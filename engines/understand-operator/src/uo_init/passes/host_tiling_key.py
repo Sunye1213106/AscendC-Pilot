@@ -1,15 +1,10 @@
 # -*- coding: utf-8 -*-
 """Bind source-declared TilingKey fields to Host ``GET_TPL_TILING_KEY`` args.
 
-AscendC declares packed key dimensions in ``ASCENDC_TPL_ARGS_DECL`` and Host
-code constructs the packed value by passing ordered arguments to
-``GET_TPL_TILING_KEY``. The positional mapping is a source-level contract and
-is stronger than historical natural-language derivations.
-
-This pass is operator-agnostic. It records each argument expression, links
-known runtime/compile/API symbols to it when possible, and marks matched Host
-variables for the subsequent def-use pass instead of treating an archive node
-as an already-rooted value.
+The positional packed-key call is a source contract.  This pass records that
+contract and identifies the concrete Host symbol used for every argument.  It
+must not derive the full value function and must not guess across ambiguous
+short names.
 """
 from __future__ import annotations
 
@@ -20,14 +15,30 @@ from typing import Any
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
 
 _CALL_TOKEN = "GET_TPL_TILING_KEY"
 _SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*(?:\s*(?:\.|->|::)\s*[A-Za-z_]\w*)*")
+_FUNCTION_RE = re.compile(
+    r"(?:inline\s+|static\s+|virtual\s+|constexpr\s+)*"
+    r"[A-Za-z_][\w:<>,\s*&~]*?\s+"
+    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
+    r"\([^;{}]*\)\s*(?:const\s*)?(?:override\s*)?\{",
+    re.S,
+)
 _CAST_WORDS = {
     "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast", "true", "false",
     "uint8_t", "uint16_t", "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t",
     "int64_t", "size_t", "bool", "int", "unsigned", "long", "short", "float", "double",
+}
+_RUNTIME_KINDS = {EntityKind.VARIABLE.value, EntityKind.FIELD.value}
+_DIRECT_ROOT_KINDS = {
+    EntityKind.INPUT.value,
+    EntityKind.COMPILE_VAR.value,
+    EntityKind.MACRO.value,
+    EntityKind.BUILD_VARIANT.value,
+    EntityKind.ARCH.value,
 }
 
 
@@ -50,6 +61,7 @@ def bind_host_tiling_key_expressions(
     calls = 0
     bound_names: set[str] = set()
     mismatches: list[dict[str, Any]] = []
+    ambiguous_sources: list[dict[str, Any]] = []
 
     host_dir = root / "op_host" / architecture
     if host_dir.is_dir():
@@ -57,14 +69,17 @@ def bind_host_tiling_key_expressions(
             if not path.is_file() or path.suffix.lower() not in _SOURCE_SUFFIXES:
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
+            file = _rel(root, path)
             for start, _end, args_text in _calls(text, _CALL_TOKEN):
                 args = _split_args(args_text)
                 calls += 1
+                line = _line(text, start)
+                function = _containing_function(text, start)
                 if len(args) != len(keys):
                     mismatches.append(
                         {
-                            "file": _rel(root, path),
-                            "line": _line(text, start),
+                            "file": file,
+                            "line": line,
                             "argument_count": len(args),
                             "declared_key_count": len(keys),
                         }
@@ -72,19 +87,19 @@ def bind_host_tiling_key_expressions(
                     continue
                 for index, (key, expr) in enumerate(zip(keys, args)):
                     expr = expr.strip()
-                    line = _line(text, start)
                     node = codemap.upsert(
                         EntityKind.PREDICATE,
                         expr,
-                        eid=f"HOSTKEYEXPR::{_rel(root, path)}::{line}::{index}",
+                        eid=f"HOSTKEYEXPR::{file}::{line}::{index}",
                         attrs={
                             "predicate_role": "host_tiling_key_argument",
                             "tiling_key": key.name,
                             "argument_index": index,
                             "expression": expr,
+                            "function": function,
                             "provenance": "source_get_tpl_tiling_key",
                         },
-                        file=_rel(root, path),
+                        file=file,
                         line=line,
                         status="confirmed",
                     )
@@ -96,8 +111,9 @@ def bind_host_tiling_key_expressions(
                             "provenance": "source_get_tpl_tiling_key",
                             "argument_index": index,
                             "expression": expr,
-                            "file": _rel(root, path),
+                            "file": file,
                             "line": line,
+                            "function": function,
                         },
                         status="confirmed",
                     )
@@ -105,15 +121,18 @@ def bind_host_tiling_key_expressions(
                     if expr not in key.attrs["host_packing_expressions"]:
                         key.attrs["host_packing_expressions"].append(expr)
                     bound_names.add(key.name)
-                    _link_expression_sources(
+                    ambiguity = _link_expression_sources(
                         codemap,
                         node,
                         expr,
                         symbol_index=symbol_index,
-                        file=_rel(root, path),
+                        file=file,
                         line=line,
+                        function=function,
                         key_name=key.name,
                     )
+                    if ambiguity:
+                        ambiguous_sources.append(ambiguity)
 
     codemap.meta["host_tiling_key_packing"] = {
         "calls": calls,
@@ -121,6 +140,8 @@ def bind_host_tiling_key_expressions(
         "declared": len(keys),
         "bound_keys": sorted(bound_names),
         "argument_count_mismatches": mismatches,
+        "ambiguous_source_count": len(ambiguous_sources),
+        "ambiguous_sources": ambiguous_sources[:50],
     }
     return codemap
 
@@ -142,21 +163,76 @@ def _symbol_index(codemap: CodeMap) -> dict[str, list[Entity]]:
             candidates.add(f"{owner}.{ent.name}")
             candidates.add(f"{owner}::{ent.name}")
         for value in candidates:
-            text = _normalize_symbol(value)
-            if text:
-                out.setdefault(text, []).append(ent)
-                out.setdefault(text.split(".")[-1].split("::")[-1], []).append(ent)
+            text = normalize_symbol(value)
+            if not text:
+                continue
+            out.setdefault(text, []).append(ent)
+            out.setdefault(short_symbol(text), []).append(ent)
     return out
 
 
-def _mark_host_key_source(source: Entity, key_name: str) -> None:
-    """Ensure an existing Host variable is still traced to its real roots."""
-    if source.kind_name() != EntityKind.VARIABLE.value:
+def _dedupe_entities(values: list[Entity]) -> list[Entity]:
+    seen: set[str] = set()
+    out: list[Entity] = []
+    for ent in values:
+        if ent.id not in seen:
+            seen.add(ent.id)
+            out.append(ent)
+    return out
+
+
+def _source_matches(symbol_index: dict[str, list[Entity]], token: str) -> tuple[list[Entity], bool]:
+    """Prefer canonical exact identity; short-name fallback must be unique.
+
+    Returning every short-name candidate was unsound (``Foo.x`` and ``Bar.x``
+    both became producers).  If the fallback is ambiguous we deliberately create
+    a source-local unresolved symbol and let Host def-use resolve it from source.
+    """
+    normalized = normalize_symbol(token)
+    exact = _dedupe_entities(list(symbol_index.get(normalized) or []))
+    if exact:
+        runtime = [e for e in exact if e.kind_name() in _RUNTIME_KINDS]
+        if runtime:
+            # A FIELD is the canonical representation for a member path; a
+            # VARIABLE is preferred for a local.  Keep one representative so
+            # later def-use does not duplicate the same packed argument.
+            preferred = sorted(
+                runtime,
+                key=lambda e: (
+                    0 if ("." in normalized and e.kind_name() == EntityKind.FIELD.value) else 1,
+                    0 if ("." not in normalized and e.kind_name() == EntityKind.VARIABLE.value) else 1,
+                    e.id,
+                ),
+            )
+            return [preferred[0]], False
+        return exact, False
+
+    short = _dedupe_entities(list(symbol_index.get(short_symbol(normalized)) or []))
+    if len(short) == 1:
+        return short, False
+    return [], bool(short)
+
+
+def _mark_host_key_source(
+    source: Entity,
+    key_name: str,
+    *,
+    file: str,
+    line: int,
+    function: str,
+) -> None:
+    """Mark a concrete Host local/member for current-source producer tracing."""
+    if source.kind_name() not in _RUNTIME_KINDS:
         return
     source.attrs["host_key_argument"] = True
+    source.attrs["canonical_symbol"] = normalize_symbol(source.name)
     keys = source.attrs.setdefault("host_key_argument_keys", [])
     if key_name not in keys:
         keys.append(key_name)
+    sites = source.attrs.setdefault("host_key_use_sites", [])
+    site = {"file": file, "line": line, "function": function, "key": key_name}
+    if site not in sites:
+        sites.append(site)
 
 
 def _link_expression_sources(
@@ -167,8 +243,9 @@ def _link_expression_sources(
     symbol_index: dict[str, list[Entity]],
     file: str,
     line: int,
+    function: str,
     key_name: str,
-) -> None:
+) -> dict[str, Any] | None:
     literal = _literal(expr)
     if literal is not None:
         root = codemap.upsert(
@@ -191,28 +268,21 @@ def _link_expression_sources(
             attrs={"provenance": "source_get_tpl_tiling_key_literal"},
             status="confirmed",
         )
-        return
+        return None
 
+    tokens = _identifiers(expr)
     linked: set[str] = set()
-    for token in _identifiers(expr):
-        normalized = _normalize_symbol(token)
-        short = normalized.split(".")[-1].split("::")[-1]
-        matches = list(symbol_index.get(normalized) or []) + list(symbol_index.get(short) or [])
+    ambiguous_tokens: list[str] = []
+    for token in tokens:
+        matches, ambiguous = _source_matches(symbol_index, token)
+        if ambiguous:
+            ambiguous_tokens.append(normalize_symbol(token))
         for source in matches:
             if source.id == expression.id or source.id in linked:
                 continue
-            if source.kind_name() not in {
-                EntityKind.INPUT.value,
-                EntityKind.VARIABLE.value,
-                EntityKind.FIELD.value,
-                EntityKind.TILING_FIELD.value,
-                EntityKind.COMPILE_VAR.value,
-                EntityKind.MACRO.value,
-                EntityKind.BUILD_VARIANT.value,
-                EntityKind.ARCH.value,
-            }:
+            if source.kind_name() not in (_RUNTIME_KINDS | _DIRECT_ROOT_KINDS | {EntityKind.TILING_FIELD.value}):
                 continue
-            _mark_host_key_source(source, key_name)
+            _mark_host_key_source(source, key_name, file=file, line=line, function=function)
             codemap.link(
                 RelationKind.DERIVES,
                 source.id,
@@ -220,27 +290,35 @@ def _link_expression_sources(
                 attrs={
                     "provenance": "source_get_tpl_tiling_key_symbol",
                     "symbol": token,
+                    "canonical_symbol": normalize_symbol(token),
                     "file": file,
                     "line": line,
+                    "function": function,
                 },
                 status="confirmed",
             )
             linked.add(source.id)
 
-    if linked:
-        return
+    if linked and not ambiguous_tokens:
+        return None
 
-    tokens = _identifiers(expr)
-    if tokens:
-        token = tokens[-1]
+    # Create one canonical runtime symbol for the actual source token instead of
+    # linking every unrelated short-name hit.  ``trace_host_key_roots`` resolves
+    # this node against assignments in the current Host source.
+    runtime_tokens = [t for t in tokens if "::" not in normalize_symbol(t)]
+    if runtime_tokens:
+        token = runtime_tokens[-1]
+        canonical = normalize_symbol(token)
         local = codemap.upsert(
             EntityKind.VARIABLE,
-            _normalize_symbol(token),
+            canonical,
             eid=f"HOSTKEYVAR::{file}::{line}::{key_name}",
             attrs={
-                "source_name": _normalize_symbol(token).split(".")[-1].split("::")[-1],
+                "source_name": short_symbol(canonical),
+                "canonical_symbol": canonical,
                 "host_key_argument": True,
                 "host_key_argument_keys": [key_name],
+                "host_key_use_sites": [{"file": file, "line": line, "function": function, "key": key_name}],
                 "upstream_unresolved": True,
                 "provenance": "source_get_tpl_tiling_key_symbol",
             },
@@ -253,9 +331,18 @@ def _link_expression_sources(
             RelationKind.DERIVES,
             local.id,
             expression.id,
-            attrs={"provenance": "source_get_tpl_tiling_key_symbol"},
+            attrs={
+                "provenance": "source_get_tpl_tiling_key_symbol",
+                "canonical_symbol": canonical,
+                "file": file,
+                "line": line,
+                "function": function,
+            },
             status="confirmed",
         )
+    if ambiguous_tokens:
+        return {"key": key_name, "file": file, "line": line, "tokens": sorted(set(ambiguous_tokens))}
+    return None
 
 
 def _calls(text: str, token: str):
@@ -291,6 +378,41 @@ def _matching_paren(text: str, open_pos: int) -> int:
             if depth == 0:
                 return i
     return -1
+
+
+def _matching_brace(text: str, open_pos: int) -> int:
+    depth = 0
+    quote = ""
+    escape = False
+    for i in range(open_pos, len(text)):
+        ch = text[i]
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in {'"', "'"}:
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _containing_function(text: str, offset: int) -> str:
+    hits: list[tuple[int, str]] = []
+    for match in _FUNCTION_RE.finditer(text):
+        open_pos = text.find("{", match.start(), match.end())
+        close_pos = _matching_brace(text, open_pos)
+        if open_pos <= offset <= close_pos:
+            hits.append((close_pos - open_pos, match.group("name")))
+    return min(hits, default=(0, ""))[1]
 
 
 def _split_args(text: str) -> list[str]:
@@ -333,11 +455,9 @@ def _split_args(text: str) -> list[str]:
 def _identifiers(expr: str) -> list[str]:
     out: list[str] = []
     for match in _IDENT_RE.finditer(expr):
-        value = re.sub(r"\s*(?:->|\.)\s*", ".", match.group(0).strip())
+        value = normalize_symbol(match.group(0))
         first = value.split(".")[0].split("::")[0]
-        if first in _CAST_WORDS or first.isdigit():
-            continue
-        if value in _CAST_WORDS:
+        if first in _CAST_WORDS or first.isdigit() or value in _CAST_WORDS:
             continue
         out.append(value)
     return out
@@ -357,10 +477,6 @@ def _literal(expr: str) -> int | float | bool | None:
         return float(text)
     except ValueError:
         return None
-
-
-def _normalize_symbol(value: str) -> str:
-    return re.sub(r"\s*(?:->|\.)\s*", ".", str(value or "").strip())
 
 
 def _line(text: str, offset: int) -> int:
