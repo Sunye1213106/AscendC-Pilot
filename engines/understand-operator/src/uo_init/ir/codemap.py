@@ -126,43 +126,13 @@ class CodeMap:
         confidence: float = 1.0,
     ) -> Entity:
         kind_name = kind.value if isinstance(kind, EntityKind) else str(kind)
-        attrs_doc = dict(attrs or {})
-
-        # The source-closure scanner first verifies the global kernel signature,
-        # then performs a generic function-body scan.  Treating the second hit as
-        # a fresh FUNCTION forks graph identity: CALLS edges originate from the
-        # duplicate instead of the Kernel, so entry reachability and TilingData
-        # consumption become false negatives.  Reuse the already verified Kernel
-        # only for this exact provenance/name case; ordinary same-name functions
-        # remain separate entities.
-        if (
-            eid is None
-            and kind_name == EntityKind.FUNCTION.value
-            and attrs_doc.get("provenance") == "source_kernel_definition"
-        ):
-            kernels = [
-                ent
-                for ent in self.by_name(name, kind=EntityKind.KERNEL)
-                if ent.attrs.get("source_signature") is True
-            ]
-            if len(kernels) == 1:
-                entity = kernels[0]
-                entity.attrs.update(attrs_doc)
-                if file:
-                    entity.file = file
-                    entity.line_start = int(line)
-                    entity.line_end = int(line)
-                entity.status = status
-                entity.confidence = confidence
-                return entity
-
         entity_id = eid or _eid(kind_name, name)
         return self.add_entity(
             Entity(
                 id=entity_id,
                 kind=kind,
                 name=name,
-                attrs=attrs_doc,
+                attrs=dict(attrs or {}),
                 file=file,
                 line_start=int(line),
                 line_end=int(line),
@@ -289,106 +259,335 @@ class CodeMap:
         path.reverse()
         return path
 
-    def incoming(self, entity_id: str, *, kind: RelationKind | str | None = None) -> list[tuple[Relation, Entity]]:
-        return self.neighbors(entity_id, kind=kind, direction="in")
+    def host_kernel_path_exists(self) -> bool:
+        inputs = self.by_kind(EntityKind.INPUT)
+        if not inputs:
+            # Fallback: VARIABLE named like inputs also count for adapters.
+            inputs = [e for e in self.entities.values() if e.kind_name() in {"INPUT", "VARIABLE"}]
+        for inp in inputs[:32]:
+            # Prefer a full path to KERNEL; fall back to key/instance reachability.
+            to_kernel = self.find_path(inp.id, end_kinds={"KERNEL"})
+            if len(to_kernel) >= 2:
+                return True
+            path = self.find_path(
+                inp.id,
+                end_kinds={"TILING_KEY", "TEMPLATE_INSTANCE"},
+            )
+            if len(path) >= 2 and (
+                self.by_kind(EntityKind.KERNEL)
+                or self.by_kind(EntityKind.TEMPLATE_INSTANCE)
+            ):
+                return True
+        kernels = self.by_kind(EntityKind.KERNEL)
+        keys = self.by_kind(EntityKind.TILING_KEY)
+        return bool(kernels) and (bool(keys) or bool(self.by_kind(EntityKind.TEMPLATE_INSTANCE)))
 
-    def outgoing(self, entity_id: str, *, kind: RelationKind | str | None = None) -> list[tuple[Relation, Entity]]:
-        return self.neighbors(entity_id, kind=kind, direction="out")
-
-    # -- serialization -----------------------------------------------------
-    def to_dict(self) -> dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
+        by_kind: dict[str, int] = defaultdict(int)
+        for e in self.entities.values():
+            by_kind[e.kind_name()] += 1
+        by_rel: dict[str, int] = defaultdict(int)
+        for r in self.relations.values():
+            by_rel[r.kind_name()] += 1
         return {
-            "schema": "uo-codemap/v1",
             "op_name": self.op_name,
             "architecture": self.architecture,
-            "entities": [e.to_dict() for e in self.entities.values()],
-            "relations": [r.to_dict() for r in self.relations.values()],
-            "meta": self.meta,
+            "entity_count": len(self.entities),
+            "relation_count": len(self.relations),
+            "entities_by_kind": dict(sorted(by_kind.items())),
+            "relations_by_kind": dict(sorted(by_rel.items())),
+            "has_host": bool(
+                self.by_kind(EntityKind.FUNCTION)
+                or self.by_kind(EntityKind.VARIABLE)
+                or self.by_kind(EntityKind.FIELD)
+            ),
+            "has_kernel": bool(self.by_kind(EntityKind.KERNEL)),
+            "has_host_kernel_path": self.host_kernel_path_exists(),
         }
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema": "codemap/v1",
+            "op_name": self.op_name,
+            "architecture": self.architecture,
+            "meta": dict(self.meta),
+            "entities": [e.to_dict() for e in self.entities.values()],
+            "relations": [r.to_dict() for r in self.relations.values()],
+            "summary": self.summary(),
+        }
+
+    # -- adapters from legacy IR -------------------------------------------
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "CodeMap":
-        cm = cls(
-            op_name=str(data.get("op_name") or ""),
-            architecture=str(data.get("architecture") or ""),
-            meta=dict(data.get("meta") or {}),
+    def from_host_ir(
+        cls,
+        host_ir: Any,
+        *,
+        op_name: str = "",
+        architecture: str = "",
+        codemap: "CodeMap | None" = None,
+    ) -> "CodeMap":
+        cm = codemap or cls(op_name=op_name, architecture=architecture)
+        if op_name:
+            cm.op_name = op_name
+        if architecture:
+            cm.architecture = architecture
+
+        for name, summary in (getattr(host_ir, "summaries", None) or {}).items():
+            fn = cm.upsert(EntityKind.FUNCTION, str(name), attrs={"layer": "host"})
+            for callee, _args in getattr(summary, "calls", None) or []:
+                other = cm.upsert(EntityKind.FUNCTION, str(callee), attrs={"layer": "host"})
+                cm.link(RelationKind.CALLS, fn.id, other.id)
+            for w in getattr(summary, "writes", None) or []:
+                field_e = cm.upsert(EntityKind.FIELD, str(w), attrs={"layer": "host"})
+                cm.link(RelationKind.WRITES, fn.id, field_e.id)
+            for r in getattr(summary, "reads", None) or []:
+                var_e = cm.upsert(EntityKind.VARIABLE, str(r), attrs={"layer": "host"})
+                cm.link(RelationKind.READS, fn.id, var_e.id)
+
+        for ev in getattr(host_ir, "writes", None) or []:
+            path = str(getattr(ev, "path", "") or "")
+            if not path:
+                continue
+            field_e = cm.upsert(
+                EntityKind.FIELD,
+                path,
+                attrs={"layer": "host", "rhs": getattr(ev, "rhs", "")},
+                file=str(getattr(ev, "file", "") or ""),
+                line=int(getattr(ev, "line", 0) or 0),
+            )
+            fn_name = str(getattr(ev, "function", "") or "")
+            if fn_name:
+                fn = cm.upsert(EntityKind.FUNCTION, fn_name, attrs={"layer": "host"})
+                cm.link(RelationKind.WRITES, fn.id, field_e.id)
+            for guard in (ev.guards() if hasattr(ev, "guards") else []) or []:
+                br = cm.upsert(
+                    EntityKind.BRANCH,
+                    str(guard)[:120],
+                    attrs={"layer": "host", "predicate": str(guard)},
+                )
+                cm.link(RelationKind.GUARDED_BY, field_e.id, br.id)
+                cm.link(RelationKind.CONTROLS, br.id, field_e.id)
+
+        for site in getattr(host_ir, "call_sites", None) or []:
+            caller = cm.upsert(
+                EntityKind.FUNCTION,
+                str(getattr(site, "caller", "") or ""),
+                attrs={"layer": "host"},
+            )
+            callee = cm.upsert(
+                EntityKind.FUNCTION,
+                str(getattr(site, "callee", "") or ""),
+                attrs={"layer": "host"},
+            )
+            if caller.name and callee.name:
+                cm.link(RelationKind.CALLS, caller.id, callee.id)
+
+        cm.meta["host_backend"] = str(getattr(host_ir, "backend", "") or "")
+        return cm
+
+    @classmethod
+    def from_kernel_ir(
+        cls,
+        kernel_ir: Any,
+        *,
+        op_name: str = "",
+        architecture: str = "",
+        codemap: "CodeMap | None" = None,
+    ) -> "CodeMap":
+        cm = codemap or cls(op_name=op_name, architecture=architecture)
+        if architecture:
+            arch = cm.upsert(EntityKind.ARCH, architecture, attrs={"layer": "arch"})
+        else:
+            arch = None
+        kernel = cm.upsert(
+            EntityKind.KERNEL,
+            op_name or "kernel",
+            attrs={
+                "layer": "kernel",
+                "variants": list(getattr(kernel_ir, "variants", None) or []),
+            },
         )
-        for row in data.get("entities") or []:
-            if isinstance(row, dict):
-                cm.add_entity(Entity.from_dict(row))
-        for row in data.get("relations") or []:
-            if not isinstance(row, dict):
-                continue
-            rel = Relation.from_dict(row)
-            cm.relations[rel.id] = rel
+        if arch is not None:
+            cm.link(RelationKind.AVAILABLE_ON, kernel.id, arch.id)
+
+        for br in getattr(kernel_ir, "branches", None) or []:
+            cond = str(getattr(br, "condition", "") or "")
+            branch = cm.upsert(
+                EntityKind.BRANCH,
+                cond[:120] or str(getattr(br, "id", "") or "branch"),
+                eid=str(getattr(br, "id", "") or "") or None,
+                attrs={
+                    "layer": "kernel",
+                    "condition": cond,
+                    "dimensions": list(getattr(br, "dimensions", None) or []),
+                    "variants": list(getattr(br, "variants", None) or []),
+                },
+                file=str(getattr(br, "file", "") or ""),
+                line=int(getattr(br, "line", 0) or 0),
+            )
+            cm.link(RelationKind.CONTROLS, branch.id, kernel.id)
+            for dim in getattr(br, "dimensions", None) or []:
+                key = cm.upsert(EntityKind.TILING_KEY, str(dim), attrs={"layer": "tiling"})
+                cm.link(RelationKind.SELECTS, key.id, branch.id)
+                cm.link(RelationKind.SELECTS, key.id, kernel.id)
         return cm
 
     @classmethod
-    def from_legacy(cls, legacy: dict[str, Any], *, op_name: str = "", architecture: str = "") -> "CodeMap":
-        """Build a CodeMap from a legacy ``build_kb`` dictionary."""
-        cm = cls(op_name=op_name, architecture=architecture)
-        id_map: dict[str, str] = {}
-        for row in legacy.get("nodes") or []:
-            if not isinstance(row, dict):
+    def from_tiling_data_ir(
+        cls,
+        tiling_ir: Any,
+        *,
+        op_name: str = "",
+        architecture: str = "",
+        codemap: "CodeMap | None" = None,
+    ) -> "CodeMap":
+        cm = codemap or cls(op_name=op_name, architecture=architecture)
+        structs = getattr(tiling_ir, "structs", None) or {}
+        # TilingDataIR may expose .fields or iterate structs.
+        fields: list[Any] = list(getattr(tiling_ir, "fields", None) or [])
+        if not fields and isinstance(structs, dict):
+            for st in structs.values():
+                fields.extend(getattr(st, "fields", None) or [])
+        for f in fields:
+            name = str(getattr(f, "name", "") or "")
+            if not name:
                 continue
-            raw_kind = str(row.get("kind") or row.get("type") or "Other")
-            kind = _KB_KIND_MAP.get(raw_kind, EntityKind.OTHER)
-            raw_id = str(row.get("id") or "")
-            name = str(row.get("name") or row.get("symbol") or raw_id or raw_kind)
-            ent = cm.upsert(
-                kind,
+            cm.upsert(
+                EntityKind.TILING_FIELD,
                 name,
-                eid=raw_id or None,
                 attrs={
-                    k: v
-                    for k, v in row.items()
-                    if k not in {"id", "kind", "type", "name", "symbol", "file", "line", "status", "confidence"}
+                    "layer": "tiling",
+                    "ctype": str(getattr(f, "ctype", "") or ""),
+                    "struct": str(getattr(f, "struct", "") or ""),
                 },
-                file=str(row.get("file") or ""),
-                line=int(row.get("line") or row.get("line_start") or 0),
-                status=str(row.get("status") or "extracted"),
-                confidence=float(row.get("confidence") or 1.0),
+                file=str(getattr(f, "file", "") or ""),
+                line=int(getattr(f, "line", 0) or 0),
             )
-            if raw_id:
-                id_map[raw_id] = ent.id
-        for row in legacy.get("edges") or []:
-            if not isinstance(row, dict):
-                continue
-            raw_kind = str(row.get("kind") or row.get("type") or "REFERENCES")
-            kind = _KB_EDGE_MAP.get(raw_kind, RelationKind.REFERENCES)
-            src = id_map.get(str(row.get("src") or row.get("source") or ""), str(row.get("src") or row.get("source") or ""))
-            dst = id_map.get(str(row.get("dst") or row.get("target") or ""), str(row.get("dst") or row.get("target") or ""))
-            if not src or not dst or src not in cm.entities or dst not in cm.entities:
-                continue
-            rel = cm.link(
-                kind,
-                src,
-                dst,
-                attrs={
-                    k: v
-                    for k, v in row.items()
-                    if k not in {"id", "kind", "type", "src", "source", "dst", "target", "status", "confidence"}
-                },
-                status=str(row.get("status") or "extracted"),
-                confidence=float(row.get("confidence") or 1.0),
-            )
-            if row.get("id"):
-                old_id = rel.id
-                rel.id = str(row["id"])
-                cm.relations.pop(old_id, None)
-                cm.relations[rel.id] = rel
         return cm
 
-    def iter_entities(self, kinds: Iterable[str] | None = None) -> Iterator[Entity]:
-        allowed = set(kinds or ())
-        for entity in self.entities.values():
-            if allowed and entity.kind_name() not in allowed:
-                continue
-            yield entity
+    @classmethod
+    def from_kb(
+        cls,
+        kb: Any,
+        *,
+        codemap: "CodeMap | None" = None,
+    ) -> "CodeMap":
+        cm = codemap or cls(
+            op_name=str(getattr(kb, "op_name", "") or ""),
+            architecture=str(getattr(kb, "architecture", "") or ""),
+        )
+        for node in (getattr(kb, "nodes", None) or {}).values():
+            kind_raw = str(getattr(node, "kind", "") or "OTHER")
+            kind = _KB_KIND_MAP.get(kind_raw, EntityKind.OTHER)
+            ev0 = (getattr(node, "evidence", None) or [None])[0]
+            cm.add_entity(
+                Entity(
+                    id=str(node.id),
+                    kind=kind,
+                    name=str(getattr(node, "name", "") or ""),
+                    attrs={
+                        "layer": str(getattr(node, "layer", "") or ""),
+                        "legacy_kind": kind_raw,
+                        **dict(getattr(node, "data", None) or {}),
+                    },
+                    file=str(getattr(ev0, "file", "") or "") if ev0 else "",
+                    line_start=int(getattr(ev0, "line_start", 0) or 0) if ev0 else 0,
+                    line_end=int(getattr(ev0, "line_end", 0) or 0) if ev0 else 0,
+                    status=str(getattr(node, "status", "extracted") or "extracted"),
+                    confidence=float(getattr(node, "confidence", 1.0) or 1.0),
+                )
+            )
+        for edge in (getattr(kb, "edges", None) or {}).values():
+            kind_raw = str(getattr(edge, "kind", "") or "OTHER")
+            kind = _KB_EDGE_MAP.get(kind_raw, RelationKind.OTHER)
+            cm.link(
+                kind,
+                str(edge.src),
+                str(edge.dst),
+                attrs={"legacy_kind": kind_raw, **dict(getattr(edge, "data", None) or {})},
+                status=str(getattr(edge, "status", "extracted") or "extracted"),
+                confidence=float(getattr(edge, "confidence", 1.0) or 1.0),
+            )
+        return cm
 
-    def iter_relations(self, kinds: Iterable[str] | None = None) -> Iterator[Relation]:
-        allowed = set(kinds or ())
-        for relation in self.relations.values():
-            if allowed and relation.kind_name() not in allowed:
+    @classmethod
+    def assemble(
+        cls,
+        *,
+        op_name: str = "",
+        architecture: str = "",
+        host_ir: Any = None,
+        kernel_ir: Any = None,
+        tiling_ir: Any = None,
+        kb: Any = None,
+        inputs: Iterable[str] | None = None,
+        key_fields: Iterable[dict[str, Any]] | None = None,
+    ) -> "CodeMap":
+        """Build a CodeMap from available legacy IR pieces."""
+        cm = cls(op_name=op_name, architecture=architecture)
+        if architecture:
+            arch = cm.upsert(EntityKind.ARCH, architecture)
+            bv = cm.upsert(
+                EntityKind.BUILD_VARIANT,
+                architecture,
+                attrs={"architecture": architecture},
+            )
+            cm.link(RelationKind.ACTIVE_UNDER, arch.id, bv.id)
+
+        for inp in inputs or ():
+            name = str(inp)
+            if name:
+                cm.upsert(EntityKind.INPUT, name, attrs={"layer": "api"})
+
+        if host_ir is not None:
+            cls.from_host_ir(host_ir, op_name=op_name, architecture=architecture, codemap=cm)
+        if tiling_ir is not None:
+            cls.from_tiling_data_ir(
+                tiling_ir, op_name=op_name, architecture=architecture, codemap=cm
+            )
+        if kernel_ir is not None:
+            cls.from_kernel_ir(
+                kernel_ir, op_name=op_name, architecture=architecture, codemap=cm
+            )
+        if kb is not None:
+            cls.from_kb(kb, codemap=cm)
+
+        # Input-rooted derivation rows → DERIVES / SELECTS backbone.
+        for row in key_fields or ():
+            if not isinstance(row, dict):
                 continue
-            yield relation
+            key_name = str(row.get("name") or row.get("field") or row.get("dim") or "")
+            if not key_name:
+                continue
+            key_e = cm.upsert(EntityKind.TILING_KEY, key_name, attrs={"layer": "tiling"})
+            for root in row.get("input_roots") or row.get("roots") or []:
+                root_name = str(root)
+                if not root_name:
+                    continue
+                # Prefer INPUT entity when name looks like an API input.
+                kind = EntityKind.INPUT if root_name.isupper() or "." not in root_name else EntityKind.VARIABLE
+                if root_name.lower().startswith("input") or root_name in {
+                    "query",
+                    "key",
+                    "value",
+                    "queryType",
+                    "layoutType",
+                }:
+                    kind = EntityKind.INPUT
+                root_e = cm.upsert(kind, root_name, attrs={"layer": "api"})
+                cm.link(RelationKind.DERIVES, root_e.id, key_e.id)
+                cm.link(RelationKind.FLOWS_TO, root_e.id, key_e.id)
+            for kernel in cm.by_kind(EntityKind.KERNEL):
+                cm.link(RelationKind.SELECTS, key_e.id, kernel.id)
+
+        # Ensure tiling fields written by host connect toward keys when names match.
+        for field_e in cm.by_kind(EntityKind.FIELD):
+            for key_e in cm.by_kind(EntityKind.TILING_KEY):
+                if field_e.name and (
+                    field_e.name == key_e.name
+                    or field_e.name.endswith("." + key_e.name)
+                    or key_e.name in field_e.name
+                ):
+                    cm.link(RelationKind.FLOWS_TO, field_e.id, key_e.id)
+
+        return cm
