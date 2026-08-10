@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Diff → affected tiling fields / keys, using the durable codemap."""
+"""Diff → affected tiling fields / keys, using the durable CodeMap ``.uo``."""
 
 from __future__ import annotations
 
@@ -101,15 +101,48 @@ def _path_matches(writer_file: str, diff_path: str) -> bool:
     return wf.endswith(dp) or dp.endswith(wf.split("/")[-1])
 
 
+def _load_host_view(
+    uo_root: Path, project_root: Path | None
+) -> tuple[dict[str, Any], str]:
+    """Prefer ``.uo`` tg_host_view; fall back to legacy host_codemap.yaml."""
+    try:
+        from uo_init.store.reader import find_uo_product, load_view_blob
+
+        root = project_root
+        if root is None:
+            # uo_root may be <op>/.ascendc-pilot/uo or <op>/.ascendc-pilot/<arch>/uo
+            if uo_root.name == "uo" and uo_root.parent.name == ".ascendc-pilot":
+                root = uo_root.parent.parent
+            elif uo_root.name == "uo":
+                root = uo_root.parents[2]
+        if root is not None:
+            product = find_uo_product(root)
+            if product is not None and product.suffix == ".uo":
+                blob = load_view_blob(product, "ir/tg_host_view.yaml")
+                if isinstance(blob, dict) and blob:
+                    return blob, f"uo:{product.name}"
+    except Exception:
+        pass
+
+    for rel in ("ir/tg_host_view.yaml", "ir/host_codemap.yaml"):
+        path = uo_root / rel
+        if path.is_file():
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            if isinstance(doc, dict) and doc:
+                return doc, path.as_posix()
+    return {}, ""
+
+
 def impact_from_diff(
     diff_text: str,
     *,
     uo_root: str | Path | None = None,
     project_root: str | Path | None = None,
 ) -> ImpactReport:
-    """Compute the tiling impact of a unified diff against the codemap."""
+    """Compute the tiling impact of a unified diff against the CodeMap."""
+    proj = Path(project_root).expanduser().resolve() if project_root else None
     root = Path(uo_root) if uo_root else (
-        Path(project_root or ".") / ".ascendc-pilot" / "uo"
+        (proj / ".ascendc-pilot" / "uo") if proj else Path(".ascendc-pilot") / "uo"
     )
     ranges = parse_diff_ranges(diff_text)
     report = ImpactReport(files=sorted(ranges))
@@ -118,16 +151,76 @@ def impact_from_diff(
         report.note = "no file hunks in diff"
         return report
 
-    codemap_path = root / "ir" / "host_codemap.yaml"
-    if not codemap_path.is_file():
-        report.note = f"missing codemap at {codemap_path}"
-        return report
-    doc = yaml.safe_load(codemap_path.read_text(encoding="utf-8")) or {}
+    doc, source = _load_host_view(root, proj)
+    if not doc:
+        # Last resort: scan CodeMap entities directly when only .uo exists.
+        try:
+            from uo_init.store.reader import find_uo_product, read_codemap
+            from uo_init.ir.entity import EntityKind
+
+            product = find_uo_product(proj or root)
+            if product is None:
+                report.note = "missing CodeMap .uo and host_codemap.yaml"
+                return report
+            cm = read_codemap(product)
+            fields_hit: set[str] = set()
+            for ent in cm.entities.values():
+                if ent.kind_name() not in {
+                    EntityKind.FIELD.value,
+                    EntityKind.VARIABLE.value,
+                    EntityKind.PREDICATE.value,
+                }:
+                    continue
+                wf = str(ent.file or "")
+                line = int(ent.line_start or 0)
+                for dp, spans in ranges.items():
+                    if not _path_matches(wf, dp):
+                        continue
+                    if any(a <= line <= b for a, b in spans):
+                        if ent.kind_name() == EntityKind.PREDICATE.value:
+                            report.hit_predicates.append(
+                                {
+                                    "file": wf,
+                                    "line": line,
+                                    "condition": ent.name,
+                                    "fields": [],
+                                }
+                            )
+                        else:
+                            report.hit_writers.append(
+                                {
+                                    "field": ent.name,
+                                    "file": wf,
+                                    "line": line,
+                                    "function": ent.attrs.get("function"),
+                                }
+                            )
+                            fields_hit.add(ent.name)
+            report.fields = sorted(fields_hit)
+            report.key_dims = sorted(
+                n
+                for n in fields_hit
+                if n[:1].isupper() and (len(n) == 1 or n[1:2].islower() or "_" not in n[:1])
+            )
+            report.note = (
+                f"codemap-entity scan: {len(report.hit_writers)} writers, "
+                f"{len(report.hit_predicates)} predicates, fields={report.fields}"
+            )
+            return report
+        except Exception as exc:  # noqa: BLE001
+            report.note = f"missing host view ({exc})"[:200]
+            return report
 
     fields_hit: set[str] = set()
     for f in doc.get("fields") or []:
         name = str(f.get("name") or "")
-        for w in f.get("writers") or []:
+        writers = list(f.get("writers") or [])
+        if not writers and f.get("entity_id"):
+            # tg_host_view from CodeMap may only stamp producer_sites as writers
+            writers = list(f.get("writers") or [])
+        for w in writers:
+            if not isinstance(w, dict):
+                continue
             wf = str(w.get("file") or "")
             line = int(w.get("line") or 0)
             for dp, spans in ranges.items():
@@ -139,6 +232,8 @@ def impact_from_diff(
                         ("file", "line", "function", "rhs", "via")}
                     })
                     fields_hit.add(name)
+                    if f.get("tiling_key"):
+                        report.key_dims.append(str(f.get("tiling_key")))
     for p in doc.get("predicates") or []:
         pf = str(p.get("file") or "")
         line = int(p.get("line") or 0)
@@ -152,21 +247,19 @@ def impact_from_diff(
                         fields_hit.add(str(fld))
 
     report.fields = sorted(fields_hit)
-    key_dims = []
+    key_dims = list(report.key_dims)
     for f in doc.get("fields") or []:
         name = str(f.get("name") or "")
         if name not in fields_hit:
             continue
-        if f.get("kind") == "key_dim" or (name[:1].isupper() and name[1:2].islower()):
-            key_dims.append(name)
+        if f.get("kind") in {"key_dim", "key_dim_host"} or (
+            name[:1].isupper() and name[1:2].islower()
+        ):
+            key_dims.append(str(f.get("tiling_key") or name))
     report.key_dims = sorted(set(key_dims))
-
-    # Expanding the full declared set is rarely useful when a shared dimension
-    # is hit (almost every key has SplitAxis). CE hands fields/key_dims to TG;
-    # regression pulls witnesses that exercise those dims.
     report.affected_keys = []
     report.note = (
-        f"{len(report.hit_writers)} writers, {len(report.hit_predicates)} "
-        f"predicates, fields={report.fields}"
+        f"source={source}; {len(report.hit_writers)} writers, "
+        f"{len(report.hit_predicates)} predicates, fields={report.fields}"
     )
     return report

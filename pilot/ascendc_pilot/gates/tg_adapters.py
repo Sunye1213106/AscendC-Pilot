@@ -122,16 +122,34 @@ def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
     fields = list(inv.get("fields") or [])
     if not fields:
         issues.append("binding_inventory.fields empty")
-    keys = _load(uo / "tiling" / "exhaustive_key_space.yaml") or {}
+    keys: dict[str, Any] = {}
+    view: dict[str, Any] = {}
+    graph: dict[str, Any] = {}
+    try:
+        from uo_init.store.reader import find_uo_product, load_view_blob
+
+        product = find_uo_product(project_root)
+        if product is not None and product.suffix == ".uo":
+            blob = load_view_blob(product, "tiling/exhaustive_key_space.yaml")
+            if isinstance(blob, dict):
+                keys = blob
+            blob = load_view_blob(product, "ir/tg_host_view.yaml")
+            if isinstance(blob, dict):
+                view = blob
+            blob = load_view_blob(product, "ir/operator_graph.yaml")
+            if isinstance(blob, dict):
+                graph = blob
+        else:
+            issues.append("missing .uo CodeMap product")
+    except Exception as exc:  # noqa: BLE001
+        issues.append(f"uo_read_error:{exc}"[:120])
+    del uo  # binding gate authority is .uo view_blobs, not arch YAML tree
     count = int((keys or {}).get("legal_key_count") or 0) if isinstance(keys, dict) else 0
     if count <= 0:
         issues.append("DECLARED_SET_EMPTY")
-    view = _load(uo / "ir" / "tg_host_view.yaml") or {}
     view_fields = list((view or {}).get("fields") or []) if isinstance(view, dict) else []
     if view_fields and fields and len(fields) != len(view_fields):
-        # Soft mismatch note — inventory may filter; fail only when inventory empty above.
         pass
-    graph = _load(uo / "ir" / "operator_graph.yaml") or {}
     fp = str((graph or {}).get("fingerprint") or "") if isinstance(graph, dict) else ""
     inv_fp = str(inv.get("graph_fingerprint") or "")
     if fp and inv_fp and fp != inv_fp:

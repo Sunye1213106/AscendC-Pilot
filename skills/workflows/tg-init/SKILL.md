@@ -10,6 +10,11 @@ description: 测例契约与绑定：变量/IO/TilingKey 维信息提取。用�
 
 阶段：`intent → kb_ready → contract → bind → gate → confirm`。
 
+权威 UO 是 `.ascendc-pilot/uo/<op>.<arch>.uo`（CodeMap）。`kb_check` 确认其中的 TG 视图
+（`tiling/exhaustive_key_space`、`ir/tg_host_view`、`ir/operator_graph`），并写入
+`tg/init/uo_ready.yaml`。视图缺失时用
+`python -m uo_init.dump <op>.uo --materialize-tg --op-root <算子目录>` 物化进同一 `.uo`。
+
 ## Pilot
 
 `acp start` → `next` → `run-action` →（语义则 finalize）→ `advance`。

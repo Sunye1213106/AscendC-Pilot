@@ -52,6 +52,10 @@ approved T
 
 ## UO 的使用方式
 
-UO 提供结构证据，不提供全局 19 维 closed-form：Key producer、Host CALLS/READS/WRITES、all writes、guards、TilingData flow、Template/Kernel、source span。Agent 只为当前 residual 拉局部 slice 并推理。
+UO（CodeMap `.uo`）提供结构证据，不提供全局 19 维 closed-form：Key producer、Host CALLS/READS/WRITES、all writes、guards、TilingData flow、Template/Kernel、source span。
+
+查代码纪律：**先 `CodeMapQuery`，再最小源码窗口验证**。定向构造主路径是
+`dim → packing → producer/guards → reads → knobs → Case`；`construction_hints` 仅兜底。
+「没找到 hint」≠ 不可达。
 
 安全不变量：`references/closure-safety.md`；搜索/构造：`references/search.md`；oracle：`references/oracle.md`；签发：`references/certificate.md`。

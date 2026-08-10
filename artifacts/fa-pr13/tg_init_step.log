@@ -1,0 +1,70 @@
+uo=/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/uo/flash_attention_score_grad.arch35.uo size=16326656
+== init_intent ==
+{"ok": true, "engine": "init_intent", "artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/init/init_intent.yaml", "schema": "tg-init-intent/v1", "mode": "tilingkey_full_coverage", "source": "default", "consumer_root": "", "op_name": "flash_attention_score_grad", "architecture": "arch35", "description": ""}
+== kb_check ==
+{"ok": false, "gate": {"gate": "uo_ready", "ok": false, "integrity_status": "", "checks": {"integrity_pass": false, "sqlite_present": false, "sqlite_fresh": false, "sqlite_status": "error", "sqlite_error": "unable to open database file", "template_blocks": 0, "key_field_obligations": 0, "legal_key_rows": 0, "tiling_materialized": false, "branch_rows": 0}, "message": "UO KB not ready (integrity,sqlite,tiling_materialize)"}, "engine": "kb_check"}
+== contract_build ==
+{"ok": false, "engine": "contract_build", "op_name": "flash_attention_score_grad", "mode": "tilingkey_full_coverage", "csv_consumer_root": "", "payload": {"schema": "tg-tilingkey-contract/v1", "status": "fail", "mode": "tilingkey_full_coverage", "op_name": "flash_attention_score_grad", "architecture": "arch35", "declared_set": {"source": "uo/tiling/exhaustive_key_space.yaml", "fingerprint": "", "count": 0, "legal_key_index": ""}, "graph_fingerprint": "", "host_view": "uo/ir/tg_host_view.yaml", "errors": ["missing uo/ir/operator_graph.yaml", "missing uo/tiling/exhaustive_key_space.yaml", "missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)"]}, "errors": ["missing uo/ir/operator_graph.yaml", "missing uo/tiling/exhaustive_key_space.yaml", "missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)"]}
+== semantic_bind ==
+{"ok": true, "engine": "semantic_bind", "mode": "tilingkey_full_coverage", "artifacts": {}, "inventory_path": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/realization/binding_inventory.yaml", "csv_consumer_root": "", "field_count": 0}
+== _run_tg_bind_merge ==
+{"ok": true, "engine": "bind_merge", "mode": "tilingkey_full_coverage", "payload": {"schema": "tg-bind-merge/v1", "mode": "tilingkey_full_coverage", "status": "pass", "note": "full mode skips CSV realization merge; host-view inventory is authoritative", "inventory": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/realization/binding_inventory.yaml"}}
+== _run_tg_mid_nest ==
+{"ok": true, "engine": "mid_nest", "mode": "tilingkey_full_coverage", "artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/realization/mid_symbol_queue.yaml"}
+== integrity_gate ==
+{"ok": false, "engine": "integrity_gate", "mode": "tilingkey_full_coverage", "artifact": "/work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/contract/integrity_gate.yaml", "gates": {"tilingkey_contract": {"ok": false, "status": "fail", "errors": ["missing uo/ir/operator_graph.yaml", "missing uo/tiling/exhaustive_key_space.yaml", "missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)"]}}}
+== artifacts ==
+.ascendc-pilot/arch35/tg/contract/integrity_gate.yaml
+.ascendc-pilot/arch35/tg/contract/tilingkey_contract.yaml
+.ascendc-pilot/arch35/tg/init/init_intent.yaml
+.ascendc-pilot/arch35/tg/realization/binding_inventory.yaml
+.ascendc-pilot/arch35/tg/realization/mid_symbol_queue.yaml
+.ascendc-pilot/arch35/tg/realization/uo_merge_report.yaml
+.ascendc-pilot/arch35/tg/snapshot/understand_contract.json
+
+----- /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/init/init_intent.yaml (163 bytes) -----
+schema: tg-init-intent/v1
+mode: tilingkey_full_coverage
+source: default
+consumer_root: ''
+op_name: flash_attention_score_grad
+architecture: arch35
+description: ''
+
+----- /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/contract/tilingkey_contract.yaml (459 bytes) -----
+schema: tg-tilingkey-contract/v1
+status: fail
+mode: tilingkey_full_coverage
+op_name: flash_attention_score_grad
+architecture: arch35
+declared_set:
+  source: uo/tiling/exhaustive_key_space.yaml
+  fingerprint: ''
+  count: 0
+  legal_key_index: ''
+graph_fingerprint: ''
+host_view: uo/ir/tg_host_view.yaml
+errors:
+- missing uo/ir/operator_graph.yaml
+- missing uo/tiling/exhaustive_key_space.yaml
+- missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)
+
+----- /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/realization/binding_inventory.yaml (120 bytes) -----
+schema: tg-tilingkey-binding-inventory/v1
+mode: tilingkey_full_coverage
+fields: []
+field_count: 0
+graph_fingerprint: ''
+
+----- /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/snapshot/understand_contract.json (188 bytes) -----
+{
+  "schema": "tg-tilingkey-snapshot/v1",
+  "mode": "tilingkey_full_coverage",
+  "op_name": "flash_attention_score_grad",
+  "architecture": "arch35",
+  "files": {},
+  "snapshot_hash": ""
+}
+MISSING tg/init/integrity.yaml
+MISSING tg/init/audit_report.yaml
+DONE_TG_INIT_ENGINES

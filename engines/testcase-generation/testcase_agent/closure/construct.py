@@ -1,19 +1,28 @@
 # -*- coding: utf-8 -*-
 """Build the input a target key asks for, instead of searching for it.
 
-Tables live in ``operators/<op>/<arch>/construction_hints.yaml``. Missing
-hints are empty (cold-start / before ``export_adapter_pack``).
+CodeMap-directed path:
+  target dims → TILING_KEY packing → host producers/guards → reads → knobs → Case
 
-The engine never names operator-specific Key dimensions. Loops, bool knobs
-and post-rules are declared in yaml (``loops`` / ``bool_knobs`` / ``post``).
+``construction_hints.yaml`` is an adapter table used only when CodeMap cannot
+spell a case yet (empty producers / no product).
 """
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any, Mapping
 
 from testcase_agent.closure import workspace as W
+
+# Last CodeMap construct traces (entity ids / packing) for audit.
+_LAST_TRACES: list[dict[str, Any]] = []
+
+
+def last_traces() -> list[dict[str, Any]]:
+    return list(_LAST_TRACES)
 
 
 @lru_cache(maxsize=4)
@@ -34,12 +43,160 @@ def _dtype_map() -> dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
-def build(t: Mapping[str, str], seed: int = 0) -> list:
-    """Spellings of one target key, most likely first.
+def _find_uo_product() -> Path | None:
+    root = os.environ.get("ASCENDC_PROJECT_ROOT") or os.environ.get("UO_OP_DIR") or ""
+    if not root:
+        try:
+            ws = W.default_workspace()
+            # .../.ascendc-pilot/<arch>/tg/closure → op root
+            root = str(Path(ws.state).parents[3])
+        except Exception:
+            return None
+    try:
+        from uo_init.store.reader import find_uo_product
 
-    Optional operator hook ``construct_case(target)`` overrides entirely.
-    Otherwise interprets ``loops`` / ``bool_knobs`` / ``post`` from hints.
-    """
+        op = os.environ.get("UO_OPERATOR") or ""
+        arch = os.environ.get("UO_ARCH") or ""
+        return find_uo_product(Path(root), op_name=op, architecture=arch)
+    except Exception:
+        return None
+
+
+def _codemap_build(t: Mapping[str, str], *, seed: int = 0) -> list:
+    """Spell cases by walking CodeMap packing → producer → knobs."""
+    del seed
+    global _LAST_TRACES
+    _LAST_TRACES = []
+    product = _find_uo_product()
+    if product is None:
+        return []
+    try:
+        from uo_init.query.engine import CodeMapQuery
+        from uo_init.store.reader import load_view_blob, read_codemap
+    except Exception:
+        return []
+
+    cm = read_codemap(product)
+    q = CodeMapQuery(cm, path=str(product))
+    view = load_view_blob(product, "ir/tg_host_view.yaml") or {}
+    if not isinstance(view, dict):
+        view = {}
+
+    I = W.replay_inputs()
+    sem = getattr(I, "SEMANTICS", None)
+    if sem is None or not hasattr(sem, "from_knobs"):
+        return []
+
+    # Base knobs from hints defaults when present.
+    hints = _hints()
+    defaults = dict(hints.get("defaults") or {})
+    dtype_dim = str(hints.get("dtype_dim") or "InputDType")
+    dtype_map = _dtype_map()
+    dtype = dtype_map.get(str(t.get(dtype_dim)))
+    if dtype is None:
+        # Best-effort dtype from common names
+        dtype = {
+            "0": "float16",
+            "1": "bfloat16",
+            "2": "float",
+            "3": "float8_e5m2",
+            "4": "float8_e4m3fn",
+            "5": "hifloat8",
+            "6": "float",
+        }.get(str(t.get(dtype_dim)), "float16")
+
+    knobs = dict(defaults)
+    knobs["dtype"] = dtype
+    traces: list[dict[str, Any]] = []
+
+    # Map each target dim via declared_keys packing + host fields.
+    declared = view.get("declared_keys") or {}
+    fields = list(view.get("fields") or [])
+    uo_yaml_root = product.parent  # not used by CodemapQuery(.uo); knobs_for_field needs uo dir
+    # Prefer arch uo dir beside product for feature_bindings compatibility
+    arch_uo = None
+    try:
+        arch_uo = str(Path(W.default_workspace().state).parent.parent / "uo")
+    except Exception:
+        arch_uo = str(product.parent)
+
+    from testcase_agent.closure.generate import knobs_for_field
+
+    for dim, want in t.items():
+        meta = declared.get(dim) or {}
+        packing = list(meta.get("packing") or [])
+        host_fields = [
+            f for f in fields
+            if str(f.get("tiling_key") or "") == dim or str(f.get("name") or "") == dim
+        ]
+        cone: list[str] = []
+        entity_ids: list[str] = []
+        for f in host_fields:
+            if f.get("entity_id"):
+                entity_ids.append(str(f["entity_id"]))
+            try:
+                cone.extend(knobs_for_field(str(f.get("name") or dim), uo_root=arch_uo))
+            except Exception:
+                pass
+        if not cone:
+            try:
+                cone.extend(knobs_for_field(dim, uo_root=arch_uo))
+            except Exception:
+                pass
+
+        # Bool-like dims: set matching bool knobs when we know the mapping.
+        if str(want) in {"0", "1"} and cone:
+            for k in cone:
+                if "dtype" in k.lower():
+                    continue
+                knobs[k] = True if str(want) == "1" else knobs.get(k, False)
+
+        # Query tiling key entity for packing symbols.
+        key_rows = q.tiling_keys()
+        key_row = next((r for r in key_rows if r.get("name") == dim), None)
+        if key_row and not packing:
+            packing = list(key_row.get("host_packing_expressions") or [])
+
+        traces.append(
+            {
+                "dim": dim,
+                "want": str(want),
+                "packing": packing,
+                "host_fields": [str(f.get("name") or "") for f in host_fields],
+                "entity_ids": entity_ids,
+                "knob_cone": sorted(set(cone)),
+            }
+        )
+
+    # Apply bool_knobs table from hints when CodeMap cone is incomplete.
+    bool_knobs = hints.get("bool_knobs") or {}
+    for dim, spec in bool_knobs.items():
+        if not isinstance(spec, dict):
+            continue
+        knob = str(spec.get("knob") or "")
+        if not knob:
+            continue
+        on_val = spec.get("on", True)
+        off_val = spec.get("off", False)
+        knobs[knob] = on_val if str(t.get(str(dim))) == "1" else off_val
+
+    try:
+        case = sem.from_knobs(knobs)
+        if hasattr(sem, "repair"):
+            case = sem.repair(case)
+        out = [case.normalised() if hasattr(case, "normalised") else case]
+    except Exception:
+        out = []
+
+    _LAST_TRACES = traces
+    if out:
+        for tr in traces:
+            tr["spelled"] = True
+    return out
+
+
+def _hints_build(t: Mapping[str, str], seed: int = 0) -> list:
+    """Cartesian construction from adapter ``construction_hints.yaml`` tables."""
     del seed
     I = W.replay_inputs()
     hints = _hints()
@@ -66,10 +223,8 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
 
     loops = list(hints.get("loops") or [])
     if not loops:
-        # No declared construction loops → nothing to enumerate.
         return []
 
-    # Expand cartesian product of loop axes declared in yaml.
     axes: list[list[dict[str, Any]]] = []
     for loop in loops:
         table_name = str(loop.get("table") or "")
@@ -109,7 +264,6 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
             return []
         axes.append(axis)
 
-    # Cartesian product
     combos: list[dict[str, Any]] = [{}]
     for axis in axes:
         nxt: list[dict[str, Any]] = []
@@ -139,7 +293,6 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
                 off_val = knobs.get(str(spec["off_from_defaults"]), knobs.get(knob))
             knobs[knob] = on_val if str(t.get(str(dim))) == "1" else off_val
 
-        # Named derived rules (when/set) still supported.
         for rule in hints.get("derived") or []:
             when = rule.get("when") or {}
             if all(str(t.get(k)) == str(v) for k, v in when.items()):
@@ -190,14 +343,29 @@ def build(t: Mapping[str, str], seed: int = 0) -> list:
     return out
 
 
-def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:
-    """Diagnostic notes for a target — never a reachability verdict.
+def build(t: Mapping[str, str], seed: int = 0) -> list:
+    """Spellings of one target key, most likely first.
 
-    Prefers operator ``construct_reasons`` (rewrite-risk *hypotheses*) and
-    whether ``build`` can spell a case.  Callers must still construct + replay;
-    lemmas come from oracle HIT/REWRITE/REFUSE plus source proof, not from
-    this list alone.
+    Order: operator hook → CodeMap-directed → adapter hints tables.
     """
+    # Operator hook still wins when present.
+    I = W.replay_inputs()
+    if hasattr(I, "construct_case"):
+        try:
+            hooked = list(I.construct_case(t) or [])
+            if hooked:
+                return hooked
+        except Exception:
+            pass
+
+    coded = _codemap_build(t, seed=seed)
+    if coded:
+        return coded
+    return _hints_build(t, seed=seed)
+
+
+def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:
+    """Diagnostic notes for a target — never a reachability verdict."""
     del seed
     I = W.replay_inputs()
     hints = _hints()
@@ -217,7 +385,13 @@ def explain(t: Mapping[str, str], seed: int = 0) -> list[str]:
         reasons.append(f"construct.build error:{str(exc)[:120]}")
         return reasons or ["constructor:error"]
     if not built:
-        reasons.append("constructor:no_case")
-    elif reasons:
-        reasons.append("constructor:best_effort_case_emitted")
+        reasons.append("constructor:empty")
+        if _LAST_TRACES:
+            reasons.append(f"codemap_trace_dims:{len(_LAST_TRACES)}")
+        if not (hints.get("loops") or []):
+            reasons.append("hints:no_loops")
+    else:
+        reasons.append(f"constructor:spelled:{len(built)}")
+        if _LAST_TRACES:
+            reasons.append("constructor:codemap_directed")
     return reasons

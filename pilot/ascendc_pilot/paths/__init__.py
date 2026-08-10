@@ -213,14 +213,21 @@ def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> 
     if not modern.exists():
         return {"ok": True, "migrated": False, "root": ""}
 
-    # Flat layout (uo/tg at top of .ascendc-pilot) → nest under <arch>/.
-    flat_markers = (modern / UO_SUBDIR, modern / TG_SUBDIR, modern / STATE_SUBDIR)
-    if any(p.exists() for p in flat_markers) and not target.exists():
+    # Nest control-plane dirs under <arch>/. Never move the arch-neutral
+    # CodeMap product dir ``.ascendc-pilot/uo/*.uo`` — that is the UO authority.
+    product_uo = modern / UO_SUBDIR
+    has_codemap_product = product_uo.is_dir() and any(product_uo.glob("*.uo"))
+    flat_control = (modern / TG_SUBDIR, modern / STATE_SUBDIR, modern / CONTEXT_SUBDIR)
+    flat_yaml_uo = product_uo.is_dir() and not has_codemap_product
+    if (any(p.exists() for p in flat_control) or flat_yaml_uo) and not target.exists():
         target.mkdir(parents=True, exist_ok=True)
-        for name in (
-            UO_SUBDIR, TG_SUBDIR, CE_SUBDIR, MEMORY_SUBDIR,
+        move_names = [
+            TG_SUBDIR, CE_SUBDIR, MEMORY_SUBDIR,
             RUNS_SUBDIR, CONTEXT_SUBDIR, STATE_SUBDIR,
-        ):
+        ]
+        if flat_yaml_uo:
+            move_names.insert(0, UO_SUBDIR)
+        for name in move_names:
             src = modern / name
             if src.exists() and not (target / name).exists():
                 shutil.move(str(src), str(target / name))

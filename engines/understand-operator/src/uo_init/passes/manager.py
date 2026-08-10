@@ -16,6 +16,7 @@ from uo_init.passes import (
     symbol,
     template,
     tiling,
+    tpl_schema,
 )
 
 PassFn = Callable[..., CodeMap]
@@ -30,6 +31,7 @@ ANALYZE_PASSES: list[tuple[str, PassFn]] = [
     ("core_codemap", symbol.run),
     ("compile_time", compile_time.run),
     ("macro", macro.run),
+    ("tpl_schema", tpl_schema.run),
     ("template", template.run),
     ("dataflow", dataflow.run),
     ("tiling", tiling.run),

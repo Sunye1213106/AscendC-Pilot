@@ -1,0 +1,1255 @@
+{
+  "binary": {
+    "architecture": "arch35",
+    "blocking": [],
+    "counts": {
+      "attributes": 13,
+      "dependency_complete_tiling_keys": 12,
+      "host_entities": 1087,
+      "host_packing_bound_tiling_keys": 19,
+      "inputs": 41,
+      "kernels": 1,
+      "outputs": 7,
+      "producer_tiling_keys": 19,
+      "rooted_tiling_keys": 19,
+      "source_declared_tiling_keys": 19,
+      "template_instances": 0,
+      "tensor_inputs": 27,
+      "tiling_data": 11,
+      "tiling_fields": 163,
+      "tiling_keys": 19,
+      "unbound_kernels": 0,
+      "unbound_template_instances": 0,
+      "unbound_tiling_keys": 0,
+      "unresolved_entities": 13,
+      "unresolved_relations": 54,
+      "unrooted_tiling_keys": 0
+    },
+    "evidence_backed_host_kernel_path": true,
+    "evidence_backed_input_output_path": true,
+    "evidence_backed_input_tilingkey_kernel_path": true,
+    "evidence_backed_tilingdata_kernel_path": true,
+    "legacy_summary_has_host_kernel_path": true,
+    "meta": {
+      "architecture": "arch35",
+      "authority": "uo",
+      "cm_compile_time_branch_links": "0",
+      "cm_compile_time_pass": "v2-syntax-backed",
+      "cm_core_codemap_pass": "v1",
+      "cm_dataflow_pass": "v1-skip",
+      "cm_has_evidence_backed_host_kernel_path": "false",
+      "cm_has_strict_kernel_tiling_closure": "true",
+      "cm_host_defuse_validation": "{\"dangling_dependency_nodes_removed\": 9, \"invalid_definition_nodes_removed\": 13, \"invalid_relations_removed\": 81, \"policy\": \"lexically-masked-assignment-revalidation/v1\", \"producer_sites_removed\": 13}",
+      "cm_host_kernel_bind_pass": "v2-sound",
+      "cm_host_key_root_trace": "{\"assignment_records\": 1620, \"policy\": \"canonical-source-producer/v3\", \"producer_variables\": 18, \"rooted_variables\": 18, \"target_variables\": 18}",
+      "cm_host_tiling_key_packing": "{\"ambiguous_source_count\": 0, \"ambiguous_sources\": [], \"argument_count_mismatches\": [], \"bound_keys\": [\"DTemplateNum\", \"DeterType\", \"InputDType\", \"IsAttenMask\", \"IsBn2MultiBlk\", \"IsDNoEqual\", \"IsDrop\", \"IsEmptyTensor\", \"IsNEqual\", \"IsNzOut\", \"IsPse\", \"IsRegbase\", \"IsRope\", \"IsTnd\", \"IsTndSwizzle\", \"OutDType\", \"S1TemplateNum\", \"S2TemplateNum\", \"SplitAxis\"], \"calls\": 1, \"declared\": 19, \"fields_bound\": 19}",
+      "cm_kernel_pass": "v1",
+      "cm_kernel_tiling_closure": "{\"architecture\": \"arch35\", \"architecture_foreign_entity_facts\": [], \"architecture_foreign_relation_facts\": [], \"architecture_pure\": true, \"broad_facts_removed\": 10651, \"call_boundary_policy\": \"do-not-guess-dependent-target/v1\", \"call_frontier_policy\": \"inheritance-member-dispatch/v1\", \"call_read_policy\": \"verified-body-qualified-owner/v2\", \"kernel_abi_links\": 34, \"kernel_bound_call_edges\": 601, \"kernel_bound_call_sites\": 595, \"kernel_call_boundary_sites\": 118, \"kernel_dispatch_set_call_sites\": 145, \"kernel_entries\": 1, \"kernel_external_call_sites\": 2772, \"kernel_externalized_call_sites\": 8, \"kernel_inheritance_edges\": 4, \"kernel_member_type_bindings\": 47, \"kernel_reachable_call_boundary_sites\": 117, \"kernel_reachable_scopes\": 277, \"kernel_reachable_unresolved_internal_call_sites\": 0, \"kernel_resolved_frontier_call_sites\": 105, \"kernel_scopes\": 731, \"kernel_template_args\": 19, \"kernel_template_binding_complete\": true, \"kernel_unresolved_internal_call_sites\": 0, \"metrics_policy\": \"entry-reachable-consumed-fields/v2\", \"policy\": \"qualified-source-closure/v1\", \"schema\": \"uo-kernel-tiling-closure/v1\", \"selected_host_writer_files\": [\"flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp\", \"flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h\", \"flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp\", \"flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h\", \"flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp\", \"flash_attention_score_grad/op_host/flash_attention_score_grad_tiling.cpp\"], \"selected_kernel_files\": [\"flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h\", \"flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h\", \"flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer_manager.h\", \"flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffers_policy.h\", \"flash_attention_score_grad/op_kernel/arch35/deter.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_empty_tensor_regbase.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_entry_regbase.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_deter.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_presfmg_regbase.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h\", \"flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/cast_softmax_grad.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/dropout.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/pse_atten_mask_muls_simple_softmax.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_anti_quant_compute_p_ds.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_anti_quant_softmax_grad_front_cast.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_broadcast_sub_mul.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_cal_sink.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_cast_transdata_deconflict.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_common_utils.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_ds_abs_reduce_max.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_muls_sel_simple_softmax.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_muls_sel_simple_softmax_aligned256.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_post_reduce_sink.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned256_f16.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned256_f32.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned512_f16.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned512_f32.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned768_f16.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned768_f32.h\", \"flash_attention_score_grad/op_kernel/arch35/vector_api/vf_transdata.h\", \"flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp\"], \"strict_closure_ok\": true, \"tiling_ambiguous_read_sites\": 0, \"tiling_ambiguous_writer_sites\": 0, \"tiling_consumed_field_producer_coverage\": \"136/136\", \"tiling_consumed_fields_with_producer\": 136, \"tiling_consumed_fields_without_producer\": [], \"tiling_data_fields\": 163, \"tiling_data_types\": 11, \"tiling_entry_reachable_fields\": 136, \"tiling_entry_reachable_read_sites\": 324, \"tiling_entry_reachable_selected_fields\": 136, \"tiling_entry_reachable_unresolved_read_sites\": 0, \"tiling_host_writer_fields\": 146, \"tiling_host_writer_policy\": \"qualified-receiver-arch-shared/v2\", \"tiling_host_writer_sites\": 198, \"tiling_outside_domain_writer_sites\": 24, \"tiling_read_policy\": \"tiling-pointer-chain-conditional/v2\", \"tiling_read_sites\": 383, \"tiling_registered_root_types\": [\"FlashAttentionScoreGradEmptyTensorTilingDataRegbase\", \"FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase\"], \"tiling_resolved_host_writer_sites\": 174, \"tiling_resolved_read_sites\": 383, \"tiling_selected_type_closure\": [\"BaseDeterParamRegbase\", \"BlockNumListParamsRegbase\", \"DeterParamRegbase\", \"FlashAttentionScoreGradEmptyTensorTilingDataRegbase\", \"FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase\", \"FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase\", \"FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase\", \"PostParamsRegbase\", \"PreParamsRegbase\", \"TndParamRegbase\", \"TndSwizzleParamRegbase\"], \"tiling_selected_type_count\": 11, \"truth_policy\": \"current-domain-writer+conditional-type-closure/v1\"}",
+      "cm_macro_pass": "v1",
+      "cm_passes_run": "[\"reachability\", \"core_codemap\", \"compile_time\", \"macro\", \"template\", \"dataflow\", \"tiling\", \"kernel\", \"host_kernel_bind\"]",
+      "cm_production_source_enrichment": "true",
+      "cm_resolved_archive_gaps": "{}",
+      "cm_source_class_frontier_branches": "0",
+      "cm_source_class_frontier_resolved": "0",
+      "cm_source_contract": "ascendc-source-contract/v2",
+      "cm_source_contract_architecture": "arch35",
+      "cm_source_contract_stats": "{\"api_attributes\": 13, \"api_outputs\": 7, \"api_source_files\": 1, \"api_tensor_inputs\": 27, \"source_declared_tiling_keys\": 19, \"source_kernel_abi_links\": 34, \"source_kernel_entries\": 1, \"source_template_args_bound\": 19, \"source_tiling_data_classes\": 11, \"source_tiling_data_fields\": 146}",
+      "cm_source_declared_tiling_key_count": "19",
+      "cm_source_declared_tiling_keys": "[\"IsEmptyTensor\", \"SplitAxis\", \"InputDType\", \"IsTnd\", \"IsDrop\", \"IsPse\", \"IsAttenMask\", \"S1TemplateNum\", \"S2TemplateNum\", \"DTemplateNum\", \"DeterType\", \"IsNEqual\", \"IsBn2MultiBlk\", \"IsDNoEqual\", \"IsRope\", \"OutDType\", \"IsNzOut\", \"IsTndSwizzle\", \"IsRegbase\"]",
+      "cm_source_inventory_file_count": "47",
+      "cm_source_inventory_roles": "{\"api\": 1, \"host\": 5, \"kernel\": 40, \"kernel-entry\": 1}",
+      "cm_source_resolution": "ascendc-source-resolution/v2",
+      "cm_source_resolution_stats": "{\"hardware_resources\": 79, \"resolved_archive_gap_count\": 0, \"runtime_types\": 50, \"source_call_edges\": 4282, \"source_compile_vars\": 283, \"source_direct_kernel_calls\": 0, \"source_frontier_sites\": 1076, \"source_kernel_type_dispatch_edges\": 0, \"source_macro_scopes\": 106, \"source_macros\": 54, \"tilingdata_read_edges\": 267}",
+      "cm_source_tiling_data_class_count": "11",
+      "cm_source_tiling_data_complete": "{\"added_fields\": 17, \"array_fields\": 16, \"default_initializers\": 2, \"policy\": \"source-member-array-conditional/v2\", \"total_fields\": 163}",
+      "cm_source_tiling_data_field_count": "146",
+      "cm_source_tiling_registration_decoded_key_edges": "1",
+      "cm_source_tiling_registrations": "1",
+      "cm_template_pass": "v2-sound",
+      "cm_tiling_pass": "v1",
+      "entity_count": "3431",
+      "generated_at": "2026-08-10T05:16:00.190820+00:00",
+      "op_name": "flash_attention_score_grad",
+      "relation_count": "4346",
+      "schema": "codemap-uo/v1"
+    },
+    "ok": true,
+    "op_name": "flash_attention_score_grad",
+    "product": "D:\\PR-review\\AscendC-Pilot\\artifacts\\fa-pr13\\flash_attention_score_grad.arch35.uo",
+    "size_bytes": 16326656,
+    "summary": {
+      "architecture": "arch35",
+      "entities_by_kind": {
+        "ARCH": 1,
+        "BUILD_VARIANT": 1,
+        "COMPILE_VAR": 412,
+        "FIELD": 793,
+        "FILE": 47,
+        "FUNCTION": 138,
+        "INPUT": 41,
+        "KERNEL": 1,
+        "MACRO": 140,
+        "METHOD": 630,
+        "OUTPUT": 7,
+        "PREDICATE": 802,
+        "TEMPLATE": 1,
+        "TEMPLATE_ARG": 19,
+        "TILING_DATA": 11,
+        "TILING_FIELD": 163,
+        "TILING_KEY": 19,
+        "TYPE": 49,
+        "VARIABLE": 156
+      },
+      "entity_count": 3431,
+      "has_host": true,
+      "has_host_kernel_path": true,
+      "has_input_output_path": true,
+      "has_input_tilingkey_kernel_path": true,
+      "has_kernel": true,
+      "has_tilingdata_kernel_path": true,
+      "op_name": "flash_attention_score_grad",
+      "relation_count": 4346,
+      "relations_by_kind": {
+        "ACTIVE_UNDER": 288,
+        "AVAILABLE_ON": 46,
+        "BINDS": 19,
+        "CALLS": 693,
+        "CONTROLS": 20,
+        "DECLARES": 926,
+        "DEFINES": 1,
+        "DERIVES": 1694,
+        "FLOWS_TO": 36,
+        "READS": 306,
+        "REFERENCES": 5,
+        "SELECTS": 1,
+        "WRITES": 311
+      },
+      "tiling_key_declaration_coverage": "19/19",
+      "tiling_key_dependency_coverage": "12/19",
+      "tiling_key_host_packing_coverage": "19/19",
+      "tiling_key_host_producer_coverage": "19/19",
+      "tiling_key_root_coverage": "19/19"
+    },
+    "tiling_key_evidence": [
+      {
+        "dependency_complete": true,
+        "key": "IsEmptyTensor",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "0",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::0",
+            "sources": [
+              {
+                "id": "HOSTKEYCONST::IsEmptyTensor::0",
+                "kind": "COMPILE_VAR",
+                "name": "IsEmptyTensor=literal:0",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": false,
+        "key": "SplitAxis",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(splitAxis)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::1",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::SplitAxis",
+                "kind": "VARIABLE",
+                "name": "splitAxis",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "splitAxis",
+            "line": 1443
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": true,
+        "key": "InputDType",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(fBaseParams.inputDtype)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::2",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::InputDType",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.inputDtype",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "DetermineMode",
+            "lhs": "fBaseParams.inputDtype",
+            "line": 1651
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "DetermineMode",
+            "lhs": "fBaseParams.inputDtype",
+            "line": 1653
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "DetermineMode",
+            "lhs": "fBaseParams.inputDtype",
+            "line": 1655
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "DetermineMode",
+            "lhs": "fBaseParams.inputDtype",
+            "line": 1657
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "DetermineMode",
+            "lhs": "fBaseParams.inputDtype",
+            "line": 1659
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "DetermineMode",
+            "lhs": "fBaseParams.inputDtype",
+            "line": 1661
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": false,
+        "key": "IsTnd",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(isTnd)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::3",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsTnd",
+                "kind": "VARIABLE",
+                "name": "isTnd",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "isTnd",
+            "line": 1442
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": true,
+        "key": "IsDrop",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(dropValue)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::4",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsDrop",
+                "kind": "VARIABLE",
+                "name": "dropValue",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "dropValue",
+            "line": 1440
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "IsPse",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(pseValue)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::5",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsPse",
+                "kind": "VARIABLE",
+                "name": "pseValue",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "pseValue",
+            "line": 1439
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "IsAttenMask",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(attenMaskCfg)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::6",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsAttenMask",
+                "kind": "VARIABLE",
+                "name": "attenMaskCfg",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "attenMaskCfg",
+            "line": 1437
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "S1TemplateNum",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint16_t>(fBaseParams.s1TemplateType)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::7",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::S1TemplateNum",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.s1TemplateType",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s1TemplateType",
+            "line": 813
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s1TemplateType",
+            "line": 819
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s1TemplateType",
+            "line": 824
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s1TemplateType",
+            "line": 836
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "S2TemplateNum",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint16_t>(fBaseParams.s2TemplateType)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::8",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::S2TemplateNum",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.s2TemplateType",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s2TemplateType",
+            "line": 814
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s2TemplateType",
+            "line": 820
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s2TemplateType",
+            "line": 825
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetS1S2TemplateType",
+            "lhs": "fBaseParams.s2TemplateType",
+            "line": 837
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "DTemplateNum",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint16_t>(fBaseParams.dTemplateType)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::9",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::DTemplateNum",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.dTemplateType",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetDTemplateType",
+            "lhs": "fBaseParams.dTemplateType",
+            "line": 848
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetDTemplateType",
+            "lhs": "fBaseParams.dTemplateType",
+            "line": 852
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetDTemplateType",
+            "lhs": "fBaseParams.dTemplateType",
+            "line": 855
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetDTemplateType",
+            "lhs": "fBaseParams.dTemplateType",
+            "line": 858
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetDTemplateType",
+            "lhs": "fBaseParams.dTemplateType",
+            "line": 861
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "GetDTemplateType",
+            "lhs": "fBaseParams.dTemplateType",
+            "line": 864
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": false,
+        "key": "DeterType",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(fBaseParams.deterSparseType)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::10",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::DeterType",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.deterSparseType",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "CalcleCausalDeterParam",
+            "lhs": "fBaseParams.deterSparseType",
+            "line": 745
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+            "lhs": "fBaseParams.deterSparseType",
+            "line": 663
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": false,
+        "key": "IsNEqual",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(isDeterNEqual)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::11",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsNEqual",
+                "kind": "VARIABLE",
+                "name": "isDeterNEqual",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "isDeterNEqual",
+            "line": 1444
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": false,
+        "key": "IsBn2MultiBlk",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(fBaseParams.isBn2MultiBlk)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::12",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsBn2MultiBlk",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.isBn2MultiBlk",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "SetSplitAxis",
+            "lhs": "fBaseParams.isBn2MultiBlk",
+            "line": 1592
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "SetSplitAxis",
+            "lhs": "fBaseParams.isBn2MultiBlk",
+            "line": 1616
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+            "lhs": "fBaseParams.isBn2MultiBlk",
+            "line": 682
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": true,
+        "key": "IsDNoEqual",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(dNoEqual)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::13",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsDNoEqual",
+                "kind": "VARIABLE",
+                "name": "dNoEqual",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "dNoEqual",
+            "line": 1438
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "IsRope",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(fBaseParams.hasRope)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::14",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsRope",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.hasRope",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+            "lhs": "fBaseParams.hasRope",
+            "line": 95
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": true,
+        "key": "OutDType",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(fBaseParams.outDtype)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::15",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::OutDType",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.outDtype",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "function": "ProcessQuantInfo",
+            "lhs": "fBaseParams.outDtype",
+            "line": 1180
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      },
+      {
+        "dependency_complete": false,
+        "key": "IsNzOut",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(fBaseParams.isNzOut)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::16",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsNzOut",
+                "kind": "VARIABLE",
+                "name": "fBaseParams.isNzOut",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+            "lhs": "fBaseParams.isNzOut",
+            "line": 444
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": false,
+        "key": "IsTndSwizzle",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::17",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsTndSwizzle",
+                "kind": "VARIABLE",
+                "name": "tndBaseInfo.isTndSwizzle",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+            "lhs": "tndBaseInfo.isTndSwizzle",
+            "line": 461
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": [
+          "INT32_MAX",
+          "TND_SWIZZLE_PREFIX_NUM",
+          "batchIdx",
+          "calculatedBlockInfo",
+          "context_",
+          "deterPrefixData",
+          "fBaseParams",
+          "fBaseParams.actualSeqKvlen",
+          "fBaseParams.actualSeqQlen",
+          "invalidS1Array",
+          "parseInfo",
+          "s1ValidIdx"
+        ]
+      },
+      {
+        "dependency_complete": true,
+        "key": "IsRegbase",
+        "packed": true,
+        "packing": [
+          {
+            "expression": "static_cast<uint8_t>(isRegbasePlatformValue)",
+            "has_source_producer": true,
+            "has_trusted_root": true,
+            "packing_node": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::18",
+            "sources": [
+              {
+                "id": "HOSTKEYVAR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1460::IsRegbase",
+                "kind": "VARIABLE",
+                "name": "isRegbasePlatformValue",
+                "producer": true,
+                "rooted": true
+              }
+            ]
+          }
+        ],
+        "producer": true,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetTilingKey",
+            "lhs": "isRegbasePlatformValue",
+            "line": 1441
+          }
+        ],
+        "rooted": true,
+        "unresolved_dependencies": []
+      }
+    ],
+    "tiling_key_producer_missing": [],
+    "tiling_key_rooted": [
+      "IsEmptyTensor",
+      "SplitAxis",
+      "InputDType",
+      "IsTnd",
+      "IsDrop",
+      "IsPse",
+      "IsAttenMask",
+      "S1TemplateNum",
+      "S2TemplateNum",
+      "DTemplateNum",
+      "DeterType",
+      "IsNEqual",
+      "IsBn2MultiBlk",
+      "IsDNoEqual",
+      "IsRope",
+      "OutDType",
+      "IsNzOut",
+      "IsTndSwizzle",
+      "IsRegbase"
+    ],
+    "tiling_key_unrooted": [],
+    "warnings": [
+      {
+        "code": "PARTIAL_TILINGKEY_DEPENDENCY_SKELETON",
+        "detail": "7/19 TilingKeys retain unresolved runtime dependency leaves",
+        "examples": [
+          {
+            "key": "SplitAxis",
+            "unresolved": [
+              "INT32_MAX",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          },
+          {
+            "key": "IsTnd",
+            "unresolved": [
+              "INT32_MAX",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          },
+          {
+            "key": "DeterType",
+            "unresolved": [
+              "INT32_MAX",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          },
+          {
+            "key": "IsNEqual",
+            "unresolved": [
+              "INT32_MAX",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          },
+          {
+            "key": "IsBn2MultiBlk",
+            "unresolved": [
+              "INT32_MAX",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          },
+          {
+            "key": "IsNzOut",
+            "unresolved": [
+              "INT32_MAX",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          },
+          {
+            "key": "IsTndSwizzle",
+            "unresolved": [
+              "INT32_MAX",
+              "TND_SWIZZLE_PREFIX_NUM",
+              "batchIdx",
+              "calculatedBlockInfo",
+              "context_",
+              "deterPrefixData",
+              "fBaseParams",
+              "fBaseParams.actualSeqKvlen",
+              "fBaseParams.actualSeqQlen",
+              "invalidS1Array",
+              "parseInfo",
+              "s1ValidIdx"
+            ]
+          }
+        ]
+      },
+      {
+        "code": "UNRESOLVED_FACTS",
+        "detail": "entities=13 relations=54"
+      }
+    ]
+  },
+  "blocking": [],
+  "cold_analysis_budget_seconds": 300.0,
+  "cold_analysis_seconds": 53.917797,
+  "compiler_ir_used": false,
+  "fresh_source_graph": true,
+  "historical_archive_used": false,
+  "kernel_tiling_closure": {
+    "architecture": "arch35",
+    "architecture_foreign_entity_facts": [],
+    "architecture_foreign_relation_facts": [],
+    "architecture_pure": true,
+    "broad_facts_removed": 10651,
+    "call_boundary_policy": "do-not-guess-dependent-target/v1",
+    "call_frontier_policy": "inheritance-member-dispatch/v1",
+    "call_read_policy": "verified-body-qualified-owner/v2",
+    "kernel_abi_links": 34,
+    "kernel_bound_call_edges": 601,
+    "kernel_bound_call_sites": 595,
+    "kernel_call_boundary_sites": 118,
+    "kernel_dispatch_set_call_sites": 145,
+    "kernel_entries": 1,
+    "kernel_external_call_sites": 2772,
+    "kernel_externalized_call_sites": 8,
+    "kernel_inheritance_edges": 4,
+    "kernel_member_type_bindings": 47,
+    "kernel_reachable_call_boundary_sites": 117,
+    "kernel_reachable_scopes": 277,
+    "kernel_reachable_unresolved_internal_call_sites": 0,
+    "kernel_resolved_frontier_call_sites": 105,
+    "kernel_scopes": 731,
+    "kernel_template_args": 19,
+    "kernel_template_binding_complete": true,
+    "kernel_unresolved_internal_call_sites": 0,
+    "metrics_policy": "entry-reachable-consumed-fields/v2",
+    "policy": "qualified-source-closure/v1",
+    "schema": "uo-kernel-tiling-closure/v1",
+    "selected_host_writer_files": [
+      "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+      "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h",
+      "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.h",
+      "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+      "flash_attention_score_grad/op_host/flash_attention_score_grad_tiling.cpp"
+    ],
+    "selected_kernel_files": [
+      "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+      "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+      "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+      "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+      "flash_attention_score_grad/op_kernel/arch35/deter.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_empty_tensor_regbase.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_deter.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_presfmg_regbase.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/cast_softmax_grad.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/dropout.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/pse_atten_mask_muls_simple_softmax.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_anti_quant_compute_p_ds.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_anti_quant_softmax_grad_front_cast.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_broadcast_sub_mul.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_cal_sink.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_cast_transdata_deconflict.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_common_utils.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_ds_abs_reduce_max.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_muls_sel_simple_softmax.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_muls_sel_simple_softmax_aligned256.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_post_reduce_sink.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned256_f16.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned256_f32.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned512_f16.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned512_f32.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned768_f16.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_softmax_grad_front_cast_aligned768_f32.h",
+      "flash_attention_score_grad/op_kernel/arch35/vector_api/vf_transdata.h",
+      "flash_attention_score_grad/op_kernel/flash_attention_score_grad_apt.cpp"
+    ],
+    "strict_closure_ok": true,
+    "tiling_ambiguous_read_sites": 0,
+    "tiling_ambiguous_writer_sites": 0,
+    "tiling_consumed_field_producer_coverage": "136/136",
+    "tiling_consumed_fields_with_producer": 136,
+    "tiling_consumed_fields_without_producer": [],
+    "tiling_data_fields": 163,
+    "tiling_data_types": 11,
+    "tiling_entry_reachable_fields": 136,
+    "tiling_entry_reachable_read_sites": 324,
+    "tiling_entry_reachable_selected_fields": 136,
+    "tiling_entry_reachable_unresolved_read_sites": 0,
+    "tiling_host_writer_fields": 146,
+    "tiling_host_writer_policy": "qualified-receiver-arch-shared/v2",
+    "tiling_host_writer_sites": 198,
+    "tiling_outside_domain_writer_sites": 24,
+    "tiling_read_policy": "tiling-pointer-chain-conditional/v2",
+    "tiling_read_sites": 383,
+    "tiling_registered_root_types": [
+      "FlashAttentionScoreGradEmptyTensorTilingDataRegbase",
+      "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase"
+    ],
+    "tiling_resolved_host_writer_sites": 174,
+    "tiling_resolved_read_sites": 383,
+    "tiling_selected_type_closure": [
+      "BaseDeterParamRegbase",
+      "BlockNumListParamsRegbase",
+      "DeterParamRegbase",
+      "FlashAttentionScoreGradEmptyTensorTilingDataRegbase",
+      "FlashAttentionScoreGradS1S2BNGS1S2BaseParamsRegbase",
+      "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase",
+      "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase",
+      "PostParamsRegbase",
+      "PreParamsRegbase",
+      "TndParamRegbase",
+      "TndSwizzleParamRegbase"
+    ],
+    "tiling_selected_type_count": 11,
+    "truth_policy": "current-domain-writer+conditional-type-closure/v1"
+  },
+  "mode": "fresh-current-source-structural-compiler",
+  "ok": true,
+  "operator": "D:\\PR-review\\TEST\\ops-transformer\\attention\\flash_attention_score_grad",
+  "product": "D:\\PR-review\\AscendC-Pilot\\artifacts\\fa-pr13\\flash_attention_score_grad.arch35.uo",
+  "source_crosscheck": {
+    "architecture": "arch35",
+    "current_host_files_without_evidence": [],
+    "existing_evidence_files": 48,
+    "expected_host_files": [
+      "flash_attention_score_grad_tiling_common_regbase.cpp",
+      "flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "flash_attention_score_grad_tiling_varlen_regbase.cpp"
+    ],
+    "expected_kernel_file_count": 40,
+    "foreign_arch_evidence": [],
+    "matched_host_files": [
+      "flash_attention_score_grad_tiling_common_regbase.cpp",
+      "flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "flash_attention_score_grad_tiling_varlen_regbase.cpp"
+    ],
+    "matched_kernel_file_count": 40,
+    "ok": true,
+    "source_evidence_files": 48,
+    "stale_evidence_files": []
+  }
+}

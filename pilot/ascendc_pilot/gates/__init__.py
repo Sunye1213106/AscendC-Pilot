@@ -922,8 +922,86 @@ def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
         }
 
 
+def gate_uo_ready_tg(
+    project_root: Path, uo: Path, *, op_name: str | None = None
+) -> dict[str, Any]:
+    """TG readiness: CodeMap ``.uo`` + view_blobs (D / host_view / operator_graph)."""
+    product_gate = gate_uo_product_ready(project_root, uo)
+    if not product_gate.get("ok"):
+        return {
+            "gate": "uo_ready",
+            "ok": False,
+            "message": product_gate.get("message") or "missing .uo CodeMap",
+            "checks": {"uo_product": False},
+        }
+    try:
+        from uo_init.tg_projection import ensure_tg_views, load_tg_view
+
+        ready = ensure_tg_views(
+            project_root,
+            op_name=str(op_name or ""),
+        )
+        path = str(ready.get("path") or product_gate.get("path") or "")
+        count = int(ready.get("legal_key_count") or 0)
+        host = load_tg_view(path, "ir/tg_host_view.yaml") if path else None
+        graph = load_tg_view(path, "ir/operator_graph.yaml") if path else None
+        checks = {
+            "uo_product": True,
+            "legal_key_count": count,
+            "tg_host_view": isinstance(host, dict) and bool(host),
+            "operator_graph": isinstance(graph, dict) and bool(graph),
+            "materialized": bool(ready.get("backfilled")) or count > 0,
+        }
+        ok = bool(ready.get("ok")) and count > 0 and checks["tg_host_view"] and checks["operator_graph"]
+        return {
+            "gate": "uo_ready",
+            "ok": ok,
+            "checks": checks,
+            "message": "ok" if ok else str(ready.get("error") or "TG views incomplete"),
+            "path": path,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "gate": "uo_ready",
+            "ok": False,
+            "message": f"uo_ready failed: {exc}"[:240],
+        }
+
+
+def gate_tg_host_view_ready(
+    project_root: Path, uo: Path, *, op_name: str | None = None
+) -> dict[str, Any]:
+    del uo
+    try:
+        from uo_init.store.reader import find_uo_product, load_view_blob
+
+        found = find_uo_product(project_root, op_name=str(op_name or ""))
+        if found is None or found.suffix != ".uo":
+            return {
+                "gate": "tg_host_view_ready",
+                "ok": False,
+                "message": "missing .uo CodeMap product",
+            }
+        blob = load_view_blob(found, "ir/tg_host_view.yaml")
+        ok = isinstance(blob, dict) and (
+            blob.get("fields") is not None or blob.get("declared_keys")
+        )
+        return {
+            "gate": "tg_host_view_ready",
+            "ok": ok,
+            "message": "ok" if ok else "missing ir/tg_host_view.yaml in .uo",
+            "path": str(found),
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "gate": "tg_host_view_ready",
+            "ok": False,
+            "message": str(exc)[:240],
+        }
+
+
 def gate_uo_ready(uo: Path) -> dict[str, Any]:
-    """TG intake readiness for the new uo_init KB contract (no old uo.scripts)."""
+    """Arch-scoped workspace integrity helper. TG authority gate is ``gate_uo_ready_tg``."""
     manifest = uo / "manifest.yaml"
     integrity_path = uo / "checks" / "integrity.yaml"
     manifest_exists = manifest.is_file() and manifest.stat().st_size > 0
@@ -1627,8 +1705,8 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "adjudicate_llm_tasks": lambda: gate_adjudicate_llm_tasks(uo, project_root=project_root),
         "apply_semantic_patch": lambda: gate_apply_semantic_patch(uo, project_root=project_root),
         "semantic_closure": lambda: gate_semantic_closure(uo, project_root=project_root),
-        "uo_ready": lambda: gate_uo_ready(uo),
-        "kb_ready": lambda: gate_uo_ready(uo),
+        "uo_ready": lambda: gate_uo_ready_tg(project_root, uo, op_name=op_name),
+        "kb_ready": lambda: gate_uo_ready_tg(project_root, uo, op_name=op_name),
         "input_derivable_closed": lambda: gate_input_derivable_closed(uo),
         "family_path_obligation": lambda: tg_adapters.gate_family_path_obligation(project_root),
         "context_pack": lambda: {
@@ -1652,12 +1730,7 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
         "allow_solve": lambda: tg_adapters.gate_allow_solve(project_root),
         "solve_terminal": lambda: tg_adapters.gate_solve_terminal(project_root),
-        "tg_host_view_ready": lambda: gate_tk_file(
-            uo,
-            "tg_host_view_ready",
-            "ir/tg_host_view.yaml",
-            alt="ir/host_codemap.yaml",
-        ),
+        "tg_host_view_ready": lambda: gate_tg_host_view_ready(project_root, uo, op_name=op_name),
         "uo_product_ready": lambda: gate_uo_product_ready(project_root, uo),
         "closure_soundness": lambda: gate_closure_soundness(project_root),
         "adapter_completeness": lambda: tg_adapters.gate_adapter_completeness(project_root),

@@ -43,7 +43,8 @@ uo_init/
   dump.py
 ```
 
-兼容模块可以在 engine 内部读取迁移期中间事实，但 `.uo` 是对查询层与 Agent 暴露的产品 authority；兼容投影不是第二知识库。
+查询层与 Agent 只认 `.uo`：TG 所需 D / `tg_host_view` / `operator_graph` 均在 view_blob 中。
+中间 YAML 仅为 Action receipt 或 `uo-dump` 调试展开，不是第二知识库。
 
 ## Agent-facing 文档
 
@@ -56,4 +57,9 @@ uo_init/
 ```powershell
 python -m uo_init dump path\to\op.arch35.uo --summary
 python -m uo_init dump path\to\op.arch35.uo --path queryType KERNEL
+# 缺少 TG 视图时，从算子源码头物化 TPL/D + tg_host_view 进同一 .uo：
+python -m uo_init dump path\to\op.arch35.uo --materialize-tg --op-root path\to\op
 ```
+
+`tpl_schema` pass 将 `ASCENDC_TPL_ARGS_DECL` / `ARGS_SEL` 写入 CodeMap，并把 legal key 空间 D
+存入 view_blob（不建 per-key entity）。

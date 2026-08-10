@@ -1,0 +1,1514 @@
+{
+  "load_s": 0.1017,
+  "keys": {
+    "IsNzOut": {
+      "decl_order": 16,
+      "bit_offset": 52,
+      "packing": [
+        "static_cast<uint8_t>(fBaseParams.isNzOut)"
+      ],
+      "path_to_kernel": [
+        "TILING_KEY:IsNzOut",
+        "TEMPLATE_ARG:IsNzOut",
+        "KERNEL:flash_attention_score_grad"
+      ]
+    },
+    "IsTndSwizzle": {
+      "decl_order": 17,
+      "bit_offset": 53,
+      "packing": [
+        "static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)"
+      ],
+      "path_to_kernel": [
+        "TILING_KEY:IsTndSwizzle",
+        "TEMPLATE_ARG:IsTndSwizzle",
+        "KERNEL:flash_attention_score_grad"
+      ]
+    },
+    "fBaseParams.isNzOut": {
+      "canonical": "fBaseParams.isNzOut",
+      "producer_sites": [
+        {
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 444,
+          "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+          "lhs": "fBaseParams.isNzOut"
+        }
+      ],
+      "rooted": true,
+      "upstream_unresolved": false,
+      "assignment_predicates": [
+        {
+          "expression": "(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 444,
+          "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+          "guards": [],
+          "lhs": "fBaseParams.isNzOut"
+        }
+      ],
+      "dep_nodes": 130,
+      "deps_sample": [
+        {
+          "depth": 1,
+          "kind": "PREDICATE",
+          "name": "(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 444,
+          "prov": "source_host_defuse",
+          "producer_sites": [],
+          "expression": "(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.splitAxis",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1639,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 1639,
+              "function": "SetSplitAxis",
+              "lhs": "fBaseParams.splitAxis"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 1641,
+              "function": "SetSplitAxis",
+              "lhs": "fBaseParams.splitAxis"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 1643,
+              "function": "SetSplitAxis",
+              "lhs": "fBaseParams.splitAxis"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 684,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+              "lhs": "fBaseParams.splitAxis"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1643,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.d",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 107,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 107,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.d"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 146,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.d"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 185,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.d"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 296,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.d"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "ConstAxisTemplateNum::NUM64",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 813,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "ConstAxisTemplateNum::NUM128",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1627,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "FP16_C0_SIZE",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 444,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.queryType",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1006,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 1006,
+              "function": "ProcessOptionalInput",
+              "lhs": "fBaseParams.queryType"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "VARIABLE",
+          "name": "fBaseParams.deterSparseType",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1460,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 745,
+              "function": "CalcleCausalDeterParam",
+              "lhs": "fBaseParams.deterSparseType"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 663,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+              "lhs": "fBaseParams.deterSparseType"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "DeterSparseType::DETER_OLD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1444,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.enableSwizzle",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 442,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 442,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+              "lhs": "fBaseParams.enableSwizzle"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.s1",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 106,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 106,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s1"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 145,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s1"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 184,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s1"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 288,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s1"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "NZ_OUT_MIN_S_SIZE",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 444,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.s2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 187,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 187,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s2"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 289,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s2"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 331,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.s2"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        }
+      ],
+      "inputs_reached": [],
+      "unresolved_sample": [
+        {
+          "name": "deterPrefixData",
+          "kind": "VARIABLE",
+          "prov": "source_host_unresolved_dependency",
+          "status": "partial"
+        }
+      ]
+    },
+    "tndBaseInfo.isTndSwizzle": {
+      "canonical": "tndBaseInfo.isTndSwizzle",
+      "producer_sites": [
+        {
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 461,
+          "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+          "lhs": "tndBaseInfo.isTndSwizzle"
+        }
+      ],
+      "rooted": true,
+      "upstream_unresolved": false,
+      "assignment_predicates": [
+        {
+          "expression": "fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 461,
+          "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+          "guards": [],
+          "lhs": "tndBaseInfo.isTndSwizzle"
+        }
+      ],
+      "dep_nodes": 130,
+      "deps_sample": [
+        {
+          "depth": 1,
+          "kind": "PREDICATE",
+          "name": "fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 461,
+          "prov": "source_host_defuse",
+          "producer_sites": [],
+          "expression": "fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.enableSwizzle",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 442,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 442,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+              "lhs": "fBaseParams.enableSwizzle"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.layoutType",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1194,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 1194,
+              "function": "ProcessSparseModeInfo",
+              "lhs": "fBaseParams.layoutType"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+              "line": 1638,
+              "function": "SetSplitAxis",
+              "lhs": "fBaseParams.layoutType"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 101,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.layoutType"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 140,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.layoutType"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "COMPILE_VAR",
+          "name": "INPUT_FORMAT_TND",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1638,
+          "prov": "source_host_compile_symbol",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "VARIABLE",
+          "name": "templateSupportCond",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 453,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 453,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+              "lhs": "templateSupportCond"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.b",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 102,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 102,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.b"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 141,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.b"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 180,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.b"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 292,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "fBaseParams.b"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "VARIABLE",
+          "name": "TND_SWIZZLE_PREFIX_NUM",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 461,
+          "prov": "source_host_unresolved_dependency",
+          "producer_sites": [],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "tndBaseInfo.isSeqExistZero",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 252,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 252,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "tndBaseInfo.isSeqExistZero"
+            },
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 266,
+              "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+              "lhs": "tndBaseInfo.isSeqExistZero"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        },
+        {
+          "depth": 2,
+          "kind": "FIELD",
+          "name": "fBaseParams.tailZeroCount",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h",
+          "line": 472,
+          "prov": "source_host_defuse_dependency",
+          "producer_sites": [
+            {
+              "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h",
+              "line": 472,
+              "function": "",
+              "lhs": "tailZeroCount"
+            }
+          ],
+          "expression": null,
+          "guards": []
+        }
+      ],
+      "inputs_reached": [],
+      "unresolved_sample": [
+        {
+          "name": "TND_SWIZZLE_PREFIX_NUM",
+          "kind": "VARIABLE",
+          "prov": "source_host_unresolved_dependency",
+          "status": "partial"
+        },
+        {
+          "name": "fBaseParams",
+          "kind": "VARIABLE",
+          "prov": "source_host_unresolved_dependency",
+          "status": "partial"
+        }
+      ]
+    },
+    "chase::fBaseParams.enableSwizzle": {
+      "hit_count": 1,
+      "first": {
+        "kind": "FIELD",
+        "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line": 442,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 442,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+            "lhs": "fBaseParams.enableSwizzle"
+          }
+        ],
+        "expression_attrs": {
+          "expression": null,
+          "lhs": null,
+          "guards": null,
+          "provenance": "source_host_defuse",
+          "canonical_symbol": "fBaseParams.enableSwizzle"
+        }
+      },
+      "upstream": [
+        {
+          "kind": "PREDICATE",
+          "name": "(isExceedL2Cache || isLargeInvalidBlk) && fBaseParams.blockOuter == fBaseParams.aicNum",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 442
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "isExceedL2Cache",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 440
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "isLargeInvalidBlk",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 441
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 541
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.aicNum",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 385
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "CheckExceedL2Cache()",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 440
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "CheckIsLargeInvalidBlk(fBaseParams)",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 441
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 541
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 566
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 638
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 708
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1568
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1657
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "coreIdx + 1",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 949
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "blockOuter",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 968
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "coreIdx + 1",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 1312
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "compileInfoPtr->aicNum",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 385
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "ascendcPlatform.GetCoreNumAic()",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 396
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "host-expr:flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:440",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 440
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "fBaseParams",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1194
+        }
+      ]
+    },
+    "chase::templateSupportCond": {
+      "hit_count": 1,
+      "first": {
+        "kind": "VARIABLE",
+        "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line": 453,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 453,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoOpTiling",
+            "lhs": "templateSupportCond"
+          }
+        ],
+        "expression_attrs": {
+          "expression": null,
+          "lhs": null,
+          "guards": null,
+          "provenance": "source_host_defuse",
+          "canonical_symbol": "templateSupportCond"
+        }
+      },
+      "upstream": [
+        {
+          "kind": "PREDICATE",
+          "name": "(fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.deterSparseType == static_cast<uint32_t>(DeterSparseType::DETER_DENSE) && false) ||\n        (!fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2S2 &&\n         (fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE ||\n          (fBaseParams.s2 > static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) &&\n           fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE_1)) &&\n         (fBaseParams.sparseType != static_cast<uint8_t>(SparseType::UNSUPPORTED)))",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 453
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.isDeterministic",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1605
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.splitAxis",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1639
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1643
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "fBaseParams.deterSparseType",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1460
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "DeterSparseType::DETER_DENSE",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 902
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SplitAxisEnum::BN2S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1639
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.s1",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 106
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "TND_SWIZZLE_MIN_S1_SIZE",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 453
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.s2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 187
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "ConstAxisTemplateNum::NUM128",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1627
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "TND_SWIZZLE_MIN_S1_SIZE_1",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 453
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.sparseType",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 662
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SparseType::UNSUPPORTED",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 453
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "false",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1605
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "(context_->GetDeterministic() == 1)",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1609
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "false",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1613
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "(context_->GetDeterministic() == 1)",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1617
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "(context_->GetDeterministic() == 1)",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 49
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "(context_->GetDeterministic() == 1)",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 683
+        }
+      ]
+    },
+    "chase::fBaseParams.layoutType": {
+      "hit_count": 1,
+      "first": {
+        "kind": "FIELD",
+        "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+        "line": 1194,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "line": 1194,
+            "function": "ProcessSparseModeInfo",
+            "lhs": "fBaseParams.layoutType"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "line": 1638,
+            "function": "SetSplitAxis",
+            "lhs": "fBaseParams.layoutType"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 101,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+            "lhs": "fBaseParams.layoutType"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 140,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+            "lhs": "fBaseParams.layoutType"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 179,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+            "lhs": "fBaseParams.layoutType"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 218,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::GetShapeAttrsInfo",
+            "lhs": "fBaseParams.layoutType"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 670,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+            "lhs": "fBaseParams.layoutType"
+          }
+        ],
+        "expression_attrs": {
+          "expression": null,
+          "lhs": null,
+          "guards": null,
+          "provenance": "source_host_defuse",
+          "canonical_symbol": "fBaseParams.layoutType"
+        }
+      },
+      "upstream": [
+        {
+          "kind": "PREDICATE",
+          "name": "INPUT_FORMAT_BS2N2GD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1194
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "fBaseParams.isAllSame ? INPUT_FORMAT_TND : fBaseParams.layoutType",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1638
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "INPUT_FORMAT_S2BN2GD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 101
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "INPUT_FORMAT_BS2N2GD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 140
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "INPUT_FORMAT_BN2GS2D",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 179
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "INPUT_FORMAT_TND",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 218
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "INPUT_FORMAT_BS2N2GD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 670
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "INPUT_FORMAT_BS2N2GD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1194
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "fBaseParams",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1194
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.isAllSame",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 244
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "INPUT_FORMAT_TND",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1638
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.isBn2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1579
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "bn2S2RouteLimit",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1627
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "INPUT_FORMAT_S2BN2GD",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 101
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "inputLayout",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 55
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "INPUT_FORMAT_BN2GS2D",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 179
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "true",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 244
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "(kvValue[i] - kvValue[i - 1] == lastKvLen) &&\n                                        (qValue[i] - qValue[i - 1] == lastQLen) && fBaseParams.isAllSame",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 278
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "(fBaseParams.s1 <= BN2_MAX_S && fBaseParams.s2 <= BN2_MAX_S) &&\n                        (fBaseParams.n1 == fBaseParams.n2) &&\n                        (fBaseParams.d <= BN2_MAX_D) &&\n                        (fBaseParams.queryType != ge::DT_FLOAT) &&\n                        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN || fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n                        (fBaseParams.tailZeroCount == 0)",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1579
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "fBaseParams.isBn2MultiBlk ? true : fBaseParams.isBn2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1603
+        }
+      ]
+    },
+    "chase::fBaseParams.splitAxis": {
+      "hit_count": 2,
+      "first": {
+        "kind": "FIELD",
+        "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+        "line": 1639,
+        "producer_sites": [
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "line": 1639,
+            "function": "SetSplitAxis",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "line": 1641,
+            "function": "SetSplitAxis",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+            "line": 1643,
+            "function": "SetSplitAxis",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 684,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 691,
+            "function": "FlashAttentionScoreGradTilingNormalRegbase::DoSparse",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+            "line": 126,
+            "function": "CalcleTNDCausalDeterParam",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+            "line": 190,
+            "function": "CalcleTNDDenseBns2DeterParam",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+            "line": 389,
+            "function": "CalcleTNDBandBns2DeterParam",
+            "lhs": "fBaseParams.splitAxis"
+          },
+          {
+            "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+            "line": 760,
+            "function": "CalcleTNDDeterSyncRounds",
+            "lhs": "fBaseParams.splitAxis"
+          }
+        ],
+        "expression_attrs": {
+          "expression": null,
+          "lhs": null,
+          "guards": null,
+          "provenance": "source_host_defuse",
+          "canonical_symbol": "fBaseParams.splitAxis"
+        }
+      },
+      "upstream": [
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.splitAxis",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1639
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1639
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1641
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1643
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 684
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "fBaseParams.isBn2 ? SplitAxisEnum::BN2 : SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 691
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 126
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 190
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 389
+        },
+        {
+          "kind": "PREDICATE",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 760
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SplitAxisEnum::BN2S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1639
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.isBn2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1579
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "bn2S2RouteLimit",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1627
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SplitAxisEnum::BN2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1641
+        },
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SplitAxisEnum::BN2GS1S2",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 1643
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "fBaseParams.isBn2MultiBlk",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1460
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.isInvalidCol",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1534
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.isInvalidRow",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1547
+        },
+        {
+          "kind": "VARIABLE",
+          "name": "deterPrefixData",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 190
+        },
+        {
+          "kind": "FIELD",
+          "name": "fBaseParams.deterMaxRound",
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line": 732
+        }
+      ]
+    }
+  },
+  "input_hits": {
+    "IsNzOut": {
+      "query": [
+        "INPUT:query",
+        "PREDICATE:context_->GetInputDesc(0)->GetDataType()",
+        "VARIABLE:queryType",
+        "PREDICATE:queryType",
+        "FIELD:fBaseParams.queryType",
+        "PREDICATE:(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+        "VARIABLE:fBaseParams.isNzOut",
+        "PREDICATE:static_cast<uint8_t>(fBaseParams.isNzOut)",
+        "TILING_KEY:IsNzOut"
+      ],
+      "input_layout": [
+        "INPUT:input_layout",
+        "PREDICATE:context_->GetAttrs()->GetAttrPointer<char>(LAYOUT_ATTR_IDX)",
+        "VARIABLE:inputLayout",
+        "PREDICATE:queryShape->GetStorageShape().GetDim(INPUT_DIM_0)",
+        "FIELD:fBaseParams.s1",
+        "PREDICATE:(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+        "VARIABLE:fBaseParams.isNzOut",
+        "PREDICATE:static_cast<uint8_t>(fBaseParams.isNzOut)",
+        "TILING_KEY:IsNzOut"
+      ],
+      "sparse_mode": [
+        "INPUT:sparse_mode",
+        "PREDICATE:*(attrs->GetAttrPointer<int>(static_cast<size_t>(AttrIndex::SPARSE_MODE)))",
+        "FIELD:fBaseParams.sparseMode",
+        "PREDICATE:static_cast<uint32_t>(DeterSparseType::DETER_BAND)",
+        "VARIABLE:fBaseParams.deterSparseType",
+        "PREDICATE:(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+        "VARIABLE:fBaseParams.isNzOut",
+        "PREDICATE:static_cast<uint8_t>(fBaseParams.isNzOut)",
+        "TILING_KEY:IsNzOut"
+      ],
+      "keep_prob": [
+        "INPUT:keep_prob",
+        "PREDICATE:*(context_->GetAttrs()->GetAttrPointer<float>(1))",
+        "FIELD:fBaseParams.keepProb",
+        "PREDICATE:!fBaseParams.hasRope && fBaseParams.d <= BN2_MAX_D &&\n        (fBaseParams.layoutType == INPUT_FORMAT_TND || (fBaseParams.isAllSame && !fBaseParams.isDeterministic) ||\n         bn2S2NotTndLimit) &&\n        (fBaseParams.keepProb >= 1 ||\n         (fBaseParams.d <= static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.keepProb < 1)) &&\n        (fBaseParams.n1 == fBaseParams.n2) && (fBaseParams.queryType != ge::DT_FLOAT) &&\n        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n          fBaseParams.queryType == ge::DT_HIFLOAT8)",
+        "VARIABLE:bn2S2RouteLimit",
+        "PREDICATE:SplitAxisEnum::BN2S2",
+        "FIELD:fBaseParams.splitAxis",
+        "PREDICATE:(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+        "VARIABLE:fBaseParams.isNzOut",
+        "PREDICATE:static_cast<uint8_t>(fBaseParams.isNzOut)",
+        "TILING_KEY:IsNzOut"
+      ],
+      "deterministic": [
+        "INPUT:__context__.deterministic",
+        "PREDICATE:(context_->GetDeterministic() == 1)",
+        "FIELD:fBaseParams.isDeterministic",
+        "PREDICATE:!fBaseParams.hasRope && fBaseParams.d <= BN2_MAX_D &&\n        (fBaseParams.layoutType == INPUT_FORMAT_TND || (fBaseParams.isAllSame && !fBaseParams.isDeterministic) ||\n         bn2S2NotTndLimit) &&\n        (fBaseParams.keepProb >= 1 ||\n         (fBaseParams.d <= static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.keepProb < 1)) &&\n        (fBaseParams.n1 == fBaseParams.n2) && (fBaseParams.queryType != ge::DT_FLOAT) &&\n        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n          fBaseParams.queryType == ge::DT_HIFLOAT8)",
+        "VARIABLE:bn2S2RouteLimit",
+        "PREDICATE:SplitAxisEnum::BN2S2",
+        "FIELD:fBaseParams.splitAxis",
+        "PREDICATE:(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&\n         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&\n         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&\n         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&\n        fBaseParams.enableSwizzle && fBaseParams.s1 >= NZ_OUT_MIN_S_SIZE && fBaseParams.s2 >= NZ_OUT_MIN_S_SIZE",
+        "VARIABLE:fBaseParams.isNzOut",
+        "PREDICATE:static_cast<uint8_t>(fBaseParams.isNzOut)",
+        "TILING_KEY:IsNzOut"
+      ]
+    },
+    "IsTndSwizzle": {
+      "query": [
+        "INPUT:query",
+        "PREDICATE:context_->GetInputDesc(0)->GetDataType()",
+        "VARIABLE:queryType",
+        "PREDICATE:queryType",
+        "FIELD:fBaseParams.queryType",
+        "PREDICATE:(fBaseParams.s1 <= BN2_MAX_S && fBaseParams.s2 <= BN2_MAX_S) &&\n                        (fBaseParams.n1 == fBaseParams.n2) &&\n                        (fBaseParams.d <= BN2_MAX_D) &&\n                        (fBaseParams.queryType != ge::DT_FLOAT) &&\n                        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN || fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n                        (fBaseParams.tailZeroCount == 0)",
+        "FIELD:fBaseParams.isBn2",
+        "PREDICATE:fBaseParams.isAllSame ? INPUT_FORMAT_TND : fBaseParams.layoutType",
+        "FIELD:fBaseParams.layoutType",
+        "PREDICATE:fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+        "VARIABLE:tndBaseInfo.isTndSwizzle",
+        "PREDICATE:static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)",
+        "TILING_KEY:IsTndSwizzle"
+      ],
+      "input_layout": [
+        "INPUT:input_layout",
+        "PREDICATE:context_->GetAttrs()->GetAttrPointer<char>(LAYOUT_ATTR_IDX)",
+        "VARIABLE:inputLayout",
+        "PREDICATE:INPUT_FORMAT_S2BN2GD",
+        "FIELD:fBaseParams.layoutType",
+        "PREDICATE:fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+        "VARIABLE:tndBaseInfo.isTndSwizzle",
+        "PREDICATE:static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)",
+        "TILING_KEY:IsTndSwizzle"
+      ],
+      "sparse_mode": [
+        "INPUT:sparse_mode",
+        "PREDICATE:*(attrs->GetAttrPointer<int>(static_cast<size_t>(AttrIndex::SPARSE_MODE)))",
+        "FIELD:fBaseParams.sparseMode",
+        "PREDICATE:static_cast<uint32_t>(DeterSparseType::DETER_BAND)",
+        "VARIABLE:fBaseParams.deterSparseType",
+        "PREDICATE:(fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.deterSparseType == static_cast<uint32_t>(DeterSparseType::DETER_DENSE) && false) ||\n        (!fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2S2 &&\n         (fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE ||\n          (fBaseParams.s2 > static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) &&\n           fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE_1)) &&\n         (fBaseParams.sparseType != static_cast<uint8_t>(SparseType::UNSUPPORTED)))",
+        "VARIABLE:templateSupportCond",
+        "PREDICATE:fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+        "VARIABLE:tndBaseInfo.isTndSwizzle",
+        "PREDICATE:static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)",
+        "TILING_KEY:IsTndSwizzle"
+      ],
+      "keep_prob": [
+        "INPUT:keep_prob",
+        "PREDICATE:*(context_->GetAttrs()->GetAttrPointer<float>(1))",
+        "FIELD:fBaseParams.keepProb",
+        "PREDICATE:!fBaseParams.hasRope && fBaseParams.d <= BN2_MAX_D &&\n        (fBaseParams.layoutType == INPUT_FORMAT_TND || (fBaseParams.isAllSame && !fBaseParams.isDeterministic) ||\n         bn2S2NotTndLimit) &&\n        (fBaseParams.keepProb >= 1 ||\n         (fBaseParams.d <= static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.keepProb < 1)) &&\n        (fBaseParams.n1 == fBaseParams.n2) && (fBaseParams.queryType != ge::DT_FLOAT) &&\n        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n          fBaseParams.queryType == ge::DT_HIFLOAT8)",
+        "VARIABLE:bn2S2RouteLimit",
+        "PREDICATE:fBaseParams.isAllSame ? INPUT_FORMAT_TND : fBaseParams.layoutType",
+        "FIELD:fBaseParams.layoutType",
+        "PREDICATE:fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+        "VARIABLE:tndBaseInfo.isTndSwizzle",
+        "PREDICATE:static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)",
+        "TILING_KEY:IsTndSwizzle"
+      ],
+      "deterministic": [
+        "INPUT:__context__.deterministic",
+        "PREDICATE:(context_->GetDeterministic() == 1)",
+        "FIELD:fBaseParams.isDeterministic",
+        "PREDICATE:(fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.deterSparseType == static_cast<uint32_t>(DeterSparseType::DETER_DENSE) && false) ||\n        (!fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2S2 &&\n         (fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE ||\n          (fBaseParams.s2 > static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) &&\n           fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE_1)) &&\n         (fBaseParams.sparseType != static_cast<uint8_t>(SparseType::UNSUPPORTED)))",
+        "VARIABLE:templateSupportCond",
+        "PREDICATE:fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&\n                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0",
+        "VARIABLE:tndBaseInfo.isTndSwizzle",
+        "PREDICATE:static_cast<uint8_t>(tndBaseInfo.isTndSwizzle)",
+        "TILING_KEY:IsTndSwizzle"
+      ]
+    }
+  },
+  "gaps": [
+    "fBaseParams.isNzOut: no INPUT entity reached within depth 5 via DERIVES/FLOWS_TO",
+    "fBaseParams.isNzOut: unresolved leaves e.g. ['deterPrefixData']",
+    "tndBaseInfo.isTndSwizzle: no INPUT entity reached within depth 5 via DERIVES/FLOWS_TO",
+    "tndBaseInfo.isTndSwizzle: unresolved leaves e.g. ['TND_SWIZZLE_PREFIX_NUM', 'fBaseParams']"
+  ],
+  "api": {
+    "tensor_inputs": [
+      "query",
+      "key",
+      "value",
+      "dy",
+      "pse_shift",
+      "drop_mask",
+      "padding_mask",
+      "atten_mask",
+      "softmax_max",
+      "softmax_sum",
+      "softmax_in",
+      "attention_in",
+      "prefix",
+      "actual_seq_qlen",
+      "actual_seq_kvlen",
+      "q_start_idx",
+      "kv_start_idx",
+      "d_scale_q",
+      "d_scale_k",
+      "d_scale_v",
+      "d_scale_dy",
+      "d_scale_o",
+      "query_rope",
+      "key_rope",
+      "sink",
+      "ds_scale",
+      "p_scale"
+    ],
+    "attributes": [
+      "scale_value",
+      "keep_prob",
+      "pre_tockens",
+      "next_tockens",
+      "head_num",
+      "input_layout",
+      "inner_precise",
+      "sparse_mode",
+      "pse_type",
+      "seed",
+      "offset",
+      "out_dtype",
+      "softmax_in_layout"
+    ]
+  },
+  "query_s": 0.049,
+  "source_verify": [
+    {
+      "tag": "assign",
+      "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line": 444,
+      "note": "(fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&\n         fBaseParams.d > st",
+      "ok": true,
+      "window": [
+        "443|    // dqkv fixp nz出优化开关",
+        "444|    fBaseParams.isNzOut =",
+        "445|        (fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&",
+        "446|         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&",
+        "447|         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&",
+        "448|         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||",
+        "449|           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&",
+        "450|         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&"
+      ]
+    },
+    {
+      "tag": "producer",
+      "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line": 444,
+      "note": "fBaseParams.isNzOut",
+      "ok": true,
+      "window": [
+        "443|    // dqkv fixp nz出优化开关",
+        "444|    fBaseParams.isNzOut =",
+        "445|        (fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&",
+        "446|         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&",
+        "447|         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&",
+        "448|         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||",
+        "449|           fBaseParams.queryType == ge::DT_HIFLOAT8 || fBaseParams.queryType == ge::DT_FLOAT) &&",
+        "450|         fBaseParams.deterSparseType != static_cast<uint32_t>(DeterSparseType::DETER_OLD)) &&"
+      ]
+    },
+    {
+      "tag": "assign",
+      "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line": 461,
+      "note": "fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&\n     ",
+      "ok": true,
+      "window": [
+        "460|         (fBaseParams.sparseType != static_cast<uint8_t>(SparseType::UNSUPPORTED)));",
+        "461|    tndBaseInfo.isTndSwizzle = fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&",
+        "462|                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&",
+        "463|                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0;",
+        "464|    OP_LOGI(context_, \"isExceedL2Cache=[%d], sparseType=[%d], enableSwizzle=[%d], isTndSwizzle = [%d], isNzOut = [%d].\",",
+        "465|            static_cast<int>(isExceedL2Cache), static_cast<int>(fBaseParams.sparseType),",
+        "466|            static_cast<int>(fBaseParams.enableSwizzle), tndBaseInfo.isTndSwizzle, fBaseParams.isNzOut);",
+        "467|"
+      ]
+    },
+    {
+      "tag": "producer",
+      "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line": 461,
+      "note": "tndBaseInfo.isTndSwizzle",
+      "ok": true,
+      "window": [
+        "460|         (fBaseParams.sparseType != static_cast<uint8_t>(SparseType::UNSUPPORTED)));",
+        "461|    tndBaseInfo.isTndSwizzle = fBaseParams.enableSwizzle && fBaseParams.layoutType == INPUT_FORMAT_TND &&",
+        "462|                               templateSupportCond && fBaseParams.b < TND_SWIZZLE_PREFIX_NUM &&",
+        "463|                               !tndBaseInfo.isSeqExistZero && fBaseParams.tailZeroCount == 0;",
+        "464|    OP_LOGI(context_, \"isExceedL2Cache=[%d], sparseType=[%d], enableSwizzle=[%d], isTndSwizzle = [%d], isNzOut = [%d].\",",
+        "465|            static_cast<int>(isExceedL2Cache), static_cast<int>(fBaseParams.sparseType),",
+        "466|            static_cast<int>(fBaseParams.enableSwizzle), tndBaseInfo.isTndSwizzle, fBaseParams.isNzOut);",
+        "467|"
+      ]
+    },
+    {
+      "tag": "fBaseParams.enableSwizzle",
+      "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line": 442,
+      "note": "fBaseParams.enableSwizzle",
+      "ok": true,
+      "window": [
+        "441|    bool isLargeInvalidBlk = CheckIsLargeInvalidBlk(fBaseParams);",
+        "442|    fBaseParams.enableSwizzle = (isExceedL2Cache || isLargeInvalidBlk) && fBaseParams.blockOuter == fBaseParams.aicNum;",
+        "443|    // dqkv fixp nz出优化开关",
+        "444|    fBaseParams.isNzOut =",
+        "445|        (fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&",
+        "446|         fBaseParams.d > static_cast<uint32_t>(ConstAxisTemplateNum::NUM64) &&",
+        "447|         fBaseParams.d < static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.d % FP16_C0_SIZE != 0 &&",
+        "448|         !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||"
+      ]
+    },
+    {
+      "tag": "templateSupportCond",
+      "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line": 453,
+      "note": "templateSupportCond",
+      "ok": true,
+      "window": [
+        "452|    // tnd场景下 仅确定性计算+BN2GS1S2模板 以及 非确定性计算+BN2S2模板 支持swizzle优化",
+        "453|    bool templateSupportCond =",
+        "454|        (fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2GS1S2 &&",
+        "455|         fBaseParams.deterSparseType == static_cast<uint32_t>(DeterSparseType::DETER_DENSE) && false) ||",
+        "456|        (!fBaseParams.isDeterministic && fBaseParams.splitAxis == SplitAxisEnum::BN2S2 &&",
+        "457|         (fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE ||",
+        "458|          (fBaseParams.s2 > static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) &&",
+        "459|           fBaseParams.s1 >= TND_SWIZZLE_MIN_S1_SIZE_1)) &&"
+      ]
+    }
+  ],
+  "verify_s": 0.004,
+  "total_s": 0.1547
+}

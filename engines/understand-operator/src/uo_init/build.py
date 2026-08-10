@@ -108,6 +108,19 @@ def compile_codemap(
         cm.meta["production_source_enrichment"] = False
 
     from uo_init.diagnostics.audit import audit_codemap
+    from uo_init.passes import tpl_schema as tpl_schema_pass
+    from uo_init.tg_views import finalize_tg_views
+
+    # Ensure TPL/D blobs exist even when header was only discoverable after
+    # source inventory; then stamp host/graph projections with packing facts.
+    if "tiling/exhaustive_key_space.yaml" not in (context.get("tg_views") or {}):
+        if source_root is not None:
+            context["op_root"] = str(source_root)
+            context["architecture"] = arch
+        cm = tpl_schema_pass.run(cm, context=context)
+    merged_views = dict(views or {})
+    merged_views.update(context.get("tg_views") or {})
+    merged_views = finalize_tg_views(cm, existing=merged_views)
 
     audit = audit_codemap(cm)
     result: dict[str, Any] = {
@@ -116,10 +129,14 @@ def compile_codemap(
         "audit": audit,
         "gaps": list_gaps(cm),
         "codemap": cm,
+        "tg_views": {
+            "legal_key_count": int(cm.meta.get("legal_key_count") or 0),
+            "view_names": sorted(merged_views),
+        },
     }
     if commit and source_root is not None:
         path = uo_product_path(source_root, op_name, arch)
-        written = write_codemap(cm, path, views=views)
+        written = write_codemap(cm, path, views=merged_views)
         result["uo"] = written
         result["path"] = written.get("path")
     return result

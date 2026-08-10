@@ -169,6 +169,54 @@ class CodeMapQuery:
                 )
         return out
 
+    def tpl_schema(self) -> dict[str, Any]:
+        """TPL ARGS_DECL/ARGS_SEL schema from view_blob or meta."""
+        blob = self._view("tiling/tpl_schema.yaml")
+        if isinstance(blob, dict) and blob:
+            return blob
+        meta = self.codemap.meta.get("tpl_schema")
+        return dict(meta) if isinstance(meta, dict) else {}
+
+    def template_blocks(self) -> list[dict[str, Any]]:
+        blob = self._view("tiling/template_blocks.yaml")
+        if isinstance(blob, dict):
+            return list(blob.get("blocks") or [])
+        return [
+            e.to_dict()
+            for e in self.codemap.by_kind(EntityKind.TEMPLATE)
+            if e.attrs.get("tpl_role") == "args_sel_group"
+        ]
+
+    def legal_key_count(self) -> int:
+        blob = self._view("tiling/exhaustive_key_space.yaml")
+        if isinstance(blob, dict) and int(blob.get("legal_key_count") or 0) > 0:
+            return int(blob["legal_key_count"])
+        return int(self.codemap.meta.get("legal_key_count") or 0)
+
+    def legal_keys(self, *, limit: int = 0, offset: int = 0) -> list[dict[str, Any]]:
+        """Stream legal packed keys from the index blob (not entity-per-key)."""
+        blob = self._view("tiling/legal_key_index.jsonl")
+        rows: list[dict[str, Any]] = []
+        if isinstance(blob, dict):
+            rows = [r for r in (blob.get("rows") or []) if isinstance(r, dict)]
+        elif isinstance(blob, list):
+            rows = [r for r in blob if isinstance(r, dict)]
+        if offset:
+            rows = rows[offset:]
+        if limit and limit > 0:
+            rows = rows[:limit]
+        return rows
+
+    def _view(self, name: str) -> Any:
+        if not self.path:
+            return None
+        try:
+            from uo_init.store.reader import load_view_blob
+
+            return load_view_blob(self.path, name)
+        except Exception:
+            return None
+
     # ---- Template / architecture / kernels --------------------------------
 
     def guards(self, name: str) -> list[dict[str, Any]]:

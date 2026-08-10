@@ -265,10 +265,70 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from ascendc_pilot.gates import run_named_gate
+    """Require CodeMap ``.uo`` with TG view blobs (D / host_view / graph)."""
+    import yaml
 
-    result = run_named_gate(project_root, "uo_ready", op_name=str(ctx.get("op_name") or "") or None)
-    return {"ok": bool(result.get("ok")), "gate": result, "engine": "kb_check"}
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    ready = _ensure_uo_tg_views(project_root, tg_ctx)
+    ok = bool(ready.get("ok")) and int(ready.get("legal_key_count") or 0) > 0
+    receipt = {
+        "schema": "tg-uo-ready/v1",
+        "ok": ok,
+        "mode": str(tg_ctx.get("mode") or "tilingkey_full_coverage"),
+        "op_name": str(tg_ctx.get("op_name") or ""),
+        "architecture": str(tg_ctx.get("architecture") or ""),
+        "uo_product": str(ready.get("path") or ""),
+        "legal_key_count": int(ready.get("legal_key_count") or 0),
+        "error": "" if ok else str(ready.get("error") or "UO TG views not ready"),
+    }
+    out = _tg(project_root) / "init" / "uo_ready.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return {
+        "ok": ok,
+        "engine": "kb_check",
+        "mode": receipt["mode"],
+        "gate": {
+            "gate": "uo_ready",
+            "ok": ok,
+            "message": "ok" if ok else receipt["error"],
+            "detail": ready,
+        },
+        "uo": ready,
+        "receipt_path": out.as_posix(),
+    }
+
+
+def _ensure_uo_tg_views(project_root: Path, tg_ctx: dict[str, Any]) -> dict[str, Any]:
+    """Locate ``.uo`` and ensure TPL/D + host/graph view_blobs exist."""
+    try:
+        from uo_init.tg_projection import ensure_tg_views
+
+        return ensure_tg_views(
+            project_root,
+            op_name=str(tg_ctx.get("op_name") or ""),
+            architecture=str(tg_ctx.get("architecture") or ""),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)[:400]}
+
+
+def _load_uo_tg_doc(project_root: Path, tg_ctx: dict[str, Any], name: str) -> dict[str, Any]:
+    """Load a TG view exclusively from the CodeMap ``.uo`` view_blob."""
+    try:
+        from uo_init.store.reader import find_uo_product, load_view_blob
+
+        product = find_uo_product(
+            project_root,
+            op_name=str(tg_ctx.get("op_name") or ""),
+            architecture=str(tg_ctx.get("architecture") or ""),
+        )
+        if product is None or product.suffix != ".uo":
+            return {}
+        blob = load_view_blob(product, name)
+        return blob if isinstance(blob, dict) else {}
+    except Exception:
+        return {}
 
 
 def _load_yaml(path: Path) -> Any:
@@ -450,63 +510,47 @@ def _run_tg_init_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
 
 
 def _write_tilingkey_contract(project_root: Path, tg_ctx: dict[str, Any]) -> dict[str, Any]:
-    """Minimal UO-based contract for tilingkey_full_coverage (no CSV consumer)."""
+    """Build tilingkey contract from CodeMap ``.uo`` view_blobs only."""
     import yaml
 
     tg = _tg(project_root)
-    uo = _uo(project_root)
-    for rel in (
-        "ir/operator_graph.yaml",
-        "tiling/exhaustive_key_space.yaml",
-        "ir/tg_host_view.yaml",
-        "ir/host_codemap.yaml",
-    ):
-        # tg_host_view OR host_codemap alias is enough for the view check.
-        pass
-    graph = uo / "ir" / "operator_graph.yaml"
-    keys = uo / "tiling" / "exhaustive_key_space.yaml"
-    view = uo / "ir" / "tg_host_view.yaml"
-    alias = uo / "ir" / "host_codemap.yaml"
     errors: list[str] = []
-    if not graph.is_file():
-        errors.append("missing uo/ir/operator_graph.yaml")
-    if not keys.is_file():
-        errors.append("missing uo/tiling/exhaustive_key_space.yaml")
-    if not view.is_file() and not alias.is_file():
-        errors.append("missing uo/ir/tg_host_view.yaml (run uo-init export_tg_host_view)")
-    key_doc = _load_yaml(keys) or {}
-    graph_doc = _load_yaml(graph) or {}
+    ready = _ensure_uo_tg_views(project_root, tg_ctx)
+    if not ready.get("ok"):
+        errors.append(str(ready.get("error") or "uo_tg_views_unavailable"))
+    graph_doc = _load_uo_tg_doc(project_root, tg_ctx, "ir/operator_graph.yaml")
+    key_doc = _load_uo_tg_doc(project_root, tg_ctx, "tiling/exhaustive_key_space.yaml")
+    view_doc = _load_uo_tg_doc(project_root, tg_ctx, "ir/tg_host_view.yaml")
+    if not graph_doc:
+        errors.append("missing view_blob ir/operator_graph.yaml in .uo")
+    if not key_doc:
+        errors.append("missing view_blob tiling/exhaustive_key_space.yaml in .uo")
+    if not view_doc:
+        errors.append("missing view_blob ir/tg_host_view.yaml in .uo")
     declared_count = int(key_doc.get("legal_key_count") or 0)
     if declared_count <= 0:
-        # Legacy aliases — UO export uses legal_key_count only.
-        declared_count = int(
-            key_doc.get("count")
-            or len(key_doc.get("keys") or key_doc.get("declared_keys") or [])
-            or 0
-        )
-    if declared_count <= 0 and keys.is_file():
+        declared_count = int(ready.get("legal_key_count") or 0)
+    if declared_count <= 0:
         errors.append("DECLARED_SET_EMPTY: legal_key_count missing or zero")
-    index_rel = str(key_doc.get("legal_key_index") or "")
-    if index_rel and declared_count > 0:
-        index_path = uo / index_rel.replace("\\", "/").lstrip("/")
-        if not index_path.is_file():
-            # legal_key_index is relative to uo/tiling/ in some exports
-            alt = uo / "tiling" / Path(index_rel).name
-            index_path = alt if alt.is_file() else index_path
-        if index_path.is_file():
-            try:
-                n_lines = sum(
-                    1
-                    for line in index_path.read_text(encoding="utf-8").splitlines()
-                    if line.strip() and not line.strip().startswith("#")
+    index_rel = str(key_doc.get("legal_key_index") or "tiling/legal_key_index.jsonl")
+    try:
+        from uo_init.tg_projection import legal_key_rows
+        from uo_init.store.reader import find_uo_product
+
+        product = find_uo_product(
+            project_root,
+            op_name=str(tg_ctx.get("op_name") or ""),
+            architecture=str(tg_ctx.get("architecture") or ""),
+        )
+        if product is not None and declared_count > 0:
+            n_rows = len(legal_key_rows(product))
+            if n_rows and n_rows != declared_count:
+                errors.append(
+                    f"DECLARED_SET_MISMATCH: legal_key_count={declared_count} "
+                    f"but legal_key_index has {n_rows} rows"
                 )
-                if n_lines != declared_count:
-                    errors.append(
-                        f"DECLARED_SET_MISMATCH: legal_key_count={declared_count} "
-                        f"but {index_path.name} has {n_lines} rows"
-                    )
-            except OSError as exc:
-                errors.append(f"legal_key_index_unreadable: {exc}")
+    except Exception:
+        pass
     contract = {
         "schema": "tg-tilingkey-contract/v1",
         "status": "pass" if not errors else "fail",
@@ -514,17 +558,21 @@ def _write_tilingkey_contract(project_root: Path, tg_ctx: dict[str, Any]) -> dic
         "op_name": tg_ctx["op_name"],
         "architecture": tg_ctx["architecture"],
         "declared_set": {
-            "source": "uo/tiling/exhaustive_key_space.yaml",
+            "source": "uo:tiling/exhaustive_key_space.yaml",
             "fingerprint": str(
                 key_doc.get("fingerprint")
                 or graph_doc.get("fingerprint")
+                or ready.get("graph_fingerprint")
                 or ""
             ),
             "count": declared_count,
             "legal_key_index": index_rel,
         },
-        "graph_fingerprint": str(graph_doc.get("fingerprint") or ""),
-        "host_view": "uo/ir/tg_host_view.yaml",
+        "graph_fingerprint": str(
+            graph_doc.get("fingerprint") or ready.get("graph_fingerprint") or ""
+        ),
+        "host_view": "uo:ir/tg_host_view.yaml",
+        "uo_product": str(ready.get("path") or ""),
         "errors": errors,
     }
     out = tg / "contract" / "tilingkey_contract.yaml"
@@ -647,33 +695,41 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         if _is_tilingkey_full(tg_ctx) and consumer is None:
             import yaml
 
-            from uo_init.host_codemap import load_tg_host_view
-
-            uo = _uo(project_root)
-            view = load_tg_host_view(uo)
-            reads_of = None
-            try:
-                from uo_init.host_codemap import CodemapQuery
-
-                reads_of = CodemapQuery(uo).reads_of
-            except Exception:  # noqa: BLE001
-                reads_of = None
+            _ensure_uo_tg_views(project_root, tg_ctx)
+            view = _load_uo_tg_doc(project_root, tg_ctx, "ir/tg_host_view.yaml")
+            graph_doc = _load_uo_tg_doc(project_root, tg_ctx, "ir/operator_graph.yaml")
+            if not view:
+                return {
+                    "ok": False,
+                    "engine": "semantic_bind",
+                    "error": "missing view_blob ir/tg_host_view.yaml in .uo",
+                }
             rows = []
             for f in view.get("fields") or []:
                 name = str(f.get("name") or "")
                 if not name:
                     continue
                 reads = list(f.get("reads") or [])
-                if reads_of is not None:
-                    try:
-                        reads = reads_of(name) or reads
-                    except Exception:  # noqa: BLE001
-                        pass
                 rows.append({
                     "field": name,
                     "kind": f.get("kind"),
+                    "tiling_key": f.get("tiling_key"),
                     "reads": reads,
                     "exactness": f.get("exactness"),
+                    "entity_id": f.get("entity_id"),
+                    "packing": list(f.get("packing") or []),
+                })
+            # Also bind declared key dims when host fields are sparse.
+            for dim, meta in (view.get("declared_keys") or {}).items():
+                if any(r.get("field") == dim or r.get("tiling_key") == dim for r in rows):
+                    continue
+                rows.append({
+                    "field": str(dim),
+                    "kind": "key_dim",
+                    "tiling_key": str(dim),
+                    "reads": [],
+                    "exactness": "",
+                    "packing": list((meta or {}).get("packing") or []),
                 })
             inv = {
                 "schema": "tg-tilingkey-binding-inventory/v1",
@@ -681,7 +737,8 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
                 "fields": rows,
                 "field_count": len(rows),
                 "graph_fingerprint": str(
-                    (_load_yaml(uo / "ir" / "operator_graph.yaml") or {}).get("fingerprint")
+                    graph_doc.get("fingerprint")
+                    or (view.get("source") or {}).get("graph_fingerprint")
                     or ""
                 ),
             }
@@ -1529,13 +1586,24 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
     targets = residual.distance_one_targets(analysis)[: int(ctx.get("limit") or 32)]
     built = 0
     cases: list = []
+    traces: list[dict[str, Any]] = []
     for t in targets:
         key = t.get("key")
         try:
             inst = WS.decode(int(key))
-            cases.extend(construct.build(inst))
+            spelled = construct.build(inst)
+            cases.extend(spelled)
             built += 1
-        except Exception:
+            traces.append(
+                {
+                    "key": int(key),
+                    "differing_dims": t.get("differing_dims"),
+                    "spelled": len(spelled),
+                    "codemap": construct.last_traces(),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            traces.append({"key": key, "error": str(exc)[:200]})
             continue
     # Production defaults to live Host; CI/synthetic may opt out.
     replayed = 0
@@ -1576,10 +1644,22 @@ def _run_closure_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         "replayed": replayed,
         "sample_keys": [t.get("key") for t in targets[:10]],
         "error": doc_err,
+        "codemap_directed": any(bool(x.get("codemap")) for x in traces),
     }
     out = _tg(project_root) / "closure" / "construct" / "targets.yaml"
     _dump_closure_yaml(out, doc)
-    return {"ok": True, "engine": "closure_construct", "artifact": out.as_posix(), **doc}
+    trace_path = _tg(project_root) / "closure" / "construct" / "trace.yaml"
+    _dump_closure_yaml(
+        trace_path,
+        {"schema": "tg-closure-construct-trace/v1", "traces": traces[:64]},
+    )
+    return {
+        "ok": True,
+        "engine": "closure_construct",
+        "artifact": out.as_posix(),
+        "trace": trace_path.as_posix(),
+        **doc,
+    }
 
 
 def _run_closure_explain(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -2112,14 +2192,15 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/diff/impact.yaml",
         "uo/diff/unresolved.yaml",
     ],
-    # kb-answer / uo-ready: readiness precondition (existing KB), not answer/write payload.
+    # kb-answer: readiness precondition (existing workspace), not answer payload.
     "kb-answer-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
     "code-review-v1": [
         "ce/review/index.yaml",
         "ce/review/functional_report.yaml",
         "ce/review/bug_report.yaml",
     ],
-    "uo-ready-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
+    # tg-init kb_check receipt: proves CodeMap .uo TG views are readable.
+    "uo-ready-v1": ["tg/init/uo_ready.yaml"],
     "tg-init-intent-v1": ["tg/init/init_intent.yaml"],
     "tilingkey-contract-v1": [
         "tg/contract/tilingkey_contract.yaml",

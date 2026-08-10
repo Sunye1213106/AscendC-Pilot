@@ -25,7 +25,7 @@ tg/plan/levels/<level>/target_set.yaml
 - approve 冻结 `target_hash + snapshot_hash + plan_hash`；
 - `tg-solve` 不得扩大 T。
 
-Full TilingKey mode 的 precheck 直接检查 `.uo` 和当前 Kernel schema。`csv_consumer` 兼容模式仍由自己的 precheck 检查旧契约。
+Full TilingKey mode 的 precheck 检查 `.uo` 与当前 Kernel schema。`csv_consumer` 模式使用自己的 precheck 与契约路径。
 
 ## Pilot
 

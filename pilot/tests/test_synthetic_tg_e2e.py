@@ -3,11 +3,67 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
 import yaml
+
+
+def _write_synthetic_uo(project_root: Path) -> Path:
+    """Minimal CodeMap ``.uo`` with TG view_blobs (authority for D / host / graph)."""
+    import sys
+
+    uo_src = Path(__file__).resolve().parents[2] / "engines" / "understand-operator" / "src"
+    if uo_src.is_dir() and str(uo_src) not in sys.path:
+        sys.path.insert(0, str(uo_src))
+
+    from uo_init.ir.codemap import CodeMap
+    from uo_init.store.writer import write_codemap
+
+    cm = CodeMap(op_name="_synthetic_toy", architecture="arch0")
+    product = project_root / ".ascendc-pilot" / "uo" / "_synthetic_toy.arch0.uo"
+    views = {
+        "tiling/exhaustive_key_space.yaml": {
+            "schema": "uo-exhaustive-key-space/v1",
+            "legal_key_count": 4,
+            "legal_key_index": "tiling/legal_key_index.jsonl",
+            "fingerprint": "fp-toy",
+            "template_blocks": [],
+            "status": "template_admissible",
+        },
+        "tiling/legal_key_index.jsonl": {
+            "schema": "uo-legal-key-index/v1",
+            "count": 4,
+            "rows": [
+                {"tiling_key": 1, "dims": {"DimA": "0", "DimB": "0"}},
+                {"tiling_key": 2, "dims": {"DimA": "0", "DimB": "1"}},
+                {"tiling_key": 3, "dims": {"DimA": "1", "DimB": "0"}},
+                {"tiling_key": 4, "dims": {"DimA": "1", "DimB": "1"}},
+            ],
+        },
+        "ir/tg_host_view.yaml": {
+            "schema": "tg-host-view/v1",
+            "source": {"graph_fingerprint": "fp-toy"},
+            "fields": [
+                {"name": "DimA", "kind": "key_dim"},
+                {"name": "DimB", "kind": "key_dim"},
+            ],
+            "predicates": [],
+            "declared_keys": {
+                "DimA": {"packing": []},
+                "DimB": {"packing": []},
+            },
+            "platform_gates": [],
+        },
+        "ir/operator_graph.yaml": {
+            "schema": "operator-graph/v1",
+            "fingerprint": "fp-toy",
+            "nodes": [],
+            "edges": [],
+        },
+    }
+    write_codemap(cm, product, views=views, meta={"fingerprint": "fp-toy"})
+    return product
 
 
 @pytest.fixture()
@@ -17,52 +73,16 @@ def synthetic_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("TG_CLOSURE_CI", "1")
     monkeypatch.setenv("ASCENDC_PROJECT_ROOT", str(tmp_path))
 
-    from ascendc_pilot.paths import ensure_agent_layout, tg_root, uo_root
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
 
     ensure_agent_layout(tmp_path, arch="arch0")
-    uo = uo_root(tmp_path, arch="arch0")
+    _write_synthetic_uo(tmp_path)
+
     tg = tg_root(tmp_path, arch="arch0")
-    (uo / "ir").mkdir(parents=True, exist_ok=True)
-    (uo / "tiling").mkdir(parents=True, exist_ok=True)
     (tg / "closure").mkdir(parents=True, exist_ok=True)
     (tg / "init").mkdir(parents=True, exist_ok=True)
     (tg / "plan" / "levels" / "L0").mkdir(parents=True, exist_ok=True)
 
-    (uo / "manifest.yaml").write_text(
-        "op_name: _synthetic_toy\narchitecture: arch0\nfingerprint: fp-toy\n",
-        encoding="utf-8",
-    )
-    (uo / "ir" / "operator_graph.yaml").write_text(
-        "fingerprint: fp-toy\nnodes: []\nedges: []\n",
-        encoding="utf-8",
-    )
-    (uo / "tiling" / "exhaustive_key_space.yaml").write_text(
-        "legal_key_count: 4\n"
-        "legal_key_index: tiling/legal_key_index.jsonl\n"
-        "fingerprint: fp-toy\n"
-        "template_blocks: []\n",
-        encoding="utf-8",
-    )
-    (uo / "tiling" / "legal_key_index.jsonl").write_text(
-        "1\n2\n3\n4\n", encoding="utf-8"
-    )
-    (uo / "ir" / "tg_host_view.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema": "tg-host-view/v1",
-                "source": {"graph_fingerprint": "fp-toy"},
-                "fields": [
-                    {"name": "DimA", "kind": "key_dim"},
-                    {"name": "DimB", "kind": "key_dim"},
-                ],
-                "predicates": [],
-                "declared_keys": {},
-                "platform_gates": [],
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
     (tg / "init" / "init_intent.yaml").write_text(
         "schema: tg-init-intent/v1\nmode: tilingkey_full_coverage\n",
         encoding="utf-8",
@@ -90,7 +110,7 @@ def test_synthetic_init_intent_and_contract(synthetic_root: Path):
 
     tg_ctx = _resolve_tg_ctx(synthetic_root, {"op_name": "_synthetic_toy", "architecture": "arch0"})
     contract = _write_tilingkey_contract(synthetic_root, tg_ctx)
-    assert contract.get("status") == "pass"
+    assert contract.get("status") == "pass", contract
     assert int((contract.get("declared_set") or {}).get("count") or 0) == 4
 
 
@@ -252,4 +272,3 @@ def test_full_mode_contract_build_finalize_paths(synthetic_root: Path):
     integ = _run_tg_integrity(synthetic_root, ctx)
     assert integ["ok"] is True
     assert (tg / "contract" / "integrity_gate.yaml").is_file()
-

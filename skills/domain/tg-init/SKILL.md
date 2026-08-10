@@ -27,8 +27,9 @@ description: >
 
 ## 契约
 
+- 权威是 CodeMap `.uo`；`declared_set` 来自 view_blob `tiling/exhaustive_key_space`（TPL ARGS_SEL 展开的 D）
 - 契约应列出求解所需维度、约束、消费方期望
-- 字段含义与单位必须有源码或 KB 锚点
+- 字段含义与单位必须有源码或 CodeMap 锚点（禁止无证据的「看起来像」）
 - 不完整契约不得假装可求解
 
 细节：`references/contract.md`

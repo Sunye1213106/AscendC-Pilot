@@ -226,27 +226,70 @@ def rule_book(*, refresh: bool = False):
 
 @lru_cache(maxsize=1)
 def declared() -> frozenset[int]:
-    """D, expanded from the kernel's `ASCENDC_TPL_ARGS_SEL` groups.
+    """D from CodeMap ``.uo`` ``tiling/legal_key_index`` (TPL ARGS_SEL).
 
-    Every legal template instantiation packs to one key, so the selection
-    groups *are* the declared set. Deriving it here rather than reading a
-    generated CSV means D cannot go stale relative to the kernel.
+    When a local TPL schema is also loadable, it must agree with ``.uo``;
+    mismatch raises ``DECLARED_SET_DIVERGENCE``. Without ``.uo``, expand the
+    TPL schema only (unit / adapter contexts with no CodeMap product).
     """
     from uo_init.tpl_dsl import expand_legal_instances  # noqa: PLC0415
 
     sch = schema()
     fallback = {d.name: (list(d.value_domain) or ["0"])[0] for d in sch.dims}
-    keys: set[int] = set()
+    schema_keys: set[int] = set()
     for inst in expand_legal_instances(sch):
         full = {name: str(inst.get(name, fallback[name])) for name in fallback}
         try:
-            keys.add(int(sch.encode_tiling_key(full)))
+            schema_keys.add(int(sch.encode_tiling_key(full)))
         except (ValueError, KeyError):
-            # A selection naming a value outside the declared domain is a
-            # kernel/schema disagreement, not a key. Skipping it keeps D to
-            # what can actually be packed.
             continue
-    return frozenset(keys)
+
+    uo_keys = _declared_from_uo()
+    if uo_keys is not None:
+        if schema_keys and uo_keys != schema_keys:
+            only_uo = sorted(uo_keys - schema_keys)[:5]
+            only_sch = sorted(schema_keys - uo_keys)[:5]
+            raise RuntimeError(
+                "DECLARED_SET_DIVERGENCE: .uo legal_key_index disagrees with "
+                f"TPL schema (uo_only={only_uo} schema_only={only_sch})"
+            )
+        return frozenset(uo_keys)
+    return frozenset(schema_keys)
+
+
+def _declared_from_uo() -> set[int] | None:
+    """Load packed keys from ``.uo`` view_blob when available."""
+    import os
+    from pathlib import Path
+
+    try:
+        from uo_init.store.reader import find_uo_product
+        from uo_init.tg_projection import legal_key_rows
+    except Exception:
+        return None
+    root = os.environ.get("ASCENDC_PROJECT_ROOT") or os.environ.get("UO_OP_DIR") or ""
+    if not root:
+        try:
+            root = str(Path(default_workspace().state).parents[3])
+        except Exception:
+            return None
+    product = find_uo_product(
+        Path(root),
+        op_name=os.environ.get("UO_OPERATOR") or "",
+        architecture=os.environ.get("UO_ARCH") or "",
+    )
+    if product is None:
+        return None
+    rows = legal_key_rows(product)
+    if not rows:
+        return None
+    out: set[int] = set()
+    for row in rows:
+        try:
+            out.add(int(row.get("tiling_key")))
+        except (TypeError, ValueError):
+            continue
+    return out or None
 
 
 def decode(key: int) -> dict[str, str]:

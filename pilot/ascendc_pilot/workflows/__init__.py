@@ -46,10 +46,13 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
 
 _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     "tg-init": {
-        "init_intent": {"read": ["uo/manifest.yaml", "context/**"], "write": ["tg/init/init_intent.yaml"]},
-        "kb_check": {"read": ["uo/manifest.yaml", "uo/checks/integrity.yaml"], "write": []},
+        "init_intent": {"read": ["context/**"], "write": ["tg/init/init_intent.yaml"]},
+        "kb_check": {
+            "read": ["../uo/*.uo"],
+            "write": ["tg/init/uo_ready.yaml"],
+        },
         "contract_build": {
-            "read": ["uo/**", "context/**"],
+            "read": ["../uo/*.uo", "tg/init/uo_ready.yaml", "context/**"],
             "write": [
                 "tg/intake/**", "tg/snapshot/**", "tg/realization/**", "tg/contract/**",
                 "tg/plan/coverage_obligations.yaml", "tg/run.yaml", "context/pilot_params.yaml",
@@ -57,7 +60,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
         "semantic_bind": {
             "read": [
-                "uo/ir/tg_host_view.yaml", "uo/ir/operator_graph.yaml", "tg/contract/**",
+                "../uo/*.uo", "tg/contract/**",
                 "tg/realization/llm_bind_prompt_bundle.yaml", "tg/realization/binding_inventory.yaml",
                 "tg/realization/binding_gaps.yaml", "tg/realization/unresolved.yaml",
             ],

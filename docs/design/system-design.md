@@ -11,17 +11,17 @@
 
 ```text
 算子源码 + CANN 头文件
-        │  /uo-init
+        │  /uo-init（CodeMap + TPL ARGS_SEL）
         ▼
-   UO 知识库（YAML 权威）
-        │  /tg-init → /tg-plan → /tg-solve
+   .uo 权威（view_blob 含 D / tg_host_view / operator_graph）
+        │  /tg-init → /tg-plan → /tg-solve（CodeMap 定向构造）
         ▼
    gap=0 证书：D = (R ∩ D) ∪ E
 ```
 
 | 符号 | 含义 | 唯一合法来源 |
 | --- | --- | --- |
-| **D** | 内核声明的 TilingKey 集合（TPL 展开） | 源码头文件 / `exhaustive_key_space` |
+| **D** | 内核声明的 TilingKey 集合（TPL ARGS_SEL 展开） | `.uo` view_blob `tiling/exhaustive_key_space` |
 | **R** | 真实 Host 跑出过的 Key | Host oracle verdict |
 | **E** | 有源码证明不可达的 Key | 经审查的 sound 规则 |
 
@@ -45,14 +45,15 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
-产物根（按架构分目录）：
+产物布局：
 
 ```text
-<算子目录>/.ascendc-pilot/<arch>/
-├── uo/          # 知识库（YAML 权威，SQLite 可丢弃）
-├── tg/          # 合同 / plan / closure / solve
-├── ce/
-└── memory/ context/ state/ runs/
+<算子目录>/.ascendc-pilot/
+├── uo/<op>.<arch>.uo     # 唯一 CodeMap 权威（含 TG view_blob）
+└── <arch>/
+    ├── tg/               # 合同 / plan / closure / solve
+    ├── ce/
+    └── memory/ context/ state/ runs/
 ```
 
 默认工作流：`/uo-init` → `/tg-init` → `/tg-plan` → `/tg-solve`。  
@@ -74,35 +75,28 @@ Primary 控制器**禁止**直接改 `uo/ir/**` 救场。
 
 ```text
 [算子 Host/Kernel 源码]
-        │ extract_host / extract_tiling_key / extract_kernel
+        │ CodeMap passes（含 tpl_schema：ARGS_DECL + ARGS_SEL）
         ▼
-   HostIR + TPL 绑定 + Registry + Kernel 分支
-        │ derive_key_fields → normalize → resolve_gaps
-        ▼
-   每维 value_expr / exactness / input_closure / undecided
-        │ export_kb + materialize + key_reachability
-        ▼
-.ascendc-pilot/<arch>/uo/
-  ir/operator_graph.yaml          ← 语义权威
-  ir/host_derivation.yaml
-  tiling/key_derivations.yaml
-  tiling/exhaustive_key_space.yaml   ← D
-  tiling/legal_key_index.jsonl
-  tiling/key_reachability.yaml       ← 静态可达性骨架
-  ir/tg_host_view.yaml               ← TG 投影（旋钮→维）
-        │ tg-init（tilingkey_full_coverage）
+.ascendc-pilot/uo/<op>.<arch>.uo          ← 权威 CodeMap
+  view_blob:
+    tiling/exhaustive_key_space.yaml      ← D
+    tiling/legal_key_index.jsonl
+    ir/tg_host_view.yaml                  ← packing / producer / predicates
+    ir/operator_graph.yaml                ← fingerprint / 闭包身份
+        │ tg-init（tilingkey_full_coverage）读 view_blob
         ▼
 .ascendc-pilot/<arch>/tg/
   contract/tilingkey_contract.yaml
-        │ tg-solve
+        │ tg-solve：CodeMap 定向 construct + Host replay
         ▼
   closure/
     R.txt  excluded.txt  open.txt  closure.csv
     corpus/  models/  rounds/  lemmas/
+    construct/trace.yaml                  ← 定向构造审计
 ```
 
-**单向反馈**：运行发现缺口 → 源码验证 → 更新 UO KB → 重建 TG 投影 → 重训模型。  
-禁止 TG 模型直接改写 UO KB。
+**单向反馈**：运行发现缺口 → 源码验证 → 更新 `.uo` → TG 重读 view_blob。  
+禁止 TG 模型直接改写 UO CodeMap。
 
 ---
 
@@ -169,7 +163,7 @@ HostIR
 | `variable_model` | 变量域；`completeness: open` 时不发明值 |
 | `materialize_tiling` | 声明 key 空间 + 覆盖义务 |
 | `key_reachability` | 多维联合 Z3：reachable / unreachable / unknown / underivable |
-| `kb_export` | 分层 YAML；`operator_graph.yaml` 为语义权威 |
+| `kb_export` / `commit` | 写入 `.uo` CodeMap；YAML 仅为 dump/调试 |
 
 ### 4.4 能提取什么
 
@@ -228,17 +222,16 @@ UO 的 Z3 **不是**全覆盖终点，而是给 TG 的静态骨架与剪枝证�
 
 ### 4.5 KB 主要产物
 
-根目录：`.ascendc-pilot/<arch>/uo/`
+权威产品：`.ascendc-pilot/uo/<op>.<arch>.uo`（SQLite CodeMap）。
 
-| 路径 | 内容 |
+| view_blob / 表 | 内容 |
 | --- | --- |
-| `indexes/kb_graph.sqlite` | **唯一 on-disk 权威产物**（graph + view_blob + legal_key_index + host_derivation + field_*） |
-| `manifest.yaml` 等分层 YAML | 可选导出（`UO_KB_YAML=1`）；可用 `uo_init.dump` 从 DB 重建 |
-| `ir/operator_graph.yaml` | 图的可读导出（权威在 DB） |
-| `ir/host_derivation.yaml` | 完整派生（含守卫审计） |
-| `ir/tg_host_view.yaml` | TG 投影：字段 → roots → writers → knobs |
-| `tiling/legal_key_index.jsonl` | 声明集 D 逐行（DB 表可 dump） |
-| `tiling/key_reachability.yaml` | 静态可达性 |
+| graph entities/relations | Host/Kernel/Tiling/compile-time 图 |
+| `tiling/exhaustive_key_space.yaml` | D 的计数与索引指针 |
+| `tiling/legal_key_index.jsonl` | 声明集 D 逐行 |
+| `ir/tg_host_view.yaml` | TG：字段 → roots → writers → knobs |
+| `ir/operator_graph.yaml` | fingerprint / 闭包身份 |
+| `ir/host_derivation.yaml` 等 | 派生与审计（可由 `uo-dump` 展开为临时 YAML） |
 
 ### 4.6 UO 能力边界
 
@@ -275,7 +268,7 @@ UO 的 Z3 **不是**全覆盖终点，而是给 TG 的静态骨架与剪枝证�
 
 ### 5.3 前置：tg-init / tg-plan
 
-**tg-init**（full）：读 UO 的 `operator_graph`、`exhaustive_key_space`、`tg_host_view`，写出 `tilingkey_contract` 与 semantic bind（旋钮 ↔ 维）。不强制 CSV。
+**tg-init**（full）：读 `.uo` view_blob 中的 `operator_graph`、`exhaustive_key_space`、`tg_host_view`（缺则 TPL backfill），写出 `tilingkey_contract` 与 semantic bind。不强制 CSV。
 
 **tg-plan**：覆盖义务矩阵与范围；full 模式可跳过部分 consumer 门禁。
 

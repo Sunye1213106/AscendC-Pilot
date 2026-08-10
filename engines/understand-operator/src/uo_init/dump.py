@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""uo-dump — sole debug/export surface for CodeMap (``.uo``) and legacy KB."""
+"""uo-dump — debug/export surface for CodeMap ``.uo`` view_blobs."""
 
 from __future__ import annotations
 
@@ -66,13 +66,11 @@ def resolve_view_name(view: str) -> str:
 
 
 def _resolve_db_or_uo(uo_root: Path) -> tuple[str, Path]:
-    """Return ('uo'|'db', path)."""
+    """Return ('uo'|'db', path). Prefer ``.uo`` product; accept explicit sqlite only for dump."""
     if uo_root.is_file() and uo_root.suffix == ".uo":
         return "uo", uo_root
-    db = uo_root / "indexes" / "kb_graph.sqlite"
-    if db.is_file():
-        return "db", db
-    # Climb for product dir.
+    if uo_root.is_file() and uo_root.suffix in {".sqlite", ".db"}:
+        return "db", uo_root
     try:
         from uo_init.store.reader import find_uo_product
 
@@ -81,9 +79,10 @@ def _resolve_db_or_uo(uo_root: Path) -> tuple[str, Path]:
             return "uo", found
     except Exception:
         pass
-    raise FileNotFoundError(
-        f"missing CodeMap product (.uo) or indexes/kb_graph.sqlite under {uo_root}"
-    )
+    db = uo_root / "indexes" / "kb_graph.sqlite"
+    if db.is_file():
+        return "db", db
+    raise FileNotFoundError(f"missing CodeMap product (.uo) under {uo_root}")
 
 
 def dump_view(
@@ -92,7 +91,7 @@ def dump_view(
     *,
     out: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Load one view from ``.uo`` or legacy DB and optionally write ``out``."""
+    """Load one view from ``.uo`` (or an explicit sqlite dump path) and optionally write ``out``."""
     root = Path(uo_root).expanduser().resolve()
     kind, product = _resolve_db_or_uo(root)
     name = resolve_view_name(view)
@@ -314,7 +313,7 @@ def dump_path_query(uo_file: Path, start: str, end: str) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m uo_init.dump",
-        description="Dump CodeMap views from .uo (or legacy kb_graph.sqlite)",
+        description="Dump CodeMap views from .uo",
     )
     parser.add_argument("target", nargs="?", default="", help=".uo file or view name")
     parser.add_argument("view", nargs="?", default="", help="view name when target is .uo")
@@ -330,6 +329,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arch", action="store_true")
     parser.add_argument("--symbol", default="", help="dump symbol by name")
     parser.add_argument("--path", nargs=2, metavar=("FROM", "TO"), help="find_path FROM TO")
+    parser.add_argument(
+        "--materialize-tg",
+        action="store_true",
+        help="backfill TPL/D + tg_host_view/operator_graph view_blobs into .uo",
+    )
+    parser.add_argument("--header", default="", help="explicit template_tiling_key.h for --materialize-tg")
+    parser.add_argument("--op-root", default="", help="operator source root for --materialize-tg")
     parser.add_argument("--format", default="yaml", choices=("yaml", "json"))
     args = parser.parse_args(argv)
 
@@ -354,6 +360,30 @@ def main(argv: list[str] | None = None) -> int:
         view = "templates"
     elif args.arch:
         view = "arch"
+
+    if args.materialize_tg:
+        try:
+            from uo_init.tg_projection import backfill_from_source
+
+            kind, product = _resolve_db_or_uo(uo)
+            if kind != "uo":
+                raise FileNotFoundError("--materialize-tg requires a .uo product")
+            op_root = Path(args.op_root).expanduser().resolve() if args.op_root else product.parent.parent.parent
+            # product is <op>/.ascendc-pilot/uo/<op>.<arch>.uo → op root = parents[2]
+            if product.parent.name == "uo" and product.parent.parent.name == ".ascendc-pilot":
+                op_root = product.parent.parent.parent
+            if args.op_root:
+                op_root = Path(args.op_root).expanduser().resolve()
+            result = backfill_from_source(
+                op_root,
+                uo_path=product,
+                tiling_key_header=args.header or None,
+            )
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result.get("ok") else 1
+        except Exception as exc:  # noqa: BLE001
+            print(json.dumps({"ok": False, "error": str(exc)[:400]}, ensure_ascii=False))
+            return 1
 
     if args.path:
         try:

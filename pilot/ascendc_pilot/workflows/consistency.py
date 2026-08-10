@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 _ACTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_PRECONDITION_CONTRACTS = frozenset({"kb-answer-v1", "uo-ready-v1"})
+_PRECONDITION_CONTRACTS = frozenset({"kb-answer-v1"})
 _HARDCODED_WORKFLOW_IN_PROMPT = re.compile(
     r"workflow_id:\s*`(uo-init|uo-update|tg-init|tg-plan|tg-solve|ce-review|uo-query)`"
 )

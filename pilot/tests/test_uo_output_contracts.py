@@ -56,7 +56,7 @@ def test_uo_query_review_ready_contracts_not_bare_dirs() -> None:
     assert "ce/review/functional_report.yaml" in _joined("code-review-v1")
     assert "ce/review/bug_report.yaml" in _joined("code-review-v1")
     assert "uo/review/index.yaml" not in _joined("code-review-v1")
-    assert _joined("uo-ready-v1") == "uo/manifest.yaml,uo/checks/integrity.yaml"
+    assert _joined("uo-ready-v1") == "tg/init/uo_ready.yaml"
     assert OUTPUT_CONTRACT_PATHS["uo-ready-v1"] != ["uo"]
     assert "tg/plan" not in OUTPUT_CONTRACT_PATHS["plan-scope-v1"]
     assert "tg/plan" not in OUTPUT_CONTRACT_PATHS["solve-precheck-v1"]

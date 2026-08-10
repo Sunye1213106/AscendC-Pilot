@@ -132,7 +132,7 @@ def find_uo_product(
     op_name: str = "",
     architecture: str = "",
 ) -> Path | None:
-    """Locate ``.ascendc-pilot/uo/<op>.<arch>.uo`` with fallbacks."""
+    """Locate the CodeMap product ``.ascendc-pilot/uo/<op>.<arch>.uo``."""
     from uo_init.store.writer import uo_product_dir, uo_product_path
 
     root = Path(op_root).expanduser().resolve()
@@ -158,12 +158,6 @@ def find_uo_product(
                     return c
         if candidates:
             return candidates[0]
-
-    # Legacy fallback: <arch>/uo/indexes/kb_graph.sqlite
-    arch = architecture or "arch35"
-    legacy = root / ".ascendc-pilot" / arch / "uo" / "indexes" / "kb_graph.sqlite"
-    if legacy.is_file():
-        return legacy
     return None
 
 
