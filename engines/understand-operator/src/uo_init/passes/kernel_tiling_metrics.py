@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Compute strict source-backed Kernel/TilingData closure metrics."""
+"""Compute strict source-backed Kernel/TilingData closure metrics.
+
+The verified ``TILING_DATA -> KERNEL`` edge is a certificate edge: it exists
+only when the source closure invariant below is true.  Therefore the generic UO
+review cannot pass merely because one TilingData type was unpacked somewhere.
+"""
 from __future__ import annotations
 
 from collections import defaultdict, deque
@@ -14,14 +19,12 @@ _BOUND_CALLS = {
     "source_kernel_call_bound_v3",
     "source_kernel_call_dispatch_set_v3",
 }
+_CERT_EDGE_PROVENANCE = "source_tiling_registration_verified"
 
 
 def finalize_kernel_tiling_metrics(codemap: CodeMap) -> CodeMap:
     closure = dict(codemap.meta.get("kernel_tiling_closure") or {})
-    starts = {
-        e.id for e in codemap.by_kind(EntityKind.KERNEL)
-        if e.attrs.get("source_signature")
-    }
+    starts = {e.id for e in codemap.by_kind(EntityKind.KERNEL) if e.attrs.get("source_signature")}
     adj: dict[str, set[str]] = defaultdict(set)
     for rel in codemap.relations.values():
         if rel.kind_name() == RelationKind.CALLS.value and str(rel.attrs.get("provenance") or "") in _BOUND_CALLS:
@@ -75,31 +78,63 @@ def finalize_kernel_tiling_metrics(codemap: CodeMap) -> CodeMap:
         if str(e.attrs.get("owner") or "") in selected_types
     }
     consumed_selected = consumed & selected_field_ids if selected_field_ids else consumed
+    declared_key_count = int(codemap.meta.get("source_declared_tiling_key_count") or 0)
+    template_count = int(closure.get("kernel_template_args") or 0)
+    template_complete = template_count > 0 and (not declared_key_count or template_count == declared_key_count)
+
+    strict = bool(
+        closure.get("architecture_pure")
+        and int(closure.get("kernel_entries") or 0) > 0
+        and template_complete
+        and int(closure.get("kernel_abi_links") or 0) > 0
+        and len(reachable) > len(starts)
+        and unresolved_calls == 0
+        and len(consumed) > 0
+        and unresolved_reads == 0
+        and not without_producer
+        and int(closure.get("tiling_ambiguous_writer_sites") or 0) == 0
+    )
 
     closure.update(
         {
             "kernel_reachable_scopes": len(reachable),
             "kernel_reachable_unresolved_internal_call_sites": unresolved_calls,
+            "kernel_template_binding_complete": template_complete,
             "tiling_entry_reachable_fields": len(consumed),
             "tiling_entry_reachable_selected_fields": len(consumed_selected),
             "tiling_entry_reachable_unresolved_read_sites": unresolved_reads,
             "tiling_consumed_fields_with_producer": len(with_producer),
             "tiling_consumed_fields_without_producer": without_producer,
             "tiling_consumed_field_producer_coverage": f"{len(with_producer)}/{len(consumed)}",
-            "strict_closure_ok": bool(
-                closure.get("architecture_pure")
-                and int(closure.get("kernel_entries") or 0) > 0
-                and int(closure.get("kernel_template_args") or 0) > 0
-                and int(closure.get("kernel_abi_links") or 0) > 0
-                and len(reachable) > len(starts)
-                and unresolved_calls == 0
-                and len(consumed) > 0
-                and unresolved_reads == 0
-                and not without_producer
-                and int(closure.get("tiling_ambiguous_writer_sites") or 0) == 0
-            ),
-            "metrics_policy": "entry-reachable-consumed-fields/v1",
+            "strict_closure_ok": strict,
+            "metrics_policy": "entry-reachable-consumed-fields/v2",
         }
     )
+
+    # Certificate edge policy: the generic audit's TILING_DATA→KERNEL check is
+    # now backed by the same strict invariant rather than existential presence.
+    cert_relations = [
+        rid for rid, rel in codemap.relations.items()
+        if str(rel.attrs.get("provenance") or "") == _CERT_EDGE_PROVENANCE
+    ]
+    if not strict:
+        for rid in cert_relations:
+            codemap.relations.pop(rid, None)
+    elif not cert_relations:
+        kernels = codemap.by_kind(EntityKind.KERNEL)
+        roots = set(closure.get("tiling_registered_root_types") or ())
+        for td in codemap.by_kind(EntityKind.TILING_DATA):
+            if td.name not in roots:
+                continue
+            for kernel in kernels:
+                codemap.link(
+                    RelationKind.FLOWS_TO,
+                    td.id,
+                    kernel.id,
+                    attrs={"provenance": _CERT_EDGE_PROVENANCE, "strict_closure": True},
+                    status="confirmed",
+                )
+
     codemap.meta["kernel_tiling_closure"] = closure
+    codemap.meta["has_strict_kernel_tiling_closure"] = strict
     return codemap
