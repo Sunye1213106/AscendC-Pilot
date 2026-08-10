@@ -13,6 +13,7 @@ from uo_init.ir.relation import RelationKind
 from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
@@ -45,7 +46,9 @@ def compile_codemap(
     an operator source root exists, deterministic source passes additionally
     inventory the selected architecture, recover API/Key/TilingData contracts,
     bind Host packed-key arguments, trace their def-use roots, model TilingData
-    registrations/resources/frontiers and then run the strict completeness audit.
+    registrations/resources/frontiers, and finally rebuild an architecture-
+    pure Kernel/TilingData call/read/write closure from qualified current-source
+    symbols before the strict completeness audit runs.
     """
     arch = (architecture or "arch35").strip() or "arch35"
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
@@ -79,6 +82,7 @@ def compile_codemap(
         enrich_tiling_registrations(cm, source_root, architecture=arch)
         resolve_source_gaps(cm, source_root, architecture=arch)
         resolve_class_frontiers(cm, source_root, architecture=arch)
+        finalize_kernel_tiling_closure(cm, source_root, architecture=arch)
         cm.meta["production_source_enrichment"] = True
     else:
         cm.meta["production_source_enrichment"] = False
