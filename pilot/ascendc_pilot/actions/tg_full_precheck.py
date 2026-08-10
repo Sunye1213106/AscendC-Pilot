@@ -1,8 +1,7 @@
 """Mode-aware TG plan precheck.
 
-The full TilingKey path is `.uo`-native. CSV-consumer compatibility keeps the
-legacy initialization/fingerprint checks inside its precheck engine instead of
-sharing static workflow gates with the new path.
+The full TilingKey path is `.uo`-native. CSV-consumer compatibility keeps its
+legacy initialization/fingerprint checks in the original precheck engine.
 """
 from __future__ import annotations
 
@@ -38,20 +37,3 @@ def plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 def install(registry: dict[tuple[str, str], Callable[..., dict[str, Any]]]) -> None:
     registry[("tg-plan", "plan_precheck")] = plan_precheck
-
-    # Static gate metadata cannot express the mode split. Let the engine above
-    # enforce mode-specific preconditions and keep only approval as a terminal
-    # workflow gate. CSV mode still executes its original precheck implementation.
-    try:
-        from ascendc_pilot.workflows import WORKFLOWS
-
-        meta = WORKFLOWS.get("tg-plan") or {}
-        phase_gates = dict(meta.get("phase_gates") or {})
-        phase_gates["gate"] = []
-        meta["phase_gates"] = phase_gates
-        meta["complete_gates"] = ["plan_approved"]
-        for row in meta.get("actions") or []:
-            if isinstance(row, dict) and row.get("id") == "plan_precheck":
-                row["gates"] = []
-    except Exception:
-        pass
