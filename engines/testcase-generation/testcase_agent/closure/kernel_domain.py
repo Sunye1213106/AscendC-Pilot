@@ -42,6 +42,26 @@ def _legacy_root(ws: W.Workspace) -> Path:
         return ws.root / ".ascendc-pilot" / _arch() / "uo"
 
 
+def view_source(uo: Path | None, rel: str = "views/kernel.yaml") -> dict[str, Any]:
+    """Describe a legacy projection source without selecting it as authority.
+
+    Kept as a small compatibility/introspection API for tests and diagnostics.
+    Production ``load_kernel_view`` still resolves the formal ``.uo`` product
+    first; this helper merely distinguishes an absent export from YAML/DB-backed
+    legacy fixtures.
+    """
+    if uo is None:
+        return {"kind": "missing", "path": "", "reason": "uo_root_missing"}
+    root = Path(uo).expanduser().resolve()
+    path = root / rel
+    if path.is_file():
+        return {"kind": "yaml", "path": str(path)}
+    db = root / "indexes" / "kb_graph.sqlite"
+    if db.is_file():
+        return {"kind": "db", "path": str(db), "view": rel}
+    return {"kind": "missing", "path": "", "reason": f"{rel} missing"}
+
+
 def _legacy_doc(ws: W.Workspace) -> tuple[dict[str, Any], dict[str, Any]]:
     uo = _legacy_root(ws)
     for rel in ("views/kernel.yaml", "kernel/branches.yaml"):
