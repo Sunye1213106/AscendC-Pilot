@@ -14,6 +14,7 @@ from uo_init.passes.frontier_resolution import resolve_class_frontiers
 from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
+from uo_init.passes.kernel_call_resolution import resolve_kernel_call_frontiers
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
@@ -21,6 +22,7 @@ from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
 from uo_init.passes.tiling_field_complete import complete_tiling_fields
 from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
+from uo_init.passes.tiling_kernel_reads import rebuild_verified_tiling_reads
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.resolve.semantic_gap import list_gaps
 from uo_init.store.writer import uo_product_path, write_codemap
@@ -88,6 +90,8 @@ def compile_codemap(
         resolve_class_frontiers(cm, source_root, architecture=arch)
         finalize_kernel_tiling_closure(cm, source_root, architecture=arch)
         refine_kernel_calls_and_tiling_reads(cm, source_root, architecture=arch)
+        resolve_kernel_call_frontiers(cm, source_root, architecture=arch)
+        rebuild_verified_tiling_reads(cm, source_root, architecture=arch)
         enrich_tiling_host_writes(cm, source_root, architecture=arch)
         cm.meta["production_source_enrichment"] = True
     else:
