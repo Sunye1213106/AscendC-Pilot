@@ -18,6 +18,7 @@ from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tilin
 from uo_init.passes.kernel_call_resolution import resolve_kernel_call_frontiers
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.kernel_tiling_metrics import finalize_kernel_tiling_metrics
+from uo_init.passes.kernel_tiling_truth import finalize_kernel_tiling_truth
 from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
@@ -97,6 +98,7 @@ def compile_codemap(
         classify_kernel_call_boundaries(cm)
         rebuild_verified_tiling_reads(cm, source_root, architecture=arch)
         enrich_tiling_host_writes(cm, source_root, architecture=arch)
+        finalize_kernel_tiling_truth(cm)
         finalize_kernel_tiling_metrics(cm)
         cm.meta["production_source_enrichment"] = True
     else:
