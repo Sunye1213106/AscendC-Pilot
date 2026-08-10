@@ -25,13 +25,16 @@ from uo_init.store.writer import write_codemap
 OP_NAME = "flash_attention_score_grad"
 ARCH = "arch35"
 EXPECTED_KEY_COUNT = 19
-CRITICAL_PRODUCER_KEYS = {
-    "IsNzOut",
-    "IsTndSwizzle",
-    "SplitAxis",
-    "S1TemplateNum",
-    "S2TemplateNum",
-    "DTemplateNum",
+# These identities are deliberately source-level, not values/formulas. They
+# catch the exact regressions that previously made the graph green through a
+# header initializer or unrelated branch constant.
+CRITICAL_PRODUCERS = {
+    "IsNzOut": {"lhs": "fBaseParams.isNzOut", "file": "flash_attention_score_grad_tiling_normal_regbase.cpp"},
+    "IsTndSwizzle": {"lhs": "tndBaseInfo.isTndSwizzle", "file": "flash_attention_score_grad_tiling_normal_regbase.cpp"},
+    "SplitAxis": {"lhs": "splitAxis", "file": "flash_attention_score_grad_tiling_normal_regbase.cpp"},
+    "S1TemplateNum": {"lhs": "fBaseParams.s1TemplateType", "file": "flash_attention_score_grad_tiling_common_regbase.cpp"},
+    "S2TemplateNum": {"lhs": "fBaseParams.s2TemplateType", "file": "flash_attention_score_grad_tiling_common_regbase.cpp"},
+    "DTemplateNum": {"lhs": "fBaseParams.dTemplateType", "file": "flash_attention_score_grad_tiling_common_regbase.cpp"},
 }
 
 
@@ -107,16 +110,40 @@ def _fresh_soundness_checks(uo: Path, binary: dict[str, Any]) -> list[dict[str, 
             blocking.append({"code": "FRESH_KEY_COVERAGE_FAILED", "detail": f"{field}={summary.get(field)!r}, expected {expected}"})
 
     evidence = {row.get("key"): row for row in (binary.get("tiling_key_evidence") or []) if isinstance(row, dict)}
-    for key in sorted(CRITICAL_PRODUCER_KEYS):
+    for key, expected_producer in sorted(CRITICAL_PRODUCERS.items()):
         row = evidence.get(key) or {}
-        if not row.get("producer") or not row.get("rooted") or not row.get("producer_sites"):
+        sites = [site for site in (row.get("producer_sites") or []) if isinstance(site, dict)]
+        matching = [
+            site for site in sites
+            if str(site.get("lhs") or "") == expected_producer["lhs"]
+            and Path(str(site.get("file") or "")).name == expected_producer["file"]
+            and str(site.get("file") or "").lower().endswith(".cpp")
+        ]
+        if not row.get("producer") or not row.get("rooted") or not matching:
             blocking.append(
                 {
                     "code": "CRITICAL_KEY_PRODUCER_MISSING",
-                    "detail": f"{key} must have a current-source producer site and trusted root",
+                    "detail": f"{key} must be produced by {expected_producer['lhs']} in {expected_producer['file']}",
                     "evidence": row,
                 }
             )
+        # Member-backed critical keys must never pick up the bare declaration
+        # initializer that caused the old short-name ambiguity.
+        if "." in expected_producer["lhs"]:
+            bare = expected_producer["lhs"].split(".")[-1]
+            bad = [
+                site for site in sites
+                if str(site.get("lhs") or "") == bare
+                or str(site.get("file") or "").lower().endswith((".h", ".hpp", ".hh"))
+            ]
+            if bad:
+                blocking.append(
+                    {
+                        "code": "CRITICAL_KEY_FALSE_PRODUCER",
+                        "detail": f"{key} contains declaration/short-name producer pollution",
+                        "bad_sites": bad,
+                    }
+                )
 
     synthetic_branch_roots = [
         e.id for e in cm.by_kind(EntityKind.COMPILE_VAR)
@@ -128,6 +155,14 @@ def _fresh_soundness_checks(uo: Path, binary: dict[str, Any]) -> list[dict[str, 
                 "code": "SYNTHETIC_BRANCH_COMPILE_ROOT",
                 "detail": "uppercase branch spellings were promoted to compile roots",
                 "examples": synthetic_branch_roots[:20],
+            }
+        )
+
+    if "input_root" in list(cm.meta.get("passes_run") or []):
+        blocking.append(
+            {
+                "code": "RETIRED_DERIVED_KEY_PASS_ACTIVE",
+                "detail": "fresh structural pipeline still runs legacy input_root/derive_key_fields adapter",
             }
         )
 
@@ -209,7 +244,7 @@ def run(operator: Path, out_dir: Path) -> dict[str, Any]:
         "",
     ]
     evidence = {row.get("key"): row for row in (binary.get("tiling_key_evidence") or []) if isinstance(row, dict)}
-    for key in sorted(CRITICAL_PRODUCER_KEYS):
+    for key in sorted(CRITICAL_PRODUCERS):
         row = evidence.get(key) or {}
         sites = row.get("producer_sites") or []
         lines.append(f"- `{key}`: producer=`{row.get('producer')}`, rooted=`{row.get('rooted')}`, sites=`{sites[:6]}`")
