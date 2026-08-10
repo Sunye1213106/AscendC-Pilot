@@ -7,7 +7,6 @@ role_id: referee
 agent_id: tg-init-audit
 execution_mode: subagent
 capabilities:
-- structured-review
 - kb-query
 policies:
 - source-authority

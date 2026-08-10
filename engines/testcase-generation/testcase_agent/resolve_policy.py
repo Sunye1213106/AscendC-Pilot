@@ -58,6 +58,16 @@ AUDIT_CHECKLIST_IDS: tuple[str, ...] = (
     "kernel_shape_progress",
 )
 
+# Full tilingkey_full_coverage audit — no CSV lexicon/shape-graph obligations.
+TILINGKEY_AUDIT_CHECKLIST_IDS: tuple[str, ...] = (
+    "tilingkey_contract",
+    "declared_set_nonempty",
+    "binding_inventory",
+    "host_view_aligned",
+    "graph_fingerprint",
+    "integrity_gate",
+)
+
 # Subset enforced by --verify-csv-closure (same names as checklist ids).
 VERIFY_GATE_IDS: tuple[str, ...] = (
     "merge_report",
@@ -708,7 +718,7 @@ def _norm_mid_name(name: str) -> str:
 def collect_open_mid_symbols(out_root: Path, *, limit: int = 32) -> dict[str, Any]:
     """
     Queue of intermediate symbols that still need nested uo-query Tasks
-    (ses_07c3 style: uncertain → CBM/subagent until CSV).
+    (ses_07c3 style: uncertain → UO query/subagent until CSV).
     """
     root = Path(out_root)
     open_syms: dict[str, dict[str, Any]] = {}

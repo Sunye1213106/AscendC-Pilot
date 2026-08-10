@@ -1,0 +1,6 @@
+# Toy observations — withheld_from discipline (no self-proving logs).
+version: 1
+withheld_from: []
+constants: {}
+notes:
+  - toy package; constants resolve by name only

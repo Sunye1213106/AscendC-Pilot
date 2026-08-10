@@ -19,14 +19,8 @@ def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
     if not sets and not raise_limits:
         return {}
 
-    try:
-        from uo.scripts.propose_extract_plan import (
-            EXTRACT_LIMIT_SPECS,
-            apply_extract_limits_to_environ,
-            persist_extract_limits,
-        )
-    except Exception:  # noqa: BLE001
-        return {"ok": False, "error": "extract_limit_helpers_unavailable"}
+    # Old extract-plan limit knobs removed with understand-operator-old.
+    return {"ok": True, "skipped": True, "reason": "extract_limits_not_applicable"}
 
     env_to_key = {env: key for key, (env, _default) in EXTRACT_LIMIT_SPECS.items()}
     raised: dict[str, int] = {}
@@ -219,14 +213,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_ir_v.add_argument("--run-id", default="", help="Run id for staging paths")
     p_ir_wl = p_ir_sub.add_parser(
-        "extract-plan-worklist",
-        help="Summarize extract-plan decision_worklist",
+        "extract-plan-obligations",
+        help="汇总 extract_plan semantic_obligations / snapshot",
     )
     p_ir_wl.add_argument("--project", type=Path, default=Path.cwd())
     p_ir_wl.add_argument("--run-id", default="")
     p_ir_cov = p_ir_sub.add_parser(
-        "extract-plan-coverage",
-        help="Report decision_report coverage vs worklist",
+        "extract-plan-relations",
+        help="汇总 semantic_relations / unresolved 计数",
     )
     p_ir_cov.add_argument("--project", type=Path, default=Path.cwd())
     p_ir_cov.add_argument("--run-id", default="")
@@ -275,17 +269,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_scope = sub.add_parser(
         "uo-scope",
-        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/stage/…)",
+        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/finalize)",
     )
     p_scope.add_argument(
         "step",
         choices=[
             "scan",
             "checkpoint",
-            "build-evidence",
-            "closure",
-            "stage",
-            "record-index",
             "finalize",
         ],
         help="Deterministic scope step",
@@ -299,38 +289,72 @@ def main(argv: list[str] | None = None) -> int:
         help="For checkpoint: continue|revise|stop|manual_supplement",
     )
     p_scope.add_argument("--notes", default="")
-    p_scope.add_argument(
-        "--cbm-project",
-        default="",
-        help="For record-index: MCP index_repository project name",
-    )
 
     p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
     p_uq.add_argument("--project", type=Path, default=Path.cwd())
     p_uq.add_argument("--op-name", default="")
     p_uq.add_argument("--pattern", default="")
     p_uq.add_argument("--target", default="")
+    p_uq.add_argument(
+        "--mode",
+        default="search",
+        choices=(
+            "search",
+            "constraints",
+            "neighbors",
+            "impact",
+            "field",
+            "branches",
+            "templates",
+        ),
+        help="search|constraints|neighbors|impact|field|branches|templates",
+    )
+    p_uq.add_argument("--file", default="", help="impact 模式：源码相对路径")
+    p_uq.add_argument("--line", type=int, default=0, help="impact 模式：起始行")
+    p_uq.add_argument("--line-end", type=int, default=0, help="impact 模式：结束行（默认=--line）")
+    p_uq.add_argument("--kind", default="", help="search 时限定 node kind，逗号分隔")
     p_uq.add_argument("--depth", type=int, default=1)
     p_uq.add_argument("--limit", type=int, default=50)
     p_uq.add_argument("--relation-type", default="")
     p_uq.add_argument("--status-only", action="store_true")
 
-    p_cbm = sub.add_parser(
-        "cbm",
-        help="CBM locate + windowed source read for producers (wraps CbmClient)",
+    p_uo = sub.add_parser("uo", help="UO Host contract 查询与解释")
+    p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
+    for explain_name, help_zh in (
+        ("explain-host-value", "解释 HostValue 推导路径"),
+        ("explain-tiling-field", "解释 TilingField 写入/读点与影响范围"),
+        ("explain-key-dimension", "解释 KeyDimension 组成"),
+        ("impact", "按源码位置查影响子图"),
+        ("search", "KB 全文/子串检索"),
+    ):
+        p_ex = p_uo_sub.add_parser(explain_name, help=help_zh)
+        p_ex.add_argument("entity_id", nargs="?", default="", help="实体 id / 字段名 / 检索词")
+        p_ex.add_argument("--project", type=Path, default=Path.cwd())
+        p_ex.add_argument("--op-name", default="")
+        p_ex.add_argument("--file", default="")
+        p_ex.add_argument("--line", type=int, default=0)
+        p_ex.add_argument("--line-end", type=int, default=0)
+        p_ex.add_argument("--limit", type=int, default=50)
+    p_dump = p_uo_sub.add_parser("dump", help="从 kb_graph.sqlite 按需导出 YAML view")
+    p_dump.add_argument(
+        "view",
+        nargs="?",
+        default="",
+        help="view 名/别名：manifest, quality, tilingdata, kernel, …",
     )
-    p_cbm_sub = p_cbm.add_subparsers(dest="cbm_cmd", required=True)
-    p_cbm_lu = p_cbm_sub.add_parser(
-        "lookup",
-        help="Resolve symbol → bounded snippet (prefer before whole-file Read)",
+    p_dump.add_argument("--project", type=Path, default=Path.cwd())
+    p_dump.add_argument("--out", type=Path, default=None, help="输出路径（省略则打印 YAML）")
+    p_dump.add_argument("--list", action="store_true", help="列出 DB 中可用 view")
+    p_loc = p_uo_sub.add_parser("locate", help="定位实体源码 file:line")
+    p_loc.add_argument("query", help="实体 id / 维名 / 字段名 / 分支 id")
+    p_loc.add_argument("--project", type=Path, default=Path.cwd())
+    p_loc.add_argument("--kind", default="", help="逗号分隔 node kinds")
+    p_loc.add_argument(
+        "--mode",
+        choices=("search", "dim", "branch", "field"),
+        default="search",
     )
-    p_cbm_lu.add_argument("--project", type=Path, default=Path.cwd())
-    p_cbm_lu.add_argument("--name", required=True, help="Symbol short name or qualified_name")
-    p_cbm_lu.add_argument("--file-contains", default="", help="Prefer/narrow by path fragment")
-    p_cbm_lu.add_argument("--architecture", default="", help="e.g. arch35 (ranking only)")
-    p_cbm_lu.add_argument("--class-qn", default="", help="Owning class / namespace hint")
-    p_cbm_lu.add_argument("--pad", type=int, default=2, help="Snippet line padding")
-    p_cbm_lu.add_argument("--limit", type=int, default=8, help="Max ambiguous hits")
+    p_loc.add_argument("--limit", type=int, default=20)
 
     p_dbg = sub.add_parser(
         "debug",
@@ -735,7 +759,7 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.paths import uo_root
 
         uo = uo_root(args.project, args.op_name or None)
-        from uo.scripts.check_final_confidence import check_final_confidence
+        return print_json({"ok": False, "error": "legacy_command_removed"}) or 2
 
         payload = check_final_confidence(
             uo,
@@ -773,46 +797,198 @@ def main(argv: list[str] | None = None) -> int:
             architecture=args.architecture or "arch35",
             decision=args.decision or "",
             notes=args.notes or "",
-            cbm_project=getattr(args, "cbm_project", "") or "",
         )
         return print_result(payload)
     if args.cmd == "uo-query":
-        from uo.scripts.uo_kb_query import main as query_main
+        from ascendc_pilot.paths import uo_root
+        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
-        op = str(args.op_name or "").strip() or project.name
-        argv = [str(project), "--op-name", op]
+        uo = uo_root(project)
         if args.status_only:
-            argv.append("--status-only")
-        else:
-            if not args.pattern:
-                print_json(
-                    {"ok": False, "error": "pattern_required", "message_zh": "非 --status-only 时需要 --pattern"}
-                )
-                return 2
-            argv.extend(["--pattern", args.pattern])
-            if args.target:
-                argv.extend(["--target", args.target])
-            argv.extend(["--depth", str(args.depth), "--limit", str(args.limit)])
-            if args.relation_type:
-                argv.extend(["--relation-type", args.relation_type])
-        return int(query_main(argv) or 0)
-    if args.cmd == "cbm":
-        if args.cbm_cmd == "lookup":
-            from ascendc_pilot.cbm_lookup import lookup_symbol
-
-            payload = lookup_symbol(
-                Path(args.project).resolve(),
-                name=str(args.name or ""),
-                file_contains=str(args.file_contains or ""),
-                architecture=str(args.architecture or ""),
-                class_qn=str(getattr(args, "class_qn", "") or ""),
-                pad=int(args.pad or 2),
-                limit=int(args.limit or 8),
+            db = uo / "indexes" / "kb_graph.sqlite"
+            print_json(
+                {
+                    "ok": db.is_file(),
+                    "uo_root": uo.as_posix(),
+                    "sqlite": db.as_posix() if db.is_file() else "",
+                    "engine": "uo_init.uo_query",
+                }
             )
-            print_json(payload)
+            return 0 if db.is_file() else 1
+        pattern = str(args.pattern or args.target or "").strip()
+        mode = str(getattr(args, "mode", "search") or "search")
+        if mode != "impact" and not pattern:
+            print_json(
+                {
+                    "ok": False,
+                    "error": "pattern_required",
+                    "message_zh": "非 --status-only 时需要 --pattern（impact 模式用 --file/--line）",
+                }
+            )
+            return 2
+        try:
+            q = open_query(uo)
+            limit = int(args.limit or 50)
+            if mode == "constraints":
+                rows = q.constraints_for(pattern)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            elif mode == "neighbors":
+                rows = q.neighbors(pattern, depth=int(args.depth or 1), limit=limit)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows}
+            elif mode == "impact":
+                f = str(getattr(args, "file", "") or pattern)
+                line = int(getattr(args, "line", 0) or 0)
+                line_end = int(getattr(args, "line_end", 0) or line or 0)
+                if not f or not line:
+                    print_json({"ok": False, "error": "impact_needs_file_line"})
+                    return 2
+                rows = q.impact_of(f, (line, line_end or line))
+                payload = {
+                    "ok": True,
+                    "mode": mode,
+                    "file": f,
+                    "line": line,
+                    "line_end": line_end or line,
+                    "count": len(rows),
+                    "rows": rows[:limit],
+                }
+            elif mode == "field":
+                payload = q.field_impact(pattern)
+                payload["mode"] = mode
+            elif mode == "branches":
+                rows = q.branches_for_key(pattern)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            elif mode == "templates":
+                rows = q.templates_for_key(pattern)
+                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            else:
+                kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
+                rows = q.search(pattern, kinds=kinds, limit=limit)
+                payload = {
+                    "ok": True,
+                    "mode": "search",
+                    "pattern": pattern,
+                    "kinds": kinds,
+                    "count": len(rows),
+                    "rows": rows,
+                }
+            payload["engine"] = "uo_init.uo_query"
+            print_json(payload, default=str)
             return 0 if payload.get("ok") else 1
-        return 2
+        except Exception as exc:  # noqa: BLE001
+            print_json({"ok": False, "error": str(exc)[:300]})
+            return 1
+    if args.cmd == "uo":
+        from ascendc_pilot.paths import uo_root
+
+        project = Path(args.project).resolve()
+        uo = uo_root(project)
+        if args.uo_cmd == "dump":
+            from uo_init.dump import dump_view
+            from uo_init.kb_index import list_view_blobs
+
+            db = uo / "indexes" / "kb_graph.sqlite"
+            if getattr(args, "list", False):
+                print_json(
+                    {"ok": db.is_file(), "views": list_view_blobs(db) if db.is_file() else []}
+                )
+                return 0 if db.is_file() else 1
+            if not str(getattr(args, "view", "") or "").strip():
+                print_json({"ok": False, "error": "view_required"})
+                return 2
+            try:
+                result = dump_view(uo, str(args.view), out=getattr(args, "out", None))
+                if getattr(args, "out", None):
+                    print_json({k: v for k, v in result.items() if k != "payload"})
+                else:
+                    import yaml
+
+                    print(
+                        yaml.safe_dump(
+                            result.get("payload"),
+                            allow_unicode=True,
+                            sort_keys=True,
+                            default_flow_style=False,
+                        ),
+                        end="",
+                    )
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                print_json({"ok": False, "error": str(exc)[:300]})
+                return 1
+        if args.uo_cmd == "locate":
+            from uo_init.source_locator import open_locator
+
+            try:
+                loc = open_locator(uo)
+                kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
+                mode = str(getattr(args, "mode", "search") or "search")
+                query = str(args.query or "")
+                limit = int(getattr(args, "limit", 20) or 20)
+                if mode == "dim":
+                    rows = loc.locate_dim(query, limit=limit)
+                elif mode == "branch":
+                    rows = loc.locate_branch(query, limit=limit)
+                elif mode == "field":
+                    rows = loc.locate_field(query, limit=limit)
+                else:
+                    rows = loc.locate(query, kinds=kinds or None, limit=limit)
+                print_json(
+                    {
+                        "ok": True,
+                        "mode": mode,
+                        "count": len(rows),
+                        "locations": [r.to_dict() for r in rows],
+                    }
+                )
+                return 0
+            except Exception as exc:  # noqa: BLE001
+                print_json({"ok": False, "error": str(exc)[:300]})
+                return 1
+
+        from uo_init.uo_query import open_query
+
+        eid = str(args.entity_id or "")
+        try:
+            q = open_query(uo)
+            if args.uo_cmd == "explain-host-value":
+                result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
+            elif args.uo_cmd == "explain-tiling-field":
+                result = q.field_impact(eid)
+                result["entity_id"] = eid
+            elif args.uo_cmd == "explain-key-dimension":
+                result = {
+                    "ok": True,
+                    "entity_id": eid,
+                    "branches": q.branches_for_key(eid) if hasattr(q, "branches_for_key") else [],
+                    "templates": q.templates_for_key(eid) if hasattr(q, "templates_for_key") else [],
+                }
+            elif args.uo_cmd == "impact":
+                f = str(getattr(args, "file", "") or "")
+                line = int(getattr(args, "line", 0) or 0)
+                line_end = int(getattr(args, "line_end", 0) or line or 0)
+                if not f or not line:
+                    result = {"ok": False, "error": "impact_needs_file_line"}
+                else:
+                    rows = q.impact_of(f, (line, line_end or line))
+                    result = {
+                        "ok": True,
+                        "file": f,
+                        "line": line,
+                        "count": len(rows),
+                        "rows": rows[: int(getattr(args, "limit", 50) or 50)],
+                    }
+            elif args.uo_cmd == "search":
+                rows = q.search(eid, limit=int(getattr(args, "limit", 50) or 50))
+                result = {"ok": True, "pattern": eid, "count": len(rows), "rows": rows}
+            else:
+                print_json({"ok": False, "error": f"未知 uo 子命令: {args.uo_cmd}"})
+                return 2
+        except Exception as exc:  # noqa: BLE001
+            result = {"ok": False, "error": str(exc)[:300]}
+        print_json(result, default=str)
+        return 0 if result.get("ok") else 1
     if args.cmd == "debug":
         return _cmd_debug(args)
     return 2
@@ -986,7 +1162,7 @@ def _cmd_debug(args: Any) -> int:
 def _cmd_inspect(args: Any) -> int:
     from collections import Counter
 
-    from uo.scripts._ir_io import read_yaml
+    from ascendc_pilot.uo_artifacts import read_yaml
 
     project = Path(args.project).resolve()
     uo = project / ".ascendc-pilot" / "uo"
@@ -1066,13 +1242,12 @@ def _cmd_inspect(args: Any) -> int:
         dups = {k: v for k, v in c.items() if k and v > 1}
         print_json({"ok": True, "duplicate_targets": dups, "count": len(dups)}, default=str)
         return 0
-    if sub == "extract-plan-worklist":
-        from uo.scripts.extract_plan_decision import build_decision_worklist
-
+    if sub == "extract-plan-obligations":
         run_id = str(getattr(args, "run_id", "") or "").strip()
-        wl_path = None
+        obl = None
+        snap = None
         if run_id:
-            cand = (
+            base = (
                 project
                 / ".ascendc-pilot"
                 / "runs"
@@ -1080,45 +1255,25 @@ def _cmd_inspect(args: Any) -> int:
                 / "actions"
                 / "extract_plan"
                 / "inputs"
-                / "decision_worklist.yaml"
             )
-            if cand.is_file():
-                wl_path = cand
-        if wl_path is None:
-            alt = uo / "ir" / "extract_plan_decision_worklist.yaml"
-            wl_path = alt if alt.is_file() else None
-        if wl_path is not None:
-            doc = read_yaml(wl_path) or {}
-        else:
-            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-            doc = build_decision_worklist(cands if isinstance(cands, dict) else {})
-        items = [w for w in (doc.get("work_items") or []) if isinstance(w, dict)]
+            if (base / "semantic_obligations.yaml").is_file():
+                obl = read_yaml(base / "semantic_obligations.yaml")
+            if (base / "extract_plan_snapshot.yaml").is_file():
+                snap = read_yaml(base / "extract_plan_snapshot.yaml")
         print_json(
             {
                 "ok": True,
-                "path": str(wl_path) if wl_path else "(built)",
-                "counts": doc.get("counts") or {
-                    "work_items": len(items),
-                    "required": sum(1 for w in items if w.get("required_decision")),
-                },
-                "required_ids": [
-                    str(w.get("candidate_id"))
-                    for w in items
-                    if w.get("required_decision") and w.get("candidate_id")
-                ][:200],
+                "snapshot": snap if isinstance(snap, dict) else {},
+                "deterministic_count": (obl or {}).get("deterministic_count") if isinstance(obl, dict) else 0,
+                "llm_required_count": (obl or {}).get("llm_required_count") if isinstance(obl, dict) else 0,
             },
             default=str,
         )
         return 0
-    if sub == "extract-plan-coverage":
-        from uo.scripts.extract_plan_decision import (
-            build_decision_worklist,
-            report_extract_plan_coverage,
-        )
-
+    if sub == "extract-plan-relations":
         run_id = str(getattr(args, "run_id", "") or "").strip()
-        wl = read_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml")
-        if not isinstance(wl, dict) and run_id:
+        graph = read_yaml(uo / "ir" / "semantic_relations.yaml")
+        if not isinstance(graph, dict) and run_id:
             p = (
                 project
                 / ".ascendc-pilot"
@@ -1126,76 +1281,36 @@ def _cmd_inspect(args: Any) -> int:
                 / run_id
                 / "actions"
                 / "extract_plan"
-                / "inputs"
-                / "decision_worklist.yaml"
-            )
-            wl = read_yaml(p) if p.is_file() else None
-        if not isinstance(wl, dict):
-            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-            wl = build_decision_worklist(cands if isinstance(cands, dict) else {})
-        report = None
-        if run_id:
-            rp = (
-                project
-                / ".ascendc-pilot"
-                / "runs"
-                / run_id
-                / "actions"
-                / "extract_plan"
                 / "staging"
-                / "decision_report.yaml"
+                / "semantic_relations.yaml"
             )
-            if rp.is_file():
-                report = read_yaml(rp)
-        if not isinstance(report, dict):
-            report = read_yaml(uo / "ir" / "extract_plan_decision_report.yaml")
-        cov = report_extract_plan_coverage(
-            wl if isinstance(wl, dict) else {},
-            report if isinstance(report, dict) else None,
+            if p.is_file():
+                graph = read_yaml(p)
+        graph = graph if isinstance(graph, dict) else {}
+        print_json(
+            {
+                "ok": True,
+                "relation_count": len(graph.get("relations") or []),
+                "entity_count": len(graph.get("entities") or []),
+                "unresolved_count": len(graph.get("unresolved") or []),
+                "input_root_count": len(graph.get("input_roots") or []),
+            },
+            default=str,
         )
-        # Optionally write to action scratch when run_id present.
-        if run_id:
-            scratch = (
-                project
-                / ".ascendc-pilot"
-                / "runs"
-                / run_id
-                / "actions"
-                / "extract_plan"
-                / "scratch"
-                / "coverage_report.yaml"
-            )
-            try:
-                scratch.parent.mkdir(parents=True, exist_ok=True)
-                from uo.scripts._ir_io import write_yaml
-
-                write_yaml(scratch, cov)
-                cov["scratch"] = str(scratch)
-            except OSError:
-                pass
-        print_json(cov, default=str)
-        return 0 if cov.get("ok") else 1
+        return 0
     if sub == "validate":
         what = str(getattr(args, "what", "extract_plan") or "extract_plan")
-        if what in {"extract_plan", "extract-plan-staging"}:
-            from uo.scripts.extract_plan_autofill import (
-                stamp_candidate_ids,
-                validate_tri_state_coverage,
-            )
-            from uo.scripts.extract_plan_decision import (
-                build_decision_worklist,
-                is_decision_report,
-                validate_extract_plan_staging,
-            )
+        if what in {"extract_plan", "extract-plan-staging", "parts"}:
+            return print_json({"ok": False, "error": "legacy_command_removed"}) or 2
 
-            cands = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-            if isinstance(cands, dict):
-                stamp_candidate_ids(cands)
+            plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
+            errs = assert_canonical_plan_slim(plan if isinstance(plan, dict) else {})
+            rel = read_yaml(uo / "ir" / "semantic_relations.yaml")
+            if what != "parts" and not isinstance(rel, dict):
+                errs.append("缺少 semantic_relations.yaml")
             run_id = str(getattr(args, "run_id", "") or "").strip()
-            report = None
-            worklist = read_yaml(uo / "ir" / "extract_plan_decision_worklist.yaml")
-            if run_id:
-                rp = (
+            if what == "parts" and run_id:
+                part_dir = (
                     project
                     / ".ascendc-pilot"
                     / "runs"
@@ -1203,48 +1318,10 @@ def _cmd_inspect(args: Any) -> int:
                     / "actions"
                     / "extract_plan"
                     / "staging"
-                    / "decision_report.yaml"
+                    / "relation_parts"
                 )
-                if rp.is_file():
-                    report = read_yaml(rp)
-                wlp = (
-                    project
-                    / ".ascendc-pilot"
-                    / "runs"
-                    / run_id
-                    / "actions"
-                    / "extract_plan"
-                    / "inputs"
-                    / "decision_worklist.yaml"
-                )
-                if wlp.is_file():
-                    worklist = read_yaml(wlp)
-            if what == "extract-plan-staging":
-                if not isinstance(worklist, dict):
-                    worklist = build_decision_worklist(
-                        cands if isinstance(cands, dict) else {}
-                    )
-                errs = validate_extract_plan_staging(
-                    report=report if isinstance(report, dict) else None,
-                    worklist=worklist if isinstance(worklist, dict) else {},
-                    plan=None,
-                    candidates=cands if isinstance(cands, dict) else {},
-                    project_root=project,
-                )
-                print_json({"ok": not errs, "errors": errs}, default=str)
-                return 0 if not errs else 1
-            plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
-            if isinstance(report, dict) and is_decision_report(report):
-                errs = validate_extract_plan_staging(
-                    report=report,
-                    worklist=worklist
-                    if isinstance(worklist, dict)
-                    else build_decision_worklist(cands if isinstance(cands, dict) else {}),
-                )
-            else:
-                errs = validate_tri_state_coverage(
-                    plan if isinstance(plan, dict) else {}, cands
-                )
+                if not part_dir.is_dir():
+                    errs.append("缺少 staging/relation_parts")
             print_json({"ok": not errs, "errors": errs}, default=str)
             return 0 if not errs else 1
         print_json({"ok": False, "error": "unsupported_validate", "what": what})
@@ -1308,13 +1385,19 @@ def _doctor(project: Path) -> int:
     except ImportError:
         issues.append("ascendc_pilot not installed (pip install -e ./pilot)")
     try:
-        import uo  # noqa: F401
+        import uo_init  # noqa: F401
     except ImportError:
-        issues.append("uo engine not installed (pip install -e ./engines/understand-operator)")
+        issues.append("uo_init engine not installed (pip install -e ./engines/understand-operator)")
     try:
         import testcase_agent  # noqa: F401
     except ImportError:
         issues.append("testcase_agent not installed (pip install -e ./engines/testcase-generation)")
+    try:
+        import code_engineering  # noqa: F401
+    except ImportError:
+        warnings.append(
+            "code_engineering not installed (pip install -e ./engines/code-engineering)"
+        )
 
     from ascendc_pilot.paths import AGENT_DIR, ensure_agent_layout
 
@@ -1331,14 +1414,30 @@ def _doctor(project: Path) -> int:
         scripts = repo / "scripts"
         if scripts.is_dir() and str(scripts) not in sys.path:
             sys.path.insert(0, str(scripts))
-        from compose_runtime import validate, validate_generated
+        from compose_runtime import (
+            check_generated_drift,
+            validate,
+            validate_generated,
+        )
 
         src_errors = validate(repo)
         for err in src_errors:
             issues.append(f"compose: {err}")
-        gen_errors = validate_generated(repo, host="opencode")
-        for err in gen_errors:
-            issues.append(f"generated: {err}")
+        for host in ("opencode", "cursor", "codex"):
+            gen_dir = repo / "generated" / host
+            if not gen_dir.is_dir():
+                warnings.append(
+                    f"generated/{host} missing — run: "
+                    f"python scripts/compose_runtime.py --repo . --host {host}"
+                )
+                continue
+            gen_errors = validate_generated(repo, host=host)
+            for err in gen_errors:
+                issues.append(f"generated/{host}: {err}")
+        drift = check_generated_drift(repo, hosts=["opencode", "cursor", "codex"])
+        for err in drift:
+            # Drift is a soft fail until install regenerates; still surface loudly.
+            warnings.append(err)
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"compose validation skipped: {exc}")
 
@@ -1346,27 +1445,7 @@ def _doctor(project: Path) -> int:
     try:
         import z3  # noqa: F401
     except ImportError:
-        warnings.append("z3 not installed (pip install -e ./engines/testcase-generation[solver]) — /tg-solve will fail")
-
-    # CBM MCP: plugin install ≠ MCP configured
-    try:
-        import json
-        from pathlib import Path as _P
-
-        oc = _P.home() / ".config" / "opencode" / "opencode.json"
-        if oc.is_file():
-            cfg = json.loads(oc.read_text(encoding="utf-8"))
-            mcp = cfg.get("mcp") or cfg.get("mcpServers") or {}
-            names = {str(k).lower() for k in (mcp.keys() if isinstance(mcp, dict) else [])}
-            if not any("codebase-memory" in n or n == "cbm" for n in names):
-                warnings.append(
-                    "OpenCode opencode.json has no codebase-memory-mcp — "
-                    "see docs/cbm-mcp-setup.md (UO source lookup degraded)"
-                )
-        else:
-            warnings.append("OpenCode opencode.json missing — CBM MCP not configured")
-    except Exception as exc:  # noqa: BLE001
-        warnings.append(f"CBM MCP check skipped: {exc}")
+        warnings.append("z3 not installed; only explicit legacy-solver comparison is unavailable")
 
     # TG consumer root hint
     import os

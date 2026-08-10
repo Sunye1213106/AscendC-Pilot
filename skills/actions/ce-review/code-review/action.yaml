@@ -7,9 +7,8 @@ role_id: readonly_reviewer
 agent_id: ce-reviewer
 execution_mode: subagent
 capabilities:
-- structured-review
 - kb-query
-- cbm-navigation
+- source-navigation
 - source-reading
 policies:
 - source-authority

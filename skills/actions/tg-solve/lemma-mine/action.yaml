@@ -1,0 +1,37 @@
+# GENERATED from Workflow Spec — do not hand-edit identity fields
+id: lemma_mine
+workflow_id: tg-solve
+role_id: producer
+agent_id: tg-lemma-producer
+execution_mode: subagent
+capabilities:
+- source-reading
+- source-navigation
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+task_prompt_id: tg/lemma-mine
+context_profile_id: tg-solve-lemma-mine
+output_contract_id: lemma-mine-v1
+allowed_write_paths:
+- runs/{run_id}/actions/lemma_mine/parts/**
+- runs/{run_id}/actions/lemma_mine/scratch/**
+- runs/{run_id}/actions/lemma_mine/staging.yaml
+forbidden_write_paths:
+- runs/{run_id}/actions/lemma_mine/staging.yaml
+allowed_read_paths:
+- tg/closure/lemmas/leads.yaml
+- tg/closure/lemmas/evidence/**
+- uo/ir/**
+- uo/tiling/**
+- runs/**/actions/lemma_mine/**
+forbidden_read_paths: []
+checker:
+  required: true
+referee:
+  required: false
+generated_from: workflow_spec

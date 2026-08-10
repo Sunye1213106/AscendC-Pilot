@@ -118,4 +118,4 @@ def test_install_contract_into_project(tmp_path: Path) -> None:
     contract = _contract_dir(tmp_path)
     dest = install_contract_into_project(repo, "flash_attention_score_grad", contract)
     assert (dest / "realization_map.yaml").is_file()
-    assert dest == (repo / ".ascendc-pilot" / "tg" / "realization").resolve()
+    assert dest == (repo / ".ascendc-pilot" / "arch35" / "tg" / "realization").resolve()

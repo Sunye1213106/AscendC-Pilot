@@ -1,4 +1,4 @@
-"""Composer / compositional source validation tests."""
+"""Composer / runtime-context validation tests."""
 
 from __future__ import annotations
 
@@ -20,31 +20,70 @@ def test_compose_validate_clean():
     assert errors == [], errors
 
 
-def test_action_composition_fields_present():
-    from ascendc_pilot.workflows.specs import WORKFLOWS
+def test_uo_actions_match_engine_and_prompt_boundary():
+    from ascendc_pilot.workflows import WORKFLOWS
 
-    act = next(a for a in WORKFLOWS["uo-init"]["actions"] if a["id"] == "key_resolution")
-    assert act["agent_id"] == "uo-key-resolve"
-    assert act["role_id"] == "producer"
-    assert "evidence" in act["policy_ids"]
-    assert "semantic-resolution" in act["capability_ids"]
-    assert act["action_method_id"] == "uo-init/key-resolution"
-    assert act["task_prompt_id"] == "uo/key-resolution"
-    assert act["actors"] == ["uo-key-resolve"]
+    actions = {a["id"]: a for a in WORKFLOWS["uo-init"]["actions"]}
+
+    prepare = actions["prepare"]
+    assert prepare["execution_mode"] == "primary_interactive"
+    assert prepare["agent_id"] == "ascendc-pilot"
+    assert prepare["task_prompt_id"] == "uo/scope-confirmation"
+
+    resolve = actions["resolve"]
+    assert resolve["execution_mode"] == "subagent"
+    assert resolve["agent_id"] == "uo-semantic-resolver"
+    assert resolve["task_prompt_id"] == "uo/resolve-gaps"
+
+    for action_id in ("extract", "analyze", "apply_gap_patch", "commit", "review"):
+        action = actions[action_id]
+        assert action["execution_mode"] == "deterministic"
+        assert not action.get("agent_id")
+        assert not action.get("task_prompt_id")
+        assert action.get("actors") == []
+
+    for action in WORKFLOWS["uo-update"]["actions"]:
+        assert action["execution_mode"] == "deterministic"
+        assert not action.get("agent_id")
+        assert not action.get("task_prompt_id")
+
+    query = next(a for a in WORKFLOWS["uo-query"]["actions"] if a["id"] == "kb_lookup")
+    assert query["task_prompt_id"] == "uo/codemap-query"
 
 
-def test_compose_host_smoke(tmp_path: Path):
+def test_compose_and_prune_runtime_context(tmp_path: Path):
     from compose_runtime import compose_host
+    from prune_runtime_context import prune
 
-    # Compose into real generated path for opencode (side effect ok in CI)
-    result = compose_host(REPO, "opencode")
+    out = tmp_path / "opencode"
+    result = compose_host(REPO, "opencode", out_root=out)
     assert result["ok"]
-    skill = REPO / "generated" / "opencode" / "skills" / "uo-init" / "SKILL.md"
-    agent = REPO / "generated" / "opencode" / "agents" / "uo-key-resolve.md"
-    prompt = REPO / "generated" / "opencode" / "prompts" / "tasks" / "uo" / "key-resolution.md"
-    assert skill.is_file()
-    assert agent.is_file()
-    assert prompt.is_file()
-    text = skill.read_text(encoding="utf-8")
-    assert "Composition index" in text
-    assert "pilot-control" in text
+
+    # prune() works on generated/<host>; mirror the temporary compose there so
+    # the test does not mutate committed/generated state.
+    generated = REPO / "generated" / "_test_prune"
+    if generated.exists():
+        import shutil
+
+        shutil.rmtree(generated)
+    import shutil
+
+    shutil.copytree(out, generated)
+    try:
+        pruned = prune(REPO, "_test_prune")
+        assert pruned["ok"], pruned
+        agents = generated / "agents"
+        prompts = generated / "prompts" / "tasks" / "uo"
+        assert not (agents / "deterministic-uo-engine.md").exists()
+        assert not (agents / "deterministic-tg-engine.md").exists()
+        assert (agents / "uo-semantic-resolver.md").is_file()
+        assert (agents / "uo-query.md").is_file()
+        assert (prompts / "codemap-query.md").is_file()
+        assert not (prompts / "kb-review.md").exists()
+        assert not (prompts / "kb-lookup.md").exists()
+
+        init_skill = (generated / "skills" / "uo-init" / "SKILL.md").read_text(encoding="utf-8")
+        assert "| `extract` | `deterministic` | `engine` |" in init_skill
+        assert "| `review` | `deterministic` | `engine` |" in init_skill
+    finally:
+        shutil.rmtree(generated, ignore_errors=True)

@@ -139,12 +139,22 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
         # Use the domain engine's canonical confirmation path: it rechecks merge,
         # domain symmetry, full CSV closure, audit completeness, and writes the
         # UO fingerprint before status can become confirmed.
+        from ascendc_pilot.workflows import resolve_tg_mode
+
+        mode = resolve_tg_mode(project_root)
+        require_merge = mode == "csv_consumer"
         watched = [
             tg / "init" / "status.yaml",
             tg / "init" / "kb_fingerprint.yaml",
-            tg / "realization" / "domain_review.yaml",
-            tg / "realization" / "binding_lexicon.yaml",
+            tg / "init" / "confirmation.yaml",
         ]
+        if require_merge:
+            watched.extend(
+                [
+                    tg / "realization" / "domain_review.yaml",
+                    tg / "realization" / "binding_lexicon.yaml",
+                ]
+            )
         backups = {candidate: candidate.read_bytes() if candidate.is_file() else None for candidate in watched}
         try:
             from testcase_agent.init_status import mark_init_confirmed
@@ -152,7 +162,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
             mark_init_confirmed(
                 tg,
                 notes="Confirmed by Pilot primary_interactive Action",
-                require_merge=True,
+                require_merge=require_merge,
             )
         except Exception as exc:  # noqa: BLE001
             rollback_primary_decision({"backups": backups})
@@ -161,6 +171,18 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
                 "error": "INIT_CONFIRM_DOMAIN_GATE_FAILED",
                 "message_zh": str(exc)[:400],
             }
+        # Record a narrow confirmation receipt (ownership: human_confirm only).
+        confirm_path = tg / "init" / "confirmation.yaml"
+        _dump(
+            confirm_path,
+            {
+                "schema": "tg-init-confirmation/v1",
+                "status": "confirmed",
+                "mode": mode,
+                "confirmed_at": now,
+                **identity,
+            },
+        )
         path = tg / "init" / "status.yaml"
         doc = _load(path)
         doc.update(

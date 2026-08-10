@@ -1,0 +1,23 @@
+# provenance: FAG arch35 已通过实例。结构可照抄，数值/字段名不可搬。
+# 可泛化：marks 只向引擎暴露命名捕获组；scrapes 按 slot 归位；
+# state scrape 可不写封闭 field 列表；report_state 决定谁进宽表。
+version: 1
+marks:
+  case:  '^###CASE (?P<case_id>\S+)'
+  done:  '^###DONE (?P<case_id>\S+) ok=(?P<ok>\d+) key=(?P<key>\d+)'
+  key:   '^###KEY (?P<key>\d+)'
+  dim:   '^###DIM (?P<name>\w+)=(?P<value>-?\d+)'
+  state: '^###STATE (?P<name>\w+)=(?P<value>-?\d+)'
+scrapes:
+  - into: dim
+    when: ['GetTilingKey']
+    pairs: '(\w+)\s*=?\s*\[(-?\d+)\]'
+    fields: []   # 填本算子日志里的维名；空列表表示「协议尚未列出」
+  - into: state
+    when: ['someIntermediateMarker']
+    pairs: '(\w+)\s*=?\s*\[(-?\d+)\]'
+reject:
+  when: ['[ERROR]']
+  after: 'OpName:'
+  limit: 160
+report_state: [intermediate_a, intermediate_b]

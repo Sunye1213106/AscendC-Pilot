@@ -3,15 +3,12 @@ version: 1
 name_zh: AscendC-Pilot
 role: producer
 mode: primary
-description: >-
-  AscendC-Pilot primary control agent. Load workflow skills by description
-  (uo-init / tg-init / …) then acp start; Build/Plan tabs bypass harness.
+description: AscendC-Pilot primary. Load workflow skills by description, then acp
+  start. Semantic methods live under skills/domain/.
 read_scopes:
-  - "*"
-write_scopes:
-  []
+- '*'
+write_scopes: []
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

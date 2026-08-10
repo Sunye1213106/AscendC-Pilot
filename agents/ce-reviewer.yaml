@@ -3,17 +3,17 @@ version: 1
 name_zh: Code review analyst
 role: readonly_reviewer
 mode: subagent
-description: Code review analyst for Code Engineering
+description: Code review analyst. Read session prompt.md first, then skills/domain/code-review/SKILL.md.
 read_scopes:
-  - "uo/**"
-  - "ce/**"
-  - "runs/**"
-  - "context/**"
+- uo/**
+- ce/**
+- runs/**
+- context/**
+- skills/domain/**
 write_scopes:
-  - "ce/review/**"
-  - "runs/**"
+- ce/review/**
+- runs/**
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

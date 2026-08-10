@@ -1,58 +1,18 @@
-## Task
+<task>
+只解决 `prepare` 确定性扫描留下的 operator scope / architecture 歧义。
+</task>
 
-执行 `scope_confirmation`（prepare 完成后的 primary 交互步骤）。
+<context>
+`prepare` 已完成候选发现。若 receipt 表明范围唯一或已自动接受，不要重新选择；只有明确的多候选、根目录冲突或 architecture 不确定时才需要判断。
+</context>
 
-Bundle identity is authoritative.
-Do not replace, infer, normalize, or copy identity from old artifacts.
+<instructions>
+1. 比较 bundle 中的候选路径、architecture 和确定性 evidence。
+2. 选择能完整覆盖当前 operator 的最小源码范围，排除明显的其他算子或其他 architecture。
+3. 若现有证据仍不能唯一决定，向用户询问唯一缺失的选择，不进行 Host/Kernel 语义分析。
+4. 不手工构造源码清单，不绕过 `acp uo-scope` / prepare 的候选结果。
+</instructions>
 
-## Mode
-
-- mode: `primary_interactive`
-- workflow_id: `<WORKFLOW_ID>`
-- action_id: `<ACTION_ID>`
-- actor_id: `<ACTOR_ID>`
-- role_id: `<ROLE_ID>`
-- run_id: `<RUN_ID>`
-- action_session_id: `<ACTION_SESSION_ID>`
-- architecture: `<ARCHITECTURE>`
-
-## 严禁（违反即失败）
-
-- 再次执行当前 Action 的 prepare（`run-action` 不含 `--finalize`）或把 primary 当 subagent 派发
-- 认为 acp「只是概念」而手工按 Actions 表执行
-- 跳过 `prepare_layout`
-- 用 Glob / Read / 心算制作架构文件计数表
-- 只扫算子目录、漏掉 sibling/parent `common/`
-- 直调 `python …/macro_scope_scan.py` 等
-- 硬编码算子名、架构或 project 路径
-
-## 必须执行的命令顺序
-
-工作目录 = `<PROJECT_ROOT>`（当前算子根）：
-
-```text
-acp uo-scope scan --project <PROJECT_ROOT> --architecture <ARCHITECTURE>
-# ↑ 把完整 stdout（含 common 检测行与计数表）原样给用户确认
-# AskQuestion: continue | revise | stop | manual_supplement
-
-acp uo-scope checkpoint --project <PROJECT_ROOT> --decision <decision>
-acp uo-scope build-evidence --project <PROJECT_ROOT>
-acp uo-scope closure --project <PROJECT_ROOT>
-acp uo-scope stage --project <PROJECT_ROOT>
-# MUST：MCP index_repository → …/.ascendc-pilot/uo/cbm/index_stage  (mode=fast)
-#       MCP 只建图；记下返回的 project 名
-acp uo-scope record-index --project <PROJECT_ROOT> --cbm-project <MCP返回的project名>
-# ↑ 写出 uo/cbm/index_meta.json（indexed_via=mcp）；禁止跳过直接 finalize
-acp uo-scope finalize --project <PROJECT_ROOT>
-acp run-action <ACTION_ID> --finalize --project <PROJECT_ROOT>
-```
-
-若 scan 输出没有 `Detected AscendC common library` / `common_files`，而仓库存在 `../common`，停止并报告，不要手补。
-
-正式 Output Contract 产物：
-`uo/runs/<RUN_ID>/scope/scope_confirmed.yaml` + `receipt.yaml` + `uo/cbm/index_meta.json`
-（不是 `uo/summary/scope_confirmed.yaml`，也不是任意旧 run 的 `uo/runs/*/…`）。
-
-## Output Contract
-
-`scope-confirmed-v1`
+<output>
+只提交当前 `uo-prepare-v1` 合同需要的 scope / BuildVariant 决策；不要执行 extract、analyze 或 resolve。
+</output>

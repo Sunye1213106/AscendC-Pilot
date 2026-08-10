@@ -229,7 +229,7 @@ def test_old_project_sessions_not_exported(tmp_path: Path) -> None:
     old_run = "RUN_old99999999"
     (tmp_path / "session-ses_070dOLD.md").write_text("# stale history\n", encoding="utf-8")
     (tmp_path / f"session-{child}.md").write_text("# child\n", encoding="utf-8")
-    dbg.register_child(
+    reg = dbg.register_child(
         tmp_path,
         parent_session_id=parent,
         run_id=old_run,
@@ -237,7 +237,17 @@ def test_old_project_sessions_not_exported(tmp_path: Path) -> None:
         started_at=dbg._now(),
         task_prompt_text="x",
     )
-    dbg.patch_child_session_id(tmp_path, child_session_id=child, parent_session_id=parent)
+    # The registration must be named: the run differs from the active one, so
+    # there is no pending row for the current (run, action) to fall back on.
+    patched = dbg.patch_child_session_id(
+        tmp_path,
+        child_session_id=child,
+        parent_session_id=parent,
+        run_id=old_run,
+        action_id="extract_plan",
+        registration_id=reg["registration_id"],
+    )
+    assert patched.get("ok") is True, patched
     out = dbg.export_child_session(tmp_path, child_session_id=child)
     assert out.get("skipped") and out.get("reason") == "run_id_mismatch"
     assert not list((tmp_path / ".ascendc-pilot" / "debug" / "exports").glob(f"*_{child}"))
@@ -249,7 +259,7 @@ def test_other_parent_session_not_exported(tmp_path: Path) -> None:
     child = "ses_childC001"
     _enable_parent_debug(tmp_path, parent)
     st = load_state(tmp_path) or {}
-    dbg.register_child(
+    reg = dbg.register_child(
         tmp_path,
         parent_session_id=other_parent,
         run_id=str(st.get("run_id") or ""),
@@ -257,7 +267,14 @@ def test_other_parent_session_not_exported(tmp_path: Path) -> None:
         started_at=dbg._now(),
         task_prompt_text="x",
     )
-    dbg.patch_child_session_id(tmp_path, child_session_id=child, parent_session_id=other_parent)
+    patched = dbg.patch_child_session_id(
+        tmp_path,
+        child_session_id=child,
+        parent_session_id=other_parent,
+        action_id="extract_plan",
+        registration_id=reg["registration_id"],
+    )
+    assert patched.get("ok") is True, patched
     out = dbg.export_child_session(tmp_path, child_session_id=child)
     assert out.get("skipped") and out.get("reason") == "parent_session_mismatch"
 

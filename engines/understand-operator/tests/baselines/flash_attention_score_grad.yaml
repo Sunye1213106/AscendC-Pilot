@@ -1,0 +1,13 @@
+host_control_nodes:
+  flash_attention_score_grad_tiling.cpp:
+    sha256: cdfb2c12a2f2a1bbb8198e60d54aeca63f6e59498402081bf4dbeb4644f9a457
+    value: 153
+  flash_attention_score_grad_tiling_common_regbase.cpp:
+    sha256: 0fb935c4119f65435f0e36843a05907eaa52336e4937138b42406848cd024ff2
+    value: 377
+  flash_attention_score_grad_tiling_normal_regbase.cpp:
+    sha256: b8f8a8a40d28a2c60f38b84125f36c6e3321dfefa84323060182c9840cfefc3c
+    value: 324
+  flash_attention_score_grad_tiling_varlen_regbase.cpp:
+    sha256: 6d630724ed13fd7b6ee4b31a22df54d68ac45c493cf9b1224a9f8bac5159a727
+    value: 242

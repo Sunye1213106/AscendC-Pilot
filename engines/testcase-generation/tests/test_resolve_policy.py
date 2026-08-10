@@ -352,14 +352,15 @@ def test_enum_knob_without_csv_determinants_needs_binding() -> None:
         schema={"columns": ["B"], "fields": []},
         lexicon={"key_derivations": []},
         snapshot_files={
-            "contracts/testcase.yaml": {
-                "key_determinants": {
-                    "KEY_SPLITAXIS": {
+            "tiling/key_space.yaml": {
+                "fields": [
+                    {
+                        "id": "KEY_SPLITAXIS",
                         "role": "enum_knob",
                         "needs_binding": False,
                         "csv_determinants": [],
                     }
-                }
+                ]
             }
         },
         consumer_root=None,
@@ -375,16 +376,18 @@ def test_not_input_derivable_skipped_from_needs_binding() -> None:
         schema={"columns": ["B"], "fields": []},
         lexicon={"key_derivations": []},
         snapshot_files={
-            "contracts/testcase.yaml": {
-                "key_determinants": {
-                    "KEY_BLOCKID": {
+            "tiling/key_space.yaml": {
+                "fields": [
+                    {
+                        "id": "KEY_BLOCKID",
                         "role": "switch",
                         "input_derivable": False,
                         "not_input_derivable": True,
                         "needs_binding": False,
                         "csv_determinants": [],
                     },
-                    "KEY_ISNZOUT": {
+                    {
+                        "id": "KEY_ISNZOUT",
                         "role": "switch",
                         "input_derivable": True,
                         "needs_binding": True,
@@ -392,7 +395,7 @@ def test_not_input_derivable_skipped_from_needs_binding() -> None:
                         "host_parent": "HELPER_ENABLE",
                         "derivation_roots": ["HOST_ATTR_SPARSEMODE"],
                     },
-                }
+                ]
             }
         },
         consumer_root=None,

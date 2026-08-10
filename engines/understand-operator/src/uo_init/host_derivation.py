@@ -1,0 +1,2095 @@
+# -*- coding: utf-8 -*-
+"""Key-field derivation as a first-class KB artifact.
+
+`KeyFieldDeriver` expands every TilingKey dimension down to input roots. That
+result used to live only in a debug probe, so the contract layer had nothing to
+reason with: per-key reachability fell back to a pair of hand-written
+invariants, and TG had no key derivations to bind against.
+
+This module runs the derivation for a whole operator and turns it into
+`ir/host_derivation.yaml`. By default the YAML (and the in-memory document)
+keep lightweight metadata only (status / leaves / roots / def_sites / guards).
+Full ``value_expr`` DAGs and the truncated ``expanded`` text are kept only when
+``UO_DEEP_SOLVE=1`` — that optional path feeds Z3 key-reachability and
+``tiling/expr/`` shards. Default uo-init does not solve or retain them.
+
+Lightweight consumers (codemap / gaps pre-sort / key_index) read metadata only.
+Deep consumers need ``UO_DEEP_SOLVE=1`` before derive.
+
+Field / aux / premise jobs run in a persistent-but-replaceable worker pool:
+each worker loads the HostIR bundle once and reuses one ``KeyFieldDeriver``
+across jobs. A timed-out or crashed worker is killed and replaced so one
+runaway expansion cannot stall the rest of the run; that field is recorded
+as ``unresolved`` rather than failing the export.
+"""
+from __future__ import annotations
+
+import multiprocessing as mp
+import os
+import pickle
+import re
+import sys
+import tempfile
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Iterable
+
+from uo_init.derive_key_fields import (
+    AUX_PREFIX,
+    EX_CONSTANT,
+    EX_EXACT,
+    EX_OVERAPPROX,
+    EX_UNRESOLVED,
+    LOOPELEM_PREFIX,
+    OVERAPPROX_PREFIXES,
+    decode_expr_dag,
+    encode_expr_dag,
+    is_aux_var,
+)
+from uo_init.ids import hash12
+from uo_init.kb_model import classify_input_closure, input_closure_is_drivable
+
+DERIVATION_VERSION = 1
+
+
+def deep_solve_enabled() -> bool:
+    """Whether to retain ``value_expr`` / ``expanded`` after grading.
+
+    Default off: derive still grades from the live trees, then drops them so
+    YAML / RAM / materialize stay on lightweight metadata. Set
+    ``UO_DEEP_SOLVE=1`` to keep DAGs for Z3 reachability and ``tiling/expr/``.
+    """
+    return os.environ.get("UO_DEEP_SOLVE", "").strip().lower() in ("1", "true", "yes")
+
+
+def strip_deep_payload(doc: "HostDerivation") -> None:
+    """Drop ``value_expr`` / ``expanded`` from every field when deep-solve is off."""
+    if deep_solve_enabled():
+        return
+    for fld in doc.fields:
+        fld.value_expr = None
+        fld.expanded = ""
+    for aux in doc.auxiliaries.values():
+        aux.value_expr = None
+        aux.expanded = ""
+
+# How a guard that survived normalization failure should be treated. The split
+# is deterministic: it comes from the reason code and the guard text, never
+# from a per-operator table.
+PRESORT_SCHEDULING = "scheduling"
+PRESORT_PLATFORM = "platform"
+PRESORT_REACHABILITY = "reachability"
+PRESORT_UNMAPPED = "unmapped"
+PRESORT_LOOP_ELEMENT = "loop_element"
+PRESORT_UNKNOWN = "unknown"
+
+PRESORTS = (
+    PRESORT_SCHEDULING,
+    PRESORT_PLATFORM,
+    PRESORT_REACHABILITY,
+    PRESORT_UNMAPPED,
+    PRESORT_LOOP_ELEMENT,
+    PRESORT_UNKNOWN,
+)
+
+# Guards that must not become LLM work, for opposite reasons.
+#
+# Scheduling guards are softened on purpose: a branch on traversal position is
+# taken on some iteration whatever the input, so pinning it would wrongly rule
+# keys out. Nothing to ask.
+#
+# Reachability guards ("did control reach the function that wrote this") are a
+# gap in our own call-graph analysis. A model guessing at them would be
+# guessing at something the source states outright, so they are tracked as
+# unclosed — they still count as over-approximations — and fixed by analysis.
+#
+# Loop-element guards used to be excluded from this set, on the theory that a
+# quantified statement about a container is a judgement call. Reading the source
+# disproved it: all six surviving loop elements in FAG are computed from the
+# operator's own inputs — `invalidS1Array[j]` is interval coverage over sparse
+# bands, `parseInfo[i][LENGTH_IDX]` is a prefix sum, `size(syncRounds)` is a
+# filtered count. Nothing is unknown; what is missing is the ability to *reason*
+# about aggregation, and a model asked "is this input-derived?" would answer yes
+# without that making the expression any more solvable. So they are tracked as
+# over-approximations until the summaries land (P2).
+NON_ESCALATING = frozenset(
+    {PRESORT_SCHEDULING, PRESORT_REACHABILITY, PRESORT_LOOP_ELEMENT}
+)
+
+# Platform quantities are locked by the CANN profile (K5). One still showing up
+# undecided means the fold missed it, which is a real gap.
+_PLATFORM_RE = re.compile(
+    r"PlatformAscendC|GetPlatformInfo|GetCoreNumAic|GetCoreNumAiv|GetCoreNum|GetL2Size",
+    re.I,
+)
+
+_UNMAPPED_REASONS = frozenset(
+    {"UNMAPPED_SYMBOL", "UNMAPPED_CALL", "UNMAPPED_LEAF", "FUNCTION_PARAMETER"}
+)
+
+# Keep the pipe (and the YAML) bounded; the full tree stays in `value_expr`.
+EXPANDED_KEEP = 20000
+TEXT_KEEP = 400
+
+DEFAULT_TIMEOUT = 180
+DEFAULT_HELPER_GUARDS = 4
+
+#: How many isolated derivations may be in flight at once. The limit is memory,
+#: not CPU: every worker unpickles its own copy of the parsed translation units,
+#: and the sequential path was spending most of its wall clock waiting for one
+#: interpreter at a time to start, read that copy, and be reaped.
+DEFAULT_WORKERS = 4
+
+#: The three phases of a derivation, in the order they must run.
+PHASES = ("fields", "auxiliaries", "premises")
+
+
+def short(value: str) -> str:
+    """`DtypeEnum::FLOAT32` -> `FLOAT32`."""
+    return str(value).split("::")[-1]
+
+
+# -- guard identity and pre-sort -------------------------------------------
+def guard_id(var_id: str) -> str:
+    """`VAR_UNDECIDED_<h>` / `VAR_SCHED_<h>` -> `UG_<h>`.
+
+    Reusing the normalizer's digest keeps the guard, its free boolean and the
+    blocker that reports it on one identity instead of three.
+    """
+    tail = str(var_id).rsplit("_", 1)[-1]
+    return f"UG_{tail}" if tail else f"UG_{hash12(var_id)}"
+
+
+def split_reason(detail: str) -> tuple[str, str]:
+    """`"UNMAPPED_SYMBOL: foo"` -> `("UNMAPPED_SYMBOL", "foo")`."""
+    text = str(detail or "")
+    head, sep, tail = text.partition(":")
+    if sep and head and " " not in head.strip():
+        return head.strip(), tail.strip()
+    return "UNKNOWN", text.strip()
+
+
+def presort_guard(var_id: str, detail: str) -> str:
+    """Deterministic bucket for one softened guard."""
+    if str(var_id).startswith("VAR_REACHED_"):
+        return PRESORT_REACHABILITY
+    if str(var_id).startswith("VAR_SCHED_"):
+        return PRESORT_SCHEDULING
+    if str(var_id).startswith(LOOPELEM_PREFIX):
+        return PRESORT_LOOP_ELEMENT
+    reason, text = split_reason(detail)
+    if reason == "REACHED_SOFT":
+        return PRESORT_REACHABILITY
+    if reason == "SCHED_SOFT":
+        return PRESORT_SCHEDULING
+    if reason == "LOOP_ELEMENT":
+        return PRESORT_LOOP_ELEMENT
+    if _PLATFORM_RE.search(text):
+        return PRESORT_PLATFORM
+    if reason in _UNMAPPED_REASONS:
+        return PRESORT_UNMAPPED
+    return PRESORT_UNKNOWN
+
+
+# -- evidence --------------------------------------------------------------
+_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}")
+_IDENT_STOP = frozenset(
+    {
+        "static_cast", "const_cast", "reinterpret_cast", "dynamic_cast",
+        "int", "bool", "float", "double", "size_t", "uint8_t", "uint16_t",
+        "uint32_t", "uint64_t", "int8_t", "int16_t", "int32_t", "int64_t",
+        "true", "false", "Unknown", "and", "not", "ite",
+    }
+)
+
+
+def _tokens(text: str) -> frozenset[str]:
+    return frozenset(
+        t for t in _IDENT_RE.findall(str(text or "")) if t not in _IDENT_STOP
+    )
+
+
+class GuardEvidenceIndex:
+    """Map a softened guard back to a source location.
+
+    The undecided text is the *expanded* form, so it cannot be matched to the
+    original guard literally. What can be asked instead is which recorded path
+    conditions appear *inside* it, so the score is how much of the source
+    guard the expansion covers — not how similar the two texts are overall.
+
+    Symmetric similarity was the wrong question: an expanded guard is a
+    conjunction of many source guards, so every individual one scores low
+    against it, and short unrelated conditions score as well as the real
+    source. That is how `platformInfoPtr == nullptr` came to be cited, at
+    0.25, as the origin of a guard about `coreIdx` — a location that sent a
+    reader to an unrelated function. A wrong line is worse than no line.
+
+    An expanded guard has no single origin, so `also` reports how many other
+    source guards are in there with it.
+
+    A guard that *is* one opaque call has no path condition to match at all —
+    `CheckExceedL2Cache()` stood for a whole condition and was reported with no
+    file or line, so the residual table cited a hash. Such a guard does have a
+    recorded origin, just in `call_sites` rather than in a path condition, and
+    `_calls` is consulted for exactly that shape.
+    """
+
+    #: How much of a source guard must appear in the expansion. Below 1.0
+    #: because normalisation rewrites some tokens (`nullptr` -> `None`).
+    MIN_COVERAGE = 0.75
+
+    def __init__(self, host_ir: Any) -> None:
+        self._rows: list[tuple[frozenset[str], str, int, str, str]] = []
+        seen: set[tuple[str, int, str]] = set()
+        writes = list(getattr(host_ir, "writes", []) or [])
+        writes += list(getattr(host_ir, "local_writes", []) or [])
+        for w in writes:
+            for cond in getattr(w, "path_conditions", ()) or ():
+                text = getattr(cond, "text", "") or ""
+                cfile = getattr(cond, "file", "") or getattr(w, "file", "") or ""
+                cline = int(getattr(cond, "line", 0) or 0)
+                if not text or not cfile:
+                    continue
+                key = (cfile, cline, text)
+                if key in seen:
+                    continue
+                seen.add(key)
+                toks = _tokens(text)
+                if toks:
+                    self._rows.append(
+                        (toks, cfile, cline, text, getattr(w, "function", "") or "")
+                    )
+        #: callee -> the places it is called from. Keyed on the callee alone, so
+        #: an overload set collapses into one entry and is then refused for
+        #: being ambiguous, which is the safe direction.
+        self._calls: dict[str, list[tuple[str, int, str]]] = {}
+        for site in getattr(host_ir, "call_sites", []) or ():
+            callee = str(getattr(site, "callee", "") or "")
+            cfile = str(getattr(site, "file", "") or "")
+            if not callee or not cfile:
+                continue
+            self._calls.setdefault(callee, []).append(
+                (cfile, int(getattr(site, "line", 0) or 0), str(getattr(site, "caller", "") or ""))
+            )
+
+    def _call_origin(self, text: str, scope: str) -> dict[str, Any] | None:
+        """The one call site a guard that is nothing but a call came from.
+
+        Only for a guard whose entire text is a single call: an opaque call
+        standing in for a whole condition. A call named *among* other terms is
+        not this case — the guard is then a conjunction whose origin is the
+        path condition, which `best` has already looked for.
+
+        Exactly one call site, or nothing. Naming one of several is a guess, and
+        the reason this index exists at all is that a wrong line reads as an
+        answer while a missing one reads as a gap.
+        """
+        toks = _tokens(text)
+        if len(toks) != 1:
+            return None
+        name = next(iter(toks))
+        if f"{name}(" not in str(text or "").replace(" ", ""):
+            return None
+        found = [s for s in self._calls.get(name, ()) if not scope or s[2] == scope]
+        if len(found) != 1:
+            return None
+        cfile, cline, caller = found[0]
+        return {
+            "file": cfile.replace("\\", "/"),
+            "line": cline,
+            "snippet": f"{name}() called in {caller}" if caller else f"{name}()",
+            "match": 1.0,
+            "via": "call_site",
+        }
+
+    def best(self, text: str, scope: str = "") -> dict[str, Any] | None:
+        """Where this guard came from, optionally confined to one function.
+
+        Without `scope` the answer is whichever source guard shares the most
+        tokens, and identically-worded guards in two functions are
+        indistinguishable — that is how both `invalidS1Array[j]` variables came
+        to cite the normal-path line, sending a reader to the wrong coordinate
+        domain. When a scope is known and it has no match, the answer is None
+        rather than a line from some other function: a wrong line is worse than
+        no line.
+        """
+        toks = _tokens(text)
+        if not toks:
+            return None
+        if not self._rows:
+            return self._call_origin(text, scope)
+        found: list[tuple[int, float, str, int, str]] = []
+        for row_toks, cfile, cline, raw, fn in self._rows:
+            if scope and fn and fn != scope:
+                continue
+            covered = len(toks & row_toks) / len(row_toks)
+            if covered < self.MIN_COVERAGE:
+                continue
+            # Longest first: where several source guards are present, the most
+            # specific one is the most useful place to start reading.
+            found.append((len(row_toks), covered, cfile, cline, raw))
+        if not found:
+            return self._call_origin(text, scope)
+        found.sort(key=lambda r: (r[0], r[1]), reverse=True)
+        _n, covered, cfile, cline, raw = found[0]
+        out: dict[str, Any] = {
+            "file": cfile.replace("\\", "/"),
+            "line": cline,
+            "snippet": raw[:200],
+            "match": round(covered, 3),
+        }
+        if len(found) > 1:
+            out["also"] = len(found) - 1
+        return out
+
+
+def encode_function(host_ir: Any, site: Any) -> str:
+    """Function enclosing the encode call — the scope guards resolve against."""
+    near = [
+        w
+        for w in getattr(host_ir, "local_writes", []) or []
+        if w.file == site.file and w.line < site.line
+    ]
+    return max(near, key=lambda w: w.line).function if near else ""
+
+
+def _as_int(text: Any) -> int | None:
+    """Numeric value of a rendered constant, or None if it stays symbolic."""
+    s = str(text).strip()
+    if s in ("True", "true"):
+        return 1
+    if s in ("False", "false"):
+        return 0
+    try:
+        return int(s, 0)
+    except ValueError:
+        return None
+
+
+# -- records ---------------------------------------------------------------
+@dataclass
+class UndecidedGuard:
+    id: str
+    var_id: str
+    reason: str
+    text: str
+    presort: str
+    escalate: bool
+    evidence: dict[str, Any] | None = None
+    #: The symbol resolution stopped on. `text` is the whole guard, which for a
+    #: deeply expanded condition says nothing about where it went wrong.
+    blocked_on: str = ""
+    #: Function the variable was read in. Part of its identity: same-named
+    #: locals in two functions are two variables, not one.
+    scope: str = ""
+    #: Type the worker declared the variable with, when it said. Empty means
+    #: fall back to guessing from the bucket, which is right for a softened
+    #: guard and wrong for anything else sharing its prefix.
+    var_type: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "id": self.id,
+            "var_id": self.var_id,
+            "reason": self.reason,
+            "text": self.text,
+            "presort": self.presort,
+            "escalate": self.escalate,
+        }
+        if self.var_type:
+            out["var_type"] = self.var_type
+        if self.blocked_on:
+            out["blocked_on"] = self.blocked_on
+        if self.scope:
+            out["scope"] = self.scope
+        if self.evidence:
+            out["evidence"] = dict(self.evidence)
+        return out
+
+
+@dataclass
+class FieldDerivation:
+    name: str
+    index: int
+    status: str
+    exactness: str = EX_UNRESOLVED
+    #: Over-approximation variables still standing in `value_expr`. Closing the
+    #: derivation means emptying this list, not merely reaching `status=derived`.
+    free_vars: list[str] = field(default_factory=list)
+    host_expr: str = ""
+    domain: list[str] = field(default_factory=list)
+    value_expr: dict[str, Any] | None = None
+    value_leaves: list[str] = field(default_factory=list)
+    root_vars: list[str] = field(default_factory=list)
+    variables: list[str] = field(default_factory=list)
+    #: var_id -> the root that variable resolved to. `root_vars` is the set of
+    #: them and grades the field; this grades one assignment, which is what a
+    #: witness is made of.
+    var_roots: dict[str, str] = field(default_factory=dict)
+    #: var_id -> `[name, function]` for each `VAR_AUX_*` in `value_expr`. Their
+    #: own derivations live in `HostDerivation.auxiliaries`.
+    aux_targets: dict[str, list[str]] = field(default_factory=dict)
+    #: The same for `VAR_TDF_*`: host fields expansion stopped on rather than
+    #: substituted. Derived alongside the auxiliaries and evaluated ahead of
+    #: this field, which is what makes them settable from inputs instead of
+    #: standing free. Unlike `aux_targets` they do not weaken the grade.
+    state_targets: dict[str, list[str]] = field(default_factory=dict)
+    undecided_guards: list[UndecidedGuard] = field(default_factory=list)
+    unresolved: list[dict[str, str]] = field(default_factory=list)
+    def_sites: list[dict[str, Any]] = field(default_factory=list)
+    #: Sites where an if/else-if chain was closed with an assumed zero default
+    #: because no unguarded write was found. Not an over-approximation — the
+    #: expression is exact *if* the assumption holds — but it rests on a
+    #: declaration we never read, so it is reported rather than taken silently.
+    implicit_defaults: list[dict[str, Any]] = field(default_factory=list)
+    note: str = ""
+    seconds: float = 0.0
+    expanded_chars: int = 0
+    expanded: str = ""
+
+    @property
+    def escalating(self) -> list[UndecidedGuard]:
+        return [g for g in self.undecided_guards if g.escalate]
+
+    @property
+    def domain_violations(self) -> list[str]:
+        """Values the field can take that the template never declared.
+
+        A generic sentinel for "derivation disagrees with the TPL contract". It
+        fires on `OutDType` here: the template declares 0-3, but the FP8 and
+        HiFloat8 paths write 4/5/6 into the key. That is an operator-side
+        inconsistency, not a derivation bug — the derivation is what exposes it.
+
+        Only leaves that resolve to a number are judged. `value_leaves` also
+        carries unfolded enum spellings (`DtypeEnum::FLOAT32`, `TILING_KEY_1`),
+        and counting those as out-of-domain would flag all 19 dimensions and
+        make the check useless. So this is a lower bound on the real conflicts.
+        """
+        allowed = {n for n in (_as_int(v) for v in self.domain) if n is not None}
+        if not allowed:
+            return []
+        bad = {n for n in (_as_int(v) for v in self.value_leaves) if n is not None}
+        return [str(n) for n in sorted(bad - allowed)]
+
+    @property
+    def collapsed_leaves(self) -> list[str]:
+        """Values the expansion reached that the normalised form cannot.
+
+        The mirror of `domain_violations`, and the direction that actually
+        threatens soundness. That one asks whether the field can produce more
+        than the template declares; this one asks whether normalisation quietly
+        made it produce *less* than the same derivation said one pass earlier.
+
+        `value_leaves` is the union of both readings, so the difference against
+        a fresh walk of `value_expr` is exactly what folding dropped. Nothing
+        about the operator can explain that away: the arms were there before
+        `_guard` folded a constant through them.
+
+        Why it needs its own check: a dropped arm takes its variables with it,
+        so `free_vars` comes back empty and the field is graded `exact` -- the
+        derivation ends up claiming precise knowledge of a value set it just
+        shrank. `DeterType` is the case this was written for. Five writes, five
+        declared values, and an SMT form that can only ever return 0 or 2;
+        replay puts its accuracy at 87.5%.
+
+        Values the *template* declares and the expression cannot reach are a
+        weaker signal and deliberately not reported here -- `IsRegbase=0` does
+        not exist on arch35, and `S1TemplateNum` reads 0 only when
+        `IsEmptyTensor=1` short-circuits it, which is another dimension's
+        business. Those need a witness, not a failure.
+        """
+        if self.value_expr is None:
+            return []
+        from uo_init.derive_key_fields import smt_value_leaves
+
+        reachable = {
+            n for n in (_as_int(v) for v in smt_value_leaves(self.value_expr))
+            if n is not None
+        }
+        recorded = {
+            n for n in (_as_int(v) for v in self.value_leaves) if n is not None
+        }
+        return [str(n) for n in sorted(recorded - reachable)]
+
+    @property
+    def input_closure(self) -> str:
+        """Whether a test case can drive this field, which `exactness` cannot say.
+
+        Derived from `root_vars` rather than stored so the two can never
+        disagree. See `kb_model.classify_input_closure`.
+        """
+        return classify_input_closure(self.root_vars)
+
+    @property
+    def input_derivable(self) -> bool:
+        """Closed *and* drivable — the single question a generator should ask.
+
+        The old rule was `status == "derived" and bool(root_vars)`, which passed
+        any non-empty root set. Four dimensions here close onto `TILING_DATA`
+        alone, so a generator was told it controlled them while nothing it can
+        set reaches them.
+        """
+        return self.exactness in (EX_EXACT, EX_CONSTANT) and input_closure_is_drivable(
+            self.input_closure
+        )
+
+    def unrecorded_free_vars(self) -> list[str]:
+        """Over-approximations in `value_expr` that nothing on the books explains.
+
+        This must always be empty. A free variable with nothing behind it is
+        invisible to the gap machinery, so it can never be escalated or closed,
+        while the solver still treats the condition it replaced as "either
+        way" — an over-approximation that has dropped off the books rather
+        than been resolved.
+
+        Three kinds of record answer for a variable. A softened guard is one.
+        An assumed default is another: the chain reached a point where the
+        field's prior value was unreadable, which is not a guard at all but is
+        recorded just as precisely, down to the site that raised it. The third
+        is a cut that did not close — `aux_targets` names the host expression
+        and the function it was read in, which is more than a guard record
+        carries, and its own derivation says exactly where it stopped.
+        """
+        recorded = {g.var_id for g in self.undecided_guards}
+        recorded |= {
+            str(d["variable"]) for d in self.implicit_defaults if d.get("variable")
+        }
+        recorded |= set(self.aux_targets)
+        return sorted(v for v in self.free_vars if v not in recorded)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Persist one field. ``value_expr`` / ``expanded`` only when deep-solve on."""
+        out: dict[str, Any] = {
+            "name": self.name,
+            "index": self.index,
+            "status": self.status,
+            "exactness": self.exactness,
+            "input_closure": self.input_closure,
+            "input_derivable": self.input_derivable,
+            "free_vars": list(self.free_vars),
+            "host_expr": self.host_expr,
+            "domain": list(self.domain),
+            "value_leaves": list(self.value_leaves),
+            "domain_violations": self.domain_violations,
+            "collapsed_leaves": self.collapsed_leaves,
+            "root_vars": list(self.root_vars),
+            "variables": list(self.variables),
+            "var_roots": dict(self.var_roots),
+            "aux_targets": {k: list(v) for k, v in self.aux_targets.items()},
+            "state_targets": {k: list(v) for k, v in self.state_targets.items()},
+            "undecided_guards": [g.to_dict() for g in self.undecided_guards],
+            "unresolved": list(self.unresolved),
+            "def_sites": list(self.def_sites),
+            "implicit_defaults": list(self.implicit_defaults),
+            "note": self.note,
+            "seconds": self.seconds,
+            "expanded_chars": self.expanded_chars,
+        }
+        if deep_solve_enabled():
+            # Shared sub-expressions are named rather than repeated; see
+            # `encode_expr_dag`. Read it back with `decode_expr_dag`.
+            out["value_expr"] = encode_expr_dag(self.value_expr)
+            # Truncated text render — only kept for deep-solve debugging.
+            if self.expanded:
+                out["expanded"] = self.expanded[:EXPANDED_KEEP]
+        return out
+
+
+@dataclass
+class HostDerivation:
+    op_name: str = ""
+    architecture: str = ""
+    encode_site: dict[str, Any] = field(default_factory=dict)
+    encode_function: str = ""
+    fields: list[FieldDerivation] = field(default_factory=list)
+    note: str = ""
+    #: What the operator requires of its inputs, one entry per rejection it
+    #: writes. These hold on every run that produces a key, so they constrain
+    #: every field at once and belong to the document rather than to any one of
+    #: them. Without them an input the operator refuses — FAG's HIFLOAT8 query —
+    #: still looks available, and the values only it can produce are reported as
+    #: reachable. See `HostIR.legality_premises`.
+    premises: list[dict[str, Any]] = field(default_factory=list)
+    #: `VAR_AUX_*` and `VAR_TDF_*` -> its own derivation. A field's expression
+    #: names the first where the dependency graph re-entered itself and the
+    #: second where expansion stopped on host state; either way evaluating the
+    #: field means evaluating these first. See `derive_key_fields._aux_leaf`
+    #: and `_ValueNormalizer.state_surfaces`.
+    auxiliaries: dict[str, FieldDerivation] = field(default_factory=dict)
+    #: Wall clock per phase. The per-field `seconds` only cover what happens
+    #: inside a worker, so a run whose fields sum to two minutes could still
+    #: take twelve without anything here saying where the rest went.
+    phase_seconds: dict[str, float] = field(default_factory=dict)
+
+    def by_name(self) -> dict[str, FieldDerivation]:
+        return {f.name: f for f in self.fields}
+
+    def aux_closure(self, start: Iterable[str], *, through_state: bool = True) -> set[str]:
+        """Every auxiliary reachable from these, including unresolved ones.
+
+        An auxiliary that names another is not unusual: cutting `blockOuter`
+        exposes `splitAxis`, whose own derivation reads `blockOuter` back.
+
+        `through_state=False` follows only the cut edges. The two edge kinds
+        answer different questions and must not be mixed when grading: a cut
+        that stays open is a hole in the field, while host state that stays
+        opaque is where the field always bottomed out. Walking from a state
+        target into some cut made inside *its* derivation and charging the
+        field for it reports a loss the field never took — which is how `IsTnd`
+        went from exact to over-approximated on a change that only added
+        information.
+        """
+        out: set[str] = set()
+        stack = [str(v) for v in start]
+        while stack:
+            var_id = stack.pop()
+            if var_id in out:
+                continue
+            out.add(var_id)
+            aux = self.auxiliaries.get(var_id)
+            if aux is not None:
+                stack.extend(aux.aux_targets)
+                if through_state:
+                    stack.extend(aux.state_targets)
+        return out
+
+    def totals(self) -> dict[str, Any]:
+        return {
+            "total": len(self.fields),
+            "derived": sum(1 for f in self.fields if f.status == "derived"),
+            "partial": sum(1 for f in self.fields if f.status == "partial"),
+            "unresolved": sum(1 for f in self.fields if f.status == "unresolved"),
+            # The closure target. `derived` counts fields we have *some*
+            # expression for; `exact` counts the ones whose expression still
+            # means what the source means.
+            "exact": sum(1 for f in self.fields if f.exactness == EX_EXACT),
+            "free_vars": len({v for f in self.fields for v in f.free_vars}),
+            # Must stay 0: see FieldDerivation.unrecorded_free_vars.
+            "unrecorded_free_vars": len(
+                {v for f in self.fields for v in f.unrecorded_free_vars()}
+            ),
+            "input_derivable": sum(1 for f in self.fields if f.input_derivable),
+            # Operator-side contract conflicts, reported not gated: the template
+            # and the host disagree, and neither is ours to change.
+            "domain_violations": sum(1 for f in self.fields if f.domain_violations),
+            # Normalisation dropping a value arm the expansion reached. Unlike
+            # domain_violations this is ours, not the operator's: it means the
+            # derivation under-approximates while grading itself exact.
+            "collapsed_leaves": sum(
+                1
+                for f in self.fields
+                if f.collapsed_leaves and not f.free_vars
+            ),
+            "implicit_defaults": sum(len(f.implicit_defaults) for f in self.fields),
+            "undecided": sum(len(f.undecided_guards) for f in self.fields),
+            "scheduling": sum(
+                1
+                for f in self.fields
+                for g in f.undecided_guards
+                if g.presort == PRESORT_SCHEDULING
+            ),
+            "escalating": len(
+                {g.id for f in self.fields for g in f.escalating}
+            ),
+            "max_chars": max((f.expanded_chars for f in self.fields), default=0),
+            "seconds": round(sum(f.seconds for f in self.fields), 1),
+        }
+
+    @property
+    def status(self) -> str:
+        if not self.fields:
+            return "unresolved"
+        t = self.totals()
+        if t["derived"] == t["total"]:
+            return "derived"
+        return "unresolved" if t["derived"] == 0 else "partial"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": DERIVATION_VERSION,
+            "status": self.status,
+            "op_name": self.op_name,
+            "architecture": self.architecture,
+            "encode_site": dict(self.encode_site),
+            "encode_function": self.encode_function,
+            "totals": self.totals(),
+            "note": self.note,
+            "premises": [dict(p) for p in self.premises],
+            "fields": [f.to_dict() for f in self.fields],
+            "auxiliaries": {k: v.to_dict() for k, v in sorted(self.auxiliaries.items())},
+        }
+
+
+# -- worker ----------------------------------------------------------------
+def _derive_row(bundle: dict[str, Any], index: int, helper: int) -> dict[str, Any]:
+    """Derive one dimension. Pure function of the bundle — no I/O."""
+    from uo_init.derive_key_fields import KeyFieldDeriver
+
+    # The isolated workers set this same ceiling (see `_run_isolated`). In-process
+    # runs inherit the interpreter default (1000), which SplitAxis's expansion
+    # blows straight through — surfacing as `unresolved` where the isolated path
+    # returns `partial` for the identical field. Keep the two paths consistent.
+    sys.setrecursionlimit(20000)
+    host_ir = bundle["host_ir"]
+    binding = bundle["binding"]
+    b = binding.bindings[index]
+    deriver = KeyFieldDeriver(
+        host_ir=host_ir,
+        resolver=bundle["resolver"],
+        var_model=bundle["var_model"],
+        max_helper_guards=helper,
+    )
+    started = time.time()
+    result = deriver.derive(
+        dim_name=b.decl.name,
+        index=b.index,
+        host_expr=b.host_expr,
+        function=encode_function(host_ir, binding.site),
+    )
+    row = result.to_dict()
+    row["domain"] = [str(v) for v in b.decl.value_domain]
+    row["seconds"] = round(time.time() - started, 1)
+    row["expanded_chars"] = len(row["expanded"])
+    row["expanded"] = row["expanded"][:EXPANDED_KEEP]
+    row["undecided"] = {k: v[:TEXT_KEEP] for k, v in row["undecided"].items()}
+    return row
+
+
+def _derive_aux_row(
+    bundle: dict[str, Any], var_id: str, name: str, function: str, helper: int
+) -> dict[str, Any]:
+    """Derive one name the cycle cut off, as its own target.
+
+    Same machinery as a dimension, pointed at an ordinary host name instead of
+    an encode-site expression. Re-entering the cut is the point: this time the
+    name is the root of the walk, so its writes are expanded, and only the back
+    edge inside them is cut.
+    """
+    from uo_init.derive_key_fields import KeyFieldDeriver
+
+    deriver = KeyFieldDeriver(
+        host_ir=bundle["host_ir"],
+        resolver=bundle["resolver"],
+        var_model=bundle["var_model"],
+        max_helper_guards=helper,
+    )
+    started = time.time()
+    result = deriver.derive(
+        dim_name=var_id, index=-1, host_expr=name, function=function
+    )
+    row = result.to_dict()
+    row["seconds"] = round(time.time() - started, 1)
+    row["expanded_chars"] = len(row["expanded"])
+    row["expanded"] = row["expanded"][:EXPANDED_KEEP]
+    row["undecided"] = {k: v[:TEXT_KEEP] for k, v in row["undecided"].items()}
+    return row
+
+
+#: Names a premise may not depend on. A premise *narrows* the input space, so
+#: an inexact one hides reachable keys — the one failure mode worth being
+#: paranoid about here. A free variable means the expansion gave up somewhere,
+#: and "some unknown thing is false" excludes inputs on no evidence at all.
+#:
+#: Every variable the derivation invents when it cannot decide something
+#: counts, not merely the ones named after the giving up. A softened guard
+#: enters as `VAR_UNDECIDED_x` and is sampled like any other boolean, so half
+#: the draws read it as false and refuse inputs the operator accepts.
+_SOFT_PREFIXES = ("VAR_LOCAL_", "VAR_UNMODELLED_") + OVERAPPROX_PREFIXES
+
+
+def _mentions_soft(node: Any) -> bool:
+    if isinstance(node, dict):
+        name = node.get("var")
+        if isinstance(name, str) and name.startswith(_SOFT_PREFIXES):
+            return True
+        return any(_mentions_soft(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_mentions_soft(v) for v in node)
+    return False
+
+
+def _mentions_any_var(node: Any) -> bool:
+    if isinstance(node, dict):
+        if isinstance(node.get("var"), str):
+            return True
+        return any(_mentions_any_var(v) for v in node.values())
+    if isinstance(node, list):
+        return any(_mentions_any_var(v) for v in node)
+    return False
+
+
+def _derive_premises(
+    bundle: dict[str, Any],
+    host_ir: Any,
+    function: str,
+    helper: int,
+    *,
+    resolver: Any = None,
+    layer: str = "host",
+    offset: int = 0,
+    only_range: tuple[int, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Expand each input-legality condition the same way a dimension is expanded.
+
+    A rejection is written in the operator's own vocabulary — `fBaseParams
+    .queryType`, a member assigned three calls earlier — so it needs the same
+    chasing a key field does, and gets it by going through the same deriver.
+
+    `resolver` and `offset` are for reading a second layer: the API states most
+    of the contract and states it in its own names, so it needs its own
+    resolver, and its premises need indices that do not collide with tiling's.
+    """
+    from uo_init.derive_key_fields import KeyFieldDeriver
+
+    out: list[dict[str, Any]] = []
+    lo, hi = only_range or (0, -1)
+    # One deriver for the whole run, not one per premise. Its caches are keyed
+    # by name and program point and `derive` resets what is per-derivation, so
+    # sharing them is what they were built for -- and a premise asks the same
+    # questions its neighbours do. A fresh deriver each time paid for every
+    # one of those answers again, including a solver call per `_read_cover`
+    # miss.
+    deriver = KeyFieldDeriver(
+        host_ir=host_ir,
+        resolver=resolver if resolver is not None else bundle["resolver"],
+        var_model=bundle["var_model"],
+        max_helper_guards=helper,
+    )
+    for n, (text, fn, file, line) in enumerate(host_ir.legality_premises()):
+        if only_range is not None and not lo <= n < hi:
+            continue
+        i = n + offset
+        try:
+            row = deriver.derive(
+                dim_name=f"__premise{i}",
+                index=-1 - i,
+                host_expr=text,
+                function=fn or function,
+            ).to_dict()
+        except Exception as exc:  # noqa: BLE001 — a premise we cannot read is dropped
+            out.append({"text": text, "file": file, "line": line, "function": fn,
+                        "layer": layer, "usable": False,
+                        "why": f"{type(exc).__name__}: {exc}"[:120]})
+            continue
+        expr = row.get("value_expr")
+        why = ""
+        if expr is None:
+            why = "no expression"
+        elif row.get("unresolved"):
+            why = str((row["unresolved"][0] or {}).get("reason") or "unresolved")[:120]
+        elif _mentions_soft(expr):
+            why = "free variable"
+        elif not _mentions_any_var(expr):
+            # A requirement on the inputs that mentions no input is not one:
+            # expansion lost it somewhere. `if (!IsSameShape(dy, attentionIn))`
+            # folds to a bare constant once the call cannot be read, and a
+            # constant-false premise would reject every input there is.
+            why = "no input dependence"
+        out.append(
+            {
+                "text": text,
+                "file": file,
+                "line": line,
+                "function": fn,
+                "layer": layer,
+                "usable": not why,
+                "why": why,
+                "expr": None if why else expr,
+            }
+        )
+    return out
+
+
+def _api_premises(
+    bundle: dict[str, Any], helper: int, offset: int
+) -> list[dict[str, Any]]:
+    """The same, read from the user-facing API layer.
+
+    Host tiling assumes it was handed a legal input and says almost nothing
+    about what that means; the API layer is where the operator states it, one
+    rejection at a time. Without those the analysis believes a FLOAT16 query
+    can arrive alongside a rope input, and reports keys the kernel never
+    declared.
+    """
+    contract = bundle.get("api_contract")
+    ir = getattr(contract, "ir", None)
+    if ir is None:
+        return []
+    resolver = bundle.get("api_resolver")
+    if resolver is None:
+        from uo_init.source_resolver import SourceResolver
+
+        resolver = SourceResolver(host_ir=ir)
+        if bundle.get("var_model") is not None:
+            resolver.adopt(bundle["var_model"])
+    return _derive_premises(
+        bundle, ir, "", helper, resolver=resolver, layer="api", offset=offset
+    )
+
+
+def _premise_worker(
+    bundle_path: str,
+    sys_path: list[str],
+    layer: str,
+    lo: int,
+    hi: int,
+    function: str,
+    helper: int,
+    offset: int,
+    queue,
+) -> None:
+    """Expand one contiguous run of premises.
+
+    Premises are chunked rather than spawned one apiece: each is small, and a
+    process per premise would spend more time starting up and reading the
+    bundle than deriving.
+    """
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        resolver = None
+        if layer == "api":
+            ir = getattr(bundle.get("api_contract"), "ir", None)
+            if ir is None:
+                queue.put({"rows": []})
+                return
+            resolver = bundle.get("api_resolver")
+            if resolver is None:
+                from uo_init.source_resolver import SourceResolver
+
+                resolver = SourceResolver(host_ir=ir)
+                if bundle.get("var_model") is not None:
+                    resolver.adopt(bundle["var_model"])
+        else:
+            ir = bundle["host_ir"]
+        queue.put(
+            {
+                "rows": _derive_premises(
+                    bundle,
+                    ir,
+                    function,
+                    helper,
+                    resolver=resolver,
+                    layer=layer,
+                    offset=offset,
+                    only_range=(lo, hi),
+                )
+            }
+        )
+    except Exception as exc:  # noqa: BLE001 — the parent turns this into a note
+        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
+
+
+def _chunks(total: int, workers: int) -> list[tuple[int, int]]:
+    if total <= 0:
+        return []
+    width = max(1, min(workers, total))
+    size = (total + width - 1) // width
+    return [(i, min(i + size, total)) for i in range(0, total, size)]
+
+
+def _premises_isolated(
+    bundle_path: str,
+    *,
+    total: int,
+    layer: str,
+    function: str,
+    helper: int,
+    offset: int,
+    timeout: int,
+    workers: int,
+) -> list[dict[str, Any]]:
+    """Derive a layer's premises in parallel, in source order.
+
+    Cut into more chunks than there are workers. Premises are wildly uneven --
+    most resolve at once, a few chase a member through several calls -- so an
+    even split by count hands one worker all the slow ones and the run waits
+    on it. Smaller chunks let a worker that finished take the next.
+    """
+    spans = _chunks(total, workers * 2)
+    if not spans:
+        return []
+    results = _run_isolated_batch(
+        [
+            {
+                "target": _premise_worker,
+                "args": (
+                    bundle_path,
+                    list(sys.path),
+                    layer,
+                    lo,
+                    hi,
+                    function,
+                    helper,
+                    offset,
+                ),
+                "name": f"{layer}-premises[{lo}:{hi}]",
+                "index": -1,
+            }
+            for lo, hi in spans
+        ],
+        timeout=timeout,
+        workers=workers,
+    )
+    out: list[dict[str, Any]] = []
+    for (lo, hi), res in zip(spans, results):
+        rows = res.get("rows")
+        if rows is None:
+            # A chunk that dies takes its premises with it. Record the loss:
+            # a premise that quietly vanishes reads as a constraint the
+            # operator never stated.
+            out.append(
+                {
+                    "text": f"{layer} premises [{lo}:{hi}]",
+                    "file": "",
+                    "line": 0,
+                    "function": function,
+                    "layer": layer,
+                    "usable": False,
+                    "why": str(res.get("note") or "premise chunk failed")[:120],
+                }
+            )
+            continue
+        out.extend(rows)
+    return out
+
+
+def _failed_row(name: str, index: int, reason: str, seconds: float) -> dict[str, Any]:
+    return {
+        "name": name,
+        "index": index,
+        "host_expr": "",
+        "expanded": "",
+        "expanded_chars": 0,
+        "value_expr": None,
+        "value_leaves": [],
+        "input_roots": [],
+        "variables": [],
+        "def_sites": [],
+        "unresolved": [{"text": "", "reason": reason}],
+        "scheduling": {},
+        "undecided": {},
+        "domain": [],
+        "status": "unresolved",
+        "note": reason,
+        "seconds": seconds,
+    }
+
+
+def _reap(proc: Any, *queues: Any) -> int | None:
+    """Leave no worker behind, whatever state it is in. Returns its exit code."""
+    exitcode: int | None = None
+    try:
+        proc.join(timeout=5)
+        if proc.is_alive():
+            proc.terminate()
+            proc.join(timeout=5)
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=5)
+        exitcode = proc.exitcode
+    finally:
+        for queue in queues:
+            try:
+                queue.close()
+                queue.join_thread()
+            except Exception:  # noqa: BLE001 — teardown must not mask the result
+                pass
+        try:
+            proc.close()
+        except Exception:  # noqa: BLE001 — already reaped, or never started
+            pass
+    return exitcode
+
+
+def _premise_rows_from_bundle(
+    bundle: dict[str, Any],
+    *,
+    layer: str,
+    lo: int,
+    hi: int,
+    function: str,
+    helper: int,
+    offset: int,
+) -> dict[str, Any]:
+    """Expand one premise chunk against an already-loaded bundle."""
+    resolver = None
+    if layer == "api":
+        ir = getattr(bundle.get("api_contract"), "ir", None)
+        if ir is None:
+            return {"rows": []}
+        resolver = bundle.get("api_resolver")
+        if resolver is None:
+            from uo_init.source_resolver import SourceResolver
+
+            resolver = SourceResolver(host_ir=ir)
+            if bundle.get("var_model") is not None:
+                resolver.adopt(bundle["var_model"])
+    else:
+        ir = bundle["host_ir"]
+    return {
+        "rows": _derive_premises(
+            bundle,
+            ir,
+            function,
+            helper,
+            resolver=resolver,
+            layer=layer,
+            offset=offset,
+            only_range=(lo, hi),
+        )
+    }
+
+
+def _persistent_worker_main(
+    bundle_path: str, sys_path: list[str], request_q, response_q
+) -> None:
+    """Load the bundle once; serve field/aux/premise jobs until shutdown."""
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+    except Exception as exc:  # noqa: BLE001
+        # Parent will see no usable replies and replace this worker.
+        try:
+            response_q.put(
+                {"job_id": -1, "row": {"__error__": f"bundle_load: {exc}"[:400]}}
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    while True:
+        try:
+            job = request_q.get()
+        except Exception:  # noqa: BLE001
+            break
+        if job is None:
+            break
+        job_id = int(job.get("job_id", -1))
+        try:
+            op = str(job.get("op") or "")
+            if op == "field":
+                row = _derive_row(bundle, int(job["index"]), int(job["helper"]))
+            elif op == "aux":
+                row = _derive_aux_row(
+                    bundle,
+                    str(job["var_id"]),
+                    str(job.get("name") or ""),
+                    str(job.get("function") or ""),
+                    int(job["helper"]),
+                )
+            elif op == "premise":
+                row = _premise_rows_from_bundle(
+                    bundle,
+                    layer=str(job.get("layer") or "host"),
+                    lo=int(job["lo"]),
+                    hi=int(job["hi"]),
+                    function=str(job.get("function") or ""),
+                    helper=int(job["helper"]),
+                    offset=int(job.get("offset") or 0),
+                )
+            else:
+                row = {"__error__": f"unknown op {op!r}"}
+            response_q.put({"job_id": job_id, "row": row})
+        except Exception as exc:  # noqa: BLE001 — parent turns this into a row
+            response_q.put(
+                {
+                    "job_id": job_id,
+                    "row": {"__error__": f"{type(exc).__name__}: {exc}"[:400]},
+                }
+            )
+
+
+def _legacy_job_to_op(job: dict[str, Any]) -> dict[str, Any]:
+    """Convert a legacy ``{target, args, name, index}`` job into a pool op."""
+    if "op" in job:
+        return {
+            "op": job["op"],
+            "name": job.get("name") or "",
+            "index": int(job.get("index", -1)),
+            **{k: v for k, v in job.items() if k not in {"name", "index"}},
+        }
+    target = job.get("target")
+    args = tuple(job.get("args") or ())
+    name = str(job.get("name") or "")
+    index = int(job.get("index", -1))
+    if target is _worker or getattr(target, "__name__", "") == "_worker":
+        return {
+            "op": "field",
+            "index": int(args[2]),
+            "helper": int(args[3]),
+            "name": name,
+            "out_index": index,
+        }
+    if target is _aux_worker or getattr(target, "__name__", "") == "_aux_worker":
+        return {
+            "op": "aux",
+            "var_id": str(args[2]),
+            "name": str(args[3]),
+            "function": str(args[4]),
+            "helper": int(args[5]),
+            "out_index": index,
+            "label": name,
+        }
+    if target is _premise_worker or getattr(target, "__name__", "") == "_premise_worker":
+        return {
+            "op": "premise",
+            "layer": str(args[2]),
+            "lo": int(args[3]),
+            "hi": int(args[4]),
+            "function": str(args[5]),
+            "helper": int(args[6]),
+            "offset": int(args[7]),
+            "name": name,
+            "out_index": index,
+        }
+    raise TypeError(f"unsupported derive job target: {target!r}")
+
+
+# Keep names importable for legacy job detection / tests.
+def _worker(bundle_path: str, sys_path: list[str], index: int, helper: int, queue) -> None:
+    """Legacy one-shot worker (tests / fallback). Prefer the persistent pool."""
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        queue.put(_derive_row(bundle, index, helper))
+    except Exception as exc:  # noqa: BLE001
+        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
+
+
+def _aux_worker(
+    bundle_path: str,
+    sys_path: list[str],
+    var_id: str,
+    name: str,
+    function: str,
+    helper: int,
+    queue,
+) -> None:
+    """Legacy one-shot aux worker. Prefer the persistent pool."""
+    for entry in sys_path:
+        if entry and entry not in sys.path:
+            sys.path.insert(0, entry)
+    sys.setrecursionlimit(20000)
+    try:
+        with open(bundle_path, "rb") as fh:
+            bundle = pickle.load(fh)
+        queue.put(_derive_aux_row(bundle, var_id, name, function, helper))
+    except Exception as exc:  # noqa: BLE001
+        queue.put({"__error__": f"{type(exc).__name__}: {exc}"[:400]})
+
+
+class _WorkerSlot:
+    """One persistent derive process; replaceable on timeout/crash."""
+
+    def __init__(self, bundle_path: str, sys_path: list[str]) -> None:
+        self.bundle_path = bundle_path
+        self.sys_path = list(sys_path)
+        self.proc: Any = None
+        self.req: Any = None
+        self.resp: Any = None
+        self._start()
+
+    def _start(self) -> None:
+        ctx = mp.get_context("spawn")
+        self.req = ctx.Queue()
+        self.resp = ctx.Queue()
+        self.proc = ctx.Process(
+            target=_persistent_worker_main,
+            args=(self.bundle_path, self.sys_path, self.req, self.resp),
+            daemon=True,
+        )
+        self.proc.start()
+
+    def _restart(self) -> None:
+        if self.proc is not None:
+            _reap(self.proc, self.req, self.resp)
+        self._start()
+
+    def close(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            self.req.put(None)
+        except Exception:  # noqa: BLE001
+            pass
+        _reap(self.proc, self.req, self.resp)
+        self.proc = None
+
+    def run(self, op: dict[str, Any], *, timeout: int) -> dict[str, Any]:
+        name = str(op.get("label") or op.get("name") or op.get("var_id") or "?")
+        index = int(op.get("out_index", op.get("index", -1)))
+        job_id = int(time.time() * 1e6) ^ id(op) & 0x7FFFFFFF
+        payload = {k: v for k, v in op.items() if k not in {"label", "out_index"}}
+        payload["job_id"] = job_id
+        started = time.time()
+        try:
+            self.req.put(payload)
+        except Exception as exc:  # noqa: BLE001
+            self._restart()
+            return _failed_row(
+                name, index, f"QUEUE:{type(exc).__name__}", round(time.time() - started, 1)
+            )
+        msg: dict[str, Any] | None = None
+        try:
+            msg = self.resp.get(timeout=timeout)
+        except Exception:  # noqa: BLE001 — timeout or broken pipe
+            msg = None
+        elapsed = round(time.time() - started, 1)
+        if msg is None or int(msg.get("job_id", -2)) != job_id:
+            # Timed out or desynced — kill and replace before the next job.
+            self._restart()
+            reason = "TIMEOUT" if elapsed >= timeout else "CRASHED"
+            if op.get("op") == "premise":
+                return {"note": reason, "seconds": elapsed}
+            return _failed_row(name, index, reason, elapsed)
+        row = msg.get("row")
+        if not isinstance(row, dict):
+            self._restart()
+            return _failed_row(name, index, "CRASHED", elapsed)
+        if "__error__" in row:
+            # Soft error: worker stays alive for the next job.
+            if op.get("op") == "premise":
+                return {"note": str(row["__error__"]), "seconds": elapsed}
+            return _failed_row(name, index, str(row["__error__"]), elapsed)
+        if "seconds" not in row:
+            row = dict(row)
+            row["seconds"] = elapsed
+        return row
+
+
+def _run_isolated_batch(
+    jobs: list[dict[str, Any]], *, timeout: int, workers: int
+) -> list[dict[str, Any]]:
+    """Run jobs on a persistent worker pool (submission order preserved).
+
+    Workers load the HostIR bundle once. A per-job timeout kills and replaces
+    only that worker; other slots keep their caches.
+    """
+    if not jobs:
+        return []
+    ops = [_legacy_job_to_op(job) for job in jobs]
+    first_args = tuple(jobs[0].get("args") or ())
+    if first_args:
+        bundle_path = str(first_args[0])
+        sys_path = list(first_args[1])
+    else:
+        bundle_path = str(jobs[0]["bundle_path"])
+        sys_path = list(jobs[0].get("sys_path") or sys.path)
+    width = max(1, min(workers, len(ops)))
+    slots = [_WorkerSlot(bundle_path, sys_path) for _ in range(width)]
+    results: list[dict[str, Any] | None] = [None] * len(ops)
+    cursor = 0
+    lock = threading.Lock()
+
+    def _drive(slot: _WorkerSlot) -> None:
+        nonlocal cursor
+        while True:
+            with lock:
+                if cursor >= len(ops):
+                    return
+                i = cursor
+                cursor += 1
+                op = ops[i]
+            results[i] = slot.run(op, timeout=timeout)
+
+    try:
+        if width == 1:
+            _drive(slots[0])
+        else:
+            with ThreadPoolExecutor(max_workers=width) as pool:
+                list(pool.map(_drive, slots))
+    finally:
+        for slot in slots:
+            slot.close()
+    return [r if isinstance(r, dict) else _failed_row("?", -1, "CRASHED", 0.0) for r in results]
+
+
+# -- assembly --------------------------------------------------------------
+def _readopt(row: dict[str, Any], key: str, default: Any) -> Any:
+    got = row.get(key)
+    return default if got is None else got
+
+
+def _guards_of(
+    row: dict[str, Any], evidence: GuardEvidenceIndex | None
+) -> list[UndecidedGuard]:
+    """The softened guards, from either shape a row arrives in.
+
+    A worker hands back `undecided` as `{var_id: "reason: text"}`; a document
+    that has been through `to_dict` carries `undecided_guards` as whole records.
+    Reading only the worker shape leaves the guards empty after a round-trip,
+    and then `_reregister_soft_vars` declares nothing -- so the solver meets
+    those variables as unknown symbols, which is exactly the state that drops a
+    dimension.
+    """
+    records = row.get("undecided_guards")
+    if records:
+        return [
+            UndecidedGuard(
+                id=str(r.get("id") or guard_id(str(r.get("var_id") or ""))),
+                var_id=str(r.get("var_id") or ""),
+                reason=str(r.get("reason") or ""),
+                text=str(r.get("text") or "")[:TEXT_KEEP],
+                presort=str(r.get("presort") or ""),
+                escalate=bool(r.get("escalate")),
+                evidence=dict(r["evidence"]) if r.get("evidence") else None,
+                blocked_on=str(r.get("blocked_on") or ""),
+                scope=str(r.get("scope") or ""),
+                var_type=str(r.get("var_type") or ""),
+            )
+            for r in records
+        ]
+
+    guards: list[UndecidedGuard] = []
+    blocked_on = row.get("blocked_on") or {}
+    var_scope = row.get("var_scope") or {}
+    var_types = row.get("var_types") or {}
+    for var_id, detail in sorted((row.get("undecided") or {}).items()):
+        reason, text = split_reason(detail)
+        presort = presort_guard(var_id, detail)
+        scope = str(var_scope.get(var_id) or "")
+        guards.append(
+            UndecidedGuard(
+                id=guard_id(var_id),
+                var_id=var_id,
+                reason=reason,
+                text=text[:TEXT_KEEP],
+                presort=presort,
+                escalate=presort not in NON_ESCALATING,
+                evidence=evidence.best(text, scope) if evidence is not None else None,
+                blocked_on=str(blocked_on.get(var_id) or ""),
+                scope=scope,
+                var_type=str(var_types.get(var_id) or ""),
+            )
+        )
+    return guards
+
+
+def _roots_of(row: dict[str, Any]) -> list[Any]:
+    """The input roots, under either name the two serialisations give them.
+
+    Losing them is not a quiet loss of detail: an empty root set grades as
+    `IC_NONE`, which reads as "constant, nothing needs setting" and counts as
+    drivable -- the opposite of "closed onto host state no test can drive".
+    """
+    value = row.get("input_roots")
+    if value is None:
+        value = row.get("root_vars")
+    return list(value or [])
+
+
+def _to_field(
+    row: dict[str, Any], evidence: GuardEvidenceIndex | None
+) -> FieldDerivation:
+    guards = _guards_of(row, evidence)
+    return FieldDerivation(
+        name=str(row.get("name") or ""),
+        index=int(row.get("index") or 0),
+        status=str(row.get("status") or "unresolved"),
+        exactness=str(_readopt(row, "exactness", EX_UNRESOLVED)),
+        free_vars=sorted(str(v) for v in _readopt(row, "free_vars", [])),
+        host_expr=str(_readopt(row, "host_expr", "")),
+        domain=[str(v) for v in _readopt(row, "domain", [])],
+        value_expr=decode_expr_dag(row.get("value_expr")),
+        value_leaves=sorted(str(v) for v in _readopt(row, "value_leaves", [])),
+        root_vars=sorted(str(v) for v in _roots_of(row)),
+        variables=sorted(str(v) for v in _readopt(row, "variables", [])),
+        var_roots={
+            str(k): str(v) for k, v in (_readopt(row, "var_roots", {}) or {}).items()
+        },
+        aux_targets={
+            str(k): [str(x) for x in (v or [])]
+            for k, v in (_readopt(row, "aux_targets", {}) or {}).items()
+        },
+        state_targets={
+            str(k): [str(x) for x in (v or [])]
+            for k, v in (_readopt(row, "state_targets", {}) or {}).items()
+        },
+        undecided_guards=guards,
+        unresolved=list(_readopt(row, "unresolved", [])),
+        def_sites=list(_readopt(row, "def_sites", [])),
+        implicit_defaults=list(_readopt(row, "implicit_defaults", [])),
+        note=str(_readopt(row, "note", "")),
+        seconds=float(_readopt(row, "seconds", 0.0)),
+        expanded_chars=int(_readopt(row, "expanded_chars", 0)),
+        expanded=str(_readopt(row, "expanded", "")),
+    )
+
+
+def host_derivation_from_dict(raw: dict[str, Any] | None) -> HostDerivation:
+    """Rehydrate a persisted HostDerivation without rerunning source analysis."""
+
+    if not isinstance(raw, dict):
+        return HostDerivation()
+    fields = [
+        _to_field(row, None)
+        for row in (raw.get("fields") or [])
+        if isinstance(row, dict)
+    ]
+    auxiliaries = {
+        str(name): _to_field(row, None)
+        for name, row in (raw.get("auxiliaries") or {}).items()
+        if isinstance(row, dict)
+    }
+    return HostDerivation(
+        op_name=str(raw.get("op_name") or ""),
+        architecture=str(raw.get("architecture") or ""),
+        encode_site=dict(raw.get("encode_site") or {}),
+        encode_function=str(raw.get("encode_function") or ""),
+        fields=fields,
+        note=str(raw.get("note") or ""),
+        premises=[
+            dict(row)
+            for row in (raw.get("premises") or [])
+            if isinstance(row, dict)
+        ],
+        auxiliaries=auxiliaries,
+        phase_seconds={
+            str(k): float(v)
+            for k, v in (raw.get("phase_seconds") or {}).items()
+            if isinstance(v, (int, float))
+        },
+    )
+
+
+#: How to re-declare a softened guard, by the bucket it was sorted into. This
+#: has to reproduce what the worker declared: a loop element is an unbounded
+#: int (`_truthy` renders it as `!= 0`, which only type-checks as an int) while
+#: the other soft variables really are booleans. Declaring them all bool used
+#: to rewrite the loop-element variables' type and origin behind the caller's
+#: back, which then made them look interchangeable across dimensions.
+_SOFT_VAR_KINDS: dict[str, dict[str, Any]] = {
+    PRESORT_LOOP_ELEMENT: {
+        "type": "int",
+        "origin": "LOOP_ELEMENT",
+        "source": "loop_local_element",
+        "merged": True,
+    },
+    PRESORT_SCHEDULING: {
+        "type": "bool",
+        "origin": "SCHED_SOFT",
+        "source": "scheduling_guard",
+        "merged": False,
+    },
+    PRESORT_REACHABILITY: {
+        "type": "bool",
+        "origin": "REACHED_SOFT",
+        "source": "reachability_guard",
+        "merged": False,
+    },
+    "": {
+        "type": "bool",
+        "origin": "UNDECIDED_GUARD",
+        "source": "undecidable_guard",
+        "merged": False,
+    },
+}
+
+
+def _reregister_soft_vars(var_model: Any, doc: HostDerivation) -> None:
+    """Re-declare the free variables the workers created.
+
+    Softening happens inside the child process, so the parent's model never
+    sees those `VarSpec`s. The solver needs them declared, and the patch
+    validator needs `var_id` lookups to agree with what the derivation emitted.
+
+    Two kinds come back this way. A softened guard arrives as an
+    `UndecidedGuard`; the variable standing in for a field's value before any
+    write arrives on the `implicit_defaults` record instead, and it is an
+    unbounded int rather than a bool. Leaving the second kind undeclared is not
+    a silent no-op -- the solver reads an unknown symbol as `unmodelled_variable`
+    and drops the whole dimension.
+    """
+    from uo_init.kb_model import Domain
+    from uo_init.variable_model import VarSpec
+
+    for fld in doc.fields:
+        for guard in fld.undecided_guards:
+            if var_model.get(guard.var_id) is not None:
+                continue
+            kind = _SOFT_VAR_KINDS.get(guard.presort) or _SOFT_VAR_KINDS[""]
+            # What the worker declared beats what the bucket suggests. The
+            # bucket only knows the prefix, and `VAR_SCHED_` carries both
+            # softened guards and traversal positions -- one bool, one int.
+            var_type = guard.var_type or kind["type"]
+            var_model.add(
+                VarSpec(
+                    var_id=guard.var_id,
+                    name=guard.var_id,
+                    value_type=var_type,
+                    domain=Domain(
+                        var_id=guard.var_id,
+                        value_type=var_type,
+                        completeness="open",
+                        source=kind["source"],
+                    ),
+                    origin=kind["origin"],
+                    description=f"{guard.reason}: {guard.text[:160]}",
+                    identity_merged=bool(kind["merged"]),
+                )
+            )
+        for record in fld.implicit_defaults:
+            var_id = str(record.get("variable") or "")
+            if not var_id or var_model.get(var_id) is not None:
+                continue
+            where = f"{record.get('file')}:{record.get('line')}"
+            var_model.add(
+                VarSpec(
+                    var_id=var_id,
+                    name=var_id,
+                    value_type="int",
+                    domain=Domain(
+                        var_id=var_id,
+                        value_type="int",
+                        completeness="open",
+                        source="init_unknown",
+                    ),
+                    origin="INIT_UNKNOWN",
+                    description=(
+                        f"value of {record.get('field')} before any write ({where})"
+                    ),
+                )
+            )
+
+
+#: How many times a cut may expose a further cut before the chase stops.
+#: `blockOuter` needs two: itself, then `splitAxis` inside it. Past that the
+#: names repeat, and an unbounded chase on a graph with cycles does not end.
+MAX_AUX_ROUNDS = 3
+
+
+def _derive_auxiliaries(
+    doc: HostDerivation,
+    bundle: dict[str, Any],
+    *,
+    tmp_path: str,
+    isolate: bool,
+    helper: int,
+    timeout: int,
+    evidence: "GuardEvidenceIndex | None",
+    workers: int = DEFAULT_WORKERS,
+) -> None:
+    """Derive every name expansion stopped on, and the ones they expose.
+
+    Rounds are sequential because a round's results decide what the next one
+    asks for, but the names within one round are independent of each other.
+    """
+    pending: dict[str, list[str]] = {}
+    for fld in doc.fields:
+        pending.update(fld.aux_targets)
+        pending.update(fld.state_targets)
+    for _ in range(MAX_AUX_ROUNDS):
+        todo = {k: v for k, v in pending.items() if k not in doc.auxiliaries}
+        if not todo:
+            return
+        batch = sorted(todo.items())
+        rows: list[dict[str, Any]] = []
+        if isolate and tmp_path:
+            rows = _run_isolated_batch(
+                [
+                    {
+                        "target": _aux_worker,
+                        "args": (
+                            tmp_path,
+                            list(sys.path),
+                            var_id,
+                            (list(where) + ["", ""])[0],
+                            (list(where) + ["", ""])[1],
+                            helper,
+                        ),
+                        "name": var_id,
+                        "index": -1,
+                    }
+                    for var_id, where in batch
+                ],
+                timeout=timeout,
+                workers=workers,
+            )
+        else:
+            for var_id, where in batch:
+                name, function = (list(where) + ["", ""])[:2]
+                started = time.time()
+                try:
+                    rows.append(
+                        _derive_aux_row(bundle, var_id, name, function, helper)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    rows.append(
+                        _failed_row(
+                            var_id,
+                            -1,
+                            f"{type(exc).__name__}: {exc}"[:200],
+                            round(time.time() - started, 1),
+                        )
+                    )
+        for (var_id, _where), row in zip(batch, rows):
+            aux = _to_field(row, evidence)
+            aux.expanded = ""
+            if _says_nothing(aux, var_id):
+                continue
+            doc.auxiliaries[var_id] = aux
+            pending.update(aux.aux_targets)
+            pending.update(
+                {k: v for k, v in aux.state_targets.items() if k != var_id}
+            )
+
+
+def _says_nothing(aux: FieldDerivation, var_id: str) -> bool:
+    """Whether the derivation came back with the name it was asked about.
+
+    `num`, `prefixN` and the like are read at the leaf under a parameter name,
+    and the resolver maps that name straight back to the tiling field it was
+    passed from — so deriving it yields itself. Registering that is worse than
+    not deriving it at all: an unknown quantity a search could sample becomes
+    a quantity nothing can evaluate, and every draw that reads it is lost.
+    """
+    return set(aux.variables) == {var_id}
+
+
+def _regrade_through_auxiliaries(doc: HostDerivation) -> None:
+    """Charge a field for the auxiliaries it reads, or credit it for them.
+
+    A cut that came back with a closed expression over inputs is a definition,
+    not a hole: the field is as decided as it ever was, only written down in
+    two pieces, and its roots are the union of both. One that came back
+    unresolved, or that reads itself back, is a hole — the field cannot be
+    evaluated by walking it once — so the auxiliary stands in `free_vars` and
+    the field grades over-approximated, exactly as the `VAR_TDF_*` leaf it
+    replaced did. The difference is that now it says which name it stopped on.
+
+    A `VAR_TDF_*` target is credited the same way but never charged. Stopping
+    on host state was always allowed: the expression is exact with the leaf in
+    it, and the derivation only says how that leaf gets its value. Failing to
+    say leaves the field exactly where it was, so downgrading it would report
+    a loss where nothing was lost.
+    """
+    settled = _settled_auxiliaries(doc)
+    for fld in doc.fields:
+        closure = doc.aux_closure(set(fld.aux_targets) | set(fld.state_targets))
+        if not closure:
+            continue
+        charged = doc.aux_closure(fld.aux_targets, through_state=False)
+        open_aux = sorted(v for v in charged - settled if is_aux_var(v))
+        for var_id in sorted(closure & settled):
+            aux = doc.auxiliaries[var_id]
+            fld.var_roots.update(aux.var_roots)
+            fld.root_vars = sorted(set(fld.root_vars) | set(aux.root_vars))
+        if open_aux:
+            fld.free_vars = sorted(set(fld.free_vars) | set(open_aux))
+            # Reached through another cut rather than named here, but a free
+            # variable is only on the books if something says where it came
+            # from. `unrecorded_free_vars` reads this.
+            for var_id in open_aux:
+                origin = doc.auxiliaries.get(var_id)
+                fld.aux_targets.setdefault(
+                    var_id, [origin.host_expr if origin else "", ""]
+                )
+            if fld.exactness in (EX_EXACT, EX_CONSTANT):
+                fld.exactness = EX_OVERAPPROX
+            fld.note = "; ".join(
+                filter(None, [fld.note, "UNSETTLED_AUX: " + ",".join(open_aux[:4])])
+            )
+
+
+def _settled_auxiliaries(doc: HostDerivation) -> set[str]:
+    """Auxiliaries a single forward walk can evaluate.
+
+    Greatest fixpoint from the optimistic side: assume all are settled, then
+    strike out any that is unresolved, carries a free variable of its own, or
+    names one that has already been struck. An auxiliary in a cycle -- and
+    `blockOuter` reading `splitAxis` reading `blockOuter` is one -- never
+    stabilises, so it falls out on the round its partner does.
+    """
+    settled = {
+        var_id
+        for var_id, aux in doc.auxiliaries.items()
+        if aux.exactness in (EX_EXACT, EX_CONSTANT) and not aux.free_vars
+    }
+    while True:
+        drop = {
+            var_id
+            for var_id in settled
+            if any(
+                dep not in settled and dep != var_id
+                for dep in (
+                    set(doc.auxiliaries[var_id].aux_targets)
+                    | set(doc.auxiliaries[var_id].state_targets)
+                )
+            )
+        }
+        if not drop:
+            return settled
+        settled -= drop
+
+
+def derive_host_fields(
+    bundle: dict[str, Any],
+    *,
+    timeout: int = DEFAULT_TIMEOUT,
+    max_helper_guards: int = DEFAULT_HELPER_GUARDS,
+    isolate: bool = True,
+    only: list[str] | None = None,
+    workers: int = DEFAULT_WORKERS,
+    phases: tuple[str, ...] = PHASES,
+) -> HostDerivation:
+    """Derive every bound TilingKey dimension of one operator.
+
+    `isolate=False` runs in-process: no timeout protection, but usable from a
+    test runner where spawning is more trouble than the protection is worth.
+
+    `phases` narrows the run to some of `fields`, `auxiliaries`, `premises`.
+    A narrowed run is for measuring one phase in isolation and its result is
+    incomplete by construction, so callers must not persist it. Auxiliaries
+    are derived from what the fields exposed and so say nothing without them;
+    premises stand alone.
+    """
+    binding = bundle.get("binding")
+    spec = bundle.get("spec")
+    doc = HostDerivation(
+        op_name=getattr(spec, "op_name", "") or "",
+        architecture=getattr(spec, "arch_dir", "") or "",
+    )
+    if binding is None or not getattr(binding, "bindings", None):
+        doc.note = str(bundle.get("bind_error") or "no tpl binding")
+        return doc
+
+    host_ir = bundle["host_ir"]
+    doc.encode_site = binding.site.to_dict()
+    doc.encode_function = encode_function(host_ir, binding.site)
+    evidence = GuardEvidenceIndex(host_ir)
+    wanted = set(only or [])
+    targets = [
+        b for b in binding.bindings if not wanted or b.decl.name in wanted
+    ]
+
+    tmp_path = ""
+    api_path = ""
+    if isolate:
+        keep = {
+            k: bundle[k]
+            for k in ("binding", "host_ir", "resolver", "var_model")
+            if k in bundle
+        }
+        fd, tmp_path = tempfile.mkstemp(prefix="uo_derive_", suffix=".pkl")
+        try:
+            with open(fd, "wb") as fh:
+                pickle.dump(keep, fh)
+        except Exception:  # noqa: BLE001 — fall back to in-process
+            isolate = False
+            tmp_path = ""
+    if isolate and tmp_path and bundle.get("api_contract") is not None:
+        # The API layer travels separately: only its own premises read it, and
+        # every field and auxiliary worker would otherwise pay to unpickle it.
+        api_keep = {
+            k: bundle[k]
+            for k in ("api_contract", "api_resolver", "var_model", "resolver")
+            if k in bundle
+        }
+        fd, api_path = tempfile.mkstemp(prefix="uo_derive_api_", suffix=".pkl")
+        try:
+            with open(fd, "wb") as fh:
+                pickle.dump(api_keep, fh)
+        except Exception:  # noqa: BLE001 — fall back to in-process for this layer
+            api_path = ""
+
+    phase = time.time()
+    try:
+        rows: list[dict[str, Any]] = []
+        if "fields" not in phases:
+            targets = []
+        # Warm per-field cache (UO_DERIVE_CACHE). Hits are resolved in-parent
+        # before isolate workers spawn, so isolate mode stays intact for misses.
+        from uo_init import derive_cache
+
+        op_dir = getattr(spec, "op_dir", None) or ""
+        arch = getattr(spec, "arch_dir", None) or doc.architecture or "arch35"
+        bundle_fp = derive_cache.bundle_fingerprint(bundle) if targets else ""
+        cached_by_name: dict[str, dict[str, Any]] = {}
+        miss_targets = []
+        for b in targets:
+            key = derive_cache.field_cache_key(
+                b.decl.name,
+                bundle_fp,
+                max_helper_guards=max_helper_guards,
+                kind="field",
+            )
+            hit = derive_cache.load_field_row(key, op_dir=op_dir or None, arch=arch)
+            if hit is not None:
+                cached_by_name[b.decl.name] = hit
+            else:
+                miss_targets.append(b)
+
+        miss_rows: list[dict[str, Any]] = []
+        if isolate and tmp_path and miss_targets:
+            miss_rows = _run_isolated_batch(
+                [
+                    {
+                        "target": _worker,
+                        "args": (
+                            tmp_path,
+                            list(sys.path),
+                            b.index,
+                            max_helper_guards,
+                        ),
+                        "name": b.decl.name,
+                        "index": b.index,
+                    }
+                    for b in miss_targets
+                ],
+                timeout=timeout,
+                workers=workers,
+            )
+        else:
+            for b in miss_targets:
+                started = time.time()
+                try:
+                    miss_rows.append(_derive_row(bundle, b.index, max_helper_guards))
+                except Exception as exc:  # noqa: BLE001
+                    miss_rows.append(
+                        _failed_row(
+                            b.decl.name,
+                            b.index,
+                            f"{type(exc).__name__}: {exc}"[:200],
+                            round(time.time() - started, 1),
+                        )
+                    )
+        # Persist non-crash miss rows, then rebuild in original target order.
+        for b, row in zip(miss_targets, miss_rows):
+            note = str(row.get("note") or "")
+            if row and "TIMEOUT" not in note and "CRASHED" not in note:
+                key = derive_cache.field_cache_key(
+                    b.decl.name,
+                    bundle_fp,
+                    max_helper_guards=max_helper_guards,
+                    kind="field",
+                )
+                derive_cache.store_field_row(key, row, op_dir=op_dir or None, arch=arch)
+            cached_by_name[b.decl.name] = row
+        rows = [cached_by_name[b.decl.name] for b in targets]
+        for row in rows:
+            fld = _to_field(row, evidence)
+            # Text render is debug-only; grading uses value_expr. Deep trees
+            # are stripped after regrade when UO_DEEP_SOLVE is off.
+            fld.expanded = ""
+            doc.fields.append(fld)
+        doc.phase_seconds["fields"] = round(time.time() - phase, 1)
+        phase = time.time()
+        if "auxiliaries" in phases:
+            try:
+                _derive_auxiliaries(
+                    doc,
+                    bundle,
+                    tmp_path=tmp_path,
+                    isolate=isolate,
+                    helper=max_helper_guards,
+                    timeout=timeout,
+                    evidence=evidence,
+                    workers=workers,
+                )
+            except Exception as exc:  # noqa: BLE001 — a cut we cannot chase stays a cut
+                doc.note = (
+                    doc.note + f" auxiliaries failed: {type(exc).__name__}"
+                ).strip()
+            doc.phase_seconds["auxiliaries"] = round(time.time() - phase, 1)
+        phase = time.time()
+        try:
+            if "premises" not in phases:
+                pass
+            elif isolate and tmp_path:
+                host_total = len(list(host_ir.legality_premises()))
+                doc.premises = _premises_isolated(
+                    tmp_path,
+                    total=host_total,
+                    layer="host",
+                    function=doc.encode_function,
+                    helper=max_helper_guards,
+                    offset=0,
+                    timeout=timeout,
+                    workers=workers,
+                )
+                api_ir = getattr(bundle.get("api_contract"), "ir", None)
+                if api_path and api_ir is not None:
+                    doc.premises.extend(
+                        _premises_isolated(
+                            api_path,
+                            total=len(list(api_ir.legality_premises())),
+                            layer="api",
+                            function="",
+                            helper=max_helper_guards,
+                            offset=len(doc.premises),
+                            timeout=timeout,
+                            workers=workers,
+                        )
+                    )
+            else:
+                doc.premises = _derive_premises(
+                    bundle, host_ir, doc.encode_function, max_helper_guards
+                )
+                doc.premises.extend(
+                    _api_premises(bundle, max_helper_guards, len(doc.premises))
+                )
+        except Exception as exc:  # noqa: BLE001 — premises sharpen, they do not gate
+            doc.note = (doc.note + f" premises failed: {type(exc).__name__}").strip()
+        if "premises" in phases:
+            doc.phase_seconds["premises"] = round(time.time() - phase, 1)
+    finally:
+        for path in (tmp_path, api_path):
+            if path:
+                Path(path).unlink(missing_ok=True)
+
+    doc.fields.sort(key=lambda f: f.index)
+    _regrade_through_auxiliaries(doc)
+    if bundle.get("var_model") is not None:
+        _reregister_soft_vars(bundle["var_model"], doc)
+    # Default path does not solve / persist value_expr or expanded.
+    strip_deep_payload(doc)
+    return doc
+
+
+def to_key_derivations(doc: HostDerivation) -> dict[str, Any]:
+    """TG-facing view: one entry per dimension, no derivation bookkeeping.
+
+    TG binds `key_derivations` to decide which CSV variables move a key field.
+    Default omits ``expr`` (same deep-solve gate as ``host_derivation.yaml``);
+    roots / leaves / status are enough for the closure path.
+    """
+    deep = deep_solve_enabled()
+    entries: dict[str, Any] = {}
+    for f in doc.fields:
+        row: dict[str, Any] = {
+            "index": f.index,
+            "status": f.status,
+            "host_expr": f.host_expr,
+            "domain": list(f.domain),
+            "value_leaves": list(f.value_leaves),
+            "root_vars": list(f.root_vars),
+            "variables": list(f.variables),
+            "input_closure": f.input_closure,
+            "input_derivable": f.input_derivable,
+            "undecided_guard_ids": [g.id for g in f.undecided_guards],
+        }
+        if deep:
+            row["expr"] = encode_expr_dag(f.value_expr)
+        entries[f.name] = row
+    return {
+        "version": DERIVATION_VERSION,
+        "status": doc.status,
+        "source": "uo_init.host_derivation",
+        "encode_site": dict(doc.encode_site),
+        "key_derivations": entries,
+    }

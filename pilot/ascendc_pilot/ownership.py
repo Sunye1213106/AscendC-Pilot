@@ -39,149 +39,182 @@ PRIMARY_AGENT_ID = "ascendc-pilot"
 # - ACTION_WRITE_PATHS: union fallback for engines that do not yet split roles
 ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
-            "runs/{run_id}/actions/extract_plan/scratch/**",
+        "resolve_gaps": [
+            "runs/{run_id}/actions/resolve_gaps/parts/**",
+            "runs/{run_id}/actions/resolve_gaps/scratch/**",
+            "runs/{run_id}/actions/resolve_gaps/staging.yaml",
         ],
-        "adjudicate_llm_tasks": [
-            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
+    },
+    "tg-solve": {
+        "lemma_mine": [
+            "runs/{run_id}/actions/lemma_mine/parts/**",
+            "runs/{run_id}/actions/lemma_mine/scratch/**",
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+        ],
+        "lemma_review": [
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+        ],
+        "closure_audit": [
+            "runs/{run_id}/actions/closure_audit/review.yaml",
         ],
     },
 }
-
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "extract_plan": [
-            "uo/ir/extract_plan.yaml",
-            "uo/ir/extract_plan_aliases.yaml",
-            "uo/ir/receiver_bindings.yaml",
-            "uo/ir/extract_plan_auto_fill_report.yaml",
-            "uo/ir/extract_plan_decision_report.yaml",
+        "resolve_gaps": [
+            "uo/ir/unresolved.yaml",
+            "uo/ir/gap_patch_receipt.yaml",
         ],
-        "adjudicate_llm_tasks": [
-            "uo/ir/semantic_patches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
+        "apply_gap_patch": [
+            "uo/ir/gap_patch_receipt.yaml",
+            "uo/ir/**",
+        ],
+    },
+    "tg-solve": {
+        "lemma_mine": [
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+        ],
+        "lemma_review": [
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+        ],
+        "lemma_apply": [
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+            "tg/closure/open.txt",
+            "tg/closure/lemmas/active_rules.yaml",
+            "tg/closure/lemmas/revoked_rules.yaml",
+            "tg/closure/lemmas/reviews.yaml",
+        ],
+        "closure_audit": [
+            "runs/{run_id}/actions/closure_audit/review.yaml",
+        ],
+        "closure_certify": [
+            "tg/closure/closure.csv",
+            "tg/closure/certificate.yaml",
+            "tg/closure/audit_report.yaml",
         ],
     },
 }
-
 ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "prepare_layout": ["uo/manifest.yaml", "uo/**"],
-        "scope_confirmation": [
+        "prepare_layout": ["uo/manifest.yaml", "uo/operator.yaml", "uo/**"],
+        "scope_scan": [
             "uo/runs/{run_id}/scope/**",
-            "uo/cbm/**",
+            "uo/summary/scope_candidates.yaml",
+        ],
+        "scope_confirm": [
+            "uo/runs/{run_id}/scope/**",
             "uo/summary/scope_confirmed.yaml",
         ],
-        "detect_score_pre": [
-            "uo/ir/entrypoint_graph.yaml",
-            "uo/ir/operator_boundary.yaml",
-            "uo/ir/score_report_pre.yaml",
-            "uo/ir/llm_tasks.yaml",
+        "extract_host": ["uo/ir/**"],
+        "extract_tiling_key": ["uo/tiling/**"],
+        "extract_registry": ["uo/tiling/families.yaml", "uo/tiling/**"],
+        "extract_kernel": ["uo/kernel/**"],
+        "normalize_variables": ["uo/tiling/**"],
+        "derive_key_fields": [
+            "uo/ir/host_derivation.yaml",
+            "uo/ir/derive_key_fields_receipt.yaml",
+            "uo/tiling/key_derivations.yaml",
+            "uo/ir/**",
+            "uo/tiling/**",
+        ],
+        "normalize_predicates": ["uo/ir/unresolved.yaml", "uo/ir/**"],
+        "resolve_gaps": [
+            "runs/{run_id}/actions/resolve_gaps/parts/**",
+            "runs/{run_id}/actions/resolve_gaps/scratch/**",
+            "runs/{run_id}/actions/resolve_gaps/staging.yaml",
+            "uo/ir/resolve_gaps_receipt.yaml",
             "uo/ir/**",
         ],
-        # Union of producer staging + finalizer canonical (engines / gates).
-        "extract_plan": [
-            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
-            "runs/{run_id}/actions/extract_plan/scratch/**",
-            "uo/ir/extract_plan.yaml",
-            "uo/ir/extract_plan_aliases.yaml",
-            "uo/ir/receiver_bindings.yaml",
-            "uo/ir/extract_plan_auto_fill_report.yaml",
-            "uo/ir/extract_plan_decision_report.yaml",
+        "apply_gap_patch": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/**"],
+        "export_kb": ["uo/**"],
+        "build_index": ["uo/indexes/**"],
+        "export_tg_host_view": [
+            "uo/ir/tg_host_view.yaml",
+            "uo/indexes/kb_graph.sqlite",
+            "uo/checks/tg_host_view_receipt.yaml",
         ],
-        "detect_score_post": ["uo/ir/score_report_post.yaml", "uo/ir/llm_tasks.yaml", "uo/ir/**"],
-        "adjudicate_llm_tasks": [
-            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
-            "uo/ir/semantic_patches.yaml",
+        "export_adapter_pack": [
+            "uo/adapter/**",
+            "uo/checks/adapter_pack_receipt.yaml",
         ],
-        "apply_semantic_patch": [
-            "uo/ir/semantic_resolution_ledger.yaml",
-            "uo/ir/llm_tasks.yaml",
-            "uo/ir/semantic_apply_report.yaml",
-            "uo/ir/**",
-        ],
-        "apply_scope_expansion": [
-            "uo/ir/scope_expansion_requests.yaml",
-            "uo/ir/scope_expansion_decisions.yaml",
-            "uo/ir/scope_expansion_receipt.yaml",
-            "uo/ir/**",
-            "uo/runs/**",
-        ],
-        "rebuild_from_ledger": ["uo/ir/**"],
-        "recheck_closure": ["uo/ir/llm_tasks.yaml", "uo/ir/**"],
-        "key_triage": ["uo/ir/key_triage.yaml"],
-        "key_resolution": [
-            "uo/ir/input_derivable_patch.yaml",
-            "uo/ir/key_shape_resolve/**",
-        ],
-        "confidence_report": [
-            "uo/checks/confidence_gate.yaml",
-            "uo/summary/confidence_report.md",
-            "uo/ir/**",
-        ],
-        "confidence_review": ["uo/review/confidence_reason_review.yaml"],
-        "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/ir/**"],
+        "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/checks/**"],
         "kb_review": ["uo/review/kb_product_review.yaml"],
     },
+    "tg-plan": {
+        "plan_intent": ["tg/plan/plan_intent.yaml"],
+    },
+    "tg-solve": {
+        "oracle_probe": ["tg/closure/oracle_probe.yaml"],
+        "closure_ledger": [
+            "tg/closure/R.txt",
+            "tg/closure/open.txt",
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+        ],
+        "closure_search": ["tg/closure/rounds/**", "tg/closure/models/**"],
+        "closure_residual": ["tg/closure/residual/**", "tg/closure/route.yaml"],
+        "closure_construct": ["tg/closure/construct/**"],
+        "closure_explain": ["tg/closure/why.csv", "tg/closure/construct/**"],
+        "lemma_leads": [
+            "tg/closure/lemmas/leads.yaml",
+            "tg/closure/leads.csv",
+            "tg/closure/leads3.csv",
+        ],
+        "lemma_evidence": [
+            "tg/closure/lemmas/evidence/**",
+            "tg/closure/lemmas/evidence_receipt.yaml",
+            "tg/closure/lemmas/leads.yaml",
+        ],
+        "lemma_mine": [
+            "runs/{run_id}/actions/lemma_mine/parts/**",
+            "runs/{run_id}/actions/lemma_mine/scratch/**",
+            "runs/{run_id}/actions/lemma_mine/staging.yaml",
+        ],
+        "lemma_review": [
+            "runs/{run_id}/actions/lemma_review/review.yaml",
+        ],
+        "lemma_apply": [
+            "tg/closure/excluded.txt",
+            "tg/closure/excluded_why.csv",
+            "tg/closure/open.txt",
+            "tg/closure/lemmas/active_rules.yaml",
+            "tg/closure/lemmas/revoked_rules.yaml",
+            "tg/closure/lemmas/reviews.yaml",
+        ],
+        "closure_audit": [
+            "runs/{run_id}/actions/closure_audit/review.yaml",
+        ],
+        "closure_certify": [
+            "tg/closure/closure.csv",
+            "tg/closure/certificate.yaml",
+            "tg/closure/audit_report.yaml",
+        ],
+        "z3_solve": ["tg/solve/**", "tg/cases/**", "tg/realization/**"],
+        "cover_confirm": ["tg/solve/**", "tg/cases/**"],
+    },
 }
-
-# Action-precise read paths (lease allow-list). Empty → no Action-level allow filter.
-# Agent read_scopes are ceilings; lease must be a subset when non-empty.
 ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
-        "extract_plan": [
-            "uo/ir/extract_plan_candidates.yaml",
-            "uo/ir/extract_plan_candidates.sha256",
-            "uo/ir/extract_plan_candidates.summary.yaml",
-            "uo/ir/extract_plan_decision_worklist.yaml",
-            "uo/ir/extract_plan.rework_hints.yaml",
-            "uo/ir/entrypoint_graph.yaml",
-            "uo/cbm/index_meta.json",
-            # Decision worklist + staging self-check / rework.
-            "runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/decision_report.yaml",
-            "runs/{run_id}/actions/extract_plan/staging/output.yaml",
-            "runs/{run_id}/actions/extract_plan/scratch/**",
-            "uo/ir/extract_plan.yaml",
-            "uo/ir/extract_plan_aliases.yaml",
-            "uo/ir/receiver_bindings.yaml",
-            "uo/ir/extract_plan_auto_fill_report.yaml",
+        "resolve_gaps": [
+            "uo/ir/unresolved.yaml",
+            "uo/ir/resolve_gaps_staging.yaml",
+            "runs/{run_id}/actions/resolve_gaps/parts/**",
+            "runs/{run_id}/actions/resolve_gaps/scratch/**",
         ],
-        "adjudicate_llm_tasks": [
-            "uo/ir/llm_tasks.yaml",
-            "uo/ir/score_report_pre.yaml",
-            "uo/ir/score_report_post.yaml",
-            "uo/ir/semantic_patches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
-            "runs/{run_id}/actions/adjudicate_llm_tasks/reduce_report.yaml",
+        "kb_review": [
+            "uo/quality.yaml",
+            "uo/ir/unresolved.yaml",
+            "uo/checks/integrity.yaml",
+            "uo/manifest.yaml",
         ],
     },
 }
-
-# Action-precise forbidden reads (deny first, before allow-list).
 ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {
-    "uo-init": {
-        "extract_plan": [
-            "uo/ir/llm_tasks.yaml",
-            "uo/ir/semantic_patches.yaml",
-            "uo/ir/semantic_resolution_ledger.yaml",
-        ],
-    },
+    "uo-init": {},
 }
-
-# Canonical producer staging relative to action session dir.
-STAGING_OUTPUT_NAME = "staging/output.yaml"
+STAGING_RELATIONS_NAME = "staging/semantic_relations.yaml"
+STAGING_RELATIONS_BASE_NAME = "staging/semantic_relations.base.yaml"
 
 _UNRESOLVED_RE = re.compile(r"\[UNRESOLVED:[A-Z][A-Z0-9_]{2,}\]")
 _ANGLE_TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
@@ -245,6 +278,21 @@ def shard_producer_write_paths(
     sid = str(shard_id or "").strip()
     if not sid:
         return action_producer_write_paths(workflow_id, action_id, run_id=run_id)
+    if action_id == "extract_plan":
+        return [
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/staging/relation_parts/part_{sid}.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/scratch/{sid}/**",
+                run_id=run_id,
+            ),
+        ]
     return [
         expand_path_template(
             f"runs/{{run_id}}/actions/{action_id}/parts/part_{sid}.yaml",
@@ -268,6 +316,81 @@ def shard_producer_read_paths(
     """Narrow Map-worker reads to assigned batch + own part (rework)."""
     sid = str(shard_id or "").strip()
     batch = str(batch_name or f"batch_{sid}.yaml").strip()
+    if action_id == "extract_plan":
+        paths = [
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/inputs/relation_batches.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/inputs/semantic_obligations.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/inputs/batches/{batch}",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/staging/relation_parts/part_{sid}.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/scratch/{sid}/**",
+                run_id=run_id,
+            ),
+            # Session pack / env only — NOT full worklist / candidates
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/environment_capabilities.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/prompt.md",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/method.md",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/extract_plan/bundle.yaml",
+                run_id=run_id,
+            ),
+        ]
+        return paths
+    if action_id == "resolve_gaps":
+        paths = [
+            expand_path_template(
+                "runs/{run_id}/actions/resolve_gaps/inputs/blocker_batches.yaml",
+                run_id=run_id,
+            ),
+            expand_path_template(
+                f"runs/{{run_id}}/actions/resolve_gaps/inputs/batches/{batch}",
+                run_id=run_id,
+            ),
+            "uo/ir/unresolved.yaml",
+            "uo/ir/resolve_gaps_staging.yaml",
+        ]
+        if sid:
+            paths.append(
+                expand_path_template(
+                    f"runs/{{run_id}}/actions/resolve_gaps/parts/part_{sid}.yaml",
+                    run_id=run_id,
+                )
+            )
+            paths.append(
+                expand_path_template(
+                    f"runs/{{run_id}}/actions/resolve_gaps/scratch/{sid}/**",
+                    run_id=run_id,
+                )
+            )
+        for extra in (
+            f"runs/{{run_id}}/actions/resolve_gaps/environment_capabilities.yaml",
+            f"runs/{{run_id}}/actions/resolve_gaps/prompt.md",
+            f"runs/{{run_id}}/actions/resolve_gaps/method.md",
+            f"runs/{{run_id}}/actions/resolve_gaps/bundle.yaml",
+        ):
+            paths.append(expand_path_template(extra, run_id=run_id))
+        return paths
     paths = [
         expand_path_template(
             f"runs/{{run_id}}/actions/{action_id}/semantic_batches.yaml",
@@ -291,10 +414,51 @@ def shard_producer_read_paths(
                 run_id=run_id,
             )
         )
-    # Shared score/task context (read-only; not other shards' parts).
     paths.extend(action_read_paths(workflow_id, action_id, run_id=run_id))
-    # Deny cross-shard parts via forbidden patterns applied separately.
     return paths
+
+
+def shard_producer_forbidden_read_paths(
+    workflow_id: str,
+    action_id: str,
+    *,
+    run_id: str,
+    shard_id: str = "",
+) -> list[str]:
+    """Cross-shard / full-IR reads forbidden for Map workers."""
+    _ = workflow_id
+    sid = str(shard_id or "").strip()
+    if action_id == "extract_plan":
+        return [
+            "uo/ir/extract_plan_candidates.yaml",
+            expand_path_template(
+                "runs/{run_id}/actions/extract_plan/inputs/batches/**",
+                run_id=run_id,
+            ),
+            "uo/ir/extract_plan.yaml",
+            "uo/ir/semantic_relations.yaml",
+            "uo/ir/llm_tasks.yaml",
+            "uo/ir/semantic_patches.yaml",
+            "uo/ir/semantic_resolution_ledger.yaml",
+        ]
+    if action_id == "adjudicate_llm_tasks":
+        return [
+            "uo/ir/semantic_patches.yaml",
+            "uo/ir/semantic_resolution_ledger.yaml",
+            expand_path_template(
+                "runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
+                run_id=run_id,
+            ),
+        ]
+    if action_id == "resolve_gaps":
+        # Do not glob-forbid batches/parts — assigned paths are allow-listed per shard.
+        return [
+            "uo/ir/gap_bindings.yaml",
+            "uo/ir/host_derivation.yaml",
+            "uo/ir/operator_graph.yaml",
+            "uo/ir/quality.yaml",
+        ]
+    return []
 
 
 def expand_path_template(path: str, *, run_id: str = "", **extra: str) -> str:
@@ -450,6 +614,9 @@ def path_within_scopes(path_or_pattern: str, scopes: list[str], *, run_id: str =
     ]
     if not ceilings:
         return False
+    # Universal ceilings cover every path / pattern.
+    if any(c in {"**", "*", "**/**"} for c in ceilings):
+        return True
     # Concrete file / already-expanded path.
     if "*" not in rel and "?" not in rel and "[" not in rel:
         return path_matches_patterns(rel, ceilings)
@@ -494,7 +661,8 @@ def staging_dir(session_dir: Path) -> Path:
 
 
 def staging_output_path(session_dir: Path) -> Path:
-    return Path(session_dir) / STAGING_OUTPUT_NAME
+    """Relation Graph 权威 staging 路径（不再使用 output.yaml）。"""
+    return Path(session_dir) / STAGING_RELATIONS_NAME
 
 
 __all__ = [
@@ -508,7 +676,8 @@ __all__ = [
     "EXECUTION_PRIMARY_INTERACTIVE",
     "EXECUTION_SUBAGENT",
     "PRIMARY_AGENT_ID",
-    "STAGING_OUTPUT_NAME",
+    "STAGING_RELATIONS_NAME",
+    "STAGING_RELATIONS_BASE_NAME",
     "action_finalizer_write_paths",
     "action_forbidden_read_paths",
     "action_producer_write_paths",
@@ -524,6 +693,7 @@ __all__ = [
     "path_matches_patterns",
     "path_within_scopes",
     "prompt_has_unresolved",
+    "shard_producer_forbidden_read_paths",
     "shard_producer_read_paths",
     "shard_producer_write_paths",
     "staging_dir",

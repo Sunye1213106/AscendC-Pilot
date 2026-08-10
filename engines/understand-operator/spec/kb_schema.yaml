@@ -1,0 +1,240 @@
+# Unified UO knowledge-base schema.
+#
+# One graph, several layered views. On-disk authority is
+# `indexes/kb_graph.sqlite` (`meta.authority=db`). Layered YAML under
+# `.ascendc-pilot/uo/` is an optional human/debug export gated by `UO_KB_YAML`
+# (default 1 for test compat; production target 0). Every dumpable view must be
+# reconstructible from DB `view_blob` / tables via `uo_init.dump`.
+#
+# Consumed by:
+#   - uo_init.kb_export   (assembles views; writes sqlite; optional YAML)
+#   - uo_init.kb_index    (sqlite product writer / YAML→DB rebuild)
+#   - uo_init.dump        (YAML-on-demand from DB)
+#   - uo_init.uo_query / source_locator (query + file:line locate)
+#   - testcase-generation (variables + constraints -> Z3; loads DB or YAML)
+version: 1
+authority: db
+product: indexes/kb_graph.sqlite
+
+# ---------------------------------------------------------------------------
+# Status vocabulary. Every node, edge and artifact carries one.
+# ---------------------------------------------------------------------------
+statuses:
+  extracted: 由 clang 确定性抽取，证据完整
+  partial: 抽取到部分信息，某一维度未闭合（例如域只有下界）
+  unresolved: 规则无法闭合，已登记为 blocker，等待语义判定
+  not_extracted: 本次实现明确不产出该层，声明式缺失而非文件丢失
+
+completeness:
+  closed: 值域在源码里可穷举证明
+  open: 只推出部分边界，剩余由 TG 的测试策略决定
+
+# ---------------------------------------------------------------------------
+# Node kinds. `prefix` feeds uo_init.ids.KIND_PREFIX; ids are
+# `<prefix>_<hash12|SLUG>` and are stable across formatting-only edits.
+# ---------------------------------------------------------------------------
+node_kinds:
+  Input:
+    prefix: IN
+    layer: interface
+    id_rule: named
+    source: opdef `Input("name")`
+  OptionalInput:
+    prefix: OPT
+    layer: interface
+    id_rule: named
+    source: opdef optional input
+  Output:
+    prefix: OUT
+    layer: interface
+    id_rule: named
+    source: opdef `Output("name")`
+  Attribute:
+    prefix: ATTR
+    layer: interface
+    id_rule: named
+    source: opdef `Attr("name")`
+  Variable:
+    prefix: VAR
+    layer: variables
+    id_rule: named
+    source: variable_model 归一化层
+    carries: [value_type, domain, completeness]
+  TilingKeyDim:
+    prefix: KEY
+    layer: tiling
+    id_rule: named
+    source: tpl_dsl.TplDim
+  TilingDataField:
+    prefix: TDF
+    layer: tiling
+    id_rule: named
+    source: host 写事件的字段路径
+  HostBranch:
+    prefix: HBR
+    layer: host
+    id_rule: content
+    id_material: [rel_file, function, normalized_guard, ordinal_in_function]
+    source: clang_walk.CtrlNode
+  KernelBranch:
+    prefix: KBR
+    layer: kernel
+    id_rule: content
+    id_material: [rel_file, function, normalized_guard, ordinal_in_function]
+    source: clang_walk.CtrlNode (kernel 实例化 TU)
+  TemplateBinding:
+    prefix: KTPL
+    layer: kernel
+    id_rule: content
+    source: harness.EntrySignature + pairwise 采样实例
+  KernelPath:
+    prefix: KPATH
+    layer: kernel
+    id_rule: content
+    source: kernel 侧路径遍历
+  Predicate:
+    prefix: CON
+    layer: constraints
+    id_rule: content
+    id_material: [owner_id, polarity, canonical_smt]
+    carries: [smt, polarity, status]
+  Family:
+    prefix: FAM
+    layer: registry
+    id_rule: named
+    source: registry_capable.Competition
+  ApiContract:
+    prefix: API
+    layer: api
+    id_rule: named
+    source: 文档证据
+  Evidence:
+    prefix: EV
+    layer: evidence
+    id_rule: content
+    id_material: [rel_file, line_start, line_end]
+  Function:
+    prefix: FN
+    layer: host
+    id_rule: named
+    source: host_ir.call_sites / clang_walk.FuncRecord
+    carries: [file, line]
+
+# ---------------------------------------------------------------------------
+# Edge kinds. Edge ids are `REL_<hash12(kind, src, dst)>`.
+# ---------------------------------------------------------------------------
+edge_kinds:
+  derives_from: {src: any, dst: any, meaning: 目标是来源经计算得到的}
+  guards: {src: Predicate, dst: [HostBranch, KernelBranch], meaning: 谓词守卫该分支}
+  controls: {src: Variable, dst: [HostBranch, KernelBranch], meaning: 变量可控制该分支取值}
+  encodes: {src: TilingKeyDim, dst: Variable, meaning: KEY 维度编码该变量}
+  binds: {src: TilingKeyDim, dst: TemplateBinding, meaning: KEY 维度绑定到模板实参}
+  writes: {src: any, dst: TilingDataField, meaning: host 侧写入该字段}
+  reads: {src: any, dst: any}
+  calls: {src: Function, dst: Function, meaning: caller 在某 call site 调用 callee}
+  selects: {src: Family, dst: TemplateBinding, meaning: registry 竞价选中}
+  implements: {src: TemplateBinding, dst: KernelPath}
+  uses_api: {src: any, dst: ApiContract}
+  evidenced_by: {src: any, dst: Evidence, meaning: 唯一允许指向 Evidence 的边}
+
+# ---------------------------------------------------------------------------
+# Invariants enforced by export_integrity. A violation fails the gate.
+# ---------------------------------------------------------------------------
+invariants:
+  - id: unique_ids
+    rule: node id 与 edge id 在整个 KB 内唯一
+  - id: edge_endpoints_exist
+    rule: 每条边的 src 与 dst 都必须是已声明的 node id
+  - id: no_evidence_free_node
+    rule: >
+      status 为 extracted 或 partial 的节点至少有一条 evidence_ref；
+      unresolved 节点允许无证据，但必须出现在 ir/unresolved.yaml
+  - id: id_prefix_matches_kind
+    rule: node id 前缀必须与其 kind 在 node_kinds 中声明的 prefix 一致
+  - id: predicate_owner_exists
+    rule: 每个 Predicate 的 owner_id 必须是已声明的分支节点
+  - id: artifact_hash_match
+    rule: checks/artifact_hashes.yaml 中每个条目的 sha256 与实际文件一致
+  - id: db_product_idempotent
+    rule: >
+      同一 graph 写入 sqlite 两次必须得到同样的内容摘要；
+      若存在 YAML，由 YAML rebuild 与内存 assemble→write 指纹一致
+  - id: dump_reconstructible
+    rule: manifest / quality / tilingdata / kernel 等 view 必须能从 DB dump 还原
+
+# ---------------------------------------------------------------------------
+# Layer -> files. When YAML is exported (`UO_KB_YAML=1`), `required` files must
+# exist for legacy TG intake. With DB authority (`UO_KB_YAML=0`), the same
+# logical views live in sqlite `view_blob` and TG loads them via adapters.
+# `optional` may carry `status: not_extracted` and still pass.
+# ---------------------------------------------------------------------------
+layers:
+  meta:
+    required: [manifest.yaml, operator.yaml, quality.yaml]
+  tiling:
+    required:
+      - tiling/variables.yaml
+      - tiling/key_space.yaml
+      - tiling/exhaustive_key_space.yaml
+      - tiling/constraints.yaml
+      - tiling/families.yaml
+      - tiling/coverage_model.yaml
+    optional:
+      - tiling/data_model.yaml
+  kernel:
+    required:
+      - kernel/branches.yaml
+      - kernel/paths.yaml
+      - kernel/compile_model.yaml
+      - kernel/variables.yaml
+    optional:
+      - kernel/pipeline.yaml
+      - kernel/resources.yaml
+  views:
+    required:
+      - views/tilingdata.yaml
+      - views/kernel.yaml
+    optional:
+      - views/call_graph.yaml
+  cross_layer:
+    required:
+      - cross_layer/tiling_to_kernel.yaml
+      - cross_layer/impact_graph.yaml
+    optional:
+      - cross_layer/variable_lineage.yaml
+  ir:
+    required:
+      - ir/operator_graph.yaml
+      - ir/unresolved.yaml
+    optional:
+      - ir/host_ir.yaml
+      - ir/input_derivable.yaml
+  flow:
+    optional:
+      - flow/golden_model.yaml
+      - flow/numerical_model.yaml
+  checks:
+    required:
+      - checks/artifact_hashes.yaml
+
+# ---------------------------------------------------------------------------
+# Quality metrics written to quality.yaml. Two closure numbers on purpose:
+# a branch tracked to a loop induction variable is "closed" but gives a test
+# generator nothing to steer with.
+# ---------------------------------------------------------------------------
+metrics:
+  source_closure:
+    definition: 追溯到任意合法根 Source 的控制节点占比
+  input_controllability:
+    definition: 追溯到测试用例可直接设置的根的控制节点占比
+    numerator_roots:
+      - INPUT_SHAPE
+      - INPUT_DTYPE
+      - INPUT_FORMAT
+      - INPUT_VALUE
+      - OPTIONAL_INPUT_PRESENCE
+      - ATTRIBUTE
+  predicate_normalization:
+    definition: 成功序列化为 SMT-lite 的谓词占比
+  blocker_count:
+    definition: 去重后的未闭合原子数（LLM 任务数上界）

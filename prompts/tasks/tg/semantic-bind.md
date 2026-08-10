@@ -1,44 +1,21 @@
-Bundle identity is authoritative.
-Do not replace, infer, normalize, or copy identity from old artifacts.
+# Task
 
-# Task: tg/semantic-bind
+Bind contract symbols to KB/source entities.
 
-你是 `tg-semantic-bind` producer。只处理当前 Action 的 binding gaps。
+# Targets
 
-## 允许读取
+`<TARGET_IDS_OR_FILES>`
 
-- `.ascendc-pilot/tg/realization/llm_bind_prompt_bundle.yaml`
-- `.ascendc-pilot/tg/realization/binding_inventory.yaml`
-- `.ascendc-pilot/tg/realization/binding_gaps.yaml`
-- `.ascendc-pilot/tg/realization/unresolved.yaml`
-- bundle 内给出的源码窗口路径（仅这些文件）
+# Context
 
-## 禁止
+- Project: `<PROJECT_ROOT>`
+- TG: `<TG_ROOT>`
+- UO: `<UO_ROOT>`
 
-- 全仓搜索或打开未在窗口中的源码
-- 发明 CSV 列名 / KEY id / 表达式
-- 空 accept、无 candidate_id 的批量升级
-- 直接修改 `binding_lexicon.yaml`（由 finalize 确定性应用）
-- 调用 `acp run-action semantic_bind --finalize`
-- 调用 `acp advance` / `complete` / 跳阶段
+# Requirements
 
-## 输出
+- Follow `skills/domain/tg-init/SKILL.md` and `references/binding.md`
 
-写 `.ascendc-pilot/tg/realization/semantic_bind_patch.yaml`（必须带本次 prepare 的 nonce）：
+# Return
 
-```yaml
-action: bind
-prepare_nonce: <from Runtime Bundle / binding_inventory.pilot_prepare.nonce>
-bindings:
-  - candidate_id: <from bundle>
-    key_id: KEY_...
-    expr: "..."
-    evidence:
-      - file_path: ...
-        line: ...
-```
-
-写出补丁后立即停止并返回简短结果。不得执行 finalize；由 Primary 执行 `acp run-action semantic_bind --finalize`。
-
-Finalize 会调用 `apply_semantic_bind_patch`、校验 fingerprint / Output Contract / `bind_progress`。
-若仍有 unresolved gaps，保持 `ready_for_llm`，不得宣称完成。
+Bound, ambiguous, or `UNRESOLVED` per target.

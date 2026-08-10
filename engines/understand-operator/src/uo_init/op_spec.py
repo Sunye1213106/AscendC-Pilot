@@ -1,0 +1,380 @@
+# -*- coding: utf-8 -*-
+"""Discover an operator's layout from its source tree.
+
+Every module used to hardcode FlashAttentionScoreGrad paths and regexes. This
+resolves them from the Ascend C repository conventions instead:
+
+    op_host/<snake>_def.cpp                       operator definition
+    op_host/**/*_tiling*.cpp                      host tiling TUs
+    op_kernel/<snake>_apt.cpp | <snake>.cpp       kernel entry
+    op_kernel/<arch>/<snake>_template_tiling_key.h TilingKey DSL
+
+Which files those roles draw from is decided by `scope_scan`, which reads the
+directory layout and the include graph rather than file names, so shared
+headers a domain keeps beside its operators come along. The globs here remain
+as a fallback for a tree the scan cannot make sense of.
+
+A repository that does not follow the convention can pin the answer with
+`spec/operators/<op>.yaml`; discovery reports ambiguities rather than guessing
+so `scope_confirm` knows when it must ask a human.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from uo_init import scope_scan as sscan
+
+SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
+OVERRIDE_DIR = SPEC_DIR / "operators"
+
+# `class FlashAttentionScoreGrad : public OpDef` / `OP_ADD(FlashAttentionScoreGrad)`
+OP_CLASS_RE = re.compile(r"\bclass\s+([A-Z]\w*)\s*:\s*public\s+OpDef\b")
+OP_ADD_RE = re.compile(r"\bOP_ADD\s*\(\s*([A-Z]\w*)\s*\)")
+# `ASCENDC_TPL_ARGS_DECL(FlashAttentionScoreGrad,`
+TPL_TAG_RE = re.compile(r"ASCENDC_TPL_ARGS_DECL\s*\(\s*([A-Za-z_]\w*)")
+ARCH_DIR_RE = re.compile(r"^arch\d+$")
+
+
+def camel_to_snake(name: str) -> str:
+    s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
+
+
+def snake_to_camel(name: str) -> str:
+    return "".join(part.title() for part in str(name).split("_") if part)
+
+
+@dataclass
+class OpSpec:
+    """Resolved locations for one operator, one architecture."""
+
+    op_dir: Path
+    op_name: str = ""
+    op_snake: str = ""
+    arch_dir: str = ""
+    opdef: Path | None = None
+    host_targets: list[Path] = field(default_factory=list)
+    api_targets: list[Path] = field(default_factory=list)
+    kernel_targets: list[Path] = field(default_factory=list)
+    decl_targets: list[Path] = field(default_factory=list)
+    kernel_entry: Path | None = None
+    kernel_headers: list[Path] = field(default_factory=list)
+    tiling_key_header: Path | None = None
+    tiling_data_header: Path | None = None
+    proto: Path | None = None
+    docs: list[Path] = field(default_factory=list)
+    available_archs: list[str] = field(default_factory=list)
+    ambiguities: list[str] = field(default_factory=list)
+    scope: sscan.ScopeSet | None = None
+    source: str = "discovered"
+
+    @property
+    def op_needle(self) -> str:
+        """Substring used to tell operator-owned source from library headers.
+
+        The first two words of the snake name are specific enough to exclude
+        CANN headers without excluding the operator's own files.
+        """
+        parts = self.op_snake.split("_")
+        return "_".join(parts[:2]) if len(parts) >= 2 else self.op_snake
+
+    @property
+    def host_root(self) -> Path:
+        return self.op_dir / "op_host"
+
+    @property
+    def kernel_root(self) -> Path:
+        return self.op_dir / "op_kernel"
+
+    def to_dict(self) -> dict[str, Any]:
+        def rel(p: Path | None) -> str:
+            if p is None:
+                return ""
+            try:
+                return p.relative_to(self.op_dir).as_posix()
+            except ValueError:
+                return p.as_posix()
+
+        return {
+            "op_name": self.op_name,
+            "op_snake": self.op_snake,
+            "op_dir": self.op_dir.as_posix(),
+            "arch_dir": self.arch_dir,
+            "available_archs": list(self.available_archs),
+            "opdef": rel(self.opdef),
+            "host_targets": [rel(p) for p in self.host_targets],
+            "api_targets": [rel(p) for p in self.api_targets],
+            "kernel_targets": [rel(p) for p in self.kernel_targets],
+            "decl_targets": [rel(p) for p in self.decl_targets],
+            "scope_files": len(self.scope.files) if self.scope else 0,
+            "kernel_entry": rel(self.kernel_entry),
+            "tiling_key_header": rel(self.tiling_key_header),
+            "tiling_data_header": rel(self.tiling_data_header),
+            "proto": rel(self.proto),
+            "docs": [rel(p) for p in self.docs],
+            "ambiguities": list(self.ambiguities),
+            "source": self.source,
+        }
+
+    @property
+    def is_unambiguous(self) -> bool:
+        return not self.ambiguities
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _find_opdef(host_root: Path) -> tuple[Path | None, list[str]]:
+    candidates = sorted(host_root.glob("*_def.cpp")) if host_root.is_dir() else []
+    if not candidates:
+        return None, ["opdef_not_found: no op_host/*_def.cpp"]
+    if len(candidates) > 1:
+        names = ", ".join(p.name for p in candidates)
+        return candidates[0], [f"multiple_opdef: {names}"]
+    return candidates[0], []
+
+
+def _op_name_from(opdef: Path | None, op_dir: Path) -> tuple[str, list[str]]:
+    if opdef is not None:
+        text = _read(opdef)
+        m = OP_CLASS_RE.search(text) or OP_ADD_RE.search(text)
+        if m:
+            return m.group(1), []
+        stem = opdef.stem[: -len("_def")] if opdef.stem.endswith("_def") else opdef.stem
+        return snake_to_camel(stem), [f"op_name_from_filename: {opdef.name}"]
+    return snake_to_camel(op_dir.name), ["op_name_from_directory"]
+
+
+def _discover_archs(op_dir: Path) -> list[str]:
+    seen: set[str] = set()
+    for parent in (op_dir / "op_host", op_dir / "op_kernel"):
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            if child.is_dir() and ARCH_DIR_RE.match(child.name):
+                seen.add(child.name)
+    return sorted(seen)
+
+
+def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
+    """Tiling TUs for this architecture: the shared entry plus the arch folder.
+
+    Headers are excluded (they are pulled in by the TUs) and other arch folders
+    are excluded so a single run models exactly one hardware generation.
+    """
+    if not host_root.is_dir():
+        return []
+    out: list[Path] = []
+    for path in sorted(host_root.glob("*.cpp")):
+        if "_tiling" in path.stem:
+            out.append(path)
+    arch_root = host_root / arch_dir
+    if arch_root.is_dir():
+        out.extend(sorted(p for p in arch_root.glob("*.cpp") if "_tiling" in p.stem))
+    # Prefer files that belong to this operator when the folder is shared.
+    owned = [p for p in out if op_snake and p.stem.startswith(op_snake)]
+    return owned or out
+
+
+def _targets_from_scope(spec: OpSpec) -> None:
+    """Split the scanned scope into the sets each parsing stage consumes.
+
+    Tiling stays on its own: the definition and shape-inference TUs describe the
+    operator rather than compute a TilingKey, and folding their writes into the
+    host IR would attribute assignments to runs that never make one.
+    """
+    scope = spec.scope
+    if scope is None:
+        return
+    spec.host_targets = scope.paths(role=sscan.ROLE_HOST_TILING, tu_only=True)
+    spec.api_targets = scope.paths(role=sscan.ROLE_API, tu_only=True)
+    spec.kernel_targets = scope.paths(role=sscan.ROLE_KERNEL_ENTRY, tu_only=True)
+    spec.decl_targets = scope.paths(
+        role=(sscan.ROLE_HOST_DEF, sscan.ROLE_HOST_INFERSHAPE), tu_only=True
+    )
+
+
+def _kernel_entry(kernel_root: Path, op_snake: str) -> tuple[Path | None, list[str]]:
+    """`*_apt.cpp` is the AscendC entry when present, else `<snake>.cpp`.
+
+    Fallback for a tree `scope_scan` could not read; the scan decides which
+    architecture an entry builds by what it includes, which names cannot say.
+    """
+    if not kernel_root.is_dir():
+        return None, ["kernel_entry_not_found: no op_kernel/"]
+    apt = sorted(kernel_root.glob("*_apt.cpp"))
+    if len(apt) == 1:
+        return apt[0], []
+    if len(apt) > 1:
+        return apt[0], [f"multiple_kernel_entry: {', '.join(p.name for p in apt)}"]
+    plain = sorted(kernel_root.glob("*.cpp"))
+    if len(plain) == 1:
+        return plain[0], []
+    named = [p for p in plain if p.stem == op_snake]
+    if named:
+        return named[0], []
+    if plain:
+        return plain[0], [f"multiple_kernel_entry: {', '.join(p.name for p in plain)}"]
+    return None, ["kernel_entry_not_found: no op_kernel/*.cpp"]
+
+
+def _tiling_key_header(
+    kernel_root: Path, arch_dir: str, op_name: str
+) -> tuple[Path | None, list[str]]:
+    arch_root = kernel_root / arch_dir
+    search_roots = [r for r in (arch_root, kernel_root) if r.is_dir()]
+    for root in search_roots:
+        hits = sorted(root.glob("*template_tiling_key.h"))
+        if len(hits) == 1:
+            return hits[0], []
+        if len(hits) > 1:
+            # Disambiguate by the op tag inside the DSL itself.
+            for h in hits:
+                m = TPL_TAG_RE.search(_read(h))
+                if m and m.group(1) == op_name:
+                    return h, []
+            return hits[0], [f"multiple_tiling_key_header: {', '.join(p.name for p in hits)}"]
+    return None, ["tiling_key_header_not_found: no *template_tiling_key.h"]
+
+
+def _tiling_data_header(kernel_root: Path, arch_dir: str) -> Path | None:
+    for root in (kernel_root / arch_dir, kernel_root):
+        if not root.is_dir():
+            continue
+        hits = sorted(root.glob("*tiling_data*.h")) or sorted(root.glob("*_tiling.h"))
+        if hits:
+            return hits[0]
+    return None
+
+
+def load_override(op_name: str) -> dict[str, Any] | None:
+    path = OVERRIDE_DIR / f"{op_name}.yaml"
+    if not path.is_file():
+        path = OVERRIDE_DIR / f"{camel_to_snake(op_name)}.yaml"
+    if not path.is_file():
+        return None
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
+    """Resolve every path uo-init needs for one operator.
+
+    `arch_dir` defaults to the newest architecture folder present, since a
+    repository carrying both arch22 and arch35 is being developed against the
+    newer one.
+    """
+    op_dir = Path(op_dir).expanduser().resolve()
+    spec = OpSpec(op_dir=op_dir)
+    spec.available_archs = _discover_archs(op_dir)
+
+    if arch_dir:
+        spec.arch_dir = arch_dir
+        if spec.available_archs and arch_dir not in spec.available_archs:
+            spec.ambiguities.append(
+                f"arch_not_present: {arch_dir} not in {spec.available_archs}"
+            )
+    elif len(spec.available_archs) == 1:
+        spec.arch_dir = spec.available_archs[0]
+    elif spec.available_archs:
+        spec.arch_dir = spec.available_archs[-1]
+        spec.ambiguities.append(
+            f"multiple_arch_dirs: {spec.available_archs}; defaulted to {spec.arch_dir}"
+        )
+    else:
+        spec.ambiguities.append("no_arch_dir_found")
+
+    spec.opdef, notes = _find_opdef(spec.host_root)
+    spec.ambiguities.extend(notes)
+
+    spec.op_name, notes = _op_name_from(spec.opdef, op_dir)
+    spec.ambiguities.extend(notes)
+    spec.op_snake = camel_to_snake(spec.op_name)
+
+    # Scanned even when the spec is pinned: a pin says which files to parse,
+    # while the scope says which files the walk may read once parsing pulls
+    # them in, and the second question stands either way.
+    spec.scope = sscan.scan(op_dir, arch_dir=spec.arch_dir)
+
+    override = load_override(spec.op_name)
+    if override:
+        return _apply_override(spec, override)
+
+    _targets_from_scope(spec)
+
+    if not spec.host_targets:
+        spec.host_targets = _host_targets(spec.host_root, spec.arch_dir, spec.op_snake)
+        spec.ambiguities.append("host_targets_from_glob: scope scan found none")
+    if not spec.host_targets:
+        spec.ambiguities.append("host_targets_not_found: no op_host tiling TU")
+
+    if spec.kernel_targets:
+        spec.kernel_entry = spec.kernel_targets[0]
+        if len(spec.kernel_targets) > 1:
+            names = ", ".join(p.name for p in spec.kernel_targets)
+            spec.ambiguities.append(f"multiple_kernel_entry: {names}")
+    else:
+        spec.kernel_entry, notes = _kernel_entry(spec.kernel_root, spec.op_snake)
+        spec.ambiguities.extend(notes)
+
+    spec.tiling_key_header, notes = _tiling_key_header(
+        spec.kernel_root, spec.arch_dir, spec.op_name
+    )
+    spec.ambiguities.extend(notes)
+
+    spec.tiling_data_header = _tiling_data_header(spec.kernel_root, spec.arch_dir)
+
+    arch_kernel = spec.kernel_root / spec.arch_dir
+    if arch_kernel.is_dir():
+        spec.kernel_headers = sorted(arch_kernel.glob("*.h"))
+
+    proto_root = op_dir / "op_graph"
+    if proto_root.is_dir():
+        protos = sorted(proto_root.glob("*_proto.h"))
+        spec.proto = protos[0] if protos else None
+
+    docs_root = op_dir / "docs"
+    if docs_root.is_dir():
+        spec.docs = sorted(docs_root.glob("aclnn*.md"))
+
+    return spec
+
+
+def _apply_override(spec: OpSpec, override: dict[str, Any]) -> OpSpec:
+    """A pinned spec replaces discovery entirely: partial pinning hides drift."""
+    spec.source = "override"
+    spec.ambiguities = []
+
+    def as_path(value: Any) -> Path | None:
+        return spec.op_dir / str(value) if value else None
+
+    spec.op_name = str(override.get("op_name") or spec.op_name)
+    spec.op_snake = str(override.get("op_snake") or camel_to_snake(spec.op_name))
+    spec.arch_dir = str(override.get("arch_dir") or spec.arch_dir)
+    spec.opdef = as_path(override.get("opdef")) or spec.opdef
+    spec.host_targets = [spec.op_dir / p for p in (override.get("host_targets") or [])]
+    spec.kernel_entry = as_path(override.get("kernel_entry"))
+    spec.tiling_key_header = as_path(override.get("tiling_key_header"))
+    spec.tiling_data_header = as_path(override.get("tiling_data_header"))
+    spec.proto = as_path(override.get("proto"))
+    spec.docs = [spec.op_dir / p for p in (override.get("docs") or [])]
+
+    for label, path in (
+        ("opdef", spec.opdef),
+        ("kernel_entry", spec.kernel_entry),
+        ("tiling_key_header", spec.tiling_key_header),
+    ):
+        if path is not None and not path.is_file():
+            spec.ambiguities.append(f"override_missing_{label}: {path}")
+    for path in spec.host_targets:
+        if not path.is_file():
+            spec.ambiguities.append(f"override_missing_host_target: {path}")
+    return spec

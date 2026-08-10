@@ -5,14 +5,17 @@ role: deterministic_engine
 mode: subagent
 description: TG deterministic engine
 read_scopes:
-  - "tg/**"
-  - "uo/**"
-  - "runs/**"
+- tg/**
+- uo/**
+- runs/**
+- context/**
+- operators/**
+- skills/domain/**
 write_scopes:
-  - "tg/**"
-  - "runs/**"
+- tg/**
+- runs/**
+- context/pilot_params.yaml
 forbidden:
-  - modify_pilot_state
-  - declare_workflow_passed
-  - write_outside_declared_scope
-
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

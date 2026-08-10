@@ -52,45 +52,33 @@ def _load_action_yaml(skills: Path, method_id: str) -> dict[str, Any]:
 
 
 def _registered_gate_ids(project_root: Path) -> set[str]:
-    from ascendc_pilot.gates import run_named_gate
-    from ascendc_pilot.workflows.specs import WORKFLOWS
+    """Read gate names from source without executing any gate.
 
-    probe = project_root if project_root.is_dir() else Path.cwd()
-    known: set[str] = set()
-    unknown_msg = "unknown gate id:"
-    candidates: set[str] = set()
-    for meta in WORKFLOWS.values():
-        for g in meta.get("gates") or []:
-            candidates.add(str(g))
-        for gs in (meta.get("phase_gates") or {}).values():
-            for g in gs or []:
-                candidates.add(str(g))
-        for g in meta.get("complete_gates") or []:
-            candidates.add(str(g))
-        for a in meta.get("actions") or []:
-            if isinstance(a, dict):
-                for g in a.get("gates") or []:
-                    candidates.add(str(g))
-    for gid in sorted(candidates):
-        res = run_named_gate(probe, gid)
-        msg = str(res.get("message") or "")
-        if unknown_msg in msg:
-            continue
-        known.add(gid)
-    return known
+    Consistency validation is a static control-plane check.  Executing gates
+    here used to make a bare checkout unexpectedly probe CANN/operator sources,
+    which made Skill/Prompt validation environment-dependent and side-effectful.
+    """
+    root = _repo_root(project_root)
+    gate_source = root / "pilot" / "ascendc_pilot" / "gates" / "__init__.py"
+    if not gate_source.is_file():
+        return set()
+    text = gate_source.read_text(encoding="utf-8")
+    marker = "mapping = {"
+    start = text.find(marker)
+    if start < 0:
+        return set()
+    tail = text[start + len(marker) :]
+    end = tail.find("\n    }")
+    block = tail if end < 0 else tail[:end]
+    return set(re.findall(r'(?m)^\s*"([A-Za-z0-9_-]+)"\s*:', block))
 
 
 def _effective_write_scopes(agent_id: str, action_id: str, repo_root: Path) -> list[str]:
+    del action_id
     from ascendc_pilot.agents_registry import load_agent_meta
 
     meta = load_agent_meta(agent_id, str(repo_root))
-    scopes = [str(x) for x in (meta.get("write_scopes") or [])]
-    if agent_id == "uo-key-resolve":
-        if action_id == "key_triage":
-            return ["uo/ir/key_triage.yaml"]
-        if action_id == "key_resolution":
-            return ["uo/ir/input_derivable_patch.yaml", "uo/ir/key_shape_resolve/**"]
-    return scopes
+    return [str(x) for x in (meta.get("write_scopes") or [])]
 
 
 def _check_staged_output(
@@ -106,7 +94,8 @@ def _check_staged_output(
     formal_paths: list[str],
     root: Path,
 ) -> list[str]:
-    """Mode B: agent writes staging contract; merge action writes formal contract."""
+    """Validate producer staging + deterministic/semantic merge ownership."""
+    del formal_contract_id
     from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
     from ascendc_pilot.agents_registry import path_matches_scope
 
@@ -134,12 +123,9 @@ def _check_staged_output(
         return errors
     for rel in staging_rels:
         if not scopes or not path_matches_scope(rel, scopes):
-            errors.append(
-                f"{wid}/{aid}: staging path {rel!r} outside {agent_id} write scopes"
-            )
+            errors.append(f"{wid}/{aid}: staging path {rel!r} outside {agent_id} write scopes")
 
     if merge_id == aid:
-        # Same-action finalize_engine merge: formal paths are not agent-written.
         return errors
 
     merge_action = actions_by_id.get(merge_id)
@@ -149,17 +135,28 @@ def _check_staged_output(
 
     if aid in pipeline_order and merge_id in pipeline_order:
         if pipeline_order.index(merge_id) <= pipeline_order.index(aid):
-            errors.append(
-                f"{wid}/{aid}: merge_action_id {merge_id!r} must appear after producer in pipeline"
-            )
+            errors.append(f"{wid}/{aid}: merge_action_id {merge_id!r} must appear after producer in pipeline")
     elif aid in pipeline_order and merge_id not in pipeline_order:
         errors.append(f"{wid}/{aid}: merge_action_id {merge_id!r} missing from pipeline order")
 
     merge_role = str(merge_action.get("role_id") or "")
+    merge_mode = str(merge_action.get("execution_mode") or "").strip().lower()
     if merge_role not in {"deterministic_engine", "producer", "referee"}:
-        errors.append(
-            f"{wid}/{aid}: merge action {merge_id} role {merge_role!r} cannot write formal contract"
-        )
+        errors.append(f"{wid}/{aid}: merge action {merge_id} role {merge_role!r} cannot write formal contract")
+        return errors
+
+    if merge_role == "deterministic_engine" or merge_mode == "deterministic":
+        merge_scopes = [str(x) for x in (merge_action.get("allowed_write_paths") or [])]
+        if not merge_scopes:
+            errors.append(f"{wid}/{aid}: deterministic merge action {merge_id} has empty allowed_write_paths")
+            return errors
+        for rel in formal_paths:
+            if not path_matches_scope(rel, merge_scopes):
+                errors.append(
+                    f"{wid}/{aid}: formal contract path {rel!r} not writable by deterministic merge action {merge_id}"
+                )
+        return errors
+
     merge_agent = str(merge_action.get("agent_id") or "").strip()
     if not merge_agent:
         errors.append(f"{wid}/{aid}: merge action {merge_id} missing agent_id")
@@ -171,8 +168,7 @@ def _check_staged_output(
     for rel in formal_paths:
         if not path_matches_scope(rel, merge_scopes):
             errors.append(
-                f"{wid}/{aid}: formal contract path {rel!r} not writable by merge "
-                f"action {merge_id} agent {merge_agent}"
+                f"{wid}/{aid}: formal contract path {rel!r} not writable by merge action {merge_id} agent {merge_agent}"
             )
     return errors
 
@@ -186,10 +182,9 @@ def _collect_shared_task_prompts(workflows: dict[str, dict[str, Any]]) -> dict[s
             if not isinstance(action, dict):
                 continue
             tpid = str(action.get("task_prompt_id") or "").strip()
-            if not tpid:
-                continue
-            usage.setdefault(tpid, set()).add(wid)
-    return {k: v for k, v in usage.items() if len(v) > 1}
+            if tpid:
+                usage.setdefault(tpid, set()).add(wid)
+    return {key: value for key, value in usage.items() if len(value) > 1}
 
 
 def _check_output_contract_unknown() -> list[str]:
@@ -197,15 +192,15 @@ def _check_output_contract_unknown() -> list[str]:
 
     errors: list[str] = []
     bogus = "definitely-not-a-registered-contract-ssot-v1"
-    r = _check_output_contract(Path("."), bogus)
-    if r.get("ok"):
+    result = _check_output_contract(Path("."), bogus)
+    if result.get("ok"):
         errors.append("_check_output_contract must not succeed for unknown contract ids")
-    elif r.get("error") != "unknown_contract":
+    elif result.get("error") != "unknown_contract":
         errors.append(
-            f"_check_output_contract expected error=unknown_contract, got {r.get('error')!r}"
+            f"_check_output_contract expected error=unknown_contract, got {result.get('error')!r}"
         )
-    r2 = _check_output_contract(Path("."), "")
-    if r2.get("ok") or r2.get("error") != "missing_contract_id":
+    empty = _check_output_contract(Path("."), "")
+    if empty.get("ok") or empty.get("error") != "missing_contract_id":
         errors.append("_check_output_contract must fail closed on empty contract id")
     return errors
 
@@ -215,7 +210,7 @@ def check_all(
     *,
     workflows: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    """Run fail-closed SSOT checks; return human-readable error strings."""
+    """Run fail-closed, side-effect-free SSOT checks."""
     root = _repo_root(repo_root)
     skills = root / "skills"
     prompts = root / "prompts"
@@ -262,64 +257,60 @@ def check_all(
                     errors.append(f"{wid}: resolve phase must have non-empty pipeline")
                 if workflows is None and pipe != preferred_pipeline(wid, phase):
                     errors.append(
-                        f"{wid}/{phase}: Spec pipelines mismatch preferred_pipeline(): "
-                        f"{pipe!r} vs {preferred_pipeline(wid, phase)!r}"
+                        f"{wid}/{phase}: Spec pipelines mismatch preferred_pipeline(): {pipe!r} vs {preferred_pipeline(wid, phase)!r}"
                     )
-                for aid in pipe:
-                    if aid not in spec_action_set:
-                        errors.append(f"{wid}/{phase}: pipeline action {aid!r} not in Spec actions")
+                for action_id in pipe:
+                    if action_id not in spec_action_set:
+                        errors.append(f"{wid}/{phase}: pipeline action {action_id!r} not in Spec actions")
 
         all_gate_refs: set[str] = set()
-        for gs in (meta.get("phase_gates") or {}).values():
-            all_gate_refs.update(str(g) for g in gs or [])
+        for gates in (meta.get("phase_gates") or {}).values():
+            all_gate_refs.update(str(g) for g in gates or [])
         all_gate_refs.update(str(g) for g in meta.get("complete_gates") or [])
         all_gate_refs.update(str(g) for g in meta.get("gates") or [])
-        for g in sorted(all_gate_refs):
-            if g and g not in gate_ids:
-                errors.append(f"{wid}: unregistered gate id {g!r}")
+        for gate in sorted(all_gate_refs):
+            if gate and gate not in gate_ids:
+                errors.append(f"{wid}: unregistered gate id {gate!r}")
 
         actions_by_id = {str(a.get("id") or ""): a for a in actions if a.get("id")}
         pipeline_order: list[str] = []
         for phase in meta.get("phases") or []:
-            for aid in [str(x) for x in ((meta.get("pipelines") or {}).get(phase) or [])]:
-                if aid and aid not in pipeline_order:
-                    pipeline_order.append(aid)
-        # Fallback: Spec action declaration order when pipelines sparse (e.g. tg-init)
-        for aid in action_ids:
-            if aid and aid not in pipeline_order:
-                pipeline_order.append(aid)
+            for action_id in [str(x) for x in ((meta.get("pipelines") or {}).get(phase) or [])]:
+                if action_id and action_id not in pipeline_order:
+                    pipeline_order.append(action_id)
+        for action_id in action_ids:
+            if action_id and action_id not in pipeline_order:
+                pipeline_order.append(action_id)
 
         for action in actions:
             aid = str(action.get("id") or "")
             role = str(action.get("role_id") or "")
             agent_id = str(action.get("agent_id") or "").strip()
-            mid = str(action.get("action_method_id") or "")
-            tpid = str(action.get("task_prompt_id") or "").strip()
-            cid = str(action.get("output_contract_id") or "").strip()
+            method_id = str(action.get("action_method_id") or "")
+            prompt_id = str(action.get("task_prompt_id") or "").strip()
+            contract_id = str(action.get("output_contract_id") or "").strip()
 
-            if mid:
-                method = _read_action_method(skills, mid)
-                if not method.strip():
-                    errors.append(f"{wid}/{aid}: missing METHOD for {mid}")
+            if method_id:
+                if not _read_action_method(skills, method_id).strip():
+                    errors.append(f"{wid}/{aid}: missing METHOD for {method_id}")
             elif role in {"producer", "referee", "readonly_analyst", "deterministic_engine"}:
                 errors.append(f"{wid}/{aid}: missing action_method_id")
 
-            if tpid:
-                pp = _prompt_path(prompts, tpid)
-                if not pp.is_file():
-                    errors.append(f"{wid}/{aid}: missing task prompt {tpid}")
+            if prompt_id:
+                prompt_path = _prompt_path(prompts, prompt_id)
+                if not prompt_path.is_file():
+                    errors.append(f"{wid}/{aid}: missing task prompt {prompt_id}")
                 else:
-                    text = pp.read_text(encoding="utf-8")
-                    if tpid in shared_prompts:
-                        m = _HARDCODED_WORKFLOW_IN_PROMPT.search(text)
-                        if m:
+                    text = prompt_path.read_text(encoding="utf-8")
+                    if prompt_id in shared_prompts:
+                        match = _HARDCODED_WORKFLOW_IN_PROMPT.search(text)
+                        if match:
                             errors.append(
-                                f"{wid}/{aid}: shared prompt {tpid} hardcodes workflow_id "
-                                f"{m.group(1)!r}; use `<WORKFLOW_ID>`"
+                                f"{wid}/{aid}: shared prompt {prompt_id} hardcodes workflow_id {match.group(1)!r}; use `<WORKFLOW_ID>`"
                             )
                         if "workflow_id:" in text and "`<WORKFLOW_ID>`" not in text:
                             errors.append(
-                                f"{wid}/{aid}: shared prompt {tpid} must use workflow_id: `<WORKFLOW_ID>`"
+                                f"{wid}/{aid}: shared prompt {prompt_id} must use workflow_id: `<WORKFLOW_ID>`"
                             )
             elif role in {"producer", "referee", "readonly_analyst"}:
                 errors.append(f"{wid}/{aid}: semantic action missing task_prompt_id")
@@ -329,106 +320,98 @@ def check_all(
                     errors.append(f"{wid}/{aid}: missing agent_id for role {role}")
                 elif not (agents_dir / f"{agent_id}.yaml").is_file():
                     errors.append(f"{wid}/{aid}: missing agent file {agent_id}.yaml")
-                if not cid:
+                if not contract_id:
                     errors.append(f"{wid}/{aid}: missing output_contract_id")
 
-            if cid:
-                paths = OUTPUT_CONTRACT_PATHS.get(cid)
+            if contract_id:
+                paths = OUTPUT_CONTRACT_PATHS.get(contract_id)
                 if paths is None:
-                    errors.append(f"{wid}/{aid}: unknown output_contract_id {cid!r}")
+                    errors.append(f"{wid}/{aid}: unknown output_contract_id {contract_id!r}")
                 elif (
                     agent_id
                     and agent_id not in {"", "ascendc-pilot"}
                     and role in {"producer", "referee"}
-                    and cid not in _PRECONDITION_CONTRACTS
+                    and contract_id not in _PRECONDITION_CONTRACTS
                 ):
                     scopes = _effective_write_scopes(agent_id, aid, root)
                     if not scopes:
                         errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
                     rel_paths = [str(rel).replace("\\", "/") for rel in paths or []]
-                    rel_paths = [r for r in rel_paths if not r.startswith("runs/")]
-                    if not rel_paths:
-                        continue
-                    output_mode = str(action.get("output_mode") or "direct").strip().lower()
-                    if output_mode == "staged":
-                        errors.extend(
-                            _check_staged_output(
-                                wid=wid,
-                                aid=aid,
-                                action=action,
-                                actions_by_id=actions_by_id,
-                                pipeline_order=pipeline_order,
-                                agent_id=agent_id,
-                                scopes=scopes,
-                                formal_contract_id=cid,
-                                formal_paths=rel_paths,
-                                root=root,
-                            )
-                        )
-                    else:
-                        in_scope = [
-                            r for r in rel_paths if scopes and path_matches_scope(r, scopes)
-                        ]
-                        if not in_scope:
-                            errors.append(
-                                f"{wid}/{aid}: agent has no writable output path for contract {cid}"
+                    rel_paths = [rel for rel in rel_paths if not rel.startswith("runs/")]
+                    if rel_paths:
+                        output_mode = str(action.get("output_mode") or "direct").strip().lower()
+                        if output_mode == "staged":
+                            errors.extend(
+                                _check_staged_output(
+                                    wid=wid,
+                                    aid=aid,
+                                    action=action,
+                                    actions_by_id=actions_by_id,
+                                    pipeline_order=pipeline_order,
+                                    agent_id=agent_id,
+                                    scopes=scopes,
+                                    formal_contract_id=contract_id,
+                                    formal_paths=rel_paths,
+                                    root=root,
+                                )
                             )
                         else:
-                            for rel_s in rel_paths:
-                                if scopes and not path_matches_scope(rel_s, scopes):
-                                    errors.append(
-                                        f"{wid}/{aid}: contract path {rel_s!r} outside "
-                                        f"{agent_id} write scopes (action {aid})"
-                                    )
+                            in_scope = [rel for rel in rel_paths if scopes and path_matches_scope(rel, scopes)]
+                            if not in_scope:
+                                errors.append(
+                                    f"{wid}/{aid}: agent has no writable output path for contract {contract_id}"
+                                )
+                            else:
+                                for rel in rel_paths:
+                                    if scopes and not path_matches_scope(rel, scopes):
+                                        errors.append(
+                                            f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
+                                        )
 
-            for g in action.get("gates") or []:
-                gs = str(g)
-                if gs and gs not in gate_ids:
-                    errors.append(f"{wid}/{aid}: action gate {gs!r} not registered")
+            for gate in action.get("gates") or []:
+                gate_id = str(gate)
+                if gate_id and gate_id not in gate_ids:
+                    errors.append(f"{wid}/{aid}: action gate {gate_id!r} not registered")
 
-            if mid:
-                ay = _load_action_yaml(skills, mid)
-                if ay:
-                    ay_cid = str(ay.get("output_contract_id") or "").strip()
-                    if cid and ay_cid and ay_cid != cid:
+            if method_id:
+                action_yaml = _load_action_yaml(skills, method_id)
+                if action_yaml:
+                    yaml_contract = str(action_yaml.get("output_contract_id") or "").strip()
+                    if contract_id and yaml_contract and yaml_contract != contract_id:
                         errors.append(
-                            f"{wid}/{aid}: action.yaml contract {ay_cid!r} != Spec {cid!r}"
+                            f"{wid}/{aid}: action.yaml contract {yaml_contract!r} != Spec {contract_id!r}"
                         )
-                    ay_agent = str(ay.get("agent_id") or "").strip()
-                    if agent_id and ay_agent and ay_agent != agent_id:
+                    yaml_agent = str(action_yaml.get("agent_id") or "").strip()
+                    if agent_id and yaml_agent and yaml_agent != agent_id:
                         errors.append(
-                            f"{wid}/{aid}: action.yaml agent {ay_agent!r} != Spec {agent_id!r}"
+                            f"{wid}/{aid}: action.yaml agent {yaml_agent!r} != Spec {agent_id!r}"
                         )
 
     if workflows is None:
         from ascendc_pilot.run_resume import action_owned_artifacts
 
-        registered_paths = {p for ps in OUTPUT_CONTRACT_PATHS.values() for p in ps}
+        registered_paths = {path for paths in OUTPUT_CONTRACT_PATHS.values() for path in paths}
         for wid, meta in wf_map.items():
             if meta.get("reserved") or not meta.get("slash"):
                 continue
             owned = action_owned_artifacts(wid)
             for aid, rels in owned.items():
-                act = next(
+                action = next(
                     (a for a in (meta.get("actions") or []) if isinstance(a, dict) and a.get("id") == aid),
                     None,
                 )
-                cid = str((act or {}).get("output_contract_id") or "")
-                contract_paths = set(OUTPUT_CONTRACT_PATHS.get(cid) or [])
+                contract_id = str((action or {}).get("output_contract_id") or "")
+                contract_paths = set(OUTPUT_CONTRACT_PATHS.get(contract_id) or [])
                 for rel in rels:
                     if rel not in registered_paths:
-                        errors.append(
-                            f"{wid}/{aid}: resume owned path {rel!r} not in OUTPUT_CONTRACT_PATHS"
-                        )
+                        errors.append(f"{wid}/{aid}: resume owned path {rel!r} not in OUTPUT_CONTRACT_PATHS")
                     if contract_paths and rel not in contract_paths:
-                        errors.append(
-                            f"{wid}/{aid}: resume owned path {rel!r} not in contract {cid} paths"
-                        )
+                        errors.append(f"{wid}/{aid}: resume owned path {rel!r} not in contract {contract_id} paths")
 
     return errors
 
 
 def check_all_raise(repo_root: Path | None = None) -> None:
-    errs = check_all(repo_root)
-    if errs:
-        raise ValueError("SSOT consistency failed:\n" + "\n".join(f"- {e}" for e in errs))
+    errors = check_all(repo_root)
+    if errors:
+        raise ValueError("SSOT consistency failed:\n" + "\n".join(f"- {error}" for error in errors))

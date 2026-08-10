@@ -12,19 +12,38 @@ from ascendc_pilot.actions.engines import (
     invoke_engine,
 )
 from ascendc_pilot.actions.runtime import _check_output_contract
-from ascendc_pilot.paths import ensure_agent_layout
+from ascendc_pilot.paths import ensure_agent_layout, tg_root, uo_root
 from ascendc_pilot.state import start_workflow
 from ascendc_pilot.workflows.specs import WORKFLOWS
+
+
+def _seed_manifest(root: Path) -> None:
+    """Durable products live under ``.ascendc-pilot/<arch>/``, never flat."""
+    path = uo_root(root) / "manifest.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("op_name: synth_tg\n", encoding="utf-8")
+
+
+def _select_csv_consumer_mode(root: Path) -> None:
+    """These engines only do work in the CSV-consumer mode.
+
+    Under the default ``tilingkey_full_coverage`` overlay ``z3_solve`` is a
+    declared no-op and ``contract_build`` reports missing KB layers instead of
+    the consumer root, so asserting either against the base mode tests nothing.
+    """
+    path = tg_root(root) / "init" / "init_intent.yaml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "schema: tg-init-intent/v1\nmode: csv_consumer\n", encoding="utf-8"
+    )
 
 
 def test_tg_contract_build_requires_consumer_root(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
-    (root / ".ascendc-pilot" / "uo" / "manifest.yaml").write_text(
-        "op_name: synth_tg\n",
-        encoding="utf-8",
-    )
+    _seed_manifest(root)
+    _select_csv_consumer_mode(root)
     result = invoke_engine(root, "tg-init", "contract_build", ctx={"op_name": "synth_tg"})
     assert result.get("ok") is False
     assert "TEST_SCRIPT_ROOT" in str(result.get("error") or "")
@@ -35,7 +54,7 @@ def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
-    (root / ".ascendc-pilot" / "uo" / "manifest.yaml").write_text("op_name: synth_tg\n", encoding="utf-8")
+    _seed_manifest(root)
     result = invoke_engine(
         root,
         "tg-plan",
@@ -43,7 +62,7 @@ def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
         ctx={"op_name": "synth_tg", "level": "L0"},
     )
     assert result.get("ok") is False
-    marker = root / ".ascendc-pilot" / "tg" / "realization" / "pilot_plan_build.yaml"
+    marker = tg_root(root) / "realization" / "pilot_plan_build.yaml"
     assert not marker.is_file()
 
 
@@ -51,10 +70,11 @@ def test_tg_z3_solve_not_marker_only(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
-    (root / ".ascendc-pilot" / "uo" / "manifest.yaml").write_text("op_name: synth_tg\n", encoding="utf-8")
+    _seed_manifest(root)
+    _select_csv_consumer_mode(root)
     result = invoke_engine(root, "tg-solve", "z3_solve", ctx={"op_name": "synth_tg"})
     assert result.get("ok") is False
-    marker = root / ".ascendc-pilot" / "tg" / "realization" / "pilot_z3_solve.yaml"
+    marker = tg_root(root) / "realization" / "pilot_z3_solve.yaml"
     assert not marker.is_file()
 
 
@@ -85,7 +105,7 @@ def test_plan_build_contract_rejects_empty_dir(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
-    (root / ".ascendc-pilot" / "tg" / "plan").mkdir(parents=True, exist_ok=True)
+    (tg_root(root) / "plan").mkdir(parents=True, exist_ok=True)
     checked = _check_output_contract(root, "plan-build-v1")
     assert checked.get("ok") is False
 

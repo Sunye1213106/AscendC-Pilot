@@ -1,85 +1,416 @@
 # AscendC-Pilot
 
-面向 AscendC 算子理解、测试生成、代码工程辅助的 AI Agent 平台。
+AscendC-Pilot 是一个面向 **AscendC 算子开发** 的 AI Agent 工具。
 
-```text
-AscendC-Pilot
+项目通过静态分析构建算子的结构化知识，使 Agent 不需要反复阅读大量 AscendC 源码，也能理解 Host、TilingKey、TilingData、Kernel 之间的关系，并在此基础上完成测试生成、代码审查和开发辅助。
 
-├── Understand Operator
-├── Testcase Generation
-└── Code Engineering
-```
+目前主要包含三个能力：
 
-| 层 | 作用 |
-| --- | --- |
-| [pilot/](./pilot/) | Pilot 控制面：状态、门禁、路由、Context、记忆 |
-| [engines/understand-operator/](./engines/understand-operator/) | Understand Operator（UO）领域引擎 |
-| [engines/testcase-generation/](./engines/testcase-generation/) | Testcase Generation（TG）领域引擎 |
-| [engines/code-engineering/](./engines/code-engineering/) | Code Engineering（CE）；当前实现 `/ce-review` |
-| [skills/](./skills/) · [prompts/](./prompts/) · [agents/](./agents/) | 组合式业务源（Policy/Capability/Action/Prompt/Agent） |
-| [generated/](./generated/) | Composer 宿主产物（可丢弃，安装前重生成） |
+- **UO — Understand Operator**：分析 AscendC 算子并构建算子知识库
+- **TG — Testcase Generation**：基于算子知识生成测试并完成覆盖闭环
+- **CE — Code Engineering**：基于算子知识进行代码审查和开发辅助
 
-支持安装到 **OpenCode / Codex / Cursor**。
+支持 **OpenCode / Cursor / Codex**。
 
 ---
 
-## 功能一览
+## Features
 
-| 命令 | 功能 |
-| --- | --- |
-| `/uo-init` | 建 KB（环境准备 → 范围确认 → 结构抽取 → 语义闭合 → 导出与校验 → 产物审查） |
-| `/uo-query` | 定稿后只读问答 |
-| `/uo-update` | 增量刷新 KB |
-| `/tg-init` | 测项合同与绑定 → 人工确认 |
-| `/tg-plan` | 覆盖规划与人工批准 |
-| `/tg-solve` | Z3 求解 → CSV 投影 |
-| `/ce-review` | 基于 UO KB 的代码审查（Code Engineering） |
-
-本地统一产物：
+### Understand Operator
 
 ```text
-<算子仓>/.ascendc-pilot/{uo,tg,ce,memory,runs,context,state}/
+AscendC Source
+      ↓
+Static Analysis
+      ↓
+Operator Knowledge Base
+```
+
+分析：
+
+- Host 控制流
+- TilingKey
+- TilingData
+- Kernel Template / Branch
+- 变量来源与依赖关系
+- Host → Kernel 跨层关系
+
+主要命令：
+
+```text
+/uo-init
+/uo-query
+/uo-update
 ```
 
 ---
 
-## 安装
 
-```powershell
+
+### Testcase Generation
+
+基于 UO 生成的算子知识：
+
+- 构建测试输入约束
+- 分析 TilingKey 可达性
+- 自动生成测试用例
+- Solver 求解
+- Host Replay
+- Coverage Closure
+
+主要命令：
+
+```text
+/tg-init
+/tg-plan
+/tg-solve
+```
+
+---
+
+
+
+### Code Engineering
+
+面向日常 AscendC 开发：
+
+- Code Review
+- 修改影响分析
+- 算子语义查询
+- Context 构建
+- 后续代码修改与 Debug
+
+当前入口：
+
+```text
+/ce-review
+```
+
+---
+
+
+
+## Install
+
+
+
+### Python Environment
+
+```bash
 pip install -r requirements.txt
-pip install -e "./pilot"
-pip install -e "./engines/understand-operator"
-pip install -e "./engines/testcase-generation[solver]"
-./install.ps1 opencode   # 或 cursor / codex
+
+pip install -e ./pilot
+pip install -e ./engines/common
+pip install -e ./engines/understand-operator
+pip install -e "./engines/testcase-generation[ml]"
+pip install -e ./engines/code-engineering
+```
+
+检查安装：
+
+```bash
 acp doctor
 ```
 
-CBM：`.\install.ps1 cbm`（勿把上游脚本下载成仓库根目录的 `install.ps1`）。详见 [docs/cbm-mcp-setup.md](./docs/cbm-mcp-setup.md)
-
 ---
 
-## CLI
+
+
+### Install Agent Host
+
+
+
+#### OpenCode
+
+Windows：
 
 ```powershell
-acp --help
-acp doctor
-acp route /uo-init
-acp route /tg-init
-acp route /ce-review
+./install.ps1 opencode
 ```
 
-完成态只认 `acp complete`。
+Linux：
+
+```bash
+./install.sh opencode
+```
+
+
+
+#### Cursor
+
+```powershell
+./install.ps1 cursor
+```
+
+
+
+#### Codex
+
+```powershell
+./install.ps1 codex
+```
 
 ---
 
-## 端到端
+
+
+## Quick Start
+
+在 AscendC 算子仓中运行：
 
 ```text
-/uo-init → /tg-init → --confirm → /tg-plan → approve → /tg-solve
+/uo-init
 ```
 
-代码工程：
+UO 会分析当前算子并在：
 
 ```text
-/uo-init → /ce-review
+<operator-repo>/.ascendc-pilot/
 ```
+
+生成项目本地知识与运行数据。
+
+完成后可以直接查询算子：
+
+```text
+/uo-query
+```
+
+例如：
+
+```text
+这个算子的 TilingKey 是怎么决定的？
+```
+
+```text
+s1Inner 最终来自哪个输入？
+```
+
+```text
+这个 Kernel 分支由哪些 Host 条件控制？
+```
+
+需要生成测试时：
+
+```text
+/tg-init
+/tg-plan
+/tg-solve
+```
+
+需要代码审查时：
+
+```text
+/ce-review
+```
+
+---
+
+
+
+## How It Works
+
+AscendC-Pilot 将系统分成两个部分：
+
+```text
+Agent
+  ↓
+Pilot
+  ↓
+UO / TG / CE
+  ↓
+Operator Knowledge
+```
+
+**Pilot** 负责工作流、状态和执行编排。
+
+**UO** 负责把 AscendC 源码转化为结构化算子知识。
+
+**TG / CE** 不重新理解完整源码，而是优先消费 UO 已经建立的算子知识。
+
+Agent 的规则、能力和任务分别由：
+
+```text
+skills/
+prompts/
+agents/
+```
+
+组合生成。
+
+详细设计见：
+
+```text
+docs/
+```
+
+---
+
+
+
+## Project Structure
+
+```text
+AscendC-Pilot/
+│
+├── pilot/                      # 控制面与工作流
+│
+├── engines/
+│   ├── understand-operator/    # UO
+│   ├── testcase-generation/    # TG
+│   ├── code-engineering/       # CE
+│   └── common/                 # 公共组件
+│
+├── skills/                     # Agent 规则与能力
+├── prompts/                    # Task Prompt
+├── agents/                     # Agent Role
+│
+├── operators/                  # 算子运行所需的少量配置
+├── opencode-plugin/            # OpenCode Adapter
+├── scripts/                    # 构建、检查和开发工具
+├── docs/                       # 设计与实现文档
+│
+├── install.ps1
+├── install.sh
+└── requirements.txt
+```
+
+
+
+### `pilot/`
+
+AscendC-Pilot 控制面。
+
+负责：
+
+- Workflow
+- State
+- Gate
+- Context
+- Action 调度
+- CLI
+
+
+
+### `engines/understand-operator/`
+
+UO 核心实现。
+
+负责 AscendC 静态分析和 Operator Knowledge Base 构建。
+
+### `engines/testcase-generation/`
+
+TG 核心实现。
+
+负责测试生成、约束求解和覆盖闭环。
+
+### `engines/code-engineering/`
+
+CE 核心实现。
+
+负责 Code Review 和后续开发辅助能力。
+
+### `skills/`
+
+Agent 可以使用的 Policy、Capability、Action 和 Workflow。
+
+### `prompts/`
+
+具体任务使用的 Prompt。
+
+### `agents/`
+
+不同 Agent 的角色和职责定义。
+
+### `operators/`
+
+保存无法从源码自动获得、但运行测试时需要的少量算子配置。
+
+当前推荐结构：
+
+```text
+operators/<op>/<arch>/
+├── operator.yaml
+├── log_protocol.yaml
+└── input_semantics.py
+```
+
+
+
+### `scripts/`
+
+仓库级工具，包括：
+
+- Runtime 生成
+- Contract Check
+- Acceptance Test
+- 开发辅助脚本
+
+
+
+### `docs/`
+
+保存详细设计。
+
+包括：
+
+- 系统架构
+- UO 静态分析
+- Relation Graph
+- TilingKey Closure
+- TG
+- Skill / Prompt 设计
+- Debug 与 Benchmark
+
+---
+
+
+
+## Runtime Data
+
+AscendC-Pilot 不把算子分析产物写回自身源码目录。
+
+所有算子级数据统一写入：
+
+```text
+<operator-repo>/.ascendc-pilot/
+```
+
+例如：
+
+```text
+.ascendc-pilot/
+├── uo/
+├── tg/
+├── ce/
+├── context/
+├── memory/
+├── runs/
+└── state/
+```
+
+源码仓只维护工具本身，具体算子的 KB、Cache、Replay 和运行结果属于目标算子仓。
+
+---
+
+
+
+## Documentation
+
+详细设计见：
+
+```text
+docs/README.md
+```
+
+主要包括：
+
+```text
+docs/design/
+docs/fag/
+docs/debug/
+```
+
+README 只描述项目如何使用。
+
+具体的静态分析算法、Relation Graph、Knowledge Base Schema、TilingKey Closure 和 Agent Workflow 设计均放在 `docs/` 中维护。

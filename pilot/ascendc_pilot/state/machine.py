@@ -26,14 +26,14 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         return {"ok": False, "error": "no_active_workflow", "message_zh": "无活动工作流"}
     wid = str(state.get("workflow_id") or "")
     phase = str(state.get("phase") or "")
-    meta = get_workflow(wid)
+    meta = get_workflow(wid, project_root=project_root)
     fresh = collect_obligations(project_root, wid)
     state["open_items"] = open_obligations(fresh)
     state.pop("all_obligations", None)
     save_state(project_root, state)
 
     status = str(state.get("status") or "running")
-    phase_actions = actions_for_phase(wid, phase)
+    phase_actions = actions_for_phase(wid, phase, project_root=project_root)
     lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
 
     # Status-first decision (never phase → allowed_actions alone).
@@ -201,9 +201,9 @@ def advance_phase(
         raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
 
     wid = str(state.get("workflow_id") or "")
-    meta = get_workflow(wid)
+    meta = get_workflow(wid, project_root=project_root)
     current = str(state.get("phase") or "")
-    if not allowed_transition(wid, current, next_phase, kind="forward"):
+    if not allowed_transition(wid, current, next_phase, kind="forward", project_root=project_root):
         raise RuntimeError(f"Illegal transition {current!r} → {next_phase!r} (no forward edge)")
 
     # Hard constraint: cannot advance while recommended (or any pipeline) actions remain.
@@ -213,7 +213,7 @@ def advance_phase(
             project_root,
             workflow_id=wid,
             phase=current,
-            allowed_actions=actions_for_phase(wid, current),
+            allowed_actions=actions_for_phase(wid, current, project_root=project_root),
         )
         msgs = [
             f"阶段 `{current}` 流水线未完成：缺少 Action {missing}",
@@ -422,7 +422,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
         raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
 
     wid = str(state.get("workflow_id") or "")
-    meta = get_workflow(wid)
+    meta = get_workflow(wid, project_root=project_root)
     ready = set(meta.get("terminal_ready_states") or state_ids(wid))
     phase = str(state.get("phase") or "")
     if ready and phase not in ready:

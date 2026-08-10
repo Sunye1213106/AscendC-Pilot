@@ -1,0 +1,30 @@
+# GENERATED from Workflow Spec — do not hand-edit identity fields
+id: plan_intent
+workflow_id: tg-plan
+role_id: controller
+agent_id: ascendc-pilot
+execution_mode: primary_interactive
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+task_prompt_id: tg/plan-intent
+context_profile_id: tg-plan-plan-intent
+output_contract_id: plan-intent-v1
+allowed_write_paths:
+- tg/plan/plan_intent.yaml
+forbidden_write_paths: []
+allowed_read_paths:
+- tg/init/**
+- context/**
+- uo/manifest.yaml
+forbidden_read_paths: []
+checker:
+  required: true
+referee:
+  required: false
+generated_from: workflow_spec

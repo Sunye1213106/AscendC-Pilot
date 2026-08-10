@@ -1,0 +1,89 @@
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  PYTHONIOENCODING: utf-8
+
+jobs:
+  gates:
+    name: orchestration gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PyYAML
+        run: pip install "PyYAML>=6.0"
+      - name: Compose all hosts
+        run: |
+          python scripts/compose_runtime.py --host opencode
+          python scripts/compose_runtime.py --host cursor
+          python scripts/compose_runtime.py --host codex
+      - name: Check contracts
+        run: |
+          python scripts/check_contracts.py
+          python scripts/check_ownership_contracts.py
+          python scripts/check_skill_architecture.py
+
+  tests:
+    name: ${{ matrix.suite }} tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: understand-operator
+            dir: engines/understand-operator
+          - suite: testcase-generation
+            dir: engines/testcase-generation
+          - suite: pilot
+            dir: pilot
+          - suite: scripts
+            dir: scripts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packages
+        run: |
+          pip install -r requirements.txt
+          pip install -e ./engines/common
+          pip install -e ./pilot
+          pip install -e ./engines/understand-operator
+          pip install -e "./engines/testcase-generation[ml]"
+          pip install pytest
+      # Suites share conftest basenames, so each runs from its own rootdir.
+      # Tests needing CANN / operator sources skip on a bare runner.
+      - name: pytest
+        working-directory: ${{ matrix.dir }}
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/engines/testcase-generation:${{ github.workspace }}/scripts:${{ github.workspace }}/engines/understand-operator/src:${{ github.workspace }}/pilot
+        run: python -m pytest tests -q
+
+  closure-acceptance:
+    name: closure loop acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packages
+        run: |
+          pip install -r requirements.txt
+          pip install -e ./engines/common
+          pip install -e ./pilot
+          pip install -e ./engines/understand-operator
+          pip install -e "./engines/testcase-generation[ml]"
+      # Must reach gap=0 on the synthetic toy, N times, with no NPU and no API
+      # key. A loop whose steps return ok but close nothing fails here.
+      - name: acceptance harness
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/engines/testcase-generation:${{ github.workspace }}/scripts:${{ github.workspace }}/engines/understand-operator/src:${{ github.workspace }}/pilot
+        run: python scripts/closure_acceptance_harness.py --runs 3

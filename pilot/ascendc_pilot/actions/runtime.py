@@ -18,13 +18,13 @@ from ascendc_pilot.actions.engines import (
     OUTPUT_CONTRACT_PATHS,
     invoke_engine,
 )
-from ascendc_pilot.paths import agent_root, ensure_agent_layout, runs_root, tg_root
+from ascendc_pilot.paths import agent_root, ensure_control_layout, ensure_tg_layout, runs_root, tg_root
 from ascendc_pilot.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
 
 try:
-    from uo.scripts.extract_plan_io import FORBIDDEN_EXTRACT_PLAN_KEYS as _EXTRACT_PLAN_FORBID_FIELDS
+    from ascendc_pilot.legacy_stubs import FORBIDDEN_EXTRACT_PLAN_KEYS as _EXTRACT_PLAN_FORBID_FIELDS
 except ImportError:  # pragma: no cover
     # Fallback only when UO engine is not on PYTHONPATH (should not happen in Pilot installs).
     _EXTRACT_PLAN_FORBID_FIELDS = frozenset(
@@ -234,15 +234,21 @@ def _repo_root(project_root: Path) -> Path:
     return root
 
 
-def _action_spec(workflow_id: str, action_id: str, phase: str) -> dict[str, Any] | None:
-    allowed = actions_for_phase(workflow_id, phase)
+def _action_spec(
+    workflow_id: str,
+    action_id: str,
+    phase: str,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, Any] | None:
+    allowed = actions_for_phase(workflow_id, phase, project_root=project_root)
     for row in allowed:
         if str(row.get("id") or "") == action_id:
             return row
     # Also allow lookup in full workflow for clearer error messages
-    meta = get_workflow(workflow_id)
+    meta = get_workflow(workflow_id, project_root=project_root)
     for row in meta.get("actions") or []:
-        if str(row.get("id") or "") == action_id:
+        if isinstance(row, dict) and str(row.get("id") or "") == action_id:
             return {**row, "_not_in_phase": True}
     return None
 
@@ -353,8 +359,8 @@ def _render_placeholders(
     role_id: str = "",
     lease_id: str = "",
     action_session_id: str = "",
-    cbm_project: str = "",
     candidates_sha256: str = "",
+    shard_id: str = "",
     **_ignored: Any,
 ) -> str:
     repl = {
@@ -363,6 +369,8 @@ def _render_placeholders(
         "<WORKFLOW_ID>": workflow_id,
         "<ACTOR_ID>": actor_id,
         "<TARGET_IDS_OR_FILES>": target or "(see context pack / human input)",
+        "<TARGET>": target or "(see dispatch_targets / batch file)",
+        "<SHARD_ID>": shard_id or "(see dispatch_tasks[].shard_id)",
         "<OP_NAME>": op_name,
         "<PROJECT_ROOT>": project_root,
         "<UO_ROOT>": uo_root,
@@ -373,7 +381,6 @@ def _render_placeholders(
         "<ROLE_ID>": role_id,
         "<LEASE_ID>": lease_id,
         "<ACTION_SESSION_ID>": action_session_id,
-        "<CBM_PROJECT>": cbm_project or "(read uo/cbm/index_meta.json → cbm_project)",
         "<CANDIDATES_SHA256>": candidates_sha256
         or "(copy from task_prompt_stub candidates_sha256=…)",
     }
@@ -396,7 +403,6 @@ def _build_task_prompt_stub(
     bundle_path: str,
     dispatch_targets: dict[str, Any] | None = None,
     agent_root_path: str = "",
-    cbm_project: str = "",
     project_root: str = "",
     architecture: str = "",
     candidates_sha256: str = "",
@@ -432,8 +438,6 @@ def _build_task_prompt_stub(
         lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in dt["write"]))
     if dt.get("forbid_read"):
         lines.append("forbid_read: " + ", ".join(str(x) for x in dt["forbid_read"]))
-    if cbm_project:
-        lines.append(f"cbm_project: {cbm_project}")
     if candidates_sha256:
         lines.append(f"candidates_sha256: {candidates_sha256}")
     if environment_path:
@@ -444,26 +448,17 @@ def _build_task_prompt_stub(
     read_list = [str(x) for x in (dt.get("read") or [])]
     lines.extend(large_ir_must_read_order_lines(read_list))
     if action_id == "extract_plan":
-        # Action contract only (evidence sha / collage); read-order is public above.
+        # Relation Graph Map worker contract (roles derive from relations; no role pick).
         lines.extend(
             [
-                "evidence_tools: for EACH accepted promoted writer/sink — "
-                "MCP get_code_snippet (after search_graph) OR `acp cbm lookup` OR "
-                "copy candidate source_window.text OR windowed Read of evidence_files; "
-                "MUST put contiguous window text into evidence_snippet "
-                "(finalize verifies against on-disk source; no `...` collage). "
-                "search_graph / grep alone is NOT enough.",
-                "candidates_sha256_rule: copy the exact candidates_sha256 value above "
-                "into extract_plan.yaml (do not recompute; bash hash tools are blocked)",
-                "evidence_sha_rule: copy summary/candidate source_window_sha256 into "
-                "evidence_window_sha256 (or omit sha when evidence_files+lines+contiguous "
-                "snippet are set — finalize enrich fills sha from disk). "
-                "FORBIDDEN: bash recompute; FORBIDDEN: Grep/findstr whole candidates only "
-                "to harvest sha256; FORBIDDEN: reuse a neighbor candidate's hash.",
-                "non_sink_rule: prefer non_sink_roots: []. If accepting any, copy exact "
-                "names from summary non_sink_root_names only (assign-LHS identifiers, "
-                "not functions). FORBIDDEN: invent names from snippets/source "
-                "identifiers. Uncertain → omit.",
+                "relation_only: confirm/reject/unresolved Relations from the batch; "
+                "FORBIDDEN: choose extract-plan roles / writers / sinks / bindings directly.",
+                "write_only: staging/relation_parts/part_NNN.yaml for this shard; "
+                "FORBIDDEN: write uo/ir/extract_plan.yaml or slim IR sidecars.",
+                "grounding: Relations must cite evidence windows; GetTilingData alone "
+                "≠ WRITES; setter alone ≠ BINDS; COMMON_ASSIGN alone ≠ writer.",
+                "candidates_sha256_rule: copy the exact candidates_sha256 value from stub "
+                "(do not recompute; bash hash tools are blocked).",
                 f"project_root: {project_root}" if project_root else "project_root: (see prompt)",
                 f"architecture: {architecture or 'arch35'}",
             ]
@@ -595,7 +590,10 @@ def _contract_identity_ok(
     action_owned = path.name in _ACTION_OWNED_ARTIFACT_NAMES or "/runs/" in posix
 
     # Missing identity on older artifacts is a migration error for run-scoped contracts.
-    if any(ch in posix for ch in ("/runs/", "scope_confirmed", "receipt.yaml")):
+    # Only the run-scoped scope receipts require identity before finalizer
+    # stamping.  Do not match the substring ``receipt.yaml`` in deterministic
+    # IR names such as ``host_extract_receipt.yaml``.
+    if "/runs/" in posix or path.name in {"scope_confirmed.yaml", "receipt.yaml"}:
         if not checks["run_id"]:
             return {
                 "ok": False,
@@ -653,6 +651,16 @@ def _contract_identity_ok(
             continue
         expected_value = expected.get(field, "")
         if not expected_value or not actual or actual == expected_value:
+            continue
+        # ``uo-init`` exposes the public action as ``scope_confirm`` while
+        # the scope receipt contract historically used the canonical producer
+        # id ``scope_confirmation``.  Treat these two spellings as the same
+        # owner so a valid run-scoped receipt is not rejected at finalize.
+        if (
+            field == "action_id"
+            and {str(expected_value), str(actual)}
+            == {"scope_confirm", "scope_confirmation"}
+        ):
             continue
         # Canonical IR may be shared across actions; only enforce action-owned
         # producer/session fields where the artifact is owned by this action.
@@ -851,14 +859,16 @@ def _check_output_contract(
 
 
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
-    ensure_agent_layout(project_root)
+    ensure_control_layout(project_root)
     state = load_state(project_root)
     if not state:
         return {"ok": False, "error": "no_active_workflow", "message_zh": "无活动 workflow；请先 acp start"}
     wid = str(state.get("workflow_id") or "")
+    if wid.startswith("tg-"):
+        ensure_tg_layout(project_root)
     phase = str(state.get("phase") or "")
     run_id = str(state.get("run_id") or "")
-    action = _action_spec(wid, action_id, phase)
+    action = _action_spec(wid, action_id, phase, project_root=project_root)
     if action is None:
         return {
             "ok": False,
@@ -872,7 +882,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "error": "action_not_allowed",
             "message_zh": f"动作 {action_id!r} 不在当前阶段 {phase!r} 的 allowed_actions 中",
             "phase": phase,
-            "allowed": [a.get("id") for a in actions_for_phase(wid, phase)],
+            "allowed": [a.get("id") for a in actions_for_phase(wid, phase, project_root=project_root)],
         }
 
     # Prefer pipeline order: block Host skip (e.g. apply before detect_score_post / adjudicate).
@@ -884,7 +894,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             project_root,
             workflow_id=wid,
             phase=phase,
-            allowed_actions=actions_for_phase(wid, phase),
+            allowed_actions=actions_for_phase(wid, phase, project_root=project_root),
         )
         rec_reason = str((recommended or {}).get("reason") or "")
         rec_id = (recommended or {}).get("id")
@@ -989,17 +999,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     pack_path = str(pack.get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
     architecture = str(state.get("architecture") or "arch35")
-    cbm_project = ""
-    try:
-        meta_path = Path(uo_s) / "cbm" / "index_meta.json"
-        if meta_path.is_file():
-            import json
-
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            if isinstance(meta, dict):
-                cbm_project = str(meta.get("cbm_project") or "").strip()
-    except Exception:  # noqa: BLE001
-        cbm_project = ""
     ph_kwargs = {
         "run_id": run_id,
         "action_id": action_id,
@@ -1014,7 +1013,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "architecture": architecture,
         "role_id": role_id,
         "action_session_id": action_sid,
-        "cbm_project": cbm_project,
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
@@ -1061,8 +1059,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "architecture": architecture,
         "status": "prepared",
         "identity_note": (
-            "Bundle identity is authoritative. "
-            "Do not replace, infer, normalize, or copy identity from old artifacts."
+            "Bundle identity supplied by Pilot is authoritative. "
+            "Identity from any other artifact must not be used."
         ),
     }
 
@@ -1124,77 +1122,259 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             if sha_side.is_file():
                 candidates_sha256 = sha_side.read_text(encoding="utf-8").strip()
         ph_kwargs["candidates_sha256"] = candidates_sha256
-        target_line = (
-            f"{cand_path} → confirm via decision_worklist → "
-            f"staging/decision_report.yaml; "
-            f"candidates_sha256={candidates_sha256 or '(missing)'}; "
-            "FORBIDDEN: write uo/ir/extract_plan.yaml; "
-            "DO NOT read or adjudicate ir/llm_tasks.yaml"
-        )
-        prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         if prepare_engine.get("reused_candidates"):
             bundle["prepare_engine"]["reused_candidates"] = True
-        staging_rel = f"runs/{run_id}/actions/extract_plan/staging/decision_report.yaml"
-        staging_legacy = f"runs/{run_id}/actions/extract_plan/staging/output.yaml"
-        scratch_rel = f"runs/{run_id}/actions/extract_plan/scratch/**"
-        worklist_rel = f"runs/{run_id}/actions/extract_plan/inputs/decision_worklist.yaml"
-        bundle["dispatch_targets"] = {
-            "read": [
-                worklist_rel,
-                "uo/ir/extract_plan_decision_worklist.yaml",
-                "uo/ir/extract_plan_candidates.summary.yaml",
-                "uo/ir/extract_plan.rework_hints.yaml",
-                "uo/ir/extract_plan_candidates.yaml",
-                "uo/ir/extract_plan_candidates.sha256",
-                "uo/ir/entrypoint_graph.yaml",
-                "uo/cbm/index_meta.json",
-                staging_rel,
-                staging_legacy,
-                scratch_rel,
-            ],
-            "write": [staging_rel, staging_legacy, scratch_rel],
-            "forbid_read": [
-                "uo/ir/llm_tasks.yaml",
-                "uo/ir/semantic_patches.yaml",
-                "uo/ir/semantic_resolution_ledger.yaml",
-            ],
-            "forbid_write": [
-                "uo/ir/extract_plan.yaml",
-                "uo/ir/extract_plan_aliases.yaml",
-                "uo/ir/receiver_bindings.yaml",
-                "uo/ir/semantic_patches.yaml",
-                "uo/ir/llm_tasks.yaml",
-            ],
-            "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
-            "output_mode": "staged",
-        }
         bundle["candidates_sha256"] = candidates_sha256
-        # Ensure staging dir exists for producer.
+        # Relation Graph prepare: observations → obligations → optional relation shards.
         try:
-            (Path(sdir) / "staging").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "staging" / "relation_parts").mkdir(parents=True, exist_ok=True)
             (Path(sdir) / "scratch").mkdir(parents=True, exist_ok=True)
-            (Path(sdir) / "inputs").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "inputs" / "batches").mkdir(parents=True, exist_ok=True)
         except OSError:
             pass
-        # Drop only *unreadable/invalid* producer dumps. Keep parseable plans so
-        # re-prepare (new lease) does not force a full rewrite + hash churn loop.
-        for stale_plan in (
-            Path(uo_s) / "ir" / "extract_plan.yaml",
-            Path(sdir) / "staging" / "output.yaml",
-            Path(sdir) / "staging" / "decision_report.yaml",
-        ):
+
+        try:
+            from ascendc_pilot.uo_artifacts import read_yaml, write_yaml
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
+
+            cand_doc = read_yaml(Path(uo_s) / "ir" / "extract_plan_candidates.yaml") or {}
+            action_session = str(action_sid or run_id)
+            uo_ir = Path(uo_s) / "ir"
+            prep = prepare_relation_extract_plan(
+                cand_doc if isinstance(cand_doc, dict) else {},
+                action_dir=Path(sdir),
+                action_session_id=action_session,
+                source_snapshot_hash=candidates_sha256,
+                identity={"architecture": architecture, "candidates_sha256": candidates_sha256},
+                run_id=str(run_id or ""),
+                workflow_id=str(wid or "uo-init"),
+                action_id="extract_plan",
+                prepare_nonce_hash=str(action_sid or ""),
+                architecture=str(architecture or ""),
+                operator_boundary_path=uo_ir / "operator_boundary.yaml",
+                entrypoint_graph_path=uo_ir / "entrypoint_graph.yaml",
+            )
+            if not prep.get("ok"):
+                return {
+                    "ok": False,
+                    "error": "EXTRACT_PLAN_RELATION_PREPARE_FAILED",
+                    "message_zh": "extract_plan Relation 准备失败",
+                    "prepare": prep,
+                }
+            manifest = prep.get("manifest") or {}
+            manifest["candidates_sha256"] = candidates_sha256
+            try:
+                if int(manifest.get("obligation_count") or 0) > 0:
+                    require_valid_manifest(manifest)
+            except ValueError as exc:
+                return {
+                    "ok": False,
+                    "error": str(exc).split(":")[0] if ":" in str(exc) else "LLM_WORK_NOT_SHARDED",
+                    "message_zh": f"extract_plan relation 分片失败：{exc}",
+                    "manifest": {
+                        "obligation_count": manifest.get("obligation_count"),
+                        "shard_count": manifest.get("shard_count"),
+                        "errors": manifest.get("errors"),
+                    },
+                }
+
+            inputs_dir = Path(sdir) / "inputs"
+            llm_n = int(manifest.get("obligation_count") or 0)
+            if llm_n == 0:
+                write_yaml(inputs_dir / "relation_batches.yaml", manifest)
+                dispatch_tasks = []
+                target_line = (
+                    "extract_plan Relation Graph: all obligations closed deterministically; "
+                    "no Map workers; Host must run `acp run-action extract_plan --finalize`"
+                )
+                bundle["dispatch_tasks"] = []
+                bundle["relation_batches"] = {
+                    "shard_count": 0,
+                    "obligation_count": 0,
+                    "deterministic_count": prep.get("deterministic_count"),
+                    "deterministic_only": True,
+                }
+                bundle["dispatch_targets"] = {
+                    "read": [
+                        f"runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
+                    ],
+                    "write": [],
+                    "forbid_write": ["uo/ir/extract_plan.yaml"],
+                    "output_mode": "staged",
+                    "map_reduce": False,
+                    "deterministic_only": True,
+                    "relation_graph": True,
+                    "skip_subagent": True,
+                }
+                prompt_r = _render_placeholders(
+                    prompt,
+                    **{
+                        **ph_kwargs,
+                        "target": target_line,
+                        "shard_id": "deterministic",
+                        "candidates_sha256": candidates_sha256,
+                    },
+                )
+            else:
+                obl_by_id = {
+                    str(o.get("obligation_id") or ""): o
+                    for o in (manifest.get("pruned") or {}).get("llm_obligations") or []
+                    if isinstance(o, dict) and o.get("obligation_id")
+                }
+                write_llm_batches(
+                    inputs_dir,
+                    manifest,
+                    obl_by_id,
+                    batches_subdir="batches",
+                    parts_subdir="batches",
+                    manifest_name="relation_batches.yaml",
+                    extra_batch_fields={"candidates_sha256": candidates_sha256},
+                )
+                (Path(sdir) / "staging" / "relation_parts").mkdir(parents=True, exist_ok=True)
+                for sh in manifest.get("shards") or []:
+                    if isinstance(sh, dict):
+                        idx = int(sh.get("shard_index") or 0)
+                        sh["part_file"] = f"staging/relation_parts/part_{idx:03d}.yaml"
+                        sh["batch_file"] = f"inputs/batches/batch_{idx:03d}.yaml"
+                write_yaml(inputs_dir / "relation_batches.yaml", manifest)
+
+                dispatch_tasks = build_dispatch_tasks(
+                    manifest,
+                    action_id="extract_plan",
+                    run_id=run_id,
+                    actor_id="uo-semantic-resolve",
+                    action_session_id=action_session,
+                    batch_root="inputs/batches",
+                    part_root="staging/relation_parts",
+                )
+                from ascendc_pilot.ownership import (
+                    shard_producer_forbidden_read_paths,
+                    shard_producer_read_paths,
+                )
+
+                for dt in dispatch_tasks:
+                    sid = str(dt.get("shard_id") or "")
+                    idx = int(dt.get("shard_index") or 0)
+                    batch_name = f"batch_{idx:03d}.yaml"
+                    part_name = f"part_{idx:03d}.yaml"
+                    shard_target = (
+                        f"Relation obligation batch {batch_name} → write "
+                        f"staging/relation_parts/{part_name}; confirm/reject/unresolved Relations only"
+                    )
+                    dt["allowed_read_paths"] = shard_producer_read_paths(
+                        "uo-init",
+                        "extract_plan",
+                        run_id=run_id,
+                        shard_id=f"{idx:03d}",
+                        batch_name=batch_name,
+                    )
+                    dt["allowed_write_paths"] = [
+                        f"runs/{run_id}/actions/extract_plan/staging/relation_parts/part_{idx:03d}.yaml",
+                        f"runs/{run_id}/actions/extract_plan/scratch/{sid}/**",
+                    ]
+                    dt["forbidden_read_paths"] = shard_producer_forbidden_read_paths(
+                        "uo-init", "extract_plan", run_id=run_id, shard_id=sid
+                    )
+                    # Per-shard rendered prompt + stub (Host must use each task's stub).
+                    dt["prompt_rendered"] = _render_placeholders(
+                        prompt,
+                        **{
+                            **ph_kwargs,
+                            "target": shard_target,
+                            "shard_id": sid or f"{idx:03d}",
+                            "candidates_sha256": candidates_sha256,
+                        },
+                    )
+                    dt["task_prompt_stub"] = (
+                        f"action_id=extract_plan\n"
+                        f"actor_id=uo-semantic-resolve\n"
+                        f"run_id={run_id}\n"
+                        f"shard_id={sid or f'{idx:03d}'}\n"
+                        f"batch: runs/{run_id}/actions/extract_plan/inputs/batches/{batch_name}\n"
+                        f"write: runs/{run_id}/actions/extract_plan/staging/relation_parts/{part_name}\n"
+                        "Confirm/reject/unresolved Relations only; do NOT choose extract-plan roles; "
+                        "do NOT finalize.\n"
+                    )
+
+                shard_n = int(manifest.get("shard_count") or 0)
+                target_line = (
+                    f"Relation Graph extract_plan: {llm_n} ambiguous obligations → {shard_n} shards; "
+                    "confirm/reject/unresolved Relations only; "
+                    "workers write staging/relation_parts/part_NNN.yaml; "
+                    "finalizer reduces → semantic_relations → materialize slim IR"
+                )
+                bundle["dispatch_tasks"] = dispatch_tasks
+                bundle["relation_batches"] = {
+                    "shard_count": shard_n,
+                    "obligation_count": llm_n,
+                    "obligation_set_hash": manifest.get("obligation_set_hash"),
+                    "deterministic_count": prep.get("deterministic_count"),
+                }
+                bundle["dispatch_targets"] = {
+                    "read": [
+                        f"runs/{run_id}/actions/extract_plan/inputs/relation_batches.yaml",
+                        f"runs/{run_id}/actions/extract_plan/inputs/batches/**",
+                        f"runs/{run_id}/actions/extract_plan/inputs/semantic_obligations.yaml",
+                        f"runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+                        f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    ],
+                    "write": [
+                        f"runs/{run_id}/actions/extract_plan/staging/relation_parts/**",
+                        f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    ],
+                    "forbid_read": [
+                        "uo/ir/extract_plan_candidates.yaml",
+                        "uo/ir/llm_tasks.yaml",
+                        "uo/ir/semantic_patches.yaml",
+                        "uo/ir/semantic_resolution_ledger.yaml",
+                    ],
+                    "forbid_write": [
+                        "uo/ir/extract_plan.yaml",
+                        "uo/ir/extract_plan_aliases.yaml",
+                        "uo/ir/receiver_bindings.yaml",
+                        "uo/ir/semantic_relations.yaml",
+                        "uo/ir/semantic_patches.yaml",
+                        "uo/ir/llm_tasks.yaml",
+                    ],
+                    "forbid_write_fields": list(_EXTRACT_PLAN_FORBID_FIELDS),
+                    "output_mode": "staged",
+                    "map_reduce": True,
+                    "relation_graph": True,
+                }
+                # Session-level prompt: placeholders filled; per-shard details in dispatch_tasks.
+                first_sid = ""
+                if dispatch_tasks:
+                    first_sid = str(dispatch_tasks[0].get("shard_id") or "000")
+                prompt_r = _render_placeholders(
+                    prompt,
+                    **{
+                        **ph_kwargs,
+                        "target": target_line,
+                        "shard_id": first_sid or "see_dispatch_tasks",
+                        "candidates_sha256": candidates_sha256,
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "EXTRACT_PLAN_SHARD_PREPARE_FAILED",
+                "message_zh": f"extract_plan Relation prepare 失败：{exc}",
+            }
+
+        # Drop unreadable canonical; keep mid-edit staging parts.
+        for stale_plan in (Path(uo_s) / "ir" / "extract_plan.yaml",):
             if not stale_plan.is_file():
                 continue
             keep = False
             try:
-                from uo.scripts.yaml_literal_sanitize import safe_load_yaml_text
+                from ascendc_pilot.yaml_literal_sanitize import safe_load_yaml_text
 
                 doc = safe_load_yaml_text(stale_plan.read_text(encoding="utf-8"))
-                keep = isinstance(doc, dict) and int(doc.get("version") or 0) == 1
+                keep = isinstance(doc, dict) and int(doc.get("version") or 0) in {1, 2}
             except Exception:  # noqa: BLE001
                 keep = False
-            if not keep and stale_plan.name == "extract_plan.yaml":
-                # Only auto-delete unreadable canonical; staging may be mid-edit.
+            if not keep:
                 try:
                     stale_plan.unlink()
                 except OSError:
@@ -1203,11 +1383,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     adjudicate_not_applicable = False
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
         try:
-            from uo.scripts.llm_tasks import (
-                blocking_gap_tasks,
-                can_auto_mark_missing,
-                open_blocking_tasks,
-            )
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
             uo = uo_root(project_root)
             open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
@@ -1324,11 +1500,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
         else:
             # Map-Reduce prepare: plan semantic batches; workers write parts only.
-            from uo.scripts.llm_tasks import load_llm_tasks
-            from uo.scripts.semantic_patch_shards import (
-                plan_semantic_batches,
-                write_semantic_batches,
-            )
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
+            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
             uo = uo_root(project_root)
             doc = load_llm_tasks(uo)
@@ -1339,7 +1512,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             }
             snap = ""
             try:
-                from uo.scripts.source_snapshot import require_source_snapshot
+                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
                 s = require_source_snapshot(uo, run_id=run_id or None)
                 if s.get("ok"):
@@ -1419,6 +1592,221 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             # Stubs live on dispatch_tasks / task_prompt_stub.md — never in ph_kwargs
             # (_render_placeholders only accepts template token kwargs).
             prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+
+    # resolve_gaps: shard blockers (≤30) for closed-vocabulary producer patches.
+    resolve_gaps_deferred = False
+    if wid == "uo-init" and action_id == "resolve_gaps" and role_id == "producer":
+        from ascendc_pilot.ownership import (
+            shard_producer_forbidden_read_paths,
+            shard_producer_read_paths,
+            shard_producer_write_paths,
+        )
+        from ascendc_pilot.paths import uo_root as _uo_root_fn
+        from ascendc_pilot.uo_artifacts import read_yaml, write_yaml
+
+        prepare_engine = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
+        if not prepare_engine.get("ok"):
+            return {
+                "ok": False,
+                "error": "RESOLVE_GAPS_PREPARE_FAILED",
+                "engine": prepare_engine,
+                "message_zh": str(
+                    prepare_engine.get("message_zh")
+                    or prepare_engine.get("error")
+                    or "resolve_gaps prepare failed"
+                ),
+            }
+        bundle["prepare_engine"] = {
+            "ok": True,
+            "need_subagent": bool(prepare_engine.get("need_subagent")),
+            "blocker_count": prepare_engine.get("blocker_count"),
+            "deferred": bool(prepare_engine.get("deferred")),
+        }
+        if prepare_engine.get("skipped") or prepare_engine.get("deferred") or not prepare_engine.get(
+            "need_subagent"
+        ):
+            resolve_gaps_deferred = True
+            bundle["dispatch_targets"] = {
+                "not_applicable": True,
+                "skip_subagent": True,
+                "deferred": True,
+                "write": ["uo/ir/resolve_gaps_receipt.yaml"],
+                "forbid_write": ["uo/ir/gap_bindings.yaml", "uo/ir/host_derivation.yaml"],
+            }
+            target_line = (
+                "NO LLM work — resolve_gaps deferred/skipped; Host will auto-finalize"
+            )
+            prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
+        else:
+            uo = _uo_root_fn(project_root)
+            unresolved = read_yaml(uo / "ir" / "unresolved.yaml") or {}
+            blockers = [
+                b for b in (unresolved.get("blockers") or []) if isinstance(b, dict)
+            ]
+            try:
+                from uo_init.blocker_shards import (
+                    materialize_blocker_batches,
+                    plan_blocker_shards,
+                )
+            except ImportError:
+                import sys
+
+                eng_src = (
+                    Path(__file__).resolve().parents[3]
+                    / "engines"
+                    / "understand-operator"
+                    / "src"
+                )
+                if eng_src.is_dir() and str(eng_src) not in sys.path:
+                    sys.path.insert(0, str(eng_src))
+                from uo_init.blocker_shards import (
+                    materialize_blocker_batches,
+                    plan_blocker_shards,
+                )
+
+            manifest = plan_blocker_shards(blockers)
+            if not manifest.get("ok"):
+                return {
+                    "ok": False,
+                    "error": str(manifest.get("error") or "LLM_WORK_NOT_SHARDED"),
+                    "manifest": {
+                        k: manifest.get(k)
+                        for k in (
+                            "obligation_count",
+                            "shard_count",
+                            "max_per_shard",
+                            "message_zh",
+                        )
+                    },
+                    "message_zh": str(
+                        manifest.get("message_zh") or "resolve_gaps 分片失败"
+                    ),
+                }
+            (Path(sdir) / "inputs" / "batches").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "parts").mkdir(parents=True, exist_ok=True)
+            (Path(sdir) / "scratch").mkdir(parents=True, exist_ok=True)
+            materialize_blocker_batches(
+                Path(sdir),
+                manifest,
+                unresolved=unresolved if isinstance(unresolved, dict) else {},
+                closed_vocabulary=(
+                    unresolved.get("closed_vocabulary")
+                    if isinstance(unresolved, dict)
+                    else None
+                ),
+            )
+            write_yaml(
+                Path(sdir) / "inputs" / "blocker_batches.yaml",
+                {
+                    "version": 1,
+                    "obligation_count": manifest.get("obligation_count"),
+                    "shard_count": manifest.get("shard_count"),
+                    "max_per_shard": manifest.get("max_per_shard"),
+                    "shards": [
+                        {k: v for k, v in sh.items() if k != "blockers_by_id"}
+                        for sh in (manifest.get("shards") or [])
+                        if isinstance(sh, dict)
+                    ],
+                },
+            )
+            dispatch_tasks: list[dict[str, Any]] = []
+            for sh in manifest.get("shards") or []:
+                if not isinstance(sh, dict):
+                    continue
+                sid = str(sh.get("shard_id") or "")
+                idx = int(sh.get("shard_index") or 0)
+                batch_name = f"batch_{sid}.yaml"
+                bids = [str(x) for x in (sh.get("blocker_ids") or [])]
+                shard_target = (
+                    f"blockers ({len(bids)}): " + ", ".join(bids) + " → write "
+                    f"runs/{run_id}/actions/resolve_gaps/parts/part_{sid}.yaml"
+                )
+                dt: dict[str, Any] = {
+                    "shard_id": sid,
+                    "shard_index": idx,
+                    "actor_id": actor_id,
+                    "action_id": action_id,
+                    "blocker_ids": bids,
+                    "task_count": len(bids),
+                    "batch_file": f"inputs/batches/{batch_name}",
+                    "part_file": f"parts/part_{sid}.yaml",
+                    "allowed_read_paths": shard_producer_read_paths(
+                        wid,
+                        action_id,
+                        run_id=run_id,
+                        shard_id=sid,
+                        batch_name=batch_name,
+                    ),
+                    "allowed_write_paths": shard_producer_write_paths(
+                        wid, action_id, run_id=run_id, shard_id=sid
+                    ),
+                    "forbidden_read_paths": shard_producer_forbidden_read_paths(
+                        wid, action_id, run_id=run_id, shard_id=sid
+                    ),
+                    "forbidden_write_paths": [
+                        "uo/ir/**",
+                        "uo/tiling/**",
+                        "uo/quality.yaml",
+                    ],
+                }
+                shard_prompt = _render_placeholders(
+                    prompt,
+                    **{**ph_kwargs, "target": shard_target, "shard_id": sid},
+                )
+                stub_body = (
+                    f"action_id=resolve_gaps shard_id={sid}\n"
+                    f"actor_id={actor_id}\n"
+                    f"run_id={run_id}\n"
+                    f"batch: runs/{run_id}/actions/resolve_gaps/inputs/batches/{batch_name}\n"
+                    f"write: runs/{run_id}/actions/resolve_gaps/parts/part_{sid}.yaml\n"
+                    f"scratch: runs/{run_id}/actions/resolve_gaps/scratch/{sid}/**\n"
+                    "FORBIDDEN: read other batches/parts; FORBIDDEN: write uo/ir/**; "
+                    "FORBIDDEN: acp finalize/next/advance\n"
+                    f"blockers ({len(bids)}): {', '.join(bids)}\n"
+                    "Follow session prompt.md / method.md / bundle.yaml after reading the batch.\n"
+                )
+                dt["task_prompt_stub"] = stub_body
+                dt["prompt_rendered"] = shard_prompt
+                dispatch_tasks.append(dt)
+
+            first_sid = (
+                str(dispatch_tasks[0].get("shard_id") or "000") if dispatch_tasks else "000"
+            )
+            first_bids = list(dispatch_tasks[0].get("blocker_ids") or []) if dispatch_tasks else []
+            target_line = (
+                f"shard {first_sid} blockers: " + ", ".join(first_bids)
+                if first_bids
+                else "see dispatch_tasks[]"
+            )
+            prompt_r = _render_placeholders(
+                prompt, **{**ph_kwargs, "target": target_line, "shard_id": first_sid}
+            )
+            bundle["dispatch_tasks"] = dispatch_tasks
+            bundle["dispatch_targets"] = {
+                "map_reduce": True,
+                "output_mode": "staged",
+                "shard_count": len(dispatch_tasks),
+                "obligation_count": manifest.get("obligation_count"),
+                "read": [
+                    f"runs/{run_id}/actions/resolve_gaps/inputs/blocker_batches.yaml",
+                    f"runs/{run_id}/actions/resolve_gaps/inputs/batches/**",
+                    "uo/ir/unresolved.yaml",
+                    "uo/ir/resolve_gaps_staging.yaml",
+                ],
+                "write": [
+                    f"runs/{run_id}/actions/resolve_gaps/parts/**",
+                    f"runs/{run_id}/actions/resolve_gaps/scratch/**",
+                ],
+                "forbid_write": ["uo/ir/**", "uo/tiling/**", "uo/quality.yaml"],
+                "forbid_read": shard_producer_forbidden_read_paths(
+                    wid, action_id, run_id=run_id
+                ),
+            }
+            bundle["blocker_batches"] = {
+                "shard_count": len(dispatch_tasks),
+                "obligation_count": manifest.get("obligation_count"),
+                "max_per_shard": manifest.get("max_per_shard"),
+            }
 
     # KEY triage: explicit finite target set from gaps / escalate_keys.
     if action_id == "key_triage" and role_id == "producer":
@@ -1540,7 +1928,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             if isinstance(bundle.get("dispatch_targets"), dict)
             else None,
             agent_root_path=agent_root_posix,
-            cbm_project=cbm_project,
             project_root=root_s,
             architecture=architecture,
             candidates_sha256=str(bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""),
@@ -1556,10 +1943,25 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         write_paths = action_write_paths(wid, action_id, run_id=run_id)
     else:
         write_paths = [expand_path_template(p, run_id=run_id) for p in write_paths]
+    # Map-Reduce: prefer producer-only write paths from ownership + dispatch_targets.
+    dt = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
+    if dt.get("map_reduce"):
+        from ascendc_pilot.ownership import action_producer_write_paths
+
+        prod_writes = action_producer_write_paths(wid, action_id, run_id=run_id)
+        if prod_writes:
+            write_paths = list(prod_writes)
+        if dt.get("write"):
+            write_paths = [expand_path_template(p, run_id=run_id) for p in list(dt.get("write") or [])]
     forbid_write = [
         expand_path_template(p, run_id=run_id)
         for p in list(action.get("forbidden_write_paths") or [])
     ]
+    if dt.get("forbid_write"):
+        for p in dt.get("forbid_write") or []:
+            ep = expand_path_template(str(p), run_id=run_id)
+            if ep not in forbid_write:
+                forbid_write.append(ep)
     read_paths = list(action.get("allowed_read_paths") or [])
     if not read_paths:
         from ascendc_pilot.ownership import action_read_paths
@@ -1567,11 +1969,21 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         read_paths = action_read_paths(wid, action_id, run_id=run_id)
     else:
         read_paths = [expand_path_template(p, run_id=run_id) for p in read_paths]
+    if dt.get("map_reduce") and dt.get("read"):
+        # Narrow action-level reads to Map-Reduce allow-list (+ session pack below).
+        read_paths = [expand_path_template(p, run_id=run_id) for p in list(dt.get("read") or [])]
     # Session pack always readable (env capabilities + stubs).
-    for extra in (
-        f"runs/{run_id}/actions/{action_id}/**",
+    # Map-Reduce: do NOT open actions/{action_id}/** (would re-expose all batches).
+    session_extras = [
         f"runs/{run_id}/actions/{action_id}/environment_capabilities.yaml",
-    ):
+        f"runs/{run_id}/actions/{action_id}/prompt.md",
+        f"runs/{run_id}/actions/{action_id}/method.md",
+        f"runs/{run_id}/actions/{action_id}/bundle.yaml",
+        f"runs/{run_id}/actions/{action_id}/session.yaml",
+    ]
+    if not dt.get("map_reduce"):
+        session_extras.insert(0, f"runs/{run_id}/actions/{action_id}/**")
+    for extra in session_extras:
         if extra not in read_paths:
             read_paths.append(extra)
     forbid_read = [
@@ -1583,14 +1995,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
         forbid_read = action_forbidden_read_paths(wid, action_id, run_id=run_id)
     # Dispatch targets may further narrow write paths for producers.
-    dt = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
     if dt.get("write"):
         write_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["write"]]
     if dt.get("forbid_write"):
         forbid_write = [
             expand_path_template(str(p), run_id=run_id) for p in dt["forbid_write"]
         ] + forbid_write
-    if dt.get("read"):
+    if dt.get("read") and not dt.get("map_reduce"):
         read_paths = [expand_path_template(str(p), run_id=run_id) for p in dt["read"]]
     if dt.get("forbid_read"):
         forbid_read = [
@@ -1602,9 +2013,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         wps = expand_path_template(str(wp), run_id=run_id)
         if wps and wps not in read_paths:
             read_paths.append(wps)
-    # Stub tells producer to read prompt/method/bundle first — always lease the
-    # prepared action session pack (allowed_read_roots alone was previously ignored).
-    if run_id and action_id:
+    # Stub tells producer to read prompt/method/bundle first — lease the
+    # prepared action session pack. Map-Reduce must NOT open actions/** or
+    # every batch becomes readable again (narrow reads already set above).
+    if run_id and action_id and not dt.get("map_reduce"):
         session_pack = f"runs/{run_id}/actions/{action_id}/**"
         read_paths = [session_pack, *read_paths]
     # De-dupe while preserving order.
@@ -1626,7 +2038,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         read_paths = deduped_rp
     allowed_targets = [str(x) for x in (dt.get("target_ids") or []) if str(x).strip()]
     # Outer containment: workflow write_roots; precise paths are Action lease.
-    wf_roots = list((get_workflow(wid) or {}).get("write_roots") or [])
+    wf_roots = list((get_workflow(wid, project_root=project_root) or {}).get("write_roots") or [])
     src_scope = source_scope_for_lease(project_root, run_id=run_id)
     lease = issue_action_lease(
         project_root,
@@ -1750,11 +2162,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             f"acp uo-scope scan --project <PROJECT_ROOT> --architecture {architecture}",
             "AskQuestion: continue | revise | stop | manual_supplement",
             "acp uo-scope checkpoint --project <PROJECT_ROOT> --decision <decision>",
-            "acp uo-scope build-evidence --project <PROJECT_ROOT>",
-            "acp uo-scope closure --project <PROJECT_ROOT>",
-            "acp uo-scope stage --project <PROJECT_ROOT>",
-            "MCP index_repository → uo/cbm/index_stage",
-            "acp uo-scope record-index --project <PROJECT_ROOT> --cbm-project <MCP_PROJECT>",
             "acp uo-scope finalize --project <PROJECT_ROOT>",
             f"acp run-action {action_id} --finalize --project <PROJECT_ROOT>",
         ]
@@ -1818,14 +2225,31 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result.setdefault("resume_required", False)
         result.setdefault("resume_session_id", "")
     if wid == "uo-init" and action_id == "extract_plan":
+        dt_ep = bundle.get("dispatch_targets") if isinstance(bundle.get("dispatch_targets"), dict) else {}
+        result["finalize_required"] = True
+        result["recommended_command"] = "acp run-action extract_plan --finalize"
+        result["dispatch_targets"] = dt_ep or bundle.get("dispatch_targets")
+        result["relation_batches"] = bundle.get("relation_batches")
+        if dt_ep.get("deterministic_only") or dt_ep.get("skip_subagent"):
+            # prepare 永不内联 finalize；即使无 LLM obligation 也立即返回。
+            result["dispatch_task"] = False
+            result["deterministic_only"] = True
+            result["auto_finalize"] = False
+            result["message_zh"] = (
+                "extract_plan Relation Graph：义务已全部确定性闭合；prepare 已完成。"
+                "禁止再派 uo-semantic-resolve；请立即执行 "
+                "`acp run-action extract_plan --finalize`，然后 `acp next`。"
+            )
+            return result
         result["message_zh"] = (
-            f"已准备 extract_plan；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
-            f"只确认 candidates→extract_plan.yaml。"
-            f"禁止塞 llm_tasks/mark_missing。完成后 "
-            f"acp run-action extract_plan --finalize，然后必须 `acp next`。"
+            f"已准备 extract_plan Relation Graph；按 `dispatch_tasks[]` 并行派发 `{actor_id}`："
+            f"每 shard 原样使用该 task 的 `task_prompt_stub`（只确认 Relation，禁止选 role）。"
+            f"全部 shard 完成后 `acp run-action extract_plan --finalize`，然后必须 `acp next`。"
         )
+        result["dispatch_tasks"] = bundle.get("dispatch_tasks") or []
         if prepare_engine is not None:
             result["dispatch_targets"] = bundle.get("dispatch_targets")
+        result["relation_batches"] = bundle.get("relation_batches")
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks":
         if adjudicate_not_applicable:
             fin = finalize_action(project_root, action_id)
@@ -1845,6 +2269,28 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             f"acp run-action adjudicate_llm_tasks --finalize，然后必须 `acp next` → apply_semantic_patch。"
         )
         result["dispatch_targets"] = bundle.get("dispatch_targets")
+    if wid == "uo-init" and action_id == "resolve_gaps":
+        if resolve_gaps_deferred:
+            fin = finalize_action(project_root, action_id, engine_result=prepare_engine)
+            result["auto_finalize"] = True
+            result["dispatch_task"] = False
+            result["finalize"] = fin
+            result["ok"] = bool(fin.get("ok"))
+            result["message_zh"] = (
+                "resolve_gaps：无派生 blocker 且总数未达阈值，已 deferred 并 auto-finalize；请 `acp next`。"
+            )
+            return result
+        result["finalize_required"] = True
+        result["recommended_command"] = "acp run-action resolve_gaps --finalize"
+        result["dispatch_tasks"] = bundle.get("dispatch_tasks") or []
+        result["dispatch_targets"] = bundle.get("dispatch_targets")
+        result["blocker_batches"] = bundle.get("blocker_batches")
+        shard_n = len(result["dispatch_tasks"])
+        result["message_zh"] = (
+            f"已准备 resolve_gaps：{shard_n} 个 shard（每 shard≤30 blocker）；"
+            f"按 `dispatch_tasks[]` 派发 `{actor_id}`，各 task 原样使用其 `task_prompt_stub`。"
+            f"全部完成后 `acp run-action resolve_gaps --finalize`，然后必须 `acp next` → apply_gap_patch。"
+        )
     return result
 
 
@@ -1868,6 +2314,12 @@ def _finalize_owned_artifact_path(
         / str(session.get("run_id") or "")
         / "scope"
         / "scope_confirmed.yaml",
+        "env_probe": _uo_root(project_root) / "tk" / "env_probe.yaml",
+        "derive_fields": _uo_root(project_root) / "tk" / "derive_fields.yaml",
+        "export_codemap": _uo_root(project_root) / "tk" / "export_codemap.yaml",
+        "mine_recipe": _uo_root(project_root) / "tk" / "mine_recipe.yaml",
+        "apply_recipe": _uo_root(project_root) / "tk" / "recipe.yaml",
+        "coverage_gate": _uo_root(project_root) / "tk" / "coverage_gate.yaml",
     }
     return owned.get(action_id)
 
@@ -2166,14 +2618,14 @@ def finalize_action(
     *,
     engine_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    ensure_agent_layout(project_root)
+    ensure_control_layout(project_root)
     state = load_state(project_root)
     if not state:
         return {"ok": False, "error": "no_active_workflow"}
     wid = str(state.get("workflow_id") or "")
     phase = str(state.get("phase") or "")
     run_id = str(state.get("run_id") or "")
-    action = _action_spec(wid, action_id, phase)
+    action = _action_spec(wid, action_id, phase, project_root=project_root)
     if action is None or action.get("_not_in_phase"):
         return {"ok": False, "error": "action_not_allowed", "action_id": action_id, "phase": phase}
 
@@ -2252,22 +2704,198 @@ def finalize_action(
                 ],
             )
 
-    # extract_plan finalize: validate plan + build host/kernel/tilingkey/bridge layers.
+    # extract_plan finalize: reduce relation parts, then engine materialize + layers.
     if (
         producer_identity_ok
         and wid == "uo-init"
         and action_id == "extract_plan"
         and engine_result is None
     ):
+        from ascendc_pilot.actions.progress import ActionProgressReporter
+        from ascendc_pilot.authorize.lease import issue_action_lease, revoke_active_lease
+
+        progress = ActionProgressReporter(
+            project_root, run_id=run_id, action_id=action_id, phase="finalize"
+        )
+        # 签发独立 finalizer lease；失败时只释放 finalizer，保留 prepare session。
+        prepare_lease_id = str(session.get("lease_id") or lease_id or "")
+        session["prepare_lease_id"] = prepare_lease_id
+        try:
+            fin_lease = issue_action_lease(
+                project_root,
+                state=state,
+                action_id=action_id,
+                actor_id=actor_id or "finalizer",
+                mode="normal",
+                allowed_write_paths=[
+                    f"runs/{run_id}/actions/extract_plan/staging/**",
+                    f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    "uo/ir/extract_plan.yaml",
+                    "uo/ir/extract_plan_aliases.yaml",
+                    "uo/ir/receiver_bindings.yaml",
+                    "uo/ir/semantic_relations.yaml",
+                    "uo/ir/semantic_observations.yaml",
+                    "uo/ir/host_subgraph.yaml",
+                    "uo/ir/kernel_subgraph.yaml",
+                    "uo/ir/tilingkey_subgraph.yaml",
+                    "uo/ir/bridge_subgraph.yaml",
+                    "uo/ir/layer_fingerprints.yaml",
+                ],
+                allowed_read_paths=[
+                    f"runs/{run_id}/actions/extract_plan/**",
+                    "uo/ir/**",
+                ],
+            )
+            session["finalizer_lease_id"] = str(fin_lease.get("lease_id") or "")
+            lease_id = str(fin_lease.get("lease_id") or lease_id)
+            _dump(sdir / "session.yaml", session)
+        except Exception as exc:  # noqa: BLE001
+            return _attach_finalize_observation(
+                project_root,
+                {
+                    "ok": False,
+                    "phase_runtime": "finalize",
+                    "action_id": action_id,
+                    "error": "EXTRACT_PLAN_STAGE_FAILED",
+                    "stage": "issue_finalizer_lease",
+                    "message_zh": f"签发 finalizer lease 失败：{exc}",
+                    "retryable": True,
+                },
+                action_id=action_id,
+                messages=[str(exc)],
+            )
+
+        def _release_finalizer_keep_prepare(reason: str) -> None:
+            try:
+                revoke_active_lease(
+                    project_root,
+                    reason=reason,
+                    touch_active_action=False,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            # 恢复 prepare 可重试状态（不永久 LEASE_REVOKED）
+            session["status"] = "prepare_ready"
+            session["finalize_retryable"] = True
+            session.pop("finalizer_lease_id", None)
+            _dump(sdir / "session.yaml", session)
+            active = _load(agent_root(project_root) / "state" / "active_action.yaml")
+            if isinstance(active, dict):
+                active["status"] = "prepared"
+                active["lease_id"] = prepare_lease_id
+                _dump(agent_root(project_root) / "state" / "active_action.yaml", active)
+            # 重新签发 prepare 范围 lease，便于重试 finalize
+            try:
+                restored = issue_action_lease(
+                    project_root,
+                    state=state,
+                    action_id=action_id,
+                    actor_id=str(session.get("actor_id") or actor_id or ""),
+                    mode="normal",
+                    allowed_write_paths=[
+                        f"runs/{run_id}/actions/extract_plan/staging/**",
+                        f"runs/{run_id}/actions/extract_plan/scratch/**",
+                    ],
+                    allowed_read_paths=[
+                        f"runs/{run_id}/actions/extract_plan/**",
+                        "uo/ir/**",
+                    ],
+                )
+                session["lease_id"] = str(restored.get("lease_id") or prepare_lease_id)
+                _dump(sdir / "session.yaml", session)
+                if isinstance(active, dict):
+                    active["lease_id"] = session["lease_id"]
+                    _dump(agent_root(project_root) / "state" / "active_action.yaml", active)
+            except Exception:  # noqa: BLE001
+                pass
+
+        man_path = Path(sdir) / "inputs" / "relation_batches.yaml"
+        if man_path.is_file():
+            try:
+                progress.start_stage("reduce_relation_parts")
+                from ascendc_pilot.uo_artifacts import read_yaml
+                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
+
+                base_graph: dict = {}
+                base_path = Path(sdir) / "staging" / "semantic_relations.base.yaml"
+                if base_path.is_file():
+                    loaded = read_yaml(base_path)
+                    if isinstance(loaded, dict):
+                        base_graph = loaded
+                only_failed = bool(session.get("retry_failed_shards_only"))
+                obl_n = int((read_yaml(man_path) or {}).get("obligation_count") or 0)
+                if obl_n > 0:
+                    reduced = reduce_relation_parts(
+                        Path(sdir), base_graph, only_failed=only_failed
+                    )
+                    session["reduce_report"] = {
+                        "ok": reduced.get("ok"),
+                        "errors": reduced.get("errors"),
+                        "grounding_errors": reduced.get("grounding_errors"),
+                    }
+                    if not reduced.get("ok"):
+                        session["apply_result"] = reduced
+                        _dump(sdir / "session.yaml", session)
+                        progress.fail_stage(
+                            "RELATION_REDUCE_FAILED",
+                            "relation parts reduce 失败",
+                        )
+                        _release_finalizer_keep_prepare("finalize_reduce_failed")
+                        return _attach_finalize_observation(
+                            project_root,
+                            {
+                                "ok": False,
+                                "phase_runtime": "finalize",
+                                "action_id": action_id,
+                                "error": "EXTRACT_PLAN_RELATION_REDUCE_FAILED",
+                                "apply_result": reduced,
+                                "retry_shards": reduced.get("retry_shards") or [],
+                                "retryable": True,
+                                "message_zh": (
+                                    "extract_plan relation parts reduce 失败；"
+                                    f"仅重跑失败 shard: {reduced.get('retry_shards')}"
+                                ),
+                            },
+                            action_id=action_id,
+                            messages=list(reduced.get("errors") or [])[:20],
+                        )
+                elif base_graph:
+                    from ascendc_pilot.uo_artifacts import write_yaml
+
+                    write_yaml(Path(sdir) / "staging" / "semantic_relations.yaml", base_graph)
+                progress.complete_stage()
+            except Exception as exc:  # noqa: BLE001
+                progress.fail_stage("EXTRACT_PLAN_PARTS_REDUCE_EXCEPTION", str(exc))
+                _release_finalizer_keep_prepare("finalize_reduce_exception")
+                return _attach_finalize_observation(
+                    project_root,
+                    {
+                        "ok": False,
+                        "phase_runtime": "finalize",
+                        "action_id": action_id,
+                        "error": "EXTRACT_PLAN_PARTS_REDUCE_EXCEPTION",
+                        "message_zh": str(exc),
+                        "retryable": True,
+                    },
+                    action_id=action_id,
+                    messages=[str(exc)],
+                )
         fin_ctx = {
             "op_name": state.get("op_name") or "",
             "architecture": state.get("architecture") or "arch35",
             "run_id": run_id,
             "extract_plan_mode": "finalize",
+            "actor_id": actor_id,
+            "workflow_id": wid,
+            "phase": phase,
+            "action_session_id": action_sid,
+            "lease_id": lease_id,
+            "prepare_nonce": prepare_nonce,
+            "progress": progress,
+            "action_dir": str(sdir),
         }
         apply_result = invoke_engine(project_root, wid, action_id, ctx=fin_ctx)
         if not apply_result.get("ok"):
-            session["status"] = "finalize_failed"
             session["apply_result"] = apply_result
             _dump(sdir / "session.yaml", session)
             apply_inner = apply_result.get("apply") if isinstance(apply_result.get("apply"), dict) else {}
@@ -2282,6 +2910,7 @@ def finalize_action(
             )
             if bucket_summary:
                 fail_msg = f"{fail_msg} [{bucket_summary}]"
+            _release_finalizer_keep_prepare("finalize_build_failed")
             fail_payload = {
                 "ok": False,
                 "phase_runtime": "finalize",
@@ -2290,6 +2919,7 @@ def finalize_action(
                 "apply_result": apply_result,
                 "rejected_buckets": buckets or {},
                 "message_zh": fail_msg,
+                "retryable": True,
             }
             uniq = []
             if isinstance(buckets, dict):
@@ -2304,8 +2934,13 @@ def finalize_action(
                     *uniq,
                 ],
             )
+        # 成功路径：继续走下方 receipt；finalizer lease 在成功 revoke 时清理
+        engine_result = apply_result
+        session["apply_result"] = apply_result
+        _dump(sdir / "session.yaml", session)
 
     # adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
+# adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
     if (
         producer_identity_ok
         and wid == "uo-init"
@@ -2315,8 +2950,8 @@ def finalize_action(
         man_path = Path(sdir) / "semantic_batches.yaml"
         if man_path.is_file():
             try:
-                from uo.scripts._ir_io import write_yaml
-                from uo.scripts.semantic_patch_shards import reduce_semantic_parts
+                from ascendc_pilot.uo_artifacts import write_yaml
+                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
 
                 reduced = reduce_semantic_parts(Path(sdir))
                 if not reduced.get("ok"):

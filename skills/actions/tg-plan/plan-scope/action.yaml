@@ -7,7 +7,6 @@ role_id: deterministic_engine
 agent_id: deterministic-tg-engine
 execution_mode: deterministic
 capabilities:
-- obligation-analysis
 - kb-query
 policies:
 - source-authority
@@ -21,9 +20,11 @@ context_profile_id: tg-plan-plan-scope
 output_contract_id: plan-scope-v1
 allowed_write_paths:
 - tg/plan/levels/*/plan_scope.yaml
+- tg/plan/plan_intent.yaml
 forbidden_write_paths: []
 allowed_read_paths:
 - tg/init/**
+- tg/plan/plan_intent.yaml
 - tg/snapshot/**
 - tg/realization/**
 - context/**

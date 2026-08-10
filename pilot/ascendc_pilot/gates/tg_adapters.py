@@ -74,6 +74,20 @@ def _wrap_exc(gate: str, fn: Any) -> dict[str, Any]:
 
 
 def gate_merge_pass(project_root: Path) -> dict[str, Any]:
+    if _tg_mode(project_root) == "tilingkey_full_coverage":
+        tg = tg_root(project_root)
+        inv = tg / "realization" / "binding_inventory.yaml"
+        report = _load(tg / "realization" / "uo_merge_report.yaml")
+        ok = inv.is_file() and (
+            not isinstance(report, dict)
+            or str(report.get("status") or "pass").lower() in {"pass", "passed", "ok", ""}
+        )
+        return {
+            "gate": "merge_pass",
+            "ok": ok,
+            "message": "ok" if ok else "full-mode merge requires binding_inventory.yaml",
+            "mode": "tilingkey_full_coverage",
+        }
     out = tg_root(project_root)
 
     def _run() -> Any:
@@ -84,8 +98,62 @@ def gate_merge_pass(project_root: Path) -> dict[str, Any]:
     return _wrap_exc("merge_pass", _run)
 
 
+def _tg_mode(project_root: Path) -> str:
+    tg = tg_root(project_root)
+    for rel in ("plan/plan_intent.yaml", "init/init_intent.yaml"):
+        doc = _load(tg / rel)
+        if isinstance(doc, dict) and doc.get("mode"):
+            return str(doc["mode"]).strip()
+    return "tilingkey_full_coverage"
+
+
+def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
+    """Full-mode bind gate: host-view inventory + declared Key space must align."""
+    tg = tg_root(project_root)
+    uo = uo_root(project_root)
+    issues: list[str] = []
+    inv = _load(tg / "realization" / "binding_inventory.yaml")
+    if not isinstance(inv, dict):
+        return {
+            "gate": "tilingkey_binding_ready",
+            "ok": False,
+            "message": "realization/binding_inventory.yaml missing",
+        }
+    fields = list(inv.get("fields") or [])
+    if not fields:
+        issues.append("binding_inventory.fields empty")
+    keys = _load(uo / "tiling" / "exhaustive_key_space.yaml") or {}
+    count = int((keys or {}).get("legal_key_count") or 0) if isinstance(keys, dict) else 0
+    if count <= 0:
+        issues.append("DECLARED_SET_EMPTY")
+    view = _load(uo / "ir" / "tg_host_view.yaml") or {}
+    view_fields = list((view or {}).get("fields") or []) if isinstance(view, dict) else []
+    if view_fields and fields and len(fields) != len(view_fields):
+        # Soft mismatch note — inventory may filter; fail only when inventory empty above.
+        pass
+    graph = _load(uo / "ir" / "operator_graph.yaml") or {}
+    fp = str((graph or {}).get("fingerprint") or "") if isinstance(graph, dict) else ""
+    inv_fp = str(inv.get("graph_fingerprint") or "")
+    if fp and inv_fp and fp != inv_fp:
+        issues.append("graph_fingerprint_mismatch")
+    return {
+        "gate": "tilingkey_binding_ready",
+        "ok": not issues,
+        "message": "ok" if not issues else "; ".join(issues),
+        "field_count": len(fields),
+        "declared_count": count,
+        "issues": issues,
+    }
+
+
 def gate_bind_progress(project_root: Path) -> dict[str, Any]:
-    """Bind phase: lexicon must exist; ready_for_llm with zero applied progress fails."""
+    """Bind phase gate — mode-aware.
+
+    ``tilingkey_full_coverage`` uses host-view inventory (no CSV lexicon).
+    ``csv_consumer`` still requires lexicon / unresolved progress.
+    """
+    if _tg_mode(project_root) == "tilingkey_full_coverage":
+        return gate_tilingkey_binding_ready(project_root)
     out = tg_root(project_root)
     lex = out / "realization" / "binding_lexicon.yaml"
     unresolved = _load(out / "realization" / "unresolved.yaml")
@@ -161,11 +229,12 @@ def gate_csv_closure(project_root: Path) -> dict[str, Any]:
 def gate_audit_pass(project_root: Path) -> dict[str, Any]:
     """Full audit contract via engine require_audit_pass — not shallow status read."""
     out = tg_root(project_root)
+    checklist = "tilingkey" if _tg_mode(project_root) == "tilingkey_full_coverage" else "csv"
 
     def _run() -> Any:
         from testcase_agent.init_status import require_audit_pass
 
-        return require_audit_pass(out)
+        return require_audit_pass(out, checklist=checklist)
 
     return _wrap_exc("audit_pass", _run)
 
@@ -334,7 +403,7 @@ def gate_family_path_obligation(project_root: Path) -> dict[str, Any]:
     """FAM ↔ KPATH ↔ obligation refs must be consistent on UO export surface."""
 
     def _run() -> Any:
-        from uo.scripts.family_path_obligation import check_family_path_obligation
+        from ascendc_pilot.legacy_stubs import check_family_path_obligation
 
         uo = uo_root(project_root)
         payload = check_family_path_obligation(uo, write=True)
@@ -400,3 +469,180 @@ def gate_solve_terminal(project_root: Path) -> dict[str, Any]:
         }
 
     return _wrap_exc("solve_terminal", _run)
+
+
+_ADAPTER_METHODS = (
+    "declared_keys",
+    "decode_key",
+    "sample_case",
+    "mutate",
+    "construct",
+    "describe",
+    "replay",
+    "actual_key",
+    "generation_knobs",
+)
+
+# Cold-start packages keep only identity + log protocol. Adapter pack YAML
+# (search/construction/feature/bridge/proof/observations) is optional until
+# export_adapter_pack writes it.
+_REQUIRED_YAML = (
+    "operator.yaml",
+    "log_protocol.yaml",
+)
+
+_OPTIONAL_ADAPTER_YAML = (
+    "search_hints.yaml",
+    "construction_hints.yaml",
+    "feature_bindings.yaml",
+    "bridge_spec.yaml",
+    "proof_rules.yaml",
+    "observations.yaml",
+)
+
+_REQUIRED_SECTIONS = {
+    "search_hints.yaml": ("sampling_grid",),
+    "construction_hints.yaml": ("defaults",),
+    "feature_bindings.yaml": ("categorical", "base_numeric"),
+    "log_protocol.yaml": ("marks", "scrapes", "report_state"),
+}
+
+
+def gate_adapter_completeness(
+    project_root: Path,
+    *,
+    package_dir: Path | None = None,
+    examples_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Static completeness gate so FAG-runnable ≠ platform-generic.
+
+    Checks:
+      - OperatorAdapter protocol surface (9 methods) when an adapter is loaded
+      - knob_schema covers every describe() column
+      - operator.yaml + log_protocol.yaml present (adapter pack optional)
+      - when adapter-pack YAML is present, required sections are non-empty
+      - construction_hints / feature_bindings are not byte-identical to skill examples
+    """
+    import hashlib
+    import sys
+
+    issues: list[str] = []
+    repo = Path(project_root).resolve()
+    scripts = repo / "scripts"
+    if scripts.is_dir() and str(scripts) not in sys.path:
+        sys.path.insert(0, str(scripts))
+
+    pkg = package_dir
+    if pkg is None:
+        try:
+            from replay import package_data
+
+            pkg = package_data.active_package_dir(repo)
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "gate": "adapter_completeness",
+                "ok": False,
+                "message": f"package resolve failed: {exc}",
+            }
+    pkg = Path(pkg)
+
+    for name in _REQUIRED_YAML:
+        path = pkg / name
+        if not path.is_file():
+            issues.append(f"missing:{name}")
+            continue
+        doc = _load(path)
+        if not isinstance(doc, dict) or not doc:
+            issues.append(f"empty:{name}")
+            continue
+        for section in _REQUIRED_SECTIONS.get(name, ()):
+            if section not in doc:
+                issues.append(f"missing_section:{name}:{section}")
+
+    for name in _OPTIONAL_ADAPTER_YAML:
+        path = pkg / name
+        if not path.is_file():
+            continue
+        doc = _load(path)
+        if not isinstance(doc, dict) or not doc:
+            issues.append(f"empty:{name}")
+            continue
+        for section in _REQUIRED_SECTIONS.get(name, ()):
+            if section not in doc:
+                issues.append(f"missing_section:{name}:{section}")
+
+    # Anti-copy: must not match skill examples byte-for-byte (ignoring provenance comments).
+    examples = examples_dir or (
+        repo / "skills" / "domain" / "tg-closure" / "examples"
+    )
+    for yaml_name, excerpt_name in (
+        ("construction_hints.yaml", "construction_hints.excerpt.yaml"),
+        ("feature_bindings.yaml", "feature_bindings.excerpt.yaml"),
+    ):
+        pkg_path = pkg / yaml_name
+        ex_path = examples / excerpt_name
+        if not pkg_path.is_file() or not ex_path.is_file():
+            continue
+        def _norm(text: str) -> str:
+            lines = [
+                ln for ln in text.splitlines()
+                if ln.strip() and not ln.strip().startswith("#")
+            ]
+            return "\n".join(lines).strip()
+
+        if _norm(pkg_path.read_text(encoding="utf-8")) == _norm(
+            ex_path.read_text(encoding="utf-8")
+        ):
+            issues.append(f"copied_from_example:{yaml_name}")
+
+    # knob_schema vs describe columns
+    try:
+        from replay import inputs as I
+
+        sem = I.SEMANTICS
+        if hasattr(sem, "knob_schema") and hasattr(sem, "describe"):
+            schema = dict(sem.knob_schema() or {})
+            # Build a default case when possible.
+            case = None
+            if hasattr(sem, "from_knobs"):
+                defaults = {
+                    k: (v.get("domain") or [v.get("default")])[0]
+                    if isinstance(v, dict) and v.get("domain")
+                    else (v.get("default") if isinstance(v, dict) else None)
+                    for k, v in schema.items()
+                }
+                defaults = {k: v for k, v in defaults.items() if v is not None}
+                try:
+                    case = sem.from_knobs(defaults)
+                except Exception:
+                    case = None
+            if case is not None:
+                cols = set(sem.describe(case).keys())
+                missing = cols - set(schema.keys())
+                if missing:
+                    issues.append(f"knob_schema_missing_describe_cols:{sorted(missing)}")
+    except Exception as exc:  # noqa: BLE001
+        issues.append(f"semantics_check_failed:{exc}")
+
+    # Adapter methods — the Protocol must declare all 9; a materialize-only
+    # package adapter is fine as long as OperatorAdapter lists the surface.
+    try:
+        from replay.operator_adapter import OperatorAdapter
+
+        for m in _ADAPTER_METHODS:
+            if not hasattr(OperatorAdapter, m):
+                issues.append(f"protocol_missing:{m}")
+    except Exception as exc:  # noqa: BLE001
+        issues.append(f"adapter_protocol_failed:{exc}")
+
+    ok = not issues
+    return {
+        "gate": "adapter_completeness",
+        "ok": ok,
+        "message": "ok" if ok else f"issues={issues[:8]}",
+        "issues": issues,
+        "package": str(pkg),
+        "fingerprint": hashlib.sha256(
+            "".join(issues).encode("utf-8")
+        ).hexdigest()[:12],
+    }

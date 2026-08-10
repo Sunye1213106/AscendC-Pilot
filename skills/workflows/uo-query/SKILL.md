@@ -1,20 +1,16 @@
 ---
 name: uo-query
-description: 只读查询 UO 知识库 / 问答 / 查某个 KEY。用户提问已有 KB 内容时加载。 Pilot 管阶段；加载后执行 acp start
-  uo-query。
+description: >
+  只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、
+  Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有 UO 内容、
+  某个 KEY/字段/路径或 CodeMap 完整性时使用。
 ---
 
 # uo-query
 
-只读查询 UO KB。
+编排只读 `.uo` CodeMap 查询。领域方法按需读取 `skills/domain/uo-codemap-query/SKILL.md`。
 
-本 Skill 不定义工作流阶段。执行时：
-
-1. 调用 `acp start`（同 workflow 活动 run 则复用）；
-2. 调用 `acp next`；
-3. 对返回的 action_id 调用 `acp run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
-4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `acp run-action <action_id> --finalize`；
-5. 调用 `acp advance`（仅消费 run-action 签发的可信收据）。
+查询 Agent 只执行当前 Action Bundle 的问题；结构化 `CodeMapQuery` 优先，源码窗口仅用于补证。不得修改 `.uo`。
 
 ## Actions
 
@@ -22,7 +18,6 @@ description: 只读查询 UO 知识库 / 问答 / 查某个 KEY。用户提问�
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
-| `kb_lookup` | `subagent` | `uo-query` | `readonly_analyst` | `uo-query/kb-lookup` | `uo/kb-lookup` | `kb-answer-v1` |
+| `kb_lookup` | `subagent` | `uo-query` | `readonly_analyst` | `uo-query/kb-lookup` | `uo/codemap-query` | `kb-answer-v1` |
 
 <!-- END GENERATED ACTIONS -->
-

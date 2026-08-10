@@ -9,11 +9,17 @@ description = "AscendC Testcase Generation (TG) engine for AscendC-Pilot"
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6.0",
+  "acp-common",
 ]
 
 [project.optional-dependencies]
-solver = [
-  "z3-solver>=4.12",
+ml = [
+  "scikit-learn>=1.3",
+  "pandas>=2.0",
+  "numpy>=1.24",
+]
+closure = [
+  "testcase-agent[ml]",
 ]
 
 [project.scripts]
@@ -21,6 +27,7 @@ solver = [
 tg-plan = "testcase_agent.cli:plan_main"
 tg-solve = "testcase_agent.cli:solve_main"
 tg-init = "testcase_agent.cli:init_main"
+tg-closure = "testcase_agent.closure.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

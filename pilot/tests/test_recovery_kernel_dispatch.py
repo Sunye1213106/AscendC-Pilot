@@ -1,24 +1,49 @@
 from __future__ import annotations
 
 from ascendc_pilot.recovery import (
+    KEY_DERIVATION_REWORK,
     KERNEL_DISPATCH_REWORK,
+    SEMANTIC_PATCH_REWORK,
+    SCOPE_EXPANSION_REWORK,
+    is_registered_action_id,
     recoveries_for_closure_gaps,
     resolve_recovery,
 )
 
 
-def test_kernel_dispatch_recovery_reruns_deterministic_entrypoint_stage() -> None:
-    resolved = resolve_recovery(
-        KERNEL_DISPATCH_REWORK,
-        workflow_id="uo-init",
-        current_phase="extract",
-    )
-    assert resolved["ok"] is True
+def _target(reason: str, phase: str) -> tuple[str, str]:
+    resolved = resolve_recovery(reason, workflow_id="uo-init", current_phase=phase)
+    assert resolved["ok"] is True, resolved
     recovery = resolved["recovery"]
-    if recovery["type"] == "transition":
-        assert recovery["next_action"] == "detect_score_pre"
-    else:
-        assert recovery["action_id"] == "detect_score_pre"
+    if recovery["type"] == "action":
+        return phase, str(recovery["action_id"])
+    assert recovery["type"] == "transition"
+    return str(recovery["target_phase"]), str(recovery["next_action"])
+
+
+def test_kernel_dispatch_recovery_reruns_public_extract_stage() -> None:
+    phase, action = _target(KERNEL_DISPATCH_REWORK, "resolve")
+    assert phase == "extract"
+    assert action == "extract"
+    assert is_registered_action_id(action)
+
+
+def test_key_derivation_recovery_reruns_public_analyze_stage() -> None:
+    phase, action = _target(KEY_DERIVATION_REWORK, "resolve")
+    assert phase == "analyze"
+    assert action == "analyze"
+
+
+def test_semantic_patch_recovery_returns_to_public_resolve_stage() -> None:
+    phase, action = _target(SEMANTIC_PATCH_REWORK, "review")
+    assert phase == "resolve"
+    assert action == "resolve"
+
+
+def test_scope_expansion_recovery_returns_to_prepare() -> None:
+    phase, action = _target(SCOPE_EXPANSION_REWORK, "analyze")
+    assert phase == "prepare"
+    assert action == "prepare"
 
 
 def test_kernel_only_no_progress_does_not_add_llm_loop() -> None:
@@ -32,4 +57,5 @@ def test_kernel_only_no_progress_does_not_add_llm_loop() -> None:
         current_phase="extract",
     )
     assert payload["reason_codes"] == [KERNEL_DISPATCH_REWORK]
-    assert "adjudicate_llm_tasks" not in payload["recovery_actions"]
+    assert payload["recovery_actions"] == ["extract"]
+    assert all(is_registered_action_id(action) for action in payload["recovery_actions"])

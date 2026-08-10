@@ -9,7 +9,6 @@ execution_mode: deterministic
 capabilities:
 - contract-building
 - kb-query
-- obligation-analysis
 policies:
 - source-authority
 - code-access
@@ -19,7 +18,7 @@ policies:
 - output-quality
 task_prompt_id: null
 context_profile_id: tg-init-contract-build
-output_contract_id: csv-contract-v1
+output_contract_id: tilingkey-contract-v1
 allowed_write_paths:
 - tg/intake/**
 - tg/snapshot/**

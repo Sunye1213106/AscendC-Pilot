@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "acp-common"
+version = "0.1.0"
+description = "Shared finite-domain primitives for AscendC-Pilot engines"
+requires-python = ">=3.10"
+dependencies = [
+  "z3-solver>=4.12",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["acp_common*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

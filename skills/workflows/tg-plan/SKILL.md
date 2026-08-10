@@ -1,20 +1,35 @@
 ---
 name: tg-plan
-description: 生成覆盖规划 / 覆盖义务并人工批准（tg-plan、coverage）。用户要覆盖计划时加载。 Pilot 管阶段；加载后执行 acp
-  start tg-plan。
+description: >
+  制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey；
+  指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。
 ---
 
 # tg-plan
 
-生成覆盖义务并人工批准。
+领域规则：`skills/domain/tg-plan/SKILL.md`。
 
-本 Skill 不定义工作流阶段。执行时：
+```text
+intent → scope → gate → build → approve
+```
 
-1. 调用 `acp start`（同 workflow 活动 run 则复用）；
-2. 调用 `acp next`；
-3. 对返回的 action_id 调用 `acp run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
-4. 语义 Action：按 Runtime Bundle 派发声明 actor，产出后调用 `acp run-action <action_id> --finalize`；
-5. 调用 `acp advance`（仅消费 run-action 签发的可信收据）。
+核心产品是：
+
+```text
+tg/plan/levels/<level>/target_set.yaml
+```
+
+- `D` = 当前 Kernel template 声明域；
+- `T` = 本次 Solve 目标，`T ⊆ D`；
+- 无显式目标时 `T=D`；
+- approve 冻结 `target_hash + snapshot_hash + plan_hash`；
+- `tg-solve` 不得扩大 T。
+
+Full TilingKey mode 的 precheck 直接检查 `.uo` 和当前 Kernel schema。`csv_consumer` 兼容模式仍由自己的 precheck 检查旧契约。
+
+## Pilot
+
+`acp start tg-plan` → 按顺序执行 Action → `plan_approve`。禁止跳过 intent/build；目标变更必须重新 Plan/Approve。
 
 ## Actions
 
@@ -22,10 +37,10 @@ description: 生成覆盖规划 / 覆盖义务并人工批准（tg-plan、covera
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
+| `plan_intent` | `primary_interactive` | `ascendc-pilot` | `controller` | `tg-plan/plan-intent` | `tg/plan-intent` | `plan-intent-v1` |
 | `plan_scope` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-scope` | `-` | `plan-scope-v1` |
 | `plan_precheck` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-precheck` | `-` | `plan-precheck-v1` |
 | `plan_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-build` | `-` | `plan-build-v1` |
 | `plan_approve` | `primary_interactive` | `ascendc-pilot` | `controller` | `tg-plan/plan-approve` | `tg/plan-approve` | `plan-approved-v1` |
 
 <!-- END GENERATED ACTIONS -->
-

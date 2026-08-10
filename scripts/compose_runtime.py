@@ -24,6 +24,16 @@ _FORBIDDEN_PATTERNS = [
     re.compile(r"(?i)\bpython\s+.*\b(tg-init|tg-plan|tg-solve|build_layered_kb)\b"),
 ]
 
+# Shared policies injected into both workflow skills and agents (same set).
+COMPOSE_POLICY_IDS: tuple[str, ...] = (
+    "pilot-control",
+    "language",
+    "evidence",
+    "code-access",
+    "source-authority",
+    "output-quality",
+)
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     if yaml is None or not path.is_file():
@@ -141,6 +151,51 @@ def _scan_forbidden(path: Path, text: str, errors: list[str]) -> None:
         for pat in _FORBIDDEN_PATTERNS:
             if pat.search(line):
                 errors.append(f"forbidden pattern {pat.pattern!r} in {path.as_posix()}:{i}")
+
+
+_DOMAIN_HARNESS_PATTERNS = [
+    re.compile(r"\brun_id\b", re.I),
+    re.compile(r"\baction_id\b", re.I),
+    re.compile(r"\bfinalize\b", re.I),
+    re.compile(r"\badvance\b", re.I),
+    re.compile(r"\bacp\s+start\b", re.I),
+    re.compile(r"\bacp\s+next\b", re.I),
+]
+
+
+def validate_domain_skills(repo: Path) -> list[str]:
+    """Lint Agent-facing domain skills: frontmatter, line budget, no harness leakage."""
+    errors: list[str] = []
+    domain_root = repo / "skills" / "domain"
+    if not domain_root.is_dir():
+        errors.append("missing skills/domain/")
+        return errors
+    for skill_md in sorted(domain_root.glob("*/SKILL.md")):
+        text = skill_md.read_text(encoding="utf-8")
+        try:
+            meta, body = _require_skill_frontmatter(text, path=skill_md)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        if not str(meta.get("name") or "").strip():
+            errors.append(f"{skill_md.as_posix()}: missing frontmatter name")
+        if not str(meta.get("description") or "").strip():
+            errors.append(f"{skill_md.as_posix()}: missing frontmatter description")
+        # Count non-empty lines in full file (progressive-disclosure budget).
+        n_lines = len(text.splitlines())
+        if n_lines > 200:
+            errors.append(
+                f"DOMAIN_SKILL_TOO_LONG {skill_md.as_posix()}: {n_lines} lines > 200"
+            )
+        for i, line in enumerate(body.splitlines(), 1):
+            for pat in _DOMAIN_HARNESS_PATTERNS:
+                if pat.search(line):
+                    errors.append(
+                        f"DOMAIN_HARNESS_LEAK {skill_md.as_posix()}:{i}: "
+                        f"pattern {pat.pattern!r} belongs in Harness, not domain Skill"
+                    )
+    return errors
+
 
 
 def _glob_prefix(pattern: str) -> str:
@@ -325,6 +380,7 @@ def validate(repo: Path) -> list[str]:
     agents = paths["agents"]
     errors: list[str] = []
     errors.extend(check_skill_action_markers(repo))
+    errors.extend(validate_domain_skills(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
@@ -359,7 +415,7 @@ def validate(repo: Path) -> list[str]:
     # Pre-compose validate only checks sources so install can regenerate stale trees.
 
     for wid, meta in WORKFLOWS.items():
-        if meta.get("reserved") or not meta.get("slash"):
+        if meta.get("reserved") or meta.get("alias_of") or not meta.get("slash"):
             continue
         skill_md = skills / "workflows" / wid / "SKILL.md"
         if not skill_md.is_file():
@@ -554,12 +610,7 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
     _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
     body = _replace_actions_table(body, meta)
     # Inject shared policies once (same core as agents — avoid skill-local forks).
-    for pid in (
-        "pilot-control",
-        "evidence",
-        "code-access",
-        "source-authority",
-    ):
+    for pid in COMPOSE_POLICY_IDS:
         marker = f"## Composed: {pid}"
         text = _read_policy(skills, pid)
         if marker not in body and text:
@@ -673,17 +724,9 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     reads = "\n".join(f"- `{x}`" for x in (agent_meta.get("read_scopes") or [])) or "- (none)"
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
-    # Shared policies for ALL agents (DEFAULT_POLICY_IDS core). Do not push
-    # high-confidence / source-window rules into individual skill prompts only.
-    _agent_policy_ids = (
-        "pilot-control",
-        "language",
-        "evidence",
-        "code-access",
-        "source-authority",
-        "output-quality",
-    )
-    _agent_policies = {pid: _read_policy(skills, pid) for pid in _agent_policy_ids}
+    # Shared policies for ALL agents (same COMPOSE_POLICY_IDS as workflow skills).
+    # Do not push high-confidence / source-window rules into individual skill prompts only.
+    _agent_policies = {pid: _read_policy(skills, pid) for pid in COMPOSE_POLICY_IDS}
     hc = _agent_policies["pilot-control"]
     lang = _agent_policies["language"]
     front: dict[str, Any] = {
@@ -725,7 +768,7 @@ You may read:
 {reads}
 
 Confirmed-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
-Locate with CBM first (`search_graph` → `get_code_snippet`, or `acp cbm lookup`), then windowed `Read` — never whole-file dumps.
+Locate with UO KB query first, then confirmed-scope windowed `Read` — never whole-file dumps.
 
 You may write:
 
@@ -742,7 +785,7 @@ At runtime, follow:
 1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
 2. Then the current Pilot Action / METHOD only as referenced by that prompt;
 3. the composed Policies;
-4. the composed Capabilities (`cbm-navigation`, `source-reading` when declared on the Action);
+4. the composed Capabilities (`source-navigation`, `source-reading` when declared on the Action);
 5. the declared Output Contract.
 
 When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
@@ -804,7 +847,11 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     compiled: list[str] = []
 
     # Workflow skills + operator
-    workflow_ids = [wid for wid, m in WORKFLOWS.items() if m.get("slash") and not m.get("reserved")]
+    workflow_ids = [
+        wid
+        for wid, m in WORKFLOWS.items()
+        if m.get("slash") and not m.get("reserved") and not m.get("alias_of")
+    ]
     workflow_ids.append("operator")
     for wid in workflow_ids:
         src = skills / "workflows" / wid
@@ -892,6 +939,19 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                     shutil.rmtree(cdst)
                 shutil.copytree(csrc, cdst)
         compiled.append(f"{host}/skills/{wid}")
+
+    # Domain cognitive skills (Agent-facing progressive disclosure)
+    domain_src = skills / "domain"
+    if domain_src.is_dir():
+        domain_dst = out_skills / "domain"
+        if domain_dst.exists():
+            shutil.rmtree(domain_dst)
+        shutil.copytree(
+            domain_src,
+            domain_dst,
+            ignore=shutil.ignore_patterns("README.md"),
+        )
+        compiled.append(f"{host}/skills/domain")
 
     # Shared policies pack under each host
     pol_dst = out_skills / "_policies"

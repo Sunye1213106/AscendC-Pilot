@@ -1,0 +1,22 @@
+# -*- coding: utf-8 -*-
+"""KernelPass — kernel IR → KERNEL / BRANCH / AVAILABLE_ON edges."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from uo_init.ir.codemap import CodeMap
+
+
+def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
+    ctx = context or {}
+    kernel_ir = ctx.get("kernel_ir")
+    if kernel_ir is not None:
+        CodeMap.from_kernel_ir(
+            kernel_ir,
+            op_name=codemap.op_name or str(ctx.get("op_name") or ""),
+            architecture=codemap.architecture,
+            codemap=codemap,
+        )
+    codemap.meta["kernel_pass"] = "v1"
+    return codemap

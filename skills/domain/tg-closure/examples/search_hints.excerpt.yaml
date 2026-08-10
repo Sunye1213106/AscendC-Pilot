@@ -1,0 +1,15 @@
+# provenance: FAG arch35 已通过实例。结构可照抄，数值不可搬。
+# 可泛化：nearest_knobs 的键是 Key 维度、值是能翻动它的输入旋钮；
+# sampling_grid 是探索包络而非合法域。
+version: 1
+sampling_grid:
+  # 示例形状：按算子自己的 layout / dtype / 尺寸旋钮填写
+  layout: [LAYOUT_A, LAYOUT_B]
+  dtype: [DTYPE_A, DTYPE_B]
+  # ... 其余旋钮 ...
+nearest_knobs:
+  SomeDim:
+    - {knob: some_input_knob, values: [v1, v2, v3]}
+  AnotherDim:
+    - {knob: flag_a, values: [0, 1]}
+    - {knob: mode_b, values: [0, 1, 2]}

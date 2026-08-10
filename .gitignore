@@ -1,13 +1,24 @@
 .claude/
 .opencode/
-.tmp-cbm-install/
 # Local-only eval oracles (do not commit)
 .tmp-oracle/
+
+# Cached clang bundles / derivation runs (keep replay corpus locally; never commit)
+.probe_cache/
+
+# Host runtime trees are composed at install time (see install.ps1)
+generated/
 
 # Python cache and test artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
+# pytest --basetemp dirs. These held full UO run products (YAML, SQLite), which
+# file discovery and scope closure would otherwise pick up as if they were source.
+.pytest-tmp/
+.pytest_tmp/
+# One-off local probes. Nothing here is a reusable entry point.
+.pytmp/
 
 # Packaging/build metadata
 *.egg-info/
@@ -21,6 +32,7 @@ env/
 
 # Operator-local agent products
 .ascendc-agent/
+.ascendc-pilot/
 .understand-operator/
 .testcase-generator/
 

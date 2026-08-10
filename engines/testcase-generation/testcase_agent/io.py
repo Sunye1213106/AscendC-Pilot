@@ -36,9 +36,16 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def output_root(project_root: Path, op_name: str) -> Path:
-    del op_name  # products live under .ascendc-pilot/tg (no op nesting)
-    return project_root / ".ascendc-pilot" / "tg"
+def output_root(project_root: Path, op_name: str, *, arch: str | None = None) -> Path:
+    """``<op_src>/.ascendc-pilot/<arch>/tg`` — op nesting is via arch, not op_name."""
+    del op_name
+    try:
+        from ascendc_pilot.paths import tg_root
+
+        return tg_root(project_root, arch=arch)
+    except Exception:
+        arch_name = (arch or "").strip() or "arch35"
+        return project_root / ".ascendc-pilot" / arch_name / "tg"
 
 
 def ensure_output_dirs(root: Path) -> None:

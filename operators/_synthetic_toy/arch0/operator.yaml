@@ -1,0 +1,24 @@
+# Synthetic second-operator package for adapter smoke tests.
+# Not a real Ascend operator — only proves loader / protocol boundaries.
+version: 1
+
+operator:
+  name: _synthetic_toy
+  path: synthetic/toy
+  arch: arch0
+
+sources:
+  tiling_key_header: op_kernel/{arch}/{op}_template_tiling_key.h
+
+replay:
+  host: local
+  distro: ""
+  entry: /dev/null
+  done_marker: TOY_BATCH_DONE
+  overrides: {}
+
+artifacts:
+  cache: tg/replay
+  wide_glob: "*toy_cases*.csv"
+
+log_protocol: log_protocol.yaml

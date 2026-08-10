@@ -1,0 +1,15 @@
+version: 1
+marks:
+  case:  '^###CASE (?P<case_id>\S+)'
+  done:  '^###DONE (?P<case_id>\S+) ok=(?P<ok>\d+) key=(?P<key>\d+)'
+  key:   '^###KEY (?P<key>\d+)'
+  dim:   '^###DIM (?P<name>\w+)=(?P<value>-?\d+)'
+  state: '^###STATE (?P<name>\w+)=(?P<value>-?\d+)'
+scrapes: []
+reject:
+  when: []
+  after: ""
+  limit: 80
+report_state:
+  - key
+  - reject

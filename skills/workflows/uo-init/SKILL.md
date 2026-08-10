@@ -1,129 +1,29 @@
 ---
 name: uo-init
-description: 首次建立 / 创建本地知识库（UO KB）、建库、初始化算子知识库。 用户提到建立知识库、只分析某架构分支（如 arch35）时加载本 Skill。
-  Pilot 管阶段；加载后执行 acp start uo-init。
+description: >
+  首次构建 AscendC `.uo` CodeMap：确定范围与 BuildVariant、抽取 CompilerFacts、
+  运行确定性 CodeMap Pass、只消解显式语义缺口、写入并审查单一 `.uo`。
+  用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。
 ---
 
 # uo-init
 
-首次建立 UO KB。
-
-## 硬规则（读完再动手）
-
-0. **必须先 Tab 切到 `ascendc-pilot`（primary）再跑本 Skill**。默认 Build/其它 agent 没有 acp 权限围栏，会把流程当成“读 METHOD 手干”。
-0.5. **关键启动参数不明确 → 立刻 AskQuestion，禁止探查纠结**（缺一就问，同一轮 `question`）：
-   - **算子目录**（`--project`）：用户说「这个算子 / 建库」但未给出**单一**算子根，且 cwd 不是算子包时 → AskQuestion 点选/粘贴路径。
-   - **architecture**：用户未说只要某分支、且不能默认时 → AskQuestion（常见：`arch35`）。
-   - **测试脚本路径不属于 uo-init 启动必填**（那是 `tg-init` 测例契约用的）。本 workflow **禁止**为 `--test-script-root` 打断建库；用户未提则不要问、不要猜。
-   - **MUST NOT**：为猜算子目录而 Glob 全仓库、枚举几十个 arch35、读 session 考古、长篇「让我想想」。
-   - **MUST NOT**：在未确认 `--project` 前执行 `acp start` / scope / 读源码建库。
-   - 用户已给出算子路径，或 cwd/`--project` 已是唯一算子根，且 arch 已明确或可安全默认 → 直接 `acp start`，勿再问。
-1. **`acp` 是真实 CLI**（本机已安装），不是概念步骤，**禁止**“按 METHOD 手工模拟工作流”。
-2. **禁止跳步**：必须先 `acp start` → `acp next` → 当前 `action_id`；不得一上来做 scope 或读源码建 KB。
-3. **确定性 Action**（如 `prepare_layout`）：只跑 `acp run-action <id>`，会自动 finalize。
-4. **语义 Action**：`run-action` 准备 → 按 Bundle **派发声明 actor**（如 `uo-semantic-resolve`）→ actor 写合同产物 → `--finalize`。
-   - Primary **禁止**自己 Write `uo/ir/**`（会 `PRIMARY_PROTECTED_WRITE`）。
-   - Task 须带 `subagent_type`/`agent` = Bundle 的 `actor_id`，并带上 `action_id`。
-   - **派发正文硬规则**：Task prompt **只能**用 prepare 返回的 `task_prompt_stub`（或 `session/task_prompt_stub.md`）原样粘贴。
-     - MUST NOT：自己复述/改写 METHOD；MUST NOT：先 Read method/prompt 再二编长 prompt。
-     - MUST NOT：把 `llm_tasks`/`mark_missing`/超大 candidates **整包**粘进 Task（只传路径）。
-     - MUST NOT：在 stub 前后夹 REWORK / 失败诊断 / 额外目标长文。
-   - **同 Action rework**：必须 **resume 原 Task session**（同一 `action_id` 的已有子代理），**禁止**再开第二个 session。
-   - **`extract_plan` 只确认 candidates→`extract_plan.yaml`**；边裁决走 `adjudicate_llm_tasks`→`apply_semantic_patch`（禁止跳步）。
-   - Write 被拒后 **禁止**用 bash/`Set-Content`/`>` 绕过围栏写正式 IR。
-5. **禁止**用 Glob/Read 自编「文件计数表」代替 `acp uo-scope scan`；`common/` 由扫描脚本向上发现，手数必漏。
-6. **进度 / Todo**：遵循公共策略 `pilot-control`（原生 Todo）；勿在本 Skill 硬编码阶段表，勿在主对话贴状态面板。
-7. **`extract_plan --finalize`**：会校验 plan 并 `build_layered_kb(host/kernel/tilingkey/bridge)`；大算子可能数分钟无输出，属正常，禁止当卡死打断。
-
-## 启动前：关键参数确认（歧义时立刻问）
+首次构建 AscendC CodeMap。领域规则按需读取 `skills/domain/uo-codemap-build/SKILL.md`。
 
 ```text
-# 歧义示例：cwd=D:\PR-review，用户只说「为这个算子建库只要 arch35」
-→ 立刻 question/AskQuestion，只问清：
-  1) 算子目录（--project）
-  2) architecture（若未说）
-# 确认后（勿因缺测试脚本路径而停）：
-acp start uo-init --project <算子目录> --architecture arch35
+prepare → extract → analyze → resolve → commit → review
 ```
 
-**禁止**先 Glob 全树再写长思考链。
+正式产物：`.ascendc-pilot/uo/<op_name>.<arch>.uo`。
 
-## Debug 模式（可选）
+## 执行边界
 
-排查 Host 绕弯 / 工具失败 / 子代理收尾时开启：
+- `prepare`：确定性扫描优先；只有真实 scope / architecture 歧义才由 primary 判断。
+- `extract`、`analyze`、`apply_gap_patch`、`commit`、`review`：engine 直接执行，无 Agent、无 task prompt。
+- `resolve`：唯一 UO 构建语义 Agent，只处理当前 bundle 的 unresolved gaps。
+- `apply_gap_patch` 是 `resolve` 阶段内部确定性 merge Action，不是额外公开阶段。
 
-```text
-acp debug enable --project <算子目录>
-# 可选：ASCENDC_DEBUG=1
-acp debug status --project <算子目录>
-acp debug export-session --project <算子目录>   # 手动打包
-acp debug disable --project <算子目录>
-```
-
-开启后：
-- **工具调用失败** → 写入 `.ascendc-pilot/debug/anomalies.jsonl`（Cursor `postToolUseFailure` / OpenCode `tool.execute.after`）
-- **过长非逻辑思考链**（长 + meta 纠结词密集）→ 同文件 `long_nonlogical_thought`
-- **子代理 Task 结束** → 自动导出 `.ascendc-pilot/debug/exports/<stamp>_…/`（含 events/observations/anomalies + `DEBUG_REPORT.md`）
-
-## 启动前：未完成 run → AskQuestion（与 scope 同款可点选框）
-
-算子目录若已有活动 `uo-init` run 或残留 `.ascendc-pilot/uo`，**禁止静默复用 / 自动删除**。
-
-```text
-acp start uo-init --project <算子目录>
-# 若返回 needs_human_decision=true / EXISTING_RUN_NEEDS_DECISION：
-# 1) 把 run_summary.summary_text_zh（完整/中断点）贴给用户
-# 2) 必须调用 OpenCode `question`（AskQuestion），options 用返回的 ask_question.options
-# 3) 等人点选后再执行：
-acp start uo-init --project <算子目录> --decision continue   # 清理残缺 → 回退完整点 → 继续
-acp start uo-init --project <算子目录> --decision reinit     # 删除 uo 产物后重新 init
-```
-
-可选先查摘要：`acp run-summary --project <算子目录>`。
-
-| 选项 | 含义 |
-|---|---|
-| 继续上次 | **先检查中断步骤是否有失败/残缺产物并清理**（如无效 `extract_plan.yaml`、半成品 host/kernel 图、失败 session/lease）；保留上游已 finalize 产物；回退到最近完整正确状态后再 `resume_next_action` / `acp next` |
-| 删除重开 | abort + 清除 `.ascendc-pilot/uo`（及 runs/context）→ 新 run 从 `prepare_layout` |
-
-**MUST**：与 `scope_confirmation` 一样用可点选框；禁止只在聊天里口头问“要不要继续”。  
-**MUST NOT**：未 AskQuestion 就 `--force-new` / 静默 resume。
-
-## 语义 Action 派发模板（短 · 禁止加戏）
-
-`acp run-action <id>` 成功后，JSON 含 `task_prompt_stub`。派发时：
-
-```text
-# 首次：
-Task(subagent_type=<actor_id>):
-  <原样粘贴 task_prompt_stub 全文>
-
-# 同 Action rework / checker_gate 重试：
-Task(subagent_type=<actor_id>, resume=<原 task session id>):
-  <原样粘贴新一轮 task_prompt_stub 全文>
-```
-
-禁止：
-- 先 Read method/prompt 再改写成更长的 Task
-- 粘贴 `llm_tasks.yaml` / 超大 candidates 全文
-- 给子代理加「顺便裁决 call_edge」/「REWORK：请 omit …」等额外目标
-- rework 时新开第二个 session（必须 resume）
-
-子代理卡要求：启动后**先读** session `prompt.md`。
-
-## 执行循环
-
-1. `acp start uo-init --project <算子目录>`（若需决策 → AskQuestion → `--decision …`）
-2. `acp next --project <算子目录>` → **只跑**返回的 `recommended_next_action`（禁止从 `allowed_actions` 跳步）
-3. `acp run-action <recommended_id> --project <算子目录>`
-4. 语义 Action 产出后：`acp run-action <id> --finalize` → **立刻再** `acp next`  
-   （`extract_plan --finalize` 含分层构建，大算子可能数分钟）
-5. extract 流水线顺序（硬）：`detect_score_pre` → `extract_plan` → `detect_score_post` → `adjudicate_llm_tasks` → `apply_semantic_patch` → `rebuild_from_ledger` → `recheck_closure`
-6. `acp advance <next_phase>`（仅本阶段 pipeline / phase_gates 齐备时）
-7. Gate fail → `rework_required`：`retry` 同 Action 时 **resume 原子代理**，stub 原样，禁止加戏诊断文
-
-用户说「只分析 arch35」时：在 `scope_confirmation` 用  
-`acp uo-scope scan --architecture arch35`（不要自己筛目录）。
+Pilot 只按 `acp start` / `next` / `run-action` / `advance` 返回的当前 Action 执行；语义 producer 完成后由 primary finalize。
 
 ## Actions
 
@@ -131,25 +31,12 @@ Task(subagent_type=<actor_id>, resume=<原 task session id>):
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
-| `prepare_layout` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/prepare-layout` | `-` | `kb-layout-v1` |
-| `scope_confirmation` | `primary_interactive` | `ascendc-pilot` | `controller` | `uo-init/scope-confirmation` | `uo/scope-confirmation` | `scope-confirmed-v1` |
-| `detect_score_pre` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-pre` | `-` | `detect-score-pre-v1` |
-| `extract_plan` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/extract-plan` | `uo/extract-plan` | `extract-plan-v1` |
-| `detect_score_post` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/detect-score-post` | `-` | `detect-score-post-v1` |
-| `adjudicate_llm_tasks` | `subagent` | `uo-semantic-resolve` | `producer` | `uo-init/adjudicate-llm-tasks` | `uo/adjudicate-llm-tasks` | `semantic-patches-v1` |
-| `apply_semantic_patch` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-semantic-patch` | `-` | `semantic-patch-v1` |
-| `apply_scope_expansion` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/apply-scope-expansion` | `-` | `scope-expansion-v1` |
-| `rebuild_from_ledger` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/rebuild-from-ledger` | `-` | `rebuild-ledger-v1` |
-| `recheck_closure` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/recheck-closure` | `-` | `recheck-closure-v1` |
-| `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |
-| `key_resolution` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-resolution` | `uo/key-resolution` | `input-derivable-patch-v1` |
-| `confidence_report` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/confidence-report` | `-` | `confidence-report-v1` |
-| `confidence_review` | `subagent` | `uo-confidence-review` | `referee` | `uo-init/confidence-review` | `uo/confidence-review` | `confidence-reason-review-v1` |
-| `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-init/export-integrity` | `-` | `integrity-v1` |
-| `kb_review` | `subagent` | `uo-kb-review` | `referee` | `uo-init/kb-review` | `uo/kb-review` | `kb-review-v1` |
+| `prepare` | `primary_interactive` | `ascendc-pilot` | `controller` | `uo-init/prepare` | `uo/scope-confirmation` | `uo-prepare-v1` |
+| `extract` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/extract` | `-` | `uo-extract-v1` |
+| `analyze` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/analyze` | `-` | `uo-analyze-v1` |
+| `resolve` | `subagent` | `uo-semantic-resolver` | `producer` | `uo-init/resolve` | `uo/resolve-gaps` | `resolve-gaps-v1` |
+| `apply_gap_patch` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/apply-gap-patch` | `-` | `gap-patch-v1` |
+| `commit` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/commit` | `-` | `uo-commit-v1` |
+| `review` | `deterministic` | `engine` | `deterministic_engine` | `uo-init/review` | `-` | `uo-review-v1` |
 
 <!-- END GENERATED ACTIONS -->
-
-Pipeline order is owned by Workflow Spec (`pilot/ascendc_pilot/workflows/specs.py` pipelines).
-Do not redefine action order in this Skill.
-

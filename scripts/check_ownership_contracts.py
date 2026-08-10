@@ -153,8 +153,8 @@ def audit(repo: Path) -> list[str]:
                                 errors.append(
                                     f"{wid}/{aid}: prompt hardcoded conflicting workflow_id {m.group(1)!r}"
                                 )
-                        if "Bundle identity is authoritative" not in ptext and mode == EXECUTION_SUBAGENT:
-                            errors.append(f"{wid}/{aid}: prompt missing bundle identity authority note")
+                        # Bundle identity is enforced by Runtime Bundle / prepare,
+                        # not by requiring a natural-language note in the Task Prompt.
 
             ag: dict[str, Any] = {}
             if agent_id and agent_id != PRIMARY_AGENT_ID:
@@ -233,13 +233,17 @@ def audit(repo: Path) -> list[str]:
         # Light check: skill markers already covered by check_skill_action_markers.
         pass
 
-    # generated runtime must be recomposable (drift check; read-only)
+    # generated/ is gitignored: recompose opencode and validate the fresh tree
+    # instead of comparing against a committed golden copy.
     try:
-        drift = compose.check_generated_drift(repo, hosts=["opencode"])
-        for d in drift[:20]:
-            errors.append(d if str(d).startswith("GENERATED") else f"GENERATED_DRIFT: {d}")
+        result = compose.compose_host(repo, "opencode")
+        if result.get("errors"):
+            for e in result["errors"][:20]:
+                errors.append(f"COMPOSE: {e}")
+        for e in compose.validate_generated(repo, host="opencode")[:20]:
+            errors.append(e if str(e).startswith("generated/") else f"GENERATED: {e}")
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"GENERATED_DRIFT: auditor failed: {exc}")
+        errors.append(f"COMPOSE: auditor failed: {exc}")
 
     return errors
 

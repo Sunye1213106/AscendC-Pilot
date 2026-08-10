@@ -5,20 +5,20 @@ alwaysApply: true
 
 # AscendC-Pilot 产品修改准则
 
-改 Pilot / UO / TG / OpenCode 插件时遵守。细则与案例见 `docs/uo-init-联调问题与修复.md`、`docs/skill-and-prompt-principles.md`。
+改 Pilot / UO / TG / OpenCode 插件时遵守。细则见 `docs/README.md`、`docs/design/skill-prompt.md`、`docs/design/principles.md`。
 
 ## 1. 公共优先，禁止碎片化
 
 - **全局规则**（证据、读码、权威源、Lease、控制面、大 IR summary）只进：
   - `skills/policies/*`
   - `skills/capabilities/*`
-  - 共享模块（如 `uo.scripts.source_evidence`、`uo.scripts.ir_summary`、`ascendc_pilot.ir_summary`、`yaml_literal_sanitize`、`authorize/lease.py`）
+  - 共享模块（Pilot `ir_summary` / `authorize/lease.py`；`uo-init` 侧 `uo_init.*`；勿把旧 `uo.scripts.*` 写进新 uo-init 合同）
 - Action `METHOD.md` / `prompts/tasks/**` **只引用**公共策略，**禁止**另立例外或复制一整套证据规则。
-- 发现「只改了 extract-plan」类倾向 → **上收**到 Policy/Capability/共享校验后再改本步合同。
+- 发现「只改了单个 Action prompt」类倾向 → **上收**到 Policy/Capability/共享校验后再改本步合同。
 
 ## 2. 多复用，少新开路径
 
-- 先搜现有：Policy、Capability、`extract_plan_io` / `source_evidence`、lease、gate、compose 注入。
+- 先搜现有：Policy、Capability、lease、gate、compose 注入、`uo_init` 模块。
 - 新逻辑优先 **扩展共享 helper**，禁止每个 Action 各写一套宽松校验。
 - 校验权威在 **finalize / gate / 共享模块**，不靠 prompt 文案「教模型」。
 
@@ -26,7 +26,7 @@ alwaysApply: true
 
 | 问题类型 | 落点 |
 |---|---|
-| 所有语义结论的证据标准 | `policies/evidence` + `source_evidence` |
+| 所有语义结论的证据标准 | `policies/evidence` + 共享证据校验 |
 | 怎么查代码 / CBM | `policies/code-access` + `cbm-navigation` |
 | 读写权限 / 自检 | `authorize/lease`（含 write⊆read） |
 | 某步字段合同 | 该 Action METHOD + prompt + output contract |
@@ -36,10 +36,11 @@ alwaysApply: true
 
 - Primary **禁止**代写 `uo/ir/**`；Gate fail → **resume 原 Task + 原样 stub**，禁止 stub 加戏 / 手改 IR「救场」。
 - 产品缺陷用 **sanitize / 合同 / lease / gate** 修；不要依赖 Host 手工 Edit。
+- **引擎边界**：`uo-init` → `engines/understand-operator`（`uo_init`）；`uo-update` 仍可能走 `understand-operator-old`，改文档时勿混写。
 
 ## 5. 交付检查
 
 1. 改动是公共层还是个别 skill？个别 skill 须有正当理由。  
 2. 有无共享模块可复用？校验是否挂在共享路径？  
 3. `compose_runtime.py` + 必要单测；提醒用户 `refresh-opencode.ps1` 后重启。  
-4. 联调级根因写入 `docs/uo-init-联调问题与修复.md`（问题→根因→落点→状态）。
+4. 联调级根因写入 `docs/uo-init-clang-refactor.md` 变更日志，或 `docs/debug/` 现行笔记（问题→根因→落点→状态）。

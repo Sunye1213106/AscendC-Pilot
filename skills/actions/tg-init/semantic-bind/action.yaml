@@ -2,12 +2,12 @@
 version: 1
 name_zh: 语义绑定
 gates:
-- bind_progress
+- tilingkey_binding_ready
 id: semantic_bind
 workflow_id: tg-init
-role_id: producer
-agent_id: tg-semantic-bind
-execution_mode: subagent
+role_id: deterministic_engine
+agent_id: deterministic-tg-engine
+execution_mode: deterministic
 capabilities:
 - kb-query
 - semantic-resolution
@@ -18,13 +18,17 @@ policies:
 - language
 - pilot-control
 - output-quality
-task_prompt_id: tg/semantic-bind
+task_prompt_id: null
 context_profile_id: tg-init-semantic-bind
-output_contract_id: semantic-bind-v1
+output_contract_id: tilingkey-binding-v1
 allowed_write_paths:
+- tg/realization/binding_inventory.yaml
 - tg/realization/semantic_bind_patch.yaml
 forbidden_write_paths: []
 allowed_read_paths:
+- uo/ir/tg_host_view.yaml
+- uo/ir/operator_graph.yaml
+- tg/contract/**
 - tg/realization/llm_bind_prompt_bundle.yaml
 - tg/realization/binding_inventory.yaml
 - tg/realization/binding_gaps.yaml

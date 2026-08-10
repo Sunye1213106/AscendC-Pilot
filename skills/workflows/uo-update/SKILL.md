@@ -1,20 +1,22 @@
 ---
 name: uo-update
-description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用户说更新 KB、刷新知识库时加载。 Pilot 管阶段；加载后执行 acp
-  start uo-update。
+description: >
+  在已有 `.uo` 上根据源码变更执行确定性增量刷新、重建受影响 CodeMap 关系、
+  校验完整性并输出差异摘要。用户要求刷新已有 UO/CodeMap 或查看源码变更对
+  CodeMap 的影响时使用。
 ---
 
 # uo-update
 
-增量更新 UO KB；含 diff_only。
+`uo-update` 是确定性增量编译流程，不创建语义 subagent，也不绑定 task prompt。源码变更中无法由确定性 frontend/pass 可靠重建的关系必须保持 unresolved，不能由 update 流程猜测补齐。
 
-本 Skill 不定义工作流阶段。执行时：
+## 原则
 
-1. 调用 `acp start uo-update`（同 workflow 活动 run 则复用）；
-2. 调用 `acp next`；
-3. 对返回的 action_id 调用 `acp run-action <action_id>`（prepare；确定性 Action 会自动 finalize）；
-4. 语义 Action：按 Bundle 派发 actor → `acp run-action <action_id> --finalize`；
-5. 需要推进时：`acp advance <next_phase>`。
+- `.uo` 是更新对象与查询 authority。
+- 只重建受变更影响的事实/关系；未受影响证据保持稳定。
+- macro、template、compile var、TilingKey/TilingData、Host/Kernel 与 architecture 依赖都按 CodeMap provenance 失效/重算。
+- 完整性审查失败时 fail closed，并返回明确 rework reason。
+- `diff_only` 只比较，不修改产品。
 
 ## Actions
 
@@ -22,16 +24,15 @@ description: 增量更新 / 刷新已有 UO 知识库（含 diff_only）。用�
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
-| `detect_changes` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/detect-changes` | `-` | `change-detect-v1` |
-| `plan_update` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/plan-update` | `-` | `update-plan-v1` |
-| `apply_update` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/apply-update` | `-` | `update-apply-v1` |
-| `key_triage` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-triage` | `uo/key-triage` | `key-triage-v1` |
-| `key_resolution` | `subagent` | `uo-key-resolve` | `producer` | `uo-init/key-resolution` | `uo/key-resolution` | `input-derivable-patch-v1` |
-| `confidence_report` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/confidence-report` | `-` | `confidence-report-v1` |
-| `confidence_review` | `subagent` | `uo-confidence-review` | `referee` | `uo-init/confidence-review` | `uo/confidence-review` | `confidence-reason-review-v1` |
-| `export_integrity` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/export-integrity` | `-` | `integrity-v1` |
-| `diff_summary` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/diff-summary` | `-` | `diff-summary-v1` |
-| `diff_only` | `deterministic` | `deterministic-uo-engine` | `deterministic_engine` | `uo-update/diff-only` | `-` | `diff-summary-v1` |
+| `detect_changes` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/detect-changes` | `-` | `change-detect-v1` |
+| `plan_update` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/plan-update` | `-` | `update-plan-v1` |
+| `apply_update` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/apply-update` | `-` | `update-apply-v1` |
+| `key_triage` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/key-triage` | `-` | `key-triage-v1` |
+| `key_resolution` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/key-resolution` | `-` | `input-derivable-patch-v1` |
+| `confidence_report` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/confidence-report` | `-` | `confidence-report-v1` |
+| `confidence_review` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/confidence-review` | `-` | `confidence-reason-review-v1` |
+| `export_integrity` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/export-integrity` | `-` | `integrity-v1` |
+| `diff_summary` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/diff-summary` | `-` | `diff-summary-v1` |
+| `diff_only` | `deterministic` | `engine` | `deterministic_engine` | `uo-update/diff-only` | `-` | `diff-summary-v1` |
 
 <!-- END GENERATED ACTIONS -->
-

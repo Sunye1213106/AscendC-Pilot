@@ -5,14 +5,47 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ascendc_pilot.actions import engines as _engines
 from ascendc_pilot.actions import runtime as _runtime
 from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
+from ascendc_pilot.actions.tg_full_precheck import install as _install_tg_full_precheck
+from ascendc_pilot.actions.tg_plan_targets import install as _install_tg_plan_targets
 from ascendc_pilot.actions.tg_primary import (
     PRIMARY_TG_ACTIONS,
     materialize_primary_decision,
     primary_interactive_steps,
     rollback_primary_decision,
 )
+
+# Public uo-init Actions are composites over deterministic compiler steps.
+# Analyze now reports structural CodeMap gaps only; it no longer derives every
+# TilingKey value expression or asks a global SAT solver to close the key space.
+_UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
+    "uo-prepare-v1": [
+        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
+        "uo/runs/{run_id}/scope/receipt.yaml",
+    ],
+    "uo-extract-v1": [
+        "uo/ir/host_extract_receipt.yaml",
+        "uo/tiling/key_bind_receipt.yaml",
+        "uo/tiling/families.yaml",
+        "uo/kernel/fold_receipt.yaml",
+    ],
+    "uo-analyze-v1": [
+        "uo/ir/codemap_analyze_receipt.yaml",
+        "uo/ir/unresolved.yaml",
+    ],
+    "uo-commit-v1": ["uo/*.uo"],
+    "uo-review-v1": ["uo/*.uo"],
+}
+_engines.OUTPUT_CONTRACT_PATHS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
+_engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
+
+# Full TilingKey TG is plan-scoped: tg-plan freezes T, tg-solve closes exactly
+# T with the existing replay/construct/lemma engine. CSV-consumer compatibility
+# remains untouched and is the only route that may still use the SMT backend.
+_install_tg_plan_targets(_engines.ENGINE_REGISTRY)
+_install_tg_full_precheck(_engines.ENGINE_REGISTRY)
 
 
 def _sanitize_semantic_bind_session(result: dict[str, Any]) -> None:

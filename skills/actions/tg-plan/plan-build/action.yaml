@@ -7,7 +7,6 @@ role_id: deterministic_engine
 agent_id: deterministic-tg-engine
 execution_mode: deterministic
 capabilities:
-- obligation-analysis
 - kb-query
 policies:
 - source-authority
@@ -28,6 +27,7 @@ allowed_write_paths:
 forbidden_write_paths: []
 allowed_read_paths:
 - tg/init/**
+- tg/plan/plan_intent.yaml
 - tg/snapshot/**
 - tg/realization/**
 - tg/contract/**

@@ -1,0 +1,88 @@
+# -*- coding: utf-8 -*-
+"""BuildVariantPass — architecture / macros / includes as a first-class unit."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class BuildVariant:
+    name: str
+    architecture: str = "arch35"
+    soc: str = ""
+    compiler_target: str = ""
+    host_defines: list[str] = field(default_factory=list)
+    kernel_defines: list[str] = field(default_factory=list)
+    include_paths: list[str] = field(default_factory=list)
+    dtype_variant: str = ""
+    compile_flags: list[str] = field(default_factory=list)
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "architecture": self.architecture,
+            "soc": self.soc,
+            "compiler_target": self.compiler_target,
+            "host_defines": list(self.host_defines),
+            "kernel_defines": list(self.kernel_defines),
+            "include_paths": list(self.include_paths),
+            "dtype_variant": self.dtype_variant,
+            "compile_flags": list(self.compile_flags),
+            **dict(self.extra),
+        }
+
+
+def build_variant_from_context(
+    *,
+    architecture: str = "arch35",
+    build_context: Any = None,
+    dtype_variant: str = "",
+    name: str = "",
+) -> BuildVariant:
+    """Lift ``BuildContext`` / YAML into a CodeMap BUILD_VARIANT."""
+    arch = (architecture or "arch35").strip() or "arch35"
+    host_defs: list[str] = []
+    kernel_defs: list[str] = []
+    includes: list[str] = []
+    flags: list[str] = []
+    soc = ""
+    target = ""
+
+    ctx = build_context
+    if ctx is not None:
+        host = getattr(ctx, "host", None) or {}
+        kernel = getattr(ctx, "kernel", None) or {}
+        if hasattr(ctx, "host_args"):
+            # BuildContext dataclass-style
+            try:
+                host_defs = list(getattr(ctx, "host_defines", None) or [])
+            except Exception:
+                host_defs = []
+            if hasattr(ctx, "host") and isinstance(ctx.host, dict):
+                host = ctx.host
+            if hasattr(ctx, "kernel") and isinstance(ctx.kernel, dict):
+                kernel = ctx.kernel
+        if isinstance(host, dict):
+            host_defs = [str(x) for x in (host.get("defines") or host_defs)]
+            includes.extend(str(x) for x in (host.get("include_paths") or host.get("includes") or []))
+            flags.extend(str(x) for x in (host.get("flags") or []))
+        if isinstance(kernel, dict):
+            kernel_defs = [str(x) for x in (kernel.get("defines") or [])]
+            includes.extend(str(x) for x in (kernel.get("include_paths") or kernel.get("includes") or []))
+        soc = str(getattr(ctx, "soc", "") or "")
+        target = str(getattr(ctx, "compiler_target", "") or getattr(ctx, "target", "") or "")
+
+    return BuildVariant(
+        name=name or arch,
+        architecture=arch,
+        soc=soc,
+        compiler_target=target,
+        host_defines=host_defs,
+        kernel_defines=kernel_defs,
+        include_paths=includes,
+        dtype_variant=dtype_variant,
+        compile_flags=flags,
+    )

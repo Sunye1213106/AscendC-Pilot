@@ -1,13 +1,12 @@
 # GENERATED from Workflow Spec — do not hand-edit identity fields
 version: 1
-name_zh: 仅差异摘要（跳过完整更新）
+name_zh: 仅生成 CodeMap 差异摘要
 id: diff_only
 workflow_id: uo-update
 role_id: deterministic_engine
-agent_id: deterministic-uo-engine
+agent_id: null
 execution_mode: deterministic
-capabilities:
-- kb-query
+capabilities: []
 policies:
 - source-authority
 - code-access

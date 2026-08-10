@@ -1,0 +1,116 @@
+name: UO arch35 FlashAttention audit
+
+on:
+  pull_request:
+    paths:
+      - "engines/understand-operator/**"
+      - ".github/workflows/uo-arch35-flashattention.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arch35-binary-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout AscendC-Pilot
+        uses: actions/checkout@v4
+
+      - name: Checkout real FlashAttention source
+        uses: actions/checkout@v4
+        with:
+          repository: Sunye1213106/flashattention
+          ref: main
+          path: external/flashattention
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install UO runtime
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e ./engines/common
+          pip install -e ./engines/understand-operator
+          pip install pytest
+
+      - name: Prepare audit output
+        run: mkdir -p "$GITHUB_WORKSPACE/artifacts/uo-arch35"
+
+      - name: Targeted CodeMap soundness tests
+        id: targeted_tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python -m pytest engines/understand-operator/tests/unit/test_codemap_soundness_audit.py \
+            engines/understand-operator/tests/unit/test_understand_archive_import.py -q \
+            2>&1 | tee "$GITHUB_WORKSPACE/artifacts/uo-arch35/pytest-targeted.txt"
+
+      - name: Full UO test suite diagnostic
+        id: full_uo_tests
+        continue-on-error: true
+        env:
+          PYTHONPATH: ${{ github.workspace }}/engines/understand-operator/src
+        run: |
+          set -o pipefail
+          cd engines/understand-operator
+          python -m pytest tests -q 2>&1 | tee "$GITHUB_WORKSPACE/artifacts/uo-arch35/pytest-full.txt"
+
+      - name: Inventory real archived facts
+        run: |
+          ARCHIVE=external/flashattention/flash_attention_score_grad/.understand-operator.zip
+          OUT="$GITHUB_WORKSPACE/artifacts/uo-arch35"
+          TMP="$RUNNER_TEMP/fa-uo-archive"
+          rm -rf "$TMP" && mkdir -p "$TMP"
+          unzip -l "$ARCHIVE" > "$OUT/archive-list.txt"
+          unzip -q "$ARCHIVE" -d "$TMP"
+          ROOT="$TMP/.understand-operator/flash_attention_score_grad"
+          mkdir -p "$OUT/archive-snapshot/facts/kernel" "$OUT/archive-snapshot/indexes" "$OUT/archive-snapshot/checks/step2"
+          for f in manifest.yaml facts/host.yaml facts/compute.yaml facts/kernel/overview.yaml indexes/entity_registry.json checks/step2/host_validation.yaml checks/step2/kernel_overview_validation.yaml checks/step2/review.yaml; do
+            if [ -f "$ROOT/$f" ]; then
+              cp "$ROOT/$f" "$OUT/archive-snapshot/$f"
+            fi
+          done
+
+      - name: Build and audit arch35 UO
+        id: audit
+        continue-on-error: true
+        env:
+          UO_AUDIT_OUT: ${{ github.workspace }}/artifacts/uo-arch35
+        run: |
+          python engines/understand-operator/tools/arch35_flashattention_audit.py \
+            --operator external/flashattention/flash_attention_score_grad \
+            --out-dir "$UO_AUDIT_OUT"
+
+      - name: Inspect audit outputs
+        if: always()
+        run: |
+          echo "workspace=$GITHUB_WORKSPACE"
+          find "$GITHUB_WORKSPACE/artifacts" -maxdepth 6 -type f -printf '%p %s bytes\n' 2>/dev/null || true
+
+      - name: Publish audit summary
+        if: always()
+        run: |
+          REPORT="$GITHUB_WORKSPACE/artifacts/uo-arch35/arch35-audit.md"
+          JSON_REPORT="$GITHUB_WORKSPACE/artifacts/uo-arch35/arch35-audit.json"
+          if [ -f "$REPORT" ]; then
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$JSON_REPORT" ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$JSON_REPORT" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "targeted test outcome: ${{ steps.targeted_tests.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "full UO test outcome: ${{ steps.full_uo_tests.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "audit outcome: ${{ steps.audit.outcome }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload binary and audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flash-attention-score-grad-arch35-uo-audit
+          path: ${{ github.workspace }}/artifacts/uo-arch35/
+          if-no-files-found: error
