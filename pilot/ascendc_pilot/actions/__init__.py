@@ -8,6 +8,7 @@ from typing import Any
 from ascendc_pilot.actions import engines as _engines
 from ascendc_pilot.actions import runtime as _runtime
 from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
+from ascendc_pilot.actions.tg_compaction import compact_after_plan_approve
 from ascendc_pilot.actions.tg_full_precheck import install as _install_tg_full_precheck
 from ascendc_pilot.actions.tg_plan_targets import install as _install_tg_plan_targets
 from ascendc_pilot.actions.tg_primary import (
@@ -56,7 +57,7 @@ def _normalize_tg_product_reads() -> None:
     """Make the effective TG IO contract consume the single .uo authority.
 
     Older workflow metadata named YAML paths below ``uo/`` even though full TG
-    now reads view blobs from the binary product.  Normalize those declarations
+    now reads view blobs from the binary product. Normalize those declarations
     at the runtime boundary so ownership/isolation checks never require a YAML
     file that UO no longer publishes.
     """
@@ -163,6 +164,13 @@ def finalize_action(
     if not result.get("ok"):
         rollback_primary_decision(materialized)
         result["primary_decision_rolled_back"] = True
+        return result
+
+    if action_id == "plan_approve":
+        compact = compact_after_plan_approve(Path(project_root))
+        result["compaction"] = compact
+        if not compact.get("ok"):
+            result["compaction_warning"] = "TG_COMPACTION_INCOMPLETE"
     return result
 
 
