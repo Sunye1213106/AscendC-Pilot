@@ -6,6 +6,7 @@ mode: subagent
 description: TG deterministic engine
 read_scopes:
 - tg/**
+- ../uo/**
 - uo/**
 - runs/**
 - context/**

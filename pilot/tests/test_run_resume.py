@@ -147,8 +147,8 @@ def test_owned_artifact_map_uses_public_uo_actions() -> None:
     assert any("codemap_analyze_receipt" in path for path in owned["analyze"])
     assert any("unresolved.yaml" in path for path in owned["analyze"])
     assert not any("derive_key_fields_receipt" in path for path in owned["analyze"])
-    assert owned["commit"] == ("uo/*.uo",)
-    assert owned["review"] == ("uo/*.uo",)
+    assert owned["commit"] == ("../uo/*.uo",)
+    assert owned["review"] == ("../uo/*.uo",)
 
 
 def test_different_workflow_resume_does_not_cross_active_run(tmp_path: Path) -> None:

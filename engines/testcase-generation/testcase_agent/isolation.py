@@ -1,4 +1,4 @@
-"""Hard isolation + KB fingerprint for TG↔UO boundary."""
+"""Hard isolation + product fingerprint for the TG↔UO boundary."""
 
 from __future__ import annotations
 
@@ -9,41 +9,86 @@ from typing import Any
 
 from .io import read_yaml, write_yaml
 
-UO_MARKERS = (".ascendc-pilot", "uo")  # refuse writes under .../.ascendc-pilot/uo/...
-
 
 class IsolationError(PermissionError):
-    """Raised when TG attempts to write under UO_ROOT."""
+    """Raised when TG attempts to write into either UO namespace."""
 
 
 def _is_uo_tree(resolved: Path) -> bool:
+    """Match both the formal product tree and the retired arch work tree."""
     parts = resolved.parts
-    if ".ascendc-pilot" in parts:
-        try:
-            idx = parts.index(".ascendc-pilot")
-        except ValueError:
-            return False
-        return idx + 1 < len(parts) and parts[idx + 1] == "uo"
-    return False
+    try:
+        idx = parts.index(".ascendc-pilot")
+    except ValueError:
+        return False
+    tail = parts[idx + 1 :]
+    if not tail:
+        return False
+    # <op>/.ascendc-pilot/uo/**
+    if tail[0] == "uo":
+        return True
+    # <op>/.ascendc-pilot/<arch>/uo/**
+    return len(tail) >= 2 and tail[1] == "uo"
 
 
 def assert_tg_write_path(path: Path | str, *, out_root: Path | None = None) -> Path:
-    """Refuse writes under UO graph. Optionally require under out_root."""
     resolved = Path(path).expanduser().resolve()
     if _is_uo_tree(resolved):
         raise IsolationError(
-            f"TG isolation: refuse write under $UO_ROOT (.ascendc-pilot/uo): {resolved}. "
-            "CSV mapping / bind artifacts must stay under $TG_ROOT (.ascendc-pilot/tg)."
+            f"UO_ROOT: TG isolation refuses write under UO authority/work tree: {resolved}. "
+            "TG artifacts must stay under .ascendc-pilot/<arch>/tg."
         )
     if out_root is not None:
         root = Path(out_root).expanduser().resolve()
         try:
             resolved.relative_to(root)
         except ValueError as exc:
-            raise IsolationError(
-                f"TG isolation: write path {resolved} is outside OUT_ROOT {root}"
-            ) from exc
+            raise IsolationError(f"TG isolation: write path {resolved} is outside OUT_ROOT {root}") from exc
     return resolved
+
+
+def _project_from_uo_hint(uo_hint: Path) -> tuple[Path | None, str]:
+    """Recover operator root and arch from old/new UO path shapes."""
+    root = Path(uo_hint).expanduser().resolve()
+    parts = root.parts
+    try:
+        idx = parts.index(".ascendc-pilot")
+    except ValueError:
+        return None, ""
+    project = Path(*parts[:idx]) if idx > 0 else Path(root.anchor)
+    tail = parts[idx + 1 :]
+    arch = ""
+    if len(tail) >= 2 and tail[1] == "uo":
+        arch = str(tail[0])
+    return project, arch
+
+
+def _product_fingerprint(uo_hint: Path) -> dict[str, Any] | None:
+    project, arch = _project_from_uo_hint(uo_hint)
+    if project is None:
+        return None
+    try:
+        from testcase_agent import product_uo
+
+        ident = product_uo.identity(project, architecture=arch)
+    except Exception:
+        return None
+    sha = str(ident.get("sha256") or "")
+    if not sha:
+        return None
+    # The product byte digest is the lock. Metadata is explanatory, not a
+    # second mutable authority that can drift independently.
+    return {
+        "version": 2,
+        "authority": "uo_product",
+        "uo_product": str(ident.get("path") or ""),
+        "digest": sha,
+        "uo_sha256": sha,
+        "revision": str(ident.get("revision") or ""),
+        "graph_fingerprint": str(ident.get("graph_fingerprint") or ""),
+        "op_name": str(ident.get("op_name") or ""),
+        "architecture": str(ident.get("architecture") or arch),
+    }
 
 
 def _meta_from_sqlite(sqlite_path: Path) -> dict[str, str]:
@@ -62,14 +107,11 @@ def _meta_from_sqlite(sqlite_path: Path) -> dict[str, str]:
 
 def _view_blob_from_sqlite(sqlite_path: Path, name: str) -> dict[str, Any] | None:
     try:
-        import json
         import sqlite3
 
         conn = sqlite3.connect(str(sqlite_path))
         try:
-            row = conn.execute(
-                "SELECT data FROM view_blob WHERE name=?", (name,)
-            ).fetchone()
+            row = conn.execute("SELECT data FROM view_blob WHERE name=?", (name,)).fetchone()
         finally:
             conn.close()
         if not row:
@@ -80,12 +122,8 @@ def _view_blob_from_sqlite(sqlite_path: Path, name: str) -> dict[str, Any] | Non
         return None
 
 
-def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
-    """Stable fingerprint of a finalized UO KB (read-only).
-
-    Prefers on-disk YAML when present; falls back to sqlite ``view_blob`` /
-    ``meta`` so DB-only products still fingerprint stably.
-    """
+def _legacy_fingerprint(uo_root: Path) -> dict[str, Any]:
+    """Compatibility fingerprint for old fixtures that predate ``.uo``."""
     root = Path(uo_root).expanduser().resolve()
     hashes: dict[str, str] = {}
     artifact_path = root / "checks" / "artifact_hashes.yaml"
@@ -96,9 +134,7 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
             if isinstance(raw, dict):
                 hashes = {str(k): str(v) for k, v in raw.items()}
 
-    revision = ""
-    authority = ""
-    graph_fingerprint = ""
+    revision = authority = graph_fingerprint = integrity_status = confidence_status = ""
     manifest_path = root / "manifest.yaml"
     if manifest_path.is_file():
         manifest = read_yaml(manifest_path)
@@ -107,29 +143,18 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
             revision = str(source.get("revision") or manifest.get("revision") or "")
             authority = str(manifest.get("authority") or "")
             graph_fingerprint = str(manifest.get("graph_fingerprint") or "")
-
-    integrity_status = ""
-    integrity_path = root / "checks" / "integrity.yaml"
-    if integrity_path.is_file():
-        integrity = read_yaml(integrity_path)
-        if isinstance(integrity, dict):
-            integrity_status = str(integrity.get("status") or "")
-
-    confidence_status = ""
-    conf_path = root / "checks" / "confidence_gate.yaml"
-    if conf_path.is_file():
-        conf = read_yaml(conf_path)
-        if isinstance(conf, dict):
-            confidence_status = str(conf.get("status") or "")
+    for rel, key in (("checks/integrity.yaml", "integrity"), ("checks/confidence_gate.yaml", "confidence")):
+        doc = read_yaml(root / rel) if (root / rel).is_file() else {}
+        if isinstance(doc, dict):
+            if key == "integrity":
+                integrity_status = str(doc.get("status") or "")
+            else:
+                confidence_status = str(doc.get("status") or "")
 
     sqlite_sha = ""
     sqlite_path = root / "indexes" / "kb_graph.sqlite"
     if sqlite_path.is_file():
-        h = hashlib.sha256()
-        with sqlite_path.open("rb") as fh:
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                h.update(chunk)
-        sqlite_sha = h.hexdigest()
+        sqlite_sha = hashlib.sha256(sqlite_path.read_bytes()).hexdigest()
         meta = _meta_from_sqlite(sqlite_path)
         authority = authority or str(meta.get("authority") or "")
         graph_fingerprint = graph_fingerprint or str(meta.get("graph_fingerprint") or "")
@@ -140,8 +165,7 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
                 raw = blob.get("hashes") or blob.get("files") or {}
                 if isinstance(raw, dict):
                     hashes = {str(k): str(v) for k, v in raw.items()}
-        if not revision:
-            revision = str(meta.get("revision") or "")
+        revision = revision or str(meta.get("revision") or "")
 
     payload = {
         "artifact_hashes": dict(sorted(hashes.items())),
@@ -152,25 +176,34 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
         "authority": authority,
         "graph_fingerprint": graph_fingerprint,
     }
-    digest = hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     return {
         "version": 1,
+        "authority": authority or "legacy_uo_export",
         "uo_root": root.as_posix(),
         "digest": digest,
         "revision": revision,
         "integrity_status": integrity_status,
         "confidence_status": confidence_status,
         "kb_graph_sha256": sqlite_sha,
-        "authority": authority,
         "graph_fingerprint": graph_fingerprint,
         "artifact_hash_count": len(hashes),
     }
 
 
+def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
+    """Fingerprint the formal ``.uo`` whenever one exists.
+
+    ``uo_root`` remains an argument only for compatibility with the old TG API;
+    it is treated as a project/arch hint, not as the production authority.
+    """
+    product = _product_fingerprint(Path(uo_root))
+    if product is not None:
+        return product
+    return _legacy_fingerprint(Path(uo_root))
+
+
 def write_kb_fingerprint(out_root: Path, uo_root: Path) -> dict[str, Any]:
-    """Write fingerprint under OUT_ROOT only (never touches UO)."""
     fp = compute_kb_fingerprint(uo_root)
     path = Path(out_root) / "init" / "kb_fingerprint.yaml"
     assert_tg_write_path(path, out_root=out_root)

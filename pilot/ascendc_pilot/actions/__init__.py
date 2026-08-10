@@ -8,6 +8,7 @@ from typing import Any
 from ascendc_pilot.actions import engines as _engines
 from ascendc_pilot.actions import runtime as _runtime
 from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
+from ascendc_pilot.actions.tg_compaction import compact_after_plan_approve
 from ascendc_pilot.actions.tg_full_precheck import install as _install_tg_full_precheck
 from ascendc_pilot.actions.tg_plan_targets import install as _install_tg_plan_targets
 from ascendc_pilot.actions.tg_primary import (
@@ -16,10 +17,13 @@ from ascendc_pilot.actions.tg_primary import (
     primary_interactive_steps,
     rollback_primary_decision,
 )
+from ascendc_pilot.actions.uo_product_compaction import install as _install_uo_product_compaction
 
 # Public uo-init Actions are composites over deterministic compiler steps.
 # Analyze now reports structural CodeMap gaps only; it no longer derives every
 # TilingKey value expression or asks a global SAT solver to close the key space.
+# The final product is arch-neutral under .ascendc-pilot/uo/, one level above
+# the arch-scoped agent root used by Action contract resolution.
 _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "uo-prepare-v1": [
         "uo/runs/{run_id}/scope/scope_confirmed.yaml",
@@ -35,17 +39,52 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
         "uo/ir/codemap_analyze_receipt.yaml",
         "uo/ir/unresolved.yaml",
     ],
-    "uo-commit-v1": ["uo/*.uo"],
-    "uo-review-v1": ["uo/*.uo"],
+    "uo-commit-v1": ["../uo/*.uo"],
+    "uo-review-v1": ["../uo/*.uo"],
+}
+_TG_LOOP_OUTPUT_CONTRACTS: dict[str, list[str]] = {
+    # lemma_loop is a deterministic orchestration action. Its stable receipt is
+    # the loop summary; per-round scratch/evidence remains governed by ownership
+    # paths and must not be required to exist on a zero-round terminal pass.
+    "lemma-loop-v1": ["tg/closure/lemma_loop.yaml"],
 }
 _engines.OUTPUT_CONTRACT_PATHS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
+_engines.OUTPUT_CONTRACT_PATHS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
+_engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 
 # Full TilingKey TG is plan-scoped: tg-plan freezes T, tg-solve closes exactly
 # T with the existing replay/construct/lemma engine. CSV-consumer compatibility
 # remains untouched and is the only route that may still use the SMT backend.
 _install_tg_plan_targets(_engines.ENGINE_REGISTRY)
 _install_tg_full_precheck(_engines.ENGINE_REGISTRY)
+_install_uo_product_compaction(_engines.ENGINE_REGISTRY)
+
+
+def _normalize_tg_product_reads() -> None:
+    """Make the effective TG IO contract consume the single .uo authority.
+
+    Older workflow metadata named YAML paths below ``uo/`` even though full TG
+    now reads view blobs from the binary product. Normalize those declarations
+    at the runtime boundary so ownership/isolation checks never require a YAML
+    file that UO no longer publishes.
+    """
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    for workflow_id in ("tg-init", "tg-plan", "tg-solve"):
+        meta = WORKFLOWS.get(workflow_id) or {}
+        for row in meta.get("actions") or []:
+            if not isinstance(row, dict):
+                continue
+            reads = [str(p) for p in (row.get("allowed_read_paths") or [])]
+            needs_uo = any(p == "uo" or p == "uo/**" or p.startswith("uo/") for p in reads)
+            reads = [p for p in reads if not (p == "uo" or p == "uo/**" or p.startswith("uo/"))]
+            if needs_uo and "../uo/*.uo" not in reads:
+                reads.insert(0, "../uo/*.uo")
+            row["allowed_read_paths"] = list(dict.fromkeys(reads))
+
+
+_normalize_tg_product_reads()
 
 
 def _sanitize_semantic_bind_session(result: dict[str, Any]) -> None:
@@ -133,6 +172,13 @@ def finalize_action(
     if not result.get("ok"):
         rollback_primary_decision(materialized)
         result["primary_decision_rolled_back"] = True
+        return result
+
+    if action_id == "plan_approve":
+        compact = compact_after_plan_approve(Path(project_root))
+        result["compaction"] = compact
+        if not compact.get("ok"):
+            result["compaction_warning"] = "TG_COMPACTION_INCOMPLETE"
     return result
 
 

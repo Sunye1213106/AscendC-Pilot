@@ -8,6 +8,7 @@ description: Bounded lemma producer. Read session prompt.md first, then skills/d
 read_scopes:
 - tg/closure/lemmas/leads.yaml
 - tg/closure/**
+- ../uo/**
 - uo/ir/**
 - uo/tiling/**
 - operators/**

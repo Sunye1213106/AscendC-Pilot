@@ -247,14 +247,15 @@ def test_lemma_mine_writes_arch_scoped_runs(synthetic_root: Path):
     assert not flat.is_file()
 
 
-def test_lemma_mine_still_issues_a_contract_without_a_parseable_schema(
+def test_lemma_mine_uses_uo_legal_index_without_a_replay_schema(
     synthetic_root: Path,
 ):
-    """Hypotheses are aiming information, not a precondition.
+    """The committed CodeMap is sufficient aiming authority for lemma mining.
 
-    This operator has no resolvable key header, so residual analysis cannot
-    run. The producer must still receive the obligation contract; degrading to
-    "no hypotheses" is correct, failing the action is not.
+    A replay/TPL schema is no longer a prerequisite when the ``.uo`` embeds the
+    complete legal-key index.  The producer should still receive the proof
+    contract and may derive aiming hypotheses from exact D/decode rows without
+    touching WSL or replay setup.
     """
     import yaml
 
@@ -275,11 +276,8 @@ def test_lemma_mine_still_issues_a_contract_without_a_parseable_schema(
         ).read_text(encoding="utf-8")
     )
     assert staging["contract"]["required_fields"]
-    assert staging["hypotheses"] == []
-    assert staging["hypothesis_stats"].get("unavailable"), (
-        "a skipped analysis must say why, or the empty list reads as "
-        "'nothing left to prove'"
-    )
+    assert staging["hypotheses"], "product legal-key rows should support residual aiming"
+    assert not staging["hypothesis_stats"].get("unavailable")
 
 
 def test_full_mode_contract_build_finalize_paths(synthetic_root: Path):

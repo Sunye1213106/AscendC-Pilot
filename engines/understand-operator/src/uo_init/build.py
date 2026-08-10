@@ -19,6 +19,7 @@ from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.kernel_call_boundaries import classify_kernel_call_boundaries
 from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
 from uo_init.passes.kernel_call_resolution import resolve_kernel_call_frontiers
+from uo_init.passes.kernel_identity import preserve_verified_kernel_identity
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.kernel_tiling_metrics import finalize_kernel_tiling_metrics
 from uo_init.passes.kernel_tiling_truth import finalize_kernel_tiling_truth
@@ -198,6 +199,7 @@ def compile_codemap(
             ("source_gaps", resolve_source_gaps, {}),
             ("class_frontiers", resolve_class_frontiers, {}),
             ("kernel_tiling_closure", finalize_kernel_tiling_closure, {}),
+            ("kernel_identity", preserve_verified_kernel_identity, {"skip_arch": True}),
             ("kernel_call_refine", refine_kernel_calls_and_tiling_reads, {}),
             ("kernel_call_frontiers", resolve_kernel_call_frontiers, {}),
             ("kernel_call_boundaries", classify_kernel_call_boundaries, {"skip_arch": True}),

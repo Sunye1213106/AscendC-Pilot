@@ -8,6 +8,7 @@ description: Referee for lemma certificates and closure audit. Read session prom
   review.yaml only; never excluded set.
 read_scopes:
 - tg/closure/**
+- ../uo/**
 - uo/**
 - operators/**
 - runs/**
