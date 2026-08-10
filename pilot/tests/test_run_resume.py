@@ -144,7 +144,9 @@ def test_owned_artifact_map_uses_public_uo_actions() -> None:
         assert action_id in owned
     for retired in ("derive_key_fields", "export_kb", "export_adapter_pack", "normalize_predicates"):
         assert retired not in owned
-    assert any("derive_key_fields_receipt" in path for path in owned["analyze"])
+    assert any("codemap_analyze_receipt" in path for path in owned["analyze"])
+    assert any("unresolved.yaml" in path for path in owned["analyze"])
+    assert not any("derive_key_fields_receipt" in path for path in owned["analyze"])
     assert owned["commit"] == ("uo/*.uo",)
     assert owned["review"] == ("uo/*.uo",)
 
@@ -164,9 +166,12 @@ def test_continue_scrubs_failed_analyze_owned_products(tmp_path: Path) -> None:
     state = start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
     run_id = state["run_id"]
     uo = uo_root(tmp_path)
-    _write(uo / "tiling" / "normalize_variables_receipt.yaml", {"ok": True})
-    _write(uo / "ir" / "derive_key_fields_receipt.yaml", {"ok": True})
+    _write(uo / "ir" / "codemap_analyze_receipt.yaml", {"ok": True})
     _write(uo / "ir" / "unresolved.yaml", {"blockers": ["x"]})
+    # Retired products are intentionally not action-owned anymore. They are not
+    # consumed by structural analyze/commit and resume must not resurrect their
+    # old authority merely to scrub them.
+    _write(uo / "ir" / "derive_key_fields_receipt.yaml", {"legacy": True})
     _write(uo / "ir" / "host_extract_receipt.yaml", {"keep": True})
     _write(
         state_root(tmp_path) / "active_action.yaml",
@@ -190,9 +195,9 @@ def test_continue_scrubs_failed_analyze_owned_products(tmp_path: Path) -> None:
     assert result["ok"] is True
     scrubbed = set((result.get("resume_scrub") or {}).get("scrubbed_actions") or [])
     assert "analyze" in scrubbed
-    assert not (uo / "tiling" / "normalize_variables_receipt.yaml").is_file()
-    assert not (uo / "ir" / "derive_key_fields_receipt.yaml").is_file()
+    assert not (uo / "ir" / "codemap_analyze_receipt.yaml").is_file()
     assert not (uo / "ir" / "unresolved.yaml").is_file()
+    assert (uo / "ir" / "derive_key_fields_receipt.yaml").is_file()
     assert (uo / "ir" / "host_extract_receipt.yaml").is_file()
     assert not (state_root(tmp_path) / "active_action.yaml").is_file()
     assert load_state(tmp_path)["status"] == "running"
