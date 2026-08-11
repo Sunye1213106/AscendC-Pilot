@@ -43,10 +43,14 @@ def test_compile_slice_writes_file_even_without_uo(tmp_path: Path) -> None:
     assert slice_doc is not None
     assert slice_doc["profile_id"] == "uo-init-resolve"
     assert "token_estimate" in slice_doc
+    assert slice_doc["budget_ok"] is True
+    assert slice_doc["token_estimate"] <= slice_doc["token_budget"]
+    assert isinstance(slice_doc["budget_receipts"], list)
     assert Path(slice_doc["path"]).is_file()
     loaded = yaml.safe_load(Path(slice_doc["path"]).read_text(encoding="utf-8"))
     assert loaded["task"]["action_id"] == "resolve"
     assert "excluded" in loaded
+    assert loaded["budget_ok"] is True
     # References may be missing until P4 gotchas land; status is recorded.
     assert isinstance(loaded["references"], list)
 
