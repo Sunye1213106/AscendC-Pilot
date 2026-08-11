@@ -296,19 +296,19 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     )
     level = _pick(ctx.get("level"), state.get("level"), params.get("level"), pack.get("level"), default="L0")
     focus = _pick(ctx.get("focus"), state.get("focus"), params.get("focus"), pack.get("focus"))
-    consumer = _pick(
-        ctx.get("csv_consumer_root"),
+    test_script_root = _pick(
         ctx.get("test_script_root"),
-        state.get("csv_consumer_root"),
+        ctx.get("csv_consumer_root"),
         state.get("test_script_root"),
-        params.get("csv_consumer_root"),
+        state.get("csv_consumer_root"),
         params.get("test_script_root"),
-        pack.get("csv_consumer_root"),
+        params.get("csv_consumer_root"),
         pack.get("test_script_root"),
+        pack.get("csv_consumer_root"),
         run_ctx.get("test_script_root"),
-        init_intent.get("consumer_root"),
-        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
+        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
+        init_intent.get("consumer_root"),
     )
     mode = _pick(
         ctx.get("mode"),
@@ -324,8 +324,7 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "architecture": architecture,
         "level": level,
         "focus": focus,
-        "test_script_root": consumer,
-        "csv_consumer_root": consumer,
+        "test_script_root": test_script_root,
         "mode": mode,
     }
 
@@ -358,7 +357,7 @@ def _run_tg_init_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         "consumer_root": str(
             ctx.get("consumer_root")
             or existing.get("consumer_root")
-            or tg_ctx.get("csv_consumer_root")
+            or tg_ctx.get("test_script_root")
             or ""
         ),
         "op_name": tg_ctx["op_name"],
@@ -2320,76 +2319,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "uo-commit-v1": ["../uo/*.uo"],
     "uo-verify-v1": ["uo/checks/integrity.yaml"],
-    "kb-layout-v1": ["uo/manifest.yaml", "uo/operator.yaml"],
-    "scope-candidates-v1": ["uo/summary/scope_candidates.yaml"],
-    "scope-confirmed-v1": [
-        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
-        "uo/runs/{run_id}/scope/receipt.yaml",
-    ],
-    "extract-host-v1": ["uo/ir/host_extract_receipt.yaml"],
-    "extract-tiling-key-v1": ["uo/tiling/key_bind_receipt.yaml"],
-    "extract-registry-v1": ["uo/tiling/families.yaml"],
-    "extract-kernel-v1": ["uo/kernel/fold_receipt.yaml"],
-    "normalize-variables-v1": ["uo/tiling/normalize_variables_receipt.yaml"],
-    "derive-key-fields-v1": [
-        "uo/ir/host_derivation.yaml",
-        "uo/ir/derive_key_fields_receipt.yaml",
-        "uo/tiling/key_derivations.yaml",
-    ],
-    "normalize-predicates-v1": ["uo/ir/unresolved.yaml"],
-    "resolve-gaps-v1": ["uo/ir/resolve_gaps_receipt.yaml"],
-    "resolve-gaps-staging-v1": [
-        "uo/ir/resolve_gaps_staging.yaml",
-        "runs/{run_id}/actions/resolve_gaps/parts/**",
-        "runs/{run_id}/actions/resolve_gaps/staging.yaml",
-    ],
-    "gap-patch-v1": ["uo/ir/gap_patch_receipt.yaml", "uo/ir/gap_bindings.yaml"],
-    # DB is the product; YAML layers are opt-in (UO_KB_YAML=1) / `uo dump`.
-    "export-kb-v1": ["uo/indexes/kb_graph.sqlite"],
-    "build-index-v1": ["uo/indexes/kb_graph.sqlite"],
-    "export-tg-host-view-v1": [
-        "uo/ir/tg_host_view.yaml",
-        "uo/checks/tg_host_view_receipt.yaml",
-    ],
-    "export-adapter-pack-v1": [
-        "uo/adapter/bridge_spec.yaml",
-        "uo/adapter/feature_bindings.yaml",
-        "uo/adapter/search_hints.yaml",
-        "uo/adapter/construction_hints.yaml",
-        "uo/checks/adapter_pack_receipt.yaml",
-    ],
-    "detect-score-pre-v1": [
-        "uo/ir/entrypoint_graph.yaml",
-        "uo/ir/operator_boundary.yaml",
-        "uo/ir/score_report_pre.yaml",
-        "uo/ir/llm_tasks.yaml",
-    ],
-    "detect-score-post-v1": [
-        "uo/ir/score_report_post.yaml",
-        "uo/ir/llm_tasks.yaml",
-        "uo/ir/semantic_task_triage.yaml",
-    ],
-    "semantic-patches-v1": ["uo/ir/semantic_patches.yaml"],
-    "semantic-patch-v1": ["uo/ir/semantic_resolution_ledger.yaml"],
-    "scope-expansion-v1": ["uo/ir/scope_expansion_receipt.yaml"],
-    "rebuild-ledger-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/operator_graph.yaml"],
-    # Recheck is validation-only; required state under inspection
-    "recheck-closure-v1": ["uo/ir/entrypoint_graph.yaml", "uo/ir/llm_tasks.yaml"],
-    "extract-plan-v1": [
-        "uo/ir/extract_plan.yaml",
-        "uo/ir/extract_plan_candidates.yaml",
-        "uo/ir/extract_plan_aliases.yaml",
-        "uo/ir/receiver_bindings.yaml",
-        "uo/ir/host_subgraph.yaml",
-        "uo/ir/kernel_subgraph.yaml",
-        "uo/ir/macro_semantics.yaml",
-    ],
-    "extract-plan-staging-v1": [
-        # Deterministic-only: base graph; Map path: relation_parts → reduced relations.
-        "runs/{run_id}/actions/extract_plan/staging/semantic_relations.base.yaml",
-    ],
     "integrity-v1": ["uo/checks/integrity.yaml"],
-    "kb-review-v1": ["uo/review/kb_product_review.yaml"],
     "change-detect-v1": ["uo/diff/change_set.yaml"],
     "update-plan-v1": ["uo/summary/update_plan.yaml"],
     "update-apply-v1": [
@@ -2421,12 +2351,6 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/realization/binding_inventory.yaml",
     ],
     "tilingkey-integrity-v1": [
-        "tg/contract/integrity_gate.yaml",
-    ],
-    "semantic-bind-v1": [
-        "tg/realization/binding_inventory.yaml",
-    ],
-    "tg-integrity-v1": [
         "tg/contract/integrity_gate.yaml",
     ],
     "init-audit-v1": ["tg/init/audit_report.yaml"],
@@ -2476,34 +2400,10 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/closure/certificate.yaml",
         "tg/closure/audit_report.yaml",
     ],
-    "tk-env-v1": ["uo/tk/env_probe.yaml"],
-    "tk-derive-v1": ["uo/tk/derive_fields.yaml"],
-    "tk-codemap-v1": [
-        "uo/tk/export_codemap.yaml",
-        "uo/ir/host_codemap.yaml",
-    ],
-    "tk-recipe-staging-v1": [
-        "runs/{run_id}/actions/mine_recipe/parts/**",
-        "runs/{run_id}/actions/mine_recipe/staging.yaml",
-    ],
-    "tk-recipe-v1": ["uo/tk/recipe.yaml", "uo/tk/apply_recipe.yaml"],
-    "tk-gate-v1": ["uo/tk/coverage_gate.yaml"],
 }
 
 # Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)
 OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
-    "scope-confirmed-v1": [
-        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
-        "uo/runs/{run_id}/scope/receipt.yaml",
-    ],
-    "extract-plan-v1": [
-        "uo/ir/extract_plan.yaml",
-        "uo/ir/extract_plan_candidates.yaml",
-        "uo/ir/extract_plan_aliases.yaml",
-        "uo/ir/receiver_bindings.yaml",
-        "uo/ir/host_subgraph.yaml",
-        "uo/ir/kernel_subgraph.yaml",
-    ],
     "change-detect-v1": [
         "uo/diff/change_set.yaml",
     ],
@@ -2520,9 +2420,6 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
         "uo/diff/change_set.yaml",
         "uo/diff/impact.yaml",
         "uo/diff/unresolved.yaml",
-    ],
-    "kb-review-v1": [
-        "uo/review/kb_product_review.yaml",
     ],
     "code-review-v1": [
         "ce/review/index.yaml",
@@ -2541,9 +2438,6 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     ],
     "tilingkey-integrity-v1": [
         "tg/contract/integrity_gate.yaml",
-    ],
-    "semantic-bind-v1": [
-        "tg/realization/binding_inventory.yaml",
     ],
 }
 

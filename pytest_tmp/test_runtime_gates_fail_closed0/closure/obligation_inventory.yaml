@@ -1,0 +1,10 @@
+keys:
+- kernel_obligations:
+  - id: KB::b:T
+    status: COVERED
+  tiling_key: 1
+  tilingdata_obligations:
+  - id: TD::a
+    status: UNRESOLVED
+reachable_keys: 1
+schema: tg-obligation-inventory/v1

@@ -38,8 +38,11 @@ from uo_init.ir.kernel_execution import (
 )
 from uo_init.ir.relation import RelationKind
 from uo_init.kernel_sync import pair_events
+from uo_init.passes.kernel_exec_order import assign_exec_ranks
 from uo_init.passes.source_text_cache import read_text
 from uo_init.semantics import registry as semreg
+
+_WALK_CACHE_LIMIT = 48
 
 _TENSOR_TYPE_RE = re.compile(
     r"\b(?:LocalTensor|GlobalTensor|TBuf|TQue|TPipe|MutexBuffer)\b",
@@ -230,7 +233,7 @@ def _collect_call_sites_from_walks(
     from uo_init import tu_cache
 
     walks = tu_cache.iter_cached_walks(
-        source_root, architecture, path_substr="op_kernel", limit=48
+        source_root, architecture, path_substr="op_kernel", limit=_WALK_CACHE_LIMIT
     )
     if time.perf_counter() > deadline:
         return [], [], [], "budget_exhausted_before_walk_cache"
@@ -253,7 +256,10 @@ def _collect_call_sites_from_walks(
             calls.append(site)
         decls.extend(getattr(wr, "local_decls", None) or [])
         controls.extend(getattr(wr, "controls", None) or [])
-    return calls, decls, controls, "clang_walk_cache"
+    provenance = "clang_walk_cache"
+    if len(walks) >= _WALK_CACHE_LIMIT:
+        provenance = "clang_walk_cache_partial"
+    return calls, decls, controls, provenance
 
 
 def _update_enclosing_func(line: str, current: str) -> str:
@@ -680,10 +686,18 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         RelationKind.SYNCHRONIZES_WITH.value,
         RelationKind.HAPPENS_BEFORE.value,
         RelationKind.EXECUTES_ON.value,
+        RelationKind.EMITS_SYNC.value,
+        RelationKind.DATA_DEPENDS_ON.value,
     }
     for rid, rel in list(codemap.relations.items()):
         if rel.kind_name() in drop_rel_kinds or rel.src in drop_ids or rel.dst in drop_ids:
             codemap.relations.pop(rid, None)
+
+    # Global execution order from Kernel entry call expand (not file/line sort).
+    summaries, order_meta = assign_exec_ranks(codemap, ir.operations, ir.sync_events)
+    ir.function_summaries = summaries
+    if int(order_meta.get("unreached_appended") or 0) > 0:
+        ir.notes.append("exec_order_unreached_appended")
 
     region_ents: dict[str, str] = {}
     for region in ir.regions:
@@ -805,22 +819,36 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
                         status="partial",
                     )
 
-    # PRECEDES within function (program order).
-    by_func: dict[str, list[str]] = defaultdict(list)
+    # PRECEDES within function by exec_rank (falls back to local site order).
+    by_func: dict[str, list[tuple[ExecOperation, str]]] = defaultdict(list)
     for op, eid in op_ents:
-        by_func[op.function].append(eid)
-    for _func, eids in by_func.items():
-        for a, b in zip(eids, eids[1:]):
+        by_func[op.function].append((op, eid))
+    for _func, rows in by_func.items():
+        rows.sort(
+            key=lambda t: (
+                int(t[0].exec_rank) if int(t[0].exec_rank) >= 0 else 10**9,
+                int(t[0].line),
+                int(t[0].column),
+                int(t[0].ordinal),
+            )
+        )
+        for (a_op, a), (b_op, b) in zip(rows, rows[1:]):
             codemap.link(
                 RelationKind.PRECEDES,
                 a,
                 b,
-                attrs={"provenance": "kernel_execution", "kind": "program_order"},
+                attrs={
+                    "provenance": "kernel_execution",
+                    "kind": "program_order",
+                    "exec_rank_a": int(a_op.exec_rank),
+                    "exec_rank_b": int(b_op.exec_rank),
+                },
                 status="confirmed",
             )
 
-    # Sync entities + pairing → SIGNALS / WAITS_ON / SYNCHRONIZES_WITH / HAPPENS_BEFORE
+    # Sync entities + EMITS_SYNC + pairing → SIGNALS / WAITS_ON / SYNCHRONIZES_WITH / HAPPENS_BEFORE
     sync_ents: dict[str, SyncEvent] = {}
+    emits_sync = 0
     for sev in ir.sync_events:
         ent = codemap.upsert(
             EntityKind.SYNC_EVENT,
@@ -834,8 +862,14 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         )
         sync_ents[sev.id] = sev
         if sev.operation_id and sev.operation_id in codemap.entities:
-            # Tie sync event to its operation occurrence via CONTAINS reverse: op CONTAINS sync? Use REFERENCES-like via CONTAINS from region already; link EXECUTES_ON unused.
-            pass
+            codemap.link(
+                RelationKind.EMITS_SYNC,
+                sev.operation_id,
+                sev.id,
+                attrs={"provenance": "kernel_execution"},
+                status="confirmed",
+            )
+            emits_sync += 1
         _ = ent
 
     pair_input = [s.to_dict() for s in ir.sync_events]
@@ -898,45 +932,81 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         elif status == "MULTIPLE_PAIR_CANDIDATES":
             ambiguous += 1
 
-    # Buffer lifecycle summary (Phase 2 start).
+    # Buffer lifecycle summary (exec_rank ordered).
     lifecycle = _compute_buffer_lifecycles(codemap, ir)
 
+    ranked = sum(1 for o in ir.operations if int(o.exec_rank) >= 0)
     stats = {
         "operations": len(ir.operations),
         "buffers": len(ir.buffers),
         "buffer_views": len(ir.buffer_views),
         "sync_events": len(ir.sync_events),
         "regions": len(ir.regions),
+        "function_summaries": len(ir.function_summaries),
+        "ops_ranked": ranked,
         "sync_paired": paired,
         "sync_unresolved": unresolved,
         "sync_ambiguous": ambiguous,
+        "emits_sync": emits_sync,
         "buffer_lifecycles": len(lifecycle),
+        "exec_order": order_meta,
         "provenance": ir.notes[0] if ir.notes else "",
         "registry_version": ir.registry_version,
+        "quality": {
+            "ops": len(ir.operations),
+            "buffers": len(ir.buffers),
+            "sync_events": len(ir.sync_events),
+            "ops_ranked": ranked,
+            "emits_sync": emits_sync,
+            "sync_paired": paired,
+            "buffer_lifecycles": len(lifecycle),
+            "walk_partial": "partial" in str(ir.notes) or "partial" in (ir.notes[0] if ir.notes else ""),
+        },
     }
+    if any("partial" in str(n) for n in ir.notes) or "partial" in str(
+        getattr(ir, "registry_version", "")
+    ):
+        stats["status"] = "partial"
+    # Walk-cache truncation is recorded in provenance string.
+    if "partial" in str(stats.get("provenance") or ""):
+        stats["status"] = "partial"
+        stats["quality"]["walk_partial"] = True
     codemap.meta["kernel_execution"] = stats
     codemap.meta["kernel_buffer_lifecycle"] = lifecycle
+    codemap.meta["kernel_function_exec"] = [s.to_dict() for s in ir.function_summaries]
     _ = root
     return stats
 
 
 def _compute_buffer_lifecycles(codemap: CodeMap, ir: KernelExecutionIR) -> dict[str, Any]:
-    """Derive acquire / first_write / last_use / release per buffer name+scope."""
+    """Derive acquire / first_write / last_use / release per (scope, buffer_id)."""
     out: dict[str, Any] = {}
-    ops = sorted(ir.operations, key=lambda o: (o.file, o.line, o.column, o.ordinal))
+    ops = sorted(
+        ir.operations,
+        key=lambda o: (
+            int(o.exec_rank) if int(o.exec_rank) >= 0 else 10**9,
+            int(o.line),
+            int(o.column),
+            int(o.ordinal),
+        ),
+    )
     by_buf: dict[tuple[str, str], dict[str, Any]] = {}
     for buf in ir.buffers:
-        double = None
-        if buf.queue_depth is not None:
-            double = "confirmed" if int(buf.queue_depth) >= 2 else "no"
-        by_buf[(buf.scope, buf.name)] = {
+        slots = int(buf.queue_depth) if buf.queue_depth is not None else None
+        capable = None
+        if slots is not None:
+            capable = "confirmed" if slots >= 2 else "no"
+        by_buf[(buf.scope, buf.id)] = {
             "buffer": buf.name,
             "buffer_id": buf.id,
             "memory": buf.memory_space,
             "scope": buf.scope,
             "owner": buf.backing or "",
             "queue_depth": buf.queue_depth,
-            "double_buffer": double,
+            "buffer_slots": slots,
+            "double_buffer_capable": capable,
+            # Stronger "double_buffer=confirmed" is no longer claimed from queue_depth alone.
+            "overlap_usage": "partial" if capable == "confirmed" else ("no" if capable == "no" else None),
             "acquire": None,
             "first_write": None,
             "last_read": None,
@@ -945,12 +1015,28 @@ def _compute_buffer_lifecycles(codemap: CodeMap, ir: KernelExecutionIR) -> dict[
             "accesses": [],
             "confidence": buf.confidence,
         }
+    name_index: dict[tuple[str, str], str] = {
+        (buf.scope, buf.name): buf.id for buf in ir.buffers
+    }
+
+    def _row(function: str, name: str) -> dict[str, Any] | None:
+        bid = name_index.get((function, name))
+        if not bid:
+            return None
+        return by_buf.get((function, bid))
+
     for op in ops:
         for name in op.writes:
-            row = by_buf.get((op.function, name))
+            row = _row(op.function, name)
             if not row:
                 continue
-            site = {"op": op.id, "callee": op.callee, "line": op.line, "role": "write"}
+            site = {
+                "op": op.id,
+                "callee": op.callee,
+                "line": op.line,
+                "exec_rank": int(op.exec_rank),
+                "role": "write",
+            }
             row["accesses"].append(site)
             if row["first_write"] is None:
                 row["first_write"] = site
@@ -960,47 +1046,60 @@ def _compute_buffer_lifecycles(codemap: CodeMap, ir: KernelExecutionIR) -> dict[
             if op.category == "buffer_release":
                 row["release"] = site
         for name in op.reads:
-            row = by_buf.get((op.function, name))
+            row = _row(op.function, name)
             if not row:
                 continue
-            site = {"op": op.id, "callee": op.callee, "line": op.line, "role": "read"}
+            site = {
+                "op": op.id,
+                "callee": op.callee,
+                "line": op.line,
+                "exec_rank": int(op.exec_rank),
+                "role": "read",
+            }
             row["accesses"].append(site)
             row["last_read"] = site
             row["last_use"] = site
         if op.category == "buffer_acquire" and op.receiver:
-            row = by_buf.get((op.function, op.receiver))
+            row = _row(op.function, op.receiver)
             if row and row["acquire"] is None:
                 row["acquire"] = {
                     "op": op.id,
                     "callee": op.callee,
                     "line": op.line,
+                    "exec_rank": int(op.exec_rank),
                     "role": "acquire",
                 }
         if op.category == "buffer_release":
             for name in list(op.writes) or [a.split("[", 1)[0] for a in op.args[:1]]:
-                row = by_buf.get((op.function, str(name)))
+                row = _row(op.function, str(name))
                 if row:
                     row["release"] = {
                         "op": op.id,
                         "callee": op.callee,
                         "line": op.line,
+                        "exec_rank": int(op.exec_rank),
                         "role": "release",
                     }
         if op.category == "buffer_init" and op.callee == "InitBuffer":
             qname = op.receiver or (op.args[0].split("[", 1)[0] if op.args else "")
-            row = by_buf.get((op.function, qname))
-            if row and row["double_buffer"] is None and row.get("queue_depth"):
-                row["double_buffer"] = (
-                    "confirmed" if int(row["queue_depth"]) >= 2 else "no"
-                )
+            row = _row(op.function, qname)
+            if row and row["double_buffer_capable"] is None and row.get("queue_depth"):
+                slots = int(row["queue_depth"])
+                row["buffer_slots"] = slots
+                row["double_buffer_capable"] = "confirmed" if slots >= 2 else "no"
+                row["overlap_usage"] = "partial" if slots >= 2 else "no"
+
     for key, row in by_buf.items():
         if not row["accesses"] and row["acquire"] is None and row["queue_depth"] is None:
             continue
-        # Without full acquire/release evidence, downgrade double-buffer claims.
-        if row.get("double_buffer") == "confirmed" and not (row.get("acquire") and row.get("release")):
-            row["double_buffer"] = "partial"
-            row["confidence"] = "partial"
-        out[f"{key[0]}::{key[1]}"] = row
+        # queue_depth alone is only capability evidence; require acquire+release for confirmed overlap.
+        if row.get("double_buffer_capable") == "confirmed":
+            if row.get("acquire") and row.get("release") and len(row.get("accesses") or []) >= 2:
+                row["overlap_usage"] = "confirmed"
+            else:
+                row["overlap_usage"] = "partial"
+                row["confidence"] = "partial"
+        out[f"{key[0]}::{row['buffer']}"] = row
     _ = codemap
     return out
 
@@ -1051,6 +1150,8 @@ def finalize_kernel_execution(
         root=root,
         provenance=provenance,
     )
+    if "partial" in provenance:
+        ir.notes.append("walk_cache_limit_partial")
     if time.perf_counter() > deadline:
         ir.notes.append("budget_exhausted")
     stats = _materialize(codemap, ir, root=root)

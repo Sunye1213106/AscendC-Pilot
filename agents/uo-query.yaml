@@ -7,6 +7,7 @@ description: >
   Read-only answers for the current Action Bundle UO CodeMap query.
   Read session prompt.md first, then skills/operator-analysis/SKILL.md as needed.
   Prefer structured `.uo` queries; only open minimal source windows when evidence is insufficient.
+skill_ids: [operator-analysis]
 read_scopes:
 - uo/**
 - runs/**

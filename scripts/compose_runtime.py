@@ -402,7 +402,7 @@ def check_skill_action_markers(repo: Path) -> list[str]:
     """Verify every slash workflow has an entry description and Spec actions."""
     errors: list[str] = []
     sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
 
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved") or not meta.get("slash"):
@@ -441,7 +441,7 @@ def validate(repo: Path) -> list[str]:
     errors.extend(validate_domain_skills(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
 
     # Collect write scopes by role for overlap / containment check
     producer_writes: set[str] = set()
@@ -873,7 +873,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     host_meta = _load_yaml(paths["hosts"] / f"{host}.yaml")
 
     sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
 
     if out_root.exists():
         shutil.rmtree(out_root)
@@ -1043,7 +1043,7 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
         return errors
 
     sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
 
     # Engine-identity agents (kind=deterministic_engine) are never composed to host MD.
     engine_ids: set[str] = set()

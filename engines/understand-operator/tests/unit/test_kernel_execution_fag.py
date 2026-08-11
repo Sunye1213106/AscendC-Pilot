@@ -11,6 +11,7 @@ import pytest
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.kernel_data_deps import finalize_kernel_data_deps
 from uo_init.passes.kernel_execution import finalize_kernel_execution
 from uo_init.passes.kernel_pipeline import finalize_kernel_pipeline
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
@@ -43,10 +44,12 @@ def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir:
 
     t_exec = time.perf_counter()
     finalize_kernel_execution(cm, fag_dir, architecture=arch_dir)
+    finalize_kernel_data_deps(cm)
     exec_s = time.perf_counter() - t_exec
     finalize_kernel_pipeline(cm)
 
     meta = cm.meta.get("kernel_execution") or {}
+    quality = meta.get("quality") or {}
     ops = cm.by_kind(EntityKind.OPERATION)
     syncs = cm.by_kind(EntityKind.SYNC_EVENT)
     bufs = cm.by_kind(EntityKind.BUFFER)
@@ -65,8 +68,17 @@ def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir:
     assert syncs, "expected SYNC_EVENT entities on FAG"
     assert bufs, "expected BUFFER entities on FAG"
 
+    # Quality report fields must exist and be positive.
+    assert isinstance(quality, dict) and quality, f"missing quality report: {meta}"
+    assert int(quality.get("ops") or 0) > 0
+    assert int(quality.get("buffers") or 0) > 0
+    assert int(quality.get("sync_events") or 0) > 0
+    assert int(meta.get("data_deps_total") or quality.get("data_deps_total") or 0) >= 0
+
     precedes = [r for r in cm.relations.values() if r.kind_name() == RelationKind.PRECEDES.value]
     assert precedes, "program-order PRECEDES required"
+    emits = [r for r in cm.relations.values() if r.kind_name() == RelationKind.EMITS_SYNC.value]
+    assert emits, "EMITS_SYNC links required when sync events exist"
 
     pipe = cm.meta.get("kernel_execution_pipeline") or {}
     assert int(pipe.get("operation_count") or 0) >= 50
@@ -77,11 +89,12 @@ def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir:
     assert overview["operations"] == len(ops)
     assert isinstance(q.kernel_pipeline(), dict)
 
-    # Timing print for manual inspection (pytest -s).
+    # Timing print for manual inspection (pytest -s). Do not commit FAG logs.
     print(
         f"\n[FAG arch35] closure={closure_s:.2f}s exec={exec_s:.2f}s "
         f"ops={len(ops)} sync={len(syncs)} buf={len(bufs)} "
-        f"paired={meta.get('sync_paired')} files={meta.get('selected_files')}"
+        f"paired={meta.get('sync_paired')} deps={meta.get('data_deps_total')} "
+        f"quality={quality} files={meta.get('selected_files')}"
     )
 
 

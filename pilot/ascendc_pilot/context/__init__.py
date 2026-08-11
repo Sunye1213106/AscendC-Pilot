@@ -45,20 +45,19 @@ def _resolve_pilot_params(project_root: Path, state: dict[str, Any]) -> dict[str
                 return s
         return default
 
-    consumer = pick(
-        state.get("csv_consumer_root"),
+    test_script_root = pick(
         state.get("test_script_root"),
-        params.get("csv_consumer_root"),
+        state.get("csv_consumer_root"),
         params.get("test_script_root"),
+        params.get("csv_consumer_root"),
         run_ctx.get("test_script_root"),
-        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
+        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
     )
     return {
         "op_name": pick(state.get("op_name"), params.get("op_name"), man.get("op_name"), run_ctx.get("op_name"), project_root.name),
         "architecture": pick(state.get("architecture"), params.get("architecture"), man.get("architecture"), default="arch35"),
-        "test_script_root": consumer,
-        "csv_consumer_root": consumer,
+        "test_script_root": test_script_root,
         "level": pick(state.get("level"), params.get("level"), default="L0"),
         "focus": pick(state.get("focus"), params.get("focus")),
     }
@@ -109,7 +108,6 @@ def build_context_pack(
         "op_name": params["op_name"],
         "architecture": params["architecture"],
         "test_script_root": params["test_script_root"],
-        "csv_consumer_root": params["csv_consumer_root"],
         "level": params["level"],
         "focus": params["focus"],
         "workflow": {

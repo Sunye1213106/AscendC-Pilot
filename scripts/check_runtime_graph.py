@@ -71,34 +71,25 @@ def _main() -> int:
                         errors.append(
                             f"workflow {wf_id} action {aid}: missing prompt {pp.relative_to(REPO)}"
                         )
-            ocid = action.get("output_contract_id")
-            if ocid:
-                ocid_s = str(ocid)
-                used_contracts.add(ocid_s)
-                if ocid_s not in OUTPUT_CONTRACT_PATHS:
+            for contract_field in ("output_contract_id", "staging_contract_id"):
+                contract_id = action.get(contract_field)
+                if not contract_id:
+                    continue
+                contract_id_s = str(contract_id)
+                used_contracts.add(contract_id_s)
+                if contract_id_s not in OUTPUT_CONTRACT_PATHS:
                     errors.append(
-                        f"workflow {wf_id} action {aid}: unknown output_contract_id {ocid_s}"
+                        f"workflow {wf_id} action {aid}: unknown {contract_field} "
+                        f"{contract_id_s}"
                     )
             mode = str(action.get("execution_mode") or "")
-            if mode == "deterministic" or agent_id in {
-                "deterministic-uo-engine",
-                "deterministic-tg-engine",
-            }:
-                key = (wf_id, aid)
+            key = (wf_id, aid)
+            if key in ENGINE_REGISTRY or mode == "deterministic":
                 used_engine_actions.add(key)
-                if key not in ENGINE_REGISTRY and aid not in {
-                    "diff_only",  # alias handled separately sometimes
-                    "human_confirm",
-                    "plan_approve",
-                    "init_audit",
-                    "lemma_verify",
-                }:
-                    # human/interactive may not be engines; only require registered if deterministic engine agent
-                    if agent_id.startswith("deterministic-"):
-                        if key not in ENGINE_REGISTRY:
-                            errors.append(
-                                f"workflow {wf_id} action {aid}: missing ENGINE_REGISTRY entry"
-                            )
+            if mode == "deterministic" and key not in ENGINE_REGISTRY:
+                errors.append(
+                    f"workflow {wf_id} action {aid}: missing ENGINE_REGISTRY entry"
+                )
 
     # Production prompts must not be deprecated / contain CBM markers
     if prompts_dir.is_dir():
@@ -128,7 +119,15 @@ def _main() -> int:
             if aid not in used_agents and aid not in agent_allow:
                 errors.append(f"unused production agent: agents/{aid}.yaml")
 
-    # Skill refs from agents (skills: list)
+    unused_engine_actions = set(ENGINE_REGISTRY) - used_engine_actions
+    for wf_id, action_id in sorted(unused_engine_actions):
+        errors.append(f"orphan ENGINE_REGISTRY entry: {wf_id}/{action_id}")
+
+    unused_contracts = set(OUTPUT_CONTRACT_PATHS) - used_contracts
+    for contract_id in sorted(unused_contracts):
+        errors.append(f"orphan OUTPUT_CONTRACT_PATHS entry: {contract_id}")
+
+    # Skill refs from agents (skills / skill_ids lists)
     try:
         import yaml  # type: ignore
     except ImportError:
@@ -136,7 +135,7 @@ def _main() -> int:
     if yaml and agents_dir.is_dir():
         for yml in agents_dir.glob("*.yaml"):
             meta = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
-            for sk in meta.get("skills") or []:
+            for sk in list(meta.get("skills") or []) + list(meta.get("skill_ids") or []):
                 sk_s = str(sk).strip()
                 if not sk_s:
                     continue

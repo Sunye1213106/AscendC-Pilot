@@ -41,8 +41,6 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     ],
     "uo-commit-v1": ["../uo/*.uo"],
     "uo-verify-v1": ["../uo/*.uo"],
-    # Backward-compatible alias for older receipts / tests.
-    "uo-review-v1": ["../uo/*.uo"],
     "uo-investigate-v1": [
         "uo/ir/gap_investigation.yaml",
         "runs/{run_id}/actions/investigate/report.yaml",

@@ -18,7 +18,7 @@ def check_prompt_capability_drift(repo: Path) -> list[str]:
     """Fail when a task prompt hardcodes a capability list that ≠ Action Spec."""
     sys.path.insert(0, str(repo / "pilot"))
     sys.path.insert(0, str(repo / "scripts"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
 
     import compose_runtime as compose
 

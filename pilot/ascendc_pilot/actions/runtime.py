@@ -37,11 +37,10 @@ def _eng_ctx_from_pack(pack: dict[str, Any], state: dict[str, Any], run_id: str)
         "run_id": run_id,
         "op_name": pack.get("op_name") or state.get("op_name") or "",
         "architecture": pack.get("architecture") or state.get("architecture") or "arch35",
-        "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
-        "csv_consumer_root": pack.get("csv_consumer_root")
-        or state.get("csv_consumer_root")
-        or pack.get("test_script_root")
+        "test_script_root": pack.get("test_script_root")
         or state.get("test_script_root")
+        or pack.get("csv_consumer_root")
+        or state.get("csv_consumer_root")
         or "",
         "level": pack.get("level") or state.get("level") or "L0",
         "focus": pack.get("focus") or state.get("focus") or "",
@@ -834,7 +833,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         bundle["prepare_engine"] = {
             "ok": True,
             "inventory_path": prepare_engine.get("inventory_path"),
-            "csv_consumer_root": prepare_engine.get("csv_consumer_root"),
+            "test_script_root": prepare_engine.get("test_script_root"),
         }
     # adjudicate_llm_tasks: producer writes patches for deterministic apply.
     adjudicate_not_applicable = False

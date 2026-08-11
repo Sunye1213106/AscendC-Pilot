@@ -299,7 +299,22 @@ class CodeMapQuery:
         if name in life:
             return dict(life[name])
         hits = [v for k, v in life.items() if k.endswith(f"::{name}") or str(v.get("buffer")) == name]
-        return dict(hits[0]) if hits else None
+        # Deduplicate by buffer_id (same row may be referenced once per key).
+        uniq: dict[str, dict[str, Any]] = {}
+        for row in hits:
+            bid = str(row.get("buffer_id") or row.get("scope") or "") + "::" + str(row.get("buffer") or "")
+            uniq[bid] = row
+        candidates = list(uniq.values())
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return dict(candidates[0])
+        return {
+            "status": "AMBIGUOUS",
+            "buffer": name,
+            "candidate_count": len(candidates),
+            "candidates": [dict(c) for c in candidates],
+        }
 
     def sync_events(self, function: str = "") -> list[dict[str, Any]]:
         rows = self.codemap.by_kind(EntityKind.SYNC_EVENT)

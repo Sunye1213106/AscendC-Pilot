@@ -30,7 +30,6 @@ _pytest_tmp*/
 _*.log
 _*.err
 _*.out
-1.md
 artifacts/scratch/
 
 # Packaging/build metadata

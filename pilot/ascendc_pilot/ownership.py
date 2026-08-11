@@ -124,10 +124,45 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/gap_investigation.yaml",
         ],
     },
+    "tg-init": {
+        "init_intent": ["tg/init/init_intent.yaml"],
+        "kb_check": ["tg/init/uo_ready.yaml"],
+        "contract_build": [
+            "tg/intake/**",
+            "tg/snapshot/**",
+            "tg/realization/**",
+            "tg/contract/**",
+            "tg/plan/coverage_obligations.yaml",
+            "tg/run.yaml",
+            "context/pilot_params.yaml",
+        ],
+        "semantic_bind": ["tg/realization/binding_inventory.yaml"],
+        "integrity_gate": ["tg/contract/integrity_gate.yaml"],
+        "init_audit": ["tg/init/audit_report.yaml"],
+        "human_confirm": [
+            "tg/init/status.yaml",
+            "tg/init/kb_fingerprint.yaml",
+            "tg/init/confirmation.yaml",
+        ],
+    },
     "tg-plan": {
         "plan_intent": ["tg/plan/plan_intent.yaml"],
+        "plan_scope": [
+            "tg/plan/levels/*/plan_scope.yaml",
+            "tg/plan/plan_intent.yaml",
+        ],
+        "plan_precheck": [],
+        "plan_build": [
+            "tg/plan/**",
+            "tg/extract/**",
+            "tg/realization/**",
+            "tg/contract/**",
+            "tg/run.yaml",
+        ],
+        "plan_approve": ["tg/plan/levels/*/human_supplement.yaml"],
     },
     "tg-solve": {
+        "solve_precheck": [],
         "oracle_probe": ["tg/closure/oracle_probe.yaml"],
         "closure_ledger": [
             "tg/closure/R.txt",
@@ -205,6 +240,114 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/gap_investigation.yaml",
             "runs/{run_id}/actions/investigate/**",
             "../uo/*.uo",
+        ],
+    },
+    "tg-init": {
+        "init_intent": ["context/**"],
+        "kb_check": ["../uo/*.uo"],
+        "contract_build": [
+            "../uo/*.uo",
+            "tg/init/uo_ready.yaml",
+            "context/**",
+        ],
+        "semantic_bind": [
+            "../uo/*.uo",
+            "tg/contract/**",
+            "tg/realization/binding_inventory.yaml",
+        ],
+        "integrity_gate": [
+            "tg/snapshot/**",
+            "tg/realization/**",
+            "tg/contract/**",
+        ],
+        "init_audit": [
+            "tg/snapshot/**",
+            "tg/contract/**",
+            "tg/realization/**",
+            "tg/init/**",
+        ],
+        "human_confirm": [
+            "tg/init/**",
+            "tg/realization/**",
+            "tg/snapshot/**",
+            "tg/contract/**",
+        ],
+    },
+    "tg-plan": {
+        "plan_intent": ["../uo/*.uo", "tg/init/**", "context/**"],
+        "plan_scope": [
+            "../uo/*.uo",
+            "tg/init/**",
+            "tg/plan/plan_intent.yaml",
+            "tg/snapshot/**",
+            "tg/realization/**",
+            "context/**",
+        ],
+        "plan_precheck": [
+            "../uo/*.uo",
+            "tg/init/status.yaml",
+            "tg/snapshot/**",
+        ],
+        "plan_build": [
+            "../uo/*.uo",
+            "tg/init/**",
+            "tg/plan/plan_intent.yaml",
+            "tg/snapshot/**",
+            "tg/realization/**",
+            "tg/contract/**",
+            "context/**",
+        ],
+        "plan_approve": [
+            "tg/plan/levels/*/**",
+            "tg/plan/plan_intent.yaml",
+        ],
+    },
+    "tg-solve": {
+        "solve_precheck": [
+            "../uo/*.uo",
+            "tg/init/**",
+            "tg/plan/**",
+            "tg/snapshot/**",
+        ],
+        "oracle_probe": ["../uo/*.uo", "tg/init/**", "local/**"],
+        "closure_ledger": ["../uo/*.uo", "tg/closure/**"],
+        "closure_search": ["../uo/*.uo", "tg/closure/**"],
+        "closure_residual": ["tg/closure/**"],
+        "closure_construct": ["../uo/*.uo", "tg/closure/**"],
+        "closure_explain": ["tg/closure/**"],
+        "lemma_leads": ["tg/closure/**"],
+        "lemma_evidence": ["../uo/*.uo", "tg/closure/lemmas/leads.yaml"],
+        "lemma_mine": [
+            "../uo/*.uo",
+            "tg/closure/lemmas/leads.yaml",
+            "tg/closure/lemmas/evidence/**",
+            "runs/**/actions/lemma_mine/**",
+        ],
+        "lemma_verify": [
+            "runs/**/actions/lemma_mine/**",
+            "tg/closure/**",
+        ],
+        "lemma_review": [
+            "../uo/*.uo",
+            "runs/**/actions/lemma_mine/**",
+            "runs/**/actions/lemma_verify/**",
+            "tg/closure/lemmas/**",
+        ],
+        "lemma_apply": [
+            "runs/**/actions/lemma_review/review.yaml",
+            "tg/closure/lemmas/**",
+            "local/**",
+        ],
+        "lemma_loop": [
+            "../uo/*.uo",
+            "tg/closure/**",
+            "runs/**/actions/lemma_mine/**",
+            "runs/**/actions/lemma_review/**",
+        ],
+        "closure_audit": ["../uo/*.uo", "tg/closure/**"],
+        "closure_certify": [
+            "tg/closure/**",
+            "runs/**/actions/closure_audit/review.yaml",
         ],
     },
 }
@@ -453,11 +596,14 @@ def path_matches_patterns(rel_posix: str, patterns: list[str]) -> bool:
             continue
         if p.endswith("/**"):
             prefix = p[:-3].rstrip("/")
-            if rel == prefix or rel.startswith(prefix + "/"):
-                return True
-            continue
+            # Literal directory ceiling (no mid-path globs).
+            if prefix and not any(ch in prefix for ch in "*?["):
+                if rel == prefix or rel.startswith(prefix + "/"):
+                    return True
+                continue
+            # Mid-path globs such as runs/**/actions/** — fall through to regex.
         if "*" in p or "?" in p:
-            # simple glob: ** already handled; treat * as single-segment wildcard
+            # ** = any path segment sequence; * = single segment
             rx = re.escape(p).replace(r"\*\*", ".*").replace(r"\*", "[^/]*").replace(r"\?", ".")
             if re.fullmatch(rx, rel):
                 return True

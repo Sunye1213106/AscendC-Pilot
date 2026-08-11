@@ -193,7 +193,8 @@ def test_synthetic_solve_oracle_ledger_residual(synthetic_root: Path, monkeypatc
 
 
 def test_mode_overlay_terminals():
-    from ascendc_pilot.workflows import get_workflow
+    """csv_consumer mode_overlays were retired; tilingkey_full_coverage is the only supported mode."""
+    from ascendc_pilot.workflows import WORKFLOWS, get_workflow
 
     full = get_workflow("tg-solve", mode="tilingkey_full_coverage")
     assert full.get("terminal_ready_states") == ["certify"]
@@ -201,25 +202,17 @@ def test_mode_overlay_terminals():
     assert "oracle" in (full.get("pipelines") or {})
     assert "encode" not in (full.get("pipelines") or {})
 
-    csv = get_workflow("tg-solve", mode="csv_consumer")
-    assert csv.get("terminal_ready_states") == ["cover"]
-    assert "solve_terminal" in (csv.get("complete_gates") or [])
-    assert "encode" in (csv.get("pipelines") or {})
-    assert "oracle" not in (csv.get("pipelines") or {})
+    assert "csv_consumer" not in (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
+    assert "csv_consumer" not in (WORKFLOWS["tg-init"].get("mode_overlays") or {})
 
     init_full = get_workflow("tg-init", mode="tilingkey_full_coverage")
     assert "merge" not in (init_full.get("phases") or [])
-    assert init_full.get("_active_mode") == "tilingkey_full_coverage"
     bind = next(a for a in init_full["actions"] if a["id"] == "contract_build")
     assert bind["output_contract_id"] == "tilingkey-contract-v1"
 
-    init_csv = get_workflow("tg-init", mode="csv_consumer")
-    assert "merge" in (init_csv.get("phases") or [])
-    csv_bind = next(a for a in init_csv["actions"] if a["id"] == "contract_build")
-    assert csv_bind["output_contract_id"] == "csv-contract-v1"
 
-
-def test_preferred_pipeline_reads_plan_intent_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_preferred_pipeline_ignores_stray_legacy_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A stale plan_intent.yaml mode (e.g. from an old run) no longer selects a csv_consumer pipeline."""
     monkeypatch.setenv("UO_ARCH", "arch0")
     from ascendc_pilot.paths import ensure_tg_layout, tg_root
     from ascendc_pilot.workflows.pipeline import preferred_pipeline
@@ -230,8 +223,8 @@ def test_preferred_pipeline_reads_plan_intent_mode(tmp_path: Path, monkeypatch: 
     (plan / "plan_intent.yaml").write_text(
         "schema: tg-plan-intent/v1\nmode: csv_consumer\n", encoding="utf-8"
     )
-    assert preferred_pipeline("tg-solve", "encode", project_root=tmp_path) == ["z3_solve"]
-    assert preferred_pipeline("tg-solve", "oracle", project_root=tmp_path) == []
+    assert preferred_pipeline("tg-solve", "encode", project_root=tmp_path) == []
+    assert preferred_pipeline("tg-solve", "oracle", project_root=tmp_path) == ["oracle_probe"]
 
 
 def test_lemma_mine_writes_arch_scoped_runs(synthetic_root: Path):

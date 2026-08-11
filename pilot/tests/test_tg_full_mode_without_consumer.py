@@ -10,20 +10,13 @@ import yaml
 from ascendc_pilot.paths import ensure_agent_layout, tg_root, uo_root
 
 
-def test_require_consumer_optional_under_tilingkey_mode():
-    from ascendc_pilot.actions.engines import (
-        _is_tilingkey_full,
-        _require_consumer_root,
-    )
+def test_is_tilingkey_full_detects_mode():
+    from ascendc_pilot.actions.engines import _is_tilingkey_full
 
     assert _is_tilingkey_full({"mode": "tilingkey_full_coverage"})
-    assert _require_consumer_root({"mode": "tilingkey_full_coverage"}) is None
-    try:
-        _require_consumer_root({"mode": "csv_consumer"})
-        raised = False
-    except RuntimeError as exc:
-        raised = "TEST_SCRIPT_ROOT_REQUIRED" in str(exc)
-    assert raised
+    assert _is_tilingkey_full({"mode": "tilingkey_full"})
+    # csv_consumer stack was removed; unknown/legacy modes are not full-TK.
+    assert not _is_tilingkey_full({"mode": "csv_consumer"})
 
 
 def test_init_intent_defaults_to_tilingkey(tmp_path: Path):
@@ -53,7 +46,7 @@ def test_plan_scope_without_consumer(tmp_path: Path):
     out = _run_tg_plan_scope(tmp_path, {"op_name": "demo"})
     assert out["ok"] is True
     assert out["mode"] == "tilingkey_full_coverage"
-    assert out["csv_consumer_root"] == ""
+    assert "csv_consumer_root" not in out
 
 
 def test_candidate_human_rule_cannot_enter_E():

@@ -1,0 +1,5 @@
+schema: tg-active-rules/v1
+rules:
+- when:
+    a: '1'
+  grade: source_lemma

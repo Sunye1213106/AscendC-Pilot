@@ -45,7 +45,7 @@ def audit(repo: Path) -> list[str]:
         path_within_scopes,
         write_roots_as_scopes,
     )
-    from ascendc_pilot.workflows.specs import WORKFLOWS
+    from ascendc_pilot.workflows import WORKFLOWS
     import compose_runtime as compose
 
     errors: list[str] = []

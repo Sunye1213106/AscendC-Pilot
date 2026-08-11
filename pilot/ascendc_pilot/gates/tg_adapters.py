@@ -212,6 +212,45 @@ def _load_plan_hashes(plan_dir: Path) -> tuple[str | None, str | None]:
     return snapshot_hash, plan_hash
 
 
+def _require_approval(
+    supplement: dict[str, Any],
+    snapshot_hash: str | None,
+    plan_hash: str | None,
+    unresolved: dict[str, Any],
+) -> None:
+    """Validate human_supplement against plan hashes (was in deleted solve.py)."""
+    required = {
+        "decision",
+        "approved_snapshot_hash",
+        "approved_plan_hash",
+        "approved_at",
+        "supplements",
+        "notes",
+    }
+    missing = sorted(key for key in required if key not in supplement)
+    if missing:
+        raise RuntimeError(f"APPROVAL_REQUIRED: approval file missing field(s): {', '.join(missing)}")
+    decision = str(supplement.get("decision") or supplement.get("approval") or "").strip().lower()
+    status = str(supplement.get("status") or "").strip().lower()
+    approved = supplement.get("approved") is True
+    if decision != "approve" and status not in {"approved", "approve"} and not approved:
+        raise RuntimeError("APPROVAL_REQUIRED: plan approval is required before tg-solve")
+    if supplement.get("approved_snapshot_hash") != snapshot_hash:
+        raise RuntimeError("APPROVAL_SNAPSHOT_MISMATCH: approval does not match current snapshot_hash")
+    if supplement.get("approved_plan_hash") != plan_hash:
+        raise RuntimeError("APPROVAL_PLAN_MISMATCH: approval does not match current plan_hash")
+    blocking = unresolved.get("blocking_hard_obligations") or []
+    gaps = unresolved.get("contract_gaps") or []
+    if unresolved.get("status") != "ready_for_manual_review" or blocking:
+        raise RuntimeError("PLAN_BLOCKED: unresolved hard blockers must be cleared before tg-solve")
+    if gaps:
+        raise RuntimeError("CONTRACT_GAPS_PRESENT: contract gaps must be resolved before tg-solve")
+    if unresolved.get("allow_solve") is False:
+        raise RuntimeError(
+            f"ALLOW_SOLVE_NO: {unresolved.get('allow_solve_reason') or 'plan forbids solve'}."
+        )
+
+
 def gate_plan_approved(project_root: Path, *, level: str = "") -> dict[str, Any]:
     """Validate real human_supplement against snapshot/plan hashes via engine approval rules."""
     out = tg_root(project_root)
@@ -267,6 +306,28 @@ def gate_allow_solve(project_root: Path, *, level: str = "") -> dict[str, Any]:
         "reason": (unresolved or {}).get("allow_solve_reason") if isinstance(unresolved, dict) else "",
         "message": "ok" if ok else f"allow_solve={allow!r}",
     }
+
+
+_REQUIRED_YAML = (
+    "operator.yaml",
+    "log_protocol.yaml",
+)
+
+_OPTIONAL_ADAPTER_YAML = (
+    "search_hints.yaml",
+    "construction_hints.yaml",
+    "feature_bindings.yaml",
+    "bridge_spec.yaml",
+    "proof_rules.yaml",
+    "observations.yaml",
+)
+
+_REQUIRED_SECTIONS = {
+    "search_hints.yaml": ("sampling_grid",),
+    "construction_hints.yaml": ("defaults",),
+    "feature_bindings.yaml": ("categorical", "base_numeric"),
+    "log_protocol.yaml": ("marks", "scrapes", "report_state"),
+}
 
 
 def gate_adapter_completeness(

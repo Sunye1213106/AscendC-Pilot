@@ -217,27 +217,9 @@ def mark_init_pending(
     return doc
 
 
-def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool = True) -> dict[str, Any]:
-    if require_merge:
-        from .resolve_policy import require_full_csv_closure
-        from .uo_resolve_merge import UoMergeError, require_domain_symmetry, require_merge_pass
-
-        try:
-            require_merge_pass(out_root)
-            require_domain_symmetry(out_root)
-        except UoMergeError as exc:
-            raise InitGateError(str(exc), ask=exc.ask, payload=exc.report) from exc
-        closure = require_full_csv_closure(out_root)
-        if str(closure.get("status") or "").lower() != "pass":
-            raise InitGateError(
-                "CSV closure verify failed. Nested uo-query Tasks on open mid-symbols, then --merge-uo-resolve.",
-                ask=str(closure.get("ask") or "shape_closure_incomplete"),
-                payload=closure,
-            )
-        require_audit_pass(out_root)
-    else:
-        # Full tilingkey mode: still require referee audit, but not CSV merge/closure.
-        require_audit_pass(out_root, checklist="tilingkey")
+def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool = False) -> dict[str, Any]:
+    del require_merge  # csv_consumer merge/domain-symmetry/CSV-closure gate was removed; kept for call-site compat.
+    require_audit_pass(out_root, checklist="tilingkey")
     doc = read_init_status(out_root)
     if not doc:
         doc = {"version": 1}
@@ -311,7 +293,7 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
 def require_audit_pass(
     out_root: Path,
     *,
-    checklist: str = "csv",
+    checklist: str = "tilingkey",
 ) -> dict[str, Any]:
     """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
     from .resolve_policy import AUDIT_CHECKLIST_IDS, TILINGKEY_AUDIT_CHECKLIST_IDS

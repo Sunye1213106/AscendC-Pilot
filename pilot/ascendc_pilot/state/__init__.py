@@ -281,7 +281,7 @@ def start_workflow(
     except Exception:  # noqa: BLE001
         hashes = {}
     all_obl = collect_obligations(project_root, workflow_id)
-    consumer = (csv_consumer_root or test_script_root or "").strip()
+    consumer = (test_script_root or csv_consumer_root or "").strip()
     state: dict[str, Any] = {
         "workflow_id": workflow_id,
         "run_id": run_id,
@@ -292,7 +292,6 @@ def start_workflow(
         "op_name": (op_name or "").strip(),
         "architecture": (architecture or "").strip() or "arch35",
         "test_script_root": consumer,
-        "csv_consumer_root": consumer,
         "level": (level or "").strip() or "L0",
         "focus": (focus or "").strip(),
         "retry_budget": int(meta.get("retry_budget") or 3),

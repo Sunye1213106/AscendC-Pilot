@@ -127,8 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_start.add_argument("--op-name", default="", help="Operator name for UO/TG engines")
     p_start.add_argument("--architecture", default="", help="Target architecture (default arch35)")
-    p_start.add_argument("--test-script-root", type=Path, default=None, help="CSV consumer / test script root")
-    p_start.add_argument("--csv-consumer-root", type=Path, default=None, help="Alias of --test-script-root")
+    p_start.add_argument("--test-script-root", type=Path, default=None, help="Test script root")
     p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
     p_start.add_argument("--focus", default="", help="TG plan focus")
 
@@ -555,11 +554,6 @@ def main(argv: list[str] | None = None) -> int:
                 if getattr(args, "test_script_root", None)
                 else ""
             ),
-            "csv_consumer_root": (
-                str(args.csv_consumer_root.resolve())
-                if getattr(args, "csv_consumer_root", None)
-                else ""
-            ),
             "level": getattr(args, "level", "") or "",
             "focus": getattr(args, "focus", "") or "",
         }
@@ -586,7 +580,6 @@ def main(argv: list[str] | None = None) -> int:
                         or start_kwargs.get("architecture")
                         or "arch35",
                         "test_script_root": result.get("test_script_root") or "",
-                        "csv_consumer_root": result.get("csv_consumer_root") or "",
                         "level": result.get("level") or "L0",
                         "focus": result.get("focus") or "",
                     }
@@ -616,7 +609,6 @@ def main(argv: list[str] | None = None) -> int:
                 "op_name": state.get("op_name") or "",
                 "architecture": state.get("architecture") or "arch35",
                 "test_script_root": state.get("test_script_root") or "",
-                "csv_consumer_root": state.get("csv_consumer_root") or "",
                 "level": state.get("level") or "L0",
                 "focus": state.get("focus") or "",
             }

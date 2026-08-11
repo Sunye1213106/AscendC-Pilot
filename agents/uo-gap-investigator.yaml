@@ -10,6 +10,7 @@ description: >
   skills/operator-analysis/SKILL.md. Must not write canonical `.uo` or merge
   gap patches into CodeMap. Must not redo human file-list confirmation or
   bypass Clang Source Scope.
+skill_ids: [operator-analysis]
 read_scopes:
 - uo/ir/unresolved.yaml
 - uo/ir/codemap_analyze_receipt.yaml

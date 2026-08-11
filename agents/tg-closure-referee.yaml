@@ -6,9 +6,11 @@ mode: subagent
 description: Referee for lemma certificates and closure audit. Read session prompt.md
   first, then skills/source-proof (referee-replay) or skills/testcase-generation. Writes
   review.yaml only; never excluded set.
+skill_ids: [source-proof, testcase-generation]
 read_scopes:
 - tg/closure/**
 - uo/**
+- ../uo/**
 - runs/**
 - context/**
 - skills/testcase-generation/**

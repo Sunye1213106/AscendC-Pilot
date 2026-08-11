@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """Derived Kernel pipeline view from Operation DAG (not a canonical source fact).
 
-Pipeline stages are inferred from operation categories + engines + buffer deps.
+Order of work: classify → src/dst memory (CopyIn/Out) → stages → overlap.
 Never invent CopyIn/Compute/CopyOut solely from function names.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 
+_LOCAL = {"UB", "L1", "L0A", "L0B", "L0C"}
 _STAGE_BY_CATEGORY = {
     "memory_transfer": "Copy",
     "memory_init": "Copy",
@@ -33,34 +34,118 @@ _STAGE_BY_CATEGORY = {
 }
 
 
-def _stage_for(op_attrs: dict[str, Any]) -> str:
+def _exec_rank(ent) -> int:
+    try:
+        return int(ent.attrs.get("exec_rank") if ent.attrs.get("exec_rank") is not None else -1)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _base_stage(op_attrs: dict[str, Any]) -> str:
     cat = str(op_attrs.get("category") or "")
     eng = str(op_attrs.get("engine") or "").upper()
     base = _STAGE_BY_CATEGORY.get(cat, "Other")
-    if base == "Copy":
-        if eng in {"MTE", "MTE2", "MTE3"}:
-            # Direction hint from reads/writes memory spaces is done later.
-            return "Copy"
-        return "Copy"
     if base == "Compute":
         if eng == "CUBE":
             return "ComputeCube"
         if eng == "VECTOR":
             return "ComputeVector"
-        return "Compute"
     return base
+
+
+def _mem_spaces(codemap: CodeMap, op_id: str) -> tuple[set[str], set[str]]:
+    src: set[str] = set()
+    dst: set[str] = set()
+    for _rel, buf in codemap.neighbors(op_id, kind=RelationKind.READS_BUFFER, direction="out"):
+        src.add(str(buf.attrs.get("memory_space") or "UNKNOWN"))
+    for _rel, buf in codemap.neighbors(op_id, kind=RelationKind.WRITES_BUFFER, direction="out"):
+        dst.add(str(buf.attrs.get("memory_space") or "UNKNOWN"))
+    return src, dst
+
+
+def _refine_copy_stage(src: set[str], dst: set[str]) -> str:
+    """GM→UB/L1 = CopyIn; UB/L1→GM = CopyOut; else InternalTransfer."""
+    src_gm = "GM" in src
+    dst_gm = "GM" in dst
+    src_local = bool(src & _LOCAL)
+    dst_local = bool(dst & _LOCAL)
+    if src_gm and dst_local:
+        return "CopyIn"
+    if src_local and dst_gm:
+        return "CopyOut"
+    if src or dst:
+        return "InternalTransfer"
+    return "Copy"
+
+
+def _reachable(adj: dict[str, set[str]], src: str, dst: str) -> bool:
+    if src == dst:
+        return True
+    seen = {src}
+    q: deque[str] = deque([src])
+    while q:
+        cur = q.popleft()
+        for nxt in adj.get(cur) or ():
+            if nxt == dst:
+                return True
+            if nxt not in seen:
+                seen.add(nxt)
+                q.append(nxt)
+    return False
+
+
+def _dep_order_graph(codemap: CodeMap) -> tuple[dict[str, set[str]], set[tuple[str, str]]]:
+    """Forward must-precede edges from HB + DATA_DEPENDS (not PRECEDES)."""
+    adj: dict[str, set[str]] = defaultdict(set)
+    raw_pairs: set[tuple[str, str]] = set()
+    for rel in codemap.relations.values():
+        kind = rel.kind_name()
+        if kind == RelationKind.HAPPENS_BEFORE.value:
+            adj[rel.src].add(rel.dst)
+        elif kind == RelationKind.DATA_DEPENDS_ON.value:
+            # Consumer → producer in link; producer must precede consumer.
+            adj[rel.dst].add(rel.src)
+            if str(rel.attrs.get("hazard") or "") == "RAW":
+                raw_pairs.add((rel.dst, rel.src))
+                raw_pairs.add((rel.src, rel.dst))
+    return adj, raw_pairs
 
 
 def analyze_kernel_pipeline(codemap: CodeMap) -> dict[str, Any]:
     """Build a derived pipeline view and store it in ``codemap.meta``."""
     ops = sorted(
         codemap.by_kind(EntityKind.OPERATION),
-        key=lambda e: (e.file, e.line_start, int(e.attrs.get("column") or 0), int(e.attrs.get("ordinal") or 0)),
+        key=lambda e: (
+            _exec_rank(e) if _exec_rank(e) >= 0 else 10**9,
+            e.file,
+            e.line_start,
+            int(e.attrs.get("column") or 0),
+            int(e.attrs.get("ordinal") or 0),
+        ),
     )
+
+    # 1) Classify + 2) refine Copy by src/dst memory BEFORE building stages.
+    copy_in = copy_out = internal = 0
+    for op in ops:
+        stage = _base_stage(op.attrs)
+        if stage == "Copy" and str(op.attrs.get("category") or "") == "memory_transfer":
+            src, dst = _mem_spaces(codemap, op.id)
+            stage = _refine_copy_stage(src, dst)
+            op.attrs["src_memory"] = sorted(src)
+            op.attrs["dst_memory"] = sorted(dst)
+            if stage == "CopyIn":
+                copy_in += 1
+            elif stage == "CopyOut":
+                copy_out += 1
+            elif stage == "InternalTransfer":
+                internal += 1
+        op.attrs["pipeline_stage_hint"] = stage
+
+    # 3) Stages after refine.
     stages: dict[str, list[dict[str, Any]]] = defaultdict(list)
     lanes: dict[str, list[str]] = defaultdict(list)
     for op in ops:
-        stage = _stage_for(op.attrs)
+        stage = str(op.attrs.get("pipeline_stage_hint") or _base_stage(op.attrs))
         row = {
             "id": op.id,
             "callee": op.name,
@@ -69,6 +154,7 @@ def analyze_kernel_pipeline(codemap: CodeMap) -> dict[str, Any]:
             "category": op.attrs.get("category"),
             "file": op.file,
             "line": op.line_start,
+            "exec_rank": _exec_rank(op),
             "stage": stage,
             "entry_reachable": op.attrs.get("entry_reachable", True),
         }
@@ -76,13 +162,8 @@ def analyze_kernel_pipeline(codemap: CodeMap) -> dict[str, Any]:
         eng = str(op.attrs.get("engine") or "UNKNOWN")
         lanes[eng].append(op.id)
 
-    # Overlap-capable pairs: consecutive program-order ops on different engines
-    # with no HAPPENS_BEFORE edge between them.
-    hb: set[tuple[str, str]] = set()
-    for rel in codemap.relations.values():
-        if rel.kind_name() == RelationKind.HAPPENS_BEFORE.value:
-            hb.add((rel.src, rel.dst))
-
+    # 4) Overlap: different engines, no dep-path (HB/DATA), no RAW.
+    dep_adj, raw_pairs = _dep_order_graph(codemap)
     precedes: list[tuple[str, str]] = []
     for rel in codemap.relations.values():
         if rel.kind_name() == RelationKind.PRECEDES.value:
@@ -98,7 +179,9 @@ def analyze_kernel_pipeline(codemap: CodeMap) -> dict[str, Any]:
         eb = str(b.attrs.get("engine") or "")
         if not ea or not eb or ea == eb or ea == "UNKNOWN" or eb == "UNKNOWN":
             continue
-        if (src, dst) in hb:
+        if (src, dst) in raw_pairs:
+            continue
+        if _reachable(dep_adj, src, dst) or _reachable(dep_adj, dst, src):
             continue
         overlap.append(
             {
@@ -111,41 +194,6 @@ def analyze_kernel_pipeline(codemap: CodeMap) -> dict[str, Any]:
             }
         )
 
-    # Refine Copy → CopyIn/CopyOut using GM involvement when available.
-    buffers = {e.id: e for e in codemap.by_kind(EntityKind.BUFFER)}
-    copy_in = 0
-    copy_out = 0
-    for rel in codemap.relations.values():
-        if rel.kind_name() == RelationKind.WRITES_BUFFER.value:
-            op = codemap.entities.get(rel.src)
-            buf = buffers.get(rel.dst)
-            if not op or not buf:
-                continue
-            if str(op.attrs.get("category")) != "memory_transfer":
-                continue
-            mem = str(buf.attrs.get("memory_space") or "")
-            if mem in {"UB", "L1", "L0A", "L0B", "L0C"}:
-                op.attrs["pipeline_stage_hint"] = "CopyIn"
-                copy_in += 1
-        if rel.kind_name() == RelationKind.READS_BUFFER.value:
-            op = codemap.entities.get(rel.src)
-            buf = buffers.get(rel.dst)
-            if not op or not buf:
-                continue
-            if str(op.attrs.get("category")) != "memory_transfer":
-                continue
-            mem = str(buf.attrs.get("memory_space") or "")
-            if mem in {"UB", "L1"} and str(op.attrs.get("pipeline_stage_hint") or "") != "CopyIn":
-                # reading UB often means compute source; GM write is CopyOut
-                pass
-        if rel.kind_name() == RelationKind.WRITES_BUFFER.value:
-            op = codemap.entities.get(rel.src)
-            buf = buffers.get(rel.dst)
-            if op and buf and str(buf.attrs.get("memory_space") or "") == "GM":
-                if str(op.attrs.get("category")) == "memory_transfer":
-                    op.attrs["pipeline_stage_hint"] = "CopyOut"
-                    copy_out += 1
-
     view = {
         "schema": "kernel/execution_pipeline/v1",
         "authority": "derived",
@@ -155,10 +203,12 @@ def analyze_kernel_pipeline(codemap: CodeMap) -> dict[str, Any]:
         "overlap_capable_count": len(overlap),
         "copy_in_hints": copy_in,
         "copy_out_hints": copy_out,
+        "internal_transfer_hints": internal,
         "operation_count": len(ops),
         "note": (
             "PIPELINE_STAGE is a derived view from operation DAG / engines / "
-            "buffer deps — not a canonical compiler fact."
+            "buffer deps — not a canonical compiler fact. Overlap requires "
+            "different engines, no HB/DATA path, and no RAW hazard."
         ),
     }
     codemap.meta["kernel_execution_pipeline"] = view

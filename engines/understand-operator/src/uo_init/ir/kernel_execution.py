@@ -35,6 +35,7 @@ class ExecOperation:
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
     execution_domain: str = "UNKNOWN"
+    exec_rank: int = -1
     provenance: str = "clang"
     confidence: str = "confirmed"
     registry_version: str = ""
@@ -57,6 +58,7 @@ class ExecOperation:
             "reads": list(self.reads),
             "writes": list(self.writes),
             "execution_domain": self.execution_domain,
+            "exec_rank": int(self.exec_rank),
             "provenance": self.provenance,
             "confidence": self.confidence,
             "registry_version": self.registry_version,
@@ -145,6 +147,7 @@ class SyncEvent:
     guards: list[str] = field(default_factory=list)
     loop_stack: list[str] = field(default_factory=list)
     operation_id: str = ""
+    exec_rank: int = -1
     provenance: str = "clang"
     confidence: str = "confirmed"
 
@@ -166,8 +169,31 @@ class SyncEvent:
             "guards": list(self.guards),
             "loop_stack": list(self.loop_stack),
             "operation_id": self.operation_id,
+            "exec_rank": int(self.exec_rank),
             "provenance": self.provenance,
             "confidence": self.confidence,
+        }
+
+
+@dataclass
+class FunctionExecSummary:
+    """Lightweight per-function execution summary (not full CFG)."""
+
+    function: str
+    entity_id: str = ""
+    op_count: int = 0
+    call_count: int = 0
+    entry_rank: int = -1
+    exit_rank: int = -1
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "function": self.function,
+            "entity_id": self.entity_id,
+            "op_count": self.op_count,
+            "call_count": self.call_count,
+            "entry_rank": self.entry_rank,
+            "exit_rank": self.exit_rank,
         }
 
 
@@ -210,6 +236,7 @@ class KernelExecutionIR:
     buffer_views: list[BufferView] = field(default_factory=list)
     sync_events: list[SyncEvent] = field(default_factory=list)
     regions: list[ExecRegion] = field(default_factory=list)
+    function_summaries: list[FunctionExecSummary] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     registry_version: str = ""
 
@@ -222,6 +249,7 @@ class KernelExecutionIR:
             "buffer_views": len(self.buffer_views),
             "sync_events": len(self.sync_events),
             "regions": len(self.regions),
+            "function_summaries": len(self.function_summaries),
             "notes": list(self.notes),
             "detail": {
                 "operations": [o.to_dict() for o in self.operations],
@@ -229,5 +257,6 @@ class KernelExecutionIR:
                 "buffer_views": [v.to_dict() for v in self.buffer_views],
                 "sync_events": [s.to_dict() for s in self.sync_events],
                 "regions": [r.to_dict() for r in self.regions],
+                "function_summaries": [f.to_dict() for f in self.function_summaries],
             },
         }

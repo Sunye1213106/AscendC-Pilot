@@ -136,25 +136,15 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     backups: dict[Path, bytes | None] = {}
 
     if action_id == "human_confirm":
-        # Use the domain engine's canonical confirmation path: it rechecks merge,
-        # domain symmetry, full CSV closure, audit completeness, and writes the
-        # UO fingerprint before status can become confirmed.
-        from ascendc_pilot.workflows import resolve_tg_mode
-
-        mode = resolve_tg_mode(project_root)
-        require_merge = mode == "csv_consumer"
+        # Use the domain engine's canonical confirmation path: it rechecks
+        # audit completeness and writes the UO fingerprint before status can
+        # become confirmed. The csv_consumer merge/domain-symmetry/CSV-closure
+        # path was removed; full-TK confirmation never requires it.
         watched = [
             tg / "init" / "status.yaml",
             tg / "init" / "kb_fingerprint.yaml",
             tg / "init" / "confirmation.yaml",
         ]
-        if require_merge:
-            watched.extend(
-                [
-                    tg / "realization" / "domain_review.yaml",
-                    tg / "realization" / "binding_lexicon.yaml",
-                ]
-            )
         backups = {candidate: candidate.read_bytes() if candidate.is_file() else None for candidate in watched}
         try:
             from testcase_agent.init_status import mark_init_confirmed
@@ -162,7 +152,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
             mark_init_confirmed(
                 tg,
                 notes="Confirmed by Pilot primary_interactive Action",
-                require_merge=require_merge,
+                require_merge=False,
             )
         except Exception as exc:  # noqa: BLE001
             rollback_primary_decision({"backups": backups})
@@ -178,7 +168,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
             {
                 "schema": "tg-init-confirmation/v1",
                 "status": "confirmed",
-                "mode": mode,
+                "mode": "tilingkey_full_coverage",
                 "confirmed_at": now,
                 **identity,
             },

@@ -24,12 +24,12 @@ def _seed_manifest(root: Path) -> None:
     path.write_text("op_name: synth_tg\n", encoding="utf-8")
 
 
-def _select_csv_consumer_mode(root: Path) -> None:
-    """These engines only do work in the CSV-consumer mode.
+def _select_legacy_csv_mode(root: Path) -> None:
+    """csv_consumer was a legacy mode string; the stack backing it is fully removed.
 
-    Under the default ``tilingkey_full_coverage`` overlay ``z3_solve`` is a
-    declared no-op and ``contract_build`` reports missing KB layers instead of
-    the consumer root, so asserting either against the base mode tests nothing.
+    Any mode outside tilingkey_full_coverage/tilingkey_full is rejected by the
+    (now sole) full-TK engine implementations instead of falling back to a
+    dead CSV code path.
     """
     path = tg_root(root) / "init" / "init_intent.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -38,15 +38,15 @@ def _select_csv_consumer_mode(root: Path) -> None:
     )
 
 
-def test_tg_contract_build_requires_consumer_root(tmp_path: Path) -> None:
+def test_tg_contract_build_rejects_removed_csv_consumer_mode(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
     _seed_manifest(root)
-    _select_csv_consumer_mode(root)
+    _select_legacy_csv_mode(root)
     result = invoke_engine(root, "tg-init", "contract_build", ctx={"op_name": "synth_tg"})
     assert result.get("ok") is False
-    assert "TEST_SCRIPT_ROOT" in str(result.get("error") or "")
+    assert "csv_consumer" in str(result.get("error") or "")
 
 
 def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
@@ -66,39 +66,40 @@ def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
     assert not marker.is_file()
 
 
-def test_tg_z3_solve_not_marker_only(tmp_path: Path) -> None:
+def test_tg_z3_solve_action_removed(tmp_path: Path) -> None:
+    """z3_solve / cover_confirm / bind_merge / mid_nest were deleted with csv_consumer."""
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
     _seed_manifest(root)
-    _select_csv_consumer_mode(root)
     result = invoke_engine(root, "tg-solve", "z3_solve", ctx={"op_name": "synth_tg"})
     assert result.get("ok") is False
+    assert "no deterministic engine" in str(result.get("error") or "")
     marker = tg_root(root) / "realization" / "pilot_z3_solve.yaml"
     assert not marker.is_file()
 
 
 def test_output_contracts_require_concrete_tg_artifacts() -> None:
-    assert OUTPUT_CONTRACT_PATHS["csv-contract-v1"] != ["tg"]
-    joined = ",".join(OUTPUT_CONTRACT_PATHS["csv-contract-v1"])
-    assert "realization_map.yaml" in joined
-    assert "binding_inventory.yaml" in joined
-    assert "llm_bind_prompt_bundle.yaml" in joined
-    assert "binding_gaps.yaml" in joined
-    assert "unresolved.yaml" in joined
+    assert "csv-contract-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "z3-solve-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "cover-confirm-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "bind-merge-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "mid-nest-v1" not in OUTPUT_CONTRACT_PATHS
+    joined = ",".join(OUTPUT_CONTRACT_PATHS["tilingkey-contract-v1"])
+    assert "tilingkey_contract.yaml" in joined
     assert "understand_contract.json" in joined
+    assert "binding_inventory.yaml" in ",".join(OUTPUT_CONTRACT_PATHS["tilingkey-binding-v1"])
     assert OUTPUT_CONTRACT_PATHS["plan-scope-v1"] == ["tg/plan/levels/*/plan_scope.yaml"]
     assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == ["tg/plan/levels/*/human_supplement.yaml"]
-    assert "tg/solve/**/realize_report.yaml" in OUTPUT_CONTRACT_PATHS["cover-confirm-v1"]
     assert "plan-build-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
-    assert "z3-solve-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
+    assert "z3-solve-v1" not in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 
 
 def test_tg_init_agents_omit_dead_csv_contract_producer() -> None:
     agents = {a["id"] for a in WORKFLOWS["tg-init"]["agents"]}
     assert "tg-csv-contract" not in agents
+    assert "tg-semantic-bind" not in agents
     assert "deterministic-tg-engine" in agents
-    assert "tg-semantic-bind" in agents
 
 
 def test_plan_build_contract_rejects_empty_dir(tmp_path: Path) -> None:

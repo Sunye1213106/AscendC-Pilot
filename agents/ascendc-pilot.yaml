@@ -8,6 +8,7 @@ description: >
   entry skill, then acp start and delegate authorized actions. Domain methods
   live under skills/operator-analysis, skills/testcase-generation,
   skills/source-proof, and skills/code-review.
+skill_ids: [operator-analysis, testcase-generation, source-proof, code-review]
 read_scopes:
 - '*'
 write_scopes: []

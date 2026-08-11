@@ -7,9 +7,12 @@ kind: deterministic_engine
 role: deterministic_engine
 mode: subagent
 description: TG deterministic engine
+skill_ids: [testcase-generation, operator-analysis, source-proof]
 read_scopes:
 - tg/**
 - uo/**
+- ../uo/**
+- local/**
 - runs/**
 - context/**
 - skills/testcase-generation/**
@@ -17,6 +20,7 @@ read_scopes:
 - skills/source-proof/**
 write_scopes:
 - tg/**
+- runs/**
 - runs/**/actions/**
 - context/pilot_params.yaml
 forbidden:

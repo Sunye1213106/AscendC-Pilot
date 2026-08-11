@@ -308,6 +308,20 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     if low_conf_entities or low_conf_relations:
         warn("LOW_CONFIDENCE_FACTS", f"entities={len(low_conf_entities)} relations={len(low_conf_relations)}")
 
+    # Meta-only Kernel execution quality (does not block verify).
+    ke = codemap.meta.get("kernel_execution") if isinstance(codemap.meta, dict) else None
+    kernel_exec_quality: dict[str, Any] | None = None
+    if isinstance(ke, dict) and not ke.get("skipped"):
+        quality = dict(ke.get("quality") or {})
+        quality.setdefault("ops", ke.get("operations"))
+        quality.setdefault("buffers", ke.get("buffers"))
+        quality.setdefault("sync_events", ke.get("sync_events"))
+        quality.setdefault("sync_paired", ke.get("sync_paired"))
+        quality.setdefault("data_deps_total", ke.get("data_deps_total"))
+        quality.setdefault("emits_sync", ke.get("emits_sync"))
+        quality.setdefault("buffer_lifecycles", ke.get("buffer_lifecycles"))
+        kernel_exec_quality = quality
+
     return {
         "ok": not blocking,
         "op_name": codemap.op_name,
@@ -322,6 +336,7 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         "tiling_key_unrooted": unrooted_keys,
         "tiling_key_producer_missing": producer_missing,
         "tiling_key_evidence": evidence_rows,
+        "kernel_execution_quality": kernel_exec_quality,
         "counts": {
             "inputs": len(inputs), "tensor_inputs": len(tensor_inputs), "attributes": len(attributes), "outputs": len(outputs),
             "host_entities": len(hosts), "tiling_keys": len(keys), "source_declared_tiling_keys": source_key_count,

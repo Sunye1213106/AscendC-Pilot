@@ -80,6 +80,8 @@ _KB_EDGE_MAP: dict[str, RelationKind] = {
     "SYNCHRONIZES_WITH": RelationKind.SYNCHRONIZES_WITH,
     "HAPPENS_BEFORE": RelationKind.HAPPENS_BEFORE,
     "EXECUTES_ON": RelationKind.EXECUTES_ON,
+    "EMITS_SYNC": RelationKind.EMITS_SYNC,
+    "DATA_DEPENDS_ON": RelationKind.DATA_DEPENDS_ON,
     # Legacy KB edge names.
     "writes": RelationKind.WRITES,
     "reads": RelationKind.READS,

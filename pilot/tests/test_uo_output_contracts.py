@@ -21,7 +21,7 @@ def test_uo_init_contracts_aligned() -> None:
     )
     assert "input-derivable-patch-v1" not in OUTPUT_CONTRACT_PATHS
     assert "key-triage-v1" not in OUTPUT_CONTRACT_PATHS
-    assert "extract-plan-v1" not in OUTPUT_CONTRACT_PATHS or True  # may linger unused
+    assert "extract-plan-v1" not in OUTPUT_CONTRACT_PATHS
 
 
 def test_uo_update_contracts_aligned() -> None:

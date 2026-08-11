@@ -23,10 +23,9 @@ closure = [
 ]
 
 [project.scripts]
-# tg-contract removed from public CLI — invoke via acp run-action contract_build
-tg-plan = "testcase_agent.cli:plan_main"
-tg-solve = "testcase_agent.cli:solve_main"
-tg-init = "testcase_agent.cli:init_main"
+# tg-contract / tg-plan / tg-solve / tg-init (testcase_agent.cli) removed with the
+# csv_consumer stack — the pilot's tilingkey_full_coverage flow now owns
+# contract_build / plan / solve via `acp run-action` (ascendc_pilot.actions.engines).
 tg-closure = "testcase_agent.closure.cli:main"
 
 [tool.setuptools.packages.find]

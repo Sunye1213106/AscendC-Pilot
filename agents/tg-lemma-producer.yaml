@@ -5,12 +5,14 @@ role: producer
 mode: subagent
 description: Bounded lemma producer. Read session prompt.md first, then skills/source-proof/SKILL.md.
   Write staging certificates only.
+skill_ids: [source-proof, testcase-generation, operator-analysis]
 read_scopes:
 - tg/closure/lemmas/leads.yaml
 - tg/closure/**
 - uo/ir/**
 - uo/tiling/**
 - uo/**
+- ../uo/**
 - runs/**
 - context/**
 - skills/testcase-generation/**

@@ -1,0 +1,18 @@
+schema: tg-closure-round-analysis/v1
+blame: null
+distance_histogram: {}
+mostly_distance_1: false
+open_patterns: null
+pattern_dims: null
+r_witness_values: null
+reason: PROOF_BLOCKED
+state:
+  declared: 3
+  R: 0
+  E: 0
+  gap: 3
+  violation: 0
+target_hit_rate: null
+rewrite_share: null
+new_R: null
+timestamp: 1786445047.0365472

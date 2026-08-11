@@ -31,6 +31,25 @@ def _site_key(event: dict[str, Any]) -> tuple[str, int, int]:
     )
 
 
+def _exec_rank(event: dict[str, Any]) -> int:
+    try:
+        return int(event.get("exec_rank") if event.get("exec_rank") is not None else -1)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _precedes(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """True iff ``a`` is strictly before ``b`` in execution / program order."""
+    ra, rb = _exec_rank(a), _exec_rank(b)
+    if ra >= 0 and rb >= 0:
+        return ra < rb
+    _afun, aline, acol = _site_key(a)
+    bfun, bline, bcol = _site_key(b)
+    if _afun != bfun:
+        return False
+    return aline < bline or (aline == bline and acol <= bcol)
+
+
 def pair_events(
     events: Iterable[dict[str, Any]],
     *,
@@ -39,6 +58,8 @@ def pair_events(
     """Pair SetFlag/WaitFlag only when identity is unambiguous or nearest-preceding.
 
     Missing or still-ambiguous candidates stay explicit unresolved outcomes.
+    Nearest preceding prefers ``exec_rank`` when present; otherwise same-function
+    (line, column) order.
     """
     producers: dict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
     waits: list[dict[str, Any]] = []
@@ -63,23 +84,22 @@ def pair_events(
             producer = candidates[0]
             confidence = "confirmed"
         elif prefer_nearest_preceding:
-            wfun, wline, wcol = _site_key(wait)
+            wfun = str(wait.get("function") or "")
             preceding = [
                 c
                 for c in candidates
-                if str(c.get("function") or "") == wfun
-                and (
-                    int(c.get("line") or 0) < wline
-                    or (
-                        int(c.get("line") or 0) == wline
-                        and int(c.get("column") or 0) <= wcol
-                    )
-                )
+                if str(c.get("function") or "") == wfun and _precedes(c, wait)
             ]
             if not preceding:
                 status = "MULTIPLE_PAIR_CANDIDATES"
             else:
-                preceding.sort(key=lambda c: (int(c.get("line") or 0), int(c.get("column") or 0)))
+                preceding.sort(
+                    key=lambda c: (
+                        _exec_rank(c) if _exec_rank(c) >= 0 else 10**9,
+                        int(c.get("line") or 0),
+                        int(c.get("column") or 0),
+                    )
+                )
                 producer = preceding[-1]
                 status = "PAIRED"
                 confidence = "partial"
