@@ -159,7 +159,7 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
 # Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
 
-foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator")) {
+foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator","operator-analysis","testcase-generation","source-proof","code-review","_shared")) {
   $target = Join-Path $Dest "skills\$name"
   if (-not (Test-Path -LiteralPath $target)) {
     throw "generated skill missing: $target (compose/copy failed)"

@@ -9,14 +9,16 @@ resolves them from the Ascend C repository conventions instead:
     op_kernel/<snake>_apt.cpp | <snake>.cpp       kernel entry
     op_kernel/<arch>/<snake>_template_tiling_key.h TilingKey DSL
 
-Which files those roles draw from is decided by `scope_scan`, which reads the
-directory layout and the include graph rather than file names, so shared
-headers a domain keeps beside its operators come along. The globs here remain
-as a fallback for a tree the scan cannot make sense of.
+Which files those roles draw from is decided by `scope_scan`, which bootstraps
+from the directory layout and include graph, then (during prepare/extract) is
+enriched with Clang's real dependency closure so shared headers a domain keeps
+beside its operators come along. The globs here remain as a fallback for a
+tree the scan cannot make sense of.
 
 A repository that does not follow the convention can pin the answer with
-`spec/operators/<op>.yaml`; discovery reports ambiguities rather than guessing
-so `scope_confirm` knows when it must ask a human.
+`spec/operators/<op>.yaml`; discovery reports ambiguities rather than guessing.
+`scope_validate` turns hard failures into blockers — it never asks a human to
+confirm a file list once operator + arch are fixed.
 """
 from __future__ import annotations
 
@@ -75,10 +77,11 @@ class OpSpec:
 
     @property
     def op_needle(self) -> str:
-        """Substring used to tell operator-owned source from library headers.
+        """Legacy path substring for callers without a ScopeSet.
 
-        The first two words of the snake name are specific enough to exclude
-        CANN headers without excluding the operator's own files.
+        Prefer ScopeSet / Clang closure membership. The first two words of the
+        snake name exclude most CANN headers but also miss sibling ``common/``
+        paths — walkers must pass ``scope=`` so shared AST nodes are kept.
         """
         parts = self.op_snake.split("_")
         return "_".join(parts[:2]) if len(parts) >= 2 else self.op_snake

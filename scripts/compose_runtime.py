@@ -24,7 +24,7 @@ _FORBIDDEN_PATTERNS = [
     re.compile(r"(?i)\bpython\s+.*\b(tg-init|tg-plan|tg-solve|build_layered_kb)\b"),
 ]
 
-# Shared policies injected into both workflow skills and agents (same set).
+# Shared policies injected into both workflow entry skills and agents (same set).
 COMPOSE_POLICY_IDS: tuple[str, ...] = (
     "pilot-control",
     "language",
@@ -33,6 +33,94 @@ COMPOSE_POLICY_IDS: tuple[str, ...] = (
     "source-authority",
     "output-quality",
 )
+
+# True Skills (model-facing expertise). Workflow slash entries are generated shells.
+COGNITIVE_SKILL_IDS: tuple[str, ...] = (
+    "operator-analysis",
+    "testcase-generation",
+    "source-proof",
+    "code-review",
+)
+
+# Slash / discovery entry metadata. Body is generated from Spec; no skills/workflows source.
+WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
+    "uo-init": {
+        "description": (
+            "首次构建 AscendC `.uo` CodeMap：机器解析范围与 BuildVariant、抽取 CompilerFacts、"
+            "运行确定性 CodeMap Pass、只消解显式语义缺口、写入并审查单一 `.uo`。"
+            "用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。"
+            "prepare 为确定性步骤：用户定 operator+arch，编译器定 Source Scope，无人工文件清单确认。"
+        ),
+        "skill_id": "operator-analysis",
+    },
+    "uo-update": {
+        "description": (
+            "在已有 `.uo` 上根据源码变更执行确定性增量刷新、重建受影响 CodeMap 关系、"
+            "校验完整性并输出差异摘要。用户要求刷新已有 UO/CodeMap 或查看源码变更对 CodeMap 的影响时使用。"
+        ),
+        "skill_id": "operator-analysis",
+    },
+    "uo-query": {
+        "description": (
+            "只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、"
+            "Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有 UO 内容、"
+            "某个 KEY/字段/路径或 CodeMap 完整性时使用。"
+        ),
+        "skill_id": "operator-analysis",
+    },
+    "ce-review": {
+        "description": (
+            "基于 KB 的代码审查 / code review / 查 bug。用户要审查算子代码时加载。"
+            "Pilot 管阶段；加载后执行 acp start ce-review。"
+        ),
+        "skill_id": "code-review",
+    },
+    "tg-init": {
+        "description": (
+            "测例契约与绑定：变量/IO/TilingKey 维信息提取。用户说 tg-init、建测例契约、"
+            "tilingkey 绑定时加载。默认 tilingkey_full_coverage（无需 CSV）。"
+            "Pilot 管阶段；加载后 acp start tg-init。"
+        ),
+        "skill_id": "testcase-generation",
+    },
+    "tg-plan": {
+        "description": (
+            "制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey；"
+            "指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。"
+        ),
+        "skill_id": "testcase-generation",
+    },
+    "tg-solve": {
+        "description": (
+            "执行已批准 TG Plan：对 target set T 构造/replay case，用真实 Host witness 扩大 R，"
+            "对残差按需推导源码引理扩大 E，直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。"
+        ),
+        "skill_id": "testcase-generation",
+    },
+    "operator": {
+        "description": (
+            "可选助手：列出可用 Pilot workflow entry，或把 /uo-init 等 slash 转给 acp route。"
+            "自然语言意图请直接加载对应 entry，不要依赖本入口做口语路由。"
+        ),
+        "skill_id": "",
+    },
+}
+
+# Capability id → repo-relative directory (tools / pilot runtime / gates).
+CAPABILITY_DIRS: dict[str, str] = {
+    "source-reading": "tools/source/source-reading",
+    "source-navigation": "tools/source/source-navigation",
+    "readonly-source-search": "tools/source/readonly-source-search",
+    "kb-query": "tools/codemap/kb-query",
+    "structured-ir-query": "tools/codemap/structured-ir-query",
+    "action-scratch": "pilot/runtime/action-scratch",
+    "bounded-semantic-batch": "pilot/runtime/bounded-semantic-batch",
+    "sharded-llm-producer": "pilot/runtime/sharded-llm-producer",
+    "sharded-semantic-producer": "pilot/runtime/sharded-semantic-producer",
+    "semantic-resolution": "pilot/runtime/semantic-resolution",
+    "producer-self-check": "pilot/gates/producer-self-check",
+    "contract-building": "pilot/gates/contract-building",
+}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -120,27 +208,27 @@ def _repo_paths(repo: Path) -> dict[str, Path]:
         "skills": repo / "skills",
         "prompts": repo / "prompts",
         "agents": repo / "agents",
+        "policies": repo / "pilot" / "policies",
+        "hosts": repo / "adapters" / "hosts",
         "out": repo / "generated",
     }
 
 
-def _read_policy(skills: Path, pid: str) -> str:
-    p = skills / "policies" / pid / "POLICY.md"
+def _capability_dir(repo: Path, cid: str) -> Path:
+    rel = CAPABILITY_DIRS.get(cid)
+    if not rel:
+        return repo / "tools" / "_unknown" / cid
+    return repo / Path(rel)
+
+
+def _read_policy(repo: Path, pid: str) -> str:
+    p = repo / "pilot" / "policies" / pid / "POLICY.md"
     return p.read_text(encoding="utf-8") if p.is_file() else ""
 
 
-def _read_capability(skills: Path, cid: str) -> tuple[dict[str, Any], str]:
-    d = skills / "capabilities" / cid
+def _read_capability(repo: Path, cid: str) -> tuple[dict[str, Any], str]:
+    d = _capability_dir(repo, cid)
     return _load_yaml(d / "capability.yaml"), (d / "METHOD.md").read_text(encoding="utf-8") if (d / "METHOD.md").is_file() else ""
-
-
-def _read_action(skills: Path, method_id: str) -> tuple[dict[str, Any], str]:
-    # method_id like uo-init/key-resolution
-    parts = method_id.split("/", 1)
-    if len(parts) != 2:
-        return {}, ""
-    d = skills / "actions" / parts[0] / parts[1]
-    return _load_yaml(d / "action.yaml"), (d / "METHOD.md").read_text(encoding="utf-8") if (d / "METHOD.md").is_file() else ""
 
 
 def _scan_forbidden(path: Path, text: str, errors: list[str]) -> None:
@@ -164,13 +252,14 @@ _DOMAIN_HARNESS_PATTERNS = [
 
 
 def validate_domain_skills(repo: Path) -> list[str]:
-    """Lint Agent-facing domain skills: frontmatter, line budget, no harness leakage."""
+    """Lint model-facing cognitive skills: frontmatter, line budget, no harness leakage."""
     errors: list[str] = []
-    domain_root = repo / "skills" / "domain"
-    if not domain_root.is_dir():
-        errors.append("missing skills/domain/")
-        return errors
-    for skill_md in sorted(domain_root.glob("*/SKILL.md")):
+    skills_root = repo / "skills"
+    for skill_id in COGNITIVE_SKILL_IDS:
+        skill_md = skills_root / skill_id / "SKILL.md"
+        if not skill_md.is_file():
+            errors.append(f"missing cognitive skill: skills/{skill_id}/SKILL.md")
+            continue
         text = skill_md.read_text(encoding="utf-8")
         try:
             meta, body = _require_skill_frontmatter(text, path=skill_md)
@@ -181,20 +270,48 @@ def validate_domain_skills(repo: Path) -> list[str]:
             errors.append(f"{skill_md.as_posix()}: missing frontmatter name")
         if not str(meta.get("description") or "").strip():
             errors.append(f"{skill_md.as_posix()}: missing frontmatter description")
-        # Count non-empty lines in full file (progressive-disclosure budget).
         n_lines = len(text.splitlines())
         if n_lines > 200:
             errors.append(
                 f"DOMAIN_SKILL_TOO_LONG {skill_md.as_posix()}: {n_lines} lines > 200"
             )
+        gotchas = skills_root / skill_id / "references" / "gotchas.md"
+        if not gotchas.is_file():
+            errors.append(f"DOMAIN_MISSING_GOTCHAS {gotchas.as_posix()}")
         for i, line in enumerate(body.splitlines(), 1):
             for pat in _DOMAIN_HARNESS_PATTERNS:
                 if pat.search(line):
                     errors.append(
                         f"DOMAIN_HARNESS_LEAK {skill_md.as_posix()}:{i}: "
-                        f"pattern {pat.pattern!r} belongs in Harness, not domain Skill"
+                        f"pattern {pat.pattern!r} belongs in Harness, not Skill"
                     )
     return errors
+
+
+def _entry_skill_shell(wid: str, *, skill_id: str = "") -> str:
+    """Thin slash entry body (orchestration pointer only)."""
+    lines = [
+        f"# {wid}",
+        "",
+        "Pilot workflow entry. Orchestration authority: `pilot/.../workflows/specs.py`.",
+        "",
+    ]
+    if skill_id:
+        lines.append(f"Domain method: `skills/{skill_id}/SKILL.md`.")
+        lines.append("")
+    lines.extend(
+        [
+            "Run via `acp start` / `next` / `run-action` / `advance` / `complete`.",
+            "",
+            "## Actions",
+            "",
+            "<!-- BEGIN GENERATED ACTIONS -->",
+            "",
+            "<!-- END GENERATED ACTIONS -->",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 
@@ -236,136 +353,43 @@ def _scope_overlap_errors(producer_writes: set[str], referee_writes: set[str]) -
 
 
 def sync_action_yaml_mirrors(repo: Path) -> list[str]:
-    """Rewrite skills/actions/**/action.yaml identity fields from Workflow Spec."""
-    errors: list[str] = []
-    if yaml is None:
-        return ["PyYAML required for action.yaml mirrors"]
-    sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
-
-    skills = repo / "skills"
-    for wid, meta in WORKFLOWS.items():
-        if meta.get("reserved") or not meta.get("slash"):
-            continue
-        for action in meta.get("actions") or []:
-            if not isinstance(action, dict):
-                continue
-            mid = str(action.get("action_method_id") or "")
-            if "/" not in mid:
-                continue
-            wf, name = mid.split("/", 1)
-            # Source action.yaml is owned by the method-path workflow prefix only.
-            # Cross-workflow reused methods (e.g. uo-update → uo-init/key-triage) are
-            # mirrored into generated/<host>/skills/<wid>/actions/ instead.
-            if wf != wid:
-                continue
-            adir = skills / "actions" / wf / name
-            if not (adir / "METHOD.md").is_file():
-                continue
-            existing = _load_yaml(adir / "action.yaml")
-            extras = {
-                k: v
-                for k, v in existing.items()
-                if k
-                not in {
-                    "id",
-                    "workflow_id",
-                    "role_id",
-                    "agent_id",
-                    "execution_mode",
-                    "capabilities",
-                    "policies",
-                    "task_prompt_id",
-                    "context_profile_id",
-                    "output_contract_id",
-                    "allowed_write_paths",
-                    "forbidden_write_paths",
-                    "allowed_read_paths",
-                    "forbidden_read_paths",
-                    "checker",
-                    "referee",
-                    "generated_from",
-                }
-            }
-            mirrored = _spec_action_yaml(wid, action, extras=extras)
-            adir.mkdir(parents=True, exist_ok=True)
-            (adir / "action.yaml").write_text(
-                "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
-                + yaml.safe_dump(mirrored, allow_unicode=True, sort_keys=False),
-                encoding="utf-8",
-            )
-    return errors
+    """No-op: Action identity lives only in Workflow Spec (no skills/actions source tree)."""
+    del repo
+    return []
 
 
 def sync_skill_action_markers(repo: Path) -> list[str]:
-    """Fill source Skill GENERATED ACTIONS markers from Workflow Spec."""
-    errors: list[str] = []
-    sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
-
-    skills = repo / "skills"
-    for wid, meta in WORKFLOWS.items():
-        if meta.get("reserved") or not meta.get("slash"):
-            continue
-        skill_path = skills / "workflows" / wid / "SKILL.md"
-        if not skill_path.is_file():
-            continue
-        raw = skill_path.read_text(encoding="utf-8")
-        try:
-            front, body = _require_skill_frontmatter(raw, path=skill_path)
-        except ValueError as exc:
-            errors.append(str(exc))
-            continue
-        new_body = _replace_actions_table(body, meta)
-        # Count actions in generated block
-        begin = "<!-- BEGIN GENERATED ACTIONS -->"
-        end = "<!-- END GENERATED ACTIONS -->"
-        if begin in new_body and end in new_body:
-            block = new_body.split(begin, 1)[1].split(end, 1)[0]
-            found = set(
-                re.findall(r"(?m)^\|\s*`([a-z0-9_]+)`\s*\|", block)
-            )
-            expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
-            if found != expected:
-                errors.append(
-                    f"SKILL_ACTION_SET_DRIFT {wid}: generated={sorted(found)} spec={sorted(expected)}"
-                )
-        out = _dump_frontmatter(front) + "\n" + new_body.lstrip("\n")
-        skill_path.write_text(out, encoding="utf-8")
-    return errors
+    """No-op: workflow entry Skills are generated from Spec + WORKFLOW_ENTRIES."""
+    del repo
+    return []
 
 
 def check_skill_action_markers(repo: Path) -> list[str]:
-    """Read-only: verify source Skill GENERATED ACTIONS markers match Workflow Spec."""
+    """Verify every slash workflow has an entry description and Spec actions."""
     errors: list[str] = []
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
 
-    skills = repo / "skills"
-    begin = "<!-- BEGIN GENERATED ACTIONS -->"
-    end = "<!-- END GENERATED ACTIONS -->"
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved") or not meta.get("slash"):
             continue
-        skill_path = skills / "workflows" / wid / "SKILL.md"
-        if not skill_path.is_file():
+        entry = WORKFLOW_ENTRIES.get(wid)
+        if not entry or not str(entry.get("description") or "").strip():
+            errors.append(f"SKILL_ENTRY_MISSING {wid}: add WORKFLOW_ENTRIES description")
             continue
-        text = skill_path.read_text(encoding="utf-8")
-        if begin not in text or end not in text:
-            errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: missing GENERATED ACTIONS markers")
-            continue
-        block = text.split(begin, 1)[1].split(end, 1)[0]
-        found = set(re.findall(r"(?m)^\|\s*`([a-z0-9_]+)`\s*\|", block))
+        skill_id = str(entry.get("skill_id") or "").strip()
+        if skill_id and skill_id not in COGNITIVE_SKILL_IDS:
+            errors.append(f"SKILL_ENTRY_BAD_SKILL {wid}: unknown skill_id {skill_id!r}")
         expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
-        if found != expected:
-            errors.append(
-                f"SKILL_ACTION_SET_DRIFT {wid}: generated={sorted(found)} spec={sorted(expected)}"
-            )
+        if not expected:
+            errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: Spec has no actions")
+    if "operator" not in WORKFLOW_ENTRIES:
+        errors.append("SKILL_ENTRY_MISSING operator: add WORKFLOW_ENTRIES description")
     return errors
 
 
 def sync_sources(repo: Path) -> list[str]:
-    """Write path: refresh action.yaml mirrors and Skill action markers from Spec."""
+    """Write path: Spec is authority; nothing to sync into skills/workflows."""
     errors: list[str] = []
     errors.extend(sync_action_yaml_mirrors(repo))
     errors.extend(sync_skill_action_markers(repo))
@@ -427,31 +451,22 @@ def validate(repo: Path) -> list[str]:
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved") or meta.get("alias_of") or not meta.get("slash"):
             continue
-        skill_md = skills / "workflows" / wid / "SKILL.md"
-        if not skill_md.is_file():
-            errors.append(f"missing workflow skill: {skill_md}")
-        else:
-            try:
-                _require_skill_frontmatter(skill_md.read_text(encoding="utf-8"), path=skill_md)
-            except ValueError as exc:
-                errors.append(str(exc))
+        entry = WORKFLOW_ENTRIES.get(wid)
+        if not entry or not str(entry.get("description") or "").strip():
+            errors.append(f"missing WORKFLOW_ENTRIES for {wid}")
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
                 continue
             aid = action.get("id")
             for pid in action.get("policy_ids") or []:
-                if not (skills / "policies" / pid / "POLICY.md").is_file():
+                if not (repo / "pilot" / "policies" / pid / "POLICY.md").is_file():
                     errors.append(f"{wid}/{aid}: missing policy {pid}")
             for cid in action.get("capability_ids") or []:
-                if not (skills / "capabilities" / cid / "capability.yaml").is_file():
+                if not (_capability_dir(repo, str(cid)) / "capability.yaml").is_file():
                     errors.append(f"{wid}/{aid}: missing capability {cid}")
             mid = action.get("action_method_id")
-            if mid:
-                _, method = _read_action(skills, str(mid))
-                if not method:
-                    errors.append(f"{wid}/{aid}: missing action method {mid}")
-                else:
-                    _scan_forbidden(Path(str(mid)), method, errors)
+            if not mid:
+                errors.append(f"{wid}/{aid}: missing action_method_id")
             tpid = action.get("task_prompt_id")
             if tpid:
                 p = prompts / "tasks" / f"{tpid}.md"
@@ -481,18 +496,9 @@ def validate(repo: Path) -> list[str]:
             # Primary must not be declared as subagent execution.
             if action.get("execution_mode") == "subagent" and agent_id == "ascendc-pilot":
                 errors.append(f"{wid}/{aid}: primary agent cannot use subagent execution_mode")
-            # action.yaml must mirror Spec when this workflow owns the method path.
-            mid = action.get("action_method_id")
-            if mid:
-                parts = str(mid).split("/", 1)
-                ayaml, _method = _read_action(skills, str(mid))
-                if ayaml and len(parts) == 2 and parts[0] == wid:
-                    drift = _action_yaml_drift(wid, action, ayaml)
-                    errors.extend(drift)
 
-    # operator workflow skill required
-    if not (skills / "workflows" / "operator" / "SKILL.md").is_file():
-        errors.append("missing workflows/operator/SKILL.md")
+    if "operator" not in WORKFLOW_ENTRIES:
+        errors.append("missing WORKFLOW_ENTRIES for operator")
 
     return errors
 
@@ -614,15 +620,15 @@ def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
     return body.rstrip() + "\n\n" + wrapped
 
 
-def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
-    src = skills / "workflows" / wid / "SKILL.md"
-    raw = src.read_text(encoding="utf-8") if src.is_file() else f"---\nname: {wid}\ndescription: {wid}\n---\n\n# {wid}\n"
-    _, body = _require_skill_frontmatter(raw, path=src if src.is_file() else None)
+def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any]) -> str:
+    entry = WORKFLOW_ENTRIES.get(wid) or {}
+    skill_id = str(entry.get("skill_id") or "")
+    body = _entry_skill_shell(wid, skill_id=skill_id)
     body = _replace_actions_table(body, meta)
     # Inject shared policies once (same core as agents — avoid skill-local forks).
     for pid in COMPOSE_POLICY_IDS:
         marker = f"## Composed: {pid}"
-        text = _read_policy(skills, pid)
+        text = _read_policy(repo, pid)
         if marker not in body and text:
             body = body.rstrip() + f"\n\n{marker}\n\n" + text + "\n"
     # Index composed refs + runtime bundle paths
@@ -657,7 +663,7 @@ def _compose_skill_body(skills: Path, wid: str, meta: dict[str, Any]) -> str:
             dom, name = tpid.split("/", 1)
             prompt_path = f"prompts/tasks/{dom}/{name}.md"
         runtime_lines.append(
-            "| `{id}` | `actions/{folder}/METHOD.md` | `{prompt}` | `{contract}` | `{role}` |".format(
+            "| `{id}` | `actions/{folder}/action.yaml` | `{prompt}` | `{contract}` | `{role}` |".format(
                 id=a.get("id"),
                 folder=folder,
                 prompt=prompt_path,
@@ -736,7 +742,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
     # Shared policies for ALL agents (same COMPOSE_POLICY_IDS as workflow skills).
     # Do not push high-confidence / source-window rules into individual skill prompts only.
-    _agent_policies = {pid: _read_policy(skills, pid) for pid in COMPOSE_POLICY_IDS}
+    _agent_policies = {pid: _read_policy(repo, pid) for pid in COMPOSE_POLICY_IDS}
     hc = _agent_policies["pilot-control"]
     lang = _agent_policies["language"]
     front: dict[str, Any] = {
@@ -833,14 +839,13 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     skills = paths["skills"]
     prompts_src = paths["prompts"]
     agents_src = paths["agents"]
-    # Only the default compose target may rewrite source action.yaml mirrors.
-    # Drift checks compose into a temp out_root and must stay read-only on sources.
-    update_source_mirrors = out_root is None
+    # Compose into out_root (default generated/<host>). Temp out_roots stay
+    # isolated; Spec is the sole Action identity authority (no skills/actions/).
     if out_root is None:
         out_root = paths["out"] / host
     else:
         out_root = Path(out_root)
-    host_meta = _load_yaml(skills / "hosts" / f"{host}.yaml")
+    host_meta = _load_yaml(paths["hosts"] / f"{host}.yaml")
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
@@ -856,7 +861,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
 
     compiled: list[str] = []
 
-    # Workflow skills + operator
+    # Workflow slash entries (thin shells) + cognitive skills
     workflow_ids = [
         wid
         for wid, m in WORKFLOWS.items()
@@ -864,12 +869,9 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     ]
     workflow_ids.append("operator")
     for wid in workflow_ids:
-        src = skills / "workflows" / wid
-        if not (src / "SKILL.md").is_file():
-            continue
-        meta, src_body = _require_skill_frontmatter(
-            (src / "SKILL.md").read_text(encoding="utf-8"), path=src / "SKILL.md"
-        )
+        entry = WORKFLOW_ENTRIES.get(wid) or {}
+        desc = str(entry.get("description") or "").strip() or wid
+        meta: dict[str, Any] = {"name": wid, "description": desc}
         overrides = dict(host_meta.get("skill_defaults") or {})
         per_skill = (host_meta.get("skills") or {}).get(wid) or {}
         if isinstance(per_skill, dict):
@@ -880,10 +882,12 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             meta.pop("disable-model-invocation", None)
             meta.pop("disable_model_invocation", None)
         wf_meta = WORKFLOWS.get(wid) or {}
-        body = _compose_skill_body(skills, wid, wf_meta) if wid != "operator" else src_body
         if wid == "operator":
-            hc = _read_policy(skills, "pilot-control")
+            body = _entry_skill_shell(wid, skill_id="")
+            hc = _read_policy(repo, "pilot-control")
             body = body.rstrip() + "\n\n## Composed: pilot-control\n\n" + hc + "\n"
+        else:
+            body = _compose_skill_body(repo, wid, wf_meta)
         dest = out_skills / wid
         dest.mkdir(parents=True, exist_ok=True)
         skill_out = dest / "SKILL.md"
@@ -894,43 +898,15 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         skill_out.write_text(out_text, encoding="utf-8")
         expected_n = len(wf_meta.get("actions") or []) if wid != "operator" else None
         _assert_generated_skill(skill_out, expected_actions=expected_n)
-        # Copy action methods referenced by this workflow as sidecars;
-        # action.yaml is a generated mirror of Workflow Spec (not an editable authority).
+        # Emit Spec-derived Action Bundle sidecars (identity only).
         for a in wf_meta.get("actions") or []:
             mid = a.get("action_method_id")
             if not mid:
                 continue
-            ayaml, method = _read_action(skills, str(mid))
-            if not method:
-                continue
             folder = str(mid).split("/", 1)[-1]
-            parts = str(mid).split("/", 1)
-            # Overwrite source action.yaml only on real compose (not drift temp trees).
-            if (
-                update_source_mirrors
-                and len(parts) == 2
-                and parts[0] == wid
-                and yaml is not None
-            ):
-                src_adir = skills / "actions" / parts[0] / parts[1]
-                src_adir.mkdir(parents=True, exist_ok=True)
-                mirrored = _spec_action_yaml(wid, a, extras={k: v for k, v in (ayaml or {}).items() if k not in {
-                    "id", "workflow_id", "role_id", "agent_id", "execution_mode",
-                    "capabilities", "policies", "task_prompt_id", "context_profile_id",
-                    "output_contract_id", "allowed_write_paths", "forbidden_write_paths",
-                    "allowed_read_paths", "forbidden_read_paths",
-                    "checker", "referee", "generated_from",
-                }})
-                (src_adir / "action.yaml").write_text(
-                    "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
-                    + yaml.safe_dump(mirrored, allow_unicode=True, sort_keys=False),
-                    encoding="utf-8",
-                )
             adir = dest / "actions" / folder
             adir.mkdir(parents=True, exist_ok=True)
-            (adir / "METHOD.md").write_text(method, encoding="utf-8")
-            # Always write workflow-specific identity into generated skill sidecar.
-            merged = _spec_action_yaml(wid, a, extras=ayaml if isinstance(ayaml, dict) else None)
+            merged = _spec_action_yaml(wid, a)
             if yaml is not None:
                 (adir / "action.yaml").write_text(
                     "# GENERATED from Workflow Spec — do not hand-edit identity fields\n"
@@ -942,7 +918,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         for a in wf_meta.get("actions") or []:
             caps_needed.update(a.get("capability_ids") or [])
         for cid in sorted(caps_needed):
-            csrc = skills / "capabilities" / cid
+            csrc = _capability_dir(repo, str(cid))
             if csrc.is_dir():
                 cdst = dest / "capabilities" / cid
                 if cdst.exists():
@@ -950,28 +926,35 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                 shutil.copytree(csrc, cdst)
         compiled.append(f"{host}/skills/{wid}")
 
-    # Domain cognitive skills (Agent-facing progressive disclosure)
-    domain_src = skills / "domain"
-    if domain_src.is_dir():
-        domain_dst = out_skills / "domain"
-        if domain_dst.exists():
-            shutil.rmtree(domain_dst)
-        shutil.copytree(
-            domain_src,
-            domain_dst,
-            ignore=shutil.ignore_patterns("README.md"),
-        )
-        compiled.append(f"{host}/skills/domain")
+    # Cognitive skills + shared references
+    for skill_id in COGNITIVE_SKILL_IDS:
+        src = skills / skill_id
+        if not (src / "SKILL.md").is_file():
+            continue
+        dst = out_skills / skill_id
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("README.md"))
+        compiled.append(f"{host}/skills/{skill_id}")
+    shared_src = skills / "_shared"
+    if shared_src.is_dir():
+        shared_dst = out_skills / "_shared"
+        if shared_dst.exists():
+            shutil.rmtree(shared_dst)
+        shutil.copytree(shared_src, shared_dst)
+        compiled.append(f"{host}/skills/_shared")
 
     # Shared policies pack under each host
     pol_dst = out_skills / "_policies"
     pol_dst.mkdir(parents=True, exist_ok=True)
-    for pdir in (skills / "policies").iterdir():
-        if pdir.is_dir():
-            d = pol_dst / pdir.name
-            if d.exists():
-                shutil.rmtree(d)
-            shutil.copytree(pdir, d)
+    policies_src = paths["policies"]
+    if policies_src.is_dir():
+        for pdir in policies_src.iterdir():
+            if pdir.is_dir():
+                d = pol_dst / pdir.name
+                if d.exists():
+                    shutil.rmtree(d)
+                shutil.copytree(pdir, d)
 
     # Agents — skip kind=deterministic_engine (authorize identity only; not LLM-spawned).
     for ag in sorted(agents_src.glob("*.yaml")):
@@ -1195,8 +1178,7 @@ def compose_all(
     hosts: list[str] | None = None,
     sync: bool = True,
 ) -> dict[str, Any]:
-    skills = repo / "skills"
-    hosts_dir = skills / "hosts"
+    hosts_dir = repo / "adapters" / "hosts"
     host_names = hosts or [p.stem for p in hosts_dir.glob("*.yaml")]
     if sync:
         sync_errs = sync_sources(repo)

@@ -164,14 +164,28 @@ def _fit_slice_doc_to_budget(slice_doc: dict[str, Any], budget: int) -> list[str
 
 def _repo_root_from_project(project_root: Path) -> Path:
     # project_root is the operator dir; AscendC-Pilot repo is a sibling or cwd.
-    # Prefer env/cwd discovery: walk up for skills/domain.
+    # Prefer env/cwd discovery: walk up for skills/ + pilot/.
+    def _looks_like_repo(base: Path) -> bool:
+        skills = base / "skills"
+        if not (base / "pilot").is_dir() or not skills.is_dir():
+            return False
+        return any(
+            (skills / name).is_dir()
+            for name in (
+                "operator-analysis",
+                "testcase-generation",
+                "source-proof",
+                "code-review",
+                "domain",
+            )
+        )
+
     cur = Path(project_root).expanduser().resolve()
     for base in [cur, *cur.parents]:
-        if (base / "skills" / "domain").is_dir() and (base / "pilot").is_dir():
+        if _looks_like_repo(base):
             return base
-    # Fall back: assume installed next to operators, or cwd.
     cwd = Path.cwd().resolve()
-    if (cwd / "skills" / "domain").is_dir():
+    if _looks_like_repo(cwd):
         return cwd
     return cur
 

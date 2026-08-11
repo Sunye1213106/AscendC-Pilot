@@ -1,0 +1,14 @@
+version: 1
+skill: source-proof
+mode: dry
+cases:
+  - id: prove_field_pin
+    query: 证明某字段只能取特定值，建立可审计源码引理
+    expect_skill: source-proof
+    expect_references:
+      - references/proof-obligations.md
+
+  - id: not_uo_query
+    query: 证明前提 P 蕴含结论 Q，主动寻找反例
+    expect_skill: source-proof
+    forbid_skill: uo-query

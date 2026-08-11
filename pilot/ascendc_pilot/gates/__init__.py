@@ -613,7 +613,7 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "ok": False,
             "error": "SCOPE_RECEIPT_MISSING",
             "scope_path": confirmed_path.as_posix(),
-            "message": f"范围确认缺失（需要 runs/{run_id}/scope/scope_confirmed.yaml）",
+            "message": f"范围校验缺失（需要 runs/{run_id}/scope/scope_confirmed.yaml）",
         }
 
     raw = _load(confirmed_path)

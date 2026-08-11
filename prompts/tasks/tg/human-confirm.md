@@ -13,7 +13,7 @@ Confirm init boundaries that machines cannot safely decide.
 
 # Requirements
 
-- Follow `skills/domain/tg-init/SKILL.md` (human-confirm)
+- Follow `skills/testcase-generation/SKILL.md` (human-confirm)
 - Confirm scope/mode/exceptions only; do not waive evidence
 
 # Return

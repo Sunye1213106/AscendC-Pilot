@@ -1977,7 +1977,7 @@ def _run_lemma_mine(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             "INSUFFICIENT with the reason. Write results to parts/part_0.yaml keeping "
             "the `when` clause as given unless the source says a weaker or stronger "
             "antecedent is the real one. Check r_witness_values before narrowing. "
-            "Follow skills/domain/source-lemma-proof/SKILL.md."
+            "Follow skills/source-proof/SKILL.md."
         ),
     }
     (parts / "staging.yaml").write_text(
@@ -2670,6 +2670,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     # Fine-grained internals (debug / compatibility).
     ("uo-init", "prepare_layout"): _uo_init_engine("prepare_layout"),
     ("uo-init", "scope_scan"): _uo_init_engine("scope_scan"),
+    ("uo-init", "scope_validate"): _uo_init_engine("scope_validate"),
     ("uo-init", "scope_confirm"): _uo_init_engine("scope_confirm"),
     ("uo-init", "extract_host"): _uo_init_engine("extract_host"),
     ("uo-init", "extract_tiling_key"): _uo_init_engine("extract_tiling_key"),

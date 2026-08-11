@@ -1,6 +1,6 @@
 # AscendC-Pilot 架构现状
 
-本文只写**当前已落地的形态**，不写历史计划。闭环认知见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`；组合式 skill 原则见 [skill-prompt.md](./skill-prompt.md)；系统数据流见 [system-design.md](./system-design.md)。
+本文只写**当前已落地的形态**，不写历史计划。闭环认知见 `skills/testcase-generation` 与 `skills/source-proof`；组合式 skill 原则见 [skill-prompt.md](./skill-prompt.md)；系统数据流见 [system-design.md](./system-design.md)。
 
 ---
 
@@ -21,14 +21,17 @@
 主路径 action（`uo_init.pilot_engines.ENGINES`）：
 
 ```text
-prepare_layout → scope_scan → scope_confirm
+prepare_layout → scope_scan → scope_validate
   → extract_host → extract_tiling_key → extract_registry → extract_kernel
   → derive_key_fields → normalize_predicates → resolve_gaps → apply_gap_patch
   → export_kb → build_index → export_tg_host_view → export_integrity → kb_review
 ```
 
+公开六阶段：`prepare`（确定性：用户定 operator+arch，机器定 Source Scope）→ `extract` → `analyze` → `resolve` → `commit` → `review`。
+
 要点：
 
+- **范围原则**：用户决定分析目标；Clang include closure 决定源码范围。无人工文件清单确认；硬失败记 blocker。
 - **静态主路径**：libclang HostIR、`kernel_ir`（`if constexpr`）、`tiling_data_ir`、派生 `host_derivation`。
 - **Z3 默认关闭**：`UO_DEEP_SOLVE` 未设时 materialize 走 `deep_solve_off`。
 - **产物目录**：工作区仍可在 `<op>/.ascendc-pilot/<arch>/uo/`；**正式权威产物**为 `<op>/.ascendc-pilot/uo/<op>.<arch>.uo`（统一 CodeMap SQLite，`meta.authority=uo`）。旧 `indexes/kb_graph.sqlite` / YAML 投影由 `uo-dump` 临时展开，不再作为产品面。
@@ -54,7 +57,7 @@ D = (R ∩ D) ∪ E    且    R ∩ E = ∅
 CLI：`tg-closure`（`python -m testcase_agent.closure.cli`）。  
 确定性路由：`search_round.route()` → `GAP_ZERO | ORACLE_SUSPECT | SEARCH_STALLED | CONSTRUCT_TARGETS | NEED_LEMMA | SEARCH_PROGRESS`。
 
-Pilot 工作流 `tg-solve`（mode `tilingkey_full_coverage`）把上述步骤编排进 `acp` 阶段机；领域证据纪律见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`。
+Pilot 工作流 `tg-solve`（mode `tilingkey_full_coverage`）把上述步骤编排进 `acp` 阶段机；领域证据纪律见 `skills/testcase-generation` 与 `skills/source-proof`。
 
 算子侧冷启动契约（目标）：`operators/<op>/<arch>/` 仅保留
 
@@ -84,8 +87,8 @@ TilingKey / KernelBranch / TilingDataField 共用同一账本形状 `(D,R,E)`：
 
 | 文档 | 用途 |
 | --- | --- |
-| `skills/domain/tg-closure` | 闭环认知（含 `closure-safety`） |
-| `skills/domain/source-lemma-proof` | 源码引理证明 |
+| `skills/testcase-generation` | 闭环与测例构造/计划认知（含 `closure-safety`） |
+| `skills/source-proof` | 源码引理证明 |
 | [system-design.md](./system-design.md) | 数据流与模块边界 |
 | [skill-prompt.md](./skill-prompt.md) | Domain / Prompt / Harness 原则 |
 | [principles.md](./principles.md) | 产品修改口诀 |

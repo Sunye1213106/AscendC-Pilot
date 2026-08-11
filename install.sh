@@ -144,11 +144,17 @@ fi
 # Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
-for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator; do
+for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator \
+            operator-analysis testcase-generation source-proof code-review; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
 done
+# Shared progressive-disclosure refs used by cognitive skills
+if [[ -d "$DEST/skills/_shared" ]]; then
+  rm -rf "$SKILLS/_shared"
+  ln -sfn "$DEST/skills/_shared" "$SKILLS/_shared" 2>/dev/null || cp -R "$DEST/skills/_shared" "$SKILLS/_shared"
+fi
 
 # Every installed agent is now reachable from a non-deterministic Action.
 for f in "$DEST/agents"/*.md; do

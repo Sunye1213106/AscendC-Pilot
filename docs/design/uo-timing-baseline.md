@@ -40,7 +40,7 @@ measured by capturing their own stderr.
 | Action | Cold (s) | Warm (s) | Notes |
 |--------|---------:|---------:|-------|
 | `prepare_layout` | not yet measured | not yet measured | separate action; capture its stderr |
-| `scope_confirm` | not yet measured | not yet measured | separate action; capture its stderr |
+| `scope_validate` | not yet measured | not yet measured | internal prepare gate; capture its stderr |
 | `extract_host` | ~max(host,1×kernel) (`fast`) / ~180 (`full`) | 1.388 | `fast`: 1 dtype kernel \|\| host; skips API clang |
 | `extract_tiling_key` | not yet measured | not yet measured | separate action; capture its stderr |
 | `extract_kernel` | not yet measured | not yet measured | pairwise fold expensive; fold_kernel=false skips harness |

@@ -217,3 +217,61 @@ def test_shared_code_inside_the_operator_is_found_too(tmp_path: Path) -> None:
     scope = ss.scan(root, arch_dir="")
     got = {f.path.relative_to(scope.workspace_root).as_posix() for f in scope.files}
     assert "common/op_kernel/util.h" in got
+
+
+def test_classify_path_separates_owned_shared_external(domain: Path) -> None:
+    scope = ss.scan(domain, arch_dir="arch35")
+    owned = next(f.path for f in scope.files if not f.shared)
+    shared = next(f.path for f in scope.files if f.shared)
+    assert (
+        ss.classify_path(
+            owned, op_dir=scope.op_dir, workspace_root=scope.workspace_root
+        )
+        == ss.KIND_OWNED
+    )
+    assert (
+        ss.classify_path(
+            shared, op_dir=scope.op_dir, workspace_root=scope.workspace_root
+        )
+        == ss.KIND_SHARED
+    )
+    assert (
+        ss.classify_path(
+            "/opt/cann-asc-devkit/include/foo.h",
+            op_dir=scope.op_dir,
+            workspace_root=scope.workspace_root,
+        )
+        == ss.KIND_EXTERNAL
+    )
+
+
+def test_enrich_with_clang_merges_shared_without_external(domain: Path) -> None:
+    """When Clang reports includes, SHARED joins scope; EXTERNAL stays out."""
+    scope = ss.scan(domain, arch_dir="arch35")
+    before = len(scope.files)
+    extra_shared = domain.parent / "common" / "op_kernel" / "arch35" / "extra_clang.h"
+    extra_shared.parent.mkdir(parents=True, exist_ok=True)
+    extra_shared.write_text("// clang-only\n", encoding="utf-8")
+    external = Path("/opt/cann-asc-devkit/include/ghost.h")
+
+    def _fake_includes(tu_path, args):
+        return [extra_shared, external]
+
+    old = ss.clang_include_paths
+    ss.clang_include_paths = _fake_includes  # type: ignore[assignment]
+    try:
+        enriched = ss.enrich_with_clang(
+            scope,
+            host_args=[],
+            kernel_args=[],
+            host_tus=scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True)[:1],
+            kernel_tu=None,
+        )
+    finally:
+        ss.clang_include_paths = old  # type: ignore[assignment]
+
+    assert len(enriched.files) == before + 1
+    hit = next(f for f in enriched.files if f.path.name == "extra_clang.h")
+    assert hit.shared and hit.kind == ss.KIND_SHARED
+    assert hit.provenance == "clang_include"
+    assert not any("cann-asc-devkit" in f.path.as_posix() for f in enriched.files)

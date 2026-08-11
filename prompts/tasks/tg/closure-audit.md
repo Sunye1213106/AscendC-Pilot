@@ -13,7 +13,7 @@ Audit whether the TilingKey closure is ready to certify.
 
 # Requirements
 
-- Follow `skills/domain/tg-closure/SKILL.md` and `references/closure-safety.md`
+- Follow `skills/testcase-generation/SKILL.md` and `references/closure-safety.md`
 - Do not invent new exclusion rules
 
 # Return

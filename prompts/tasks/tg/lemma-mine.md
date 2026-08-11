@@ -18,7 +18,7 @@ Closed lead pack only (do not invent leads). Use the companion evidence pack whe
 
 # Requirements
 
-- Follow `skills/domain/source-lemma-proof/SKILL.md`
+- Follow `skills/source-proof/SKILL.md`
 - Close required proof obligations; actively seek counterexamples
 - Do not convert missing/search failure into exclusion
 - Each candidate must include structured fields:

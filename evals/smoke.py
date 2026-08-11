@@ -4,18 +4,25 @@
 Runs:
 1. harness metric self-check
 2. routing dry eval
-3. skill dry eval (uo-codemap-query)
+3. skill dry eval (all four cognitive skills)
 4. closure acceptance harness via shared summarize (1 dry run)
 """
-
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+
+_COGNITIVE_SKILLS = (
+    "operator-analysis",
+    "testcase-generation",
+    "source-proof",
+    "code-review",
+)
 
 
 def _run(cmd: list[str]) -> dict:
@@ -42,7 +49,6 @@ def main() -> int:
 
     from evals.harness.runner import pass_at_k, pass_hat_k, summarize_runs
 
-    # 1) metric primitives
     assert pass_at_k([False, True, False], 3) == 1.0
     assert pass_hat_k([True, True, True], 3) == 1.0
     assert pass_hat_k([True, False, True], 3) == 0.0
@@ -59,27 +65,20 @@ def main() -> int:
     results.append(
         _run([sys.executable, str(REPO / "evals" / "routing" / "run_routing_eval.py"), "--repo", str(REPO)])
     )
-    results.append(
-        _run(
-            [
-                sys.executable,
-                str(REPO / "evals" / "skills" / "run_skill_eval.py"),
-                "--repo",
-                str(REPO),
-                "--skill",
-                "uo-codemap-query",
-            ]
+    for skill in _COGNITIVE_SKILLS:
+        results.append(
+            _run(
+                [
+                    sys.executable,
+                    str(REPO / "evals" / "skills" / "run_skill_eval.py"),
+                    "--repo",
+                    str(REPO),
+                    "--skill",
+                    skill,
+                ]
+            )
         )
-    )
-    # Closure harness: 1 dry run (full 3-run stays in closure-acceptance job).
-    env_pythonpath = (
-        f"{REPO};{REPO / 'engines' / 'testcase-generation'};"
-        f"{REPO / 'scripts'};{REPO / 'engines' / 'understand-operator' / 'src'};{REPO / 'pilot'}"
-    )
-    import os
-
     env = os.environ.copy()
-    # Prefer platform path sep for PYTHONPATH
     sep = ";" if os.name == "nt" else ":"
     env["PYTHONPATH"] = sep.join(
         [
@@ -110,7 +109,17 @@ def main() -> int:
     )
 
     ok = all(r["ok"] for r in results)
-    print(json.dumps({"ok": ok, "results": [{"cmd": r["cmd"], "ok": r["ok"], "returncode": r["returncode"]} for r in results]}, indent=2))
+    print(
+        json.dumps(
+            {
+                "ok": ok,
+                "results": [
+                    {"cmd": r["cmd"], "ok": r["ok"], "returncode": r["returncode"]} for r in results
+                ],
+            },
+            indent=2,
+        )
+    )
     if not ok:
         for r in results:
             if not r["ok"]:

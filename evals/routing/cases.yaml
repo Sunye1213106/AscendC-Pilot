@@ -4,12 +4,12 @@ version: 1
 cases:
   - id: route_uo_init_build
     query: 首次构建 UO CodeMap，指定 architecture 分析算子
-    should_trigger: [uo-init, uo-codemap-build]
+    should_trigger: [uo-init]
     should_not_trigger: [tg-solve, ce-review]
 
   - id: route_uo_query
     query: 查询已有 .uo 里某个 TilingKey 维度和 Host 字段关系
-    should_trigger: [uo-query, uo-codemap-query]
+    should_trigger: [uo-query, operator-analysis]
     should_not_trigger: [uo-init, tg-init]
 
   - id: route_uo_update
@@ -29,7 +29,7 @@ cases:
 
   - id: route_tg_solve
     query: 对已批准 target set 做 Host replay 闭环，扩大 R 和 E
-    should_trigger: [tg-solve, tg-closure]
+    should_trigger: [tg-solve, testcase-generation]
     should_not_trigger: [uo-init]
 
   - id: route_ce_review
@@ -39,5 +39,5 @@ cases:
 
   - id: route_lemma_proof
     query: 证明某字段只能取特定值，建立可审计源码引理
-    should_trigger: [source-lemma-proof]
+    should_trigger: [source-proof]
     should_not_trigger: [uo-query]

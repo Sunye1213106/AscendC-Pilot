@@ -14,7 +14,7 @@ Bind contract symbols to KB/source entities.
 
 # Requirements
 
-- Follow `skills/domain/tg-init/SKILL.md` and `references/binding.md`
+- Follow `skills/testcase-generation/SKILL.md` and `references/construction-binding.md`
 
 # Return
 

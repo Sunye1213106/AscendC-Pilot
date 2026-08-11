@@ -1,19 +1,17 @@
 # -*- coding: utf-8 -*-
 """Decide which files an operator's analysis is allowed to look at.
 
-Scope comes from the repository layout, never from the operator's name: a file
-is in because of the directory it sits in, and a shared file is in because
-something the operator compiles includes it. Name matching cannot express the
-second half -- a domain keeps common headers beside its operators, and
-`attention/common/op_kernel/arch35/pse.h` carries no operator name yet is
-compiled into the kernel. Dropping it does not merely lose detail, it makes
-whatever the operator reads from it look undefined.
+Principle: the user chooses the analysis target (operator + arch); the
+compiler decides the source closure. Layout scan bootstraps entry TUs and a
+candidate shared pool; Clang's real include graph is the authority for what
+shared headers enter scope.
 
     <op_dir>/op_api      user-facing contract: which inputs are refused
     <op_dir>/op_graph    prototype: inputs, outputs, attributes
     <op_dir>/op_host     tiling, definition, shape inference
     <op_dir>/op_kernel   the kernel itself
-    <common>/**          only what the above actually include, transitively
+    <common>/**          what entry TUs actually include (Clang preferred)
+    CANN / system        classified EXTERNAL / SYSTEM, never analysis scope
 
 One architecture per run: `archNN` folders other than the requested one are
 dropped, since a run models one hardware generation.
@@ -60,6 +58,12 @@ ROLE_HEADER = "header"
 SIDE_HOST = "host"
 SIDE_KERNEL = "kernel"
 
+# Classification of a path relative to the analysis universe.
+KIND_OWNED = "OWNED"
+KIND_SHARED = "SHARED"
+KIND_EXTERNAL = "EXTERNAL_LIBRARY"
+KIND_SYSTEM = "SYSTEM"
+
 
 @dataclass(frozen=True)
 class ScopeFile:
@@ -70,6 +74,8 @@ class ScopeFile:
     side: str
     is_tu: bool
     shared: bool = False
+    kind: str = KIND_OWNED
+    provenance: str = "layout"
 
     @property
     def is_header(self) -> bool:
@@ -132,6 +138,8 @@ class ScopeSet:
                     "side": f.side,
                     "is_tu": f.is_tu,
                     "shared": f.shared,
+                    "kind": f.kind,
+                    "provenance": f.provenance,
                 }
                 for f in self.files
             ],
@@ -148,13 +156,17 @@ class ScopeSet:
             path = Path(rel)
             if not path.is_absolute():
                 path = (workspace_root / rel).resolve()
+            shared = bool(row.get("shared"))
+            kind = str(row.get("kind") or (KIND_SHARED if shared else KIND_OWNED))
             files.append(
                 ScopeFile(
                     path=path,
                     role=str(row.get("role") or ""),
                     side=str(row.get("side") or ""),
                     is_tu=bool(row.get("is_tu")),
-                    shared=bool(row.get("shared")),
+                    shared=shared,
+                    kind=kind,
+                    provenance=str(row.get("provenance") or "layout"),
                 )
             )
         return cls(
@@ -423,13 +435,16 @@ def scan(op_dir: str | Path, *, arch_dir: str = "") -> ScopeSet:
     from_common = {_key(p) for p in shared}
     files: list[ScopeFile] = []
     for path in owned + shared:
+        is_shared = _key(path) in from_common
         files.append(
             ScopeFile(
                 path=path,
                 role=_role_of(path),
                 side=_side_of(path),
                 is_tu=path.suffix.lower() in SOURCE_SUFFIXES,
-                shared=_key(path) in from_common,
+                shared=is_shared,
+                kind=KIND_SHARED if is_shared else KIND_OWNED,
+                provenance="include_regex" if is_shared else "layout",
             )
         )
 
@@ -463,3 +478,171 @@ def _drop_foreign_arch_entries(
             continue
         out.append(f)
     return out
+
+
+def classify_path(
+    path: str | Path,
+    *,
+    op_dir: Path,
+    workspace_root: Path,
+    foreign_markers: tuple[str, ...] = (
+        "cann-asc-devkit",
+        "/_cann/",
+        "cann-metadef",
+        "bisheng",
+        "/usr/include",
+        "/usr/lib",
+    ),
+) -> str:
+    """Classify a Clang-reported path into OWNED / SHARED / EXTERNAL / SYSTEM."""
+    text = str(path).replace("\\", "/")
+    low = text.lower()
+    if any(m in low for m in foreign_markers):
+        return KIND_EXTERNAL if "cann" in low or "bisheng" in low else KIND_SYSTEM
+    try:
+        resolved = Path(path).resolve()
+    except OSError:
+        resolved = Path(path)
+    try:
+        resolved.relative_to(op_dir.resolve())
+        return KIND_OWNED
+    except ValueError:
+        pass
+    try:
+        rel = resolved.relative_to(workspace_root.resolve()).as_posix().lower()
+    except ValueError:
+        return KIND_SYSTEM
+    if rel.startswith("common/") or "/common/" in f"/{rel}":
+        return KIND_SHARED
+    # Other trees under the same domain workspace (sibling packages) stay out.
+    return KIND_SYSTEM
+
+
+def clang_include_paths(tu_path: str | Path, args: list[str]) -> list[Path]:
+    """Files Clang actually included while parsing ``tu_path``.
+
+    Requires ``PARSE_DETAILED_PROCESSING_RECORD``. Returns [] when libclang is
+    unavailable or the TU cannot be parsed — callers keep the regex bootstrap.
+    """
+    try:
+        from clang import cindex
+    except ImportError:
+        return []
+    try:
+        idx = cindex.Index.create()
+        tu = idx.parse(
+            str(tu_path),
+            args=list(args),
+            options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+        )
+    except Exception:  # noqa: BLE001 — enrichment must never block prepare
+        return []
+    out: list[Path] = []
+    seen: set[str] = set()
+    try:
+        inclusions = tu.get_includes()
+    except Exception:  # noqa: BLE001
+        return []
+    for inc in inclusions:
+        try:
+            included = inc.include
+            if included is None:
+                continue
+            name = getattr(included, "name", None) or str(included)
+        except Exception:  # noqa: BLE001
+            continue
+        if not name:
+            continue
+        key = _key(name)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(Path(name))
+    return out
+
+
+def enrich_with_clang(
+    scope: ScopeSet,
+    *,
+    host_args: list[str] | None = None,
+    kernel_args: list[str] | None = None,
+    host_tus: Iterable[Path] | None = None,
+    kernel_tu: Path | None = None,
+) -> ScopeSet:
+    """Merge Clang's real include closure into a layout/regex ScopeSet.
+
+    Only OWNED and SHARED paths are added. EXTERNAL / SYSTEM includes are
+    recorded in notes for diagnostics but never become analysis scope.
+    Regex-discovered shared files remain; Clang may add more that macros /
+    conditional includes made reachable.
+    """
+    notes = list(scope.notes)
+    index = {_key(f.path): f for f in scope.files}
+    added = 0
+    external_hits = 0
+
+    jobs: list[tuple[Path, list[str], str]] = []
+    for path in host_tus or ():
+        if path is not None and Path(path).is_file():
+            jobs.append((Path(path), list(host_args or []), SIDE_HOST))
+    if kernel_tu is not None and Path(kernel_tu).is_file():
+        jobs.append((Path(kernel_tu), list(kernel_args or []), SIDE_KERNEL))
+
+    if not jobs:
+        notes.append("clang_enrichment_skipped: no_entry_tus")
+        scope.notes = notes
+        return scope
+
+    for tu_path, args, side in jobs:
+        includes = clang_include_paths(tu_path, args)
+        if not includes:
+            notes.append(f"clang_includes_empty: {tu_path.name}")
+            continue
+        notes.append(f"clang_includes={len(includes)} from {tu_path.name}")
+        for inc in includes:
+            kind = classify_path(
+                inc, op_dir=scope.op_dir, workspace_root=scope.workspace_root
+            )
+            if kind in {KIND_EXTERNAL, KIND_SYSTEM}:
+                external_hits += 1
+                continue
+            key = _key(inc)
+            if key in index:
+                # Prefer clang provenance when both saw the file.
+                prev = index[key]
+                if prev.provenance != "clang_include":
+                    index[key] = ScopeFile(
+                        path=prev.path,
+                        role=prev.role,
+                        side=prev.side,
+                        is_tu=prev.is_tu,
+                        shared=prev.shared or kind == KIND_SHARED,
+                        kind=KIND_SHARED if (prev.shared or kind == KIND_SHARED) else prev.kind,
+                        provenance="clang_include",
+                    )
+                continue
+            try:
+                resolved = Path(inc).resolve()
+            except OSError:
+                resolved = Path(inc)
+            is_shared = kind == KIND_SHARED
+            index[key] = ScopeFile(
+                path=resolved,
+                role=_role_of(resolved) if not is_shared else ROLE_HEADER,
+                side=side if is_shared else _side_of(resolved),
+                is_tu=resolved.suffix.lower() in SOURCE_SUFFIXES,
+                shared=is_shared,
+                kind=kind,
+                provenance="clang_include",
+            )
+            added += 1
+
+    notes.append(f"clang_shared_added={added} clang_external_seen={external_hits}")
+    files = sorted(index.values(), key=lambda f: f.path.as_posix())
+    return ScopeSet(
+        op_dir=scope.op_dir,
+        workspace_root=scope.workspace_root,
+        arch_dir=scope.arch_dir,
+        files=files,
+        notes=notes,
+    )

@@ -14,7 +14,11 @@ read_scopes:
 - runs/**
 - context/**
 - operators/**
-- skills/domain/**
+- skills/operator-analysis/**
+- skills/testcase-generation/**
+- skills/source-proof/**
+- skills/code-review/**
+- skills/_shared/**
 write_scopes:
 - tg/**
 - runs/**

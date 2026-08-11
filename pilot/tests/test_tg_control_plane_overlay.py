@@ -63,7 +63,7 @@ def test_tg_solve_closure_actions_registered() -> None:
         assert ("tg-solve", action_id) in ENGINE_REGISTRY
         row = action_by_id("tg-solve", action_id) or {}
         assert row.get("id") == action_id
-        # Domain cognition lives in skills/domain/*; capability_ids are retrieval-only.
+        # Domain cognition lives in skills/{operator-analysis,testcase-generation,source-proof,code-review}; capability_ids are retrieval-only.
         caps = set(row.get("capability_ids") or [])
         assert "tilingkey-closure" not in caps
         assert "structured-review" not in caps

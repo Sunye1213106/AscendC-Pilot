@@ -24,20 +24,33 @@ REPO = Path(__file__).resolve().parents[2]
 
 def _load_skill_descriptions(repo: Path) -> dict[str, str]:
     out: dict[str, str] = {}
-    for root in (repo / "skills" / "workflows", repo / "skills" / "domain"):
-        if not root.is_dir():
+    # Cognitive skills
+    for name in (
+        "operator-analysis",
+        "testcase-generation",
+        "source-proof",
+        "code-review",
+    ):
+        skill = repo / "skills" / name / "SKILL.md"
+        if not skill.is_file() or yaml is None:
             continue
-        for skill in root.glob("*/SKILL.md"):
-            text = skill.read_text(encoding="utf-8")
-            if not text.startswith("---"):
-                continue
-            parts = text.split("---", 2)
-            if len(parts) < 3 or yaml is None:
-                continue
-            meta = yaml.safe_load(parts[1]) or {}
-            name = str(meta.get("name") or skill.parent.name)
-            desc = str(meta.get("description") or "")
-            out[name] = desc
+        text = skill.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            continue
+        parts = text.split("---", 2)
+        if len(parts) < 3:
+            continue
+        meta = yaml.safe_load(parts[1]) or {}
+        out[str(meta.get("name") or name)] = str(meta.get("description") or "")
+    # Slash entry descriptions (from composer metadata)
+    sys.path.insert(0, str(repo / "scripts"))
+    try:
+        import compose_runtime as compose
+
+        for wid, entry in compose.WORKFLOW_ENTRIES.items():
+            out[wid] = str(entry.get("description") or "")
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

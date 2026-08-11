@@ -18,7 +18,7 @@ Replay producer lemma certificates and adjudicate.
 
 # Requirements
 
-- Follow `skills/domain/source-lemma-proof/SKILL.md` and `references/referee-replay.md`
+- Follow `skills/source-proof/SKILL.md` and `references/referee-replay.md`
 - Replay only; do not open new hypotheses
 
 # Return

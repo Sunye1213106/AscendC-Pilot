@@ -3,7 +3,7 @@ version: 1
 name_zh: TG semantic bind producer
 role: producer
 mode: subagent
-description: Semantic bind producer. Read session prompt.md first, then skills/domain/tg-init/SKILL.md.
+description: Semantic bind producer. Read session prompt.md first, then skills/testcase-generation/SKILL.md.
 read_scopes:
 - tg/realization/**
 - tg/snapshot/**
@@ -12,7 +12,11 @@ read_scopes:
 - uo/**
 - runs/**
 - context/**
-- skills/domain/**
+- skills/operator-analysis/**
+- skills/testcase-generation/**
+- skills/source-proof/**
+- skills/code-review/**
+- skills/_shared/**
 write_scopes:
 - tg/realization/semantic_bind_patch.yaml
 - runs/**

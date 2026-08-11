@@ -27,7 +27,7 @@ class QuerySlice:
 class ContextProfile:
     id: str
     description: str = ""
-    # Domain reference files relative to repo root (skills/domain/...).
+    # Domain reference files relative to repo root (skills/<skill>/...).
     references: tuple[str, ...] = ()
     query_slices: tuple[QuerySlice, ...] = ()
     include_prior_failure: bool = True
@@ -49,11 +49,11 @@ PROFILES: dict[str, ContextProfile] = {
         id="uo-init-resolve",
         description="Bounded semantic-gap resolve: blockers + nearby graph + gotchas.",
         references=(
-            "skills/domain/uo-codemap-build/references/authority-model.md",
-            "skills/domain/uo-codemap-build/references/completeness.md",
-            "skills/domain/uo-codemap-build/references/gotchas.md",
-            "skills/domain/_shared/evidence-quality.md",
-            "skills/domain/_shared/cpp-semantics.md",
+            "skills/operator-analysis/references/codemap-authority.md",
+            "skills/operator-analysis/references/codemap-completeness.md",
+            "skills/operator-analysis/references/codemap-build-gotchas.md",
+            "skills/_shared/evidence-quality.md",
+            "skills/_shared/cpp-semantics.md",
         ),
         query_slices=(
             QuerySlice(method="search", seed_from="unresolved_blockers", limit=12),
@@ -66,11 +66,11 @@ PROFILES: dict[str, ContextProfile] = {
         id="tg-solve-lemma-mine",
         description="Lemma mining: open keys / leads + branch/template locality + proof gotchas.",
         references=(
-            "skills/domain/source-lemma-proof/references/proof-obligations.md",
-            "skills/domain/source-lemma-proof/references/failure-patterns.md",
-            "skills/domain/source-lemma-proof/references/static-evidence.md",
-            "skills/domain/source-lemma-proof/references/gotchas.md",
-            "skills/domain/tg-closure/references/closure-safety.md",
+            "skills/source-proof/references/proof-obligations.md",
+            "skills/source-proof/references/failure-patterns.md",
+            "skills/source-proof/references/static-evidence.md",
+            "skills/source-proof/references/gotchas.md",
+            "skills/testcase-generation/references/closure-safety.md",
         ),
         query_slices=(
             QuerySlice(method="branches_for_key", seed_from="lemma_leads", limit=8),
@@ -84,10 +84,10 @@ PROFILES: dict[str, ContextProfile] = {
         id="ce-review-code-review",
         description="Code review: impact neighborhood of changed files + cross-layer gotchas.",
         references=(
-            "skills/domain/code-review/references/ascendc-checks.md",
-            "skills/domain/code-review/references/cross-layer-contracts.md",
-            "skills/domain/code-review/references/gotchas.md",
-            "skills/domain/_shared/finding-format.md",
+            "skills/code-review/references/ascendc-checks.md",
+            "skills/code-review/references/cross-layer-contracts.md",
+            "skills/code-review/references/gotchas.md",
+            "skills/_shared/finding-format.md",
         ),
         query_slices=(
             QuerySlice(method="entities_in_files", seed_from="impact_files", limit=20),

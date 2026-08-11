@@ -26,16 +26,17 @@ def test_uo_actions_match_engine_and_prompt_boundary():
     actions = {a["id"]: a for a in WORKFLOWS["uo-init"]["actions"]}
 
     prepare = actions["prepare"]
-    assert prepare["execution_mode"] == "primary_interactive"
-    assert prepare["agent_id"] == "ascendc-pilot"
-    assert prepare["task_prompt_id"] == "uo/scope-confirmation"
+    assert prepare["execution_mode"] == "deterministic"
+    assert not prepare.get("agent_id")
+    assert not prepare.get("task_prompt_id")
+    assert prepare.get("actors") == []
 
     resolve = actions["resolve"]
     assert resolve["execution_mode"] == "subagent"
     assert resolve["agent_id"] == "uo-semantic-resolver"
     assert resolve["task_prompt_id"] == "uo/resolve-gaps"
 
-    for action_id in ("extract", "analyze", "apply_gap_patch", "commit", "review"):
+    for action_id in ("prepare", "extract", "analyze", "apply_gap_patch", "commit", "review"):
         action = actions[action_id]
         assert action["execution_mode"] == "deterministic"
         assert not action.get("agent_id")

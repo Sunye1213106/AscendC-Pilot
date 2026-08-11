@@ -1,0 +1,16 @@
+version: 1
+skill: operator-analysis
+mode: dry
+# Dry skill utility proxy: does the skill description + references exist and
+# route correctly vs a no-skill baseline (empty description).
+cases:
+  - id: query_tilingkey_field
+    query: 基于 CodeMap 回答 TilingData 字段和 Kernel 分支的关系
+    expect_skill: operator-analysis
+    expect_references:
+      - references/codemap-query-gotchas.md
+
+  - id: query_not_tg_solve
+    query: 只读查询已有 .uo，不要求解 TilingKey 输入公式
+    expect_skill: operator-analysis
+    forbid_skill: tg-solve

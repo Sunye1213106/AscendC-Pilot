@@ -23,10 +23,9 @@ def _ensure_path(repo: Path) -> None:
 
 
 def _skill_dir(repo: Path, skill: str) -> Path | None:
-    for root in (repo / "skills" / "domain", repo / "skills" / "workflows"):
-        d = root / skill
-        if (d / "SKILL.md").is_file():
-            return d
+    d = repo / "skills" / skill
+    if (d / "SKILL.md").is_file():
+        return d
     return None
 
 
@@ -101,7 +100,7 @@ def evaluate_skill(repo: Path, skill_dir: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo", type=Path, default=REPO)
-    ap.add_argument("--skill", default="uo-codemap-query")
+    ap.add_argument("--skill", default="operator-analysis")
     args = ap.parse_args(argv)
     skill_dir = args.repo / "evals" / "skills" / args.skill
     doc = evaluate_skill(args.repo, skill_dir)

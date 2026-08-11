@@ -5,14 +5,18 @@ role: readonly_analyst
 mode: subagent
 description: >
   只读回答当前 Action Bundle 中的 UO CodeMap 查询。先读 session prompt.md，
-  再按需读取 skills/domain/uo-codemap-query/SKILL.md；优先结构化 `.uo` 查询，
+  再按需读取 skills/operator-analysis/SKILL.md；优先结构化 `.uo` 查询，
   仅在证据不足时读取最小源码窗口。
 read_scopes:
 - uo/**
 - runs/**
 - context/**
 - memory/**
-- skills/domain/**
+- skills/operator-analysis/**
+- skills/testcase-generation/**
+- skills/source-proof/**
+- skills/code-review/**
+- skills/_shared/**
 write_scopes:
 - runs/**
 - context/**

@@ -14,7 +14,7 @@ Audit TG init gaps and blockers.
 
 # Requirements
 
-- Follow `skills/domain/tg-init/SKILL.md` (audit)
+- Follow `skills/testcase-generation/SKILL.md` (audit)
 
 # Return
 

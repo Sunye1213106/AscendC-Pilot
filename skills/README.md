@@ -1,14 +1,13 @@
-# skills（组合式）
+# skills
 
-业务规则只在本树、`prompts/`、`agents/` 维护。
+模型可读的专业能力包。Action / Workflow 编排权威在 `pilot/.../workflows/specs.py`。
 
 ```text
 python scripts/compose_runtime.py --repo .
 # → generated/<host>/{skills,agents,prompts}/
 ```
 
-- Policy / Capability / Action Method / Role / Workflow Skill 分层
-- Pilot Workflow Spec（`pilot/.../specs.py`）声明 Action 组合引用
-- Composer 组装运行时指令；禁止手改 `generated/`
-- 意图：Agent 按各 workflow skill 的 `description` 自选加载；`acp route` 仅 slash
-- `/operator` 为可选助手（列候选 / 转发 slash），不做口语路由
+- 四个认知 Skill：`operator-analysis`、`testcase-generation`、`source-proof`、`code-review`
+- Composer 另外生成 slash 入口（`uo-init`、`tg-solve` 等）与 Spec Action Bundle 镜像
+- 禁止手改 `generated/`
+- Agent 按 Skill `description` 自选加载；`acp route` 仅 slash

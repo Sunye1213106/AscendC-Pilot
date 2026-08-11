@@ -9,6 +9,7 @@ from uo_init.pilot_engines import (
     prepare_layout,
     resolve_gaps,
     scope_confirm,
+    scope_validate,
 )
 
 
@@ -87,13 +88,57 @@ def test_resolve_gaps_autoskips_when_closed(tmp_path: Path):
     assert patch["ok"] and patch.get("skipped")
 
 
-def test_scope_confirm_needs_human_when_ambiguous(tmp_path: Path):
-    scope = tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r1" / "scope"
+def test_scope_validate_blocks_when_probe_unclean(tmp_path: Path):
+    """Probe failure is a blocker — never a human file-list confirmation."""
+    scope = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "runs" / "r1" / "scope"
     scope.mkdir(parents=True)
     (scope / "candidates.yaml").write_text(
-        "probe_clean: false\nambiguities: [multi_arch]\nop_name: X\n",
+        "probe_clean: false\n"
+        "ambiguities: []\n"
+        "op_name: X\n"
+        "arch_dir: arch35\n"
+        "arch_user_specified: true\n"
+        "host_targets:\n"
+        "  - a.cpp\n"
+        "kernel_entry: k.cpp\n",
         encoding="utf-8",
     )
-    out = scope_confirm(tmp_path, {"run_id": "r1"})
+    out = scope_validate(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
     assert out["ok"] is False
-    assert out.get("need_human")
+    assert out.get("blocker") is True
+    assert out.get("need_human") is False
+    assert "clang_probe_unclean" in (out.get("blockers") or [])
+
+
+def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
+    scope = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "runs" / "r1" / "scope"
+    scope.mkdir(parents=True)
+    (scope / "candidates.yaml").write_text(
+        "probe_clean: true\n"
+        "ambiguities:\n"
+        "  - 'host_targets_from_glob: fallback'\n"
+        "op_name: X\n"
+        "arch_dir: arch35\n"
+        "arch_user_specified: true\n"
+        "host_targets:\n"
+        "  - a.cpp\n"
+        "kernel_entry: k.cpp\n"
+        "scope_files: 3\n"
+        "scope_shared: 1\n",
+        encoding="utf-8",
+    )
+    out = scope_validate(
+        tmp_path,
+        {"run_id": "r1", "arch_dir": "arch35", "workflow_id": "uo-init"},
+    )
+    assert out["ok"] is True
+    assert out.get("auto") is True
+    receipt = out["receipt"]
+    assert receipt["status"] == "confirmed"
+    assert receipt["source"] == "machine"
+    assert receipt["validated"] is True
+    assert (scope / "scope_confirmed.yaml").is_file()
+
+
+def test_scope_confirm_alias_is_scope_validate():
+    assert scope_confirm is scope_validate

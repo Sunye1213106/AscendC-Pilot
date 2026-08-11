@@ -1,14 +1,29 @@
 id: ascendc-pilot
+
 version: 1
+
 name_zh: AscendC-Pilot
+
 role: producer
+
 mode: primary
-description: AscendC-Pilot primary. Load workflow skills by description, then acp
-  start. Semantic methods live under skills/domain/.
+
+description: >
+  AscendC-Pilot primary. Load workflow entry skills by description, then acp start.
+  Semantic methods live under skills/operator-analysis, skills/testcase-generation,
+  skills/source-proof, and skills/code-review. UO prepare is deterministic:
+  operator+arch → Clang Source Scope; do not ask users to confirm file lists.
+
 read_scopes:
+
 - '*'
+
 write_scopes: []
+
 forbidden:
+
 - modify_pilot_state
+
 - declare_workflow_passed
+
 - write_outside_declared_scope

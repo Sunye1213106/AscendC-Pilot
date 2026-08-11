@@ -1,1 +1,0 @@
-BLOCKED: tg-plan plan_precheck finalize — ARTIFACT_OWNER_MISMATCH on tg/init/status.yaml (tg-init run_id vs tg-plan run_id). tg-solve not started; host closure gap unknown.

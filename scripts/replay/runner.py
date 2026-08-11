@@ -252,7 +252,7 @@ class ReplayRunner:
                     f"replay entry script not found at {entry!r}\n"
                     f"build the driver locally, or point the manifest's replay.entry "
                     f"at wherever it was built "
-                    f"(see skills/domain/tg-closure and skills/domain/source-lemma-proof)"
+                    f"(see skills/testcase-generation and skills/source-proof)"
                 )
             return
         if self.manifest.host != "wsl":
@@ -280,7 +280,7 @@ class ReplayRunner:
                 f"replay entry script not found at {entry} inside {distro}\n"
                 f"build the driver there, or point the manifest's replay.entry "
                 f"at wherever it was built "
-                f"(see skills/domain/tg-closure and skills/domain/source-lemma-proof)"
+                f"(see skills/testcase-generation and skills/source-proof)"
             )
 
     def _invoke(self, send: dict[str, I.Case], in_csv, out_csv, log_txt,

@@ -269,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_scope = sub.add_parser(
         "uo-scope",
-        help="Run UO scope_confirmation deterministic steps (scan/checkpoint/finalize)",
+        help="Run UO scope validate steps (scan/validate; legacy aliases: checkpoint/finalize)",
     )
     p_scope.add_argument(
         "step",

@@ -116,10 +116,23 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "scope_scan": [
             "uo/runs/{run_id}/scope/**",
             "uo/summary/scope_candidates.yaml",
+            "uo/summary/scope_set.yaml",
+        ],
+        "scope_validate": [
+            "uo/runs/{run_id}/scope/**",
+            "uo/summary/scope_confirmed.yaml",
         ],
         "scope_confirm": [
             "uo/runs/{run_id}/scope/**",
             "uo/summary/scope_confirmed.yaml",
+        ],
+        "prepare": [
+            "uo/manifest.yaml",
+            "uo/operator.yaml",
+            "uo/runs/{run_id}/scope/**",
+            "uo/summary/**",
+            "uo/ir/build_variant.yaml",
+            "uo/**",
         ],
         "extract_host": ["uo/ir/**"],
         "extract_tiling_key": ["uo/tiling/**"],

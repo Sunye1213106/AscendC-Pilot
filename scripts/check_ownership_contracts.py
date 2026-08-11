@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Static ownership / identity contract auditor for AscendC-Pilot.
 
-Fails install/compose/CI when Spec, Skill, action.yaml, Agent, Prompt, METHOD,
-Output Contract, and write scopes drift or violate ownership rules.
+Fails install/compose/CI when Spec, Skill, Agent, Prompt, Output Contract,
+and write scopes drift or violate ownership rules.
 
-This auditor is READ-ONLY: it never rewrites action.yaml, Skill markers, or
-generated/**. Use ``python scripts/compose_runtime.py --sync`` to refresh mirrors.
+This auditor is READ-ONLY: it never rewrites Skill markers or generated/**.
+Use ``python scripts/compose_runtime.py --sync`` to refresh Skill action markers.
+Action identity lives solely in Workflow Spec (no skills/actions source tree).
 """
 
 from __future__ import annotations
@@ -84,14 +85,17 @@ def audit(repo: Path) -> list[str]:
         if missing_pipeline:
             errors.append(f"SKILL_PIPELINE_DRIFT {wid}: pipeline refs unknown actions {missing_pipeline}")
 
-        skill_path = skills_dir / "workflows" / wid / "SKILL.md"
-        if skill_path.is_file():
-            text = skill_path.read_text(encoding="utf-8")
-            if "<!-- BEGIN GENERATED ACTIONS -->" not in text or "<!-- END GENERATED ACTIONS -->" not in text:
-                errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: missing GENERATED ACTIONS markers")
-            # Source skill must not redefine a full hand-maintained action table outside markers.
-            if re.search(r"(?ms)^## Actions\s*\n\| action_id \|", text) and "BEGIN GENERATED" not in text:
-                errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: hand-maintained Actions table")
+        # Entry skills are composed into generated/; Spec + WORKFLOW_ENTRIES are authority.
+        entry_ok = True
+        try:
+            import compose_runtime as _compose
+
+            if wid not in _compose.WORKFLOW_ENTRIES:
+                errors.append(f"SKILL_ENTRY_MISSING {wid}")
+                entry_ok = False
+        except Exception:  # noqa: BLE001
+            entry_ok = True
+        del entry_ok
 
         for action in actions:
             aid = str(action.get("id") or "")
@@ -113,14 +117,8 @@ def audit(repo: Path) -> list[str]:
                     errors.append(f"{wid}/{aid}: deterministic Action missing engine registry entry")
 
             if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
-                if mid and "/" in mid:
-                    wf, name = mid.split("/", 1)
-                    method = skills_dir / "actions" / wf / name / "METHOD.md"
-                    if not method.is_file() or not method.read_text(encoding="utf-8").strip():
-                        errors.append(f"ACTION_METHOD_MISSING {wid}/{aid}: {mid}")
-                    ayaml = _load_yaml(skills_dir / "actions" / wf / name / "action.yaml")
-                    if wf == wid:
-                        errors.extend(compose._action_yaml_drift(wid, action, ayaml))
+                if mid and "/" not in mid:
+                    errors.append(f"{wid}/{aid}: invalid action_method_id {mid!r}")
                 if tpid:
                     if "/" in tpid:
                         dom, name = tpid.split("/", 1)

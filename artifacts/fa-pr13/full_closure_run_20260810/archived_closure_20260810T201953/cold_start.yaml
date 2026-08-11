@@ -1,7 +1,0 @@
-schema: tg-cold-start/v1
-timestamp: '2026-08-10T09:00:24.841661+00:00'
-fingerprint: 6e275cc3f809b68ac9d1d643
-state: /work/ops-transformer/attention/flash_attention_score_grad/.ascendc-pilot/arch35/tg/closure
-cleared:
-- provenance_backfill
-note: stamped after Host+lemma closure without wiping R/E

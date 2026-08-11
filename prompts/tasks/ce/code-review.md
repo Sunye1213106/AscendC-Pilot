@@ -15,7 +15,7 @@ Review the assigned targets for source-backed defects.
 
 # Requirements
 
-- Follow `skills/domain/code-review/SKILL.md`
+- Follow `skills/code-review/SKILL.md`
 - Prefer Codemap/KB localize, then minimal source reads
 
 # Return

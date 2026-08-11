@@ -81,16 +81,18 @@ def run_uo_scope(
         "prepare_layout": "prepare_layout",
         "scan": "scope_scan",
         "scope_scan": "scope_scan",
-        "confirm": "scope_confirm",
-        "scope_confirm": "scope_confirm",
-        "checkpoint": "scope_confirm",
-        "finalize": "scope_confirm",
+        "validate": "scope_validate",
+        "scope_validate": "scope_validate",
+        "confirm": "scope_validate",
+        "scope_confirm": "scope_validate",
+        "checkpoint": "scope_validate",
+        "finalize": "scope_validate",
     }
     if step in {"build-evidence", "closure", "stage", "record-index", "stage_cbm"}:
         payload = {
             "ok": False,
             "error": "legacy_scope_step_removed",
-            "message_zh": f"步骤 {step} 已随旧引擎移除；请使用 prepare/scan/confirm",
+            "message_zh": f"步骤 {step} 已随旧引擎移除；请使用 prepare/scan/validate",
             "step": step,
         }
         return _record_step_result(root, payload, action_id="uo_scope", step_id=step)
@@ -100,7 +102,7 @@ def run_uo_scope(
         payload = {"ok": False, "error": f"unknown_step:{step}", "step": step}
         return _record_step_result(root, payload, action_id="uo_scope", step_id=step)
 
-    if action == "scope_confirm" and decision:
+    if action == "scope_validate" and decision:
         ctx["decision"] = decision
         ctx["notes"] = notes
         if str(decision).strip().lower() in {
@@ -110,6 +112,7 @@ def run_uo_scope(
             "yes",
             "y",
         }:
+            ctx["force_validate"] = True
             ctx["force_confirm"] = True
 
     fn = pe.ENGINES[action]

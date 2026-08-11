@@ -587,6 +587,30 @@ def extract_host_bundle(
             arch_dir=spec.arch_dir,
         )
 
+    # Prefer Clang include closure over regex bootstrap so common/ headers
+    # that macros or conditional includes pull in still enter Host/Kernel walks.
+    with timer.span("scope_clang_enrich"):
+        from uo_init import scope_scan as sscan
+
+        if spec.scope is None:
+            spec.scope = sscan.scan(spec.op_dir, arch_dir=spec.arch_dir)
+        try:
+            spec.scope = sscan.enrich_with_clang(
+                spec.scope,
+                host_args=ctx.host_args(),
+                kernel_args=ctx.kernel_args(dtype_variant="DT_FLOAT16"),
+                host_tus=targets[:3],
+                kernel_tu=spec.kernel_entry,
+            )
+        except Exception as exc:  # noqa: BLE001
+            spec.scope.notes.append(f"clang_enrichment_failed: {str(exc)[:200]}")
+            _tlog(f"  scope_clang_enrich failed: {exc}")
+        else:
+            _tlog(
+                f"  scope_files={len(spec.scope.files)} "
+                f"shared={sum(1 for f in spec.scope.files if f.shared)}"
+            )
+
     # Schema is cheap text parse; needed for kernel dimension tags before host IR.
     schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None
     kernel_dims = [d.name for d in schema.dims] if schema else []

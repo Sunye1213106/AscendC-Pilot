@@ -19,36 +19,11 @@ def _repo_root(explicit: Path | None) -> Path:
     return Path(__file__).resolve().parents[3]
 
 
-def _read_action_method(skills: Path, method_id: str) -> str:
-    parts = method_id.split("/", 1)
-    if len(parts) != 2:
-        return ""
-    d = skills / "actions" / parts[0] / parts[1]
-    mp = d / "METHOD.md"
-    return mp.read_text(encoding="utf-8") if mp.is_file() else ""
-
-
 def _prompt_path(prompts: Path, tpid: str) -> Path:
     if "/" in tpid:
         dom, name = tpid.split("/", 1)
         return prompts / "tasks" / dom / f"{name}.md"
     return prompts / "tasks" / f"{tpid}.md"
-
-
-def _load_action_yaml(skills: Path, method_id: str) -> dict[str, Any]:
-    parts = method_id.split("/", 1)
-    if len(parts) != 2:
-        return {}
-    p = skills / "actions" / parts[0] / parts[1] / "action.yaml"
-    if not p.is_file():
-        return {}
-    try:
-        import yaml
-
-        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        return data if isinstance(data, dict) else {}
-    except Exception:  # noqa: BLE001
-        return {}
 
 
 def _registered_gate_ids(project_root: Path) -> set[str]:
@@ -212,7 +187,6 @@ def check_all(
 ) -> list[str]:
     """Run fail-closed, side-effect-free SSOT checks."""
     root = _repo_root(repo_root)
-    skills = root / "skills"
     prompts = root / "prompts"
     agents_dir = root / "agents"
 
@@ -291,8 +265,9 @@ def check_all(
             contract_id = str(action.get("output_contract_id") or "").strip()
 
             if method_id:
-                if not _read_action_method(skills, method_id).strip():
-                    errors.append(f"{wid}/{aid}: missing METHOD for {method_id}")
+                # action_method_id is a logical Spec key only (no skills/actions tree).
+                if "/" not in method_id:
+                    errors.append(f"{wid}/{aid}: invalid action_method_id {method_id!r}")
             elif role in {"producer", "referee", "readonly_analyst", "deterministic_engine"}:
                 errors.append(f"{wid}/{aid}: missing action_method_id")
 
@@ -372,20 +347,6 @@ def check_all(
                 gate_id = str(gate)
                 if gate_id and gate_id not in gate_ids:
                     errors.append(f"{wid}/{aid}: action gate {gate_id!r} not registered")
-
-            if method_id:
-                action_yaml = _load_action_yaml(skills, method_id)
-                if action_yaml:
-                    yaml_contract = str(action_yaml.get("output_contract_id") or "").strip()
-                    if contract_id and yaml_contract and yaml_contract != contract_id:
-                        errors.append(
-                            f"{wid}/{aid}: action.yaml contract {yaml_contract!r} != Spec {contract_id!r}"
-                        )
-                    yaml_agent = str(action_yaml.get("agent_id") or "").strip()
-                    if agent_id and yaml_agent and yaml_agent != agent_id:
-                        errors.append(
-                            f"{wid}/{aid}: action.yaml agent {yaml_agent!r} != Spec {agent_id!r}"
-                        )
 
     if workflows is None:
         from ascendc_pilot.run_resume import action_owned_artifacts

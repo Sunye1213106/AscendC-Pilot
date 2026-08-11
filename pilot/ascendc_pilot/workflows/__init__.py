@@ -182,7 +182,7 @@ def _make_deterministic(row: dict[str, Any]) -> None:
 def _apply_uo_control_plane_contracts() -> None:
     """Expose the six-stage `.uo` compiler without legacy KB control gates."""
     init = WORKFLOWS.get("uo-init") or {}
-    for action_id in ("extract", "analyze", "apply_gap_patch", "commit", "review"):
+    for action_id in ("prepare", "extract", "analyze", "apply_gap_patch", "commit", "review"):
         row = _action(init, action_id)
         if row is not None:
             _make_deterministic(row)
@@ -211,7 +211,7 @@ def _apply_uo_control_plane_contracts() -> None:
         {"id": "uo-semantic-resolver", "role": "producer"},
     ]
     init["static_obligations"] = [
-        {"id": "scope_confirmed", "label_zh": "范围已确认"},
+        {"id": "scope_confirmed", "label_zh": "范围已校验"},
         {"id": "uo_product_ready", "label_zh": ".uo CodeMap 已写入"},
     ]
     meta = init.setdefault("meta", {})

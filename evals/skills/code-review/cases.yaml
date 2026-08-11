@@ -1,0 +1,14 @@
+version: 1
+skill: code-review
+mode: dry
+cases:
+  - id: review_operator_diff
+    query: 审查算子代码改动，找潜在 bug
+    expect_skill: code-review
+    expect_references:
+      - references/ascendc-checks.md
+
+  - id: not_tg_solve
+    query: 分析改动影响范围与跨层契约一致性
+    expect_skill: code-review
+    forbid_skill: tg-solve

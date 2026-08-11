@@ -1,1 +1,0 @@
-TilingData R requires scrape/dump capability in log_protocol or driver. Without it, coverage is static over-approx from writers×witness keys; over_approximated=true and fields are never excluded into E.

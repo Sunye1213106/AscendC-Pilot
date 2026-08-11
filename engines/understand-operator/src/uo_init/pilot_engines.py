@@ -322,7 +322,8 @@ def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) 
 
 
 def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """List host/kernel candidates and probe libclang diagnostics."""
+    """Resolve Source Scope: layout bootstrap + Clang include closure + probe."""
+    from uo_init import scope_scan as sscan
     from uo_init.build_context import BuildContext
     from uo_init.clang_walk import probe_diagnostics
     from uo_init.op_spec import discover
@@ -345,15 +346,33 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
 
     hosts = [p for p in spec.host_targets if p.exists()]
     kernel = spec.kernel_entry if spec.kernel_entry and spec.kernel_entry.exists() else None
+
+    # Compiler-driven closure: layout/regex bootstrap is not the final scope.
+    scope = spec.scope
+    if scope is not None:
+        try:
+            scope = sscan.enrich_with_clang(
+                scope,
+                host_args=bctx.host_args(),
+                kernel_args=bctx.kernel_args(dtype_variant="DT_FLOAT16"),
+                host_tus=hosts[:3],
+                kernel_tu=kernel,
+            )
+            spec.scope = scope
+        except Exception as exc:  # noqa: BLE001
+            if scope is not None:
+                scope.notes.append(f"clang_enrichment_failed: {str(exc)[:200]}")
+
     probes: list[dict[str, Any]] = []
     host_errors = 0
     kernel_errors = 0
     # Probe only asks whether the build flags resolve; a deep walk here would
     # repeat the work extract does with a different scope and cache key.
-    # When the caller already force-confirms the scope (automation / cold
-    # measure), skip the TU parses entirely — extract will surface real errors.
+    # Automation may skip probes when force-accepting; extract still surfaces
+    # real parse errors.
     force = bool(
         ctx.get("force_confirm")
+        or ctx.get("force_validate")
         or ctx.get("confirmed")
         or str(ctx.get("decision") or "").strip().lower()
         in {"continue", "accept", "confirm", "yes", "y"}
@@ -397,10 +416,11 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
                 )
                 kernel_errors = -1
     else:
-        probes.append({"probe": "skipped", "reason": "force_confirm_auto_accept"})
+        probes.append({"probe": "skipped", "reason": "force_validate_auto_accept"})
 
+    scope_dict = scope.to_dict() if scope is not None else {}
     candidate = {
-        "version": 1,
+        "version": 2,
         "status": "extracted",
         "op_name": spec.op_name,
         "arch_dir": spec.arch_dir,
@@ -416,10 +436,19 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "kernel_probe_errors": kernel_errors,
         "probe_clean": True if skip_probe else (host_errors == 0 and kernel_errors == 0),
         "probe_skipped": skip_probe,
+        "scope_files": len(scope.files) if scope is not None else 0,
+        "scope_shared": (
+            sum(1 for f in scope.files if f.shared) if scope is not None else 0
+        ),
+        "scope_notes": list(scope.notes) if scope is not None else [],
+        "arch_user_specified": bool(str(ctx.get("arch_dir") or "").strip()),
     }
     out = run / "scope" / "candidates.yaml"
     _dump(out, candidate)
     _dump(uo / "summary" / "scope_candidates.yaml", candidate)
+    if scope_dict:
+        _dump(run / "scope" / "scope_set.yaml", scope_dict)
+        _dump(uo / "summary" / "scope_set.yaml", scope_dict)
     return {
         "ok": True,
         "engine": "scope_scan",
@@ -428,11 +457,74 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "candidates": out.as_posix(),
         "host_probe_errors": host_errors,
         "kernel_probe_errors": kernel_errors,
+        "scope_files": candidate["scope_files"],
+        "scope_shared": candidate["scope_shared"],
     }
 
 
-def scope_confirm(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Auto-confirm when unambiguous and probe-clean; else request human."""
+# Soft discover notes that never justify a human file-list review once the user
+# already fixed operator + architecture. Hard blockers still fail prepare.
+_SOFT_AMBIGUITY_PREFIXES = (
+    "host_targets_from_glob:",
+    "op_name_from_filename:",
+    "op_name_from_directory:",
+    "multiple_opdef:",
+    "multiple_kernel_entry:",
+    "multiple_tiling_key_header:",
+)
+
+
+def _hard_scope_blockers(
+    ambiguities: list[str],
+    *,
+    arch_user_specified: bool,
+    probe_clean: bool,
+    hosts: list[Any],
+    kernel_entry: str,
+) -> list[str]:
+    """Failures that stop prepare; never become a 'confirm these files?' prompt."""
+    blockers: list[str] = []
+    for item in ambiguities:
+        text = str(item)
+        if text.startswith(_SOFT_AMBIGUITY_PREFIXES):
+            continue
+        if text.startswith("multiple_arch_dirs:"):
+            if arch_user_specified:
+                continue
+            blockers.append(text)
+            continue
+        if text.startswith(
+            (
+                "arch_not_present:",
+                "no_arch_dir_found",
+                "opdef_not_found:",
+                "host_targets_not_found:",
+                "kernel_entry_not_found:",
+                "tiling_key_header_not_found:",
+                "override_missing_",
+            )
+        ):
+            blockers.append(text)
+            continue
+        # Unknown ambiguity: soft when probe is clean, else hard.
+        if not probe_clean:
+            blockers.append(text)
+    if not hosts:
+        blockers.append("host_targets_empty")
+    if not str(kernel_entry or "").strip():
+        blockers.append("kernel_entry_empty")
+    if not probe_clean:
+        blockers.append("clang_probe_unclean")
+    return blockers
+
+
+def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Machine gate: write scope receipt or fail as blocker.
+
+    Never asks a human to confirm a discovered file list. The user already
+    chose operator + arch; this step only validates that Source Scope and
+    Build Context resolve cleanly.
+    """
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root)
@@ -443,59 +535,78 @@ def scope_confirm(project_root: Path, payload: dict[str, Any] | None = None) -> 
     if str((prior or {}).get("status") or "") == "confirmed":
         return {
             "ok": True,
-            "engine": "scope_confirm",
-            "auto": bool((prior or {}).get("auto")),
-            "already_confirmed": True,
+            "engine": "scope_validate",
+            "auto": bool((prior or {}).get("auto", True)),
+            "already_validated": True,
             "receipt": prior,
         }
     decision = str(ctx.get("decision") or "").strip().lower()
     force = bool(
         ctx.get("force_confirm")
+        or ctx.get("force_validate")
         or ctx.get("confirmed")
         or decision in {"continue", "accept", "confirm", "yes", "y"}
     )
-    ambiguous = bool(cand.get("ambiguities"))
     probe_clean = bool(cand.get("probe_clean", False))
-    # Automation / cold-start drivers: probe-clean + explicit continue accepts
-    # mild discover ambiguities (extra headers) without a human prompt.
-    if (
-        not force
-        and probe_clean
-        and str(ctx.get("step") or "").strip().lower() in {"finalize", "confirm", "scope_confirm", ""}
-        and bool(ctx.get("auto_accept_clean"))
-    ):
-        force = True
-    need_human = (ambiguous or not probe_clean) and not force
-    if need_human:
+    arch_user_specified = bool(
+        cand.get("arch_user_specified")
+        or str(ctx.get("arch_dir") or ctx.get("architecture") or "").strip()
+    )
+    ambiguities = [str(x) for x in (cand.get("ambiguities") or [])]
+    hosts = list(cand.get("host_targets") or [])
+    kernel_entry = str(cand.get("kernel_entry") or "")
+    blockers = _hard_scope_blockers(
+        ambiguities,
+        arch_user_specified=arch_user_specified,
+        probe_clean=probe_clean or force,
+        hosts=hosts,
+        kernel_entry=kernel_entry,
+    )
+    if force:
+        blockers = [b for b in blockers if b != "clang_probe_unclean"]
+    if blockers:
         return {
             "ok": False,
-            "engine": "scope_confirm",
-            "need_human": True,
-            "ambiguous": ambiguous,
+            "engine": "scope_validate",
+            "blocker": True,
+            "need_human": False,
+            "blockers": blockers,
+            "ambiguous": bool(ambiguities),
             "probe_clean": probe_clean,
-            "message_zh": "范围有歧义或探针有错，需要人工确认",
+            "message_zh": (
+                "范围校验失败（编译探针或入口 TU 不可用），已记为 blocker；"
+                "不要求人工确认文件清单"
+            ),
+            "error": "SCOPE_VALIDATE_BLOCKED",
         }
     receipt = {
-        "version": 1,
+        "version": 2,
         "status": "confirmed",
-        # Run-scoped identity is required by the Pilot output contract.  The
-        # compatibility ``uo-scope`` wrapper supplies these fields from the
-        # active workflow state; keeping them in the producer artifact also
-        # makes direct static execution auditable.
+        "validated": True,
+        "source": "machine",
+        # Run-scoped identity is required by the Pilot output contract.
         "run_id": str(ctx.get("run_id") or ""),
         "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
+        # Keep legacy action_id spelling so scope_receipt gate stays stable.
         "action_id": str(ctx.get("action_id") or "scope_confirmation"),
         "op_name": cand.get("op_name") or root.name,
         "arch_dir": cand.get("arch_dir") or "",
-        "host_targets": cand.get("host_targets") or [],
-        "kernel_entry": cand.get("kernel_entry") or "",
-        "auto": not force,
+        "host_targets": hosts,
+        "kernel_entry": kernel_entry,
+        "auto": True,
         "probe_clean": probe_clean,
+        "scope_files": cand.get("scope_files"),
+        "scope_shared": cand.get("scope_shared"),
+        "soft_ambiguities": ambiguities,
     }
     _dump(scope / "scope_confirmed.yaml", receipt)
     _dump(scope / "receipt.yaml", {"ok": True, "gate": "scope_receipt", **receipt})
     _dump(uo / "summary" / "scope_confirmed.yaml", receipt)
-    return {"ok": True, "engine": "scope_confirm", "auto": not force, "receipt": receipt}
+    return {"ok": True, "engine": "scope_validate", "auto": True, "receipt": receipt}
+
+
+# Compatibility alias: public prepare chain and legacy CLI still say confirm.
+scope_confirm = scope_validate
 
 
 def _bundle_cache(uo: Path) -> Path:
@@ -1840,7 +1951,8 @@ ENGINES: dict[str, Any] = {
     # Internal / merge helpers (also used by composites).
     "prepare_layout": prepare_layout,
     "scope_scan": scope_scan,
-    "scope_confirm": scope_confirm,
+    "scope_validate": scope_validate,
+    "scope_confirm": scope_confirm,  # alias → scope_validate
     "extract_host": extract_host,
     "extract_tiling_key": extract_tiling_key,
     "extract_registry": extract_registry,

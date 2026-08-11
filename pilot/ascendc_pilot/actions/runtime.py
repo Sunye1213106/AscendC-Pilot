@@ -475,14 +475,12 @@ def _build_task_prompt_stub(
 
 
 def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, str]:
+    """Load task prompt; Action METHOD.md sources were removed (Spec is authority).
+
+    Returns ``(method, prompt)`` where ``method`` is always empty.
+    """
     method = ""
     prompt = ""
-    mid = str(action.get("action_method_id") or "")
-    if mid and "/" in mid:
-        wf, name = mid.split("/", 1)
-        mp = repo / "skills" / "actions" / wf / name / "METHOD.md"
-        if mp.is_file():
-            method = mp.read_text(encoding="utf-8")
     tpid = str(action.get("task_prompt_id") or "")
     if tpid:
         if "/" in tpid:
@@ -989,15 +987,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     )
     method, prompt = _load_method_and_prompt(repo, action)
     if execution_mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
-        mid = str(action.get("action_method_id") or "")
         tpid = str(action.get("task_prompt_id") or "")
-        if mid and not str(method or "").strip():
-            return {
-                "ok": False,
-                "error": "ACTION_METHOD_MISSING",
-                "message_zh": f"Action {action_id} missing METHOD.md for {mid}",
-                "action_method_id": mid,
-            }
         if tpid and not str(prompt or "").strip():
             return {
                 "ok": False,

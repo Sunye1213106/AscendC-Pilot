@@ -1,6 +1,0 @@
-WROTE /mnt/d/PR-review/AscendC-Pilot/artifacts/fa-pr13/codemap_blame_dims.json
-== uo
-Traceback (most recent call last):
-  File "/mnt/d/PR-review/AscendC-Pilot/artifacts/fa-pr13/codemap_blame_dims.py", line 64, in <module>
-    v = e.get(k)
-AttributeError: 'str' object has no attribute 'get'

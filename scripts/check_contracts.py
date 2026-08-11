@@ -17,13 +17,12 @@ _CAP_LIST_RE = re.compile(
 def check_prompt_capability_drift(repo: Path) -> list[str]:
     """Fail when a task prompt hardcodes a capability list that ≠ Action Spec."""
     sys.path.insert(0, str(repo / "pilot"))
+    sys.path.insert(0, str(repo / "scripts"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
 
-    known_caps = {
-        p.name
-        for p in (repo / "skills" / "capabilities").iterdir()
-        if p.is_dir() and (p / "capability.yaml").is_file()
-    }
+    import compose_runtime as compose
+
+    known_caps = set(compose.CAPABILITY_DIRS)
     # task_prompt_id -> expected capability_ids (first writer wins; warn on conflict)
     expected: dict[str, list[str]] = {}
     owners: dict[str, str] = {}

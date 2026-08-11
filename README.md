@@ -285,27 +285,34 @@ docs/
 ```text
 AscendC-Pilot/
 │
-├── pilot/                      # 控制面与工作流
-│
-├── engines/
-│   ├── understand-operator/    # UO
-│   ├── testcase-generation/    # TG
-│   ├── code-engineering/       # CE
-│   └── common/                 # 公共组件
-│
-├── skills/                     # Agent 规则与能力
+├── pilot/                      # 控制面：Workflow Spec、State、Gate、Policy、runtime
+├── engines/                    # UO / TG / CE 确定性引擎
+├── skills/                     # 四个认知 Skill + _shared
+├── tools/                      # 源码 / CodeMap 工具契约
+├── adapters/hosts/             # OpenCode / Cursor / Codex overlays
 ├── prompts/                    # Task Prompt
 ├── agents/                     # Agent Role
-│
-├── operators/                  # 算子运行所需的少量配置
+├── operators/                  # 算子运行配置
 ├── opencode-plugin/            # OpenCode Adapter
-├── scripts/                    # 构建、检查和开发工具
-├── docs/                       # 设计与实现文档
+├── scripts/                    # compose / 检查 / 开发工具
+├── docs/                       # 设计文档
+├── evals/                      # dry evals
 │
 ├── install.ps1
 ├── install.sh
 └── requirements.txt
 ```
+
+### `skills/`
+
+模型可读专业知识（progressive disclosure）：
+
+- `operator-analysis` — UO CodeMap 构建与查询
+- `testcase-generation` — 测例契约 / 计划 / 闭环
+- `source-proof` — 源码引理证明
+- `code-review` — 代码审查
+
+Action / Workflow 编排权威在 `pilot/.../workflows/specs.py`；compose 生成 slash 入口与 Action Bundle 镜像。
 
 ### `pilot/`
 
@@ -319,6 +326,12 @@ AscendC-Pilot 控制面。
 - Context
 - Action 调度
 - CLI
+- Policies（`pilot/policies/`）
+- Runtime capabilities（`pilot/runtime/`）
+
+### `tools/`
+
+源码阅读 / 导航与 CodeMap 查询的工具使用契约。
 
 ### `engines/understand-operator/`
 
@@ -337,10 +350,6 @@ TG 核心实现。
 CE 核心实现。
 
 负责 Code Review 和后续开发辅助能力。
-
-### `skills/`
-
-Agent 可以使用的 Policy、Capability、Action 和 Workflow。
 
 ### `prompts/`
 

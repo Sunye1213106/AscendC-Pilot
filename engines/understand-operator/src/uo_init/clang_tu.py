@@ -58,12 +58,51 @@ def parse_path(path: str, args: list[str]) -> ParseResult:
     return ParseResult(path=path, args=args, diagnostics=diags, tu=tu)
 
 
-def _in_op(node, needle: str) -> bool:
+def _in_analysis_scope(
+    node,
+    needle: str = "",
+    *,
+    scope=None,
+    op_root: str = "",
+) -> bool:
+    """True when a cursor belongs to operator-owned or shared analysis sources.
+
+    Prefer a scanned/Clang-enriched ScopeSet: shared ``common/`` headers carry
+    no operator name, so a bare ``op_needle`` substring drops them and loses
+    semantics. Fall back to needle / op_root / sibling ``common/`` when no
+    scope was supplied (legacy callers).
+    """
     try:
         f = node.location.file
-        return f is not None and needle in f.name.replace("\\", "/")
+        if f is None:
+            return False
+        path = f.name.replace("\\", "/")
     except Exception:
         return False
+    if scope is not None:
+        return scope.contains(path)
+    if needle and needle in path:
+        return True
+    if op_root:
+        root = str(op_root).replace("\\", "/")
+        if path.startswith(root) or root in path:
+            return True
+        # Sibling domain common: <workspace>/common/... next to the operator.
+        try:
+            sibling_common = (Path(op_root).resolve().parent / "common").as_posix()
+            if path.startswith(sibling_common) or f"/{sibling_common}/" in f"/{path}/":
+                return True
+        except Exception:
+            pass
+        inner_common = f"{root.rstrip('/')}/common/"
+        if inner_common in path or path.startswith(inner_common):
+            return True
+    return False
+
+
+def _in_op(node, needle: str) -> bool:
+    """Legacy needle-only check; prefer :func:`_in_analysis_scope`."""
+    return _in_analysis_scope(node, needle)
 
 
 def _member_path(n) -> str:
@@ -89,14 +128,21 @@ def _member_path(n) -> str:
     return ".".join(reversed([p for p in parts if p]))
 
 
-def analyze_host(path: str, ctx: BuildContext, op_needle: str) -> ParseResult:
+def analyze_host(
+    path: str,
+    ctx: BuildContext,
+    op_needle: str,
+    *,
+    scope=None,
+) -> ParseResult:
     res = parse_path(path, ctx.host_args())
     if res.tu is None:
         return res
+    op_root = getattr(ctx, "op_dir", "") or ""
     writes: list[str] = []
     branches: collections.Counter = collections.Counter()
     for n in res.tu.cursor.walk_preorder():
-        if not _in_op(n, op_needle):
+        if not _in_analysis_scope(n, op_needle, scope=scope, op_root=op_root):
             continue
         k = n.kind
         if k in (
@@ -125,13 +171,16 @@ def analyze_kernel(
     ctx: BuildContext,
     op_needle: str,
     dtype_variant: str | None = "DT_FLOAT16",
+    *,
+    scope=None,
 ) -> ParseResult:
     res = parse_path(path, ctx.kernel_args(dtype_variant=dtype_variant))
     if res.tu is None:
         return res
+    op_root = getattr(ctx, "op_dir", "") or ""
     branches: collections.Counter = collections.Counter()
     for node in res.tu.cursor.walk_preorder():
-        if not _in_op(node, op_needle):
+        if not _in_analysis_scope(node, op_needle, scope=scope, op_root=op_root):
             continue
         if node.kind in (
             cindex.CursorKind.IF_STMT,

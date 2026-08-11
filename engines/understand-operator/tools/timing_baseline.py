@@ -41,7 +41,8 @@ _LINE_RE = re.compile(
 # Product actions / known phases for the baseline table template.
 ACTIONS = (
     "prepare_layout",
-    "scope_confirm",
+    "scope_validate",
+    "scope_confirm",  # alias
     "extract_host",
     "extract_tiling_key",
     "extract_kernel",

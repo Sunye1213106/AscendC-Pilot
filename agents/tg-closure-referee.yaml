@@ -4,7 +4,7 @@ name_zh: TG 闭环审查 referee
 role: referee
 mode: subagent
 description: Referee for lemma certificates and closure audit. Read session prompt.md
-  first, then skills/domain/source-lemma-proof (referee-replay) or tg-closure. Writes
+  first, then skills/source-proof (referee-replay) or skills/testcase-generation. Writes
   review.yaml only; never excluded set.
 read_scopes:
 - tg/closure/**
@@ -13,7 +13,11 @@ read_scopes:
 - operators/**
 - runs/**
 - context/**
-- skills/domain/**
+- skills/operator-analysis/**
+- skills/testcase-generation/**
+- skills/source-proof/**
+- skills/code-review/**
+- skills/_shared/**
 write_scopes:
 - runs/**/actions/lemma_review/review.yaml
 - runs/**/actions/closure_audit/review.yaml

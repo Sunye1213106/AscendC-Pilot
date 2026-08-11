@@ -207,7 +207,8 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
         # uo-init
         "prepare_layout": "布局/manifest",
         "scope_scan": "范围扫描",
-        "scope_confirm": "范围确认",
+        "scope_validate": "范围校验",
+        "scope_confirm": "范围校验",
         "extract_host": "Host 抽取",
         "extract_tiling_key": "TilingKey 抽取",
         "extract_registry": "算子族登记",

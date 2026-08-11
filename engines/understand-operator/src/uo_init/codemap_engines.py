@@ -43,7 +43,11 @@ def _chain(
 
 
 def prepare(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Discover source scope and seed the selected BuildVariant."""
+    """Resolve Source Scope from operator+arch; machine-validate; seed BuildVariant.
+
+    User chooses the analysis target. The compiler decides the source closure.
+    There is no human file-list confirmation step.
+    """
     ctx = dict(payload or {})
     ctx.setdefault("auto_accept_clean", True)
     out = _chain(
@@ -52,7 +56,7 @@ def prepare(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         [
             ("prepare_layout", pe.prepare_layout),
             ("scope_scan", pe.scope_scan),
-            ("scope_confirm", pe.scope_confirm),
+            ("scope_validate", pe.scope_validate),
         ],
         engine="prepare",
     )

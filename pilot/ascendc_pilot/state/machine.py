@@ -297,8 +297,8 @@ def advance_phase(
         explicit = None
         error_code = "GATE_FAILED"
         if any(g.get("gate") == "scope_receipt" for g in failed):
-            preferred = "human_required"
-            error_code = "SCOPE_CONFIRMATION_REQUIRED"
+            preferred = "blocked"
+            error_code = "SCOPE_VALIDATE_BLOCKED"
             explicit = "environment_invariant"
         from ascendc_pilot.observation import record_pilot_result
 
@@ -313,13 +313,14 @@ def advance_phase(
             explicit_class=explicit,
             extra={"from": current, "to": next_phase, "failed_gates": [f.get("gate") for f in failed]},
         )
-        # Prefer observation-driven status; keep scope_receipt → human_required
+        # Prefer observation-driven status; scope_receipt failure is a blocker
+        # (machine validate), not a human file-list confirmation.
         state = load_state(project_root)
-        if preferred == "human_required" and state.get("status") != "blocked":
-            state["status"] = "human_required"
+        if preferred == "blocked" and state.get("status") != "blocked":
+            state["status"] = "blocked"
             lf = dict(state.get("last_failure") or {})
             lf["reason_code"] = error_code
-            lf["message_zh"] = "请确认本次算子源码范围"
+            lf["message_zh"] = "范围校验失败（blocker）：检查 operator/arch、Build Context 与 Clang 探针"
             state["last_failure"] = lf
             save_state(project_root, state)
             state = load_state(project_root)

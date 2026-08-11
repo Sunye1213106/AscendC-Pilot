@@ -448,14 +448,14 @@ def _in_scope(
 ) -> bool:
     """True when a cursor belongs to the operator under analysis.
 
-    A scanned scope answers this directly and is preferred, because it was
-    built from the include graph: it holds the shared headers a domain keeps
-    beside its operators, which carry no operator name. Judging those by name
-    drops them, and what they define then reads as undefined rather than as
-    missing input.
+    A scanned / Clang-enriched scope answers this directly and is preferred,
+    because it was built from the include graph: it holds the shared headers a
+    domain keeps beside its operators, which carry no operator name. Judging
+    those by name drops them, and what they define then reads as undefined
+    rather than as missing input.
 
-    The filename needle and the operator root remain for callers that have no
-    scan to hand.
+    Without a scope, fall back to needle, op_root, or a sibling/inner
+    ``common/`` tree under the same workspace.
     """
     if file is None:
         return False
@@ -463,11 +463,23 @@ def _in_scope(
         return False
     if scope is not None:
         return scope.contains(file)
-    if needle:
-        return needle in file
+    if needle and needle in file:
+        return True
     if op_root:
-        return file.startswith(op_root)
-    return True
+        root = op_root.replace("\\", "/")
+        path = file.replace("\\", "/")
+        if path.startswith(root) or root in path:
+            return True
+        try:
+            sibling = (Path(op_root).resolve().parent / "common").as_posix()
+            if path.startswith(sibling) or f"/{sibling}/" in f"/{path}/":
+                return True
+        except Exception:
+            pass
+        inner = f"{root.rstrip('/')}/common/"
+        if inner in path or path.startswith(inner):
+            return True
+    return False
 
 
 def _base_class(cursor):

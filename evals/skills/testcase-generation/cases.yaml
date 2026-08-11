@@ -1,0 +1,14 @@
+version: 1
+skill: testcase-generation
+mode: dry
+cases:
+  - id: closure_target_set
+    query: Host replay 闭环 target set，扩大 R 与 E，完成 T=(R∩T)∪E
+    expect_skill: testcase-generation
+    expect_references:
+      - references/closure-safety.md
+
+  - id: init_contract_bind
+    query: 测例契约与语义绑定，TilingKey 初始化，不构造 Host replay
+    expect_skill: testcase-generation
+    forbid_skill: ce-review

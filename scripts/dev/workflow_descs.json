@@ -1,0 +1,10 @@
+{
+  "ce-review": "基于 KB 的代码审查 / code review / 查 bug。用户要审查算子代码时加载。Pilot 管阶段；加载后执行 acp start ce-review。",
+  "operator": "可选助手：列出可用 Pilot workflow skill，或把 /uo-init 等 slash 转给 acp route。 自然语言意图请直接加载对应 workflow skill，不要依赖本 Skill 做口语路由。",
+  "tg-init": "测例契约与绑定：变量/IO/TilingKey 维信息提取。用户说 tg-init、建测例契约、tilingkey 绑定时加载。默认 tilingkey_full_coverage（无需 CSV）。Pilot 管阶段；加载后 acp start tg-init。",
+  "tg-plan": "制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey； 指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。",
+  "tg-solve": "执行已批准 TG Plan：对 target set T 构造/replay case，用真实 Host witness 扩大 R， 对残差按需推导源码引理扩大 E，直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。",
+  "uo-init": "首次构建 AscendC `.uo` CodeMap：确定范围与 BuildVariant、抽取 CompilerFacts、 运行确定性 CodeMap Pass、只消解显式语义缺口、写入并审查单一 `.uo`。 用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。",
+  "uo-query": "只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、 Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有 UO 内容、 某个 KEY/字段/路径或 CodeMap 完整性时使用。",
+  "uo-update": "在已有 `.uo` 上根据源码变更执行确定性增量刷新、重建受影响 CodeMap 关系、 校验完整性并输出差异摘要。用户要求刷新已有 UO/CodeMap 或查看源码变更对 CodeMap 的影响时使用。"
+}

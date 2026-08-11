@@ -48,9 +48,9 @@ uo_init/
 
 ## Agent-facing 文档
 
-- 构建领域规则：`skills/domain/uo-codemap-build/SKILL.md`
-- 查询领域规则：`skills/domain/uo-codemap-query/SKILL.md`
-- Workflow：`skills/workflows/uo-init` / `uo-update` / `uo-query`
+- 算子分析（构建与查询）：`skills/operator-analysis/SKILL.md`
+- Pilot Spec + generated entry wrappers：`uo-init` / `uo-update` / `uo-query`
+  （`prepare` 为确定性：operator+arch → Clang Source Scope，无人工文件清单确认）
 
 ## 本地调试
 

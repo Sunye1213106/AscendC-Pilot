@@ -1,7 +1,7 @@
 # AscendC-Pilot 系统设计
 
 > 描述系统**如何设计、如何工作**：UO 如何从源码建成知识库，TG 如何用知识库做 TilingKey 全覆盖。  
-> 闭环认知见 `skills/domain/tg-closure` 与 `skills/domain/source-lemma-proof`；现状架构见 [architecture.md](./architecture.md)；UO 控制闭合见 [control-closure.md](./control-closure.md)。
+> 闭环认知见 `skills/testcase-generation` 与 `skills/source-proof`；现状架构见 [architecture.md](./architecture.md)；UO 控制闭合见 [control-closure.md](./control-closure.md)。
 
 ---
 
@@ -111,13 +111,14 @@ Primary 控制器**禁止**直接改 `uo/ir/**` 救场。
 ### 4.2 流水线阶段
 
 ```text
-prepare → scope → extract → normalize → export → review
+prepare → extract → analyze → resolve → commit → review
 ```
+
+`prepare` 内部：`prepare_layout` → `scope_scan`（layout + Clang dependency closure）→ `scope_validate`（机器 gate，非人工确认）。
 
 | 阶段 | 关键 Action | 做什么 |
 | --- | --- | --- |
-| prepare | `prepare_layout` | 发现算子布局，重置 `uo/` 骨架 |
-| scope | `scope_scan` / `scope_confirm` | 确认 Host/Kernel 分析范围 |
+| prepare | `prepare`（内部：`prepare_layout` → `scope_scan` → `scope_validate`） | 机器建立 Source Scope + BuildVariant；失败记 blocker |
 | extract | `extract_host` | libclang 建 HostIR + 分支清单 |
 | | `extract_tiling_key` | TPL DSL ↔ Host 编码点绑定 |
 | | `extract_registry` | 注册表 / IsCapable |
@@ -431,7 +432,7 @@ acp start tg-solve ...
 | 文档 | 内容 |
 | --- | --- |
 | [control-closure.md](./control-closure.md) | UO 控制来源闭合图细节 |
-| `skills/domain/tg-closure` / `source-lemma-proof` | 闭环与引理认知 |
+| `skills/testcase-generation` / `skills/source-proof` | 闭环与引理认知 |
 | [architecture.md](./architecture.md) | 现状架构（UO / TG / 三域） |
 | [../fag/tilingkey-closure-report.md](../fag/tilingkey-closure-report.md) | 历史校准报告（非 Skill） |
-| `skills/workflows/*/SKILL.md` | 各工作流 Harness 入口 |
+| Pilot Spec + generated entry wrappers | 各工作流 Harness 入口 |
