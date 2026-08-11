@@ -2,7 +2,9 @@
 """One bounded directed-search round (fit → generate → replay → progress).
 
 The workflow state machine drives the outer loop via SEARCH_PROGRESS; this
-module never loops forever inside a single action.
+module never loops forever inside a single action. L3 branch-outcome coverage
+reuses the same outer state machine but dispatches the search round to the
+replay-backed branch runtime.
 """
 
 from __future__ import annotations
@@ -132,6 +134,18 @@ def lockout_active(ws: W.Workspace, st: dict[str, Any]) -> bool:
 def route(ws: W.Workspace | None = None) -> dict[str, Any]:
     """Deterministic residual router reason codes for the tg-solve state machine."""
     ws = (ws or W.default_workspace()).ensure()
+    try:
+        from testcase_agent.closure import branch_runtime as BR
+
+        if BR.is_branch_mode(ws):
+            routed = BR.route(ws)
+            if routed:
+                return routed
+    except Exception:
+        # If L3 dispatch itself is broken, fall through to the ordinary router;
+        # certification still fails closed on unresolved runtime obligations.
+        pass
+
     st = ledger.state(ws)
     if st.get("gap", 1) == 0 and st.get("violation", 1) == 0:
         clear_lockout(ws)
@@ -225,12 +239,44 @@ def run_round(
     uo_graph_fingerprint: str = "",
     oracle_protocol_version: str = "v1",
 ) -> dict[str, Any]:
-    """Execute one search round including optional live host replay.
+    """Execute one bounded search round including optional live Host replay.
 
     Pass ``oracle=StubOracle(...)`` in CI. When ``oracle`` is None, attempt
-    ``HostOracle``; failures are recorded without crashing the round.
+    ``HostOracle``. L3 branch mode uses raw replay results so TilingData/STATE
+    observations can be evaluated, but still returns the same progress schema.
     """
     ws = (ws or W.default_workspace()).ensure()
+    try:
+        from testcase_agent.closure import branch_runtime as BR
+
+        if BR.is_branch_mode(ws):
+            return BR.run_round(ws, budget=budget, seed=seed, oracle=oracle)
+    except Exception as exc:
+        # Keep a deterministic receipt instead of silently dropping into the
+        # key searcher: running key search in L3 would produce the wrong work.
+        if "BR" in locals() and BR.is_branch_mode(ws):
+            rounds_dir = ws.state / "branch_rounds"
+            rounds_dir.mkdir(parents=True, exist_ok=True)
+            rd = rounds_dir / "dispatch_error"
+            rd.mkdir(parents=True, exist_ok=True)
+            progress = {
+                "schema": "tg-branch-runtime/v1",
+                "ok": False,
+                "reason": "BRANCH_RUNTIME_DISPATCH_FAILED",
+                "error": str(exc)[:500],
+                "new_R": 0,
+                "new_obligations": 0,
+            }
+            try:
+                import yaml
+
+                (rd / "progress.yaml").write_text(
+                    yaml.safe_dump(progress, allow_unicode=True, sort_keys=False), encoding="utf-8"
+                )
+            except Exception:
+                pass
+            return {"ok": False, "round_dir": str(rd), "progress": progress, "route_hint": "PROOF_BLOCKED"}
+
     rounds_dir = ws.state / "rounds"
     rounds_dir.mkdir(parents=True, exist_ok=True)
     idx = len(list(rounds_dir.glob("round_*"))) + 1
