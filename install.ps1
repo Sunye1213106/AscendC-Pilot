@@ -35,6 +35,12 @@ function Get-AgentsDest([string]$plat) {
     "codex" { Join-Path $HOME ".agents\agents" }
   }
 }
+function Get-CommandsDest([string]$plat) {
+  switch ($plat) {
+    "opencode" { Join-Path $HOME ".config\opencode\commands" }
+    default { $null }
+  }
+}
 function Get-PluginsDest([string]$plat) {
   switch ($plat) {
     "opencode" { Join-Path $HOME ".config\opencode\plugins" }
@@ -84,6 +90,7 @@ if ($Platform -like "uninstall-*") {
   $skills = Get-SkillsDest $plat
   $agents = Get-AgentsDest $plat
   $plugins = Get-PluginsDest $plat
+  $commands = Get-CommandsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
   foreach ($name in @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff","uo-code-review")) {
     $p = Join-Path $skills $name
@@ -93,10 +100,18 @@ if ($Platform -like "uninstall-*") {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
-  if ($plat -eq "opencode" -and $plugins) {
-    foreach ($pluginName in @("ascendc-pilot.ts", "ascendc-harness.ts")) {
-      $pluginFile = Join-Path $plugins $pluginName
-      if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
+  if ($plat -eq "opencode") {
+    if ($commands) {
+      foreach ($name in @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve")) {
+        $p = Join-Path $commands "$name.md"
+        if (Test-Path -LiteralPath $p) { Remove-Item -Force -LiteralPath $p }
+      }
+    }
+    if ($plugins) {
+      foreach ($pluginName in @("ascendc-pilot.ts", "ascendc-harness.ts")) {
+        $pluginFile = Join-Path $plugins $pluginName
+        if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
+      }
     }
     $legacyPlug = Join-Path $HOME ".config\opencode\ascendc-agent-plugin"
     if (Test-Path -LiteralPath $legacyPlug) { Remove-Item -Recurse -Force -LiteralPath $legacyPlug }
@@ -107,13 +122,22 @@ if ($Platform -like "uninstall-*") {
 
 if ($SkipPip -ne "1") {
   python -m pip install -r "$BundleRoot\requirements.txt"
+  if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 }
+
+# Fail before Host composition if execution ownership is internally inconsistent.
+python "$BundleRoot\scripts\check_execution_contracts.py"
+if ($LASTEXITCODE -ne 0) { throw "execution contract audit failed" }
 
 # Compose sources, then retain only model-reachable runtime context.
 python "$BundleRoot\scripts\compose_runtime.py" --repo "$BundleRoot" --host $Platform
 if ($LASTEXITCODE -ne 0) { throw "compose_runtime failed" }
 python "$BundleRoot\scripts\prune_runtime_context.py" --repo "$BundleRoot" --host $Platform
 if ($LASTEXITCODE -ne 0) { throw "prune_runtime_context failed" }
+if ($Platform -eq "opencode") {
+  python "$BundleRoot\scripts\compose_opencode_commands.py"
+  if ($LASTEXITCODE -ne 0) { throw "compose_opencode_commands failed" }
+}
 
 $Dest = Get-PluginDest $Platform
 $Skills = Get-SkillsDest $Platform
@@ -122,7 +146,7 @@ New-Item -ItemType Directory -Force -Path $Dest, $Skills, $Agents | Out-Null
 if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
-# Bundle runtime implementation only.  Agent-facing skills/prompts/agents are
+# Bundle runtime implementation only. Agent-facing skills/prompts/agents are
 # copied exclusively from generated/<host> below; docs/templates are not runtime context.
 foreach ($name in @("pilot","scripts","opencode-plugin")) {
   $src = Join-Path $BundleRoot $name
@@ -142,7 +166,7 @@ foreach ($eng in @("common","understand-operator","testcase-generation","code-en
 
 # Install ONLY generated runtime trees.
 $genRoot = Join-Path $BundleRoot "generated\$Platform"
-foreach ($name in @("skills", "agents", "prompts")) {
+foreach ($name in @("skills", "agents", "prompts", "commands")) {
   $p = Join-Path $Dest $name
   if (Test-Path -LiteralPath $p) { Remove-Item -Recurse -Force -LiteralPath $p }
 }
@@ -150,6 +174,9 @@ Copy-Item -Recurse -Force (Join-Path $genRoot "skills") (Join-Path $Dest "skills
 Copy-Item -Recurse -Force (Join-Path $genRoot "agents") (Join-Path $Dest "agents")
 if (Test-Path (Join-Path $genRoot "prompts")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "prompts") (Join-Path $Dest "prompts")
+}
+if (Test-Path (Join-Path $genRoot "commands")) {
+  Copy-Item -Recurse -Force (Join-Path $genRoot "commands") (Join-Path $Dest "commands")
 }
 
 # Purge leftovers from earlier installs before linking the current closure.
@@ -232,11 +259,19 @@ foreach ($agentFile in $agentFiles) {
 
 if ($Platform -eq "opencode") {
   $plugins = Get-PluginsDest "opencode"
-  New-Item -ItemType Directory -Force -Path $plugins | Out-Null
+  $commands = Get-CommandsDest "opencode"
+  New-Item -ItemType Directory -Force -Path $plugins, $commands | Out-Null
   $pluginSrc = Join-Path $BundleRoot "opencode-plugin\ascendc-pilot.ts"
   if (Test-Path $pluginSrc) {
     Copy-Item -Force $pluginSrc (Join-Path $plugins "ascendc-pilot.ts")
     Write-Host "Installed plugin → $plugins\ascendc-pilot.ts"
+  }
+  $commandSrc = Join-Path $Dest "commands"
+  if (Test-Path -LiteralPath $commandSrc) {
+    Get-ChildItem -Path $commandSrc -Filter "*.md" -File | ForEach-Object {
+      Copy-Item -Force -LiteralPath $_.FullName -Destination (Join-Path $commands $_.Name)
+    }
+    Write-Host "Workflow commands → $commands\{uo-*,tg-*,ce-review}.md"
   }
   Write-Host "Primary agent → $Agents\ascendc-pilot.md (Tab 切换；未改 opencode.json)"
 }
