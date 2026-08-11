@@ -34,20 +34,25 @@ def self_test() -> list[str]:
 
     errors: list[str] = []
     if not can_transition("open", "verified"):
-        errors.append("open→verified should be allowed")
+        errors.append("open→verified should be allowed for an explicit harness settle")
     if can_transition("verified", "open"):
         errors.append("verified→open should require explicit revert")
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         ensure_agent_layout(root, arch="arch0")
-        # Force arch for state_root via env-less default: write under arch0 by setting state.
-        # ensure_agent_layout creates .ascendc-pilot/<arch>/…
         ledger = load_ledger(root)
         upsert_item(ledger, oid="OBL_A", status="open", reason="seed")
         upsert_item(ledger, oid="OBL_A", status="candidate", reason="progress")
-        upsert_item(ledger, oid="OBL_A", status="verified", settled_by_gate="g1",
-                    evidence=[{"gate_id": "g1", "run_id": "R1"}], reason="gate")
+        upsert_item(
+            ledger,
+            oid="OBL_A",
+            status="verified",
+            settled_by_gate="g1",
+            evidence=[{"gate_id": "g1", "run_id": "R1"}],
+            reason="gate",
+            verified_by_harness=True,
+        )
         save_ledger(root, ledger)
         loaded = load_ledger(root)
         errs = validate_ledger(loaded)
@@ -59,6 +64,18 @@ def self_test() -> list[str]:
         upsert_item(ledger, oid="OBL_A", status="open", reason="bad_downgrade", allow_revert=False)
         if (ledger.get("items") or {}).get("OBL_A", {}).get("status") != "verified":
             errors.append("silent downgrade should be refused")
+
+        # Producer/domain status aliases must not self-settle the persistent ledger.
+        untrusted = upsert_item(
+            ledger,
+            oid="OBL_B",
+            status="done",
+            settled_by_gate="not_recorded",
+            evidence=[{"gate_id": "not_recorded", "run_id": "R2"}],
+            reason="producer_claim",
+        )
+        if untrusted.get("status") != "candidate":
+            errors.append(f"untrusted done should remain candidate, got {untrusted.get('status')}")
     return errors
 
 
