@@ -257,13 +257,11 @@ def test_confirm_requires_audit_report(tmp_path: Path) -> None:
     project = tmp_path / "operator"
     uo_root = project / ".ascendc-pilot" / "uo"
     uo_root.mkdir(parents=True)
-    write_yaml(
-        uo_root / "manifest.yaml",
-        {
-            "version": 1,
-            "authority": "legacy_test_fixture",
-            "source": {"revision": "fixture"},
-        },
+    # This is a UO-side fixture, so write it directly. Going through TG's
+    # write_yaml would correctly trip the UO/TG isolation guard.
+    (uo_root / "manifest.yaml").write_text(
+        "version: 1\nauthority: legacy_test_fixture\nsource:\n  revision: fixture\n",
+        encoding="utf-8",
     )
     (out / "init").mkdir(parents=True)
     (out / "realization").mkdir(parents=True)
