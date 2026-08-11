@@ -1,7 +1,7 @@
 id: ascendc-pilot
 version: 1
 name_zh: AscendC-Pilot
-role: producer
+role: controller
 mode: primary
 description: >
   Main coordinator for AscendC-Pilot workflows. Load the relevant workflow
