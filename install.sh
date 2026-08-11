@@ -35,6 +35,13 @@ agents_dest() {
   esac
 }
 
+commands_dest() {
+  case "$1" in
+    opencode) echo "$HOME/.config/opencode/commands" ;;
+    *) echo "" ;;
+  esac
+}
+
 plugins_dest() {
   case "$1" in
     opencode) echo "$HOME/.config/opencode/plugins" ;;
@@ -69,11 +76,12 @@ purge_legacy_ascendc_agent() {
 
 uninstall() {
   local plat="$1"
-  local plug skills agents plugins
+  local plug skills agents plugins commands
   plug="$(plugin_dest "$plat")"
   skills="$(skills_dest "$plat")"
   agents="$(agents_dest "$plat")"
   plugins="$(plugins_dest "$plat")"
+  commands="$(commands_dest "$plat")"
   rm -rf "$plug"
   for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator _policies uo-code-review; do
     rm -rf "$skills/$name"
@@ -84,8 +92,15 @@ uninstall() {
     tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
     rm -f "$agents/$name.md"
   done
-  if [[ "$plat" == "opencode" && -n "$plugins" ]]; then
-    rm -f "$plugins/ascendc-pilot.ts" "$plugins/ascendc-harness.ts"
+  if [[ "$plat" == "opencode" ]]; then
+    if [[ -n "$commands" ]]; then
+      for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve; do
+        rm -f "$commands/$name.md"
+      done
+    fi
+    if [[ -n "$plugins" ]]; then
+      rm -f "$plugins/ascendc-pilot.ts" "$plugins/ascendc-harness.ts"
+    fi
     rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
   fi
   echo "Uninstalled $plat ascendc-pilot plugin"
@@ -106,9 +121,16 @@ if [[ "$SKIP_PIP" != "1" ]]; then
   python -m pip install -r "$BUNDLE_ROOT/requirements.txt"
 fi
 
+# Fail installation before composing a Host runtime when execution ownership is
+# internally inconsistent.
+python "$BUNDLE_ROOT/scripts/check_execution_contracts.py"
+
 # Compose sources, then retain only model-reachable runtime context.
 python "$BUNDLE_ROOT/scripts/compose_runtime.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
 python "$BUNDLE_ROOT/scripts/prune_runtime_context.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
+if [[ "$PLATFORM" == "opencode" ]]; then
+  python "$BUNDLE_ROOT/scripts/compose_opencode_commands.py"
+fi
 
 DEST="$(plugin_dest "$PLATFORM")"
 SKILLS="$(skills_dest "$PLATFORM")"
@@ -117,7 +139,7 @@ mkdir -p "$DEST" "$SKILLS" "$AGENTS"
 rm -rf "$DEST"
 mkdir -p "$DEST"
 
-# Bundle runtime implementation only.  Agent-facing assets come exclusively
+# Bundle runtime implementation only. Agent-facing assets come exclusively
 # from generated/<host>; docs/templates/source prompts are not runtime context.
 for name in pilot acp scripts opencode-plugin; do
   if [[ -d "$BUNDLE_ROOT/$name" ]]; then
@@ -132,13 +154,16 @@ for eng in common understand-operator testcase-generation code-engineering; do
 done
 
 GEN="$BUNDLE_ROOT/generated/$PLATFORM"
-for name in skills agents prompts; do
+for name in skills agents prompts commands; do
   rm -rf "$DEST/$name"
 done
 cp -R "$GEN/skills" "$DEST/skills"
 cp -R "$GEN/agents" "$DEST/agents"
 if [[ -d "$GEN/prompts" ]]; then
   cp -R "$GEN/prompts" "$DEST/prompts"
+fi
+if [[ -d "$GEN/commands" ]]; then
+  cp -R "$GEN/commands" "$DEST/commands"
 fi
 
 # Purge leftovers from earlier installs before linking the current closure.
@@ -172,7 +197,7 @@ else
   fi
 fi
 
-# Every installed agent is now reachable from a non-deterministic Action.
+# Every installed agent is reachable from a non-deterministic Action.
 for f in "$DEST/agents"/*.md; do
   [[ -f "$f" ]] || continue
   base="$(basename "$f")"
@@ -182,10 +207,18 @@ done
 
 if [[ "$PLATFORM" == "opencode" ]]; then
   PLUGINS="$(plugins_dest opencode)"
-  mkdir -p "$PLUGINS"
+  COMMANDS="$(commands_dest opencode)"
+  mkdir -p "$PLUGINS" "$COMMANDS"
   if [[ -f "$BUNDLE_ROOT/opencode-plugin/ascendc-pilot.ts" ]]; then
     cp "$BUNDLE_ROOT/opencode-plugin/ascendc-pilot.ts" "$PLUGINS/ascendc-pilot.ts"
     echo "Installed plugin → $PLUGINS/ascendc-pilot.ts"
+  fi
+  if [[ -d "$DEST/commands" ]]; then
+    for f in "$DEST/commands"/*.md; do
+      [[ -f "$f" ]] || continue
+      cp "$f" "$COMMANDS/$(basename "$f")"
+    done
+    echo "Workflow commands → $COMMANDS/{uo-*,tg-*,ce-review}.md"
   fi
   echo "Primary agent → $AGENTS/ascendc-pilot.md (Tab switch; opencode.json untouched)"
 fi
