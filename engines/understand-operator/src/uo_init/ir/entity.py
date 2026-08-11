@@ -41,6 +41,8 @@ class EntityKind(str, Enum):
     OPERATION = "OPERATION"
     BUFFER = "BUFFER"
     BUFFER_VIEW = "BUFFER_VIEW"
+    # AscendC::Reg / MicroAPI register-file objects (RegTensor, MaskReg, ...).
+    REGISTER = "REGISTER"
     SYNC_EVENT = "SYNC_EVENT"
     EXEC_REGION = "EXEC_REGION"
 

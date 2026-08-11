@@ -1,0 +1,44 @@
+# AscendC MicroAPI / Reg compute primitives (dav_3510+).
+# CANN: namespace MicroAPI = Reg; RegTensor / LoadAlign / StoreAlign / ...
+version: ascendc-semantic-registry/v1
+ops:
+  LoadAlign:
+    category: reg_load
+    engine: VECTOR
+    confidence: confirmed
+    args:
+      "0": write_register
+      "1": read_buffer
+  StoreAlign:
+    category: reg_store
+    engine: VECTOR
+    confidence: confirmed
+    args:
+      "0": write_buffer
+      "1": read_register
+  Cast:
+    category: reg_compute
+    engine: VECTOR
+    confidence: partial
+    args:
+      "0": write_register
+      "1": read_register
+  Interleave:
+    category: reg_compute
+    engine: VECTOR
+    confidence: partial
+  CreateMask:
+    category: reg_mask
+    engine: VECTOR
+    confidence: confirmed
+  UpdateMask:
+    category: reg_mask
+    engine: VECTOR
+    confidence: confirmed
+  ReduceSum:
+    category: reg_compute
+    engine: VECTOR
+    confidence: partial
+    args:
+      "0": write_register
+      "1": read_register

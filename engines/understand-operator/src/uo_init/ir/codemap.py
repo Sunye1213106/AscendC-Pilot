@@ -71,6 +71,8 @@ _KB_EDGE_MAP: dict[str, RelationKind] = {
     "PRECEDES": RelationKind.PRECEDES,
     "READS_BUFFER": RelationKind.READS_BUFFER,
     "WRITES_BUFFER": RelationKind.WRITES_BUFFER,
+    "READS_REGISTER": RelationKind.READS_REGISTER,
+    "WRITES_REGISTER": RelationKind.WRITES_REGISTER,
     "VIEW_OF": RelationKind.VIEW_OF,
     "ALIASES": RelationKind.ALIASES,
     "ALLOCATES": RelationKind.ALLOCATES,

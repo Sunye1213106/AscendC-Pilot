@@ -30,7 +30,7 @@ def _load_yaml(name: str) -> dict[str, Any]:
 def load_registry() -> dict[str, dict[str, Any]]:
     """Merge category YAML files into callee → semantic record."""
     out: dict[str, dict[str, Any]] = {}
-    for name in ("memory.yaml", "queue.yaml", "sync.yaml", "vector.yaml", "cube.yaml"):
+    for name in ("memory.yaml", "queue.yaml", "sync.yaml", "vector.yaml", "cube.yaml", "microapi.yaml"):
         doc = _load_yaml(name)
         ops = doc.get("ops") if isinstance(doc.get("ops"), dict) else doc
         for callee, meta in (ops or {}).items():
@@ -104,10 +104,10 @@ def arg_effects(callee: str, args: list[str], *, receiver: str = "") -> tuple[li
         if not name:
             continue
         role_l = str(role).lower()
-        if "write" in role_l or role_l in {"dst", "dst_buffer", "write_buffer"}:
+        if "write" in role_l or role_l in {"dst", "dst_buffer", "write_buffer", "write_register"}:
             if name not in writes:
                 writes.append(name)
-        if "read" in role_l or role_l in {"src", "src_buffer", "read_buffer"}:
+        if "read" in role_l or role_l in {"src", "src_buffer", "read_buffer", "read_register"}:
             if name not in reads:
                 reads.append(name)
 

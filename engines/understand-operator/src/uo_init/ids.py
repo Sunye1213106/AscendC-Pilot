@@ -38,6 +38,7 @@ KIND_PREFIX: dict[str, str] = {
     "Operation": "OP",
     "Buffer": "BUF",
     "BufferView": "BVIEW",
+    "Register": "REG",
     "SyncEvent": "SYNC",
     "ExecRegion": "XREG",
 }
@@ -180,6 +181,17 @@ def buffer_site_id(
     root: str = "",
 ) -> str:
     return make_id("Buffer", rel_posix(file, root), int(line), str(scope or ""), str(name or ""))
+
+
+def register_site_id(
+    *,
+    file: str,
+    line: int,
+    scope: str,
+    name: str,
+    root: str = "",
+) -> str:
+    return make_id("Register", rel_posix(file, root), int(line), str(scope or ""), str(name or ""))
 
 
 def buffer_view_id(

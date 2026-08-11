@@ -23,6 +23,7 @@ from uo_init.ids import (
     buffer_view_id,
     exec_region_id,
     operation_site_id,
+    register_site_id,
     rel_posix,
     sync_event_id,
 )
@@ -34,6 +35,7 @@ from uo_init.ir.kernel_execution import (
     ExecOperation,
     ExecRegion,
     KernelExecutionIR,
+    Register,
     SyncEvent,
 )
 from uo_init.ir.relation import RelationKind
@@ -41,11 +43,20 @@ from uo_init.kernel_sync import pair_events
 from uo_init.passes.kernel_exec_order import assign_exec_ranks
 from uo_init.passes.source_text_cache import read_text
 from uo_init.semantics import registry as semreg
+from uo_init.semantics.ascendc_storage import (
+    BUFFER_MEMORY_SPACES,
+    is_non_storage_type,
+    is_storage_type_text,
+    is_valid_storage_name,
+    register_class_from_type,
+)
 
 _WALK_CACHE_LIMIT = 48
 
-_TENSOR_TYPE_RE = re.compile(
-    r"\b(?:LocalTensor|GlobalTensor|TBuf|TQue|TPipe|MutexBuffer)\b",
+# AscendC buffer + MicroAPI/Reg types (CANN: namespace MicroAPI = Reg).
+_STORAGE_TYPE_RE = re.compile(
+    r"\b(?:LocalTensor|GlobalTensor|TBuf|TQue|TPipe|MutexBuffer|"
+    r"RegTensor|MaskReg|UnalignReg(?:ForLoad|ForStore)?|AddrReg)\b",
     re.I,
 )
 _DECL_RE = re.compile(
@@ -87,7 +98,11 @@ def _caller_allowed(caller: str, reachable: set[str], *, filter_strict: bool) ->
 
 
 def _norm_file(path: str, root: str = "") -> str:
-    return rel_posix(path, root)
+    text = str(path or "").replace("\\", "/")
+    # WSL-style absolute paths from Clang → host drive for IDE jump.
+    if text.startswith("/mnt/") and len(text) >= 7 and text[5].isalpha() and text[6] == "/":
+        text = f"{text[5].upper()}:{text[6:]}"
+    return rel_posix(text, root)
 
 
 def _reachable_function_names(codemap: CodeMap) -> tuple[set[str], bool]:
@@ -452,8 +467,9 @@ def _build_ir_from_sites(
     ordinals: dict[tuple[str, int, int, str], int] = {}
     ops_by_func: dict[str, list[ExecOperation]] = defaultdict(list)
     buffer_by_key: dict[tuple[str, str], Buffer] = {}
+    register_by_key: dict[tuple[str, str], Register] = {}
 
-    # Buffers from local decls.
+    # Storage decls: AscendC buffers vs MicroAPI/Reg registers (CANN catalog).
     for decl in local_decls or []:
         if isinstance(decl, dict):
             type_text = str(decl.get("type_text") or "")
@@ -469,7 +485,28 @@ def _build_ir_from_sites(
             file = str(getattr(decl, "file", "") or "")
             line = int(getattr(decl, "line", 0) or 0)
             init = getattr(decl, "init", None)
-        if not name or not _TENSOR_TYPE_RE.search(type_text):
+        if not name or not is_valid_storage_name(name):
+            continue
+        if not (_STORAGE_TYPE_RE.search(type_text) or is_storage_type_text(type_text)):
+            continue
+        if is_non_storage_type(type_text):
+            continue
+        reg_class = register_class_from_type(type_text)
+        if reg_class:
+            rid = register_site_id(file=file, line=line, scope=function, name=name, root=root)
+            reg = Register(
+                id=rid,
+                name=name,
+                register_class=reg_class,
+                type_text=type_text.strip(),
+                scope=function,
+                file=_norm_file(file, root),
+                line=line,
+                provenance=provenance,
+                confidence="confirmed" if provenance.startswith("clang") else "partial",
+            )
+            ir.registers.append(reg)
+            register_by_key[(function, name)] = reg
             continue
         mem = _infer_memory_space(type_text, name)
         if not _is_data_buffer(type_text, name, mem):
@@ -695,15 +732,18 @@ def _build_ir_from_sites(
                 )
             )
 
-        # Ensure referenced buffer names exist.
+        # Bind referenced storage names: prefer declared REGISTER / BUFFER.
+        # Do not invent UNKNOWN buffers for expressions or undeclared identifiers
+        # without AscendC memory evidence (GM/UB/L1/...).
         for bname in list(reads) + list(writes):
-            key = (op.function, bname)
-            if key in buffer_by_key:
+            if not is_valid_storage_name(bname):
                 continue
-            # Skip non-buffer tokens (this, literals, type names).
-            if bname in {"this", "true", "false"} or bname[:1].isdigit():
+            key = (op.function, bname)
+            if key in register_by_key or key in buffer_by_key:
                 continue
             mem = _infer_memory_space("", bname)
+            if mem not in BUFFER_MEMORY_SPACES:
+                continue
             if not _is_data_buffer("", bname, mem):
                 continue
             bid = buffer_site_id(
@@ -739,6 +779,7 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         EntityKind.OPERATION.value,
         EntityKind.BUFFER.value,
         EntityKind.BUFFER_VIEW.value,
+        EntityKind.REGISTER.value,
         EntityKind.SYNC_EVENT.value,
         EntityKind.EXEC_REGION.value,
     }
@@ -750,6 +791,8 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         RelationKind.PRECEDES.value,
         RelationKind.READS_BUFFER.value,
         RelationKind.WRITES_BUFFER.value,
+        RelationKind.READS_REGISTER.value,
+        RelationKind.WRITES_REGISTER.value,
         RelationKind.VIEW_OF.value,
         RelationKind.ALIASES.value,
         RelationKind.ALLOCATES.value,
@@ -802,6 +845,22 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         buffer_ents[buf.id] = ent.id
         buffer_by_name_scope[(buf.scope, buf.name)] = ent.id
 
+    register_ents: dict[str, str] = {}
+    register_by_name_scope: dict[tuple[str, str], str] = {}
+    for reg in ir.registers:
+        ent = codemap.upsert(
+            EntityKind.REGISTER,
+            reg.name,
+            eid=reg.id,
+            attrs=reg.to_dict(),
+            file=reg.file,
+            line=reg.line,
+            status="extracted",
+            confidence=1.0 if reg.confidence == "confirmed" else 0.6,
+        )
+        register_ents[reg.id] = ent.id
+        register_by_name_scope[(reg.scope, reg.name)] = ent.id
+
     for view in ir.buffer_views:
         ent = codemap.upsert(
             EntityKind.BUFFER_VIEW,
@@ -848,7 +907,7 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
                 attrs={"provenance": "kernel_execution"},
                 status="confirmed",
             )
-        # Buffer effects
+        # Buffer / register effects
         for name in op.reads:
             bid = buffer_by_name_scope.get((op.function, name))
             if bid:
@@ -859,6 +918,15 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
                     attrs={"provenance": "kernel_execution", "name": name},
                     status="confirmed" if op.confidence == "confirmed" else "partial",
                 )
+            rid = register_by_name_scope.get((op.function, name))
+            if rid:
+                codemap.link(
+                    RelationKind.READS_REGISTER,
+                    ent.id,
+                    rid,
+                    attrs={"provenance": "kernel_execution", "name": name},
+                    status="confirmed" if op.confidence == "confirmed" else "partial",
+                )
         for name in op.writes:
             bid = buffer_by_name_scope.get((op.function, name))
             if bid:
@@ -866,6 +934,15 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
                     RelationKind.WRITES_BUFFER,
                     ent.id,
                     bid,
+                    attrs={"provenance": "kernel_execution", "name": name},
+                    status="confirmed" if op.confidence == "confirmed" else "partial",
+                )
+            rid = register_by_name_scope.get((op.function, name))
+            if rid:
+                codemap.link(
+                    RelationKind.WRITES_REGISTER,
+                    ent.id,
+                    rid,
                     attrs={"provenance": "kernel_execution", "name": name},
                     status="confirmed" if op.confidence == "confirmed" else "partial",
                 )
@@ -1012,6 +1089,7 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
     stats = {
         "operations": len(ir.operations),
         "buffers": len(ir.buffers),
+        "registers": len(ir.registers),
         "buffer_views": len(ir.buffer_views),
         "sync_events": len(ir.sync_events),
         "regions": len(ir.regions),
@@ -1028,6 +1106,7 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         "quality": {
             "ops": len(ir.operations),
             "buffers": len(ir.buffers),
+            "registers": len(ir.registers),
             "sync_events": len(ir.sync_events),
             "ops_ranked": ranked,
             "emits_sync": emits_sync,
@@ -1295,12 +1374,12 @@ def _lexical_buffer_decls(
             func = _update_enclosing_func(line, func)
             if not _caller_allowed(func, reachable, filter_strict=filter_strict):
                 continue
-            if not _TENSOR_TYPE_RE.search(line):
+            if not _STORAGE_TYPE_RE.search(line):
                 continue
             for m in _DECL_RE.finditer(line):
                 type_text = m.group("type")
                 name = m.group("name")
-                if not _TENSOR_TYPE_RE.search(type_text):
+                if not _STORAGE_TYPE_RE.search(type_text):
                     continue
                 decls.append(
                     {

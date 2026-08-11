@@ -118,6 +118,49 @@ def test_registry_classifies_datacopy_and_sync() -> None:
     assert writes2 == ["dyL1Tensor"]
     assert reads2 == ["dyGm"]
     assert semreg.classify("WaitFlag")[0] == "sync_wait"
+    assert semreg.classify("LoadAlign")[0] == "reg_load"
+
+
+def test_regtensor_is_register_not_unknown_buffer(tmp_path: Path) -> None:
+    root = tmp_path / "regtoy"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        #include "kernel_operator.h"
+        namespace AscendC {
+        using namespace MicroAPI;
+        __aicore__ inline void Process() {
+          RegTensor<float> vregSrc;
+          MaskReg preg;
+          LocalTensor<float> ub;
+          GlobalTensor<float> gm;
+          LoadAlign(vregSrc, ((__ubuf__ float *&)ub), 64);
+          DataCopy(ub, gm);
+        }
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="regtoy", architecture="arch35")
+    _seed_kernel(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_execution(cm, root, architecture="arch35")
+    regs = cm.by_kind(EntityKind.REGISTER)
+    names = {r.name for r in regs}
+    assert "vregSrc" in names
+    assert "preg" in names or any(r.attrs.get("register_class") == "MASK_REG" for r in regs)
+    assert all(r.file and r.line_start for r in regs)
+    unk = [
+        b
+        for b in cm.by_kind(EntityKind.BUFFER)
+        if b.attrs.get("memory_space") == "UNKNOWN" and b.name == "vregSrc"
+    ]
+    assert not unk, "RegTensor must not be modeled as UNKNOWN BUFFER"
+    loc = CodeMapQuery(codemap=cm).locate(next(r.id for r in regs if r.name == "vregSrc"))
+    assert loc and loc["line"] > 0 and "process.h" in loc["file"].replace("\\", "/")
+
 
 
 def test_kernel_execution_extracts_ops_buffers_sync_and_order(tmp_path: Path) -> None:

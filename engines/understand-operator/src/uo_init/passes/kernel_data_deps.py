@@ -38,9 +38,15 @@ def finalize_kernel_data_deps(codemap: CodeMap, *_args: Any, **_kwargs: Any) -> 
     reads: dict[str, list[str]] = defaultdict(list)
     for rel in codemap.relations.values():
         kind = rel.kind_name()
-        if kind == RelationKind.WRITES_BUFFER.value:
+        if kind in {
+            RelationKind.WRITES_BUFFER.value,
+            RelationKind.WRITES_REGISTER.value,
+        }:
             writes[rel.src].append(rel.dst)
-        elif kind == RelationKind.READS_BUFFER.value:
+        elif kind in {
+            RelationKind.READS_BUFFER.value,
+            RelationKind.READS_REGISTER.value,
+        }:
             reads[rel.src].append(rel.dst)
 
     ops = sorted(

@@ -100,6 +100,34 @@ class Buffer:
 
 
 @dataclass
+class Register:
+    """AscendC MicroAPI / Reg register-file object (RegTensor, MaskReg, ...)."""
+
+    id: str
+    name: str
+    register_class: str = "VREG"
+    type_text: str = ""
+    scope: str = ""
+    file: str = ""
+    line: int = 0
+    provenance: str = "clang"
+    confidence: str = "confirmed"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "register_class": self.register_class,
+            "type_text": self.type_text,
+            "scope": self.scope,
+            "file": self.file,
+            "line": self.line,
+            "provenance": self.provenance,
+            "confidence": self.confidence,
+        }
+
+
+@dataclass
 class BufferView:
     """View / alias / slice / reinterpret of a Buffer."""
 
@@ -233,6 +261,7 @@ class KernelExecutionIR:
 
     operations: list[ExecOperation] = field(default_factory=list)
     buffers: list[Buffer] = field(default_factory=list)
+    registers: list[Register] = field(default_factory=list)
     buffer_views: list[BufferView] = field(default_factory=list)
     sync_events: list[SyncEvent] = field(default_factory=list)
     regions: list[ExecRegion] = field(default_factory=list)
@@ -246,6 +275,7 @@ class KernelExecutionIR:
             "registry_version": self.registry_version,
             "operations": len(self.operations),
             "buffers": len(self.buffers),
+            "registers": len(self.registers),
             "buffer_views": len(self.buffer_views),
             "sync_events": len(self.sync_events),
             "regions": len(self.regions),
@@ -254,6 +284,7 @@ class KernelExecutionIR:
             "detail": {
                 "operations": [o.to_dict() for o in self.operations],
                 "buffers": [b.to_dict() for b in self.buffers],
+                "registers": [r.to_dict() for r in self.registers],
                 "buffer_views": [v.to_dict() for v in self.buffer_views],
                 "sync_events": [s.to_dict() for s in self.sync_events],
                 "regions": [r.to_dict() for r in self.regions],

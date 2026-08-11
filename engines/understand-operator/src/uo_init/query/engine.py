@@ -254,6 +254,7 @@ class CodeMapQuery:
         return {
             "operations": len(self.codemap.by_kind(EntityKind.OPERATION)),
             "buffers": len(self.codemap.by_kind(EntityKind.BUFFER)),
+            "registers": len(self.codemap.by_kind(EntityKind.REGISTER)),
             "buffer_views": len(self.codemap.by_kind(EntityKind.BUFFER_VIEW)),
             "sync_events": len(self.codemap.by_kind(EntityKind.SYNC_EVENT)),
             "regions": len(self.codemap.by_kind(EntityKind.EXEC_REGION)),
@@ -284,6 +285,29 @@ class CodeMapQuery:
         if function:
             rows = [e for e in rows if str(e.attrs.get("scope") or "") == function]
         return [e.to_dict() for e in rows]
+
+    def registers(self, function: str = "") -> list[dict[str, Any]]:
+        """AscendC MicroAPI/Reg register-file entities (RegTensor, MaskReg, ...)."""
+        rows = self.codemap.by_kind(EntityKind.REGISTER)
+        if function:
+            rows = [e for e in rows if str(e.attrs.get("scope") or "") == function]
+        rows = sorted(rows, key=lambda e: (e.file, e.line_start, e.name))
+        return [e.to_dict() for e in rows]
+
+    def locate(self, entity_id: str) -> dict[str, Any] | None:
+        """Return file/line/column for quick source jump from any entity id."""
+        ent = self.codemap.entities.get(entity_id)
+        if ent is None:
+            return None
+        return {
+            "id": ent.id,
+            "kind": ent.kind_name(),
+            "name": ent.name,
+            "file": ent.file,
+            "line": int(ent.line_start or ent.attrs.get("line") or 0),
+            "column": int(ent.attrs.get("column") or 0),
+            "function": ent.attrs.get("function") or ent.attrs.get("scope") or "",
+        }
 
     def buffer(self, name: str) -> list[dict[str, Any]]:
         return [
