@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from testcase_agent.closure import branch_runtime as BR
-from testcase_agent.closure import obligations as OBL
 from testcase_agent.closure import search_round
 from testcase_agent.closure.workspace import Workspace
 
@@ -50,26 +49,35 @@ class _Runner:
 def _inventory() -> dict:
     return {
         "schema": "tg-obligation-inventory/v1",
-        "summary": {},
-        "obligations": [
+        "reachable_keys": 1,
+        "keys": [
             {
-                "id": "TD::1::foo::one",
-                "type": "TILINGDATA_VALUE_CLASS",
                 "tiling_key": 1,
-                "field": "foo",
-                "predicate": "foo == 1",
-                "status": OBL.UNRESOLVED,
-            },
-            {
-                "id": "KB::1::b1::true",
-                "type": "KERNEL_BRANCH_OUTCOME",
-                "tiling_key": 1,
-                "branch_id": "b1",
-                "outcome": True,
-                "status": OBL.UNRESOLVED,
-            },
+                "tilingdata_obligations": [
+                    {
+                        "id": "TD::foo::foo == 1",
+                        "field": "foo",
+                        "predicate": "foo == 1",
+                        "status": BR.UNRESOLVED,
+                    }
+                ],
+                "kernel_obligations": [
+                    {
+                        "id": "KB::b1:T",
+                        "branch_id": "b1",
+                        "outcome": True,
+                        "status": BR.UNRESOLVED,
+                    }
+                ],
+            }
         ],
     }
+
+
+def _statuses(inv: dict) -> list[str]:
+    key = inv["keys"][0]
+    rows = list(key["tilingdata_obligations"]) + list(key["kernel_obligations"])
+    return [str(row["status"]) for row in rows]
 
 
 def _patch_runtime(monkeypatch, tmp_path: Path):
@@ -106,7 +114,7 @@ def test_off_key_replay_never_settles_runtime_obligations(monkeypatch, tmp_path:
     assert result["progress"]["on_key"] == 0
     assert result["progress"]["new_obligations"] == 0
     assert result["progress"]["open_obligations"] == 2
-    assert all(row["status"] == OBL.UNRESOLVED for row in inv["obligations"])
+    assert _statuses(inv) == [BR.UNRESOLVED, BR.UNRESOLVED]
     assert not runner.written
 
 
@@ -120,7 +128,7 @@ def test_same_key_runtime_state_covers_td_and_branch(monkeypatch, tmp_path: Path
     assert result["progress"]["new_obligations"] == 2
     assert result["progress"]["open_obligations"] == 0
     assert result["route_hint"] == "GAP_ZERO"
-    assert {row["status"] for row in inv["obligations"]} == {OBL.COVERED}
+    assert set(_statuses(inv)) == {BR.COVERED}
     assert runner.written and runner.written[0].name.startswith("branch_round_")
 
 
