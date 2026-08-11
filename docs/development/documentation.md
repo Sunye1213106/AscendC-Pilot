@@ -1,63 +1,41 @@
-﻿# 文档维护规则
+# 文档维护
 
-## 什么属于 Docs
+文档应解释代码不容易直接表达的内容：为什么需要某个模块、数据为何这样流动、谁拥有最终决定权，以及失败时为何不能跨越边界。不要把实现手工复制一遍，也不要把旧 Markdown 当作事实来源。
 
-人类说明放在 `docs/`。
+## Source of Truth
 
-例如：
+修改说明前按以下优先级确认事实：
 
-- 架构总览
-- 模块职责
-- 开发指南
-- reference tables
-- 历史 case studies 和 benchmark notes
+1. 当前 implementation
+2. workflow、contract 与 schema
+3. tests
+4. 当前 runtime assets
+5. 既有 docs
 
-## 什么留在代码旁边
+若文档与实现冲突，以实现为准并改写文档；若实现语义本身不清楚，应标记该歧义，不应凭空发明机制。
 
-Runtime inputs 留在 runtime 期望的位置：
+## 文档类型
 
-- `skills/*/SKILL.md`
-- `skills/*/references/*.md`
-- `skills/*/examples/**`
-- `prompts/tasks/**/*.md`
-- `pilot/policies/**`
-- `pilot/runtime/**`
-- `tools/**`
-- `generated/**`
+| 类型 | 要解决的问题 | 适合的位置 |
+| --- | --- | --- |
+| Concept | 为什么需要、系统怎样协作 | `docs/architecture/` |
+| Guide | 用户或开发者如何完成任务 | `docs/getting-started/`、`docs/development/` |
+| Module | 一个模块如何工作和与谁衔接 | `docs/modules/` |
+| Reference | 精确、可查、少解释的投影 | `docs/reference/` |
 
-## 不再新增模块 README
+不同类型不应强行套用同一组“定位、职责、输入、输出”标题。对于复杂流程，优先使用问题说明、ASCII 流程图、少量关键表格和实现锚点。
 
-不要在 `pilot/`、`agents/`、`engines/`、`skills/`、`prompts/`、`tools/`、`adapters/` 或 `evals/` 这类模块目录下新增 developer-facing `README.md`。
+## Runtime Markdown 的边界
 
-允许的 README：
+人类项目说明集中在 `docs/`。会被 Agent、Composer 或 Harness 消费的 Markdown 必须留在 runtime 附近：`skills/*/SKILL.md`、skill references、`prompts/tasks/`、`pilot/policies/`、`pilot/runtime/`、examples 和 generated host instructions。
 
-- `README.md`
-- `docs/**/README.md`
-- `skills/*/examples/**` 下作为 runtime example 的 README
-- eval tooling 需要读取的 live-case README
-
-## Module Doc 模板
-
-模块页统一使用这些章节：
-
-```text
-# Module Name
-## 定位
-## 职责
-## 非职责
-## 入口
-## 输入
-## 处理流程
-## 输出
-## 不变量
-## 失败与恢复
-## 集成关系
-## 实现锚点
-## 测试
-```
+不要在 `pilot/`、`agents/`、`engines/`、`skills/`、`prompts/`、`tools/`、`adapters/` 或 `evals/` 下新增 developer-facing README。根 `README.md`、`docs/**/README.md` 与 runtime example 所需 README 是例外。
 
 ## 检查
 
 ```bash
+python scripts/generate_reference_docs.py
 python scripts/check_docs.py
 ```
+
+检查会覆盖内部链接、废弃路径、README 边界和生成 Reference 的新鲜度；它不尝试用 lint 判断自然语言是否“写得好”。

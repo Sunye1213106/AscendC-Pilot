@@ -1,2 +1,0 @@
-{"tiling_key": 1, "counts": {"active_td_fields": 1, "td_obligations": 2, "runtime_branch_outcomes": 2, "uncovered": 4}, "td": ["TD::s1Tail::s1Tail == 0", "TD::s1Tail::s1Tail != 0"], "kb": ["KB::KB_rt:T", "KB::KB_rt:F"]}
-{"tiling_key": 2, "counts": {"active_td_fields": 1, "td_obligations": 2, "runtime_branch_outcomes": 2, "uncovered": 4}, "td": ["TD::s1Tail::s1Tail == 0", "TD::s1Tail::s1Tail != 0"], "kb": ["KB::KB_rt:T", "KB::KB_rt:F"]}

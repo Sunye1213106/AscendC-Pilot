@@ -1,7 +1,0 @@
-schema: tg-cold-start/v1
-timestamp: '2026-08-11T09:44:07.477644+00:00'
-fingerprint: deadbeef
-state: D:\PR-review\AscendC-Pilot\pytest_tmp\test_unsealed_backdated_cold_s0\closure
-cleared:
-- provenance_backfill
-note: stamped after Host+lemma closure without wiping R/E

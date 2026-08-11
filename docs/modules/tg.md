@@ -1,98 +1,82 @@
-﻿# TG - Testcase Generation
+# TG：测试用例与覆盖闭环
 
-## 定位
+TG（Testcase Generation）不是普通的 testcase generator。它将 UO 提供的算子模型转化为可审计的覆盖义务账本，并用 replay 观察和经审查的排除证据关闭账本。目标不是“模型认为覆盖了”，而是在约定的域内证明没有未处理义务。
 
-TG 把 UO 知识转换为 testcase obligations，通过搜索、replay evidence 和被审查的 exclusion 完成覆盖闭环。
+## 覆盖义务模型
 
-## 职责
-
-- 从 UO 构建 TG contracts。
-- 规划 coverage obligations。
-- 求解 TilingKey 与 runtime branch obligations。
-- 在 consumer overlay 需要时执行 semantic binding。
-- 执行确定性 search、construct、replay、ledger update。
-- 让 producer / referee agents 执行 bounded lemma 与 audit 工作。
-- 只有 gate 通过后才签发 closure certificate。
-
-## 非职责
-
-- 不在 UO 已经拥有 CodeMap 时重新理解完整源码。
-- 不把静态 set-cover claim 当作 runtime coverage。
-- 不允许 lemma producer 写 excluded set。
-
-## 入口
-
-- Slash：`/tg-init`、`/tg-plan`、`/tg-solve`
-- CLI：`tg-init`、`tg-plan`、`tg-solve`、`tg-closure`
-- Pilot：`acp start tg-init`、`acp start tg-plan`、`acp start tg-solve`
-
-## 输入
-
-- UO CodeMap 与 TG projections
-- TG contract 与 plan products
-- 可选 replay / oracle 配置
-- Local extensions：case building、replay parsing、golden provider、TilingData decoder
-
-## 处理流程
+对一个目标域，TG 使用以下集合：
 
 ```text
-tg-init  -> contract and initialization audit
-tg-plan  -> intent, scope, precheck, build, approval
-tg-solve -> precheck, oracle, ledger, search, residual, construct, lemma, audit, certify
+D = declared / discovered target obligation domain
+R = replay-confirmed reachable obligations
+E = soundly excluded obligations
+O = open obligations
+
+O = D - R - E
+R ∩ E = ∅
 ```
 
-L2 用于 TilingKey closure。L3 复用同一 solve state machine，目标换成 plan level 选出的 runtime branch outcome obligations。
+只有当 `O = ∅`，且 `R` 具备真实 replay evidence、`E` 具备足够的 source-backed exclusion evidence 并满足 gate contract 时，才可签发 closure certificate。候选输入、SAT 结果或静态目标声明都不是 coverage；它们只能帮助寻找需要 replay 的候选。
 
-Closure 使用：
+## 输入和前置条件
 
-- `D`：declared 或 discovered target domain
-- `R`：replay-confirmed reachable set
-- `E`：soundly excluded set
-- `open`：残留 obligations
+TG 只读消费 UO CodeMap、TG projection、契约和计划产物，并可使用 operator-local replay、golden provider、TilingData decoder 等扩展。UO 若缺失或因源码变化而过期，应先完成 `/uo-init` 或 `/uo-update`。
 
-只有 replay evidence 和 exclusions 满足当前 gate contract，closure certificate 才有效。
+## 三条工作流
 
-## 输出
+`/tg-init` 建立 TG contract 并执行初始化审计：`intent -> kb_ready -> contract -> bind -> gate -> confirm`。它确认 UO 输入可用、指纹新鲜、TilingKey binding 和审计条件成立。
 
-- `.ascendc-pilot/<arch>/tg/init/**`
-- `.ascendc-pilot/<arch>/tg/plan/**`
-- `.ascendc-pilot/<arch>/tg/contract/**`
-- `.ascendc-pilot/<arch>/tg/closure/**`
-- `.ascendc-pilot/<arch>/tg/replay/**`
-- `.ascendc-pilot/<arch>/runs/**/actions/**`
+`/tg-plan` 将目标域和层级转成可执行计划：`intent -> scope -> gate -> build -> filter -> review -> approve`。计划批准后才允许求解。
 
-## 不变量
+`/tg-solve` 执行证据闭环：`gate -> oracle -> ledger -> search -> residual -> construct -> lemma -> audit -> certify`。其中 residual 会被路由回 search、construct 或 lemma；证据不足时不能以“已尝试”关闭义务。
 
-- TG 对 UO 只读。
-- Runtime branch coverage 必须有真实 replay evidence。
-- Producer output 先 staging，再 review 或 deterministic finalization。
-- Referee report 不写 canonical excluded set。
+## Solve 的真实闭环
 
-## 失败与恢复
+```text
+                         obligation
+                              |
+               +--------------+--------------+
+               |              |              |
+             search       construct        lemma
+               |              |              |
+               +------ candidate -----------+
+                              |
+                          host replay
+                          /          \
+                   observed         mismatch
+                      |
+                      v
+                      R
 
-`tg-solve` 会把 residual 路由回 search、construct 或 lemma phase。Audit rework 会在 proof 或 exclusion evidence 不足时回到 lemma。环境或 oracle 失败可进入 human intervention。
+lemma -> producer -> source evidence -> referee
+                                      |
+                              deterministic apply
+                                      |
+                                      v
+                                      E
+```
 
-## 集成关系
+Search 和 construct 的输出只是 candidate。只有 host replay 对目标义务作出真实观察，候选才进入 `R`。另一条路径中，producer 提出 lemma 和源证据，referee 审查，确定性逻辑应用通过的结果，才可能进入 `E`。producer 和 referee 均不能直接写 excluded set。
 
-TG 消费 UO，也可以给 CE 提供 regression 和 coverage context。Local extensions 连接项目特定的 replay、golden 和 TilingData decoder 逻辑，而不改变 TG core。
+## L2 与 L3
 
-## 实现锚点
+**L2：TilingKey 闭环。** 对每个声明的 TilingKey，TG 要么通过 replay 证明它可达并记入 `R`，要么以源码证据证明它不可能并记入 `E`。目标是 declared keys 由 `R ∪ E` 覆盖。
 
-- `engines/testcase-generation/testcase_agent/`
-- `engines/testcase-generation/testcase_agent/closure/`
-- `pilot/ascendc_pilot/actions/tg_primary.py`
-- `pilot/ascendc_pilot/actions/tg_plan_targets.py`
-- `skills/testcase-generation/`
-- `skills/source-proof/`
-- `agents/deterministic-tg-engine.yaml`
-- `agents/tg-lemma-producer.yaml`
-- `agents/tg-closure-referee.yaml`
-- `agents/tg-init-audit.yaml`
+**L3：运行时分支闭环。** L3 固定一个已确认可达的 TilingKey，改变可由运行时控制的输入，执行 Host replay，并观察 TilingData/状态与 Kernel branch outcome。它解决的是“同一 key 下的运行时结果”而不是再次枚举 key。
 
-## 测试
+```text
+reachable TilingKey
+  -> same-key candidate
+  -> change runtime-controllable inputs
+  -> host replay
+  -> observe TilingData / state
+  -> kernel branch outcome
+```
 
-- `engines/testcase-generation/tests/`
-- `pilot/tests/test_tg_engines_real.py`
-- `pilot/tests/test_synthetic_tg_e2e.py`
-- `evals/skills/testcase-generation/`
-- `evals/skills/source-proof/`
+若 replay 重写了 TilingKey，该 candidate 不能被计作目标 key 的 L3 分支覆盖。没有 decoder 或 replay observation 时，也不能以静态猜测关闭 runtime obligation。
+
+## 产物、失败与实现
+
+TG 在 `<arch>/tg/` 下写入 `init`、`plan`、`contract`、`closure` 和 `replay` 产物；run 级 staging、bundle 和 receipt 位于 `<arch>/runs/`。详细归属见 [产物与权威](../architecture/artifacts-and-authority.md)。
+
+oracle 或环境不可用会保留残留义务并可进入人工介入；审计失败会回到 lemma 或求解阶段；未完成的 ledger 不会签发 certificate。实现入口为 `engines/testcase-generation/testcase_agent/closure/`、`pilot/ascendc_pilot/actions/tg_primary.py` 和 `skills/testcase-generation/`、`skills/source-proof/`。

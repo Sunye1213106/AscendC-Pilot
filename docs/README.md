@@ -1,46 +1,48 @@
-﻿# Documentation
+# 文档导航
 
-本目录是人类说明文档的唯一集中入口，根目录 `README.md` 除外。
+本文档以中文为主，解释项目的设计动机、边界和数据流。实现、schema、workflow 与测试是事实权威；runtime 会消费的 `SKILL.md`、prompt 和 policy 保留在其代码位置。
 
-Runtime 输入继续留在代码旁边：`SKILL.md`、skill references、task prompts、Pilot policies、generated host instructions、example fixtures 都不是项目说明文档。
+## 使用 AscendC-Pilot
 
-## 第一次使用
+```text
+安装
+  -> Quick Start
+  -> UO：建立并查询 CodeMap
+  -> TG：建立覆盖闭环
+  -> CE：审查改动影响
+```
 
 - [安装](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)
-
-## 想理解系统为什么这样设计
-
-- [架构总览](architecture/overview.md)
-- [Agent 系统](architecture/agent-system.md)
-- [Harness 与权限](architecture/harness-and-permissions.md)
-- [Skills、Prompts 与 Policies](architecture/skills-prompts-policies.md)
-- [状态与产物](architecture/state-and-artifacts.md)
-- [设计原则](architecture/principles.md)
-
-## 想理解某个模块
-
 - [UO - Understand Operator](modules/uo.md)
 - [TG - Testcase Generation](modules/tg.md)
 - [CE - Code Engineering](modules/ce.md)
-- [Pilot Runtime](modules/pilot-runtime.md)
-- [Engines](modules/engines.md)
-- [Host Adapters](modules/host-adapters.md)
 
-## 想开发 AscendC-Pilot
+## 开发 AscendC-Pilot
 
-- [仓库结构](reference/repository-layout.md)
-- [CLI 参考](reference/cli.md)
-- [产物布局](reference/artifact-layout.md)
+```text
+架构总览
+  -> Agent Runtime
+  -> UO / TG 的数据模型
+  -> 产物与权威
+  -> 扩展与测试
+  -> 精确 Reference
+```
+
+- [架构总览](architecture/overview.md)
+- [Agent Runtime](architecture/agent-runtime.md)
+- [产物与权威](architecture/artifacts-and-authority.md)
+- [扩展指南](development/extending.md)
+- [测试与评估](development/testing.md)
+- [文档维护](development/documentation.md)
+
+## Reference
+
+- [Workflow Reference](reference/workflows.generated.md)
 - [Agent Matrix](reference/agent-matrix.generated.md)
+- [CLI Reference](reference/cli.generated.md)
+- [产物布局 Reference](reference/artifact-layout.generated.md)
+- [仓库结构](reference/repository-layout.md)
 - [术语表](reference/glossary.md)
-- [扩展 Agent](development/extending-agent.md)
-- [扩展 Skill](development/extending-skill.md)
-- [扩展 Workflow](development/extending-workflow.md)
-- [扩展 Engine](development/extending-engine.md)
-- [测试与 Evals](development/testing-and-evals.md)
-- [文档维护规则](development/documentation.md)
 
-## 历史材料
-
-历史执行记录、benchmark 和 case study 归档在 [history/](history/README.md)。它们用于溯源，不再作为当前架构权威。
+历史执行记录和 case study 位于 [history/](history/README.md)，只用于溯源，不是当前架构权威。

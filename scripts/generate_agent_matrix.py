@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Any
 
@@ -31,14 +32,14 @@ def summarize_scope(values: list[Any], *, limit: int = 2) -> str:
     return head
 
 
-def main() -> int:
+def render() -> str:
     rows = [load_agent(path) for path in sorted(AGENTS_DIR.glob("*.yaml"))]
     lines = [
-        "# Agent Matrix",
+        "# Agent 矩阵",
         "",
         "本文件由 `agents/*.yaml` 生成，请不要手工编辑。",
         "",
-        "| Agent | Kind | Role | Mode | Read scopes | Write scopes | 来源 |",
+        "| Agent | 类型 | 角色 | 模式 | 可读范围 | 可写范围 | 来源 |",
         "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for row in rows:
@@ -53,8 +54,22 @@ def main() -> int:
             f"| `{agent_id}` | `{kind}` | `{role}` | `{mode}` | {reads} | {writes} | `{source}` |"
         )
     lines.append("")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true", help="Fail when the committed file is stale")
+    args = parser.parse_args()
+    expected = render()
+    actual = OUT.read_text(encoding="utf-8") if OUT.is_file() else ""
+    if args.check:
+        if actual != expected:
+            print(f"stale generated reference: {OUT.relative_to(ROOT).as_posix()}")
+            return 1
+        return 0
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text("\n".join(lines), encoding="utf-8")
+    OUT.write_text(expected, encoding="utf-8")
     return 0
 
 

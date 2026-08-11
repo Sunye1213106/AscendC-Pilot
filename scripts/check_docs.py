@@ -13,9 +13,15 @@ DEPRECATED_PATHS = (
     "docs/design/",
     "docs/fag/",
     "docs/case-studies/",
-    "docs/design/system-design.md",
-    "docs/design/skill-prompt.md",
-    "docs/design/control-closure.md",
+    "docs/architecture/agent-system.md",
+    "docs/architecture/harness-and-permissions.md",
+    "docs/architecture/skills-prompts-policies.md",
+    "docs/architecture/state-and-artifacts.md",
+    "docs/development/extending-agent.md",
+    "docs/development/extending-engine.md",
+    "docs/development/extending-skill.md",
+    "docs/development/extending-workflow.md",
+    "docs/development/testing-and-evals.md",
     "docs/fag/data/",
     "agents/README.md",
     "pilot/README.md",
@@ -107,16 +113,17 @@ def check_engines_doc(errors: list[str]) -> None:
             errors.append(f"engines.md missing {name}")
 
 
-def check_generated_matrix_fresh(errors: list[str]) -> None:
+def check_generated_references_fresh(errors: list[str]) -> None:
     result = subprocess.run(
-        [sys.executable, "scripts/generate_agent_matrix.py"],
+        [sys.executable, "scripts/generate_reference_docs.py", "--check"],
         cwd=ROOT,
         text=True,
         capture_output=True,
         check=False,
     )
     if result.returncode != 0:
-        errors.append(f"agent matrix generation failed: {result.stderr.strip()}")
+        detail = (result.stdout + result.stderr).strip()
+        errors.append(f"generated references are stale: {detail}")
 
 
 def main() -> int:
@@ -126,7 +133,7 @@ def main() -> int:
     check_links(errors)
     check_agent_matrix(errors)
     check_engines_doc(errors)
-    check_generated_matrix_fresh(errors)
+    check_generated_references_fresh(errors)
     if errors:
         for item in errors:
             print(f"docs-check: {item}")

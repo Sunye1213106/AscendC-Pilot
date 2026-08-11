@@ -1,35 +1,112 @@
-# AscendC synchronization primitives.
+# AscendC / CANN synchronization primitives.
+# Catalog aligned with kernel_operator_block_sync_intf.h + kernel_common.h Mutex.
+# Engine for HardEvent Set/Wait is resolved at the call site from HardEvent::SRC_DST
+# (see ascendc_sync.py); YAML default UNKNOWN means "resolve from template".
 version: ascendc-semantic-registry/v1
 ops:
+  # --- HardEvent pipe sync ---
   SetFlag:
     category: sync_signal
     engine: UNKNOWN
     confidence: confirmed
+    mechanism: hard_event
   WaitFlag:
     category: sync_wait
     engine: UNKNOWN
     confidence: confirmed
+    mechanism: hard_event
+
+  # --- Same-pipe / all-pipe barriers ---
   PipeBarrier:
     category: sync_barrier
     engine: UNKNOWN
     confidence: confirmed
+    mechanism: barrier
+  DataSyncBarrier:
+    category: sync_barrier
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: barrier
+  SyncAll:
+    category: sync_barrier
+    engine: ALL
+    confidence: confirmed
+    mechanism: barrier
+
+  # --- Cross-core (AIC↔AIV) ---
   CrossCoreSetFlag:
     category: sync_signal
     engine: UNKNOWN
     confidence: confirmed
+    mechanism: cross_core
   CrossCoreWaitFlag:
     category: sync_wait
     engine: UNKNOWN
     confidence: confirmed
-  SyncAll:
-    category: sync_barrier
+    mechanism: cross_core
+
+  # --- Inter-block (IB) ---
+  IBSet:
+    category: sync_signal
     engine: UNKNOWN
     confidence: confirmed
+    mechanism: inter_block
+  IBWait:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: inter_block
+
+  # --- Mutex (dav_3510 / arch35) ---
+  AllocMutexID:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  ReleaseMutexID:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  Lock:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  Unlock:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  LockProd:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  UnlockProd:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  LockCons:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+  UnlockCons:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: mutex
+
+  # Legacy spelled aliases still seen in some ops / generated code.
   SetFlag_PIPE_MTE2_TO_PIPE_V:
     category: sync_signal
     engine: MTE
     confidence: partial
+    mechanism: hard_event
   WaitFlag_PIPE_MTE2_TO_PIPE_V:
     category: sync_wait
     engine: VECTOR
     confidence: partial
+    mechanism: hard_event

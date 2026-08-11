@@ -57,11 +57,11 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "uo-init": {
         "description": (
-            "首次构建 AscendC `.uo` CodeMap：机器解析范围与 BuildVariant、抽取 CompilerFacts、"
+            "首次构建 AscendC `.uo` CodeMap：机器解析源码范围与构建变体、抽取 CompilerFacts、"
             "运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
             "semantic residual 保留在 unresolved.yaml，不由 LLM 写入 canonical UO。"
             "用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。"
-            "prepare 为确定性步骤：用户定 operator+arch，编译器定 Source Scope，无人工文件清单确认。"
+            "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
         "skill_id": "operator-analysis",
     },

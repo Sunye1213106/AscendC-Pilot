@@ -4,7 +4,7 @@
 
 ## 内容
 
-- [FAG runs](fag/)
+- [FAG runs](fag_test/)
 - [Case studies](case-studies/)
 - [Benchmarks](benchmarks/)
 

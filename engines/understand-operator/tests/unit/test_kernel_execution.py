@@ -119,6 +119,37 @@ def test_registry_classifies_datacopy_and_sync() -> None:
     assert reads2 == ["dyGm"]
     assert semreg.classify("WaitFlag")[0] == "sync_wait"
     assert semreg.classify("LoadAlign")[0] == "reg_load"
+    assert semreg.classify("IBSet")[0] == "sync_signal"
+    assert semreg.classify("Lock")[0] == "sync_signal"
+    assert semreg.classify("CrossCoreWaitFlag")[0] == "sync_wait"
+
+
+def test_hard_event_resolves_engines() -> None:
+    from uo_init.semantics.ascendc_sync import resolve_sync_site
+
+    info = resolve_sync_site("SetFlag", args=["eventIDSToV"], targs=["HardEvent::S_V"])
+    assert info["event"] == "S_V"
+    assert info["src_engine"] == "SCALAR"
+    assert info["dst_engine"] == "VECTOR"
+    assert info["engine"] == "SCALAR"
+    assert info["mechanism"] == "hard_event"
+
+    wait = resolve_sync_site("WaitFlag", args=["id"], targs=["HardEvent::MTE2_MTE3"])
+    assert wait["event"] == "MTE2_MTE3"
+    assert wait["src_engine"] == "MTE"
+    assert wait["dst_engine"] == "MTE"
+    assert wait["engine"] == "MTE"
+
+    cc = resolve_sync_site("CrossCoreWaitFlag", args=["FLAG"], targs=["SYNC_MODE", "PIPE_V"])
+    assert cc["cross_core"] is True
+    assert cc["pipe"] == "PIPE_V"
+    assert cc["dst_engine"] == "VECTOR"
+    assert cc["mechanism"] == "cross_core"
+
+    mx = resolve_sync_site("Lock", args=["mutexId_"], targs=["PIPE_MTE1"])
+    assert mx["kind"] == "MutexLock"
+    assert mx["mechanism"] == "mutex"
+    assert mx["src_engine"] == "MTE"
 
 
 def test_regtensor_is_register_not_unknown_buffer(tmp_path: Path) -> None:
@@ -161,6 +192,63 @@ def test_regtensor_is_register_not_unknown_buffer(tmp_path: Path) -> None:
     loc = CodeMapQuery(codemap=cm).locate(next(r.id for r in regs if r.name == "vregSrc"))
     assert loc and loc["line"] > 0 and "process.h" in loc["file"].replace("\\", "/")
 
+
+def test_storage_wrapper_links_cann_root_from_type_not_name(tmp_path: Path) -> None:
+    """MutexBuffer / BufferType::* → VIEW_OF LocalTensor root (type-driven, not names)."""
+    from uo_init.semantics.ascendc_storage import (
+        memory_space_from_type_text,
+        resolve_buffer_decl,
+    )
+
+    assert memory_space_from_type_text("MutexBuffer<BufferType::L0A, SyncType::INNER_CORE_SYNC>") == "L0A"
+    assert memory_space_from_type_text("TQue<QuePosition::VECIN, 1>") == "UB"
+    dep = resolve_buffer_decl("MutexBuffer<bufferType, syncType>")
+    assert dep and dep["is_wrapper"] and dep["storage_root_kind"] == "LocalTensor"
+
+    root = tmp_path / "wraptoy"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        template <typename T>
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            MutexBuffer<BufferType::L1, SyncType::INNER_CORE_SYNC> anyName;
+            MutexBuffer<bufferType, syncType> otherName;
+            LocalTensor<T> ub;
+            DataCopy(ub, anyName);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="wraptoy", architecture="arch35")
+    _seed_kernel(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_execution(cm, root, architecture="arch35")
+    bufs = {b.name: b for b in cm.by_kind(EntityKind.BUFFER)}
+    assert "anyName" in bufs
+    assert bufs["anyName"].attrs.get("memory_space") == "L1"
+    assert bufs["anyName"].attrs.get("role") == "storage_wrapper"
+    assert bufs["anyName"].attrs.get("backing")
+    root_ent = cm.entities.get(str(bufs["anyName"].attrs.get("backing")))
+    assert root_ent is not None
+    assert root_ent.attrs.get("kind") == "LocalTensor"
+    assert root_ent.attrs.get("role") == "cann_storage_root"
+    assert root_ent.attrs.get("memory_space") == "L1"
+    views = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.VIEW_OF.value
+        and r.src == bufs["anyName"].id
+        and r.dst == root_ent.id
+    ]
+    assert views, "wrapper must VIEW_OF cann storage root"
+    if "otherName" in bufs:
+        assert bufs["otherName"].attrs.get("role") == "storage_wrapper"
+        assert bufs["otherName"].attrs.get("backing")
 
 
 def test_kernel_execution_extracts_ops_buffers_sync_and_order(tmp_path: Path) -> None:

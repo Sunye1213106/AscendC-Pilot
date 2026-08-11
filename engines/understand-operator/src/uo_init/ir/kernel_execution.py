@@ -79,6 +79,7 @@ class Buffer:
     file: str = ""
     line: int = 0
     queue_depth: int | None = None
+    role: str = ""
     provenance: str = "clang"
     confidence: str = "confirmed"
 
@@ -94,6 +95,7 @@ class Buffer:
             "file": self.file,
             "line": self.line,
             "queue_depth": self.queue_depth,
+            "role": self.role,
             "provenance": self.provenance,
             "confidence": self.confidence,
         }
@@ -157,7 +159,7 @@ class BufferView:
 
 @dataclass
 class SyncEvent:
-    """SetFlag / WaitFlag / Barrier / cross-core sync site."""
+    """SetFlag / WaitFlag / Barrier / cross-core / mutex / IB sync site."""
 
     id: str
     kind: str
@@ -170,6 +172,7 @@ class SyncEvent:
     event: str = ""
     buffer_identity: str = ""
     cross_core: bool = False
+    mechanism: str = ""
     src_engine: str = ""
     dst_engine: str = ""
     guards: list[str] = field(default_factory=list)
@@ -192,6 +195,7 @@ class SyncEvent:
             "event": self.event,
             "buffer_identity": self.buffer_identity,
             "cross_core": self.cross_core,
+            "mechanism": self.mechanism,
             "src_engine": self.src_engine,
             "dst_engine": self.dst_engine,
             "guards": list(self.guards),

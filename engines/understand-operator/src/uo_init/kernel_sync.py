@@ -66,9 +66,9 @@ def pair_events(
     for event in events:
         kind = str(event.get("kind") or "")
         identity = _identity(event)
-        if kind in {"SetFlag", "SET", "CrossCoreSetFlag"}:
+        if kind in {"SetFlag", "SET", "CrossCoreSetFlag", "MutexLock", "IBSet"}:
             producers[identity].append(event)
-        elif kind in {"WaitFlag", "WAIT", "CrossCoreWaitFlag"}:
+        elif kind in {"WaitFlag", "WAIT", "CrossCoreWaitFlag", "MutexUnlock", "IBWait"}:
             waits.append(event)
     result: list[dict[str, Any]] = []
     for wait in waits:

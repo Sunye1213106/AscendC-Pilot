@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -48,8 +48,11 @@ from uo_init.semantics.ascendc_storage import (
     is_non_storage_type,
     is_storage_type_text,
     is_valid_storage_name,
+    memory_space_from_type_text,
     register_class_from_type,
+    resolve_buffer_decl,
 )
+from uo_init.semantics.ascendc_sync import mutex_pipe_for, resolve_sync_site
 
 _WALK_CACHE_LIMIT = 48
 
@@ -208,6 +211,10 @@ def _guards_from_path_conditions(pcs: Iterable[Any]) -> list[str]:
 
 
 def _infer_memory_space(type_text: str, name: str = "") -> str:
+    """Prefer CANN/AscendC type & position template args; names are fallback only."""
+    from_type = memory_space_from_type_text(type_text)
+    if from_type:
+        return from_type
     t = f"{type_text} {name}".lower()
     n = str(name or "").lower()
     # TPipe is not a data buffer — mark so callers can drop it.
@@ -237,11 +244,57 @@ def _infer_memory_space(type_text: str, name: str = "") -> str:
 
 
 def _buffer_kind(type_text: str) -> str:
+    resolved = resolve_buffer_decl(type_text)
+    if resolved:
+        return str(resolved["kind"])
     t = type_text
     for name in ("LocalTensor", "GlobalTensor", "TBuf", "TQue", "TPipe", "MutexBuffer"):
         if name in t:
             return name
     return "Buffer"
+
+
+def _attach_storage_wrapper_root(
+    ir: KernelExecutionIR,
+    wrapper: Buffer,
+    *,
+    type_text: str,
+    root: str,
+    provenance: str,
+) -> None:
+    """Wrapper BUFFER views a synthetic CANN LocalTensor/GlobalTensor storage root.
+
+    Root identity is structural (``{name}#storage``), not a source member name.
+    Materialize links ``wrapper —VIEW_OF→ root`` via ``backing``.
+    """
+    resolved = resolve_buffer_decl(type_text)
+    if not resolved or not resolved.get("is_wrapper"):
+        return
+    root_kind = str(resolved.get("storage_root_kind") or "LocalTensor")
+    space = str(resolved.get("memory_space") or wrapper.memory_space or "UNKNOWN")
+    root_name = f"{wrapper.name}#storage"
+    rid = buffer_site_id(
+        file=wrapper.file,
+        line=wrapper.line,
+        scope=wrapper.scope,
+        name=root_name,
+        root=root,
+    )
+    storage = Buffer(
+        id=rid,
+        name=root_name,
+        kind=root_kind,
+        memory_space=space,
+        scope=wrapper.scope,
+        file=wrapper.file,
+        line=wrapper.line,
+        role="cann_storage_root",
+        provenance=provenance,
+        confidence=wrapper.confidence,
+    )
+    ir.buffers.append(storage)
+    wrapper.backing = rid
+    wrapper.role = "storage_wrapper"
 
 
 def _is_data_buffer(type_text: str, name: str, memory_space: str) -> bool:
@@ -270,21 +323,91 @@ def _site_dedupe_key(site: Any, *, root: str = "") -> tuple[str, int, str]:
     return (_norm_file(file, root), line, callee)
 
 
+def _site_as_dict(site: Any) -> dict[str, Any]:
+    if isinstance(site, dict):
+        return site
+    return {
+        "caller": getattr(site, "caller", "") or "",
+        "callee": getattr(site, "callee", "") or "",
+        "file": getattr(site, "file", "") or "",
+        "line": int(getattr(site, "line", 0) or 0),
+        "column": int(getattr(site, "column", 0) or 0),
+        "args": list(getattr(site, "args", None) or []),
+        "template_args": list(getattr(site, "template_args", None) or []),
+        "receiver": getattr(site, "receiver", "") or "",
+        "path_conditions": getattr(site, "path_conditions", None) or (),
+        "entry_reachable": bool(getattr(site, "entry_reachable", True)),
+    }
+
+
+def _targs_quality(targs: list[str] | None) -> int:
+    """Higher when template args carry CANN HardEvent / PIPE tokens."""
+    joined = " ".join(str(t) for t in (targs or []))
+    score = 0
+    if "HardEvent" in joined or any(
+        ev in joined for ev in ("MTE2_", "MTE1_", "MTE3_", "PIPE_", "_MTE", "_FIX", "V_S", "S_V", "V_V")
+    ):
+        score += 2
+    if "PIPE_" in joined:
+        score += 2
+    if joined.strip():
+        score += 1
+    return score
+
+
+def _enrich_site_templates(dst: Any, src: dict[str, Any]) -> Any:
+    """Fill / upgrade template_args/args from lexical when Clang omitted or stripped them.
+
+    Returns the (possibly replaced) site object.
+    """
+    src_t = list(src.get("template_args") or [])
+    src_a = list(src.get("args") or [])
+    if isinstance(dst, dict):
+        cur_t = list(dst.get("template_args") or [])
+        if _targs_quality(src_t) > _targs_quality(cur_t):
+            dst["template_args"] = src_t
+        if (not dst.get("args")) and src_a:
+            dst["args"] = src_a
+        if not dst.get("receiver") and src.get("receiver"):
+            dst["receiver"] = src["receiver"]
+        return dst
+    d = _site_as_dict(dst)
+    cur_t = list(d.get("template_args") or [])
+    if _targs_quality(src_t) > _targs_quality(cur_t):
+        d["template_args"] = src_t
+    if (not d.get("args")) and src_a:
+        d["args"] = src_a
+    if not d.get("receiver") and src.get("receiver"):
+        d["receiver"] = src["receiver"]
+    if d.get("template_args") or d.get("args"):
+        return d
+    return dst
+
+
 def _merge_lexical_sites(
     walk_calls: list[Any],
     lexical: list[dict[str, Any]],
     *,
     root: str,
 ) -> tuple[list[Any], int]:
-    """Prefer Clang sites; add lexical AscendC primitives missing from walks."""
-    seen = {_site_dedupe_key(s, root=root) for s in walk_calls}
+    """Prefer Clang sites; add lexical AscendC primitives missing from walks.
+
+    When Clang already recorded a site but dropped template args (common for
+    ``SetFlag<HardEvent::…>`` / ``CrossCore* <mode, PIPE_*>``), enrich in place
+    from the lexical twin so CANN sync engines can resolve.
+    """
+    index: dict[tuple[str, int, str], int] = {}
+    out: list[Any] = list(walk_calls)
+    for i, s in enumerate(out):
+        index[_site_dedupe_key(s, root=root)] = i
     added = 0
-    out = list(walk_calls)
     for site in lexical:
         key = _site_dedupe_key(site, root=root)
-        if key in seen:
+        if key in index:
+            i = index[key]
+            out[i] = _enrich_site_templates(out[i], site)
             continue
-        seen.add(key)
+        index[key] = len(out)
         out.append(site)
         added += 1
     return out, added
@@ -410,49 +533,9 @@ def _lexical_primitive_sites(
     return sites
 
 
-def _site_as_dict(site: Any) -> dict[str, Any]:
-    if isinstance(site, dict):
-        return site
-    return {
-        "caller": getattr(site, "caller", ""),
-        "callee": getattr(site, "callee", ""),
-        "file": getattr(site, "file", ""),
-        "line": int(getattr(site, "line", 0) or 0),
-        "column": int(getattr(site, "column", 0) or 0),
-        "args": list(getattr(site, "args", ()) or ()),
-        "template_args": list(getattr(site, "template_args", ()) or ()),
-        "receiver": getattr(site, "receiver", "") or "",
-        "path_conditions": getattr(site, "path_conditions", ()) or (),
-        "entry_reachable": True,
-    }
-
-
-def _sync_kind_and_pipe(callee: str, args: list[str], targs: list[str]) -> tuple[str, str, str, bool]:
-    """Return (sync_kind, flag, pipe, cross_core) for Set/Wait/Barrier sites."""
-    cross = "CrossCore" in callee
-    if "SetFlag" in callee:
-        skind = "SetFlag"
-    elif "WaitFlag" in callee:
-        skind = "WaitFlag"
-    elif "PipeBarrier" in callee or "SyncAll" in callee:
-        skind = "BARRIER"
-    else:
-        skind = callee
-    flag = args[0] if args else ""
-    pipe = ""
-    event = ""
-    # CrossCoreWaitFlag<SYNC_MODE, PIPE_V>(FLAG) — pipe lives in template args.
-    for t in targs:
-        if "PIPE_" in t.upper() or t.upper().startswith("PIPE"):
-            pipe = t
-            break
-    if not pipe and len(args) > 1:
-        pipe = args[1]
-    if len(args) > 2:
-        event = args[2]
-    elif len(args) == 1 and not targs:
-        event = ""
-    return skind, str(flag), str(pipe), cross
+def _sync_kind_and_pipe(callee: str, args: list[str], targs: list[str]) -> dict[str, Any]:
+    """CANN-aligned sync site fields (HardEvent / pipe / mutex / IB / cross-core)."""
+    return resolve_sync_site(callee, args=args, targs=targs)
 
 
 def _build_ir_from_sites(
@@ -511,6 +594,9 @@ def _build_ir_from_sites(
         mem = _infer_memory_space(type_text, name)
         if not _is_data_buffer(type_text, name, mem):
             continue
+        resolved = resolve_buffer_decl(type_text)
+        if resolved and resolved.get("memory_space") and resolved["memory_space"] != "UNKNOWN":
+            mem = str(resolved["memory_space"])
         bid = buffer_site_id(file=file, line=line, scope=function, name=name, root=root)
         buf = Buffer(
             id=bid,
@@ -521,11 +607,16 @@ def _build_ir_from_sites(
             scope=function,
             file=_norm_file(file, root),
             line=line,
+            role=str(resolved.get("role") or "") if resolved else "",
             provenance=provenance,
             confidence="confirmed" if provenance.startswith("clang") else "partial",
         )
         ir.buffers.append(buf)
         buffer_by_key[(function, name)] = buf
+        if resolved and resolved.get("is_wrapper"):
+            _attach_storage_wrapper_root(
+                ir, buf, type_text=type_text, root=root, provenance=provenance
+            )
 
     # Function regions.
     region_by_func: dict[str, ExecRegion] = {}
@@ -664,10 +755,46 @@ def _build_ir_from_sites(
                         buffer_by_key[qkey].kind = "TQue"
 
         # Sync events from sync_* categories.
+        # Only resolve engines from Clang/lexical template args + CANN catalog.
+        # If HardEvent/PIPE cannot be resolved, leave UNKNOWN and mark as gap later.
         if category.startswith("sync_"):
-            skind, flag, pipe, cross = _sync_kind_and_pipe(callee, args, targs)
+            sync_info = _sync_kind_and_pipe(callee, args, targs)
+            # Mutex LockProd/Cons: pipe from receiver memory_space when already known.
+            if (
+                str(sync_info.get("mechanism") or "") == "mutex"
+                and not sync_info.get("pipe")
+                and receiver
+            ):
+                rbuf = buffer_by_key.get((op.function, receiver))
+                space = rbuf.memory_space if rbuf else ""
+                if (not space or space == "UNKNOWN") and rbuf and rbuf.backing:
+                    root_buf = next((b for b in ir.buffers if b.id == rbuf.backing), None)
+                    if root_buf:
+                        space = root_buf.memory_space
+                mpipe = mutex_pipe_for(callee, space)
+                if mpipe:
+                    sync_info = dict(sync_info)
+                    sync_info["pipe"] = mpipe
+                    eng = resolve_sync_site(callee, args=args, targs=[mpipe])
+                    sync_info["src_engine"] = eng.get("src_engine") or sync_info.get("src_engine")
+                    sync_info["dst_engine"] = eng.get("dst_engine") or sync_info.get("dst_engine")
+                    sync_info["engine"] = eng.get("engine") or sync_info.get("engine")
+            skind = str(sync_info.get("kind") or callee)
+            resolved_eng = str(sync_info.get("engine") or "")
+            if resolved_eng and resolved_eng != "UNKNOWN":
+                op.engine = resolved_eng
+            elif engine == "UNKNOWN" and str(sync_info.get("mechanism") or "") == "barrier" and callee == "SyncAll":
+                op.engine = "ALL"
             sid = sync_event_id(
                 file=file, line=line, column=column, kind=skind, ordinal=ordinal, root=root
+            )
+            src_e = str(sync_info.get("src_engine") or "")
+            dst_e = str(sync_info.get("dst_engine") or "")
+            engine_gap = (
+                skind != "BARRIER"
+                and src_e in {"", "UNKNOWN"}
+                and dst_e in {"", "UNKNOWN"}
+                and str(op.engine or "UNKNOWN") == "UNKNOWN"
             )
             ir.sync_events.append(
                 SyncEvent(
@@ -677,16 +804,17 @@ def _build_ir_from_sites(
                     line=line,
                     column=column,
                     function=op.function,
-                    flag=flag,
-                    pipe=pipe,
-                    event="",
-                    cross_core=cross,
-                    src_engine=engine if category == "sync_signal" else "",
-                    dst_engine=engine if category == "sync_wait" else "",
+                    flag=str(sync_info.get("flag") or ""),
+                    pipe=str(sync_info.get("pipe") or ""),
+                    event=str(sync_info.get("event") or ""),
+                    cross_core=bool(sync_info.get("cross_core")),
+                    mechanism=str(sync_info.get("mechanism") or ""),
+                    src_engine=src_e,
+                    dst_engine=dst_e,
                     guards=list(guards),
                     operation_id=oid,
                     provenance=provenance,
-                    confidence=op.confidence,
+                    confidence="partial" if engine_gap else op.confidence,
                 )
             )
 
@@ -772,8 +900,27 @@ def _build_ir_from_sites(
     return ir
 
 
+def _dedupe_by_id(items: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    out: list[Any] = []
+    for item in items:
+        iid = str(getattr(item, "id", "") or "")
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+        out.append(item)
+    return out
+
+
 def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[str, Any]:
     """Write KernelExecutionIR into CodeMap entities/relations."""
+    # Collapse duplicate site ids from clang+lexical overlay.
+    ir.buffers = _dedupe_by_id(ir.buffers)
+    ir.registers = _dedupe_by_id(ir.registers)
+    ir.sync_events = _dedupe_by_id(ir.sync_events)
+    ir.operations = _dedupe_by_id(ir.operations)
+    ir.buffer_views = _dedupe_by_id(ir.buffer_views)
+
     # Purge previous execution entities from this pass.
     drop_kinds = {
         EntityKind.OPERATION.value,
@@ -829,21 +976,61 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         )
         region_ents[region.function or region.name] = ent.id
 
+    gaps: list[dict[str, Any]] = []
+
     buffer_ents: dict[str, str] = {}
     buffer_by_name_scope: dict[tuple[str, str], str] = {}
     for buf in ir.buffers:
+        attrs = buf.to_dict()
+        mem_gap = str(buf.memory_space or "UNKNOWN") == "UNKNOWN"
+        if mem_gap:
+            attrs["gap_code"] = "buffer_memory_space_unresolved"
+            attrs["resolution_blocker"] = "missing_buffertype_or_tposition_from_clang"
+            attrs["reason"] = (
+                f"buffer kind={buf.kind or 'Buffer'} role={buf.role or '-'}: "
+                "BufferType/TPosition/QuePosition not available from decl type text"
+            )
+            gaps.append(
+                {
+                    "code": "buffer_memory_space_unresolved",
+                    "entity_id": buf.id,
+                    "kind": buf.kind,
+                    "role": buf.role,
+                    "name": buf.name,
+                    "file": buf.file,
+                    "line": buf.line,
+                }
+            )
         ent = codemap.upsert(
             EntityKind.BUFFER,
             buf.name,
             eid=buf.id,
-            attrs=buf.to_dict(),
+            attrs=attrs,
             file=buf.file,
             line=buf.line,
-            status="extracted",
-            confidence=1.0 if buf.confidence == "confirmed" else 0.6,
+            status="partial" if mem_gap else "extracted",
+            confidence=0.4 if mem_gap else (1.0 if buf.confidence == "confirmed" else 0.6),
         )
         buffer_ents[buf.id] = ent.id
         buffer_by_name_scope[(buf.scope, buf.name)] = ent.id
+
+    # Wrapper → CANN storage root (structural, independent of member names).
+    for buf in ir.buffers:
+        if not buf.backing:
+            continue
+        src = buffer_ents.get(buf.id)
+        dst = buffer_ents.get(buf.backing)
+        if src and dst:
+            codemap.link(
+                RelationKind.VIEW_OF,
+                src,
+                dst,
+                attrs={
+                    "provenance": "ascendc_storage_wrapper",
+                    "role": "storage_wrapper",
+                },
+                status="confirmed",
+            )
 
     register_ents: dict[str, str] = {}
     register_by_name_scope: dict[tuple[str, str], str] = {}
@@ -999,16 +1186,46 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
     # Sync entities + EMITS_SYNC + pairing → SIGNALS / WAITS_ON / SYNCHRONIZES_WITH / HAPPENS_BEFORE
     sync_ents: dict[str, SyncEvent] = {}
     emits_sync = 0
+
+    def _sync_needs_engine_gap(sev: SyncEvent) -> bool:
+        """True when CANN HardEvent/PIPE could not be resolved from available templates."""
+        if str(sev.src_engine or "UNKNOWN") != "UNKNOWN" or str(sev.dst_engine or "UNKNOWN") != "UNKNOWN":
+            return False
+        # SyncAll()-style: barrier without pipe/flag/event — not an engine-resolution gap.
+        if sev.kind == "BARRIER" and not sev.pipe and not sev.flag and not sev.event:
+            return False
+        return True
+
     for sev in ir.sync_events:
+        attrs = sev.to_dict()
+        mark_gap = _sync_needs_engine_gap(sev)
+        if mark_gap:
+            attrs["gap_code"] = "sync_engine_unresolved"
+            attrs["resolution_blocker"] = "missing_hard_event_or_pipe_from_clang"
+            attrs["reason"] = (
+                f"CANN sync {sev.kind}/{sev.mechanism or 'unknown'}: "
+                "HardEvent/PIPE not available from Clang/lexical templates"
+            )
+            gaps.append(
+                {
+                    "code": "sync_engine_unresolved",
+                    "entity_id": sev.id,
+                    "kind": sev.kind,
+                    "mechanism": sev.mechanism,
+                    "file": sev.file,
+                    "line": sev.line,
+                    "function": sev.function,
+                }
+            )
         ent = codemap.upsert(
             EntityKind.SYNC_EVENT,
             sev.kind,
             eid=sev.id,
-            attrs=sev.to_dict(),
+            attrs=attrs,
             file=sev.file,
             line=sev.line,
-            status="extracted",
-            confidence=1.0 if sev.confidence == "confirmed" else 0.6,
+            status="partial" if mark_gap else "extracted",
+            confidence=0.4 if mark_gap else (1.0 if sev.confidence == "confirmed" else 0.6),
         )
         sync_ents[sev.id] = sev
         if sev.operation_id and sev.operation_id in codemap.entities:
@@ -1086,6 +1303,7 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
     lifecycle = _compute_buffer_lifecycles(codemap, ir)
 
     ranked = sum(1 for o in ir.operations if int(o.exec_rank) >= 0)
+    gap_counts = dict(Counter(str(g.get("code") or "") for g in gaps))
     stats = {
         "operations": len(ir.operations),
         "buffers": len(ir.buffers),
@@ -1100,6 +1318,9 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
         "sync_ambiguous": ambiguous,
         "emits_sync": emits_sync,
         "buffer_lifecycles": len(lifecycle),
+        "gaps": gaps,
+        "gap_count": len(gaps),
+        "gap_counts": gap_counts,
         "exec_order": order_meta,
         "provenance": ir.notes[0] if ir.notes else "",
         "registry_version": ir.registry_version,
@@ -1112,6 +1333,8 @@ def _materialize(codemap: CodeMap, ir: KernelExecutionIR, *, root: str) -> dict[
             "emits_sync": emits_sync,
             "sync_paired": paired,
             "buffer_lifecycles": len(lifecycle),
+            "gap_count": len(gaps),
+            "gap_counts": gap_counts,
             "walk_partial": "partial" in str(ir.notes) or "partial" in (ir.notes[0] if ir.notes else ""),
         },
     }

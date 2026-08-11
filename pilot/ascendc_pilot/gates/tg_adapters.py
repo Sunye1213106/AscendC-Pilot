@@ -308,6 +308,21 @@ def gate_allow_solve(project_root: Path, *, level: str = "") -> dict[str, Any]:
     }
 
 
+_ADAPTER_METHODS = (
+    "declared_keys",
+    "decode_key",
+    "sample_case",
+    "mutate",
+    "construct",
+    "describe",
+    "replay",
+    "actual_key",
+    "generation_knobs",
+)
+
+# Cold-start packages keep only identity + log protocol. Adapter pack YAML
+# (search/construction/feature/bridge/proof/observations) is optional until
+# export_adapter_pack writes it.
 _REQUIRED_YAML = (
     "operator.yaml",
     "log_protocol.yaml",
