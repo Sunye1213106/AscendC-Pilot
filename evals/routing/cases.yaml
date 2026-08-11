@@ -1,0 +1,43 @@
+# Skill routing trigger eval (dry): description acts as semantic router.
+# should_trigger: skill name must win; should_not_trigger: skill must not win.
+version: 1
+cases:
+  - id: route_uo_init_build
+    query: 首次构建 UO CodeMap，指定 architecture 分析算子
+    should_trigger: [uo-init, uo-codemap-build]
+    should_not_trigger: [tg-solve, ce-review]
+
+  - id: route_uo_query
+    query: 查询已有 .uo 里某个 TilingKey 维度和 Host 字段关系
+    should_trigger: [uo-query, uo-codemap-query]
+    should_not_trigger: [uo-init, tg-init]
+
+  - id: route_uo_update
+    query: 源码改了，刷新已有 CodeMap 并看差异
+    should_trigger: [uo-update]
+    should_not_trigger: [uo-init]
+
+  - id: route_tg_init
+    query: 建测例契约，做 tilingkey 绑定
+    should_trigger: [tg-init]
+    should_not_trigger: [uo-query, ce-review]
+
+  - id: route_tg_plan
+    query: 制定 TG 测试目标并批准 plan，不构造 case、不做 Host replay
+    should_trigger: [tg-plan]
+    should_not_trigger: [uo-init, ce-review]
+
+  - id: route_tg_solve
+    query: 对已批准 target set 做 Host replay 闭环，扩大 R 和 E
+    should_trigger: [tg-solve, tg-closure]
+    should_not_trigger: [uo-init]
+
+  - id: route_ce_review
+    query: 审查算子代码改动，找潜在 bug
+    should_trigger: [ce-review, code-review]
+    should_not_trigger: [tg-solve]
+
+  - id: route_lemma_proof
+    query: 证明某字段只能取特定值，建立可审计源码引理
+    should_trigger: [source-lemma-proof]
+    should_not_trigger: [uo-query]

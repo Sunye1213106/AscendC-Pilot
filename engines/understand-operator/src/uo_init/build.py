@@ -29,6 +29,7 @@ from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
 from uo_init.passes.tiling_field_complete import complete_tiling_fields
 from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
+from uo_init.passes.value_defining_sites import enrich_value_defining_sites
 from uo_init.passes.tiling_kernel_reads import rebuild_verified_tiling_reads
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.resolve.semantic_gap import list_gaps
@@ -205,6 +206,7 @@ def compile_codemap(
             ("kernel_call_boundaries", classify_kernel_call_boundaries, {"skip_arch": True}),
             ("tiling_reads", rebuild_verified_tiling_reads, {}),
             ("tiling_host_writes", enrich_tiling_host_writes, {}),
+            ("value_defining_sites", enrich_value_defining_sites, {}),
             ("kernel_tiling_truth", finalize_kernel_tiling_truth, {"skip_arch": True}),
             ("kernel_tiling_metrics", finalize_kernel_tiling_metrics, {"skip_arch": True}),
         ):
@@ -236,6 +238,23 @@ def compile_codemap(
     merged_views.update(context.get("tg_views") or {})
     merged_views = finalize_tg_views(cm, existing=merged_views)
     _span("finalize_views", t0)
+
+    from uo_init.tg_projection import require_commit_views
+
+    if commit and source_root is not None:
+        missing = require_commit_views(merged_views)
+        if missing:
+            return {
+                "ok": False,
+                "error": "TG_VIEW_INCOMPLETE",
+                "missing": missing,
+                "summary": {},
+                "audit": {},
+                "gaps": list_gaps(cm),
+                "codemap": cm,
+                "_merged_views": merged_views,
+                "tg_views": {"view_names": sorted(merged_views), "missing": missing},
+            }
 
     t0 = time.perf_counter()
     audit = audit_codemap(cm)

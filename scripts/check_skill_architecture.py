@@ -34,6 +34,14 @@ WORKFLOW_DOMAIN_LEAK = re.compile(
     re.I,
 )
 
+# Domain Skill must not teach Harness protocol (see docs/design/where-does-this-go.md)
+DOMAIN_HARNESS_LEAK = re.compile(
+    r"\b(declare_workflow_passed|execution_mode|allowed_write_paths|"
+    r"output_contract_id|action_session_id|prepare_nonce|lease_id|"
+    r"acp\s+finalize|finalize_action)\b",
+    re.I,
+)
+
 
 def _errors() -> list[str]:
     errors: list[str] = []
@@ -90,6 +98,15 @@ def _errors() -> list[str]:
                 errors.append(
                     f"DOMAIN_CROSS_SKILL_INCLUDE {skill_md.as_posix()}: references domain/{other}/SKILL.md"
                 )
+        for i, line in enumerate(text.splitlines(), 1):
+            if DOMAIN_HARNESS_LEAK.search(line):
+                errors.append(
+                    f"DOMAIN_HARNESS_LEAK {skill_md.as_posix()}:{i}: {line.strip()[:80]}"
+                )
+        # Every domain skill must ship high-signal gotchas (progressive disclosure L2).
+        gotchas = skill_md.parent / "references" / "gotchas.md"
+        if not gotchas.is_file():
+            errors.append(f"DOMAIN_MISSING_GOTCHAS {gotchas.as_posix()}")
         # resolve relative reference paths listed as `references/...` or `_shared/...`
         for rel in re.findall(r"`((?:references|_shared)/[^`]+\.md)`", text):
             # _shared is under domain/

@@ -2,7 +2,7 @@
 
 | Kind | Path | Required files |
 |---|---|---|
-| **Domain Skill** | `domain/<id>/` | `SKILL.md`（≤200 行）；可选 `references/**`；共用 `domain/_shared/` |
+| **Domain Skill** | `domain/<id>/` | `SKILL.md`（≤200 行）；**必须** `references/gotchas.md`；可选更多 `references/**`；共用 `domain/_shared/` |
 | Policy | `policies/<id>/` | `policy.yaml`, `POLICY.md` |
 | Capability | `capabilities/<id>/` | `capability.yaml`, `METHOD.md`（**仅**检索/导航/批处理基础设施） |
 | Action | `actions/<workflow>/<action>/` | `action.yaml`, `METHOD.md`（薄：绑定 Domain Skill 或 deterministic） |

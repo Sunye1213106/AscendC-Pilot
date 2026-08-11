@@ -1,0 +1,470 @@
+[
+ {
+  "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+  "line": 163,
+  "function": "Init",
+  "condition": "! isDropBoolMode && tilingData->s1s2BNGS1S2BaseParams.keepProb<1",
+  "fields": [
+   "keepProb"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+  "line": 172,
+  "function": "Init",
+  "condition": "tilingData->s1s2BNGS1S2BaseParams.dropMaskOuter && isDropBoolMode",
+  "fields": [
+   "dropMaskOuter"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+  "line": 198,
+  "function": "Process",
+  "condition": "g_coreType == AIV && cBlockIdx<tilingData->preTilingData.maskCoreNum",
+  "fields": [
+   "maskCoreNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+  "line": 210,
+  "function": "Process",
+  "condition": "tilingData->preTilingData.sValueZeroUnderTND ||(IS_DETER_NEW(DETER_SPARSE_TYPE)&& tilingData->preTilingData.hasInvalidCol)",
+  "fields": [
+   "hasInvalidCol",
+   "sValueZeroUnderTND"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 5
+ },
+ {
+  "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+  "line": 222,
+  "function": "Process",
+  "condition": "!(tilingData->s1s2BNGS1S2BaseParams.dropMaskOuter && isDropBoolMode)",
+  "fields": [
+   "dropMaskOuter"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_presfmg_regbase.h",
+  "line": 193,
+  "function": "Init",
+  "condition": "SPLIT_AXIS == BN2S2 && !(tilingData->preTilingData.sValueZeroUnderTND ||(IS_DETER_NEW(DETER_SPARSE_TYPE)&& tilingData->preTilingData.hasInvalidCol))",
+  "fields": [
+   "hasInvalidCol",
+   "sValueZeroUnderTND"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_presfmg_regbase.h",
+  "line": 249,
+  "function": "Process",
+  "condition": "tilingData->preTilingData.sValueZeroUnderTND ||(IS_DETER_NEW(DETER_SPARSE_TYPE)&& tilingData->preTilingData.hasInvalidCol)",
+  "fields": [
+   "hasInvalidCol",
+   "sValueZeroUnderTND"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 4
+ },
+ {
+  "file": "flash_attention_score_grad_presfmg_regbase.h",
+  "line": 257,
+  "function": "Process",
+  "condition": "tilingData->s1s2BNGS1S2SplitCoreParams.s2Outer>1",
+  "fields": [
+   "s2Outer"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 3
+ },
+ {
+  "file": "flash_attention_score_grad_block_vec.h",
+  "line": 263,
+  "function": "InitGlobalBuffer",
+  "condition": "tilingData->preTilingData.dropoutIsDivisibleBy8 == 0",
+  "fields": [
+   "dropoutIsDivisibleBy8"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 359,
+  "function": "SetSwizzleConstInfo",
+  "condition": "! tilingData->s1s2BNGS1S2BaseParams.isSplitByBlockIdx",
+  "fields": [
+   "isSplitByBlockIdx"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 457,
+  "function": "SetSwizzleConstInfo",
+  "condition": "tilingData->s1s2BNGS1S2BaseParams.sparseType == static_cast<uint8_t>(SparseType::BAND)",
+  "fields": [
+   "sparseType"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 4
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 566,
+  "function": "SetConstInfo",
+  "condition": "static_cast<uint8_t>(tilingData->s1s2BNGS1S2BaseParams.coreNum)== VEC_CORE_NUM_64",
+  "fields": [
+   "coreNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1378,
+  "function": "GetNextValidIdx",
+  "condition": "tilingData->s1s2BNGS1S2BaseParams.isSplitByBlockIdx",
+  "fields": [
+   "isSplitByBlockIdx"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 2
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1384,
+  "function": "GetNextValidIdx",
+  "condition": "nextValidBlockInnerIdx>= tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ cBlockIdx ]",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 4
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1389,
+  "function": "GetNextValidIdx",
+  "condition": "nextValidBlockInnerIdx>= tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ cBlockIdx ]",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 3
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1397,
+  "function": "GetNextValidIdx",
+  "condition": "nextValidBlockInnerIdx>= tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ cBlockIdx ]",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 3
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1402,
+  "function": "GetNextValidIdx",
+  "condition": "nextValidBlockInnerIdx>= tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ cBlockIdx ]",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 2
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1415,
+  "function": "GetNextValidIdxForTndSwizzleDense",
+  "condition": "loopIdx<tilingData->tndSwizzleParam.tndS2BlockPrefixSum [ bIdx + 1 ]",
+  "fields": [
+   "tndS2BlockPrefixSum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1458,
+  "function": "GetNextValidIdxForTndSwizzleCasual",
+  "condition": "loopIdx<tilingData->tndSwizzleParam.tndS2BlockPrefixSum [ bIdx + 1 ]",
+  "fields": [
+   "tndS2BlockPrefixSum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_base.h",
+  "line": 1555,
+  "function": "GetNextValidIdxForTndSwizzleBand",
+  "condition": "bandLoopIdx<tilingData->tndSwizzleParam.tndS2BlockPrefixSum [ bIdx + 1 ]",
+  "fields": [
+   "tndS2BlockPrefixSum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 2
+ },
+ {
+  "file": "flash_attention_score_grad_kernel.h",
+  "line": 41,
+  "function": "Process",
+  "condition": "this->tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ this->cBlockIdx ] == 0",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_kernel.h",
+  "line": 75,
+  "function": "Process",
+  "condition": "this->tilingData->s1s2BNGS1S2BaseParams.isSplitByBlockIdx || IS_TND_SWIZZLE",
+  "fields": [
+   "isSplitByBlockIdx"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 3
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_deter.h",
+  "line": 681,
+  "function": "SpecialS2Index",
+  "condition": "this->tilingData->deterParam.deterPrefix2 [ i ] == dkvGmOffset",
+  "fields": [
+   "deterPrefix2"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 2
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_deter.h",
+  "line": 729,
+  "function": "DeterSync",
+  "condition": "this->tilingData->baseDeterParam.dkDvIsNeedDeter [ i ] == 0",
+  "fields": [
+   "dkDvIsNeedDeter"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 2
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_deter.h",
+  "line": 732,
+  "function": "DeterSync",
+  "condition": "static_cast<uint64_t>(loopIdx)>= this->tilingData->baseDeterParam.dqIsNeedDeter [ i ] && static_cast<uint64_t>(loopIdx)<= this->tilingData->baseDeterParam.dkDvIsNeedDeter [ i ]",
+  "fields": [
+   "dkDvIsNeedDeter",
+   "dqIsNeedDeter"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 3
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_deter.h",
+  "line": 1037,
+  "function": "Process_OLD_DETER",
+  "condition": "this->tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ this->cBlockIdx ] != 0",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_kernel_deter.h",
+  "line": 1038,
+  "function": "Process_OLD_DETER",
+  "condition": "blockInnerIdx<this->tilingData->s1s2BNGS1S2BlockNumList.blockEnds [ this->cBlockIdx ] + 1",
+  "fields": [
+   "blockEnds"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 2
+ },
+ {
+  "file": "flash_attention_score_grad_entry_regbase.h",
+  "line": 238,
+  "function": "RegbaseFAG",
+  "condition": "tilingData->s1s2BNGS1S2BaseParams.sinkOptional){ FlashAttentionScoreGradS1S2BNGS1S2PreRegbase<INPUT_TYPE, float, DETER_SPARSE_TYPE, IS_TND, SPLIT_AXIS, IS_TND_SWIZZLE, IS_ATTEN_MASK>opPre;opPre.Init(dq, dk, dv, actual_seq_kvlen, drop_mask, user, tilingData, & pipeIn);opPre.Process();opPre.SyncALLCores();} pipeIn.Destroy();TPipe pipeBase;using CubeBlockType = typename std::conditional<g_coreType == AscendC::AIC, FagBaseApi::FAGBlockCube<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK, IS_PSE, IS_DROP, IS_TND, IS_BN2_MULTIBLK, DETER_SPARSE_TYPE, IS_N_EQUAL, IS_D_NO_EQUAL, IS_ROPE, IS_NZ_OUT, IS_TND_SWIZZLE, SPLIT_AXIS, s1TemplateType, s2TemplateType, dTemplateType>, FagBaseApi::FAGBlockCubeDummy<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK, IS_PSE, IS_DROP, IS_TND, IS_BN2_MULTIBLK, DETER_SPARSE_TYPE, IS_N_EQUAL, IS_D_NO_EQUAL, IS_ROPE, IS_NZ_OUT, IS_TND_SWIZZLE, SPLIT_AXIS, s1TemplateType, s2TemplateType, dTemplateType>>::type;using VecBlockType = typename std::conditional<g_coreType == AscendC::AIC, FagBaseApi::FAGBlockVecDummy<INPUT_TYPE, CALC_TYPE, OUTDTYPE, IS_ATTEN_MASK, IS_PSE, IS_DROP, IS_TND, IS_BN2_MULTIBLK...",
+  "fields": [
+   "sinkOptional"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 5
+ },
+ {
+  "file": "flash_attention_score_grad_entry_regbase.h",
+  "line": 238,
+  "function": "RegbaseFAG",
+  "condition": "tilingData->s1s2BNGS1S2BaseParams.sinkOptional){ op.SyncALLCores();pipeBase.Destroy();TPipe pipePost;FlashAttentionScoreGradS1S2BNGS1S2PostRegbase<INPUT_TYPE, float, OUTDTYPE, SPLIT_AXIS, IS_ROPE, DETER_SPARSE_TYPE, IS_TND, IS_TND_SWIZZLE>opPost;opPost.Init(dq, dk, dv, dqRope, dkRope, dsink, user, tilingData, & pipePost);opPost.Process();} else { pipeBase.Destroy();} } while(0)# define INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL_FP16(...)if(ORIG_DTYPE_QUERY == DT_FLOAT16)INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL(__VA_ARGS__)# define INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL_BF16(...)if(ORIG_DTYPE_QUERY == DT_BF16)INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL(__VA_ARGS__)# define INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL_FP32(...)if(ORIG_DTYPE_QUERY == DT_FLOAT)INVOKE_FAG_GENERAL_S1S2_BN2_REGBASE_IMPL(__VA_ARGS__)template<uint8_t splitAxis, uint8_t inputDType, bool isTnd, bool isDrop, bool isPse, bool isAttenMask, uint16_t s1TemplateType, uint16_t s2TemplateType, uint16_t dTemplateType, uint8_t deterType, bool isNEqual, bool isBn2MultiBlk, bool isDNoEqual, bool isRope, uint8_t outDType, bool isNzOut, bool isTndSwizzle, bool isRegbase>inline __aicore__ void RegbaseFAG(__gm__ uint8_t * query...",
+  "fields": [
+   "sinkOptional"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 5
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 54,
+  "function": "Init",
+  "condition": "m_tilingData->isRope",
+  "fields": [
+   "isRope"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 62,
+  "function": "Process",
+  "condition": "m_tilingData->singleCoreDqNum>0",
+  "fields": [
+   "singleCoreDqNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 63,
+  "function": "Process",
+  "condition": "m_blockIdx<m_tilingData->formerDqNum",
+  "fields": [
+   "formerDqNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 71,
+  "function": "Process",
+  "condition": "m_tilingData->singleCoreDkNum>0",
+  "fields": [
+   "singleCoreDkNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 72,
+  "function": "Process",
+  "condition": "m_blockIdx<m_tilingData->formerDkNum",
+  "fields": [
+   "formerDkNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 80,
+  "function": "Process",
+  "condition": "m_tilingData->singleCoreDvNum>0",
+  "fields": [
+   "singleCoreDvNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 81,
+  "function": "Process",
+  "condition": "m_blockIdx<m_tilingData->formerDvNum",
+  "fields": [
+   "formerDvNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 89,
+  "function": "Process",
+  "condition": "m_tilingData->singleCoreDpseNum>0",
+  "fields": [
+   "singleCoreDpseNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 90,
+  "function": "Process",
+  "condition": "m_blockIdx<m_tilingData->formerDpseNum",
+  "fields": [
+   "formerDpseNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 98,
+  "function": "Process",
+  "condition": "m_tilingData->isRope && m_tilingData->singleCoreDqRopeNum>0",
+  "fields": [
+   "isRope",
+   "singleCoreDqRopeNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 99,
+  "function": "Process",
+  "condition": "m_blockIdx<m_tilingData->formerDqRopeNum",
+  "fields": [
+   "formerDqRopeNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 107,
+  "function": "Process",
+  "condition": "m_tilingData->isRope && m_tilingData->singleCoreDkRopeNum>0",
+  "fields": [
+   "isRope",
+   "singleCoreDkRopeNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 0
+ },
+ {
+  "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+  "line": 108,
+  "function": "Process",
+  "condition": "m_blockIdx<m_tilingData->formerDkRopeNum",
+  "fields": [
+   "formerDkRopeNum"
+  ],
+  "constexpr_guards": [],
+  "all_guards": 1
+ }
+]

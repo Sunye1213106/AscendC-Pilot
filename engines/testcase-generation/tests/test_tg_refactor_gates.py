@@ -22,10 +22,12 @@ def _op_tree(tmp_path: Path) -> tuple[Path, Path]:
 def test_parse_levels_default_l0_l1() -> None:
     assert _parse_levels("L1") == ["L1"]
     assert _parse_levels("") == ["L0", "L1"]
+    # `all` deliberately stops at L2: L3 multiplies keys by branch outcomes.
     assert _parse_levels("all") == ["L0", "L1", "L2"]
     assert _parse_levels("L0,L1-branch") == ["L0", "L1"]
-    with pytest.raises(ValueError, match="L3"):
-        _parse_levels("L3")
+    # L3 is the branch-outcome level and must be asked for by name.
+    assert _parse_levels("L3") == ["L3"]
+    assert _parse_levels("branch_outcome") == ["L3"]
     with pytest.raises(ValueError, match="L1-REJECT"):
         _parse_levels("L1-REJECT")
 

@@ -37,22 +37,33 @@ DT = {
     "BF16": 27, "HIFLOAT8": 34, "FLOAT8_E5M2": 35, "FLOAT8_E4M3FN": 36,
 }
 
-#: Positional order of the operator's 24 inputs.
+#: Positional order of the operator's inputs, in REG_OP order. `sink`,
+#: `ds_scale` and `p_scale` were missing here while the operator declared them,
+#: so every case left them absent and `sinkOptional` could never be anything but
+#: zero -- which read as "the sink branches are unreachable" rather than "no case
+#: ever supplied a sink".
 IN_ORDER = [
     "query", "key", "value", "dy", "pse_shift", "drop_mask", "padding_mask",
     "atten_mask", "softmax_max", "softmax_sum", "softmax_in", "attention_in",
     "prefix", "actual_seq_qlen", "actual_seq_kvlen", "q_start_idx", "kv_start_idx",
     "dScaleQ", "dScaleK", "dScaleV", "dScaledy", "dScaleo", "queryRope", "keyRope",
+    "sink", "ds_scale", "p_scale",
 ]
-OUT_ORDER = ["dq", "dk", "dv", "dpse", "dq_rope", "dk_rope"]
+OUT_ORDER = ["dq", "dk", "dv", "dpse", "dq_rope", "dk_rope", "dsink"]
 
 #: Inputs whose dtype is fixed regardless of the case's main dtype.
+# REG_OP declares sink and its gradient as float32 only. Prefer reading fixed
+# dtypes from UO/operator contract when available; this table is the operator
+# package fallback until IR dtype slots are always projected into the .uo.
 FIXED_DT = {
     "drop_mask": DT["UINT8"], "padding_mask": DT["FLOAT"], "atten_mask": DT["UINT8"],
     "softmax_max": DT["FLOAT"], "softmax_sum": DT["FLOAT"],
     "prefix": DT["INT64"], "actual_seq_qlen": DT["INT64"],
     "actual_seq_kvlen": DT["INT64"], "q_start_idx": DT["INT64"],
     "kv_start_idx": DT["INT64"],
+    # REG_OP declares sink and its gradient as float32 only.
+    "sink": DT["FLOAT"],
+    "dsink": DT["FLOAT"],
 }
 
 ROPE_D = 64
@@ -76,6 +87,10 @@ class Case:
     d: int = 128
     d1: int | None = None          # value's D; defaults to d
     atten_mask: str = "none"       # none | ss | 2048 | bnss | b1ss | 11ss
+    #: Attention sink: one float32 logit per query head, an optional input the
+    #: host reports through `sinkOptional`. Named as a shape rather than a bool
+    #: so a probe can try the ranks the host accepts.
+    sink: str = "none"             # none | n1 | bn1 | n1s
     pse: bool = False
     pse_shape: str = "bnss"        # bnss | b1ss | 1nss | 1nhs | bnhs
     rope: bool = False
@@ -284,6 +299,19 @@ def shapes(c: Case) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
         ins["queryRope"] = rope_shape
         ins["keyRope"] = k_rope
 
+    sink_shapes = {
+        "n1": [n1],
+        "bn1": [c.b, n1],
+        "n1s": [n1, c.s1],
+    }
+    if c.sink != "none":
+        if c.sink not in sink_shapes:
+            raise ValueError(
+                f"{c.sink!r} is not a sink shape; expected one of "
+                f"{('none', *sink_shapes)}. Falling back to a default would make "
+                f"a case naming an unknown rank a duplicate of one already run.")
+        ins["sink"] = sink_shapes[c.sink]
+
     outs: dict[str, list[int]] = {
         "dq": list(ins["query"]),
         "dk": list(ins["key"]),
@@ -292,6 +320,16 @@ def shapes(c: Case) -> tuple[dict[str, list[int]], dict[str, list[int]]]:
     if c.rope:
         outs["dq_rope"] = list(ins["queryRope"])
         outs["dk_rope"] = list(ins["keyRope"])
+    if c.sink != "none":
+        outs["dsink"] = list(ins["sink"])
+        # The UT tiling faker compacts absent outputs out of the tensor
+        # vector. ProcessSinkInfo then calls GetOutputShape(DSINKOUT_IDX=6)
+        # with no null check, so a present dsink after empty dpse/rope slots
+        # segfaults. Occupy every required output slot whenever sink is on;
+        # the host only validates dsink's shape against n1.
+        outs.setdefault("dpse", [1])
+        outs.setdefault("dq_rope", [1])
+        outs.setdefault("dk_rope", [1])
     return ins, outs
 
 
@@ -315,6 +353,7 @@ def describe(c: Case) -> dict:
         "d": c.d,
         "d1": c.dv,
         "atten_mask": c.atten_mask,
+        "sink": c.sink,
         "pse": int(c.pse),
         "pse_shape": c.pse_shape if c.pse else "",
         "pse_type": c.pse_type,

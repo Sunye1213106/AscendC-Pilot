@@ -17,12 +17,15 @@ description: >
 3. **BuildVariant 隔离**：宏、模板实例、compile var 和 architecture 必须属于当前构建变体。
 4. **源码只做验证**：CodeMap 不足时读取最小源码窗口，不能用整文件扫描替代查询。
 5. **缺口显式保留**：unresolved 影响结论时返回 `PARTIAL` 或 `UNKNOWN`，不要猜测补边。
+6. **定值写点优先**：查 TilingData 字段「谁决定取值」时，先看 `value_defining_sites`（及 tilingdata view 同名列）；若只有最终 `host_writer_sites` 拷贝、无定值站点，回答 `PARTIAL` 并提示定向读码 + `uo-update` 回灌，不得当作「不可达」。
+7. **Steerable 分支**：查 kernel 可控分支时优先 `views/kernel.yaml` / BRANCH 实体上的 TD 依赖字段；空库存不是「无分支」，而是 UO 缺口。
 
 ## 常用查询面
 
 - API：`operator_api`、`input_roots`、`output_roots`
 - TilingKey：`tiling_keys`、`selected_kernel`
-- TilingData：`tiling_data`、`tiling_fields`、`tiling_registrations`、`field_impact`
+- TilingData：`tiling_data`、`tiling_fields`、`tiling_registrations`、`field_impact`；定值写点看字段 attrs / `views/tilingdata.yaml` 的 `value_defining_sites`
+- Kernel：`views/kernel.yaml` 分支库存（含 TD-steerable）
 - 图关系：`search`、`neighbors`、`callers`、`callees`、`find_path`、`upstream`、`downstream`
 - 编译期：macro、compile var、template arg / instance、BuildVariant、available arch
 - 质量：`audit`、`unresolved`、`summary`

@@ -139,8 +139,8 @@ def _items_from_yaml(path: Path) -> list[dict[str, Any]]:
     return out
 
 
-def collect_obligations(project_root: Path, workflow_id: str) -> list[dict[str, Any]]:
-    """Return all obligations with settled status. Open ones must block complete."""
+def _collect_obligations_derived(project_root: Path, workflow_id: str) -> list[dict[str, Any]]:
+    """Legacy derivation from gates + domain YAML (no ledger I/O)."""
     meta = get_workflow(workflow_id)
     out: list[dict[str, Any]] = []
 
@@ -174,6 +174,37 @@ def collect_obligations(project_root: Path, workflow_id: str) -> list[dict[str, 
         seen.add(kid)
         uniq.append(row)
     return uniq
+
+
+def collect_obligations(project_root: Path, workflow_id: str) -> list[dict[str, Any]]:
+    """Return all obligations with settled status. Open ones must block complete.
+
+    Ledger-first: sync derived items into ``obligation_ledger.yaml``, then
+    project ledger rows. On ledger failure, fall back to pure derivation so
+    existing callers keep working.
+    """
+    derived = _collect_obligations_derived(project_root, workflow_id)
+    try:
+        from ascendc_pilot.obligations.ledger import sync_from_collected, view_as_collect_items
+        from ascendc_pilot.state import load_state
+
+        state = load_state(project_root)
+        run_id = str(state.get("run_id") or "") if isinstance(state, dict) else ""
+        ledger = sync_from_collected(
+            project_root, workflow_id, derived, run_id=run_id
+        )
+        projected = view_as_collect_items(ledger)
+        if not projected:
+            return derived
+        # Preserve any brand-new derived ids that race ahead of ledger write.
+        seen = {str(r.get("id") or "") for r in projected}
+        for row in derived:
+            kid = str(row.get("id") or "")
+            if kid and kid not in seen:
+                projected.append(row)
+        return projected
+    except Exception:  # noqa: BLE001 — never break complete_workflow on ledger bugs
+        return derived
 
 
 def open_obligations(items: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -12,13 +12,19 @@ Plan 不构造 case、不跑 Host、不证明不可达。它只把求解边界�
 ## 集合定义
 
 - `D`：当前 Kernel template 源码声明的全部 legal packed TilingKey。
-- `T`：本次批准计划要闭合的目标集合，必须满足 `T ⊆ D`。
-- 默认：用户没有指定目标时，`T = D`。
+- `T`：本次批准计划要闭合的目标集合，必须满足 `T ⊆ D`（L3 时元素是 `(key, site, outcome)`，key 轴仍 ⊆ D）。
+- 默认：用户没有指定目标时，`T = D`（L2）；L3 在 D 上再展开 steerable branch outcomes。
 
-显式目标支持两种形式：
+## 覆盖梯子
 
-1. `explicit_keys`：指定 packed TilingKey 列表；
-2. `dimension_filter`：指定维度条件，例如 `IsTnd=1, InputDType∈{2,3}`，由确定性脚本在 D 上过滤得到 T。
+| Level | 元素 | 说明 |
+|---|---|---|
+| L0 | 功能/可选输入冒烟 | 粗类 |
+| L1 | 受影响 kernel branch | 存在性 |
+| L2 | 可达 TilingKey | ≈全量可达 key |
+| L3 | `(key, site, True\|False)` | L2 × steerable TD 分支双结局；引擎 `closure.branch_outcome` |
+
+不要新建 `td-*` workflow：L3 仍走 `/tg-plan` → `/tg-solve`，相位机与 TilingKey 相同（ledger / search / lemma / certify）。
 
 ## Plan 流程
 

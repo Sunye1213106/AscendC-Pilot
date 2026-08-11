@@ -242,17 +242,27 @@ def review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
 def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from uo_init.build import compile_codemap, load_compile_cache
     from uo_init.store.writer import uo_product_path, write_codemap
+    from uo_init.tg_projection import require_commit_views
 
     root = project_root.expanduser().resolve()
     try:
         op_name, arch, host_ir, kernel_ir, declared, _uo = _compiler_inputs(root, ctx)
         cached = load_compile_cache(root, op_name, arch)
         if cached is not None and cached.get("codemap") is not None:
+            views = cached.get("views") or {}
+            missing = require_commit_views(views)
+            if missing:
+                return {
+                    "ok": False,
+                    "error": "TG_VIEW_INCOMPLETE",
+                    "missing": missing,
+                    "reused_analyze": True,
+                }
             path = uo_product_path(root, op_name, arch)
             written = write_codemap(
                 cached["codemap"],
                 path,
-                views=cached.get("views") or {},
+                views=views,
                 summary=cached.get("summary"),
             )
             return {
@@ -285,6 +295,8 @@ def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "audit": result.get("audit"),
         "gaps": result.get("gaps"),
         "uo": result.get("uo"),
+        "error": result.get("error"),
+        "missing": result.get("missing"),
         "reused_analyze": False,
         "analysis_policy": "structure_and_provenance_only",
     }

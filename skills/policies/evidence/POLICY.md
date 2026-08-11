@@ -27,11 +27,14 @@
 14. **`mark_missing` 硬 Gate（公共）**：不得仅以 `score < threshold` / `confidence too low` 作为唯一理由。必须提供机器可核验的 `negative_evidence`（`scope_snapshot_sha256`、`include_closure_status` 对照产物、`queries[]`、`inspected_windows[]+window_sha256`、`absence_kind`）。Gate **不信任**模型自填的 `include_scope_complete: true`，须读 scope/include closure 产物。`triage_category=macro_contract_resolvable` 禁止 `mark_missing`（应交宏合同物化）。校验：`uo.scripts.llm_tasks.validate_mark_missing_patch`。
 15. **语义表面由关系派生（公共）**：`Roles and sinks are derived from relations; heuristics cannot independently prove semantics.` LLM 只确认 Relation，不得直接选择最终 extract-plan role。
 16. **输入为唯一根（公共）**：`All semantic surfaces derive from input roots; intermediate locals are never roots.` 条件 / 分支 / 模板 / KEY 维必须经 `GROUNDED_IN`（或等价推导链）接到 input_root（B/N/S/D、layout、dtype、attr…）；否则 `unsolved` / `needs_binding`，不得进入可测 coverage。
+17. **TilingData / 分支 lemma**：把 outcome 标为 PROVEN_UNREACHABLE（E）或 pin 字段取值时，证据级别必须达到本策略的 high / `source_verified`（磁盘窗口 + 连续 snippet）。仅 UO 字段名、仅 `host_writer_sites` 最终拷贝点、或仅「观测上从未出现」**不足以**入 E。
+18. **浅 writer ≠ 结构完备**：若查询只返回 ABI `set_*` 拷贝而无 `value_defining_sites`，结论状态为 `PARTIAL`/`UNKNOWN`，下一步是定向读码回灌 UO，不是在 TG 里特判算子。
 
 ## Hard Constraints
 
 - MUST：每个闭合结论附证据类型与引用。
 - MUST：`confidence: high` ⇒ `source_verified: true` + 磁盘窗口 sha **且** 连续可核验 `evidence_snippet`。
+- MUST：lemma / E / 字段 pin ⇒ high + 源码窗口；禁止「观测缺席」或「浅 writer」单独入 E。
 - MUST：`mark_missing` ⇒ 机器可核验 `negative_evidence`；禁止 score-only / 伪 missing。
 - MUST NOT：发明证据、行号、KB 节点或 snippet；禁止用「仅 window sha」放行拼贴 snippet。
 - MUST NOT：复用邻居候选 / 错窗的 `evidence_window_sha256`（邻项 hash 视为编造）。

@@ -7,6 +7,7 @@
 | [design/architecture.md](./design/architecture.md) | **现状架构**（UO / TG / Pilot / 三域） |
 | [design/system-design.md](./design/system-design.md) | 系统数据流 |
 | [design/skill-prompt.md](./design/skill-prompt.md) | Domain / Prompt / Harness 原则 |
+| [design/where-does-this-go.md](./design/where-does-this-go.md) | **分层决策表**：这句话该写哪一层 |
 | [design/principles.md](./design/principles.md) | 产品修改口诀 |
 | [design/control-closure.md](./design/control-closure.md) | UO 控制来源闭合（短注） |
 

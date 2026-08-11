@@ -23,6 +23,34 @@ REQUIRED_TG_VIEWS = (
 )
 
 
+#: The subset a commit can always satisfy. Both are projected from CodeMap
+#: entities alone, so a product that omits them omitted them by accident.
+#: The TilingKey domain views are excluded on purpose: they need a discoverable
+#: TPL header, and a tree without one is a legitimate partial build rather than
+#: a broken product.
+REQUIRED_COMMIT_VIEWS = (
+    "views/kernel.yaml",
+    "views/tilingdata.yaml",
+)
+
+
+def require_tg_views(views: dict[str, Any] | None) -> list[str]:
+    """Names in ``REQUIRED_TG_VIEWS`` that are absent from ``views``."""
+    docs = views or {}
+    return [name for name in REQUIRED_TG_VIEWS if name not in docs or docs.get(name) is None]
+
+
+def require_commit_views(views: dict[str, Any] | None) -> list[str]:
+    """Kernel / TilingData views a commit must carry.
+
+    TG reads branch and field coverage domains from these two; a product without
+    them looks to the solver like an operator with no branches and no fields,
+    which reads as "nothing to cover" instead of "the product is incomplete".
+    """
+    docs = views or {}
+    return [name for name in REQUIRED_COMMIT_VIEWS if name not in docs or docs.get(name) is None]
+
+
 def load_tg_view(uo_path: str | Path, name: str) -> dict[str, Any] | list[Any] | None:
     from uo_init.store.reader import load_view_blob
     return load_view_blob(uo_path, name)
@@ -131,7 +159,7 @@ def backfill_from_source(
             "path": str(product),
             "header": ctx.get("tiling_key_header") or (cm.meta.get("tpl_schema") or {}).get("header"),
         }
-    missing = [name for name in REQUIRED_TG_VIEWS if name not in views or views.get(name) is None]
+    missing = require_tg_views(views)
     if missing:
         return {"ok": False, "error": "TG_VIEW_INCOMPLETE", "missing": missing, "path": str(product)}
 

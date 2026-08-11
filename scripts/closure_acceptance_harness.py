@@ -525,25 +525,45 @@ def run_agent(
 
 
 def summarize(runs: list[dict[str, Any]]) -> dict[str, Any]:
-    """Distribution over runs — a single sample says nothing about a model."""
-    gaps = [int(r.get("final_gap") or 0) for r in runs if not r.get("skipped")]
-    rounds = [int(r.get("rounds_used") or 0) for r in runs if r.get("rounds_used")]
-    failures: dict[str, int] = {}
-    for r in runs:
-        for f in r.get("gate_failures") or []:
-            failures[str(f).split(":")[0]] = failures.get(str(f).split(":")[0], 0) + 1
-    passed = sum(1 for r in runs if r.get("ok"))
-    out: dict[str, Any] = {
-        "runs": len(runs),
-        "passed": passed,
-        "pass_rate": round(passed / len(runs), 3) if runs else 0.0,
-        "gate_failure_counts": failures,
-    }
-    if gaps:
-        out["final_gap"] = {"min": min(gaps), "max": max(gaps), "mean": round(statistics.fmean(gaps), 2)}
-    if rounds:
-        out["rounds_used"] = {"min": min(rounds), "max": max(rounds), "mean": round(statistics.fmean(rounds), 2)}
-    return out
+    """Distribution over runs — a single sample says nothing about a model.
+
+    Delegates to ``evals.harness.runner.summarize_runs`` when available so CI
+    smoke and this harness share pass@1 / pass^k / token metrics. Falls back
+    to the historical local summary if evals is not on PYTHONPATH.
+    """
+    try:
+        if str(REPO) not in sys.path:
+            sys.path.insert(0, str(REPO))
+        from evals.harness.runner import summarize_runs
+
+        return summarize_runs(runs)
+    except Exception:
+        gaps = [int(r.get("final_gap") or 0) for r in runs if not r.get("skipped")]
+        rounds = [int(r.get("rounds_used") or 0) for r in runs if r.get("rounds_used")]
+        failures: dict[str, int] = {}
+        for r in runs:
+            for f in r.get("gate_failures") or []:
+                failures[str(f).split(":")[0]] = failures.get(str(f).split(":")[0], 0) + 1
+        passed = sum(1 for r in runs if r.get("ok"))
+        out: dict[str, Any] = {
+            "runs": len(runs),
+            "passed": passed,
+            "pass_rate": round(passed / len(runs), 3) if runs else 0.0,
+            "gate_failure_counts": failures,
+        }
+        if gaps:
+            out["final_gap"] = {
+                "min": min(gaps),
+                "max": max(gaps),
+                "mean": round(statistics.fmean(gaps), 2),
+            }
+        if rounds:
+            out["rounds_used"] = {
+                "min": min(rounds),
+                "max": max(rounds),
+                "mean": round(statistics.fmean(rounds), 2),
+            }
+        return out
 
 
 def main(argv: list[str] | None = None) -> int:

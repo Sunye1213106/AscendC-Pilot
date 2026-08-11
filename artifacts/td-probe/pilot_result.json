@@ -1,0 +1,4464 @@
+[
+ {
+  "trait": "empty_tensor",
+  "want_key": 18014398509481985,
+  "got_key": 18014398509481985,
+  "hit": true,
+  "ok": true,
+  "td_size": 128,
+  "variant": "EMPTY",
+  "block_num": 32,
+  "counts": {
+   "unreachable": 29,
+   "false": 5,
+   "true": 8
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "unreachable",
+    "detail": "not a field of this variant: keepProb",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "unreachable",
+    "detail": "not a field of this variant: dropMaskOuter",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "unreachable",
+    "detail": "not a field of this variant: maskCoreNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "unreachable",
+    "detail": "not a field of this variant: hasInvalidCol, sValueZeroUnderTND",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "unreachable",
+    "detail": "not a field of this variant: dropMaskOuter",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "unreachable",
+    "detail": "not a field of this variant: hasInvalidCol, sValueZeroUnderTND",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "unreachable",
+    "detail": "not a field of this variant: hasInvalidCol, sValueZeroUnderTND",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "unreachable",
+    "detail": "not a field of this variant: s2Outer",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "unreachable",
+    "detail": "not a field of this variant: dropoutIsDivisibleBy8",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isSplitByBlockIdx",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "unreachable",
+    "detail": "not a field of this variant: sparseType",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "unreachable",
+    "detail": "not a field of this variant: coreNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isSplitByBlockIdx",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "not a field of this variant: tndS2BlockPrefixSum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "not a field of this variant: tndS2BlockPrefixSum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "not a field of this variant: tndS2BlockPrefixSum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isSplitByBlockIdx",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "not a field of this variant: deterPrefix2",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "not a field of this variant: dkDvIsNeedDeter",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "not a field of this variant: dkDvIsNeedDeter, dqIsNeedDeter",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "unreachable",
+    "detail": "not a field of this variant: blockEnds",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "unreachable",
+    "detail": "not a field of this variant: sinkOptional",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "unreachable",
+    "detail": "not a field of this variant: sinkOptional",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "bn2gs1s2_plain",
+  "want_key": 19703248907145264,
+  "got_key": 19703248907145264,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "both": 8,
+   "true": 2,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 64 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "bn2_multiblk",
+  "want_key": 19773617651322930,
+  "got_key": 19773617651322930,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "both": 8,
+   "true": 2,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 64 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "bn2s2",
+  "want_key": 19742831325745332,
+  "got_key": 19742831325745328,
+  "hit": false,
+  "ok": true,
+  "td_size": 7184,
+  "variant": "TTTF",
+  "block_num": 32,
+  "counts": {
+   "false": 10,
+   "undecided": 3,
+   "both": 10,
+   "true": 3,
+   "unreachable": 16
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 32 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "undecided",
+    "detail": "array indexed but nothing decided",
+    "unknown": [
+     "dkvGmOffset"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "drop_pse_mask",
+  "want_key": 19703248907147056,
+  "got_key": 19703248907147056,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "undecided": 3,
+   "both": 8,
+   "false": 10,
+   "true": 2,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 64 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "deter_old",
+  "want_key": 19705447930400816,
+  "got_key": 19705447930400816,
+  "hit": true,
+  "ok": true,
+  "td_size": 1896,
+  "variant": "TFFF",
+  "block_num": 32,
+  "counts": {
+   "false": 13,
+   "undecided": 2,
+   "both": 8,
+   "true": 2,
+   "unreachable": 17
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 32 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "false",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "false",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "deter_new_dense",
+  "want_key": 19707646953656368,
+  "got_key": 19707646953656368,
+  "hit": true,
+  "ok": true,
+  "td_size": 1896,
+  "variant": "TFFF",
+  "block_num": 32,
+  "counts": {
+   "false": 13,
+   "undecided": 2,
+   "true": 3,
+   "both": 7,
+   "unreachable": 17
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "false",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "false",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "deter_band_nequal",
+  "want_key": 19747229372256304,
+  "got_key": 19742831325745200,
+  "hit": false,
+  "ok": true,
+  "td_size": 1896,
+  "variant": "TFFF",
+  "block_num": 32,
+  "counts": {
+   "false": 13,
+   "undecided": 2,
+   "true": 3,
+   "both": 7,
+   "unreachable": 17
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "false",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "false",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "tnd_plain",
+  "want_key": 19703248907145392,
+  "got_key": 19703248907145392,
+  "hit": true,
+  "ok": true,
+  "td_size": 2440,
+  "variant": "FFTF",
+  "block_num": 58,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "both": 8,
+   "true": 2,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 58 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "tnd_swizzle",
+  "want_key": 28714846208397488,
+  "got_key": 19707646953656496,
+  "hit": false,
+  "ok": true,
+  "td_size": 7184,
+  "variant": "TTTF",
+  "block_num": 32,
+  "counts": {
+   "false": 11,
+   "undecided": 3,
+   "true": 4,
+   "both": 8,
+   "unreachable": 16
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "undecided",
+    "detail": "array indexed but nothing decided",
+    "unknown": [
+     "dkvGmOffset"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "rope",
+  "want_key": 20125462445953072,
+  "got_key": 20125462445953072,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "true": 3,
+   "both": 7,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "nz_out",
+  "want_key": 24206849071386672,
+  "got_key": 24206849071386672,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "true": 3,
+   "both": 7,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "true",
+    "detail": "uniform",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "fp32",
+  "want_key": 18577349000302608,
+  "got_key": 18577349000302608,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "both": 8,
+   "true": 2,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 64 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ },
+ {
+  "trait": "bf16",
+  "want_key": 19140298953723936,
+  "got_key": 19140298953723936,
+  "hit": true,
+  "ok": true,
+  "td_size": 1296,
+  "variant": "FFFF",
+  "block_num": 64,
+  "counts": {
+   "false": 11,
+   "undecided": 2,
+   "both": 8,
+   "true": 2,
+   "unreachable": 19
+  },
+  "detail": [
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 163,
+    "state": "false",
+    "detail": "decided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 172,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 198,
+    "state": "both",
+    "detail": "varies over 64 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 210,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+    "line": 222,
+    "state": "undecided",
+    "detail": "undecided",
+    "unknown": [
+     "isDropBoolMode"
+    ]
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 193,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 249,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_presfmg_regbase.h",
+    "line": 257,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_block_vec.h",
+    "line": 263,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 359,
+    "state": "true",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 457,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 566,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1378,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1384,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1389,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1397,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1402,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1415,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1458,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_base.h",
+    "line": 1555,
+    "state": "unreachable",
+    "detail": "absent member: tndSwizzleParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 41,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel.h",
+    "line": 75,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 681,
+    "state": "unreachable",
+    "detail": "absent member: deterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 729,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 732,
+    "state": "unreachable",
+    "detail": "absent member: baseDeterParam",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1037,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_kernel_deter.h",
+    "line": 1038,
+    "state": "both",
+    "detail": "varies over 36 indices",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_entry_regbase.h",
+    "line": 238,
+    "state": "false",
+    "detail": "decided",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 54,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 62,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 63,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 71,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 72,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 80,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 81,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDvNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 89,
+    "state": "unreachable",
+    "detail": "not a field of this variant: singleCoreDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 90,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDpseNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 98,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 99,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDqRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 107,
+    "state": "unreachable",
+    "detail": "not a field of this variant: isRope, singleCoreDkRopeNum",
+    "unknown": []
+   },
+   {
+    "file": "flash_attention_score_grad_empty_tensor_regbase.h",
+    "line": 108,
+    "state": "unreachable",
+    "detail": "not a field of this variant: formerDkRopeNum",
+    "unknown": []
+   }
+  ]
+ }
+]

@@ -314,6 +314,7 @@ def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[
             if isinstance(w, dict) and (w.get("expression") or w.get("formula")):
                 writer_formula = str(w.get("expression") or w.get("formula"))
                 break
+        value_defining = list(attrs.get("value_defining_sites") or [])
         row = {
             "id": ent.id,
             "name": ent.name,
@@ -321,6 +322,7 @@ def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[
             "ordinal": attrs.get("ordinal"),
             "array_extent": attrs.get("array_extent"),
             "writers": writers,
+            "value_defining_sites": value_defining,
             "readers": rds,
             "file": ent.file,
             "line": ent.line_start,

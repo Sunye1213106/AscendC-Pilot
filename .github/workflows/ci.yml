@@ -30,6 +30,7 @@ jobs:
           python scripts/check_ownership_contracts.py
           python scripts/check_skill_architecture.py
           python scripts/check_contract_dag.py
+          python scripts/check_obligation_ledger.py --self-test
 
   tests:
     name: ${{ matrix.suite }} tests
@@ -66,6 +67,26 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/engines/testcase-generation:${{ github.workspace }}/scripts:${{ github.workspace }}/engines/understand-operator/src:${{ github.workspace }}/pilot
         run: python -m pytest tests -q
+
+  evals-smoke:
+    name: evals smoke (dry)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install packages
+        run: |
+          pip install -r requirements.txt
+          pip install -e ./engines/common
+          pip install -e ./pilot
+          pip install -e ./engines/understand-operator
+          pip install -e "./engines/testcase-generation[ml]"
+      - name: evals smoke
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/engines/testcase-generation:${{ github.workspace }}/scripts:${{ github.workspace }}/engines/understand-operator/src:${{ github.workspace }}/pilot
+        run: python evals/smoke.py
 
   closure-acceptance:
     name: closure loop acceptance

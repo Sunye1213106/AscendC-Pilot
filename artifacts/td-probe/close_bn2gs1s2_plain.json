@@ -1,0 +1,45 @@
+{
+ "trait": "bn2gs1s2_plain",
+ "key": 19703248907145264,
+ "on_key": 60,
+ "live": 22,
+ "goal": 44,
+ "covered": 35,
+ "excluded": 9,
+ "gap": 0,
+ "open_list": [],
+ "field_values": {
+  "dropoutIsDivisibleBy8": {
+   "1": 60
+  },
+  "sinkOptional": {
+   "0": 58,
+   "1": 2
+  },
+  "sparseType": {
+   "0": 60
+  }
+ },
+ "growth": [
+  [
+   "layout_BSND",
+   30,
+   30
+  ],
+  [
+   "b_32",
+   3,
+   33
+  ],
+  [
+   "s2_64",
+   1,
+   34
+  ],
+  [
+   "sink_n1",
+   1,
+   35
+  ]
+ ]
+}

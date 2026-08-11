@@ -38,7 +38,7 @@ Full TilingKey mode 的 precheck 检查 `.uo` 与当前 Kernel schema。`csv_con
 
 | action_id | execution_mode | agent | role | method | prompt | output_contract |
 |---|---|---|---|---|---|---|
-| `plan_intent` | `primary_interactive` | `ascendc-pilot` | `controller` | `tg-plan/plan-intent` | `tg/plan-intent` | `plan-intent-v1` |
+| `plan_intent` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-intent` | `tg/plan-intent` | `plan-intent-v1` |
 | `plan_scope` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-scope` | `-` | `plan-scope-v1` |
 | `plan_precheck` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-precheck` | `-` | `plan-precheck-v1` |
 | `plan_build` | `deterministic` | `deterministic-tg-engine` | `deterministic_engine` | `tg-plan/plan-build` | `-` | `plan-build-v1` |

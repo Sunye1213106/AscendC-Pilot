@@ -1,0 +1,5 @@
+version: 1
+# Baseline expectations for dry skill eval (no LLM).
+min_pass_rate: 1.0
+require_skill_file: true
+require_gotchas: true

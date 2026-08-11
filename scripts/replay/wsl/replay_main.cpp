@@ -11,8 +11,17 @@
 // Emits, on stdout, interleaved with OP_LOG output:
 //   ###CASE <id>
 //   ... tiling logs ...
+//   ###TD <bytes> <base64>          (only when $REPLAY_DUMP_TD=1)
+//   ###WS <size>[/<size>...]        (only when $REPLAY_DUMP_TD=1)
+//   ###BLOCK <n>                    (only when $REPLAY_DUMP_TD=1)
 //   ###DONE <id> ok=<0|1> key=<uint64>
 // and appends one `id,ok,key` row per case to the out CSV.
+//
+// The tiling data is emitted as opaque bytes on purpose. Which field sits at
+// which offset is a property of the operator's headers, not of this driver, so
+// naming fields here would put the struct layout in two places and let them
+// drift. The layout probe reads it off the headers with `offsetof`; this side
+// only has to hand over what the host actually wrote.
 //
 // Usage: replay_main <in.csv> <out.csv> [operator.so]
 //   When the third arg is absent, $REPLAY_SO is used.
@@ -40,8 +49,14 @@ namespace {
 
 // One ASCII char for a datatype code is a checksum the parser relies on;
 // anything unparseable is refused with a clear message rather than coerced.
-constexpr int kInCount = 24;
-constexpr int kOutCount = 6;
+//
+// The counts come from the operator's REG_OP: 27 inputs through `p_scale` and 7
+// outputs through `dsink`. They were 24 and 6, which silently truncated the
+// optional `sink` input -- so `sinkOptional` was always zero in the tiling data
+// and every kernel branch behind it looked unreachable rather than untried.
+// A row that names fewer slots still works: a missing slot is an absent tensor.
+constexpr int kInCount = 27;
+constexpr int kOutCount = 7;
 constexpr uint64_t kTilingDataBytes = 65536;  // TND swizzle needs more than the UT's 4096.
 
 std::vector<std::string> Split(const std::string& s, char sep) {
@@ -142,6 +157,25 @@ bool ParseAttrs(const std::string& field, std::vector<TilingContextPara::OpAttr>
     return true;
 }
 
+const char kB64[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+std::string Base64(const uint8_t* data, size_t n) {
+    std::string out;
+    out.reserve((n + 2) / 3 * 4);
+    for (size_t i = 0; i < n; i += 3) {
+        const uint32_t a = data[i];
+        const uint32_t b = i + 1 < n ? data[i + 1] : 0;
+        const uint32_t c = i + 2 < n ? data[i + 2] : 0;
+        const uint32_t v = (a << 16) | (b << 8) | c;
+        out.push_back(kB64[(v >> 18) & 0x3F]);
+        out.push_back(kB64[(v >> 12) & 0x3F]);
+        out.push_back(i + 1 < n ? kB64[(v >> 6) & 0x3F] : '=');
+        out.push_back(i + 2 < n ? kB64[v & 0x3F] : '=');
+    }
+    return out;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -189,6 +223,13 @@ int main(int argc, char** argv) {
         "\"UB_SIZE\":262144,\"L2_SIZE\":134217728,\"L1_SIZE\":524288,"
         "\"L0A_SIZE\":65536,\"L0B_SIZE\":65536,\"L0C_SIZE\":262144,"
         "\"CORE_NUM\":32,\"socVersion\":\"Ascend950\"}}";
+
+    // The run that produced a key produced that key's TilingData too, so the
+    // entry script turns this on for every batch: branch and field coverage then
+    // read a key sweep's witnesses rather than replaying the same inputs again.
+    // `REPLAY_DUMP_TD=0` opts a key-only sweep out of the per-case base64.
+    const char* dumpEnv = std::getenv("REPLAY_DUMP_TD");
+    const bool dumpTd = dumpEnv == nullptr || *dumpEnv != '0';
 
     std::ifstream in(argv[1]);
     std::ofstream out(argv[2]);
@@ -242,15 +283,29 @@ int main(int argc, char** argv) {
 
         uint64_t key = 0;
         bool ok = false;
+        TilingInfo info{};
         if (!parseOk) {
             std::fprintf(stderr, "[ERROR] %s parse: %s\n", id.c_str(), err.c_str());
         } else {
             TilingContextPara para(
                 "FlashAttentionScoreGrad", inputs, outputs, attrs, &compileInfo,
                 "Ascend950", kSocInfo, kTilingDataBytes, deterministic);
-            TilingInfo info{};
             ok = ExecuteTiling(para, info);
             if (ok) key = info.tilingKey;
+        }
+
+        // Printed before ###DONE so a reader that splits on the case fence
+        // finds them inside the case they belong to.
+        if (dumpTd && ok && info.tilingData && info.tilingDataSize > 0) {
+            std::printf("###TD %zu %s\n", info.tilingDataSize,
+                        Base64(info.tilingData.get(), info.tilingDataSize).c_str());
+            std::printf("###BLOCK %zu\n", info.blockNum);
+            std::string ws;
+            for (size_t i = 0; i < info.workspaceSizes.size(); ++i) {
+                if (i) ws.push_back('/');
+                ws += std::to_string(info.workspaceSizes[i]);
+            }
+            std::printf("###WS %s\n", ws.c_str());
         }
 
         out << id << ',' << (ok ? 1 : 0) << ',' << key << '\n';

@@ -67,10 +67,9 @@ class OperatorInputAdapter:
             name=name,
             present=bool(dims),
             dims=dims,
-            # Outputs are written in the case's own dtype; only inputs have a
-            # type of their own to respect.
-            dtype=I.SEMANTICS.dtype_of(c, name, main) if role == ROLE_INPUT
-            else main,
+            # Most outputs follow the case dtype; REG_OP-fixed ones (dsink)
+            # go through dtype_of the same way fixed inputs do.
+            dtype=I.SEMANTICS.dtype_of(c, name, main),
             values=tuple(values) if values else None,
             read_by_value=source is not None,
             role=role,

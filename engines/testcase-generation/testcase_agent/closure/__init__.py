@@ -14,6 +14,10 @@ from testcase_agent.closure.workspace import Workspace, default_workspace
 from testcase_agent.closure import ledger
 from testcase_agent.closure import lemma
 from testcase_agent.closure import report
+from testcase_agent.closure import branch_eval
+from testcase_agent.closure import branch_outcome
+from testcase_agent.closure import field_pins
+from testcase_agent.closure import key_data_coupling
 
 __all__ = [
     "Workspace",
@@ -21,4 +25,8 @@ __all__ = [
     "ledger",
     "lemma",
     "report",
+    "branch_eval",
+    "branch_outcome",
+    "field_pins",
+    "key_data_coupling",
 ]

@@ -143,9 +143,24 @@ def prune(repo: Path, host: str) -> dict[str, Any]:
     removed_agents: list[str] = []
     removed_prompts: list[str] = []
 
+    # Also drop host MD for source agents marked kind=deterministic_engine
+    # (compose should already skip them; prune is belt-and-suspenders).
+    engine_ids: set[str] = set()
+    agents_src = repo / "agents"
+    if agents_src.is_dir():
+        try:
+            import yaml  # type: ignore
+        except ImportError:
+            yaml = None  # type: ignore
+        if yaml is not None:
+            for ag in agents_src.glob("*.yaml"):
+                data = yaml.safe_load(ag.read_text(encoding="utf-8")) or {}
+                if isinstance(data, dict) and str(data.get("kind") or "").strip() == "deterministic_engine":
+                    engine_ids.add(str(data.get("id") or ag.stem))
+
     if agents_dir.is_dir():
         for path in sorted(agents_dir.glob("*.md")):
-            if path.stem not in agent_ids:
+            if path.stem not in agent_ids or path.stem in engine_ids:
                 path.unlink()
                 removed_agents.append(path.name)
 

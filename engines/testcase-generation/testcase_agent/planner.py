@@ -55,12 +55,14 @@ RESERVED_MATCH_KEYS = {
     "optional_inputs",
     "feature_flags",
 }
-TEST_LEVELS = ("L0", "L1", "L2")
+TEST_LEVELS = ("L0", "L1", "L2", "L3")
 LEVEL_ORDER = {level: idx for idx, level in enumerate(TEST_LEVELS)}
 # Compat: historical L1-BRANCH artifacts map to L1 (affected kernel branches).
 L1_BRANCH_LEVELS = frozenset({"L1", "L1-BRANCH"})
 L1_FAMILY_LEVELS = L1_BRANCH_LEVELS
 L1_REJECT_LEVELS = frozenset()  # removed: reject suite no longer a user level
+# L3: per reachable key, steerable TD-dependent branch True/False outcomes.
+L3_BRANCH_OUTCOME = "L3"
 BOUNDARY_KIND_LEVELS = {
     "tilingdata_boundary",
     "core_split_boundary",
@@ -215,6 +217,8 @@ def build_plan(
         add_l0_obligations(obligations, files, coverage, contract, semantic_focus)
     elif level == "L2":
         add_l2_exhaustive_key_obligations(obligations, files, contract, semantic_focus)
+    elif level == "L3":
+        add_l3_branch_outcome_obligations(obligations, files, contract, semantic_focus)
     elif level in L1_FAMILY_LEVELS:
         # L1: affected / in-scope kernel branches (topic or impact scopes; else whole operator)
         add_l1_branch_obligations(
@@ -230,9 +234,9 @@ def build_plan(
             decorate_level="L1",
         )
     else:
-        raise TgPlanError(f"Unsupported test level: {level}. Allowed: L0, L1, L2")
+        raise TgPlanError(f"Unsupported test level: {level}. Allowed: L0, L1, L2, L3")
     obligations = filter_obligations_by_focus(obligations, semantic_focus)
-    if topic_manifest and level in {"L0", "L1", "L2"} | L1_FAMILY_LEVELS:
+    if topic_manifest and level in {"L0", "L1", "L2", "L3"} | L1_FAMILY_LEVELS:
         obligations = filter_obligations_for_topic(obligations, topic_manifest, files)
         if not obligations:
             blocker = make_obligation(
@@ -774,6 +778,130 @@ def add_l2_exhaustive_key_obligations(out: list[dict[str, Any]], files: dict[str
     semantic_focus["tiling_key_coverage"] = stats
 
 
+def add_l3_branch_outcome_obligations(
+    out: list[dict[str, Any]],
+    files: dict[str, Any],
+    contract: dict[str, Any],
+    semantic_focus: dict[str, Any],
+) -> None:
+    """L3: steerable TD-dependent branch True/False outcomes under reachable keys.
+
+    Reuses the L2 key space as the key axis. Branch inventory comes from
+    ``views/kernel.yaml`` (preferred) or ``kernel/branches.yaml``. Only branches
+    that name TilingData fields (or stage=runtime) become outcome obligations;
+    constexpr / key-only arms stay L1/L2. Closure is the same ``T=(R∩T)∪E``
+    identity with elements ``(key, site, outcome)``, evaluated by
+    ``closure.branch_outcome`` — not a separate td-* workflow.
+    """
+    del contract  # packing comes from L2 path via files
+    # Seed reachable keys the same way L2 does (side-effect: may append blockers).
+    l2_buf: list[dict[str, Any]] = []
+    add_l2_exhaustive_key_obligations(l2_buf, files, contract={}, semantic_focus=semantic_focus)
+    key_items = [i for i in l2_buf if str(i.get("id") or "").startswith("L2_KEY_")]
+    for blocker in l2_buf:
+        if blocker not in key_items and blocker.get("status") == "unresolved":
+            # Surface L2 blockers under L3 as well.
+            b = dict(blocker)
+            b["id"] = str(b.get("id") or "L3_BLOCK").replace("L2_", "L3_", 1)
+            decorate_obligation(
+                b, "L3",
+                {"artifact": "tiling/exhaustive_key_space.yaml", "entity_ref": "", "reason": "l3_requires_l2_keys"},
+                "L3 needs reachable TilingKey space", semantic_focus,
+            )
+            out.append(b)
+
+    kernel = _as_dict(files.get("views/kernel.yaml")) or _as_dict(files.get("kernel/branches.yaml"))
+    branches = list(kernel.get("branches") or [])
+    steerable = []
+    for br in branches:
+        if not isinstance(br, dict):
+            continue
+        td_fields = list(br.get("tilingdata_fields") or br.get("fields") or [])
+        stage = str(br.get("stage") or br.get("evaluation_stage") or "").lower()
+        cond = str(br.get("condition") or br.get("predicate") or "")
+        if not cond:
+            continue
+        if td_fields or stage in {"runtime", ""} and ("tiling" in cond.lower() or "tilingdata" in cond.lower()):
+            steerable.append(br)
+        elif td_fields:
+            steerable.append(br)
+
+    if not steerable:
+        # Still record the key axis so solve can attach per-key ledgers later.
+        for item in key_items:
+            cloned = dict(item)
+            cloned["id"] = str(cloned.get("id") or "").replace("L2_KEY_", "L3_KEY_", 1)
+            cloned["kind"] = "branch_outcome_key"
+            decorate_obligation(
+                cloned, "L3",
+                {"artifact": "views/kernel.yaml", "entity_ref": "", "reason": "l3_key_axis_no_steerable"},
+                "reachable key under L3 (no steerable TD branches in UO view yet)",
+                semantic_focus,
+            )
+            out.append(cloned)
+        semantic_focus["branch_outcome_coverage"] = {
+            "reachable_key_count": len(key_items),
+            "steerable_branch_count": 0,
+            "outcome_obligation_count": 0,
+            "note": "UO kernel view has no TD-steerable branches; regenerate UO or narrow to L2",
+        }
+        return
+
+    # Cap full cartesian explosion in the plan artifact: emit per-branch
+    # outcome templates scoped to all reachable keys, plus a compact key axis.
+    for item in key_items[: min(len(key_items), 64)]:
+        cloned = dict(item)
+        cloned["id"] = str(cloned.get("id") or "").replace("L2_KEY_", "L3_KEY_", 1)
+        cloned["kind"] = "branch_outcome_key"
+        decorate_obligation(
+            cloned, "L3",
+            {"artifact": "tiling/exhaustive_key_space.yaml", "entity_ref": "", "reason": "l3_key_axis"},
+            "per-key branch-outcome ledger axis (sample in plan; full set is L2 keys)",
+            semantic_focus,
+        )
+        out.append(cloned)
+
+    outcome_n = 0
+    for br in steerable:
+        bid = str(br.get("id") or br.get("name") or "")
+        if not bid:
+            f, ln = br.get("file"), br.get("line")
+            bid = f"{f}:{ln}" if f is not None else "branch"
+        for outcome in (True, False):
+            tag = "T" if outcome else "F"
+            obl = make_obligation(
+                "kernel_branch_outcome",
+                {
+                    "id": f"L3_BO::{bid}::{tag}",
+                    "branch_id": bid,
+                    "outcome": outcome,
+                    "condition": str(br.get("condition") or br.get("predicate") or ""),
+                    "tilingdata_fields": list(br.get("tilingdata_fields") or br.get("fields") or []),
+                    "status": "unresolved",
+                    "closes_via": "branch_outcome",
+                    "applies_to_keys": "all_reachable",
+                },
+                target_refs=[bid, tag],
+                priority="high",
+            )
+            decorate_obligation(
+                obl, "L3",
+                {"artifact": "views/kernel.yaml", "entity_ref": bid, "reason": "steerable_branch_outcome"},
+                f"cover branch {bid} outcome={outcome} under each reachable key (R) or pin (E)",
+                semantic_focus,
+            )
+            out.append(obl)
+            outcome_n += 1
+
+    semantic_focus["branch_outcome_coverage"] = {
+        "reachable_key_count": len(key_items),
+        "steerable_branch_count": len(steerable),
+        "outcome_obligation_count": outcome_n,
+        "key_axis_in_plan": min(len(key_items), 64),
+        "engine": "testcase_agent.closure.branch_outcome",
+    }
+
+
 def add_family_obligations(out: list[dict[str, Any]], coverage: dict[str, Any], contract: dict[str, Any]) -> None:
     items = coverage.get("family_obligations") or []
     for item in _iter_items(items):
@@ -1169,14 +1297,17 @@ def normalize_level(level: str) -> str:
     normalized = str(level or "L0").strip().upper().replace("_", "-")
     if normalized in {"L1BRANCH", "L1-BRANCH"}:
         normalized = "L1"
-    if normalized in {"L1REJECT", "L1-REJECT", "L3"}:
+    if normalized in {"L1REJECT", "L1-REJECT"}:
         raise TgPlanError(
-            f"Unsupported test level: {level}. Use L0,L1,L2 "
-            "(L0=功能冒烟, L1=受影响 kernel branch, L2=全部 TilingKey). "
+            f"Unsupported test level: {level}. Use L0,L1,L2,L3 "
+            "(L0=功能冒烟, L1=受影响 kernel branch, L2=全部 TilingKey, "
+            "L3=可达 key × steerable branch outcomes). "
             "Scope via --topic (omit = whole operator)."
         )
+    if normalized in {"BRANCH-OUTCOME", "BRANCH_OUTCOME"}:
+        normalized = "L3"
     if normalized not in TEST_LEVELS:
-        raise TgPlanError(f"Unsupported test level: {level}. Allowed: L0, L1, L2")
+        raise TgPlanError(f"Unsupported test level: {level}. Allowed: L0, L1, L2, L3")
     return normalized
 
 

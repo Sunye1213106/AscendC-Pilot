@@ -1,0 +1,534 @@
+{
+ "unguarded": {
+  "loop": {
+   "expression": "tilingData->postTilingData.qPostBlockFactor",
+   "file": "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+   "line": 91,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ],
+   "conflicts": [
+    "tilingData->postTilingData.sinkPostBlockFactor"
+   ]
+  },
+  "inputTotalSize": {
+   "expression": "tilingData->postTilingData.qPostBlockTotal",
+   "file": "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+   "line": 92,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ],
+   "conflicts": [
+    "tilingData->postTilingData.sinkPostBlockTotal"
+   ]
+  },
+  "isSink": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.sinkOptional",
+   "file": "flash_attention_score_grad_nz_post.h",
+   "line": 118,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "maskUsedCoreNum": {
+   "expression": "tilingData->preTilingData.maskCoreNum",
+   "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+   "line": 142,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "isDropBoolMode": {
+   "expression": "tilingData->preTilingData.dropoutIsDivisibleBy8 == 0",
+   "file": "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+   "line": 161,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "n1": {
+   "expression": "n2 * tilingData->s1s2BNGS1S2BaseParams.g",
+   "file": "flash_attention_score_grad_nz_post.h",
+   "line": 143,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "usedCoreNum": {
+   "expression": "tilingData->s1s2BNGS1S2SplitCoreParams.blockOuter>>1",
+   "file": "flash_attention_score_grad_nz_post.h",
+   "line": 151,
+   "function": "Init",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "layoutType": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.layout",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 502,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "bSize": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.b",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 495,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "n2Size": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.n2",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 496,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "gSize": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.g",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 497,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "s1Size": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.s1",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 498,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "s2Size": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.s2",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 499,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "dSize": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.d",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 500,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "dSizeV": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.d1",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 501,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  },
+  "aicCoreNum": {
+   "expression": "tilingData->s1s2BNGS1S2BaseParams.coreNum>>1",
+   "file": "flash_attention_score_grad_kernel_base.h",
+   "line": 680,
+   "function": "SetConstInfo",
+   "variants": [
+    "DT_BF16",
+    "DT_FLOAT",
+    "DT_FLOAT16"
+   ]
+  }
+ },
+ "guarded_only": {
+  "s1SinkOuter": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:108 under <macro-expanded>",
+   "flash_attention_score_grad_nz_post.h:123 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:555 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:108 under <macro-expanded>",
+   "flash_attention_score_grad_nz_post.h:123 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:555 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:108 under <macro-expanded>",
+   "flash_attention_score_grad_nz_post.h:123 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:555 under <macro-expanded>"
+  ],
+  "s2SinkOuter": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:109 under <macro-expanded>",
+   "flash_attention_score_grad_nz_post.h:124 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:556 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:109 under <macro-expanded>",
+   "flash_attention_score_grad_nz_post.h:124 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:556 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:109 under <macro-expanded>",
+   "flash_attention_score_grad_nz_post.h:124 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:556 under <macro-expanded>"
+  ],
+  "bSinkSize": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:110 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:110 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:110 under <macro-expanded>"
+  ],
+  "loop": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:211 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:215 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:211 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:215 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:211 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:215 under for(qkvIdx<3)"
+  ],
+  "inputTotalSize": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:212 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:216 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:212 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:216 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:212 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:216 under for(qkvIdx<3)"
+  ],
+  "qPostTailNum": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:213 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:217 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:213 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:217 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:213 under for(qkvIdx<3)",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h:217 under for(qkvIdx<3)"
+  ],
+  "sinkPreBlockFactor": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:133 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:133 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:133 under <macro-expanded>"
+  ],
+  "sinkPreBlockTotal": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:134 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:134 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:134 under <macro-expanded>"
+  ],
+  "sinkPreBlockTail": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:135 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:135 under <macro-expanded>",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:135 under <macro-expanded>"
+  ],
+  "maskUBLoop": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:226 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:229 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:226 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:229 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:226 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:229 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas"
+  ],
+  "maskTailUBProcessNum": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:227 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:230 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:227 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:230 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:227 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:230 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas"
+  ],
+  "maskUBProcessNum": [
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:242 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:242 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas",
+   "flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h:242 under g_coreType == AIV && cBlockIdx<tilingData->preTilingData.mas"
+  ],
+  "qPreBlockFactor": [
+   "flash_attention_score_grad_presfmg_regbase.h:143 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:143 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:143 under g_coreType == AIV"
+  ],
+  "qPreBlockTotal": [
+   "flash_attention_score_grad_presfmg_regbase.h:144 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:144 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:144 under g_coreType == AIV"
+  ],
+  "qPreBlockTail": [
+   "flash_attention_score_grad_presfmg_regbase.h:145 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:145 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:145 under g_coreType == AIV"
+  ],
+  "kPreBlockFactor": [
+   "flash_attention_score_grad_presfmg_regbase.h:146 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:146 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:146 under g_coreType == AIV"
+  ],
+  "kPreBlockTotal": [
+   "flash_attention_score_grad_presfmg_regbase.h:147 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:147 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:147 under g_coreType == AIV"
+  ],
+  "kPreBlockTail": [
+   "flash_attention_score_grad_presfmg_regbase.h:148 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:148 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:148 under g_coreType == AIV"
+  ],
+  "vPreBlockFactor": [
+   "flash_attention_score_grad_presfmg_regbase.h:149 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:149 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:149 under g_coreType == AIV"
+  ],
+  "vPreBlockTotal": [
+   "flash_attention_score_grad_presfmg_regbase.h:150 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:150 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:150 under g_coreType == AIV"
+  ],
+  "vPreBlockTail": [
+   "flash_attention_score_grad_presfmg_regbase.h:151 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:151 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:151 under g_coreType == AIV"
+  ],
+  "b": [
+   "flash_attention_score_grad_presfmg_regbase.h:153 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:153 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:153 under g_coreType == AIV"
+  ],
+  "n1": [
+   "flash_attention_score_grad_presfmg_regbase.h:154 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:154 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:154 under g_coreType == AIV"
+  ],
+  "s1": [
+   "flash_attention_score_grad_presfmg_regbase.h:155 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:155 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:155 under g_coreType == AIV"
+  ],
+  "d": [
+   "flash_attention_score_grad_presfmg_regbase.h:156 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:156 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:156 under g_coreType == AIV"
+  ],
+  "usedCoreNum": [
+   "flash_attention_score_grad_presfmg_regbase.h:162 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:162 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:162 under g_coreType == AIV"
+  ],
+  "layout": [
+   "flash_attention_score_grad_presfmg_regbase.h:163 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:163 under g_coreType == AIV",
+   "flash_attention_score_grad_presfmg_regbase.h:163 under g_coreType == AIV"
+  ],
+  "curBatchIdx": [
+   "flash_attention_score_grad_kernel_base.h:301 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:301 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:301 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ"
+  ],
+  "curBatchTotalBaseIdx": [
+   "flash_attention_score_grad_kernel_base.h:304 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:304 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:304 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ"
+  ],
+  "curBatchTotalS1S2SizeAlign": [
+   "flash_attention_score_grad_kernel_base.h:310 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:310 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:310 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ"
+  ],
+  "curBatchTotalS1S2Size": [
+   "flash_attention_score_grad_kernel_base.h:311 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:311 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ",
+   "flash_attention_score_grad_kernel_base.h:311 under ! IS_DETER_NEW(DETER_SPARSE_TYPE)&& IS_TND && ! IS_TND_SWIZZ"
+  ],
+  "preTokens": [
+   "flash_attention_score_grad_kernel_base.h:320 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:320 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:320 under IS_ATTEN_MASK"
+  ],
+  "nextTokens": [
+   "flash_attention_score_grad_kernel_base.h:321 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:321 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:321 under IS_ATTEN_MASK"
+  ],
+  "bandIndex": [
+   "flash_attention_score_grad_kernel_base.h:322 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:322 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:322 under IS_ATTEN_MASK"
+  ],
+  "attenMaskShapeType": [
+   "flash_attention_score_grad_kernel_base.h:327 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:327 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:327 under <macro-expanded>"
+  ],
+  "compressMode": [
+   "flash_attention_score_grad_kernel_base.h:328 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:328 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:328 under <macro-expanded>"
+  ],
+  "attenMaskS2Size": [
+   "flash_attention_score_grad_kernel_base.h:329 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:329 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:329 under <macro-expanded>"
+  ],
+  "pseLayoutType": [
+   "flash_attention_score_grad_kernel_base.h:338 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:338 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:338 under <macro-expanded>"
+  ],
+  "pseType": [
+   "flash_attention_score_grad_kernel_base.h:341 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:341 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:341 under <macro-expanded>"
+  ],
+  "qStartIdx": [
+   "flash_attention_score_grad_kernel_base.h:342 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:342 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:342 under <macro-expanded>"
+  ],
+  "kvStartIdx": [
+   "flash_attention_score_grad_kernel_base.h:343 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:343 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:343 under <macro-expanded>"
+  ],
+  "seed": [
+   "flash_attention_score_grad_kernel_base.h:346 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:346 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:346 under <macro-expanded>"
+  ],
+  "offset": [
+   "flash_attention_score_grad_kernel_base.h:347 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:347 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:347 under <macro-expanded>"
+  ],
+  "keepProbUint8": [
+   "flash_attention_score_grad_kernel_base.h:348 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:348 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:348 under <macro-expanded>"
+  ],
+  "dropMaskOuter": [
+   "flash_attention_score_grad_kernel_base.h:349 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:349 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:349 under <macro-expanded>"
+  ],
+  "boolMode": [
+   "flash_attention_score_grad_kernel_base.h:350 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:350 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:350 under <macro-expanded>"
+  ],
+  "enableDenseSwizzle": [
+   "flash_attention_score_grad_kernel_base.h:363 under IS_NORMAL_SWIZZLE",
+   "flash_attention_score_grad_kernel_base.h:363 under IS_NORMAL_SWIZZLE",
+   "flash_attention_score_grad_kernel_base.h:363 under IS_NORMAL_SWIZZLE"
+  ],
+  "enableCasualSwizzle": [
+   "flash_attention_score_grad_kernel_base.h:367 under IS_NORMAL_SWIZZLE",
+   "flash_attention_score_grad_kernel_base.h:367 under IS_NORMAL_SWIZZLE",
+   "flash_attention_score_grad_kernel_base.h:367 under IS_NORMAL_SWIZZLE"
+  ],
+  "continuousBlockNum": [
+   "flash_attention_score_grad_kernel_base.h:378 under IS_NORMAL_SWIZZLE",
+   "flash_attention_score_grad_kernel_base.h:378 under IS_NORMAL_SWIZZLE",
+   "flash_attention_score_grad_kernel_base.h:378 under IS_NORMAL_SWIZZLE"
+  ],
+  "isSink": [
+   "flash_attention_score_grad_kernel_base.h:554 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:554 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:554 under <macro-expanded>"
+  ],
+  "noNeedDeter": [
+   "flash_attention_score_grad_kernel_base.h:562 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:562 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:562 under IS_DETER_OLD(DETER_SPARSE_TYPE)"
+  ],
+  "usedCubeCoreNum": [
+   "flash_attention_score_grad_kernel_base.h:563 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:563 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:563 under IS_DETER_OLD(DETER_SPARSE_TYPE)"
+  ],
+  "usedVectorCoreNum": [
+   "flash_attention_score_grad_kernel_base.h:568 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:571 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:568 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:571 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:568 under IS_DETER_OLD(DETER_SPARSE_TYPE)",
+   "flash_attention_score_grad_kernel_base.h:571 under IS_DETER_OLD(DETER_SPARSE_TYPE)"
+  ],
+  "s1Token": [
+   "flash_attention_score_grad_kernel_base.h:674 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:674 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:674 under IS_ATTEN_MASK"
+  ],
+  "s2Token": [
+   "flash_attention_score_grad_kernel_base.h:675 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:675 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:675 under IS_ATTEN_MASK"
+  ],
+  "sparseMode": [
+   "flash_attention_score_grad_kernel_base.h:676 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:676 under IS_ATTEN_MASK",
+   "flash_attention_score_grad_kernel_base.h:676 under IS_ATTEN_MASK"
+  ],
+  "keepProb": [
+   "flash_attention_score_grad_kernel_base.h:689 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:689 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:689 under <macro-expanded>"
+  ],
+  "tndMaxSumLayout": [
+   "flash_attention_score_grad_kernel_base.h:692 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:692 under <macro-expanded>",
+   "flash_attention_score_grad_kernel_base.h:692 under <macro-expanded>"
+  ],
+  "lastBatchTotalS1S2SizeAlign": [
+   "flash_attention_score_grad_kernel_base.h:840 under IS_TND_SWIZZLE",
+   "flash_attention_score_grad_kernel_deter.h:236 under runInfo.lastBatchIdx != bIdx",
+   "flash_attention_score_grad_kernel_base.h:840 under IS_TND_SWIZZLE",
+   "flash_attention_score_grad_kernel_deter.h:236 under runInfo.lastBatchIdx != bIdx",
+   "flash_attention_score_grad_kernel_base.h:840 under IS_TND_SWIZZLE",
+   "flash_attention_score_grad_kernel_deter.h:236 under runInfo.lastBatchIdx != bIdx"
+  ],
+  "lastBatchTotalS1S2Size": [
+   "flash_attention_score_grad_kernel_base.h:841 under IS_TND_SWIZZLE",
+   "flash_attention_score_grad_kernel_deter.h:239 under runInfo.lastBatchIdx != bIdx",
+   "flash_attention_score_grad_kernel_base.h:841 under IS_TND_SWIZZLE",
+   "flash_attention_score_grad_kernel_deter.h:239 under runInfo.lastBatchIdx != bIdx",
+   "flash_attention_score_grad_kernel_base.h:841 under IS_TND_SWIZZLE",
+   "flash_attention_score_grad_kernel_deter.h:239 under runInfo.lastBatchIdx != bIdx"
+  ],
+  "dqIsNeedDeter": [
+   "flash_attention_score_grad_kernel_deter.h:1278 under !(this->constInfo.deterConstInfo.noNeedDeter)",
+   "flash_attention_score_grad_kernel_deter.h:1278 under !(this->constInfo.deterConstInfo.noNeedDeter)",
+   "flash_attention_score_grad_kernel_deter.h:1278 under !(this->constInfo.deterConstInfo.noNeedDeter)"
+  ],
+  "dkDvIsNeedDeter": [
+   "flash_attention_score_grad_kernel_deter.h:1279 under !(this->constInfo.deterConstInfo.noNeedDeter)",
+   "flash_attention_score_grad_kernel_deter.h:1279 under !(this->constInfo.deterConstInfo.noNeedDeter)",
+   "flash_attention_score_grad_kernel_deter.h:1279 under !(this->constInfo.deterConstInfo.noNeedDeter)"
+  ]
+ }
+}

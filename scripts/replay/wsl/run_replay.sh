@@ -42,6 +42,12 @@ done
 # missing rather than reported unreachable.
 export REPLAY_TILING_DATA_SIZE=${REPLAY_TILING_DATA_SIZE:-65536}
 
+# A run that produced a key also produced that key's TilingData. Dumping it here
+# is what lets branch/field coverage read a key sweep's witnesses instead of
+# replaying the same inputs again; set REPLAY_DUMP_TD=0 for a key-only sweep
+# where the extra base64 per case is not wanted.
+export REPLAY_DUMP_TD=${REPLAY_DUMP_TD:-1}
+
 if [ "$WITH_LOG" = "1" ]; then
   export ASCEND_SLOG_PRINT_TO_STDOUT=1
   export ASCEND_GLOBAL_LOG_LEVEL=1

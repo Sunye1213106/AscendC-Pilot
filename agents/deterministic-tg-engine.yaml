@@ -1,6 +1,9 @@
 id: deterministic-tg-engine
 version: 1
 name_zh: TG deterministic engine
+# Engine identity for authorize/write_scopes — NOT an LLM-spawned agent.
+# compose_runtime skips kind=deterministic_engine when emitting host agent MD.
+kind: deterministic_engine
 role: deterministic_engine
 mode: subagent
 description: TG deterministic engine

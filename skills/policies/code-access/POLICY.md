@@ -19,6 +19,8 @@
 11. **标准读码路径（全局）**：`search_graph` / `search_code` 定位 → `get_code_snippet(qualified_name=...)` 或定向 Read **函数体窗口** → 再写结论。禁止「最省事」捷径（只 search 不拉 snippet、整文件 dump、凭记忆编 snippet）。
 12. **窗口预算**：只读当前结论所需最小窗口（函数/宏块附近）；禁止整文件倾倒进上下文。
 13. 高置信结论的源码比对要求见 `evidence` 策略（本策略不另开例外）。
+14. **TilingData 定值写点**：UO `host_writer_sites` 若只停在最终 `set_*` / `fBaseParams` 拷贝，而缺少 `value_defining_sites`（真正决定字段取值的赋值），**不得**据此宣称「字段不可达 / 无需读码」。须定向阅读定值函数最小窗口，并走 `uo-update` / gap-patch 回灌 UO；禁止在 TG 脚本里写死算子特判。
+15. **Lemma / 不可达证明**：将某 branch outcome 或 key 划入 E 时，**必须**读 host 源码最小窗口写 P⇒Q（见 `source-lemma-proof` + `evidence`）；UO 只提供 writer / guard / branch anchor，不能单独充当证明。
 
 ## Hard Constraints
 
@@ -26,6 +28,8 @@
 - MUST NOT：`index_repository(repo_path=父仓)`。
 - MUST NOT：整文件 dump 或无关大段源码加载。
 - MUST NOT：把 UO 图空结果当作「不可解」的唯一证据。
+- MUST NOT：仅凭浅 `host_writer_sites`（无 `value_defining_sites`）宣称字段/分支不可达。
+- MUST：lemma / E 结论具备源码窗口证据（`source_verified`），不得「UO 有字段名即闭合」。
 - MUST NOT：把 BuildConfig / CompileMacro / PlatformInfo 伪装成 CSV 可控输入。
 - MUST NOT：恢复 `roles.*.selected` 单入口契约。
 - MUST NOT：candidate 边假闭合主链；patch 直接改写派生图。

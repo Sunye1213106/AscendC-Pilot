@@ -13,12 +13,18 @@ generated/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+**/.pytest_cache/
 # pytest --basetemp dirs. These held full UO run products (YAML, SQLite), which
 # file discovery and scope closure would otherwise pick up as if they were source.
 .pytest-tmp/
 .pytest_tmp/
+**/.pytest-tmp/
 # One-off local probes. Nothing here is a reusable entry point.
 .pytmp/
+
+# Root / scratch one-off logs (never commit)
+_*.log
+artifacts/scratch/
 
 # Packaging/build metadata
 *.egg-info/

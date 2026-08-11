@@ -1,4 +1,4 @@
-"""Lightweight Context Pack builder."""
+"""Lightweight Context Pack builder + optional Context Compiler slices."""
 
 from __future__ import annotations
 
@@ -15,6 +15,13 @@ except ImportError:  # pragma: no cover
 from ascendc_pilot.memory import search_local
 from ascendc_pilot.paths import context_root, ensure_agent_layout, tg_root, uo_root
 from ascendc_pilot.state import load_state
+
+# Re-export compiler entry points for callers / tests.
+from ascendc_pilot.context.compiler import (  # noqa: E402
+    compile_context_slice,
+    maybe_compile_slice,
+)
+from ascendc_pilot.context.profiles import get_profile  # noqa: E402
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -65,6 +72,12 @@ def build_context_pack(
     include_memory: bool = True,
     max_memory: int = 5,
 ) -> dict[str, Any]:
+    """Build the legacy lightweight context pack (byte-stable when no slice).
+
+    This function deliberately ignores context profiles so callers that only
+    need the pack keep identical output. Use ``maybe_compile_slice`` separately
+    when a profile is registered.
+    """
     ensure_agent_layout(project_root)
     state = load_state(project_root)
     uo = uo_root(project_root)
@@ -118,3 +131,11 @@ def build_context_pack(
         out.write_text(yaml.safe_dump(pack, allow_unicode=True, sort_keys=False), encoding="utf-8")
     pack["path"] = out.as_posix()
     return pack
+
+
+__all__ = [
+    "build_context_pack",
+    "compile_context_slice",
+    "maybe_compile_slice",
+    "get_profile",
+]

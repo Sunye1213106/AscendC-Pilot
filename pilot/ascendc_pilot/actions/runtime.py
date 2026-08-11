@@ -971,11 +971,22 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     sdir.mkdir(parents=True, exist_ok=True)
     staging_dir(sdir).mkdir(parents=True, exist_ok=True)
 
-    from ascendc_pilot.context import build_context_pack
+    from ascendc_pilot.context import build_context_pack, maybe_compile_slice
     from ascendc_pilot.paths import tg_root, uo_root
 
     pack = build_context_pack(project_root, intent=f"run-action:{action_id}", topic=action_id)
     repo = _repo_root(project_root)
+    # Optional Context Compiler slice — only when a profile is registered.
+    # Unregistered profiles leave pack/session identical to the pre-compiler path.
+    context_profile_id = str(action.get("context_profile_id") or "") or None
+    context_slice = maybe_compile_slice(
+        project_root,
+        context_profile_id=context_profile_id,
+        action_id=action_id,
+        workflow_id=wid,
+        intent=f"run-action:{action_id}",
+        repo_root=repo,
+    )
     method, prompt = _load_method_and_prompt(repo, action)
     if execution_mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
         mid = str(action.get("action_method_id") or "")
@@ -998,6 +1009,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     uo_s = uo_root(project_root).as_posix()
     tg_s = tg_root(project_root).as_posix()
     pack_path = str(pack.get("path") or "")
+    slice_path = str((context_slice or {}).get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
     architecture = str(state.get("architecture") or "arch35")
     ph_kwargs = {
@@ -1010,6 +1022,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "tg_root_path": tg_s,
         "topic": action_id,
         "context_pack_path": pack_path,
+        "context_slice_path": slice_path,
         "op_name": op_name,
         "architecture": architecture,
         "role_id": role_id,
@@ -1053,6 +1066,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "referee_required": bool(action.get("referee_required", False)),
         "gates": list(action.get("gates") or []),
         "context_pack_path": pack_path,
+        "context_slice_path": slice_path,
+        "context_slice_token_estimate": int((context_slice or {}).get("token_estimate") or 0),
         "project_root": root_s,
         "uo_root": uo_s,
         "tg_root": tg_s,
@@ -1984,6 +1999,16 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     ]
     if not dt.get("map_reduce"):
         session_extras.insert(0, f"runs/{run_id}/actions/{action_id}/**")
+    # Compiled context slice (when profile registered) is always readable.
+    if slice_path:
+        # Prefer relative path under context/ for authorize globs.
+        try:
+            from ascendc_pilot.paths import agent_root as _agent_root
+
+            rel = Path(slice_path).resolve().relative_to(_agent_root(project_root).resolve())
+            session_extras.append(rel.as_posix())
+        except Exception:
+            session_extras.append("context/slices/**")
     for extra in session_extras:
         if extra not in read_paths:
             read_paths.append(extra)
@@ -3113,6 +3138,8 @@ def finalize_action(
 
     in_hashes = {
         "context_pack": file_sha256(Path(str(session.get("context_pack_path") or ""))) or "",
+        "context_slice": file_sha256(Path(str(session.get("context_slice_path") or ""))) or "",
+        "context_slice_token_estimate": str(session.get("context_slice_token_estimate") or ""),
         "prompt": file_sha256(sdir / "prompt.md") or "",
         "prepare_nonce": str(session.get("prepare_nonce") or ""),
         "lease_id": str(session.get("lease_id") or ""),

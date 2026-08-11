@@ -23,6 +23,7 @@ allowed_write_paths:
 - tg/plan/plan_intent.yaml
 forbidden_write_paths: []
 allowed_read_paths:
+- ../uo/*.uo
 - tg/init/**
 - tg/plan/plan_intent.yaml
 - tg/snapshot/**

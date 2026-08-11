@@ -492,11 +492,14 @@ def solve_main(argv: list[str] | None = None) -> int:
 
 
 def _parse_levels(raw: str) -> list[str]:
-    """Parse --level into canonical L0/L1/L2. Default empty → L0,L1. No L3 / L1-REJECT expansion."""
-    allowed = {"L0", "L1", "L2"}
+    """Parse --level into canonical L0/L1/L2/L3. Default empty → L0,L1."""
+    allowed = {"L0", "L1", "L2", "L3"}
     text = str(raw or "").strip()
     if not text:
         return ["L0", "L1"]
+    # `all` stays L0..L2 on purpose: L3 multiplies every reachable key by its
+    # steerable branch outcomes, so it is opt-in rather than swept into a
+    # shorthand someone types to "get everything".
     if text.lower() == "all":
         return ["L0", "L1", "L2"]
     levels: list[str] = []
@@ -504,23 +507,23 @@ def _parse_levels(raw: str) -> list[str]:
         token = part.strip().upper().replace("_", "-")
         if not token:
             continue
-        # Compat aliases → L1 (affected kernel branches)
         if token in {"L1BRANCH", "L1-BRANCH"}:
             token = "L1"
-        if token in {"L1REJECT", "L1-REJECT", "L3"}:
+        if token in {"BRANCH-OUTCOME", "BRANCH_OUTCOME"}:
+            token = "L3"
+        if token in {"L1REJECT", "L1-REJECT"}:
             raise ValueError(
-                f"Unsupported --level {part!r}. Use L0,L1,L2 "
-                "(default L0,L1; L2 optional). Scope via --topic (omit = whole operator). "
-                "L3 / L1-REJECT were removed."
+                f"Unsupported --level {part!r}. Use L0,L1,L2,L3 "
+                "(default L0,L1; L2=keys; L3=key×branch outcomes)."
             )
         if token not in allowed:
             raise ValueError(
-                f"Invalid --level {part!r}. Allowed: L0,L1,L2,all "
-                "(default L0,L1; L0=功能冒烟, L1=受影响 kernel branch, L2=全部 TilingKey)"
+                f"Invalid --level {part!r}. Allowed: L0,L1,L2,L3,all "
+                "(L0=功能冒烟, L1=kernel branch, L2=TilingKey, L3=branch outcomes)"
             )
         if token not in levels:
             levels.append(token)
-    return levels
+    return levels or ["L0", "L1"]
 
 
 def _plan_summary(result: dict[str, Any]) -> dict[str, Any]:

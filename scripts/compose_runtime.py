@@ -400,10 +400,20 @@ def validate(repo: Path) -> list[str]:
             errors.append(
                 f"agent {aid}: OpenCode uses mode not type; remove type={meta.get('type')!r}"
             )
+        kind = str(meta.get("kind") or "").strip().lower()
+        if kind and kind not in {"deterministic_engine"}:
+            errors.append(
+                f"agent {aid}: invalid kind {kind!r} "
+                f"(expected empty or deterministic_engine)"
+            )
         if role in {"producer", "referee", "readonly_analyst", "deterministic_engine"} and not mode:
             # Defaulted to subagent at compose time; warn as error to keep sources explicit.
             if aid != "ascendc-pilot":
                 errors.append(f"agent {aid}: missing mode (use mode: subagent)")
+        if kind == "deterministic_engine" and role != "deterministic_engine":
+            errors.append(
+                f"agent {aid}: kind=deterministic_engine requires role=deterministic_engine"
+            )
         if role == "producer":
             producer_writes |= scopes
         elif role == "referee":
@@ -963,10 +973,13 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                 shutil.rmtree(d)
             shutil.copytree(pdir, d)
 
-    # Agents
+    # Agents — skip kind=deterministic_engine (authorize identity only; not LLM-spawned).
     for ag in sorted(agents_src.glob("*.yaml")):
         meta = _load_yaml(ag)
         if not meta.get("id"):
+            continue
+        kind = str(meta.get("kind") or "").strip().lower()
+        if kind == "deterministic_engine":
             continue
         md = _compose_agent_md(repo, meta)
         (out_agents / f"{meta['id']}.md").write_text(md, encoding="utf-8")
@@ -1003,7 +1016,16 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows.specs import WORKFLOWS  # noqa: WPS433
 
-    # Every referenced non-primary agent must have a generated md
+    # Engine-identity agents (kind=deterministic_engine) are never composed to host MD.
+    engine_ids: set[str] = set()
+    agents_src = repo / "agents"
+    if agents_src.is_dir():
+        for ag in agents_src.glob("*.yaml"):
+            meta = _load_yaml(ag)
+            if str(meta.get("kind") or "").strip() == "deterministic_engine":
+                engine_ids.add(str(meta.get("id") or ag.stem))
+
+    # Every referenced non-primary LLM agent must have a generated md
     needed: set[str] = set()
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved") or not meta.get("slash"):
@@ -1012,7 +1034,12 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
             if not isinstance(action, dict):
                 continue
             agent_id = action.get("agent_id")
-            if agent_id and agent_id != "ascendc-pilot":
+            if (
+                agent_id
+                and agent_id != "ascendc-pilot"
+                and str(agent_id) not in engine_ids
+                and str(action.get("execution_mode") or "") != "deterministic"
+            ):
                 needed.add(str(agent_id))
             role = action.get("role_id")
             if role in {"producer", "referee", "readonly_analyst"} and not agent_id:

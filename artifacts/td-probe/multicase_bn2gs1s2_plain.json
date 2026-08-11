@@ -1,0 +1,16 @@
+{
+ "trait": "bn2gs1s2_plain",
+ "key": 19703248907145264,
+ "candidates": 48,
+ "on_key": 45,
+ "live": 22,
+ "goal": 44,
+ "covered": 34,
+ "open": 3,
+ "undecided_sites": 0,
+ "minimal_cases": [
+  "layout_BSND",
+  "b_32",
+  "s2_64"
+ ]
+}

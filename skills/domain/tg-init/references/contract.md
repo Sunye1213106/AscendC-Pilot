@@ -1,7 +1,8 @@
-# 契约构建
+# Contract
 
-- 每个维度：名字、来源、合法域、与其他维的约束
-- `declared_set.count` = UO 中 TPL `ARGS_SEL` 展开的 legal packed key 数（不是 allowed_values 笛卡尔）
-- 身份指纹：`ir/operator_graph.yaml` / `.uo` graph fingerprint
-- 消费方（求解/CSV/闭环）需求必须可追溯
-- 缺锚点的维度标 gap，勿填默认臆测值
+TG 契约描述求解前的变量域、IO 与 TilingKey 维信息。
+
+- 权威 Key 空间来自 UO（`.uo` 内 legal-key / host view），不是手写表。
+- 契约变更必须留下 fingerprint；solve 侧用 fingerprint gate 防漂移。
+- 契约不包含具体 case 行；case 属于 solve / replay。
+- 完整性 gate（integrity）失败时不得 human_confirm。
