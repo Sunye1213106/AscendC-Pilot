@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ascendc-pilot"
 version = "0.1.0"
 description = "AscendC-Pilot control plane for Understand Operator, Testcase Generation, and Code Engineering"
-readme = "README.md"
+readme = { text = "AscendC-Pilot control plane package.", content-type = "text/plain" }
 requires-python = ">=3.10"
 dependencies = [
   "PyYAML>=6.0",

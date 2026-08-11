@@ -82,27 +82,9 @@ def load_agent_meta(agent_id: str, project_root: str | None = None) -> dict[str,
 
 
 def agent_write_scopes(agent_id: str, project_root: Path | None = None) -> list[str]:
-    """Return write scopes, narrowed by active_action for KEY producers."""
+    """Return write scopes declared on the agent YAML."""
     meta = load_agent_meta(agent_id, str(project_root) if project_root else None)
-    scopes = [str(x) for x in (meta.get("write_scopes") or [])]
-    if agent_id != "uo-key-resolve" or project_root is None:
-        return scopes
-    action_id = ""
-    try:
-        from ascendc_pilot.paths import agent_root
-
-        active_path = agent_root(project_root) / "state" / "active_action.yaml"
-        if active_path.is_file():
-            active = _load_yaml(active_path)
-            action_id = str(active.get("action_id") or "")
-    except Exception:  # noqa: BLE001
-        action_id = ""
-    # Mutual exclusion: triage must not write resolution products and vice versa.
-    if action_id == "key_triage":
-        return ["uo/ir/key_triage.yaml"]
-    if action_id == "key_resolution":
-        return ["uo/ir/input_derivable_patch.yaml", "uo/ir/key_shape_resolve/**"]
-    return scopes
+    return [str(x) for x in (meta.get("write_scopes") or [])]
 
 
 def agent_read_scopes(agent_id: str, project_root: Path | None = None) -> list[str]:

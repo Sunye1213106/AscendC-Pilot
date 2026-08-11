@@ -73,40 +73,6 @@ def _wrap_exc(gate: str, fn: Any) -> dict[str, Any]:
         }
 
 
-def gate_merge_pass(project_root: Path) -> dict[str, Any]:
-    if _tg_mode(project_root) == "tilingkey_full_coverage":
-        tg = tg_root(project_root)
-        inv = tg / "realization" / "binding_inventory.yaml"
-        report = _load(tg / "realization" / "uo_merge_report.yaml")
-        ok = inv.is_file() and (
-            not isinstance(report, dict)
-            or str(report.get("status") or "pass").lower() in {"pass", "passed", "ok", ""}
-        )
-        return {
-            "gate": "merge_pass",
-            "ok": ok,
-            "message": "ok" if ok else "full-mode merge requires binding_inventory.yaml",
-            "mode": "tilingkey_full_coverage",
-        }
-    out = tg_root(project_root)
-
-    def _run() -> Any:
-        from testcase_agent.uo_resolve_merge import require_merge_pass
-
-        return require_merge_pass(out)
-
-    return _wrap_exc("merge_pass", _run)
-
-
-def _tg_mode(project_root: Path) -> str:
-    tg = tg_root(project_root)
-    for rel in ("plan/plan_intent.yaml", "init/init_intent.yaml"):
-        doc = _load(tg / rel)
-        if isinstance(doc, dict) and doc.get("mode"):
-            return str(doc["mode"]).strip()
-    return "tilingkey_full_coverage"
-
-
 def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
     """Full-mode bind gate: host-view inventory + declared Key space must align."""
     tg = tg_root(project_root)
@@ -164,95 +130,14 @@ def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
     }
 
 
-def gate_bind_progress(project_root: Path) -> dict[str, Any]:
-    """Bind phase gate — mode-aware.
-
-    ``tilingkey_full_coverage`` uses host-view inventory (no CSV lexicon).
-    ``csv_consumer`` still requires lexicon / unresolved progress.
-    """
-    if _tg_mode(project_root) == "tilingkey_full_coverage":
-        return gate_tilingkey_binding_ready(project_root)
-    out = tg_root(project_root)
-    lex = out / "realization" / "binding_lexicon.yaml"
-    unresolved = _load(out / "realization" / "unresolved.yaml")
-    gaps_doc = _load(out / "realization" / "binding_gaps.yaml")
-    if not lex.is_file():
-        return {
-            "gate": "bind_progress",
-            "ok": False,
-            "message": "realization/binding_lexicon.yaml missing",
-        }
-    status = ""
-    gaps: list[Any] = []
-    if isinstance(unresolved, dict):
-        status = str(unresolved.get("status") or "").lower()
-        gaps = list(unresolved.get("binding_gaps") or [])
-    if isinstance(gaps_doc, dict) and gaps_doc.get("gaps") is not None:
-        gaps = list(gaps_doc.get("gaps") or gaps)
-        status = str(gaps_doc.get("status") or status).lower()
-    # blocked / ready_for_llm with remaining gaps → not yet closed for advance
-    if status in {"blocked", "pending", "unresolved"}:
-        return {"gate": "bind_progress", "ok": False, "status": status, "message": f"bind status={status}"}
-    if status == "ready_for_llm" and gaps:
-        return {
-            "gate": "bind_progress",
-            "ok": False,
-            "status": status,
-            "remaining_gaps": len(gaps),
-            "message": f"binding gaps remain ({len(gaps)}); apply semantic_bind_patch against llm_bind_prompt_bundle",
-        }
-    # ready / pass / no gaps
-    lex_doc = _load(lex) if lex.is_file() else {}
-    has_deriv = bool(isinstance(lex_doc, dict) and (lex_doc.get("key_derivations") or lex_doc.get("key_tokens")))
-    if status in {"ready", "pass", "resolved", "ok", ""} and (not gaps or has_deriv or status in {"ready", "pass"}):
-        return {"gate": "bind_progress", "ok": True, "status": status or "ready", "message": "ok"}
-    if not gaps:
-        return {"gate": "bind_progress", "ok": True, "status": status or "ready", "message": "ok"}
-    return {
-        "gate": "bind_progress",
-        "ok": False,
-        "status": status,
-        "message": "bind progress insufficient",
-    }
-
-
-def gate_domain_symmetry(project_root: Path) -> dict[str, Any]:
-    out = tg_root(project_root)
-
-    def _run() -> Any:
-        from testcase_agent.uo_resolve_merge import require_domain_symmetry
-
-        return require_domain_symmetry(out)
-
-    return _wrap_exc("domain_symmetry", _run)
-
-
-def gate_csv_closure(project_root: Path) -> dict[str, Any]:
-    out = tg_root(project_root)
-
-    def _run() -> Any:
-        from testcase_agent.resolve_policy import require_full_csv_closure
-
-        return require_full_csv_closure(out)
-
-    result = _wrap_exc("csv_closure", _run)
-    detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
-    if detail and "status" in detail:
-        ok = str(detail.get("status") or "").lower() in {"pass", "passed", "ok"}
-        result["ok"] = ok
-        result["message"] = "ok" if ok else f"csv_closure status={detail.get('status')!r}"
-    return result
-
-
 def gate_audit_pass(project_root: Path) -> dict[str, Any]:
     """Full audit contract via engine require_audit_pass — not shallow status read."""
     out = tg_root(project_root)
-    checklist = "tilingkey" if _tg_mode(project_root) == "tilingkey_full_coverage" else "csv"
 
     def _run() -> Any:
         from testcase_agent.init_status import require_audit_pass
 
-        return require_audit_pass(out, checklist=checklist)
+        return require_audit_pass(out, checklist="tilingkey")
 
     return _wrap_exc("audit_pass", _run)
 
@@ -352,7 +237,6 @@ def gate_plan_approved(project_root: Path, *, level: str = "") -> dict[str, Any]
             unresolved = {}
 
         snapshot_hash, plan_hash = _load_plan_hashes(plan_dir)
-        from testcase_agent.solve import _require_approval
 
         _require_approval(supplement, snapshot_hash, plan_hash, unresolved)
         return {
@@ -383,156 +267,6 @@ def gate_allow_solve(project_root: Path, *, level: str = "") -> dict[str, Any]:
         "reason": (unresolved or {}).get("allow_solve_reason") if isinstance(unresolved, dict) else "",
         "message": "ok" if ok else f"allow_solve={allow!r}",
     }
-
-
-def _latest_solve_root(out: Path) -> Path | None:
-    solve = out / "solve"
-    if not solve.is_dir():
-        return None
-    # Prefer explicit latest symlink/dir, else newest child with solver_report
-    latest = solve / "latest"
-    if (latest / "solver_report.yaml").is_file() or (latest / "realize_report.yaml").is_file():
-        return latest
-    if (solve / "solver_report.yaml").is_file():
-        return solve
-    candidates = sorted(
-        [p for p in solve.iterdir() if p.is_dir() and (p / "solver_report.yaml").is_file()],
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    return candidates[0] if candidates else None
-
-
-def _uncovered_terminal(items: list[Any]) -> tuple[bool, list[str]]:
-    """Return (ok, open_ids). Terminal = resolved|verified|not_applicable|human_required|rejected (not blocked)."""
-    from ascendc_pilot.workflows.specs import CLOSED_OBLIGATION_STATUSES
-
-    open_ids: list[str] = []
-    for it in items:
-        if isinstance(it, str):
-            open_ids.append(it)
-            continue
-        if not isinstance(it, dict):
-            continue
-        status = str(it.get("status") or it.get("state") or "open").lower()
-        if status in CLOSED_OBLIGATION_STATUSES or status in {"closed", "done", "pass", "passed"}:
-            continue
-        # blocked remains open for solve terminal — needs human/rework, not success
-        kid = str(it.get("id") or it.get("obligation_id") or it.get("key") or "")
-        if kid:
-            open_ids.append(kid)
-        elif status in {"open", "unresolved", "pending", "blocked", ""}:
-            open_ids.append(str(it)[:80])
-    return (not open_ids), open_ids
-
-
-def gate_family_path_obligation(project_root: Path) -> dict[str, Any]:
-    """FAM ↔ KPATH ↔ obligation refs must be consistent on UO export surface."""
-
-    def _run() -> Any:
-        from ascendc_pilot.legacy_stubs import check_family_path_obligation
-
-        uo = uo_root(project_root)
-        payload = check_family_path_obligation(uo, write=True)
-        if not payload.get("ok"):
-            raise RuntimeError(payload.get("message") or "family_path_obligation failed")
-        return payload
-
-    return _wrap_exc("family_path_obligation", _run)
-
-
-def gate_solve_terminal(project_root: Path) -> dict[str, Any]:
-    """Terminal solve must use real solver/realization/CSV/obligation artifacts — not status.yaml."""
-    out = tg_root(project_root)
-
-    def _run() -> Any:
-        from testcase_agent.solve import _require_nonempty_realize
-        from testcase_agent.uo_resolve_merge import require_domain_symmetry
-
-        solve_root = _latest_solve_root(out)
-        if solve_root is None:
-            raise RuntimeError("solve artifacts missing: need solve/**/solver_report.yaml")
-
-        solver = _load(solve_root / "solver_report.yaml")
-        if not isinstance(solver, dict) or not solver:
-            raise RuntimeError(f"solver_report.yaml missing or empty under {solve_root}")
-
-        realize = _load(solve_root / "realize_report.yaml")
-        if not isinstance(realize, dict) or not realize:
-            # Also accept nested under solver report
-            realize = solver.get("realize_report") if isinstance(solver.get("realize_report"), dict) else None
-        if not isinstance(realize, dict) or not realize:
-            raise RuntimeError(f"realize_report.yaml missing under {solve_root}")
-
-        _require_nonempty_realize(realize)
-        require_domain_symmetry(out)
-
-        uncovered_raw: list[Any] = []
-        unc_path = solve_root / "uncovered_obligations.yaml"
-        unc_doc = _load(unc_path)
-        if isinstance(unc_doc, dict):
-            uncovered_raw = list(
-                unc_doc.get("items")
-                or unc_doc.get("obligations")
-                or unc_doc.get("uncovered_obligations")
-                or []
-            )
-        elif isinstance(solver.get("uncovered_obligations"), list):
-            uncovered_raw = list(solver["uncovered_obligations"])
-
-        ok_unc, open_ids = _uncovered_terminal(uncovered_raw)
-        if not ok_unc:
-            raise RuntimeError(
-                f"uncovered obligations still open: {open_ids[:12]}. "
-                "All must reach resolved|verified|not_applicable|human_required|blocked|rejected."
-            )
-
-        return {
-            "ok": True,
-            "solve_root": solve_root.as_posix(),
-            "realized_count": realize.get("realized_count"),
-            "selected_count": realize.get("selected_count"),
-            "uncovered_open": open_ids,
-        }
-
-    return _wrap_exc("solve_terminal", _run)
-
-
-_ADAPTER_METHODS = (
-    "declared_keys",
-    "decode_key",
-    "sample_case",
-    "mutate",
-    "construct",
-    "describe",
-    "replay",
-    "actual_key",
-    "generation_knobs",
-)
-
-# Cold-start packages keep only identity + log protocol. Adapter pack YAML
-# (search/construction/feature/bridge/proof/observations) is optional until
-# export_adapter_pack writes it.
-_REQUIRED_YAML = (
-    "operator.yaml",
-    "log_protocol.yaml",
-)
-
-_OPTIONAL_ADAPTER_YAML = (
-    "search_hints.yaml",
-    "construction_hints.yaml",
-    "feature_bindings.yaml",
-    "bridge_spec.yaml",
-    "proof_rules.yaml",
-    "observations.yaml",
-)
-
-_REQUIRED_SECTIONS = {
-    "search_hints.yaml": ("sampling_grid",),
-    "construction_hints.yaml": ("defaults",),
-    "feature_bindings.yaml": ("categorical", "base_numeric"),
-    "log_protocol.yaml": ("marks", "scrapes", "report_state"),
-}
 
 
 def gate_adapter_completeness(

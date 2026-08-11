@@ -53,4 +53,4 @@ D_implementation 实现声明（模板实例 / TPL / 注册）集合
 但 implementation declarations 只存在 `(A,false)`。  
 则存在 accepted-but-undeclared 状态，应报告为跨层契约断裂。
 
-命名历史案例见 `docs/case-studies/`（Agent 默认不读）。
+命名历史案例见 `docs/history/case-studies/`（Agent 默认不读）。

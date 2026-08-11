@@ -1,7 +1,0 @@
-# provenance: FAG arch35 已通过实例。结构可照抄，数值不可搬。
-# 可泛化：floor_terms 是源码比较式抽不出来时的派生项兜底；
-# 派生项必须来自源码比较，不是猜的。勿照抄 static_parents 具体列表
-# （其中可能含静态分析缺口，如某维只绑了一个父节点）。
-version: 1
-floor_terms: [product_term_a, bytes_term_b, mod_term_c, band_term_d]
-# static_parents: 从 UO host view / feature hints 生成，不要手抄范例数值

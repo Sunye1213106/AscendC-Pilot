@@ -15,8 +15,6 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "bind": ["semantic_bind"],
         "gate": ["integrity_gate", "init_audit"],
         "confirm": ["human_confirm"],
-        "merge": ["bind_merge"],
-        "nest": ["mid_nest"],
     },
     "tg-plan": {
         "intent": ["plan_intent"],
@@ -37,10 +35,6 @@ _TG_PIPELINES: dict[str, dict[str, list[str]]] = {
         "lemma": ["lemma_leads", "lemma_evidence", "lemma_mine", "lemma_verify", "lemma_review", "lemma_apply", "lemma_loop"],
         "audit": ["closure_audit"],
         "certify": ["closure_certify"],
-        "encode": ["z3_solve"],
-        "solve": ["z3_solve"],
-        "project": ["z3_solve"],
-        "cover": ["cover_confirm"],
     },
 }
 
@@ -61,13 +55,10 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         "semantic_bind": {
             "read": [
                 "../uo/*.uo", "tg/contract/**",
-                "tg/realization/llm_bind_prompt_bundle.yaml", "tg/realization/binding_inventory.yaml",
-                "tg/realization/binding_gaps.yaml", "tg/realization/unresolved.yaml",
+                "tg/realization/binding_inventory.yaml",
             ],
-            "write": ["tg/realization/binding_inventory.yaml", "tg/realization/semantic_bind_patch.yaml"],
+            "write": ["tg/realization/binding_inventory.yaml"],
         },
-        "bind_merge": {"read": ["tg/snapshot/**", "tg/realization/**"], "write": ["tg/realization/**"]},
-        "mid_nest": {"read": ["tg/realization/**"], "write": ["tg/realization/mid_symbol_queue.yaml"]},
         "integrity_gate": {
             "read": ["tg/snapshot/**", "tg/realization/**", "tg/contract/**"],
             "write": ["tg/contract/integrity_gate.yaml"],
@@ -147,11 +138,6 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
             "read": ["tg/closure/**", "runs/**/actions/closure_audit/review.yaml"],
             "write": ["tg/closure/closure.csv", "tg/closure/certificate.yaml", "tg/closure/audit_report.yaml"],
         },
-        "z3_solve": {
-            "read": ["tg/init/**", "tg/plan/**", "tg/snapshot/**", "tg/realization/**", "tg/contract/**", "tg/extract/**", "context/**"],
-            "write": ["tg/solve/**", "tg/cases/**", "tg/realization/**"],
-        },
-        "cover_confirm": {"read": ["tg/solve/**", "tg/cases/**", "tg/plan/**"], "write": []},
     },
 }
 
@@ -243,13 +229,14 @@ def _apply_uo_control_plane_contracts() -> None:
     for row in update.get("actions") or []:
         if isinstance(row, dict):
             _make_deterministic(row)
-    update["agents"] = []
+    update["agents"] = [{"id": "deterministic-uo-engine", "role": "deterministic_engine"}]
     labels = {
-        "detect_changes": "检测源码变更", "plan_update": "规划 CodeMap 增量更新",
-        "apply_update": "应用 CodeMap 增量更新", "key_triage": "分类受影响语义关系",
-        "key_resolution": "重建受影响语义关系", "confidence_report": "生成更新质量报告",
-        "confidence_review": "审查更新一致性", "export_integrity": "校验 CodeMap 完整性",
-        "diff_summary": "CodeMap 差异摘要", "diff_only": "仅生成 CodeMap 差异摘要",
+        "detect_changes": "检测源码变更",
+        "plan_update": "规划 CodeMap 增量更新",
+        "apply_update": "应用 CodeMap 增量更新",
+        "export_integrity": "校验 CodeMap 完整性",
+        "diff_summary": "CodeMap 差异摘要",
+        "diff_only": "仅生成 CodeMap 差异摘要",
     }
     for action_id, label in labels.items():
         row = _action(update, action_id)
@@ -264,7 +251,6 @@ def _apply_uo_control_plane_contracts() -> None:
     lookup = _action(query, "kb_lookup")
     if lookup is not None:
         lookup["label_zh"] = "CodeMap 查询"
-        lookup["task_prompt_id"] = "uo/codemap-query"
         lookup["gates"] = []
 
 def _apply_tg_control_plane_contracts() -> None:

@@ -133,6 +133,24 @@ def main(argv: list[str] | None = None) -> int:
         errors.append(f"skill architecture lint unavailable: {exc}")
 
     try:
+        from check_runtime_graph import _main as runtime_graph_main  # noqa: WPS433
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf_out), redirect_stderr(buf_err):
+            code = runtime_graph_main()
+        if code != 0:
+            detail = (buf_out.getvalue() or buf_err.getvalue()).strip()
+            for line in detail.splitlines()[:40]:
+                if line.strip().startswith("- "):
+                    errors.append(f"runtime graph: {line.strip()[2:]}")
+                elif "issue" in line.lower():
+                    errors.append(f"runtime graph: {line.strip()}")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"runtime graph lint unavailable: {exc}")
+
+    try:
         from check_operator_independence import main as independence_main  # noqa: WPS433
         import io
         from contextlib import redirect_stderr, redirect_stdout

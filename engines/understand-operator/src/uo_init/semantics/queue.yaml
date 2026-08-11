@@ -1,0 +1,50 @@
+# AscendC queue / buffer acquire-release primitives.
+version: ascendc-semantic-registry/v1
+ops:
+  InitBuffer:
+    category: buffer_init
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: queue
+  AllocTensor:
+    category: buffer_acquire
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: queue
+    returns: buffer_view
+  FreeTensor:
+    category: buffer_release
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: queue
+    args:
+      "0": write_buffer
+  EnQue:
+    category: queue_enqueue
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: queue
+    args:
+      "0": read_buffer
+  DeQue:
+    category: queue_dequeue
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: queue
+    returns: buffer_view
+  Get:
+    category: buffer_view
+    engine: UNKNOWN
+    confidence: partial
+    receiver: read
+  GetTensor:
+    category: buffer_view
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: read
+    returns: buffer_view
+  ReinterpretCast:
+    category: buffer_view
+    engine: UNKNOWN
+    confidence: partial
+    receiver: read

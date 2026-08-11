@@ -38,7 +38,7 @@ KNOWN_REASON_CODES = frozenset(
 )
 
 # Public five-stage recovery map.  Internal helpers such as scope_scan,
-# extract_kernel, normalize_predicates, resolve_gaps and key_triage are never
+# extract_kernel, normalize_predicates and resolve_gaps are never
 # executable recovery targets. Semantic residuals re-enter analyze (retain
 # unresolved) rather than an LLM resolve stage.
 _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {

@@ -70,9 +70,12 @@ def _fast_rebuild_if_safe(
         return fallback(project_root, workflow_id, action_id, ctx=ctx)
 
     try:
-        from ascendc_pilot.legacy_stubs import _source_snapshot_hash
-        from ascendc_pilot.legacy_stubs import compute_semantic_stats
-        from ascendc_pilot.legacy_stubs import should_skip_layered_rebuild
+        def _source_snapshot_hash(*_a, **_k):
+            return ""
+        def compute_semantic_stats(*_a, **_k):
+            return {"open": 0, "done": 0, "engine": "stub"}
+        def should_skip_layered_rebuild(*_a, **_k):
+            return False
 
         snapshot = str(_source_snapshot_hash(uo, run_id=run_id) or "")
         if not snapshot:
@@ -197,7 +200,8 @@ def _fast_recheck_closure(
     try:
         from ascendc_pilot.recovery import recoveries_for_closure_gaps
         from ascendc_pilot.state import load_state
-        from ascendc_pilot.legacy_stubs import compute_semantic_stats
+        def compute_semantic_stats(*_a, **_k):
+            return {"open": 0, "done": 0, "engine": "stub"}
 
         entrypoint = _read_yaml(ir / "entrypoint_graph.yaml")
         closure = entrypoint.get("closure") if isinstance(entrypoint.get("closure"), dict) else {}

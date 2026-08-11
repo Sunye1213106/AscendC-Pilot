@@ -39,6 +39,11 @@ _KB_KIND_MAP: dict[str, EntityKind] = {
     "Arch": EntityKind.ARCH,
     "Architecture": EntityKind.ARCH,
     "BuildVariant": EntityKind.BUILD_VARIANT,
+    "Operation": EntityKind.OPERATION,
+    "Buffer": EntityKind.BUFFER,
+    "BufferView": EntityKind.BUFFER_VIEW,
+    "SyncEvent": EntityKind.SYNC_EVENT,
+    "ExecRegion": EntityKind.EXEC_REGION,
 }
 
 _KB_EDGE_MAP: dict[str, RelationKind] = {
@@ -62,6 +67,19 @@ _KB_EDGE_MAP: dict[str, RelationKind] = {
     "ACTIVE_UNDER": RelationKind.ACTIVE_UNDER,
     "SAVES": RelationKind.SAVES,
     "RESTORES": RelationKind.RESTORES,
+    "CONTAINS": RelationKind.CONTAINS,
+    "PRECEDES": RelationKind.PRECEDES,
+    "READS_BUFFER": RelationKind.READS_BUFFER,
+    "WRITES_BUFFER": RelationKind.WRITES_BUFFER,
+    "VIEW_OF": RelationKind.VIEW_OF,
+    "ALIASES": RelationKind.ALIASES,
+    "ALLOCATES": RelationKind.ALLOCATES,
+    "RELEASES": RelationKind.RELEASES,
+    "SIGNALS": RelationKind.SIGNALS,
+    "WAITS_ON": RelationKind.WAITS_ON,
+    "SYNCHRONIZES_WITH": RelationKind.SYNCHRONIZES_WITH,
+    "HAPPENS_BEFORE": RelationKind.HAPPENS_BEFORE,
+    "EXECUTES_ON": RelationKind.EXECUTES_ON,
     # Legacy KB edge names.
     "writes": RelationKind.WRITES,
     "reads": RelationKind.READS,

@@ -1,33 +1,46 @@
-# AscendC-Pilot 文档索引
+﻿# Documentation
 
-## design（架构与原则）
+本目录是人类说明文档的唯一集中入口，根目录 `README.md` 除外。
 
-| 文档 | 说明 |
-| --- | --- |
-| [design/architecture.md](./design/architecture.md) | **现状架构**（UO / TG / Pilot / 三域） |
-| [design/system-design.md](./design/system-design.md) | 系统数据流 |
-| [design/skill-prompt.md](./design/skill-prompt.md) | Domain / Prompt / Harness 原则 |
-| [design/where-does-this-go.md](./design/where-does-this-go.md) | **分层决策表**：这句话该写哪一层 |
-| [design/principles.md](./design/principles.md) | 产品修改口诀 |
-| [design/control-closure.md](./design/control-closure.md) | UO 控制来源闭合（短注） |
+Runtime 输入继续留在代码旁边：`SKILL.md`、skill references、task prompts、Pilot policies、generated host instructions、example fixtures 都不是项目说明文档。
 
-**Agent 认知权威**：`skills/operator-analysis`、`skills/testcase-generation`、`skills/source-proof`、`skills/code-review`（共用 `skills/_shared`），不是本目录下的长篇 SOP。
+## 第一次使用
 
-## fag（校准样本，非 Skill）
+- [安装](getting-started/installation.md)
+- [Quick Start](getting-started/quickstart.md)
 
-| 文档 | 说明 |
-| --- | --- |
-| [fag/tilingkey-closure-report.md](./fag/tilingkey-closure-report.md) | 历史校准闭合报告 |
-| [fag/fag-arch35-wsl-full-tilingkey-run.md](./fag/fag-arch35-wsl-full-tilingkey-run.md) | WSL 工程跑记 |
-| [fag/fag-arch35-static-blocker-execution-20260806.md](./fag/fag-arch35-static-blocker-execution-20260806.md) | 静态 blocker 执行日志 |
-| [fag/data/](./fag/data/) | 可达用例 CSV 等 |
+## 想理解系统为什么这样设计
 
-## case-studies（人类溯源，Agent 默认不读）
+- [架构总览](architecture/overview.md)
+- [Agent 系统](architecture/agent-system.md)
+- [Harness 与权限](architecture/harness-and-permissions.md)
+- [Skills、Prompts 与 Policies](architecture/skills-prompts-policies.md)
+- [状态与产物](architecture/state-and-artifacts.md)
+- [设计原则](architecture/principles.md)
 
-| 文档 | 说明 |
-| --- | --- |
-| [case-studies/](./case-studies/) | 从实战提炼的命名案例（如跨层契约） |
+## 想理解某个模块
 
-## Skill 原则
+- [UO - Understand Operator](modules/uo.md)
+- [TG - Testcase Generation](modules/tg.md)
+- [CE - Code Engineering](modules/ce.md)
+- [Pilot Runtime](modules/pilot-runtime.md)
+- [Engines](modules/engines.md)
+- [Host Adapters](modules/host-adapters.md)
 
-组合式分层以 [design/skill-prompt.md](./design/skill-prompt.md) 为准。产品修改口诀见 [design/principles.md](./design/principles.md)。
+## 想开发 AscendC-Pilot
+
+- [仓库结构](reference/repository-layout.md)
+- [CLI 参考](reference/cli.md)
+- [产物布局](reference/artifact-layout.md)
+- [Agent Matrix](reference/agent-matrix.generated.md)
+- [术语表](reference/glossary.md)
+- [扩展 Agent](development/extending-agent.md)
+- [扩展 Skill](development/extending-skill.md)
+- [扩展 Workflow](development/extending-workflow.md)
+- [扩展 Engine](development/extending-engine.md)
+- [测试与 Evals](development/testing-and-evals.md)
+- [文档维护规则](development/documentation.md)
+
+## 历史材料
+
+历史执行记录、benchmark 和 case study 归档在 [history/](history/README.md)。它们用于溯源，不再作为当前架构权威。

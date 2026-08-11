@@ -1,0 +1,30 @@
+# AscendC memory / transfer primitives (architecture-neutral roles).
+version: ascendc-semantic-registry/v1
+ops:
+  DataCopy:
+    category: memory_transfer
+    engine: MTE
+    confidence: confirmed
+    args:
+      "0": write_buffer
+      "1": read_buffer
+  DataCopyPad:
+    category: memory_transfer
+    engine: MTE
+    confidence: confirmed
+    args:
+      "0": write_buffer
+      "1": read_buffer
+  Copy:
+    category: memory_transfer
+    engine: MTE
+    confidence: partial
+    args:
+      "0": write_buffer
+      "1": read_buffer
+  InitGlobalMemory:
+    category: memory_init
+    engine: MTE
+    confidence: confirmed
+    args:
+      "0": write_buffer

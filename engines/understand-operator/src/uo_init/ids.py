@@ -35,6 +35,11 @@ KIND_PREFIX: dict[str, str] = {
     "ApiContract": "API",
     "Evidence": "EV",
     "Function": "FN",
+    "Operation": "OP",
+    "Buffer": "BUF",
+    "BufferView": "BVIEW",
+    "SyncEvent": "SYNC",
+    "ExecRegion": "XREG",
 }
 
 PREFIX_KIND = {v: k for k, v in KIND_PREFIX.items()}
@@ -139,6 +144,91 @@ def predicate_id(owner_id: str, polarity: bool, canonical: str) -> str:
 
 def evidence_id(file: str, line_start: int, line_end: int, root: str = "") -> str:
     return make_id("Evidence", rel_posix(file, root), line_start, line_end)
+
+
+def operation_site_id(
+    *,
+    file: str,
+    line: int,
+    column: int,
+    callee: str,
+    ordinal: int = 0,
+    root: str = "",
+) -> str:
+    """Occurrence id for one execution operation site.
+
+    Distinct call sites with the same callee must not collapse. Location +
+    ordinal disambiguate; ``file:line:col`` is intentional for site identity
+    (semantic object ≠ operation occurrence).
+    """
+    return make_id(
+        "Operation",
+        rel_posix(file, root),
+        int(line),
+        int(column),
+        str(callee or ""),
+        int(ordinal),
+    )
+
+
+def buffer_site_id(
+    *,
+    file: str,
+    line: int,
+    scope: str,
+    name: str,
+    root: str = "",
+) -> str:
+    return make_id("Buffer", rel_posix(file, root), int(line), str(scope or ""), str(name or ""))
+
+
+def buffer_view_id(
+    *,
+    buffer_id: str,
+    name: str,
+    file: str = "",
+    line: int = 0,
+    root: str = "",
+) -> str:
+    return make_id("BufferView", buffer_id, str(name or ""), rel_posix(file, root), int(line))
+
+
+def sync_event_id(
+    *,
+    file: str,
+    line: int,
+    column: int,
+    kind: str,
+    ordinal: int = 0,
+    root: str = "",
+) -> str:
+    return make_id(
+        "SyncEvent",
+        rel_posix(file, root),
+        int(line),
+        int(column),
+        str(kind or ""),
+        int(ordinal),
+    )
+
+
+def exec_region_id(
+    *,
+    kind: str,
+    file: str,
+    line: int,
+    function: str,
+    ordinal: int = 0,
+    root: str = "",
+) -> str:
+    return make_id(
+        "ExecRegion",
+        str(kind or ""),
+        rel_posix(file, root),
+        int(line),
+        str(function or ""),
+        int(ordinal),
+    )
 
 
 def edge_id(kind: str, src: str, dst: str) -> str:

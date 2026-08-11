@@ -37,6 +37,13 @@ class EntityKind(str, Enum):
     ARCH = "ARCH"
     BUILD_VARIANT = "BUILD_VARIANT"
 
+    # Kernel execution ontology (site-level; distinct from compile-time KernelIR).
+    OPERATION = "OPERATION"
+    BUFFER = "BUFFER"
+    BUFFER_VIEW = "BUFFER_VIEW"
+    SYNC_EVENT = "SYNC_EVENT"
+    EXEC_REGION = "EXEC_REGION"
+
     # Escapes for legacy KB kinds during adaptation.
     OTHER = "OTHER"
 

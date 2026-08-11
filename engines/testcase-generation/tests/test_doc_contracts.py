@@ -1,15 +1,15 @@
-"""Documentation/runtime contracts for the three public TG workflows."""
+"""Documentation/runtime contracts for TG workflow entry points."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-SKILLS = ROOT / "skills" / "workflows"
 SKILLS_ROOT = ROOT / "skills"
+TG_SKILL = SKILLS_ROOT / "testcase-generation" / "SKILL.md"
 AGENTS = ROOT / "agents"
 
-PUBLIC_SKILLS = ("tg-init", "tg-plan", "tg-solve")
+PUBLIC_WORKFLOWS = ("tg-init", "tg-plan", "tg-solve")
 MAX_LINES = 220
 
 
@@ -20,22 +20,20 @@ def _line_count(path: Path) -> int:
 def test_install_lists_public_tg_skills() -> None:
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
-    for name in PUBLIC_SKILLS:
+    for name in PUBLIC_WORKFLOWS:
         assert name in ps1 and name in sh
 
 
-def test_public_skill_shells_within_line_limit() -> None:
-    for name in PUBLIC_SKILLS:
-        path = SKILLS / name / "SKILL.md"
-        assert path.is_file(), f"missing {path}"
-        assert _line_count(path) <= MAX_LINES, f"{path} exceeds {MAX_LINES} lines"
+def test_tg_skill_within_line_limit() -> None:
+    assert TG_SKILL.is_file(), f"missing {TG_SKILL}"
+    assert _line_count(TG_SKILL) <= MAX_LINES, f"{TG_SKILL} exceeds {MAX_LINES} lines"
 
 
 def test_tg_model_agents_are_derived_from_workflow_spec() -> None:
     from ascendc_pilot.workflows import WORKFLOWS
 
     expected: set[str] = set()
-    for workflow_id in PUBLIC_SKILLS:
+    for workflow_id in PUBLIC_WORKFLOWS:
         for action in WORKFLOWS[workflow_id].get("actions") or []:
             if not isinstance(action, dict):
                 continue
@@ -73,5 +71,6 @@ def test_install_skips_retired_tg_domain_review_agent() -> None:
 
 
 def test_tg_dispatch_mentions_runtime_control_plane() -> None:
-    skill = (SKILLS / "tg-init" / "SKILL.md").read_text(encoding="utf-8")
-    assert "acp" in skill or "Pilot" in skill or "TG" in skill
+    skill = TG_SKILL.read_text(encoding="utf-8")
+    assert "testcase-generation" in skill
+    assert all(name in skill for name in ("D", "T", "R", "E"))

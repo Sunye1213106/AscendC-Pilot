@@ -60,59 +60,12 @@ _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 
 # Full TilingKey TG is plan-scoped: tg-plan freezes T, tg-solve closes exactly
-# T with the existing replay/construct/lemma engine. CSV-consumer compatibility
-# remains untouched and is the only route that may still use the SMT backend.
+# T with the existing replay/construct/lemma engine.
 _install_tg_plan_targets(_engines.ENGINE_REGISTRY)
 _install_tg_full_precheck(_engines.ENGINE_REGISTRY)
 _install_uo_product_compaction(_engines.ENGINE_REGISTRY)
 
 
-def _normalize_tg_product_reads() -> None:
-    """Make the effective TG IO contract consume the single .uo authority.
-
-    Older workflow metadata named YAML paths below ``uo/`` even though full TG
-    now reads view blobs from the binary product. Normalize those declarations
-    at the runtime boundary so ownership/isolation checks never require a YAML
-    file that UO no longer publishes.
-    """
-    from ascendc_pilot.workflows import WORKFLOWS
-
-    for workflow_id in ("tg-init", "tg-plan", "tg-solve"):
-        meta = WORKFLOWS.get(workflow_id) or {}
-        for row in meta.get("actions") or []:
-            if not isinstance(row, dict):
-                continue
-            reads = [str(p) for p in (row.get("allowed_read_paths") or [])]
-            needs_uo = any(p == "uo" or p == "uo/**" or p.startswith("uo/") for p in reads)
-            reads = [p for p in reads if not (p == "uo" or p == "uo/**" or p.startswith("uo/"))]
-            if needs_uo and "../uo/*.uo" not in reads:
-                reads.insert(0, "../uo/*.uo")
-            row["allowed_read_paths"] = list(dict.fromkeys(reads))
-
-
-_normalize_tg_product_reads()
-
-
-def _sanitize_semantic_bind_session(result: dict[str, Any]) -> None:
-    """Ensure the producer stops after writing its staged patch."""
-
-    if not result.get("ok") or result.get("action_id") != "semantic_bind":
-        return
-    replacements = {
-        "然后执行：`acp run-action semantic_bind --finalize`":
-            "写出补丁后立即停止并返回结果；由 Primary 执行 `acp run-action semantic_bind --finalize`。",
-        "4. 执行 `acp run-action semantic_bind --finalize`（finalize 会应用补丁并校验）。":
-            "4. 写出补丁后立即停止；不得执行 finalize。Primary 将调用 finalize 应用补丁并校验。",
-    }
-    for key in ("prompt_path", "method_path"):
-        raw = str(result.get(key) or "")
-        path = Path(raw) if raw else None
-        if path is None or not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8")
-        for old, new in replacements.items():
-            text = text.replace(old, new)
-        path.write_text(text, encoding="utf-8")
 
 
 def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str, Any]:
@@ -144,7 +97,6 @@ def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str
 
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     result = _prepare_with_fast_uo_engine(project_root, action_id)
-    _sanitize_semantic_bind_session(result)
     if result.get("ok") and action_id in PRIMARY_TG_ACTIONS:
         result["interactive_steps"] = primary_interactive_steps(
             action_id,

@@ -318,9 +318,8 @@ def _load_context(project_root: Path | None) -> dict[str, Any]:
             return {"state": {}, "meta": {}, "allowed_actions": []}
         wid = str(state.get("workflow_id") or "")
         phase = str(state.get("phase") or "")
-        # project_root selects the mode overlay. Without it authorization reads
-        # the base spec, so a csv_consumer run judges `semantic_bind` against
-        # the deterministic engine and denies the very producer it ships.
+        # project_root selects the mode overlay so authorization sees the
+        # same effective action set as the running workflow.
         meta = get_workflow(wid, project_root=project_root) if wid else {}
         actions = (
             actions_for_phase(wid, phase, project_root=project_root)

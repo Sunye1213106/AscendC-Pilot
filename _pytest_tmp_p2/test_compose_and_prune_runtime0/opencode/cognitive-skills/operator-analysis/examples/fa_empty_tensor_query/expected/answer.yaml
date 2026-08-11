@@ -1,3 +1,0 @@
-status: ANSWERED
-answer: "No. Host rejects numel()==0 for q, k, and v before launch."
-evidence_span: "torch_interface.cpp empty-tensor checks"

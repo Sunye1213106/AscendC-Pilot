@@ -78,10 +78,7 @@ def agent_contract_hash(repo_root: Path | None = None) -> str:
     parts: list[str] = []
     for rel in (
         "engines/understand-operator/spec/ownership.yaml",
-        "agents/uo-confidence-review.yaml",
-        "agents/uo-key-resolve.yaml",
         "agents/references/init-audit-schema.md",
-        "agents/references/csv-contract-schema.md",
     ):
         path = root / rel
         if path.is_file():
@@ -94,9 +91,7 @@ def tg_contract_hash(repo_root: Path | None = None) -> str:
     parts: list[str] = []
     for rel in (
         "engines/testcase-generation/testcase_agent/contract.py",
-        "engines/testcase-generation/testcase_agent/realization_contract.py",
-        "engines/testcase-generation/testcase_agent/resolve_policy.py",
-        "agents/references/csv-contract-schema.md",
+        "engines/testcase-generation/testcase_agent/closure/oracle.py",
     ):
         path = root / rel
         if path.is_file():

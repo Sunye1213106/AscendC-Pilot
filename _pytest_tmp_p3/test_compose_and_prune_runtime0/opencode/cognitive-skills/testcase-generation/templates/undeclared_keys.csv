@@ -1,4 +1,0 @@
-# provenance: FAG arch35 R−D defect 单子节选。结构可照抄，具体 key 不可搬。
-# 可泛化：R−D 必须单独报告为 undeclared-key defect，不计入 D 闭合。
-key,InputDType,IsRope,note
-# <packed_key>,<dim...>,Host produced but kernel header did not declare

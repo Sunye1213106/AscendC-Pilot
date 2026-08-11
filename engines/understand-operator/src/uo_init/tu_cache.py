@@ -363,6 +363,48 @@ def load_walk(
         return None
 
 
+def iter_cached_walks(
+    op_dir: str | Path | None,
+    arch: str | None = None,
+    *,
+    path_substr: str = "op_kernel",
+    limit: int = 64,
+) -> list[Any]:
+    """Load up to ``limit`` cached WalkResults whose TU path matches ``path_substr``.
+
+    Used by Kernel Execution extraction to reuse Clang call sites already paid
+    for during ``build_kernel_ir`` / host walks — no extra libclang parse.
+    """
+    if not cache_enabled() or op_dir is None:
+        return []
+    root = tu_cache_dir(op_dir, arch)
+    if not root.is_dir():
+        return []
+    needle = str(path_substr or "").replace("\\", "/").lower()
+    out: list[Any] = []
+    for path in sorted(root.glob("*.pkl")):
+        if path.name.endswith(".probe.pkl"):
+            continue
+        if len(out) >= max(1, int(limit)):
+            break
+        try:
+            with open(path, "rb") as fh:
+                payload = pickle.load(fh)
+            if not isinstance(payload, dict) or int(payload.get("version") or 0) != CACHE_VERSION:
+                continue
+            if str(payload.get("kind") or "") not in {"", "WalkResult"}:
+                continue
+            result = deserialize_walk_result(payload)
+            tu = str(getattr(result, "path", "") or "").replace("\\", "/").lower()
+            if needle and needle not in tu:
+                continue
+            out.append(result)
+            _bump("hit")
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
 def load_probe(
     key: str,
     *,

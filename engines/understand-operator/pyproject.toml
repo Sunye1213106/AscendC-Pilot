@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "uo-init"
 version = "0.1.0"
 description = "AscendC UO CodeMap compiler"
-readme = "README.md"
+readme = { text = "AscendC UO CodeMap compiler package.", content-type = "text/plain" }
 requires-python = ">=3.10"
 dependencies = [
   "libclang>=18.1.1",

@@ -1,0 +1,35 @@
+# AscendC synchronization primitives.
+version: ascendc-semantic-registry/v1
+ops:
+  SetFlag:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+  WaitFlag:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+  PipeBarrier:
+    category: sync_barrier
+    engine: UNKNOWN
+    confidence: confirmed
+  CrossCoreSetFlag:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+  CrossCoreWaitFlag:
+    category: sync_wait
+    engine: UNKNOWN
+    confidence: confirmed
+  SyncAll:
+    category: sync_barrier
+    engine: UNKNOWN
+    confidence: confirmed
+  SetFlag_PIPE_MTE2_TO_PIPE_V:
+    category: sync_signal
+    engine: MTE
+    confidence: partial
+  WaitFlag_PIPE_MTE2_TO_PIPE_V:
+    category: sync_wait
+    engine: VECTOR
+    confidence: partial

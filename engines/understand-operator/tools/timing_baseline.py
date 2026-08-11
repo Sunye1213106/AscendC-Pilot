@@ -19,7 +19,7 @@ Or write the empty markdown template with anecdotal placeholders only::
 
     python engines/understand-operator/tools/timing_baseline.py --write-doc
 
-The markdown table lands at ``docs/design/uo-timing-baseline.md`` (repo root).
+The markdown table lands at ``docs/history/benchmarks/uo-timing-baseline.md`` (repo root).
 """
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def repo_root_from_here() -> Path:
 
 
 def default_doc_path() -> Path:
-    return repo_root_from_here() / "docs" / "design" / "uo-timing-baseline.md"
+    return repo_root_from_here() / "docs" / "history" / "benchmarks" / "uo-timing-baseline.md"
 
 
 def parse_timing_lines(text: str) -> list[dict[str, object]]:
@@ -283,7 +283,7 @@ def render_markdown(
             "workers hide more wall time (`host_derivation.HostDerivation.phase_seconds`).",
             "- Kernel pairwise fold: expensive; disable with `fold_kernel=false`.",
             "- `export_tg_host_view`: FAG cached export **31.7s → 2.0s** after "
-            "fingerprint reuse (`docs/fag/fag-arch35-static-blocker-execution-20260806.md`).",
+            "fingerprint reuse (`docs/history/fag/fag-arch35-static-blocker-execution-20260806.md`).",
             "",
             "## Cache knobs (warm path)",
             "",

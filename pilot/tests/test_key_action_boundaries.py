@@ -1,4 +1,4 @@
-"""UO update resolve boundary after retiring per-KEY model agents."""
+"""UO update pipeline boundaries after retiring resolve stub chain."""
 
 from __future__ import annotations
 
@@ -6,18 +6,34 @@ from pathlib import Path
 
 from ascendc_pilot.paths import ensure_agent_layout
 from ascendc_pilot.state import start_workflow
-from ascendc_pilot.workflows import actions_for_phase, phase_pipeline
+from ascendc_pilot.workflows import WORKFLOWS, actions_for_phase, phase_pipeline
 from ascendc_pilot.workflows.pipeline import recommend_next_action
 
 
-def test_uo_update_resolve_actions_are_deterministic() -> None:
-    actions = actions_for_phase("uo-update", "resolve")
-    assert actions
-    for action in actions:
-        assert action.get("execution_mode") == "deterministic"
-        assert not action.get("agent_id")
-        assert not action.get("task_prompt_id")
-        assert action.get("actors") == []
+def test_uo_update_has_no_resolve_phase() -> None:
+    assert "resolve" not in (WORKFLOWS["uo-update"].get("phases") or [])
+    assert phase_pipeline("uo-update", "resolve") == []
+    assert actions_for_phase("uo-update", "resolve") == []
+
+
+def test_uo_update_pipeline_is_detect_plan_apply_export_diff() -> None:
+    assert WORKFLOWS["uo-update"]["phases"] == [
+        "detect",
+        "plan",
+        "apply",
+        "export",
+        "diff",
+    ]
+    assert phase_pipeline("uo-update", "detect") == ["detect_changes"]
+    assert phase_pipeline("uo-update", "plan") == ["plan_update"]
+    assert phase_pipeline("uo-update", "apply") == ["apply_update"]
+    assert phase_pipeline("uo-update", "export") == ["export_integrity"]
+    assert phase_pipeline("uo-update", "diff") == ["diff_summary"]
+    for phase in ("detect", "plan", "apply", "export", "diff"):
+        for action in actions_for_phase("uo-update", phase):
+            assert action.get("execution_mode") == "deterministic"
+            assert action.get("agent_id") in (None, "", "deterministic-uo-engine")
+            assert not action.get("task_prompt_id")
 
 
 def test_uo_init_has_no_resolve_phase() -> None:
@@ -39,14 +55,14 @@ def test_uo_investigate_has_readonly_gap_investigator() -> None:
     assert actions["investigate"]["task_prompt_id"] == "uo/investigate-gaps"
 
 
-def test_recommend_uo_update_resolve_starts_at_first_engine_action(tmp_path: Path) -> None:
+def test_recommend_uo_update_export_starts_at_integrity(tmp_path: Path) -> None:
     ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-update", phase="resolve", force_phase=True)
-    allowed = actions_for_phase("uo-update", "resolve")
+    start_workflow(tmp_path, "uo-update", phase="export", force_phase=True)
+    allowed = actions_for_phase("uo-update", "export")
     rec = recommend_next_action(
         tmp_path,
         workflow_id="uo-update",
-        phase="resolve",
+        phase="export",
         allowed_actions=allowed,
     )
-    assert rec and rec["id"] == phase_pipeline("uo-update", "resolve")[0]
+    assert rec and rec["id"] == phase_pipeline("uo-update", "export")[0]

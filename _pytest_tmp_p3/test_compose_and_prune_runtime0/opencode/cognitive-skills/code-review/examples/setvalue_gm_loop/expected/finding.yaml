@@ -1,7 +1,0 @@
-severity: high
-title: 禁止逐元素访问 GM（SetValue/GetValue 循环）
-condition: Kernel 对 GlobalTensor 做 for-loop GetValue/SetValue
-invariant: 生产路径须用批量 DataCopy/DataCopyPad
-evidence:
-  - source: cannbot-skills/.../ascendc-api.md API-1
-impact: 性能极差且违反 AscendC API 约束

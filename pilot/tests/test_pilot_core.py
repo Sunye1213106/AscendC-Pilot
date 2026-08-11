@@ -483,7 +483,7 @@ def test_complete_rejects_open_obligations(tmp_path: Path):
 def test_authorize_action_and_role(tmp_path: Path):
     from ascendc_pilot.authorize import authorize
 
-    start_workflow(tmp_path, "uo-update", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-update", phase="apply", force_phase=True)
     bad_action = authorize(
         tmp_path,
         tool="write",
@@ -497,9 +497,9 @@ def test_authorize_action_and_role(tmp_path: Path):
     ok = authorize(
         tmp_path,
         tool="write",
-        path=str(uo_root(tmp_path) / "ir" / "input_derivable_patch.yaml"),
+        path=str(uo_root(tmp_path) / "diff" / "change_set.yaml"),
         agent="deterministic-uo-engine",
-        action="key_resolution",
+        action="apply_update",
     )
     assert ok.get("decision") == "allow"
 
@@ -508,7 +508,7 @@ def test_authorize_action_and_role(tmp_path: Path):
         tool="write",
         path=str(uo_root(tmp_path) / "ir" / "x.yaml"),
         agent="ascendc-pilot",
-        action="key_resolution",
+        action="apply_update",
     )
     assert primary.get("decision") == "deny"
 
@@ -517,23 +517,23 @@ def test_verify_receipt_strict(tmp_path: Path):
     from ascendc_pilot.runs import issue_receipt, verify_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    start_workflow(tmp_path, "uo-update", phase="resolve", force_phase=True)
+    start_workflow(tmp_path, "uo-update", phase="apply", force_phase=True)
     wf = workflow_spec_hash("uo-update")
     issue_receipt(
         tmp_path,
         actor_type="producer",
         actor_id="deterministic-uo-engine",
-        action_id="key_resolution",
+        action_id="apply_update",
         workflow_spec_hash=wf,
-        input_hashes={"triage": "abc"},
-        output_hashes={"patch": "def"},
+        input_hashes={"plan": "abc"},
+        output_hashes={"receipt": "def"},
         checker_result={"ok": True},
         _internal=True,
     )
     ok = verify_receipt(
         tmp_path,
         actor_id="deterministic-uo-engine",
-        action_id="key_resolution",
+        action_id="apply_update",
         require_hashes=True,
         require_action_id=True,
         require_spec_hash=True,

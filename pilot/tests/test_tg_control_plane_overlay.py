@@ -31,13 +31,11 @@ def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
     ]
     assert phase_pipeline("tg-solve", "audit") == ["closure_audit"]
     assert phase_pipeline("tg-solve", "certify") == ["closure_certify"]
-    # Default mode is tilingkey_full_coverage — csv phases are not active.
+    # Default mode is tilingkey_full_coverage; csv_consumer overlay removed.
+    assert "csv_consumer" not in (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
+    assert "csv_consumer" not in (WORKFLOWS["tg-init"].get("mode_overlays") or {})
     assert phase_pipeline("tg-solve", "encode") == []
     assert phase_pipeline("tg-solve", "cover") == []
-    # csv_consumer overlay exposes the legacy path.
-    assert phase_pipeline("tg-solve", "encode", mode="csv_consumer") == ["z3_solve"]
-    assert phase_pipeline("tg-solve", "cover", mode="csv_consumer") == ["cover_confirm"]
-    assert phase_pipeline("tg-solve", "oracle", mode="csv_consumer") == []
 
 
 def test_tg_solve_closure_actions_registered() -> None:
@@ -96,15 +94,14 @@ def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() 
 def test_deterministic_tg_leases_cover_domain_engine_outputs() -> None:
     contract = action_by_id("tg-init", "contract_build") or {}
     plan = action_by_id("tg-plan", "plan_build") or {}
-    solve = action_by_id("tg-solve", "z3_solve") or {}
+    solve = action_by_id("tg-solve", "closure_certify") or {}
 
     assert "tg/contract/**" in contract["allowed_write_paths"]
     assert "tg/plan/coverage_obligations.yaml" in contract["allowed_write_paths"]
     assert "context/pilot_params.yaml" in contract["allowed_write_paths"]
     assert "tg/extract/**" in plan["allowed_write_paths"]
     assert "tg/realization/**" in plan["allowed_write_paths"]
-    assert "tg/cases/**" in solve["allowed_write_paths"]
-    assert "tg/realization/**" in solve["allowed_write_paths"]
+    assert any("tg/closure" in p for p in (solve.get("allowed_write_paths") or []))
 
 
 def test_downstream_reinit_preserves_upstream_tg_contracts() -> None:
@@ -173,28 +170,3 @@ def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Pa
     assert result["dispatch_task"] is False
     assert "uo-scope" not in "\n".join(result["interactive_steps"])
     assert "AskQuestion: approve | rework | stop" in "\n".join(result["interactive_steps"])
-
-
-def test_semantic_bind_runtime_prompt_removes_producer_finalize(monkeypatch, tmp_path: Path) -> None:
-    prompt = tmp_path / "prompt.md"
-    method = tmp_path / "method.md"
-    prompt.write_text("然后执行：`acp run-action semantic_bind --finalize`", encoding="utf-8")
-    method.write_text(
-        "4. 执行 `acp run-action semantic_bind --finalize`（finalize 会应用补丁并校验）。",
-        encoding="utf-8",
-    )
-    monkeypatch.setattr(
-        actions._runtime,
-        "prepare_action",
-        lambda *_args, **_kwargs: {
-            "ok": True,
-            "action_id": "semantic_bind",
-            "prompt_path": prompt.as_posix(),
-            "method_path": method.as_posix(),
-        },
-    )
-
-    result = actions.prepare_action(tmp_path, "semantic_bind")
-    assert result["ok"] is True
-    assert "然后执行：`acp run-action semantic_bind --finalize`" not in prompt.read_text(encoding="utf-8")
-    assert "不得执行 finalize" in method.read_text(encoding="utf-8")
