@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """The manifest, the log protocol, and the engine not knowing an operator.
 
 The last of those is the point of P1 and the only one that can regress
@@ -18,17 +18,17 @@ from replay import manifest as M
 from replay import runner as R
 
 REPO = Path(__file__).resolve().parents[3]
-PACKAGES = REPO / "operators"
+FIXTURES = REPO / "tests" / "fixtures"
 
 
 @pytest.fixture(scope="module")
 def fag_manifest() -> M.OperatorManifest:
     return M.OperatorManifest.load(
-        PACKAGES / "flash_attention_score_grad" / "arch35" / "operator.yaml")
+        FIXTURES / "flash_attention_score_grad" / "arch35" / "operator.yaml")
 
 
 def write_manifest(tmp_path: Path, body: str, protocol: str = "") -> Path:
-    pkg = tmp_path / "operators" / "toy" / "arch1"
+    pkg = tmp_path / "tests" / "fixtures" / "toy" / "arch1"
     pkg.mkdir(parents=True)
     (pkg / "operator.yaml").write_text(body, encoding="utf-8")
     (pkg / "log_protocol.yaml").write_text(
@@ -93,10 +93,14 @@ def test_a_manifest_that_is_not_there_says_where_it_looked(tmp_path):
         M.OperatorManifest.load(tmp_path / "nowhere.yaml")
 
 
-def test_the_packages_present_are_discoverable():
-    found = M.available(REPO)
-
+def test_fixture_packages_are_listed_explicitly():
+    found = M.available_fixtures(REPO)
     assert ("flash_attention_score_grad", "arch35") in found
+    assert ("_synthetic_toy", "arch0") in found
+
+
+def test_pilot_checkout_does_not_auto_discover_packages():
+    assert M.available(REPO) == []
 
 
 # --- the log protocol ---------------------------------------------------
@@ -232,7 +236,14 @@ def test_a_case_the_driver_never_finished_is_still_reported(fag_manifest):
     assert not got["c9"].ok
 
 
-def test_the_wide_table_columns_come_from_the_protocol(fag_manifest):
+def test_the_wide_table_columns_come_from_the_protocol(fag_manifest, monkeypatch):
+    monkeypatch.setenv("UO_OPERATOR", "flash_attention_score_grad")
+    monkeypatch.setenv("UO_ARCH", "arch35")
+    from replay import inputs as I
+    from replay import package_data
+
+    package_data.clear_caches()
+    I.reload()
     runner = R.ReplayRunner(fag_manifest)
     runner._parsed["dims"] = ["A", "B"]
 
@@ -301,9 +312,13 @@ def test_the_default_runner_is_found_without_being_named(tmp_path):
 
 def test_several_packages_must_be_told_apart(tmp_path, monkeypatch):
     write_manifest(tmp_path, MINIMAL)
-    other = tmp_path / "operators" / "toy2" / "arch1"
+    other = tmp_path / "tests" / "fixtures" / "toy2" / "arch1"
     other.mkdir(parents=True)
-    (other / "operator.yaml").write_text(MINIMAL, encoding="utf-8")
+    body2 = MINIMAL.replace("name: toy,", "name: toy2,")
+    (other / "operator.yaml").write_text(body2, encoding="utf-8")
+    (other / "log_protocol.yaml").write_text(
+        "version: 1\nmarks: {}\n", encoding="utf-8"
+    )
     monkeypatch.delenv("UO_OPERATOR", raising=False)
     monkeypatch.delenv("UO_ARCH", raising=False)
 
@@ -319,8 +334,11 @@ def test_no_package_at_all_says_what_to_do(tmp_path, monkeypatch):
         R.manifest_path(tmp_path)
 
 
-def test_the_module_level_names_still_resolve():
+def test_the_module_level_names_still_resolve(monkeypatch):
     """Twenty-odd scripts read these; they must survive the manifest."""
+    monkeypatch.setenv("UO_OPERATOR", "flash_attention_score_grad")
+    monkeypatch.setenv("UO_ARCH", "arch35")
+    R.reset()
     assert isinstance(R.CACHE, Path)
     assert R.LOG_FIELDS[0] == "splitAxis"
     assert R.MANIFEST.arch == "arch35"

@@ -14,9 +14,6 @@ read_scopes:
 - runs/**/actions/resolve_gaps/**
 - runs/**/actions/resolve/**
 - skills/operator-analysis/**
-- skills/testcase-generation/**
-- skills/source-proof/**
-- skills/code-review/**
 - skills/_shared/**
 write_scopes:
 - uo/ir/resolve_gaps_staging.yaml

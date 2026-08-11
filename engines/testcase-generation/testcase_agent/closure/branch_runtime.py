@@ -178,15 +178,15 @@ def precheck(ws: W.Workspace | None = None) -> dict[str, Any]:
 
 
 def _load_decoder() -> tuple[Any | None, str]:
-    """Load optional operator ``tilingdata_decoder.py`` without engine priors."""
+    """Load optional tilingdata decoder (Local Extension or fixture package)."""
     try:
         from replay.package_data import package_file
 
         path = package_file("tilingdata_decoder.py")
     except Exception as exc:
-        return None, f"package_lookup_failed:{exc}"
+        return None, f"LOCAL_CAPABILITY_REQUIRED:interface=tilingdata_decoder:lookup:{exc}"
     if not path.is_file():
-        return None, "decoder_missing"
+        return None, "LOCAL_CAPABILITY_REQUIRED:interface=tilingdata_decoder:missing"
     name = "uo_operator_tilingdata_decoder"
     try:
         if name in sys.modules:

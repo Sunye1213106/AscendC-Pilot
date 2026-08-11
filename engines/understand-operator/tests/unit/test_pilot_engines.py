@@ -94,6 +94,7 @@ def test_scope_validate_blocks_when_probe_unclean(tmp_path: Path):
     scope.mkdir(parents=True)
     (scope / "candidates.yaml").write_text(
         "probe_clean: false\n"
+        "clang_scope_status: complete\n"
         "ambiguities: []\n"
         "op_name: X\n"
         "arch_dir: arch35\n"
@@ -110,11 +111,69 @@ def test_scope_validate_blocks_when_probe_unclean(tmp_path: Path):
     assert "clang_probe_unclean" in (out.get("blockers") or [])
 
 
+def test_scope_validate_blocks_when_clang_scope_incomplete(tmp_path: Path):
+    scope = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "runs" / "r1" / "scope"
+    scope.mkdir(parents=True)
+    (scope / "candidates.yaml").write_text(
+        "probe_clean: true\n"
+        "clang_scope_status: incomplete\n"
+        "ambiguities: []\n"
+        "op_name: X\n"
+        "arch_dir: arch35\n"
+        "arch_user_specified: true\n"
+        "host_targets:\n"
+        "  - a.cpp\n"
+        "kernel_entry: k.cpp\n",
+        encoding="utf-8",
+    )
+    out = scope_validate(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
+    assert out["ok"] is False
+    assert out.get("blocker") is True
+    assert out.get("need_human") is False
+    assert "SCOPE_CLANG_CLOSURE_INCOMPLETE" in (out.get("blockers") or [])
+    assert out.get("error") == "SCOPE_CLANG_CLOSURE_INCOMPLETE"
+
+
+def test_scope_validate_ignores_decision_yes_bypass(tmp_path: Path):
+    """decision=yes must not skip Clang / probe gates on the product path."""
+    scope = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "runs" / "r1" / "scope"
+    scope.mkdir(parents=True)
+    (scope / "candidates.yaml").write_text(
+        "probe_clean: false\n"
+        "clang_scope_status: incomplete\n"
+        "ambiguities: []\n"
+        "op_name: X\n"
+        "arch_dir: arch35\n"
+        "arch_user_specified: true\n"
+        "host_targets:\n"
+        "  - a.cpp\n"
+        "kernel_entry: k.cpp\n",
+        encoding="utf-8",
+    )
+    out = scope_validate(
+        tmp_path,
+        {
+            "run_id": "r1",
+            "arch_dir": "arch35",
+            "decision": "yes",
+            "force_confirm": True,
+            "force_validate": True,
+        },
+    )
+    assert out["ok"] is False
+    blockers = out.get("blockers") or []
+    assert "clang_probe_unclean" in blockers
+    assert "SCOPE_CLANG_CLOSURE_INCOMPLETE" in blockers
+
+
 def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
     scope = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "runs" / "r1" / "scope"
     scope.mkdir(parents=True)
     (scope / "candidates.yaml").write_text(
         "probe_clean: true\n"
+        "clang_scope_status: complete\n"
+        "clang_scope_tus_expected: 2\n"
+        "clang_scope_tus_parsed: 2\n"
         "ambiguities:\n"
         "  - 'host_targets_from_glob: fallback'\n"
         "op_name: X\n"
@@ -137,6 +196,7 @@ def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
     assert receipt["status"] == "confirmed"
     assert receipt["source"] == "machine"
     assert receipt["validated"] is True
+    assert receipt["clang_scope_status"] == "complete"
     assert (scope / "scope_confirmed.yaml").is_file()
 
 

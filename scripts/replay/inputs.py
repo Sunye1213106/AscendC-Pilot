@@ -45,9 +45,9 @@ _EXPORTS = (
 
 
 def _semantics_path() -> Path:
-    from .package_data import active_package_dir
+    from .package_data import package_file
 
-    return active_package_dir(_ROOT) / "input_semantics.py"
+    return package_file("input_semantics.py")
 
 
 def _load(path: Path | None = None) -> Any:
@@ -59,7 +59,9 @@ def _load(path: Path | None = None) -> Any:
         del sys.modules[_MOD_NAME]
     if not target.is_file():
         raise ImportError(
-            f"no input semantics at {target}; the operator package is incomplete"
+            "LOCAL_CAPABILITY_REQUIRED interface=case_builder "
+            f"detail=no input semantics at {target}; place implementation under "
+            "<op>/.ascendc-pilot/<arch>/local/case-builder/ or a tests/fixtures package"
         )
     spec = importlib.util.spec_from_file_location(_MOD_NAME, target)
     assert spec and spec.loader

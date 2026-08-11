@@ -1,0 +1,8 @@
+schema: ascendc-pilot-local-extension/v1
+interface: runtime_launcher
+version: 1
+description: >
+  Launches operator-specific replay/runtime entrypoints when the generic
+  launcher cannot resolve the driver.
+required_exports:
+  - launch

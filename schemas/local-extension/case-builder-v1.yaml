@@ -1,0 +1,13 @@
+schema: ascendc-pilot-local-extension/v1
+interface: case_builder
+version: 1
+description: >
+  Builds Host-callable testcases from target obligations when the generic
+  CaseBuilder cannot derive shapes/dtypes/optional tensors from UO alone.
+required_exports:
+  - construct_case
+  - SEMANTICS
+optional_exports:
+  - Case
+  - describe
+  - shapes

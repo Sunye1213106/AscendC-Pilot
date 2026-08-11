@@ -9,3 +9,4 @@
 - **unresolved 不可凭命名闭合**：相似度、匈牙利命名、注释猜测都不能把 unresolved 标成 resolved。
 - **只读边界**：uo-query 不得修改 `.uo`、不得写 gap patch、不得宣布 workflow PASS。
 - **缺视图时先物化**：`tg_host_view` / legal-key 视图缺失时，提示 `uo_init.dump --materialize-tg`，不要发明维度。
+- **回答缺 `path:line` 不合格**：只复述图节点 / 字段名、不给源码 `path:line`（或 `path:start-end`）→ 不合格。图命中带 span 时必须写入最终回答；无 span 标 `PARTIAL` / `UNKNOWN`，禁止编造行号。

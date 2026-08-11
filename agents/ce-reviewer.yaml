@@ -1,46 +1,21 @@
 id: ce-reviewer
-
 version: 1
-
 name_zh: Code review analyst
-
 role: readonly_reviewer
-
 mode: subagent
-
 description: Code review analyst. Read session prompt.md first, then skills/code-review/SKILL.md.
-
 read_scopes:
-
 - uo/**
-
 - ce/**
-
 - runs/**
-
 - context/**
-
-- skills/operator-analysis/**
-
-- skills/testcase-generation/**
-
-- skills/source-proof/**
-
 - skills/code-review/**
-
+- skills/operator-analysis/**
 - skills/_shared/**
-
 write_scopes:
-
 - ce/review/**
-
 - runs/**
-
 forbidden:
-
 - modify_pilot_state
-
 - declare_workflow_passed
-
 - write_outside_declared_scope
-

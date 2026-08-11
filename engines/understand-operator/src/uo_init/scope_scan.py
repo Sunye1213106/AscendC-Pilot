@@ -1,20 +1,11 @@
 # -*- coding: utf-8 -*-
 """Decide which files an operator's analysis is allowed to look at.
 
-Principle: the user chooses the analysis target (operator + arch); the
-compiler decides the source closure. Layout scan bootstraps entry TUs and a
-candidate shared pool; Clang's real include graph is the authority for what
-shared headers enter scope.
-
-    <op_dir>/op_api      user-facing contract: which inputs are refused
-    <op_dir>/op_graph    prototype: inputs, outputs, attributes
-    <op_dir>/op_host     tiling, definition, shape inference
-    <op_dir>/op_kernel   the kernel itself
-    <common>/**          what entry TUs actually include (Clang preferred)
-    CANN / system        classified EXTERNAL / SYSTEM, never analysis scope
-
-One architecture per run: `archNN` folders other than the requested one are
-dropped, since a run models one hardware generation.
+Principle: the user chooses the analysis target (operator + arch); Clang
+decides the authoritative source closure. Layout scan bootstraps owned files
+and entry TUs; regex include walking is diagnostic only. After
+``enrich_with_clang`` succeeds, SHARED files come solely from
+``tu.get_includes()`` — never a regex∪clang union.
 """
 from __future__ import annotations
 
@@ -494,7 +485,12 @@ def classify_path(
         "/usr/lib",
     ),
 ) -> str:
-    """Classify a Clang-reported path into OWNED / SHARED / EXTERNAL / SYSTEM."""
+    """Classify a Clang-reported path into OWNED / SHARED / EXTERNAL / SYSTEM.
+
+    SHARED is any project source under ``workspace_root`` that is not under the
+    operator directory (``common/``, sibling shared trees, etc.). Directory
+    name alone is not required — the compile graph is.
+    """
     text = str(path).replace("\\", "/")
     low = text.lower()
     if any(m in low for m in foreign_markers):
@@ -509,25 +505,46 @@ def classify_path(
     except ValueError:
         pass
     try:
-        rel = resolved.relative_to(workspace_root.resolve()).as_posix().lower()
+        resolved.relative_to(workspace_root.resolve())
+        return KIND_SHARED
     except ValueError:
         return KIND_SYSTEM
-    if rel.startswith("common/") or "/common/" in f"/{rel}":
-        return KIND_SHARED
-    # Other trees under the same domain workspace (sibling packages) stay out.
-    return KIND_SYSTEM
 
 
-def clang_include_paths(tu_path: str | Path, args: list[str]) -> list[Path]:
+@dataclass
+class ClangIncludeResult:
+    """Outcome of asking Clang for one TU's include graph."""
+
+    ok: bool
+    paths: list[Path] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class ClangEnrichment:
+    """Authoritative (or incomplete) Source Scope after Clang include closure."""
+
+    scope: ScopeSet
+    status: str  # complete | incomplete | skipped
+    tus_expected: int = 0
+    tus_parsed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def complete(self) -> bool:
+        return self.status == "complete"
+
+
+def clang_include_paths(tu_path: str | Path, args: list[str]) -> ClangIncludeResult:
     """Files Clang actually included while parsing ``tu_path``.
 
-    Requires ``PARSE_DETAILED_PROCESSING_RECORD``. Returns [] when libclang is
-    unavailable or the TU cannot be parsed — callers keep the regex bootstrap.
+    Requires ``PARSE_DETAILED_PROCESSING_RECORD``. Distinguishes parse failure
+    from a successful parse that simply pulled no project headers.
     """
     try:
         from clang import cindex
     except ImportError:
-        return []
+        return ClangIncludeResult(ok=False, error="libclang_not_installed")
     try:
         idx = cindex.Index.create()
         tu = idx.parse(
@@ -535,14 +552,19 @@ def clang_include_paths(tu_path: str | Path, args: list[str]) -> list[Path]:
             args=list(args),
             options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
         )
-    except Exception:  # noqa: BLE001 — enrichment must never block prepare
-        return []
+    except Exception as exc:  # noqa: BLE001
+        return ClangIncludeResult(
+            ok=False, error=f"clang_parse_failed:{Path(tu_path).name}:{str(exc)[:160]}"
+        )
     out: list[Path] = []
     seen: set[str] = set()
     try:
         inclusions = tu.get_includes()
-    except Exception:  # noqa: BLE001
-        return []
+    except Exception as exc:  # noqa: BLE001
+        return ClangIncludeResult(
+            ok=False,
+            error=f"clang_get_includes_failed:{Path(tu_path).name}:{str(exc)[:160]}",
+        )
     for inc in inclusions:
         try:
             included = inc.include
@@ -558,7 +580,7 @@ def clang_include_paths(tu_path: str | Path, args: list[str]) -> list[Path]:
             continue
         seen.add(key)
         out.append(Path(name))
-    return out
+    return ClangIncludeResult(ok=True, paths=out)
 
 
 def enrich_with_clang(
@@ -568,19 +590,16 @@ def enrich_with_clang(
     kernel_args: list[str] | None = None,
     host_tus: Iterable[Path] | None = None,
     kernel_tu: Path | None = None,
-) -> ScopeSet:
-    """Merge Clang's real include closure into a layout/regex ScopeSet.
+) -> ClangEnrichment:
+    """Replace regex shared closure with Clang's authoritative include closure.
 
-    Only OWNED and SHARED paths are added. EXTERNAL / SYSTEM includes are
-    recorded in notes for diagnostics but never become analysis scope.
-    Regex-discovered shared files remain; Clang may add more that macros /
-    conditional includes made reachable.
+    Owned layout files are kept. Regex-discovered SHARED files are dropped and
+    rebuilt only from ``tu.get_includes()``. Status is ``complete`` only when
+    every entry TU parses successfully — callers must treat incomplete as a
+    blocker, not a silent fallback to regex.
     """
     notes = list(scope.notes)
-    index = {_key(f.path): f for f in scope.files}
-    added = 0
-    external_hits = 0
-
+    owned = [f for f in scope.files if not f.shared]
     jobs: list[tuple[Path, list[str], str]] = []
     for path in host_tus or ():
         if path is not None and Path(path).is_file():
@@ -590,16 +609,37 @@ def enrich_with_clang(
 
     if not jobs:
         notes.append("clang_enrichment_skipped: no_entry_tus")
-        scope.notes = notes
-        return scope
+        owned_scope = ScopeSet(
+            op_dir=scope.op_dir,
+            workspace_root=scope.workspace_root,
+            arch_dir=scope.arch_dir,
+            files=sorted(owned, key=lambda f: f.path.as_posix()),
+            notes=notes,
+        )
+        return ClangEnrichment(
+            scope=owned_scope,
+            status="skipped",
+            tus_expected=0,
+            tus_parsed=0,
+            errors=["no_entry_tus"],
+        )
+
+    index = {_key(f.path): f for f in owned}
+    added = 0
+    external_hits = 0
+    parsed = 0
+    errors: list[str] = []
 
     for tu_path, args, side in jobs:
-        includes = clang_include_paths(tu_path, args)
-        if not includes:
-            notes.append(f"clang_includes_empty: {tu_path.name}")
+        result = clang_include_paths(tu_path, args)
+        if not result.ok:
+            err = result.error or f"clang_includes_failed:{tu_path.name}"
+            errors.append(err)
+            notes.append(err)
             continue
-        notes.append(f"clang_includes={len(includes)} from {tu_path.name}")
-        for inc in includes:
+        parsed += 1
+        notes.append(f"clang_includes={len(result.paths)} from {tu_path.name}")
+        for inc in result.paths:
             kind = classify_path(
                 inc, op_dir=scope.op_dir, workspace_root=scope.workspace_root
             )
@@ -608,16 +648,25 @@ def enrich_with_clang(
                 continue
             key = _key(inc)
             if key in index:
-                # Prefer clang provenance when both saw the file.
                 prev = index[key]
-                if prev.provenance != "clang_include":
+                if prev.shared or kind == KIND_SHARED:
                     index[key] = ScopeFile(
                         path=prev.path,
                         role=prev.role,
                         side=prev.side,
                         is_tu=prev.is_tu,
-                        shared=prev.shared or kind == KIND_SHARED,
-                        kind=KIND_SHARED if (prev.shared or kind == KIND_SHARED) else prev.kind,
+                        shared=True,
+                        kind=KIND_SHARED,
+                        provenance="clang_include",
+                    )
+                elif prev.provenance != "clang_include":
+                    index[key] = ScopeFile(
+                        path=prev.path,
+                        role=prev.role,
+                        side=prev.side,
+                        is_tu=prev.is_tu,
+                        shared=False,
+                        kind=KIND_OWNED,
                         provenance="clang_include",
                     )
                 continue
@@ -637,12 +686,24 @@ def enrich_with_clang(
             )
             added += 1
 
-    notes.append(f"clang_shared_added={added} clang_external_seen={external_hits}")
+    status = "complete" if parsed == len(jobs) and not errors else "incomplete"
+    notes.append(
+        f"clang_scope_status={status} tus_parsed={parsed}/{len(jobs)} "
+        f"clang_shared_added={added} clang_external_seen={external_hits} "
+        f"regex_shared_replaced=1"
+    )
     files = sorted(index.values(), key=lambda f: f.path.as_posix())
-    return ScopeSet(
+    out_scope = ScopeSet(
         op_dir=scope.op_dir,
         workspace_root=scope.workspace_root,
         arch_dir=scope.arch_dir,
         files=files,
         notes=notes,
+    )
+    return ClangEnrichment(
+        scope=out_scope,
+        status=status,
+        tus_expected=len(jobs),
+        tus_parsed=parsed,
+        errors=errors,
     )

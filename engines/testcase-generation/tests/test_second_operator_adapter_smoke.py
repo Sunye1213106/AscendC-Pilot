@@ -32,7 +32,6 @@ def toy_env(monkeypatch):
     monkeypatch.delenv("UO_ARCH", raising=False)
     package_data.clear_caches()
     R._default = None
-    I.reload()
 
 
 def test_inputs_loader_not_hardcoded_to_fag():
@@ -77,38 +76,20 @@ def test_second_operator_adapter_smoke(toy_env):
 
 
 def test_closure_tables_loaded_from_operator_package():
-    """FAG cold-start: adapter pack YAML is absent → empty dicts, not hard fail."""
+    """Cold-start without operator env: adapter YAML → empty dicts, not hard fail."""
     os.environ.pop("UO_OPERATOR", None)
     os.environ.pop("UO_ARCH", None)
-    from replay import inputs as I
+    os.environ.pop("ASCENDC_PROJECT_ROOT", None)
+    os.environ.pop("UO_OP_DIR", None)
     from replay import package_data
     from replay import runner as R
 
     package_data.clear_caches()
     R._default = None
-    I.reload()
 
     construct = package_data.load_yaml("construction_hints.yaml", refresh=True)
     search = package_data.load_yaml("search_hints.yaml", refresh=True)
     features = package_data.load_yaml("feature_bindings.yaml", refresh=True)
-    assert isinstance(construct, dict)
-    assert isinstance(search, dict)
-    assert isinstance(features, dict)
-    # Priors purged: empty until export_adapter_pack. If a local pack exists,
-    # keep a weak shape check rather than golden FAG tables.
-    if construct:
-        assert "d_for" in construct or "defaults" in construct or "loops" in construct
-    if search:
-        assert "sampling_grid" in search or "nearest_knobs" in search
-    if features.get("static_parents"):
-        from testcase_agent.closure import features as F
-
-        status = F.static_parent_status("DeterType")
-        parents = F.static_parents(
-            "DeterType", ["deterministic", "layout", "dtype"]
-        )
-        if status == "present":
-            assert "deterministic" in parents
-        else:
-            # missing / explicit_empty must not pretend static == all features
-            assert parents == []
+    assert construct == {}
+    assert search == {}
+    assert features == {}

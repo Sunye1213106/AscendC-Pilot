@@ -292,7 +292,8 @@ AscendC-Pilot/
 ├── adapters/hosts/             # OpenCode / Cursor / Codex overlays
 ├── prompts/                    # Task Prompt
 ├── agents/                     # Agent Role
-├── operators/                  # 算子运行配置
+├── schemas/                    # UO / TG / Local Extension schemas
+├── tests/fixtures/             # synthetic / archived test packages only
 ├── opencode-plugin/            # OpenCode Adapter
 ├── scripts/                    # compose / 检查 / 开发工具
 ├── docs/                       # 设计文档
@@ -328,6 +329,7 @@ AscendC-Pilot 控制面。
 - CLI
 - Policies（`pilot/policies/`）
 - Runtime capabilities（`pilot/runtime/`）
+- OperatorWorkspace / Local Extension 加载
 
 ### `tools/`
 
@@ -357,23 +359,23 @@ CE 核心实现。
 
 ### `agents/`
 
-不同 Agent 的角色和职责定义。
+不同 Agent 的角色和职责定义（仅 LLM 执行者）。
 
-### `operators/`
+### 算子知识与 Local Extension
 
-保存无法从源码自动获得、但运行测试时需要的少量算子配置。
-
-当前推荐结构：
+Pilot 源码**不**保存任何具体算子知识。运行产物与本地补充能力一律在算子目录：
 
 ```text
-operators/<op>/<arch>/
-├── operator.yaml
-├── log_protocol.yaml
-├── input_semantics.py
-└── tilingdata_decoder.py        # 可选；L3 raw TD runtime decoder
+<operator-root>/.ascendc-pilot/<arch>/
+├── uo/                 # canonical .uo + projections
+├── tg/
+├── local/              # Local Extension（case-builder / tilingdata-decoder / …）
+├── context/
+├── runs/
+└── config.local.yaml
 ```
 
-`tilingdata_decoder.py` 是 operator-side adapter，不允许把算子结构/offset 特化写进通用 TG engine。对于 FAG arch35，decoder 从当前算子源码和 BuildContext 动态推导 TilingData ABI，而不是持久化一份手写 offset 表。
+测试用 synthetic / 归档 adapter 仅在 `tests/fixtures/`。
 
 ### `scripts/`
 
@@ -381,6 +383,7 @@ operators/<op>/<arch>/
 
 - Runtime 生成
 - Contract Check
+- Operator independence lint
 - Acceptance Test
 - 开发辅助脚本
 

@@ -15,6 +15,8 @@ MEMORY_SUBDIR = "memory"
 RUNS_SUBDIR = "runs"
 CONTEXT_SUBDIR = "context"
 STATE_SUBDIR = "state"
+LOCAL_SUBDIR = "local"
+CACHE_SUBDIR = "cache"
 
 #: Env vars that may name the operator source root (project / op_src).
 PROJECT_ENV_VARS = ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR")

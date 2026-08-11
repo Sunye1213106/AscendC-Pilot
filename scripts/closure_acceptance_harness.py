@@ -266,6 +266,12 @@ def _prepare_env(root: Path, state: Path) -> None:
     os.environ["ASCENDC_PROJECT_ROOT"] = str(root)
     os.environ["UO_OP_DIR"] = str(root)
     os.environ["TG_CLOSURE_STATE"] = str(state)
+    # Package-side input_semantics / log_protocol live in test fixtures,
+    # not under the ephemeral operator root.
+    repo = Path(__file__).resolve().parents[1]
+    fixture_pkg = repo / "tests" / "fixtures" / "_synthetic_toy" / "arch0"
+    if fixture_pkg.is_dir():
+        os.environ["UO_PACKAGE_DIR"] = str(fixture_pkg)
 
 
 def _fresh_workspace(root: Path | None):

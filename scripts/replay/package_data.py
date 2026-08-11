@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Load operator-package YAML data without hardcoding one operator's path.
+"""Resolve operator-local data without a Pilot ``operators/`` tree.
 
-Closure / obligations / inputs all ask "what does the active package say?"
-through this module so a second operator only adds files under operators/.
+Authority order:
+1. ``ASCENDC_PROJECT_ROOT`` / ``UO_OP_DIR`` → ``.ascendc-pilot/<arch>/``
+   (adapter pack, local extensions, optional ``_compat_package``)
+2. Explicit ``UO_PACKAGE_DIR``
+3. Test fixtures under ``tests/fixtures/`` (synthetic / archived adapters)
+
+Production code must never import AscendC-Pilot ``operators.*``.
 """
 
 from __future__ import annotations
@@ -21,8 +26,22 @@ def repo_root() -> Path:
     return _ROOT
 
 
+def _arch_name() -> str:
+    return (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+
+
+def _operator_project_root() -> Path | None:
+    for env in ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR"):
+        raw = (os.environ.get(env) or "").strip()
+        if raw:
+            p = Path(raw).expanduser().resolve()
+            if p.is_dir():
+                return p
+    return None
+
+
 def active_operator_arch() -> tuple[str, str]:
-    """(operator, arch) from env — no silent FAG default."""
+    """(operator, arch) from env — no silent operator default."""
     op = (os.environ.get("UO_OPERATOR") or "").strip()
     arch = (os.environ.get("UO_ARCH") or "").strip()
     if op and arch:
@@ -31,34 +50,79 @@ def active_operator_arch() -> tuple[str, str]:
         raise ValueError("UO_OPERATOR set but UO_ARCH missing")
     if arch and not op:
         raise ValueError("UO_ARCH set but UO_OPERATOR missing")
-    # Fall through: try runner.default() single-package discovery.
-    try:
-        from .runner import default, available
+    raise ValueError(
+        "UO_OPERATOR and UO_ARCH must be set (or ASCENDC_PROJECT_ROOT with "
+        "local package); Pilot never auto-selects an operator identity"
+    )
 
-        pkgs = available()
-        if len(pkgs) == 1:
-            man = default().manifest
-            return man.name, man.arch
-        if len(pkgs) == 0:
-            raise ValueError("no operator packages under operators/")
-        raise ValueError(
-            "multiple operator packages found; set UO_OPERATOR and UO_ARCH "
-            f"(have: {[p.name for p in pkgs]})"
-        )
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(
-            "UO_OPERATOR/UO_ARCH unset and operator package discovery failed"
-        ) from exc
+
+def _fixture_package_dir(root: Path, op: str, arch: str) -> Path | None:
+    cand = root / "tests" / "fixtures" / op / arch
+    if cand.is_dir():
+        return cand
+    return None
+
+
+def _compat_package_dir(op_root: Path, arch: str) -> Path | None:
+    """Optional migration shim: ``.ascendc-pilot/<arch>/local/_compat_package``."""
+    try:
+        from ascendc_pilot.paths import artifact_root, LOCAL_SUBDIR
+
+        base = artifact_root(op_root, arch, allow_pilot_checkout=True)
+    except Exception:
+        base = op_root / ".ascendc-pilot" / arch
+    cand = base / "local" / "_compat_package"
+    if cand.is_dir():
+        return cand
+    # Also accept flat local package files next to extensions (legacy dump).
+    flat = base / "local"
+    if (flat / "operator.yaml").is_file() or (flat / "input_semantics.py").is_file():
+        return flat
+    return None
 
 
 def active_package_dir(root: Path | None = None) -> Path:
-    """Directory containing operator.yaml for the active operator."""
+    """Directory holding package-side YAML / Python for the active operator.
+
+    Prefer operator-local ``.ascendc-pilot`` trees; fall back to test fixtures.
+    Never requires AscendC-Pilot ``operators/``.
+    """
     base = root or _ROOT
+    override = (os.environ.get("UO_PACKAGE_DIR") or "").strip()
+    if override:
+        path = Path(override).expanduser().resolve()
+        if path.is_dir():
+            return path
+
+    op_proj = _operator_project_root()
+    if op_proj is not None:
+        arch = _arch_name()
+        if os.environ.get("UO_OPERATOR") or os.environ.get("UO_ARCH"):
+            try:
+                _, arch = active_operator_arch()
+            except ValueError:
+                pass
+        compat = _compat_package_dir(op_proj, arch)
+        if compat is not None:
+            return compat
+        # No compat package: still return local root so callers can look for
+        # extension implementations via LocalExtensionRegistry.
+        try:
+            from ascendc_pilot.workspace import OperatorWorkspace
+
+            ws = OperatorWorkspace.resolve(
+                op_proj, arch=arch, allow_pilot_checkout=True
+            )
+            return ws.local_root
+        except Exception:
+            return op_proj / ".ascendc-pilot" / arch / "local"
+
     if os.environ.get("UO_OPERATOR") or os.environ.get("UO_ARCH"):
         op, arch = active_operator_arch()
-        return base / "operators" / op / arch
+        fixture = _fixture_package_dir(base, op, arch)
+        if fixture is not None:
+            return fixture
+
     try:
         from .runner import default
 
@@ -67,28 +131,66 @@ def active_package_dir(root: Path | None = None) -> Path:
             return Path(pkg)
     except Exception:
         pass
-    op, arch = active_operator_arch()
-    return base / "operators" / op / arch
+
+    raise ValueError(
+        "UO_OPERATOR and UO_ARCH must be set (or ASCENDC_PROJECT_ROOT with "
+        "local package); Pilot never auto-selects an operator identity"
+    )
 
 
 def package_file(name: str, *, root: Path | None = None) -> Path:
-    return active_package_dir(root) / name
+    """Resolve a package-side file, including Local Extension implementations."""
+    base = active_package_dir(root)
+    direct = base / name
+    if direct.is_file():
+        return direct
 
+    # Map legacy filenames → Local Extension layout.
+    ext_map = {
+        "input_semantics.py": ("case_builder", "implementation.py"),
+        "tilingdata_decoder.py": ("tilingdata_decoder", "implementation.py"),
+        "log_protocol.yaml": ("replay_parser", "log_protocol.yaml"),
+    }
+    if name in ext_map:
+        interface, filename = ext_map[name]
+        # When base is already local/, look for interface subdir.
+        kebab = {
+            "case_builder": "case-builder",
+            "tilingdata_decoder": "tilingdata-decoder",
+            "replay_parser": "replay-parser",
+        }[interface]
+        cand = base / kebab / filename
+        if cand.is_file():
+            return cand
+        # When ASCENDC_PROJECT_ROOT points at op root, registry path:
+        op_proj = _operator_project_root()
+        if op_proj is not None:
+            try:
+                from ascendc_pilot.local_extension import LocalExtensionRegistry
 
-def _arch_name() -> str:
-    return (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+                reg = LocalExtensionRegistry.from_operator_root(
+                    op_proj, arch=_arch_name()
+                )
+                ext = reg.discover(interface)
+                if ext is not None:
+                    if name.endswith(".py"):
+                        return ext.implementation
+                    alt = ext.root / filename
+                    if alt.is_file():
+                        return alt
+            except Exception:
+                pass
+    return direct
 
 
 def adapter_pack_dir(root: Path | None = None) -> Path | None:
-    """Prefer ``<op>/.ascendc-pilot/<arch>/uo/adapter`` when present.
-
-    ``export_adapter_pack`` writes adapter YAML here so ``operators/`` stays
-    limited to identity + log_protocol + input_semantics. Legacy
-    ``tg/adapter`` is still accepted if present.
-    """
+    """Prefer ``<op>/.ascendc-pilot/<arch>/uo/adapter`` when present."""
     bases: list[Path] = []
     if root is not None:
         bases.append(Path(root))
+    op_proj = _operator_project_root()
+    if op_proj is not None:
+        bases.insert(0, op_proj)
     for env in ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR"):
         raw = (os.environ.get(env) or "").strip()
         if raw:
@@ -115,13 +217,16 @@ def adapter_pack_dir(root: Path | None = None) -> Path | None:
 
 
 def resolve_adapter_file(name: str, *, root: Path | None = None) -> Path | None:
-    """Locate an adapter YAML: ``uo/adapter/`` first, then operator package."""
+    """Locate an adapter YAML: ``uo/adapter/`` first, then package / fixture."""
     adapter = adapter_pack_dir(root)
     if adapter is not None:
         path = adapter / name
         if path.is_file():
             return path
-    path = package_file(name, root=root)
+    try:
+        path = package_file(name, root=root)
+    except ValueError:
+        return None
     return path if path.is_file() else None
 
 
@@ -135,12 +240,7 @@ def _load_yaml_cached(name: str) -> dict[str, Any]:
 
 
 def load_yaml(name: str, *, refresh: bool = False) -> dict[str, Any]:
-    """Read adapter YAML (uo/adapter first, then operators package).
-
-    ``refresh`` must not participate in the cache key: the resolved path
-    depends on ambient env (``ASCENDC_PROJECT_ROOT`` / ``UO_OPERATOR``), so a
-    cached ``refresh=True`` entry would keep serving another operator's pack.
-    """
+    """Read adapter YAML (uo/adapter first, then package / fixture)."""
     if refresh:
         _load_yaml_cached.cache_clear()
     return _load_yaml_cached(name)

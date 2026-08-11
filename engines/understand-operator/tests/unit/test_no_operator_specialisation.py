@@ -27,7 +27,8 @@ from uo_init import paths
 #: The analysis engine was the original scope; the closure ledger, the replay
 #: driver and the control plane make the same promise and were unguarded, which
 #: is how a per-operator alias survived in the replay adapter.
-#: ``operators/`` is deliberately absent: that is where specialisation belongs.
+#: Specialisation belongs only under the analysed operator's
+#: ``.ascendc-pilot/<arch>/local/`` (Local Extension), never in UO/TG engines.
 PRODUCT_DIRS = (
     Path("engines/understand-operator/src/uo_init"),
     Path("engines/testcase-generation/testcase_agent"),

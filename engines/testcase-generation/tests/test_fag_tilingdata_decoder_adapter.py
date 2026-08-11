@@ -8,7 +8,7 @@ from pathlib import Path
 
 def _module():
     repo = Path(__file__).resolve().parents[3]
-    path = repo / "operators" / "flash_attention_score_grad" / "arch35" / "tilingdata_decoder.py"
+    path = repo / "tests" / "fixtures" / "flash_attention_score_grad" / "arch35" / "tilingdata_decoder.py"
     spec = importlib.util.spec_from_file_location("test_fag_tilingdata_decoder", path)
     assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)

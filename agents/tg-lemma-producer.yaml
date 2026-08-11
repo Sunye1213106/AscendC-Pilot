@@ -11,13 +11,11 @@ read_scopes:
 - ../uo/**
 - uo/ir/**
 - uo/tiling/**
-- operators/**
 - runs/**
 - context/**
-- skills/operator-analysis/**
 - skills/testcase-generation/**
 - skills/source-proof/**
-- skills/code-review/**
+- skills/operator-analysis/**
 - skills/_shared/**
 write_scopes:
 - runs/**/actions/lemma_mine/parts/**

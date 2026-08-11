@@ -23,7 +23,6 @@ rm -rf \
   "$REPO/.probe_cache" \
   "$OP/.ascendc-pilot" \
   "$OP/.probe_cache" \
-  "$REPO/operators/flash_attention_score_grad/.ascendc-pilot" \
   2>/dev/null || true
 # also clear any leftover nested uo under repo accidental paths
 find "$REPO" "$OP" -maxdepth 3 -type d -name '.ascendc-pilot' -print -exec rm -rf {} + 2>/dev/null || true

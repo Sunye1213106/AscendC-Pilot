@@ -96,7 +96,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
     },
     "tg-solve": {
         "solve_precheck": {"read": ["../uo/*.uo", "tg/init/**", "tg/plan/**", "tg/snapshot/**"], "write": []},
-        "oracle_probe": {"read": ["../uo/*.uo", "tg/init/**", "operators/**"], "write": ["tg/closure/oracle_probe.yaml"]},
+        "oracle_probe": {"read": ["../uo/*.uo", "tg/init/**", "local/**"], "write": ["tg/closure/oracle_probe.yaml"]},
         "closure_ledger": {
             "read": ["../uo/*.uo", "tg/closure/**"],
             "write": ["tg/closure/R.txt", "tg/closure/open.txt", "tg/closure/excluded.txt", "tg/closure/excluded_why.csv"],
@@ -120,7 +120,7 @@ _TG_ACTION_IO: dict[str, dict[str, dict[str, list[str]]]] = {
         },
         "lemma_review": {"read": ["../uo/*.uo", "runs/**/actions/lemma_mine/**", "runs/**/actions/lemma_verify/**", "tg/closure/lemmas/**"], "write": ["runs/{run_id}/actions/lemma_review/review.yaml"]},
         "lemma_apply": {
-            "read": ["runs/**/actions/lemma_review/review.yaml", "tg/closure/lemmas/**", "operators/**/proof_rules.yaml"],
+            "read": ["runs/**/actions/lemma_review/review.yaml", "tg/closure/lemmas/**", "local/**"],
             "write": ["tg/closure/excluded.txt", "tg/closure/excluded_why.csv", "tg/closure/open.txt", "tg/closure/lemmas/active_rules.yaml", "tg/closure/lemmas/revoked_rules.yaml", "tg/closure/lemmas/reviews.yaml"],
         },
         "lemma_loop": {

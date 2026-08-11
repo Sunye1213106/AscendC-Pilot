@@ -245,33 +245,74 @@ def test_classify_path_separates_owned_shared_external(domain: Path) -> None:
     )
 
 
-def test_enrich_with_clang_merges_shared_without_external(domain: Path) -> None:
-    """When Clang reports includes, SHARED joins scope; EXTERNAL stays out."""
+def test_enrich_with_clang_replaces_regex_shared(domain: Path) -> None:
+    """Clang shared closure replaces regex shared — it is not a union."""
     scope = ss.scan(domain, arch_dir="arch35")
-    before = len(scope.files)
+    regex_shared = {f.path.name for f in scope.files if f.shared}
+    assert "mask.h" in regex_shared
+    assert "buffer.h" in regex_shared
+
     extra_shared = domain.parent / "common" / "op_kernel" / "arch35" / "extra_clang.h"
     extra_shared.parent.mkdir(parents=True, exist_ok=True)
     extra_shared.write_text("// clang-only\n", encoding="utf-8")
     external = Path("/opt/cann-asc-devkit/include/ghost.h")
 
     def _fake_includes(tu_path, args):
-        return [extra_shared, external]
+        return ss.ClangIncludeResult(ok=True, paths=[extra_shared, external])
 
     old = ss.clang_include_paths
     ss.clang_include_paths = _fake_includes  # type: ignore[assignment]
     try:
-        enriched = ss.enrich_with_clang(
+        enrichment = ss.enrich_with_clang(
             scope,
             host_args=[],
             kernel_args=[],
-            host_tus=scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True)[:1],
+            host_tus=scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True),
             kernel_tu=None,
         )
     finally:
         ss.clang_include_paths = old  # type: ignore[assignment]
 
-    assert len(enriched.files) == before + 1
-    hit = next(f for f in enriched.files if f.path.name == "extra_clang.h")
-    assert hit.shared and hit.kind == ss.KIND_SHARED
+    assert enrichment.complete
+    assert enrichment.tus_parsed == enrichment.tus_expected
+    shared_names = {f.path.name for f in enrichment.scope.files if f.shared}
+    assert shared_names == {"extra_clang.h"}
+    assert "mask.h" not in shared_names
+    assert "buffer.h" not in shared_names
+    hit = next(f for f in enrichment.scope.files if f.path.name == "extra_clang.h")
     assert hit.provenance == "clang_include"
-    assert not any("cann-asc-devkit" in f.path.as_posix() for f in enriched.files)
+    assert not any("cann-asc-devkit" in f.path.as_posix() for f in enrichment.scope.files)
+
+
+def test_enrich_with_clang_incomplete_when_parse_fails(domain: Path) -> None:
+    scope = ss.scan(domain, arch_dir="arch35")
+
+    def _fail(tu_path, args):
+        return ss.ClangIncludeResult(ok=False, error=f"clang_parse_failed:{Path(tu_path).name}")
+
+    old = ss.clang_include_paths
+    ss.clang_include_paths = _fail  # type: ignore[assignment]
+    try:
+        enrichment = ss.enrich_with_clang(
+            scope,
+            host_args=[],
+            host_tus=scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True)[:1],
+        )
+    finally:
+        ss.clang_include_paths = old  # type: ignore[assignment]
+
+    assert not enrichment.complete
+    assert enrichment.status == "incomplete"
+    assert enrichment.tus_parsed == 0
+    assert not any(f.shared for f in enrichment.scope.files)
+
+
+def test_classify_path_marks_workspace_non_owned_as_shared(domain: Path) -> None:
+    scope = ss.scan(domain, arch_dir="arch35")
+    other = scope.workspace_root / "shared" / "util.h"
+    other.parent.mkdir(parents=True, exist_ok=True)
+    other.write_text("//\n", encoding="utf-8")
+    assert (
+        ss.classify_path(other, op_dir=scope.op_dir, workspace_root=scope.workspace_root)
+        == ss.KIND_SHARED
+    )

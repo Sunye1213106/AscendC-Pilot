@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Export TG adapter pack YAML from UO host_derivation / KB.
 
-Writes under ``.ascendc-pilot/<arch>/uo/adapter/`` by default so
-``operators/<op>/<arch>/`` stays limited to identity + log_protocol +
-input_semantics (and stays inside the uo-init write root). TG loaders
-prefer the adapter dir, then the package dir.
+Writes under ``.ascendc-pilot/<arch>/uo/adapter/`` by default.
+Missing runtime capabilities use Local Extension under
+``.ascendc-pilot/<arch>/local/`` — never AscendC-Pilot source.
+TG loaders prefer the adapter dir, then local package / fixtures.
 """
 from __future__ import annotations
 

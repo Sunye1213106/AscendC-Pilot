@@ -117,7 +117,6 @@ CAPABILITY_DIRS: dict[str, str] = {
     "bounded-semantic-batch": "pilot/runtime/bounded-semantic-batch",
     "sharded-llm-producer": "pilot/runtime/sharded-llm-producer",
     "sharded-semantic-producer": "pilot/runtime/sharded-semantic-producer",
-    "semantic-resolution": "pilot/runtime/semantic-resolution",
     "producer-self-check": "pilot/gates/producer-self-check",
     "contract-building": "pilot/gates/contract-building",
 }
@@ -926,7 +925,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                 shutil.copytree(csrc, cdst)
         compiled.append(f"{host}/skills/{wid}")
 
-    # Cognitive skills + shared references
+    # Cognitive skills + shared references (internal: not top-level model routing)
     for skill_id in COGNITIVE_SKILL_IDS:
         src = skills / skill_id
         if not (src / "SKILL.md").is_file():
@@ -935,6 +934,20 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns("README.md"))
+        skill_md = dst / "SKILL.md"
+        text = skill_md.read_text(encoding="utf-8")
+        meta, body = _require_skill_frontmatter(text, path=skill_md)
+        # Workflow entries are model-invokable; cognitive skills are loaded by agents.
+        if host != "opencode":
+            meta["disable-model-invocation"] = True
+        else:
+            # OpenCode: keep discoverable but mark via description prefix if needed;
+            # host does not honor disable-model-invocation — rely on workflow entries.
+            meta.pop("disable-model-invocation", None)
+        per = (host_meta.get("skills") or {}).get(skill_id) or {}
+        if isinstance(per, dict):
+            meta.update(per)
+        skill_md.write_text(_dump_frontmatter(meta) + "\n" + body.lstrip("\n"), encoding="utf-8")
         compiled.append(f"{host}/skills/{skill_id}")
     shared_src = skills / "_shared"
     if shared_src.is_dir():

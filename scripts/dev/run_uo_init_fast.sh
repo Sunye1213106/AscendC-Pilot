@@ -28,7 +28,6 @@ rm -rf \
   "$REPO/.probe_cache" \
   "$OP/.ascendc-pilot" \
   "$OP/.probe_cache" \
-  "$REPO/operators/flash_attention_score_grad/.ascendc-pilot" \
   "$REPO/engines/testcase-generation/.ascendc-pilot" \
   "$REPO/engines/understand-operator/.ascendc-pilot" \
   2>/dev/null || true

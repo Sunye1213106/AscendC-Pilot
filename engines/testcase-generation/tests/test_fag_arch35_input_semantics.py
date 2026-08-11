@@ -1,6 +1,31 @@
 from __future__ import annotations
 
-from operators.flash_attention_score_grad.arch35 import input_semantics as fag
+import importlib.util
+from pathlib import Path
+
+
+def _load_fag():
+    import sys
+
+    repo = Path(__file__).resolve().parents[3]
+    path = (
+        repo
+        / "tests"
+        / "fixtures"
+        / "flash_attention_score_grad"
+        / "arch35"
+        / "input_semantics.py"
+    )
+    name = "fixture_fag_input_semantics"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+fag = _load_fag()
 
 
 def _target(**overrides: str) -> dict[str, str]:

@@ -13,9 +13,6 @@ read_scopes:
 - context/**
 - memory/**
 - skills/operator-analysis/**
-- skills/testcase-generation/**
-- skills/source-proof/**
-- skills/code-review/**
 - skills/_shared/**
 write_scopes:
 - runs/**

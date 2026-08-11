@@ -31,7 +31,7 @@ prepare_layout → scope_scan → scope_validate
 
 要点：
 
-- **范围原则**：用户决定分析目标；Clang include closure 决定源码范围。无人工文件清单确认；硬失败记 blocker。
+- **范围原则**：用户决定分析目标；Clang include closure 决定权威 Source Scope（regex 仅 bootstrap，成功后替换而非 union）。无人工文件清单确认；`clang_scope_status!=complete` 或探针失败记 blocker。禁止 `decision=yes` 绕过编译验证（测试仅 `UO_TEST_ALLOW_UNVERIFIED_SCOPE=1`）。
 - **静态主路径**：libclang HostIR、`kernel_ir`（`if constexpr`）、`tiling_data_ir`、派生 `host_derivation`。
 - **Z3 默认关闭**：`UO_DEEP_SOLVE` 未设时 materialize 走 `deep_solve_off`。
 - **产物目录**：工作区仍可在 `<op>/.ascendc-pilot/<arch>/uo/`；**正式权威产物**为 `<op>/.ascendc-pilot/uo/<op>.<arch>.uo`（统一 CodeMap SQLite，`meta.authority=uo`）。旧 `indexes/kb_graph.sqlite` / YAML 投影由 `uo-dump` 临时展开，不再作为产品面。
@@ -59,13 +59,16 @@ CLI：`tg-closure`（`python -m testcase_agent.closure.cli`）。
 
 Pilot 工作流 `tg-solve`（mode `tilingkey_full_coverage`）把上述步骤编排进 `acp` 阶段机；领域证据纪律见 `skills/testcase-generation` 与 `skills/source-proof`。
 
-算子侧冷启动契约（目标）：`operators/<op>/<arch>/` 仅保留
+算子侧冷启动契约：Pilot 源码不保存算子 package。运行时只看：
 
-- `operator.yaml`
-- `log_protocol.yaml`
-- `input_semantics.py`
+```text
+<operator-root>/.ascendc-pilot/<arch>/
+├── uo/           # .uo + adapter projections
+├── tg/
+└── local/        # Local Extension（缺失能力时）
+```
 
-其余 adapter pack（bridge / feature_bindings / search_hints / construction_hints）由 UO 从 KB **自动导出**，默认写入 `.ascendc-pilot/<arch>/uo/adapter/`；`proof_rules` / active lemmas 由闭环自证，不预置先验。
+adapter pack（bridge / feature_bindings / search_hints / construction_hints）由 UO 从 KB **自动导出**，默认写入 `.ascendc-pilot/<arch>/uo/adapter/`；`proof_rules` / active lemmas 由闭环自证，不预置先验。
 
 ---
 

@@ -45,11 +45,10 @@ def _chain(
 def prepare(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Resolve Source Scope from operator+arch; machine-validate; seed BuildVariant.
 
-    User chooses the analysis target. The compiler decides the source closure.
-    There is no human file-list confirmation step.
+    User chooses the analysis target. Clang decides the authoritative source
+    closure. There is no human file-list confirmation and no decision=yes bypass.
     """
     ctx = dict(payload or {})
-    ctx.setdefault("auto_accept_clean", True)
     out = _chain(
         project_root,
         ctx,

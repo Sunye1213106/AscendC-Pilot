@@ -1,0 +1,11 @@
+schema: ascendc-pilot-local-extension/v1
+interface: tilingdata_decoder
+version: 1
+description: >
+  Decodes raw TilingData bytes into a field map when UO layout facts are
+  incomplete for a GenericTilingDataDecoder.
+required_exports:
+  - decode
+optional_exports:
+  - selfcheck
+  - eval_context

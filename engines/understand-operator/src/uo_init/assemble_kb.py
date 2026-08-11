@@ -587,29 +587,50 @@ def extract_host_bundle(
             arch_dir=spec.arch_dir,
         )
 
-    # Prefer Clang include closure over regex bootstrap so common/ headers
-    # that macros or conditional includes pull in still enter Host/Kernel walks.
+    # Authoritative Clang include closure replaces regex shared discovery.
     with timer.span("scope_clang_enrich"):
+        import os
+
         from uo_init import scope_scan as sscan
 
         if spec.scope is None:
             spec.scope = sscan.scan(spec.op_dir, arch_dir=spec.arch_dir)
         try:
-            spec.scope = sscan.enrich_with_clang(
+            enrichment = sscan.enrich_with_clang(
                 spec.scope,
                 host_args=ctx.host_args(),
                 kernel_args=ctx.kernel_args(dtype_variant="DT_FLOAT16"),
-                host_tus=targets[:3],
+                host_tus=targets,
                 kernel_tu=spec.kernel_entry,
             )
-        except Exception as exc:  # noqa: BLE001
-            spec.scope.notes.append(f"clang_enrichment_failed: {str(exc)[:200]}")
-            _tlog(f"  scope_clang_enrich failed: {exc}")
-        else:
+            spec.scope = enrichment.scope
+            allow_unverified = str(
+                os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE") or ""
+            ).strip().lower() in {"1", "true", "yes"}
+            if not enrichment.complete and not allow_unverified:
+                raise RuntimeError(
+                    "SCOPE_CLANG_CLOSURE_INCOMPLETE: "
+                    f"parsed {enrichment.tus_parsed}/{enrichment.tus_expected}; "
+                    + "; ".join(enrichment.errors[:3])
+                )
             _tlog(
-                f"  scope_files={len(spec.scope.files)} "
+                f"  clang_scope={enrichment.status} "
+                f"tus={enrichment.tus_parsed}/{enrichment.tus_expected} "
+                f"scope_files={len(spec.scope.files)} "
                 f"shared={sum(1 for f in spec.scope.files if f.shared)}"
             )
+        except RuntimeError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            allow_unverified = str(
+                os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE") or ""
+            ).strip().lower() in {"1", "true", "yes"}
+            if not allow_unverified:
+                raise RuntimeError(
+                    f"SCOPE_CLANG_CLOSURE_INCOMPLETE: {str(exc)[:200]}"
+                ) from exc
+            spec.scope.notes.append(f"clang_enrichment_failed: {str(exc)[:200]}")
+            _tlog(f"  scope_clang_enrich failed (unverified override): {exc}")
 
     # Schema is cheap text parse; needed for kernel dimension tags before host IR.
     schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None

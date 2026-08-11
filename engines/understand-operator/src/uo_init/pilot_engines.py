@@ -322,7 +322,9 @@ def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) 
 
 
 def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Resolve Source Scope: layout bootstrap + Clang include closure + probe."""
+    """Resolve Source Scope: layout bootstrap → Clang authoritative closure → probe."""
+    import os
+
     from uo_init import scope_scan as sscan
     from uo_init.build_context import BuildContext
     from uo_init.clang_walk import probe_diagnostics
@@ -344,83 +346,95 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "scope_scan", "error": str(exc)[:400]}
 
+    # All selected Host TUs + kernel entry — never a fixed [:N] semantic cut.
     hosts = [p for p in spec.host_targets if p.exists()]
     kernel = spec.kernel_entry if spec.kernel_entry and spec.kernel_entry.exists() else None
 
-    # Compiler-driven closure: layout/regex bootstrap is not the final scope.
+    clang_status = "incomplete"
+    clang_tus_expected = 0
+    clang_tus_parsed = 0
+    clang_errors: list[str] = []
     scope = spec.scope
     if scope is not None:
         try:
-            scope = sscan.enrich_with_clang(
+            enrichment = sscan.enrich_with_clang(
                 scope,
                 host_args=bctx.host_args(),
                 kernel_args=bctx.kernel_args(dtype_variant="DT_FLOAT16"),
-                host_tus=hosts[:3],
+                host_tus=hosts,
                 kernel_tu=kernel,
             )
+            scope = enrichment.scope
             spec.scope = scope
+            clang_status = enrichment.status
+            clang_tus_expected = enrichment.tus_expected
+            clang_tus_parsed = enrichment.tus_parsed
+            clang_errors = list(enrichment.errors)
         except Exception as exc:  # noqa: BLE001
+            clang_status = "incomplete"
+            clang_errors = [f"clang_enrichment_failed:{str(exc)[:200]}"]
             if scope is not None:
-                scope.notes.append(f"clang_enrichment_failed: {str(exc)[:200]}")
+                scope.notes.append(clang_errors[0])
 
     probes: list[dict[str, Any]] = []
     host_errors = 0
     kernel_errors = 0
-    # Probe only asks whether the build flags resolve; a deep walk here would
-    # repeat the work extract does with a different scope and cache key.
-    # Automation may skip probes when force-accepting; extract still surfaces
-    # real parse errors.
-    force = bool(
-        ctx.get("force_confirm")
-        or ctx.get("force_validate")
-        or ctx.get("confirmed")
-        or str(ctx.get("decision") or "").strip().lower()
-        in {"continue", "accept", "confirm", "yes", "y"}
-    )
-    skip_probe = force and bool(ctx.get("auto_accept_clean", True))
-    if not skip_probe:
-        for path in hosts[:3]:
-            try:
-                res = probe_diagnostics(str(path), bctx, side="host")
-                errs = int(res.get("error_count") or 0)
-            except Exception as exc:  # noqa: BLE001
-                probes.append({"file": path.as_posix(), "error": str(exc)[:200]})
-                continue
-            host_errors += max(errs, 0)
+    # Test/dev escape hatch only — never decision=yes / force_confirm on product path.
+    allow_unverified = str(
+        os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE") or ""
+    ).strip().lower() in {"1", "true", "yes"}
+    for path in hosts:
+        try:
+            res = probe_diagnostics(str(path), bctx, side="host")
+            errs = int(res.get("error_count") or 0)
+        except Exception as exc:  # noqa: BLE001
+            probes.append({"file": path.as_posix(), "error": str(exc)[:200]})
+            host_errors += 1
+            continue
+        host_errors += max(errs, 0)
+        probes.append(
+            {
+                "file": path.as_posix(),
+                "errors": errs,
+                "side": "host",
+                "probe": "declarations_only",
+            }
+        )
+    if kernel is not None:
+        try:
+            res = probe_diagnostics(
+                str(kernel), bctx, side="kernel", dtype_variant="DT_FLOAT16"
+            )
+            kernel_errors = int(res.get("error_count") or 0)
             probes.append(
                 {
-                    "file": path.as_posix(),
-                    "errors": errs,
-                    "side": "host",
+                    "file": kernel.as_posix(),
+                    "errors": kernel_errors,
+                    "side": "kernel",
+                    "raw_error_count": kernel_errors,
                     "probe": "declarations_only",
                 }
             )
-        if kernel is not None:
-            try:
-                res = probe_diagnostics(
-                    str(kernel), bctx, side="kernel", dtype_variant="DT_FLOAT16"
-                )
-                kernel_errors = int(res.get("error_count") or 0)
-                probes.append(
-                    {
-                        "file": kernel.as_posix(),
-                        "errors": kernel_errors,
-                        "side": "kernel",
-                        "raw_error_count": kernel_errors,
-                        "probe": "declarations_only",
-                    }
-                )
-            except Exception as exc:  # noqa: BLE001
-                probes.append(
-                    {"file": kernel.as_posix(), "error": str(exc)[:200], "side": "kernel"}
-                )
-                kernel_errors = -1
-    else:
-        probes.append({"probe": "skipped", "reason": "force_validate_auto_accept"})
+        except Exception as exc:  # noqa: BLE001
+            probes.append(
+                {"file": kernel.as_posix(), "error": str(exc)[:200], "side": "kernel"}
+            )
+            kernel_errors = -1
+
+    probe_clean = host_errors == 0 and kernel_errors == 0
+    if allow_unverified and not probe_clean:
+        probes.append({"probe": "unverified_override", "reason": "UO_TEST_ALLOW_UNVERIFIED_SCOPE"})
+        probe_clean = True
+    if allow_unverified and clang_status != "complete":
+        clang_status = "complete"
+        clang_errors = []
+        probes.append(
+            {"clang_scope": "unverified_override", "reason": "UO_TEST_ALLOW_UNVERIFIED_SCOPE"}
+        )
 
     scope_dict = scope.to_dict() if scope is not None else {}
     candidate = {
-        "version": 2,
+        "version": 3,
         "status": "extracted",
         "op_name": spec.op_name,
         "arch_dir": spec.arch_dir,
@@ -434,8 +448,12 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "probes": probes,
         "host_probe_errors": host_errors,
         "kernel_probe_errors": kernel_errors,
-        "probe_clean": True if skip_probe else (host_errors == 0 and kernel_errors == 0),
-        "probe_skipped": skip_probe,
+        "probe_clean": probe_clean,
+        "probe_skipped": False,
+        "clang_scope_status": clang_status,
+        "clang_scope_tus_expected": clang_tus_expected,
+        "clang_scope_tus_parsed": clang_tus_parsed,
+        "clang_scope_errors": clang_errors,
         "scope_files": len(scope.files) if scope is not None else 0,
         "scope_shared": (
             sum(1 for f in scope.files if f.shared) if scope is not None else 0
@@ -453,6 +471,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "ok": True,
         "engine": "scope_scan",
         "probe_clean": candidate["probe_clean"],
+        "clang_scope_status": clang_status,
         "ambiguous": bool(spec.ambiguities),
         "candidates": out.as_posix(),
         "host_probe_errors": host_errors,
@@ -479,6 +498,7 @@ def _hard_scope_blockers(
     *,
     arch_user_specified: bool,
     probe_clean: bool,
+    clang_scope_status: str,
     hosts: list[Any],
     kernel_entry: str,
 ) -> list[str]:
@@ -515,22 +535,24 @@ def _hard_scope_blockers(
         blockers.append("kernel_entry_empty")
     if not probe_clean:
         blockers.append("clang_probe_unclean")
+    if clang_scope_status != "complete":
+        blockers.append("SCOPE_CLANG_CLOSURE_INCOMPLETE")
     return blockers
 
 
 def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Machine gate: write scope receipt or fail as blocker.
 
-    Never asks a human to confirm a discovered file list. The user already
-    chose operator + arch; this step only validates that Source Scope and
-    Build Context resolve cleanly.
+    Requires Clang authoritative include closure (``clang_scope_status=complete``)
+    and a clean probe. Never asks a human to confirm a file list, and never
+    accepts ``decision=yes`` / ``force_confirm`` as a compiler bypass.
     """
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root)
     run = _run_dir(uo, ctx)
     scope = run / "scope"
-    cand = _load(scope / "candidates.yaml") or _load(uo / "summary" / "scope_candidates.yaml")
+    cand = _load(scope / "candidates.yaml") or _load(uo / "summary" / "scope_candidates.yaml") or {}
     prior = _load(scope / "scope_confirmed.yaml") or _load(uo / "summary" / "scope_confirmed.yaml")
     if str((prior or {}).get("status") or "") == "confirmed":
         return {
@@ -540,14 +562,8 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             "already_validated": True,
             "receipt": prior,
         }
-    decision = str(ctx.get("decision") or "").strip().lower()
-    force = bool(
-        ctx.get("force_confirm")
-        or ctx.get("force_validate")
-        or ctx.get("confirmed")
-        or decision in {"continue", "accept", "confirm", "yes", "y"}
-    )
     probe_clean = bool(cand.get("probe_clean", False))
+    clang_scope_status = str(cand.get("clang_scope_status") or "incomplete")
     arch_user_specified = bool(
         cand.get("arch_user_specified")
         or str(ctx.get("arch_dir") or ctx.get("architecture") or "").strip()
@@ -558,13 +574,17 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
     blockers = _hard_scope_blockers(
         ambiguities,
         arch_user_specified=arch_user_specified,
-        probe_clean=probe_clean or force,
+        probe_clean=probe_clean,
+        clang_scope_status=clang_scope_status,
         hosts=hosts,
         kernel_entry=kernel_entry,
     )
-    if force:
-        blockers = [b for b in blockers if b != "clang_probe_unclean"]
     if blockers:
+        err = (
+            "SCOPE_CLANG_CLOSURE_INCOMPLETE"
+            if "SCOPE_CLANG_CLOSURE_INCOMPLETE" in blockers
+            else "SCOPE_VALIDATE_BLOCKED"
+        )
         return {
             "ok": False,
             "engine": "scope_validate",
@@ -573,17 +593,21 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             "blockers": blockers,
             "ambiguous": bool(ambiguities),
             "probe_clean": probe_clean,
+            "clang_scope_status": clang_scope_status,
             "message_zh": (
-                "范围校验失败（编译探针或入口 TU 不可用），已记为 blocker；"
+                "范围校验失败（Clang Source Scope 不完整或探针失败），已记为 blocker；"
                 "不要求人工确认文件清单"
             ),
-            "error": "SCOPE_VALIDATE_BLOCKED",
+            "error": err,
         }
     receipt = {
-        "version": 2,
+        "version": 3,
         "status": "confirmed",
         "validated": True,
         "source": "machine",
+        "clang_scope_status": clang_scope_status,
+        "clang_scope_tus_expected": cand.get("clang_scope_tus_expected"),
+        "clang_scope_tus_parsed": cand.get("clang_scope_tus_parsed"),
         # Run-scoped identity is required by the Pilot output contract.
         "run_id": str(ctx.get("run_id") or ""),
         "workflow_id": str(ctx.get("workflow_id") or "uo-init"),

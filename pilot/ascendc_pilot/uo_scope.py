@@ -103,17 +103,9 @@ def run_uo_scope(
         return _record_step_result(root, payload, action_id="uo_scope", step_id=step)
 
     if action == "scope_validate" and decision:
+        # Notes only — never promote decision=yes into a compiler bypass.
         ctx["decision"] = decision
         ctx["notes"] = notes
-        if str(decision).strip().lower() in {
-            "continue",
-            "accept",
-            "confirm",
-            "yes",
-            "y",
-        }:
-            ctx["force_validate"] = True
-            ctx["force_confirm"] = True
 
     fn = pe.ENGINES[action]
     try:

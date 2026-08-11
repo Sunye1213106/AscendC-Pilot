@@ -1,0 +1,10 @@
+schema: ascendc-pilot-local-extension/v1
+interface: replay_parser
+version: 1
+description: >
+  Parses operator replay driver stdout when the Generic Replay Protocol is
+  not yet emitted by the host driver.
+required_exports:
+  - parse_lines
+optional_exports:
+  - LogProtocol

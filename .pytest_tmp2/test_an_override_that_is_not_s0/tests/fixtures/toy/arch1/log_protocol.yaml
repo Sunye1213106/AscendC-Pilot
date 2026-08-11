@@ -1,0 +1,4 @@
+version: 1
+marks:
+  case: '^###CASE (?P<case_id>\S+)'
+  done: '^###DONE (?P<case_id>\S+) ok=(?P<ok>\d+) key=(?P<key>\d+)'

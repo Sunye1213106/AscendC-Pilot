@@ -23,7 +23,7 @@ prepare → extract → analyze → resolve → commit → review
 ## 构建规则
 
 1. **确定性提取优先**：Clang、source pass、写入与结构审查由 engine 执行。
-2. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 由 entry TU + Build Context + Clang include closure 决定，不经人工文件清单确认。硬失败记 blocker。
+2. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。
 3. **关系必须有证据**：CALLS / READS / WRITES / DERIVES 等必须回到源码或 compiler provenance。
 4. **不为闭环制造公式**：复杂 Key producer 保留 producer、all-writes、guards、upstream roots 与 source span。
 5. **编译期是一等语义**：macro、compile var、template、BuildVariant、ARCH 显式建模。
@@ -37,6 +37,7 @@ prepare → extract → analyze → resolve → commit → review
 3. **BuildVariant 隔离**。
 4. **源码只做验证**：最小窗口；缺口显式 `PARTIAL` / `UNKNOWN`。
 5. **定值写点优先**：TilingData 取值看 `value_defining_sites`。
+6. **回答必须可定位**：每个事实结论写出源码 `path:line`（或 `path:start-end`）；KB 节点 / `evidence_ref` 可并列，但不能替代 span。图有 span 却未写入回答 → 不合格。无 span 时不得假装 `ANSWERED`。
 
 ## 按需参考
 
@@ -47,5 +48,6 @@ prepare → extract → analyze → resolve → commit → review
 | extract 覆盖 | `references/codemap-extraction.md` |
 | 构建踩坑 | `references/codemap-build-gotchas.md` |
 | 查询踩坑 | `references/codemap-query-gotchas.md` |
+| 语义闭合 | `references/semantic-resolution.md` |
 | 共用证据纪律 | `_shared/evidence-quality.md` |
 | 踩坑入口 | `references/gotchas.md` |

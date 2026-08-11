@@ -22,8 +22,9 @@ from typing import Any, Iterable, Mapping
 
 import yaml
 
-#: Where operator packages live, relative to the repository root.
-OPERATORS_DIR = "operators"
+#: Test-only fixture packages under ``tests/fixtures/<operator>/<arch>/``.
+FIXTURES_PACKAGES_DIR = Path("tests") / "fixtures"
+
 
 #: The four slots a log line can fill. `dim` is a value the tiling decided,
 #: `state` an intermediate behind one, `series` a per-sample record, and the
@@ -203,26 +204,46 @@ def _read_yaml(path: Path) -> Mapping[str, Any]:
 
 
 def discover(root: Path, operator: str, arch: str) -> Path:
-    """Where a named operator's manifest should be."""
-    return root / OPERATORS_DIR / operator / arch / "operator.yaml"
+    """Fixture manifest path: ``tests/fixtures/<operator>/<arch>/operator.yaml``.
+
+    Production replay loads from ``ASCENDC_PROJECT_ROOT`` /
+    ``.ascendc-pilot/<arch>/local/`` via ``package_data`` / Local Extension.
+    """
+    return root / FIXTURES_PACKAGES_DIR / operator / arch / "operator.yaml"
 
 
 def available(root: Path) -> list[tuple[str, str]]:
-    """Every operator package present, as (operator, arch) pairs.
+    """Discoverable packages under ``root/tests/fixtures/``.
 
-    Names starting with ``_`` are reserved for synthetic / test fixtures and
-    are only selected when ``UO_OPERATOR`` is set explicitly.
+    The AscendC-Pilot checkout itself always returns ``[]`` so production
+    never auto-picks an operator identity. Temporary test roots may list
+    non-``_`` fixtures so a single-package sandbox still works without env.
     """
-    base = root / OPERATORS_DIR
+    base = root / FIXTURES_PACKAGES_DIR
     if not base.is_dir():
         return []
-    out = []
+    resolved = Path(root).resolve()
+    # Pilot checkout: no auto-discovery (compare via path parts, not string eq).
+    if (resolved / "pilot" / "ascendc_pilot").is_dir() and (resolved / "engines").is_dir():
+        return []
+    out: list[tuple[str, str]] = []
     for manifest in sorted(base.glob("*/*/operator.yaml")):
         op = manifest.parent.parent.name
         if op.startswith("_"):
             continue
         out.append((op, manifest.parent.name))
     return out
+
+
+def available_fixtures(root: Path) -> list[tuple[str, str]]:
+    """List all fixture packages including ``_synthetic_*`` (tests only)."""
+    base = root / FIXTURES_PACKAGES_DIR
+    if not base.is_dir():
+        return []
+    return [
+        (m.parent.parent.name, m.parent.name)
+        for m in sorted(base.glob("*/*/operator.yaml"))
+    ]
 
 
 def slots_of(protocol: LogProtocol, lines: Iterable[str]) -> dict[str, Any]:

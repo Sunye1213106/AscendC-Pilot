@@ -10,13 +10,10 @@ read_scopes:
 - tg/closure/**
 - ../uo/**
 - uo/**
-- operators/**
 - runs/**
 - context/**
-- skills/operator-analysis/**
 - skills/testcase-generation/**
 - skills/source-proof/**
-- skills/code-review/**
 - skills/_shared/**
 write_scopes:
 - runs/**/actions/lemma_review/review.yaml

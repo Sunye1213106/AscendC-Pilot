@@ -462,8 +462,9 @@ def manifest_path(root: Path = ROOT) -> Path:
         return discover(root, *found[0])
     if not found:
         raise ManifestError(
-            f"no operator package under {root / 'operators'}; add one, or "
-            f"set UO_REPLAY_MANIFEST to a manifest elsewhere")
+            f"no operator package selected; set UO_OPERATOR+UO_ARCH "
+            f"(fixture under tests/fixtures/) or UO_REPLAY_MANIFEST / "
+            f"ASCENDC_PROJECT_ROOT for operator-local .ascendc-pilot")
     listing = ", ".join(f"{op}/{arch}" for op, arch in found)
     raise ManifestError(
         f"several operator packages are present ({listing}); set UO_OPERATOR "

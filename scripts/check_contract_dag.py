@@ -2,7 +2,7 @@
 """Producer/consumer DAG check for Workflow Spec IO contracts.
 
 Fails with CONTRACT_ORPHAN_INPUT when a declared read has no producer and is
-not an allowed external root (context/**, operators/**, runs/**, source trees).
+not an allowed external root (context/**, local/**, runs/**, source trees).
 
 Formal UO handoff is modeled as logical resources:
   ../uo/*.uo / uo:product / uo:view:*
@@ -21,12 +21,12 @@ from typing import Any
 # Inputs that may exist without a Workflow Spec producer.
 _EXTERNAL_ROOTS = (
     "context/**",
-    "operators/**",
     "runs/**",
     "source/**",
     "op_host/**",
     "op_kernel/**",
     "op_api/**",
+    "local/**",
 )
 
 # Logical resources embedded in the formal .uo product.
@@ -56,7 +56,7 @@ def _is_external(path: str) -> bool:
         if fnmatch.fnmatch(path, root) or path == root.rstrip("/**") or path.startswith(root.rstrip("*")):
             return True
     # Exact external prefixes without glob
-    for prefix in ("context/", "operators/", "runs/", "source/", "op_host/", "op_kernel/", "op_api/"):
+    for prefix in ("context/", "runs/", "source/", "op_host/", "op_kernel/", "op_api/", "local/"):
         if path.startswith(prefix) or path == prefix.rstrip("/"):
             return True
     return False

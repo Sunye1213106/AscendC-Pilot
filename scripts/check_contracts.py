@@ -132,6 +132,26 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # noqa: BLE001
         errors.append(f"skill architecture lint unavailable: {exc}")
 
+    try:
+        from check_operator_independence import main as independence_main  # noqa: WPS433
+        import io
+        from contextlib import redirect_stderr, redirect_stdout
+
+        buf_out, buf_err = io.StringIO(), io.StringIO()
+        with redirect_stdout(buf_out), redirect_stderr(buf_err):
+            code = independence_main()
+        if code != 0:
+            detail = (buf_err.getvalue() or buf_out.getvalue()).strip()
+            errors.append(
+                "operator independence: "
+                + (detail.splitlines()[0] if detail else "failed")
+            )
+            for line in (buf_err.getvalue() or "").splitlines()[1:41]:
+                if line.strip():
+                    errors.append(line.strip())
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"operator independence lint unavailable: {exc}")
+
     import json
 
     payload = (

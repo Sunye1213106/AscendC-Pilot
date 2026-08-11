@@ -208,7 +208,7 @@ def default_spec() -> Any:
     packages without an adapter pack still import.
 
     Lookup order: ``.ascendc-pilot/<arch>/tg/adapter/bridge_spec.yaml``,
-    then ``operators/<op>/<arch>/bridge_spec.yaml``.
+    then ``.ascendc-pilot/<arch>/uo/adapter/bridge_spec.yaml`` / local package.
     """
     global _SPEC
     if _SPEC is None:

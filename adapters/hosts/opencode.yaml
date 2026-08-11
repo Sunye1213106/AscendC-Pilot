@@ -1,5 +1,5 @@
-# OpenCode host defaults for compiled skills
-# Workflow skills are selectable by the model via description (like normal OpenCode skills).
+# OpenCode host defaults for composed skills.
+# Workflow slash entries are selectable via description.
 skill_defaults:
   disable-model-invocation: false
 skills: {}
