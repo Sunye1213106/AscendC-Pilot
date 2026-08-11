@@ -26,8 +26,10 @@ _pytest_tmp*/
 # One-off local probes. Nothing here is a reusable entry point.
 .pytmp/
 
-# Root / scratch one-off logs (never commit)
+# Root / scratch one-off logs / local init dumps (never commit)
 _*.log
+_*.err
+_*.out
 1.md
 artifacts/scratch/
 
