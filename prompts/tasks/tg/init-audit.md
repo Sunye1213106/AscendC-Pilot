@@ -14,7 +14,7 @@ Audit TG init gaps and blockers.
 
 # Requirements
 
-- Follow `skills/testcase-generation/SKILL.md` (audit)
+- Follow the packaged `testcase-generation` domain skill (audit); do not assume a Host-specific physical Skill path
 
 # Return
 
