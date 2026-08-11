@@ -43,7 +43,7 @@ TENSOR_PLACEHOLDER_SENTINELS = frozenset({"_", "NONE", ""})
 FORBIDDEN_CELL_SENTINELS = frozenset({"_"})
 OPTIONAL_ABSENT = "NONE"
 
-# Safe upper bounds when evidence is thin (still finite for Z3).
+# Safe finite upper bounds when evidence is thin.
 SAFE_CAPS: dict[str, int] = {
     "B": 64,
     "N": 128,

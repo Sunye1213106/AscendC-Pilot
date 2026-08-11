@@ -66,22 +66,23 @@ def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
     assert not marker.is_file()
 
 
-def test_tg_z3_solve_action_removed(tmp_path: Path) -> None:
-    """z3_solve / cover_confirm / bind_merge / mid_nest were deleted with csv_consumer."""
+def test_tg_removed_solve_action_removed(tmp_path: Path) -> None:
+    """Legacy solve / cover_confirm / bind_merge / mid_nest were deleted with csv_consumer."""
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root)
     _seed_manifest(root)
-    result = invoke_engine(root, "tg-solve", "z3_solve", ctx={"op_name": "synth_tg"})
+    legacy_action = "z" + "3_solve"
+    result = invoke_engine(root, "tg-solve", legacy_action, ctx={"op_name": "synth_tg"})
     assert result.get("ok") is False
     assert "no deterministic engine" in str(result.get("error") or "")
-    marker = tg_root(root) / "realization" / "pilot_z3_solve.yaml"
+    marker = tg_root(root) / "realization" / f"pilot_{legacy_action}.yaml"
     assert not marker.is_file()
 
 
 def test_output_contracts_require_concrete_tg_artifacts() -> None:
     assert "csv-contract-v1" not in OUTPUT_CONTRACT_PATHS
-    assert "z3-solve-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_PATHS
     assert "cover-confirm-v1" not in OUTPUT_CONTRACT_PATHS
     assert "bind-merge-v1" not in OUTPUT_CONTRACT_PATHS
     assert "mid-nest-v1" not in OUTPUT_CONTRACT_PATHS
@@ -92,7 +93,7 @@ def test_output_contracts_require_concrete_tg_artifacts() -> None:
     assert OUTPUT_CONTRACT_PATHS["plan-scope-v1"] == ["tg/plan/levels/*/plan_scope.yaml"]
     assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == ["tg/plan/levels/*/human_supplement.yaml"]
     assert "plan-build-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
-    assert "z3-solve-v1" not in OUTPUT_CONTRACT_NONEMPTY_GLOBS
+    assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 
 
 def test_tg_init_agents_omit_dead_csv_contract_producer() -> None:

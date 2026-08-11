@@ -37,7 +37,7 @@ class RelationKind(str, Enum):
     SAVES = "SAVES"
     RESTORES = "RESTORES"
 
-    # Kernel execution graph (occurrence-level).
+    # Kernel execution graph (occurrence-level) — optional deep analysis.
     CONTAINS = "CONTAINS"
     PRECEDES = "PRECEDES"
     READS_BUFFER = "READS_BUFFER"
@@ -55,6 +55,10 @@ class RelationKind(str, Enum):
     EXECUTES_ON = "EXECUTES_ON"
     EMITS_SYNC = "EMITS_SYNC"
     DATA_DEPENDS_ON = "DATA_DEPENDS_ON"
+
+    # Kernel root-trace graph (UO canonical): wrapper / API → AscendC root.
+    WRAPS = "WRAPS"
+    ROOTED_AT = "ROOTED_AT"
 
     OTHER = "OTHER"
 

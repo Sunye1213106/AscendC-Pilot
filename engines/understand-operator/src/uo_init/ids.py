@@ -41,6 +41,8 @@ KIND_PREFIX: dict[str, str] = {
     "Register": "REG",
     "SyncEvent": "SYNC",
     "ExecRegion": "XREG",
+    "Type": "TYPE",
+    "Root": "ROOT",
 }
 
 PREFIX_KIND = {v: k for k, v in KIND_PREFIX.items()}

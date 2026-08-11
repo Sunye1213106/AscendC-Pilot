@@ -16,8 +16,6 @@ pip install -e ./engines/code-engineering
 acp doctor
 ```
 
-`z3-solver` 仍然在项目中使用，但它不是纯控制面或文档检查的前置条件。`engines/common` 提供 `acp_common.z3_backend`，并通过依赖安装 `z3-solver`；UO 的 key reachability、loop summary、lineage 以及 TG 的约束/覆盖求解会使用这层有限域 solver。只安装 Host Adapter 或运行基础 CLI 时，不需要把它理解成 CANN 环境要求。
-
 `acp doctor` 验证 Python package、engine import 和 generated host runtime；它不会证明 CANN、Clang 或 replay 已可用。检查当前 Python 与本地工具可见性：
 
 ```bash

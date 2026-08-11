@@ -249,17 +249,30 @@ class CodeMapQuery:
     # ---- Kernel execution --------------------------------------------------
 
     def kernel_overview(self) -> dict[str, Any]:
-        """Compact Kernel execution summary from CodeMap meta + entity counts."""
-        meta = dict(self.codemap.meta.get("kernel_execution") or {})
+        """Compact Kernel summary (root-trace preferred; execution meta as shim)."""
+        meta = dict(self.codemap.meta.get("kernel_root_trace") or {})
+        if not meta:
+            meta = dict(self.codemap.meta.get("kernel_execution") or {})
         return {
+            "model": meta.get("model") or ("root_trace" if "reached_buffers" in meta or "gap_counts" in meta else "legacy"),
             "operations": len(self.codemap.by_kind(EntityKind.OPERATION)),
             "buffers": len(self.codemap.by_kind(EntityKind.BUFFER)),
             "registers": len(self.codemap.by_kind(EntityKind.REGISTER)),
             "buffer_views": len(self.codemap.by_kind(EntityKind.BUFFER_VIEW)),
             "sync_events": len(self.codemap.by_kind(EntityKind.SYNC_EVENT)),
             "regions": len(self.codemap.by_kind(EntityKind.EXEC_REGION)),
+            "reached_buffers": meta.get("reached_buffers"),
+            "reached_operations": meta.get("reached_operations"),
+            "gap_count": meta.get("gap_count"),
             "meta": meta,
         }
+
+    def kernel_root_trace(self) -> dict[str, Any]:
+        """Return Kernel Root Trace meta + ROOTED_AT / WRAPS counts."""
+        meta = dict(self.codemap.meta.get("kernel_root_trace") or {})
+        wraps = sum(1 for r in self.codemap.relations.values() if r.kind_name() == RelationKind.WRAPS.value)
+        rooted = sum(1 for r in self.codemap.relations.values() if r.kind_name() == RelationKind.ROOTED_AT.value)
+        return {**meta, "wraps_relations": wraps, "rooted_at_relations": rooted}
 
     def operations(self, function: str = "") -> list[dict[str, Any]]:
         rows = self.codemap.by_kind(EntityKind.OPERATION)

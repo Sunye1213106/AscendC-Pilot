@@ -19,10 +19,8 @@ from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.kernel_call_boundaries import classify_kernel_call_boundaries
 from uo_init.passes.kernel_call_read_refine import refine_kernel_calls_and_tiling_reads
 from uo_init.passes.kernel_call_resolution import resolve_kernel_call_frontiers
-from uo_init.passes.kernel_execution import finalize_kernel_execution
-from uo_init.passes.kernel_data_deps import finalize_kernel_data_deps
 from uo_init.passes.kernel_identity import preserve_verified_kernel_identity
-from uo_init.passes.kernel_pipeline import finalize_kernel_pipeline
+from uo_init.passes.kernel_root_trace import finalize_kernel_root_trace
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.kernel_tiling_metrics import finalize_kernel_tiling_metrics
 from uo_init.passes.kernel_tiling_truth import finalize_kernel_tiling_truth
@@ -212,10 +210,8 @@ def compile_codemap(
             ("value_defining_sites", enrich_value_defining_sites, {}),
             ("kernel_tiling_truth", finalize_kernel_tiling_truth, {"skip_arch": True}),
             ("kernel_tiling_metrics", finalize_kernel_tiling_metrics, {"skip_arch": True}),
-            # Kernel Execution Model: operations / buffers / sync (budget-capped).
-            ("kernel_execution", finalize_kernel_execution, {}),
-            ("kernel_data_deps", finalize_kernel_data_deps, {"skip_arch": True}),
-            ("kernel_pipeline", finalize_kernel_pipeline, {"skip_arch": True}),
+            # Kernel Root Trace (UO canonical): wrappers / calls → AscendC root.
+            ("kernel_root_trace", finalize_kernel_root_trace, {}),
         ):
             t0 = time.perf_counter()
             if kwargs.get("skip_arch"):

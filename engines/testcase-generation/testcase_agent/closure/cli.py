@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     p_gen = sub.add_parser("generate", help="sample a candidate pool")
     p_gen.add_argument("-n", type=int, default=32)
     p_gen.add_argument("--seed", type=int, default=0)
-    p_rep = sub.add_parser("replay", help="replay cases via HostOracle (needs NPU)")
+    p_rep = sub.add_parser("replay", help="replay cases via HostOracle (needs CANN host replay env)")
     p_rep.add_argument("-n", type=int, default=8)
     p_rep.add_argument("--seed", type=int, default=0)
     p_rep.add_argument("--tag", default="cli_replay")

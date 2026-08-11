@@ -107,7 +107,6 @@ def write_kb_database(
     artifact_hashes: dict[str, dict[str, Any]] | None = None,
     legal_keys: list[dict[str, Any]] | None = None,
     host_derivation: dict[str, Any] | None = None,
-    key_reachability: dict[str, Any] | None = None,
     meta: dict[str, Any] | None = None,
     db_path: str | Path | None = None,
     preserve_host_view: bool = False,
@@ -143,18 +142,6 @@ def write_kb_database(
     view_map = dict(views or {})
     # Always persist the canonical graph as a reconstructible blob.
     view_map.setdefault("ir/operator_graph.yaml", graph)
-    if key_reachability is not None:
-        view_map.setdefault("tiling/key_reachability.yaml", key_reachability)
-    reach_summary = {}
-    if isinstance(key_reachability, dict):
-        reach_summary = {
-            "status": key_reachability.get("status"),
-            "legal_key_count": key_reachability.get("legal_key_count"),
-            "status_counts": key_reachability.get("status_counts") or {},
-            "solver": key_reachability.get("solver") or {},
-        }
-        view_map.setdefault("key_reachability_summary", reach_summary)
-
     # Build the final blob text once. Pre-serialized entries win.
     blob_text: dict[str, str] = {}
     if view_json:
@@ -201,9 +188,6 @@ def write_kb_database(
         ):
             if key in manifest and manifest[key] is not None:
                 meta_out[key if key != "status" else "manifest_status"] = manifest[key]
-    if reach_summary:
-        meta_out["key_reachability_legal_key_count"] = reach_summary.get("legal_key_count")
-        meta_out["key_reachability_status"] = reach_summary.get("status")
     meta_out.update(meta or {})
 
     host_view_snapshot: dict[str, list[tuple]] | None = None
@@ -402,7 +386,6 @@ def rebuild_index(
         views = load_yaml_view_layers(root)
         legal_keys = load_legal_key_index_rows(root)
         host_derivation = _load_yaml_dict(root / "ir" / "host_derivation.yaml")
-        key_reachability = views.get("tiling/key_reachability.yaml")
         integrity = _load_yaml_dict(root / "checks" / "integrity.yaml")
         meta: dict[str, Any] = {"authority": "db", "rebuild_source": "yaml"}
         if integrity:
@@ -414,7 +397,6 @@ def rebuild_index(
             views=views,
             legal_keys=legal_keys,
             host_derivation=host_derivation or None,
-            key_reachability=key_reachability if isinstance(key_reachability, dict) else None,
             meta=meta,
             db_path=target,
             preserve_host_view=True,
@@ -453,7 +435,6 @@ def load_yaml_view_layers(uo_root: str | Path) -> dict[str, Any]:
         "tiling/constraints.yaml",
         "tiling/families.yaml",
         "tiling/coverage_model.yaml",
-        "tiling/key_reachability.yaml",
         "tiling/data_model.yaml",
         "tiling/key_derivations.yaml",
         "views/tilingdata.yaml",

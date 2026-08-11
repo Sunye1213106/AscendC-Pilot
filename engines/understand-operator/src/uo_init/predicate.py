@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Turn guard expressions into solver-ready SMT-lite JSON.
+"""Turn guard expressions into constraint-IR JSON.
 
 `source_resolver` says where a guard comes from; `variable_model` names the
 variables. This module rewrites the parsed expression tree so every leaf is
-either a declared variable or a literal, and emits the operator set the
-downstream Z3 backend already understands (`constraint_ir.SUPPORTED_EXPR_OPS`).
+either a declared variable or a literal, and emits the operator set shared by
+the downstream constraint consumers (`constraint_ir.SUPPORTED_EXPR_OPS`).
 
 A predicate that cannot be fully normalized is *not* approximated. It is
 returned with `status: unresolved` and the reason that stopped it, so the gap

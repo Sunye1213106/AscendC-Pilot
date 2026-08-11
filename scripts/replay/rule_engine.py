@@ -2,7 +2,7 @@
 """Load proof and derived rules, and ask them about an instance.
 
 Two grades live in two files: proof_rules.yaml is written by a person (or an
-LLM quoting source), derived_rules.yaml by the solver. Both answer the same
+LLM quoting source), derived_rules.yaml by deterministic analysis. Both answer the same
 question -- which dimension values cannot occur -- and the runtime
 counterexample gate refuses to believe either when a real witness contradicts
 it. source_hash on the derived file is what keeps a stale solve from silently

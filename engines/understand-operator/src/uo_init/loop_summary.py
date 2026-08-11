@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """How many times a counted loop can run.
 
 Only loops whose init, step and bound are all read as constants get a number.
@@ -524,51 +524,23 @@ def guards_exclusive(
     members: Any = (),
     timeout_ms: int = 2000,
 ) -> Exclusion:
-    """Whether two guard sets can hold at once, decided by the solver.
+    """Conservatively report that guard exclusivity is not proven.
 
-    Only `unsat` counts as exclusive. `sat`, `unknown`, a timeout and a
-    compilation failure all mean the same thing here — we did not establish
-    it — and each returns not-exclusive, because claiming exclusion we cannot
-    show is what would let a real pair of appends be counted as one.
+    UO no longer carries a symbolic solver.  The API remains so loop/container
+    summaries can keep collecting evidence, but it must not claim exclusion.
     """
     atoms = _Atoms(frozenset(members or ()))
-    args: list[dict[str, Any]] = []
+    checked = 0
     for cond in conds_a or ():
-        ir = _guard_ir(cond, atoms, function_a)
-        if ir is not None:
-            args.append(ir)
+        if _guard_ir(cond, atoms, function_a) is not None:
+            checked += 1
     for cond in conds_b or ():
-        ir = _guard_ir(cond, atoms, function_b)
-        if ir is not None:
-            args.append(ir)
-    if not args:
+        if _guard_ir(cond, atoms, function_b) is not None:
+            checked += 1
+    if checked == 0:
         return Exclusion(False, reason="no_readable_guards")
+    return Exclusion(False, reason="solver_removed", checked=checked)
 
-    try:
-        from acp_common.z3_backend import SolveConfig, Z3Backend
-    except ImportError as exc:  # pragma: no cover - solver always present
-        return Exclusion(False, reason=f"solver_unavailable:{exc}")
-
-    variables = [{"id": name, "type": "int"} for name in sorted(atoms.names)]
-    try:
-        backend = Z3Backend(
-            {"variables": variables, "constraints": []},
-            SolveConfig(timeout_ms=timeout_ms),
-        )
-        expr = args[0] if len(args) == 1 else {"op": "and", "args": args}
-        result = backend.solve_expr(expr, label="event_exclusion")
-    except Exception as exc:
-        return Exclusion(False, reason=f"solver_error:{type(exc).__name__}")
-
-    status = str((result or {}).get("status") or "")
-    if status == "unsat":
-        return Exclusion(True, checked=len(args))
-    detail = (result or {}).get("reason") or ""
-    return Exclusion(
-        False,
-        reason=f"not_proven:{status}" + (f":{detail[:80]}" if status == "error" else ""),
-        checked=len(args),
-    )
 
 
 @dataclass(frozen=True)
@@ -593,82 +565,24 @@ def guards_cover(
     members: Any = (),
     timeout_ms: int = 2000,
 ) -> Implication:
-    """Does getting to the read imply one of the writes already happened?
-
-    `write_conds` is `(conds, function)` per write. The query is
-    `read ∧ ¬(∨ write)`: unsat means no run reaches the read with the
-    variable unwritten, so the chain's fall-through is dead code and the
-    initial value it would assume is about a path that does not exist.
-
-    `fBaseParams.bandIdx` is the case this exists for. It is written only
-    under `attenMask` being present and read only where that holds, so the
-    writes look partial on their own and the free variable minted to stand
-    for the unwritten value went on to block five dimensions.
-
-    Unreadable guards are dropped, and the direction matters: dropping one
-    from a write shrinks the disjunction, dropping one from the read weakens
-    the premise, and both make the implication *harder* to prove. Only `unsat`
-    counts; `sat`, `unknown`, a timeout and a compile failure all mean the
-    same thing -- not shown -- because claiming coverage we cannot establish
-    would silently assume a value the source never wrote.
-
-    An empty premise is `True`, and asking anyway is the point. It is the
-    weakest premise there is, so `True and not(or writes)` coming back unsat is
-    a *stronger* result than the same query under any real read condition --
-    it says the writes cover every run, wherever the read sits. This used to
-    return not-shown, which reads as caution and is the opposite: it threw away
-    the one case an if/else-if chain covering every path falls into, and left
-    the VAR_INIT minted for the fall-through standing on three dimensions.
-    """
+    """Conservatively report that guarded write coverage is not proven."""
     atoms = _Atoms(frozenset(members or ()))
-    premise: list[dict[str, Any]] = []
-    for cond in read_conds or ():
-        ir = _guard_ir(cond, atoms, read_function)
-        if ir is not None:
-            premise.append(ir)
-
-    reached: list[dict[str, Any]] = []
+    reached = []
     for conds, function in write_conds or ():
         parts = [
             ir
             for ir in (_guard_ir(c, atoms, function) for c in conds or ())
             if ir is not None
         ]
-        if len(parts) != len(tuple(conds or ())):
-            # A guard we cannot read could be false, so this write cannot be
-            # counted on. Leaving it out is the safe direction.
+        if len(parts) != len(tuple(conds or ())) :
             continue
         if not parts:
-            # No guards at all: this write always runs, and nothing is assumed.
             return Implication(True, checked=0)
         reached.append(parts[0] if len(parts) == 1 else {"op": "and", "args": parts})
     if not reached:
         return Implication(False, reason="no_readable_write_guards")
+    return Implication(False, reason="solver_removed", checked=len(reached))
 
-    try:
-        from acp_common.z3_backend import SolveConfig, Z3Backend
-    except ImportError as exc:  # pragma: no cover - solver always present
-        return Implication(False, reason=f"solver_unavailable:{exc}")
-
-    written = reached[0] if len(reached) == 1 else {"op": "or", "args": reached}
-    args = premise + [{"op": "not", "arg": written}]
-    # With no premise there is one conjunct, and an `and` of one is a shape the
-    # backend need not be asked to understand.
-    query = args[0] if len(args) == 1 else {"op": "and", "args": args}
-    variables = [{"id": name, "type": "int"} for name in sorted(atoms.names)]
-    try:
-        backend = Z3Backend(
-            {"variables": variables, "constraints": []},
-            SolveConfig(timeout_ms=timeout_ms),
-        )
-        result = backend.solve_expr(query, label="read_coverage")
-    except Exception as exc:
-        return Implication(False, reason=f"solver_error:{type(exc).__name__}")
-
-    status = str((result or {}).get("status") or "")
-    if status == "unsat":
-        return Implication(True, checked=len(reached))
-    return Implication(False, reason=f"not_proven:{status}", checked=len(reached))
 
 
 # --- how many elements can these containers hold between them --------------
@@ -831,18 +745,6 @@ class GuardTruth:
         return self.always_true or self.always_false
 
 
-def _solve(expr: dict[str, Any], variables: list[dict[str, Any]], timeout_ms: int) -> str:
-    try:
-        from acp_common.z3_backend import SolveConfig, Z3Backend
-
-        backend = Z3Backend(
-            {"variables": variables, "constraints": []}, SolveConfig(timeout_ms=timeout_ms)
-        )
-        return str(backend.solve_expr(expr, label="guard_truth").get("status") or "")
-    except Exception:
-        return "error"
-
-
 def guard_truth(
     ir: Any,
     text: str,
@@ -851,16 +753,10 @@ def guard_truth(
     constants: dict[str, int] | None = None,
     timeout_ms: int = 2000,
 ) -> GuardTruth:
-    """Whether container size bounds alone decide this guard.
+    """Conservatively report that a guard truth value is unsettled.
 
-    `syncRounds.size() + syncRoundRanges.size() > CORE_LIST_NUM` is false on
-    every run, because those two vectors are filled from opposite sides of one
-    `if` inside a 36-iteration loop. Left unsettled, each `size()` becomes a
-    free variable and the branch behind it stays alive; settled, both variables
-    and the branch go away together.
-
-    Only sizes are looked at, and only when the guard mentions one. Everything
-    else returns unsettled without troubling the solver.
+    Loop/container bounds are still computed, but UO no longer proves boolean
+    guard truth with a symbolic solver.
     """
     names = [
         n
@@ -872,26 +768,11 @@ def guard_truth(
     bound = cardinality_bound(ir, scope, names, constants=constants)
     if not bound:
         return GuardTruth()
-
-    card = {f"size({n})": f"CARD_{n}" for n in names}
-    atoms = _Atoms(frozenset(getattr(ir, "class_fields", None) or ()), overrides=card)
-    guard = _text_to_ir(text, atoms, scope, constants)
-    if guard is None:
+    atoms = _Atoms(frozenset(getattr(ir, "class_fields", None) or ()))
+    if _text_to_ir(text, atoms, scope, constants) is None:
         return GuardTruth()
-
-    cards = [{"var": v} for v in card.values()]
-    facts = [{"op": "ge", "lhs": c, "rhs": 0} for c in cards]
-    total = cards[0] if len(cards) == 1 else {"op": "add", "args": cards}
-    facts.append({"op": "le", "lhs": total, "rhs": int(bound.bound)})
-
-    variables = [{"id": name, "type": "int"} for name in sorted(atoms.names)]
-    detail = f"{'+'.join(sorted(card.values()))}<={bound.bound}"
-    if _solve({"op": "and", "args": [*facts, guard]}, variables, timeout_ms) == "unsat":
-        return GuardTruth(always_false=True, detail=detail)
-    negated = {"op": "and", "args": [*facts, {"op": "not", "arg": guard}]}
-    if _solve(negated, variables, timeout_ms) == "unsat":
-        return GuardTruth(always_true=True, detail=detail)
     return GuardTruth()
+
 
 
 # --- interval coverage & next-fit (summary primitives) ---------------------
@@ -999,3 +880,4 @@ def next_fit_cores(
     if max_cores is not None and cores > max_cores:
         return NextFitBound(cores, overflows=True, reason="core_list_full")
     return NextFitBound(cores)
+

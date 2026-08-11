@@ -6,8 +6,8 @@ Two things live here because they answer the same question from both ends:
 1. For every control node, what does a test case have to set to drive it true,
    and separately to drive it false. A branch is only covered when both sides
    are reachable, so one record per node would silently halve the obligation
-   list. Satisfiability itself is left to TG's Z3 — this layer states the
-   constraint, it does not solve it.
+   list. Runtime closure is left to TG planning and replay — this layer states
+   the constraint, it does not solve it.
 
 2. How much of the operator is actually pinned down. `source_closure` counts a
    branch tracked to any root, including loop counters and constants;

@@ -1,0 +1,12 @@
+architecture: arch35
+authority: db
+derived_index: indexes/kb_graph.sqlite
+graph_fingerprint: 9e8b60928fcad9034812289ce471af6ae7228c5b48ae1ad507101507c8bed596
+legal_key_count: 1
+op_name: SampleOp
+product: indexes/kb_graph.sqlite
+schema: kb_schema-v1
+status: extracted
+template_block_count: 1
+version: 1
+yaml_export: false

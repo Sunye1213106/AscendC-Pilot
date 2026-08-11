@@ -86,30 +86,96 @@ def main() -> int:
         q = CodeMapQuery(codemap=cm, path=str(product))
         audit = q.audit()
         summary = dict(audit.get("summary") or {})
-        ke = dict(cm.meta.get("kernel_execution") or {})
-        pipe = dict(cm.meta.get("kernel_execution_pipeline") or {})
+        ke = dict(cm.meta.get("kernel_root_trace") or cm.meta.get("kernel_execution") or {})
         closure = dict(cm.meta.get("kernel_tiling_closure") or {})
         by_kind = {}
         for kind in (
             "INPUT", "OUTPUT", "TILING_KEY", "TILING_DATA", "TILING_FIELD",
             "KERNEL", "FUNCTION", "METHOD", "OPERATION", "BUFFER", "BUFFER_VIEW",
-            "SYNC_EVENT", "EXEC_REGION", "BRANCH", "TEMPLATE",
+            "REGISTER", "TYPE", "BRANCH", "TEMPLATE",
         ):
             by_kind[kind] = len(cm.by_kind(kind))
+        wraps = sum(1 for r in cm.relations.values() if r.kind_name() == "WRAPS")
+        rooted = sum(1 for r in cm.relations.values() if r.kind_name() == "ROOTED_AT")
+        # Wrapper recognition: MutexBuffer is a storage_wrapper_type → AscendC::LocalTensor,
+        # not a BUFFER kind. Decl sites carry role=storage_wrapper + file:line.
+        mutex_types = [
+            t.to_dict()
+            for t in cm.by_kind("TYPE")
+            if t.name == "MutexBuffer" and t.attrs.get("role") == "storage_wrapper_type"
+        ]
+        mutex_sites = [
+            b.to_dict()
+            for b in cm.by_kind("BUFFER")
+            if b.attrs.get("wrapper") == "MutexBuffer"
+            or (
+                b.attrs.get("role") == "storage_wrapper"
+                and "MutexBuffer" in str(b.attrs.get("trace") or [])
+            )
+        ]
+        mutex_sync = [
+            o.to_dict()
+            for o in cm.by_kind("OPERATION")
+            if o.file and "mutex_buffer" in str(o.file).replace("\\", "/")
+            and o.attrs.get("root_status") == "REACHED"
+        ]
         completeness = {
             "uo_path": str(product),
             "entity_count": len(cm.entities),
             "relation_count": len(cm.relations),
             "by_kind": by_kind,
             "audit_summary": summary,
-            "kernel_execution": ke,
-            "kernel_pipeline": {
-                "operation_count": pipe.get("operation_count"),
-                "overlap_capable_count": pipe.get("overlap_capable_count"),
-                "copy_in_hints": pipe.get("copy_in_hints"),
-                "copy_out_hints": pipe.get("copy_out_hints"),
-                "stages": sorted((pipe.get("stages") or {}).keys()) if isinstance(pipe.get("stages"), dict) else [],
+            "kernel_root_trace": {
+                "operations": ke.get("operations"),
+                "buffers": ke.get("buffers"),
+                "registers": ke.get("registers"),
+                "reached_buffers": ke.get("reached_buffers"),
+                "reached_operations": ke.get("reached_operations"),
+                "gap_count": ke.get("gap_count"),
+                "gap_counts": ke.get("gap_counts"),
+                "elapsed_s": ke.get("elapsed_s"),
             },
+            "wraps_relations": wraps,
+            "rooted_at_relations": rooted,
+            "mutex_wrapper_type_reached": sum(
+                1 for t in mutex_types if t.get("root_status") == "REACHED" and "LocalTensor" in str(t.get("root") or "")
+            ),
+            "mutex_wrapper_type_samples": [
+                {
+                    "name": t.get("name"),
+                    "role": t.get("role"),
+                    "root": t.get("root"),
+                    "root_status": t.get("root_status"),
+                    "file": t.get("file"),
+                    "line": t.get("line_start"),
+                    "trace": t.get("trace"),
+                }
+                for t in mutex_types[:4]
+            ],
+            "mutex_decl_sites": len(mutex_sites),
+            "mutex_decl_reached": sum(1 for b in mutex_sites if b.get("root_status") == "REACHED"),
+            "mutex_decl_samples": [
+                {
+                    "name": b.get("name"),
+                    "wrapper": b.get("wrapper"),
+                    "root": b.get("root"),
+                    "root_status": b.get("root_status"),
+                    "file": b.get("file"),
+                    "line": b.get("line_start"),
+                    "trace": b.get("trace"),
+                }
+                for b in mutex_sites[:8]
+            ],
+            "mutex_sync_ops_reached": len(mutex_sync),
+            "mutex_sync_samples": [
+                {
+                    "name": o.get("name"),
+                    "root": o.get("root"),
+                    "file": o.get("file"),
+                    "line": o.get("line_start"),
+                }
+                for o in mutex_sync[:8]
+            ],
             "kernel_tiling_closure": {
                 k: closure.get(k)
                 for k in (
@@ -118,7 +184,6 @@ def main() -> int:
                     "tiling_entry_reachable_fields",
                     "tiling_entry_reachable_read_sites",
                 )
-                if k in closure or True
             },
             "operator_api": {
                 "tensor_inputs": len(q.operator_api().get("tensor_inputs") or []),

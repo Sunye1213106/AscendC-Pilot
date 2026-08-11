@@ -3,7 +3,7 @@
 
 UO extracts facts an Agent can query.  It does not solve the operator's full
 19-dimensional TilingKey function.  In particular the public analyze path does
-not run ``derive_key_fields`` / KeyReachability / global SAT.  Test construction
+not run ``derive_key_fields`` or a global host-reachability SAT pass. Test construction
 and local lemma reasoning belong to TG.
 
 Canonical ``.uo`` is compiler truth + deterministic derivation only.  Semantic
@@ -123,7 +123,7 @@ def _compiler_inputs(
     except Exception:
         # Current-source enrichment in compile_codemap remains authoritative;
         # missing compiler IR becomes an explicit structural gap, not a reason
-        # to fall back to symbolic Key derivation.
+        # to fall back to removed symbolic host-reachability logic.
         pass
 
     declared = pe._load(uo / "tiling" / "key_space.yaml") or pe._load(
@@ -176,7 +176,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         "policy": "retain_unresolved_no_llm_patch",
         "non_goals": [
             "global_tilingkey_value_derivation",
-            "global_key_reachability_sat",
+            "global_host_reachability_sat",
             "container_cardinality_proofs",
             "read_coverage_implication_proofs",
             "llm_semantic_gap_patching",

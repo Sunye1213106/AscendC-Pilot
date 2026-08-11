@@ -33,27 +33,8 @@ TG 只读消费 UO CodeMap、TG projection、契约和计划产物，并可使�
 ## Solve 的真实闭环
 
 ```text
-                         obligation
-                              |
-               +--------------+--------------+
-               |              |              |
-             search       construct        lemma
-               |              |              |
-               +------ candidate -----------+
-                              |
-                          host replay
-                          /          \
-                   observed         mismatch
-                      |
-                      v
-                      R
-
-lemma -> producer -> source evidence -> referee
-                                      |
-                              deterministic apply
-                                      |
-                                      v
-                                      E
+obligation -> {search, construct} -> candidate -> host replay -> observed -> R
+obligation -> lemma -> producer -> source evidence -> referee -> deterministic apply -> E
 ```
 
 Search 和 construct 的输出只是 candidate。只有 host replay 对目标义务作出真实观察，候选才进入 `R`。另一条路径中，producer 提出 lemma 和源证据，referee 审查，确定性逻辑应用通过的结果，才可能进入 `E`。producer 和 referee 均不能直接写 excluded set。

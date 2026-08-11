@@ -65,8 +65,8 @@ FAG 源码 HEAD：`4e09c2ec15a414f6e312caf5b3da16cd965af07b`
 
 需要分清两件事：
 
-1. `underivable=8705` 不是 KB 没有 kernel/tilingdata，也不是 UO source closure 失败；它只表示没有启用 UO deep value_expr/Z3 去逐值反推每个 key。
-2. 本轮正确路线是 Z3-free：用 KB/domain 构造候选，用 WSL Host replay 得到 `R`，再对剩余 open key 做源码 guard 审核并生成 source-lemma `E`。
+1. `underivable=8705` 不是 KB 没有 kernel/tilingdata，也不是 UO source closure 失败；它只表示没有启用旧的 deep value_expr 路线去逐值反推每个 key。
+2. 本轮正确路线是 Z-free：用 KB/domain 构造候选，用 WSL Host replay 得到 `R`，再对剩余 open key 做源码 guard 审核并生成 source-lemma `E`。
 
 ## 本轮执行路线
 
@@ -79,7 +79,7 @@ FAG 源码 HEAD：`4e09c2ec15a414f6e312caf5b3da16cd965af07b`
 7. 对源码不可达组合生成 source-lemma 证书，先 dry-run 验证 `bad_R=0`，再 promote。
 8. 再跑 `state/report/residual/route` 和 pytest。
 
-这条链路没有使用 UO deep Z3。sklearn 只保留为 observation/ranking/blocker 诊断工具，不作为证明来源，也不允许它把 direct KB 构造候选过滤掉。
+这条链路没有使用 UO deep solver。sklearn 只保留为 observation/ranking/blocker 诊断工具，不作为证明来源，也不允许它把 direct KB 构造候选过滤掉。
 
 ## 清理和重跑
 
@@ -147,7 +147,7 @@ full refresh with kernel blocker_count = 0
 kernel_branches = 485
 ```
 
-这一步说明：UO 静态侧的问题主要是静态脚本能力不足，不是源码里不可建模的复杂循环，也不是要依赖 deep Z3。
+这一步说明：UO 静态侧的问题主要是静态脚本能力不足，不是源码里不可建模的复杂循环，也不是要依赖 deep solver。
 
 ## TG replay 前的构造问题和修复
 
@@ -399,7 +399,7 @@ gap = 0
 3. TG 侧候选生成存在重复 replay 和漂移探索，花了 budget 但不增加 declared `R`。
 4. residual 旧实现对 open key 到 witness 的距离接近全量笛卡尔扫描。
 
-这不是因为必须跑 deep Z3。当前路线把“证明”改成有限域枚举 + Host replay + 源码 guard certificate，单次耗时主要落在 WSL replay 和必要的静态解析上。
+这不是因为必须跑 deep solver。当前路线把“证明”改成有限域枚举 + Host replay + 源码 guard certificate，单次耗时主要落在 WSL replay 和必要的静态解析上。
 
 已做的提速：
 

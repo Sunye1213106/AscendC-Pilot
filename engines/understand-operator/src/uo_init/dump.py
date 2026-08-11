@@ -31,7 +31,7 @@ VIEW_ALIASES: dict[str, str] = {
     "tilingdata": "views/tilingdata.yaml",
     "kernel": "views/kernel.yaml",
     "call_graph": "views/call_graph.yaml",
-    "key_reachability": "tiling/key_reachability.yaml",
+    "legal_keys": "tiling/legal_key_index.jsonl",
     "key_space": "tiling/key_space.yaml",
     "exhaustive_key_space": "tiling/exhaustive_key_space.yaml",
     "coverage_model": "tiling/coverage_model.yaml",

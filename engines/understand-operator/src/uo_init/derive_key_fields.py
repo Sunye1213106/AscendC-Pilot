@@ -98,8 +98,8 @@ def has_constant_dead_arm(value_expr: Any, *, source_only: bool = False) -> bool
     A derivation artefact can pin an arm that the host actually takes. The
     signal is a `lit` boolean appearing in a *guard position*: as the
     condition of an `if_then_else`, or inside the `and`/`or`/`not` connective
-    that forms a condition. Z3 folds such a constant and proves the other arm
-    unreachable, which is only sound if the constant was — and for
+    that forms a condition. Downstream constraint consumers would fold such a
+    constant and mark the other arm unreachable, which is only sound if the constant was — and for
     SplitAxis/DeterType it was not. A `lit` sitting in an if's *arm* is the
     field's legitimate boolean output, not a guard, so it does not count.
 
@@ -528,10 +528,9 @@ class KeyFieldDerivation:
     def to_dict(self) -> dict[str, Any]:
         """Serialise one field for worker → parent IPC.
 
-        Always includes ``value_expr`` / ``expanded`` so the parent can grade,
-        patch gaps, and optionally persist deep-solve shards. Persistence to
-        ``host_derivation.yaml`` / ``key_derivations.yaml`` strips these unless
-        ``UO_DEEP_SOLVE=1`` (see ``host_derivation.FieldDerivation.to_dict``).
+        Always includes ``value_expr`` / ``expanded`` so the parent can grade
+        and patch gaps. Export strips these payloads before writing
+        ``host_derivation.yaml`` / ``key_derivations.yaml``.
         """
         return {
             "name": self.name,
@@ -1745,9 +1744,10 @@ class KeyFieldDeriver:
             else:
                 fallthrough = assumed if assumed is not None else Const(0)
             # A constant condition here is a derivation artefact, not a fact
-            # about the operator: leaving it in the tree lets Z3 prove the
-            # other arm unreachable, and for SplitAxis/DeterType that arm is
-            # the one the host actually takes. Fold it away now; any remaining
+            # about the operator: leaving it in the tree lets downstream
+            # constraint consumers mark the other arm unreachable, and for
+            # SplitAxis/DeterType that arm is the one the host actually takes.
+            # Fold it away now; any remaining
             # constant-dead structure is still flagged by
             # `underapproximated_dim_names`.
             if isinstance(cond, Const):
@@ -3175,18 +3175,11 @@ class KeyFieldDeriver:
         self.implicit_zero = []
         self._implicit_seen = set()
         expanded = self._expand_text(host_expr, function, 0)
-        # Pretty text of the expansion is only for optional deep-solve debug;
-        # grading / SMT use the DAG. Skip the render unless UO_DEEP_SOLVE=1.
-        keep_expanded = os.environ.get("UO_DEEP_SOLVE", "").strip().lower() in (
-            "1",
-            "true",
-            "yes",
-        )
         out = KeyFieldDerivation(
             name=dim_name,
             index=index,
             host_expr=host_expr,
-            expanded=_pretty_dag(expanded) if keep_expanded else "",
+            expanded="",
             def_sites=self._defs_for(strip_casts(host_expr), function),
         )
         norm = _ValueNormalizer(

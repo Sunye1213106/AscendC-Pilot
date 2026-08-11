@@ -7,9 +7,9 @@ Sources (CANN asc-devkit):
   - ``TPosition`` / ``QuePosition`` template args → memory_space
   - Wrapper types (e.g. ``MutexBuffer<BufferType, SyncType>``) compose a
     CANN storage root (LocalTensor/GlobalTensor at a TPosition) + sync policy.
-    Model the wrapper as BUFFER with ``role=storage_wrapper`` and
-    ``VIEW_OF`` the synthetic CANN storage root — same idea as INPUT roots,
-    independent of member/variable names.
+    Model the wrapper as a TYPE with ``role=storage_wrapper_type`` that
+    ``WRAPS`` / ``ROOTED_AT`` AscendC LocalTensor — not as an AscendC buffer
+    kind. Decl sites keep ``role=storage_wrapper`` + file:line for location.
 """
 
 from __future__ import annotations
@@ -45,6 +45,38 @@ ASCENDC_STORAGE_WRAPPER_TYPES: frozenset[str] = frozenset(
         "MutexBuffer",
         # fa_base_matmul::Buffer / similar position-templated wrappers
         "Buffer",
+    }
+)
+
+# Multi-buffer policies that wrap MutexBuffer (hence LocalTensor).
+ASCENDC_STORAGE_POLICY_TYPES: frozenset[str] = frozenset(
+    {
+        "MutexBuffersPolicySingleBuffer",
+        "MutexBuffersPolicyDB",
+        "MutexBuffersPolicy3buff",
+        "MutexBuffersPolicy4buff",
+        "MutexMatrix2x2BufferPolicy",
+        "MutexBufferManager",
+    }
+)
+
+# Method spellings that collide with AscendC TQue/TBuf APIs but, on a
+# MutexBuffer / policy receiver, are view accessors → LocalTensor.
+STORAGE_VIEW_ACCESSORS: frozenset[str] = frozenset(
+    {
+        "Get",
+        "GetTensor",
+        "GetPre",
+        "GetReused",
+        "GetVec",
+        "GetCube",
+        "GetFree",
+        "AllocNext",
+        "ReuseNext",
+        "FreeNext",
+        "PeekNextK",
+        "PeekBuffer",
+        "GetBuffer",
     }
 )
 
@@ -155,6 +187,30 @@ def is_storage_wrapper_type(type_text: str) -> bool:
     if re.search(r"\bBuffer\s*<", text):
         return True
     return False
+
+
+def wrapper_family_from_type(type_text: str) -> str:
+    """Classify project storage-wrapper / policy family from a type spelling.
+
+    Returns empty string when the type is a direct AscendC buffer (TQue/…)
+    or unrelated — so ``Get``/``GetTensor`` keep their AscendC roots.
+    """
+    text = str(type_text or "")
+    if not text:
+        return ""
+    if any(p in text for p in ASCENDC_STORAGE_POLICY_TYPES) or "MutexBuffersPolicy" in text:
+        return "MutexBuffersPolicy"
+    if "MutexBufferManager" in text:
+        return "MutexBufferManager"
+    if "MutexBuffer" in text:
+        return "MutexBuffer"
+    if re.search(r"\bBuffer\s*<", text):
+        return "Buffer"
+    return ""
+
+
+def is_storage_view_accessor(callee: str) -> bool:
+    return str(callee or "").split("::")[-1] in STORAGE_VIEW_ACCESSORS
 
 
 def is_non_storage_type(type_text: str) -> bool:

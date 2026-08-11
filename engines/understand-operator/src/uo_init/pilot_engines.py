@@ -1042,12 +1042,10 @@ def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None)
         # re-deriving; still a contract stub until TG consumes it.
         _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(doc))
         try:
-            from uo_init.materialize_tiling import write_expr_shards, write_key_index
+            from uo_init.materialize_tiling import write_key_index
 
             field_dicts = [f.to_dict() for f in doc.fields]
             write_key_index(uo, field_dicts)
-            # No-op unless UO_DEEP_SOLVE=1 (to_dict then carries value_expr).
-            write_expr_shards(uo, field_dicts)
         except Exception:
             pass
         totals = doc.totals()

@@ -11,7 +11,7 @@
 #   - uo_init.kb_index    (sqlite product writer / YAML→DB rebuild)
 #   - uo_init.dump        (YAML-on-demand from DB)
 #   - uo_init.uo_query / source_locator (query + file:line locate)
-#   - testcase-generation (variables + constraints -> Z3; loads DB or YAML)
+#   - testcase-generation (variables + constraints -> candidate planning/replay; loads DB or YAML)
 version: 1
 authority: db
 product: indexes/kb_graph.sqlite

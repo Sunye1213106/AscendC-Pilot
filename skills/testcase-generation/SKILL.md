@@ -42,7 +42,7 @@ Plan `level=L3` / `branch_outcome_coverage`：TD dump + `branch_eval` 增长 R�
 
 ## 纪律
 
-- 预测 / 模型 / Z3-approx 只能排序候选，不能入 E。
+- 预测 / 模型 / 近似排序只能排序候选，不能入 E。
 - Lemma 必须有源码引用，并检查入口、early return、all writers、顺序、异常路径。
 - 真实 witness 推翻 lemma 时立即撤销并重建 E。
 - 改变 T 回到 Plan，不在 Solve 内改计划。

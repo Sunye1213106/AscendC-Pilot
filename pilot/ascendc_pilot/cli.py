@@ -1433,12 +1433,6 @@ def _doctor(project: Path) -> int:
     except Exception as exc:  # noqa: BLE001
         warnings.append(f"compose validation skipped: {exc}")
 
-    # Z3 solver (tg-solve)
-    try:
-        import z3  # noqa: F401
-    except ImportError:
-        warnings.append("z3 not installed; only explicit legacy-solver comparison is unavailable")
-
     # TG consumer root hint
     import os
 

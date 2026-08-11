@@ -3,18 +3,19 @@
 
 `KeyFieldDeriver` expands every TilingKey dimension down to input roots. That
 result used to live only in a debug probe, so the contract layer had nothing to
-reason with: per-key reachability fell back to a pair of hand-written
-invariants, and TG had no key derivations to bind against.
+bind against: runtime reachability fell back to a pair of hand-written
+invariants, and TG had no key derivations to plan from.
 
 This module runs the derivation for a whole operator and turns it into
 `ir/host_derivation.yaml`. By default the YAML (and the in-memory document)
 keep lightweight metadata only (status / leaves / roots / def_sites / guards).
-Full ``value_expr`` DAGs and the truncated ``expanded`` text are kept only when
-``UO_DEEP_SOLVE=1`` — that optional path feeds Z3 key-reachability and
-``tiling/expr/`` shards. Default uo-init does not solve or retain them.
+Full ``value_expr`` DAGs and the truncated ``expanded`` text are transient:
+workers return them for grading, then export strips them before
+``host_derivation.yaml`` / ``key_derivations.yaml``. UO no longer persists
+expression shards or runs a symbolic host-reachability solver.
 
-Lightweight consumers (codemap / gaps pre-sort / key_index) read metadata only.
-Deep consumers need ``UO_DEEP_SOLVE=1`` before derive.
+Consumers (codemap / gaps pre-sort / key_index / TG projection) read metadata
+only and close runtime evidence through replay or reviewed source facts.
 
 Field / aux / premise jobs run in a persistent-but-replaceable worker pool:
 each worker loads the HostIR bundle once and reuses one ``KeyFieldDeriver``
@@ -25,7 +26,6 @@ as ``unresolved`` rather than failing the export.
 from __future__ import annotations
 
 import multiprocessing as mp
-import os
 import pickle
 import re
 import sys
@@ -55,19 +55,14 @@ from uo_init.kb_model import classify_input_closure, input_closure_is_drivable
 DERIVATION_VERSION = 1
 
 
-def deep_solve_enabled() -> bool:
-    """Whether to retain ``value_expr`` / ``expanded`` after grading.
-
-    Default off: derive still grades from the live trees, then drops them so
-    YAML / RAM / materialize stay on lightweight metadata. Set
-    ``UO_DEEP_SOLVE=1`` to keep DAGs for Z3 reachability and ``tiling/expr/``.
-    """
-    return os.environ.get("UO_DEEP_SOLVE", "").strip().lower() in ("1", "true", "yes")
+def persist_expr_payload_enabled() -> bool:
+    """Whether to retain ``value_expr`` / ``expanded`` in exported artifacts."""
+    return False
 
 
 def strip_deep_payload(doc: "HostDerivation") -> None:
-    """Drop ``value_expr`` / ``expanded`` from every field when deep-solve is off."""
-    if deep_solve_enabled():
+    """Drop ``value_expr`` / ``expanded`` from every exported field."""
+    if persist_expr_payload_enabled():
         return
     for fld in doc.fields:
         fld.value_expr = None
@@ -561,7 +556,7 @@ class FieldDerivation:
         return sorted(v for v in self.free_vars if v not in recorded)
 
     def to_dict(self) -> dict[str, Any]:
-        """Persist one field. ``value_expr`` / ``expanded`` only when deep-solve on."""
+        """Persist one field. ``value_expr`` / ``expanded`` are normally omitted."""
         out: dict[str, Any] = {
             "name": self.name,
             "index": self.index,
@@ -588,11 +583,11 @@ class FieldDerivation:
             "seconds": self.seconds,
             "expanded_chars": self.expanded_chars,
         }
-        if deep_solve_enabled():
+        if persist_expr_payload_enabled():
             # Shared sub-expressions are named rather than repeated; see
             # `encode_expr_dag`. Read it back with `decode_expr_dag`.
             out["value_expr"] = encode_expr_dag(self.value_expr)
-            # Truncated text render — only kept for deep-solve debugging.
+            # Truncated text render — only kept for explicit payload debugging.
             if self.expanded:
                 out["expanded"] = self.expanded[:EXPANDED_KEEP]
         return out
@@ -1983,8 +1978,8 @@ def derive_host_fields(
         rows = [cached_by_name[b.decl.name] for b in targets]
         for row in rows:
             fld = _to_field(row, evidence)
-            # Text render is debug-only; grading uses value_expr. Deep trees
-            # are stripped after regrade when UO_DEEP_SOLVE is off.
+            # Text render is debug-only; grading uses value_expr. Expression
+            # payloads are stripped after regrade.
             fld.expanded = ""
             doc.fields.append(fld)
         doc.phase_seconds["fields"] = round(time.time() - phase, 1)
@@ -2065,10 +2060,10 @@ def to_key_derivations(doc: HostDerivation) -> dict[str, Any]:
     """TG-facing view: one entry per dimension, no derivation bookkeeping.
 
     TG binds `key_derivations` to decide which CSV variables move a key field.
-    Default omits ``expr`` (same deep-solve gate as ``host_derivation.yaml``);
+    Default omits ``expr`` (same payload policy as ``host_derivation.yaml``);
     roots / leaves / status are enough for the closure path.
     """
-    deep = deep_solve_enabled()
+    include_expr = persist_expr_payload_enabled()
     entries: dict[str, Any] = {}
     for f in doc.fields:
         row: dict[str, Any] = {
@@ -2083,7 +2078,7 @@ def to_key_derivations(doc: HostDerivation) -> dict[str, Any]:
             "input_derivable": f.input_derivable,
             "undecided_guard_ids": [g.id for g in f.undecided_guards],
         }
-        if deep:
+        if include_expr:
             row["expr"] = encode_expr_dag(f.value_expr)
         entries[f.name] = row
     return {

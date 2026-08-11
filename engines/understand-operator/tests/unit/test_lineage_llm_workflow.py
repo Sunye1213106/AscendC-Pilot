@@ -6,10 +6,8 @@ from uo_init.lineage import (
     terminate,
     tnd_unroll,
     tpl_vs_host_diff,
-    z3_uint_in_domain,
 )
 from uo_init.llm_harness import Ledger, LlmOutput
-from uo_init.tpl_dsl import parse_file
 from uo_init.workflow import run_operator_report
 
 
@@ -23,14 +21,6 @@ def test_input_value_marked():
     names = [f"in{i}" for i in range(20)]
     m = mark_input_value_deps([12, 13, 14, 15, 16], names)
     assert all(v.startswith("INPUT_VALUE:") for v in m.values())
-
-
-def test_z3_uint_must_in_decl_vals(fag_dir):
-    sch = parse_file(
-        fag_dir / "op_kernel" / "arch35" / "flash_attention_score_grad_template_tiling_key.h"
-    )
-    assert z3_uint_in_domain(sch, "S1TemplateNum", 128) == "sat"
-    assert z3_uint_in_domain(sch, "S1TemplateNum", 99999) == "unsat"
 
 
 def test_tpl_vs_host_diff_empty_or_reported():

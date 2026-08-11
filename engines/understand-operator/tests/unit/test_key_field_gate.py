@@ -40,12 +40,13 @@ def test_k7_invariants_file_has_i1_i12():
 def test_the_invariants_fixture_is_documentation_not_a_gate():
     """K7's invariants describe the operator; K6 must not assert them.
 
-    They used to be three hand-written rules inside `z3_check_key_dims`, which
-    made every key they did not object to `reachable` — a claim nothing had
-    checked. Reachability now comes from the derivation, so this file is a
-    reference to compare derived results against, not an input to them.
+    They used to be three hand-written rules inside a legacy reachability
+    helper, which made every key they did not object to `reachable` — a claim
+    nothing had checked. Runtime closure now comes from replay or reviewed
+    evidence, so this file is a reference to compare derived results against,
+    not an input to them.
     """
     from uo_init import materialize_tiling
 
-    assert not hasattr(materialize_tiling, "z3_check_key_dims")
+    assert not any(name.endswith("check_key_dims") for name in dir(materialize_tiling))
     assert not hasattr(materialize_tiling, "_hard_invariants")

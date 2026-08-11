@@ -28,3 +28,15 @@ ops:
     confidence: confirmed
     args:
       "0": write_buffer
+  SetAtomicAdd:
+    category: memory_atomic
+    engine: MTE
+    confidence: confirmed
+  SetAtomicNone:
+    category: memory_atomic
+    engine: MTE
+    confidence: confirmed
+  SetAtomicType:
+    category: memory_atomic
+    engine: MTE
+    confidence: partial

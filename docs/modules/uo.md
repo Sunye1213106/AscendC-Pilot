@@ -43,15 +43,11 @@ operator root + architecture
 | `verify` | `.uo` | 校验结构、合同和导出视图 | 已验证的 CodeMap |
 
 ```text
-Source
-  -> CompilerFacts
-  -> normalized IR
-  -> derived fields and relations
-       |- Host -> TilingKey
-       |- Input -> derived state
-       |- TilingData -> Kernel
-       `- Host condition -> Kernel branch
-  -> Operator CodeMap
+Source -> CompilerFacts -> normalized IR -> derived fields and relations -> Operator CodeMap
+derived fields and relations -> Host -> TilingKey
+derived fields and relations -> Input -> derived state
+derived fields and relations -> TilingData -> Kernel
+derived fields and relations -> Host condition -> Kernel branch
 ```
 
 CompilerFacts 是建立可追溯关系的依据，而非为了“用 Clang 而用 Clang”。它让 UO 可在当前构建变体的语义下识别声明、引用、模板、宏和源位置；后续的确定性 pass 将这些事实规范化并推导可消费关系。
@@ -67,9 +63,7 @@ UO 的 Kernel 分析已经从“找到入口和分支”扩展为更完整的执
 ## 三条 UO 工作流
 
 ```text
-Source -> CodeMap -> /uo-query   只读消费
-          |
-          `--------> /uo-update  受控增量刷新
+Source -> CodeMap -> {/uo-query 只读消费 | /uo-update 受控增量刷新}
 ```
 
 `/uo-init` 从源码建立新的 CodeMap，依次经过 `prepare -> extract -> analyze -> commit -> verify`。

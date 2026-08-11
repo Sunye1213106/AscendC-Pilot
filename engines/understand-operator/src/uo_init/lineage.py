@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Source lineage, light Z3 helpers, and closure gates."""
+"""Source lineage and closure gates."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,7 +7,6 @@ from typing import Any, Iterable
 
 from uo_init.expr_ir import Expr, Unknown, pretty
 from uo_init.source_resolver import SourceResolver, resolve_with_path
-from uo_init.tpl_dsl import TplSchema
 
 LEGAL_ROOTS = {
     "INPUT_SHAPE",
@@ -100,34 +99,6 @@ def tnd_unroll(b: int, prefix: str = "actual_seq_qlen") -> list[str]:
     if b < 1:
         raise ValueError("B must be >= 1")
     return [f"{prefix}[{i}]" for i in range(b)]
-
-
-def z3_uint_in_domain(schema: TplSchema, dim_name: str, value: int) -> str:
-    """Return sat/unsat/unknown without requiring z3 at import time for unit tests."""
-    dim = next((d for d in schema.dims if d.name == dim_name), None)
-    if dim is None:
-        return "unknown"
-    if dim.kind != "UINT":
-        return "unknown"
-    try:
-        schema.encode_uint(dim, value)
-        return "sat"
-    except ValueError:
-        return "unsat"
-
-
-def try_z3_bool(formula_true: bool) -> str:
-    try:
-        import z3
-
-        s = z3.Solver()
-        x = z3.Bool("x")
-        s.add(x if formula_true else z3.Not(x))
-        s.add(x)
-        r = s.check()
-        return str(r)
-    except Exception:
-        return "unknown"
 
 
 LOOP_KINDS = ("for", "while", "do")

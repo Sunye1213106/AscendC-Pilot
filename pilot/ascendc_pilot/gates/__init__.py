@@ -1049,20 +1049,25 @@ def gate_uo_ready(uo: Path) -> dict[str, Any]:
     # New-contract tiling materialize gate.
     exhaustive = {}
     coverage = {}
-    reach = {}
     try:
         exhaustive = _load(uo / "tiling" / "exhaustive_key_space.yaml") if (uo / "tiling" / "exhaustive_key_space.yaml").is_file() else {}
         coverage = _load(uo / "tiling" / "coverage_model.yaml") if (uo / "tiling" / "coverage_model.yaml").is_file() else {}
-        reach = _load(uo / "tiling" / "key_reachability.yaml") if (uo / "tiling" / "key_reachability.yaml").is_file() else {}
     except Exception as exc:  # noqa: BLE001
         checks["tiling_load_error"] = str(exc)[:200]
     blocks = exhaustive.get("template_blocks") or []
     kfo = coverage.get("key_field_obligations") or {}
-    keys = reach.get("keys") or []
+    key_index = uo / "tiling" / "legal_key_index.jsonl"
+    if key_index.is_file():
+        try:
+            key_rows = sum(1 for line in key_index.read_text(encoding="utf-8").splitlines() if line.strip())
+        except OSError:
+            key_rows = 0
+    else:
+        key_rows = int(exhaustive.get("legal_key_count") or 0)
     checks["template_blocks"] = len(blocks)
     checks["key_field_obligations"] = len(kfo)
-    checks["legal_key_rows"] = len(keys)
-    checks["tiling_materialized"] = bool(blocks and kfo and keys)
+    checks["legal_key_rows"] = key_rows
+    checks["tiling_materialized"] = bool(blocks and kfo and key_rows)
 
     branches = {}
     try:

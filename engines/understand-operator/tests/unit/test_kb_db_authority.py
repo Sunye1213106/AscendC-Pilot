@@ -14,6 +14,7 @@ from uo_init.kb_index import (
     db_authority_ok,
     get_meta,
     index_summary,
+    load_legal_keys_from_db,
     load_view_blob,
     rebuild_index,
 )
@@ -95,7 +96,7 @@ def _sample_kb() -> KnowledgeBase:
         "key_field_obligations": {"mode": {"id": "COV_mode"}},
         "field_order": ["mode"],
         "key_status_counts": {"reachable": 1},
-        "reachability": {"mode": "deep_solve_off"},
+        "host_reachability": {"status": "not_computed"},
     }
     kb.notes["tiling_data_view"] = {
         "schema": "uo-view-tilingdata/v1",
@@ -144,8 +145,8 @@ def test_export_writes_db_with_view_blobs(tmp_path: Path):
     assert isinstance(tilingdata, dict)
     kernel = load_view_blob(db, "views/kernel.yaml")
     assert isinstance(kernel, dict)
-    reach = load_view_blob(db, "tiling/key_reachability.yaml")
-    assert isinstance(reach, dict)
+    legal_keys = load_legal_keys_from_db(db)
+    assert legal_keys and legal_keys[0]["id"] == "K0"
     summary = index_summary(db)
     assert summary["legal_key_count"] == 1
     assert summary["view_count"] >= 5

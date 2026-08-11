@@ -215,8 +215,9 @@ def _kernel_view(
     the branch survives some real instantiation, so it is attached to the row
     rather than listed as a second, unrelated branch.
 
-    `D` is therefore `(branch, dtype_variant)` pairs and reachability is a
-    downstream consequence of key reachability, reached through `dimensions`.
+    `D` is therefore `(branch, dtype_variant)` pairs. Runtime reachability is
+    closed downstream by TG replay or reviewed source evidence, reached through
+    `dimensions`.
     """
     loc: dict[str, tuple[str, int]] = {}
     for row in payload.get("evidence") or []:
@@ -475,14 +476,6 @@ def assemble_artifacts(kb: KnowledgeBase) -> dict[str, Any]:
             "key_relation_obligations": [],
             "quality": _quality(kb, payload),
         },
-        "tiling/key_reachability.yaml": {
-            "version": FORMAT_VERSION,
-            "status": "extracted" if legal_keys else "not_extracted",
-            "legal_key_count": len(legal_keys),
-            "status_counts": dict(mat.get("key_status_counts") or {}),
-            "solver": dict(mat.get("reachability") or {}),
-            "keys": legal_keys,
-        },
         "tiling/data_model.yaml": _view(
             status="extracted" if data_fields else "not_extracted",
             nodes=data_fields,
@@ -698,7 +691,6 @@ def export_kb(kb: KnowledgeBase, uo_root: str | Path) -> dict[str, Any]:
         artifact_hashes=hashes,
         legal_keys=legal_keys,
         host_derivation=assembled.get("host_derivation"),
-        key_reachability=artifacts.get("tiling/key_reachability.yaml"),
         meta={
             "authority": "db",
             "yaml_export": yaml_export_enabled(),

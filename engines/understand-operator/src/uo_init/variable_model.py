@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Named variables with value domains — the layer between source text and Z3.
+"""Named variables with value domains — the layer between source text and constraint IR.
 
-The resolver answers "which root does this guard come from"; a solver needs
+The resolver answers "which root does this guard come from"; constraint consumers need
 "which named variable, of which type, ranging over which values". This module
 mints those variables from evidence only:
 
@@ -32,10 +32,10 @@ DATATYPE_RE = re.compile(r"\.DataType\s*\(\s*\{([^}]*)\}\s*\)")
 FORMAT_RE = re.compile(r"\.Format\s*\(\s*\{([^}]*)\}\s*\)")
 ATTR_VALUE_RE = re.compile(r"\.(Int|Float|Bool|String|ListInt|ListFloat)\s*\(([^)]*)\)")
 
-# Attribute C++ declaration type -> solver variable type.
+# Attribute C++ declaration type -> constraint variable type.
 ATTR_TYPE_MAP = {
     "Int": "int",
-    "Float": "int",  # Z3 backend models numeric attrs as ints; floats are bucketed by TG
+    "Float": "int",  # numeric attrs are bucketed by TG
     "Bool": "bool",
     "String": "enum",
     "ListInt": "int",
@@ -119,7 +119,7 @@ class VarSpec:
     identity_merged: bool = False
 
     def to_tg_entry(self) -> dict[str, Any]:
-        """Shape expected by `testcase_agent.z3_backend._declare_symbols`."""
+        """Shape used by TG constraint and replay planning."""
         entry: dict[str, Any] = {"type": self.value_type}
         d = self.domain
         if d.values:

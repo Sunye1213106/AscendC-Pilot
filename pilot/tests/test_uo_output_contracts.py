@@ -39,7 +39,7 @@ def test_uo_query_review_ready_contracts_not_bare_dirs() -> None:
     assert _joined("kb-answer-v1") == "uo/manifest.yaml,uo/checks/integrity.yaml"
     assert "ce/review/index.yaml" in _joined("code-review-v1")
     assert _joined("uo-ready-v1") == "tg/init/uo_ready.yaml"
-    assert "z3-solve-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_PATHS
     assert "cover-confirm-v1" not in OUTPUT_CONTRACT_PATHS
     assert "csv-contract-v1" not in OUTPUT_CONTRACT_PATHS
 

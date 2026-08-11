@@ -292,7 +292,7 @@ def _eval(expr: Any, assignment: dict[str, Any]) -> Any:
 
 
 # Full expand for tiny ranges; larger ranges are sampled for image analysis only.
-# Z3 still uses the real {min,max} bounds — this list is NOT the solver domain.
+# Planning still keeps the real {min,max} bounds — this list is NOT the domain.
 _MAX_RANGE_EXPAND = 256
 _RANGE_SAMPLE_ANCHORS = (
     0,

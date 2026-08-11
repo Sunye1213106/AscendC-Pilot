@@ -27,7 +27,7 @@ def check_import(name: str) -> None:
 def main() -> int:
     print(f"repo={ROOT}")
     print(f"python={sys.version.split()[0]} executable={sys.executable}")
-    for name in ("yaml", "jsonschema", "z3", "uo_init", "ascendc_pilot", "testcase_agent"):
+    for name in ("yaml", "jsonschema", "uo_init", "ascendc_pilot", "testcase_agent"):
         check_import(name)
     try:
         import clang.cindex as cindex

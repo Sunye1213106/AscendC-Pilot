@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
-"""Materialize TPL key space, template blocks, coverage and reachability into the KB.
+﻿# -*- coding: utf-8 -*-
+"""Materialize TPL key space, template blocks and coverage into the KB.
 
 This is the new-contract producer for TG L1/L2. Empty shells must not be marked
 ``extracted``.
@@ -12,15 +12,6 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from uo_init.ids import named_id, slug
-from uo_init.key_reachability import (
-    LAYER_TEMPLATE,
-    R_REACHABLE,
-    R_UNDERIVABLE,
-    R_UNKNOWN,
-    R_UNREACHABLE,
-    KeyReachability,
-    KeyVerdict,
-)
 from uo_init.kb_model import (
     CONTROLLABLE_ROOTS,
     STATUS_EXTRACTED,
@@ -34,6 +25,13 @@ from uo_init.tpl_bind import BindingResult
 from uo_init.tpl_dsl import TplSchema, expand_legal_instances, parse_file
 from uo_init.variable_model import VariableModel
 
+KEY_REACHABLE = "reachable"
+KEY_UNREACHABLE = "unreachable"
+KEY_UNKNOWN = "unknown"
+KEY_UNDERIVABLE = "underivable"
+LAYER_TEMPLATE = "template"
+LAYER_NOT_COMPUTED = "not_computed"
+
 REASON_OK = "OK"
 REASON_BIND_INCOMPLETE = "BIND_INCOMPLETE"
 REASON_NOT_INPUT_DERIVABLE = "NOT_INPUT_DERIVABLE"
@@ -41,8 +39,8 @@ REASON_PREDICATE_UNRESOLVED = "PREDICATE_UNRESOLVED"
 REASON_REALIZATION_MISSING = "REALIZATION_MISSING"
 REASON_DOMAIN_OPEN = "DOMAIN_OPEN"
 REASON_HOST_ENCODE_CONFLICT = "HOST_ENCODE_CONFLICT"
-REASON_Z3_UNSAT = "Z3_UNSAT"
-REASON_Z3_UNKNOWN = "Z3_UNKNOWN"
+REASON_HOST_UNREACHABLE = "HOST_UNREACHABLE"
+REASON_HOST_UNKNOWN = "HOST_UNKNOWN"
 
 REASON_CODES = frozenset(
     {
@@ -53,8 +51,8 @@ REASON_CODES = frozenset(
         REASON_REALIZATION_MISSING,
         REASON_DOMAIN_OPEN,
         REASON_HOST_ENCODE_CONFLICT,
-        REASON_Z3_UNSAT,
-        REASON_Z3_UNKNOWN,
+        REASON_HOST_UNREACHABLE,
+        REASON_HOST_UNKNOWN,
     }
 )
 
@@ -89,18 +87,11 @@ class LegalKeyRow:
     reason_code: str = REASON_OK
     #: Default is the weakest status, not the strongest. A row that nobody
     #: classified must not read as "a host run produces this".
-    status: str = R_UNDERIVABLE
+    status: str = KEY_UNKNOWN
     detail: str = ""
     blocker_ids: list[str] = field(default_factory=list)
-    #: Which check produced the status, so a reader can tell a template-side
-    #: rejection from a solver result.
+    #: Which check produced the status.
     layer: str = LAYER_TEMPLATE
-    #: Root assignment producing this key. Only present on `reachable`.
-    witness: dict[str, Any] = field(default_factory=dict)
-    #: Which dimensions Z3 needed for the contradiction, on `unreachable`.
-    unsat_core: list[str] = field(default_factory=list)
-    #: Dimensions that entered the solver. Anything else was not checked.
-    checked_dims: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -115,12 +106,6 @@ class LegalKeyRow:
             "blocker_ids": list(self.blocker_ids),
             "layer": self.layer,
         }
-        if self.witness:
-            out["witness"] = dict(self.witness)
-        if self.unsat_core:
-            out["unsat_core"] = list(self.unsat_core)
-        if self.checked_dims:
-            out["checked_dims"] = list(self.checked_dims)
         return out
 
 
@@ -194,71 +179,34 @@ def _bind_complete(binding: BindingResult | None, schema: TplSchema) -> tuple[bo
     return True, ""
 
 
-_REASON_BY_STATUS = {
-    R_REACHABLE: REASON_OK,
-    R_UNREACHABLE: REASON_Z3_UNSAT,
-    R_UNKNOWN: REASON_Z3_UNKNOWN,
-    R_UNDERIVABLE: REASON_NOT_INPUT_DERIVABLE,
-}
-
-
-def classify_key_reachability(
-    *,
+def _legal_key_status(
     dims: dict[str, str],
     schema: TplSchema,
-    binding: BindingResult | None,
-    blocker_ids: list[str],
-    reachability: KeyReachability | None,
-) -> KeyVerdict:
-    """Decide one key, from the template's side first and the host's second.
+    *,
+    bind_ok: bool,
+    bind_detail: str,
+) -> tuple[str, str, str, str]:
+    """Return (status, reason_code, detail, layer) for a legal key row."""
 
-    The template checks are the cheap ones and answer a different question:
-    whether this combination is even spellable and bound to an encode site. Only
-    then does the host derivation get asked whether a run can produce it.
-
-    There is no fallback path that returns `reachable`. Previously three
-    hand-written invariants stood in for the derivation, and anything they did
-    not object to was called reachable — including when the solver was switched
-    off and when open blockers said the derivation was incomplete. Absent an
-    answer the honest status is `underivable`.
-    """
-    ok_bind, bind_detail = _bind_complete(binding, schema)
-    if not ok_bind:
-        return KeyVerdict(
-            status=R_UNDERIVABLE, reason=bind_detail, layer=LAYER_TEMPLATE
-        )
+    if not bind_ok:
+        return KEY_UNDERIVABLE, REASON_NOT_INPUT_DERIVABLE, bind_detail, LAYER_TEMPLATE
     for dim in schema.dims:
         val = dims.get(dim.name)
         if val is None:
-            return KeyVerdict(
-                status=R_UNDERIVABLE,
-                reason=f"missing {dim.name}",
-                layer=LAYER_TEMPLATE,
-            )
+            return KEY_UNDERIVABLE, REASON_NOT_INPUT_DERIVABLE, f"missing {dim.name}", LAYER_TEMPLATE
         if str(val) not in [str(x) for x in dim.value_domain]:
-            return KeyVerdict(
-                status=R_UNDERIVABLE,
-                reason=f"{dim.name}={val} not in domain",
-                layer=LAYER_TEMPLATE,
+            return (
+                KEY_UNDERIVABLE,
+                REASON_NOT_INPUT_DERIVABLE,
+                f"{dim.name}={val} not in domain",
+                LAYER_TEMPLATE,
             )
-    if reachability is None:
-        return KeyVerdict(
-            status=R_UNDERIVABLE,
-            reason="no host derivation to check against",
-            layer=LAYER_TEMPLATE,
-        )
-    verdict = reachability.verdict(dims)
-    if verdict.status == R_REACHABLE and blocker_ids:
-        # The derivation is still missing pieces somewhere, so "a run produces
-        # this" is a claim about an incomplete model.
-        return KeyVerdict(
-            status=R_UNKNOWN,
-            reason=f"open_blockers={len(blocker_ids)}",
-            layer=verdict.layer,
-            witness=verdict.witness,
-            participating=verdict.participating,
-        )
-    return verdict
+    return (
+        KEY_UNKNOWN,
+        REASON_HOST_UNKNOWN,
+        "host reachability is not computed by UO; TG closes it with replay or reviewed evidence",
+        LAYER_NOT_COMPUTED,
+    )
 
 
 def build_legal_key_rows(
@@ -266,23 +214,19 @@ def build_legal_key_rows(
     *,
     binding: BindingResult | None = None,
     blocker_ids: Iterable[str] = (),
-    reachability: KeyReachability | None = None,
 ) -> list[LegalKeyRow]:
     blockers = list(blocker_ids)
+    bind_ok, bind_detail = _bind_complete(binding, schema)
     rows: list[LegalKeyRow] = []
     for idx, (gi, dims) in enumerate(expand_legal_with_groups(schema)):
         full = {d.name: str(dims.get(d.name, d.value_domain[0])) for d in schema.dims}
         key = schema.encode_tiling_key(full)
-        verdict = classify_key_reachability(
-            dims=full,
+        status, reason, detail, layer = _legal_key_status(
+            full,
             schema=schema,
-            binding=binding,
-            blocker_ids=blockers,
-            reachability=reachability,
+            bind_ok=bind_ok,
+            bind_detail=bind_detail,
         )
-        status = verdict.status
-        reason = _REASON_BY_STATUS.get(status, REASON_Z3_UNKNOWN)
-        detail = verdict.reason
         rows.append(
             LegalKeyRow(
                 index=idx,
@@ -294,14 +238,10 @@ def build_legal_key_rows(
                 status=status,
                 detail=detail,
                 blocker_ids=blockers if reason == REASON_PREDICATE_UNRESOLVED else [],
-                layer=verdict.layer,
-                witness=dict(verdict.witness),
-                unsat_core=list(verdict.unsat_core),
-                checked_dims=list(verdict.participating),
+                layer=layer,
             )
         )
     return rows
-
 
 def materialize_into_kb(
     kb: KnowledgeBase,
@@ -438,22 +378,10 @@ def materialize_into_kb(
             )
 
     blocker_ids = sorted(kb.blockers.keys())
-    from uo_init.host_derivation import deep_solve_enabled
-
-    if derivation is None or var_model is None:
-        reachability = KeyReachability.unavailable(
-            "no host derivation" if derivation is None else "no variable model"
-        )
-    elif not deep_solve_enabled():
-        # Default path strips value_expr after grading; Z3 needs those trees.
-        reachability = KeyReachability.unavailable("deep_solve_off")
-    else:
-        reachability = KeyReachability.from_derivation(derivation, var_model)
     legal_rows = build_legal_key_rows(
         schema,
         binding=binding,
         blocker_ids=blocker_ids,
-        reachability=reachability,
     )
 
     # Host-derived realization: binding maps each key dim to a host expression.
@@ -520,24 +448,26 @@ def materialize_into_kb(
         "bind_edges": bind_edges,
         "legal_keys": [r.to_dict() for r in legal_rows],
         "key_status_counts": {
-            "reachable": sum(1 for r in legal_rows if r.status == R_REACHABLE),
-            "unreachable": sum(1 for r in legal_rows if r.status == R_UNREACHABLE),
-            "unknown": sum(1 for r in legal_rows if r.status == R_UNKNOWN),
-            "underivable": sum(1 for r in legal_rows if r.status == R_UNDERIVABLE),
+            "reachable": sum(1 for r in legal_rows if r.status == KEY_REACHABLE),
+            "unreachable": sum(1 for r in legal_rows if r.status == KEY_UNREACHABLE),
+            "unknown": sum(1 for r in legal_rows if r.status == KEY_UNKNOWN),
+            "underivable": sum(1 for r in legal_rows if r.status == KEY_UNDERIVABLE),
         },
-        "reachability": reachability.summary(),
+        "host_reachability": {
+            "status": "not_computed",
+            "policy": "tg_replay_or_reviewed_exclusion",
+            "reason": "UO no longer runs symbolic host reachability",
+        },
         "summary": {
             "template_block_count": len(blocks),
             "expanded_key_count": len(legal_rows),
             "ktpl_instance_count": len(blocks),
             "key_dimension_count": len(dimensions),
-            # Two different questions. The template count is how many keys can
-            # be spelled; the host count is how many a run can produce. They
-            # were previously the same number, which is what made 8705 read as
-            # a reachability result.
+            # UO enumerates keys the template can spell; TG closes host
+            # reachability through replay or reviewed evidence.
             "template_admissible": len(legal_rows),
-            "host_reachable": sum(1 for r in legal_rows if r.status == R_REACHABLE),
-            "host_unreachable": sum(1 for r in legal_rows if r.status == R_UNREACHABLE),
+            "host_reachable": 0,
+            "host_unreachable": 0,
         },
     }
     kb.notes["tiling_materialize"] = contract
@@ -561,8 +491,7 @@ def write_legal_key_index(uo_root: Path, legal_keys: list[dict[str, Any]]) -> Pa
 def write_key_index(uo_root: Path, fields: list[dict[str, Any]]) -> Path:
     """Lightweight closure-facing index (~8% of derive payload).
 
-    Carries def_sites / status / exactness / value_leaves / input_roots —
-    not value_expr / expanded (those belong to optional uo-deep-solve shards).
+    Carries def_sites / status / exactness / value_leaves / input_roots.
     """
     import yaml
 
@@ -594,46 +523,10 @@ def write_key_index(uo_root: Path, fields: list[dict[str, Any]]) -> Path:
     return path
 
 
-def write_expr_shards(uo_root: Path, fields: list[dict[str, Any]]) -> list[Path]:
-    """Optional deep-solve shards under ``tiling/expr/<dim>.yaml``."""
-    import yaml
-
-    from uo_init.host_derivation import deep_solve_enabled
-
-    if not deep_solve_enabled():
-        return []
-    root = Path(uo_root) / "tiling" / "expr"
-    root.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-    for f in fields or []:
-        if not isinstance(f, dict):
-            continue
-        name = str(f.get("name") or "").strip()
-        if not name:
-            continue
-        if f.get("value_expr") is None and not f.get("expanded"):
-            continue
-        path = root / f"{name}.yaml"
-        path.write_text(
-            yaml.safe_dump(
-                {
-                    "schema": "uo-deep-solve-expr/v1",
-                    "name": name,
-                    "value_expr": f.get("value_expr"),
-                    "expanded": f.get("expanded"),
-                },
-                allow_unicode=True,
-                sort_keys=False,
-            ),
-            encoding="utf-8",
-        )
-        written.append(path)
-    return written
-
-
 def load_schema_from_notes_or_header(
     kb: KnowledgeBase, header: str | Path | None
 ) -> TplSchema | None:
     if header and Path(header).is_file():
         return parse_file(header)
     return None
+

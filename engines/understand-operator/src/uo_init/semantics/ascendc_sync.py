@@ -120,6 +120,7 @@ def mutex_pipe_for(callee: str, memory_space: str) -> str:
 
 
 # Callee → sync mechanism (registry category still comes from sync.yaml).
+# True AscendC roots only (kernel_operator_block_sync_intf.h + kernel_common.h Mutex).
 SYNC_MECHANISM: dict[str, str] = {
     "SetFlag": "hard_event",
     "WaitFlag": "hard_event",
@@ -130,14 +131,20 @@ SYNC_MECHANISM: dict[str, str] = {
     "CrossCoreWaitFlag": "cross_core",
     "IBSet": "inter_block",
     "IBWait": "inter_block",
+    "TQueSync": "queue_sync",
     "AllocMutexID": "mutex",
     "ReleaseMutexID": "mutex",
     "Lock": "mutex",
     "Unlock": "mutex",
-    "LockProd": "mutex",
-    "UnlockProd": "mutex",
-    "LockCons": "mutex",
-    "UnlockCons": "mutex",
+}
+
+# Project / policy wrappers that forward to AscendC Mutex::Lock/Unlock.
+# Not AscendC roots — root-trace must land on Lock/Unlock.
+SYNC_WRAPPER_TO_ROOT: dict[str, str] = {
+    "LockProd": "Lock",
+    "UnlockProd": "Unlock",
+    "LockCons": "Lock",
+    "UnlockCons": "Unlock",
 }
 
 
@@ -187,6 +194,8 @@ def resolve_sync_site(
     joined = " ".join(targs + args)
 
     mechanism = SYNC_MECHANISM.get(name, "")
+    if not mechanism and name in SYNC_WRAPPER_TO_ROOT:
+        mechanism = SYNC_MECHANISM.get(SYNC_WRAPPER_TO_ROOT[name], "mutex")
     cross = name.startswith("CrossCore") or mechanism == "cross_core"
 
     if "SetFlag" in name:

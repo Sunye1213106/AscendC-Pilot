@@ -59,10 +59,6 @@ if ! $PY -c "import yaml"; then
   echo "install PyYAML/jsonschema via Aliyun..."
   $PY -m pip install "PyYAML>=6.0" "jsonschema>=4.0"
 fi
-if ! $PY -c "import z3"; then
-  echo "install z3-solver via Aliyun..."
-  $PY -m pip install "z3-solver>=4.12"
-fi
 if ! $PY -c "import clang.cindex"; then
   echo "install libclang via Aliyun..."
   $PY -m pip install libclang || true

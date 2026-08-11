@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""FAG arch35 Kernel Execution acceptance + timing gate."""
+"""FAG arch35 Kernel Root Trace acceptance + timing gate."""
 
 from __future__ import annotations
 
@@ -11,26 +11,21 @@ import pytest
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
-from uo_init.passes.kernel_data_deps import finalize_kernel_data_deps
-from uo_init.passes.kernel_execution import finalize_kernel_execution
-from uo_init.passes.kernel_pipeline import finalize_kernel_pipeline
+from uo_init.passes.kernel_root_trace import finalize_kernel_root_trace
 from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.source_text_cache import clear as clear_source_text
-from uo_init.query.engine import CodeMapQuery
 from uo_init.semantics import registry as semreg
 
-# Hard gate from product requirement: Kernel Execution addition < 30s.
-_EXEC_BUDGET_S = 30.0
+_TRACE_BUDGET_S = 30.0
 
 
 @pytest.mark.requires_fag
-def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir: str) -> None:
-    """Run closure + execution on real FAG arch35; assert coverage and budget."""
+def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir: str) -> None:
+    """Root-trace on real FAG: AscendC roots reachable, no exec/pipeline."""
     semreg.load_registry.cache_clear()
     clear_source_text()
 
     cm = CodeMap(op_name=fag_dir.name, architecture=arch_dir)
-    # Minimal KERNEL seed so closure can attach selected-arch scopes.
     cm.upsert(
         EntityKind.KERNEL,
         "flash_attention_score_grad",
@@ -42,76 +37,73 @@ def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir:
     finalize_kernel_tiling_closure(cm, fag_dir, architecture=arch_dir)
     closure_s = time.perf_counter() - t_closure
 
-    t_exec = time.perf_counter()
-    finalize_kernel_execution(cm, fag_dir, architecture=arch_dir)
-    finalize_kernel_data_deps(cm)
-    exec_s = time.perf_counter() - t_exec
-    finalize_kernel_pipeline(cm)
+    t_trace = time.perf_counter()
+    finalize_kernel_root_trace(cm, fag_dir, architecture=arch_dir)
+    trace_s = time.perf_counter() - t_trace
 
-    meta = cm.meta.get("kernel_execution") or {}
+    meta = cm.meta.get("kernel_root_trace") or {}
     quality = meta.get("quality") or {}
     ops = cm.by_kind(EntityKind.OPERATION)
-    syncs = cm.by_kind(EntityKind.SYNC_EVENT)
     bufs = cm.by_kind(EntityKind.BUFFER)
     callees = {e.name for e in ops}
 
-    assert exec_s < _EXEC_BUDGET_S, (
-        f"kernel_execution took {exec_s:.2f}s (budget {_EXEC_BUDGET_S}s); "
-        f"meta={meta}"
-    )
-    assert float(meta.get("elapsed_s") or exec_s) < _EXEC_BUDGET_S
-    assert len(ops) >= 50, f"expected rich operation set on FAG, got {len(ops)}"
-    assert "DataCopy" in callees, f"missing DataCopy in {sorted(callees)[:20]}"
-    assert any(n in callees for n in ("SetFlag", "WaitFlag", "CrossCoreSetFlag", "CrossCoreWaitFlag")), (
-        f"missing sync primitives in {sorted(callees)[:30]}"
-    )
-    assert syncs, "expected SYNC_EVENT entities on FAG"
-    assert bufs, "expected BUFFER entities on FAG"
+    assert trace_s < _TRACE_BUDGET_S, f"kernel_root_trace took {trace_s:.2f}s meta={meta}"
+    assert float(meta.get("elapsed_s") or trace_s) < _TRACE_BUDGET_S
+    assert len(ops) >= 50, f"expected AscendC call sites on FAG, got {len(ops)}"
+    assert "DataCopy" in callees
+    assert any(n in callees for n in ("SetFlag", "WaitFlag", "CrossCoreSetFlag", "CrossCoreWaitFlag"))
+    assert bufs, "expected BUFFER entities"
 
-    pipe = cm.meta.get("kernel_execution_pipeline") or {}
+    reached_ops = [e for e in ops if e.attrs.get("root_status") == "REACHED"]
+    reached_bufs = [e for e in bufs if e.attrs.get("root_status") == "REACHED"]
+    assert reached_ops, "expected REACHED operations"
+    assert reached_bufs, "expected REACHED buffers"
 
-    # Quality report fields must exist and be positive.
-    assert isinstance(quality, dict) and quality, f"missing quality report: {meta}"
-    assert int(quality.get("ops") or 0) > 0
-    assert int(quality.get("buffers") or 0) > 0
-    assert int(quality.get("sync_events") or 0) > 0
-    assert int(meta.get("data_deps_total") or quality.get("data_deps_total") or 0) >= 0
+    rooted = [r for r in cm.relations.values() if r.kind_name() == RelationKind.ROOTED_AT.value]
+    assert rooted, "expected ROOTED_AT edges to AscendC catalog"
 
-    # Usable memory-pipeline floor against FAG source expectations.
-    names = {e.name for e in ops}
-    assert "InitBuffer" in names, "lexical supplement must recover InitBuffer"
-    assert "AllocTensor" in names or "EnQue" in names
-    assert int(pipe.get("copy_in_hints") or 0) >= 1, f"expected CopyIn on FAG, pipe={pipe}"
-    assert any(
-        str(b.attrs.get("memory_space") or "") in {"GM", "WORKSPACE", "L1", "UB"}
+    # Must NOT ship execution-analysis artifacts by default.
+    assert "kernel_execution_pipeline" not in cm.meta
+    assert not any(r.kind_name() == RelationKind.HAPPENS_BEFORE.value for r in cm.relations.values())
+    assert not any(r.kind_name() == RelationKind.DATA_DEPENDS_ON.value for r in cm.relations.values())
+    assert not any(r.kind_name() == RelationKind.PRECEDES.value for r in cm.relations.values())
+
+    assert isinstance(quality, dict) and int(quality.get("operations") or 0) > 0
+    assert "gap_count" in meta
+
+    # MutexBuffer is a wrapper TYPE → AscendC::LocalTensor (+ sync ops), not a BUFFER kind.
+    mutex_types = [
+        e
+        for e in cm.by_kind(EntityKind.TYPE)
+        if e.name == "MutexBuffer" and e.attrs.get("role") == "storage_wrapper_type"
+    ]
+    if mutex_types:
+        assert any(t.attrs.get("root_status") == "REACHED" for t in mutex_types)
+        assert any("LocalTensor" in str(t.attrs.get("root") or "") for t in mutex_types)
+    mutex_sites = [
+        b
         for b in bufs
-    )
+        if b.attrs.get("wrapper") == "MutexBuffer"
+        or ("MutexBuffer" in str(b.attrs.get("trace") or []) and b.attrs.get("role") == "storage_wrapper")
+    ]
+    if mutex_sites:
+        assert any(b.attrs.get("root_status") == "REACHED" for b in mutex_sites)
+        assert all("LocalTensor" in str(b.attrs.get("root") or "") for b in mutex_sites if b.attrs.get("root_status") == "REACHED")
+        assert not any(b.attrs.get("root", "").endswith("MutexBuffer") for b in mutex_sites)
 
-    precedes = [r for r in cm.relations.values() if r.kind_name() == RelationKind.PRECEDES.value]
-    assert precedes, "program-order PRECEDES required"
-    emits = [r for r in cm.relations.values() if r.kind_name() == RelationKind.EMITS_SYNC.value]
-    assert emits, "EMITS_SYNC links required when sync events exist"
-
-    assert int(pipe.get("operation_count") or 0) >= 50
-    assert pipe.get("authority") == "derived"
-
-    q = CodeMapQuery(codemap=cm)
-    overview = q.kernel_overview()
-    assert overview["operations"] == len(ops)
-    assert isinstance(q.kernel_pipeline(), dict)
-
-    # Timing print for manual inspection (pytest -s). Do not commit FAG logs.
     print(
-        f"\n[FAG arch35] closure={closure_s:.2f}s exec={exec_s:.2f}s "
-        f"ops={len(ops)} sync={len(syncs)} buf={len(bufs)} "
-        f"paired={meta.get('sync_paired')} deps={meta.get('data_deps_total')} "
-        f"quality={quality} files={meta.get('selected_files')}"
+        f"\n[FAG root-trace] closure={closure_s:.2f}s trace={trace_s:.2f}s "
+        f"ops={len(ops)} reached_ops={len(reached_ops)} buf={len(bufs)} "
+        f"reached_buf={len(reached_bufs)} rooted={len(rooted)} "
+        f"gaps={meta.get('gap_count')} gap_counts={meta.get('gap_counts')} "
+        f"files={meta.get('selected_files')}"
     )
 
 
 @pytest.mark.requires_fag
-def test_fag_arch35_kernel_execution_delta_vs_disabled(fag_dir: Path, arch_dir: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Enabling Kernel Execution must not add more than 30s over disabled path."""
+def test_fag_arch35_kernel_root_trace_delta_vs_disabled(
+    fag_dir: Path, arch_dir: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     semreg.load_registry.cache_clear()
     clear_source_text()
 
@@ -121,25 +113,23 @@ def test_fag_arch35_kernel_execution_delta_vs_disabled(fag_dir: Path, arch_dir: 
             EntityKind.KERNEL,
             "flash_attention_score_grad",
             attrs={"source_signature": True, "source_definition": True},
+            file=f"op_kernel/{arch_dir}/flash_attention_score_grad_kernel.h",
         )
         finalize_kernel_tiling_closure(cm, fag_dir, architecture=arch_dir)
         return cm
 
+    monkeypatch.setenv("UO_KERNEL_ROOT_TRACE", "0")
     cm0 = _seed()
-    monkeypatch.setenv("UO_KERNEL_EXEC", "0")
     t0 = time.perf_counter()
-    finalize_kernel_execution(cm0, fag_dir, architecture=arch_dir)
+    finalize_kernel_root_trace(cm0, fag_dir, architecture=arch_dir)
     off_s = time.perf_counter() - t0
-    assert cm0.meta.get("kernel_execution", {}).get("skipped") is True
 
-    clear_source_text()
+    monkeypatch.setenv("UO_KERNEL_ROOT_TRACE", "1")
+    monkeypatch.setenv("UO_KERNEL_ROOT_TRACE_BUDGET_S", "25")
     cm1 = _seed()
-    monkeypatch.setenv("UO_KERNEL_EXEC", "1")
-    monkeypatch.setenv("UO_KERNEL_EXEC_BUDGET_S", "25")
     t1 = time.perf_counter()
-    finalize_kernel_execution(cm1, fag_dir, architecture=arch_dir)
+    finalize_kernel_root_trace(cm1, fag_dir, architecture=arch_dir)
     on_s = time.perf_counter() - t1
     delta = on_s - off_s
-    assert delta < _EXEC_BUDGET_S, f"delta {delta:.2f}s exceeds {_EXEC_BUDGET_S}s (on={on_s:.2f} off={off_s:.2f})"
-    assert len(cm1.by_kind(EntityKind.OPERATION)) >= 50
-    print(f"\n[FAG timing delta] off={off_s:.3f}s on={on_s:.3f}s delta={delta:.3f}s")
+    assert delta < _TRACE_BUDGET_S, f"root-trace delta {delta:.2f}s exceeds budget"
+    print(f"\n[FAG root-trace delta] off={off_s:.3f}s on={on_s:.3f}s delta={delta:.3f}s")
