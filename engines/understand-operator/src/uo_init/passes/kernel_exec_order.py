@@ -3,6 +3,10 @@
 
 Cross-function order must not use source-file dictionary order. Within one
 function, (line, column, ordinal) is still the local program order.
+
+Callee bodies are expanded at most once (memoized). Re-entering the same
+function via another call site does not re-walk its body — that keeps FAG
+under the compile budget while still ranking the first reachable path.
 """
 
 from __future__ import annotations
@@ -66,9 +70,17 @@ def _call_adj(codemap: CodeMap) -> dict[str, list[tuple[str, int, int]]]:
             for caller in caller_names:
                 for callee in callee_names:
                     adj[caller].append((callee, line, 0))
-    # Stable order per caller.
     for caller, rows in adj.items():
         rows.sort(key=lambda t: (t[1], t[2], t[0]))
+        # Dedup identical (callee, line, col) triples.
+        dedup: list[tuple[str, int, int]] = []
+        seen: set[tuple[str, int, int]] = set()
+        for row in rows:
+            if row in seen:
+                continue
+            seen.add(row)
+            dedup.append(row)
+        adj[caller] = dedup
     return adj
 
 
@@ -77,10 +89,7 @@ def assign_exec_ranks(
     operations: list[ExecOperation],
     sync_events: list[SyncEvent] | None = None,
 ) -> tuple[list[FunctionExecSummary], dict[str, Any]]:
-    """Mutate ``exec_rank`` on operations (and sync events when linked).
-
-    Returns function summaries and a small meta report.
-    """
+    """Mutate ``exec_rank`` on operations (and sync events when linked)."""
     by_func: dict[str, list[ExecOperation]] = defaultdict(list)
     for op in operations:
         by_func[str(op.function or "")].append(op)
@@ -92,23 +101,41 @@ def assign_exec_ranks(
     for e in codemap.by_kind(EntityKind.KERNEL):
         if e.attrs.get("source_definition") or e.attrs.get("source_signature"):
             starts.extend(sorted(_func_names(e.name, e.attrs)))
+    # Stable unique seeds.
+    seen_starts: set[str] = set()
+    uniq_starts: list[str] = []
+    for s in starts:
+        if s in seen_starts:
+            continue
+        seen_starts.add(s)
+        uniq_starts.append(s)
+    starts = uniq_starts
     if not starts:
-        # Fall back: functions that contain ops, in local discovery order.
         starts = sorted(n for n in by_func if n)
 
     rank = 0
-    visiting: set[str] = set()
+    stack: set[str] = set()
+    done: set[str] = set()
     summaries: dict[str, FunctionExecSummary] = {}
     ranked_ops = 0
+    expand_calls = 0
+    skipped_reentry = 0
 
     def expand(func: str) -> None:
-        nonlocal rank, ranked_ops
-        if not func or func in visiting:
+        nonlocal rank, ranked_ops, expand_calls, skipped_reentry
+        if not func:
             return
-        visiting.add(func)
+        if func in done:
+            skipped_reentry += 1
+            return
+        if func in stack:
+            # Cycle: do not re-enter.
+            skipped_reentry += 1
+            return
+        expand_calls += 1
+        stack.add(func)
         ops = by_func.get(func) or []
         calls = adj.get(func) or []
-        # Merge local ops and outbound calls into one timeline.
         timeline: list[tuple[tuple[int, int, int], str, Any]] = []
         for op in ops:
             timeline.append((_local_key(op), "op", op))
@@ -134,26 +161,29 @@ def assign_exec_ranks(
 
         summary.exit_rank = rank - 1 if rank else -1
         summaries[func] = summary
-        visiting.discard(func)
+        stack.discard(func)
+        done.add(func)
 
     for seed in starts:
         expand(seed)
 
-    # Ops never reached from entries: append in local order (partial).
     unreached = [op for op in operations if int(op.exec_rank) < 0]
     unreached.sort(key=lambda o: (o.function, *_local_key(o)))
     for op in unreached:
-        op.exec_rank = rank
-        rank += 1
-        ranked_ops += 1
-        summary = summaries.get(op.function) or FunctionExecSummary(function=op.function)
-        if summary.entry_rank < 0:
-            summary.entry_rank = op.exec_rank
-        summary.exit_rank = op.exec_rank
-        summary.op_count = max(summary.op_count, len(by_func.get(op.function) or []))
-        summaries[op.function] = summary
+        # Rank leftover bodies without re-expanding their call graphs heavily.
+        if op.function and op.function not in done:
+            expand(op.function)
+        if int(op.exec_rank) < 0:
+            op.exec_rank = rank
+            rank += 1
+            ranked_ops += 1
+            summary = summaries.get(op.function) or FunctionExecSummary(function=op.function)
+            if summary.entry_rank < 0:
+                summary.entry_rank = op.exec_rank
+            summary.exit_rank = op.exec_rank
+            summary.op_count = max(summary.op_count, len(by_func.get(op.function) or []))
+            summaries[op.function] = summary
 
-    # Sync events inherit linked operation ranks.
     op_rank = {op.id: int(op.exec_rank) for op in operations}
     for sev in sync_events or ():
         if sev.operation_id and sev.operation_id in op_rank:
@@ -165,6 +195,8 @@ def assign_exec_ranks(
         "entry_seeds": len(starts),
         "functions": len(summaries),
         "call_edges": sum(len(v) for v in adj.values()),
+        "expand_calls": expand_calls,
+        "skipped_reentry": skipped_reentry,
         "authority": "kernel_entry_call_expand",
     }
     return list(summaries.values()), meta

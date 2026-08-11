@@ -20,28 +20,40 @@ def _exec_rank(ent) -> int:
 
 def finalize_kernel_data_deps(codemap: CodeMap, *_args: Any, **_kwargs: Any) -> CodeMap:
     """Emit DATA_DEPENDS_ON edges; strengthen HAPPENS_BEFORE for confirmed RAW."""
-    # Drop previous data-dep edges from this pass.
-    for rid, rel in list(codemap.relations.items()):
-        if rel.kind_name() == RelationKind.DATA_DEPENDS_ON.value:
-            codemap.relations.pop(rid, None)
+    drop_ids: list[str] = []
+    for rid, rel in codemap.relations.items():
+        kind = rel.kind_name()
+        if kind == RelationKind.DATA_DEPENDS_ON.value:
+            drop_ids.append(rid)
         elif (
-            rel.kind_name() == RelationKind.HAPPENS_BEFORE.value
+            kind == RelationKind.HAPPENS_BEFORE.value
             and str(rel.attrs.get("provenance") or "") == "kernel_data_dep_raw"
         ):
-            codemap.relations.pop(rid, None)
+            drop_ids.append(rid)
+    for rid in drop_ids:
+        codemap.relations.pop(rid, None)
+
+    # Single pass over relations — avoid per-op neighbors() scans.
+    writes: dict[str, list[str]] = defaultdict(list)
+    reads: dict[str, list[str]] = defaultdict(list)
+    for rel in codemap.relations.values():
+        kind = rel.kind_name()
+        if kind == RelationKind.WRITES_BUFFER.value:
+            writes[rel.src].append(rel.dst)
+        elif kind == RelationKind.READS_BUFFER.value:
+            reads[rel.src].append(rel.dst)
 
     ops = sorted(
         codemap.by_kind(EntityKind.OPERATION),
         key=lambda e: (_exec_rank(e), e.file, e.line_start, int(e.attrs.get("column") or 0)),
     )
-    # buffer_id -> ordered accesses
     accesses: dict[str, list[tuple[str, str, int]]] = defaultdict(list)
     for op in ops:
         rank = _exec_rank(op)
-        for rel, buf in codemap.neighbors(op.id, kind=RelationKind.WRITES_BUFFER, direction="out"):
-            accesses[buf.id].append((op.id, "write", rank))
-        for rel, buf in codemap.neighbors(op.id, kind=RelationKind.READS_BUFFER, direction="out"):
-            accesses[buf.id].append((op.id, "read", rank))
+        for buf_id in writes.get(op.id, ()):
+            accesses[buf_id].append((op.id, "write", rank))
+        for buf_id in reads.get(op.id, ()):
+            accesses[buf_id].append((op.id, "read", rank))
 
     raw = war = waw = 0
     for buf_id, rows in accesses.items():
@@ -62,7 +74,6 @@ def finalize_kernel_data_deps(codemap: CodeMap, *_args: Any, **_kwargs: Any) -> 
                         },
                         status="confirmed",
                     )
-                    # Confirmed RAW implies happens-before producer→consumer.
                     codemap.link(
                         RelationKind.HAPPENS_BEFORE,
                         last_write,
@@ -76,7 +87,7 @@ def finalize_kernel_data_deps(codemap: CodeMap, *_args: Any, **_kwargs: Any) -> 
                     )
                     raw += 1
                 last_reads.append(op_id)
-            else:  # write
+            else:
                 if last_write and last_write != op_id:
                     codemap.link(
                         RelationKind.DATA_DEPENDS_ON,
