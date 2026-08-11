@@ -1,6 +1,7 @@
-"""Action 阶段进度与 heartbeat（CLI stdout + progress.yaml + events.jsonl）。"""
+"""Action stage progress (compact CLI stdout + progress.yaml + events.jsonl)."""
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ def _dump_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 class ActionProgressReporter:
-    """统一进度报告；禁止在各脚本里散落 print。"""
+    """统一进度报告；默认只打印 stage 边界/heartbeat，细粒度 update 写入状态。"""
 
     def __init__(
         self,
@@ -38,9 +39,23 @@ class ActionProgressReporter:
         self.action_id = str(action_id or "")
         self.phase = str(phase or "prepare")
         self.heartbeat_interval_s = float(heartbeat_interval_s)
+        self.verbose_updates = str(os.getenv("ACP_PROGRESS_VERBOSE", "")).strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        try:
+            self.flush_interval_s = max(
+                0.05,
+                float(os.getenv("ACP_PROGRESS_FLUSH_INTERVAL_S", "0.5") or "0.5"),
+            )
+        except ValueError:
+            self.flush_interval_s = 0.5
         self._stage_id = ""
         self._stage_started_ms = 0
         self._last_heartbeat_ms = 0
+        self._last_flush_ms = 0
         self._stages: list[dict[str, Any]] = []
         self._progress_path = (
             agent_root(self.project_root)
@@ -63,6 +78,7 @@ class ActionProgressReporter:
         return f"[{self.action_id}][{self.phase}][{sid}]"
 
     def _flush_progress(self, extra: dict[str, Any] | None = None) -> None:
+        now = _now_ms()
         doc: dict[str, Any] = {
             "version": 1,
             "run_id": self.run_id,
@@ -70,15 +86,21 @@ class ActionProgressReporter:
             "phase": self.phase,
             "current_stage": self._stage_id or None,
             "stages": list(self._stages),
-            "updated_at_ms": _now_ms(),
+            "updated_at_ms": now,
         }
         if extra:
             doc.update(extra)
         try:
             self._progress_path.parent.mkdir(parents=True, exist_ok=True)
             _dump_yaml(self._progress_path, doc)
+            self._last_flush_ms = now
         except OSError:
             pass
+
+    def _flush_if_due(self) -> None:
+        now = _now_ms()
+        if (now - self._last_flush_ms) >= int(self.flush_interval_s * 1000):
+            self._flush_progress()
 
     def _event(self, event_type: str, payload: dict[str, Any]) -> None:
         if not self.run_id:
@@ -136,9 +158,10 @@ class ActionProgressReporter:
                 row["message"] = message
             if metadata:
                 row.setdefault("metadata", {}).update(metadata)
-        msg = message or (f"current={current}" if current is not None else "update")
-        self._emit(f"{self._prefix()} {msg}")
-        self._flush_progress()
+        if self.verbose_updates:
+            msg = message or (f"current={current}" if current is not None else "update")
+            self._emit(f"{self._prefix()} {msg}")
+        self._flush_if_due()
         self.maybe_heartbeat(message=message)
 
     def heartbeat(self, message: str | None = None) -> None:
