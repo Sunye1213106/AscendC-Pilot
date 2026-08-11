@@ -344,7 +344,7 @@ class ControllabilityBuilder:
                     function=node.function,
                     condition=node.condition or "",
                     target_value=target,
-                    guard=pred.smt,
+                    guard=pred.expr,
                     path_condition=path_smt,
                     controlling_vars=variables,
                     source_roots=list(analysis.roots),

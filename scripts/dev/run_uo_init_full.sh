@@ -34,9 +34,6 @@ echo "===== 2) Python / deps ====="
 python3 --version
 python3 -m pip install -q --upgrade pip
 python3 -m pip install -q -r "$REPO/requirements.txt"
-python3 -m pip install -q -e "$REPO/engines/common"
-python3 -m pip install -q -e "$REPO/engines/understand-operator"
-python3 -m pip install -q -e "$REPO/pilot"
 python3 -c "import yaml, uo_init, ascendc_pilot; print('imports ok', uo_init.__file__)"
 
 export PYTHONPATH="$REPO/engines/understand-operator/src:$REPO/engines/common:$REPO/pilot:${PYTHONPATH:-}"

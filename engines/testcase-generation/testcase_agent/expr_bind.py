@@ -1,4 +1,4 @@
-"""Bind value sub-expressions (names / arith) onto CSV/KEY/KVAR vars for SMT."""
+"""Bind value sub-expressions (names / arith) onto CSV/KEY/KVAR vars for finite predicate binding."""
 
 from __future__ import annotations
 
@@ -140,7 +140,7 @@ def _kvar_value_ref(kvar: dict[str, Any], name: str, ctx: BindContext) -> dict[s
         column = str(set_by.get("csv"))
         if not ctx.csv_columns or column in ctx.csv_columns:
             return {"var": csv_var(column)}
-        # UO set_by.csv without consumer evidence → SMT-free kvar (do not invent CSV column).
+        # UO set_by.csv without consumer evidence → CSV-free kvar (do not invent CSV column).
         var = f"VAR_{kvar_id}" if kvar_id and not kvar_id.startswith("VAR_") else (kvar_id or f"VAR_KVAR_{name.upper()}")
         domain = kvar.get("domain")
         ints: list[int] = []

@@ -91,7 +91,7 @@ def main() -> int:
         by_kind = {}
         for kind in (
             "INPUT", "OUTPUT", "TILING_KEY", "TILING_DATA", "TILING_FIELD",
-            "KERNEL", "FUNCTION", "METHOD", "OPERATION", "BUFFER", "BUFFER_VIEW",
+            "KERNEL", "FUNCTION", "METHOD", "OPERATION", "BUFFER",
             "REGISTER", "TYPE", "BRANCH", "TEMPLATE",
         ):
             by_kind[kind] = len(cm.by_kind(kind))

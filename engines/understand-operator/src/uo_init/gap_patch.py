@@ -497,7 +497,7 @@ def merge_accepted(
 
 
 def binding_condition(binding: dict[str, Any]) -> dict[str, Any] | None:
-    """`{var_id, op, value}` as an SMT-lite condition, or None if incomplete.
+    """`{var_id, op, value}` as an finite-predicate condition, or None if incomplete.
 
     This is the whole content of an `input_derived` verdict: a statement that
     the guard the model could not read is really this test on a known variable.

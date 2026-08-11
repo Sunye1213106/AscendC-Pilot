@@ -97,7 +97,7 @@ node_kinds:
     layer: constraints
     id_rule: content
     id_material: [owner_id, polarity, canonical_smt]
-    carries: [smt, polarity, status]
+    carries: [expr, polarity, status]
   Family:
     prefix: FAM
     layer: registry
@@ -235,6 +235,6 @@ metrics:
       - OPTIONAL_INPUT_PRESENCE
       - ATTRIBUTE
   predicate_normalization:
-    definition: 成功序列化为 SMT-lite 的谓词占比
+    definition: 成功序列化为 finite-predicate 的谓词占比
   blocker_count:
     definition: 去重后的未闭合原子数（LLM 任务数上界）

@@ -246,21 +246,18 @@ class CodeMapQuery:
             )
         return [e.to_dict() for e in self.codemap.by_kind(EntityKind.KERNEL)]
 
-    # ---- Kernel execution --------------------------------------------------
+    # ---- Kernel Root Trace -------------------------------------------------
 
     def kernel_overview(self) -> dict[str, Any]:
-        """Compact Kernel summary (root-trace preferred; execution meta as shim)."""
+        """Compact Kernel Root Trace summary."""
         meta = dict(self.codemap.meta.get("kernel_root_trace") or {})
         if not meta:
             meta = dict(self.codemap.meta.get("kernel_execution") or {})
         return {
-            "model": meta.get("model") or ("root_trace" if "reached_buffers" in meta or "gap_counts" in meta else "legacy"),
+            "model": "root_trace",
             "operations": len(self.codemap.by_kind(EntityKind.OPERATION)),
             "buffers": len(self.codemap.by_kind(EntityKind.BUFFER)),
             "registers": len(self.codemap.by_kind(EntityKind.REGISTER)),
-            "buffer_views": len(self.codemap.by_kind(EntityKind.BUFFER_VIEW)),
-            "sync_events": len(self.codemap.by_kind(EntityKind.SYNC_EVENT)),
-            "regions": len(self.codemap.by_kind(EntityKind.EXEC_REGION)),
             "reached_buffers": meta.get("reached_buffers"),
             "reached_operations": meta.get("reached_operations"),
             "gap_count": meta.get("gap_count"),
@@ -328,71 +325,6 @@ class CodeMapQuery:
             for e in self.codemap.by_kind(EntityKind.BUFFER)
             if e.name == name or name in e.name
         ]
-
-    def buffer_lifecycle(self, name: str) -> dict[str, Any] | None:
-        life = self.codemap.meta.get("kernel_buffer_lifecycle") or {}
-        if not isinstance(life, dict):
-            return None
-        if name in life:
-            return dict(life[name])
-        hits = [v for k, v in life.items() if k.endswith(f"::{name}") or str(v.get("buffer")) == name]
-        # Deduplicate by buffer_id (same row may be referenced once per key).
-        uniq: dict[str, dict[str, Any]] = {}
-        for row in hits:
-            bid = str(row.get("buffer_id") or row.get("scope") or "") + "::" + str(row.get("buffer") or "")
-            uniq[bid] = row
-        candidates = list(uniq.values())
-        if not candidates:
-            return None
-        if len(candidates) == 1:
-            return dict(candidates[0])
-        return {
-            "status": "AMBIGUOUS",
-            "buffer": name,
-            "candidate_count": len(candidates),
-            "candidates": [dict(c) for c in candidates],
-        }
-
-    def sync_events(self, function: str = "") -> list[dict[str, Any]]:
-        rows = self.codemap.by_kind(EntityKind.SYNC_EVENT)
-        if function:
-            rows = [e for e in rows if str(e.attrs.get("function") or "") == function]
-        rows = sorted(rows, key=lambda e: (e.file, e.line_start))
-        return [e.to_dict() for e in rows]
-
-    def sync_graph(self) -> list[dict[str, Any]]:
-        """Return SIGNALS / WAITS_ON / SYNCHRONIZES_WITH / HAPPENS_BEFORE edges."""
-        kinds = {
-            RelationKind.SIGNALS.value,
-            RelationKind.WAITS_ON.value,
-            RelationKind.SYNCHRONIZES_WITH.value,
-            RelationKind.HAPPENS_BEFORE.value,
-        }
-        return [r.to_dict() for r in self.codemap.relations.values() if r.kind_name() in kinds]
-
-    def memory_flow(self, name: str) -> dict[str, Any]:
-        """Producer/consumer operations for a buffer name."""
-        bufs = [
-            e
-            for e in self.codemap.by_kind(EntityKind.BUFFER)
-            if e.name == name or name in e.name
-        ]
-        producers: list[dict[str, Any]] = []
-        consumers: list[dict[str, Any]] = []
-        for buf in bufs:
-            for rel, other in self.codemap.neighbors(
-                buf.id, kind=RelationKind.WRITES_BUFFER, direction="in"
-            ):
-                producers.append({"buffer": buf.to_dict(), "operation": other.to_dict(), "relation": rel.to_dict()})
-            for rel, other in self.codemap.neighbors(
-                buf.id, kind=RelationKind.READS_BUFFER, direction="in"
-            ):
-                consumers.append({"buffer": buf.to_dict(), "operation": other.to_dict(), "relation": rel.to_dict()})
-        return {"buffer": name, "producers": producers, "consumers": consumers}
-
-    def kernel_pipeline(self) -> dict[str, Any]:
-        view = self.codemap.meta.get("kernel_execution_pipeline")
-        return dict(view) if isinstance(view, dict) else {}
 
     def unresolved(self) -> list[dict[str, Any]]:
         return [

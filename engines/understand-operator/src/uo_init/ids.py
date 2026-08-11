@@ -35,12 +35,10 @@ KIND_PREFIX: dict[str, str] = {
     "ApiContract": "API",
     "Evidence": "EV",
     "Function": "FN",
+    "Method": "MTH",
     "Operation": "OP",
     "Buffer": "BUF",
-    "BufferView": "BVIEW",
     "Register": "REG",
-    "SyncEvent": "SYNC",
-    "ExecRegion": "XREG",
     "Type": "TYPE",
     "Root": "ROOT",
 }
@@ -90,7 +88,7 @@ def normalize_guard(text: str) -> str:
     """Canonical form of a guard, used as id material.
 
     Only whitespace is collapsed here. Callers that have a normalized predicate
-    should pass its canonical SMT-lite form instead, which additionally makes
+    should pass its canonical finite-predicate expression instead, which additionally makes
     the id immune to formatting and spelling of the same condition.
     """
     return _WS.sub(" ", str(text or "").strip())

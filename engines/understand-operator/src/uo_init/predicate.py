@@ -22,7 +22,7 @@ from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknow
 from uo_init.ids import hash12
 from uo_init.source_resolver import Atom, Resolution, SourceResolver, dotted_path
 
-# C++ operator -> SMT-lite op. Anything absent is unsupported on purpose:
+# C++ operator -> finite-predicate op. Anything absent is unsupported on purpose:
 # bit twiddling has no faithful lowering to the integer theory TG solves in.
 CMP_OPS = {"==": "eq", "!=": "ne", "<": "lt", "<=": "le", ">": "gt", ">=": "ge"}
 BOOL_OPS = {"&&": "and", "||": "or", "and": "and", "or": "or"}
@@ -114,7 +114,7 @@ class NormalizeError(Exception):
 @dataclass
 class NormalizedPredicate:
     condition: str
-    smt: dict[str, Any] | None = None
+    expr: dict[str, Any] | None = None
     status: str = STATUS_OK
     reason: str = ""
     detail: str = ""
@@ -123,16 +123,16 @@ class NormalizedPredicate:
 
     @property
     def ok(self) -> bool:
-        return self.status == STATUS_OK and self.smt is not None
+        return self.status == STATUS_OK and self.expr is not None
 
     @property
     def canonical(self) -> str:
         """Formatting-independent form, used as content-stable id material."""
-        if self.smt is None:
+        if self.expr is None:
             # Fall back to the raw text with whitespace collapsed: an
             # unresolved guard still needs a stable identity.
             return re.sub(r"\s+", " ", self.condition.strip())
-        return json.dumps(self.smt, sort_keys=True, separators=(",", ":"))
+        return json.dumps(self.expr, sort_keys=True, separators=(",", ":"))
 
     @property
     def digest(self) -> str:
@@ -151,7 +151,7 @@ class NormalizedPredicate:
             )
         return NormalizedPredicate(
             condition=f"!({self.condition})",
-            smt={"op": "not", "arg": self.smt},
+            expr={"op": "not", "arg": self.expr},
             variables=list(self.variables),
             roots=list(self.roots),
         )
@@ -163,8 +163,8 @@ class NormalizedPredicate:
             "variables": list(self.variables),
             "roots": list(self.roots),
         }
-        if self.smt is not None:
-            out["smt"] = self.smt
+        if self.expr is not None:
+            out["expr"] = self.expr
         if self.reason:
             out["unresolved_reason"] = self.reason
         if self.detail:
@@ -346,7 +346,7 @@ class PredicateNormalizer:
             self._normalize_cache[text] = out
             return out
         try:
-            smt = self._bool(tree)
+            expr = self._bool(tree)
         except NormalizeError as exc:
             res = self.resolver.resolve(text)
             out = NormalizedPredicate(
@@ -361,8 +361,8 @@ class PredicateNormalizer:
         res = self.resolver.resolve(text)
         out = NormalizedPredicate(
             condition=text,
-            smt=smt,
-            variables=sorted(collect_vars(smt)),
+            expr=expr,
+            variables=sorted(collect_vars(expr)),
             roots=res.roots,
         )
         self._normalize_cache[text] = out
@@ -438,7 +438,7 @@ def conjoin(preds: list[NormalizedPredicate]) -> dict[str, Any] | None:
     condition is a conjunction, so keeping the resolved part still yields a
     sound (if weaker) constraint. The caller records the dropped ones.
     """
-    args = [p.smt for p in preds if p.ok and p.smt is not None]
+    args = [p.expr for p in preds if p.ok and p.expr is not None]
     if not args:
         return None
     if len(args) == 1:

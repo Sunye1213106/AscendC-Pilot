@@ -72,7 +72,7 @@ def test_no_expression_at_all_is_unresolved():
 
 # -- normalisation collapse detection --------------------------------------
 def test_leaves_lost_between_expansion_and_normalisation_are_seen():
-    """The DeterType shape: expansion reached 0..4, the SMT form only 0 and 2."""
+    """The DeterType shape: expansion reached 0..4, the predicate form only 0 and 2."""
     expr = {"op": "if_then_else", "condition": {"op": "eq", "var": "VAR_X", "value": True},
             "then": {"lit": 0}, "else": {"lit": 2}}
     assert collapsed_leaf_values(expr, ["0", "1", "2", "3", "4"]) == ["1", "3", "4"]

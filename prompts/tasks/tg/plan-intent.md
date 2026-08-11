@@ -12,7 +12,7 @@ Determine the exact TilingKey target selector for this TG run. Do not construct 
 1. Preserve any explicit packed TilingKey list the user supplied as `target_mode: explicit_keys`.
 2. Preserve any requested TilingKey dimension/value filter as `target_mode: dimension_filter`.
 3. If the user did not specify a target, choose `target_mode: all_declared`; this means T equals the complete current Kernel-declared domain D.
-4. Do not infer unreachable keys, derive 19-dimensional formulas, or call SAT/SMT in planning.
+4. Do not infer unreachable keys, derive 19-dimensional formulas, or call global SAT backend in planning.
 5. Surface contradictory or ambiguous target requests instead of silently broadening them.
 6. Follow `skills/testcase-generation/SKILL.md`.
 </instructions>

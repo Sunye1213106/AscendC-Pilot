@@ -37,14 +37,11 @@ class EntityKind(str, Enum):
     ARCH = "ARCH"
     BUILD_VARIANT = "BUILD_VARIANT"
 
-    # Kernel execution ontology (site-level; distinct from compile-time KernelIR).
+    # Kernel Root Trace anchors (source sites + navigation — not execution order).
     OPERATION = "OPERATION"
     BUFFER = "BUFFER"
-    BUFFER_VIEW = "BUFFER_VIEW"
     # AscendC::Reg / MicroAPI register-file objects (RegTensor, MaskReg, ...).
     REGISTER = "REGISTER"
-    SYNC_EVENT = "SYNC_EVENT"
-    EXEC_REGION = "EXEC_REGION"
 
     # Escapes for legacy KB kinds during adaptation.
     OTHER = "OTHER"

@@ -487,7 +487,7 @@ class FieldDerivation:
         so `free_vars` comes back empty and the field is graded `exact` -- the
         derivation ends up claiming precise knowledge of a value set it just
         shrank. `DeterType` is the case this was written for. Five writes, five
-        declared values, and an SMT form that can only ever return 0 or 2;
+        declared values, and an predicate form that can only ever return 0 or 2;
         replay puts its accuracy at 87.5%.
 
         Values the *template* declares and the expression cannot reach are a

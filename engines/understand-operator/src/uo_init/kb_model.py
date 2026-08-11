@@ -59,7 +59,7 @@ PLATFORM_LOCKED_ROOTS = frozenset(
 
 #: How far a derivation got toward something a test case can drive. Orthogonal
 #: to `exactness`, which only says whether the *expression* closed: a field can
-#: be exact and still be undrivable. `IsTnd` is exactly that — its SMT form is
+#: be exact and still be undrivable. `IsTnd` is exactly that — its predicate form is
 #: the single comparison `layoutType == 4`, with no free variables at all, but
 #: `layoutType` is host state the resolver stopped on instead of the layout
 #: attribute behind it, so nothing a generator sets reaches it.

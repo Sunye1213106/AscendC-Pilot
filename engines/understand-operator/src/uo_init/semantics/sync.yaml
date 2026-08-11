@@ -86,33 +86,6 @@ ops:
     confidence: confirmed
     mechanism: queue_sync
 
-  # Project wrappers (MutexBuffer::LockProd/…) — not AscendC roots; root-trace
-  # maps them to Lock/Unlock via SYNC_WRAPPER_TO_ROOT.
-  LockProd:
-    category: sync_signal
-    engine: UNKNOWN
-    confidence: partial
-    mechanism: mutex
-    wraps: Lock
-  UnlockProd:
-    category: sync_wait
-    engine: UNKNOWN
-    confidence: partial
-    mechanism: mutex
-    wraps: Unlock
-  LockCons:
-    category: sync_signal
-    engine: UNKNOWN
-    confidence: partial
-    mechanism: mutex
-    wraps: Lock
-  UnlockCons:
-    category: sync_wait
-    engine: UNKNOWN
-    confidence: partial
-    mechanism: mutex
-    wraps: Unlock
-
   # Legacy spelled aliases still seen in some ops / generated code.
   SetFlag_PIPE_MTE2_TO_PIPE_V:
     category: sync_signal

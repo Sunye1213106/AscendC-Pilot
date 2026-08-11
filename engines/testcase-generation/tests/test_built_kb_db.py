@@ -37,7 +37,7 @@ def _write_db_product(uo: Path) -> Path:
     );
     CREATE TABLE predicate(
       id TEXT PRIMARY KEY, owner_id TEXT, polarity INTEGER,
-      smt TEXT, status TEXT, unresolved_reason TEXT
+      expr TEXT, status TEXT, unresolved_reason TEXT
     );
     CREATE TABLE artifact(
       rel_path TEXT PRIMARY KEY, sha256 TEXT, layer TEXT,

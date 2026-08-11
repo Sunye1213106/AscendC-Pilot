@@ -106,11 +106,7 @@ if ($Platform -like "uninstall-*") {
 }
 
 if ($SkipPip -ne "1") {
-  python -m pip install -e "$BundleRoot\engines\common" `
-    -e "$BundleRoot\pilot" `
-    -e "$BundleRoot\engines\understand-operator" `
-    -e "$BundleRoot\engines\testcase-generation[ml]" `
-    -e "$BundleRoot\engines\code-engineering"
+  python -m pip install -r "$BundleRoot\requirements.txt"
 }
 
 # Compose sources, then retain only model-reachable runtime context.

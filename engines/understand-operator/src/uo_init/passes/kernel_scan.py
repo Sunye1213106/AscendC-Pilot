@@ -39,7 +39,7 @@ _METHOD_DEF_RE = re.compile(
     r"(?P<name>[A-Za-z_~]\w*)\s*\("
 )
 _FUNC_DEF_RE = re.compile(
-    r"\b(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept\s*)?\{?\s*$"
+    r"\b(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept\s*)?\{"
 )
 
 
@@ -247,7 +247,9 @@ def collect_call_sites_from_walks(
             callee = str(getattr(site, "callee", "") or "").split("::")[-1]
             if not caller_allowed(caller, reachable, filter_strict=filter_strict):
                 continue
-            if not semreg.is_execution_primitive(callee):
+            # Root Trace needs the full source call graph. Terminal AscendC/CANN
+            # classification happens later; do not filter by registry primitives.
+            if not callee or not callee.isidentifier():
                 continue
             calls.append(site)
         decls.extend(getattr(wr, "local_decls", None) or [])
@@ -270,7 +272,26 @@ def update_enclosing_func(line: str, current: str) -> str:
     return current
 
 
-def lexical_primitive_sites(
+_CXX_CALL_SKIP = frozenset(
+    {
+        "if",
+        "for",
+        "while",
+        "switch",
+        "return",
+        "sizeof",
+        "alignof",
+        "decltype",
+        "static_assert",
+        "sizeof...",
+        "new",
+        "delete",
+        "catch",
+    }
+)
+
+
+def lexical_source_call_sites(
     files: list[Path],
     *,
     reachable: set[str],
@@ -278,7 +299,10 @@ def lexical_primitive_sites(
     root: str,
     deadline: float,
 ) -> list[dict[str, Any]]:
-    primitives = set(semreg.load_registry())
+    """Collect all source-scope identifier call sites (Clang fallback).
+
+    Provenance is lexical; not filtered by AscendC registry primitives.
+    """
     sites: list[dict[str, Any]] = []
     for path in files:
         if time.perf_counter() > deadline:
@@ -294,7 +318,7 @@ def lexical_primitive_sites(
             func = update_enclosing_func(line, func)
             for m in _CALL_RE.finditer(line):
                 name = m.group("name")
-                if name not in primitives:
+                if not name or name in _CXX_CALL_SKIP or not name.isidentifier():
                     continue
                 if not caller_allowed(func, reachable, filter_strict=filter_strict):
                     continue
@@ -324,6 +348,7 @@ def lexical_primitive_sites(
                         "template_args": targs_list,
                         "receiver": m.group("receiver") or "",
                         "path_conditions": (),
+                        "provenance": "lexical_source_calls",
                         "entry_reachable": caller_allowed(func, reachable, filter_strict=True)
                         if reachable
                         else True,
@@ -331,6 +356,24 @@ def lexical_primitive_sites(
                 )
     _ = root
     return sites
+
+
+def lexical_primitive_sites(
+    files: list[Path],
+    *,
+    reachable: set[str],
+    filter_strict: bool,
+    root: str,
+    deadline: float,
+) -> list[dict[str, Any]]:
+    """Deprecated alias — prefer :func:`lexical_source_call_sites`."""
+    return lexical_source_call_sites(
+        files,
+        reachable=reachable,
+        filter_strict=filter_strict,
+        root=root,
+        deadline=deadline,
+    )
 
 
 def lexical_buffer_decls(

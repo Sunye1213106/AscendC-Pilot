@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Shape / counter columns → SMT range (generalizable; not pinned to sample uniques).
+# Shape / counter columns → finite domain range (generalizable; not pinned to sample uniques).
 SHAPE_COLUMN_RE = re.compile(
     r"^(B|N\d*|S\d*|D(_V)?|Pre_Tockens|Next_Tockens|seed|offset)$",
     re.IGNORECASE,

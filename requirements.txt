@@ -1,9 +1,14 @@
 # Ascend C PR Test Agent - Python dependencies
 #
-#   pip install -r requirements.txt
-#   pip install -e "./engines/common" -e "./pilot" -e "./engines/understand-operator" -e "./engines/testcase-generation[ml]"
+#   python -m pip install -r requirements.txt
 #
 # Requires: Python >= 3.10
 
 PyYAML>=6.0
 jsonschema>=4.0
+
+-e ./engines/common
+-e ./pilot
+-e ./engines/understand-operator
+-e ./engines/testcase-generation[ml]
+-e ./engines/code-engineering

@@ -11,7 +11,7 @@ Host input / condition
   -> derived field
   -> SetTilingKey / SetTilingData
   -> template selection / constexpr
-  -> kernel execution / runtime branch
+  -> kernel selection / runtime branch
 ```
 
 这些步骤常跨文件、宏、模板和构建变体。仅靠文本搜索或 call graph 难以判断一条关系是否真实存在、受什么条件约束、是否在当前架构下可达。UO 把可由编译器事实和确定性 pass 证明的部分固化为 CodeMap，让 TG 和 CE 不必从头理解源码。
@@ -52,13 +52,21 @@ derived fields and relations -> Host condition -> Kernel branch
 
 CompilerFacts 是建立可追溯关系的依据，而非为了“用 Clang 而用 Clang”。它让 UO 可在当前构建变体的语义下识别声明、引用、模板、宏和源位置；后续的确定性 pass 将这些事实规范化并推导可消费关系。
 
-## Kernel 执行模型
+## Kernel Root Trace
 
-UO 的 Kernel 分析已经从“找到入口和分支”扩展为更完整的执行模型。它会在选定架构下重建 Kernel 入口、模板参数、ABI、调用边界、TilingData 读取与 Host 写入者关系，并用严格 closure 指标判断 `TILING_DATA -> KERNEL` 证据是否成立。
+UO 的 Kernel 分析与 Host 对称：回答对象 / 类型 / 调用能否追到 AscendC / CANN root，中间经过哪些源码定义的 wrapper / alias / method，以及节点与关系的源码位置。
 
-在可解析范围内，Kernel Execution Model 会抽取 AscendC primitive operation、LocalTensor / GlobalTensor / TQue / TBuf / register 等存储对象、同步事件、执行顺序、RAW / WAR / WAW 数据依赖，以及 CopyIn / Compute / CopyOut / Sync 等 pipeline 派生视图。这些信息进入 CodeMap 和 TG-facing views，用于 runtime branch 覆盖、TilingData 义务设计和 CE 影响分析。
+```text
+source facts
+  -> complete type / alias / member / call graph
+  -> AscendC / CANN root seeds
+  -> single reverse fixed-point
+  -> REACHED / UNRESOLVED / EXTERNAL
+```
 
-无法唯一绑定的内部调用、字段读写或外部依赖仍进入 unresolved，而不是由模型补写 canonical CodeMap。
+Canonical Kernel UO **不**做执行时序分析：不推断 exec_rank、RAW/WAR/WAW、sync pairing、CopyIn/Compute/CopyOut pipeline、buffer lifecycle 或引擎调度。也无法可靠闭合的路径保持为 unresolved gap，而不是由模型补写。
+
+典型可回答的问题包括：某个 LocalTensor / Buffer 最终追到哪个 AscendC storage root；中间经过哪些项目 wrapper、定义在哪里；某个 Kernel method 通过哪些 helper 最终调用了哪个 AscendC/CANN API；当前还有哪些对象或调用无法追到 root、原因是什么。
 
 ## 三条 UO 工作流
 

@@ -29,8 +29,8 @@ from pathlib import Path
 SLIM_MARKER = ".slim-verified"
 
 CANN_ENV_VARS = ("UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT")
-OPS_ENV_VARS = ("UO_OPS_ROOT", "OPS_TRANSFORMER_ROOT")
-OP_DIR_ENV_VARS = ("UO_OP_DIR",)
+OPS_ENV_VARS = ("UO_OPS_ROOT", "OPS_ROOT", "OPS_TRANSFORMER_ROOT")
+OP_DIR_ENV_VARS = ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR")
 
 
 def repo_root() -> Path:
@@ -131,7 +131,7 @@ def cann_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
 
 
 def ops_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
-    """The ops-transformer checkout, or None."""
+    """The operator source/dependency checkout, or None."""
     if explicit:
         got = Path(explicit).expanduser()
         return got if got.is_dir() else None
@@ -149,7 +149,7 @@ def op_dir(
     *,
     relative: str,
 ) -> Path | None:
-    """One operator's directory inside ops-transformer.
+    """One operator's directory inside a source/dependency root.
 
     `relative` has no default: which operator is under analysis is an input to
     this tool, never a property of it.

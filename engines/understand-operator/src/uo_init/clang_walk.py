@@ -177,8 +177,9 @@ class CallSite:
 
     A write inside a helper is only reached if the helper is called, and only
     on the paths where the call is. Without the guards here, an unguarded
-    write in another function has to be modelled as "may or may not happen" —
-    a free boolean the solver reads as either way.
+    write in another function has to be modelled as path-dependent —
+    deterministic evaluation leaves the condition unresolved until
+    downstream finite-domain enumeration / replay closes it.
     """
 
     caller: str

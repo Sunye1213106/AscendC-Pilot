@@ -41,9 +41,6 @@ _KB_KIND_MAP: dict[str, EntityKind] = {
     "BuildVariant": EntityKind.BUILD_VARIANT,
     "Operation": EntityKind.OPERATION,
     "Buffer": EntityKind.BUFFER,
-    "BufferView": EntityKind.BUFFER_VIEW,
-    "SyncEvent": EntityKind.SYNC_EVENT,
-    "ExecRegion": EntityKind.EXEC_REGION,
 }
 
 _KB_EDGE_MAP: dict[str, RelationKind] = {
@@ -68,22 +65,8 @@ _KB_EDGE_MAP: dict[str, RelationKind] = {
     "SAVES": RelationKind.SAVES,
     "RESTORES": RelationKind.RESTORES,
     "CONTAINS": RelationKind.CONTAINS,
-    "PRECEDES": RelationKind.PRECEDES,
-    "READS_BUFFER": RelationKind.READS_BUFFER,
-    "WRITES_BUFFER": RelationKind.WRITES_BUFFER,
-    "READS_REGISTER": RelationKind.READS_REGISTER,
-    "WRITES_REGISTER": RelationKind.WRITES_REGISTER,
-    "VIEW_OF": RelationKind.VIEW_OF,
+    "RETURNS": RelationKind.RETURNS,
     "ALIASES": RelationKind.ALIASES,
-    "ALLOCATES": RelationKind.ALLOCATES,
-    "RELEASES": RelationKind.RELEASES,
-    "SIGNALS": RelationKind.SIGNALS,
-    "WAITS_ON": RelationKind.WAITS_ON,
-    "SYNCHRONIZES_WITH": RelationKind.SYNCHRONIZES_WITH,
-    "HAPPENS_BEFORE": RelationKind.HAPPENS_BEFORE,
-    "EXECUTES_ON": RelationKind.EXECUTES_ON,
-    "EMITS_SYNC": RelationKind.EMITS_SYNC,
-    "DATA_DEPENDS_ON": RelationKind.DATA_DEPENDS_ON,
     "WRAPS": RelationKind.WRAPS,
     "ROOTED_AT": RelationKind.ROOTED_AT,
     # Legacy KB edge names.

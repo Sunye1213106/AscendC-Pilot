@@ -186,7 +186,7 @@ def compile_obligation_target(obligation: dict[str, Any], ir: dict[str, Any] | s
                     status="skipped",
                     expr=None,
                     code="ABSTRACT_BRANCH_NOT_REALIZABLE",
-                    reason=f"{refs[0]} is not mapped to CSV-realizable SMT variables",
+                    reason=f"{refs[0]} is not mapped to CSV-realizable predicate variables",
                 )
     try:
         expr = obligation_target_expr(obligation, variable_ids)
@@ -514,7 +514,7 @@ def _apply_realization_map(
     for spec in _iter_items(realization_map.get("csv_variables")):
         _add_variable(variables, spec, errors, "realization_map.csv_variables")
     for spec in _iter_items(realization_map.get("free_variables")):
-        # UO-rooted SMT free ints (no CSV projection).
+        # UO-rooted unbound ints (no CSV projection).
         patched = dict(spec)
         patched["free"] = True
         _add_variable(variables, patched, errors, "realization_map.free_variables")

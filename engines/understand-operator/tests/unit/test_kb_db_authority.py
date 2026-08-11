@@ -57,7 +57,7 @@ def _sample_kb() -> KnowledgeBase:
         data={
             "owner_id": branch.id,
             "polarity": True,
-            "smt": {"op": "eq", "var": variable.id, "value": 1},
+            "expr": {"op": "eq", "var": variable.id, "value": 1},
         },
         evidence=[branch_ev],
     )

@@ -626,7 +626,7 @@ def _dag_size(root: Expr) -> int:
 
 
 def _collect_vars_dag(node: Any, seen: set[int] | None = None) -> set[str]:
-    """`collect_vars` over a shared SMT-lite structure.
+    """`collect_vars` over a shared finite-predicate structure.
 
     Normalisation memoises by node identity, so the result is a DAG of shared
     dicts; the plain recursive walk revisits shared branches and degenerates to
@@ -1057,7 +1057,7 @@ def value_leaves(root: Expr) -> set[str]:
 
 
 def smt_value_leaves(node: Any) -> set[str]:
-    """Value-position constants of an SMT-lite `value_expr`.
+    """Value-position constants of an finite-predicate `value_expr`.
 
     Bare boolean key fields (`layoutType == TND`) expand to a comparison with
     no `Ite`, so `value_leaves(expanded)` is empty; the normalizer then wraps
@@ -3211,7 +3211,7 @@ class KeyFieldDeriver:
             # Roots must come from variables that survived into value_expr.
             # Accumulating every leaf the normalizer touched while walking
             # softened guards (GetCoreNumAic, …) is how PLATFORM_CORE_COUNT
-            # landed on IsTnd even though its SMT form is a single SCHED bool.
+            # landed on IsTnd even though its predicate form is a single SCHED bool.
             out.var_roots = {
                 v: norm.roots[v] for v in out.variables if v in norm.roots
             }
@@ -3549,7 +3549,7 @@ class _ValueNormalizer(PredicateNormalizer):
     """PredicateNormalizer extended with a value-producing entry point.
 
     A key field is an integer, not a predicate, so `Ite` has to survive into the
-    SMT as `if_then_else` at value level rather than being coerced to a bool.
+    predicate IR as `if_then_else` at value level rather than being coerced to a bool.
     """
 
     def __init__(self, resolver, model, scope_for=None, host_ir=None) -> None:
@@ -3591,7 +3591,7 @@ class _ValueNormalizer(PredicateNormalizer):
         self.state_surfaces: dict[str, list[str]] = {}
         # The expanded expression is a DAG. Normalising it as a tree costs the
         # unfolded size, so each (node, position) is lowered exactly once and
-        # the resulting SMT-lite object is shared by every reference to it.
+        # the resulting finite-predicate object is shared by every reference to it.
         self._memo: dict[tuple[int, str], tuple[Expr, dict[str, Any]]] = {}
 
     def _resolver_for(self, expr: Expr):

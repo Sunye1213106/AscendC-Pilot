@@ -281,7 +281,7 @@ def _feature_hint(text: str) -> str:
 def _predicates_from_writers(writers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Lift guard strings into predicate rows with a feature_hint when possible.
 
-    Full SMT normalisation stays in `uo_init.predicate.PredicateNormalizer`;
+    Full predicate normalisation stays in `uo_init.predicate.PredicateNormalizer`;
     here we keep a durable, queryable projection for TG feature engineering.
     """
     seen: set[tuple] = set()

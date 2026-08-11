@@ -171,8 +171,8 @@ def assemble_kb(
                     "input_controllable": rec.input_controllable,
                     "side": getattr(rec, "side", "host"),
                     # BranchRecord carries the normalized predicate in `guard`;
-                    # there is no `smt` attribute.
-                    "smt": rec.guard,
+                    # there is no `expr` attribute.
+                    "expr": rec.guard,
                     "path_condition": rec.path_condition,
                 },
             )

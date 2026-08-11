@@ -73,7 +73,7 @@ CREATE TABLE IF NOT EXISTS predicate(
   id TEXT PRIMARY KEY,
   owner_id TEXT,
   polarity INTEGER,
-  smt TEXT,
+  expr TEXT,
   status TEXT,
   data TEXT NOT NULL
 );

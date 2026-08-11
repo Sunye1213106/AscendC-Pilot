@@ -470,7 +470,7 @@ def compile_context_slice(
                 cleaned = {
                     k: v
                     for k, v in row.items()
-                    if k not in {"smt", "data", "values_json"} or _estimate_tokens(v) < 200
+                    if k not in {"expr", "data", "values_json"} or _estimate_tokens(v) < 200
                 }
                 compact.append(cleaned)
             graph_slice.append(

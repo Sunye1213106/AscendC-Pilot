@@ -58,3 +58,7 @@ Thumbs.db
 session-ses_*.md
 session-*.md
 
+
+# Local pytest scratch (never commit)
+.codex_pytest_tmp*/
+

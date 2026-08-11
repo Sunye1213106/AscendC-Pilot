@@ -53,7 +53,7 @@ def _field(exactness: str, roots: list[str], **kw) -> FieldDerivation:
 
 # -- can a test case actually drive this dimension? -------------------------
 def test_a_field_closing_onto_host_state_is_not_input_derivable():
-    """`IsTnd` is the case this exists for: its SMT form is the single
+    """`IsTnd` is the case this exists for: its predicate form is the single
     comparison `layoutType == 4` with no free variables, so it grades `exact`,
     but `layoutType` is tiling state the resolver stopped on rather than the
     layout attribute behind it. Nothing a generator sets reaches it.

@@ -34,7 +34,7 @@ class UoQuery:
     @staticmethod
     def _decode(row: sqlite3.Row) -> dict[str, Any]:
         out = dict(row)
-        for key in ("data", "smt", "values_json"):
+        for key in ("data", "expr", "values_json"):
             value = out.get(key)
             if isinstance(value, str):
                 try:

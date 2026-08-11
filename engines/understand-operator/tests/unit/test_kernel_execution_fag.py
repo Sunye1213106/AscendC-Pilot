@@ -64,9 +64,19 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
 
     # Must NOT ship execution-analysis artifacts by default.
     assert "kernel_execution_pipeline" not in cm.meta
-    assert not any(r.kind_name() == RelationKind.HAPPENS_BEFORE.value for r in cm.relations.values())
-    assert not any(r.kind_name() == RelationKind.DATA_DEPENDS_ON.value for r in cm.relations.values())
-    assert not any(r.kind_name() == RelationKind.PRECEDES.value for r in cm.relations.values())
+    forbidden = {
+        "HAPPENS_BEFORE",
+        "DATA_DEPENDS_ON",
+        "PRECEDES",
+        "READS_BUFFER",
+        "WRITES_BUFFER",
+        "SIGNALS",
+        "WAITS_ON",
+        "SYNCHRONIZES_WITH",
+        "EXECUTES_ON",
+        "EMITS_SYNC",
+    }
+    assert not any(r.kind_name() in forbidden for r in cm.relations.values())
 
     assert isinstance(quality, dict) and int(quality.get("operations") or 0) > 0
     assert "gap_count" in meta

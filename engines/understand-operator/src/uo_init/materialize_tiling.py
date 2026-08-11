@@ -419,8 +419,8 @@ def materialize_into_kb(
     for node in kb.iter_nodes():
         if node.kind != "Predicate":
             continue
-        smt = (node.data or {}).get("smt")
-        if not smt:
+        expr = (node.data or {}).get("expr")
+        if not expr:
             continue
         relations.append(
             {
@@ -428,7 +428,7 @@ def materialize_into_kb(
                 "branch_id": (node.data or {}).get("branch_id"),
                 "target_value": (node.data or {}).get("target_value"),
                 "input_controllable": (node.data or {}).get("input_controllable"),
-                "expr": smt,
+                "expr": expr,
                 "status": node.status,
             }
         )

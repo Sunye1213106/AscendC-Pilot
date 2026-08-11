@@ -43,7 +43,7 @@ CREATE TABLE domain(
 );
 CREATE TABLE predicate(
   id TEXT PRIMARY KEY, owner_id TEXT, polarity INTEGER,
-  smt TEXT, status TEXT, unresolved_reason TEXT,
+  expr TEXT, status TEXT, unresolved_reason TEXT,
   FOREIGN KEY(id) REFERENCES node(id)
 );
 CREATE TABLE artifact(
@@ -279,7 +279,7 @@ def write_kb_database(
                     row["id"],
                     row.get("owner_id") or row.get("branch_id"),
                     int(bool(row.get("polarity", row.get("target_value", True)))),
-                    _json(row.get("smt") or row.get("guard")),
+                    _json(row.get("expr") or row.get("guard")),
                     row.get("status", "unresolved"),
                     row.get("unresolved_reason", ""),
                 ),

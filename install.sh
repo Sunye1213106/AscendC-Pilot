@@ -103,7 +103,7 @@ case "$PLATFORM" in
 esac
 
 if [[ "$SKIP_PIP" != "1" ]]; then
-  python -m pip install -e "$BUNDLE_ROOT/engines/common" -e "$BUNDLE_ROOT/pilot" -e "$BUNDLE_ROOT/engines/understand-operator" -e "$BUNDLE_ROOT/engines/testcase-generation[ml]"
+  python -m pip install -r "$BUNDLE_ROOT/requirements.txt"
 fi
 
 # Compose sources, then retain only model-reachable runtime context.
