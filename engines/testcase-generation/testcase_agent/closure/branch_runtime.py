@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """Replay-backed L3 TilingData / runtime-kernel branch coverage.
 
-TilingKey closure establishes reachable keys first. L3 then mutates inputs in
-producer cones, replays them through the real Host tiling, and credits an
-obligation only from an observation that returns the intended TilingKey.
+The canonical runtime debt ledger remains ``obligation_inventory.yaml`` with
+its existing ``keys[].tilingdata_obligations/kernel_obligations`` schema. L3
+mutates candidate inputs, replays the real Host tiling, and updates those rows
+only when the observation returns the intended TilingKey.
 
 Raw ``###TD`` bytes are decoded only through an optional operator package hook
-(``tilingdata_decoder.py``). Missing/failed decode leaves debt open; static
-candidate intent is never accepted as runtime coverage.
+(``tilingdata_decoder.py``). Missing/failed decode leaves debt open; candidate
+intent and static set-cover claims are never accepted as runtime evidence.
 """
 
 from __future__ import annotations
@@ -30,8 +31,11 @@ from testcase_agent.closure import ledger
 from testcase_agent.closure import obligations as OBL
 from testcase_agent.closure import workspace as W
 
+COVERED = "COVERED"
+PROVEN_UNREACHABLE = "PROVEN_UNREACHABLE"
+UNRESOLVED = "UNRESOLVED"
+_TERMINAL = {COVERED, PROVEN_UNREACHABLE}
 _SCHEMA = "tg-branch-runtime/v1"
-_TERMINAL = {OBL.COVERED, OBL.PROVEN_UNREACHABLE}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -73,11 +77,11 @@ def is_branch_mode(ws: W.Workspace | None = None) -> bool:
 
 
 def _inventory_path(ws: W.Workspace) -> Path:
-    return ws.state / "obligation_inventory.yaml"
+    return ws.report("obligation_inventory.yaml")
 
 
 def _runtime_path(ws: W.Workspace) -> Path:
-    return ws.state / "branch_runtime.yaml"
+    return ws.report("branch_runtime.yaml")
 
 
 def _rounds_dir(ws: W.Workspace) -> Path:
@@ -87,37 +91,64 @@ def _rounds_dir(ws: W.Workspace) -> Path:
 
 
 def ensure_inventory(ws: W.Workspace | None = None) -> dict[str, Any]:
-    """Build L3 inventory once; subsequent rounds preserve runtime statuses."""
+    """Build inventory once, then read back the canonical persisted document."""
     ws = (ws or W.default_workspace()).ensure()
     old = _load_yaml(_inventory_path(ws))
     if old.get("schema") == "tg-obligation-inventory/v1":
         return old
-    return OBL.collect_obligations(ws=ws)
+    OBL.collect_obligations(ws=ws, write=True)
+    return _load_yaml(_inventory_path(ws))
+
+
+def _iter_obligations(inv: dict[str, Any]):
+    for key_doc in inv.get("keys") or []:
+        if not isinstance(key_doc, dict):
+            continue
+        try:
+            key = int(key_doc.get("tiling_key"))
+        except (TypeError, ValueError):
+            continue
+        for kind, bucket in (
+            ("TILINGDATA_VALUE_CLASS", "tilingdata_obligations"),
+            ("KERNEL_BRANCH_OUTCOME", "kernel_obligations"),
+        ):
+            for row in key_doc.get(bucket) or []:
+                if isinstance(row, dict):
+                    yield key, kind, row
+
+
+def _open_for_key(inv: dict[str, Any], key: int) -> list[tuple[str, dict[str, Any]]]:
+    return [
+        (kind, row)
+        for row_key, kind, row in _iter_obligations(inv)
+        if row_key == int(key) and str(row.get("status") or UNRESOLVED) not in _TERMINAL
+    ]
 
 
 def _save_inventory(ws: W.Workspace, inv: dict[str, Any]) -> None:
-    rows = [r for r in (inv.get("obligations") or []) if isinstance(r, dict)]
     counts: dict[str, int] = {}
     status_counts: dict[str, int] = {}
-    for row in rows:
-        typ = str(row.get("type") or "")
-        st = str(row.get("status") or OBL.UNRESOLVED)
-        counts[typ] = counts.get(typ, 0) + 1
-        status_counts[st] = status_counts.get(st, 0) + 1
-    open_rows = [r for r in rows if str(r.get("status") or OBL.UNRESOLVED) not in _TERMINAL]
-    inv["summary"] = {
-        **dict(inv.get("summary") or {}),
+    open_n = 0
+    for _key, kind, row in _iter_obligations(inv):
+        counts[kind] = counts.get(kind, 0) + 1
+        status = str(row.get("status") or UNRESOLVED)
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status not in _TERMINAL:
+            open_n += 1
+    inv["runtime_summary"] = {
         "counts": counts,
         "status_counts": status_counts,
-        "unresolved_count": len(open_rows),
-        "coverage_complete": not open_rows,
+        "unresolved_count": open_n,
+        "coverage_complete": open_n == 0,
     }
     _inventory_path(ws).write_text(
         yaml.safe_dump(inv, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
-    (ws.state / "obligation_summary.yaml").write_text(
-        yaml.safe_dump(inv["summary"], allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
+    summary_path = ws.report("obligation_summary.yaml")
+    summary = _load_yaml(summary_path)
+    summary["runtime"] = dict(inv["runtime_summary"])
+    summary_path.write_text(
+        yaml.safe_dump(summary, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
 
 
@@ -126,7 +157,7 @@ def _key_gap(ws: W.Workspace) -> set[int]:
 
 
 def precheck(ws: W.Workspace | None = None) -> dict[str, Any]:
-    """Runtime branch work is valid only after D = R ∪ E for TilingKeys."""
+    """L3 is valid only after the normal TilingKey partition is closed."""
     ws = (ws or W.default_workspace()).ensure()
     gap = _key_gap(ws)
     if gap:
@@ -137,14 +168,12 @@ def precheck(ws: W.Workspace | None = None) -> dict[str, Any]:
             "sample": sorted(gap)[:20],
         }
     inv = ensure_inventory(ws)
+    total = sum(1 for _ in _iter_obligations(inv))
     return {
         "ok": True,
         "reason": "READY",
-        "reachable_keys": int((inv.get("summary") or {}).get("reachable_keys") or 0),
-        "obligations": int(
-            (inv.get("summary") or {}).get("total_obligations")
-            or len(inv.get("obligations") or [])
-        ),
+        "reachable_keys": int(inv.get("reachable_keys") or len(inv.get("keys") or [])),
+        "obligations": total,
     }
 
 
@@ -222,26 +251,9 @@ def _base_cases_for_key(key: int, dims: dict[str, Any], ws: W.Workspace) -> list
     return dedup
 
 
-def _open_for_key(inv: dict[str, Any], key: int) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for row in inv.get("obligations") or []:
-        if not isinstance(row, dict):
-            continue
-        try:
-            row_key = int(row.get("tiling_key"))
-        except (TypeError, ValueError):
-            continue
-        if row_key != int(key):
-            continue
-        if str(row.get("status") or OBL.UNRESOLVED) in _TERMINAL:
-            continue
-        out.append(row)
-    return out
-
-
-def _fields_for(obligations: Iterable[dict[str, Any]]) -> list[str]:
+def _fields_for(obligations: Iterable[tuple[str, dict[str, Any]]]) -> list[str]:
     fields: list[str] = []
-    for row in obligations:
+    for _kind, row in obligations:
         if row.get("field"):
             fields.append(str(row["field"]))
         fields.extend(str(x) for x in (row.get("tilingdata_fields") or []) if x)
@@ -251,7 +263,7 @@ def _fields_for(obligations: Iterable[dict[str, Any]]) -> list[str]:
 def build_candidates(
     key: int,
     dims: dict[str, Any],
-    obligations: list[dict[str, Any]],
+    obligations: list[tuple[str, dict[str, Any]]],
     *,
     ws: W.Workspace,
     budget: int,
@@ -288,8 +300,7 @@ def build_candidates(
     except Exception:
         uo = str(ws.root)
     attempts = 0
-    max_attempts = max(budget * 12, 24)
-    while len(candidates) < budget and attempts < max_attempts:
+    while len(candidates) < budget and attempts < max(budget * 12, 24):
         attempts += 1
         base = rng.choice(bases)
         try:
@@ -345,7 +356,7 @@ def _decode_fields(
     }
 
 
-def _eval_td_obligation(row: dict[str, Any], env: BO.Env) -> bool | None:
+def _eval_td(row: dict[str, Any], env: BO.Env) -> bool | None:
     predicate = str(row.get("predicate") or "").strip()
     field = str(row.get("field") or "").strip()
     if not predicate:
@@ -354,10 +365,6 @@ def _eval_td_obligation(row: dict[str, Any], env: BO.Env) -> bool | None:
         return branch_eval.evaluate(predicate, env).value
     except Exception:
         return None
-
-
-def _case_ids(prefix: str, cases: list[Any]) -> dict[str, Any]:
-    return {f"{prefix}_{i:03d}": c for i, c in enumerate(cases)}
 
 
 def _raw_index(transcript: str) -> dict[str, dict[str, Any]]:
@@ -373,16 +380,23 @@ def _raw_index(transcript: str) -> dict[str, dict[str, Any]]:
         return {}
 
 
-def _credit_kernel_row(
+def _credit_kernel(
     row: dict[str, Any],
     branch: dict[str, Any] | None,
     env: BO.Env,
     meta: dict[str, Any],
     case_id: str,
 ) -> None:
+    """Credit only an actually observed branch outcome.
+
+    Key-determined exclusions are kept out of the runtime inventory for now:
+    the existing certifier intentionally requires every runtime obligation to
+    have a witnessed COVERED case. That is stricter than inference and matches
+    the user's branch-case generation goal.
+    """
     if not branch:
         return
-    state, observed, excluded = BO.state_of(
+    state, observed, _excluded = BO.state_of(
         branch,
         env,
         absent_members=set(meta.get("absent_members") or []),
@@ -391,17 +405,10 @@ def _credit_kernel_row(
     )
     want = bool(row.get("outcome"))
     if want in observed:
-        row["status"] = OBL.COVERED
+        row["status"] = COVERED
         row["evidence"] = {
             "case_id": case_id,
             "kind": "runtime_kernel_branch",
-            "state": state,
-        }
-    elif want in excluded:
-        row["status"] = OBL.PROVEN_UNREACHABLE
-        row["exclusion_basis"] = {
-            "kind": "key_determined_or_reviewed_pin",
-            "case_id": case_id,
             "state": state,
         }
 
@@ -413,7 +420,7 @@ def run_round(
     seed: int = 0,
     oracle: Any | None = None,
 ) -> dict[str, Any]:
-    """Run one bounded L3 search/replay/evaluate round."""
+    """Run one bounded L3 search → replay → evaluate round."""
     del oracle
     ws = (ws or W.default_workspace()).ensure()
     ready = precheck(ws)
@@ -434,26 +441,11 @@ def run_round(
         (rd / "progress.yaml").write_text(
             yaml.safe_dump(progress, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
-        return {
-            "ok": False,
-            "round_dir": str(rd),
-            "progress": progress,
-            "route_hint": "PROOF_BLOCKED",
-        }
+        return {"ok": False, "round_dir": str(rd), "progress": progress, "route_hint": "PROOF_BLOCKED"}
 
     inv = ensure_inventory(ws)
-    open_rows = [
-        row for row in (inv.get("obligations") or [])
-        if isinstance(row, dict)
-        and str(row.get("status") or OBL.UNRESOLVED) not in _TERMINAL
-    ]
-    open_keys = list(
-        dict.fromkeys(
-            int(row["tiling_key"])
-            for row in open_rows
-            if row.get("tiling_key") is not None
-        )
-    )
+    open_rows = [item for item in _iter_obligations(inv) if str(item[2].get("status") or UNRESOLVED) not in _TERMINAL]
+    open_keys = list(dict.fromkeys(key for key, _kind, _row in open_rows))
     if not open_keys:
         progress = {
             "schema": _SCHEMA,
@@ -465,31 +457,24 @@ def run_round(
             "open_obligations": 0,
             "coverage_complete": True,
         }
-        (rd / "progress.yaml").write_text(
-            yaml.safe_dump(progress, allow_unicode=True, sort_keys=False), encoding="utf-8"
-        )
-        return {
-            "ok": True,
-            "round_dir": str(rd),
-            "progress": progress,
-            "route_hint": "GAP_ZERO",
-        }
+        (rd / "progress.yaml").write_text(yaml.safe_dump(progress, sort_keys=False), encoding="utf-8")
+        return {"ok": True, "round_dir": str(rd), "progress": progress, "route_hint": "GAP_ZERO"}
 
     per_key = max(2, min(12, int(max(1, budget) ** 0.5) + 1))
     target_keys = open_keys[: max(1, budget // per_key)]
     case_map: dict[str, Any] = {}
     target_of: dict[str, int] = {}
     for pos, key in enumerate(target_keys):
-        dims = W.decode(key)
         made = build_candidates(
             key,
-            dims,
+            W.decode(key),
             _open_for_key(inv, key),
             ws=ws,
             budget=per_key,
             seed=seed + pos * 997 + idx * 31,
         )
-        for cid, case in _case_ids(f"b{idx}_k{key}", made).items():
+        for i, case in enumerate(made):
+            cid = f"b{idx}_k{key}_{i:03d}"
             case_map[cid] = case
             target_of[cid] = key
 
@@ -504,15 +489,8 @@ def run_round(
             "target_keys": target_keys,
             "open_obligations": len(open_rows),
         }
-        (rd / "progress.yaml").write_text(
-            yaml.safe_dump(progress, allow_unicode=True, sort_keys=False), encoding="utf-8"
-        )
-        return {
-            "ok": False,
-            "round_dir": str(rd),
-            "progress": progress,
-            "route_hint": "SEARCH_STALLED",
-        }
+        (rd / "progress.yaml").write_text(yaml.safe_dump(progress, sort_keys=False), encoding="utf-8")
+        return {"ok": False, "round_dir": str(rd), "progress": progress, "route_hint": "SEARCH_STALLED"}
 
     runner = W.replay_runner()
     tag = f"branch_r{idx:04d}"
@@ -529,38 +507,19 @@ def run_round(
             "new_obligations": 0,
             "sent": len(case_map),
         }
-        (rd / "progress.yaml").write_text(
-            yaml.safe_dump(progress, allow_unicode=True, sort_keys=False), encoding="utf-8"
-        )
-        return {
-            "ok": False,
-            "round_dir": str(rd),
-            "progress": progress,
-            "route_hint": "ORACLE_SUSPECT",
-        }
+        (rd / "progress.yaml").write_text(yaml.safe_dump(progress, sort_keys=False), encoding="utf-8")
+        return {"ok": False, "round_dir": str(rd), "progress": progress, "route_hint": "ORACLE_SUSPECT"}
 
     log_path = Path(runner.cache) / f"{tag}_log.txt"
-    transcript = (
-        log_path.read_text(encoding="utf-8", errors="replace")
-        if log_path.is_file()
-        else ""
-    )
+    transcript = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
     raw_by_id = _raw_index(transcript)
     decoder, decoder_status = _load_decoder()
     branches = KD.load_kernel_branches(ws=ws)
-    branch_by_id = {
-        BO.site_id(branch): branch
-        for branch in branches
-        if isinstance(branch, dict)
-    }
+    branch_by_id = {BO.site_id(b): b for b in branches if isinstance(b, dict)}
 
-    before_terminal = sum(
-        1
-        for row in inv.get("obligations") or []
-        if isinstance(row, dict) and str(row.get("status")) in _TERMINAL
-    )
+    before = sum(1 for _k, _kind, row in _iter_obligations(inv) if str(row.get("status")) in _TERMINAL)
     on_key = 0
-    decode_ok = 0
+    decoded_n = 0
     evidence_rows: list[dict[str, Any]] = []
     for cid, result in results.items():
         target = target_of.get(cid)
@@ -568,24 +527,22 @@ def run_round(
             continue
         actual = int(result.key or 0)
         if not result.ok or actual != target:
-            evidence_rows.append(
-                {
-                    "case_id": cid,
-                    "target_key": target,
-                    "actual_key": actual,
-                    "ok": bool(result.ok),
-                    "on_key": False,
-                    "reject": result.reject,
-                }
-            )
+            evidence_rows.append({
+                "case_id": cid,
+                "target_key": target,
+                "actual_key": actual,
+                "ok": bool(result.ok),
+                "on_key": False,
+                "reject": result.reject,
+            })
             continue
 
         on_key += 1
         dims = W.decode(target)
         raw_info = raw_by_id.get(cid) or {}
-        decoded, dec_meta = _decode_fields(decoder, raw_info.get("td"), dims)
-        if dec_meta.get("ok"):
-            decode_ok += 1
+        decoded, meta = _decode_fields(decoder, raw_info.get("td"), dims)
+        if meta.get("ok"):
+            decoded_n += 1
         fields = dict(decoded)
         for name, value in dict(result.diag or {}).items():
             fields.setdefault(str(name), value)
@@ -599,61 +556,46 @@ def run_round(
             derived=dict(ctx.get("derived") or {}),
             pins=dict(ctx.get("pins") or {}),
         )
-
-        for row in _open_for_key(inv, target):
-            if row.get("type") == "TILINGDATA_VALUE_CLASS":
-                verdict = _eval_td_obligation(row, env)
-                if verdict is True:
-                    row["status"] = OBL.COVERED
-                    row["evidence"] = {
-                        "case_id": cid,
-                        "kind": "runtime_tilingdata",
-                    }
-                    fld = str(row.get("field") or "")
-                    if fld in env.fields:
-                        row["observed_value"] = env.fields[fld]
-            elif row.get("type") == "KERNEL_BRANCH_OUTCOME":
-                _credit_kernel_row(
+        for kind, row in _open_for_key(inv, target):
+            if kind == "TILINGDATA_VALUE_CLASS" and _eval_td(row, env) is True:
+                row["status"] = COVERED
+                row["evidence"] = {"case_id": cid, "kind": "runtime_tilingdata"}
+                field = str(row.get("field") or "")
+                if field in env.fields:
+                    row["observed_value"] = env.fields[field]
+            elif kind == "KERNEL_BRANCH_OUTCOME":
+                _credit_kernel(
                     row,
                     branch_by_id.get(str(row.get("branch_id") or "")),
                     env,
-                    dec_meta,
+                    meta,
                     cid,
                 )
-
-        evidence_rows.append(
-            {
-                "case_id": cid,
-                "target_key": target,
-                "actual_key": actual,
-                "ok": True,
-                "on_key": True,
-                "decoder_ok": bool(dec_meta.get("ok")),
-                "layout": dec_meta.get("layout"),
-                "field_count": len(env.fields),
-                "diag_fields": sorted((result.diag or {}).keys()),
-            }
-        )
+        evidence_rows.append({
+            "case_id": cid,
+            "target_key": target,
+            "actual_key": actual,
+            "ok": True,
+            "on_key": True,
+            "decoder_ok": bool(meta.get("ok")),
+            "layout": meta.get("layout"),
+            "field_count": len(env.fields),
+        })
 
     _save_inventory(ws, inv)
-    after_terminal = sum(
-        1
-        for row in inv.get("obligations") or []
-        if isinstance(row, dict) and str(row.get("status")) in _TERMINAL
-    )
-    new_obligations = max(0, after_terminal - before_terminal)
-    summary = dict(inv.get("summary") or {})
-    open_after = int(summary.get("unresolved_count") or 0)
+    after = sum(1 for _k, _kind, row in _iter_obligations(inv) if str(row.get("status")) in _TERMINAL)
+    runtime_summary = dict(inv.get("runtime_summary") or {})
+    new_obligations = max(0, after - before)
+    open_after = int(runtime_summary.get("unresolved_count") or 0)
     complete = open_after == 0
 
     try:
-        actual_cases: dict[str, Any] = {}
-        actual_results: dict[str, Any] = {}
-        for cid, result in results.items():
-            target = target_of.get(cid)
-            if target is not None and result.ok and int(result.key or 0) == target:
-                actual_cases[cid] = case_map[cid]
-                actual_results[cid] = result
+        actual_cases = {
+            cid: case_map[cid]
+            for cid, result in results.items()
+            if cid in target_of and result.ok and int(result.key or 0) == target_of[cid]
+        }
+        actual_results = {cid: results[cid] for cid in actual_cases}
         if actual_cases:
             runner.write_wide(
                 ws.artifacts / f"branch_round_{idx:04d}_key_cases.csv",
@@ -667,11 +609,7 @@ def run_round(
         "schema": _SCHEMA,
         "round": idx,
         "ok": True,
-        "reason": (
-            "BRANCH_GAP_ZERO"
-            if complete
-            else ("BRANCH_PROGRESS" if new_obligations else "BRANCH_STALLED")
-        ),
+        "reason": "BRANCH_GAP_ZERO" if complete else ("BRANCH_PROGRESS" if new_obligations else "BRANCH_STALLED"),
         "new_R": 0,
         "new_obligations": new_obligations,
         "open_obligations": open_after,
@@ -680,18 +618,15 @@ def run_round(
         "replayed": len(results),
         "on_key": on_key,
         "decoder": decoder_status,
-        "decoded": decode_ok,
+        "decoded": decoded_n,
         "coverage_complete": complete,
-        "status_counts": summary.get("status_counts") or {},
+        "status_counts": runtime_summary.get("status_counts") or {},
     }
     (rd / "progress.yaml").write_text(
         yaml.safe_dump(progress, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
     (rd / "evidence.jsonl").write_text(
-        "".join(
-            json.dumps(item, ensure_ascii=False, default=str) + "\n"
-            for item in evidence_rows
-        ),
+        "".join(json.dumps(item, ensure_ascii=False, default=str) + "\n" for item in evidence_rows),
         encoding="utf-8",
     )
     runtime = {
@@ -710,35 +645,32 @@ def run_round(
         "ok": True,
         "round_dir": str(rd),
         "progress": progress,
-        "route_hint": (
-            "GAP_ZERO"
-            if complete
-            else ("SEARCH_PROGRESS" if new_obligations else "SEARCH_STALLED")
-        ),
+        "route_hint": "GAP_ZERO" if complete else ("SEARCH_PROGRESS" if new_obligations else "SEARCH_STALLED"),
         "branch_runtime": runtime,
     }
 
 
 def route(ws: W.Workspace | None = None) -> dict[str, Any]:
-    """Map branch debt to the existing tg-solve reason codes."""
     ws = (ws or W.default_workspace()).ensure()
     if not is_branch_mode(ws):
         return {}
     inv = ensure_inventory(ws)
-    open_n = int((inv.get("summary") or {}).get("unresolved_count") or 0)
+    open_n = sum(
+        1
+        for _key, _kind, row in _iter_obligations(inv)
+        if str(row.get("status") or UNRESOLVED) not in _TERMINAL
+    )
     base = ledger.state(ws)
     if open_n == 0:
         return {"reason": "GAP_ZERO", "branch_open": 0, **base}
-    recent: list[dict[str, Any]] = []
-    for rd in sorted(_rounds_dir(ws).glob("round_*"))[-2:]:
-        doc = _load_yaml(rd / "progress.yaml")
-        if doc:
-            recent.append(doc)
+    recent = [
+        _load_yaml(rd / "progress.yaml")
+        for rd in sorted(_rounds_dir(ws).glob("round_*"))[-2:]
+    ]
+    recent = [x for x in recent if x]
     if recent and int(recent[-1].get("new_obligations") or 0) > 0:
         return {"reason": "SEARCH_PROGRESS", "branch_open": open_n, **base}
-    if len(recent) >= 2 and all(
-        int(item.get("new_obligations") or 0) == 0 for item in recent[-2:]
-    ):
+    if len(recent) >= 2 and all(int(x.get("new_obligations") or 0) == 0 for x in recent[-2:]):
         return {"reason": "SEARCH_STALLED", "branch_open": open_n, **base}
     return {"reason": "SEARCH_PROGRESS", "branch_open": open_n, **base}
 
@@ -746,14 +678,16 @@ def route(ws: W.Workspace | None = None) -> dict[str, Any]:
 def certification_summary(ws: W.Workspace | None = None) -> dict[str, Any]:
     ws = (ws or W.default_workspace()).ensure()
     inv = ensure_inventory(ws)
-    summary = dict(inv.get("summary") or {})
-    open_n = int(summary.get("unresolved_count") or 0)
+    open_n = sum(
+        1
+        for _key, _kind, row in _iter_obligations(inv)
+        if str(row.get("status") or UNRESOLVED) not in _TERMINAL
+    )
     return {
         "schema": _SCHEMA,
         "ok": open_n == 0,
         "open_obligations": open_n,
         "coverage_complete": open_n == 0,
-        "status_counts": summary.get("status_counts") or {},
         "runtime": _load_yaml(_runtime_path(ws)),
     }
 
