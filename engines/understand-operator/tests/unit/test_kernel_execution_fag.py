@@ -68,6 +68,8 @@ def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir:
     assert syncs, "expected SYNC_EVENT entities on FAG"
     assert bufs, "expected BUFFER entities on FAG"
 
+    pipe = cm.meta.get("kernel_execution_pipeline") or {}
+
     # Quality report fields must exist and be positive.
     assert isinstance(quality, dict) and quality, f"missing quality report: {meta}"
     assert int(quality.get("ops") or 0) > 0
@@ -75,12 +77,21 @@ def test_fag_arch35_kernel_execution_quality_and_timing(fag_dir: Path, arch_dir:
     assert int(quality.get("sync_events") or 0) > 0
     assert int(meta.get("data_deps_total") or quality.get("data_deps_total") or 0) >= 0
 
+    # Usable memory-pipeline floor against FAG source expectations.
+    names = {e.name for e in ops}
+    assert "InitBuffer" in names, "lexical supplement must recover InitBuffer"
+    assert "AllocTensor" in names or "EnQue" in names
+    assert int(pipe.get("copy_in_hints") or 0) >= 1, f"expected CopyIn on FAG, pipe={pipe}"
+    assert any(
+        str(b.attrs.get("memory_space") or "") in {"GM", "WORKSPACE", "L1", "UB"}
+        for b in bufs
+    )
+
     precedes = [r for r in cm.relations.values() if r.kind_name() == RelationKind.PRECEDES.value]
     assert precedes, "program-order PRECEDES required"
     emits = [r for r in cm.relations.values() if r.kind_name() == RelationKind.EMITS_SYNC.value]
     assert emits, "EMITS_SYNC links required when sync events exist"
 
-    pipe = cm.meta.get("kernel_execution_pipeline") or {}
     assert int(pipe.get("operation_count") or 0) >= 50
     assert pipe.get("authority") == "derived"
 

@@ -194,31 +194,85 @@ def _guards_from_path_conditions(pcs: Iterable[Any]) -> list[str]:
 
 def _infer_memory_space(type_text: str, name: str = "") -> str:
     t = f"{type_text} {name}".lower()
-    if "globaltensor" in t or "__gm__" in t or name.lower().endswith("gm"):
+    n = str(name or "").lower()
+    # TPipe is not a data buffer — mark so callers can drop it.
+    if "tpipe" in t or n in {"tpipe", "pipe"} or n.startswith("pipe"):
+        return "PIPE"
+    if "globaltensor" in t or "__gm__" in t:
         return "GM"
-    if "localtensor" in t or "tbuf" in t or name.lower().endswith("ub"):
-        return "UB"
-    if "l1" in t:
-        return "L1"
-    if "l0a" in t:
-        return "L0A"
-    if "l0b" in t:
-        return "L0B"
-    if "l0c" in t:
-        return "L0C"
-    if "workspace" in t or "workspace" in name.lower():
+    if n.endswith("gm") or "gmtensor" in n or n.endswith("gm_"):
+        return "GM"
+    if "workspace" in t or "workspace" in n or n.endswith("ws"):
         return "WORKSPACE"
-    if "tque" in t or "queue" in t:
+    if "localtensor" in t or "tbuf" in t:
+        return "UB"
+    if n.endswith("ub") or "ubuf" in n:
+        return "UB"
+    if "l0a" in t or "l0a" in n:
+        return "L0A"
+    if "l0b" in t or "l0b" in n:
+        return "L0B"
+    if "l0c" in t or "l0c" in n:
+        return "L0C"
+    if "l1" in t or "l1" in n:
+        return "L1"
+    if "tque" in t or "queue" in t or n.endswith("que") or "queue" in n:
         return "QUEUE"
     return "UNKNOWN"
 
 
 def _buffer_kind(type_text: str) -> str:
     t = type_text
-    for name in ("LocalTensor", "GlobalTensor", "TBuf", "TQue", "TPipe"):
+    for name in ("LocalTensor", "GlobalTensor", "TBuf", "TQue", "TPipe", "MutexBuffer"):
         if name in t:
             return name
     return "Buffer"
+
+
+def _is_data_buffer(type_text: str, name: str, memory_space: str) -> bool:
+    """Exclude TPipe / control objects from BUFFER entities."""
+    if memory_space == "PIPE":
+        return False
+    kind = _buffer_kind(type_text)
+    if kind == "TPipe":
+        return False
+    n = str(name or "").lower()
+    if n in {"tpipe", "pipe"} or (n.startswith("pipe") and "tensor" not in n and "que" not in n):
+        return False
+    return True
+
+
+def _site_dedupe_key(site: Any, *, root: str = "") -> tuple[str, int, str]:
+    d = site if isinstance(site, dict) else None
+    if d is None:
+        file = str(getattr(site, "file", "") or "")
+        line = int(getattr(site, "line", 0) or 0)
+        callee = str(getattr(site, "callee", "") or "").split("::")[-1]
+    else:
+        file = str(d.get("file") or "")
+        line = int(d.get("line") or 0)
+        callee = str(d.get("callee") or "").split("::")[-1]
+    return (_norm_file(file, root), line, callee)
+
+
+def _merge_lexical_sites(
+    walk_calls: list[Any],
+    lexical: list[dict[str, Any]],
+    *,
+    root: str,
+) -> tuple[list[Any], int]:
+    """Prefer Clang sites; add lexical AscendC primitives missing from walks."""
+    seen = {_site_dedupe_key(s, root=root) for s in walk_calls}
+    added = 0
+    out = list(walk_calls)
+    for site in lexical:
+        key = _site_dedupe_key(site, root=root)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(site)
+        added += 1
+    return out, added
 
 
 def _collect_call_sites_from_walks(
@@ -417,12 +471,15 @@ def _build_ir_from_sites(
             init = getattr(decl, "init", None)
         if not name or not _TENSOR_TYPE_RE.search(type_text):
             continue
+        mem = _infer_memory_space(type_text, name)
+        if not _is_data_buffer(type_text, name, mem):
+            continue
         bid = buffer_site_id(file=file, line=line, scope=function, name=name, root=root)
         buf = Buffer(
             id=bid,
             name=name,
             kind=_buffer_kind(type_text),
-            memory_space=_infer_memory_space(type_text, name),
+            memory_space=mem,
             size_expr=str(init or ""),
             scope=function,
             file=_norm_file(file, root),
@@ -525,18 +582,25 @@ def _build_ir_from_sites(
         ir._reach[oid] = op_extra_reach  # type: ignore[attr-defined]
 
         # InitBuffer(queue, depth, size) → queue_depth / double-buffer hint.
+        # Prefer args[0] as the queue identity; receiver is usually TPipe*.
         if callee == "InitBuffer":
-            queue_name = receiver
+            queue_name = ""
             depth_val: int | None = None
             if args:
-                if not queue_name:
-                    queue_name = str(args[0]).split("[", 1)[0]
+                queue_name = str(args[0]).split("[", 1)[0].strip()
+                # Drop this-> / pipe. prefixes already handled by arg text; strip -> remnants.
+                if "->" in queue_name:
+                    queue_name = queue_name.split("->")[-1]
+                if "." in queue_name:
+                    queue_name = queue_name.split(".")[-1]
                 if len(args) >= 2:
                     try:
                         depth_val = int(str(args[1]).strip())
                     except ValueError:
                         depth_val = None
-            if queue_name:
+            if not queue_name:
+                queue_name = receiver
+            if queue_name and _is_data_buffer("TQue", queue_name, "QUEUE"):
                 qkey = (op.function, queue_name)
                 if qkey not in buffer_by_key:
                     qid = buffer_site_id(
@@ -558,6 +622,9 @@ def _build_ir_from_sites(
                     buffer_by_key[qkey] = qbuf
                 elif depth_val is not None:
                     buffer_by_key[qkey].queue_depth = depth_val
+                    buffer_by_key[qkey].memory_space = "QUEUE"
+                    if not buffer_by_key[qkey].kind:
+                        buffer_by_key[qkey].kind = "TQue"
 
         # Sync events from sync_* categories.
         if category.startswith("sync_"):
@@ -633,6 +700,12 @@ def _build_ir_from_sites(
             key = (op.function, bname)
             if key in buffer_by_key:
                 continue
+            # Skip non-buffer tokens (this, literals, type names).
+            if bname in {"this", "true", "false"} or bname[:1].isdigit():
+                continue
+            mem = _infer_memory_space("", bname)
+            if not _is_data_buffer("", bname, mem):
+                continue
             bid = buffer_site_id(
                 file=file, line=line, scope=op.function, name=bname, root=root
             )
@@ -640,7 +713,7 @@ def _build_ir_from_sites(
                 id=bid,
                 name=bname,
                 kind="Buffer",
-                memory_space=_infer_memory_space("", bname),
+                memory_space=mem,
                 scope=op.function,
                 file=op.file,
                 line=line,
@@ -1128,20 +1201,55 @@ def finalize_kernel_execution(
         filter_strict=filter_strict,
         deadline=deadline,
     )
-    if not calls and time.perf_counter() < deadline:
+    # Always lexical-supplement selected kernel files: Clang walks miss many
+    # method-style AscendC sites (InitBuffer/AllocTensor/EnQue) and template
+    # DataCopy in cube/vec headers. Prefer walk sites on conflict.
+    lexical_added = 0
+    if files and time.perf_counter() < deadline:
         lexical = _lexical_primitive_sites(
             files,
             reachable=reachable,
-            filter_strict=filter_strict,
+            # Extract all primitives in selected files; reachability is stamped
+            # per-site via entry_reachable.
+            filter_strict=False,
             root=root,
             deadline=deadline,
         )
         if lexical:
-            calls = lexical
-            provenance = "lexical_ascendc_primitives"
-            decls = _lexical_buffer_decls(
-                files, reachable=reachable, filter_strict=filter_strict, deadline=deadline
+            if not calls:
+                calls = lexical
+                provenance = "lexical_ascendc_primitives"
+            else:
+                calls, lexical_added = _merge_lexical_sites(calls, lexical, root=root)
+                if lexical_added:
+                    provenance = f"{provenance}+lexical_supplement"
+            lex_decls = _lexical_buffer_decls(
+                files,
+                reachable=reachable,
+                filter_strict=False,
+                deadline=deadline,
             )
+            if lex_decls:
+                # Prefer existing decls; append unseen (file,line,name).
+                seen_decl = {
+                    (
+                        _norm_file(str(d.get("file") if isinstance(d, dict) else getattr(d, "file", "")), root),
+                        int((d.get("line") if isinstance(d, dict) else getattr(d, "line", 0)) or 0),
+                        str((d.get("name") if isinstance(d, dict) else getattr(d, "name", "")) or ""),
+                    )
+                    for d in (decls or [])
+                    if isinstance(d, (dict,)) or hasattr(d, "name")
+                }
+                for d in lex_decls:
+                    key = (
+                        _norm_file(str(d.get("file") or ""), root),
+                        int(d.get("line") or 0),
+                        str(d.get("name") or ""),
+                    )
+                    if key in seen_decl:
+                        continue
+                    seen_decl.add(key)
+                    decls.append(d)
 
     ir = _build_ir_from_sites(
         call_sites=calls,
@@ -1150,6 +1258,8 @@ def finalize_kernel_execution(
         root=root,
         provenance=provenance,
     )
+    if lexical_added:
+        ir.notes.append(f"lexical_supplement_added={lexical_added}")
     if "partial" in provenance:
         ir.notes.append("walk_cache_limit_partial")
     if time.perf_counter() > deadline:
@@ -1160,6 +1270,7 @@ def finalize_kernel_execution(
     stats["reachable_functions"] = len(reachable)
     stats["filter_strict"] = filter_strict
     stats["selected_files"] = len(files)
+    stats["lexical_supplement_added"] = lexical_added
     codemap.meta["kernel_execution"] = stats
     return codemap
 

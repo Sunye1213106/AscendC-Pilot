@@ -79,10 +79,18 @@ def arg_effects(callee: str, args: list[str], *, receiver: str = "") -> tuple[li
         text = str(expr or "").strip()
         if not text:
             return ""
-        # Strip common indexing / Get<> wrappers to a root identity hint.
-        for sep in ("[", ".", "->", "("):
+        for prefix in ("this->", "this.", "(*this)->", "(*this)."):
+            if text.startswith(prefix):
+                text = text[len(prefix) :]
+                break
+        # Drop indexing / call args first so field names survive.
+        for sep in ("[", "("):
             if sep in text:
                 text = text.split(sep, 1)[0]
+        if "->" in text:
+            text = text.split("->")[-1]
+        if "." in text:
+            text = text.split(".")[-1]
         return text.strip()
 
     for idx_s, role in roles.items():

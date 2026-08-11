@@ -15,6 +15,8 @@ from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 
 _LOCAL = {"UB", "L1", "L0A", "L0B", "L0C"}
+# Workspace is GM-backed staging; treat as GM-like for CopyIn/Out direction.
+_GM_LIKE = {"GM", "WORKSPACE"}
 _STAGE_BY_CATEGORY = {
     "memory_transfer": "Copy",
     "memory_init": "Copy",
@@ -64,9 +66,9 @@ def _mem_spaces(codemap: CodeMap, op_id: str) -> tuple[set[str], set[str]]:
 
 
 def _refine_copy_stage(src: set[str], dst: set[str]) -> str:
-    """GM→UB/L1 = CopyIn; UB/L1→GM = CopyOut; else InternalTransfer."""
-    src_gm = "GM" in src
-    dst_gm = "GM" in dst
+    """GM/WORKSPACE→UB/L1 = CopyIn; UB/L1→GM/WORKSPACE = CopyOut; else InternalTransfer."""
+    src_gm = bool(src & _GM_LIKE)
+    dst_gm = bool(dst & _GM_LIKE)
     src_local = bool(src & _LOCAL)
     dst_local = bool(dst & _LOCAL)
     if src_gm and dst_local:

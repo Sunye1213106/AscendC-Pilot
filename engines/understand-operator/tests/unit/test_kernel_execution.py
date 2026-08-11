@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from collections import Counter
 
 from uo_init.ids import operation_site_id
 from uo_init.ir.codemap import CodeMap
@@ -110,6 +111,12 @@ def test_registry_classifies_datacopy_and_sync() -> None:
     reads, writes = semreg.arg_effects("DataCopy", ["qUb", "qGm"])
     assert writes == ["qUb"]
     assert reads == ["qGm"]
+    # this->dyGm[...] must resolve to dyGm, not "this".
+    reads2, writes2 = semreg.arg_effects(
+        "DataCopy", ["dyL1Tensor", "this->dyGm[runInfo.dyOffset]"]
+    )
+    assert writes2 == ["dyL1Tensor"]
+    assert reads2 == ["dyGm"]
     assert semreg.classify("WaitFlag")[0] == "sync_wait"
 
 
@@ -230,6 +237,13 @@ def test_pipeline_copy_direction_and_no_raw_overlap(tmp_path: Path) -> None:
         str(e.attrs.get("pipeline_stage_hint") or "") == "CopyIn"
         for e in cm.by_kind(EntityKind.OPERATION)
     )
+
+    names = Counter(e.name for e in cm.by_kind(EntityKind.OPERATION))
+    assert names.get("InitBuffer", 0) >= 1
+    assert names.get("AllocTensor", 0) >= 1
+    assert any(
+        b.attrs.get("queue_depth") == 2 for b in cm.by_kind(EntityKind.BUFFER)
+    ), "InitBuffer(..., 2, ...) must stamp queue_depth"
 
     raw_pairs = {
         (r.src, r.dst)
