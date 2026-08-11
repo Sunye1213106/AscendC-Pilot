@@ -13,8 +13,7 @@ Audit whether the TilingKey closure is ready to certify.
 
 # Requirements
 
-- Follow `skills/testcase-generation/SKILL.md` (closure-safety via that skill's references)
-
+- Follow the packaged `testcase-generation` domain skill (closure-safety through that skill's references); do not assume a Host-specific physical Skill path
 - Do not invent new exclusion rules
 
 # Return
