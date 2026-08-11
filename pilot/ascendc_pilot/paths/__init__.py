@@ -25,8 +25,8 @@ ARCH_ENV_VARS = ("UO_ARCH", "ASCENDC_ARCH")
 
 def pilot_checkout_root() -> Path:
     """The AscendC-Pilot repository checkout (this package lives under pilot/)."""
-    # .../pilot/ascendc_pilot/paths/__init__.py → parents[2] = AscendC-Pilot
-    return Path(__file__).resolve().parents[2]
+    # .../pilot/ascendc_pilot/paths/__init__.py → parents[3] = AscendC-Pilot
+    return Path(__file__).resolve().parents[3]
 
 
 def is_under_pilot_checkout(path: Path) -> bool:

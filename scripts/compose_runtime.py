@@ -25,6 +25,7 @@ _FORBIDDEN_PATTERNS = [
 ]
 
 # Shared policies injected into both workflow entry skills and agents (same set).
+# Compose injects short *invariant packs* only; full POLICY.md stays on disk for humans/CI.
 COMPOSE_POLICY_IDS: tuple[str, ...] = (
     "pilot-control",
     "language",
@@ -32,6 +33,16 @@ COMPOSE_POLICY_IDS: tuple[str, ...] = (
     "code-access",
     "source-authority",
     "output-quality",
+)
+
+# Short model-facing packs under pilot/policies/invariants/ (≤ ~50 lines total).
+COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
+    ("control", "control-invariants.md"),
+    ("evidence", "evidence-invariants.md"),
+    ("code-access", "code-access-invariants.md"),
+    ("authority", "authority.md"),
+    ("output-quality", "output-quality.md"),
+    ("language", "language.md"),
 )
 
 # True Skills (model-facing expertise). Workflow slash entries are generated shells.
@@ -47,7 +58,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "uo-init": {
         "description": (
             "首次构建 AscendC `.uo` CodeMap：机器解析范围与 BuildVariant、抽取 CompilerFacts、"
-            "运行确定性 CodeMap Pass、只消解显式语义缺口、写入并审查单一 `.uo`。"
+            "运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
+            "semantic residual 保留在 unresolved.yaml，不由 LLM 写入 canonical UO。"
             "用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定 Source Scope，无人工文件清单确认。"
         ),
@@ -65,6 +77,14 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、"
             "Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有 UO 内容、"
             "某个 KEY/字段/路径或 CodeMap 完整性时使用。"
+        ),
+        "skill_id": "operator-analysis",
+    },
+    "uo-investigate": {
+        "description": (
+            "调查 `.uo` 中保留的 unresolved semantic residual：分类根因、指出 deterministic "
+            "engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
+            "或要改进 analyzer 时使用。"
         ),
         "skill_id": "operator-analysis",
     },
@@ -223,6 +243,21 @@ def _capability_dir(repo: Path, cid: str) -> Path:
 def _read_policy(repo: Path, pid: str) -> str:
     p = repo / "pilot" / "policies" / pid / "POLICY.md"
     return p.read_text(encoding="utf-8") if p.is_file() else ""
+
+
+def _read_invariant_pack(repo: Path) -> str:
+    """Concatenate short invariant markdown for model context (not full POLICY.md)."""
+    root = repo / "pilot" / "policies" / "invariants"
+    parts: list[str] = [
+        "Follow pilot policies (short invariants). Full text: `pilot/policies/*/POLICY.md`.",
+        "",
+    ]
+    for _label, fname in COMPOSE_INVARIANT_FILES:
+        path = root / fname
+        if path.is_file():
+            parts.append(path.read_text(encoding="utf-8").rstrip())
+            parts.append("")
+    return "\n".join(parts).rstrip() + "\n"
 
 
 def _read_capability(repo: Path, cid: str) -> tuple[dict[str, Any], str]:
@@ -624,12 +659,11 @@ def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any]) -> str:
     skill_id = str(entry.get("skill_id") or "")
     body = _entry_skill_shell(wid, skill_id=skill_id)
     body = _replace_actions_table(body, meta)
-    # Inject shared policies once (same core as agents — avoid skill-local forks).
-    for pid in COMPOSE_POLICY_IDS:
-        marker = f"## Composed: {pid}"
-        text = _read_policy(repo, pid)
-        if marker not in body and text:
-            body = body.rstrip() + f"\n\n{marker}\n\n" + text + "\n"
+    # Short invariant pack only (full POLICY.md stays under pilot/policies/ for humans).
+    pack = _read_invariant_pack(repo)
+    marker = "## Composed: policy-invariants"
+    if marker not in body and pack.strip():
+        body = body.rstrip() + f"\n\n{marker}\n\n" + pack + "\n"
     # Index composed refs + runtime bundle paths
     lines = [
         "\n## Composition index\n",
@@ -732,18 +766,30 @@ def _opencode_bash_permission() -> dict[str, str]:
     }
 
 
-def _compose_agent_md(repo: Path, agent_meta: dict[str, Any]) -> str:
+def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "") -> str:
     skills = repo / "skills"
     aid = agent_meta.get("id", "agent")
     role = agent_meta.get("role", "")
-    reads = "\n".join(f"- `{x}`" for x in (agent_meta.get("read_scopes") or [])) or "- (none)"
+    read_scopes = list(agent_meta.get("read_scopes") or [])
+    if host == "opencode":
+        # Cognitive skills are not in OpenCode Skill discovery; agents load
+        # them from the plugin-internal cognitive-skills/ tree.
+        remapped: list[str] = []
+        for scope in read_scopes:
+            s = str(scope)
+            if s.startswith("skills/") and any(
+                s.startswith(f"skills/{cid}")
+                for cid in COGNITIVE_SKILL_IDS
+            ):
+                remapped.append("cognitive-" + s)
+            else:
+                remapped.append(s)
+        read_scopes = remapped
+    reads = "\n".join(f"- `{x}`" for x in read_scopes) or "- (none)"
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
-    # Shared policies for ALL agents (same COMPOSE_POLICY_IDS as workflow skills).
-    # Do not push high-confidence / source-window rules into individual skill prompts only.
-    _agent_policies = {pid: _read_policy(repo, pid) for pid in COMPOSE_POLICY_IDS}
-    hc = _agent_policies["pilot-control"]
-    lang = _agent_policies["language"]
+    # Short invariant pack for ALL agents (same pack as workflow skills).
+    inv_pack = _read_invariant_pack(repo)
     front: dict[str, Any] = {
         "name": aid,
         "description": agent_meta.get("description") or aid,
@@ -799,36 +845,16 @@ At runtime, follow:
 
 1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
 2. Then the current Pilot Action / METHOD only as referenced by that prompt;
-3. the composed Policies;
+3. the composed Policy invariants;
 4. the composed Capabilities (`source-navigation`, `source-reading` when declared on the Action);
 5. the declared Output Contract.
 
 When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
 Do **not** invent extra goals beyond the session prompt. Do **not** finalize the Action (primary runs `--finalize`).
 
-## Composed: pilot-control
+## Composed: policy-invariants
 
-{hc}
-
-## Composed: language
-
-{lang}
-
-## Composed: evidence
-
-{_agent_policies["evidence"]}
-
-## Composed: code-access
-
-{_agent_policies["code-access"]}
-
-## Composed: source-authority
-
-{_agent_policies["source-authority"]}
-
-## Composed: output-quality
-
-{_agent_policies["output-quality"]}
+{inv_pack}
 """
     return _dump_frontmatter(front) + "\n" + body
 
@@ -925,39 +951,46 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
                 shutil.copytree(csrc, cdst)
         compiled.append(f"{host}/skills/{wid}")
 
-    # Cognitive skills + shared references (internal: not top-level model routing)
+    # Cognitive skills: Cursor/Codex get disable-model-invocation;
+    # OpenCode does not put them in Skill discovery — only workflow entries.
+    cognitive_out = (
+        out_root / "cognitive-skills" if host == "opencode" else out_skills
+    )
+    if host == "opencode":
+        if cognitive_out.exists():
+            shutil.rmtree(cognitive_out)
+        cognitive_out.mkdir(parents=True, exist_ok=True)
     for skill_id in COGNITIVE_SKILL_IDS:
         src = skills / skill_id
         if not (src / "SKILL.md").is_file():
             continue
-        dst = out_skills / skill_id
+        dst = cognitive_out / skill_id
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns("README.md"))
         skill_md = dst / "SKILL.md"
         text = skill_md.read_text(encoding="utf-8")
         meta, body = _require_skill_frontmatter(text, path=skill_md)
-        # Workflow entries are model-invokable; cognitive skills are loaded by agents.
         if host != "opencode":
             meta["disable-model-invocation"] = True
         else:
-            # OpenCode: keep discoverable but mark via description prefix if needed;
-            # host does not honor disable-model-invocation — rely on workflow entries.
             meta.pop("disable-model-invocation", None)
         per = (host_meta.get("skills") or {}).get(skill_id) or {}
         if isinstance(per, dict):
             meta.update(per)
         skill_md.write_text(_dump_frontmatter(meta) + "\n" + body.lstrip("\n"), encoding="utf-8")
-        compiled.append(f"{host}/skills/{skill_id}")
+        compiled.append(
+            f"{host}/cognitive-skills/{skill_id}"
+            if host == "opencode"
+            else f"{host}/skills/{skill_id}"
+        )
     shared_src = skills / "_shared"
-    if shared_src.is_dir():
-        shared_dst = out_skills / "_shared"
-        if shared_dst.exists():
-            shutil.rmtree(shared_dst)
-        shutil.copytree(shared_src, shared_dst)
-        compiled.append(f"{host}/skills/_shared")
+    if shared_src.is_dir() and any(shared_src.glob("*.md")):
+        # Legacy leftover: cognitive skills must be self-contained under references/.
+        # Do not copy _shared into generated hosts.
+        pass
 
-    # Shared policies pack under each host
+    # Shared policies + short invariants under each host
     pol_dst = out_skills / "_policies"
     pol_dst.mkdir(parents=True, exist_ok=True)
     policies_src = paths["policies"]
@@ -977,7 +1010,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         kind = str(meta.get("kind") or "").strip().lower()
         if kind == "deterministic_engine":
             continue
-        md = _compose_agent_md(repo, meta)
+        md = _compose_agent_md(repo, meta, host=host)
         (out_agents / f"{meta['id']}.md").write_text(md, encoding="utf-8")
         compiled.append(f"{host}/agents/{meta['id']}")
     # references

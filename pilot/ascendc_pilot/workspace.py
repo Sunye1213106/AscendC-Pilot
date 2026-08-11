@@ -33,6 +33,7 @@ class OperatorWorkspace:
     operator_root: Path
     arch: str
     pilot_root: Path
+    allow_pilot_checkout: bool = False
 
     @classmethod
     def resolve(
@@ -49,12 +50,15 @@ class OperatorWorkspace:
             operator_root=op_root,
             arch=resolve_arch(arch),
             pilot_root=pilot_checkout_root(),
+            allow_pilot_checkout=allow_pilot_checkout,
         )
 
     @property
     def artifact_root(self) -> Path:
         return artifact_root(
-            self.operator_root, self.arch, allow_pilot_checkout=True
+            self.operator_root,
+            self.arch,
+            allow_pilot_checkout=self.allow_pilot_checkout,
         )
 
     @property

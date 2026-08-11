@@ -85,11 +85,11 @@ if ($Platform -like "uninstall-*") {
   $agents = Get-AgentsDest $plat
   $plugins = Get-PluginsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff","uo-code-review")) {
+  foreach ($name in @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff","uo-code-review")) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
-  foreach ($name in @("ascendc-pilot","ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine","README")) {
+  foreach ($name in @("ascendc-pilot","ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-investigator","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine","README")) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
@@ -159,7 +159,10 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
 # Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
 
-foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator","operator-analysis","testcase-generation","source-proof","code-review","_shared")) {
+$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator")
+$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","_shared")
+
+foreach ($name in $workflowSkills) {
   $target = Join-Path $Dest "skills\$name"
   if (-not (Test-Path -LiteralPath $target)) {
     throw "generated skill missing: $target (compose/copy failed)"
@@ -173,6 +176,36 @@ foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-p
   }
   if (-not (Test-Path -LiteralPath $link)) {
     throw "failed to install skill $name → $link"
+  }
+}
+
+if ($Platform -eq "opencode") {
+  foreach ($name in $cognitiveSkills) {
+    $link = Join-Path $Skills $name
+    if (Test-Path -LiteralPath $link) { Remove-Item -Recurse -Force -LiteralPath $link }
+  }
+  $cogSrc = Join-Path $genRoot "cognitive-skills"
+  if (Test-Path -LiteralPath $cogSrc) {
+    $cogDst = Join-Path $Dest "cognitive-skills"
+    if (Test-Path -LiteralPath $cogDst) { Remove-Item -Recurse -Force -LiteralPath $cogDst }
+    Copy-Item -Recurse -Force -LiteralPath $cogSrc -Destination $cogDst
+  }
+} else {
+  foreach ($name in $cognitiveSkills) {
+    $target = Join-Path $Dest "skills\$name"
+    if (-not (Test-Path -LiteralPath $target)) {
+      throw "generated skill missing: $target (compose/copy failed)"
+    }
+    $link = Join-Path $Skills $name
+    if (Test-Path -LiteralPath $link) { Remove-Item -Recurse -Force -LiteralPath $link }
+    try {
+      New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
+    } catch {
+      Copy-Item -Recurse -Force -LiteralPath $target -Destination $link
+    }
+    if (-not (Test-Path -LiteralPath $link)) {
+      throw "failed to install skill $name → $link"
+    }
   }
 }
 

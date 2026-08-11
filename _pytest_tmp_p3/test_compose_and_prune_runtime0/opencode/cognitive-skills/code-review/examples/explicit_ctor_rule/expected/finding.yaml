@@ -1,0 +1,4 @@
+severity: medium
+title: 单参构造须 explicit；多参构造禁止 explicit
+evidence:
+  - source: cannbot-skills/.../cpp-general.md rule 15.5

@@ -10,10 +10,9 @@ read_scopes:
 - runs/**
 - skills/testcase-generation/**
 - skills/operator-analysis/**
-- skills/_shared/**
 write_scopes:
 - tg/init/audit_report.yaml
-- tg/init/**
+- runs/**/actions/init_audit/**
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

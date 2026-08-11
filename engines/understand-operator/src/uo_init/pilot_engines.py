@@ -1951,7 +1951,8 @@ def _codemap_engine(name: str):
 
 
 # Stable names for ENGINE_REGISTRY adapters.
-# Public CodeMap surface: prepare / extract / analyze / resolve / commit / review.
+# Public CodeMap surface: prepare / extract / analyze / commit / verify.
+# resolve / apply_gap_patch remain for optional investigate / debug only.
 # Fine-grained names remain for internal chaining and debug run-action.
 ENGINES: dict[str, Any] = {
     "prepare": lambda project_root, payload=None: _codemap_engine("prepare")(
@@ -1963,16 +1964,20 @@ ENGINES: dict[str, Any] = {
     "analyze": lambda project_root, payload=None: _codemap_engine("analyze")(
         project_root, payload
     ),
-    "resolve": lambda project_root, payload=None: _codemap_engine("resolve")(
-        project_root, payload
-    ),
     "commit": lambda project_root, payload=None: _codemap_engine("commit")(
         project_root, payload
     ),
+    "verify": lambda project_root, payload=None: _codemap_engine("verify")(
+        project_root, payload
+    ),
+    # Compatibility aliases (not in default /uo-init pipeline).
     "review": lambda project_root, payload=None: _codemap_engine("review")(
         project_root, payload
     ),
-    # Internal / merge helpers (also used by composites).
+    "resolve": lambda project_root, payload=None: _codemap_engine("resolve")(
+        project_root, payload
+    ),
+    # Internal / merge helpers (also used by composites / optional investigate).
     "prepare_layout": prepare_layout,
     "scope_scan": scope_scan,
     "scope_validate": scope_validate,

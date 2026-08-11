@@ -20,15 +20,23 @@ def test_uo_update_resolve_actions_are_deterministic() -> None:
         assert action.get("actors") == []
 
 
-def test_uo_init_resolve_has_one_semantic_producer_then_deterministic_merge() -> None:
-    pipe = phase_pipeline("uo-init", "resolve")
-    assert pipe == ["resolve", "apply_gap_patch"]
-    actions = {action["id"]: action for action in actions_for_phase("uo-init", "resolve")}
-    assert actions["resolve"]["agent_id"] == "uo-semantic-resolver"
-    assert actions["resolve"]["execution_mode"] == "subagent"
-    assert actions["resolve"]["task_prompt_id"] == "uo/resolve-gaps"
-    assert actions["apply_gap_patch"]["execution_mode"] == "deterministic"
-    assert not actions["apply_gap_patch"].get("agent_id")
+def test_uo_init_has_no_resolve_phase() -> None:
+    assert phase_pipeline("uo-init", "resolve") == []
+    assert actions_for_phase("uo-init", "resolve") == []
+    pipe = phase_pipeline("uo-init", "verify")
+    assert pipe == ["verify"]
+    actions = {action["id"]: action for action in actions_for_phase("uo-init", "verify")}
+    assert actions["verify"]["execution_mode"] == "deterministic"
+    assert not actions["verify"].get("agent_id")
+
+
+def test_uo_investigate_has_readonly_gap_investigator() -> None:
+    pipe = phase_pipeline("uo-investigate", "investigate")
+    assert pipe == ["investigate"]
+    actions = {action["id"]: action for action in actions_for_phase("uo-investigate", "investigate")}
+    assert actions["investigate"]["agent_id"] == "uo-gap-investigator"
+    assert actions["investigate"]["execution_mode"] == "subagent"
+    assert actions["investigate"]["task_prompt_id"] == "uo/investigate-gaps"
 
 
 def test_recommend_uo_update_resolve_starts_at_first_engine_action(tmp_path: Path) -> None:

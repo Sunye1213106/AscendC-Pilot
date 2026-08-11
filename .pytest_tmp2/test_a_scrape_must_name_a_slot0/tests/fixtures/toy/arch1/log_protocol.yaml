@@ -1,5 +1,0 @@
-version: 1
-marks: {}
-scrapes:
-  - into: nonsense
-    pairs: '(\w+)=(\d+)'

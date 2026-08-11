@@ -1,0 +1,31 @@
+# GENERATED from Workflow Spec — do not hand-edit identity fields
+id: lemma_evidence
+workflow_id: tg-solve
+role_id: deterministic_engine
+agent_id: deterministic-tg-engine
+execution_mode: deterministic
+capabilities: []
+policies:
+- source-authority
+- code-access
+- evidence
+- language
+- pilot-control
+- output-quality
+task_prompt_id: null
+context_profile_id: tg-solve-lemma-evidence
+output_contract_id: lemma-evidence-v1
+allowed_write_paths:
+- tg/closure/lemmas/evidence/**
+- tg/closure/lemmas/evidence_receipt.yaml
+- tg/closure/lemmas/leads.yaml
+forbidden_write_paths: []
+allowed_read_paths:
+- ../uo/*.uo
+- tg/closure/lemmas/leads.yaml
+forbidden_read_paths: []
+checker:
+  required: true
+referee:
+  required: false
+generated_from: workflow_spec

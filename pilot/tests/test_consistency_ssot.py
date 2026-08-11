@@ -122,6 +122,6 @@ def test_uo_init_pipeline_matches_preferred() -> None:
     from ascendc_pilot.workflows import phase_pipeline
     from ascendc_pilot.workflows.pipeline import preferred_pipeline
 
-    for phase in ("prepare", "extract", "analyze", "resolve", "commit", "review"):
+    for phase in ("prepare", "extract", "analyze", "commit", "verify"):
         assert phase_pipeline("uo-init", phase) == preferred_pipeline("uo-init", phase)
         assert preferred_pipeline("uo-init", phase)

@@ -1,8 +1,10 @@
 """Structured recovery routing for the public UO CodeMap workflow.
 
-Engines emit stable reason codes.  Recovery may only target the six public
+Engines emit stable reason codes.  Recovery may only target the five public
 uo-init Actions; internal compiler helpers are implementation details and must
 never be surfaced to OpenCode/Cursor as runnable recovery actions.
+LLM gap-patching is not part of the default `/uo-init` path — use
+`/uo-investigate` for residual analysis without mutating canonical `.uo`.
 """
 
 from __future__ import annotations
@@ -35,9 +37,10 @@ KNOWN_REASON_CODES = frozenset(
     }
 )
 
-# Public six-stage recovery map.  Internal helpers such as scope_scan,
+# Public five-stage recovery map.  Internal helpers such as scope_scan,
 # extract_kernel, normalize_predicates, resolve_gaps and key_triage are never
-# executable recovery targets.
+# executable recovery targets. Semantic residuals re-enter analyze (retain
+# unresolved) rather than an LLM resolve stage.
 _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
     SCOPE_REWORK: {
         "type": "transition",
@@ -83,14 +86,14 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
     },
     BRIDGE_REWORK: {
         "type": "transition",
-        "target_phase": "resolve",
-        "next_action": "resolve",
+        "target_phase": "analyze",
+        "next_action": "analyze",
         "reason_code": BRIDGE_REWORK,
     },
     SEMANTIC_PATCH_REWORK: {
         "type": "transition",
-        "target_phase": "resolve",
-        "next_action": "resolve",
+        "target_phase": "analyze",
+        "next_action": "analyze",
         "reason_code": SEMANTIC_PATCH_REWORK,
     },
     NO_PROGRESS_RECHECK: {
@@ -109,6 +112,7 @@ _ROUTE_TO_REASON: dict[str, str] = {
     "deterministic_accept": LEDGER_REBUILD_REWORK,
     "uo-semantic-resolve": SEMANTIC_PATCH_REWORK,
     "uo-semantic-resolver": SEMANTIC_PATCH_REWORK,
+    "uo-gap-investigator": SEMANTIC_PATCH_REWORK,
 }
 
 

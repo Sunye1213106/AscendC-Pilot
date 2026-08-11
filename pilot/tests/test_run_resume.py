@@ -122,7 +122,7 @@ def test_summary_uses_public_actions_and_resume_hint(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init")
     summary = build_run_resume_summary(tmp_path, workflow_id="uo-init")
     assert summary["has_existing_run"] is True
-    public = {"prepare", "extract", "analyze", "resolve", "apply_gap_patch", "commit", "review"}
+    public = {"prepare", "extract", "analyze", "commit", "verify"}
     artifact_ids = {str(item.get("action_id") or "") for item in summary["artifacts"]}
     assert artifact_ids
     assert artifact_ids.issubset(public)
@@ -140,15 +140,23 @@ def test_ask_question_uses_current_workflow_name_for_tg_init(tmp_path: Path) -> 
 
 def test_owned_artifact_map_uses_public_uo_actions() -> None:
     owned = action_owned_artifacts("uo-init")
-    for action_id in ("prepare", "extract", "analyze", "resolve", "apply_gap_patch", "commit", "review"):
+    for action_id in ("prepare", "extract", "analyze", "commit", "verify"):
         assert action_id in owned
-    for retired in ("derive_key_fields", "export_kb", "export_adapter_pack", "normalize_predicates"):
+    for retired in (
+        "derive_key_fields",
+        "export_kb",
+        "export_adapter_pack",
+        "normalize_predicates",
+        "resolve",
+        "apply_gap_patch",
+        "review",
+    ):
         assert retired not in owned
     assert any("codemap_analyze_receipt" in path for path in owned["analyze"])
     assert any("unresolved.yaml" in path for path in owned["analyze"])
     assert not any("derive_key_fields_receipt" in path for path in owned["analyze"])
     assert owned["commit"] == ("../uo/*.uo",)
-    assert owned["review"] == ("../uo/*.uo",)
+    assert owned["verify"] == ("../uo/*.uo",)
 
 
 def test_different_workflow_resume_does_not_cross_active_run(tmp_path: Path) -> None:
@@ -203,19 +211,19 @@ def test_continue_scrubs_failed_analyze_owned_products(tmp_path: Path) -> None:
     assert load_state(tmp_path)["status"] == "running"
 
 
-def test_continue_scrubs_failed_gap_patch_products(tmp_path: Path) -> None:
-    state = start_workflow(tmp_path, "uo-init", phase="resolve", force_phase=True)
+def test_continue_scrubs_failed_verify_session_marker(tmp_path: Path) -> None:
+    """Continue scrub clears the failed Action session for public verify."""
+    state = start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True)
     run_id = state["run_id"]
-    uo = uo_root(tmp_path)
-    _write(uo / "ir" / "gap_patch_receipt.yaml", {"partial": True})
-    _write(uo / "ir" / "gap_bindings.yaml", {"bindings": [{"bad": True}]})
+    session = runs_root(tmp_path) / run_id / "actions" / "verify" / "session.yaml"
+    _write(session, {"status": "finalize_failed", "action_id": "verify", "run_id": run_id})
     _write(
         state_root(tmp_path) / "active_action.yaml",
         {
             "run_id": run_id,
             "workflow_id": "uo-init",
-            "phase": "resolve",
-            "action_id": "apply_gap_patch",
+            "phase": "verify",
+            "action_id": "verify",
             "status": "finalize_failed",
         },
     )
@@ -225,6 +233,6 @@ def test_continue_scrubs_failed_gap_patch_products(tmp_path: Path) -> None:
     result = apply_resume_decision(tmp_path, "uo-init", "continue")
     assert result["ok"] is True
     scrubbed = set((result.get("resume_scrub") or {}).get("scrubbed_actions") or [])
-    assert "apply_gap_patch" in scrubbed
-    assert not (uo / "ir" / "gap_patch_receipt.yaml").is_file()
-    assert not (uo / "ir" / "gap_bindings.yaml").is_file()
+    assert "verify" in scrubbed
+    assert not (state_root(tmp_path) / "active_action.yaml").is_file()
+    assert load_state(tmp_path)["status"] == "running"

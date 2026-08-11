@@ -34,10 +34,10 @@ def test_key_derivation_recovery_reruns_public_analyze_stage() -> None:
     assert action == "analyze"
 
 
-def test_semantic_patch_recovery_returns_to_public_resolve_stage() -> None:
-    phase, action = _target(SEMANTIC_PATCH_REWORK, "review")
-    assert phase == "resolve"
-    assert action == "resolve"
+def test_semantic_patch_recovery_returns_to_public_analyze_stage() -> None:
+    phase, action = _target(SEMANTIC_PATCH_REWORK, "verify")
+    assert phase == "analyze"
+    assert action == "analyze"
 
 
 def test_scope_expansion_recovery_returns_to_prepare() -> None:

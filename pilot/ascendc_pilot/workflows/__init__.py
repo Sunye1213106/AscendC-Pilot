@@ -180,9 +180,9 @@ def _make_deterministic(row: dict[str, Any]) -> None:
 
 
 def _apply_uo_control_plane_contracts() -> None:
-    """Expose the six-stage `.uo` compiler without legacy KB control gates."""
+    """Expose the five-stage `.uo` compiler without LLM gap-patching in the default path."""
     init = WORKFLOWS.get("uo-init") or {}
-    for action_id in ("prepare", "extract", "analyze", "apply_gap_patch", "commit", "review"):
+    for action_id in ("prepare", "extract", "analyze", "commit", "verify"):
         row = _action(init, action_id)
         if row is not None:
             _make_deterministic(row)
@@ -191,15 +191,17 @@ def _apply_uo_control_plane_contracts() -> None:
         "prepare": ["layout_receipt"],
         "extract": ["extract_receipt"],
         "analyze": [],
-        "resolve": ["gap_patch_evidence"],
         "commit": ["uo_product_ready"],
-        "review": [],
+        "verify": [],
     }
     init["complete_gates"] = ["uo_product_ready"]
-    init["gates"] = ["layout_receipt", "extract_receipt", "gap_patch_evidence", "uo_product_ready"]
+    init["gates"] = ["layout_receipt", "extract_receipt", "uo_product_ready"]
     action_gates = {
-        "prepare": ["layout_receipt"], "extract": ["extract_receipt"], "analyze": [],
-        "resolve": ["gap_patch_evidence"], "apply_gap_patch": [], "commit": ["uo_product_ready"], "review": [],
+        "prepare": ["layout_receipt"],
+        "extract": ["extract_receipt"],
+        "analyze": [],
+        "commit": ["uo_product_ready"],
+        "verify": [],
     }
     for action_id, gates in action_gates.items():
         row = _action(init, action_id)
@@ -208,7 +210,6 @@ def _apply_uo_control_plane_contracts() -> None:
 
     init["agents"] = [
         {"id": "ascendc-pilot", "role": "controller"},
-        {"id": "uo-semantic-resolver", "role": "producer"},
     ]
     init["static_obligations"] = [
         {"id": "scope_confirmed", "label_zh": "范围已校验"},
@@ -217,12 +218,26 @@ def _apply_uo_control_plane_contracts() -> None:
     meta = init.setdefault("meta", {})
     recovery = meta.setdefault("recovery_by_reason", {})
     recovery.pop("KB_REVIEW_REWORK", None)
-    recovery["CODEMAP_REVIEW_REWORK"] = {"type": "action", "action_id": "review"}
+    recovery.pop("GAP_REWORK", None)
+    recovery["GAP_REWORK"] = {"type": "action", "action_id": "analyze"}
+    recovery["CODEMAP_VERIFY_REWORK"] = {"type": "action", "action_id": "verify"}
     for edge in init.get("transitions") or []:
         if not isinstance(edge, dict):
             continue
         codes = [str(code) for code in (edge.get("reason_codes") or [])]
-        edge["reason_codes"] = ["CODEMAP_REVIEW_REWORK" if code == "KB_REVIEW_REWORK" else code for code in codes]
+        remapped: list[str] = []
+        for code in codes:
+            if code == "KB_REVIEW_REWORK":
+                remapped.append("CODEMAP_VERIFY_REWORK")
+            elif code == "CODEMAP_REVIEW_REWORK":
+                remapped.append("CODEMAP_VERIFY_REWORK")
+            else:
+                remapped.append(code)
+        edge["reason_codes"] = remapped
+
+    investigate = WORKFLOWS.get("uo-investigate") or {}
+    if investigate:
+        investigate.setdefault("agents", [{"id": "uo-gap-investigator", "role": "readonly_analyst"}])
 
     update = WORKFLOWS.get("uo-update") or {}
     for row in update.get("actions") or []:
@@ -251,7 +266,6 @@ def _apply_uo_control_plane_contracts() -> None:
         lookup["label_zh"] = "CodeMap 查询"
         lookup["task_prompt_id"] = "uo/codemap-query"
         lookup["gates"] = []
-
 
 def _apply_tg_control_plane_contracts() -> None:
     for workflow_id, pipelines in _TG_PIPELINES.items():

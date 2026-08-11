@@ -75,11 +75,11 @@ uninstall() {
   agents="$(agents_dest "$plat")"
   plugins="$(plugins_dest "$plat")"
   rm -rf "$plug"
-  for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator _policies uo-code-review; do
+  for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator _policies uo-code-review; do
     rm -rf "$skills/$name"
   done
   for name in \
-    ascendc-pilot ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve uo-key-resolve \
+    ascendc-pilot ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-investigator uo-gap-resolve uo-key-resolve \
     uo-confidence-review uo-kb-review ce-reviewer uo-query uo-code-reviewer tg-csv-contract \
     tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
     rm -f "$agents/$name.md"
@@ -144,16 +144,32 @@ fi
 # Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
-for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator \
-            operator-analysis testcase-generation source-proof code-review; do
+for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
 done
-# Shared progressive-disclosure refs used by cognitive skills
-if [[ -d "$DEST/skills/_shared" ]]; then
-  rm -rf "$SKILLS/_shared"
-  ln -sfn "$DEST/skills/_shared" "$SKILLS/_shared" 2>/dev/null || cp -R "$DEST/skills/_shared" "$SKILLS/_shared"
+
+# Cognitive skills: Cursor/Codex install into skill discovery with
+# disable-model-invocation; OpenCode keeps them plugin-internal only.
+if [[ "$PLATFORM" == "opencode" ]]; then
+  for name in operator-analysis testcase-generation source-proof code-review _shared; do
+    rm -rf "$SKILLS/$name"
+  done
+  if [[ -d "$BUNDLE_ROOT/generated/opencode/cognitive-skills" ]]; then
+    rm -rf "$DEST/cognitive-skills"
+    cp -R "$BUNDLE_ROOT/generated/opencode/cognitive-skills" "$DEST/cognitive-skills"
+  fi
+else
+  for name in operator-analysis testcase-generation source-proof code-review; do
+    [[ -d "$DEST/skills/$name" ]] || continue
+    rm -rf "$SKILLS/$name"
+    ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
+  done
+  if [[ -d "$DEST/skills/_shared" ]]; then
+    rm -rf "$SKILLS/_shared"
+    ln -sfn "$DEST/skills/_shared" "$SKILLS/_shared" 2>/dev/null || cp -R "$DEST/skills/_shared" "$SKILLS/_shared"
+  fi
 fi
 
 # Every installed agent is now reachable from a non-deterministic Action.

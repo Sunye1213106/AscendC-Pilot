@@ -23,11 +23,8 @@ from uo_init.codemap_engines import (  # noqa: E402
     commit,
     extract,
     prepare,
-    resolve,
-    review,
+    verify,
 )
-from uo_init import pilot_engines as pe  # noqa: E402
-from uo_init.pilot_engines import apply_gap_patch  # noqa: E402
 
 
 def _brief(out: dict) -> dict:
@@ -42,6 +39,9 @@ def _brief(out: dict) -> dict:
         "blocking",
         "uo_product",
         "gaps",
+        "gap_count",
+        "semantic_completeness",
+        "verdict",
     )
     return {k: out.get(k) for k in keys if k in out}
 
@@ -79,6 +79,8 @@ def main() -> int:
         ("prepare", prepare),
         ("extract", extract),
         ("analyze", analyze),
+        ("commit", commit),
+        ("verify", verify),
     ):
         print(f"\n----- {name} -----", flush=True)
         try:
@@ -96,42 +98,14 @@ def main() -> int:
             print(f"STOP at {name}", flush=True)
             return 1
 
-    print("\n----- resolve -----", flush=True)
+    print("\n----- unresolved residual (retained; not LLM-patched) -----", flush=True)
+    from uo_init import pilot_engines as pe  # noqa: E402
+
     uo = pe._uo_root(OP, arch=ARCH)
     unresolved = uo / "ir" / "unresolved.yaml"
     print(f"uo_root={uo} unresolved_exists={unresolved.is_file()}", flush=True)
     if unresolved.is_file():
         print(unresolved.read_text(encoding="utf-8", errors="replace")[:2000], flush=True)
-    try:
-        resolve_out = resolve(OP, ctx)
-    except Exception as exc:
-        traceback.print_exc()
-        resolve_out = {"ok": False, "engine": "resolve", "error": str(exc)[:800]}
-    results["resolve"] = _brief(resolve_out)
-    print(json.dumps(results["resolve"], ensure_ascii=False, indent=2, default=str)[:4000], flush=True)
-
-    print("\n----- apply_gap_patch -----", flush=True)
-    try:
-        gap_out = apply_gap_patch(OP, ctx)
-    except Exception as exc:
-        traceback.print_exc()
-        gap_out = {"ok": False, "engine": "apply_gap_patch", "error": str(exc)[:800]}
-    results["apply_gap_patch"] = _brief(gap_out)
-    print(json.dumps(results["apply_gap_patch"], ensure_ascii=False, indent=2, default=str), flush=True)
-
-    for name, fn in (("commit", commit), ("review", review)):
-        print(f"\n----- {name} -----", flush=True)
-        try:
-            out = fn(OP, ctx)
-        except Exception as exc:
-            traceback.print_exc()
-            out = {"ok": False, "engine": name, "error": str(exc)[:800]}
-        results[name] = _brief(out)
-        print(json.dumps(results[name], ensure_ascii=False, indent=2, default=str)[:4000], flush=True)
-        if not out.get("ok"):
-            SUMMARY.write_text(json.dumps(results, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-            print(f"STOP at {name}", flush=True)
-            return 1
 
     print("\n===== Product inventory =====", flush=True)
     root = OP / ".ascendc-pilot"

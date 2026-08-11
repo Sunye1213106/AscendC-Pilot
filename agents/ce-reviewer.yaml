@@ -11,10 +11,9 @@ read_scopes:
 - context/**
 - skills/code-review/**
 - skills/operator-analysis/**
-- skills/_shared/**
 write_scopes:
 - ce/review/**
-- runs/**
+- runs/**/actions/code_review/**
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

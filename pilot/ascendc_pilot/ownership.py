@@ -39,10 +39,19 @@ PRIMARY_AGENT_ID = "ascendc-pilot"
 # - ACTION_WRITE_PATHS: union fallback for engines that do not yet split roles
 ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
+        # Legacy debug only — not in default /uo-init pipeline.
         "resolve_gaps": [
             "runs/{run_id}/actions/resolve_gaps/parts/**",
             "runs/{run_id}/actions/resolve_gaps/scratch/**",
             "runs/{run_id}/actions/resolve_gaps/staging.yaml",
+        ],
+    },
+    "uo-investigate": {
+        "investigate": [
+            "runs/{run_id}/actions/investigate/parts/**",
+            "runs/{run_id}/actions/investigate/scratch/**",
+            "runs/{run_id}/actions/investigate/report.yaml",
+            "uo/ir/gap_investigation.yaml",
         ],
     },
     "tg-solve": {
@@ -168,6 +177,17 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         ],
         "export_integrity": ["uo/checks/integrity.yaml", "uo/summary/**", "uo/checks/**"],
         "kb_review": ["uo/review/kb_product_review.yaml"],
+        "commit": ["../uo/*.uo"],
+        "verify": ["uo/checks/**"],
+        "review": ["uo/checks/**"],
+    },
+    "uo-investigate": {
+        "investigate": [
+            "runs/{run_id}/actions/investigate/parts/**",
+            "runs/{run_id}/actions/investigate/scratch/**",
+            "runs/{run_id}/actions/investigate/report.yaml",
+            "uo/ir/gap_investigation.yaml",
+        ],
     },
     "tg-plan": {
         "plan_intent": ["tg/plan/plan_intent.yaml"],
@@ -250,6 +270,15 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/unresolved.yaml",
             "uo/checks/integrity.yaml",
             "uo/manifest.yaml",
+        ],
+    },
+    "uo-investigate": {
+        "investigate": [
+            "uo/ir/unresolved.yaml",
+            "uo/ir/codemap_analyze_receipt.yaml",
+            "uo/ir/gap_investigation.yaml",
+            "runs/{run_id}/actions/investigate/**",
+            "../uo/*.uo",
         ],
     },
 }

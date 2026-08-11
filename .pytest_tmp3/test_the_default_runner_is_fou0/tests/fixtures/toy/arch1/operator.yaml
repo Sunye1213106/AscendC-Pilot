@@ -1,5 +1,0 @@
-
-version: 1
-operator: {name: toy, path: family/toy, arch: arch1}
-sources: {tiling_key_header: 'op_kernel/{arch}/{op}_tiling_key.h'}
-replay: {host: wsl, distro: Some-Distro, entry: /run.sh, done_marker: FINISHED}

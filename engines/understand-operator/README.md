@@ -9,7 +9,7 @@
 | 项 | 说明 |
 |---|---|
 | 包名 | `uo_init`（`src/uo_init/`） |
-| 公开阶段 | `prepare` / `extract` / `analyze` / `resolve` / `commit` / `review` |
+| 公开阶段 | `prepare` / `extract` / `analyze` / `commit` / `verify` |
 | 编排入口 | `uo_init.codemap_engines` |
 | 查询 | `uo_init.query.CodeMapQuery` / `uo_init.uo_query` |
 | 调试导出 | `python -m uo_init dump`（`uo-dump`） |
@@ -20,14 +20,12 @@
 source + compile context + architecture
   → Clang/frontend CompilerFacts
   → deterministic AscendC CodeMap passes
-  → explicit unresolved gaps
-  → semantic resolver（仅 unresolved）
-  → deterministic patch merge
-  → one operator.<arch>.uo
-  → deterministic structural audit
+  → explicit unresolved gaps（保留，不 LLM 补洞）
+  → one operator.<arch>.uo（允许 partial）
+  → deterministic structural verify
 ```
 
-确定性阶段不通过 Agent/Prompt 解释脚本行为。模型只处理确定性流程无法可靠闭合、并由当前 Action Bundle 明确分配的 semantic gap。
+确定性阶段不通过 Agent/Prompt 解释脚本行为。模型只在可选的 `/uo-investigate` 中解释 residual，不修改 canonical `.uo`。
 
 ## 包布局
 
@@ -37,7 +35,7 @@ uo_init/
   frontend/   # clang / build_variant / preprocessor
   ir/         # entity / relation / codemap
   passes/     # reachability / compile-time / template / dataflow / tiling / kernel ...
-  resolve/    # semantic gaps
+  resolve/    # semantic gap records（optional investigate / debug）
   store/      # schema / writer / reader
   query/      # CodeMap API
   dump.py
@@ -49,7 +47,7 @@ uo_init/
 ## Agent-facing 文档
 
 - 算子分析（构建与查询）：`skills/operator-analysis/SKILL.md`
-- Pilot Spec + generated entry wrappers：`uo-init` / `uo-update` / `uo-query`
+- Pilot Spec + generated entry wrappers：`uo-init` / `uo-update` / `uo-query` / `uo-investigate`
   （`prepare` 为确定性：operator+arch → Clang Source Scope，无人工文件清单确认）
 
 ## 本地调试

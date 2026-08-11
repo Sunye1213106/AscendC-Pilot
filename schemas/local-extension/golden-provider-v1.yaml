@@ -1,0 +1,7 @@
+schema: ascendc-pilot-local-extension/v1
+interface: golden_provider
+version: 1
+description: >
+  Supplies golden / reference outputs when generic comparison cannot derive them.
+required_exports:
+  - provide

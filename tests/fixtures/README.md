@@ -1,8 +1,7 @@
 # Test fixtures only — not AscendC-Pilot production operator knowledge.
 #
 # tests/fixtures/<UO_OPERATOR>/<UO_ARCH>/
-#   _synthetic_toy/arch0/              — synthetic second-operator smoke
-#   flash_attention_score_grad/arch35/ — archived FAG adapter for unit tests
+#   _synthetic_toy/arch0/  — fictional second-operator smoke for framework wiring
 #
-# Production operator knowledge and Local Extensions live under the real
-# operator checkout: <op>/.ascendc-pilot/<arch>/
+# Real operator knowledge lives under the analysed operator checkout:
+#   <op>/.ascendc-pilot/<arch>/

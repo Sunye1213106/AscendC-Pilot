@@ -55,7 +55,7 @@ def test_finalize_failure_updates_state(tmp_path: Path):
     with patch(
         "uo_init.pilot_engines.ENGINES",
         {
-            "scope_confirm": lambda _root, _ctx: {
+            "scope_validate": lambda _root, _ctx: {
                 "ok": False,
                 "messages": [
                     "installed_skill_check.consistent is not true",
@@ -122,10 +122,10 @@ def test_glob_read_denied_after_human_required(tmp_path: Path):
         messages=["installed_skill_check.consistent is not true"],
         source="uo_scope",
     )
+    # Paths outside the failed Action's contract must stay denied.
+    # (Contract-matched IR under prepare may be allowed as CONTAINMENT_INSPECT_READ.)
     for tool, path in [
-        ("glob", str(tmp_path / ".ascendc-pilot" / "uo" / "**")),
         ("read", str(tmp_path / "engines" / "understand-operator" / "prepare_operator.py")),
-        ("read", str(tmp_path / ".ascendc-pilot" / "uo" / "runs" / "x" / "installed_skill_check.yaml")),
         ("grep", "finalize_scope"),
     ]:
         verdict = authorize(tmp_path, tool=tool, path=path, agent="ascendc-pilot")
@@ -226,9 +226,9 @@ def test_repeated_retryable_failure_upgrades(tmp_path: Path):
         return record_pilot_result(
             tmp_path,
             ok=False,
-            action_id="resolve_gaps",
+            action_id="analyze",
             step_id="action_finalize",
-            error_code="ACTION_FINALIZE_FAILED_RESOLVE_GAPS",
+            error_code="ACTION_FINALIZE_FAILED_ANALYZE",
             messages=["output_contract_failed"],
             source="finalize_action",
             explicit_class="checker_gate",
@@ -306,7 +306,7 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
     with patch(
         "uo_init.pilot_engines.ENGINES",
         {
-            "scope_confirm": lambda _root, _ctx: {
+            "scope_validate": lambda _root, _ctx: {
                 "ok": False,
                 "messages": [
                     "installed_skill_check.consistent is not true",
@@ -368,7 +368,7 @@ def test_rework_required_next_returns_targets_only(tmp_path: Path):
     record_pilot_result(
         tmp_path,
         ok=False,
-        action_id="resolve_gaps",
+        action_id="analyze",
         step_id="action_finalize",
         messages=["output_contract_failed"],
         source="finalize_action",
@@ -378,7 +378,7 @@ def test_rework_required_next_returns_targets_only(tmp_path: Path):
     assert nxt["status"] == "rework_required"
     assert nxt["allowed_actions"] == []
     assert nxt["rework_targets"]
-    assert nxt["rework_targets"][0]["action_id"] == "resolve_gaps"
+    assert nxt["rework_targets"][0]["action_id"] == "analyze"
 
 
 def test_observation_persisted_to_run_dir(tmp_path: Path):

@@ -1,5 +1,6 @@
 # OpenCode host defaults for composed skills.
-# Workflow slash entries are selectable via description.
+# Only Workflow Entry skills are installed into Skill discovery.
+# Cognitive skills live under generated/opencode/cognitive-skills/ (plugin-internal).
 skill_defaults:
   disable-model-invocation: false
 skills: {}

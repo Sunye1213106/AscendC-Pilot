@@ -874,6 +874,18 @@ def authorize(
 
     # --- bash / shell ---
     if tool_l in _BASH_TOOLS:
+        if agent_l and agent_l not in _PRIMARY_AGENTS:
+            from ascendc_pilot.agents_registry import forbidden_blocks_bash
+
+            forbid_bash = forbidden_blocks_bash(agent_l, cmd, project_root=project_root)
+            if forbid_bash:
+                return _ok(
+                    "deny",
+                    forbid_bash,
+                    f"代理 {agent_l} 的 forbidden 禁止该 bash 命令",
+                    agent=agent_l,
+                    command=cmd[:200],
+                )
         # Harness CLI first: acp * is the authorized writer into .ascendc-pilot/.
         # Must run before the protected-write heuristic — naive token "cp " matches
         # inside "acp " and falsely denied record-index when args contain the path.
@@ -1151,6 +1163,95 @@ def authorize(
                 action=action_id,
             )
 
+        # Agent ceiling ∩ Action lease BEFORE workflow write_roots / role
+        # (plan order: Agent → Lease → Workflow → Role).
+        if agent_l and agent_l not in _PRIMARY_AGENTS:
+            from ascendc_pilot.agents_registry import (
+                agent_write_scopes,
+                forbidden_blocks_write,
+                path_matches_scope,
+                rel_under_agent_dir,
+            )
+            from ascendc_pilot.authorize.lease import lease_allows_write_path, load_lease
+
+            rel = rel_under_agent_dir(path_s or norm, project_root)
+            if rel is None:
+                rel_try = norm
+                marker = "/.ascendc-pilot/"
+                if marker in rel_try:
+                    rel = rel_try.split(marker, 1)[1]
+                elif "tg/" in rel_try or rel_try.startswith("tg/"):
+                    idx = rel_try.find("tg/")
+                    rel = rel_try[idx:]
+                elif "uo/" in rel_try or rel_try.startswith("uo/"):
+                    idx = rel_try.find("uo/")
+                    rel = rel_try[idx:]
+                else:
+                    rel = rel_try.lstrip("/")
+
+            if rel is not None:
+                forbid_code = forbidden_blocks_write(agent_l, rel, project_root=project_root)
+                if forbid_code:
+                    return _ok(
+                        "deny",
+                        forbid_code,
+                        f"代理 {agent_l} 的 forbidden 禁止写入该路径",
+                        path=path_s,
+                        agent=agent_l,
+                        rel=rel,
+                    )
+
+                scopes = agent_write_scopes(agent_l, project_root)
+                # Empty write_scopes ⇒ no writes (write_outside_declared_scope).
+                if not path_matches_scope(rel, scopes):
+                    return _ok(
+                        "deny",
+                        "AGENT_WRITE_SCOPE",
+                        f"代理 {agent_l} 不得写入声明 write_scopes 之外的路径",
+                        path=path_s,
+                        agent=agent_l,
+                        write_scopes=scopes,
+                        rel=rel,
+                    )
+
+                lease = load_lease(project_root)
+                if lease and str(lease.get("status") or "") == "active":
+                    if lease.get("run_id") and state and str(lease.get("run_id")) != str(state.get("run_id") or ""):
+                        return _ok(
+                            "deny",
+                            "ACTION_RUN_MISMATCH",
+                            "lease.run_id 与当前 workflow run 不一致",
+                            lease_run_id=lease.get("run_id"),
+                            run_id=state.get("run_id"),
+                        )
+                    if action_id and lease.get("action_id") and str(lease.get("action_id")) != action_id:
+                        return _ok(
+                            "deny",
+                            "ACTION_OWNER_MISMATCH",
+                            "lease.action_id 与声明 action 不一致",
+                            lease_action_id=lease.get("action_id"),
+                            action_id=action_id,
+                        )
+                    if lease.get("actor_id") and agent_l and str(lease.get("actor_id")).lower() != agent_l:
+                        return _ok(
+                            "deny",
+                            "ACTION_OWNER_MISMATCH",
+                            "lease.actor_id 与当前代理不一致",
+                            lease_actor_id=lease.get("actor_id"),
+                            agent=agent_l,
+                        )
+                    path_check = lease_allows_write_path(lease, rel)
+                    if not path_check.get("ok"):
+                        return _ok(
+                            "deny",
+                            str(path_check.get("error") or "ACTION_WRITE_SCOPE_DENIED"),
+                            "当前 Action lease 不允许写入该路径",
+                            path=path_s,
+                            rel=rel,
+                            allowed_write_paths=lease.get("allowed_write_paths") or [],
+                            forbidden_write_paths=lease.get("forbidden_write_paths") or [],
+                        )
+
         if write_roots and norm and state and not _path_in_write_roots(
             path_s or norm, write_roots, project_root=project_root
         ):
@@ -1199,82 +1300,6 @@ def authorize(
                 phase=ctx.get("phase"),
             )
 
-        if agent_l and agent_l not in _PRIMARY_AGENTS and _is_protected_write(norm):
-            from ascendc_pilot.agents_registry import (
-                agent_write_scopes,
-                path_matches_scope,
-                rel_under_agent_dir,
-            )
-
-            scopes = agent_write_scopes(agent_l, project_root)
-            if scopes:
-                rel = rel_under_agent_dir(path_s or norm, project_root)
-                if rel is None:
-                    rel_try = norm
-                    marker = "/.ascendc-pilot/"
-                    if marker in rel_try:
-                        rel = rel_try.split(marker, 1)[1]
-                    elif "tg/" in rel_try or rel_try.startswith("tg/"):
-                        idx = rel_try.find("tg/")
-                        rel = rel_try[idx:]
-                    elif "uo/" in rel_try or rel_try.startswith("uo/"):
-                        idx = rel_try.find("uo/")
-                        rel = rel_try[idx:]
-                    else:
-                        rel = rel_try.lstrip("/")
-                if rel is not None and not path_matches_scope(rel, scopes):
-                    return _ok(
-                        "deny",
-                        "AGENT_WRITE_SCOPE",
-                        f"代理 {agent_l} 不得写入声明 write_scopes 之外的路径",
-                        path=path_s,
-                        agent=agent_l,
-                        write_scopes=scopes,
-                        rel=rel,
-                    )
-
-                # Action lease intersection: agent ceiling AND precise Action paths.
-                from ascendc_pilot.authorize.lease import lease_allows_write_path, load_lease
-
-                lease = load_lease(project_root)
-                if lease and str(lease.get("status") or "") == "active":
-                    if lease.get("run_id") and state and str(lease.get("run_id")) != str(state.get("run_id") or ""):
-                        return _ok(
-                            "deny",
-                            "ACTION_RUN_MISMATCH",
-                            "lease.run_id 与当前 workflow run 不一致",
-                            lease_run_id=lease.get("run_id"),
-                            run_id=state.get("run_id"),
-                        )
-                    if action_id and lease.get("action_id") and str(lease.get("action_id")) != action_id:
-                        return _ok(
-                            "deny",
-                            "ACTION_OWNER_MISMATCH",
-                            "lease.action_id 与声明 action 不一致",
-                            lease_action_id=lease.get("action_id"),
-                            action_id=action_id,
-                        )
-                    if lease.get("actor_id") and agent_l and str(lease.get("actor_id")).lower() != agent_l:
-                        return _ok(
-                            "deny",
-                            "ACTION_OWNER_MISMATCH",
-                            "lease.actor_id 与当前代理不一致",
-                            lease_actor_id=lease.get("actor_id"),
-                            agent=agent_l,
-                        )
-                    if rel is not None:
-                        path_check = lease_allows_write_path(lease, rel)
-                        if not path_check.get("ok"):
-                            return _ok(
-                                "deny",
-                                str(path_check.get("error") or "ACTION_WRITE_SCOPE_DENIED"),
-                                "当前 Action lease 不允许写入该路径",
-                                path=path_s,
-                                rel=rel,
-                                allowed_write_paths=lease.get("allowed_write_paths") or [],
-                                forbidden_write_paths=lease.get("forbidden_write_paths") or [],
-                            )
-
         return _ok(
             "allow",
             "WRITE_OK",
@@ -1287,4 +1312,10 @@ def authorize(
             phase=ctx.get("phase"),
         )
 
-    return _ok("allow", "TOOL_DEFAULT", "默认放行", tool=tool_l)
+    return _ok(
+        "deny",
+        "TOOL_UNKNOWN",
+        "Pilot agent 未知 tool：fail-closed（不再默认放行）",
+        tool=tool_l,
+        agent=agent_l or None,
+    )

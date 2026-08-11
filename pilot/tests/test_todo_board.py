@@ -21,7 +21,7 @@ def test_start_attaches_native_items_not_todo_md(tmp_path: Path) -> None:
         str(p.get("id") if isinstance(p, dict) else p)
         for p in get_workflow("uo-init").get("phases") or []
     ]
-    assert phases == ["prepare", "extract", "analyze", "resolve", "commit", "review"]
+    assert phases == ["prepare", "extract", "analyze", "commit", "verify"]
     assert [item["id"] for item in items] == phases
     assert all(str(item["content"]).strip() for item in items)
     assert items[0]["status"] == "in_progress"
@@ -49,7 +49,8 @@ def test_todo_marks_current_public_phase_native(tmp_path: Path) -> None:
     assert by_id["prepare"] == "done"
     assert by_id["extract"] == "done"
     assert by_id["analyze"] == "current"
-    assert by_id["resolve"] == "pending"
+    assert by_id["commit"] == "pending"
+    assert by_id["verify"] == "pending"
 
     native = {item["id"]: item["status"] for item in board["native_items"]}
     assert native["prepare"] == "completed"
@@ -65,4 +66,4 @@ def test_todo_marks_current_public_phase_native(tmp_path: Path) -> None:
 
     attached = attach_todo({"workflow_id": "uo-init"}, tmp_path, state=state)
     assert (attached.get("todo") or {}).get("todo_sync", {}).get("merge") is True
-    assert len((attached.get("todo") or {}).get("todo_sync", {}).get("items") or []) == 6
+    assert len((attached.get("todo") or {}).get("todo_sync", {}).get("items") or []) == 5

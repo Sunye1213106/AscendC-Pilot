@@ -111,7 +111,7 @@ Primary 控制器**禁止**直接改 `uo/ir/**` 救场。
 ### 4.2 流水线阶段
 
 ```text
-prepare → extract → analyze → resolve → commit → review
+prepare → extract → analyze → commit → verify
 ```
 
 `prepare` 内部：`prepare_layout` → `scope_scan`（layout + Clang dependency closure）→ `scope_validate`（机器 gate，非人工确认）。
@@ -119,18 +119,14 @@ prepare → extract → analyze → resolve → commit → review
 | 阶段 | 关键 Action | 做什么 |
 | --- | --- | --- |
 | prepare | `prepare`（内部：`prepare_layout` → `scope_scan` → `scope_validate`） | 机器建立 Source Scope + BuildVariant；失败记 blocker |
-| extract | `extract_host` | libclang 建 HostIR + 分支清单 |
-| | `extract_tiling_key` | TPL DSL ↔ Host 编码点绑定 |
-| | `extract_registry` | 注册表 / IsCapable |
-| | `extract_kernel` | Kernel 分支 fold |
-| normalize | `derive_key_fields` | 各 TilingKey 维回溯到输入根 |
-| | `normalize_predicates` | 谓词归一，未决守卫进 gap |
-| | `resolve_gaps` / `apply_gap_patch` | LLM 补洞 → 确定性打补丁（须改表达式） |
-| export | `export_kb` | 组装图 → 写 sqlite 权威库（可选 YAML，`UO_KB_YAML`） |
-| | `build_index` | 从 YAML 重建 sqlite，或确认 DB-only 产品就绪 |
-| | `export_tg_host_view` | TG 搜索投影 |
-| | `export_integrity` | 指纹一致性 |
-| review | `kb_review` | 质量门禁（referee） |
+| extract | `extract`（内部 host/key/registry/kernel） | Clang CompilerFacts |
+| analyze | `analyze` | 确定性 CodeMap Pass；写入 `unresolved.yaml`（保留 residual，不 LLM 补洞） |
+| commit | `commit` | 写入 `operator.<arch>.uo`；允许 `semantic_completeness=partial` |
+| verify | `verify` | 结构合法性 / integrity audit（不是语义全闭合） |
+
+可选：`/uo-investigate` 只读调查 unresolved，产出调查报告，**不**修改 canonical `.uo`。
+
+历史 `resolve_gaps` / `apply_gap_patch` 仅保留 debug，不在默认 `/uo-init` 路径。
 
 ### 4.3 抽取管线（模块视角）
 

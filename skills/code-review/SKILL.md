@@ -24,7 +24,7 @@ description: >
 
 ## 要点
 
-1. 归类语义变化；精确解析符号；只扩展相关关系（`_shared/cpp-semantics.md`）。
+1. 归类语义变化；精确解析符号；只扩展相关关系（`references/cpp-semantics.md`）。
 2. 说明违反了什么约束：`references/domain-checks.md`。
 3. Finding 必须解释：什么条件下产生什么错误结果。
 4. 跨层一致性：`references/cross-layer-contracts.md`；AscendC：`references/ascendc-checks.md`。
@@ -41,4 +41,4 @@ description: >
 | 通用约束 | `references/domain-checks.md` |
 | Finding 形态 | `references/examples.md` |
 | 踩坑 | `references/gotchas.md` |
-| 共用纪律 | `_shared/evidence-quality.md` / `_shared/completeness.md` / `_shared/artifact-freshness.md` |
+| 共用纪律 | `references/evidence-quality.md` / `references/completeness.md` / `references/artifact-freshness.md` |

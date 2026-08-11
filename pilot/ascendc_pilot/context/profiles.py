@@ -45,15 +45,35 @@ class ContextProfile:
 # High-value Action profiles (P1c). Ids match specs.py default
 # context_profile_id = f"{workflow_id}-{action_id with dashes}".
 PROFILES: dict[str, ContextProfile] = {
-    "uo-init-resolve": ContextProfile(
-        id="uo-init-resolve",
-        description="Bounded semantic-gap resolve: blockers + nearby graph + gotchas.",
+    "uo-investigate-investigate": ContextProfile(
+        id="uo-investigate-investigate",
+        description="Bounded unresolved residual investigation: blockers + nearby graph + gotchas.",
         references=(
             "skills/operator-analysis/references/codemap-authority.md",
             "skills/operator-analysis/references/codemap-completeness.md",
+            "skills/operator-analysis/references/semantic-resolution.md",
             "skills/operator-analysis/references/codemap-build-gotchas.md",
-            "skills/_shared/evidence-quality.md",
-            "skills/_shared/cpp-semantics.md",
+            "skills/operator-analysis/references/evidence-quality.md",
+            "skills/operator-analysis/references/cpp-semantics.md",
+        ),
+        query_slices=(
+            QuerySlice(method="search", seed_from="unresolved_blockers", limit=12),
+            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
+        ),
+        token_budget=4500,
+    ),
+    # Legacy alias kept for older session slices / tests.
+    "uo-init-resolve": ContextProfile(
+        id="uo-init-resolve",
+        description="Deprecated alias of uo-investigate-investigate (resolve removed from /uo-init).",
+        references=(
+            "skills/operator-analysis/references/codemap-authority.md",
+            "skills/operator-analysis/references/codemap-completeness.md",
+            "skills/operator-analysis/references/semantic-resolution.md",
+            "skills/operator-analysis/references/codemap-build-gotchas.md",
+            "skills/operator-analysis/references/evidence-quality.md",
+            "skills/operator-analysis/references/cpp-semantics.md",
         ),
         query_slices=(
             QuerySlice(method="search", seed_from="unresolved_blockers", limit=12),
@@ -87,7 +107,7 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-review/references/ascendc-checks.md",
             "skills/code-review/references/cross-layer-contracts.md",
             "skills/code-review/references/gotchas.md",
-            "skills/_shared/finding-format.md",
+            "skills/code-review/references/finding-format.md",
         ),
         query_slices=(
             QuerySlice(method="entities_in_files", seed_from="impact_files", limit=20),

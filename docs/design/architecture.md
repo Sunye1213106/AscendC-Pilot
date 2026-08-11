@@ -18,26 +18,28 @@
 
 ## 2. UO 流水线（现状）
 
-主路径 action（`uo_init.pilot_engines.ENGINES`）：
+主路径 action（`uo_init.codemap_engines` / `pilot_engines.ENGINES`）：
 
 ```text
 prepare_layout → scope_scan → scope_validate
   → extract_host → extract_tiling_key → extract_registry → extract_kernel
-  → derive_key_fields → normalize_predicates → resolve_gaps → apply_gap_patch
-  → export_kb → build_index → export_tg_host_view → export_integrity → kb_review
+  → analyze（CodeMap dry-run + unresolved.yaml）
+  → commit（operator.<arch>.uo；允许 semantic_completeness=partial）
+  → verify（结构合法性 / integrity audit）
 ```
 
-公开六阶段：`prepare`（确定性：用户定 operator+arch，机器定 Source Scope）→ `extract` → `analyze` → `resolve` → `commit` → `review`。
+公开五阶段：`prepare`（确定性：用户定 operator+arch，机器定 Source Scope）→ `extract` → `analyze` → `commit` → `verify`。
 
 要点：
 
 - **范围原则**：用户决定分析目标；Clang include closure 决定权威 Source Scope（regex 仅 bootstrap，成功后替换而非 union）。无人工文件清单确认；`clang_scope_status!=complete` 或探针失败记 blocker。禁止 `decision=yes` 绕过编译验证（测试仅 `UO_TEST_ALLOW_UNVERIFIED_SCOPE=1`）。
-- **静态主路径**：libclang HostIR、`kernel_ir`（`if constexpr`）、`tiling_data_ir`、派生 `host_derivation`。
+- **静态主路径**：libclang HostIR、`kernel_ir`（`if constexpr`）、`tiling_data_ir`、派生结构事实。
+- **Canonical 纯度**：`.uo` = Compiler truth + deterministic derivation。LLM 不得默认把 semantic patch 写入产品面；`resolve_gaps` / `apply_gap_patch` 已移出默认 `/uo-init`，调查走 `/uo-investigate`。
 - **Z3 默认关闭**：`UO_DEEP_SOLVE` 未设时 materialize 走 `deep_solve_off`。
 - **产物目录**：工作区仍可在 `<op>/.ascendc-pilot/<arch>/uo/`；**正式权威产物**为 `<op>/.ascendc-pilot/uo/<op>.<arch>.uo`（统一 CodeMap SQLite，`meta.authority=uo`）。旧 `indexes/kb_graph.sqlite` / YAML 投影由 `uo-dump` 临时展开，不再作为产品面。
 - **YAML**：可选导出，由 `UO_KB_YAML` 控制（默认 `1` 兼容测试；生产目标 `0`）。按需：`python -m uo_init.dump <view>`。
 
-`resolve_gaps` 的 LLM 补洞**不得**默认进 sound 排除集；默认应关闭或产出 `grade: llm`。
+`resolve_gaps` 的 LLM 补洞**不得**默认进 sound 排除集；默认应关闭，且不进入 `/uo-init` 主路径。
 
 ---
 

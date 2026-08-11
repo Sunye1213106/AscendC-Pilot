@@ -2659,14 +2659,16 @@ def _uo_init_engine(action_id: str) -> EngineFn:
 
 
 ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
-    # CodeMap compiler public surface (6 Actions + resolve merge helper).
+    # CodeMap compiler public surface (5 Actions).
     ("uo-init", "prepare"): _uo_init_engine("prepare"),
     ("uo-init", "extract"): _uo_init_engine("extract"),
     ("uo-init", "analyze"): _uo_init_engine("analyze"),
+    ("uo-init", "commit"): _uo_init_engine("commit"),
+    ("uo-init", "verify"): _uo_init_engine("verify"),
+    # Compatibility / debug (not in default /uo-init pipeline).
+    ("uo-init", "review"): _uo_init_engine("review"),
     ("uo-init", "resolve"): _uo_init_engine("resolve"),
     ("uo-init", "apply_gap_patch"): _uo_init_engine("apply_gap_patch"),
-    ("uo-init", "commit"): _uo_init_engine("commit"),
-    ("uo-init", "review"): _uo_init_engine("review"),
     # Fine-grained internals (debug / compatibility).
     ("uo-init", "prepare_layout"): _uo_init_engine("prepare_layout"),
     ("uo-init", "scope_scan"): _uo_init_engine("scope_scan"),

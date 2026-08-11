@@ -31,12 +31,12 @@ def test_uo_actions_match_engine_and_prompt_boundary():
     assert not prepare.get("task_prompt_id")
     assert prepare.get("actors") == []
 
-    resolve = actions["resolve"]
-    assert resolve["execution_mode"] == "subagent"
-    assert resolve["agent_id"] == "uo-semantic-resolver"
-    assert resolve["task_prompt_id"] == "uo/resolve-gaps"
+    assert "resolve" not in actions
+    assert "apply_gap_patch" not in actions
+    assert "review" not in actions
+    assert set(actions) == {"prepare", "extract", "analyze", "commit", "verify"}
 
-    for action_id in ("prepare", "extract", "analyze", "apply_gap_patch", "commit", "review"):
+    for action_id in ("prepare", "extract", "analyze", "commit", "verify"):
         action = actions[action_id]
         assert action["execution_mode"] == "deterministic"
         assert not action.get("agent_id")
@@ -50,6 +50,12 @@ def test_uo_actions_match_engine_and_prompt_boundary():
 
     query = next(a for a in WORKFLOWS["uo-query"]["actions"] if a["id"] == "kb_lookup")
     assert query["task_prompt_id"] == "uo/codemap-query"
+
+    investigate = {a["id"]: a for a in WORKFLOWS["uo-investigate"]["actions"]}
+    inv = investigate["investigate"]
+    assert inv["execution_mode"] == "subagent"
+    assert inv["agent_id"] == "uo-gap-investigator"
+    assert inv["task_prompt_id"] == "uo/investigate-gaps"
 
 
 def test_compose_and_prune_runtime_context(tmp_path: Path):
@@ -77,14 +83,16 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         prompts = generated / "prompts" / "tasks" / "uo"
         assert not (agents / "deterministic-uo-engine.md").exists()
         assert not (agents / "deterministic-tg-engine.md").exists()
-        assert (agents / "uo-semantic-resolver.md").is_file()
+        assert (agents / "uo-gap-investigator.md").is_file()
         assert (agents / "uo-query.md").is_file()
         assert (prompts / "codemap-query.md").is_file()
+        assert (prompts / "investigate-gaps.md").is_file()
         assert not (prompts / "kb-review.md").exists()
         assert not (prompts / "kb-lookup.md").exists()
 
         init_skill = (generated / "skills" / "uo-init" / "SKILL.md").read_text(encoding="utf-8")
         assert "| `extract` | `deterministic` | `engine` |" in init_skill
-        assert "| `review` | `deterministic` | `engine` |" in init_skill
+        assert "| `verify` | `deterministic` | `engine` |" in init_skill
+        assert "| `resolve` |" not in init_skill
     finally:
         shutil.rmtree(generated, ignore_errors=True)

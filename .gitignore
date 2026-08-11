@@ -18,7 +18,9 @@ __pycache__/
 # file discovery and scope closure would otherwise pick up as if they were source.
 .pytest-tmp/
 .pytest_tmp/
+.pytest_tmp*/
 **/.pytest-tmp/
+**/.pytest_tmp*/
 # One-off local probes. Nothing here is a reusable entry point.
 .pytmp/
 

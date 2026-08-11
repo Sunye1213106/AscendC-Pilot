@@ -1,0 +1,8 @@
+proposition: "dataType==DT_FLOAT ⇒ schMode float arm"
+verdict: PROVED
+source_citations:
+  - file: add_example_tiling.cpp
+    quote: "tilingKey = GET_TPL_TILING_KEY(ELEMENTWISE_TPL_SCH_MODE_0); context->SetTilingKey(tilingKey);"
+  - file: add_example.cpp
+    quote: "if constexpr (schMode == ... TILING_KEY_EXAMPLE_FLOAT)"
+obligations_closed: [entry, assignment, consumption]

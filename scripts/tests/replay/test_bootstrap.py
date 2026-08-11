@@ -9,8 +9,8 @@ from replay import bootstrap
 
 @dataclass(frozen=True)
 class _Manifest:
-    name: str = "flash_attention_score_grad"
-    relative_path: str = "attention/flash_attention_score_grad"
+    name: str = "toy_op"
+    relative_path: str = "family/toy"
     arch: str = "arch35"
     host: str = "wsl"
     distro: str = "Ubuntu-22.04"

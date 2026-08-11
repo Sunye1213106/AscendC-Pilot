@@ -125,6 +125,15 @@ def main() -> int:
         print("FAIL: AscendC-Pilot/operators/ directory must not exist", file=sys.stderr)
         return 1
 
+    fag_fixture = repo / "tests" / "fixtures" / "flash_attention_score_grad"
+    if fag_fixture.is_dir():
+        print(
+            "FAIL: real-operator fixture tests/fixtures/flash_attention_score_grad/ "
+            "must not exist; use _synthetic_toy only",
+            file=sys.stderr,
+        )
+        return 1
+
     errors: list[str] = []
     for path in _iter_files(repo):
         errors.extend(_check_file(path, repo))

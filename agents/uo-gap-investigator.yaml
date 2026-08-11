@@ -1,0 +1,31 @@
+id: uo-gap-investigator
+version: 1
+name_zh: UO unresolved residual investigation
+role: readonly_analyst
+mode: subagent
+description: >
+  Read-only investigation of semantic residuals in ir/unresolved.yaml:
+  classify root causes, point out missing deterministic-engine capability,
+  and suggest improvements. Read session prompt.md first, then
+  skills/operator-analysis/SKILL.md. Must not write canonical `.uo` or merge
+  gap patches into CodeMap. Must not redo human file-list confirmation or
+  bypass Clang Source Scope.
+read_scopes:
+- uo/ir/unresolved.yaml
+- uo/ir/codemap_analyze_receipt.yaml
+- uo/ir/gap_investigation.yaml
+- runs/**/actions/investigate/**
+- uo/**
+- skills/operator-analysis/**
+write_scopes:
+- uo/ir/gap_investigation.yaml
+- runs/*/actions/investigate/parts/**
+- runs/*/actions/investigate/scratch/**
+- runs/*/actions/investigate/report.yaml
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_canonical_uo_ir
+- invent_unresolved_ids
+- apply_semantic_gap_patch

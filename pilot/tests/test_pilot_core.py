@@ -87,7 +87,7 @@ def test_start_uses_entry_and_next(tmp_path: Path):
 
 
 def test_mark_terminal_pass_refused_without_complete(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="review", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True)
     with pytest.raises(RuntimeError, match="complete_workflow"):
         mark_terminal(tmp_path, "pass")
     with pytest.raises(RuntimeError, match="complete_workflow"):
@@ -100,7 +100,7 @@ def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
     start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
-    # Analyze pipeline must complete before advancing to resolve.
+    # Analyze pipeline must complete before advancing to commit.
     st = load_state(tmp_path)
     issue_receipt(
         tmp_path,
@@ -114,12 +114,12 @@ def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
         nonce="analyze-n",
         _internal=True,
     )
-    result = advance_phase(tmp_path, "resolve")
+    result = advance_phase(tmp_path, "commit")
     # analyze has no required phase gates; advance should succeed once receipt exists
     # or fail closed on pipeline — either way phase must not skip ahead silently.
     st = load_state(tmp_path)
     if result.get("ok"):
-        assert st["phase"] == "resolve"
+        assert st["phase"] == "commit"
     else:
         assert st["phase"] == "analyze"
         assert st["status"] in {"human_required", "rework_required", "running"}
@@ -262,7 +262,7 @@ def test_ses076d_fixture_full_gate_fail(tmp_path: Path):
 
 
 def test_complete_workflow_rework_on_key_gates(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="review", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True)
     uo = uo_root(tmp_path)
     _write(
         uo / "ir" / "input_derivable.yaml",
@@ -276,7 +276,7 @@ def test_complete_workflow_rework_on_key_gates(tmp_path: Path):
     assert result["ok"] is False
     assert result["status"] == "rework_required"
     assert load_state(tmp_path)["status"] == "rework_required"
-    assert load_state(tmp_path)["phase"] == "review"
+    assert load_state(tmp_path)["phase"] == "verify"
 
 
 def test_plan_approved_reads_human_supplement(tmp_path: Path):
@@ -439,10 +439,13 @@ def test_actions_for_phase_strict_binding(tmp_path: Path):
     assert [a["id"] for a in prepare] == ["prepare"]
     extract = actions_for_phase("uo-init", "extract")
     assert [a["id"] for a in extract] == ["extract"]
-    resolve = actions_for_phase("uo-init", "resolve")
-    assert [a["id"] for a in resolve] == ["resolve", "apply_gap_patch"]
+    commit = actions_for_phase("uo-init", "commit")
+    assert [a["id"] for a in commit] == ["commit"]
+    verify = actions_for_phase("uo-init", "verify")
+    assert [a["id"] for a in verify] == ["verify"]
     empty = actions_for_phase("uo-init", "nonexistent_phase")
     assert empty == []
+    assert actions_for_phase("uo-init", "resolve") == []
     start_workflow(tmp_path, "uo-init")
     nxt = describe_next(tmp_path)
     assert [a["id"] for a in nxt["allowed_actions"]] == ["prepare"]
@@ -574,12 +577,18 @@ def test_install_skill_lists_symmetric():
     repo = Path(__file__).resolve().parents[2]
     ps1 = (repo / "install.ps1").read_text(encoding="utf-8")
     sh = (repo / "install.sh").read_text(encoding="utf-8")
-    assert 'foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator"))' in ps1
-    assert "for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator; do" in sh
+    assert (
+        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate",'
+        '"ce-review","tg-init","tg-plan","tg-solve","operator")'
+    ) in ps1
+    assert (
+        "for name in uo-init uo-update uo-query uo-investigate "
+        "ce-review tg-init tg-plan tg-solve operator; do"
+    ) in sh
     # Retired skills must not be in the install junction list (uninstall purge may still name them).
     install_lists = [
-        'foreach ($name in @("uo-init","uo-update","uo-query","ce-review","tg-init","tg-plan","tg-solve","operator"))',
-        "for name in uo-init uo-update uo-query ce-review tg-init tg-plan tg-solve operator; do",
+        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator")',
+        "for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator; do",
     ]
     for block in install_lists:
         for retired in ("uo-diff", "tg-domain-review", "tg-contract"):
@@ -589,3 +598,5 @@ def test_install_skill_lists_symmetric():
     assert "ascendc-pilot.ts" in sh
     assert "tg-semantic-bind" in ps1
     assert "tg-semantic-bind" in sh
+    assert "uo-gap-investigator" in ps1
+    assert "uo-gap-investigator" in sh

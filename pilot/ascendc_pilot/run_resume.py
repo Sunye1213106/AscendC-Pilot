@@ -205,19 +205,15 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
     # labels — keep this in step with the Workflow Spec.
     label_map = {
         # uo-init
-        "prepare_layout": "布局/manifest",
-        "scope_scan": "范围扫描",
-        "scope_validate": "范围校验",
-        "scope_confirm": "范围校验",
-        "extract_host": "Host 抽取",
-        "extract_tiling_key": "TilingKey 抽取",
-        "extract_registry": "算子族登记",
-        "extract_kernel": "Kernel 抽取",
-        "normalize_variables": "变量归一",
-        "normalize_predicates": "谓词归一",
-        "derive_key_fields": "KEY 字段推导",
-        "resolve_gaps": "缺口补齐",
-        "apply_gap_patch": "缺口补丁应用",
+        "prepare": "准备范围",
+        "extract": "Clang 抽取",
+        "analyze": "CodeMap 分析",
+        "commit": "写入 .uo",
+        "verify": "结构校验",
+        # Optional investigate / legacy labels
+        "investigate": "调查 residual",
+        "resolve_gaps": "缺口补齐（debug）",
+        "apply_gap_patch": "缺口补丁应用（debug）",
         "export_kb": "KB 导出",
         "export_adapter_pack": "适配包导出",
         "export_tg_host_view": "TG Host 视图",

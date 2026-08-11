@@ -10,8 +10,9 @@ description: >
 目标：把 AscendC 源码与 architecture 编译成可查询的源码语义图，并据此回答结构问题。
 
 ```text
-prepare → extract → analyze → resolve → commit → review
+prepare → extract → analyze → commit → verify
                   ↘ query (readonly)
+                  ↘ investigate (optional; no .uo mutation)
 ```
 
 ## 职责边界
@@ -22,13 +23,14 @@ prepare → extract → analyze → resolve → commit → review
 
 ## 构建规则
 
-1. **确定性提取优先**：Clang、source pass、写入与结构审查由 engine 执行。
+1. **确定性提取优先**：Clang、source pass、写入与结构校验由 engine 执行。
 2. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。
 3. **关系必须有证据**：CALLS / READS / WRITES / DERIVES 等必须回到源码或 compiler provenance。
 4. **不为闭环制造公式**：复杂 Key producer 保留 producer、all-writes、guards、upstream roots 与 source span。
 5. **编译期是一等语义**：macro、compile var、template、BuildVariant、ARCH 显式建模。
 6. **SHARED 必须进 KB**：`common/` 等 SHARED 进入 ScopeSet 后，Host/Kernel walk 不得再用裸 `op_needle` 过滤掉。
 7. **单一产品权威**：`.ascendc-pilot/uo/<op>.<arch>.uo`。
+8. **保留 unresolved**：deterministic pass 无法闭合的语义 residual 写入 `unresolved.yaml`；**不得**默认用 LLM 补进 canonical `.uo`。部分 incomplete UO 合法（`semantic_completeness=partial`）。调查用 `/uo-investigate`。
 
 ## 查询规则
 
@@ -48,6 +50,6 @@ prepare → extract → analyze → resolve → commit → review
 | extract 覆盖 | `references/codemap-extraction.md` |
 | 构建踩坑 | `references/codemap-build-gotchas.md` |
 | 查询踩坑 | `references/codemap-query-gotchas.md` |
-| 语义闭合 | `references/semantic-resolution.md` |
-| 共用证据纪律 | `_shared/evidence-quality.md` |
+| unresolved 调查 | `references/semantic-resolution.md` |
+| 共用证据纪律 | `references/evidence-quality.md` |
 | 踩坑入口 | `references/gotchas.md` |

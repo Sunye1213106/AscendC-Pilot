@@ -83,6 +83,7 @@ def test_effective_tg_io_contract_reads_only_binary_uo() -> None:
     from ascendc_pilot.workflows import WORKFLOWS
 
     assert OUTPUT_CONTRACT_PATHS["uo-commit-v1"] == ["../uo/*.uo"]
+    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == ["../uo/*.uo"]
     assert OUTPUT_CONTRACT_PATHS["uo-review-v1"] == ["../uo/*.uo"]
 
     for workflow_id in ("tg-init", "tg-plan", "tg-solve"):

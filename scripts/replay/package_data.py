@@ -68,7 +68,7 @@ def _compat_package_dir(op_root: Path, arch: str) -> Path | None:
     try:
         from ascendc_pilot.paths import artifact_root, LOCAL_SUBDIR
 
-        base = artifact_root(op_root, arch, allow_pilot_checkout=True)
+        base = artifact_root(op_root, arch, allow_pilot_checkout=False)
     except Exception:
         base = op_root / ".ascendc-pilot" / arch
     cand = base / "local" / "_compat_package"
@@ -111,7 +111,7 @@ def active_package_dir(root: Path | None = None) -> Path:
             from ascendc_pilot.workspace import OperatorWorkspace
 
             ws = OperatorWorkspace.resolve(
-                op_proj, arch=arch, allow_pilot_checkout=True
+                op_proj, arch=arch, allow_pilot_checkout=False
             )
             return ws.local_root
         except Exception:

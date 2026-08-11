@@ -27,13 +27,14 @@ Agent 稳定角色 YAML。由 Composer 生成宿主 Markdown 到 `generated/<hos
 | Agent | 命中 | 说明 |
 |-------|------|------|
 | `ascendc-pilot` | primary | 主会话；禁止自行 declare PASS |
-| `uo-semantic-resolver` | 1, 2, 3 | 按 bundle 并行消解；只写 staging |
+| `uo-gap-investigator` | 1, 3 | 只读调查 unresolved；不写 canonical `.uo` |
 | `uo-query` | 1, 3 | 只读查询隔离；不改 `.uo` |
 | `ce-reviewer` | 1, 3, 4 | 独立审查上下文与写范围 |
 | `tg-lemma-producer` | 1, 2, 3 | 有界引理 staging；禁写 excluded |
 | `tg-closure-referee` | 1, 3, 4 | adversarial review；只写 review.yaml |
 | `tg-init-audit` | 1, 3, 4 | init 审计 referee |
 | `tg-semantic-bind` | 1, 3 | csv_consumer overlay 下的语义绑定 producer |
+| `deterministic-uo-engine` | （非 LLM） | Engine 身份；`kind: deterministic_engine` |
 | `deterministic-tg-engine` | （非 LLM） | Engine 身份；`kind: deterministic_engine` |
 
 已删除：`tg-csv-contract`（死代码；契约构建由 deterministic engine 的 `contract_build` 承担）。

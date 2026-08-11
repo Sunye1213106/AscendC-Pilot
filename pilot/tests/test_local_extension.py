@@ -21,9 +21,10 @@ def test_operator_workspace_local_root(tmp_path: Path) -> None:
     assert ws.local_extension_dir("case_builder").name == "case-builder"
 
 
-def test_local_extension_load(tmp_path: Path) -> None:
+def test_local_extension_load_and_required_exports(tmp_path: Path) -> None:
     from ascendc_pilot.local_extension import (
         LocalCapabilityRequired,
+        LocalExtensionContractError,
         LocalExtensionRegistry,
     )
 
@@ -57,6 +58,31 @@ def test_local_extension_load(tmp_path: Path) -> None:
     with pytest.raises(LocalCapabilityRequired) as ei:
         reg.get_extension("case_builder", required=True)
     assert ei.value.as_dict()["interface"] == "case_builder"
+
+    # Missing required export → contract error
+    bad = tmp_path / ".ascendc-pilot" / "arch0" / "local" / "case-builder"
+    bad.mkdir(parents=True)
+    (bad / "manifest.yaml").write_text(
+        "\n".join(
+            [
+                "schema: ascendc-pilot-local-extension/v1",
+                "interface: case_builder",
+                "version: 1",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (bad / "implementation.py").write_text("foo = 1\n", encoding="utf-8")
+    with pytest.raises(LocalExtensionContractError):
+        reg.load_module("case_builder")
+
+
+def test_from_operator_root_rejects_pilot_checkout() -> None:
+    from ascendc_pilot.local_extension import LocalExtensionRegistry
+    from ascendc_pilot.paths import pilot_checkout_root
+
+    with pytest.raises(ValueError, match="refusing|operator root"):
+        LocalExtensionRegistry.from_operator_root(pilot_checkout_root())
 
 
 def test_package_data_fixture_synthetic(monkeypatch: pytest.MonkeyPatch) -> None:

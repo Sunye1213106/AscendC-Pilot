@@ -25,13 +25,20 @@ KNOWN_INTERFACES = frozenset(
     }
 )
 
-# Directory name on disk uses kebab-case; interface id uses snake_case.
 _INTERFACE_DIR = {
     "case_builder": "case-builder",
     "replay_parser": "replay-parser",
     "tilingdata_decoder": "tilingdata-decoder",
     "runtime_launcher": "runtime-launcher",
     "golden_provider": "golden-provider",
+}
+
+_SCHEMA_FILE = {
+    "case_builder": "case-builder-v1.yaml",
+    "replay_parser": "replay-parser-v1.yaml",
+    "tilingdata_decoder": "tilingdata-decoder-v1.yaml",
+    "runtime_launcher": "runtime-launcher-v1.yaml",
+    "golden_provider": "golden-provider-v1.yaml",
 }
 
 
@@ -71,6 +78,10 @@ class LocalCapabilityRequired(Exception):
         }
 
 
+class LocalExtensionContractError(Exception):
+    """Manifest / implementation failed the interface schema contract."""
+
+
 @dataclass(frozen=True)
 class LocalExtension:
     interface: str
@@ -78,6 +89,7 @@ class LocalExtension:
     root: Path
     manifest: dict[str, Any]
     implementation: Path
+    schema: dict[str, Any]
 
     @property
     def reason_code(self) -> str:
@@ -86,33 +98,66 @@ class LocalExtension:
             return str(reason.get("code") or "")
         return ""
 
+    @property
+    def required_exports(self) -> list[str]:
+        raw = self.schema.get("required_exports") or []
+        return [str(x) for x in raw]
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return doc if isinstance(doc, dict) else {}
 
 
-def _validate_manifest(doc: dict[str, Any], *, path: Path, interface: str) -> None:
-    schema = str(doc.get("schema") or "")
-    if not schema.startswith("ascendc-pilot-local-extension/"):
-        raise ValueError(f"{path}: schema must be ascendc-pilot-local-extension/vN")
+def _schema_path(interface: str) -> Path:
+    # pilot/ascendc_pilot/local_extension.py → parents[2] = AscendC-Pilot repo root
+    name = _SCHEMA_FILE.get(interface)
+    if not name:
+        raise LocalExtensionContractError(f"no schema file for {interface}")
+    return Path(__file__).resolve().parents[2] / "schemas" / "local-extension" / name
+
+
+def _load_interface_schema(interface: str) -> dict[str, Any]:
+    path = _schema_path(interface)
+    if not path.is_file():
+        raise LocalExtensionContractError(f"missing schema: {path}")
+    doc = _load_yaml(path)
+    if str(doc.get("interface") or "") != interface:
+        raise LocalExtensionContractError(
+            f"{path}: interface mismatch {doc.get('interface')!r} != {interface!r}"
+        )
+    return doc
+
+
+def _validate_manifest(doc: dict[str, Any], *, path: Path, interface: str, schema: dict[str, Any]) -> None:
+    schema_id = str(doc.get("schema") or "")
+    if not schema_id.startswith("ascendc-pilot-local-extension/"):
+        raise LocalExtensionContractError(
+            f"{path}: schema must be ascendc-pilot-local-extension/vN"
+        )
     iface = str(doc.get("interface") or "").strip()
     if iface != interface:
-        raise ValueError(f"{path}: interface {iface!r} != requested {interface!r}")
+        raise LocalExtensionContractError(
+            f"{path}: interface {iface!r} != requested {interface!r}"
+        )
     if iface not in KNOWN_INTERFACES:
-        raise ValueError(f"{path}: unknown interface {iface!r}")
+        raise LocalExtensionContractError(f"{path}: unknown interface {iface!r}")
     try:
         version = int(doc.get("version") or 0)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{path}: version must be int") from exc
+        raise LocalExtensionContractError(f"{path}: version must be int") from exc
     if version < 1:
-        raise ValueError(f"{path}: version must be >= 1")
+        raise LocalExtensionContractError(f"{path}: version must be >= 1")
+    # Manifest may omit required_exports; schema is authoritative.
+    _ = schema
 
 
 class LocalExtensionRegistry:
     """Discover / validate / load Local Extensions for one workspace."""
 
-    def __init__(self, local_root: Path, *, operator_root: Path | None = None, arch: str = "") -> None:
+    def __init__(
+        self, local_root: Path, *, operator_root: Path | None = None, arch: str = ""
+    ) -> None:
         self.local_root = Path(local_root)
         self.operator_root = operator_root
         self.arch = arch
@@ -126,7 +171,8 @@ class LocalExtensionRegistry:
     ) -> "LocalExtensionRegistry":
         from .workspace import OperatorWorkspace
 
-        ws = OperatorWorkspace.resolve(operator_root, arch=arch, allow_pilot_checkout=True)
+        # Production: never treat AscendC-Pilot checkout as an operator root.
+        ws = OperatorWorkspace.resolve(operator_root, arch=arch, allow_pilot_checkout=False)
         return cls(ws.local_root, operator_root=ws.operator_root, arch=ws.arch)
 
     def extension_dir(self, interface: str) -> Path:
@@ -139,24 +185,25 @@ class LocalExtensionRegistry:
         manifest_path = root / "manifest.yaml"
         if not manifest_path.is_file():
             return None
+        schema = _load_interface_schema(interface)
         doc = _load_yaml(manifest_path)
-        _validate_manifest(doc, path=manifest_path, interface=interface)
+        _validate_manifest(doc, path=manifest_path, interface=interface, schema=schema)
         impl = root / "implementation.py"
         if not impl.is_file():
-            # Accept legacy alias names used during migration.
             for alt in ("parser.py", "decoder.py", "case_builder.py"):
                 cand = root / alt
                 if cand.is_file():
                     impl = cand
                     break
             else:
-                raise ValueError(f"{root}: missing implementation.py")
+                raise LocalExtensionContractError(f"{root}: missing implementation.py")
         return LocalExtension(
             interface=interface,
             version=int(doc["version"]),
             root=root,
             manifest=doc,
             implementation=impl,
+            schema=schema,
         )
 
     def get_extension(self, interface: str, *, required: bool = False) -> LocalExtension | None:
@@ -172,7 +219,7 @@ class LocalExtensionRegistry:
         return ext
 
     def load_module(self, interface: str, *, module_name: str | None = None) -> Any:
-        """Import the extension implementation module."""
+        """Import the extension and enforce ``required_exports`` from schema."""
         ext = self.get_extension(interface, required=True)
         assert ext is not None
         name = module_name or f"ascendc_pilot_local_{interface}"
@@ -199,4 +246,22 @@ class LocalExtensionRegistry:
                 operator_root=self.operator_root,
                 arch=self.arch,
             ) from exc
+
+        missing = [
+            exp
+            for exp in ext.required_exports
+            if not callable(getattr(mod, exp, None))
+        ]
+        if missing:
+            raise LocalExtensionContractError(
+                f"{ext.implementation}: missing required_exports {missing}"
+            )
+
+        selfcheck = getattr(mod, "selfcheck", None)
+        if callable(selfcheck):
+            result = selfcheck()
+            if result is False:
+                raise LocalExtensionContractError(
+                    f"{ext.implementation}: selfcheck() returned False"
+                )
         return mod

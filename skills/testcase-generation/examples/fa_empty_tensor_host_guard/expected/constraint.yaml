@@ -1,0 +1,5 @@
+constraint:
+  kind: host_precondition
+  statement: "q/k/v with numel()==0 are rejected before kernel launch"
+  evidence: torch_interface.cpp empty-tensor checks
+  not_a_tiling_key_dim: true

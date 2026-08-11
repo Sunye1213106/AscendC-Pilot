@@ -6,15 +6,17 @@ its existing ``keys[].tilingdata_obligations/kernel_obligations`` schema. L3
 mutates candidate inputs, replays the real Host tiling, and updates those rows
 only when the observation returns the intended TilingKey.
 
-Raw ``###TD`` bytes are decoded only through an optional operator package hook
-(``tilingdata_decoder.py``). Missing/failed decode leaves debt open; candidate
-intent and static set-cover claims are never accepted as runtime evidence.
+Raw ``###TD`` bytes are decoded via UO layout + generic TilingData decoder;
+``LayoutIncomplete`` falls back to a Local Extension ``tilingdata_decoder``.
+Missing/failed decode leaves debt open; candidate intent and static set-cover
+claims are never accepted as runtime evidence.
 """
 
 from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import random
 import sys
 from pathlib import Path
@@ -177,8 +179,31 @@ def precheck(ws: W.Workspace | None = None) -> dict[str, Any]:
     }
 
 
-def _load_decoder() -> tuple[Any | None, str]:
-    """Load optional tilingdata decoder (Local Extension or fixture package)."""
+def _load_extension_decoder(ws: Any | None = None) -> tuple[Any | None, str]:
+    """Local Extension tilingdata_decoder — only after generic layout fails."""
+    root = None
+    try:
+        root = Path(getattr(ws, "root", None) or os.environ.get("ASCENDC_PROJECT_ROOT") or "")
+        arch = str(os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "")
+        if root.is_dir():
+            from ascendc_pilot.local_extension import (
+                LocalCapabilityRequired,
+                LocalExtensionRegistry,
+            )
+
+            reg = LocalExtensionRegistry.from_operator_root(root, arch=arch or None)
+            ext = reg.discover("tilingdata_decoder")
+            if ext is not None:
+                try:
+                    return reg.load_module("tilingdata_decoder"), "local_extension"
+                except LocalCapabilityRequired as exc:
+                    return None, str(exc)
+                except Exception as exc:
+                    return None, f"LOCAL_CAPABILITY_REQUIRED:interface=tilingdata_decoder:load:{exc}"
+    except Exception:
+        pass
+
+    # Fixture / package-file fallback for synthetic tests only.
     try:
         from replay.package_data import package_file
 
@@ -197,11 +222,103 @@ def _load_decoder() -> tuple[Any | None, str]:
         mod = importlib.util.module_from_spec(spec)
         sys.modules[name] = mod
         spec.loader.exec_module(mod)
-        if not hasattr(mod, "decode"):
-            return None, "decoder_no_decode"
-        return mod, "ok"
+        if not callable(getattr(mod, "decode", None)):
+            return None, "LOCAL_CAPABILITY_REQUIRED:interface=tilingdata_decoder:no_decode"
+        return mod, "package_file"
     except Exception as exc:
         return None, f"decoder_load_failed:{exc}"
+
+
+def _decode_fields(
+    raw: bytes | None,
+    dims: dict[str, Any],
+    *,
+    ws: Any | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """UO layout → generic decoder; LayoutIncomplete → Local Extension."""
+    if not raw:
+        return {}, {"ok": False, "reason": "td_missing"}
+
+    root = None
+    try:
+        root = Path(getattr(ws, "root", None) or os.environ.get("ASCENDC_PROJECT_ROOT") or "")
+    except Exception:
+        root = None
+
+    layout_err = ""
+    try:
+        from testcase_agent.tilingdata.decoder import LayoutIncomplete, decode as generic_decode
+        from testcase_agent.tilingdata.layout import load_tilingdata_layout
+
+        layout = load_tilingdata_layout(root if root and root.is_dir() else None)
+        if layout:
+            try:
+                fields = generic_decode(raw, layout)
+                if isinstance(fields, dict) and fields:
+                    return dict(fields), {
+                        "ok": True,
+                        "layout": "generic_uo",
+                        "absent_members": [],
+                        "present_leaves": list(fields),
+                        "owner": {},
+                    }
+            except LayoutIncomplete as exc:
+                layout_err = str(exc)
+            except Exception as exc:
+                layout_err = f"generic_decode_failed:{exc}"
+        else:
+            layout_err = "UO_LAYOUT_INCOMPLETE:no_layout"
+    except Exception as exc:
+        layout_err = f"generic_import_failed:{exc}"
+
+    decoder, decoder_status = _load_extension_decoder(ws)
+    if decoder is None:
+        return {}, {
+            "ok": False,
+            "reason": decoder_status or layout_err or "LOCAL_CAPABILITY_REQUIRED:interface=tilingdata_decoder",
+            "generic_error": layout_err,
+        }
+    try:
+        doc = decoder.decode(raw, dims)
+    except TypeError:
+        try:
+            doc = decoder.decode(raw)
+        except Exception as exc:
+            return {}, {
+                "ok": False,
+                "reason": f"extension_decode_failed:{exc}",
+                "decoder": decoder_status,
+                "generic_error": layout_err,
+            }
+    except Exception as exc:
+        return {}, {
+            "ok": False,
+            "reason": f"extension_decode_failed:{exc}",
+            "decoder": decoder_status,
+            "generic_error": layout_err,
+        }
+    if not isinstance(doc, dict):
+        return {}, {"ok": False, "reason": "decode_not_mapping", "decoder": decoder_status}
+    fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else doc
+    return dict(fields), {
+        "ok": bool(fields),
+        "layout": doc.get("layout") or decoder_status,
+        "absent_members": list(doc.get("absent_members") or []),
+        "present_leaves": list(doc.get("present_leaves") or []),
+        "owner": dict(doc.get("owner") or {}),
+        "generic_error": layout_err,
+    }
+
+
+def _decoder_context(ws: Any | None, dims: dict[str, Any]) -> dict[str, Any]:
+    decoder, _status = _load_extension_decoder(ws)
+    if decoder is None or not hasattr(decoder, "eval_context"):
+        return {}
+    try:
+        doc = decoder.eval_context(dims)
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
 
 
 def _case_signature(case: Any) -> tuple:
@@ -321,39 +438,6 @@ def build_candidates(
                 continue
         add(case)
     return candidates
-
-
-def _decoder_context(decoder: Any | None, dims: dict[str, Any]) -> dict[str, Any]:
-    if decoder is None or not hasattr(decoder, "eval_context"):
-        return {}
-    try:
-        doc = decoder.eval_context(dims)
-        return doc if isinstance(doc, dict) else {}
-    except Exception:
-        return {}
-
-
-def _decode_fields(
-    decoder: Any | None,
-    raw: bytes | None,
-    dims: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    if decoder is None or not raw:
-        return {}, {"ok": False, "reason": "decoder_or_td_missing"}
-    try:
-        doc = decoder.decode(raw, dims)
-    except Exception as exc:
-        return {}, {"ok": False, "reason": f"decode_failed:{exc}"}
-    if not isinstance(doc, dict):
-        return {}, {"ok": False, "reason": "decode_not_mapping"}
-    fields = doc.get("fields") if isinstance(doc.get("fields"), dict) else doc
-    return dict(fields), {
-        "ok": bool(fields),
-        "layout": doc.get("layout"),
-        "absent_members": list(doc.get("absent_members") or []),
-        "present_leaves": list(doc.get("present_leaves") or []),
-        "owner": dict(doc.get("owner") or {}),
-    }
 
 
 def _eval_td(row: dict[str, Any], env: BO.Env) -> bool | None:
@@ -513,7 +597,6 @@ def run_round(
     log_path = Path(runner.cache) / f"{tag}_log.txt"
     transcript = log_path.read_text(encoding="utf-8", errors="replace") if log_path.is_file() else ""
     raw_by_id = _raw_index(transcript)
-    decoder, decoder_status = _load_decoder()
     branches = KD.load_kernel_branches(ws=ws)
     branch_by_id = {BO.site_id(b): b for b in branches if isinstance(b, dict)}
 
@@ -540,13 +623,13 @@ def run_round(
         on_key += 1
         dims = W.decode(target)
         raw_info = raw_by_id.get(cid) or {}
-        decoded, meta = _decode_fields(decoder, raw_info.get("td"), dims)
+        decoded, meta = _decode_fields(raw_info.get("td"), dims, ws=ws)
         if meta.get("ok"):
             decoded_n += 1
         fields = dict(decoded)
         for name, value in dict(result.diag or {}).items():
             fields.setdefault(str(name), value)
-        ctx = _decoder_context(decoder, dims)
+        ctx = _decoder_context(ws, dims)
         env = BO.build_env(
             fields=fields,
             dims=dims,

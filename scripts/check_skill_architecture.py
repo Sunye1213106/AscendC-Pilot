@@ -117,20 +117,25 @@ def _errors() -> list[str]:
         gotchas = skill_md.parent / "references" / "gotchas.md"
         if not gotchas.is_file():
             errors.append(f"DOMAIN_MISSING_GOTCHAS {gotchas.as_posix()}")
-        for rel in re.findall(r"`((?:references|_shared)/[^`]+\.md)`", text):
-            if rel.startswith("_shared/"):
-                target = SHARED / rel.split("/", 1)[1]
-                # also allow skills/_shared/<file> listed as _shared/<file>
-                if not target.is_file():
-                    # try multi-path refs like `_shared/a.md`、`b.md` — skip comma forms
-                    target = SHARED / Path(rel).name
-            else:
-                target = skill_md.parent / rel
+        for rel in re.findall(r"`(references/[^`]+\.md)`", text):
+            target = skill_md.parent / rel
             if not target.is_file():
-                # tolerate combined backticks with Chinese顿号 lists by only checking simple paths
                 if "、" in rel or "," in rel:
                     continue
                 errors.append(f"broken reference {rel} from {skill_md.as_posix()}")
+
+        examples_dir = skill_md.parent / "examples"
+        if not examples_dir.is_dir():
+            errors.append(f"DOMAIN_MISSING_EXAMPLES_DIR {examples_dir.as_posix()}")
+        else:
+            cases = [p for p in examples_dir.iterdir() if p.is_dir()]
+            if len(cases) < 2:
+                errors.append(
+                    f"DOMAIN_EXAMPLES_TOO_FEW {examples_dir.as_posix()}: need ≥2 case dirs, got {len(cases)}"
+                )
+            for case in cases:
+                if not (case / "README.md").is_file():
+                    errors.append(f"DOMAIN_EXAMPLE_MISSING_README {case.as_posix()}")
 
     if PROMPTS.is_dir():
         for p in PROMPTS.rglob("*.md"):
@@ -138,6 +143,12 @@ def _errors() -> list[str]:
             for i, line in enumerate(text.splitlines(), 1):
                 if PROMPT_BAD.search(line):
                     errors.append(f"PROMPT_HARNESS_LEAK {p.as_posix()}:{i}: {line.strip()[:80]}")
+                # Forbid bare references/*.md (must go Prompt → Skill → references)
+                if re.search(r"(?<![/\w])references/[A-Za-z0-9_.-]+\.md", line):
+                    if "skills/" not in line:
+                        errors.append(
+                            f"PROMPT_BARE_REFERENCE {p.as_posix()}:{i}: {line.strip()[:100]}"
+                        )
 
     # E eligibility text should live under testcase-generation / source-proof / _shared
     e_files: list[Path] = []

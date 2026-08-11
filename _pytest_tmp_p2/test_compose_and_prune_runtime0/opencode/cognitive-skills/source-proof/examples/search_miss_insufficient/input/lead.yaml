@@ -1,0 +1,2 @@
+query: "Are there other writers of tiling key besides a single SetTilingKey hit?"
+note: Real host uses GET_TPL_TILING_KEY then SetTilingKey — see TEST add_example.

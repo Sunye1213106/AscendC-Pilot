@@ -1,10 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Six public uo-init Actions for the source-backed CodeMap compiler.
+"""Five public uo-init Actions for the source-backed CodeMap compiler.
 
 UO extracts facts an Agent can query.  It does not solve the operator's full
 19-dimensional TilingKey function.  In particular the public analyze path does
 not run ``derive_key_fields`` / KeyReachability / global SAT.  Test construction
 and local lemma reasoning belong to TG.
+
+Canonical ``.uo`` is compiler truth + deterministic derivation only.  Semantic
+residuals stay in ``unresolved.yaml``; LLM must not patch them into the product.
+Optional investigation lives under ``/uo-investigate``.
 """
 
 from __future__ import annotations
@@ -137,6 +141,9 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     TilingData transport, template/kernel structure and evidence-backed paths?
     It explicitly does *not* answer whether every declared packed key is
     reachable or derive a closed-form formula for every key dimension.
+
+    Residuals are recorded in ``ir/unresolved.yaml`` and retained — they are not
+    LLM-resolved into canonical ``.uo``.
     """
     from uo_init.build import compile_codemap, store_compile_cache
 
@@ -166,11 +173,13 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         "derivation_blocker_count": 0,
         "blockers": gaps,
         "scope": "structural_source_extraction",
+        "policy": "retain_unresolved_no_llm_patch",
         "non_goals": [
             "global_tilingkey_value_derivation",
             "global_key_reachability_sat",
             "container_cardinality_proofs",
             "read_coverage_implication_proofs",
+            "llm_semantic_gap_patching",
         ],
     }
     receipt = {
@@ -185,6 +194,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         "deep_key_derivation": False,
         "global_sat": False,
         "compile_cached": True,
+        "semantic_completeness": "complete" if not gaps else "partial",
     }
     pe._dump(uo / "ir" / "unresolved.yaml", unresolved)
     pe._dump(uo / "ir" / "codemap_analyze_receipt.yaml", receipt)
@@ -192,12 +202,21 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
 
 
 def resolve(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Escalate only structural gaps that deterministic extraction left open."""
+    """Optional / debug: stage gap blockers. Not part of default ``/uo-init``.
+
+    Prefer ``/uo-investigate``. When called, LLM auto-resolve remains off unless
+    ``UO_RESOLVE_GAPS_LLM=1`` / ``enable_llm=true``.
+    """
     return pe.resolve_gaps(project_root, payload)
 
 
 def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Compile current structural facts/source into the single ``.uo`` product."""
+    """Compile current structural facts/source into the single ``.uo`` product.
+
+    Open semantic residuals are allowed: commit writes a valid but possibly
+    incomplete CodeMap (``semantic_completeness=partial``). Hard extraction
+    failures still fail this stage.
+    """
     ctx = dict(payload or {})
     product = _commit_uo_product(Path(project_root), ctx)
     return {
@@ -212,8 +231,12 @@ def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     }
 
 
-def review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Run the strict binary CodeMap audit; no legacy KB review layer."""
+def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Validate graph legality / integrity of the committed ``.uo`` product.
+
+    This is not semantic completeness: open ``unresolved`` blockers do not fail
+    verify by themselves. Failures are schema/invariant/dangling-edge issues.
+    """
     ctx = dict(payload or {})
     root = Path(project_root).expanduser().resolve()
     try:
@@ -226,20 +249,30 @@ def review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
         if product is None or product.suffix != ".uo":
             return {
                 "ok": False,
-                "engine": "review",
+                "engine": "verify",
                 "error": "missing_uo_product",
                 "message": "commit must write .ascendc-pilot/uo/<op>.<arch>.uo",
             }
         report = audit_uo(product)
         return {
             "ok": bool(report.get("ok")),
-            "engine": "review",
+            "engine": "verify",
             "path": str(product),
             "audit": report,
             "verdict": "pass" if report.get("ok") else "fail",
         }
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "review", "error": str(exc)[:400], "verdict": "fail"}
+        return {"ok": False, "engine": "verify", "error": str(exc)[:400], "verdict": "fail"}
+
+
+def review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Backward-compatible alias for :func:`verify`."""
+    out = verify(project_root, payload)
+    if isinstance(out, dict) and out.get("engine") == "verify":
+        out = dict(out)
+        out["engine"] = "review"
+        out["alias_of"] = "verify"
+    return out
 
 
 def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:

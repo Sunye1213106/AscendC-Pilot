@@ -40,7 +40,13 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
         "uo/ir/unresolved.yaml",
     ],
     "uo-commit-v1": ["../uo/*.uo"],
+    "uo-verify-v1": ["../uo/*.uo"],
+    # Backward-compatible alias for older receipts / tests.
     "uo-review-v1": ["../uo/*.uo"],
+    "uo-investigate-v1": [
+        "uo/ir/gap_investigation.yaml",
+        "runs/{run_id}/actions/investigate/report.yaml",
+    ],
 }
 _TG_LOOP_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     # lemma_loop is a deterministic orchestration action. Its stable receipt is

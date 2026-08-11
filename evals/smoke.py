@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """CI smoke for evals (dry only, no LLM / NPU).
 
-Runs:
+L0 entry:
 1. harness metric self-check
 2. routing dry eval
 3. skill dry eval (all four cognitive skills)
-4. closure acceptance harness via shared summarize (1 dry run)
+4. closure acceptance harness (1 dry run)
+5. skill architecture + operator independence lints
+6. worked-example layout check
+7. harness E2E authorize scenarios (no LLM)
 """
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ _COGNITIVE_SKILLS = (
 )
 
 
-def _run(cmd: list[str]) -> dict:
+def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> dict:
     proc = subprocess.run(
         cmd,
         cwd=str(REPO),
@@ -33,6 +36,7 @@ def _run(cmd: list[str]) -> dict:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     return {
         "cmd": cmd,
@@ -89,23 +93,17 @@ def main() -> int:
             str(REPO / "pilot"),
         ]
     )
-    proc = subprocess.run(
-        [sys.executable, str(REPO / "scripts" / "closure_acceptance_harness.py"), "--runs", "1"],
-        cwd=str(REPO),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env,
-    )
     results.append(
-        {
-            "cmd": ["closure_acceptance_harness.py", "--runs", "1"],
-            "returncode": proc.returncode,
-            "ok": proc.returncode == 0,
-            "stdout": proc.stdout[-2000:],
-            "stderr": proc.stderr[-1000:],
-        }
+        _run(
+            [sys.executable, str(REPO / "scripts" / "closure_acceptance_harness.py"), "--runs", "1"],
+            env=env,
+        )
+    )
+    results.append(_run([sys.executable, str(REPO / "scripts" / "check_skill_architecture.py")]))
+    results.append(_run([sys.executable, str(REPO / "scripts" / "check_operator_independence.py")]))
+    results.append(_run([sys.executable, "-m", "evals.run_example", "--all"]))
+    results.append(
+        _run([sys.executable, str(REPO / "evals" / "harness_e2e" / "run_harness_e2e.py")], env=env)
     )
 
     ok = all(r["ok"] for r in results)
