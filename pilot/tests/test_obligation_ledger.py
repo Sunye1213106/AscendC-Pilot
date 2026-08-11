@@ -49,6 +49,24 @@ def test_collect_writes_ledger(tmp_path: Path) -> None:
         # At least the gate-settled static ids should appear verified when mapped.
         assert isinstance(items2, list)
         assert isinstance(verified, list)
+        assert validate_ledger(ledger2) == []
+
+
+def test_untrusted_verified_claim_is_only_candidate(tmp_path: Path) -> None:
+    ensure_agent_layout(tmp_path)
+    ledger = load_ledger(tmp_path)
+    row = upsert_item(
+        ledger,
+        oid="X",
+        status="done",
+        settled_by_gate="invented",
+        evidence=[{"gate_id": "invented", "run_id": "r"}],
+        reason="producer_claim",
+    )
+    assert row["status"] == "candidate"
+    assert row.get("settled_by_gate") is None
+    assert row.get("evidence") == []
+    assert validate_ledger(ledger) == []
 
 
 def test_refuse_silent_downgrade(tmp_path: Path) -> None:
@@ -62,6 +80,8 @@ def test_refuse_silent_downgrade(tmp_path: Path) -> None:
         settled_by_gate="g",
         evidence=[{"gate_id": "g", "run_id": "r"}],
         reason="seed",
+        verified_by_harness=True,
     )
     upsert_item(ledger, oid="X", status="open", reason="bad", allow_revert=False)
     assert ledger["items"]["X"]["status"] == "verified"
+    assert validate_ledger(ledger) == []

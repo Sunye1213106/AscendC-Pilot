@@ -45,8 +45,6 @@ Operator Knowledge Base
 
 ---
 
-
-
 ### Testcase Generation
 
 基于 UO 生成的算子知识：
@@ -57,6 +55,7 @@ Operator Knowledge Base
 - Solver 求解
 - Host Replay
 - Coverage Closure
+- L3 同 TilingKey 下 TilingData / Kernel 分支结果覆盖
 
 主要命令：
 
@@ -66,9 +65,25 @@ Operator Knowledge Base
 /tg-solve
 ```
 
+TG 推荐分两层运行：
+
+```text
+L2: Full TilingKey closure
+D = R ∪ E
+        ↓
+L3: Runtime branch closure
+same-key candidate
+        ↓
+real Host replay
+        ↓
+TilingData / STATE observation
+        ↓
+TD value-class + Kernel branch outcome
+```
+
+L3 **不会**把候选生成器的静态目标或 set-cover claim 当成覆盖。只有 Host replay 成功且实际返回目标 TilingKey 的观测才能结算 runtime obligation；缺少 TilingData decoder 时相关 debt 保持 open。
+
 ---
-
-
 
 ### Code Engineering
 
@@ -88,11 +103,7 @@ Operator Knowledge Base
 
 ---
 
-
-
 ## Install
-
-
 
 ### Python Environment
 
@@ -114,11 +125,7 @@ acp doctor
 
 ---
 
-
-
 ### Install Agent Host
-
-
 
 #### OpenCode
 
@@ -134,15 +141,11 @@ Linux：
 ./install.sh opencode
 ```
 
-
-
 #### Cursor
 
 ```powershell
 ./install.ps1 cursor
 ```
-
-
 
 #### Codex
 
@@ -151,8 +154,6 @@ Linux：
 ```
 
 ---
-
-
 
 ## Quick Start
 
@@ -190,13 +191,48 @@ s1Inner 最终来自哪个输入？
 这个 Kernel 分支由哪些 Host 条件控制？
 ```
 
-需要生成测试时：
+### OpenCode：全量 TilingKey + TilingData/Kernel 控制流
+
+先初始化 TG：
 
 ```text
 /tg-init
+```
+
+第一阶段先闭合全部 TilingKey。调用 `/tg-plan` 时明确要求 **level L2 / full TilingKey coverage**，随后运行：
+
+```text
 /tg-plan
 /tg-solve
 ```
+
+L2 结束的硬前置是：
+
+```text
+Declared TilingKeys = Replayed Reachable Keys ∪ Soundly Excluded Keys
+D = R ∪ E
+```
+
+然后启动第二阶段。再次调用 `/tg-plan`，明确要求 **level L3 / TilingData + Kernel branch outcome coverage**，再运行：
+
+```text
+/tg-plan
+/tg-solve
+```
+
+Pilot 会把 `level=L3` 持久化到当前 run；`tg-solve` 随后复用现有 closure 状态，对每个 reachable TilingKey 做 bounded runtime search。L3 不会重新发明一套 `td-*` workflow。
+
+L3 生成出的实际 same-key replay case 会写入 TG replay artifacts，runtime obligation 与证据写入：
+
+```text
+<operator-repo>/.ascendc-pilot/tg/closure/
+├── obligation_inventory.yaml
+├── obligation_summary.yaml
+├── branch_runtime.yaml
+└── branch_rounds/
+```
+
+如果某轮候选发生 TilingKey rewrite，它只作为诊断证据保存，**不计入目标 key 的分支覆盖**。
 
 需要代码审查时：
 
@@ -205,8 +241,6 @@ s1Inner 最终来自哪个输入？
 ```
 
 ---
-
-
 
 ## How It Works
 
@@ -246,8 +280,6 @@ docs/
 
 ---
 
-
-
 ## Project Structure
 
 ```text
@@ -275,8 +307,6 @@ AscendC-Pilot/
 └── requirements.txt
 ```
 
-
-
 ### `pilot/`
 
 AscendC-Pilot 控制面。
@@ -289,8 +319,6 @@ AscendC-Pilot 控制面。
 - Context
 - Action 调度
 - CLI
-
-
 
 ### `engines/understand-operator/`
 
@@ -332,10 +360,11 @@ Agent 可以使用的 Policy、Capability、Action 和 Workflow。
 operators/<op>/<arch>/
 ├── operator.yaml
 ├── log_protocol.yaml
-└── input_semantics.py
+├── input_semantics.py
+└── tilingdata_decoder.py        # 可选；L3 raw TD runtime decoder
 ```
 
-
+`tilingdata_decoder.py` 是 operator-side adapter，不允许把算子结构/offset 特化写进通用 TG engine。对于 FAG arch35，decoder 从当前算子源码和 BuildContext 动态推导 TilingData ABI，而不是持久化一份手写 offset 表。
 
 ### `scripts/`
 
@@ -345,8 +374,6 @@ operators/<op>/<arch>/
 - Contract Check
 - Acceptance Test
 - 开发辅助脚本
-
-
 
 ### `docs/`
 
@@ -363,8 +390,6 @@ operators/<op>/<arch>/
 - Debug 与 Benchmark
 
 ---
-
-
 
 ## Runtime Data
 
@@ -392,8 +417,6 @@ AscendC-Pilot 不把算子分析产物写回自身源码目录。
 源码仓只维护工具本身，具体算子的 KB、Cache、Replay 和运行结果属于目标算子仓。
 
 ---
-
-
 
 ## Documentation
 

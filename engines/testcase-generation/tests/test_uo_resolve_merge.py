@@ -254,10 +254,27 @@ def test_confirm_requires_audit_report(tmp_path: Path) -> None:
     from testcase_agent.io import write_yaml
 
     out = tmp_path / "gen"
+    project = tmp_path / "operator"
+    uo_root = project / ".ascendc-pilot" / "uo"
+    uo_root.mkdir(parents=True)
+    # This is a UO-side fixture, so write it directly. Going through TG's
+    # write_yaml would correctly trip the UO/TG isolation guard.
+    (uo_root / "manifest.yaml").write_text(
+        "version: 1\nauthority: legacy_test_fixture\nsource:\n  revision: fixture\n",
+        encoding="utf-8",
+    )
     (out / "init").mkdir(parents=True)
     (out / "realization").mkdir(parents=True)
     (out / "bind").mkdir(parents=True)
-    write_init_status(out, {"version": 1, "status": "pending_confirm"})
+    write_init_status(
+        out,
+        {
+            "version": 1,
+            "status": "pending_confirm",
+            "project_root": project.as_posix(),
+            "op_name": "fixture_op",
+        },
+    )
     write_yaml(out / "realization" / "uo_merge_report.yaml", {"status": "pass"})
     write_yaml(out / "realization" / "binding_lexicon.yaml", {"key_derivations": []})
     write_yaml(out / "realization" / "realization_map.yaml", {"csv_variables": [], "abstract_branches": []})
@@ -291,6 +308,7 @@ def test_confirm_requires_audit_report(tmp_path: Path) -> None:
     )
     doc = mark_init_confirmed(out, notes="ok")
     assert doc["status"] == "confirmed"
+    assert doc["kb_fingerprint_digest"]
 
 
 def test_confirm_rejects_incomplete_audit_checklist(tmp_path: Path) -> None:

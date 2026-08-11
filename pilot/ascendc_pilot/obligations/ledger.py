@@ -1,7 +1,8 @@
 """Persistent Obligation Ledger with monotonic state transitions.
 
 States: open → candidate → verified  |  open → blocked
-Verified can only be written by the harness (gate pass / settle).
+Verified can only be written by the harness (recorded gate pass / settle).
+Untrusted domain status strings are never sufficient to create VERIFIED state.
 Illegal transitions require an explicit ``reverted_by`` record.
 """
 
@@ -110,6 +111,24 @@ def can_transition(from_status: str, to_status: str) -> bool:
     return b in ALLOWED_TRANSITIONS.get(a, frozenset())
 
 
+def _verification_evidence_matches_gate(
+    settled_by_gate: str | None,
+    evidence: list[dict[str, Any]] | None,
+) -> bool:
+    """A verified row must carry evidence bound to the gate that settled it."""
+    gate = str(settled_by_gate or "").strip()
+    if not gate:
+        return False
+    for ev in evidence or []:
+        if not isinstance(ev, dict):
+            continue
+        if str(ev.get("gate_id") or "").strip() != gate:
+            continue
+        if ev.get("receipt_path") or ev.get("run_id") or ev.get("artifact_sha256"):
+            return True
+    return False
+
+
 def _append_history(
     ledger: dict[str, Any],
     *,
@@ -149,11 +168,24 @@ def upsert_item(
     reason: str = "sync",
     allow_revert: bool = False,
     reverted_by: str | None = None,
+    verified_by_harness: bool = False,
 ) -> dict[str, Any]:
-    """Insert or transition one ledger item. Returns the item row."""
+    """Insert or transition one ledger item.
+
+    ``verified_by_harness`` is intentionally explicit. A caller that merely
+    observed a domain status such as ``pass``/``done``/``resolved`` cannot
+    settle the persistent ledger. VERIFIED additionally requires gate-bound
+    evidence; otherwise the request is downgraded to ``candidate``.
+    """
     items = ledger.setdefault("items", {})
     assert isinstance(items, dict)
     target = _normalize_ledger_status(status)
+    if target == "verified" and not (
+        verified_by_harness and _verification_evidence_matches_gate(settled_by_gate, evidence)
+    ):
+        target = "candidate"
+        reason = f"unverified_claim:{reason}"
+        settled_by_gate = None
     prev = items.get(oid)
     if not isinstance(prev, dict):
         row = {
@@ -162,7 +194,7 @@ def upsert_item(
             "label_zh": label_zh or oid,
             "status": target,
             "settled_by_gate": settled_by_gate,
-            "evidence": list(evidence or []),
+            "evidence": list(evidence or []) if target == "verified" else [],
             "updated_at": _now(),
         }
         items[oid] = row
@@ -172,16 +204,17 @@ def upsert_item(
             from_status="(new)",
             to_status=target,
             reason=reason,
-            evidence=evidence,
+            evidence=evidence if target == "verified" else None,
         )
         return row
 
     from_status = _normalize_ledger_status(str(prev.get("status") or "open"))
     if from_status == target:
-        # Refresh metadata without a transition.
-        if settled_by_gate:
+        # Refresh metadata without a transition. Do not attach verification
+        # metadata to non-verified rows.
+        if target == "verified" and settled_by_gate:
             prev["settled_by_gate"] = settled_by_gate
-        if evidence:
+        if target == "verified" and evidence:
             prev["evidence"] = list(evidence)
         if label_zh:
             prev["label_zh"] = label_zh
@@ -197,34 +230,40 @@ def upsert_item(
                 from_status=from_status,
                 to_status=target,
                 reason=f"refused:{reason}",
-                evidence=evidence,
+                evidence=evidence if target == "verified" else None,
             )
             return prev
         # Explicit revert path (e.g. gate rolled back).
         prev["status"] = target
         prev["reverted_by"] = reverted_by or reason
         prev["updated_at"] = _now()
-        if settled_by_gate is not None:
+        if target == "verified" and settled_by_gate is not None:
             prev["settled_by_gate"] = settled_by_gate
-        if evidence:
+        elif target != "verified":
+            prev["settled_by_gate"] = None
+        if target == "verified" and evidence:
             prev["evidence"] = list(evidence)
+        elif target != "verified":
+            prev["evidence"] = []
         _append_history(
             ledger,
             oid=oid,
             from_status=from_status,
             to_status=target,
             reason=reason,
-            evidence=evidence,
+            evidence=evidence if target == "verified" else None,
             reverted_by=prev["reverted_by"],
         )
         return prev
 
     prev["status"] = target
     prev["updated_at"] = _now()
-    if settled_by_gate is not None:
+    if target == "verified" and settled_by_gate is not None:
         prev["settled_by_gate"] = settled_by_gate
-    if evidence:
-        # Append evidence pointers (dedupe by receipt_path+gate_id).
+    elif target != "verified":
+        prev["settled_by_gate"] = None
+    if target == "verified" and evidence:
+        # Append evidence pointers (dedupe by receipt_path+gate_id+run_id).
         existing = list(prev.get("evidence") or [])
         seen = {
             (str(e.get("receipt_path") or ""), str(e.get("gate_id") or ""), str(e.get("run_id") or ""))
@@ -239,6 +278,8 @@ def upsert_item(
                 existing.append(e)
                 seen.add(key)
         prev["evidence"] = existing
+    elif target != "verified":
+        prev["evidence"] = []
     if label_zh:
         prev["label_zh"] = label_zh
     _append_history(
@@ -247,7 +288,7 @@ def upsert_item(
         from_status=from_status,
         to_status=target,
         reason=reason,
-        evidence=evidence,
+        evidence=evidence if target == "verified" else None,
     )
     return prev
 
@@ -266,10 +307,10 @@ def sync_from_collected(
 ) -> dict[str, Any]:
     """Merge freshly collected obligations into the persistent ledger.
 
-    - New ids start at open/candidate/verified per collected status.
-    - verified from collection (gate settled) advances ledger forward.
-    - If collection says open but ledger says verified, keep verified unless
-      the settling gate disappeared from passed_gates (explicit revert).
+    A collected row may request VERIFIED only when it names a gate that is
+    already present in Pilot ``passed_gates``. Other closed-looking domain
+    statuses are retained as ``candidate`` until a verifier/gate settles them.
+    If a previously settling gate disappears, the row is explicitly reverted.
     """
     from ascendc_pilot.state import load_state
 
@@ -283,12 +324,15 @@ def sync_from_collected(
         if not oid:
             continue
         status = map_collect_status_to_ledger(str(row.get("status") or "open"))
-        gate = row.get("settled_by_gate")
+        gate = str(row.get("settled_by_gate") or "").strip()
+        harness_verified = bool(status == "verified" and gate and gate in passed_gates)
+        if status == "verified" and not harness_verified:
+            status = "candidate"
         evidence: list[dict[str, Any]] = []
-        if gate and status == "verified":
+        if harness_verified:
             evidence.append(
                 {
-                    "gate_id": str(gate),
+                    "gate_id": gate,
                     "run_id": run_id or str((state or {}).get("run_id") or ""),
                     "receipt_path": "",  # filled by callers when known
                 }
@@ -305,7 +349,7 @@ def sync_from_collected(
                     status=status,
                     kind=str(row.get("kind") or "static"),
                     label_zh=str(row.get("label_zh") or oid),
-                    settled_by_gate=str(gate) if gate else None,
+                    settled_by_gate=gate or None,
                     evidence=evidence or None,
                     reason="gate_absent_revert",
                     allow_revert=True,
@@ -320,9 +364,10 @@ def sync_from_collected(
             status=status,
             kind=str(row.get("kind") or "static"),
             label_zh=str(row.get("label_zh") or oid),
-            settled_by_gate=str(gate) if gate else None,
+            settled_by_gate=gate or None,
             evidence=evidence or None,
             reason="collect_sync",
+            verified_by_harness=harness_verified,
         )
 
     save_ledger(project_root, ledger)
@@ -376,13 +421,16 @@ def validate_ledger(ledger: dict[str, Any]) -> list[str]:
         st = str(row.get("status") or "")
         if st not in LEDGER_STATUSES:
             errors.append(f"{oid}: invalid status {st!r}")
-        for ev in row.get("evidence") or []:
+        evidence = list(row.get("evidence") or [])
+        for ev in evidence:
             if not isinstance(ev, dict):
                 errors.append(f"{oid}: evidence entry not a mapping")
-                continue
-            # receipt_path may be empty early; gate_id or run_id should exist when verified.
-            if st == "verified" and not (ev.get("gate_id") or ev.get("receipt_path") or ev.get("run_id")):
-                errors.append(f"{oid}: verified item evidence lacks gate_id/receipt/run_id")
+        if st == "verified":
+            gate = str(row.get("settled_by_gate") or "").strip()
+            if not gate:
+                errors.append(f"{oid}: verified item lacks settled_by_gate")
+            if not _verification_evidence_matches_gate(gate, evidence):
+                errors.append(f"{oid}: verified item lacks gate-bound evidence")
     # History transitions must be legal or marked reverted/refused.
     for i, h in enumerate(ledger.get("history") or []):
         if not isinstance(h, dict):
@@ -390,7 +438,7 @@ def validate_ledger(ledger: dict[str, Any]) -> list[str]:
             continue
         fr, to = str(h.get("from") or ""), str(h.get("to") or "")
         reason = str(h.get("reason") or "")
-        if fr == "(new)" or reason.startswith("refused:"):
+        if fr == "(new)" or reason.startswith("refused:") or reason.startswith("unverified_claim:"):
             continue
         if h.get("reverted_by"):
             continue

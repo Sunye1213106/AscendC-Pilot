@@ -2,6 +2,8 @@
 
 Uses UoQuery (via open_query) to gather a bounded graph neighborhood plus
 domain references and optional prior-failure receipts. Never loads the full KB.
+The profile token budget is enforced across the final model-facing bundle, not
+only across graph rows.
 """
 
 from __future__ import annotations
@@ -46,6 +48,118 @@ def _truncate_to_budget(items: list[Any], budget: int) -> list[Any]:
         out.append(item)
         used += cost
     return out
+
+
+def _model_payload(slice_doc: dict[str, Any]) -> dict[str, Any]:
+    """Fields that are actually useful to the actor and count against budget."""
+    return {
+        "task": slice_doc.get("task"),
+        "graph_slice": slice_doc.get("graph_slice"),
+        "evidence": slice_doc.get("evidence"),
+        "references": slice_doc.get("references"),
+        "prior_failure": slice_doc.get("prior_failure"),
+        "excluded": slice_doc.get("excluded"),
+        "query_errors": slice_doc.get("query_errors"),
+    }
+
+
+def _fit_slice_doc_to_budget(slice_doc: dict[str, Any], budget: int) -> list[str]:
+    """Mutate optional payload until the final model-facing bundle fits.
+
+    Priority is deliberate:
+    1. Keep task/evidence routing metadata.
+    2. Trim long reference bodies before dropping graph evidence.
+    3. Trim graph rows from the largest slice.
+    4. Drop prior-failure context last.
+
+    Returns human-readable trim receipts. Core routing metadata is never silently
+    removed; if it alone exceeds the budget, ``budget_core_overflow`` is emitted.
+    """
+    receipts: list[str] = []
+    budget = max(256, int(budget))
+
+    def current() -> int:
+        return _estimate_tokens(_model_payload(slice_doc))
+
+    references = slice_doc.get("references")
+    if not isinstance(references, list):
+        references = []
+        slice_doc["references"] = references
+
+    # First progressively shrink reference text while retaining paths/status.
+    while current() > budget:
+        candidates = [
+            (idx, ref)
+            for idx, ref in enumerate(references)
+            if isinstance(ref, dict) and len(str(ref.get("text") or "")) > 400
+        ]
+        if not candidates:
+            break
+        idx, ref = max(candidates, key=lambda item: len(str(item[1].get("text") or "")))
+        text = str(ref.get("text") or "")
+        new_len = max(400, len(text) // 2)
+        ref["text"] = text[:new_len] + "\n…(budget-truncated)…"
+        receipts.append(f"reference_truncated:{idx}:{len(text)}->{new_len}")
+
+    # Then remove optional reference bodies entirely, preserving metadata.
+    while current() > budget:
+        candidates = [
+            (idx, ref)
+            for idx, ref in enumerate(references)
+            if isinstance(ref, dict) and ref.get("text")
+        ]
+        if not candidates:
+            break
+        idx, ref = candidates[-1]
+        ref.pop("text", None)
+        ref["status"] = "budget_omitted"
+        receipts.append(f"reference_body_omitted:{idx}")
+
+    # Graph is evidence-rich, so only trim rows after references are exhausted.
+    graph = slice_doc.get("graph_slice")
+    if not isinstance(graph, list):
+        graph = []
+        slice_doc["graph_slice"] = graph
+    while current() > budget:
+        row_lists: list[tuple[int, list[Any]]] = []
+        for idx, part in enumerate(graph):
+            if isinstance(part, dict) and isinstance(part.get("rows"), list) and part["rows"]:
+                row_lists.append((idx, part["rows"]))
+        if not row_lists:
+            break
+        idx, rows = max(row_lists, key=lambda item: _estimate_tokens(item[1]))
+        removed = rows.pop()
+        receipts.append(f"graph_row_omitted:{idx}:{_estimate_tokens(removed)}")
+
+    # Evidence seed lists are routing hints, not authoritative facts; compact them
+    # before discarding prior-failure information.
+    evidence = slice_doc.get("evidence")
+    if isinstance(evidence, list):
+        while current() > budget:
+            changed = False
+            for item in reversed(evidence):
+                if isinstance(item, dict) and isinstance(item.get("seeds"), list) and len(item["seeds"]) > 1:
+                    item["seeds"].pop()
+                    changed = True
+                    receipts.append("evidence_seed_omitted")
+                    break
+            if not changed:
+                break
+
+    if current() > budget and slice_doc.get("prior_failure") is not None:
+        slice_doc["prior_failure"] = None
+        receipts.append("prior_failure_omitted")
+
+    # Query errors can include long exception strings; preserve the fact that an
+    # error occurred while bounding its diagnostic payload.
+    errors = slice_doc.get("query_errors")
+    if isinstance(errors, list) and current() > budget:
+        slice_doc["query_errors"] = [str(e)[:160] for e in errors[:4]]
+        receipts.append("query_errors_compacted")
+
+    if current() > budget:
+        receipts.append(f"budget_core_overflow:{current()}>{budget}")
+    return receipts
 
 
 def _repo_root_from_project(project_root: Path) -> Path:
@@ -241,7 +355,8 @@ def _load_references(repo: Path, refs: tuple[str, ...]) -> list[dict[str, str]]:
             out.append({"path": rel, "status": "missing"})
             continue
         text = path.read_text(encoding="utf-8")
-        # Cap each reference to ~800 tokens of content.
+        # Per-reference cap prevents one document from dominating before the
+        # final bundle-level budget pass.
         max_chars = 3200
         out.append(
             {
@@ -298,7 +413,8 @@ def compile_context_slice(
 
     ensure_agent_layout(project_root)
     repo = Path(repo_root).resolve() if repo_root else _repo_root_from_project(project_root)
-    state = load_state(project_root) if isinstance(load_state(project_root), dict) else {}
+    loaded_state = load_state(project_root)
+    state = loaded_state if isinstance(loaded_state, dict) else {}
     task = {
         "action_id": action_id,
         "workflow_id": workflow_id or state.get("workflow_id"),
@@ -366,14 +482,10 @@ def compile_context_slice(
         "query_errors": query_errors,
         "token_budget": profile.token_budget,
     }
-    slice_doc["token_estimate"] = _estimate_tokens(
-        {
-            "task": task,
-            "graph_slice": graph_slice,
-            "references": [{"path": r.get("path"), "n": len(r.get("text") or "")} for r in references],
-            "prior_failure": prior,
-        }
-    )
+    trim_receipts = _fit_slice_doc_to_budget(slice_doc, profile.token_budget)
+    slice_doc["budget_receipts"] = trim_receipts
+    slice_doc["token_estimate"] = _estimate_tokens(_model_payload(slice_doc))
+    slice_doc["budget_ok"] = slice_doc["token_estimate"] <= profile.token_budget
 
     out_dir = context_root(project_root) / "slices"
     out_dir.mkdir(parents=True, exist_ok=True)
