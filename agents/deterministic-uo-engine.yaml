@@ -1,7 +1,7 @@
 id: deterministic-uo-engine
 version: 1
 name_zh: UO deterministic engine
-# Engine identity for authorize/write_scopes only ? not an LLM agent.
+# Engine identity for authorize/write_scopes only — not an LLM agent.
 # compose_runtime skips kind=deterministic_engine when emitting host agent MD.
 kind: deterministic_engine
 role: deterministic_engine
@@ -10,11 +10,13 @@ description: UO CodeMap deterministic engine
 skill_ids: [operator-analysis]
 read_scopes:
 - uo/**
+- ../uo/**
 - runs/**
 - context/**
 - skills/operator-analysis/**
 write_scopes:
 - uo/**
+- ../uo/**
 - runs/**/actions/**
 - context/pilot_params.yaml
 forbidden:
