@@ -120,8 +120,8 @@ Current Action Lease
 
 * **写 ⊆ 读**：每个 write path 自动并入 read paths；
 * **Actor 绑定**：非 primary 的读写须匹配 `lease.actor_id` / `action_id` / `run_id`；
-* **Primary 不写正式产物**：`ir/`、`summary/`、`checks/`、`review/`、TG formal 路径须由声明的 Producer / Referee / Engine 写入；
-* **Role 策略**：`producer`/`controller`/`deterministic_engine` 可写 formal；`referee`/`readonly_reviewer` 仅 review；`deterministic_checker` 仅 checks；`readonly_analyst` 不可写。
+* **Primary 不写正式产物**：`ascendc-pilot` 即使角色为 `controller`，仍受 `PRIMARY_PROTECTED_WRITE` 等 identity 限制；`ir/`、`summary/`、`checks/`、`review/`、TG formal 路径须由声明的 Producer / Referee / Engine 写入。
+* **Role 只是上限，不是最终权限**：`producer` / `deterministic_engine` 可在 Action 合同允许时写 formal；`referee` / `readonly_reviewer` 只写 review；`deterministic_checker` 仅 checks；`readonly_analyst` 不写 formal。`controller` 角色可能声明 formal-write capability，但 Primary identity 仍被额外保护。最终权限以 **Role ∩ Agent ceiling ∩ Action Lease ∩ Workflow roots ∩ identity-specific policy** 的交集为准。
 
 Agent YAML 的 `forbidden` 标签有确定性含义：
 
@@ -212,7 +212,7 @@ acp start
 | --- | --- |
 | `acp start` | 启动或复用 run；失败态逃生口 |
 | `acp next` | 下一 Action / 恢复提示 |
-| `acp run-action` | **唯一**正式执行入口：prepare 或 `--finalize` |
+| `acp run-action` | **workflow run 内**唯一正式执行入口：prepare 或 `--finalize`（显式 developer CLI / engine package 命令不经此路径，也不推进 Pilot 状态） |
 | `acp authorize` | Host plugin 在 tool 调用前的授权裁决 |
 | `acp advance` / `complete` | 仅 gate 通过后推进或结束 |
 | `acp rework` / `abort` / `block` | 沿声明边恢复、终止或收敛 |

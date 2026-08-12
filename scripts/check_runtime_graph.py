@@ -20,6 +20,59 @@ FORBIDDEN_PROD_MARKERS = re.compile(
     r"stage_cbm_scope|cbm_scope|cbm_db)\b"
 )
 CBM_ALLOW = ("docs/history/",)
+# Active-product vocabulary bans (deny-lists / history docs exempt via path rules).
+BANNED_TOKEN_RE = re.compile(
+    r"(?i)\b(csv_consumer(?:_root)?|scope_confirm\w*|stage_cbm)\b"
+)
+# Silent architecture fallback patterns (not legitimate arch string uses).
+ARCH35_FALLBACK_PATTERNS = (
+    re.compile(r"""or\s+["']arch35["'](?!\s+in\b)"""),
+    re.compile(r"""default\s*=\s*["']arch35["']"""),
+    re.compile(r"""(?m)^\s*return\s+["']arch35["']\s*$"""),
+)
+
+
+def _scan_banned_production_symbols(repo: Path, errors: list[str]) -> None:
+    scan_roots = [
+        repo / "pilot",
+        repo / "engines",
+        repo / "agents",
+        repo / "prompts",
+        repo / "skills",
+        repo / "scripts",
+    ]
+    for root in scan_roots:
+        if not root.is_dir():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".py", ".md", ".yaml", ".yml", ".json", ".ts", ".sh", ".ps1"}:
+                continue
+            rel = path.relative_to(repo).as_posix()
+            if any(rel.startswith(a) for a in CBM_ALLOW):
+                continue
+            if "_pytest_tmp" in rel or "/tests/" in f"/{rel}" or rel.startswith("evals/"):
+                continue
+            if path.name == "check_runtime_graph.py":
+                continue
+            # Deny-lists that mention banned tokens to block them are allowed.
+            if rel.replace("\\", "/").endswith(
+                ("authorize/__init__.py", "ascendc_pilot/uo_scope.py")
+            ):
+                continue
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if BANNED_TOKEN_RE.search(body):
+                errors.append(
+                    f"banned token (csv_consumer/scope_confirm/stage_cbm) in production path: {rel}"
+                )
+            for pat in ARCH35_FALLBACK_PATTERNS:
+                if pat.search(body):
+                    errors.append(f"silent arch35 fallback pattern {pat.pattern!r} in {rel}")
+                    break
 
 
 def _main() -> int:
@@ -178,6 +231,8 @@ def _main() -> int:
                 continue
             if cbm_re.search(body):
                 errors.append(f"CBM marker in production path: {rel}")
+
+    _scan_banned_production_symbols(REPO, errors)
 
     if errors:
         print(f"check_runtime_graph: {len(errors)} issue(s)")

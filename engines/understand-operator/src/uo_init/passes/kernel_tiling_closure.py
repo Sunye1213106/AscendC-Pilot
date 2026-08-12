@@ -136,7 +136,7 @@ def finalize_kernel_tiling_closure(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     if not root.is_dir():

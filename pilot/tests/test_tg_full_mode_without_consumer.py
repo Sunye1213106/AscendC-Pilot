@@ -22,7 +22,7 @@ def test_is_tilingkey_full_detects_mode():
 def test_init_intent_defaults_to_tilingkey(tmp_path: Path):
     from ascendc_pilot.actions.engines import _run_tg_init_intent
 
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch35")
     (uo_root(tmp_path) / "manifest.yaml").write_text(
         "op_name: demo\narchitecture: arch35\n", encoding="utf-8"
     )
@@ -38,7 +38,7 @@ def test_init_intent_defaults_to_tilingkey(tmp_path: Path):
 def test_plan_scope_without_consumer(tmp_path: Path):
     from ascendc_pilot.actions.engines import _run_tg_init_intent, _run_tg_plan_scope
 
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch35")
     (uo_root(tmp_path) / "manifest.yaml").write_text(
         "op_name: demo\narchitecture: arch35\n", encoding="utf-8"
     )

@@ -20,7 +20,14 @@ def _load_host_view(ws: W.Workspace | None = None) -> dict[str, Any]:
         from testcase_agent import product_uo
         import os
 
-        arch = (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+        arch = None
+        for _name in ("UO_ARCH", "ASCENDC_ARCH"):
+            _raw = (os.environ.get(_name) or "").strip()
+            if _raw:
+                arch = _raw
+                break
+        if not arch:
+            raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
         doc = product_uo.view(ws.root, "ir/tg_host_view.yaml", architecture=arch)
         return doc if isinstance(doc, dict) else {}
     except Exception:

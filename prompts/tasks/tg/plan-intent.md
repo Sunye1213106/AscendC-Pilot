@@ -1,22 +1,24 @@
 <task>
-Determine the exact TilingKey target selector for this TG run. Do not construct cases, run replay, or decide reachability.
+确定本轮 TG 的精确 TilingKey 目标选择器。不构造用例、不跑 replay、不断言可达性。
 </task>
 
 <context>
 - Project: `<PROJECT_ROOT>`
 - TG: `<TG_ROOT>`
-- Current operator/architecture come from Pilot context and `.uo`.
+
+算子/架构来自 Pilot 与 `.uo`。Plan 只冻结“要覆盖什么”；是否可达由后续 Solve + Replay/引理决定。
+方法细节见打包 Skill `testcase-generation`。
 </context>
 
 <instructions>
-1. Preserve any explicit packed TilingKey list the user supplied as `target_mode: explicit_keys`.
-2. Preserve any requested TilingKey dimension/value filter as `target_mode: dimension_filter`.
-3. If the user did not specify a target, choose `target_mode: all_declared`; this means T equals the complete current Kernel-declared domain D.
-4. Do not infer unreachable keys, derive 19-dimensional formulas, or call global SAT backend in planning.
-5. Surface contradictory or ambiguous target requests instead of silently broadening them.
-6. Follow the packaged `testcase-generation` domain skill; do not assume a Host-specific physical Skill path.
+1. 用户已给明确 TilingKey 列表 → `target_mode: explicit_keys`。
+2. 用户已给维度/取值过滤 → `target_mode: dimension_filter`。
+3. 用户未指定目标 → `target_mode: all_declared`（T = 当前 Kernel 声明域 D 全集）。
+4. 不要推断不可达 key、不要推导 19 维公式、不要在规划阶段调用全局 SAT。
+5. 目标请求矛盾或歧义时显式标出，禁止静默扩大范围。
 </instructions>
 
 <output>
-Return only the planning intent needed to build `target_set.yaml`: target mode, explicit keys or dimension filter, and any blocking ambiguity. The later deterministic `plan_build` validates T ⊆ D and freezes its hash.
+只返回构建 `target_set.yaml` 所需的 planning intent：target mode、显式 keys 或维度过滤、以及任何阻塞性歧义。
+后续确定性 `plan_build` 会校验 T ⊆ D 并冻结 hash。
 </output>

@@ -151,8 +151,10 @@ def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:
     steps = primary_interactive_steps("human_confirm", tmp_path, {})
     joined = "\n".join(steps)
     assert "uo-scope" not in joined
-    assert "AskQuestion: confirm | rework | stop" in joined
+    assert "AskQuestion" in joined or "question UI" in joined.lower()
+    assert "confirm" in joined
     assert "human_confirm --finalize" in joined
+    assert "acp answer" in joined
 
 
 def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Path) -> None:
@@ -164,10 +166,14 @@ def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Pa
             "action_id": "plan_approve",
             "execution_mode": "primary_interactive",
             "interactive_steps": ["acp uo-scope scan"],
+            "human_interaction_request": {"request_id": "req-test"},
         },
     )
     result = actions.prepare_action(tmp_path, "plan_approve")
     assert result["ok"] is True
     assert result["dispatch_task"] is False
-    assert "uo-scope" not in "\n".join(result["interactive_steps"])
-    assert "AskQuestion: approve | rework | stop" in "\n".join(result["interactive_steps"])
+    joined = "\n".join(result["interactive_steps"])
+    assert "uo-scope" not in joined
+    assert "approve" in joined
+    assert "plan_approve --finalize" in joined
+    assert "acp answer" in joined

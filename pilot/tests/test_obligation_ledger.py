@@ -25,7 +25,7 @@ def test_transitions_monotonic() -> None:
 
 
 def test_collect_writes_ledger(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch0")
     start_workflow(tmp_path, "uo-init", intent="t", op_name="toy", architecture="arch0")
     items = collect_obligations(tmp_path, "uo-init")
     assert isinstance(items, list)
@@ -53,7 +53,7 @@ def test_collect_writes_ledger(tmp_path: Path) -> None:
 
 
 def test_untrusted_verified_claim_is_only_candidate(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch35")
     ledger = load_ledger(tmp_path)
     row = upsert_item(
         ledger,
@@ -70,7 +70,7 @@ def test_untrusted_verified_claim_is_only_candidate(tmp_path: Path) -> None:
 
 
 def test_refuse_silent_downgrade(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch0")
     start_workflow(tmp_path, "uo-init", intent="t", op_name="toy", architecture="arch0")
     ledger = load_ledger(tmp_path)
     upsert_item(

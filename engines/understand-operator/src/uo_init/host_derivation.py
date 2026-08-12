@@ -25,6 +25,7 @@ as ``unresolved`` rather than failing the export.
 """
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import multiprocessing as mp
 import pickle
 import re
@@ -1912,7 +1913,7 @@ def derive_host_fields(
         from uo_init import derive_cache
 
         op_dir = getattr(spec, "op_dir", None) or ""
-        arch = getattr(spec, "arch_dir", None) or doc.architecture or "arch35"
+        arch = require_architecture(getattr(spec, "arch_dir", None) or doc.architecture)
         bundle_fp = derive_cache.bundle_fingerprint(bundle) if targets else ""
         cached_by_name: dict[str, dict[str, Any]] = {}
         miss_targets = []

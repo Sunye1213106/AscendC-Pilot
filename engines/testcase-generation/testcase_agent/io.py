@@ -44,7 +44,9 @@ def output_root(project_root: Path, op_name: str, *, arch: str | None = None) ->
 
         return tg_root(project_root, arch=arch)
     except Exception:
-        arch_name = (arch or "").strip() or "arch35"
+        arch_name = (arch or "").strip()
+        if not arch_name:
+            raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
         return project_root / ".ascendc-pilot" / arch_name / "tg"
 
 

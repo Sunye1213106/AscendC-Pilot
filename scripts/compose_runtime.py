@@ -54,6 +54,7 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 )
 
 # Slash / discovery entry metadata. Body is generated from Spec; no skills/workflows source.
+# Editorial discovery prose only. cognitive_skill_id / requires_* live on Workflow Spec.
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "uo-init": {
         "description": (
@@ -65,7 +66,6 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "通用代码图谱索引。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
-        "skill_id": "operator-analysis",
     },
     "uo-update": {
         "description": (
@@ -73,7 +73,6 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "CodeMap 关系、校验完整性并输出差异摘要。用户要求刷新知识库、更新已有 UO/CodeMap "
             "或查看源码变更对 CodeMap 的影响时使用；禁止改用外部 MCP 重新索引。"
         ),
-        "skill_id": "operator-analysis",
     },
     "uo-query": {
         "description": (
@@ -81,7 +80,6 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "TilingData、Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问知识库内容、"
             "已有 UO、某个 KEY/字段/路径或 CodeMap 完整性时使用。"
         ),
-        "skill_id": "operator-analysis",
     },
     "uo-investigate": {
         "description": (
@@ -89,14 +87,12 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "deterministic engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
             "或要改进 analyzer 时使用。"
         ),
-        "skill_id": "operator-analysis",
     },
     "ce-review": {
         "description": (
             "基于 KB 的代码审查 / code review / 查 bug。用户要审查算子代码时加载。"
             "Pilot 管阶段；加载后执行 acp start ce-review。"
         ),
-        "skill_id": "code-review",
     },
     "tg-init": {
         "description": (
@@ -104,14 +100,12 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "tilingkey 绑定时加载。默认 tilingkey_full_coverage（无需 CSV）。"
             "Pilot 管阶段；加载后 acp start tg-init。"
         ),
-        "skill_id": "testcase-generation",
     },
     "tg-plan": {
         "description": (
             "制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey；"
             "指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。"
         ),
-        "skill_id": "testcase-generation",
     },
     "tg-solve": {
         "description": (
@@ -119,14 +113,12 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "增长符合预期则轮内对 reject 证源码引理扩 E；不符合则基于已发现 key+源码定向再构造；"
             "直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。"
         ),
-        "skill_id": "testcase-generation",
     },
     "operator": {
         "description": (
             "可选助手：列出可用 Pilot workflow entry，或把 /uo-init 等 slash 转给 acp route。"
             "自然语言意图请直接加载对应 entry，不要依赖本入口做口语路由。"
         ),
-        "skill_id": "",
     },
 }
 
@@ -249,6 +241,32 @@ def _read_policy(repo: Path, pid: str) -> str:
     return p.read_text(encoding="utf-8") if p.is_file() else ""
 
 
+def _start_requirements_line(repo: Path) -> str:
+    """Project Spec requires_project / requires_architecture into model-facing prose."""
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows import (  # noqa: WPS433
+        workflows_needing_architecture,
+        workflows_needing_project,
+    )
+
+    arch = "/".join(sorted(workflows_needing_architecture()))
+    proj = "/".join(sorted(workflows_needing_project()))
+    return (
+        f"11. `{arch}` 启动必须同时有 `--project`（算子目录）与 `--architecture`（仓内 `arch*`）。"
+        f"缺一 → AskQuestion（arch 选项只来自扫描结果，禁止编造）；齐了 → "
+        f"`acp start … --project … --architecture …` 一次启动。"
+        f"需要算子目录的 workflow：`{proj}`。"
+        f"所有后续 `acp *` 带同一 `--project`；`.ascendc-pilot/` 只允许在该算子目录下。"
+    )
+
+
+def _cognitive_skill_for(repo: Path, wid: str) -> str:
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows import cognitive_skill_id  # noqa: WPS433
+
+    return cognitive_skill_id(wid)
+
+
 def _read_invariant_pack(repo: Path) -> str:
     """Concatenate short invariant markdown for model context (not full POLICY.md)."""
     root = repo / "pilot" / "policies" / "invariants"
@@ -256,11 +274,22 @@ def _read_invariant_pack(repo: Path) -> str:
         "Follow pilot policies (short invariants). Full text: `pilot/policies/*/POLICY.md`.",
         "",
     ]
+    start_line = _start_requirements_line(repo)
     for _label, fname in COMPOSE_INVARIANT_FILES:
         path = root / fname
-        if path.is_file():
-            parts.append(path.read_text(encoding="utf-8").rstrip())
-            parts.append("")
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8").rstrip()
+        if fname == "control-invariants.md":
+            # Spec is authority for which workflows need project/architecture.
+            text = re.sub(
+                r"(?m)^11\..*$",
+                start_line,
+                text,
+                count=1,
+            )
+        parts.append(text)
+        parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -415,9 +444,13 @@ def check_skill_action_markers(repo: Path) -> list[str]:
         if not entry or not str(entry.get("description") or "").strip():
             errors.append(f"SKILL_ENTRY_MISSING {wid}: add WORKFLOW_ENTRIES description")
             continue
-        skill_id = str(entry.get("skill_id") or "").strip()
+        skill_id = str(meta.get("cognitive_skill_id") or "").strip()
         if skill_id and skill_id not in COGNITIVE_SKILL_IDS:
-            errors.append(f"SKILL_ENTRY_BAD_SKILL {wid}: unknown skill_id {skill_id!r}")
+            errors.append(f"SKILL_ENTRY_BAD_SKILL {wid}: unknown cognitive_skill_id {skill_id!r}")
+        if "skill_id" in entry:
+            errors.append(
+                f"SKILL_ENTRY_LEGACY_SKILL_ID {wid}: skill_id moved to Spec cognitive_skill_id"
+            )
         expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
         if not expected:
             errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: Spec has no actions")
@@ -659,8 +692,7 @@ def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
 
 
 def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any]) -> str:
-    entry = WORKFLOW_ENTRIES.get(wid) or {}
-    skill_id = str(entry.get("skill_id") or "")
+    skill_id = str(meta.get("cognitive_skill_id") or "").strip()
     body = _entry_skill_shell(wid, skill_id=skill_id)
     body = _replace_actions_table(body, meta)
     # Short invariant pack only (full POLICY.md stays under pilot/policies/ for humans).
@@ -786,6 +818,12 @@ def _opencode_bash_permission() -> dict[str, str]:
     }
 
 
+def _project_primary_description(repo: Path, description: str) -> str:
+    """No-op: start requirements live only in Spec-projected invariant pack item 11."""
+    del repo
+    return str(description or "")
+
+
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "") -> str:
     skills = repo / "skills"
     aid = agent_meta.get("id", "agent")
@@ -810,9 +848,10 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
     # Short invariant pack for ALL agents (same pack as workflow skills).
     inv_pack = _read_invariant_pack(repo)
+    desc = _project_primary_description(repo, str(agent_meta.get("description") or aid))
     front: dict[str, Any] = {
         "name": aid,
-        "description": agent_meta.get("description") or aid,
+        "description": desc,
     }
     bash_perm = _opencode_bash_permission()
     if agent_meta.get("mode") == "primary":
@@ -834,13 +873,14 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "grep": "allow",
         }
 
+    # Role stays thin: controller brief only; start rules live in composed invariants.
     body = f"""# Agent: {aid}
 
 ## Role
 
 You are a `{role}` for AscendC-Pilot.
 
-{agent_meta.get('description') or ''}
+{desc}
 
 ## Boundaries
 

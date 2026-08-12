@@ -15,8 +15,8 @@ from ascendc_pilot.state import start_workflow
 def test_readonly_agent_cannot_write_state(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "uo-query", phase="answer", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     target = agent_root(op) / "state" / "workflow.yaml"
     verdict = authorize(
         op,
@@ -32,8 +32,8 @@ def test_readonly_agent_cannot_write_state(tmp_path: Path) -> None:
 def test_uo_query_cannot_write_uo_product(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "uo-query", phase="answer", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     target = agent_root(op) / "uo" / "summary" / "overview.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     verdict = authorize(
@@ -53,8 +53,8 @@ def test_uo_query_cannot_write_uo_product(tmp_path: Path) -> None:
 def test_producer_write_outside_lease_denied(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "tg-solve", phase="lemma", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
     issue_action_lease(
         op,
         action_id="lemma_mine",
@@ -81,8 +81,8 @@ def test_producer_write_outside_lease_denied(tmp_path: Path) -> None:
 def test_producer_write_inside_lease_allowed(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "tg-solve", phase="lemma", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
     rel = "runs/x/actions/lemma_mine/parts/part_001.yaml"
     issue_action_lease(
         op,
@@ -113,8 +113,8 @@ def test_producer_write_inside_lease_allowed(tmp_path: Path) -> None:
 def test_referee_cannot_write_producer_path(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "tg-solve", phase="audit", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "tg-solve", phase="audit", force_phase=True, architecture="arch35")
     target = agent_root(op) / "runs" / "x" / "actions" / "lemma_mine" / "parts" / "part_001.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     verdict = authorize(
@@ -135,8 +135,8 @@ def test_referee_cannot_write_producer_path(tmp_path: Path) -> None:
 def test_unknown_tool_denied_for_pilot_agent(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "uo-query", phase="answer", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     verdict = authorize(
         op,
         tool="filesystem_write_v2",
@@ -150,8 +150,8 @@ def test_unknown_tool_denied_for_pilot_agent(tmp_path: Path) -> None:
 def test_stale_lease_run_mismatch_denied(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "tg-solve", phase="lemma", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
     issue_action_lease(
         op,
         action_id="lemma_mine",
@@ -180,8 +180,8 @@ def test_stale_lease_run_mismatch_denied(tmp_path: Path) -> None:
 def test_declare_workflow_passed_bash_forbidden(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "uo-query", phase="answer", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     verdict = authorize(
         op,
         tool="bash",

@@ -41,19 +41,21 @@ def _select_legacy_csv_mode(root: Path) -> None:
 def test_tg_contract_build_rejects_removed_csv_consumer_mode(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root)
+    ensure_agent_layout(root, arch="arch35")
     _seed_manifest(root)
     _select_legacy_csv_mode(root)
     result = invoke_engine(root, "tg-init", "contract_build", ctx={"op_name": "synth_tg"})
     assert result.get("ok") is False
-    assert "csv_consumer" in str(result.get("error") or "")
+    assert "legacy CSV" in str(result.get("error") or "") or "tilingkey_full_coverage" in str(
+        result.get("error") or ""
+    )
 
 
 def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
     """plan_build must fail without consumer/KB rather than write pilot_plan_build.yaml."""
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root)
+    ensure_agent_layout(root, arch="arch35")
     _seed_manifest(root)
     result = invoke_engine(
         root,
@@ -70,7 +72,7 @@ def test_tg_removed_solve_action_removed(tmp_path: Path) -> None:
     """Legacy solve / cover_confirm / bind_merge / mid_nest were deleted with csv_consumer."""
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root)
+    ensure_agent_layout(root, arch="arch35")
     _seed_manifest(root)
     legacy_action = "z" + "3_solve"
     result = invoke_engine(root, "tg-solve", legacy_action, ctx={"op_name": "synth_tg"})
@@ -106,7 +108,7 @@ def test_tg_init_agents_omit_dead_csv_contract_producer() -> None:
 def test_plan_build_contract_rejects_empty_dir(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root)
+    ensure_agent_layout(root, arch="arch35")
     (tg_root(root) / "plan").mkdir(parents=True, exist_ok=True)
     checked = _check_output_contract(root, "plan-build-v1")
     assert checked.get("ok") is False
@@ -129,7 +131,7 @@ def test_start_persists_pilot_params(tmp_path: Path) -> None:
         op_name="synth_tg",
         test_script_root=consumer.as_posix(),
         level="L0",
-    )
+     architecture="arch35")
     assert state.get("op_name") == "synth_tg"
     assert state.get("test_script_root") == consumer.as_posix()
     # CLI persistence is separate; engines resolve from state via context pack.

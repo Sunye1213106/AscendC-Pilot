@@ -5,8 +5,8 @@
 - **Clang 是权威，regex 不是**：regex shared 仅作 bootstrap/诊断；Clang 成功后替换（非 union）。`clang_scope_status!=complete` → `SCOPE_CLANG_CLOSURE_INCOMPLETE`。
 - **发现 common ≠ 消费 common**：ScopeSet 含 SHARED 后，walk 必须用 scope 成员判断，禁止裸 `op_needle` 丢掉共享头。
 - **禁止 decision=yes 绕过编译验证**：测试仅允许 `UO_TEST_ALLOW_UNVERIFIED_SCOPE=1`。
-- **无人工 scope 确认**：Clang include closure + probe 机检即 `scope_confirmed`；`scope_receipt` 认 `action_id=scope_confirmation`（机检收据，勿写成父 Action `prepare`）。
-- **scope_receipt 必须进 complete/phase/action gates**：否则 `passed_gates` 不记该门，`scope_confirmed` 义务在 complete 时仍开放（ses_00bf）。
+- **无人工 scope 确认**：Clang include closure + probe 机检即 `scope_validated`；`scope_receipt` 认 `action_id=scope_validated`（机检收据，勿写成父 Action `prepare`）。
+- **scope_receipt 必须进 complete/phase/action gates**：否则 `passed_gates` 不记该门，`scope_validated` 义务在 complete 时仍开放（ses_00bf）。
 - **staging ≠ canonical**：resolve 只写 staging；canonical IR 由 harness merge / commit。
 - **禁止命名闭合**：blocker 不得因变量名相似、文件邻近而关闭。
 - **跨层边必须有证据**：Host→Tiling→Kernel 边缺少 source span / evidence_ref 时保持 unresolved。

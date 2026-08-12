@@ -98,7 +98,7 @@ def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         result = update_operator(
             project_root,
             op_name,
-            architecture=arch or "arch35",
+            architecture=arch,
             run_id=run_id or None,
             reuse_artifacts=True,
             cann_root=str((ctx or {}).get("cann_root") or "") or None,
@@ -241,9 +241,11 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.paths import resolve_arch
     from ascendc_pilot.state import load_state
 
-    arch_hint = resolve_arch(
-        str(ctx.get("architecture") or "").strip() or None
-    )
+    arch_explicit = str(ctx.get("architecture") or "").strip() or None
+    try:
+        arch_hint = resolve_arch(arch_explicit)
+    except ValueError as exc:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE") from exc
     state = load_state(project_root) or {}
     params = _load_yaml(_ctx_root(project_root, arch=arch_hint) / "pilot_params.yaml") or {}
     if not isinstance(params, dict):
@@ -294,20 +296,17 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         man.get("architecture"),
         default=arch_hint,
     )
+    if not architecture:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
     level = _pick(ctx.get("level"), state.get("level"), params.get("level"), pack.get("level"), default="L0")
     focus = _pick(ctx.get("focus"), state.get("focus"), params.get("focus"), pack.get("focus"))
     test_script_root = _pick(
         ctx.get("test_script_root"),
-        ctx.get("csv_consumer_root"),
         state.get("test_script_root"),
-        state.get("csv_consumer_root"),
         params.get("test_script_root"),
-        params.get("csv_consumer_root"),
         pack.get("test_script_root"),
-        pack.get("csv_consumer_root"),
         run_ctx.get("test_script_root"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
-        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
         init_intent.get("consumer_root"),
     )
     mode = _pick(
@@ -512,7 +511,7 @@ def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         return {
             "ok": False,
             "engine": "contract_build",
-            "error": "csv_consumer contract path removed; use tilingkey_full_coverage",
+            "error": "legacy CSV contract path removed; use tilingkey_full_coverage",
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "contract_build", "error": str(exc)[:400]}
@@ -589,7 +588,7 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         return {
             "ok": False,
             "engine": "semantic_bind",
-            "error": "csv_consumer bind path removed; use tilingkey_full_coverage",
+            "error": "legacy CSV bind path removed; use tilingkey_full_coverage",
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "semantic_bind", "error": str(exc)[:400]}
@@ -816,7 +815,7 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         return {
             "ok": False,
             "engine": "plan_build",
-            "error": "csv_consumer plan path removed; use tilingkey_full_coverage",
+            "error": "legacy CSV plan path removed; use tilingkey_full_coverage",
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "plan_build", "error": str(exc)[:400]}
@@ -2278,7 +2277,9 @@ def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]
             op_name = str(man.get("op_name") or "").strip()
         except Exception:  # noqa: BLE001
             op_name = ""
-    architecture = str(ctx.get("architecture") or "arch35")
+    architecture = str(ctx.get("architecture") or "").strip()
+    if not architecture:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
     return uo, op_name, architecture
 
 
@@ -2341,7 +2342,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/manifest.yaml",
         "uo/operator.yaml",
         "uo/ir/build_variant.yaml",
-        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
+        "uo/runs/{run_id}/scope/scope_validated.yaml",
         "uo/runs/{run_id}/scope/receipt.yaml",
     ],
     "uo-extract-v1": [

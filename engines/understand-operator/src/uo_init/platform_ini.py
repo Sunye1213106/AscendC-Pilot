@@ -129,7 +129,7 @@ def list_profiles(
 def load_platform_profile(
     cann_root: str | Path,
     *,
-    arch_dir: str = "arch35",
+    arch_dir: str = "",
     platform_sku: str | None = None,
 ) -> PlatformProfile:
     """Resolve a locked SKU profile or raise if the INI cannot be found."""

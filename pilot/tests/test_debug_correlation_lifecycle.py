@@ -13,8 +13,8 @@ from ascendc_pilot.state import load_state, start_workflow
 
 
 def test_concurrent_same_action_requires_registration_id(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostCONC01"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
     r1 = dbg.register_child(
@@ -66,8 +66,8 @@ def test_concurrent_same_action_requires_registration_id(tmp_path: Path) -> None
 
 def test_same_parent_same_action_concurrent_task_reverse_completion(tmp_path: Path) -> None:
     """Second-dispatched Task finishing first must not steal the first registration."""
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostREV01"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
 
@@ -123,8 +123,8 @@ def test_same_parent_same_action_concurrent_task_reverse_completion(tmp_path: Pa
 
 def test_task_after_uses_exact_invocation_id(tmp_path: Path) -> None:
     """After-hook correlation must use registration_id / dispatch_nonce, never latest-by-action."""
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostINV01"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
 
@@ -170,8 +170,8 @@ def test_task_after_uses_exact_invocation_id(tmp_path: Path) -> None:
 
 def test_child_tool_event_backfill_by_exact_session(tmp_path: Path) -> None:
     """Mid-Task child tools record event_session_id; patch backfills by exact session id."""
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostBFILL1"
     child = "ses_childBFILL1"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
@@ -237,8 +237,8 @@ def test_child_tool_event_backfill_by_exact_session(tmp_path: Path) -> None:
 
 
 def test_host_events_not_exported_to_child(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostEXPORT1"
     child = "ses_childEXPORT1"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
@@ -290,8 +290,8 @@ def test_host_events_not_exported_to_child(tmp_path: Path) -> None:
 
 
 def test_child_tool_events_isolated_from_host(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostTOOL01"
     child = "ses_childTOOL01"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
@@ -339,14 +339,14 @@ def test_child_tool_events_isolated_from_host(tmp_path: Path) -> None:
 
 
 def test_debug_enable_before_start_binds_run(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch35")
     # Enable debug BEFORE start → run_id empty
     dbg.set_enabled(tmp_path, True, parent_session_id="ses_hostEARLY01")
     ds = dbg.load_debug_session(tmp_path)
     assert ds.get("debug_session_id")
     assert not str(ds.get("run_id") or "").strip()
 
-    start_workflow(tmp_path, "uo-init")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     st = load_state(tmp_path) or {}
     ds2 = dbg.load_debug_session(tmp_path)
     assert ds2.get("run_id") == st.get("run_id")
@@ -359,8 +359,8 @@ def test_debug_enable_before_start_binds_run(tmp_path: Path) -> None:
 
 
 def test_export_failure_writes_anomaly(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     dbg.set_enabled(tmp_path, True, parent_session_id="ses_hostFAIL01")
     out = dbg.export_child_session(tmp_path, child_session_id="ses_missingXXXX", reason="test")
     assert out.get("ok") is False
@@ -370,8 +370,8 @@ def test_export_failure_writes_anomaly(tmp_path: Path) -> None:
 
 
 def test_transcript_unavailable_does_not_pick_old_file(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostTX01"
     child = "ses_childTX01"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
@@ -398,8 +398,8 @@ def test_transcript_unavailable_does_not_pick_old_file(tmp_path: Path) -> None:
 
 
 def test_child_source_reads_appear_in_audit(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     parent = "ses_hostAUDIT1"
     child = "ses_childAUDIT1"
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)

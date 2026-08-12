@@ -8,7 +8,6 @@ from uo_init.pilot_engines import (
     apply_gap_patch,
     prepare_layout,
     resolve_gaps,
-    scope_confirm,
     scope_validate,
 )
 
@@ -247,12 +246,8 @@ def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
     assert receipt["source"] == "machine"
     assert receipt["validated"] is True
     assert receipt["clang_scope_status"] == "complete"
-    assert receipt["action_id"] == "scope_confirmation"
-    assert (scope / "scope_confirmed.yaml").is_file()
-    text = (scope / "scope_confirmed.yaml").read_text(encoding="utf-8")
-    assert "action_id: scope_confirmation" in text
+    assert receipt["action_id"] == "scope_validated"
+    assert (scope / "scope_validated.yaml").is_file()
+    text = (scope / "scope_validated.yaml").read_text(encoding="utf-8")
+    assert "action_id: scope_validated" in text
     assert "action_id: prepare" not in text
-
-
-def test_scope_confirm_alias_is_scope_validate():
-    assert scope_confirm is scope_validate

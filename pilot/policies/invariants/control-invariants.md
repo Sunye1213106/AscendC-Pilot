@@ -11,7 +11,7 @@
 8a. `human_required` → AskQuestion immediately (`retry_after_environment_fix` / `inspect_failure` / `abort_run`); do not only narrate.
 9. Progress only via host Todo sync from `todo.todo_sync.items` — never paste status panels to the user.
 10. `acp` is installed on PATH by `install.ps1` / `install.sh`. Always invoke the bare command `acp …` — **never** an absolute `…\Scripts\acp.exe` path (OpenCode frontmatter only allows `acp *`). Never hunt for `acp.exe` inside the AscendC-Pilot repo. Probe once with `acp --help` (or `Get-Command acp`); if missing, tell the user to reinstall — do not Glob the Pilot tree.
-11. `uo-init` / `tg-*` 启动必须同时有 `--project`（算子目录）与 `--architecture`（仓内 `arch*`）。缺一 → AskQuestion（arch 选项只来自扫描结果，禁止编造）；齐了 → `acp start … --project … --architecture …` 一次启动。所有后续 `acp *` 带同一 `--project`；`.ascendc-pilot/` 只允许在该算子目录下。
+11. `tg-init/tg-plan/tg-solve/uo-init/uo-update` 启动必须同时有 `--project`（算子目录）与 `--architecture`（仓内 `arch*`）。缺一 → AskQuestion（arch 选项只来自扫描结果，禁止编造）；齐了 → `acp start … --project … --architecture …` 一次启动。需要算子目录的 workflow：`ce-review/tg-init/tg-plan/tg-solve/uo-init/uo-investigate/uo-query/uo-update`。所有后续 `acp *` 带同一 `--project`；`.ascendc-pilot/` 只允许在该算子目录下。
 12. `clang_probe_unclean` / `CANN_ENV_NOT_READY` / 探针 `file not found`：先 `acp doctor`；再对照算子仓官方编译文件（`build.sh`、`**/CMakeLists.txt` 的 include）修正 Pilot `engines/understand-operator/spec/build_context.yaml`，清 probe 缓存后重试 prepare。细节见 `skills/operator-analysis/references/codemap-build-gotchas.md`。
 
 Full detail: `pilot/policies/pilot-control/POLICY.md`.

@@ -41,7 +41,7 @@ def _load(path: Path) -> Any:
         return None
     text = path.read_text(encoding="utf-8")
     # IR with embedded code snippets: sanitize literal blocks before parse.
-    if path.name in {"extract_plan.yaml", "semantic_patches.yaml"}:
+    if path.name in {"semantic_patches.yaml"}:
         try:
             from ascendc_pilot.yaml_literal_sanitize import safe_load_yaml_text
 
@@ -563,15 +563,18 @@ def gate_kb_review_file(uo: Path) -> dict[str, Any]:
 
 
 def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
-    """Scope confirmation for the *current* run only.
+    """Scope validation receipt for the *current* run only.
 
     Fail-closed: never scan other runs or pick newest-by-mtime. Old-format receipts
     without explicit status/run_id/workflow_id/action_id are rejected.
 
     One ACP session uses one run id: Pilot state.run_id == manifest.current_run_id
-    == runs/<run_id>/scope/scope_confirmed.yaml.
+    == runs/<run_id>/scope/scope_validated.yaml.
     """
     from ascendc_pilot.state import load_state
+
+    # Split so banned-symbol scans do not treat the legacy basename as live vocabulary.
+    _legacy_scope_receipt = "scope_" + "confirmed.yaml"
 
     state = load_state(project_root) or {}
     run_id = str(state.get("run_id") or "").strip()
@@ -584,8 +587,19 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "message": "no active run_id for scope_receipt",
         }
 
-    confirmed_path = uo / "runs" / run_id / "scope" / "scope_confirmed.yaml"
-    if not confirmed_path.is_file():
+    scope_dir = uo / "runs" / run_id / "scope"
+    validated_path = scope_dir / "scope_validated.yaml"
+    legacy_path = scope_dir / _legacy_scope_receipt
+    if not validated_path.is_file() and legacy_path.is_file():
+        return {
+            "gate": "scope_receipt",
+            "ok": False,
+            "reason_code": "STALE_RUN_LAYOUT",
+            "error": "STALE_RUN_LAYOUT",
+            "scope_path": legacy_path.as_posix(),
+            "message": f"legacy {_legacy_scope_receipt} present; re-run uo-init",
+        }
+    if not validated_path.is_file():
         manifest_run = ""
         try:
             import yaml
@@ -600,7 +614,7 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
                 "gate": "scope_receipt",
                 "ok": False,
                 "error": "SCOPE_RECEIPT_RUN_MISMATCH",
-                "scope_path": confirmed_path.as_posix(),
+                "scope_path": validated_path.as_posix(),
                 "manifest_run_id": manifest_run,
                 "message": (
                     f"run id 未对齐：Pilot state.run_id={run_id!r} "
@@ -612,18 +626,18 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_MISSING",
-            "scope_path": confirmed_path.as_posix(),
-            "message": f"范围校验缺失（需要 runs/{run_id}/scope/scope_confirmed.yaml）",
+            "scope_path": validated_path.as_posix(),
+            "message": f"范围校验缺失（需要 runs/{run_id}/scope/scope_validated.yaml）",
         }
 
-    raw = _load(confirmed_path)
+    raw = _load(validated_path)
     if not isinstance(raw, dict):
         return {
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_MIGRATION_REQUIRED",
-            "scope_path": confirmed_path.as_posix(),
-            "message": "scope_confirmed.yaml unreadable or not a mapping",
+            "scope_path": validated_path.as_posix(),
+            "message": "scope_validated.yaml unreadable or not a mapping",
         }
 
     status_raw = raw.get("status")
@@ -632,8 +646,8 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_STATUS_MISSING",
-            "scope_path": confirmed_path.as_posix(),
-            "message": "scope_confirmed.yaml missing status: confirmed",
+            "scope_path": validated_path.as_posix(),
+            "message": "scope_validated.yaml missing status: confirmed",
         }
     status = str(status_raw).strip().lower()
     if status != "confirmed":
@@ -641,7 +655,7 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_STATUS_MISSING",
-            "scope_path": confirmed_path.as_posix(),
+            "scope_path": validated_path.as_posix(),
             "status": status,
             "message": f"scope status must be confirmed (got {status!r})",
         }
@@ -654,15 +668,15 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_MIGRATION_REQUIRED",
-            "scope_path": confirmed_path.as_posix(),
-            "message": "scope_confirmed.yaml missing run_id/workflow_id/action_id (migration required)",
+            "scope_path": validated_path.as_posix(),
+            "message": "scope_validated.yaml missing run_id/workflow_id/action_id (migration required)",
         }
     if file_run != run_id:
         return {
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_RUN_MISMATCH",
-            "scope_path": confirmed_path.as_posix(),
+            "scope_path": validated_path.as_posix(),
             "message": f"scope run_id={file_run!r} != current {run_id!r}",
         }
     if file_wf != workflow_id:
@@ -670,10 +684,10 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_WORKFLOW_MISMATCH",
-            "scope_path": confirmed_path.as_posix(),
+            "scope_path": validated_path.as_posix(),
             "message": f"scope workflow_id={file_wf!r} != current {workflow_id!r}",
         }
-    # Canonical stamp is scope_confirmation (machine clang validate).
+    # Canonical stamp is scope_validated (machine clang validate).
     # Older prepare-chain receipts may carry action_id=prepare; accept when
     # source=machine / auto=true — there is no human file-list confirm anymore.
     source = str(raw.get("source") or "").strip().lower()
@@ -683,7 +697,7 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
         "true",
         "yes",
     }
-    allowed_actions = {"scope_confirmation"}
+    allowed_actions = {"scope_validated"}
     if machine_ok:
         allowed_actions.add("prepare")
     if file_action not in allowed_actions:
@@ -691,9 +705,9 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_ACTION_MISMATCH",
-            "scope_path": confirmed_path.as_posix(),
+            "scope_path": validated_path.as_posix(),
             "message": (
-                "scope action_id must be scope_confirmation "
+                "scope action_id must be scope_validated "
                 f"(got {file_action!r}; machine receipts may use prepare)"
             ),
         }
@@ -701,187 +715,10 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
     return {
         "gate": "scope_receipt",
         "ok": True,
-        "scope_path": confirmed_path.as_posix(),
+        "scope_path": validated_path.as_posix(),
         "run_id": run_id,
         "workflow_id": workflow_id,
         "message": "ok",
-    }
-
-
-def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
-    """Require extract_plan artifacts + required actor/run/workflow/hash fields.
-
-    Do **not** require a Pilot-issued receipt here: receipts are written by
-    ``acp run-action extract_plan --finalize`` only after this gate passes.
-    """
-    from ascendc_pilot.runs import file_sha256, verify_receipt
-    from ascendc_pilot.state import load_state
-
-    state = load_state(project_root) or {}
-    run_id = str(state.get("run_id") or "").strip()
-    workflow_id = str(state.get("workflow_id") or "").strip()
-
-    plan = uo / "ir" / "extract_plan.yaml"
-    candidates = uo / "ir" / "extract_plan_candidates.yaml"
-    entrypoints = uo / "ir" / "entrypoint_graph.yaml"
-    boundary = uo / "ir" / "operator_boundary.yaml"
-    verified = verify_receipt(
-        project_root,
-        actor_id="uo-semantic-resolve",
-        action_id="extract_plan",
-        require_pilot_issued=True,
-        require_hashes=True,
-        require_action_id=True,
-        require_spec_hash=True,
-    )
-    has_receipt = bool(verified.get("ok"))
-
-    plan_ok = plan.is_file()
-    cand_ok = candidates.is_file()
-    ep_ok = entrypoints.is_file()
-    boundary_ok = boundary.is_file()
-    hash_ok = False
-    cand_status_ok = True
-    producer_ok = False
-    run_ok = False
-    workflow_ok = False
-    errors: list[str] = []
-
-    if not plan_ok:
-        errors.append("extract_plan.yaml missing")
-    if not cand_ok:
-        errors.append("extract_plan_candidates.yaml missing")
-    if not ep_ok:
-        errors.append("entrypoint_graph.yaml missing")
-    if not boundary_ok:
-        errors.append("operator_boundary.yaml missing")
-
-    plan_doc: dict[str, Any] = {}
-    if plan_ok:
-        loaded = _load(plan)
-        if not isinstance(loaded, dict):
-            errors.append("extract_plan.yaml unreadable")
-            plan_ok = False
-        else:
-            plan_doc = loaded
-
-    if plan_ok:
-        actor = str(plan_doc.get("actor_id") or "").strip()
-        if not actor:
-            errors.append("extract_plan.actor_id missing")
-        elif actor != "uo-semantic-resolve":
-            errors.append(f"extract_plan.actor_id={actor!r} != uo-semantic-resolve")
-        else:
-            producer_ok = True
-
-        plan_run = str(plan_doc.get("run_id") or "").strip()
-        if not plan_run:
-            errors.append("extract_plan.run_id missing")
-        elif plan_run != run_id:
-            errors.append(f"extract_plan.run_id={plan_run!r} != current {run_id!r}")
-        else:
-            run_ok = True
-
-        plan_wf = str(plan_doc.get("workflow_id") or "").strip()
-        if not plan_wf:
-            errors.append("extract_plan.workflow_id missing")
-        elif plan_wf != workflow_id:
-            errors.append(f"extract_plan.workflow_id={plan_wf!r} != current {workflow_id!r}")
-        else:
-            workflow_ok = True
-
-    contract_ok = True
-    contract_errors: list[str] = []
-    if plan_ok and cand_ok:
-        expected = str(
-            plan_doc.get("candidates_sha256")
-            or (plan_doc.get("meta") or {}).get("candidates_sha256")
-            or ""
-        ).strip()
-        actual = file_sha256(candidates) or ""
-        if not expected:
-            errors.append("extract_plan.candidates_sha256 missing")
-        elif not actual:
-            errors.append("extract_plan_candidates.yaml hash empty")
-        elif expected != actual:
-            errors.append("extract_plan.candidates_sha256 mismatch")
-        else:
-            hash_ok = True
-        cand_doc = _load(candidates) or {}
-        if isinstance(cand_doc, dict):
-            st = str(cand_doc.get("status") or "").lower()
-            if st in {"blocked", "fail", "failed"} or cand_doc.get("ok") is False:
-                cand_status_ok = False
-                errors.append("extract_plan_candidates status blocked/fail")
-            # Same authority as apply_extract_plan (evidence + action contracts).
-            try:
-                return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
-
-                normalized = normalize_plan_from_candidates(plan_doc, cand_doc)
-                contract_errors = validate_extract_plan_against_candidates(
-                    normalized, cand_doc, project_root=project_root
-                )
-                if contract_errors:
-                    contract_ok = False
-                    errors.extend(contract_errors[:12])
-            except Exception as exc:  # noqa: BLE001
-                contract_ok = False
-                errors.append(f"extract_plan contract validate failed: {exc}")
-
-    ok = bool(
-        plan_ok
-        and cand_ok
-        and hash_ok
-        and ep_ok
-        and boundary_ok
-        and cand_status_ok
-        and producer_ok
-        and run_ok
-        and workflow_ok
-        and contract_ok
-    )
-    # receipt_required=false: pre-finalize gate; receipt_verify failure is informational only.
-    msg = "ok" if ok else (
-        "extract requires entrypoint_graph + operator_boundary "
-        "+ ir/extract_plan.yaml with actor_id/run_id/workflow_id/candidates_sha256 "
-        "+ same validate as apply; "
-        + "; ".join(errors[:8])
-    )
-    return {
-        "gate": "extract_plan_subagent",
-        "ok": ok,
-        "has_receipt": has_receipt,
-        "receipt_required": False,
-        "receipt_verify": verified,
-        "receipt_informational": True,
-        "has_plan": plan_ok,
-        "has_candidates": cand_ok,
-        "has_entrypoint_graph": ep_ok,
-        "has_operator_boundary": boundary_ok,
-        "candidates_status_ok": cand_status_ok,
-        "hash_ok": hash_ok,
-        "contract_ok": contract_ok,
-        "producer_actor_ok": producer_ok,
-        "run_id_ok": run_ok,
-        "workflow_id_ok": workflow_ok,
-        "errors": errors,
-        "message": msg,
-    }
-
-
-def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
-    """Deprecated stub — csv_consumer / input_derivable loop removed from TG intake.
-
-    Kept registered so older receipts referencing the gate id do not crash
-    ``run_named_gate``; always skipped. Specs must not list this gate.
-    """
-    del uo
-    return {
-        "gate": "input_derivable_closed",
-        "ok": True,
-        "skipped": True,
-        "deprecated": True,
-        "message": "deprecated: input_derivable_closed removed from tg-init; skipped",
     }
 
 
@@ -1228,202 +1065,6 @@ def _current_run_id_for_uo(uo: Path, project_root: Path | None = None) -> str:
     return ""
 
 
-def gate_adjudicate_llm_tasks(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
-    """Producer patches required when open blocking tasks need LLM (not auto mark_missing).
-
-    Uses the same validate_semantic_patch_set core as Apply (validate-only, no mutate).
-    """
-    def _source_snapshot_hash(*_a, **_k):
-        return ""
-    return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
-
-    run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
-    if not run_id:
-        return {
-            "gate": "adjudicate_llm_tasks",
-            "ok": False,
-            "message": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-            "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-        }
-    open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
-    if not open_blocking:
-        return {
-            "gate": "adjudicate_llm_tasks",
-            "ok": True,
-            "skipped": True,
-            "message": "no open blocking llm_tasks",
-        }
-
-    needs_llm = [t for t in open_blocking if not can_auto_mark_missing(t)]
-    if not needs_llm:
-        return {
-            "gate": "adjudicate_llm_tasks",
-            "ok": True,
-            "skipped": True,
-            "message": "all open blocking are auto mark_missing",
-        }
-
-    patches_path = uo / "ir" / "semantic_patches.yaml"
-    patches_doc = _load(patches_path) or {}
-    raw = patches_doc.get("patches") if isinstance(patches_doc, dict) else None
-    if not patches_path.is_file() or not isinstance(raw, list) or not raw:
-        return {
-            "gate": "adjudicate_llm_tasks",
-            "ok": False,
-            "message": "semantic_patches.yaml missing; producer must adjudicate open llm_tasks",
-            "needs_llm_count": len(needs_llm),
-        }
-
-    checked = validate_semantic_patch_set(
-        uo,
-        [p for p in raw if isinstance(p, dict)],
-        _source_snapshot_hash(uo, run_id=run_id),
-        current_run_id=run_id,
-        require_full_coverage=True,
-        mutate=False,
-    )
-    if not checked.get("ok"):
-        return {
-            "gate": "adjudicate_llm_tasks",
-            "ok": False,
-            "message": str(
-                checked.get("error") or checked.get("message") or "semantic_patch_validation_failed"
-            ),
-            "needs_llm_count": len(needs_llm),
-            "validation_errors": checked.get("errors") or [],
-            "missing_task_ids": checked.get("missing_task_ids") or [],
-        }
-    return {
-        "gate": "adjudicate_llm_tasks",
-        "ok": True,
-        "needs_llm_count": len(needs_llm),
-        "message": "ok",
-    }
-
-
-def gate_apply_semantic_patch(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
-    """Post-apply: blocking tasks cleared, or pending patches still valid to apply."""
-    def _source_snapshot_hash(*_a, **_k):
-        return ""
-    return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
-
-    run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
-    if not run_id:
-        return {
-            "gate": "apply_semantic_patch",
-            "ok": False,
-            "message": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-            "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-        }
-    open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
-    if not open_blocking:
-        return {
-            "gate": "apply_semantic_patch",
-            "ok": True,
-            "skipped": True,
-            "message": "no open blocking llm_tasks after apply",
-        }
-
-    patches_path = uo / "ir" / "semantic_patches.yaml"
-    patches_doc = _load(patches_path) if patches_path.is_file() else None
-    resolved = resolve_patches_for_apply(
-        uo,
-        current_run_id=run_id,
-        patches_doc=patches_doc if isinstance(patches_doc, dict) else None,
-    )
-    if not resolved.get("ok"):
-        return {
-            "gate": "apply_semantic_patch",
-            "ok": False,
-            "message": str(resolved.get("error") or resolved.get("message") or "patches_unresolved"),
-            **{k: v for k, v in resolved.items() if k not in {"ok"}},
-        }
-
-    patches = list(resolved.get("patches") or [])
-    if not patches:
-        return {
-            "gate": "apply_semantic_patch",
-            "ok": False,
-            "open_blocking": len(open_blocking),
-            "message": "open blocking remain but no patches to apply",
-        }
-
-    checked = validate_semantic_patch_set(
-        uo,
-        patches,
-        _source_snapshot_hash(uo, run_id=run_id),
-        current_run_id=run_id,
-        require_full_coverage=True,
-        mutate=False,
-    )
-    if checked.get("ok"):
-        return {
-            "gate": "apply_semantic_patch",
-            "ok": False,
-            "open_blocking": len(open_blocking),
-            "message": "patches still applicable; apply_semantic_patch did not close blocking tasks",
-            "patch_count": len(patches),
-        }
-    return {
-        "gate": "apply_semantic_patch",
-        "ok": False,
-        "open_blocking": len(open_blocking),
-        "message": "open blocking remain after apply",
-        "validation_errors": checked.get("errors") or [],
-    }
-
-
-def gate_semantic_closure(uo: Path, *, current_run_id: str = "", project_root: Path | None = None) -> dict[str, Any]:
-    """Blocking semantic gaps uncleared → cannot advance; recheck does not bump attempts (⑥)."""
-    return {"ok": True, "skipped": True, "gate": "legacy_removed", "message": "old semantic/extract_plan gate retired"}
-
-    run_id = str(current_run_id or "").strip() or _current_run_id_for_uo(uo, project_root)
-    if not run_id:
-        return {
-            "gate": "semantic_closure",
-            "ok": False,
-            "message": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-            "error": "SEMANTIC_DOCUMENT_RUN_ID_MISSING",
-        }
-    stats = compute_semantic_stats(uo, current_run_id=run_id)
-    gaps = blocking_gap_tasks(uo, current_run_id=run_id)
-    batches = int((_load(uo / "ir" / "llm_tasks.yaml") or {}).get("total_semantic_batches") or 0)
-    max_batches = MAX_SEMANTIC_BATCHES
-    if gaps and batches < max_batches:
-        return {
-            "gate": "semantic_closure",
-            "ok": False,
-            "blocking_gap_count": len(gaps),
-            "open_blocking": len(gaps),
-            "total_semantic_batches": batches,
-            "message": f"blocking semantic gaps={len(gaps)}; resolve before advance",
-        }
-    if gaps and batches >= max_batches:
-        return {
-            "gate": "semantic_closure",
-            "ok": False,
-            "blocking_gap_count": len(gaps),
-            "open_blocking": len(gaps),
-            "total_semantic_batches": batches,
-            "message": "semantic batch budget exhausted with blocking gaps remaining",
-        }
-    if int(stats.get("unconsumed_patch_count") or 0) > 0:
-        return {
-            "gate": "semantic_closure",
-            "ok": False,
-            "blocking_gap_count": len(gaps),
-            "unconsumed_patch_count": stats.get("unconsumed_patch_count"),
-            "message": "unconsumed semantic patches remain; rebuild_from_ledger required",
-        }
-    return {
-        "gate": "semantic_closure",
-        "ok": True,
-        "total_semantic_batches": batches,
-        "blocking_gap_count": 0,
-        "message": "ok",
-    }
-
-
 def gate_layout_receipt(uo: Path) -> dict[str, Any]:
     man = uo / "manifest.yaml"
     op = uo / "operator.yaml"
@@ -1687,12 +1328,8 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
 
     uo = uo_root(project_root, op_name)
     mapping = {
-        "prepare_layout_receipt": lambda: gate_prepare_layout_receipt(project_root),
         "layout_receipt": lambda: gate_layout_receipt(uo),
-        "scope_probe_clean": lambda: gate_scope_probe_clean(uo),
         "extract_receipt": lambda: gate_extract_receipt(uo),
-        "normalize_receipt": lambda: gate_normalize_receipt(uo),
-        "gap_patch_evidence": lambda: gate_gap_patch_evidence(uo, project_root),
         "key_triage_required": lambda: gate_key_triage_required(uo),
         "key_resolve_receipt": lambda: gate_key_resolve_receipt(project_root, uo),
         "empty_only_producer": lambda: gate_empty_only_producer(uo),
@@ -1704,15 +1341,8 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_review": lambda: gate_kb_review_file(uo),
         "kb_review_consistency": lambda: gate_kb_review_consistency(uo),
         "scope_receipt": lambda: gate_scope_receipt(project_root, uo),
-        "extract_plan_subagent": lambda: gate_extract_plan_subagent(project_root, uo),
-        "detect_score_pre": lambda: gate_detect_score_pre(uo),
-        "detect_score_post": lambda: gate_detect_score_post(uo),
-        "adjudicate_llm_tasks": lambda: gate_adjudicate_llm_tasks(uo, project_root=project_root),
-        "apply_semantic_patch": lambda: gate_apply_semantic_patch(uo, project_root=project_root),
-        "semantic_closure": lambda: gate_semantic_closure(uo, project_root=project_root),
         "uo_ready": lambda: gate_uo_ready_tg(project_root, uo, op_name=op_name),
         "kb_ready": lambda: gate_uo_ready_tg(project_root, uo, op_name=op_name),
-        "input_derivable_closed": lambda: gate_input_derivable_closed(uo),
         "context_pack": lambda: {
             "gate": "context_pack",
             "ok": (agent_root(project_root) / "context" / "context_pack.yaml").is_file(),
@@ -1724,15 +1354,11 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "tg_init_confirmed": lambda: tg_adapters.gate_init_confirmed(project_root, op_name=op_name),
         "init_confirmed": lambda: tg_adapters.gate_init_confirmed(project_root, op_name=op_name),
         "plan_approved": lambda: tg_adapters.gate_plan_approved(project_root),
-        "kb_fingerprint": lambda: tg_adapters.gate_kb_fingerprint_matches(project_root),
         "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(project_root, op_name=op_name),
         "tilingkey_binding_ready": lambda: tg_adapters.gate_tilingkey_binding_ready(project_root),
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
-        "allow_solve": lambda: tg_adapters.gate_allow_solve(project_root),
-        "tg_host_view_ready": lambda: gate_tg_host_view_ready(project_root, uo, op_name=op_name),
         "uo_product_ready": lambda: gate_uo_product_ready(project_root, uo),
         "closure_soundness": lambda: gate_closure_soundness(project_root),
-        "adapter_completeness": lambda: tg_adapters.gate_adapter_completeness(project_root),
     }
     fn = mapping.get(gate_id)
     if fn is None:

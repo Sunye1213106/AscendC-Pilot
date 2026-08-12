@@ -51,7 +51,9 @@ def _uo_context(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str
     uo = uo_root(project_root)
     manifest = _read_yaml(uo / "manifest.yaml")
     op_name = str(ctx.get("op_name") or manifest.get("op_name") or project_root.name).strip()
-    architecture = str(ctx.get("architecture") or manifest.get("architecture") or "arch35").strip()
+    architecture = str(ctx.get("architecture") or manifest.get("architecture") or "").strip()
+    if not architecture:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
     return uo, op_name, architecture
 
 

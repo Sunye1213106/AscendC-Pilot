@@ -1,8 +1,8 @@
 """tg-init: legacy Understand-KB intake snapshot (used by tests / plan snapshot bootstrap).
 
-The csv_consumer full-init flow (contract build + bind scaffolds + confirm) was
-removed with the csv_consumer stack; the pilot's own tilingkey_full_coverage
-init/confirm chain lives in ``ascendc_pilot.actions.tg_primary`` /
+The legacy CSV full-init flow (contract build + bind scaffolds + confirm) was
+removed with that stack; the pilot's own tilingkey_full_coverage init/confirm
+chain lives in ``ascendc_pilot.actions.tg_primary`` /
 ``testcase_agent.init_status`` instead.
 """
 

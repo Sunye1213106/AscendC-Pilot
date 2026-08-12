@@ -19,23 +19,17 @@ from ascendc_pilot.paths import pilot_checkout_root
 LAST_PROJECT_CACHE = Path.home() / ".config" / "opencode" / "ascendc-last-project"
 HARNESS_BIN_CACHE = Path.home() / ".config" / "opencode" / "ascendc-harness-bin"
 
-_WORKFLOWS_NEED_ARCH = frozenset({
-    "uo-init",
-    "uo-update",
-    "tg-init",
-    "tg-plan",
-    "tg-solve",
-})
-_WORKFLOWS_NEED_OPERATOR = frozenset({
-    "uo-init",
-    "uo-update",
-    "uo-query",
-    "uo-investigate",
-    "tg-init",
-    "tg-plan",
-    "tg-solve",
-    "ce-review",
-})
+
+def _workflows_need_arch() -> frozenset[str]:
+    from ascendc_pilot.workflows import workflows_needing_architecture
+
+    return workflows_needing_architecture()
+
+
+def _workflows_need_operator() -> frozenset[str]:
+    from ascendc_pilot.workflows import workflows_needing_project
+
+    return workflows_needing_project()
 
 
 def looks_like_operator_package(root: Path | str | None) -> bool:
@@ -217,6 +211,17 @@ def assert_operator_project(root: Path | str, *, action: str = "") -> dict[str, 
     }
 
 
+def _attach_intake_request(payload: dict[str, Any], root: Path) -> dict[str, Any]:
+    from ascendc_pilot.human_interaction import KIND_INTAKE, attach_interaction_request
+
+    return attach_interaction_request(
+        payload,
+        root,
+        kind=KIND_INTAKE,
+        decision_kind=str(payload.get("decision_kind") or "intake"),
+    )
+
+
 def start_intake_gate(
     *,
     project: Path | str,
@@ -233,114 +238,148 @@ def start_intake_gate(
     root = Path(project).expanduser().resolve()
     arch = (architecture or "").strip() or architecture_from_env()
 
-    if wf in _WORKFLOWS_NEED_OPERATOR:
+    need_op = wf in _workflows_need_operator()
+    need_arch = wf in _workflows_need_arch()
+
+    if need_op:
         bad = assert_operator_project(root)
         if bad is not None:
             bad["workflow_id"] = wf
             bad["suggested_command"] = (
-                f'acp start {wf} --project "<算子目录>" --architecture <arch*>'
+                f'acp start {wf} --project "<算子目录>"'
+                + (" --architecture <arch*>" if need_arch else "")
             )
-            return bad
+            return _attach_intake_request(bad, root)
         if not looks_like_operator_package(root) and not project_explicit:
-            return {
-                "ok": False,
-                "needs_human_decision": True,
-                "decision_kind": "project",
-                "reason_code": "OPERATOR_PROJECT_UNCLEAR",
-                "workflow_id": wf,
-                "project": str(root),
-                "message_zh": (
-                    f"路径 {root} 不像算子包（缺少 op_host/ 或 op_kernel/）。"
-                    "请用 AskQuestion 确认 --project，再与 --architecture 一起 start。"
-                ),
-                "ask_question": {
-                    "prompt_zh": "请确认算子源码目录",
-                    "options": [],
-                    "allow_free_text": True,
-                    "field": "project",
+            return _attach_intake_request(
+                {
+                    "ok": False,
+                    "needs_human_decision": True,
+                    "decision_kind": "project",
+                    "reason_code": "OPERATOR_PROJECT_UNCLEAR",
+                    "workflow_id": wf,
+                    "project": str(root),
+                    "message_zh": (
+                        f"路径 {root} 不像算子包（缺少 op_host/ 或 op_kernel/）。"
+                        "请用 AskQuestion 确认 --project"
+                        + ("，再与 --architecture 一起 start。" if need_arch else " 后再 start。")
+                    ),
+                    "ask_question": {
+                        "prompt_zh": "请确认算子源码目录",
+                        "options": [],
+                        "allow_free_text": True,
+                        "field": "project",
+                    },
                 },
-            }
+                root,
+            )
 
-    if wf in _WORKFLOWS_NEED_ARCH and not arch:
+    if need_arch and not arch:
         options = describe_architectures(root)
         labels = [o["label"] for o in options]
         if not options:
-            return {
-                "ok": False,
-                "needs_human_decision": True,
-                "decision_kind": "architecture",
-                "reason_code": "ARCHITECTURE_NOT_FOUND",
-                "workflow_id": wf,
-                "project": str(root),
-                "architecture_options": [],
-                "message_zh": (
-                    f"在 {root} 下未发现 op_host/arch* 或 op_kernel/arch*。"
-                    "请检查算子目录，或 AskQuestion 手工指定 architecture。"
-                ),
-                "ask_question": {
-                    "prompt_zh": "未扫到 arch* 目录，请手工输入 architecture",
-                    "options": [],
-                    "allow_free_text": True,
-                    "field": "architecture",
+            return _attach_intake_request(
+                {
+                    "ok": False,
+                    "needs_human_decision": True,
+                    "decision_kind": "architecture",
+                    "reason_code": "ARCHITECTURE_NOT_FOUND",
+                    "workflow_id": wf,
+                    "project": str(root),
+                    "architecture_options": [],
+                    "message_zh": (
+                        f"在 {root} 下未发现 op_host/arch* 或 op_kernel/arch*。"
+                        "请检查算子目录，或 AskQuestion 手工指定 architecture。"
+                    ),
+                    "ask_question": {
+                        "prompt_zh": "未扫到 arch* 目录，请手工输入 architecture",
+                        "options": [],
+                        "allow_free_text": True,
+                        "field": "architecture",
+                    },
                 },
+                root,
+            )
+        ask_opts = [
+            {
+                "label": o["label"],
+                "value": o["label"],
+                "description": o.get("description") or "",
             }
-        return {
-            "ok": False,
-            "needs_human_decision": True,
-            "decision_kind": "architecture",
-            "reason_code": "ARCHITECTURE_REQUIRED",
-            "workflow_id": wf,
-            "project": str(root),
-            "architecture_options": labels,
-            "architecture_option_details": options,
-            "message_zh": (
-                f"缺少 --architecture，不能启动。已扫描到: {', '.join(labels)}。\n"
-                "AskQuestion 选完后，用 "
-                f'`acp start {wf} --project "{root}" --architecture <选中>` '
-                "一次启动（此前不会创建 run）。"
-            ),
-            "ask_question": {
-                "prompt_zh": "请选择目标 architecture（选项来自算子仓 arch* 目录）",
-                "options": options,
-                "allow_free_text": False,
-                "field": "architecture",
-            },
-            "suggested_command": (
-                f'acp start {wf} --project "{root}" --architecture <{",".join(labels)}>'
-            ),
-            "primary_instruction_zh": (
-                "先 AskQuestion；选项必须原样使用 architecture_option_details。"
-                "选完后执行 suggested_command（带齐 --project 与 --architecture 的一次 start）。"
-                "禁止编造仓内不存在的 arch。"
-            ),
-        }
-
-    if wf in _WORKFLOWS_NEED_ARCH and arch and looks_like_operator_package(root):
-        known = discover_architectures(root)
-        if known and arch not in known:
-            return {
+            for o in options
+        ]
+        return _attach_intake_request(
+            {
                 "ok": False,
                 "needs_human_decision": True,
                 "decision_kind": "architecture",
-                "reason_code": "ARCHITECTURE_NOT_IN_TREE",
+                "reason_code": "ARCHITECTURE_REQUIRED",
                 "workflow_id": wf,
                 "project": str(root),
-                "architecture": arch,
-                "architecture_options": known,
-                "architecture_option_details": describe_architectures(root),
+                "architecture_options": labels,
+                "architecture_option_details": options,
                 "message_zh": (
-                    f"指定的 architecture={arch} 不在算子仓 arch* 目录中。"
-                    f"仓内仅有: {', '.join(known)}。请重新选择后再 start。"
+                    f"缺少 --architecture，不能启动。已扫描到: {', '.join(labels)}。\n"
+                    "AskQuestion 选完后，用 "
+                    f'`acp start {wf} --project "{root}" --architecture <选中>` '
+                    "一次启动（此前不会创建 run）。"
                 ),
                 "ask_question": {
-                    "prompt_zh": "请从算子仓实际 arch* 中选择",
-                    "options": describe_architectures(root),
+                    "prompt_zh": "请选择目标 architecture（选项来自算子仓 arch* 目录）",
+                    "options": ask_opts,
                     "allow_free_text": False,
                     "field": "architecture",
                 },
                 "suggested_command": (
-                    f'acp start {wf} --project "{root}" --architecture <{",".join(known)}>'
+                    f'acp start {wf} --project "{root}" --architecture <{",".join(labels)}>'
                 ),
-            }
+                "primary_instruction_zh": (
+                    "先 AskQuestion；选项必须原样使用 architecture_option_details。"
+                    "选完后执行 suggested_command（带齐 --project 与 --architecture 的一次 start）。"
+                    "禁止编造仓内不存在的 arch。"
+                ),
+            },
+            root,
+        )
+
+    if need_arch and arch and looks_like_operator_package(root):
+        known = discover_architectures(root)
+        if known and arch not in known:
+            details = describe_architectures(root)
+            ask_opts = [
+                {
+                    "label": o["label"],
+                    "value": o["label"],
+                    "description": o.get("description") or "",
+                }
+                for o in details
+            ]
+            return _attach_intake_request(
+                {
+                    "ok": False,
+                    "needs_human_decision": True,
+                    "decision_kind": "architecture",
+                    "reason_code": "ARCHITECTURE_NOT_IN_TREE",
+                    "workflow_id": wf,
+                    "project": str(root),
+                    "architecture": arch,
+                    "architecture_options": known,
+                    "architecture_option_details": details,
+                    "message_zh": (
+                        f"指定的 architecture={arch} 不在算子仓 arch* 目录中。"
+                        f"仓内仅有: {', '.join(known)}。请重新选择后再 start。"
+                    ),
+                    "ask_question": {
+                        "prompt_zh": "请从算子仓实际 arch* 中选择",
+                        "options": ask_opts,
+                        "allow_free_text": False,
+                        "field": "architecture",
+                    },
+                    "suggested_command": (
+                        f'acp start {wf} --project "{root}" --architecture <{",".join(known)}>'
+                    ),
+                },
+                root,
+            )
 
     return None

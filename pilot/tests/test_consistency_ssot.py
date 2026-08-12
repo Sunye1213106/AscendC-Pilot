@@ -108,7 +108,9 @@ def test_uo_deterministic_actions_have_no_task_prompt() -> None:
         for action in WORKFLOWS[workflow_id]["actions"]:
             if action.get("execution_mode") == "deterministic":
                 assert not action.get("task_prompt_id"), (workflow_id, action["id"])
-                assert not action.get("agent_id"), (workflow_id, action["id"])
+                # Registry normalization may pin deterministic-uo-engine; never a Host Task agent.
+                actor = str(action.get("agent_id") or "")
+                assert actor in {"", "deterministic-uo-engine"}, (workflow_id, action["id"], actor)
 
 
 def test_uo_query_uses_codemap_prompt() -> None:

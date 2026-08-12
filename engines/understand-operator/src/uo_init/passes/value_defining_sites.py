@@ -30,7 +30,7 @@ def enrich_value_defining_sites(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     fields = list(codemap.by_kind(EntityKind.TILING_FIELD))

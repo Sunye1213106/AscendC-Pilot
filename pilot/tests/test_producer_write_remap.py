@@ -11,8 +11,8 @@ from ascendc_pilot.state import start_workflow
 
 
 def _prepare_investigate_session(op: Path) -> str:
-    ensure_agent_layout(op)
-    state = start_workflow(op, "uo-investigate", phase="investigate", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    state = start_workflow(op, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
     run_id = str(state["run_id"])
     _write_active_action(
         op,
@@ -31,7 +31,7 @@ def _prepare_investigate_session(op: Path) -> str:
 def test_project_root_extracted_from_staging_write_path(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    ensure_agent_layout(op)
+    ensure_agent_layout(op, arch="arch35")
     write_path = op / ".ascendc-pilot" / "runs" / "r" / "actions" / "investigate" / "report.yaml"
     assert _project_root_for_path(tmp_path, str(write_path)) == op.resolve()
 

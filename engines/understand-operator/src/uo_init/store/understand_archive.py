@@ -128,7 +128,7 @@ def read_understand_archive(
     archive: str | Path,
     *,
     op_name: str,
-    architecture: str = "arch35",
+    architecture: str = "",
     operator_root: str | Path | None = None,
 ) -> CodeMap:
     """Read historical facts and optionally enrich/resolve them from current source."""
@@ -251,7 +251,7 @@ def understand_archive_to_uo(
     dest: str | Path,
     *,
     op_name: str,
-    architecture: str = "arch35",
+    architecture: str = "",
     operator_root: str | Path | None = None,
 ) -> dict[str, Any]:
     cm = read_understand_archive(archive, op_name=op_name, architecture=architecture, operator_root=operator_root)

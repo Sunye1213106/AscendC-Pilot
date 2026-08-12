@@ -5,7 +5,7 @@
 合法 skip：`$PLUGIN_ROOT/skills/tg-init/references/legitimate-skips.md`
 
 `checks[].id` **MUST** 覆盖 `resolve_policy.TILINGKEY_AUDIT_CHECKLIST_IDS` 全量  
-（`checklist=tilingkey`；csv_consumer / CSV closure 清单已移除，不得再要求任何旧 CSV checklist id）。
+（`checklist=tilingkey`；旧 CSV closure 清单已移除，不得再要求任何旧 CSV checklist id）。
 
 Live gate `audit_pass` / `init_status.require_audit_pass(..., checklist="tilingkey")` 只认下列 id：
 
@@ -41,4 +41,4 @@ next: "acp run-action human_confirm" | "acp next"
 warn 仅允许非阻塞说明；任一 required id 为 `fail` → `status: fail`，不得进入 `human_confirm` finalize。
 
 恢复路径（失败时）：`/uo-init` 产出定稿 `.uo` → `/tg-init` 重跑 contract/bind/gate → AskQuestion 后 `human_confirm --finalize`。  
-禁止引导已删除的 CSV closure / merge / csv_consumer 动作。
+禁止引导已删除的 CSV closure / merge 动作。

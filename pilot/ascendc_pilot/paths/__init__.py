@@ -84,15 +84,54 @@ def resolve_operator_root(
     )
 
 
+def require_architecture(value: str | None) -> str:
+    """Return a non-empty architecture name or raise a typed error."""
+    arch = (value or "").strip()
+    if not arch:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
+    return arch
+
+
 def resolve_arch(explicit: str | None = None) -> str:
-    """Architecture subdirectory name under ``.ascendc-pilot/``."""
+    """Architecture subdirectory name under ``.ascendc-pilot/``.
+
+    Resolution order: explicit argument → ``UO_ARCH`` / ``ASCENDC_ARCH`` → fail.
+    Never invents a default architecture.
+    """
     if explicit and str(explicit).strip():
         return str(explicit).strip()
     for name in ARCH_ENV_VARS:
         raw = (os.environ.get(name) or "").strip()
         if raw:
             return raw
-    return "arch35"
+    raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
+
+
+def discover_arch(project_root: Path | str) -> str:
+    """Resolve arch from env, or the sole ``.ascendc-pilot/<arch>/state/workflow.yaml``.
+
+    Not a silent default: multiple or zero candidates fail closed.
+    """
+    try:
+        return resolve_arch(None)
+    except ValueError:
+        pass
+    root = Path(project_root).expanduser().resolve() / AGENT_DIR
+    if not root.is_dir():
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
+    candidates = sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir() and (p / STATE_SUBDIR / "workflow.yaml").is_file()
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
+    raise ValueError(
+        "ARCHITECTURE_MISSING_IN_RUN_STATE: multiple architectures "
+        f"{candidates}; pass --architecture or set UO_ARCH"
+    )
 
 
 def artifact_root(

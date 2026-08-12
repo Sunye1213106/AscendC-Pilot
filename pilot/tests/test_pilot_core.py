@@ -59,7 +59,7 @@ def test_router_slash_only_no_nl_keywords():
 
 
 def test_state_machine_and_no_progress(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
     record_gate(tmp_path, "g1", ok=False)
     record_gate(tmp_path, "g1", ok=False)
     record_gate(tmp_path, "g1", ok=False)
@@ -71,13 +71,13 @@ def test_state_machine_and_no_progress(tmp_path: Path):
 
 def test_start_rejects_arbitrary_phase(tmp_path: Path):
     with pytest.raises(RuntimeError, match="entry_state"):
-        start_workflow(tmp_path, "uo-init", phase="analyze")
+        start_workflow(tmp_path, "uo-init", phase="analyze", architecture="arch35")
 
 
 def test_start_uses_entry_and_next(tmp_path: Path):
     from ascendc_pilot.state import describe_next
 
-    st = start_workflow(tmp_path, "uo-init")
+    st = start_workflow(tmp_path, "uo-init", architecture="arch35")
     assert st["phase"] == "prepare"
     assert st["phase_label_zh"] == "准备 BuildVariant / 范围"
     assert st["status"] == "running"
@@ -87,7 +87,7 @@ def test_start_uses_entry_and_next(tmp_path: Path):
 
 
 def test_mark_terminal_pass_refused_without_complete(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True, architecture="arch35")
     with pytest.raises(RuntimeError, match="complete_workflow"):
         mark_terminal(tmp_path, "pass")
     with pytest.raises(RuntimeError, match="complete_workflow"):
@@ -99,7 +99,7 @@ def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
     from ascendc_pilot.runs import issue_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
     # Analyze pipeline must complete before advancing to commit.
     st = load_state(tmp_path)
     issue_receipt(
@@ -262,7 +262,7 @@ def test_ses076d_fixture_full_gate_fail(tmp_path: Path):
 
 
 def test_complete_workflow_rework_on_key_gates(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True, architecture="arch35")
     uo = uo_root(tmp_path)
     _write(
         uo / "ir" / "input_derivable.yaml",
@@ -334,9 +334,11 @@ def test_spec_hashes_four_kinds():
 
 def test_kb_fingerprint_not_uo_ready_alias(tmp_path: Path):
     from ascendc_pilot.gates import run_named_gate
+    from ascendc_pilot.state import start_workflow
 
-    r = run_named_gate(tmp_path, "kb_fingerprint")
-    assert r.get("gate") == "kb_fingerprint"
+    start_workflow(tmp_path, "tg-init", force_phase=True, architecture="arch35")
+    r = run_named_gate(tmp_path, "kb_fingerprint_fresh")
+    assert r.get("gate") == "kb_fingerprint_fresh"
     # Must not silently pass via uo_ready alias when TG/UO empty
     assert r.get("ok") is False
 
@@ -347,7 +349,7 @@ def test_e2e_cli_loop_prepare_to_extract_rework(tmp_path: Path):
     from ascendc_pilot.runs import issue_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    st = start_workflow(tmp_path, "uo-init")
+    st = start_workflow(tmp_path, "uo-init", architecture="arch35")
     assert st["phase"] == "prepare"
     nxt = describe_next(tmp_path)
     assert nxt["status"] == "running"
@@ -374,11 +376,24 @@ def test_e2e_cli_loop_prepare_to_extract_rework(tmp_path: Path):
     uo.mkdir(parents=True, exist_ok=True)
     (uo / "manifest.yaml").write_text("op_name: DemoOp\n", encoding="utf-8")
     (uo / "operator.yaml").write_text("scope: op\n", encoding="utf-8")
+    st = load_state(tmp_path)
+    run_id = str(st.get("run_id") or "")
+    scope = uo / "runs" / run_id / "scope"
+    scope.mkdir(parents=True, exist_ok=True)
+    (scope / "scope_validated.yaml").write_text(
+        "status: confirmed\n"
+        f"run_id: {run_id}\n"
+        "workflow_id: uo-init\n"
+        "action_id: scope_validated\n"
+        "source: machine\n"
+        "auto: true\n",
+        encoding="utf-8",
+    )
     ok = advance_phase(tmp_path, "extract")
     assert ok["ok"] is True, ok
     assert load_state(tmp_path)["phase"] == "extract"
     # Force phase extract then rework to prepare (former scope)
-    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     rw = rework_phase(tmp_path, reason_code="SCOPE_REWORK")
     assert rw["ok"] is True
     assert load_state(tmp_path)["phase"] == "prepare"
@@ -412,7 +427,7 @@ def test_compile_skills_smoke():
 
 
 def test_memory_and_context(tmp_path: Path):
-    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True)
+    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     e = add_candidate(tmp_path, topic="tilingkey", kind="fact", content="Host GetTilingKey has IsNzOut predicate")
     promote_stable(tmp_path, e["id"], verified_by="test")
     hits = search_local(tmp_path, topic="tilingkey", limit=3)
@@ -446,7 +461,7 @@ def test_actions_for_phase_strict_binding(tmp_path: Path):
     empty = actions_for_phase("uo-init", "nonexistent_phase")
     assert empty == []
     assert actions_for_phase("uo-init", "resolve") == []
-    start_workflow(tmp_path, "uo-init")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     nxt = describe_next(tmp_path)
     assert [a["id"] for a in nxt["allowed_actions"]] == ["prepare"]
     assert nxt["phase_label_zh"] == "准备 BuildVariant / 范围"
@@ -454,7 +469,7 @@ def test_actions_for_phase_strict_binding(tmp_path: Path):
 
 def test_complete_uo_query_no_implicit_key_gates(tmp_path: Path):
     """uo-query must not inherit uo-init KEY complete gates by prefix."""
-    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True)
+    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     record_gate(tmp_path, "kb_ready", ok=True)
     uo = uo_root(tmp_path)
     _write(uo / "manifest.yaml", {"op_name": "Demo"})
@@ -467,7 +482,7 @@ def test_complete_uo_query_no_implicit_key_gates(tmp_path: Path):
 
 
 def test_complete_rejects_open_obligations(tmp_path: Path):
-    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True)
+    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True, architecture="arch35")
     uo = uo_root(tmp_path)
     _write(uo / "manifest.yaml", {"op_name": "Demo"})
     _write(uo / "checks" / "integrity.yaml", {"status": "pass"})
@@ -483,7 +498,7 @@ def test_complete_rejects_open_obligations(tmp_path: Path):
 def test_authorize_action_and_role(tmp_path: Path):
     from ascendc_pilot.authorize import authorize
 
-    start_workflow(tmp_path, "uo-update", phase="apply", force_phase=True)
+    start_workflow(tmp_path, "uo-update", phase="apply", force_phase=True, architecture="arch35")
     bad_action = authorize(
         tmp_path,
         tool="write",
@@ -517,7 +532,7 @@ def test_verify_receipt_strict(tmp_path: Path):
     from ascendc_pilot.runs import issue_receipt, verify_receipt
     from ascendc_pilot.spec_hashes import workflow_spec_hash
 
-    start_workflow(tmp_path, "uo-update", phase="apply", force_phase=True)
+    start_workflow(tmp_path, "uo-update", phase="apply", force_phase=True, architecture="arch35")
     wf = workflow_spec_hash("uo-update")
     issue_receipt(
         tmp_path,

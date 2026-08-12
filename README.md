@@ -57,7 +57,7 @@ python scripts/dev/check_install.py
 /uo-init
 ```
 
-Architecture 由仓内 `op_host/arch*` / `op_kernel/arch*` 发现；多架构时需选择。产物在：
+Architecture 选项从当前算子仓的 `op_host/arch*` / `op_kernel/arch*` 中发现。启动 UO/TG 时必须明确 architecture；如果任务或环境变量没有提供，AscendC-Pilot 会要求从发现的架构中选择，而不会使用固定默认值。产物在：
 
 ```text
 <operator-repo>/.ascendc-pilot/

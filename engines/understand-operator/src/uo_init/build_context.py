@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from uo_init.paths import require_architecture
 import yaml
 
 from uo_init import paths
@@ -34,7 +35,7 @@ class BuildContext:
     ops_root: str
     compat_root: str
     op_dir: str = ""
-    arch_dir: str = "arch35"
+    arch_dir: str = ""
     repo_root: str = ""
 
     @classmethod
@@ -45,7 +46,7 @@ class BuildContext:
         cann_root: str | None = None,
         ops_root: str | None = None,
         op_dir: str | None = None,
-        arch_dir: str = "arch35",
+        arch_dir: str = "",
         repo_root: str | None = None,
     ) -> "BuildContext":
         p = Path(path) if path else DEFAULT_CONTEXT
@@ -162,7 +163,7 @@ class BuildContext:
             ops_root=str(data.get("ops_root") or ""),
             compat_root=str(data.get("compat_root") or ""),
             op_dir=str(data.get("op_dir") or ""),
-            arch_dir=str(data.get("arch_dir") or "arch35"),
+            arch_dir=require_architecture(data.get("arch_dir")),
             repo_root=str(data.get("repo_root") or ""),
         )
 

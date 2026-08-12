@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import hashlib
 import sqlite3
 from pathlib import Path
@@ -130,7 +131,7 @@ def backfill_from_source(
 
     meta = read_meta(product)
     op = op_name or str(meta.get("op_name") or "")
-    arch = architecture or str(meta.get("architecture") or "arch35")
+    arch = require_architecture(architecture or meta.get("architecture"))
     cm = read_codemap(product)
     cm.op_name = cm.op_name or op
     cm.architecture = cm.architecture or arch

@@ -12,6 +12,21 @@ _HARDCODED_WORKFLOW_IN_PROMPT = re.compile(
     r"workflow_id:\s*`(uo-init|uo-update|tg-init|tg-plan|tg-solve|ce-review|uo-query)`"
 )
 
+# KEY / confidence gates used by CLI ``run_key_gates`` (not WorkflowSpec phase gates).
+KEY_GATE_ALLOWLIST = frozenset(
+    {
+        "key_triage_required",
+        "key_resolve_receipt",
+        "empty_only_producer",
+        "key_report_quality",
+        "confidence_closed_high",
+        "confidence_reason_review",
+        "kb_review_consistency",
+        "confidence_gate",
+        "kb_review",
+    }
+)
+
 
 def _repo_root(explicit: Path | None) -> Path:
     if explicit is not None:
@@ -45,7 +60,164 @@ def _registered_gate_ids(project_root: Path) -> set[str]:
     tail = text[start + len(marker) :]
     end = tail.find("\n    }")
     block = tail if end < 0 else tail[:end]
-    return set(re.findall(r'(?m)^\s*"([A-Za-z0-9_-]+)"\s*:', block))
+    # Only top-level mapping keys bound to lambdas (ignore nested dict literals).
+    return set(re.findall(r'(?m)^        "([A-Za-z0-9_-]+)"\s*:\s*lambda', block))
+
+
+def _collect_spec_gate_refs(workflows: dict[str, dict[str, Any]]) -> set[str]:
+    from ascendc_pilot.workflows.specs import STATIC_OBLIGATION_GATE_MAP
+
+    refs: set[str] = set(STATIC_OBLIGATION_GATE_MAP.values())
+
+    def walk(obj: Any) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                if key in {"gates", "complete_gates", "complete_gates_diff_only"} and isinstance(
+                    value, list
+                ):
+                    refs.update(str(g) for g in value if str(g).strip())
+                elif key == "phase_gates" and isinstance(value, dict):
+                    for gates in value.values():
+                        if isinstance(gates, list):
+                            refs.update(str(g) for g in gates if str(g).strip())
+                else:
+                    walk(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                walk(item)
+
+    walk(workflows)
+    return {g for g in refs if g}
+
+
+def _check_gate_registry_closure(
+    *,
+    workflows: dict[str, dict[str, Any]],
+    gate_ids: set[str],
+) -> list[str]:
+    errors: list[str] = []
+    spec_refs = _collect_spec_gate_refs(workflows)
+    for gate in sorted(spec_refs):
+        if gate not in gate_ids:
+            errors.append(f"unregistered Spec/obligation gate id {gate!r}")
+    for gate in sorted(gate_ids):
+        if gate in spec_refs or gate in KEY_GATE_ALLOWLIST:
+            continue
+        errors.append(
+            f"unreferenced workflow gate {gate!r} "
+            "(not in Spec/obligation map; add to Spec or KEY_GATE_ALLOWLIST)"
+        )
+    return errors
+
+
+def _check_no_unreferenced_actions(
+    *,
+    workflows: dict[str, dict[str, Any]],
+) -> list[str]:
+    from ascendc_pilot.actions.engines import ENGINE_REGISTRY, OUTPUT_CONTRACT_PATHS
+
+    errors: list[str] = []
+    spec_actions: set[tuple[str, str]] = set()
+    used_contracts: set[str] = set()
+    for wid, meta in workflows.items():
+        if meta.get("reserved") or not meta.get("slash"):
+            continue
+        for action in meta.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            aid = str(action.get("id") or "").strip()
+            if aid:
+                spec_actions.add((wid, aid))
+            for field in ("output_contract_id", "staging_contract_id"):
+                cid = str(action.get(field) or "").strip()
+                if cid:
+                    used_contracts.add(cid)
+
+    for key in sorted(set(ENGINE_REGISTRY) - spec_actions):
+        errors.append(f"orphan ENGINE_REGISTRY entry: {key[0]}/{key[1]}")
+    for wid, aid in sorted(spec_actions):
+        action = next(
+            (
+                a
+                for a in (workflows[wid].get("actions") or [])
+                if isinstance(a, dict) and str(a.get("id") or "") == aid
+            ),
+            None,
+        )
+        if not action:
+            continue
+        mode = str(action.get("execution_mode") or "")
+        if mode == "deterministic" and (wid, aid) not in ENGINE_REGISTRY:
+            errors.append(f"{wid}/{aid}: deterministic action missing ENGINE_REGISTRY entry")
+
+    for cid in sorted(set(OUTPUT_CONTRACT_PATHS) - used_contracts):
+        errors.append(f"orphan OUTPUT_CONTRACT_PATHS entry: {cid}")
+    return errors
+
+
+def _check_architecture_start_requirements(
+    *,
+    workflows: dict[str, dict[str, Any]] | None,
+    root: Path,
+) -> list[str]:
+    """Spec ``requires_architecture`` set must include uo-update; projection stays aligned."""
+    del workflows
+    errors: list[str] = []
+    from ascendc_pilot.workflows import (
+        workflow_requires_architecture,
+        workflows_needing_architecture,
+    )
+
+    if not workflow_requires_architecture("uo-update"):
+        errors.append("workflow_requires_architecture('uo-update') must be True")
+    needed = set(workflows_needing_architecture())
+    for wid in ("uo-init", "uo-update", "tg-init", "tg-plan", "tg-solve"):
+        if wid not in needed:
+            errors.append(f"workflows_needing_architecture() missing {wid!r}")
+
+    inv = root / "pilot" / "policies" / "invariants" / "control-invariants.md"
+    if inv.is_file():
+        text = inv.read_text(encoding="utf-8")
+        item11 = ""
+        for line in text.splitlines():
+            if line.startswith("11."):
+                item11 = line
+                break
+        if "uo-update" not in item11:
+            errors.append("control-invariants.md item 11 must mention uo-update")
+    else:
+        errors.append("missing pilot/policies/invariants/control-invariants.md")
+
+    agent = root / "agents" / "ascendc-pilot.yaml"
+    if agent.is_file():
+        desc = agent.read_text(encoding="utf-8")
+        # Thin primary: do not hardcode architecture start lists in agent yaml.
+        if "必须带齐" in desc or (
+            "--architecture" in desc and "uo-update" in desc and "tg-init" in desc
+        ):
+            errors.append(
+                "agents/ascendc-pilot.yaml must not hardcode architecture start requirement lists"
+            )
+        if "acp" not in desc.lower():
+            errors.append("agents/ascendc-pilot.yaml description must mention acp")
+    else:
+        errors.append("missing agents/ascendc-pilot.yaml")
+
+    # Model-facing compose projection helper must stay importable and include uo-update.
+    try:
+        import sys
+
+        scripts = root / "scripts"
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from compose_runtime import _start_requirements_line  # type: ignore
+
+        line = _start_requirements_line(root)
+        if "uo-update" not in line:
+            errors.append("compose _start_requirements_line projection missing uo-update")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"compose projection helper check failed: {exc}")
+    return errors
 
 
 def _effective_write_scopes(agent_id: str, action_id: str, repo_root: Path) -> list[str]:
@@ -180,6 +352,26 @@ def _check_output_contract_unknown() -> list[str]:
     return errors
 
 
+def _check_artifact_dag(
+    *,
+    workflows: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """Producer/consumer DAG: every gate/explicit consume must have a producer."""
+    from ascendc_pilot.workflows.artifact_dag import check_artifact_dag
+
+    return list(check_artifact_dag(workflows))
+
+
+def _check_workflow_model(
+    *,
+    workflows: dict[str, dict[str, Any]] | None = None,
+) -> list[str]:
+    """Phase/transition/obligation model checker for the eight-workflow matrix."""
+    from ascendc_pilot.workflows.model_checker import check_all_models
+
+    return list(check_all_models(workflows))
+
+
 def check_all(
     repo_root: Path | None = None,
     *,
@@ -200,6 +392,16 @@ def check_all(
     gate_ids = _registered_gate_ids(root)
     errors: list[str] = []
     errors.extend(_check_output_contract_unknown())
+    if workflows is None:
+        # Full-repo closure: Spec ↔ registry ↔ ENGINE/OUTPUT ↔ start requirements.
+        errors.extend(_check_gate_registry_closure(workflows=wf_map, gate_ids=gate_ids))
+        errors.extend(_check_no_unreferenced_actions(workflows=wf_map))
+        errors.extend(_check_architecture_start_requirements(workflows=wf_map, root=root))
+        errors.extend(_check_artifact_dag())
+        errors.extend(_check_workflow_model())
+    else:
+        errors.extend(_check_artifact_dag(workflows=wf_map))
+        errors.extend(_check_workflow_model(workflows=wf_map))
 
     for wid, meta in wf_map.items():
         if meta.get("reserved") or not meta.get("slash"):

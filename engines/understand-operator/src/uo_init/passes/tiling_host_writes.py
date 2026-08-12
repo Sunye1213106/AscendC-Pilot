@@ -33,7 +33,7 @@ def enrich_tiling_host_writes(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     types = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}

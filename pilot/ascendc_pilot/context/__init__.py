@@ -13,7 +13,13 @@ except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 from ascendc_pilot.memory import search_local
-from ascendc_pilot.paths import context_root, ensure_agent_layout, tg_root, uo_root
+from ascendc_pilot.paths import (
+    context_root,
+    discover_arch,
+    ensure_agent_layout,
+    tg_root,
+    uo_root,
+)
 from ascendc_pilot.state import load_state
 
 # Re-export compiler entry points for callers / tests.
@@ -32,9 +38,12 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _resolve_pilot_params(project_root: Path, state: dict[str, Any]) -> dict[str, str]:
-    params = _load_yaml(context_root(project_root) / "pilot_params.yaml")
-    man = _load_yaml(uo_root(project_root) / "manifest.yaml")
-    run_ctx = _load_yaml(tg_root(project_root) / "init" / "run_context.yaml")
+    arch = str(state.get("architecture") or "").strip() or None
+    if arch is None:
+        arch = discover_arch(project_root)
+    params = _load_yaml(context_root(project_root, arch=arch) / "pilot_params.yaml")
+    man = _load_yaml(uo_root(project_root, arch=arch) / "manifest.yaml")
+    run_ctx = _load_yaml(tg_root(project_root, arch=arch) / "init" / "run_context.yaml")
 
     def pick(*vals: Any, default: str = "") -> str:
         for v in vals:
@@ -47,16 +56,21 @@ def _resolve_pilot_params(project_root: Path, state: dict[str, Any]) -> dict[str
 
     test_script_root = pick(
         state.get("test_script_root"),
-        state.get("csv_consumer_root"),
         params.get("test_script_root"),
-        params.get("csv_consumer_root"),
         run_ctx.get("test_script_root"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
-        os.environ.get("ASCENDC_CSV_CONSUMER_ROOT"),
     )
+    architecture = pick(
+        state.get("architecture"),
+        params.get("architecture"),
+        man.get("architecture"),
+        default="",
+    )
+    if not architecture:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
     return {
         "op_name": pick(state.get("op_name"), params.get("op_name"), man.get("op_name"), run_ctx.get("op_name"), project_root.name),
-        "architecture": pick(state.get("architecture"), params.get("architecture"), man.get("architecture"), default="arch35"),
+        "architecture": architecture,
         "test_script_root": test_script_root,
         "level": pick(state.get("level"), params.get("level"), default="L0"),
         "focus": pick(state.get("focus"), params.get("focus")),
@@ -77,9 +91,10 @@ def build_context_pack(
     need the pack keep identical output. Use ``maybe_compile_slice`` separately
     when a profile is registered.
     """
-    ensure_agent_layout(project_root)
     state = load_state(project_root)
-    uo = uo_root(project_root)
+    arch = str((state or {}).get("architecture") or "").strip() or discover_arch(project_root)
+    ensure_agent_layout(project_root, arch=arch)
+    uo = uo_root(project_root, arch=arch)
     sources_used: list[str] = ["workflow_state"]
     omitted: list[str] = ["full_kb", "full_source_tree", "full_memory"]
 
@@ -124,7 +139,7 @@ def build_context_pack(
         "note": "Lightweight pack — do not load full KB unless a gate requires a specific path.",
     }
 
-    out = context_root(project_root) / "context_pack.yaml"
+    out = context_root(project_root, arch=arch) / "context_pack.yaml"
     if yaml is not None:
         out.write_text(yaml.safe_dump(pack, allow_unicode=True, sort_keys=False), encoding="utf-8")
     pack["path"] = out.as_posix()

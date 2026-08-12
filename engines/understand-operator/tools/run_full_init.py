@@ -24,7 +24,8 @@ def main() -> int:
     if not op.is_dir():
         print("UO_OP_DIR missing")
         return 2
-    arch = os.environ.get("UO_ARCH") or "arch35"
+    from uo_init.paths import architecture_from_env
+    arch = architecture_from_env()
     run_id = os.environ.get("UO_RUN_ID") or f"full-init-{int(time.time())}"
     payload = {
         "arch_dir": arch,

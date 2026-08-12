@@ -552,7 +552,7 @@ def platform_key_tokens_for_architecture(arch: str) -> tuple[str, ...]:
         if key in token or token == key:
             return tokens
     # Loose match: any arch*regbase / *3510*
-    if "regbase" in token or "3510" in token or "arch35" in token:
+    if any(marker in token for marker in ("regbase", "3510", "arch35")):
         return ARCHITECTURE_PLATFORM_KEY_TOKENS["arch35"]
     return ()
 

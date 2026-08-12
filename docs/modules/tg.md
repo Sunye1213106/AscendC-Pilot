@@ -10,24 +10,17 @@ UO 能够说明 TilingKey 如何定义、Host 中哪些状态参与构造、Tili
 - 同一个 TilingKey 下，TilingData 和 runtime branch 是否还有不同结果；
 - 长时间搜索不到某个目标，是候选构造能力不足，还是源码上确实不可达。
 
-因此 TG 不把“静态可行”“模型近似排序”或者“模型认为可达”当作覆盖结果，而是把 CodeMap 给出的目标空间逐步转化为可运行 testcase，再通过 Host Replay 观察真实结果。产品路径不含 CBM / 全局 Z3；权威证据只有 Host Replay（R）与经审查的源码引理（E）。
+因此 TG 不把“静态可行”或“模型认为可达”当作覆盖结果，而是把 CodeMap 目标空间变成可运行 testcase，再经 Host Replay 验证。
 
-整体过程为**构造—回放—分析**的轮次循环，而不是先跑完搜索、最后再统一证明引理：
+整体过程为**构造—回放—分析**的轮次循环：
 
 ```text
 Operator CodeMap
     → Coverage Domain D
-    → Round Loop:
-          Candidate Construction
-              → Host Replay
-              → Round Analysis（概念名；由 search → residual 完成）
-                    → 有源码证明线索 → lemma
-                    → 增长偏离且需定向 → construct
-                    → 其余 → 继续 search / construct，或 blocked
-    → Coverage Closure（Open = ∅）
+    → Candidate → Host Replay → Round Analysis → Closure（Open = ∅）
 ```
 
-**Round Analysis** 是概念名称，不是独立的 workflow action/state；实现上落在 `search → residual`。每轮 Replay 后立刻分析，引理证明穿插在符合条件的轮次中，不攒到最后。
+Round Analysis 的具体路由见第 5 节；产品路径不含 CBM / 全局 Z3，权威证据只有 Host Replay（R）与经审查的源码引理（E）。
 
 TG 的核心目标不是生成尽可能多的 testcase，而是回答：
 
@@ -229,7 +222,7 @@ optional input
 ...
 ```
 
-具体 knob schema 由算子对应的 InputSemantics 提供，TG 本身不在引擎中维护某个算子的硬编码参数表。
+具体 knob schema 由算子侧实现的 `InputSemantics` 协议提供（定义见 `scripts/replay/semantics.py`）；TG 通用引擎不维护某个算子的硬编码参数表。
 
 ### 根据 CodeMap 定向构造
 
@@ -274,7 +267,7 @@ UO：建立 Host → TilingKey 的正向关系
 TG：沿这条关系反向寻找 testcase
 ```
 
-对于算子特有、暂时无法由 CodeMap 通用表达的构造方式，可以通过 operator-local hook 或 construction hints 补充。
+对于算子特有、暂时无法由 CodeMap 通用表达的构造方式，可通过算子包中的 `construction_hints.yaml`（adapter 表）以及 `.ascendc-pilot/<arch>/local/` 下的本地扩展补充（见 [产物与权威](../architecture/artifacts-and-authority.md)）。
 
 这些扩展负责“怎样生成候选”，但不负责判断候选是否正确。
 
@@ -350,9 +343,7 @@ actual key
 mismatch dimensions
 ```
 
-实际 K2 可以作为新的 replay witness 进入 R，但 K1 仍然保持 open。
-
-这种 Host rewrite 信息反而会成为**当轮 Round Analysis** 的输入：按新增 witness、target hit、rewrite/refuse 与 residual 决定下一步；有源码证明线索时进 lemma，否则继续 search 或 directed construct。
+实际 K2 可以作为新的 replay witness 进入 R，但 K1 仍然保持 open。mismatch / rewrite 会作为下一轮 Round Analysis 的输入（见第 5 节）。
 
 ### R 从真实运行记录重建
 
@@ -474,7 +465,7 @@ Construct 的输出仍然只是 candidate。
 - Host reject；
 - Host 返回其他 key；
 
-目标都仍然保持 open，但这些结果会进入**当轮** Round Analysis，而不是留到最后统一处理。
+目标都仍然保持 open；结果进入当轮 Round Analysis（第 5 节），而不是留到最后统一处理。
 
 因此：
 
@@ -486,21 +477,29 @@ construct failure ≠ unreachable
 
 
 
-## 7. 轮内源码引理：用证明消化 reject / 稳定不可达模式
+## 7. 轮内源码引理：proof contract
 
-引理证明是 Round Analysis 的一部分，在**存在源码证明线索时**于轮内执行，而不是 L2 收尾补锅。Producer / Referee / Finalizer 权限边界见 [Agent Runtime](../architecture/agent-runtime.md)。
-
-典型触发：本轮有稳定 reject / source leads；residual 显示稳定结构模式；定向构造多次被同一类 Host guard 挡住。要证明的不是“这轮没找到”，而是：
+当 Round Analysis（第 5 节）路由到 lemma 时，目标不是“这轮没找到”，而是：
 
 > 对所有合法 Host 执行路径，该模式不可能产生目标 key。
+
+**可进 E 的证据**：经 Referee 审查的源码证明，且先与已有 R 反证（`Real Replay > Static Proof`）。Reject / residual 线索本身不能关闭 coverage。
+
+**分工**：
+
+```text
+Producer → Staging lemma proposal
+Referee → 资格审查
+Deterministic Finalizer → 更新 E / Open
+```
+
+权限边界见 [Agent Runtime](../architecture/agent-runtime.md)。
 
 ```text
 本轮 Reject / Residual Pattern
     → Source Evidence → Lemma Proposal
     → Check against R → Review → Deterministic Apply → E
-    → 缩小 Open，再进入下一轮
 ```
-
 
 
 ### 先从真实 witness 反证

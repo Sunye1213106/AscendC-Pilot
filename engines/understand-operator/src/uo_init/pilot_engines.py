@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from uo_init.paths import require_architecture
 import yaml
 
 from uo_init import paths
@@ -21,7 +22,7 @@ def _uo_root(project_root: Path, *, arch: str | None = None) -> Path:
 
         return uo_root(root, arch=arch)
     except Exception:
-        arch_name = (arch or "").strip() or "arch35"
+        arch_name = require_architecture(arch)
         return root / ".ascendc-pilot" / arch_name / "uo"
 
 
@@ -609,7 +610,32 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
     run = _run_dir(uo, ctx)
     scope = run / "scope"
     cand = _load(scope / "candidates.yaml") or _load(uo / "summary" / "scope_candidates.yaml") or {}
-    prior = _load(scope / "scope_confirmed.yaml") or _load(uo / "summary" / "scope_confirmed.yaml")
+    _legacy_scope_receipt = "scope_" + "confirmed.yaml"
+    validated_path = scope / "scope_validated.yaml"
+    summary_validated = uo / "summary" / "scope_validated.yaml"
+    legacy_run = scope / _legacy_scope_receipt
+    legacy_summary = uo / "summary" / _legacy_scope_receipt
+    if not validated_path.is_file() and legacy_run.is_file():
+        return {
+            "ok": False,
+            "engine": "scope_validate",
+            "reason_code": "STALE_RUN_LAYOUT",
+            "error": "STALE_RUN_LAYOUT",
+            "message": f"legacy {_legacy_scope_receipt} present; re-run uo-init",
+        }
+    if (
+        not validated_path.is_file()
+        and not summary_validated.is_file()
+        and legacy_summary.is_file()
+    ):
+        return {
+            "ok": False,
+            "engine": "scope_validate",
+            "reason_code": "STALE_RUN_LAYOUT",
+            "error": "STALE_RUN_LAYOUT",
+            "message": f"legacy {_legacy_scope_receipt} present; re-run uo-init",
+        }
+    prior = _load(validated_path) or _load(summary_validated)
     if isinstance(prior, dict) and str(prior.get("status") or "") == "confirmed":
         prior_action = str(prior.get("action_id") or "").strip()
         prior_run = str(prior.get("run_id") or "").strip()
@@ -624,7 +650,7 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
         # Reuse only canonical machine stamps for this run. Legacy prepare stamps
         # and mismatched run ids must be rewritten (ses_00bb sticky false-green).
         reusable = (
-            prior_action == "scope_confirmation"
+            prior_action == "scope_validated"
             and machine_ok
             and (not ctx_run or prior_run == ctx_run)
         )
@@ -713,7 +739,7 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
         # Gate identity for scope_receipt — always machine clang validation.
         # Do NOT stamp the parent Action id (`prepare`); that caused
         # SCOPE_RECEIPT_ACTION_MISMATCH after auto drain (ses_00bf).
-        "action_id": "scope_confirmation",
+        "action_id": "scope_validated",
         "op_name": cand.get("op_name") or root.name,
         "arch_dir": cand.get("arch_dir") or "",
         "host_targets": hosts,
@@ -724,14 +750,10 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
         "scope_shared": cand.get("scope_shared"),
         "soft_ambiguities": ambiguities,
     }
-    _dump(scope / "scope_confirmed.yaml", receipt)
+    _dump(scope / "scope_validated.yaml", receipt)
     _dump(scope / "receipt.yaml", {"ok": True, "gate": "scope_receipt", **receipt})
-    _dump(uo / "summary" / "scope_confirmed.yaml", receipt)
+    _dump(uo / "summary" / "scope_validated.yaml", receipt)
     return {"ok": True, "engine": "scope_validate", "auto": True, "receipt": receipt}
-
-
-# Compatibility alias: public prepare chain and legacy CLI still say confirm.
-scope_confirm = scope_validate
 
 
 def _bundle_cache(uo: Path) -> Path:
@@ -776,7 +798,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     with_api = default_with_api(ctx)
     kernel_max_variants = default_kernel_max_variants(ctx)
     skip_plan = skip_reextract_for_unchanged_tus(
-        root, uo_root=uo, arch=ctx.get("arch_dir") or "arch35"
+        root, uo_root=uo, arch=ctx.get("arch_dir") or ctx.get("architecture")
     )
     try:
         bundle = extract_host_bundle(
@@ -2083,7 +2105,6 @@ ENGINES: dict[str, Any] = {
     "prepare_layout": prepare_layout,
     "scope_scan": scope_scan,
     "scope_validate": scope_validate,
-    "scope_confirm": scope_confirm,  # alias → scope_validate
     "extract_host": extract_host,
     "extract_tiling_key": extract_tiling_key,
     "extract_registry": extract_registry,

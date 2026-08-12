@@ -30,7 +30,7 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
         "uo/manifest.yaml",
         "uo/operator.yaml",
         "uo/ir/build_variant.yaml",
-        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
+        "uo/runs/{run_id}/scope/scope_validated.yaml",
         "uo/runs/{run_id}/scope/receipt.yaml",
     ],
     "uo-extract-v1": [

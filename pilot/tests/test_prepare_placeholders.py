@@ -113,8 +113,8 @@ def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) 
 
     op = tmp_path / "demo_op"
     op.mkdir()
-    ensure_agent_layout(op)
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     # Minimal entrypoint graph so propose may still run / or we stub engine
     uo = uo_root(op)
     (uo / "ir").mkdir(parents=True, exist_ok=True)

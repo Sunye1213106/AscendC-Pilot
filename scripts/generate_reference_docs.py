@@ -41,26 +41,64 @@ CLI_HELP_ZH = {
 }
 
 
+def _action_execution_cell(actions: list[dict]) -> str:
+    """Summarize per-Action execution_mode (+ actor when not deterministic)."""
+    parts: list[str] = []
+    for action in actions:
+        if not isinstance(action, dict):
+            continue
+        aid = str(action.get("id") or "").strip()
+        if not aid:
+            continue
+        mode = str(action.get("execution_mode") or "").strip() or "?"
+        actor = str(action.get("agent_id") or "").strip()
+        if mode == "deterministic":
+            parts.append(f"`{aid}`:deterministic")
+        elif actor:
+            parts.append(f"`{aid}`:{mode}(`{actor}`)")
+        else:
+            parts.append(f"`{aid}`:{mode}")
+    return "<br>".join(parts) if parts else ""
+
+
+def _workflow_agents_cell(agents: list[dict]) -> str:
+    names: list[str] = []
+    for row in agents:
+        if not isinstance(row, dict):
+            continue
+        aid = str(row.get("id") or "").strip()
+        if aid:
+            names.append(f"`{aid}`")
+    return ", ".join(names)
+
+
 def render_workflows() -> str:
+    # Use normalized registry so Action execution_mode / agent_id match runtime.
     sys.path.insert(0, str(ROOT / "pilot"))
-    from ascendc_pilot.workflows.specs import WORKFLOWS
+    from ascendc_pilot.workflows import WORKFLOWS
 
     lines = [
         "# 工作流 Reference",
         "",
-        "本文件由 `pilot/ascendc_pilot/workflows/specs.py` 生成，请不要手工编辑。",
+        "本文件由 `pilot/ascendc_pilot/workflows/specs.py`（经 registry normalize）生成，请不要手工编辑。",
         "",
-        "| 工作流 | 入口 | 状态 | 动作 | 执行者 | Gate |",
-        "| --- | --- | --- | --- | --- | --- |",
+        "`Action 执行` 来自各 Action 的 `execution_mode` / `agent_id`；`Workflow Agents` 是 workflow 声明的身份清单（含 Primary），**不是**逐步执行者。",
+        "",
+        "| 工作流 | 入口 | 状态 | Action | Action 执行 | Workflow Agents | Gate |",
+        "| --- | --- | --- | --- | --- | --- | --- |",
     ]
     for workflow_id, spec in WORKFLOWS.items():
         states = ", ".join(str(row.get("id") or "") for row in spec.get("states", []))
-        actions = ", ".join(str(row.get("id") or "") for row in spec.get("actions", []))
-        actors = ", ".join(str(row.get("id") or "") for row in spec.get("agents", []))
+        actions = list(spec.get("actions") or [])
+        action_ids = ", ".join(str(row.get("id") or "") for row in actions if isinstance(row, dict))
+        exec_cell = _action_execution_cell(actions)
+        agents_cell = _workflow_agents_cell(list(spec.get("agents") or []))
         gates = ", ".join(str(value) for value in spec.get("gates", []))
         slash = str(spec.get("slash") or "")
         entry = f"`{slash}`" if slash else "内部（无 Slash 入口）"
-        lines.append(f"| `{workflow_id}` | {entry} | {states} | {actions} | {actors} | {gates} |")
+        lines.append(
+            f"| `{workflow_id}` | {entry} | {states} | {action_ids} | {exec_cell} | {agents_cell} | {gates} |"
+        )
     lines.append("")
     return "\n".join(lines)
 

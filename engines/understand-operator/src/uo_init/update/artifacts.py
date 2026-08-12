@@ -100,11 +100,11 @@ def load_scope_index(uo_root: Path) -> dict[str, str]:
     candidates: list[Path] = []
     if run_id:
         candidates.append(uo_root / "runs" / run_id / "scope" / "receipt.yaml")
-        candidates.append(uo_root / "runs" / run_id / "scope" / "scope_confirmed.yaml")
+        candidates.append(uo_root / "runs" / run_id / "scope" / "scope_validated.yaml")
     runs = uo_root / "runs"
     if runs.is_dir():
         candidates.extend(sorted(runs.glob("*/scope/receipt.yaml"), reverse=True))
-        candidates.extend(sorted(runs.glob("*/scope/scope_confirmed.yaml"), reverse=True))
+        candidates.extend(sorted(runs.glob("*/scope/scope_validated.yaml"), reverse=True))
     for path in candidates:
         doc = read_yaml(path)
         if not doc:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable
 
+from uo_init.paths import require_architecture
 from uo_init.controllability import BranchRecord, ClosureMetrics, NodeAnalysis
 from uo_init.gaps import GapReport
 from uo_init.harness import MintedKernelBranch
@@ -27,7 +28,7 @@ def _arch_scoped_uo_root(op_dir: str | Path, arch_dir: str | None) -> Path:
 
         return uo_root(Path(op_dir), arch=arch_dir)
     except Exception:
-        arch = (arch_dir or "").strip() or "arch35"
+        arch = require_architecture(arch_dir)
         return Path(op_dir) / ".ascendc-pilot" / arch / "uo"
 
 
@@ -746,7 +747,7 @@ def extract_host_bundle(
         try:
             profile = load_platform_profile(
                 cann_root,
-                arch_dir=spec.arch_dir or "arch35",
+                arch_dir=require_architecture(spec.arch_dir),
                 platform_sku=None,
             )
             apply_platform_profile(model, profile)

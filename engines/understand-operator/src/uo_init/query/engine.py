@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from uo_init.paths import require_architecture
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
@@ -402,6 +403,6 @@ def open_codemap_query(
         raise FileNotFoundError(f"no .uo product under {path}")
     if found.suffix == ".uo":
         return CodeMapQuery(codemap=read_codemap(found), path=str(found))
-    cm = CodeMap(op_name=op_name, architecture=architecture or "arch35")
+    cm = CodeMap(op_name=op_name, architecture=require_architecture(architecture))
     cm.meta["legacy_db"] = str(found)
     return CodeMapQuery(codemap=cm, path=str(found))

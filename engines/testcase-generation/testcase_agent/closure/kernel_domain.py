@@ -19,7 +19,11 @@ from testcase_agent.closure import workspace as W
 
 
 def _arch() -> str:
-    return (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+    for _name in ("UO_ARCH", "ASCENDC_ARCH"):
+        _raw = (os.environ.get(_name) or "").strip()
+        if _raw:
+            return _raw
+    raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
 
 
 def _product_doc(ws: W.Workspace) -> tuple[dict[str, Any], dict[str, Any]]:

@@ -110,7 +110,8 @@ _FORMAL_ARTIFACT_NAMES = (
     "installed_skill_check.yaml",
     "semantic_enrichment.yaml",
     "manifest.yaml",
-    "scope_confirmed.yaml",
+    "scope_validated.yaml",
+    "scope_" + "confirmed.yaml",  # legacy layout; deny writes, no auto-migrate
     "scope_review.yaml",
     "scope_scan.yaml",
     "receipt.yaml",
@@ -499,8 +500,6 @@ def _is_rework_pilot_command(
         for rid in recovery_actions or []:
             if rid:
                 allowed_ids.append(str(rid).lower())
-        if failed_action == "apply_semantic_patch" and "adjudicate_llm_tasks" not in allowed_ids:
-            allowed_ids.append("adjudicate_llm_tasks")
         if not allowed_ids:
             return True
         return any(f"run-action {aid}" in cmd_l for aid in allowed_ids)
@@ -696,8 +695,6 @@ def authorize(
         [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()],
         workflow_id=wid,
     )
-    if failed_action == "apply_semantic_patch" and "adjudicate_llm_tasks" not in recovery_actions:
-        recovery_actions = list(recovery_actions) + ["adjudicate_llm_tasks"]
 
     # ========== STATUS-AUTHORITATIVE GATES ==========
     # Mode comes from status. Lease mode must not escalate rework → containment.

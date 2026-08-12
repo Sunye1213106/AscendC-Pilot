@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import yaml
 
-from ascendc_pilot.actions.runtime import _check_output_contract, finalize_action, prepare_action
+from ascendc_pilot.actions import finalize_action, prepare_action
+from ascendc_pilot.actions.runtime import _check_output_contract
 from ascendc_pilot.paths import agent_root, ensure_agent_layout, uo_root
 from ascendc_pilot.runs import issue_receipt
 from ascendc_pilot.spec_hashes import workflow_spec_hash
@@ -42,10 +43,24 @@ def _satisfy_prepare_gate(project: Path) -> None:
     uo = uo_root(project)
     _write(uo / "manifest.yaml", {"version": 1, "op_name": "x"})
     _write(uo / "operator.yaml", {"version": 1, "op_name": "x"})
+    state = load_state(project)
+    run_id = str(state.get("run_id") or "")
+    if run_id:
+        _write(
+            uo / "runs" / run_id / "scope" / "scope_validated.yaml",
+            {
+                "status": "confirmed",
+                "run_id": run_id,
+                "workflow_id": str(state.get("workflow_id") or "uo-init"),
+                "action_id": "scope_validated",
+                "source": "machine",
+                "auto": True,
+            },
+        )
 
 
 def test_advance_denied_while_prepare_pipeline_incomplete(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     result = advance_phase(tmp_path, "extract")
     assert result["ok"] is False
     assert result.get("error") == "PIPELINE_INCOMPLETE"
@@ -54,8 +69,8 @@ def test_advance_denied_while_prepare_pipeline_incomplete(tmp_path: Path) -> Non
 
 
 def test_wrong_phase_action_is_denied(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     denied = prepare_action(tmp_path, "analyze")
     assert denied["ok"] is False
     assert denied.get("error") in {"action_not_allowed", "ACTION_NOT_ALLOWED"}
@@ -75,8 +90,8 @@ def test_missing_contract_id_fails_closed() -> None:
 
 
 def test_finalize_denied_after_phase_switch(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     state = load_state(tmp_path)
     _write(
         agent_root(tmp_path) / "state" / "active_action.yaml",
@@ -98,8 +113,8 @@ def test_finalize_denied_after_phase_switch(tmp_path: Path) -> None:
 
 
 def test_finalize_denied_when_not_active_action(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     state = load_state(tmp_path)
     _write(
         agent_root(tmp_path) / "state" / "active_action.yaml",
@@ -118,11 +133,11 @@ def test_finalize_denied_when_not_active_action(tmp_path: Path) -> None:
 
 
 def test_old_run_receipt_does_not_satisfy_current_run(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     old_run = str(load_state(tmp_path)["run_id"])
     _issue(tmp_path, "prepare")
-    new_state = start_workflow(tmp_path, "uo-init")
+    new_state = start_workflow(tmp_path, "uo-init", architecture="arch35")
     assert new_state["run_id"] != old_run
     result = advance_phase(tmp_path, "extract")
     assert result["ok"] is False
@@ -131,8 +146,8 @@ def test_old_run_receipt_does_not_satisfy_current_run(tmp_path: Path) -> None:
 
 
 def test_old_artifact_alone_cannot_advance(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     _satisfy_prepare_gate(tmp_path)
     result = advance_phase(tmp_path, "extract")
     assert result["ok"] is False
@@ -140,8 +155,8 @@ def test_old_artifact_alone_cannot_advance(tmp_path: Path) -> None:
 
 
 def test_prepare_receipt_and_gate_allow_advance(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     next_step = describe_next(tmp_path)
     assert (next_step.get("recommended_next_action") or {}).get("id") == "prepare"
     _issue(tmp_path, "prepare")
@@ -152,8 +167,8 @@ def test_prepare_receipt_and_gate_allow_advance(tmp_path: Path) -> None:
 
 
 def test_completed_prepare_pipeline_blocks_duplicate_prepare(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     _issue(tmp_path, "prepare")
     denied = prepare_action(tmp_path, "prepare")
     assert denied["ok"] is False
@@ -162,8 +177,8 @@ def test_completed_prepare_pipeline_blocks_duplicate_prepare(tmp_path: Path) -> 
 
 def test_finalize_after_prepare_does_not_nameerror_on_apply_result(tmp_path: Path) -> None:
     """Regression: finalize_action used unbound apply_result (ses_00c6 / uo-init prepare)."""
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     with patch(
         "ascendc_pilot.actions.runtime.invoke_engine",
         return_value={"ok": True, "engine": "uo-prepare-stub"},

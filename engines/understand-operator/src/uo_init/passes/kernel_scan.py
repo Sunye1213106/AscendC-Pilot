@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import re
 import time
 from collections import defaultdict
@@ -125,7 +126,7 @@ def selected_kernel_files(codemap: CodeMap, source_root: Path) -> list[Path]:
         out.append(p)
     if out:
         return out
-    arch = codemap.architecture or "arch35"
+    arch = require_architecture(codemap.architecture)
     arch_dir = source_root / "op_kernel" / arch
     if arch_dir.is_dir():
         for p in sorted(arch_dir.rglob("*")):

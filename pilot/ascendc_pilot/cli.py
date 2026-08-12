@@ -30,78 +30,11 @@ def _normalize_project_arg(args: argparse.Namespace) -> None:
 
 
 def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
-    """Apply --set / --raise-extract-limits into pilot_params + process env (ses_0662)."""
-    project = Path(args.project).resolve()
+    """Apply --set flags (legacy extract limit knobs retired; --set is a no-op skip)."""
     sets = list(getattr(args, "set", None) or [])
-    raise_limits = bool(getattr(args, "raise_extract_limits", False))
-    if not sets and not raise_limits:
+    if not sets:
         return {}
-
-    # Old extract-plan limit knobs removed with understand-operator-old.
     return {"ok": True, "skipped": True, "reason": "extract_limits_not_applicable"}
-
-    env_to_key = {env: key for key, (env, _default) in EXTRACT_LIMIT_SPECS.items()}
-    raised: dict[str, int] = {}
-
-    for item in sets:
-        text = str(item or "").strip()
-        if not text or "=" not in text:
-            continue
-        key, _, raw = text.partition("=")
-        key = key.strip()
-        short = env_to_key.get(key, key)
-        if short not in EXTRACT_LIMIT_SPECS:
-            continue
-        try:
-            raised[short] = int(raw.strip())
-        except ValueError:
-            continue
-
-    if raise_limits:
-        cand = (
-            project
-            / ".ascendc-pilot"
-            / "uo"
-            / "ir"
-            / "extract_plan_candidates.yaml"
-        )
-        raw_counts: dict[str, int] = {}
-        if cand.is_file():
-            try:
-                import yaml
-
-                doc = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
-                if isinstance(doc, dict) and isinstance(doc.get("raw_counts"), dict):
-                    raw_counts = {
-                        str(k): int(v)
-                        for k, v in doc["raw_counts"].items()
-                        if str(k) in EXTRACT_LIMIT_SPECS
-                    }
-            except Exception:  # noqa: BLE001
-                raw_counts = {}
-        for key, (_env, default) in EXTRACT_LIMIT_SPECS.items():
-            if key not in ("writers", "receivers", "aliases", "non_sink_roots", "extra_entries"):
-                continue
-            needed = int(raw_counts.get(key) or 0)
-            if needed > 0:
-                raised[key] = max(raised.get(key, 0), needed)
-            elif key not in raised:
-                # ensure at least a generous bump when no prior candidates
-                if key == "non_sink_roots":
-                    raised[key] = max(default * 2, 1024)
-
-    if not raised:
-        return {"ok": False, "error": "no_valid_extract_limits"}
-
-    path = persist_extract_limits(project, raised)
-    apply_extract_limits_to_environ(raised)
-    return {
-        "ok": True,
-        "extract_limits": {
-            EXTRACT_LIMIT_SPECS[k][0]: v for k, v in raised.items() if k in EXTRACT_LIMIT_SPECS
-        },
-        "persisted": path.as_posix() if path else "",
-    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -152,7 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     p_start.add_argument(
         "--architecture",
         default="",
-        help="Target architecture (required for uo-init/tg-*; no silent arch35 default)",
+        help=(
+            "Target architecture (required for workflows declared in Spec "
+            "requires_architecture; no silent default)"
+        ),
     )
     p_start.add_argument("--test-script-root", type=Path, default=None, help="Test script root")
     p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
@@ -176,16 +112,7 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         metavar="KEY=VALUE",
         help=(
-            "Persist extract limit / pilot param for this project then run "
-            "(e.g. --set UO_EXTRACT_MAX_NON_SINK=1024). Prefer this over shell $env."
-        ),
-    )
-    p_run.add_argument(
-        "--raise-extract-limits",
-        action="store_true",
-        help=(
-            "For extract_plan: raise candidate budgets from last candidates raw_counts "
-            "(or defaults) into context/pilot_params.yaml, then prepare"
+            "Legacy pilot param override (currently no-op; retained for CLI compat)."
         ),
     )
 
@@ -215,11 +142,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Structured IR query (candidates/tasks/yaml counts) for producers",
     )
     p_ir_sub = p_ir.add_subparsers(dest="inspect_cmd", required=True)
-    p_ir_c = p_ir_sub.add_parser("candidates", help="Summarize extract_plan_candidates")
-    p_ir_c.add_argument("--project", type=Path, default=None)
-    p_ir_c.add_argument("--kind", default="alias", help="writer|receiver|alias|receiver_binding")
-    p_ir_c.add_argument("--min-score", type=float, default=0.0)
-    p_ir_c.add_argument("--limit", type=int, default=50)
     p_ir_t = p_ir_sub.add_parser("tasks", help="Summarize llm_tasks")
     p_ir_t.add_argument("--project", type=Path, default=None)
     p_ir_t.add_argument("--severity", default="")
@@ -230,26 +152,6 @@ def main(argv: list[str] | None = None) -> int:
     p_ir_y.add_argument("--rel", required=True, help="Path relative to .ascendc-pilot/")
     p_ir_d = p_ir_sub.add_parser("duplicates", help="Find duplicate llm_tasks targets")
     p_ir_d.add_argument("--project", type=Path, default=None)
-    p_ir_v = p_ir_sub.add_parser("validate", help="Validate producer staging / tri-state coverage")
-    p_ir_v.add_argument("--project", type=Path, default=None)
-    p_ir_v.add_argument(
-        "--what",
-        default="extract_plan",
-        choices=["extract_plan", "extract-plan-staging", "parts"],
-    )
-    p_ir_v.add_argument("--run-id", default="", help="Run id for staging paths")
-    p_ir_wl = p_ir_sub.add_parser(
-        "extract-plan-obligations",
-        help="汇总 extract_plan semantic_obligations / snapshot",
-    )
-    p_ir_wl.add_argument("--project", type=Path, default=None)
-    p_ir_wl.add_argument("--run-id", default="")
-    p_ir_cov = p_ir_sub.add_parser(
-        "extract-plan-relations",
-        help="汇总 semantic_relations / unresolved 计数",
-    )
-    p_ir_cov.add_argument("--project", type=Path, default=None)
-    p_ir_cov.add_argument("--run-id", default="")
 
     p_ro = sub.add_parser(
         "ro-search",
@@ -270,6 +172,14 @@ def main(argv: list[str] | None = None) -> int:
     p_abort = sub.add_parser("abort", help="Abort current run (mark failed)")
     p_abort.add_argument("--project", type=Path, default=None)
     p_abort.add_argument("--reason", default="aborted_by_operator")
+
+    p_answer = sub.add_parser(
+        "answer",
+        help="Record a Host question UI answer as a signed HumanDecisionReceipt",
+    )
+    p_answer.add_argument("--project", type=Path, default=None)
+    p_answer.add_argument("--request-id", required=True, help="request_id from human_interaction_request")
+    p_answer.add_argument("--value", required=True, help="Selected option value")
 
     p_hashes = sub.add_parser("spec-hashes", help="Print four Spec Hash digests")
     p_hashes.add_argument("--project", type=Path, default=None)
@@ -308,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_scope.add_argument("--project", type=Path, default=None)
     p_scope.add_argument("--op-name", default="")
-    p_scope.add_argument("--architecture", default="arch35")
+    p_scope.add_argument("--architecture", default="")
     p_scope.add_argument(
         "--decision",
         default="",
@@ -541,6 +451,16 @@ def main(argv: list[str] | None = None) -> int:
         result = describe_next(args.project)
         print_json(result)
         return 0 if result.get("ok") else 1
+    if args.cmd == "answer":
+        from ascendc_pilot.human_interaction import record_answer
+
+        result = record_answer(
+            args.project,
+            request_id=str(args.request_id or ""),
+            value=str(args.value or ""),
+        )
+        print_json(result)
+        return 0 if result.get("ok") else 1
     if args.cmd == "context":
         from ascendc_pilot.context import build_context_pack
 
@@ -598,7 +518,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         decision = normalize_decision(getattr(args, "decision", "") or "")
         # --force-new alone ⇒ reinit (script escape). Skill path must AskQuestion first.
-        if args.force_new and not decision:
+        force_new = bool(getattr(args, "force_new", False))
+        if force_new and not decision:
             decision = "reinit"
 
         if decision:
@@ -617,6 +538,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.workflow_id,
                 decision,
                 start_kwargs=start_kwargs,
+                require_receipt=not force_new,
             )
             if result.get("ok") and result.get("decision") == "reinit":
                 try:
@@ -750,6 +672,7 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ro_search(args)
     if args.cmd == "retry-after-environment-fix":
         from ascendc_pilot.authorize.lease import issue_lease_for_status
+        from ascendc_pilot.human_interaction import KIND_HUMAN_REQUIRED, require_decision_receipt
         from ascendc_pilot.runs import append_event
         from ascendc_pilot.state import load_state, save_state
 
@@ -766,6 +689,15 @@ def main(argv: list[str] | None = None) -> int:
                     "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请直接按 acp next 的 retry_command 重试",
                 }
             )
+            return 1
+        receipt = require_decision_receipt(
+            args.project,
+            expected_values=["retry_after_environment_fix"],
+            expected_kind=KIND_HUMAN_REQUIRED,
+            consume=True,
+        )
+        if not receipt.get("ok"):
+            print_json(receipt)
             return 1
         lf = dict(st.get("last_failure") or {})
         action_id = str(lf.get("action_id") or "")
@@ -793,8 +725,23 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "abort":
         from ascendc_pilot.authorize.lease import issue_lease_for_status, revoke_active_lease
+        from ascendc_pilot.human_interaction import KIND_HUMAN_REQUIRED, require_decision_receipt
         from ascendc_pilot.state import load_state, mark_terminal
 
+        # When aborting from human_required AskQuestion, require the receipt.
+        # Direct abort (no pending interaction) remains allowed for operators.
+        from ascendc_pilot.human_interaction import pending_path
+
+        if pending_path(args.project).is_file():
+            receipt = require_decision_receipt(
+                args.project,
+                expected_values=["abort_run", "abort"],
+                expected_kind=KIND_HUMAN_REQUIRED,
+                consume=True,
+            )
+            if not receipt.get("ok"):
+                print_json(receipt)
+                return 1
         revoke_active_lease(args.project, reason="abort")
         st = mark_terminal(args.project, "failed", reason=args.reason or "aborted_by_operator")
         issue_lease_for_status(args.project, state=st, action_id=str((st.get("last_failure") or {}).get("action_id") or ""))
@@ -857,7 +804,7 @@ def main(argv: list[str] | None = None) -> int:
             args.project,
             args.step,
             op_name=args.op_name or "",
-            architecture=args.architecture or "arch35",
+            architecture=args.architecture or "",
             decision=args.decision or "",
             notes=args.notes or "",
         )
@@ -1230,29 +1177,6 @@ def _cmd_inspect(args: Any) -> int:
     project = Path(args.project).resolve()
     uo = project / ".ascendc-pilot" / "uo"
     sub = str(getattr(args, "inspect_cmd", "") or "")
-    if sub == "candidates":
-        doc = read_yaml(uo / "ir" / "extract_plan_candidates.yaml") or {}
-        kind = str(args.kind or "alias")
-        key = {
-            "writer": "writer_candidates",
-            "receiver": "receiver_candidates",
-            "alias": "alias_candidates",
-            "receiver_binding": "receiver_binding_candidates",
-        }.get(kind, "alias_candidates")
-        rows = [r for r in (doc.get(key) or []) if isinstance(r, dict)]
-        min_score = float(getattr(args, "min_score", 0.0) or 0.0)
-        rows = [r for r in rows if float(r.get("score") or 0) >= min_score]
-        limit = int(getattr(args, "limit", 50) or 50)
-        print_json(
-            {
-                "ok": True,
-                "kind": kind,
-                "count": len(rows),
-                "items": rows[:limit],
-            },
-            default=str,
-        )
-        return 0
     if sub == "tasks":
         doc = read_yaml(uo / "ir" / "llm_tasks.yaml") or {}
         rows = [t for t in (doc.get("tasks") or []) if isinstance(t, dict)]
@@ -1305,90 +1229,6 @@ def _cmd_inspect(args: Any) -> int:
         dups = {k: v for k, v in c.items() if k and v > 1}
         print_json({"ok": True, "duplicate_targets": dups, "count": len(dups)}, default=str)
         return 0
-    if sub == "extract-plan-obligations":
-        run_id = str(getattr(args, "run_id", "") or "").strip()
-        obl = None
-        snap = None
-        if run_id:
-            base = (
-                project
-                / ".ascendc-pilot"
-                / "runs"
-                / run_id
-                / "actions"
-                / "extract_plan"
-                / "inputs"
-            )
-            if (base / "semantic_obligations.yaml").is_file():
-                obl = read_yaml(base / "semantic_obligations.yaml")
-            if (base / "extract_plan_snapshot.yaml").is_file():
-                snap = read_yaml(base / "extract_plan_snapshot.yaml")
-        print_json(
-            {
-                "ok": True,
-                "snapshot": snap if isinstance(snap, dict) else {},
-                "deterministic_count": (obl or {}).get("deterministic_count") if isinstance(obl, dict) else 0,
-                "llm_required_count": (obl or {}).get("llm_required_count") if isinstance(obl, dict) else 0,
-            },
-            default=str,
-        )
-        return 0
-    if sub == "extract-plan-relations":
-        run_id = str(getattr(args, "run_id", "") or "").strip()
-        graph = read_yaml(uo / "ir" / "semantic_relations.yaml")
-        if not isinstance(graph, dict) and run_id:
-            p = (
-                project
-                / ".ascendc-pilot"
-                / "runs"
-                / run_id
-                / "actions"
-                / "extract_plan"
-                / "staging"
-                / "semantic_relations.yaml"
-            )
-            if p.is_file():
-                graph = read_yaml(p)
-        graph = graph if isinstance(graph, dict) else {}
-        print_json(
-            {
-                "ok": True,
-                "relation_count": len(graph.get("relations") or []),
-                "entity_count": len(graph.get("entities") or []),
-                "unresolved_count": len(graph.get("unresolved") or []),
-                "input_root_count": len(graph.get("input_roots") or []),
-            },
-            default=str,
-        )
-        return 0
-    if sub == "validate":
-        what = str(getattr(args, "what", "extract_plan") or "extract_plan")
-        if what in {"extract_plan", "extract-plan-staging", "parts"}:
-            return print_json({"ok": False, "error": "legacy_command_removed"}) or 2
-
-            plan = read_yaml(uo / "ir" / "extract_plan.yaml") or {}
-            errs = assert_canonical_plan_slim(plan if isinstance(plan, dict) else {})
-            rel = read_yaml(uo / "ir" / "semantic_relations.yaml")
-            if what != "parts" and not isinstance(rel, dict):
-                errs.append("缺少 semantic_relations.yaml")
-            run_id = str(getattr(args, "run_id", "") or "").strip()
-            if what == "parts" and run_id:
-                part_dir = (
-                    project
-                    / ".ascendc-pilot"
-                    / "runs"
-                    / run_id
-                    / "actions"
-                    / "extract_plan"
-                    / "staging"
-                    / "relation_parts"
-                )
-                if not part_dir.is_dir():
-                    errs.append("缺少 staging/relation_parts")
-            print_json({"ok": not errs, "errors": errs}, default=str)
-            return 0 if not errs else 1
-        print_json({"ok": False, "error": "unsupported_validate", "what": what})
-        return 2
     print_json({"ok": False, "error": "unknown_inspect_cmd", "inspect_cmd": sub})
     return 2
 

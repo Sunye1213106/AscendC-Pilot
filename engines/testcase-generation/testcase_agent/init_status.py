@@ -227,7 +227,7 @@ def mark_init_pending(
 
 
 def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool = False) -> dict[str, Any]:
-    del require_merge  # csv_consumer merge/domain-symmetry/CSV-closure gate was removed; kept for call-site compat.
+    del require_merge  # legacy CSV merge/domain-symmetry/closure gate was removed; kept for call-site compat.
     require_audit_pass(out_root, checklist="tilingkey")
     doc = read_init_status(out_root)
     if not doc:
@@ -307,7 +307,7 @@ def require_audit_pass(
     """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
     from .resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
 
-    # csv_consumer checklist removed; only tilingkey ids are accepted.
+    # Legacy CSV checklist removed; only tilingkey ids are accepted.
     del checklist  # call-site compat; always tilingkey
     required = TILINGKEY_AUDIT_CHECKLIST_IDS
 

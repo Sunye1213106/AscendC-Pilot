@@ -250,7 +250,7 @@ cd /path/to/operator
 /uo-init
 ```
 
-Architecture 通常由当前算子仓中的 `op_host/arch*` 和 `op_kernel/arch*` 自动发现。存在多个架构时，AscendC-Pilot 会要求选择目标架构；扫描不到时不会编造固定 architecture 作为兜底。
+Architecture 选项从当前算子仓的 `op_host/arch*` / `op_kernel/arch*` 中发现。启动 UO/TG 时必须明确 architecture；如果任务或环境变量没有提供，AscendC-Pilot 会要求从发现的架构中选择，而不会使用固定默认值。扫描不到时也不会编造固定 architecture 作为兜底。
 
 也可以在任务中显式指定，或通过环境变量设置：
 

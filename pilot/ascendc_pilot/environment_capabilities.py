@@ -37,11 +37,11 @@ def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
     rid = str(run_id or "").strip()
     candidates = []
     if rid:
-        candidates.append(runs_root(project_root) / rid / "scope" / "scope_confirmed.yaml")
+        candidates.append(runs_root(project_root) / rid / "scope" / "scope_validated.yaml")
     # Latest-ish fallback
     scope_dir = runs_root(project_root)
     if scope_dir.is_dir():
-        for p in sorted(scope_dir.glob("*/scope/scope_confirmed.yaml"), reverse=True):
+        for p in sorted(scope_dir.glob("*/scope/scope_validated.yaml"), reverse=True):
             candidates.append(p)
             break
     boundary = _load_yaml(uo_root(project_root) / "ir" / "operator_boundary.yaml")

@@ -73,7 +73,7 @@ def refine_kernel_calls_and_tiling_reads(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     selected = list((codemap.meta.get("kernel_tiling_closure") or {}).get("selected_kernel_files") or [])

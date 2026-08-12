@@ -42,7 +42,6 @@ _LINE_RE = re.compile(
 ACTIONS = (
     "prepare_layout",
     "scope_validate",
-    "scope_confirm",  # alias
     "extract_host",
     "extract_tiling_key",
     "extract_kernel",
@@ -135,7 +134,7 @@ def measure_extract_host(
     cann: Path | None = None,
     ops: Path | None = None,
     op: Path | None = None,
-    arch: str = "arch35",
+    arch: str = "",
 ) -> dict[str, Any]:
     """Run host extraction twice — cold caches then warm — capturing timing.
 
@@ -158,6 +157,7 @@ def measure_extract_host(
         sys.path.insert(0, str(src))
     from uo_init import paths as uo_paths
 
+    arch = uo_paths.require_architecture(arch)
     cann = cann or uo_paths.cann_root()
     ops = ops or uo_paths.ops_root()
     op = op or uo_paths.op_dir(relative="attention/flash_attention_score_grad")
@@ -342,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run host extraction here, twice (cold then warm), and measure it",
     )
-    ap.add_argument("--arch", default="arch35")
+    ap.add_argument("--arch", default="", required=False)
     ap.add_argument(
         "--print-rows",
         action="store_true",

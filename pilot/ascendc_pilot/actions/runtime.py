@@ -18,30 +18,55 @@ from ascendc_pilot.actions.engines import (
     OUTPUT_CONTRACT_PATHS,
     invoke_engine,
 )
-from ascendc_pilot.paths import agent_root, ensure_control_layout, ensure_tg_layout, runs_root, tg_root
+from ascendc_pilot.paths import (
+    agent_root,
+    discover_arch,
+    ensure_control_layout,
+    ensure_tg_layout,
+    require_architecture,
+    runs_root,
+    tg_root,
+    uo_root,
+)
 from ascendc_pilot.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
 
 
 
+def _arch_for(project_root: Path, state: dict[str, Any] | None = None) -> str:
+    if state is not None:
+        arch = str(state.get("architecture") or "").strip()
+        if arch:
+            return arch
+    return discover_arch(project_root)
+
+
 def _write_active_action(project_root: Path, payload: dict[str, Any]) -> Path:
     """Persist current action context for OpenCode plugin / subagent writes."""
-    path = agent_root(project_root) / "state" / "active_action.yaml"
+    arch = str(payload.get("architecture") or "").strip() or None
+    try:
+        arch = discover_arch(project_root) if arch is None else require_architecture(arch)
+    except ValueError:
+        arch = None
+    path = agent_root(project_root, arch) / "state" / "active_action.yaml"
     _dump(path, payload)
     return path
 
 
 def _eng_ctx_from_pack(pack: dict[str, Any], state: dict[str, Any], run_id: str) -> dict[str, Any]:
+    architecture = str(pack.get("architecture") or state.get("architecture") or "").strip()
+    if not architecture:
+        return {
+            "ok": False,
+            "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+        }
     return {
         "run_id": run_id,
         "op_name": pack.get("op_name") or state.get("op_name") or "",
-        "architecture": pack.get("architecture") or state.get("architecture") or "arch35",
-        "test_script_root": pack.get("test_script_root")
-        or state.get("test_script_root")
-        or pack.get("csv_consumer_root")
-        or state.get("csv_consumer_root")
-        or "",
+        "architecture": architecture,
+        "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
         "level": pack.get("level") or state.get("level") or "L0",
         "focus": pack.get("focus") or state.get("focus") or "",
     }
@@ -145,7 +170,7 @@ def _render_placeholders(
         "<TG_ROOT>": tg_root_path,
         "<TOPIC>": topic,
         "<CONTEXT_PACK_PATH>": context_pack_path,
-        "<ARCHITECTURE>": architecture or "arch35",
+        "<ARCHITECTURE>": architecture or "[UNRESOLVED:ARCHITECTURE]",
         "<ROLE_ID>": role_id,
         "<LEASE_ID>": lease_id,
         "<ACTION_SESSION_ID>": action_session_id,
@@ -255,17 +280,16 @@ def _resolve_contract_paths(root: Path, rel: str) -> list[Path]:
 
 _PRODUCER_OWNED_ARTIFACT_NAMES: set[str] = set()
 _ACTION_OWNED_ARTIFACT_NAMES = _PRODUCER_OWNED_ARTIFACT_NAMES | {
-    "scope_confirmed.yaml",
+    "scope_validated.yaml",
     "receipt.yaml",
 }
-# Public Action is ``prepare``; machine gate stamp is ``scope_confirmation``.
-# Legacy spellings remain accepted so older receipts do not fail finalize.
-_SCOPE_GATE_ACTION_IDS = frozenset({"prepare", "scope_confirm", "scope_confirmation"})
+# Public Action is ``prepare``; machine gate stamp is ``scope_validated``.
+_SCOPE_GATE_ACTION_IDS = frozenset({"prepare", "scope_validated"})
 
 
 def _is_run_scoped_scope_artifact(path: Path) -> bool:
     posix = path.as_posix().replace("\\", "/")
-    return path.name in {"scope_confirmed.yaml", "receipt.yaml"} and "/scope/" in posix
+    return path.name in {"scope_validated.yaml", "receipt.yaml"} and "/scope/" in posix
 
 
 def _hash_prepare_nonce(prepare_nonce: str = "", prepare_nonce_hash: str = "") -> str:
@@ -346,7 +370,7 @@ def _contract_identity_ok(
     # Only the run-scoped scope receipts require identity before finalizer
     # stamping.  Do not match the substring ``receipt.yaml`` in deterministic
     # IR names such as ``host_extract_receipt.yaml``.
-    if "/runs/" in posix or path.name in {"scope_confirmed.yaml", "receipt.yaml"}:
+    if "/runs/" in posix or path.name in {"scope_validated.yaml", "receipt.yaml"}:
         if not checks["run_id"]:
             return {
                 "ok": False,
@@ -406,7 +430,7 @@ def _contract_identity_ok(
         if not expected_value or not actual or actual == expected_value:
             continue
         # Public Action is ``prepare``; machine Clang scope stamps
-        # ``scope_confirmation``. Treat the gate/Action spellings as one owner
+        # ``scope_validated``. Treat the gate/Action spellings as one owner
         # on run-scoped scope artifacts (ses_00bb).
         if (
             field == "action_id"
@@ -448,7 +472,7 @@ def _collect_output_hashes(
 ) -> dict[str, str]:
     from ascendc_pilot.ownership import expand_contract_paths
 
-    root = agent_root(project_root)
+    root = agent_root(project_root, _arch_for(project_root))
     hashes: dict[str, str] = {}
     import hashlib
 
@@ -504,7 +528,6 @@ def _check_output_contract(
             "error": "missing_contract_id",
             "message": "output_contract_id is required; cannot skip validation",
         }
-    root = agent_root(project_root)
     paths = OUTPUT_CONTRACT_PATHS.get(contract_id)
     if paths is None:
         return {
@@ -513,6 +536,7 @@ def _check_output_contract(
             "error": "unknown_contract",
             "message": f"unregistered output contract {contract_id!r}; finalize denied",
         }
+    root = agent_root(project_root, _arch_for(project_root))
     expanded = expand_contract_paths(
         list(paths),
         run_id=run_id,
@@ -612,13 +636,23 @@ def _check_output_contract(
 
 
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
-    ensure_control_layout(project_root)
-    state = load_state(project_root)
+    try:
+        arch = discover_arch(project_root)
+    except ValueError:
+        return {
+            "ok": False,
+            "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            "message_zh": "缺少 architecture；请先 acp start --architecture …",
+        }
+    ensure_control_layout(project_root, arch=arch)
+    state = load_state(project_root, arch=arch)
     if not state:
         return {"ok": False, "error": "no_active_workflow", "message_zh": "无活动 workflow；请先 acp start"}
+    arch = require_architecture(str(state.get("architecture") or arch))
     wid = str(state.get("workflow_id") or "")
     if wid.startswith("tg-"):
-        ensure_tg_layout(project_root)
+        ensure_tg_layout(project_root, arch=arch)
     phase = str(state.get("phase") or "")
     run_id = str(state.get("run_id") or "")
     action = _action_spec(wid, action_id, phase, project_root=project_root)
@@ -638,7 +672,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "allowed": [a.get("id") for a in actions_for_phase(wid, phase, project_root=project_root)],
         }
 
-    # Prefer pipeline order: block Host skip (e.g. apply before detect_score_post / adjudicate).
+    # Prefer pipeline order: block Host skip ahead of recommended_next_action.
     status = str(state.get("status") or "running")
     if status == "running":
         from ascendc_pilot.workflows.pipeline import recommend_next_action
@@ -680,9 +714,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
         failed = str(lf.get("action_id") or "")
         recovery = [str(x) for x in (lf.get("recovery_actions") or []) if str(x).strip()]
-        # Default recovery: producer that feeds apply_semantic_patch
-        if failed == "apply_semantic_patch" and "adjudicate_llm_tasks" not in recovery:
-            recovery = ["adjudicate_llm_tasks", "apply_semantic_patch"]
         if failed and action_id != failed and action_id not in recovery:
             return {
                 "ok": False,
@@ -724,9 +755,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     staging_dir(sdir).mkdir(parents=True, exist_ok=True)
 
     from ascendc_pilot.context import build_context_pack, maybe_compile_slice
-    from ascendc_pilot.paths import tg_root, uo_root
 
-    pack = build_context_pack(project_root, intent=f"run-action:{action_id}", topic=action_id)
+    try:
+        pack = build_context_pack(project_root, intent=f"run-action:{action_id}", topic=action_id)
+    except ValueError as exc:
+        if "ARCHITECTURE_MISSING_IN_RUN_STATE" in str(exc):
+            return {
+                "ok": False,
+                "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+                "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            }
+        raise
     repo = _repo_root(project_root)
     # Optional Context Compiler slice — only when a profile is registered.
     # Unregistered profiles leave pack/session identical to the pre-compiler path.
@@ -750,12 +789,19 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 "task_prompt_id": tpid,
             }
     root_s = Path(project_root).expanduser().resolve().as_posix()
-    uo_s = uo_root(project_root).as_posix()
-    tg_s = tg_root(project_root).as_posix()
+    try:
+        architecture = require_architecture(str(state.get("architecture") or ""))
+    except ValueError:
+        return {
+            "ok": False,
+            "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+        }
+    uo_s = uo_root(project_root, arch=architecture).as_posix()
+    tg_s = tg_root(project_root, arch=architecture).as_posix()
     pack_path = str(pack.get("path") or "")
     slice_path = str((context_slice or {}).get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
-    architecture = str(state.get("architecture") or "arch35")
     ph_kwargs = {
         "run_id": run_id,
         "action_id": action_id,
@@ -825,223 +871,11 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     }
 
     eng_ctx = _eng_ctx_from_pack(pack, state, run_id)
+    if eng_ctx.get("ok") is False:
+        return eng_ctx
     prepare_engine: dict[str, Any] | None = None
     # semantic_bind is deterministic-only now (no LLM producer overlay). The old
     # producer prepare_stamp path referenced an unbound `stamp` local and is gone.
-    # adjudicate_llm_tasks: producer writes patches for deterministic apply.
-    adjudicate_not_applicable = False
-    if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
-        try:
-            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
-
-            uo = uo_root(project_root)
-            open_blocking = open_blocking_tasks(uo, current_run_id=run_id)
-            gap_blocking = blocking_gap_tasks(uo, current_run_id=run_id)
-            needs_llm = [
-                t
-                for t in open_blocking
-                if str(t.get("route") or "") == "uo-semantic-resolve"
-                and bool(t.get("eligible_for_adjudication", True))
-                and not can_auto_mark_missing(t)
-            ]
-            # False N/A: eligible LLM tasks exist → must dispatch.
-            non_llm_gaps = [
-                t
-                for t in gap_blocking
-                if str(t.get("route") or "") != "uo-semantic-resolve"
-                or not bool(t.get("eligible_for_adjudication", True))
-            ]
-            if needs_llm:
-                adjudicate_not_applicable = False
-            elif gap_blocking and (not open_blocking or non_llm_gaps):
-                # Gaps exist but none (or not all) are LLM-adjudicable — route-aware recovery.
-                from ascendc_pilot.recovery import recoveries_for_task_routes
-
-                routed = recoveries_for_task_routes(
-                    gap_blocking, workflow_id=wid, current_phase=phase
-                )
-                _dump(
-                    sdir / "not_applicable.yaml",
-                    {
-                        "status": "ADJUDICATION_ROUTED_NON_LLM",
-                        "action_id": "adjudicate_llm_tasks",
-                        "run_id": run_id,
-                        "phase": phase,
-                        "reason": "blocking_gaps_require_non_llm_routes",
-                        "blocking_gap_count": len(gap_blocking),
-                        "task_ids": [str(t.get("task_id") or "") for t in gap_blocking],
-                        "effective_task_types": [
-                            str(t.get("effective_task_type") or t.get("type") or "")
-                            for t in gap_blocking
-                        ],
-                        "triage_categories": [
-                            str(t.get("triage_category") or "") for t in gap_blocking
-                        ],
-                        "recovery_actions": routed.get("recovery_actions") or [],
-                        "reason_codes": routed.get("reason_codes") or [],
-                    },
-                )
-                adjudicate_not_applicable = True
-                bundle["dispatch_targets"] = {
-                    "not_applicable": True,
-                    "status": "ADJUDICATION_ROUTED_NON_LLM",
-                    "read": ["uo/ir/llm_tasks.yaml", "uo/ir/semantic_task_triage.yaml"],
-                    "write": ["uo/ir/semantic_patches.yaml"],
-                    "forbid_write": [
-                        "uo/ir/semantic_resolution_ledger.yaml",
-                        "uo/ir/extract_plan.yaml",
-                    ],
-                    "recovery_actions": routed.get("recovery_actions") or [],
-                }
-            else:
-                adjudicate_not_applicable = not needs_llm
-        except Exception:  # noqa: BLE001
-            adjudicate_not_applicable = False
-        routed_non_llm = (bundle.get("dispatch_targets") or {}).get("status") == "ADJUDICATION_ROUTED_NON_LLM"
-        if adjudicate_not_applicable:
-            if not routed_non_llm:
-                target_line = (
-                    "NO open blocking llm_tasks needing producer — "
-                    "status=semantic_patch_not_applicable; DO NOT invent patches"
-                )
-                bundle["dispatch_targets"] = {
-                    "not_applicable": True,
-                    "read": ["uo/ir/llm_tasks.yaml"],
-                    "write": ["uo/ir/semantic_patches.yaml"],
-                    "forbid_write": [
-                        "uo/ir/semantic_resolution_ledger.yaml",
-                        "uo/ir/extract_plan.yaml",
-                    ],
-                }
-                _dump(
-                    sdir / "not_applicable.yaml",
-                    {
-                        "status": "semantic_patch_not_applicable",
-                        "action_id": "adjudicate_llm_tasks",
-                        "run_id": run_id,
-                        "phase": phase,
-                        "reason": "no_open_blocking_llm_tasks",
-                    },
-                )
-            else:
-                target_line = (
-                    "blocking gaps require non-LLM routes — "
-                    "status=ADJUDICATION_ROUTED_NON_LLM; follow recovery_actions"
-                )
-            na_status = (
-                "ADJUDICATION_ROUTED_NON_LLM"
-                if routed_non_llm
-                else "semantic_patch_not_applicable"
-            )
-            # Contract path must exist for auto-finalize (semantic-patches-v1).
-            _dump(
-                uo_root(project_root) / "ir" / "semantic_patches.yaml",
-                {
-                    "version": 1,
-                    "status": na_status,
-                    "reason": "no_open_blocking_llm_tasks"
-                    if not routed_non_llm
-                    else "blocking_gaps_require_non_llm_routes",
-                    "run_id": run_id,
-                    "patches": [],
-                },
-            )
-            prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
-        else:
-            # Map-Reduce prepare: plan semantic batches; workers write parts only.
-            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
-            return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
-
-            uo = uo_root(project_root)
-            doc = load_llm_tasks(uo)
-            tasks_by_id = {
-                str(t.get("task_id")): t
-                for t in (doc.get("tasks") or [])
-                if isinstance(t, dict) and t.get("task_id")
-            }
-            snap = ""
-            try:
-                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
-
-                s = require_source_snapshot(uo, run_id=run_id or None)
-                if s.get("ok"):
-                    snap = str(s.get("source_snapshot_hash") or s.get("hash") or "")
-            except Exception:
-                snap = ""
-            # session.yaml is written later; use prepare-time action_sid already in scope
-            action_session = str(action_sid or run_id)
-            manifest = plan_semantic_batches(
-                list(needs_llm),
-                action_session_id=action_session,
-                source_snapshot_hash=snap,
-            )
-            write_semantic_batches(Path(sdir), manifest, tasks_by_id)
-            dispatch_tasks = []
-            for shard in manifest.get("shards") or []:
-                if not isinstance(shard, dict):
-                    continue
-                sid = str(shard.get("shard_id") or "")
-                stub = (
-                    f"action_id=adjudicate_llm_tasks shard_id={sid}\n"
-                    f"run_id={run_id}\n"
-                    f"action_session_id={action_session}\n"
-                    f"read: runs/{run_id}/actions/adjudicate_llm_tasks/batches/batch_{sid}.yaml\n"
-                    f"write: runs/{run_id}/actions/adjudicate_llm_tasks/parts/part_{sid}.yaml\n"
-                    f"scratch: runs/{run_id}/actions/adjudicate_llm_tasks/scratch/{sid}/**\n"
-                    "FORBIDDEN: write uo/ir/semantic_patches.yaml / ledger / llm_tasks; "
-                    "FORBIDDEN: read other shards; FORBIDDEN: acp finalize/next/advance\n"
-                    f"task_ids ({shard.get('task_count')}): {', '.join(shard.get('task_ids') or [])}\n"
-                )
-                dispatch_tasks.append(
-                    {
-                        "shard_id": sid,
-                        "actor_id": "uo-semantic-resolve",
-                        "category": shard.get("category"),
-                        "task_ids": list(shard.get("task_ids") or []),
-                        "task_prompt_stub": stub,
-                        "batch_file": shard.get("batch_file"),
-                        "part_file": shard.get("part_file"),
-                    }
-                )
-            target_line = (
-                f"Map-Reduce adjudicate: {len(dispatch_tasks)} shards → write parts only; "
-                "finalizer reduces to uo/ir/semantic_patches.yaml"
-            )
-            bundle["dispatch_targets"] = {
-                "read": [
-                    "uo/ir/llm_tasks.yaml",
-                    "uo/ir/score_report_post.yaml",
-                    "uo/ir/score_report_pre.yaml",
-                    f"runs/{run_id}/actions/adjudicate_llm_tasks/semantic_batches.yaml",
-                    f"runs/{run_id}/actions/adjudicate_llm_tasks/batches/**",
-                    f"runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-                ],
-                "write": [
-                    f"runs/{run_id}/actions/adjudicate_llm_tasks/parts/**",
-                    f"runs/{run_id}/actions/adjudicate_llm_tasks/scratch/**",
-                ],
-                "forbid_write": [
-                    "uo/ir/semantic_patches.yaml",
-                    "uo/ir/semantic_resolution_ledger.yaml",
-                    "uo/ir/extract_plan.yaml",
-                    "uo/ir/llm_tasks.yaml",
-                    "uo/ir/entrypoint_graph.yaml",
-                    "uo/ir/host_subgraph.yaml",
-                    "uo/ir/kernel_subgraph.yaml",
-                ],
-                "output_mode": "staged",
-                "map_reduce": True,
-            }
-            bundle["dispatch_tasks"] = dispatch_tasks
-            bundle["semantic_batches"] = {
-                "shard_count": len(dispatch_tasks),
-                "task_set_hash": manifest.get("task_set_hash"),
-                "source_snapshot_hash": snap,
-            }
-            # Stubs live on dispatch_tasks / task_prompt_stub.md — never in ph_kwargs
-            # (_render_placeholders only accepts template token kwargs).
-            prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
-
     # resolve_gaps: shard blockers (≤30) for closed-vocabulary producer patches.
     resolve_gaps_deferred = False
     if wid == "uo-init" and action_id == "resolve_gaps" and role_id == "producer":
@@ -1270,7 +1104,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     prompt_path = (sdir / "prompt.md").as_posix()
     method_path = (sdir / "method.md").as_posix()
     bundle_path = (sdir / "bundle.yaml").as_posix()
-    agent_root_posix = agent_root(project_root).as_posix()
+    agent_root_posix = agent_root(project_root, architecture).as_posix()
 
     from ascendc_pilot.environment_capabilities import (
         source_scope_for_lease,
@@ -1360,7 +1194,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         try:
             from ascendc_pilot.paths import agent_root as _agent_root
 
-            rel = Path(slice_path).resolve().relative_to(_agent_root(project_root).resolve())
+            rel = Path(slice_path).resolve().relative_to(
+                _agent_root(project_root, architecture).resolve()
+            )
             session_extras.append(rel.as_posix())
         except Exception:
             session_extras.append("context/slices/**")
@@ -1389,7 +1225,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             expand_path_template(str(p), run_id=run_id) for p in dt["forbid_read"]
         ] + forbid_read
     # Always allow re-reading Action write targets (producer self-check / rework).
-    # Root cause: write-only lease blocked Read of uo/ir/extract_plan.yaml after Write.
+    # Root cause: write-only lease blocked Read of write targets after Write.
     for wp in write_paths:
         wps = expand_path_template(str(wp), run_id=run_id)
         if wps and wps not in read_paths:
@@ -1539,32 +1375,61 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         return result
 
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
-        # Action-specific steps; never default to retired uo-scope CLI.
+        from ascendc_pilot.human_interaction import (
+            KIND_PRIMARY_APPROVE,
+            KIND_PRIMARY_CONFIRM,
+            attach_interaction_request,
+        )
+
         if action_id == "human_confirm":
-            interactive_steps = [
-                f"Review {root_s}/.ascendc-pilot/tg/init/audit_report.yaml and remaining realization gaps.",
-                "AskQuestion: confirm | rework | stop",
-                f"Only after `confirm`: acp run-action human_confirm --finalize --project {root_s}",
-            ]
+            ask = {
+                "header": "TG Init 人工确认",
+                "question": "确认当前 TG Init 契约与绑定可以进入后续 Plan 吗？",
+                "options": [
+                    {"label": "确认", "value": "confirm"},
+                    {"label": "返工", "value": "rework"},
+                    {"label": "停止", "value": "stop"},
+                ],
+            }
+            kind = KIND_PRIMARY_CONFIRM
         elif action_id == "plan_approve":
-            interactive_steps = [
-                f"Review the current level under {root_s}/.ascendc-pilot/tg/plan/levels/.",
-                "Check coverage_obligations.yaml, unresolved.yaml, and human-required items.",
-                "AskQuestion: approve | rework | stop",
-                f"Only after `approve`: acp run-action plan_approve --finalize --project {root_s}",
-            ]
+            ask = {
+                "header": "TG Plan 批准",
+                "question": "批准当前 TG Plan 并允许进入 Solve 吗？",
+                "options": [
+                    {"label": "批准", "value": "approve"},
+                    {"label": "返工", "value": "rework"},
+                    {"label": "停止", "value": "stop"},
+                ],
+            }
+            kind = KIND_PRIMARY_APPROVE
         else:
-            interactive_steps = [
-                f"Review the prepared bundle for Action `{action_id}` under the current workflow.",
-                "AskQuestion: continue | rework | stop",
-                f"Only after affirmative choice: acp run-action {action_id} --finalize --project {root_s}",
-            ]
-        result["interactive_steps"] = interactive_steps
+            ask = {
+                "header": f"{action_id} 人工确认",
+                "question": f"是否继续 finalize Action `{action_id}`？",
+                "options": [
+                    {"label": "继续", "value": "confirm"},
+                    {"label": "返工", "value": "rework"},
+                    {"label": "停止", "value": "stop"},
+                ],
+            }
+            kind = KIND_PRIMARY_CONFIRM
+        result["needs_human_decision"] = True
+        result["ask_question"] = ask
+        result["action_id"] = action_id
+        result = attach_interaction_request(
+            result,
+            project_root,
+            kind=kind,
+            action_id=action_id,
+        )
+        from ascendc_pilot.actions.tg_primary import primary_interactive_steps
+
+        result["interactive_steps"] = primary_interactive_steps(action_id, project_root, result)
         result["message_zh"] = (
             f"已准备 primary_interactive Action `{action_id}`。"
-            f"请在当前 primary 会话按 `primary_instructions_path` / interactive_steps 执行；"
-            f"禁止 Task 派发自身或再次 `acp run-action {action_id}`（prepare）。"
-            f"必须先 AskQuestion，再 `--finalize`。"
+            f"Host 必须弹出 AskQuestion；回答经 `acp answer` 写入 HumanDecisionReceipt 后，"
+            f"才能 `--finalize`。"
         )
         result["dispatch_task"] = False
         return result
@@ -1616,25 +1481,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         result.setdefault("resume_required", False)
         result.setdefault("resume_session_id", "")
-    if wid == "uo-init" and action_id == "adjudicate_llm_tasks":
-        if adjudicate_not_applicable:
-            fin = finalize_action(project_root, action_id)
-            result["auto_finalize"] = True
-            result["dispatch_task"] = False
-            result["finalize"] = fin
-            result["ok"] = bool(fin.get("ok"))
-            result["message_zh"] = (
-                "adjudicate_llm_tasks：无 open blocking 需 producer，"
-                "已签发 semantic_patch_not_applicable 并 auto-finalize；请 `acp next`。"
-            )
-            return result
-        result["message_zh"] = (
-            f"已准备 adjudicate_llm_tasks；派发 `{actor_id}` 时原样使用 `task_prompt_stub`："
-            f"只裁决 open blocking llm_tasks→semantic_patches.yaml。"
-            f"禁止写 ledger/派生图。完成后 "
-            f"acp run-action adjudicate_llm_tasks --finalize，然后必须 `acp next` → apply_semantic_patch。"
-        )
-        result["dispatch_targets"] = bundle.get("dispatch_targets")
     if wid == "uo-init" and action_id == "resolve_gaps":
         if resolve_gaps_deferred:
             fin = finalize_action(project_root, action_id, engine_result=prepare_engine)
@@ -1658,69 +1504,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             f"全部完成后 `acp run-action resolve_gaps --finalize`，然后必须 `acp next` → apply_gap_patch。"
         )
     return result
-
-
-def _finalize_owned_artifact_path(
-    project_root: Path,
-    *,
-    session: dict[str, Any],
-    action_id: str,
-) -> Path | None:
-    from ascendc_pilot.paths import uo_root as _uo_root
-
-    scope_confirmed = (
-        _uo_root(project_root)
-        / "runs"
-        / str(session.get("run_id") or "")
-        / "scope"
-        / "scope_confirmed.yaml"
-    )
-    owned: dict[str, Path] = {
-        "adjudicate_llm_tasks": _uo_root(project_root) / "ir" / "semantic_patches.yaml",
-        "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
-        "kb_review": _uo_root(project_root) / "review" / "kb_product_review.yaml",
-        # prepare owns the machine scope receipt; gate stamp remains scope_confirmation.
-        "prepare": scope_confirmed,
-        "scope_confirm": scope_confirmed,
-        "scope_confirmation": scope_confirmed,
-    }
-    return owned.get(action_id)
-
-
-def _validate_producer_declared_identity(
-    project_root: Path,
-    *,
-    session: dict[str, Any],
-    action_id: str,
-) -> dict[str, Any]:
-    """Reject producer-declared identity that conflicts with the prepared session."""
-    if action_id not in {"adjudicate_llm_tasks"}:
-        return {"ok": True, "skipped": True}
-    path = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
-    if path is None or not path.is_file():
-        return {"ok": True, "skipped": True, "path": path.as_posix() if path else ""}
-    check = _contract_identity_ok(
-        path,
-        run_id=str(session.get("run_id") or ""),
-        workflow_id=str(session.get("workflow_id") or ""),
-        phase=str(session.get("phase") or ""),
-        action_id=str(session.get("action_id") or action_id or ""),
-        actor_id=str(session.get("actor_id") or ""),
-        role_id=str(session.get("role_id") or ""),
-        action_session_id=str(session.get("action_session_id") or ""),
-        lease_id=str(session.get("lease_id") or ""),
-        prepare_nonce=str(session.get("prepare_nonce") or ""),
-        require_finalizer_stamp=False,
-    )
-    if check.get("ok"):
-        return {"ok": True, "path": path.as_posix()}
-    return {
-        "ok": False,
-        "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
-        "path": path.as_posix(),
-        "identity_error": check,
-        "message": "producer-declared artifact identity conflicts with prepared Action session",
-    }
 
 
 def _finalize_inject_artifact_identity(
@@ -1778,7 +1561,7 @@ def _finalize_inject_artifact_identity(
             if prior_action in _SCOPE_GATE_ACTION_IDS and prior_action != "prepare":
                 stamped["action_id"] = prior_action
             else:
-                stamped["action_id"] = "scope_confirmation"
+                stamped["action_id"] = "scope_validated"
         return stamped
 
     trusted = _stamp_scope_safe(doc)
@@ -1822,6 +1605,8 @@ def _finalize_inject_artifact_identity(
                     "message": "receipt must be a YAML mapping to stamp identity",
                 }
     return {"ok": True, "path": path.as_posix(), "contract_id": contract_id}
+
+
 
 
 def _revoke_lease_after_finalize(
@@ -1988,6 +1773,76 @@ def _finalize_bind_session_lease(
     return None
 
 
+
+
+def _attach_finalize_observation(
+    project_root: Path,
+    payload: dict[str, Any],
+    *,
+    action_id: str,
+    messages: list[str],
+) -> dict[str, Any]:
+    from ascendc_pilot.observation import record_pilot_result
+    from ascendc_pilot.state import load_state, save_state
+
+    recorded = record_pilot_result(
+        project_root,
+        ok=False,
+        action_id=action_id,
+        step_id="action_finalize",
+        messages=[m for m in messages if m],
+        source="finalize_action",
+    )
+    out = dict(payload)
+    out["observation"] = recorded.get("observation")
+    out["status"] = recorded.get("status")
+    out["last_failure"] = recorded.get("last_failure")
+    out["failure_card"] = recorded.get("failure_card")
+
+    # Propagate engine recovery_actions into last_failure for rework authorize.
+    eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
+    checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
+    eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
+    from ascendc_pilot.recovery import filter_executable_recovery_actions
+
+    wid = str((load_state(project_root) or {}).get("workflow_id") or "uo-init")
+    recovery = filter_executable_recovery_actions(
+        list(eng.get("recovery_actions") or eng2.get("recovery_actions") or []),
+        workflow_id=wid,
+    )
+    recoveries = list(eng.get("recoveries") or eng2.get("recoveries") or [])
+    if recovery or recoveries:
+        lf = dict(out.get("last_failure") or {})
+        if recovery:
+            lf["recovery_actions"] = recovery
+        if recoveries:
+            lf["recoveries"] = recoveries
+        out["last_failure"] = lf
+        st = load_state(project_root)
+        if st:
+            st_lf = dict(st.get("last_failure") or {})
+            if recovery:
+                st_lf["recovery_actions"] = recovery
+            if recoveries:
+                st_lf["recoveries"] = recoveries
+            st["last_failure"] = st_lf
+            save_state(project_root, st)
+    if str(out.get("status") or "") == "human_required":
+        from ascendc_pilot.state import describe_next
+
+        nxt = describe_next(project_root)
+        if nxt.get("ask_question"):
+            out["needs_human_decision"] = True
+            out["ask_question"] = nxt["ask_question"]
+            out["human_required"] = nxt.get("human_required")
+            out["primary_instruction_zh"] = nxt.get("primary_instruction_zh") or (
+                "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options。"
+            )
+    return out
+
+
+
+
 def finalize_action(
     project_root: Path,
     action_id: str,
@@ -2050,20 +1905,6 @@ def finalize_action(
     )
     producer_identity_ok = bool(producer_identity.get("ok"))
 
-    # adjudicate_llm_tasks Map-reduce finalize path removed with legacy UO scripts.
-    if (
-        producer_identity_ok
-        and wid == "uo-init"
-        and action_id == "adjudicate_llm_tasks"
-        and engine_result is None
-        and (Path(sdir) / "semantic_batches.yaml").is_file()
-    ):
-        return {
-            "ok": False,
-            "error": "legacy_uo_scripts_removed",
-            "message_zh": "旧 extract/semantic 路径已移除",
-        }
-
     if producer_identity_ok:
         contract = _check_output_contract(
             project_root,
@@ -2106,7 +1947,7 @@ def finalize_action(
         for gid in session.get("gates") or action.get("gates") or []:
             gate_results.append(run_named_gate(project_root, str(gid)))
         # Persist Action gate outcomes into passed_gates / failed_gates so
-        # static obligations (e.g. scope_confirmed←scope_receipt) can settle
+        # static obligations (e.g. scope_validated←scope_receipt) can settle
         # without waiting for advance/complete to re-run the same gate.
         for g in gate_results:
             try:
@@ -2285,70 +2126,42 @@ def finalize_action(
     return _attach_finalize_observation(project_root, result, action_id=action_id, messages=msgs)
 
 
-def _attach_finalize_observation(
+
+def _finalize_owned_artifact_path(
     project_root: Path,
-    payload: dict[str, Any],
     *,
+    session: dict[str, Any],
     action_id: str,
-    messages: list[str],
+) -> Path | None:
+    from ascendc_pilot.paths import uo_root as _uo_root
+
+    scope_validated = (
+        _uo_root(project_root)
+        / "runs"
+        / str(session.get("run_id") or "")
+        / "scope"
+        / "scope_validated.yaml"
+    )
+    owned: dict[str, Path] = {
+        "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
+        "kb_review": _uo_root(project_root) / "review" / "kb_product_review.yaml",
+        # prepare owns the machine scope receipt; gate stamp is scope_validated.
+        "prepare": scope_validated,
+        "scope_validated": scope_validated,
+    }
+    return owned.get(action_id)
+
+
+def _validate_producer_declared_identity(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
 ) -> dict[str, Any]:
-    from ascendc_pilot.observation import record_pilot_result
-    from ascendc_pilot.state import load_state, save_state
+    """Reject producer-declared identity that conflicts with the prepared session."""
+    del project_root, session, action_id
+    return {"ok": True, "skipped": True}
 
-    recorded = record_pilot_result(
-        project_root,
-        ok=False,
-        action_id=action_id,
-        step_id="action_finalize",
-        messages=[m for m in messages if m],
-        source="finalize_action",
-    )
-    out = dict(payload)
-    out["observation"] = recorded.get("observation")
-    out["status"] = recorded.get("status")
-    out["last_failure"] = recorded.get("last_failure")
-    out["failure_card"] = recorded.get("failure_card")
-
-    # Propagate engine recovery_actions into last_failure for rework authorize.
-    eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
-    checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
-    eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
-    from ascendc_pilot.recovery import filter_executable_recovery_actions
-
-    wid = str((load_state(project_root) or {}).get("workflow_id") or "uo-init")
-    recovery = filter_executable_recovery_actions(
-        list(eng.get("recovery_actions") or eng2.get("recovery_actions") or []),
-        workflow_id=wid,
-    )
-    recoveries = list(eng.get("recoveries") or eng2.get("recoveries") or [])
-    if recovery or recoveries:
-        lf = dict(out.get("last_failure") or {})
-        if recovery:
-            lf["recovery_actions"] = recovery
-        if recoveries:
-            lf["recoveries"] = recoveries
-        out["last_failure"] = lf
-        st = load_state(project_root)
-        if st:
-            st_lf = dict(st.get("last_failure") or {})
-            if recovery:
-                st_lf["recovery_actions"] = recovery
-            if recoveries:
-                st_lf["recoveries"] = recoveries
-            st["last_failure"] = st_lf
-            save_state(project_root, st)
-    if str(out.get("status") or "") == "human_required":
-        from ascendc_pilot.state import describe_next
-
-        nxt = describe_next(project_root)
-        if nxt.get("ask_question"):
-            out["needs_human_decision"] = True
-            out["ask_question"] = nxt["ask_question"]
-            out["human_required"] = nxt.get("human_required")
-            out["primary_instruction_zh"] = nxt.get("primary_instruction_zh") or (
-                "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options。"
-            )
-    return out
 
 
 def run_action(project_root: Path, action_id: str, *, finalize: bool = False) -> dict[str, Any]:

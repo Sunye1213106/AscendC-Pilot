@@ -196,7 +196,14 @@ def plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     if not E._is_tilingkey_full(tg_ctx):
         return E._run_tg_plan_build(project_root, ctx)
     op_name = str(tg_ctx.get("op_name") or "")
-    arch = str(tg_ctx.get("architecture") or "arch35")
+    arch = str(tg_ctx.get("architecture") or "").strip()
+    if not arch:
+        return {
+            "ok": False,
+            "engine": "plan_build",
+            "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+        }
     if not op_name:
         return {"ok": False, "engine": "plan_build", "error": "op_name required"}
 
@@ -325,12 +332,20 @@ def solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
                 "error": "TARGET_SET_STALE_OR_OUTSIDE_DECLARED",
                 "outside": sorted(keys - declared)[:20],
             }
-        uo = _uo_identity(project_root, op_name=str(tg_ctx.get("op_name") or ""), architecture=str(tg_ctx.get("architecture") or "arch35"))
+        arch = str(tg_ctx.get("architecture") or "").strip()
+        if not arch:
+            return {
+                "ok": False,
+                "engine": "solve_precheck",
+                "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+                "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            }
+        uo = _uo_identity(project_root, op_name=str(tg_ctx.get("op_name") or ""), architecture=arch)
         snapshot_hash = _hash_json(
             {
                 "uo_sha256": uo["sha256"],
                 "declared_hash": _hash_json(sorted(declared)),
-                "architecture": str(tg_ctx.get("architecture") or "arch35"),
+                "architecture": arch,
             }
         )
     except Exception as exc:  # noqa: BLE001

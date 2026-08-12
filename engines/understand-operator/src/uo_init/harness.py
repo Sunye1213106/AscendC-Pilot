@@ -14,6 +14,7 @@ selects a pairwise-covering subset instead.
 """
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import random
 import re
 from dataclasses import dataclass, field
@@ -656,7 +657,7 @@ def fold_controls(
     if exe is None:
         raise RuntimeError("no clang driver found; set clang_exe")
     op_dir = getattr(ctx, "op_dir", None) or ""
-    arch = getattr(ctx, "arch_dir", None) or "arch35"
+    arch = require_architecture(getattr(ctx, "arch_dir", None))
     cache_key = ""
     if fold_cache.cache_enabled():
         try:

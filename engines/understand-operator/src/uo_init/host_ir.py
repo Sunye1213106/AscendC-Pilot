@@ -83,7 +83,7 @@ def _walk_tu_payload(
             "ops_root": getattr(ctx, "ops_root", ""),
             "compat_root": getattr(ctx, "compat_root", ""),
             "op_dir": getattr(ctx, "op_dir", ""),
-            "arch_dir": getattr(ctx, "arch_dir", "arch35"),
+            "arch_dir": getattr(ctx, "arch_dir", "") or "",
             "repo_root": getattr(ctx, "repo_root", ""),
         }
     return {

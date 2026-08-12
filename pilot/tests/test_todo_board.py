@@ -9,7 +9,7 @@ from ascendc_pilot.todo import build_todo, write_todo
 
 
 def test_start_attaches_native_items_not_todo_md(tmp_path: Path) -> None:
-    state = start_workflow(tmp_path, "uo-init")
+    state = start_workflow(tmp_path, "uo-init", architecture="arch35")
     assert "todo_md" not in state
     todo = state.get("todo") or {}
     assert todo.get("sync") == "opencode_native_todowrite"
@@ -38,7 +38,7 @@ def test_start_attaches_native_items_not_todo_md(tmp_path: Path) -> None:
 
 
 def test_todo_marks_current_public_phase_native(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     state = load_state(tmp_path)
     state["phase"] = "analyze"
     state["phase_label_zh"] = "确定性 CodeMap Pass"

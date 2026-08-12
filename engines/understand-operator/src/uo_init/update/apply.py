@@ -22,7 +22,7 @@ def update_operator(
     repo_root: Path,
     op_name: str,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
     base: str | None = None,
     head: str | None = None,
     confirm_scope: bool = False,

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from uo_init.paths import require_architecture
 import yaml
 
 ADAPTER_FILES = (
@@ -33,7 +34,7 @@ def adapter_dir(project_root: Path, *, arch: str | None = None) -> Path:
 
         return uo_root(root, arch=arch) / "adapter"
     except Exception:
-        arch_name = (arch or "").strip() or "arch35"
+        arch_name = require_architecture(arch)
         return root / ".ascendc-pilot" / arch_name / "uo" / "adapter"
 
 
@@ -302,7 +303,7 @@ def export_adapter_pack(
 
             uo_path = uo_root(root, arch=arch)
         except Exception:
-            arch_name = (arch or "").strip() or "arch35"
+            arch_name = require_architecture(arch)
             uo_path = root / ".ascendc-pilot" / arch_name / "uo"
     else:
         uo_path = Path(uo)
@@ -313,7 +314,7 @@ def export_adapter_pack(
         derivation = _load(uo_path / "tiling" / "key_derivations.yaml")
     manifest = _load(uo_path / "manifest.yaml")
     op_name = str(manifest.get("op_name") or "")
-    arch_name = str(arch or manifest.get("architecture") or "arch35")
+    arch_name = require_architecture(arch or manifest.get("architecture"))
 
     out_dir = adapter_dir(root, arch=arch_name)
     bridge = build_bridge_spec(derivation, op_name=op_name, arch=arch_name)

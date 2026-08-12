@@ -34,7 +34,7 @@ def test_slim_checker_result_drops_large_engine_blob() -> None:
 def test_issue_receipt_stores_slim_checker(tmp_path: Path) -> None:
     import yaml
 
-    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True)
+    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
     path = issue_receipt(
         tmp_path,
         actor_type="producer",
@@ -53,7 +53,7 @@ def test_issue_receipt_stores_slim_checker(tmp_path: Path) -> None:
 
 
 def test_verify_filters_by_requested_action_id(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True)
+    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
     wf = workflow_spec_hash("uo-investigate")
     for i in range(4):
         issue_receipt(
@@ -85,7 +85,7 @@ def test_verify_filters_by_requested_action_id(tmp_path: Path) -> None:
 def test_recommend_next_uses_one_done_check_per_action(tmp_path: Path, monkeypatch) -> None:
     from ascendc_pilot.workflows import pipeline as pipe_mod
 
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
     calls: list[str] = []
 
     def fake_ok(project_root: Path, action_id: str) -> bool:
@@ -117,7 +117,7 @@ def test_verify_compacts_legacy_fat_receipt_and_resigns(tmp_path: Path) -> None:
     from ascendc_pilot.runs import run_dir, sign_receipt_payload
     from ascendc_pilot.state import load_state
 
-    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True)
+    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
     state = load_state(tmp_path)
     run_id = str(state["run_id"])
     payload = {

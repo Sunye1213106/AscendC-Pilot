@@ -45,6 +45,18 @@ jobs:
         env:
           PYTHONPATH: pilot
         run: python scripts/check_ownership_contracts.py --repo .
+      - name: Validate artifact producer/consumer DAG
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_contract_dag.py --repo .
+      - name: Validate workflow model (phases/transitions/routing)
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_workflow_model.py --repo .
+      - name: Validate session replay matrix
+        env:
+          PYTHONPATH: pilot
+        run: pytest -q pilot/tests/test_session_replay_matrix.py
       - name: Validate skill architecture
         env:
           PYTHONPATH: pilot
@@ -56,6 +68,21 @@ jobs:
           python scripts/compose_runtime.py --repo . --host opencode
           python scripts/prune_runtime_context.py --repo . --host opencode
           python scripts/compose_opencode_commands.py
+      - name: Assert generated runtime has no drift
+        env:
+          PYTHONPATH: pilot
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, "scripts")
+          from compose_runtime import check_generated_drift
+          errs = check_generated_drift(Path(".").resolve(), hosts=["opencode"])
+          if errs:
+              print("\n".join(errs))
+              raise SystemExit(1)
+          print("generated drift: ok")
+          PY
       - name: Validate deterministic drive
         env:
           PYTHONPATH: pilot

@@ -35,7 +35,7 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        start_workflow(op, "tg-solve", phase="lemma", force_phase=True)
+        start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
 
         # Unknown tool
         v = authorize(
@@ -87,7 +87,7 @@ def main() -> int:
             failures.append(f"stale lease: {v}")
 
         # Referee cannot write producer path
-        start_workflow(op, "tg-solve", phase="audit", force_phase=True)
+        start_workflow(op, "tg-solve", phase="audit", force_phase=True, architecture="arch35")
         v = authorize(
             op,
             tool="write",

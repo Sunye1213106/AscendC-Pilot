@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import pickle
 import time
 from pathlib import Path
@@ -112,7 +113,7 @@ def clear_compile_cache(op_root: Path | None = None, architecture: str | None = 
     if op_root is None:
         _COMPILE_MEM.clear()
         return
-    arch = architecture or "arch35"
+    arch = require_architecture(architecture)
     key_prefix = f"{Path(op_root).expanduser().resolve()}|"
     for k in list(_COMPILE_MEM):
         if k.startswith(key_prefix):
@@ -133,7 +134,7 @@ def _span(name: str, t0: float) -> None:
 def compile_codemap(
     *,
     op_name: str,
-    architecture: str = "arch35",
+    architecture: str = "",
     op_root: str | Path | None = None,
     host_ir: Any = None,
     kernel_ir: Any = None,
@@ -160,7 +161,7 @@ def compile_codemap(
     than guessed edges.
     """
     t_all = time.perf_counter()
-    arch = (architecture or "arch35").strip() or "arch35"
+    arch = require_architecture(architecture)
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
     cm = CodeMap(op_name=op_name, architecture=arch)
     bv = cm.upsert(EntityKind.BUILD_VARIANT, variant.name, attrs=variant.to_dict())

@@ -51,6 +51,7 @@ def _act(
     agent_id: str | None = None,
     role_id: str | None = None,
     execution_mode: str | None = None,
+    human_interaction: str = "none",
     policy_ids: list[str] | None = None,
     capability_ids: list[str] | None = None,
     action_method_id: str | None = None,
@@ -64,11 +65,17 @@ def _act(
     allowed_read_paths: list[str] | None = None,
     forbidden_write_paths: list[str] | None = None,
     forbidden_read_paths: list[str] | None = None,
+    produces: list[str] | None = None,
+    consumes: list[str] | None = None,
+    schema_version: str = "1",
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
 
     ``actors`` is derived from ``agent_id`` for authorize / spawn checks.
     Workflow Spec is the sole editable authority for identity fields.
+    ``human_interaction`` is ``none`` | ``confirm`` | ``approve``.
+    ``produces`` / ``consumes`` are optional Producer/Consumer DAG edges;
+    when ``produces`` is omitted (None), artifact_dag auto-fills from contracts.
     """
     from ascendc_pilot.ownership import (
         ACTION_FORBIDDEN_READ_PATHS,
@@ -79,6 +86,9 @@ def _act(
         infer_execution_mode,
     )
 
+    hi = str(human_interaction or "none").strip().lower()
+    if hi not in {"none", "confirm", "approve"}:
+        raise ValueError(f"{workflow_id}/{action_id}: invalid human_interaction={human_interaction!r}")
     method_id = action_method_id or f"{workflow_id}/{action_id.replace('_', '-')}"
     actors = [agent_id] if agent_id else []
     mode = infer_execution_mode(
@@ -114,6 +124,7 @@ def _act(
         "agent_id": agent_id,
         "role_id": role_id,
         "execution_mode": mode,
+        "human_interaction": hi,
         "policy_ids": list(policy_ids if policy_ids is not None else DEFAULT_POLICY_IDS),
         "capability_ids": _merge_capability_ids(capability_ids),
         "action_method_id": method_id,
@@ -126,6 +137,10 @@ def _act(
         "forbidden_read_paths": list(forbid_reads or []),
         # Derived for authorize / Task spawn (single primary actor).
         "actors": actors,
+        "schema_version": str(schema_version or "1"),
+        # None → artifact_dag.normalize_produces auto-fills from contracts.
+        "produces": list(produces) if produces is not None else None,
+        "consumes": list(consumes) if consumes is not None else [],
     }
     if output_mode:
         row["output_mode"] = output_mode
@@ -138,7 +153,7 @@ def _act(
 
 # Static obligation id → gate id that settles it when that gate passes.
 STATIC_OBLIGATION_GATE_MAP: dict[str, str] = {
-    "scope_confirmed": "scope_receipt",
+    "scope_validated": "scope_receipt",
     "uo_product_ready": "uo_product_ready",
     "kb_integrity_passed": "integrity",
     "kb_ready": "kb_ready",
@@ -196,6 +211,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-init": {
         "slash": "/uo-init",
         "engine": "uo",
+        "cognitive_skill_id": "operator-analysis",
+        "requires_project": True,
+        "requires_architecture": True,
         "entry_state": "prepare",
         "terminal_ready_states": ["verify"],
         "retry_budget": 3,
@@ -314,7 +332,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         ],
         "agents": [{"id": "ascendc-pilot", "role": "controller"}],
         "static_obligations": [
-            {"id": "scope_confirmed", "label_zh": "范围已校验"},
+            {"id": "scope_validated", "label_zh": "范围已校验"},
             {"id": "uo_product_ready", "label_zh": ".uo CodeMap 已写入"},
         ],
         "dynamic_obligation_sources": ["ir/unresolved.yaml"],
@@ -336,6 +354,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-update": {
         "slash": "/uo-update",
         "engine": "uo",
+        "cognitive_skill_id": "operator-analysis",
+        "requires_project": True,
+        "requires_architecture": True,
         "entry_state": "detect",
         "terminal_ready_states": ["diff"],
         "retry_budget": 3,
@@ -467,6 +488,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-query": {
         "slash": "/uo-query",
         "engine": "uo",
+        "cognitive_skill_id": "operator-analysis",
+        "requires_project": True,
+        "requires_architecture": False,
         "entry_state": "route",
         "terminal_ready_states": ["answer"],
         "retry_budget": 3,
@@ -512,6 +536,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-investigate": {
         "slash": "/uo-investigate",
         "engine": "uo",
+        "cognitive_skill_id": "operator-analysis",
+        "requires_project": True,
+        "requires_architecture": False,
         "entry_state": "investigate",
         "terminal_ready_states": ["report"],
         "retry_budget": 2,
@@ -573,6 +600,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "ce-review": {
         "slash": "/ce-review",
         "engine": "ce",
+        "cognitive_skill_id": "code-review",
+        "requires_project": True,
+        "requires_architecture": False,
         "entry_state": "context",
         "terminal_ready_states": ["summary"],
         "retry_budget": 3,
@@ -625,6 +655,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "tg-init": {
         "slash": "/tg-init",
         "engine": "tg",
+        "cognitive_skill_id": "testcase-generation",
+        "requires_project": True,
+        "requires_architecture": True,
         "entry_state": "intent",
         "terminal_ready_states": ["confirm"],
         "retry_budget": 3,
@@ -742,6 +775,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="ascendc-pilot",
                 role_id="controller",
                 execution_mode="primary_interactive",
+                human_interaction="confirm",
                 gates=["init_confirmed", "kb_fingerprint_fresh"],
                 capability_ids=[],
                 task_prompt_id="tg/human-confirm",
@@ -859,6 +893,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "tg-plan": {
         "slash": "/tg-plan",
         "engine": "tg",
+        "cognitive_skill_id": "testcase-generation",
+        "requires_project": True,
+        "requires_architecture": True,
         "entry_state": "intent",
         "terminal_ready_states": ["approve"],
         "retry_budget": 3,
@@ -946,6 +983,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="ascendc-pilot",
                 role_id="controller",
                 execution_mode="primary_interactive",
+                human_interaction="approve",
                 gates=["plan_approved"],
                 capability_ids=[],
                 task_prompt_id="tg/plan-approve",
@@ -980,6 +1018,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "tg-solve": {
         "slash": "/tg-solve",
         "engine": "tg",
+        "cognitive_skill_id": "testcase-generation",
+        "requires_project": True,
+        "requires_architecture": True,
         "entry_state": "gate",
         "terminal_ready_states": ["certify"],
         "retry_budget": 8,

@@ -19,7 +19,7 @@ def test_task_authorize_recovers_via_last_project_cache(
     # Leftover empty marker under workspace (no workflow) — must not win.
     (workspace / ".ascendc-pilot" / "state").mkdir(parents=True)
 
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    start_workflow(op, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     _write_active_action(
         op,
         {

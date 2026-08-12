@@ -1,32 +1,28 @@
-# Task
+<task>
+对本轮 Round Analysis 给出的源码引理线索做证明或反驳（轮内 claim，不是搜完后的清理）。
+</task>
 
-Prove or refute the assigned source lemma leads from **this round's** Round Analysis
-(expected-growth rejects / exclusive open patterns). This is an in-round claim,
-not an end-of-search cleanup.
-
-# Targets
-
+<targets>
 `<TARGET_IDS_OR_FILES>`
+</targets>
 
-# Evidence
-
-Closed lead pack only (do not invent leads). Use the companion evidence pack when present.
-Prefer Host `refuse` / rewrite observations and `round_analysis.yaml` patterns from the
-latest replay round.
-
-# Context
-
+<context>
 - Project: `<PROJECT_ROOT>`
 - UO: `<UO_ROOT>`
 - TG: `<TG_ROOT>`
 
-# Requirements
+权威闭合证据只有 Host Replay（R）与经审查的源码引理（E）。搜索失败或裸 Host reject 本身不等于不可达。
+方法细节见打包 Skill `source-proof`；遵守当前 Action 的 output contract / session 字段。
+</context>
 
-- Follow the packaged `source-proof` domain skill and the current Action output contract / session prompt fields; do not assume a Host-specific physical Skill path
-- Close required proof obligations; actively seek counterexamples
-- Do not convert missing/search failure / replay reject alone into exclusion
-- Verdict must be `PROVED` | `REFUTED` | `INSUFFICIENT` with source-window evidence
+<instructions>
+1. 只处理 closed lead pack 中的线索，禁止发明新 lead；有 companion evidence pack 时一并使用。
+2. 优先对照最新一轮 Host `refuse` / rewrite 观察与 `round_analysis.yaml` 模式。
+3. 主动寻找反例；闭合所需 proof obligations。
+4. 不得把 missing / search failure / replay reject 单独升级为 exclusion。
+</instructions>
 
-# Return
-
-Write only the declared Action output paths.
+<output>
+每个候选给出 `PROVED` | `REFUTED` | `INSUFFICIENT`，并附源码窗口证据。
+只写入 Action 声明的输出路径。
+</output>

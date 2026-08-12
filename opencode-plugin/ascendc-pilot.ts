@@ -23,6 +23,174 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 
+/** Host-side pending human interaction (mirrors ACP pending_interaction.yaml). */
+type PendingHumanInteraction = {
+  request_id: string
+  project: string
+  allowed_values: string[]
+  kind: string
+  recorded_at: number
+}
+
+const pendingByProject = new Map<string, PendingHumanInteraction>()
+
+function pendingInteractionPath(project: string): string {
+  // Arch-neutral control plane (works before --architecture is known).
+  return resolve(project, ".ascendc-pilot", "control", "pending_interaction.yaml")
+}
+
+function readPendingFromDisk(project: string): PendingHumanInteraction | null {
+  if (!project) return null
+  const path = pendingInteractionPath(project)
+  if (!existsSync(path)) return null
+  try {
+    const text = readFileSync(path, "utf8")
+    const id = text.match(/request_id:\s*["']?([A-Za-z0-9_-]+)/)?.[1] || ""
+    if (!id) return null
+    const kind = text.match(/kind:\s*["']?([A-Za-z0-9_-]+)/)?.[1] || ""
+    const values: string[] = []
+    const block = text.match(/allowed_values:\s*\n((?:\s*-\s*.+\n?)*)/)
+    if (block?.[1]) {
+      for (const line of block[1].split("\n")) {
+        const m = line.match(/^\s*-\s*["']?([^"'\n]+)/)
+        if (m?.[1]) values.push(m[1].trim())
+      }
+    }
+    return {
+      request_id: id,
+      project,
+      allowed_values: values,
+      kind,
+      recorded_at: Date.now(),
+    }
+  } catch {
+    return null
+  }
+}
+
+function getPending(project: string): PendingHumanInteraction | null {
+  if (!project) return null
+  const mem = pendingByProject.get(project)
+  if (mem) return mem
+  const disk = readPendingFromDisk(project)
+  if (disk) pendingByProject.set(project, disk)
+  return disk
+}
+
+function clearPending(project: string): void {
+  if (!project) return
+  pendingByProject.delete(project)
+}
+
+function extractJsonObjects(text: string): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = []
+  const src = String(text || "")
+  for (let i = 0; i < src.length; i++) {
+    if (src[i] !== "{") continue
+    let depth = 0
+    for (let j = i; j < src.length; j++) {
+      const ch = src[j]
+      if (ch === "{") depth++
+      else if (ch === "}") {
+        depth--
+        if (depth === 0) {
+          const slice = src.slice(i, j + 1)
+          try {
+            const obj = JSON.parse(slice) as Record<string, unknown>
+            if (obj && typeof obj === "object") out.push(obj)
+          } catch {
+            /* not json */
+          }
+          i = j
+          break
+        }
+      }
+    }
+  }
+  return out
+}
+
+function captureHumanInteractionFromOutput(project: string, outputText: string): void {
+  if (!project) return
+  for (const obj of extractJsonObjects(outputText)) {
+    const req = obj.human_interaction_request
+    if (!req || typeof req !== "object") continue
+    const r = req as Record<string, unknown>
+    const requestId = String(r.request_id || "").trim()
+    if (!requestId) continue
+    const allowed = Array.isArray(r.allowed_values)
+      ? r.allowed_values.map((v) => String(v))
+      : []
+    pendingByProject.set(project, {
+      request_id: requestId,
+      project,
+      allowed_values: allowed,
+      kind: String(r.kind || ""),
+      recorded_at: Date.now(),
+    })
+    return
+  }
+}
+
+function toolOutputText(output: Record<string, unknown> | undefined): string {
+  if (!output) return ""
+  const chunks: string[] = []
+  for (const k of ["output", "content", "message", "text", "result", "stdout"] as const) {
+    const v = output[k]
+    if (typeof v === "string" && v.trim()) chunks.push(v)
+  }
+  const meta = output.metadata
+  if (meta && typeof meta === "object") {
+    for (const k of ["output", "content", "stdout"] as const) {
+      const v = (meta as Record<string, unknown>)[k]
+      if (typeof v === "string" && v.trim()) chunks.push(v)
+    }
+  }
+  return chunks.join("\n")
+}
+
+function extractQuestionAnswer(args: Record<string, unknown>, output: Record<string, unknown> | undefined): string {
+  const fromArgs = [
+    args.answer,
+    args.value,
+    args.selection,
+    args.selected,
+    args.choice,
+    args.response,
+  ]
+  for (const v of fromArgs) {
+    if (typeof v === "string" && v.trim()) return v.trim()
+    if (Array.isArray(v) && v.length) return String(v[0]).trim()
+  }
+  const text = toolOutputText(output)
+  // Prefer last non-empty line as the selection.
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (lines.length) return lines[lines.length - 1]
+  return text.trim()
+}
+
+function runAcpAnswer(project: string, requestId: string, value: string): { ok: boolean; detail: string } {
+  const bin = resolveAcpBin()
+  const r = spawnSync(
+    bin,
+    ["answer", "--project", project, "--request-id", requestId, "--value", value],
+    { encoding: "utf8", timeout: 60_000 },
+  )
+  const stdout = String(r.stdout || "")
+  const stderr = String(r.stderr || "")
+  try {
+    const obj = JSON.parse(stdout) as Record<string, unknown>
+    if (obj.ok) return { ok: true, detail: stdout.slice(0, 500) }
+    return { ok: false, detail: String(obj.message_zh || obj.error || stdout || stderr).slice(0, 800) }
+  } catch {
+    if (r.status === 0) return { ok: true, detail: stdout.slice(0, 500) }
+    return { ok: false, detail: (stderr || stdout || `exit ${r.status}`).slice(0, 800) }
+  }
+}
+
 type AuthorizeResult = {
   ok?: boolean
   decision?: string
@@ -142,7 +310,7 @@ function detectProjectRoot(pathHint?: string): string {
 
 function detectProjectRootForTask(promptHint?: string): string {
   // Task args carry subagent names, not file paths. Prefer paths embedded in the
-  // prepare stub (…/<op>/.ascendc-pilot/runs/.../actions/extract_plan/...).
+  // prepare stub (…/<op>/.ascendc-pilot/runs/.../actions/<action_id>/...).
   const fromPrompt = projectRootFromPath(String(promptHint || ""))
   if (fromPrompt && isPilotProjectRoot(fromPrompt)) {
     return fromPrompt
@@ -250,10 +418,10 @@ function harnessBinCachePath(): string {
 }
 
 function resolveAcpBin(): string {
+  // Install scripts write the cache; Host adapter must not re-implement install discovery.
   const fromEnv = String(process.env.ASCENDC_HARNESS_BIN || "").trim()
   if (fromEnv && existsSync(fromEnv)) return fromEnv
 
-  // Written by install.ps1 / install.sh after pip installs the console script.
   try {
     const cached = readFileSync(harnessBinCachePath(), "utf-8").trim()
     if (cached && existsSync(cached)) return cached
@@ -261,55 +429,7 @@ function resolveAcpBin(): string {
     // ignore
   }
 
-  const exeName = process.platform === "win32" ? "acp.exe" : "acp"
-
-  // Prefer PATH lookup without shell (Windows-safe argv).
-  // Note: OpenCode's Node process may have a thinner PATH than the user shell.
-  const probe = spawnSync(process.platform === "win32" ? "where" : "which", ["acp"], {
-    encoding: "utf-8",
-    shell: false,
-    windowsHide: true,
-  })
-  const first = String(probe.stdout || "")
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .find((s) => s && existsSync(s))
-  if (first) return first
-
-  // Scan PATH directories directly (covers cases where `where` is unavailable).
-  const pathEnv = process.env.PATH || process.env.Path || ""
-  const pathSep = process.platform === "win32" ? ";" : ":"
-  for (const dir of pathEnv.split(pathSep)) {
-    const trimmed = dir.trim()
-    if (!trimmed) continue
-    const candidate = resolve(trimmed, exeName)
-    if (existsSync(candidate)) return candidate
-  }
-
-  // Common Windows install locations (pip --user, conda/miniconda, store Python).
-  if (process.platform === "win32") {
-    const roaming = process.env.APPDATA || ""
-    const local = process.env.LOCALAPPDATA || ""
-    const home = process.env.USERPROFILE || ""
-    const conda = process.env.CONDA_PREFIX || ""
-    const candidates = [
-      conda ? resolve(conda, "Scripts", "acp.exe") : "",
-      resolve(roaming, "Python", "Python313", "Scripts", "acp.exe"),
-      resolve(roaming, "Python", "Python312", "Scripts", "acp.exe"),
-      resolve(roaming, "Python", "Python311", "Scripts", "acp.exe"),
-      resolve(local, "Programs", "Python", "Python313", "Scripts", "acp.exe"),
-      resolve(local, "Programs", "Python", "Python312", "Scripts", "acp.exe"),
-      resolve(local, "miniconda3", "Scripts", "acp.exe"),
-      resolve(local, "anaconda3", "Scripts", "acp.exe"),
-      resolve(home, "miniconda3", "Scripts", "acp.exe"),
-      resolve(home, "anaconda3", "Scripts", "acp.exe"),
-      "C:\\ProgramData\\miniconda3\\Scripts\\acp.exe",
-      "C:\\ProgramData\\anaconda3\\Scripts\\acp.exe",
-    ]
-    for (const c of candidates) {
-      if (c && existsSync(c)) return c
-    }
-  }
+  // Bare name: rely on PATH at spawn time (agent-facing bash stays `acp *`).
   return "acp"
 }
 
@@ -834,6 +954,29 @@ export const AscendCHarnessPlugin = async () => {
           "",
       )
 
+      // Human Interaction Broker: while ACP has a pending interaction, only
+      // the question UI (and acp answer / inspect helpers) may proceed.
+      const pending = getPending(project)
+      if (pending) {
+        const isQuestion =
+          tool === "question" ||
+          tool === "askquestion" ||
+          tool === "ask_question" ||
+          tool.includes("question")
+        const isAnswerBash =
+          (tool === "bash" || tool === "shell" || tool === "terminal") &&
+          /\bacp(\.cmd|\.exe)?\s+answer\b/i.test(command)
+        const isInspectBash =
+          (tool === "bash" || tool === "shell" || tool === "terminal") &&
+          /\bacp(\.cmd|\.exe)?\s+(inspect-failure|next|status|run-summary)\b/i.test(command)
+        if (!isQuestion && !isAnswerBash && !isInspectBash) {
+          throw new Error(
+            `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}). ` +
+              `Only the question UI (or acp answer) is allowed until the user answers.`,
+          )
+        }
+      }
+
       if (tool === "bash" || tool === "shell" || tool === "terminal") {
         // Do NOT rewrite agent bash to an absolute acp.exe path.
         // OpenCode frontmatter only allows `acp *`; rewriting to
@@ -1026,6 +1169,40 @@ export const AscendCHarnessPlugin = async () => {
             ],
             project,
           )
+        }
+
+        // Capture human_interaction_request from acp stdout and record answers.
+        if (tool === "bash" || tool === "shell" || tool === "terminal") {
+          const text = toolOutputText(output)
+          if (project && text) captureHumanInteractionFromOutput(project, text)
+        }
+        const isQuestionTool =
+          tool === "question" ||
+          tool === "askquestion" ||
+          tool === "ask_question" ||
+          tool.includes("question")
+        if (isQuestionTool && project) {
+          const pending = getPending(project)
+          if (pending) {
+            const value = extractQuestionAnswer(args, output)
+            if (value) {
+              const answered = runAcpAnswer(project, pending.request_id, value)
+              if (answered.ok) {
+                clearPending(project)
+              } else {
+                runDebug(
+                  [
+                    "record-tool-failure",
+                    "--tool",
+                    "question",
+                    "--error",
+                    `acp answer failed: ${answered.detail}`.slice(0, 1500),
+                  ],
+                  project,
+                )
+              }
+            }
+          }
         }
 
         const eventSession = extractHostSessionId(input as Record<string, unknown>)

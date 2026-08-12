@@ -312,7 +312,17 @@ def _uo_root(ws=None) -> Path:
     try:
         return Path(ws.state).parent.parent / "uo"
     except Exception:
-        return Path(ws.root) / ".ascendc-pilot" / "arch35" / "uo"
+        import os
+
+        arch = None
+        for _name in ("UO_ARCH", "ASCENDC_ARCH"):
+            _raw = (os.environ.get(_name) or "").strip()
+            if _raw:
+                arch = _raw
+                break
+        if not arch:
+            raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
+        return Path(ws.root) / ".ascendc-pilot" / arch / "uo"
 
 
 def _load_yaml(path: Path) -> dict:

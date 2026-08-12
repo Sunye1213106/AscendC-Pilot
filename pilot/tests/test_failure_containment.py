@@ -47,7 +47,7 @@ def test_classify_uo_scope_finalize_is_environment_invariant():
 
 
 def test_finalize_failure_updates_state(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     issue_action_lease(tmp_path, action_id="prepare", mode="normal")
     old_lease = load_lease(tmp_path)
     assert old_lease.get("status") == "active"
@@ -87,7 +87,7 @@ def test_finalize_failure_updates_state(tmp_path: Path):
 
 
 def test_next_after_failure_no_normal_actions(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     record_pilot_result(
         tmp_path,
         ok=False,
@@ -119,7 +119,7 @@ def test_next_after_failure_no_normal_actions(tmp_path: Path):
 
 
 def test_glob_read_denied_after_human_required(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     record_pilot_result(
         tmp_path,
         ok=False,
@@ -142,7 +142,7 @@ def test_glob_read_denied_after_human_required(tmp_path: Path):
 
 def test_build_agent_passthrough_during_containment(tmp_path: Path):
     """Tab→Build must escape harness even with human_required leftover run."""
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     record_pilot_result(
         tmp_path,
         ok=False,
@@ -167,7 +167,7 @@ def test_build_agent_passthrough_during_containment(tmp_path: Path):
 
 
 def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     record_pilot_result(
         tmp_path,
         ok=False,
@@ -180,7 +180,7 @@ def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
         tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "installed_skill_check.yaml",
         tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "semantic_enrichment.yaml",
         tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml",
-        tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "scope_confirmed.yaml",
+        tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "scope_validated.yaml",
     ]
     for path in targets:
         before = path.exists()
@@ -202,7 +202,7 @@ def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
 
 
 def test_direct_domain_script_denied_after_failure(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     record_pilot_result(
         tmp_path,
         ok=False,
@@ -223,7 +223,7 @@ def test_direct_domain_script_denied_after_failure(tmp_path: Path):
 
 
 def test_repeated_retryable_failure_upgrades(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
     st = load_state(tmp_path)
     st["retry_budget"] = 2
     save_state(tmp_path, st)
@@ -258,7 +258,7 @@ def test_repeated_retryable_failure_upgrades(tmp_path: Path):
 
 
 def test_old_lease_not_reusable(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     lease = issue_action_lease(tmp_path, action_id="prepare", mode="normal")
     lid = str(lease["lease_id"])
     revoke_active_lease(tmp_path, reason="test")
@@ -278,7 +278,7 @@ def test_old_lease_not_reusable(tmp_path: Path):
 
 
 def test_normal_flow_not_blocked(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     nxt = describe_next(tmp_path)
     assert nxt["status"] == "running"
     assert any(a.get("id") == "prepare" for a in nxt["allowed_actions"])
@@ -303,7 +303,7 @@ def test_normal_flow_not_blocked(tmp_path: Path):
 
 def test_ses_0711_replay_finalize_containment(tmp_path: Path):
     """Replay the ses_0711 failure shape: finalize fails → only recovery commands legal."""
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     issue_action_lease(tmp_path, action_id="prepare", mode="normal")
 
     # Simulate earlier successful domain steps having run (state still running).
@@ -370,7 +370,7 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
 
 
 def test_rework_required_next_returns_targets_only(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
     record_pilot_result(
         tmp_path,
         ok=False,
@@ -388,7 +388,7 @@ def test_rework_required_next_returns_targets_only(tmp_path: Path):
 
 
 def test_observation_persisted_to_run_dir(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     obs = build_observation(
         tmp_path,
         outcome="failed",

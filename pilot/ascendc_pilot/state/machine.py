@@ -170,6 +170,16 @@ def describe_next(project_root: Path) -> dict[str, Any]:
                 "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options，"
                 "禁止静默重试或自动 abort。"
             )
+            from ascendc_pilot.human_interaction import (
+                KIND_HUMAN_REQUIRED,
+                attach_interaction_request,
+            )
+
+            payload = attach_interaction_request(
+                payload,
+                project_root,
+                kind=KIND_HUMAN_REQUIRED,
+            )
     if state.get("failure_card"):
         payload["failure_card"] = state.get("failure_card")
     from ascendc_pilot.todo import attach_todo

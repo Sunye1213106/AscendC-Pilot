@@ -46,7 +46,7 @@ def bind_host_tiling_key_expressions(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     keys = sorted(

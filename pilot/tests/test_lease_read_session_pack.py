@@ -15,7 +15,7 @@ from ascendc_pilot.state import start_workflow
 def test_lease_allows_session_pack_via_roots_and_pattern(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    start_workflow(op, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     run_id = "RUN_T"
     sdir = op / ".ascendc-pilot" / "runs" / run_id / "actions" / "extract_plan"
     sdir.mkdir(parents=True)
@@ -40,7 +40,7 @@ def test_lease_allows_session_pack_via_roots_and_pattern(tmp_path: Path) -> None
 def test_lease_roots_alone_allow_session_files(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    start_workflow(op, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     sdir = op / ".ascendc-pilot" / "runs" / "RUN_T" / "actions" / "extract_plan"
     sdir.mkdir(parents=True)
     lease = issue_action_lease(
@@ -60,7 +60,7 @@ def test_lease_write_paths_are_always_readable(tmp_path: Path) -> None:
     """Global invariant: producer can Read back what the Action leased for Write."""
     op = tmp_path / "DemoOp"
     op.mkdir()
-    start_workflow(op, "uo-init", phase="extract", force_phase=True)
+    start_workflow(op, "uo-init", phase="extract", force_phase=True, architecture="arch35")
     lease = issue_action_lease(
         op,
         action_id="extract_plan",

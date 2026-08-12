@@ -10,6 +10,7 @@
 | --- | --- |
 | `acp abort` | 终止当前 run 并标记为失败 |
 | `acp advance` | 仅在当前 phase gate 通过后推进状态 |
+| `acp answer` | Record a Host question UI answer as a signed HumanDecisionReceipt |
 | `acp authorize` | 执行 host hook 的授权检查 |
 | `acp block` | 标记为 blocked、failed 或 human_required |
 | `acp complete` | 全部 gate 通过后标记 workflow 完成 |

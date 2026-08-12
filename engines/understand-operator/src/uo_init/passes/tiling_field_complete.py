@@ -31,7 +31,7 @@ def complete_tiling_fields(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     kernel_dir = root / "op_kernel" / architecture

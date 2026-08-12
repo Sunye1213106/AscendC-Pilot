@@ -57,21 +57,27 @@ def run_uo_scope(
     step: str,
     *,
     op_name: str = "",
-    architecture: str = "arch35",
+    architecture: str = "",
     decision: str = "",
     notes: str = "",
 ) -> dict[str, Any]:
     """Map legacy acp uo-scope steps onto uo_init.pilot_engines."""
     root = Path(project).expanduser().resolve()
     op = _resolve_op_name(root, op_name)
-    ctx = {"op_name": op, "arch_dir": architecture or "arch35", "run_id": ""}
+    arch = (architecture or "").strip()
+    run_id = ""
     try:
         from ascendc_pilot.state import load_state
 
         st = load_state(root) or {}
-        ctx["run_id"] = str(st.get("run_id") or "")
+        run_id = str(st.get("run_id") or "")
+        if not arch:
+            arch = str(st.get("architecture") or "").strip()
     except Exception:  # noqa: BLE001
         pass
+    if not arch:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
+    ctx = {"op_name": op, "arch_dir": arch, "architecture": arch, "run_id": run_id}
 
     from uo_init import pilot_engines as pe
 
@@ -85,7 +91,6 @@ def run_uo_scope(
         "scope_validate": "scope_validate",
         # Deprecated aliases — still map to machine validate; prefer `acp run-action prepare`.
         "confirm": "scope_validate",
-        "scope_confirm": "scope_validate",
         "checkpoint": "scope_validate",
         "finalize": "scope_validate",
     }

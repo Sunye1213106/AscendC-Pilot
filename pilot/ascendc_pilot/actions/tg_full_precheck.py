@@ -17,10 +17,18 @@ def plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     if not E._is_tilingkey_full(tg_ctx):
         return E._run_tg_plan_precheck(project_root, ctx)
     try:
+        arch = str(tg_ctx.get("architecture") or "").strip()
+        if not arch:
+            return {
+                "ok": False,
+                "engine": "plan_precheck",
+                "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+                "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            }
         uo = _uo_identity(
             project_root,
             op_name=str(tg_ctx.get("op_name") or project_root.name),
-            architecture=str(tg_ctx.get("architecture") or "arch35"),
+            architecture=arch,
         )
         declared = _global_declared(project_root)
     except Exception as exc:  # noqa: BLE001

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_NONEMPTY_GLOBS, OUTPUT_CONTRACT_PATHS
@@ -15,20 +16,25 @@ from ascendc_pilot.paths import uo_root
 from ascendc_pilot.state import start_workflow
 
 
+@pytest.fixture(autouse=True)
+def _arch_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UO_ARCH", "arch35")
+
+
 def test_prepare_contract_is_run_scoped() -> None:
     paths = OUTPUT_CONTRACT_PATHS["uo-prepare-v1"]
     joined = ",".join(paths)
     assert "uo/manifest.yaml" in joined
     assert "uo/operator.yaml" in joined
     assert "uo/ir/build_variant.yaml" in joined
-    assert "uo/runs/{run_id}/scope/scope_confirmed.yaml" in joined
+    assert "uo/runs/{run_id}/scope/scope_validated.yaml" in joined
     assert "uo/runs/{run_id}/scope/receipt.yaml" in joined
     assert "uo/runs/*/" not in joined
     assert "uo-prepare-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 
 
 def _write_prepare_scope(tmp_path: Path, run_id: str) -> Path:
-    """Production machine stamp (scope_confirmation), not parent Action prepare."""
+    """Production machine stamp (scope_validated), not parent Action prepare."""
     run = uo_root(tmp_path) / "runs" / run_id / "scope"
     run.mkdir(parents=True, exist_ok=True)
     receipt = {
@@ -38,12 +44,12 @@ def _write_prepare_scope(tmp_path: Path, run_id: str) -> Path:
         "run_id": run_id,
         "workflow_id": "uo-init",
         "phase": "prepare",
-        "action_id": "scope_confirmation",
+        "action_id": "scope_validated",
         "probe_clean": True,
         "clang_scope_status": "complete",
         "scope_files": [{"path": "a.cpp"}],
     }
-    (run / "scope_confirmed.yaml").write_text(
+    (run / "scope_validated.yaml").write_text(
         yaml.safe_dump(receipt, sort_keys=False),
         encoding="utf-8",
     )
@@ -64,7 +70,9 @@ def _write_layout_artifacts(tmp_path: Path) -> None:
 
 
 def test_output_contract_accepts_current_run_prepare_scope(tmp_path: Path) -> None:
-    state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    state = start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     run_id = str(state["run_id"])
     _write_layout_artifacts(tmp_path)
     _write_prepare_scope(tmp_path, run_id)
@@ -81,9 +89,11 @@ def test_output_contract_accepts_current_run_prepare_scope(tmp_path: Path) -> No
     assert checked.get("ok") is True, checked
 
 
-def test_ses_00bb_prepare_accepts_scope_confirmation_stamp(tmp_path: Path) -> None:
-    """Engine stamps scope_confirmation; prepare finalize must not OWNER_MISMATCH."""
-    state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+def test_ses_00bb_prepare_accepts_scope_validated_stamp(tmp_path: Path) -> None:
+    """Engine stamps scope_validated; prepare finalize must not OWNER_MISMATCH."""
+    state = start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     run_id = str(state["run_id"])
     _write_layout_artifacts(tmp_path)
     _write_prepare_scope(tmp_path, run_id)
@@ -103,11 +113,13 @@ def test_ses_00bb_prepare_accepts_scope_confirmation_stamp(tmp_path: Path) -> No
 
 
 def test_summary_only_scope_does_not_satisfy_prepare_contract(tmp_path: Path) -> None:
-    state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    state = start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     _write_layout_artifacts(tmp_path)
     summary = uo_root(tmp_path) / "summary"
     summary.mkdir(parents=True)
-    (summary / "scope_confirmed.yaml").write_text("status: confirmed\n", encoding="utf-8")
+    (summary / "scope_validated.yaml").write_text("status: confirmed\n", encoding="utf-8")
     checked = _check_output_contract(
         tmp_path,
         "uo-prepare-v1",
@@ -130,7 +142,9 @@ def test_extract_pilot_strips_cd_and_env_wrappers() -> None:
 
 
 def test_authorize_allows_env_prefixed_public_action(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init", phase="extract", force_phase=True)
+    start_workflow(
+        tmp_path, "uo-init", phase="extract", force_phase=True, architecture="arch35"
+    )
     cmd = f'$env:UO_EXTRACT_MAX_NON_SINK = "1024"; acp run-action extract --project "{tmp_path}"'
     verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
     assert verdict.get("decision") == "allow", verdict
@@ -138,7 +152,7 @@ def test_authorize_allows_env_prefixed_public_action(tmp_path: Path) -> None:
 
 
 def test_authorize_allows_cd_and_acp(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     verdict = authorize(
         tmp_path,
         tool="bash",
@@ -150,7 +164,9 @@ def test_authorize_allows_cd_and_acp(tmp_path: Path) -> None:
 
 
 def test_authorize_still_denies_shell_write_into_control_plane(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     cmd = f'echo hi > "{tmp_path / ".ascendc-pilot" / "uo" / "runs" / "receipt.yaml"}"'
     verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
     assert verdict.get("decision") == "deny", verdict
@@ -160,7 +176,9 @@ def test_authorize_still_denies_shell_write_into_control_plane(tmp_path: Path) -
 def test_prepare_receipt_accepts_snapshot_run_id_shape(tmp_path: Path) -> None:
     from ascendc_pilot.actions.runtime import _contract_identity_ok
 
-    state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    state = start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     run_id = str(state["run_id"])
     run = _write_prepare_scope(tmp_path, run_id)
     (run / "receipt.yaml").write_text(
@@ -188,7 +206,9 @@ def test_prepare_receipt_accepts_snapshot_run_id_shape(tmp_path: Path) -> None:
 
 
 def test_authorize_readonly_inspection_without_model_write_scope(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     allowed = [
         f'Get-ChildItem "{tmp_path}" -Directory',
         f'ls "{tmp_path}"',
@@ -204,7 +224,9 @@ def test_authorize_readonly_inspection_without_model_write_scope(tmp_path: Path)
 
 
 def test_authorize_readonly_inspection_still_blocks_writes(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    start_workflow(
+        tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
+    )
     denied = [
         f'Get-ChildItem "{tmp_path}" > "{tmp_path / "out.txt"}"',
         f'mkdir "{tmp_path / "newdir"}"',

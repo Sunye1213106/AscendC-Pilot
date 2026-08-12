@@ -1,0 +1,40 @@
+# Control-plane Session Replay matrix (P2).
+# Cells drive intake / state machine / broker APIs — not a live OpenCode host.
+# Derived from the audit's eight-workflow contract + the seven OpenCode session
+# drift modes (silent arch, wrong project, forged human confirm, wrong phase,
+# stale scope receipt, resume, TG residual routing).
+
+version: 1
+workflows:
+  - uo-init
+  - uo-update
+  - uo-query
+  - uo-investigate
+  - tg-init
+  - tg-plan
+  - tg-solve
+  - ce-review
+
+scenarios:
+  - id: happy_path_phases
+    description: Forward path from entry reaches a terminal; every phase has an action.
+  - id: missing_architecture
+    description: Architecture required workflows must AskQuestion from tree — never invent arch.
+  - id: wrong_project
+    description: Non-operator / unclear project roots fail closed before creating .ascendc-pilot.
+  - id: wrong_phase
+    description: Action outside the current phase is denied.
+  - id: human_required
+    description: Human-interaction actions reject finalize-shaped paths without a decision receipt.
+  - id: resume
+    description: Restarting an active run requires an explicit continue/reinit decision.
+  - id: gate_fail
+    description: rework_required only exposes the failed action retry target.
+  - id: stale_kb_or_receipt
+    description: Legacy scope receipt basename alone yields STALE_RUN_LAYOUT (uo-init).
+    only_workflows: [uo-init]
+  - id: subagent_failure
+    description: LLM/subagent failure stays rework_required with typed retry (no free phase jump).
+  - id: tg_solve_routing
+    description: SEARCH_PROGRESS / CONSTRUCT_TARGETS / SEARCH_STALLED / NEED_LEMMA residual routes.
+    only_workflows: [tg-solve]

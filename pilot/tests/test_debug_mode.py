@@ -13,8 +13,8 @@ from ascendc_pilot.state import load_state, start_workflow
 
 
 def _enable_parent_debug(tmp_path: Path, parent: str = "ses_hostTEST01") -> dict:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     dbg.set_enabled(tmp_path, True, parent_session_id=parent)
     return load_state(tmp_path) or {}
 
@@ -82,8 +82,8 @@ def test_classify_skips_success_dumps() -> None:
 def test_debug_record_and_export(tmp_path: Path) -> None:
     parent = "ses_hostTEST01"
     child = "ses_childTEST01"
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
 
     off = dbg.record_tool_failure(tmp_path, tool="write", error="PRIMARY_PROTECTED_WRITE")
     assert off.get("skipped") is True
@@ -141,8 +141,8 @@ def test_debug_record_and_export(tmp_path: Path) -> None:
 
 def test_transcript_copy_requires_session_id(tmp_path: Path, monkeypatch) -> None:
     """Refuse cwd mtime fishing of unrelated session-ses_*.md."""
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     dbg.set_enabled(tmp_path, True)
 
     # Plant an unrelated old session in cwd (the historical bug path).
@@ -159,8 +159,8 @@ def test_transcript_copy_requires_session_id(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_transcript_copy_binds_session_ids(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-init")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
     dbg.set_enabled(tmp_path, True)
 
     host = tmp_path / "session-ses_hostABC123.md"

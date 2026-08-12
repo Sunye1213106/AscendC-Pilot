@@ -1,15 +1,15 @@
 """Audit checklist ids for tg-init.
 
-The csv_consumer hard-gate policy (empty-key allowlist, legitimate-skip
+The legacy CSV hard-gate policy (empty-key allowlist, legitimate-skip
 classification, CSV-closure / domain-symmetry / merge-artifact verification,
-mid-symbol chase queue, etc.) was removed with the csv_consumer stack. Only
-the tilingkey_full_coverage audit checklist id list remains: it is consumed by
+mid-symbol chase queue, etc.) was removed with that stack. Only the
+tilingkey_full_coverage audit checklist id list remains: it is consumed by
 ``init_status.require_audit_pass`` to validate ``init/audit_report.yaml``.
 """
 
 from __future__ import annotations
 
-# Canonical audit check ids for the (now-removed) csv_consumer checklist.
+# Canonical audit check ids for the (now-removed) legacy CSV checklist.
 # Kept only because a couple of tests still assert on this constant's shape;
 # no code path builds or requires this checklist anymore.
 AUDIT_CHECKLIST_IDS: tuple[str, ...] = (

@@ -2,6 +2,7 @@
 """BuildVariantPass — architecture / macros / includes as a first-class unit."""
 
 from __future__ import annotations
+from uo_init.paths import require_architecture
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 @dataclass
 class BuildVariant:
     name: str
-    architecture: str = "arch35"
+    architecture: str = ""
     soc: str = ""
     compiler_target: str = ""
     host_defines: list[str] = field(default_factory=list)
@@ -37,13 +38,13 @@ class BuildVariant:
 
 def build_variant_from_context(
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
     build_context: Any = None,
     dtype_variant: str = "",
     name: str = "",
 ) -> BuildVariant:
     """Lift ``BuildContext`` / YAML into a CodeMap BUILD_VARIANT."""
-    arch = (architecture or "arch35").strip() or "arch35"
+    arch = require_architecture(architecture)
     host_defs: list[str] = []
     kernel_defs: list[str] = []
     includes: list[str] = []

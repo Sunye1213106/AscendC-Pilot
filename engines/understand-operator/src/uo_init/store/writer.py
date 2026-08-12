@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -22,7 +23,7 @@ def uo_product_dir(op_root: str | Path) -> Path:
 
 def uo_product_path(op_root: str | Path, op_name: str, architecture: str) -> Path:
     safe_op = (op_name or "operator").replace("/", "_").replace("\\", "_")
-    arch = (architecture or "arch35").strip() or "arch35"
+    arch = require_architecture(architecture)
     return uo_product_dir(op_root) / f"{safe_op}.{arch}.uo"
 
 

@@ -245,6 +245,22 @@ def explain() -> str:
     return "\n".join(lines)
 
 
+def require_architecture(value: str | None) -> str:
+    """Return non-empty architecture or raise a typed control-plane error."""
+    arch = (value or "").strip()
+    if not arch:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
+    return arch
+
+
+def architecture_from_env() -> str:
+    for name in ("UO_ARCH", "ASCENDC_ARCH"):
+        raw = (os.environ.get(name) or "").strip()
+        if raw:
+            return raw
+    raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
+
+
 if __name__ == "__main__":
     import sys
 

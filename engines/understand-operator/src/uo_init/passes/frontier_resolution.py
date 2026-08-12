@@ -23,7 +23,7 @@ def resolve_class_frontiers(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     del architecture  # candidate sources already carry the selected arch path
     root = Path(operator_root).expanduser().resolve()

@@ -12,7 +12,7 @@
 AscendC-Pilot
 ```
 
-直接描述任务，或使用 Slash Command。Architecture 由仓内 `op_host/arch*` / `op_kernel/arch*` 发现；多架构时需选择，也可在任务中显式指定。
+直接描述任务，或使用 Slash Command。Architecture 选项从当前算子仓的 `op_host/arch*` / `op_kernel/arch*` 中发现。启动 UO/TG 时必须明确 architecture；如果任务或环境变量没有提供，AscendC-Pilot 会要求从发现的架构中选择，而不会使用固定默认值。
 
 ```text
 帮我为 flash_attention_score_grad 的 arch35 建立 CodeMap。

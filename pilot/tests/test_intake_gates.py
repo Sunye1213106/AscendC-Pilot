@@ -41,7 +41,9 @@ def test_describe_architectures_has_source_counts(tmp_path: Path):
     assert "shared" in opts[0]["description"]
 
 
-def test_start_intake_gate_requires_architecture_from_tree(tmp_path: Path):
+def test_start_intake_gate_requires_architecture_from_tree(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
     (tmp_path / "op_host" / "arch22").mkdir(parents=True)
     (tmp_path / "op_host" / "arch35").mkdir(parents=True)
     gate = intake.start_intake_gate(

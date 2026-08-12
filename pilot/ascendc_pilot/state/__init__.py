@@ -12,7 +12,13 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_pilot.paths import ensure_control_layout, runs_root, state_root
+from ascendc_pilot.paths import (
+    discover_arch,
+    ensure_control_layout,
+    require_architecture,
+    runs_root,
+    state_root,
+)
 
 RUNNING_LIKE = frozenset({"running", "rework_required", "human_required"})
 TERMINAL = frozenset({"blocked", "failed", "passed"})
@@ -74,20 +80,25 @@ def _compact_state_for_persist(state: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def workflow_state_path(project_root: Path) -> Path:
-    return state_root(project_root) / "workflow.yaml"
+def workflow_state_path(project_root: Path, *, arch: str | None = None) -> Path:
+    arch_name = arch if arch is not None else discover_arch(project_root)
+    return state_root(project_root, arch=arch_name) / "workflow.yaml"
 
 
-def resume_path(project_root: Path) -> Path:
-    return state_root(project_root) / "resume.yaml"
+def resume_path(project_root: Path, *, arch: str | None = None) -> Path:
+    arch_name = arch if arch is not None else discover_arch(project_root)
+    return state_root(project_root, arch=arch_name) / "resume.yaml"
 
 
 def new_run_id(prefix: str = "RUN") -> str:
     return f"{prefix}_{datetime.now(tz=timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
-def load_state(project_root: Path) -> dict[str, Any]:
-    path = workflow_state_path(project_root)
+def load_state(project_root: Path, *, arch: str | None = None) -> dict[str, Any]:
+    try:
+        path = workflow_state_path(project_root, arch=arch)
+    except ValueError:
+        return {}
     if not path.is_file():
         return {}
     try:
@@ -106,7 +117,11 @@ def load_state(project_root: Path) -> dict[str, Any]:
 def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     state = _compact_state_for_persist(dict(state))
     state["updated_at"] = _now()
-    path = workflow_state_path(project_root)
+    arch = str(state.get("architecture") or "").strip() or None
+    try:
+        path = workflow_state_path(project_root, arch=arch)
+    except ValueError as exc:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE") from exc
     _dump(path, state)
     try:
         st = path.stat()
@@ -233,7 +248,6 @@ def start_workflow(
     op_name: str = "",
     architecture: str = "",
     test_script_root: str = "",
-    csv_consumer_root: str = "",
     level: str = "",
     focus: str = "",
 ) -> dict[str, Any]:
@@ -249,17 +263,23 @@ def start_workflow(
     )
     from ascendc_pilot.workflows import entry_state, get_workflow, label_zh_for, state_ids
 
+    import os
+
+    arch = require_architecture(architecture)
+    # Pin process env so path helpers (uo_root/agent_root) resolve without
+    # inventing a default architecture for the rest of this process.
+    os.environ["UO_ARCH"] = arch
     meta = get_workflow(workflow_id, project_root=project_root)
-    ensure_control_layout(project_root)
+    ensure_control_layout(project_root, arch=arch)
     engine = str(meta.get("engine") or "")
     if engine == "uo" or workflow_id.startswith("uo-"):
-        ensure_uo_layout(project_root)
+        ensure_uo_layout(project_root, arch=arch)
     elif engine == "tg" or workflow_id.startswith("tg-"):
-        ensure_tg_layout(project_root)
+        ensure_tg_layout(project_root, arch=arch)
         if workflow_id == "tg-solve":
-            ensure_closure_layout(project_root)
+            ensure_closure_layout(project_root, arch=arch)
     elif engine == "ce" or workflow_id.startswith("ce-"):
-        ensure_ce_layout(project_root)
+        ensure_ce_layout(project_root, arch=arch)
     entry = entry_state(workflow_id)
     if phase and phase != entry and not force_phase:
         raise RuntimeError(
@@ -281,7 +301,7 @@ def start_workflow(
     except Exception:  # noqa: BLE001
         hashes = {}
     all_obl = collect_obligations(project_root, workflow_id)
-    consumer = (test_script_root or csv_consumer_root or "").strip()
+    consumer = (test_script_root or "").strip()
     state: dict[str, Any] = {
         "workflow_id": workflow_id,
         "run_id": run_id,
@@ -290,7 +310,7 @@ def start_workflow(
         "status": "running",
         "intent": intent or "",
         "op_name": (op_name or "").strip(),
-        "architecture": (architecture or "").strip() or "arch35",
+        "architecture": arch,
         "test_script_root": consumer,
         "level": (level or "").strip() or "L0",
         "focus": (focus or "").strip(),
@@ -306,7 +326,7 @@ def start_workflow(
     }
     state = _apply_progress(project_root, state)
     save_state(project_root, state)
-    (runs_root(project_root) / run_id).mkdir(parents=True, exist_ok=True)
+    (runs_root(project_root, arch=arch) / run_id).mkdir(parents=True, exist_ok=True)
     try:
         from ascendc_pilot.authorize.lease import clear_lease
 

@@ -278,3 +278,51 @@ def action_by_id(workflow_id: str, action_id: str, *, project_root: Any | None =
         if isinstance(action, dict) and str(action.get("id") or "") == action_id:
             return dict(action)
     return None
+
+
+def workflow_requires_project(workflow_id: str) -> bool:
+    """True when Spec declares ``requires_project`` for this workflow."""
+    wid = resolve_workflow_id(workflow_id)
+    meta = WORKFLOWS.get(wid) or {}
+    if "requires_project" in meta:
+        return bool(meta.get("requires_project"))
+    # Reserved / alias stubs without the flag are not operator workflows.
+    return False
+
+
+def workflow_requires_architecture(workflow_id: str) -> bool:
+    """True when Spec declares ``requires_architecture`` for this workflow."""
+    wid = resolve_workflow_id(workflow_id)
+    meta = WORKFLOWS.get(wid) or {}
+    if "requires_architecture" in meta:
+        return bool(meta.get("requires_architecture"))
+    return False
+
+
+def workflows_needing_project() -> frozenset[str]:
+    return frozenset(
+        wid for wid in list_user_workflows() if workflow_requires_project(wid)
+    )
+
+
+def workflows_needing_architecture() -> frozenset[str]:
+    return frozenset(
+        wid for wid in list_user_workflows() if workflow_requires_architecture(wid)
+    )
+
+
+def cognitive_skill_id(workflow_id: str) -> str:
+    wid = resolve_workflow_id(workflow_id)
+    meta = WORKFLOWS.get(wid) or {}
+    return str(meta.get("cognitive_skill_id") or "").strip()
+
+
+def architecture_required_labels() -> str:
+    """Human-readable list of workflows that require --architecture (for CLI/docs)."""
+    ids = sorted(workflows_needing_architecture())
+    return "/".join(ids) if ids else "(none)"
+
+
+def project_required_labels() -> str:
+    ids = sorted(workflows_needing_project())
+    return "/".join(ids) if ids else "(none)"

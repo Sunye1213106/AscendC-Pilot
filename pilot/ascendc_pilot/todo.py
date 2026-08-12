@@ -25,7 +25,11 @@ _NATIVE_PRIORITY = {
 
 def todo_path(project_root: Path) -> Path:
     """Legacy path kept for tests; chat must not render this file."""
-    return agent_root(project_root) / "todo.md"
+    try:
+        return agent_root(project_root) / "todo.md"
+    except ValueError:
+        # Architecture not pinned yet (pre-start / unit mocks).
+        return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "todo.md"
 
 
 def _phase_mark(phase_ids: list[str], phase: str, status: str) -> list[dict[str, str]]:
@@ -184,7 +188,14 @@ def write_todo(
     allowed_actions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Refresh structured todo only — do not write chat Markdown boards."""
-    ensure_agent_layout(project_root)
+    try:
+        arch = None
+        if isinstance(state, dict):
+            arch = str(state.get("architecture") or "").strip() or None
+        ensure_agent_layout(project_root, arch=arch)
+    except ValueError as exc:
+        if "ARCHITECTURE_MISSING" not in str(exc):
+            raise
     return build_todo(project_root, state, allowed_actions=allowed_actions)
 
 

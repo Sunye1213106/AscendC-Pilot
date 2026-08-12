@@ -27,7 +27,11 @@ def repo_root() -> Path:
 
 
 def _arch_name() -> str:
-    return (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+    for name in ("UO_ARCH", "ASCENDC_ARCH"):
+        raw = (os.environ.get(name) or "").strip()
+        if raw:
+            return raw
+    raise ValueError("ARCHITECTURE_MISSING: set UO_ARCH or ASCENDC_ARCH")
 
 
 def _operator_project_root() -> Path | None:

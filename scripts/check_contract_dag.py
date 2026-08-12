@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Producer/consumer DAG check for Workflow Spec IO contracts.
 
-Fails with CONTRACT_ORPHAN_INPUT when a declared read has no producer and is
-not an allowed external root (context/**, local/**, runs/**, source trees).
+Fails with:
+  - CONTRACT_ORPHAN_INPUT when a declared read has no producer (legacy tg-* check)
+  - ARTIFACT_ORPHAN_CONSUME when a gate/explicit consume has no producer (P1 DAG)
+
+Inputs that may exist without a Workflow Spec producer use external roots
+(context/**, local/**, runs/**, source trees, control/**).
 
 Formal UO handoff is modeled as logical resources:
   ../uo/*.uo / uo:product / uo:view:*
@@ -27,6 +31,7 @@ _EXTERNAL_ROOTS = (
     "op_kernel/**",
     "op_api/**",
     "local/**",
+    "control/**",
 )
 
 # Logical resources embedded in the formal .uo product.
@@ -56,7 +61,16 @@ def _is_external(path: str) -> bool:
         if fnmatch.fnmatch(path, root) or path == root.rstrip("/**") or path.startswith(root.rstrip("*")):
             return True
     # Exact external prefixes without glob
-    for prefix in ("context/", "runs/", "source/", "op_host/", "op_kernel/", "op_api/", "local/"):
+    for prefix in (
+        "context/",
+        "runs/",
+        "source/",
+        "op_host/",
+        "op_kernel/",
+        "op_api/",
+        "local/",
+        "control/",
+    ):
         if path.startswith(prefix) or path == prefix.rstrip("/"):
             return True
     return False
@@ -162,15 +176,28 @@ def check_contract_dag(repo: Path) -> list[str]:
     return sorted(set(errors))
 
 
+def check_all_dags(repo: Path) -> list[str]:
+    """Run legacy contract-DAG + P1 artifact producer/consumer DAG."""
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows.artifact_dag import check_artifact_dag
+
+    errors = list(check_contract_dag(repo))
+    errors.extend(check_artifact_dag())
+    return sorted(set(errors))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check Workflow Spec producer/consumer DAG")
     parser.add_argument("--repo", type=Path, default=None)
     args = parser.parse_args(argv)
     repo = (args.repo or Path(__file__).resolve().parents[1]).expanduser().resolve()
-    errors = check_contract_dag(repo)
+    errors = check_all_dags(repo)
     if errors:
+        contract = [e for e in errors if e.startswith("CONTRACT_ORPHAN")]
+        artifact = [e for e in errors if e.startswith("ARTIFACT_ORPHAN")]
+        other = [e for e in errors if e not in contract and e not in artifact]
         print(f"contract-dag: {len(errors)} orphan input(s)")
-        for err in errors:
+        for err in contract + artifact + other:
             print(f"  - {err}")
         return 1
     print("contract-dag: ok")

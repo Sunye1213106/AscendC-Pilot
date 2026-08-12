@@ -88,7 +88,7 @@ def trace_host_key_roots(
     codemap: CodeMap,
     operator_root: str | Path,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     host_dir = root / "op_host" / architecture

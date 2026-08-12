@@ -13,6 +13,7 @@ Disable with ``UO_TU_CACHE=0``. Optional override: ``UO_CACHE_ROOT``.
 """
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import hashlib
 import os
 import pickle
@@ -57,7 +58,7 @@ def uo_cache_root(op_dir: str | Path | None, arch: str | None = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     root = Path(op_dir or ".").expanduser().resolve()
-    arch_name = (arch or "").strip() or "arch35"
+    arch_name = require_architecture(arch)
     return root / ".ascendc-pilot" / arch_name / "uo" / "cache"
 
 

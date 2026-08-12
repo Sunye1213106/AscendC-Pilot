@@ -91,22 +91,25 @@ def _plan_hashes(plan_dir: Path) -> tuple[str, str]:
 
 def primary_interactive_steps(action_id: str, project_root: Path, result: dict[str, Any]) -> list[str]:
     root = project_root.expanduser().resolve().as_posix()
+    req = result.get("human_interaction_request") or {}
+    rid = str(req.get("request_id") or "<request_id>")
     if action_id == "human_confirm":
         return [
             f"Review {root}/.ascendc-pilot/tg/init/audit_report.yaml and remaining realization gaps.",
-            "AskQuestion: confirm | rework | stop.",
-            "Only after `confirm`, run: "
+            "Host must surface AskQuestion (confirm | rework | stop) from ask_question.options.",
+            f"Host records answer: acp answer --request-id {rid} --value <选中> --project {root}",
+            "Only after HumanDecisionReceipt for `confirm`, run: "
             f"acp run-action human_confirm --finalize --project {root}",
-            "For `rework` or `stop`, do not finalize and report the blocking reason.",
+            "For `rework` or `stop`, do not finalize.",
         ]
     if action_id == "plan_approve":
         return [
             f"Review the current level under {root}/.ascendc-pilot/tg/plan/levels/.",
-            "Check coverage_obligations.yaml, unresolved.yaml, and any human-required items.",
-            "AskQuestion: approve | rework | stop.",
-            "Only after `approve`, run: "
+            "Host must surface AskQuestion (approve | rework | stop).",
+            f"Host records answer: acp answer --request-id {rid} --value <选中> --project {root}",
+            "Only after HumanDecisionReceipt for `approve`, run: "
             f"acp run-action plan_approve --finalize --project {root}",
-            "For `rework` or `stop`, do not finalize and report the blocking reason.",
+            "For `rework` or `stop`, do not finalize.",
         ]
     return list(result.get("interactive_steps") or [])
 
@@ -114,8 +117,8 @@ def primary_interactive_steps(action_id: str, project_root: Path, result: dict[s
 def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str, Any]:
     """Write the affirmative decision contract immediately before finalization.
 
-    Calling ``--finalize`` is the affirmative signal. Rework/stop paths never
-    call this function, so no approval artifact is produced accidentally.
+    Requires a matching unconsumed ``HumanDecisionReceipt`` from ``acp answer``.
+    ``--finalize`` alone is never an affirmative human signal.
     """
 
     project_root = Path(project_root).expanduser().resolve()
@@ -130,15 +133,30 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     if str(session.get("action_id") or "") != action_id:
         return {"ok": False, "error": "PRIMARY_DECISION_SESSION_MISMATCH"}
 
+    from ascendc_pilot.human_interaction import require_decision_receipt
+
+    expected = ["confirm"] if action_id == "human_confirm" else ["approve"]
+    kind = "primary_confirm" if action_id == "human_confirm" else "primary_approve"
+    receipt = require_decision_receipt(
+        project_root,
+        expected_values=expected,
+        expected_action_id=action_id,
+        expected_kind=kind,
+        consume=True,
+    )
+    if not receipt.get("ok"):
+        return receipt
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     identity = _identity(session)
+    identity["human_decision_request_id"] = str(receipt.get("request_id") or "")
     tg = tg_root(project_root)
     backups: dict[Path, bytes | None] = {}
 
     if action_id == "human_confirm":
         # Use the domain engine's canonical confirmation path: it rechecks
         # audit completeness and writes the UO fingerprint before status can
-        # become confirmed. The csv_consumer merge/domain-symmetry/CSV-closure
+        # become confirmed. The legacy CSV merge/domain-symmetry/closure
         # path was removed; full-TK confirmation never requires it.
         watched = [
             tg / "init" / "status.yaml",

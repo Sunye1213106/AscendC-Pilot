@@ -140,13 +140,12 @@ def resolve_plan_paths(
     *,
     project_root: Path | None,
     op_name: str | None,
-    csv_consumer_root: Path | None,
     test_script_root: Path | None = None,
     kb_root: Path | None = None,
     contract_root: Path | None = None,
 ) -> PlanPathBundle:
     """Normalize plan CLI paths into a strict input bundle."""
-    test_tool = csv_consumer_root or test_script_root
+    test_tool = test_script_root
     if test_tool is not None:
         test_tool = test_tool.expanduser().resolve()
         if not test_tool.exists():

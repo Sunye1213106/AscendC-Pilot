@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
+from uo_init.paths import require_architecture
 from uo_init import pilot_engines as pe
 
 
@@ -78,7 +79,7 @@ def prepare(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         try:
             root = Path(project_root).expanduser().resolve()
             uo = pe._uo_root(root, arch=ctx.get("arch_dir"))
-            arch = str(ctx.get("arch_dir") or ctx.get("architecture") or "arch35")
+            arch = require_architecture(ctx.get("arch_dir") or ctx.get("architecture"))
             pe._dump(
                 uo / "ir" / "build_variant.yaml",
                 {
@@ -122,7 +123,7 @@ def _compiler_inputs(
     root = project_root.expanduser().resolve()
     spec = discover(root, arch_dir=ctx.get("arch_dir"))
     op_name = str(ctx.get("op_name") or spec.op_name)
-    arch = str(ctx.get("arch_dir") or ctx.get("architecture") or spec.arch_dir or "arch35")
+    arch = require_architecture(ctx.get("arch_dir") or ctx.get("architecture") or spec.arch_dir)
     uo = pe._uo_root(root, arch=arch)
 
     host_ir = None
@@ -264,7 +265,7 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
         from uo_init.store.reader import find_uo_product
 
         with step("verify.find_uo_product"):
-            arch = str(ctx.get("arch_dir") or ctx.get("architecture") or "arch35")
+            arch = require_architecture(ctx.get("arch_dir") or ctx.get("architecture"))
             op_name = str(ctx.get("op_name") or "")
             product = find_uo_product(root, op_name=op_name, architecture=arch)
         if product is None or product.suffix != ".uo":

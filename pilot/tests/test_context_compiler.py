@@ -24,14 +24,14 @@ def test_high_value_profiles_registered() -> None:
 
 
 def test_maybe_compile_returns_none_without_profile(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch0")
     start_workflow(tmp_path, "uo-init", intent="test", op_name="toy", architecture="arch0")
     assert maybe_compile_slice(tmp_path, context_profile_id=None, action_id="extract") is None
     assert maybe_compile_slice(tmp_path, context_profile_id="no-such", action_id="extract") is None
 
 
 def test_compile_slice_writes_file_even_without_uo(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch0")
     start_workflow(tmp_path, "uo-init", intent="test", op_name="toy", architecture="arch0")
     slice_doc = maybe_compile_slice(
         tmp_path,
@@ -56,7 +56,7 @@ def test_compile_slice_writes_file_even_without_uo(tmp_path: Path) -> None:
 
 
 def test_legacy_pack_unchanged_shape(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch0")
     start_workflow(tmp_path, "uo-init", intent="test", op_name="toy", architecture="arch0")
     pack = build_context_pack(tmp_path, intent="run-action:extract", topic="extract")
     assert pack["version"] == 1

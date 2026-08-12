@@ -15,6 +15,7 @@ buffer lifecycle, or engine scheduling.
 
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import os
 import re
 import time
@@ -519,7 +520,7 @@ def finalize_kernel_root_trace(
     codemap: CodeMap,
     source_root: Path | str,
     *,
-    architecture: str = "arch35",
+    architecture: str = "",
 ) -> CodeMap:
     if not _enabled():
         codemap.meta["kernel_root_trace"] = {"skipped": True, "reason": "UO_KERNEL_ROOT_TRACE=0"}
@@ -528,7 +529,7 @@ def finalize_kernel_root_trace(
     t0 = time.perf_counter()
     deadline = t0 + _budget_s()
     root = str(Path(source_root).expanduser().resolve())
-    arch = (architecture or codemap.architecture or "arch35").strip()
+    arch = require_architecture(architecture or codemap.architecture)
     reachable, filter_strict = kscan.reachable_function_names(codemap)
     files = kscan.selected_kernel_files(codemap, Path(root))
 

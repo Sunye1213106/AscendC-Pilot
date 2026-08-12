@@ -28,7 +28,14 @@ def compact_reviewed_uo(project_root: Path, result: dict[str, Any]) -> dict[str,
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "skipped": "product_meta_unreadable", "error": str(exc)[:200]}
 
-    arch = str(meta.get("architecture") or "arch35").strip() or "arch35"
+    arch = str(meta.get("architecture") or "").strip()
+    if not arch:
+        return {
+            "ok": False,
+            "skipped": "architecture_missing",
+            "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+            "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+        }
     root = Path(project_root).expanduser().resolve()
     formal = root / ".ascendc-pilot" / "uo"
     try:

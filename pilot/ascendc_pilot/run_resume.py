@@ -42,9 +42,7 @@ _STATE_FILES_ON_REINIT = (
 )
 
 # Staging inputs kept on continue-scrub retry (not re-produced by upstream receipts).
-_CONTINUE_SCRUB_KEEP: dict[str, frozenset[str]] = {
-    "extract_plan": frozenset({"uo/ir/extract_plan_candidates.yaml"}),
-}
+_CONTINUE_SCRUB_KEEP: dict[str, frozenset[str]] = {}
 
 
 def _scrub_rels_for_action(
@@ -116,19 +114,20 @@ def ask_options_for(workflow_id: str) -> list[dict[str, str]]:
 
 
 def normalize_decision(raw: str) -> str | None:
-    key = str(raw or "").strip().lower()
+    """Accept canonical values or exact AskQuestion option labels — no fuzzy free-text."""
+    key = str(raw or "").strip()
     if not key:
         return None
-    if key in _DECISION_ALIASES:
-        return _DECISION_ALIASES[key]
+    low = key.lower()
+    if low in {"continue", "reinit"}:
+        return low
+    if low in _DECISION_ALIASES:
+        return _DECISION_ALIASES[low]
     for opt in ask_options_for("uo-init"):
-        label = opt["label"].lower()
-        if key == label or key.startswith(opt["value"]) or opt["label"].split()[0].lower() in key:
+        if key == opt["label"] or low == str(opt["label"]).lower():
             return opt["value"]
-    if "继续" in key or "continue" in key or "reuse" in key:
-        return "continue"
-    if "删除" in key or "重开" in key or "reinit" in key or "reset" in key:
-        return "reinit"
+        if low == str(opt["value"]).lower():
+            return opt["value"]
     return None
 
 
@@ -753,11 +752,19 @@ def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
         return True
     if workflow_id != "uo-init":
         return False
-    uo = uo_root(root)
-    if uo.is_dir() and any(uo.iterdir()):
-        wid = str((state or {}).get("workflow_id") or "")
-        if not state or wid in {"", "uo-init"}:
-            return True
+    # Prefer arch-neutral product root; fall back to arch-scoped uo when arch known.
+    from ascendc_pilot.paths import uo_product_root
+
+    candidates: list[Path] = [uo_product_root(root)]
+    try:
+        candidates.append(uo_root(root))
+    except ValueError:
+        pass
+    for uo in candidates:
+        if uo.is_dir() and any(uo.iterdir()):
+            wid = str((state or {}).get("workflow_id") or "")
+            if not state or wid in {"", "uo-init"}:
+                return True
     return False
 
 
@@ -767,8 +774,13 @@ def apply_resume_decision(
     decision: str,
     *,
     start_kwargs: dict[str, Any] | None = None,
+    require_receipt: bool = True,
 ) -> dict[str, Any]:
-    """Apply continue|reinit after AskQuestion."""
+    """Apply continue|reinit after AskQuestion + HumanDecisionReceipt.
+
+    ``require_receipt=False`` is reserved for the ``--force-new`` script escape hatch.
+    """
+    from ascendc_pilot.human_interaction import KIND_RESUME, require_decision_receipt
     from ascendc_pilot.state import mark_terminal, start_workflow
     from ascendc_pilot.todo import attach_todo
     from ascendc_pilot.workflows import entry_state, phase_pipeline
@@ -782,6 +794,16 @@ def apply_resume_decision(
             "allowed": ["continue", "reinit"],
             "message_zh": f"无效决策 {decision!r}；请用 AskQuestion 选项 continue|reinit",
         }
+
+    if require_receipt:
+        receipt = require_decision_receipt(
+            root,
+            expected_values=[choice],
+            expected_kind=KIND_RESUME,
+            consume=True,
+        )
+        if not receipt.get("ok"):
+            return receipt
 
     summary = build_run_resume_summary(root, workflow_id=workflow_id)
     kwargs = dict(start_kwargs or {})
@@ -879,15 +901,17 @@ def apply_resume_decision(
 
 
 def existing_run_decision_payload(project_root: Path, workflow_id: str) -> dict[str, Any]:
+    from ascendc_pilot.human_interaction import KIND_RESUME, attach_interaction_request
+
     summary = build_run_resume_summary(project_root, workflow_id=workflow_id)
     wf_label = _workflow_label(workflow_id)
-    return {
+    payload = {
         "ok": False,
         "needs_human_decision": True,
         "error": "EXISTING_RUN_NEEDS_DECISION",
         "message_zh": (
             f"检测到未完成的 {wf_label} run 或工作流冲突。必须用 OpenCode `question`（AskQuestion）"
-            "弹出可点选框，等人选择后执行："
+            "弹出可点选框；Host 先 `acp answer`，再执行："
             f"`{summary['commands']['continue']}` 或 `{summary['commands']['reinit']}`。"
             "禁止静默复用或自动删除。"
         ),
@@ -895,4 +919,11 @@ def existing_run_decision_payload(project_root: Path, workflow_id: str) -> dict[
         "decision_values": summary["decision_values"],
         "commands": summary["commands"],
         "run_summary": summary,
+        "run_id": (summary.get("run_id") or ""),
     }
+    return attach_interaction_request(
+        payload,
+        project_root,
+        kind=KIND_RESUME,
+        decision_kind="resume",
+    )

@@ -7,6 +7,7 @@ only as an explicit fallback for files that cannot be parsed.
 """
 from __future__ import annotations
 
+from uo_init.paths import require_architecture
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -2138,7 +2139,7 @@ def probe_diagnostics(
     path = str(path)
     name = Path(path).name
     t0 = _time.perf_counter()
-    arch = getattr(ctx, "arch_dir", None) or "arch35"
+    arch = require_architecture(getattr(ctx, "arch_dir", None))
     op_dir = getattr(ctx, "op_dir", None) or ""
 
     cache_key = ""
@@ -2253,7 +2254,7 @@ def walk_file(
     path = str(path)
     name = Path(path).name
     t_all = _time.perf_counter()
-    arch = getattr(ctx, "arch_dir", None) or "arch35"
+    arch = require_architecture(getattr(ctx, "arch_dir", None))
     op_dir = getattr(ctx, "op_dir", None) or ""
     op_root = ctx.op_dir or ""
     cache_key = ""

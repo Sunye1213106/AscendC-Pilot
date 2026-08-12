@@ -43,7 +43,7 @@ def test_uo_init_has_no_resolve_phase() -> None:
     assert pipe == ["verify"]
     actions = {action["id"]: action for action in actions_for_phase("uo-init", "verify")}
     assert actions["verify"]["execution_mode"] == "deterministic"
-    assert not actions["verify"].get("agent_id")
+    assert actions["verify"].get("agent_id") in (None, "", "deterministic-uo-engine")
 
 
 def test_uo_investigate_has_readonly_gap_investigator() -> None:
@@ -56,8 +56,8 @@ def test_uo_investigate_has_readonly_gap_investigator() -> None:
 
 
 def test_recommend_uo_update_export_starts_at_integrity(tmp_path: Path) -> None:
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "uo-update", phase="export", force_phase=True)
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-update", phase="export", force_phase=True, architecture="arch35")
     allowed = actions_for_phase("uo-update", "export")
     rec = recommend_next_action(
         tmp_path,

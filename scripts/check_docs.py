@@ -44,6 +44,18 @@ UO_ENGINE_BIND_RE = re.compile(
     r"绑定到\s*`?deterministic-uo-engine`?|deterministic-uo-engine",
     re.I,
 )
+# Architecture is always required for UO/TG start — not "only when multiple".
+MULTI_ARCH_ONLY_RE = re.compile(
+    r"多架构时(?:需|才)?选择|存在多个架构时[，,]?\s*AscendC-Pilot\s*会要求选择",
+)
+# Backtick paths that should resolve in-repo (or under UO package for frontend/passes).
+INLINE_REPO_PATH_RE = re.compile(
+    r"`((?:engines|pilot|scripts|agents|docs|adapters|opencode-plugin)/[^`\s]+)`"
+)
+INLINE_UO_REL_PATH_RE = re.compile(
+    r"`((?:frontend|passes|ir|update|query)/[^`\s]+\.py)`"
+)
+UO_PACKAGE_ROOT = ROOT / "engines" / "understand-operator" / "src" / "uo_init"
 
 
 def rel(path: Path) -> str:
@@ -161,6 +173,11 @@ def check_semantic_drift(errors: list[str]) -> None:
             errors.append(f"{rel(path)} claims silent arch35 architecture default")
         if OPERATOR_UO_LEGACY_RE.search(text):
             errors.append(f"{rel(path)} uses legacy `operator.<arch>.uo` naming")
+        if MULTI_ARCH_ONLY_RE.search(text):
+            errors.append(
+                f"{rel(path)} implies architecture is only required when multiple "
+                "arch* dirs exist; UO/TG always require explicit architecture"
+            )
 
     uo = ROOT / "docs" / "modules" / "uo.md"
     if not uo.is_file():
@@ -181,6 +198,47 @@ def check_semantic_drift(errors: list[str]) -> None:
                 "quickstart.md must not bind UO phases to `deterministic-uo-engine` "
                 "(UO uses agent_id=None + deterministic execution)"
             )
+        if "必须明确 architecture" not in qs and "必须同时有" not in qs:
+            # Prefer the explicit-must wording; allow POLICY-style phrasing too.
+            if "ARCHITECTURE_REQUIRED" not in qs and "从发现的架构中选择" not in qs:
+                errors.append(
+                    "quickstart.md must state that architecture is always required "
+                    "(discovered options + explicit select; no silent default)"
+                )
+
+
+def _is_concrete_repo_path(cited: str) -> bool:
+    """Skip globs / placeholders that are not literal filesystem paths."""
+    if any(ch in cited for ch in "*?[]{}"):
+        return False
+    if "<" in cited or ">" in cited:
+        return False
+    return True
+
+
+def check_inline_implementation_paths(errors: list[str]) -> None:
+    """Fail when docs cite missing repo / UO-package implementation paths."""
+    for path in _iter_live_docs():
+        text = path.read_text(encoding="utf-8")
+        for match in INLINE_REPO_PATH_RE.finditer(text):
+            cited = match.group(1).rstrip("/")
+            if not _is_concrete_repo_path(cited):
+                continue
+            candidate = ROOT / cited
+            if not candidate.exists():
+                errors.append(f"{rel(path)} missing implementation path: `{cited}`")
+        # UO module may cite package-relative frontend/passes/*.py
+        if rel(path) == "docs/modules/uo.md":
+            for match in INLINE_UO_REL_PATH_RE.finditer(text):
+                cited = match.group(1)
+                if not _is_concrete_repo_path(cited):
+                    continue
+                candidate = UO_PACKAGE_ROOT / cited
+                if not candidate.exists():
+                    errors.append(
+                        f"{rel(path)} missing UO package path: `{cited}` "
+                        f"(expected under {UO_PACKAGE_ROOT.relative_to(ROOT).as_posix()})"
+                    )
 
 
 def main() -> int:
@@ -191,6 +249,7 @@ def main() -> int:
     check_agent_matrix(errors)
     check_engines_doc(errors)
     check_semantic_drift(errors)
+    check_inline_implementation_paths(errors)
     check_generated_references_fresh(errors)
     if errors:
         for item in errors:

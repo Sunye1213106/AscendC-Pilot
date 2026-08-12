@@ -90,8 +90,8 @@ def test_semantic_bind_action_scoped_to_deterministic_engine(tmp_path: Path):
     from ascendc_pilot.state import start_workflow
     from ascendc_pilot.paths import agent_root, ensure_agent_layout
 
-    ensure_agent_layout(tmp_path)
-    start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True)
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True, architecture="arch35")
     denied = authorize(
         tmp_path,
         tool="write",
@@ -143,7 +143,7 @@ def test_unresolved_not_auto_completed(tmp_path: Path):
     from ascendc_pilot.gates.tg_adapters import gate_tilingkey_binding_ready
     from ascendc_pilot.paths import ensure_agent_layout, tg_root
 
-    ensure_agent_layout(tmp_path)
+    ensure_agent_layout(tmp_path, arch="arch35")
     real = tg_root(tmp_path) / "realization"
     real.mkdir(parents=True)
     _write(real / "binding_inventory.yaml", {"version": 1, "fields": []})

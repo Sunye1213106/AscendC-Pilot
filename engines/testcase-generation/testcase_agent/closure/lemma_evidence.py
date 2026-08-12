@@ -42,7 +42,14 @@ def _entry_id(kind: str, file: str, line: int, snippet: str) -> str:
 def _uo_root(ws: W.Workspace) -> Path | None:
     import os
 
-    arch = (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "arch35").strip()
+    arch = None
+    for _name in ("UO_ARCH", "ASCENDC_ARCH"):
+        _raw = (os.environ.get(_name) or "").strip()
+        if _raw:
+            arch = _raw
+            break
+    if not arch:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
     try:
         from ascendc_pilot.paths import uo_root
 
