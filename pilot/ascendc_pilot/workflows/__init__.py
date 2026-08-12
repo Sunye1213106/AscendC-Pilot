@@ -1,8 +1,8 @@
 """Read-only workflow registry accessors.
 
-Workflow Spec stays the source of truth.  This module derives the runtime
+Workflow Spec stays the source of truth. This module derives the runtime
 execution binding that Host adapters consume so deterministic actions always
-have an explicit engine identity instead of relying on an LLM/Host guess.
+have an explicit engine identity and never carry a Host Task prompt.
 """
 
 from __future__ import annotations
@@ -21,13 +21,15 @@ _DETERMINISTIC_ENGINE_BY_DOMAIN = {
 def _normalize_execution_registry(
     specs: dict[str, dict[str, Any]],
 ) -> dict[str, dict[str, Any]]:
-    """Derive explicit Action actors for Host/runtime consumption.
+    """Derive explicit Action execution ownership for Host/runtime consumption.
 
     ``agent_id=None`` historically meant "internal deterministic engine" for
-    UO while TG already named ``deterministic-tg-engine`` explicitly.  That
-    asymmetry leaked into generated Skills, OpenCode Task routing, leases and
-    receipts.  Normalize it once at the registry boundary instead of teaching
-    every Host adapter another heuristic.
+    UO while TG already named ``deterministic-tg-engine`` explicitly. Some
+    legacy deterministic Actions also retained a model-facing ``task_prompt_id``
+    even though their implementation is an ``ENGINE_REGISTRY`` function. Those
+    two asymmetries leaked into generated Skills, OpenCode Task routing, leases,
+    and prompt pruning. Normalize them once at the registry boundary instead of
+    teaching every Host adapter another heuristic.
     """
     registry: dict[str, dict[str, Any]] = {}
     for workflow_id, source in specs.items():
@@ -47,13 +49,19 @@ def _normalize_execution_registry(
             mode = str(action.get("execution_mode") or "").strip()
             actor = str(action.get("agent_id") or "").strip()
             deterministic = mode == "deterministic" or role == "deterministic_engine"
-            if deterministic and not actor:
-                if not deterministic_actor:
-                    raise RuntimeError(
-                        f"{workflow_id}/{action.get('id')}: deterministic Action has no engine actor"
-                    )
-                actor = deterministic_actor
-                action["agent_id"] = actor
+            if deterministic:
+                if not actor:
+                    if not deterministic_actor:
+                        raise RuntimeError(
+                            f"{workflow_id}/{action.get('id')}: deterministic Action has no engine actor"
+                        )
+                    actor = deterministic_actor
+                    action["agent_id"] = actor
+                # Deterministic Actions consume structured Action context through
+                # the engine function. A Host Task prompt is both unreachable and
+                # dangerous: prune_runtime_context intentionally removes it, while
+                # prepare_action renders prompts before invoking the engine.
+                action["task_prompt_id"] = None
             action["actors"] = [actor] if actor else []
             if actor:
                 used_agents[actor] = role or (
@@ -75,7 +83,7 @@ def _normalize_execution_registry(
     return registry
 
 
-# Runtime/Host-facing registry.  Raw editable authority remains specs.WORKFLOWS.
+# Runtime/Host-facing registry. Raw editable authority remains specs.WORKFLOWS.
 WORKFLOWS = _normalize_execution_registry(_SPEC_WORKFLOWS)
 
 
@@ -132,6 +140,11 @@ def _rederive_actor_fields(merged: dict[str, Any], patch: dict[str, Any]) -> Non
         )
     except Exception:
         pass
+    if (
+        str(merged.get("execution_mode") or "") == "deterministic"
+        or str(merged.get("role_id") or "") == "deterministic_engine"
+    ):
+        merged["task_prompt_id"] = None
 
 
 def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any]:
