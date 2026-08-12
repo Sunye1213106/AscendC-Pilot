@@ -39,14 +39,26 @@ Execution contract:
 """
 
 
-def compose(repo: Path = REPO) -> dict[str, object]:
+def compose(repo: Path = REPO, *, out_root: Path | None = None) -> dict[str, object]:
+    """Compose commands under one OpenCode runtime root.
+
+    ``out_root`` is the host runtime root (the directory containing
+    ``skills/``, ``agents/`` and ``commands/``).  Keeping it explicit lets the
+    generated-drift checker compose the exact install pipeline in a temporary
+    directory instead of comparing unlike products.
+    """
     repo = Path(repo).resolve()
     pilot = repo / "pilot"
     if str(pilot) not in sys.path:
         sys.path.insert(0, str(pilot))
     from ascendc_pilot.workflows import WORKFLOWS
 
-    out = repo / "generated" / "opencode" / "commands"
+    runtime_root = (
+        Path(out_root).expanduser().resolve()
+        if out_root is not None
+        else repo / "generated" / "opencode"
+    )
+    out = runtime_root / "commands"
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True, exist_ok=True)

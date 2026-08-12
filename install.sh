@@ -99,7 +99,7 @@ uninstall() {
       done
     fi
     if [[ -n "$plugins" ]]; then
-      rm -f "$plugins/ascendc-pilot.ts" "$plugins/ascendc-harness.ts"
+      rm -f "$plugins/ascendc-pilot.ts" "$plugins/zz-uo-query-return-value.ts" "$plugins/ascendc-harness.ts"
     fi
     rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
   fi
@@ -209,10 +209,12 @@ if [[ "$PLATFORM" == "opencode" ]]; then
   PLUGINS="$(plugins_dest opencode)"
   COMMANDS="$(commands_dest opencode)"
   mkdir -p "$PLUGINS" "$COMMANDS"
-  if [[ -f "$BUNDLE_ROOT/opencode-plugin/ascendc-pilot.ts" ]]; then
-    cp "$BUNDLE_ROOT/opencode-plugin/ascendc-pilot.ts" "$PLUGINS/ascendc-pilot.ts"
-    echo "Installed plugin → $PLUGINS/ascendc-pilot.ts"
-  fi
+  for f in "$BUNDLE_ROOT"/opencode-plugin/*.ts; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+    cp "$f" "$PLUGINS/$base"
+    echo "Installed plugin → $PLUGINS/$base"
+  done
   if [[ -d "$DEST/commands" ]]; then
     for f in "$DEST/commands"/*.md; do
       [[ -f "$f" ]] || continue

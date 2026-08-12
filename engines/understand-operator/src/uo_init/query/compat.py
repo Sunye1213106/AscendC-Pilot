@@ -54,6 +54,43 @@ def _entity_row(ent: Entity, *, distance: int | None = None) -> dict[str, Any]:
     return row
 
 
+def _template_block_rows(blob: Any) -> list[dict[str, Any]]:
+    if not isinstance(blob, dict):
+        return []
+    for key in ("groups", "blocks", "rows", "template_blocks"):
+        rows = blob.get(key)
+        if isinstance(rows, list):
+            return [r for r in rows if isinstance(r, dict)]
+    return []
+
+
+def _value_matches_domain(value: str, domain: Any) -> bool:
+    want = str(value)
+    if isinstance(domain, (list, tuple, set)):
+        return any(str(v) == want for v in domain)
+    return str(domain) == want
+
+
+def _template_block_matches(row: dict[str, Any], filters: dict[str, str]) -> bool:
+    fixed = row.get("fixed_fields") or {}
+    domains = row.get("field_domains") or {}
+    if not isinstance(fixed, dict):
+        fixed = {}
+    if not isinstance(domains, dict):
+        domains = {}
+    for name, value in filters.items():
+        if name in fixed:
+            if str(fixed[name]) != str(value):
+                return False
+            continue
+        if name in domains:
+            if not _value_matches_domain(str(value), domains[name]):
+                return False
+            continue
+        return False
+    return True
+
+
 class CodeMapUoQuery:
     """Legacy-compatible query API backed by a committed ``.uo`` CodeMap."""
 
@@ -342,6 +379,11 @@ class CodeMapUoQuery:
     # ---- aggregate Explore modes ------------------------------------------
 
     def aggregate_tiling_key(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        """Return the key itself and its already-extracted semantic attributes.
+
+        Legal-key enumeration is intentionally *not* implicit.  Combination
+        reachability is a separate claim and must use ``legal_key`` explicitly.
+        """
         needle = str(pattern or "").strip()
         keys = self.tiling_keys()
         if needle:
@@ -353,14 +395,12 @@ class CodeMapUoQuery:
                 or low in str(k.get("id") or "").lower()
             ]
         keys = keys[: max(0, int(limit))]
-        legal = self.legal_key_query(pattern=needle, limit=min(20, int(limit)))
         return {
             "ok": True,
             "mode": "tiling_key",
             "pattern": needle,
             "keys": keys,
             "count": len(keys),
-            "legal_key_sample": legal,
         }
 
     def aggregate_tiling_data(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
@@ -402,8 +442,20 @@ class CodeMapUoQuery:
             "count": len(branches),
         }
 
-    def aggregate_template_match(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+    def aggregate_template_match(
+        self,
+        pattern: str = "",
+        *,
+        filters: dict[str, str] | None = None,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Match graph templates and, when requested, stamped template blocks."""
         needle = str(pattern or "").strip()
+        structured = {
+            str(k).strip(): str(v).strip()
+            for k, v in dict(filters or {}).items()
+            if str(k).strip() and str(v).strip()
+        }
         templates = self.templates_for_key(needle) if needle else [
             _entity_row(e)
             for e in self.codemap.entities.values()
@@ -419,13 +471,40 @@ class CodeMapUoQuery:
             for e in self.codemap.entities.values()
             if e.kind_name() in {EntityKind.MACRO.value, EntityKind.COMPILE_VAR.value}
         ]
+
+        block_matches: list[dict[str, Any]] = []
+        block_status: dict[str, Any] = {"ok": True, "reason_code": "", "used": False}
+        if structured:
+            from uo_init.store.reader import load_view_blob_checked
+
+            checked = load_view_blob_checked(
+                self.product,
+                "tiling/template_blocks.yaml",
+                codemap=self.codemap,
+                fallback_canonical=False,
+            )
+            block_status = {
+                "ok": bool(checked.get("ok")),
+                "reason_code": str(checked.get("reason_code") or ""),
+                "used": bool(checked.get("ok")),
+            }
+            if checked.get("ok"):
+                block_matches = [
+                    row
+                    for row in _template_block_rows(checked.get("view"))
+                    if _template_block_matches(row, structured)
+                ][: int(limit)]
+
         return {
-            "ok": True,
+            "ok": bool(block_status.get("ok")) if structured else True,
             "mode": "template_match",
             "pattern": needle,
+            "filters": structured,
             "templates": templates[: int(limit)],
             "macros_compile_vars": macros[: int(limit)],
-            "count": len(templates),
+            "template_blocks": block_matches,
+            "template_projection": block_status,
+            "count": len(block_matches) if structured else len(templates),
         }
 
     def aggregate_buffer(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
@@ -464,6 +543,7 @@ class CodeMapUoQuery:
         pattern: str = "",
         dim: str = "",
         value: str = "",
+        filters: dict[str, str] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
@@ -474,6 +554,7 @@ class CodeMapUoQuery:
             pattern=pattern,
             dim=dim,
             value=value,
+            filters=filters,
             limit=limit,
             offset=offset,
         )

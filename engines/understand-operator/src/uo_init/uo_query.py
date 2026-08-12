@@ -334,9 +334,6 @@ def _find_codemap_product(root: Path) -> Path | None:
         direct = sorted(root.glob("*.uo"))
         if direct:
             return direct[0]
-    # ``open_query`` is historically called with <project>/.ascendc-pilot/<arch>/uo,
-    # while the new authority lives under <project>/.ascendc-pilot/uo. Walk a
-    # bounded ancestor chain so both call conventions resolve to the same file.
     bases = [root] + list(root.parents)[:8]
     for base in bases:
         product_dir = base / ".ascendc-pilot" / "uo"
@@ -364,18 +361,13 @@ def _find_legacy_database(root: Path) -> Path | None:
 
 
 def open_query(uo_root: str | Path):
-    """Open the unified ``.uo`` backend, falling back to legacy SQLite only.
-
-    Callers intentionally receive a duck-typed query facade rather than a
-    storage-specific class. This is the sole backend selection point used by
-    `/uo-query` consumers.
-    """
+    """Open the unified ``.uo`` Explore backend, falling back to legacy SQLite only."""
     root = Path(uo_root).expanduser().resolve()
     product = _find_codemap_product(root)
     if product is not None:
-        from uo_init.query.compat import CodeMapUoQuery
+        from uo_init.query.explore_compat import ExploreCodeMapUoQuery
 
-        return CodeMapUoQuery(product)
+        return ExploreCodeMapUoQuery(product)
     legacy = _find_legacy_database(root)
     if legacy is not None:
         return UoQuery(legacy)

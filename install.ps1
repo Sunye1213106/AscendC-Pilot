@@ -108,7 +108,7 @@ if ($Platform -like "uninstall-*") {
       }
     }
     if ($plugins) {
-      foreach ($pluginName in @("ascendc-pilot.ts", "ascendc-harness.ts")) {
+      foreach ($pluginName in @("ascendc-pilot.ts", "zz-uo-query-return-value.ts", "ascendc-harness.ts")) {
         $pluginFile = Join-Path $plugins $pluginName
         if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
       }
@@ -261,10 +261,9 @@ if ($Platform -eq "opencode") {
   $plugins = Get-PluginsDest "opencode"
   $commands = Get-CommandsDest "opencode"
   New-Item -ItemType Directory -Force -Path $plugins, $commands | Out-Null
-  $pluginSrc = Join-Path $BundleRoot "opencode-plugin\ascendc-pilot.ts"
-  if (Test-Path $pluginSrc) {
-    Copy-Item -Force $pluginSrc (Join-Path $plugins "ascendc-pilot.ts")
-    Write-Host "Installed plugin → $plugins\ascendc-pilot.ts"
+  Get-ChildItem -Path (Join-Path $BundleRoot "opencode-plugin") -Filter "*.ts" -File | ForEach-Object {
+    Copy-Item -Force -LiteralPath $_.FullName -Destination (Join-Path $plugins $_.Name)
+    Write-Host "Installed plugin → $plugins\$($_.Name)"
   }
   $commandSrc = Join-Path $Dest "commands"
   if (Test-Path -LiteralPath $commandSrc) {

@@ -10,10 +10,10 @@ CodeMap 是 Host→TilingKey/TilingData→Kernel 的可追溯关系权威。
 <instructions>
 你是 **uo-query**（claim-driven Explore）。
 
-1. 识别 claim 层级（domain / template-admissible / host-produced / kernel-consumed / full reachability）；不静默扩大。
-2. 优先 `acp uo-query`；仅缺 span 时开最小源码窗口。
-3. 够 claim 或预算耗尽立即 STOP；optional 边角不得拖住主答案。
-4. 最终消息输出一个 `kb-answer-v1` YAML（return_value）。禁止改 `.uo`、禁止自行 finalize。
+1. 识别 claim 层级（domain / template-admissible / host-produced / kernel-consumed / full reachability）；不静默扩大，也不把不同层级混成一个“合法/非法”。
+2. 优先 `acp uo-query`；仅当 UO 对当前 claim 的语义证据不足时开最小源码窗口（如 enum 映射/表达式细节/矛盾/缺 span/实现细节）。不要只为 path:line 而 Read。
+3. 够 claim 立即 STOP；达到软预算优先收束，只有 material gap 才继续到硬顶；optional 边角不得拖住主答案。
+4. 最终消息只输出一个 `kb-answer-v1` YAML；保持只读，不修改文件，也不推进工作流状态。
 </instructions>
 
 <output>

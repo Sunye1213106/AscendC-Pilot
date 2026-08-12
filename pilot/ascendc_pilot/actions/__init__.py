@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -19,13 +21,7 @@ from ascendc_pilot.actions.tg_primary import (
 )
 from ascendc_pilot.actions.uo_product_compaction import install as _install_uo_product_compaction
 
-# Public uo-init Actions are composites over deterministic compiler steps.
-# Analyze now reports structural CodeMap gaps only; it no longer derives every
-# TilingKey value expression or asks a global SAT solver to close the key space.
-# The final product is arch-neutral under .ascendc-pilot/uo/, one level above
-# the arch-scoped agent root used by Action contract resolution.
 _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
-    # Must stay identical to engines.OUTPUT_CONTRACT_PATHS["uo-prepare-v1"].
     "uo-prepare-v1": [
         "uo/manifest.yaml",
         "uo/operator.yaml",
@@ -51,9 +47,6 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     ],
 }
 _TG_LOOP_OUTPUT_CONTRACTS: dict[str, list[str]] = {
-    # lemma_loop is a deterministic orchestration action. Its stable receipt is
-    # the loop summary; per-round scratch/evidence remains governed by ownership
-    # paths and must not be required to exist on a zero-round terminal pass.
     "lemma-loop-v1": ["tg/closure/lemma_loop.yaml"],
 }
 _engines.OUTPUT_CONTRACT_PATHS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
@@ -61,8 +54,6 @@ _engines.OUTPUT_CONTRACT_PATHS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 
-# Full TilingKey TG is plan-scoped: tg-plan freezes T, tg-solve closes exactly
-# T with the existing replay/construct/lemma engine.
 _install_tg_plan_targets(_engines.ENGINE_REGISTRY)
 _install_tg_full_precheck(_engines.ENGINE_REGISTRY)
 _install_uo_product_compaction(_engines.ENGINE_REGISTRY)
@@ -70,7 +61,6 @@ _install_uo_product_compaction(_engines.ENGINE_REGISTRY)
 
 def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str, Any]:
     """Scope a temporary engine router to one synchronous CLI prepare call."""
-
     original = _runtime.invoke_engine
 
     def routed(
@@ -95,6 +85,57 @@ def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str
         _runtime.invoke_engine = original
 
 
+def _parse_host_action_result(text: str) -> dict[str, Any] | None:
+    """Parse Host-only return-value transport from a Task final message."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    fenced = re.findall(r"```(?:yaml|yml)?\s*\n([\s\S]*?)```", raw, flags=re.I)
+    candidates = [c.strip() for c in fenced if "kb-answer-v1" in c]
+    candidates.extend([c.strip() for c in fenced if c.strip() and c.strip() not in candidates])
+    candidates.append(raw)
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        yaml = None  # type: ignore[assignment]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            data = yaml.safe_load(candidate) if yaml is not None else None
+        except Exception:  # noqa: BLE001
+            data = None
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _host_action_result_from_env(
+    project_root: Path,
+    action_id: str,
+) -> dict[str, Any] | None:
+    """Read an ephemeral Host→Runtime Task return without cross-run leakage.
+
+    New Host adapters stamp project/action alongside the payload. Missing stamps
+    remain accepted for manual compatibility, but an explicit mismatch is
+    rejected rather than applying one Task result to another project/action.
+    """
+    text = os.environ.get("ASCENDC_ACTION_RESULT", "")
+    if not text.strip():
+        return None
+    env_project = str(os.environ.get("ASCENDC_ACTION_RESULT_PROJECT") or "").strip()
+    if env_project:
+        try:
+            if Path(env_project).expanduser().resolve() != Path(project_root).expanduser().resolve():
+                return None
+        except OSError:
+            return None
+    env_action = str(os.environ.get("ASCENDC_ACTION_RESULT_ACTION") or "").strip()
+    if env_action and env_action != str(action_id):
+        return None
+    return _parse_host_action_result(text)
+
+
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     result = _prepare_with_fast_uo_engine(project_root, action_id)
     if result.get("ok") and action_id in PRIMARY_TG_ACTIONS:
@@ -117,9 +158,17 @@ def finalize_action(
     action_id: str,
     *,
     engine_result: dict[str, Any] | None = None,
+    result_file: Path | str | None = None,
+    action_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if action_id not in PRIMARY_TG_ACTIONS or engine_result is not None:
-        return _runtime.finalize_action(project_root, action_id, engine_result=engine_result)
+        return _runtime.finalize_action(
+            project_root,
+            action_id,
+            engine_result=engine_result,
+            result_file=result_file,
+            action_result=action_result,
+        )
 
     materialized = materialize_primary_decision(Path(project_root), action_id)
     if not materialized.get("ok"):
@@ -140,10 +189,14 @@ def finalize_action(
     return result
 
 
-def run_action(project_root: Path, action_id: str, *, finalize: bool = False) -> dict[str, Any]:
-    # Host-side meta action: drain only deterministic work selected by the
-    # workflow state machine.  It deliberately stops before subagent / human
-    # work and therefore cannot bypass Action contracts or gates.
+def run_action(
+    project_root: Path,
+    action_id: str,
+    *,
+    finalize: bool = False,
+    result_file: Path | str | None = None,
+    action_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if not finalize and action_id in {"auto", "drive"}:
         from ascendc_pilot.actions.drive import drive_until_interaction
 
@@ -158,8 +211,24 @@ def run_action(project_root: Path, action_id: str, *, finalize: bool = False) ->
             "message_zh": "auto/drive 是 Host 调度动作，不是可 finalize 的 Workflow Action。",
         }
     if finalize:
-        return finalize_action(project_root, action_id)
+        # Explicit API/result-file values take precedence. Otherwise consume the
+        # Host's one-shot in-memory Task result scoped to this project/action.
+        env_result = None
+        if action_result is None and result_file is None:
+            env_result = _host_action_result_from_env(Path(project_root), action_id)
+        return finalize_action(
+            project_root,
+            action_id,
+            result_file=result_file,
+            action_result=action_result or env_result,
+        )
     return prepare_action(project_root, action_id)
 
 
-__all__ = ["finalize_action", "prepare_action", "run_action"]
+__all__ = [
+    "finalize_action",
+    "prepare_action",
+    "run_action",
+    "_parse_host_action_result",
+    "_host_action_result_from_env",
+]
