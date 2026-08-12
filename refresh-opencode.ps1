@@ -77,8 +77,8 @@ Write-Host ""
 if ($WhatIf) {
   Write-Host "[WhatIf] Would run:"
   Write-Host "  1. install.ps1 uninstall-opencode"
-  Write-Host "  2. install.ps1 opencode   (pip + compose + plugin/skills/agents)"
-  Write-Host "  3. Verify plugin hash, acp import, observation module"
+  Write-Host "  2. install.ps1 opencode   (contract audit + compose + plugin/skills/agents/commands)"
+  Write-Host "  3. Verify plugin, native commands, acp import, and deterministic drive"
   exit 0
 }
 
@@ -126,31 +126,47 @@ Assert-True ($pluginText -match 'resolveAcpBin|never use shell:true') "installed
 Assert-True ($pluginText -match '\["acp"\]') "installed plugin resolves acp (not legacy pilot)"
 Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin no longer looks up pilot binary"
 
-# Skills / primary agent
+# Skills / primary agent / native slash commands
 $skillLink = Join-Path $HOME ".config\opencode\skills\uo-init"
 $agentLink = Join-Path $HOME ".config\opencode\agents\ascendc-pilot.md"
+$commandsDir = Join-Path $HOME ".config\opencode\commands"
 Assert-True (Test-Path -LiteralPath $skillLink) "uo-init skill linked"
 Assert-True (Test-Path -LiteralPath $agentLink) "ascendc-pilot.md installed"
+foreach ($name in @("uo-init", "tg-init", "tg-plan", "tg-solve", "ce-review")) {
+  $commandPath = Join-Path $commandsDir "$name.md"
+  Assert-True (Test-Path -LiteralPath $commandPath) "native /$name command installed"
+  $commandText = Get-Content -LiteralPath $commandPath -Raw -Encoding UTF8
+  Assert-True ($commandText -match 'agent:\s*ascendc-pilot') "/$name command binds primary controller"
+  Assert-True ($commandText -match 'acp run-action auto') "/$name command uses deterministic auto-dispatch"
+}
 
 # Pilot Python must be THIS repo (editable) and include new modules
 $pyCheck = @"
-import ascendc_pilot, pathlib
+import ascendc_pilot, pathlib, sys
 p = pathlib.Path(ascendc_pilot.__file__).resolve()
 root = pathlib.Path(r'''$BundleRoot''').resolve()
 print('HARNESS_FILE=' + str(p))
 assert str(p).lower().startswith(str(root).lower()), (p, root)
 import ascendc_pilot.observation as obs
 import ascendc_pilot.authorize.lease as lease
+from ascendc_pilot.actions.drive import drive_until_interaction
+from ascendc_pilot.workflows import WORKFLOWS
 assert hasattr(obs, 'apply_observation')
 assert hasattr(lease, 'issue_containment_lease')
+assert callable(drive_until_interaction)
+assert all(a.get('agent_id') == 'deterministic-uo-engine' for a in WORKFLOWS['uo-init']['actions'] if a.get('execution_mode') == 'deterministic')
+sys.path.insert(0, str(root / 'scripts'))
+from check_execution_contracts import audit
+errs = audit(root)
+assert not errs, errs
 print('HARNESS_OK')
 "@
 $pyOut = & python -c $pyCheck 2>&1
 if ($LASTEXITCODE -ne 0) {
   Write-Host $pyOut
-  throw "VERIFY FAIL: acp python import / module check failed"
+  throw "VERIFY FAIL: acp python import / execution-contract check failed"
 }
-Assert-True ("$pyOut" -match "HARNESS_OK") "acp imports from this repo + observation/lease present"
+Assert-True ("$pyOut" -match "HARNESS_OK") "acp imports from this repo + execution contracts pass"
 
 # acp CLI on PATH
 $harnessCmd = Get-Command acp -ErrorAction SilentlyContinue
@@ -162,5 +178,5 @@ Write-Host "Plugin hash : $dstHash"
 Write-Host "Next steps  :"
 Write-Host "  1. Start OpenCode"
 Write-Host "  2. Tab → ascendc-pilot (primary)"
-Write-Host "  3. Run your uo-init / acp test"
+Write-Host "  3. Run /uo-init, then /tg-init → /tg-plan → /tg-solve"
 Write-Host ""
