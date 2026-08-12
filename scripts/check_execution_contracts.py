@@ -4,7 +4,7 @@
 This check covers semantics that ordinary reference/scope linters cannot see:
 deterministic Actions need a deterministic engine identity, LLM Actions need a
 Host-spawnable agent, Primary interactive Actions belong to the controller, and
-Task prompts must not hard-code Host-specific cognitive Skill paths.
+Task prompts must stay Host-neutral and fully renderable by Action Runtime.
 """
 
 from __future__ import annotations
@@ -17,16 +17,31 @@ from typing import Any
 import yaml
 
 REPO = Path(__file__).resolve().parents[1]
-COGNITIVE_SKILLS = {
-    "operator-analysis",
-    "testcase-generation",
-    "source-proof",
-    "code-review",
-}
 PHYSICAL_COGNITIVE_PATH = re.compile(
     r"(?<![A-Za-z0-9_-])skills/(operator-analysis|testcase-generation|source-proof|code-review)/",
     re.I,
 )
+TEMPLATE_TOKEN = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
+RUNTIME_PROMPT_TOKENS = {
+    "RUN_ID",
+    "ACTION_ID",
+    "WORKFLOW_ID",
+    "ACTOR_ID",
+    "TARGET_IDS_OR_FILES",
+    "TARGET",
+    "SHARD_ID",
+    "OP_NAME",
+    "PROJECT_ROOT",
+    "UO_ROOT",
+    "TG_ROOT",
+    "TOPIC",
+    "CONTEXT_PACK_PATH",
+    "ARCHITECTURE",
+    "ROLE_ID",
+    "LEASE_ID",
+    "ACTION_SESSION_ID",
+    "CANDIDATES_SHA256",
+}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -147,6 +162,12 @@ def audit(repo: Path = REPO) -> list[str]:
                         errors.append(
                             f"HOST_SPECIFIC_SKILL_PATH {prompt.relative_to(repo).as_posix()}: "
                             f"use logical skill id {match.group(1)!r}, not skills/{match.group(1)}/..."
+                        )
+                    unknown_tokens = sorted(set(TEMPLATE_TOKEN.findall(body)) - RUNTIME_PROMPT_TOKENS)
+                    if unknown_tokens:
+                        errors.append(
+                            f"UNRENDERABLE_PROMPT_TOKEN {workflow_id}/{action_id}: {unknown_tokens} "
+                            f"in {prompt.relative_to(repo).as_posix()}"
                         )
 
     # End-to-end control-plane invariants for the supported operator flow.
