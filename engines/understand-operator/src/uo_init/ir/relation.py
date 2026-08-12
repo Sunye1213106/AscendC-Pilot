@@ -45,6 +45,11 @@ class RelationKind(str, Enum):
     WRAPS = "WRAPS"
     ROOTED_AT = "ROOTED_AT"
 
+    # Source-order and synchronization facts only; no inferred pairing.
+    PRECEDES = "PRECEDES"
+    SIGNALS = "SIGNALS"
+    AWAITS = "AWAITS"
+
     OTHER = "OTHER"
 
 

@@ -61,6 +61,34 @@ class CodeMapQuery:
     def downstream(self, name: str, *, limit: int = 32) -> list[dict[str, Any]]:
         return self._walk(name, direction="out", limit=limit)
 
+    def slice_forward(
+        self,
+        seed_ids: list[str],
+        *,
+        edge_kinds: list[str] | None = None,
+        depth: int = 3,
+        budget: int = 500,
+    ) -> dict[str, Any]:
+        from uo_init.query.slice import slice_forward
+
+        return slice_forward(
+            self.codemap, seed_ids, edge_kinds=edge_kinds, depth=depth, budget=budget
+        )
+
+    def slice_backward(
+        self,
+        seed_ids: list[str],
+        *,
+        edge_kinds: list[str] | None = None,
+        depth: int = 3,
+        budget: int = 500,
+    ) -> dict[str, Any]:
+        from uo_init.query.slice import slice_backward
+
+        return slice_backward(
+            self.codemap, seed_ids, edge_kinds=edge_kinds, depth=depth, budget=budget
+        )
+
     def find_path(self, start: str, end: str | None = None, *, end_kind: str = "") -> list[dict[str, Any]]:
         start_ents = self.codemap.by_name(start)
         if not start_ents:
@@ -260,6 +288,9 @@ class CodeMapQuery:
             "operations": len(self.codemap.by_kind(EntityKind.OPERATION)),
             "buffers": len(self.codemap.by_kind(EntityKind.BUFFER)),
             "registers": len(self.codemap.by_kind(EntityKind.REGISTER)),
+            "pipes": len(self.codemap.by_kind(EntityKind.PIPE)),
+            "events": len(self.codemap.by_kind(EntityKind.EVENT)),
+            "queues": len(self.codemap.by_kind(EntityKind.QUEUE)),
             "reached_buffers": meta.get("reached_buffers"),
             "reached_operations": meta.get("reached_operations"),
             "gap_count": meta.get("gap_count"),

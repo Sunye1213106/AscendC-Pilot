@@ -98,6 +98,11 @@ def test_new_api_and_legacy_methods_share_same_codemap(tmp_path: Path) -> None:
     assert q.templates_for_key(key_id)
     assert q.tiling_field("s1")
     assert q.field_impact("s1")["ok"] is True
+    forward = q.slice_forward([key_id], depth=2)
+    assert any(row["id"] == key_id for row in forward["nodes"])
+    assert forward["truncated"] is False
+    backward = q.slice_backward([key_id], edge_kinds=["DERIVES"], depth=1)
+    assert any(row["name"] == "query" for row in backward["nodes"])
 
 
 def test_open_query_accepts_direct_uo_path(tmp_path: Path) -> None:

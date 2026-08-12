@@ -3,8 +3,10 @@
 
 ``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (default 180s
 with kernel+tilingdata): keypath controllability, one dtype kernel walk,
-no API clang contract, no pairwise kernel fold.  ``full`` enables the
-complete extract path (full closure + all dtype variants + fold).
+no API clang contract, and a *sampled* pairwise ``if constexpr`` fold
+(AscendC compile-time specialization is first-class — never fully skipped).
+``full`` enables the complete extract path (full closure + all dtype
+variants + unrestricted fold).
 """
 from __future__ import annotations
 
@@ -63,12 +65,42 @@ def default_closure_max_nodes(ctx: dict[str, Any] | None = None) -> int:
 
 
 def default_fold_kernel(ctx: dict[str, Any] | None = None) -> bool:
+    """Whether to run the explicit-instantiation ``if constexpr`` harness.
+
+    AscendC kernels are template / ``if constexpr`` heavy: folding is on by
+    default whenever a clang driver is available.  Disable only with
+    ``UO_FOLD_KERNEL=0`` or ``fold_kernel: false``.  Cost is controlled by
+    :func:`default_harness_limit` under the ``fast`` profile.
+    """
     if isinstance(ctx, dict) and "fold_kernel" in ctx:
         return bool(ctx.get("fold_kernel"))
     env = os.environ.get("UO_FOLD_KERNEL")
     if env is not None and str(env).strip() != "":
         return str(env).strip().lower() not in {"0", "false", "off", "no"}
-    return profile_name(ctx) == "full"
+    # Compile-time specialization is an AscendC hallmark — do not skip.
+    return True
+
+
+def default_harness_limit(ctx: dict[str, Any] | None = None) -> int | None:
+    """Cap pairwise fold jobs.  ``None`` means unrestricted (full profile)."""
+    if isinstance(ctx, dict) and ctx.get("harness_limit") not in (None, ""):
+        try:
+            return max(0, int(ctx.get("harness_limit")))
+        except (TypeError, ValueError):
+            pass
+    env = os.environ.get("UO_HARNESS_LIMIT")
+    if env is not None and str(env).strip() != "":
+        try:
+            return max(0, int(str(env).strip()))
+        except ValueError:
+            pass
+    # fast: small pairwise sample so cold init stays bounded; full: no cap.
+    if profile_name(ctx) == "fast":
+        try:
+            return int(os.environ.get("UO_FAST_HARNESS_LIMIT", "8"))
+        except ValueError:
+            return 8
+    return None
 
 
 def default_with_kernel(ctx: dict[str, Any] | None = None) -> bool:

@@ -308,6 +308,7 @@ def find_clang(explicit: str | None = None) -> str | None:
 
     env = [
         os.environ.get("CLANG_EXE"),
+        os.environ.get("UO_CLANG"),
         (str(Path(os.environ["LLVM_BIN"]) / "clang.exe") if os.environ.get("LLVM_BIN") else None),
         (str(Path(os.environ["LLVM_HOME"]) / "bin" / "clang.exe") if os.environ.get("LLVM_HOME") else None),
     ]

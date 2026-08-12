@@ -159,10 +159,10 @@ source facts
   -> REACHED / UNRESOLVED / EXTERNAL
 ```
 
-**提取什么**：LocalTensor / Buffer / sync 等对象，经项目封装追到 AscendC/CANN 根 API 的路径。  
-**结果是什么**：标成已到达 / 未闭合 / 外部依赖，并带上源码位置。
+**提取什么**：LocalTensor / Buffer / register，以及有明确类型或调用实参证据的 pipe / event / queue；经项目封装追到 AscendC/CANN 根 API 的路径。
+**结果是什么**：标成已到达 / 未闭合 / 外部依赖，并带上源码位置。OPERATION 保留 `args`、`template_args`、`receiver` 与 receiver type；同函数内可记录有界源码顺序 `PRECEDES`。当 SetFlag / WaitFlag family 的 event identity 是简单标识符时，可记录单点 `SIGNALS` / `AWAITS` 事实。
 
-Canonical Kernel UO **不**做执行时序分析：不推断 exec_rank、RAW/WAR/WAW、sync pairing、CopyIn/Compute/CopyOut pipeline、buffer lifecycle 或引擎调度。无法可靠闭合的路径保持为 unresolved。
+Canonical Kernel UO 提供的是 sync **facts**（operation、参数、pipe/event/queue 实体，以及 identity 已知时可选的 `SIGNALS` / `AWAITS`），**不**做 timing simulation、exec_rank、RAW/WAR/WAW、跨核或生产者/消费者 pairing closure、CopyIn/Compute/CopyOut pipeline inference、buffer lifecycle 或引擎调度。配对假设属于 CE + referee；无法可靠闭合的路径保持为 unresolved。
 
 实现层：`passes/`（root trace）。
 
@@ -202,9 +202,9 @@ Canonical Kernel UO **不**做执行时序分析：不推断 exec_rank、RAW/WAR
 | `predicate` / `provenance` | 谓词与溯源槽位（schema 预留；随 passes 填充）                                                          |
 
 
-**实体（节点）典型 kind**：`BUILD_VARIANT`、`TILING_KEY` / `TILING_DATA` / `TILING_FIELD`、`KERNEL`、`TEMPLATE`*、`FUNCTION` / `VARIABLE` / `FIELD`、`BRANCH` / `PREDICATE`、`BUFFER` / `REGISTER` / `OPERATION` 等。
+**实体（节点）典型 kind**：`BUILD_VARIANT`、`TILING_KEY` / `TILING_DATA` / `TILING_FIELD`、`KERNEL`、`TEMPLATE`*、`FUNCTION` / `VARIABLE` / `FIELD`、`BRANCH` / `PREDICATE`、`BUFFER` / `REGISTER` / `PIPE` / `EVENT` / `QUEUE` / `OPERATION` 等。
 
-**关系（边）典型 kind**：`WRITES` / `READS` / `CALLS`、`DERIVES` / `FLOWS_TO` / `CONTROLS`、`BINDS` / `INSTANTIATES`、`SELECTS` / `LAUNCHES`、`WRAPS` / `ROOTED_AT` 等——把 Host 条件、Tiling、Kernel、AscendC root 串成可追溯图。
+**关系（边）典型 kind**：`WRITES` / `READS` / `CALLS`、`DERIVES` / `FLOWS_TO` / `CONTROLS`、`BINDS` / `INSTANTIATES`、`SELECTS` / `LAUNCHES`、`WRAPS` / `ROOTED_AT`，以及事实级 `PRECEDES` / `SIGNALS` / `AWAITS` 等——把 Host 条件、Tiling、Kernel、AscendC root 串成可追溯图。
 
 ```text
 meta + BuildVariant

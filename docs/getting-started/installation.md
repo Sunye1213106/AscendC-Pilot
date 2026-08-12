@@ -133,7 +133,9 @@ sudo apt-get install -y clang
 Windows：
 
 ```powershell id="qs66m8"
-winget install LLVM.LLVM
+# Prefer LLVM 18.x to match pip libclang 18.1.x (harness -ast-dump format).
+winget install --id LLVM.LLVM --version 18.1.8 -e
+# Or latest: winget install LLVM.LLVM
 ```
 
 检查：
@@ -141,6 +143,15 @@ winget install LLVM.LLVM
 ```bash id="w46rxu"
 clang --version
 ```
+
+若 `clang` 不在 PATH，可设置：
+
+```powershell
+$env:UO_CLANG = "C:\Program Files\LLVM\bin\clang.exe"
+$env:CLANG_EXE = $env:UO_CLANG
+```
+
+内核 `if constexpr` 折叠与显式实例化 harness **需要 clang 可执行文件**；仅有 pip `libclang` DLL 不够。
 
 同时确认 Python 可以加载 libclang：
 

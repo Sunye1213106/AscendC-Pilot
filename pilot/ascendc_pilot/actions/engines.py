@@ -192,16 +192,19 @@ def _run_ce_residual_analyse(project_root: Path, ctx: dict[str, Any]) -> dict[st
     from code_engineering.ledger import load_ledger, save_ledger
 
     arch = _resolve_ce_arch(project_root, ctx)
-    ledger = load_ledger(project_root, architecture=arch)
+    verify_root = _ce(project_root, arch=arch) / "verify"
+    verify_ledger = verify_root / "ledger.yaml"
+    source = verify_ledger if verify_ledger.is_file() else _ce(project_root, arch=arch) / "impact" / "ledger.yaml"
+    ledger = load_ledger(project_root, architecture=arch, path=source)
     ledger.V.update(str(value) for value in (ctx.get("verified") or []))
     ledger.X.update(str(value) for value in (ctx.get("excepted") or []))
-    save_ledger(ledger, project_root, architecture=arch)
+    save_ledger(ledger, project_root, architecture=arch, path=verify_ledger)
     doc = {
         "schema": "ce-verify-residual/v1",
         **ledger.to_dict(),
         "closed": not ledger.Open,
     }
-    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "verify" / "residual.yaml", doc)
+    out = _dump_ce_yaml(verify_root / "residual.yaml", doc)
     return {"ok": True, "engine": "residual_analyse", "artifact": out.as_posix(), **doc}
 
 
@@ -225,10 +228,13 @@ def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str
         for receipt in receipts
         for value in (receipt.get("excepted_obligations") or [])
     }
-    ledger = load_ledger(project_root, architecture=arch)
+    verify_root = _ce(project_root, arch=arch) / "verify"
+    verify_ledger = verify_root / "ledger.yaml"
+    source = verify_ledger if verify_ledger.is_file() else _ce(project_root, arch=arch) / "impact" / "ledger.yaml"
+    ledger = load_ledger(project_root, architecture=arch, path=source)
     ledger.V.update(verified)
     ledger.X.update(excepted)
-    save_ledger(ledger, project_root, architecture=arch)
+    save_ledger(ledger, project_root, architecture=arch, path=verify_ledger)
     doc = {
         "schema": "ce-external-evidence-batch/v1",
         "declared_path": declared,
@@ -236,7 +242,7 @@ def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str
         "verified_obligations": sorted(verified),
         "excepted_obligations": sorted(excepted),
     }
-    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "verify" / "external_evidence.yaml", doc)
+    out = _dump_ce_yaml(verify_root / "external_evidence.yaml", doc)
     return {"ok": True, "engine": "external_ingest", "artifact": out.as_posix(), **doc}
 
 
@@ -245,8 +251,11 @@ def _run_ce_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from code_engineering.ledger import load_ledger
 
     arch = _resolve_ce_arch(project_root, ctx)
-    ledger = load_ledger(project_root, architecture=arch)
-    out = _ce(project_root, arch=arch) / "verify" / "certificate.yaml"
+    verify_root = _ce(project_root, arch=arch) / "verify"
+    verify_ledger = verify_root / "ledger.yaml"
+    source = verify_ledger if verify_ledger.is_file() else _ce(project_root, arch=arch) / "impact" / "ledger.yaml"
+    ledger = load_ledger(project_root, architecture=arch, path=source)
+    out = verify_root / "certificate.yaml"
     doc = write_certificate(
         project_root, ledger, architecture=arch, path=out
     )
@@ -2675,8 +2684,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "verify-gate-v1": ["ce/verify/gate.yaml"],
     "verify-code-review-v1": ["ce/verify/code_review.yaml"],
     "coverage-bridge-v1": ["ce/verify/tg_handoff.yaml"],
-    "residual-analysis-v1": ["ce/verify/residual.yaml"],
-    "external-evidence-v1": ["ce/verify/external_evidence.yaml"],
+    "residual-analysis-v1": ["ce/verify/residual.yaml", "ce/verify/ledger.yaml"],
+    "external-evidence-v1": ["ce/verify/external_evidence.yaml", "ce/verify/ledger.yaml"],
     "exclusion-review-v1": ["ce/verify/exclusion_review.yaml"],
     "ce-certificate-v1": ["ce/verify/certificate.yaml"],
     "intent-capture-v1": ["ce/intent/intent.yaml"],

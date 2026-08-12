@@ -67,10 +67,8 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
     forbidden = {
         "HAPPENS_BEFORE",
         "DATA_DEPENDS_ON",
-        "PRECEDES",
         "READS_BUFFER",
         "WRITES_BUFFER",
-        "SIGNALS",
         "WAITS_ON",
         "SYNCHRONIZES_WITH",
         "EXECUTES_ON",

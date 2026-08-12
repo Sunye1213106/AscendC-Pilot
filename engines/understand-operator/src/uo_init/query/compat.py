@@ -367,6 +367,36 @@ class CodeMapUoQuery:
     def summary(self) -> dict[str, Any]:
         return self.query.summary()
 
+    def slice_forward(
+        self,
+        seed_ids: Iterable[str],
+        *,
+        edge_kinds: Iterable[str] | None = None,
+        depth: int = 3,
+        budget: int = 500,
+    ) -> dict[str, Any]:
+        return self.query.slice_forward(
+            list(seed_ids),
+            edge_kinds=list(edge_kinds) if edge_kinds is not None else None,
+            depth=depth,
+            budget=budget,
+        )
+
+    def slice_backward(
+        self,
+        seed_ids: Iterable[str],
+        *,
+        edge_kinds: Iterable[str] | None = None,
+        depth: int = 3,
+        budget: int = 500,
+    ) -> dict[str, Any]:
+        return self.query.slice_backward(
+            list(seed_ids),
+            edge_kinds=list(edge_kinds) if edge_kinds is not None else None,
+            depth=depth,
+            budget=budget,
+        )
+
     def find_path(self, start: str, end: str | None = None, *, end_kind: str = "") -> list[dict[str, Any]]:
         return self.query.find_path(start, end, end_kind=end_kind)
 

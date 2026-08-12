@@ -41,6 +41,10 @@ _KB_KIND_MAP: dict[str, EntityKind] = {
     "BuildVariant": EntityKind.BUILD_VARIANT,
     "Operation": EntityKind.OPERATION,
     "Buffer": EntityKind.BUFFER,
+    "Register": EntityKind.REGISTER,
+    "Pipe": EntityKind.PIPE,
+    "Event": EntityKind.EVENT,
+    "Queue": EntityKind.QUEUE,
 }
 
 _KB_EDGE_MAP: dict[str, RelationKind] = {
@@ -69,6 +73,9 @@ _KB_EDGE_MAP: dict[str, RelationKind] = {
     "ALIASES": RelationKind.ALIASES,
     "WRAPS": RelationKind.WRAPS,
     "ROOTED_AT": RelationKind.ROOTED_AT,
+    "PRECEDES": RelationKind.PRECEDES,
+    "SIGNALS": RelationKind.SIGNALS,
+    "AWAITS": RelationKind.AWAITS,
     # Legacy KB edge names.
     "writes": RelationKind.WRITES,
     "reads": RelationKind.READS,

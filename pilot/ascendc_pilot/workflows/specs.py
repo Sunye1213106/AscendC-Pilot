@@ -1426,6 +1426,34 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         },
         "phases": ["intent", "scope", "gate", "build", "filter", "review", "approve"],
         "gates": ["tg_init_confirmed", "plan_approved"],
+        "mode_overlays": {
+            "ce_change_scoped": {
+                # Reuse the proven TG plan machine while declaring that the
+                # requested scope originates in CE's audited impact ledger.
+                "pipelines": {
+                    "intent": ["plan_intent"],
+                    "scope": ["plan_scope"],
+                    "gate": ["plan_precheck"],
+                    "build": ["plan_build"],
+                    "filter": ["plan_build"],
+                    "review": ["plan_build"],
+                    "approve": ["plan_approve"],
+                },
+                "action_overrides": {
+                    "plan_intent": {
+                        "label_zh": "记录 CE 变更范围规划目标",
+                    },
+                    "plan_scope": {
+                        "label_zh": "从 CE 影响账本确定规划范围",
+                        "allowed_read_paths": [
+                            "ce/impact/ledger.yaml",
+                            "ce/impact/impact_slice.yaml",
+                            "uo/*.uo",
+                        ],
+                    },
+                },
+            },
+        },
     },
     "tg-solve": {
         "slash": "/tg-solve",

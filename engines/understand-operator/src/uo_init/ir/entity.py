@@ -42,6 +42,10 @@ class EntityKind(str, Enum):
     BUFFER = "BUFFER"
     # AscendC::Reg / MicroAPI register-file objects (RegTensor, MaskReg, ...).
     REGISTER = "REGISTER"
+    # Conservative synchronization facts; these are identities, not schedules.
+    PIPE = "PIPE"
+    EVENT = "EVENT"
+    QUEUE = "QUEUE"
 
     # Escapes for legacy KB kinds during adaptation.
     OTHER = "OTHER"

@@ -39,6 +39,9 @@ KIND_PREFIX: dict[str, str] = {
     "Operation": "OP",
     "Buffer": "BUF",
     "Register": "REG",
+    "Pipe": "PIPE",
+    "Event": "EVENT",
+    "Queue": "QUEUE",
     "Type": "TYPE",
     "Root": "ROOT",
 }

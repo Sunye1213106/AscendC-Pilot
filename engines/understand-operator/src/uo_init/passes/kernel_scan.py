@@ -369,6 +369,11 @@ def update_enclosing_func(line: str, current: str) -> str:
     return current
 
 
+# Control / language keywords that are never AscendC callees.
+# NOTE: ``constexpr`` / ``consteval`` are intentionally NOT here — AscendC
+# kernels are compile-time heavy (``if constexpr`` + NTTP templates). Lexical
+# denoise must not treat “compile-time” as skippable; only reject the *false
+# call shape* ``if constexpr (`` via :func:`_is_false_lexical_callee`.
 _CXX_CALL_SKIP = frozenset(
     {
         "if",
@@ -386,15 +391,13 @@ _CXX_CALL_SKIP = frozenset(
         "sizeof...",
         "new",
         "delete",
-        "constexpr",
-        "consteval",
-        "constinit",
         "static_cast",
         "reinterpret_cast",
         "const_cast",
         "dynamic_cast",
         "likely",
         "unlikely",
+        # TPL DSL schema macros — owned by tpl_schema pass, not call graphs.
         "ASCENDC_TPL_BOOL_SEL",
         "ASCENDC_TPL_UINT_SEL",
         "ASCENDC_TPL_TILING_STRUCT_SEL",
@@ -404,6 +407,27 @@ _CXX_CALL_SKIP = frozenset(
     }
 )
 
+
+def _is_false_lexical_callee(name: str, line: str, match_start: int) -> bool:
+    """Reject regex hits that look like calls but are C++ / AscendC non-calls.
+
+    AscendC relies on ``if constexpr``; that construct must stay in compile-time
+    analysis (harness fold). Here we only suppress the lexical false positive
+    where ``if constexpr (cond)`` is mistaken for a call named ``constexpr``.
+    """
+    if name in _CXX_CALL_SKIP:
+        return True
+    if name in {"constexpr", "consteval", "constinit"}:
+        prefix = line[:match_start].rstrip()
+        # ``if constexpr (`` / ``if consteval (`` — not a call.
+        if re.search(r"\bif\s*$", prefix):
+            return True
+        # Bare ``constexpr (x);`` is ill-formed C++ and was only ever noise.
+        if re.search(r"(^|[\s;{}])$", prefix) or not prefix:
+            return True
+        return False
+    return False
+
 _TPL_DSL_NAME_MARKERS = (
     "template_tiling_key.h",
     "tiling_key.h",
@@ -412,6 +436,10 @@ _TPL_DSL_NAME_MARKERS = (
 
 def _strip_line_noise(line: str) -> str:
     """Remove // comments and rough string/char literals before call scanning."""
+    # License headers are sometimes emitted as bare ``Copyright (c) 2024``;
+    # without this guard the generic call regex reports a callee named ``c``.
+    if re.search(r"\bCopyright\s*\(\s*c\s*\)", line, flags=re.I):
+        return ""
     out: list[str] = []
     i = 0
     n = len(line)
@@ -494,7 +522,9 @@ def lexical_source_call_sites(
             func = update_enclosing_func(cleaned, func)
             for m in _CALL_RE.finditer(cleaned):
                 name = m.group("name")
-                if not name or name in _CXX_CALL_SKIP or not name.isidentifier():
+                if not name or not name.isidentifier():
+                    continue
+                if _is_false_lexical_callee(name, cleaned, m.start()):
                     continue
                 if registry_names is not None and name not in registry_names:
                     # Also accept names the classifier already knows.

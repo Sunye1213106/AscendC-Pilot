@@ -1029,14 +1029,17 @@ def extract_kernel(project_root: Path, payload: dict[str, Any] | None = None) ->
     from uo_init.op_spec import discover
     from uo_init.build_context import BuildContext
 
-    from uo_init.init_profile import default_fold_kernel
+    from uo_init.init_profile import default_fold_kernel, default_harness_limit
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    # Pairwise fold is expensive.  ``UO_INIT_PROFILE=fast`` (default) skips it
-    # and relies on uninstantiated kernel_ir from extract_host.
+    # AscendC kernels are ``if constexpr`` / NTTP heavy: fold is on by default.
+    # ``fast`` caps job count via default_harness_limit; never skip entirely
+    # unless clang is missing or fold_kernel is explicitly disabled.
     fold = default_fold_kernel(ctx)
     limit = ctx.get("harness_limit")
+    if limit is None:
+        limit = default_harness_limit(ctx)
     try:
         spec = discover(root, arch_dir=ctx.get("arch_dir"))
         if not fold or not spec.tiling_key_header or not spec.kernel_entry:

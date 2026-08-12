@@ -342,8 +342,11 @@ def test_source_evidence_and_no_execution_semantics(tmp_path: Path) -> None:
           __aicore__ inline void Process() {
             LocalTensor<float> ub;
             GlobalTensor<float> gm;
+            TPipe pipe;
+            TQue<QuePosition::VECIN, 1> queue;
             DataCopy(ub, gm);
             SetFlag<HardEvent::MTE2_V>(EVENT_ID0);
+            WaitFlag<HardEvent::MTE2_V>(EVENT_ID0);
           }
         };
         """,
@@ -363,10 +366,8 @@ def test_source_evidence_and_no_execution_semantics(tmp_path: Path) -> None:
     forbidden = {
         "HAPPENS_BEFORE",
         "DATA_DEPENDS_ON",
-        "PRECEDES",
         "READS_BUFFER",
         "WRITES_BUFFER",
-        "SIGNALS",
         "WAITS_ON",
         "SYNCHRONIZES_WITH",
         "EXECUTES_ON",
@@ -377,6 +378,20 @@ def test_source_evidence_and_no_execution_semantics(tmp_path: Path) -> None:
     assert "kernel_execution_pipeline" not in cm.meta
     for e in cm.entities.values():
         assert "exec_rank" not in e.attrs
+    signal = next(r for r in cm.relations.values() if r.kind_name() == "SIGNALS")
+    event = cm.entities[signal.dst]
+    assert event.kind_name() == EntityKind.EVENT.value
+    assert event.attrs["identity"] == "EVENT_ID0"
+    assert cm.by_kind(EntityKind.PIPE)
+    assert cm.by_kind(EntityKind.QUEUE)
+    assert any(r.kind_name() == "AWAITS" and r.dst == event.id for r in cm.relations.values())
+    assert any(r.kind_name() == "PRECEDES" for r in cm.relations.values())
+    sync_op = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "SetFlag")
+    assert sync_op.attrs["args"] == ["EVENT_ID0"]
+    assert sync_op.attrs["template_args"] == ["HardEvent::MTE2_V"]
+    assert "receiver" in sync_op.attrs
+    assert "receiver_type" in sync_op.attrs
+    assert "receiver_canonical_type" in sync_op.attrs
 
 
 def test_nested_wrapper_and_alias_reach_localtensor(tmp_path: Path) -> None:

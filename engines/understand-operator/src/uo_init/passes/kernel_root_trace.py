@@ -44,7 +44,7 @@ from uo_init.semantics.ascendc_storage import (
     resolve_buffer_decl,
     storage_root_kind_from_space,
 )
-from uo_init.semantics.ascendc_sync import SYNC_MECHANISM
+from uo_init.semantics.ascendc_sync import SYNC_MECHANISM, resolve_sync_site
 
 # ---------------------------------------------------------------------------
 # Reason codes (auditable gaps)
@@ -329,6 +329,18 @@ def _decl_fields(decl: Any) -> tuple[str, str, str, str, int]:
     )
 
 
+def _sync_object_kind(type_text: str) -> EntityKind | None:
+    """Classify only explicit AscendC sync/storage type spellings."""
+    text = re.sub(r"\s+", "", str(type_text or ""))
+    if re.search(r"(?:^|::)TPipe(?:<|$)", text):
+        return EntityKind.PIPE
+    if re.search(r"(?:^|::)TQue(?:Bind)?(?:<|$)", text):
+        return EntityKind.QUEUE
+    if re.search(r"(?:^|::)HardEvent(?:Aic|Aiv)?(?:<|$)", text):
+        return EntityKind.EVENT
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Source scanners (complete graph — not storage-filtered)
 # ---------------------------------------------------------------------------
@@ -474,6 +486,9 @@ def _purge_root_trace_entities(codemap: CodeMap) -> None:
         EntityKind.OPERATION.value,
         EntityKind.BUFFER.value,
         EntityKind.REGISTER.value,
+        EntityKind.PIPE.value,
+        EntityKind.EVENT.value,
+        EntityKind.QUEUE.value,
     }
     drop_ids = {e.id for e in codemap.entities.values() if e.kind_name() in drop_kinds}
     for e in list(codemap.entities.values()):
@@ -1155,6 +1170,9 @@ def finalize_kernel_root_trace(
     gaps: list[dict[str, Any]] = []
     buf_count = 0
     reg_count = 0
+    pipe_count = 0
+    event_count = 0
+    queue_count = 0
 
     # Member fields as BUFFER anchors when typed as storage/wrapper/alias-to-them.
     for row in members:
@@ -1164,6 +1182,42 @@ def finalize_kernel_root_trace(
         if not is_valid_storage_name(name):
             continue
         base = _base_type_name(expanded) or str(row.get("base_type") or "")
+        sync_kind = _sync_object_kind(expanded) or _sync_object_kind(type_text)
+        if sync_kind is not None:
+            nfile = str(row["file"])
+            line = int(row["line"])
+            owner = str(row["owner"])
+            sid = make_id(sync_kind.value.title(), "decl", owner, name, nfile, line)
+            root_spell = (
+                "TPipe"
+                if sync_kind == EntityKind.PIPE
+                else ("TQue" if sync_kind == EntityKind.QUEUE else "HardEvent")
+            )
+            root_id = _ensure_ascendc_root(codemap, root_spell, root_kind="SYNC")
+            ent = codemap.upsert(
+                sync_kind,
+                name,
+                eid=sid,
+                attrs={
+                    "scope": owner,
+                    "type_text": type_text,
+                    "root_status": "REACHED",
+                    "root_kind": "SYNC",
+                    "root": f"AscendC::{root_spell}",
+                    "provenance": str(row.get("provenance") or "kernel_root_trace"),
+                },
+                file=nfile,
+                line=line,
+                status="extracted",
+                confidence=1.0,
+            )
+            _link(codemap, RelationKind.ROOTED_AT, ent.id, root_id)
+            buffer_by_key[(owner, name)] = ent.id
+            buffer_by_name[name] = ent.id
+            pipe_count += int(sync_kind == EntityKind.PIPE)
+            event_count += int(sync_kind == EntityKind.EVENT)
+            queue_count += int(sync_kind == EntityKind.QUEUE)
+            continue
         known = (
             is_storage_type_text(expanded)
             or is_storage_wrapper_type(expanded)
@@ -1229,6 +1283,40 @@ def finalize_kernel_root_trace(
             continue
         expanded = _resolve_alias_chain(type_text)
         base = _base_type_name(expanded)
+        sync_kind = _sync_object_kind(expanded) or _sync_object_kind(type_text)
+        if sync_kind is not None:
+            nfile = _norm_file(file, root)
+            sid = make_id(sync_kind.value.title(), "decl", function, name, nfile, line)
+            root_spell = (
+                "TPipe"
+                if sync_kind == EntityKind.PIPE
+                else ("TQue" if sync_kind == EntityKind.QUEUE else "HardEvent")
+            )
+            root_id = _ensure_ascendc_root(codemap, root_spell, root_kind="SYNC")
+            ent = codemap.upsert(
+                sync_kind,
+                name,
+                eid=sid,
+                attrs={
+                    "scope": function,
+                    "type_text": type_text,
+                    "root_status": "REACHED",
+                    "root_kind": "SYNC",
+                    "root": f"AscendC::{root_spell}",
+                    "provenance": "kernel_root_trace",
+                },
+                file=nfile,
+                line=line,
+                status="extracted",
+                confidence=1.0,
+            )
+            _link(codemap, RelationKind.ROOTED_AT, ent.id, root_id)
+            buffer_by_key[(function, name)] = ent.id
+            buffer_by_name[name] = ent.id
+            pipe_count += int(sync_kind == EntityKind.PIPE)
+            event_count += int(sync_kind == EntityKind.EVENT)
+            queue_count += int(sync_kind == EntityKind.QUEUE)
+            continue
         known = (
             is_storage_type_text(expanded)
             or is_storage_type_text(type_text)
@@ -1531,6 +1619,76 @@ def finalize_kernel_root_trace(
         )
         op_count += 1
 
+        # Persist direct synchronization identities only.  An edge means this
+        # call names this event; it does not pair signal/wait sites.
+        if re.fullmatch(r"(?:CrossCore)?(?:SetFlag|WaitFlag)", callee) and args:
+            identity = args[0].strip()
+            if re.fullmatch(r"[A-Za-z_]\w*", identity):
+                sync = resolve_sync_site(callee, args, targs)
+                event_id = make_id("Event", "sync", function, identity)
+                event = codemap.upsert(
+                    EntityKind.EVENT,
+                    identity,
+                    eid=event_id,
+                    attrs={
+                        "scope": function,
+                        "identity": identity,
+                        "event_type": str(sync.get("event") or ""),
+                        "mechanism": str(sync.get("mechanism") or ""),
+                        "cross_core": bool(sync.get("cross_core")),
+                        "provenance": str(d.get("provenance") or provenance),
+                    },
+                    file=nfile,
+                    line=line,
+                    status="extracted",
+                    confidence=1.0,
+                )
+                relation_kind = (
+                    RelationKind.SIGNALS if "SetFlag" in callee else RelationKind.AWAITS
+                )
+                _link(
+                    codemap,
+                    relation_kind,
+                    ent.id,
+                    event.id,
+                    attrs={
+                        "identity_arg": identity,
+                        "file": nfile,
+                        "line": line,
+                        "column": column,
+                    },
+                )
+                event_count += 1
+                for role in ("src_pipe", "dst_pipe"):
+                    pipe_name = str(sync.get(role) or "")
+                    if not pipe_name:
+                        continue
+                    if not pipe_name.startswith("PIPE_"):
+                        pipe_name = f"PIPE_{pipe_name}"
+                    pipe_id = make_id("Pipe", "hard_event", pipe_name)
+                    pipe = codemap.upsert(
+                        EntityKind.PIPE,
+                        pipe_name,
+                        eid=pipe_id,
+                        attrs={
+                            "role": role,
+                            "root_status": "REACHED",
+                            "root_kind": "SYNC",
+                            "root": f"AscendC::{pipe_name}",
+                            "provenance": str(d.get("provenance") or provenance),
+                        },
+                        status="extracted",
+                        confidence=1.0,
+                    )
+                    _link(
+                        codemap,
+                        RelationKind.REFERENCES,
+                        event.id,
+                        pipe.id,
+                        attrs={"role": role},
+                    )
+                    pipe_count += 1
+
         # Source METHOD CALLS graph (caller → callee method or this op).
         caller_mid = (
             _ensure_method(
@@ -1638,6 +1796,36 @@ def finalize_kernel_root_trace(
                 status="partial",
             )
 
+    # Bounded lexical statement order.  PRECEDES is adjacency in one source
+    # function/file, not a happens-before or engine schedule relation.
+    ordered_ops: dict[tuple[str, str], list[Any]] = defaultdict(list)
+    for operation in codemap.by_kind(EntityKind.OPERATION):
+        ordered_ops[
+            (str(operation.attrs.get("function") or ""), str(operation.file or ""))
+        ].append(operation)
+    precedes_count = 0
+    for (_function, _file), operations in sorted(ordered_ops.items()):
+        operations.sort(
+            key=lambda item: (
+                int(item.line_start or 0),
+                int(item.attrs.get("column") or 0),
+                item.id,
+            )
+        )
+        for previous, current in zip(operations, operations[1:]):
+            if precedes_count >= 500:
+                break
+            _link(
+                codemap,
+                RelationKind.PRECEDES,
+                previous.id,
+                current.id,
+                attrs={"via": "same_function_source_order"},
+            )
+            precedes_count += 1
+        if precedes_count >= 500:
+            break
+
     # --- 6. Single fixed-point -------------------------------------------
     _propagate_reachability(codemap)
 
@@ -1702,6 +1890,16 @@ def finalize_kernel_root_trace(
         "operations": op_count,
         "buffers": buf_count,
         "registers": reg_count,
+        "pipes": len(codemap.by_kind(EntityKind.PIPE)),
+        "events": len(codemap.by_kind(EntityKind.EVENT)),
+        "queues": len(codemap.by_kind(EntityKind.QUEUE)),
+        "precedes": precedes_count,
+        "signals": sum(
+            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.SIGNALS.value
+        ),
+        "awaits": sum(
+            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.AWAITS.value
+        ),
         "reached_operations": reached_ops,
         "reached_buffers": reached_bufs,
         "wraps": sum(1 for r in codemap.relations.values() if r.kind_name() == RelationKind.WRAPS.value),
@@ -1729,6 +1927,10 @@ def finalize_kernel_root_trace(
         "operations": op_count,
         "buffers": buf_count,
         "registers": reg_count,
+        "pipes": len(codemap.by_kind(EntityKind.PIPE)),
+        "events": len(codemap.by_kind(EntityKind.EVENT)),
+        "queues": len(codemap.by_kind(EntityKind.QUEUE)),
+        "precedes": precedes_count,
         "reached_operations": reached_ops,
         "reached_buffers": reached_bufs,
         "unresolved_types": unresolved_types,
