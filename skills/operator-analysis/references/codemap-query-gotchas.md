@@ -8,9 +8,13 @@
 - **宏与 compile-time**：`#if` / 模板参数必须保留 compile-time provenance；运行时值不能回填成宏条件的“唯一真值”。
 - **unresolved 不可凭命名闭合**：相似度、匈牙利命名、注释猜测都不能把 unresolved 标成 resolved。
 - **只读边界**：uo-query 不得修改 `.uo`、不得写 gap patch、不得宣布 workflow PASS。
-- **交付是 return_value**：最终消息输出 `kb-answer-v1`；Primary 用 `--result-file` finalize。禁止代写 `uo/checks/*`。
+- **交付是 return_value**：最终消息输出 `kb-answer-v1`；Explorer **禁止 Write** `answer.yaml`/scratch。Primary 优先无文件 `acp run-action kb_lookup --finalize`（OpenCode 插件注入）；`--result-file` 仅 fallback。禁止代写 `uo/checks/*`。
+- **复杂题 fan-out**：3+ 正交子问由 Primary 拆多个 `Task(actor=uo-query)` 再合成；不要塞进一个 Explorer。
 - **claim 够了必须停**：不静默扩大到 full reachability；optional（RoPE/DTemplate）可 PARTIAL，不得阻塞主答案。重复确认不是新证据。
-- **硬预算**：uo-query≤6、ro-search≤2、Read≤2、总工具≤10（硬顶 12）；同 span 不读两次。
+- **硬预算**：uo-query≤12、ro-search≤4、Read≤4、总工具≤18（硬顶 22）；同 span 不读两次。
+- **高置信拿 sha**：定向 Read 后跑 `acp inspect evidence-window --project … --path … --lines A-B`；有磁盘窗证明就标 high，禁止「不会算 hash → 全降 medium」。
+- **ro-search 参数**：只用 `--paths` / `--glob`（没有 `--include`）；锁 `op_host/<arch>` / `op_kernel/<arch>`；禁止跨 arch 闭合。
+- **别烧预算**：不要为 `acp --help` / 全量 tiling_key dump 耗次数；参数失败一次后读该子命令 `--help` 再试。
 - **`source_span` 足够引用**：不为拿行号而 Read。
 - **缺视图 / VIEW_STALE**：engine fallback canonical；不要发明维度。
 - **回答缺 `path:line` 不合格**：无 span 标 `PARTIAL` / `UNKNOWN`，禁止编造行号。

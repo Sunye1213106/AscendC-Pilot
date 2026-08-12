@@ -51,8 +51,33 @@ def test_compile_slice_writes_file_even_without_uo(tmp_path: Path) -> None:
     assert loaded["task"]["action_id"] == "resolve"
     assert "excluded" in loaded
     assert loaded["budget_ok"] is True
-    # References may be missing until P4 gotchas land; status is recorded.
+    # With repo_root=REPO, profile references must resolve — fail-closed, no silent missing.
+    assert loaded.get("ok") is True
+    assert not loaded.get("missing_references")
     assert isinstance(loaded["references"], list)
+    assert all(r.get("status") == "ok" for r in loaded["references"])
+
+
+def test_compile_slice_fails_closed_on_missing_refs(tmp_path: Path, monkeypatch) -> None:
+    ensure_agent_layout(tmp_path, arch="arch0")
+    start_workflow(tmp_path, "uo-init", intent="test", op_name="toy", architecture="arch0")
+    from ascendc_pilot.context import compiler as comp
+
+    def _fake_load(repo: Path, refs: tuple[str, ...]):
+        return [{"path": "skills/nope/missing.md", "status": "missing"}]
+
+    monkeypatch.setattr(comp, "_load_references", _fake_load)
+    slice_doc = maybe_compile_slice(
+        tmp_path,
+        context_profile_id="uo-init-resolve",
+        action_id="resolve",
+        workflow_id="uo-init",
+        repo_root=REPO,
+    )
+    assert slice_doc is not None
+    assert slice_doc.get("ok") is False
+    assert slice_doc.get("reason_code") == "CONTEXT_REFERENCES_MISSING"
+    assert "skills/nope/missing.md" in (slice_doc.get("missing_references") or [])
 
 
 def test_legacy_pack_unchanged_shape(tmp_path: Path) -> None:

@@ -4,14 +4,18 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  AscendC-Pilot 主控。只做四件事：识别并加载匹配的 generated workflow entry skill；
-  调用 PATH 上的 `acp`（勿找 acp.exe）；执行 ACP 返回的 typed directive
-  （含 AskQuestion / run-action / auto / answer / finalize）；不替 ACP 发明阶段或默认 architecture。
-  Prefer Pilot workflows over external MCP. 启动条件、architecture、project 根目录规则以
-  ACP 返回与 composed control-invariants 为准，勿在本 description 硬编码 workflow 清单。
+  AscendC-Pilot 主控。优先调用 Host 工具 `pilot_run`（一次启动完整 Session Driver）；
+  否则只做：识别并加载匹配的 generated workflow entry skill；调用 PATH 上的 `acp`
+  （勿找 acp.exe）；执行 ACP / host_step 返回的 typed directive
+  （含 AskQuestion / run-action / auto / answer / finalize / dispatch-result）；
+  不替 ACP 发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
+  启动条件、architecture、project 根目录规则以 ACP 返回与 composed control-invariants 为准。
+  对用户说话必须人话（意图/刚完成/下一步或请你决定）；禁止粘贴 subagent 黑话。
+  用户要「全量/全覆盖 tilingkey case」时：先 Goal 串联 tg-init→tg-plan→tg-solve
+  （start 带 --intent 含全覆盖短语；complete 后若有 recommended_next_workflow 则继续）。
 skill_ids: [operator-analysis, testcase-generation, source-proof, code-review]
 read_scopes:
-- '*'
+- pilot:*
 write_scopes: []
 forbidden:
 - modify_pilot_state

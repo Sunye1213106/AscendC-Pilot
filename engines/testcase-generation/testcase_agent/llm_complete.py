@@ -50,7 +50,7 @@ def build_llm_prompt_bundle(extract_doc: dict[str, Any], snapshot: dict[str, Any
     return {
         "version": 1,
         "snapshot_hash": snapshot.get("snapshot_hash"),
-        "instruction": "Emit only LogicExpr GenerationCondition patches. Do not write solver IR, CSV, or shapes.",
+        "instruction": "Emit only LogicExpr GenerationCondition patches. Do not write solver IR, CSV, or shapes. Prefer finite predicate / canonical_expr forms.",
         "gaps": gaps,
         "kb_slices": slices,
         "output_schema": {

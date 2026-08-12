@@ -41,14 +41,10 @@ def _normalize_execution_registry(
         actions: list[dict[str, Any]] = []
         used_agents: dict[str, str] = {}
 
-        # UO runtime state lives under the arch-scoped agent root, while the
-        # canonical CodeMap product is deliberately arch-neutral one directory
-        # above it (`../uo/*.uo`). Keep that canonical root explicit in the
-        # workflow ceiling for the two deterministic UO writers.
+        # UO CodeMap product and work tree both live under the arch-scoped
+        # agent root (``.ascendc-pilot/<arch>/uo/``). No sibling ``../uo``.
         if workflow_id in {"uo-init", "uo-update"}:
             write_roots = list(meta.get("write_roots") or [])
-            if "../uo" not in write_roots:
-                write_roots.append("../uo")
             meta["write_roots"] = write_roots
 
         for raw in source.get("actions") or []:

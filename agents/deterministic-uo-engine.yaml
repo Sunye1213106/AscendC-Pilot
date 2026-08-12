@@ -9,16 +9,14 @@ mode: subagent
 description: UO CodeMap deterministic engine
 skill_ids: [operator-analysis]
 read_scopes:
-- uo/**
-- ../uo/**
-- runs/**
-- context/**
-- skills/operator-analysis/**
+- pilot:uo/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/operator-analysis/**
 write_scopes:
-- uo/**
-- ../uo/**
-- runs/**/actions/**
-- context/pilot_params.yaml
+- pilot:uo/**
+- pilot:runs/**/actions/**
+- pilot:context/pilot_params.yaml
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

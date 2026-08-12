@@ -22,17 +22,17 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
         "uo/ir/host_extract_receipt.yaml",
         "uo/kernel/fold_receipt.yaml",
     ],
-    "uo_product_ready": ["../uo/*.uo"],
+    "uo_product_ready": ["uo/*.uo"],
     "integrity": ["uo/checks/integrity.yaml"],
     # gate_uo_ready_tg: CodeMap .uo product (+ view blobs inside).
-    "kb_ready": ["../uo/*.uo"],
-    "uo_ready": ["../uo/*.uo"],
+    "kb_ready": ["uo/*.uo"],
+    "uo_ready": ["uo/*.uo"],
     # EXTERNAL rebuildable context pack.
     "context_pack": ["context/**"],
     "init_confirmed": ["tg/init/status.yaml"],
     "tg_init_confirmed": ["tg/init/status.yaml"],
     "kb_fingerprint_fresh": ["tg/init/kb_fingerprint.yaml"],
-    # Also reads .uo view blobs (covered by ../uo/*.uo logical producer).
+    # Also reads .uo view blobs (covered by uo/*.uo logical producer).
     "tilingkey_binding_ready": ["tg/realization/binding_inventory.yaml"],
     "audit_pass": ["tg/init/audit_report.yaml"],
     "plan_approved": ["tg/plan/levels/*/human_supplement.yaml"],
@@ -63,7 +63,7 @@ _UO_LOGICAL = {
     "uo:view:ir/operator_graph",
     "uo:view:views/kernel",
     "uo:view:views/tilingdata",
-    "../uo/*.uo",
+    "uo/*.uo",
 }
 
 
@@ -72,10 +72,10 @@ def _norm(path: str) -> str:
     if not p:
         return ""
     # Collapse logical CodeMap product roots only — keep concrete uo/** paths.
-    if p in {"uo", "uo/**", "../uo", "../uo/**", "../uo/*.uo"}:
-        return "../uo/*.uo"
+    if p in {"uo", "uo/**", "../uo", "../uo/**", "../uo/*.uo", "uo/*.uo"}:
+        return "uo/*.uo"
     if fnmatch.fnmatch(p, "../uo/*.uo") or fnmatch.fnmatch(p, "uo/*.uo"):
-        return "../uo/*.uo"
+        return "uo/*.uo"
     return p
 
 
@@ -99,7 +99,7 @@ def _is_external(path: str) -> bool:
 
 
 def _is_uo_logical(path: str) -> bool:
-    return path in _UO_LOGICAL or path == "../uo/*.uo" or path.endswith(".uo")
+    return path in _UO_LOGICAL or path == "uo/*.uo" or path.endswith(".uo")
 
 
 def normalize_produces(action: dict[str, Any]) -> list[str]:
@@ -293,7 +293,7 @@ def check_artifact_dag(
         if not path:
             return
         global_producers.setdefault(path, set()).add(owner)
-        if path == "../uo/*.uo" or path.endswith(".uo"):
+        if path == "uo/*.uo" or path.endswith(".uo"):
             for logical in _UO_LOGICAL:
                 global_producers.setdefault(logical, set()).add(owner)
 
@@ -307,7 +307,7 @@ def check_artifact_dag(
             owner = f"{wid}/{aid}"
             for path in normalize_produces(action):
                 add_global(path, owner)
-    add_global("../uo/*.uo", "uo-init/commit")
+    add_global("uo/*.uo", "uo-init/commit")
 
     for wid, meta in user_wfs:
         producers: dict[str, set[str]] = {}
@@ -317,7 +317,7 @@ def check_artifact_dag(
             if not path:
                 return
             producers.setdefault(path, set()).add(owner)
-            if path == "../uo/*.uo" or path.endswith(".uo"):
+            if path == "uo/*.uo" or path.endswith(".uo"):
                 for logical in _UO_LOGICAL:
                     producers.setdefault(logical, set()).add(owner)
 
@@ -333,7 +333,7 @@ def check_artifact_dag(
             # NOTE: allowed_write_paths are permissions, never producers.
 
         if wid == "uo-init":
-            producers.setdefault("../uo/*.uo", set()).add("uo-init/commit")
+            producers.setdefault("uo/*.uo", set()).add("uo-init/commit")
             for logical in _UO_LOGICAL:
                 producers.setdefault(logical, set()).add("uo-init/commit")
 
@@ -349,7 +349,7 @@ def check_artifact_dag(
         reach = _reachable_forward_only(entry, transitions, phases)
 
         for path, owners in sorted(producers.items()):
-            if path in _UO_LOGICAL or path == "../uo/*.uo":
+            if path in _UO_LOGICAL or path == "uo/*.uo":
                 continue
             if _is_external(path):
                 continue
@@ -405,7 +405,7 @@ def check_artifact_dag(
                 local_owners = _producer_covers(path, producers)
                 global_owners = _producer_covers(path, global_producers)
                 if _is_uo_logical(path):
-                    if local_owners or global_owners or _producer_covers("../uo/*.uo", global_producers):
+                    if local_owners or global_owners or _producer_covers("uo/*.uo", global_producers):
                         continue
                     errors.append(f"ARTIFACT_ORPHAN_CONSUME: {owner} consumes {path}")
                     continue

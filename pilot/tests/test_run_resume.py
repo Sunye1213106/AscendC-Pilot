@@ -14,8 +14,15 @@ from ascendc_pilot.run_resume import (
     build_run_resume_summary,
     needs_resume_decision,
     normalize_decision,
+    resolve_start_architecture,
 )
 from ascendc_pilot.state import load_state, save_state, start_workflow
+
+
+def _make_multi_arch_op(root: Path) -> None:
+    for arch in ("arch22", "arch35"):
+        (root / "op_host" / arch).mkdir(parents=True, exist_ok=True)
+        (root / "op_kernel" / arch).mkdir(parents=True, exist_ok=True)
 
 
 def _write(path: Path, data: object) -> None:
@@ -24,6 +31,51 @@ def _write(path: Path, data: object) -> None:
         path.write_text(data, encoding="utf-8")
     else:
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def test_start_requires_askquestion_when_multiple_archs(tmp_path: Path, capsys) -> None:
+    _make_multi_arch_op(tmp_path)
+    code = acp_main(["start", "uo-init", "--project", str(tmp_path)])
+    assert code == 2
+    output = capsys.readouterr().out
+    assert "ARCHITECTURE_REQUIRED" in output
+    assert "ask_question" in output
+    assert "arch22" in output
+    assert "arch35" in output
+    state = load_state(tmp_path) or {}
+    assert not state.get("run_id")
+
+
+def test_start_with_explicit_architecture_when_multiple_archs(tmp_path: Path, capsys) -> None:
+    _make_multi_arch_op(tmp_path)
+    code = acp_main(
+        ["start", "uo-init", "--project", str(tmp_path), "--architecture", "arch22"]
+    )
+    assert code == 0
+    state = load_state(tmp_path)
+    assert state is not None
+    assert state["architecture"] == "arch22"
+
+
+def test_resolve_start_architecture_sole_arch_auto_selects(tmp_path: Path) -> None:
+    (tmp_path / "op_host" / "arch22").mkdir(parents=True)
+    result = resolve_start_architecture(tmp_path, "", workflow_id="uo-init")
+    assert result["ok"] is True
+    assert result["architecture"] == "arch22"
+    assert result["selected_by"] == "sole_arch"
+
+
+def test_reinit_requires_architecture_when_multiple_archs(tmp_path: Path) -> None:
+    _make_multi_arch_op(tmp_path)
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
+    result = apply_resume_decision(
+        tmp_path, "uo-init", "reinit", start_kwargs={}, require_receipt=False
+    )
+    assert result.get("ok") is False
+    assert result.get("needs_human_decision") is True
+    assert result.get("error") == "ARCHITECTURE_NEEDS_DECISION"
+    # Must not wipe / restart before architecture is chosen.
+    assert load_state(tmp_path)["architecture"] == "arch35"
 
 
 def test_normalize_decision_labels() -> None:
@@ -181,8 +233,8 @@ def test_owned_artifact_map_uses_public_uo_actions() -> None:
     assert any("codemap_analyze_receipt" in path for path in owned["analyze"])
     assert any("unresolved.yaml" in path for path in owned["analyze"])
     assert not any("derive_key_fields_receipt" in path for path in owned["analyze"])
-    assert owned["commit"] == ("../uo/*.uo",)
-    assert owned["verify"] == ("../uo/*.uo",)
+    assert owned["commit"] == ("uo/*.uo",)
+    assert owned["verify"] == ("uo/checks/integrity.yaml",)
 
 
 def test_different_workflow_resume_does_not_cross_active_run(tmp_path: Path) -> None:

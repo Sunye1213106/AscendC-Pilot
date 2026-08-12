@@ -10,6 +10,7 @@
 可执行步骤              -> Action
 需要独立 identity/context/permission/referee -> Agent
 工具或 runtime 方法合同 -> Capability
+控制面传输与派发        -> Host Session Driver（Host Adapter 运行时）
 ```
 
 ## 新增或修改 Workflow / Action
@@ -49,7 +50,16 @@ python scripts/check_skill_architecture.py
 
 Engine 放在 `engines/<name>/`，应有 package metadata、测试和需要时的 CLI entry point；若 Pilot 需要授权它，则新增 deterministic identity 并把 action 接入 workflow。Capability 应描述可调用的工具或 runtime 方法合同，而非承载领域解释。
 
-Host Adapter 负责将具体 host 接到 composition/runtime，不应改写 workflow 事实。修改后重新 compose 对应 host，并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。
+Host Adapter 负责两件事：安装期 composition，以及（OpenCode）运行时 Session Driver（`pilot_run` / `host_step` 派发）。Driver 不得改写 workflow 事实、不得 advance/complete、不得宣布 `passed`。修改 plugin 或 dispatch 协议后：
+
+```bash
+python scripts/compose_runtime.py --repo . --host opencode
+# 再跑 install 把 plugin 投影到用户 Host
+acp doctor --host opencode
+python scripts/check_host_driver_contract.py
+```
+
+并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。Agent YAML 路径优先使用 `pilot:` / `method:` / `source:` 命名空间；prepare 会物化 cognitive skill 正文，读失败走 `BUNDLE_NOT_READABLE`。
 
 ## Gate、测试与 Reference
 

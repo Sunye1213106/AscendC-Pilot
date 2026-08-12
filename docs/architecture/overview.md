@@ -69,11 +69,13 @@ AscendC Source → UO → Operator CodeMap
                          ├→ TG → Coverage
                          └→ CE → Review / Impact
 
-User / Host
+User
     ↓
-ACP Harness (Pilot Runtime)
+Host Adapter（安装期 compose + 运行时 Session Driver）
     ↓
-Workflow / Engine / Agent
+ACP Harness (Pilot Runtime：Workflow / Lease / Gate)
+    ↓
+Engine（事实）或 LLM Agent（推理）
 ```
 
 | 模块 | 一句话 |
@@ -82,14 +84,15 @@ Workflow / Engine / Agent
 | TG | 证据闭环：Replay + 经审查的 exclusion |
 | CE | 变更分析：沿 CodeMap 做跨层影响 |
 | ACP | 执行控制：约束 Agent / Engine 边界 |
+| Host Adapter | 安装期投影 + **运行时传输**（Session Driver） |
 
 Data Plane：`Operator → UO → CodeMap → {TG, CE}`。
 
-Control Plane：`User → Host Adapter → Primary → Pilot Workflow → Engine 或 LLM → Gate → State`。
+Control Plane：`User → Host Adapter (Driver) → Pilot Workflow → Engine 或 LLM → Gate → State`。
 
 核心原则：
 
-> Deterministic Engine 负责事实，LLM Agent 负责推理，Harness 负责约束两者之间的边界。
+> Deterministic Engine 负责事实，LLM Agent 负责推理，Harness 负责约束两者之间的边界，**Host Adapter 负责传输与派发**（不再由 Primary LLM 手搓 ACP 协议环）。
 
 覆盖如何闭环见 [TG](../modules/tg.md)；Agent 如何受约束见 [Agent Runtime](agent-runtime.md)；文件放哪见 [产物与权威](artifacts-and-authority.md)。
 
@@ -98,7 +101,7 @@ Control Plane：`User → Host Adapter → Primary → Pilot Workflow → Engine
 # 设计原则
 
 ```text
-Compiler-aware Knowledge + Deterministic Verification + Bounded Agent Reasoning
+Compiler-aware Knowledge + Deterministic Verification + Bounded Agent Reasoning + Host-owned Transport
 ```
 
-通过提前建立 Operator CodeMap，减少 Agent 对源码的重复理解、把上下文留给真正需要推理的地方；通过 Harness 限制执行范围；通过 replay 和 proof 保证结果具有工程可信度。
+通过提前建立 Operator CodeMap，减少 Agent 对源码的重复理解、把上下文留给真正需要推理的地方；通过 Harness 限制执行范围；通过 Host Session Driver 把 `start → auto → Task → finalize` 从 LLM turn 挪到 Host；通过 replay 和 proof 保证结果具有工程可信度。

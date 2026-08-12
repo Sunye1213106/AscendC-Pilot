@@ -23,7 +23,7 @@ Operator + Architecture
 | `extract` | 源码范围 | 用 Clang 抽出编译期可见事实（声明、语法树、调用/写点等） | CompilerFacts（原始事实，尚无业务解释） |
 | `analyze` | CompilerFacts | 按固定规则串成跨层关系（TilingKey、TilingData、Kernel 等）；证不全的记下来 | 语义关系图 + unresolved（未闭合项） |
 | `commit` | 分析结果 | 写入正式产品文件 | `<op_name>.<arch>.uo` |
-| `verify` | `.uo` | 检查结构是否完整、约定视图能否读出 | 已验证的 CodeMap |
+| `verify` | `.uo` | 检查结构是否完整、约定视图能否读出；写入 `uo/checks/integrity.yaml` 收据 | 已验证的 CodeMap |
 
 ---
 
@@ -175,7 +175,7 @@ Canonical Kernel UO **不**做执行时序分析：不推断 exec_rank、RAW/WAR
 各层关系归一到统一 IR，并由 `commit` materialize 为正式产品：
 
 ```text
-.ascendc-pilot/uo/<op_name>.<arch>.uo
+.ascendc-pilot/<arch>/uo/<op_name>.<arch>.uo
 ```
 
 
@@ -242,7 +242,14 @@ Source -> CodeMap -> {/uo-query 只读消费 | /uo-update 受控增量刷新 | /
 - METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`（claim sufficiency + 预算停条件）
 - 交付：`kb-answer-v1`（`answer_zh` 必填；`findings`/`gaps`/`useful_locations` optional）
 
-`readonly_analyst` 语义：**禁止改 domain 正式产物**（`.uo` / TG / CE）。Explorer 不写正式产物；Runtime 可物化 action-local `answer.yaml`。
+`readonly_analyst` 语义：**禁止改 domain 正式产物**（`.uo` / TG / CE）。Explorer 不写正式产物；Runtime 可物化 action-local `answer.yaml`（OpenCode 可无文件 finalize）。
+
+**复杂度**：
+
+- 单 claim（一个侧面）→ 一个 `uo-query` Task / 一次 `kb_lookup`。
+- 多 claim（如 Host 分核 + Kernel sync + 性能代价）→ Primary 拆成 2–4 个窄 `Task(actor=uo-query)` 并行调查，再合成确切答案；不要嵌套第二个 `/uo-query` workflow，也不要把全部子问塞进一个 Explorer。
+
+高置信源码窗：`acp inspect evidence-window --project … --path … --lines A-B`。
 
 `/uo-investigate` 调查 unresolved residual：分类根因、指出确定性引擎还缺什么能力，产出 bounded report。不修改 canonical `.uo`。
 

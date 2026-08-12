@@ -151,10 +151,34 @@ def forbidden_blocks_bash(
     return None
 
 
+def split_scope_ns(scope: str) -> tuple[str, str]:
+    """Split ``pilot:uo/**`` / ``method:…`` / ``source:…``; bare scopes → pilot."""
+    s = str(scope or "").replace("\\", "/").strip()
+    for ns in ("pilot:", "method:", "source:"):
+        if s.lower().startswith(ns):
+            return ns[:-1], s[len(ns) :].lstrip("/")
+    # Legacy: skills/** and cognitive-skills/** are method roots.
+    if s.startswith("skills/") or s.startswith("cognitive-skills/"):
+        return "method", s
+    # Legacy: op_host / op_kernel style roots are source.
+    if s.split("/", 1)[0] in {
+        "op_host",
+        "op_kernel",
+        "common",
+        "op_graph",
+        "framework",
+        "include",
+    }:
+        return "source", s
+    return "pilot", s.lstrip("/")
+
+
 def path_matches_scope(rel_under_agent: str, scopes: list[str]) -> bool:
     """Match a path relative to ``.ascendc-pilot/`` against glob-like scopes.
 
     Supports ``**``, ``*``, and exact prefixes. Empty scopes → deny (caller decides).
+    Namespace prefixes ``pilot:`` / ``method:`` / ``source:`` are stripped here;
+    callers that need cross-root matching should use ``scope_allows_path``.
     """
     from fnmatch import fnmatch
 
@@ -162,7 +186,10 @@ def path_matches_scope(rel_under_agent: str, scopes: list[str]) -> bool:
     if not scopes:
         return False
     for scope in scopes:
-        s = str(scope).replace("\\", "/").lstrip("/")
+        ns, s = split_scope_ns(str(scope))
+        if ns != "pilot":
+            # Non-pilot scopes are handled by scope_allows_path.
+            continue
         if not s:
             continue
         if s.endswith("/**"):
@@ -176,7 +203,101 @@ def path_matches_scope(rel_under_agent: str, scopes: list[str]) -> bool:
         if "*" not in s and "?" not in s and "[" not in s:
             if norm == s or norm.startswith(s.rstrip("/") + "/"):
                 return True
+        # Backward-compat: bare skills/** also matched as pilot-relative historically
+        # (usually dead); keep fnmatch for unprefixed legacy identical to pilot.
     return False
+
+
+def scope_allows_path(
+    abs_path: str | Path,
+    scopes: list[str],
+    *,
+    project_root: Path | None,
+) -> bool:
+    """True if abs_path is allowed by any namespaced scope."""
+    from fnmatch import fnmatch
+
+    try:
+        resolved = Path(abs_path).expanduser().resolve()
+    except OSError:
+        return False
+    if not scopes:
+        return False
+
+    method_roots = _method_roots(project_root)
+    for scope in scopes:
+        ns, pattern = split_scope_ns(str(scope))
+        if not pattern:
+            continue
+        if ns == "pilot":
+            rel = rel_under_agent_dir(resolved, project_root)
+            if rel is None:
+                continue
+            if path_matches_scope(rel, [f"pilot:{pattern}", pattern]):
+                return True
+            continue
+        if ns == "source":
+            if project_root is None:
+                continue
+            try:
+                rel = resolved.relative_to(Path(project_root).resolve()).as_posix()
+            except ValueError:
+                continue
+            if pattern.endswith("/**"):
+                prefix = pattern[:-3]
+                if rel == prefix or rel.startswith(prefix + "/"):
+                    return True
+            if fnmatch(rel, pattern) or rel == pattern or rel.startswith(pattern.rstrip("/") + "/"):
+                return True
+            continue
+        if ns == "method":
+            for root in method_roots:
+                try:
+                    rel = resolved.relative_to(root.resolve()).as_posix()
+                except ValueError:
+                    continue
+                # pattern may be skills/foo/** or cognitive-skills/foo/** or foo/**
+                candidates = [pattern]
+                if pattern.startswith("skills/"):
+                    candidates.append("cognitive-" + pattern)
+                    candidates.append(pattern[len("skills/") :])
+                if pattern.startswith("cognitive-skills/"):
+                    candidates.append(pattern[len("cognitive-skills/") :])
+                    candidates.append("skills/" + pattern[len("cognitive-skills/") :])
+                for cand in candidates:
+                    if cand.endswith("/**"):
+                        prefix = cand[:-3]
+                        if rel == prefix or rel.startswith(prefix + "/"):
+                            return True
+                    if fnmatch(rel, cand) or rel == cand or rel.startswith(cand.rstrip("/") + "/"):
+                        return True
+    return False
+
+
+def _method_roots(project_root: Path | None) -> list[Path]:
+    roots: list[Path] = []
+    home = Path.home()
+    roots.extend(
+        [
+            home / ".config" / "opencode" / "ascendc-pilot-plugin",
+            home / ".config" / "opencode",
+            home / ".cursor" / "ascendc-pilot-plugin",
+            home / ".agents" / "ascendc-pilot-plugin",
+        ]
+    )
+    for root in _repo_root_candidates(project_root):
+        roots.append(root)
+        roots.append(root / "skills")
+    # Dedup
+    seen: set[str] = set()
+    out: list[Path] = []
+    for r in roots:
+        key = str(r)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(r)
+    return out
 
 
 def rel_under_agent_dir(path: str | Path, project_root: Path | None) -> str | None:

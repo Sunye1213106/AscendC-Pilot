@@ -723,7 +723,7 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
 
 
 def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
-    """Pass when the single ``.uo`` CodeMap product exists under ``.ascendc-pilot/uo/``."""
+    """Pass when the single ``.uo`` CodeMap product exists under ``.ascendc-pilot/<arch>/uo/``."""
     try:
         import sys
 
@@ -746,7 +746,7 @@ def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
             "gate": "uo_product_ready",
             "ok": ok,
             "path": str(found or ""),
-            "message": "ok" if ok else "missing .ascendc-pilot/uo/<op>.<arch>.uo",
+            "message": "ok" if ok else "missing .ascendc-pilot/<arch>/uo/<op>.<arch>.uo",
         }
     except Exception as exc:  # noqa: BLE001
         return {

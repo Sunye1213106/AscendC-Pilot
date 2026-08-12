@@ -2,9 +2,9 @@
 
 本页假设 AscendC-Pilot 已完成安装。所有操作都应在**目标 AscendC 算子仓或算子目录**中进行，而不是在 AscendC-Pilot 自身仓库中。
 
-内部机制（Lease、Engine、Producer/Referee）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)。
+内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)。
 
-> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。详情见 Runtime 文档。
+> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有），不必让主控手搓 `acp start` / `auto` / `finalize`。详情见 Runtime 文档。
 
 ## 1. 打开目标算子
 
@@ -20,7 +20,7 @@ AscendC-Pilot
 > 由 Host（OpenCode / Cursor 等）注册，**不是**终端里的 shell 命令；安装后会出现在补全列表里，并由 `ascendc-pilot` 主控接管。
 > 也可以不敲 `/`，直接用自然语言描述目标。
 
-Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。
+Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。Agent 侧优先跑 `acp scan-architectures --project <算子目录>` 读目录摘要与选项，再 AskQuestion——不要 Glob 仓根或翻 cmake 猜架构。
 
 TG / CE / 查询 **不以源码目录另选架构**：以已有 `.uo` 为准。没有 CodeMap 就直接跑 `/tg-init` 等，会提示先 `/uo-init`。
 
@@ -52,7 +52,7 @@ operator + architecture → source scope → Clang CompilerFacts
 成功后正式产物位于：
 
 ```text
-<operator-repo>/.ascendc-pilot/uo/<op_name>.<arch>.uo
+<operator-repo>/.ascendc-pilot/<arch>/uo/<op_name>.<arch>.uo
 ```
 
 失败时先看：
@@ -103,6 +103,15 @@ TG 和 CE 应使用更新后的 CodeMap，不要基于过期 UO 继续工作。
 
 TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建库，会返回 `UO_PRODUCT_REQUIRED`，请先完成 §2。
 
+**产品目标（推荐）**：说「全量 / 全覆盖 / tilingkey case / 建立 TilingKey 全覆盖测试」时，Pilot 会写入
+`.ascendc-pilot/control/user_goal.yaml`，并按三步串联（每步用人话说明意图与下一步）：
+
+1. **建立覆盖合同**（`/tg-init`）→ 人话确认是否进入规划  
+2. **规划测试义务**（`/tg-plan`）→ 人话批准是否开始求解  
+3. **求解并生成用例**（`/tg-solve`）
+
+也可分步 Slash：
+
 ```text
 /tg-init --project <算子目录>
 /tg-plan --project <算子目录>
@@ -116,6 +125,8 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 ```text
 帮我为这个算子建立 TilingKey 全覆盖测试。
 ```
+
+对人可见说明会交代「目标 / 刚完成 / 下一步或请你决定」；不会用内部字段名当作唯一解释。
 
 `/tg-solve` 会生成候选输入并运行 Host Replay，根据实际结果继续搜索或证明剩余目标不可达，直到覆盖义务关闭或遇到需要人工处理的问题。详细算法见 [TG](../modules/tg.md)。
 
@@ -151,7 +162,10 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
 | `/ce-review` | 代码审查与影响分析（需已有 `.uo`） |
-| `acp doctor` / `status` / `next` / `inspect-failure` | 环境与状态诊断 |
+| `acp doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
+| `acp status` / `next` / `inspect-failure` | 状态与失败诊断 |
+| `acp scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
+| `pilot_run`（OpenCode 工具） | Host Session Driver：启动并驱动 workflow |
 
 正常使用时优先向 `AscendC-Pilot` 描述目标，或使用带参数的 Slash Command。
 

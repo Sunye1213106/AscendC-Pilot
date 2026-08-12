@@ -20,9 +20,9 @@ def _minimal_uo(path: Path, *, arch: str = "arch35") -> None:
 def test_uo_review_compaction_leaves_only_formal_product(tmp_path: Path) -> None:
     from ascendc_pilot.actions.uo_product_compaction import compact_reviewed_uo
 
-    product = tmp_path / ".ascendc-pilot" / "uo" / "flash_attention_score_grad.arch35.uo"
-    _minimal_uo(product)
     work = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    product = work / "flash_attention_score_grad.arch35.uo"
+    _minimal_uo(product)
     (work / "ir").mkdir(parents=True)
     (work / "ir" / "operator_graph.yaml").write_text("nodes: []\n", encoding="utf-8")
     (work / "indexes").mkdir()
@@ -32,7 +32,8 @@ def test_uo_review_compaction_leaves_only_formal_product(tmp_path: Path) -> None
     assert out["ok"] is True, out
     assert product.is_file()
     assert work.is_dir()
-    assert not any(p.is_file() for p in work.rglob("*"))
+    remaining = [p for p in work.rglob("*") if p.is_file()]
+    assert remaining == [product]
     assert out["removed_files"] == 2
 
 
@@ -41,6 +42,7 @@ def test_tg_plan_compaction_preserves_evidence(tmp_path: Path, monkeypatch) -> N
     from ascendc_pilot.actions.tg_compaction import compact_after_plan_approve
     from ascendc_pilot.paths import tg_root
 
+    monkeypatch.setenv("UO_ARCH", "arch35")
     monkeypatch.setattr(workflows, "resolve_tg_mode", lambda _root: "tilingkey_full_coverage")
     tg = tg_root(tmp_path, arch="arch35")
     for rel in (
@@ -82,15 +84,18 @@ def test_effective_tg_io_contract_reads_only_binary_uo() -> None:
     from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
     from ascendc_pilot.workflows import WORKFLOWS
 
-    assert OUTPUT_CONTRACT_PATHS["uo-commit-v1"] == ["../uo/*.uo"]
-    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == ["../uo/*.uo"]
+    assert OUTPUT_CONTRACT_PATHS["uo-commit-v1"] == ["uo/*.uo"]
+    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == ["uo/checks/integrity.yaml"]
     assert "uo-review-v1" not in OUTPUT_CONTRACT_PATHS
 
+    # TG may read the durable product glob ``uo/*.uo`` only — not the YAML work tree.
+    allowed_uo = {"uo/*.uo"}
     for workflow_id in ("tg-init", "tg-plan", "tg-solve"):
         for action in (WORKFLOWS.get(workflow_id) or {}).get("actions") or []:
             reads = [str(p) for p in (action.get("allowed_read_paths") or [])]
-            assert not any(p == "uo" or p == "uo/**" or p.startswith("uo/") for p in reads), (
-                workflow_id,
-                action.get("id"),
-                reads,
-            )
+            bad = [
+                p
+                for p in reads
+                if (p == "uo" or p == "uo/**" or p.startswith("uo/")) and p not in allowed_uo
+            ]
+            assert not bad, (workflow_id, action.get("id"), reads)

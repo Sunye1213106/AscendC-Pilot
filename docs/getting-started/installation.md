@@ -67,6 +67,12 @@ SKIP_PIP=1 ./install.sh opencode
 AscendC-Pilot
 ```
 
+安装会投影 plugin（含 Session Driver 工具 `pilot_run`）与 `cognitive-skills/`。改过 `opencode-plugin/` 或 Pilot 控制面后请重新跑一遍本安装，并执行：
+
+```bash
+acp doctor --host opencode
+```
+
 安装程序不会修改现有的 `opencode.json`。
 
 ### Cursor

@@ -88,12 +88,13 @@ def test_source_without_range_does_not_false_deduplicate_file(tmp_path: Path) ->
     assert second["ok"] is True
 
 
-def test_total_10_is_soft_and_12_is_hard(tmp_path: Path) -> None:
+def test_total_soft_and_hard_limits(tmp_path: Path) -> None:
     op, run_id = _started_query(tmp_path)
     results = []
     # Use non-duplicated repo searches to avoid semantic per-bucket meaning
     # dominating the total-budget regression.
-    for i in range(12):
+    # Defaults: repo soft=4, total soft=18, hard_total=22.
+    for i in range(22):
         r = check_and_record(
             op,
             run_id=run_id,
@@ -104,21 +105,24 @@ def test_total_10_is_soft_and_12_is_hard(tmp_path: Path) -> None:
         )
         results.append(r)
         assert r["ok"] is True, (i, r)
-    assert results[9].get("warning") == SOFT_REASON
-    assert results[10]["ok"] is True
-    assert results[11]["ok"] is True
-    assert results[11].get("hard_limit_reached") is True
+    # 4th call (index 3) hits repo soft limit.
+    assert results[3].get("warning") == SOFT_REASON
+    # 18th call (index 17) hits total soft.
+    assert results[17].get("warning") == SOFT_REASON
+    assert results[21].get("hard_limit_reached") is True
 
     denied = check_and_record(
         op,
         run_id=run_id,
         action_id="kb_lookup",
         tool="grep",
-        command="pattern-12",
-        path="file-12.txt",
+        command="pattern-22",
+        path="file-22.txt",
     )
     assert denied["ok"] is False
     assert denied["reason_code"] == HARD_REASON
     body = load_budget(op, run_id=run_id, action_id="kb_lookup")
     assert body is not None
-    assert int(body["counts"]["total"]) == 12
+    assert int(body["counts"]["total"]) == 22
+    assert int(body["limits"]["semantic"]) == 12
+    assert int(body["limits"]["hard_total"]) == 22

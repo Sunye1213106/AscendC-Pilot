@@ -475,3 +475,273 @@ def test_mutexbuffer_get_bridges_without_policy_catalog(tmp_path: Path) -> None:
 
     lps = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LockProd"]
     assert lps and all(e.attrs.get("root") == "AscendC::Lock" for e in lps)
+
+    # Project WidgetHolder::Get must NOT be proven as AscendC::Get.
+    project_gets = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf"
+    ]
+    assert project_gets, "expected call site for commonL1Buf.Get()"
+    assert all(e.attrs.get("root_status") != "REACHED" for e in project_gets)
+    assert all("AscendC::Get" not in str(e.attrs.get("root") or "") for e in project_gets)
+
+
+def test_project_get_lock_not_ascendc_root(tmp_path: Path) -> None:
+    """Short-name catalog hits on project methods must not prove REACHED."""
+    root = tmp_path / "false_root"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Foo {
+         public:
+          void Get() {}
+          void Lock() {}
+          void DataCopy() {}
+        };
+        class Process {
+         public:
+          Foo foo;
+          __aicore__ inline void Process() {
+            foo.Get();
+            foo.Lock();
+            foo.DataCopy();
+            LocalTensor<float> ub;
+            GlobalTensor<float> gm;
+            DataCopy(ub, gm);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="false_root", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    for name in ("Get", "Lock", "DataCopy"):
+        member_ops = [
+            e
+            for e in cm.by_kind(EntityKind.OPERATION)
+            if e.name == name and e.attrs.get("receiver") == "foo"
+        ]
+        assert member_ops, f"missing member call {name}"
+        assert all(e.attrs.get("root_status") != "REACHED" for e in member_ops), name
+
+    free_dc = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "DataCopy" and not e.attrs.get("receiver")
+    ]
+    assert free_dc and all(e.attrs.get("root_status") == "REACHED" for e in free_dc)
+
+
+def test_method_identity_not_merged_by_short_name(monkeypatch, tmp_path: Path) -> None:
+    """A::Get and B::Get must remain distinct METHOD entities when identity exists."""
+    from uo_init.passes import kernel_scan as kscan
+
+    root = tmp_path / "collision"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {}
+        };
+        """,
+        encoding="utf-8",
+    )
+    fake_calls = [
+        {
+            "caller": "Process",
+            "caller_qualified": "Process::Process",
+            "caller_usr": "c:@S@Process@F@Process#",
+            "callee": "Get",
+            "callee_qualified": "A::Get",
+            "callee_usr": "c:@S@A@F@Get#",
+            "callee_decl_file": str(arch / "process.h"),
+            "receiver": "a",
+            "receiver_type": "A",
+            "file": str(arch / "process.h"),
+            "line": 10,
+            "column": 1,
+            "args": [],
+            "provenance": "test_inject",
+        },
+        {
+            "caller": "Process",
+            "caller_qualified": "Process::Process",
+            "caller_usr": "c:@S@Process@F@Process#",
+            "callee": "Get",
+            "callee_qualified": "B::Get",
+            "callee_usr": "c:@S@B@F@Get#",
+            "callee_decl_file": str(arch / "process.h"),
+            "receiver": "b",
+            "receiver_type": "B",
+            "file": str(arch / "process.h"),
+            "line": 11,
+            "column": 1,
+            "args": [],
+            "provenance": "test_inject",
+        },
+    ]
+
+    def _fake_walks(*_a, **_k):
+        return fake_calls, [], [], "test_inject"
+
+    monkeypatch.setattr(kscan, "collect_call_sites_from_walks", _fake_walks)
+    monkeypatch.setattr(kscan, "lexical_source_call_sites", lambda *a, **k: [])
+    monkeypatch.setattr(
+        kscan, "collect_type_graph_from_walks", lambda *a, **k: {"members": [], "aliases": [], "types": [], "bases": []}
+    )
+
+    cm = CodeMap(op_name="collision", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    gets = [e for e in cm.by_kind(EntityKind.METHOD) if e.attrs.get("spelling") == "Get"]
+    assert len(gets) >= 2
+    quals = {str(e.attrs.get("qualified_name") or "") for e in gets}
+    assert "A::Get" in quals and "B::Get" in quals
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+
+
+def test_calls_edge_keeps_multiple_sites(monkeypatch, tmp_path: Path) -> None:
+    """Same caller→callee topology must accumulate sites evidence, not drop lines."""
+    from uo_init.passes import kernel_scan as kscan
+
+    root = tmp_path / "multisite"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {}
+        };
+        """,
+        encoding="utf-8",
+    )
+    fake_calls = [
+        {
+            "caller": "Process",
+            "caller_qualified": "Process::Process",
+            "caller_usr": "c:@S@Process@F@Process#",
+            "callee": "Helper",
+            "callee_qualified": "Helper",
+            "callee_usr": "c:@F@Helper#",
+            "callee_decl_file": str(arch / "process.h"),
+            "receiver": "",
+            "file": str(arch / "process.h"),
+            "line": 10,
+            "column": 3,
+            "args": [],
+            "provenance": "test_inject",
+        },
+        {
+            "caller": "Process",
+            "caller_qualified": "Process::Process",
+            "caller_usr": "c:@S@Process@F@Process#",
+            "callee": "Helper",
+            "callee_qualified": "Helper",
+            "callee_usr": "c:@F@Helper#",
+            "callee_decl_file": str(arch / "process.h"),
+            "receiver": "",
+            "file": str(arch / "process.h"),
+            "line": 50,
+            "column": 3,
+            "args": [],
+            "provenance": "test_inject",
+        },
+    ]
+
+    def _fake_walks(*_a, **_k):
+        return fake_calls, [], [], "test_inject"
+
+    monkeypatch.setattr(kscan, "collect_call_sites_from_walks", _fake_walks)
+    monkeypatch.setattr(kscan, "lexical_source_call_sites", lambda *a, **k: [])
+    monkeypatch.setattr(
+        kscan, "collect_type_graph_from_walks", lambda *a, **k: {"members": [], "aliases": [], "types": [], "bases": []}
+    )
+
+    cm = CodeMap(op_name="multisite", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    method_calls = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.CALLS.value
+        and str(r.attrs.get("via") or "") == "source_call"
+        and str(r.attrs.get("provenance") or "") == "kernel_root_trace"
+    ]
+    assert method_calls
+    sites = method_calls[0].attrs.get("sites") or []
+    lines = {int(s.get("line") or 0) for s in sites if isinstance(s, dict)}
+    assert 10 in lines and 50 in lines
+
+
+def test_templated_buffer_wraps_localtensor(tmp_path: Path) -> None:
+    """Buffer<TPosition::...> composition must close to LocalTensor (not skip bare Buffer)."""
+    root = tmp_path / "buf"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Foo {
+         public:
+          Buffer<TPosition::VECIN> storage;
+        };
+        class Process {
+         public:
+          Foo outer;
+          __aicore__ inline void Process() {}
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="buf", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    foo = _type(cm, "Foo")
+    assert foo is not None
+    assert foo.attrs.get("root_status") == "REACHED"
+    assert _wraps_path(cm, "Foo", "LocalTensor") or _wraps_path(cm, "Foo", "Buffer")
+
+
+def test_prove_root_helpers() -> None:
+    from uo_init.passes.kernel_root_trace import _prove_ascendc_api_root
+
+    ok, spell = _prove_ascendc_api_root(
+        callee="Get",
+        callee_qualified="AscendC::Get",
+        callee_decl_file="/cann/ascendc/basic_api.h",
+    )
+    assert ok and spell == "Get"
+
+    bad, _ = _prove_ascendc_api_root(
+        callee="Get",
+        callee_qualified="WidgetHolder::Get",
+        callee_usr="c:@S@WidgetHolder@F@Get#",
+        callee_decl_file="op_kernel/arch35/process.h",
+        receiver="commonL1Buf",
+        has_identity=True,
+    )
+    assert not bad
+
+    lex_ok, spell2 = _prove_ascendc_api_root(callee="DataCopy")
+    assert lex_ok and spell2 == "DataCopy"
+
+    lex_bad, _ = _prove_ascendc_api_root(callee="Get", receiver="x")
+    assert not lex_bad
+

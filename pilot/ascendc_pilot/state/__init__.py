@@ -336,6 +336,31 @@ def start_workflow(
         status=str(state.get("status") or "running"),
     )
     (runs_root(project_root, arch=arch) / run_id).mkdir(parents=True, exist_ok=True)
+    # Run-level source scope: resolve once; subsequent action leases inherit.
+    try:
+        from ascendc_pilot.environment_capabilities import source_scope_for_lease
+        import yaml as _yaml
+
+        run_scope = source_scope_for_lease(project_root, run_id=run_id)
+        scope_path = runs_root(project_root, arch=arch) / run_id / "source_scope.yaml"
+        scope_path.parent.mkdir(parents=True, exist_ok=True)
+        scope_path.write_text(
+            _yaml.safe_dump(
+                {
+                    "version": 1,
+                    "run_id": run_id,
+                    **run_scope,
+                },
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
+        )
+        state["run_source_scope_path"] = scope_path.as_posix()
+        state["allowed_source_roots"] = list(run_scope.get("allowed_source_roots") or [])
+        save_state(project_root, state)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from ascendc_pilot.authorize.lease import clear_lease
 

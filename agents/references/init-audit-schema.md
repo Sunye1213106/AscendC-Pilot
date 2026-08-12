@@ -40,5 +40,8 @@ next: "acp run-action human_confirm" | "acp next"
 
 warn 仅允许非阻塞说明；任一 required id 为 `fail` → `status: fail`，不得进入 `human_confirm` finalize。
 
+**全覆盖确定性模式**：host-view 绑定中空的 `reads` / `exactness` **不是** blocker，不得因此 `fail`
+或写入 `blockers`，也不得发明 `conditional_pass` / 嵌套 `verdict.status`。
+
 恢复路径（失败时）：`/uo-init` 产出定稿 `.uo` → `/tg-init` 重跑 contract/bind/gate → AskQuestion 后 `human_confirm --finalize`。  
 禁止引导已删除的 CSV closure / merge 动作。

@@ -18,7 +18,7 @@ class InitGateError(RuntimeError):
 
 
 def _product_uo_root(project_root: Path, *, op_name: str = "", architecture: str = "") -> Path | None:
-    """Return the formal product dir (``.ascendc-pilot/uo``) when a ``.uo`` exists."""
+    """Return the formal product dir (``.ascendc-pilot/<arch>/uo``) when a ``.uo`` exists."""
     try:
         from testcase_agent import product_uo
 
@@ -48,26 +48,36 @@ def _fingerprint_hint(project_root: Path, op_name: str, *, understand_hint: Path
 
         return uo_product_root(project_root)
     except Exception:
-        return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+        return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "arch35" / "uo"
 
 
 def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> Path | None:
     """Return understand root if present, else None.
 
     Product-only layouts are valid: a finalized ``.uo`` under
-    ``.ascendc-pilot/uo/`` is sufficient KB presence even when the retired
-    arch-scoped YAML/DB export tree is absent.
+    ``.ascendc-pilot/<arch>/uo/`` is sufficient KB presence even when the
+    retired YAML/DB export tree is absent.
     """
     if kb_root is not None:
         root = kb_root.expanduser().resolve()
         if root.suffix == ".uo" and root.is_file():
             return root.parent
-        # New layout
-        if root.name == "uo" and root.parent.name == ".ascendc-pilot":
-            if root.is_dir() and any(root.glob("*.uo")):
-                return root
-            return root if root.is_dir() else None
+        # Arch-scoped (canonical) or legacy top-level ``.ascendc-pilot/uo``.
+        if root.name == "uo":
+            parent = root.parent
+            if parent.name == ".ascendc-pilot" or (
+                parent.parent.name == ".ascendc-pilot" and parent.name.startswith("arch")
+            ):
+                if root.is_dir() and any(root.glob("*.uo")):
+                    return root
+                return root if root.is_dir() else None
         if root.name == ".ascendc-pilot":
+            # Prefer arch-scoped product dirs; fall back to legacy top-level.
+            for child in sorted(root.iterdir()) if root.is_dir() else []:
+                if child.is_dir() and child.name.startswith("arch"):
+                    candidate = child / "uo"
+                    if candidate.is_dir() and any(candidate.glob("*.uo")):
+                        return candidate
             candidate = root / "uo"
             if candidate.is_dir() and any(candidate.glob("*.uo")):
                 return candidate
@@ -91,13 +101,13 @@ def require_kb(project_root: Path, op_name: str, kb_root: Path | None = None) ->
 
         expected = uo_product_root(project_root)
     except Exception:
-        expected = Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+        expected = Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "<arch>" / "uo"
     raise InitGateError(
-        f"KB missing: {expected}. Run /uo-init to build .ascendc-pilot/uo/*.uo, then tg-init.",
+        f"KB missing: {expected}. Run /uo-init to build .ascendc-pilot/<arch>/uo/*.uo, then tg-init.",
         ask="uo_init_required",
         payload={
             "expected_kb": expected.as_posix(),
-            "hint": "tg-init defaults to <算子仓>/.ascendc-pilot/uo/*.uo; optional --kb-root only overrides.",
+            "hint": "tg-init defaults to <算子仓>/.ascendc-pilot/<arch>/uo/*.uo; optional --kb-root only overrides.",
             "next": f"uo-init <算子仓> --op-name {op_name}",
         },
     )
@@ -256,8 +266,8 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
     digest = str(fp.get("digest") or "")
     if not digest:
         raise InitGateError(
-            "Cannot fingerprint UO product for confirm. Need .ascendc-pilot/uo/*.uo "
-            "(or a legacy arch UO export). Refusing to mark confirmed without a lock.",
+            "Cannot fingerprint UO product for confirm. Need .ascendc-pilot/<arch>/uo/*.uo "
+            "(or a legacy top-level / arch UO export). Refusing to mark confirmed without a lock.",
             ask="kb_fingerprint_unavailable",
             payload={
                 "output_root": out_root.as_posix(),

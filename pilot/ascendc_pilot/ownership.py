@@ -118,7 +118,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         ],
         "extract": ["uo/ir/**", "uo/tiling/**", "uo/kernel/**", "uo/runs/{run_id}/**"],
         "analyze": ["uo/ir/**", "uo/tiling/**", "uo/kernel/**", "uo/checks/**"],
-        "commit": ["../uo/*.uo", "uo/checks/**"],
+        "commit": ["uo/*.uo", "uo/checks/**"],
         "verify": ["uo/checks/**"],
     },
     "uo-investigate": {
@@ -238,8 +238,8 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "prepare": ["uo/**"],
         "extract": ["uo/**"],
         "analyze": ["uo/**"],
-        "commit": ["uo/**", "../uo/*.uo"],
-        "verify": ["uo/**", "../uo/*.uo"],
+        "commit": ["uo/**", "uo/*.uo"],
+        "verify": ["uo/**", "uo/*.uo"],
     },
     "uo-investigate": {
         "investigate": [
@@ -247,27 +247,27 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/codemap_analyze_receipt.yaml",
             "uo/ir/gap_investigation.yaml",
             "runs/{run_id}/actions/investigate/**",
-            "../uo/*.uo",
+            "uo/*.uo",
         ],
     },
     "uo-query": {
         "kb_lookup": [
             "uo/**",
-            "../uo/*.uo",
+            "uo/*.uo",
             "runs/{run_id}/actions/kb_lookup/**",
             "context/**",
         ],
     },
     "tg-init": {
         "init_intent": ["context/**"],
-        "kb_check": ["../uo/*.uo"],
+        "kb_check": ["uo/*.uo"],
         "contract_build": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/init/uo_ready.yaml",
             "context/**",
         ],
         "semantic_bind": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/contract/**",
             "tg/realization/binding_inventory.yaml",
         ],
@@ -290,9 +290,9 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         ],
     },
     "tg-plan": {
-        "plan_intent": ["../uo/*.uo", "tg/init/**", "context/**"],
+        "plan_intent": ["uo/*.uo", "tg/init/**", "context/**"],
         "plan_scope": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/init/**",
             "tg/plan/plan_intent.yaml",
             "tg/snapshot/**",
@@ -300,12 +300,12 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "context/**",
         ],
         "plan_precheck": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/init/status.yaml",
             "tg/snapshot/**",
         ],
         "plan_build": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/init/**",
             "tg/plan/plan_intent.yaml",
             "tg/snapshot/**",
@@ -320,21 +320,21 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "tg-solve": {
         "solve_precheck": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/init/**",
             "tg/plan/**",
             "tg/snapshot/**",
         ],
-        "oracle_probe": ["../uo/*.uo", "tg/init/**", "local/**"],
-        "closure_ledger": ["../uo/*.uo", "tg/closure/**"],
-        "closure_search": ["../uo/*.uo", "tg/closure/**"],
+        "oracle_probe": ["uo/*.uo", "tg/init/**", "local/**"],
+        "closure_ledger": ["uo/*.uo", "tg/closure/**"],
+        "closure_search": ["uo/*.uo", "tg/closure/**"],
         "closure_residual": ["tg/closure/**"],
-        "closure_construct": ["../uo/*.uo", "tg/closure/**"],
+        "closure_construct": ["uo/*.uo", "tg/closure/**"],
         "closure_explain": ["tg/closure/**"],
         "lemma_leads": ["tg/closure/**"],
-        "lemma_evidence": ["../uo/*.uo", "tg/closure/lemmas/leads.yaml"],
+        "lemma_evidence": ["uo/*.uo", "tg/closure/lemmas/leads.yaml"],
         "lemma_mine": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/closure/lemmas/leads.yaml",
             "tg/closure/lemmas/evidence/**",
             "runs/**/actions/lemma_mine/**",
@@ -344,7 +344,7 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/**",
         ],
         "lemma_review": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "runs/**/actions/lemma_mine/**",
             "runs/**/actions/lemma_verify/**",
             "tg/closure/lemmas/**",
@@ -355,12 +355,12 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "local/**",
         ],
         "lemma_loop": [
-            "../uo/*.uo",
+            "uo/*.uo",
             "tg/closure/**",
             "runs/**/actions/lemma_mine/**",
             "runs/**/actions/lemma_review/**",
         ],
-        "closure_audit": ["../uo/*.uo", "tg/closure/**"],
+        "closure_audit": ["uo/*.uo", "tg/closure/**"],
         "closure_certify": [
             "tg/closure/**",
             "runs/**/actions/closure_audit/review.yaml",

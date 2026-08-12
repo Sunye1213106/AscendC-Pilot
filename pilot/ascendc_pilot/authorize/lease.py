@@ -289,6 +289,12 @@ def issue_action_lease(
         },
         run_id=str(st.get("run_id") or "") or None,
     )
+    try:
+        from ascendc_pilot.authorize.cache import bump_generation
+
+        bump_generation()
+    except Exception:  # noqa: BLE001
+        pass
     return lease
 
 
@@ -512,6 +518,12 @@ def revoke_active_lease(
                 data["revoke_reason"] = reason
                 _dump(active, data)
 
+    try:
+        from ascendc_pilot.authorize.cache import bump_generation
+
+        bump_generation()
+    except Exception:  # noqa: BLE001
+        pass
     return {
         "revoked": True,
         "lease_id": lease.get("lease_id"),

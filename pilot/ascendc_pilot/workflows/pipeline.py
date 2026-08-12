@@ -146,10 +146,36 @@ def recommend_next_action(
                 "pipeline": pipe,
                 "missing_actions": missing,
             }
+    # Resolve the forward next phase so Host gets an exact advance command.
+    next_phase = ""
+    try:
+        from ascendc_pilot.workflows import WORKFLOWS
+
+        meta = WORKFLOWS.get(workflow_id) or {}
+        for tr in meta.get("transitions") or []:
+            if not isinstance(tr, dict):
+                continue
+            if str(tr.get("kind") or "forward") != "forward":
+                continue
+            if str(tr.get("from") or "") == phase:
+                next_phase = str(tr.get("to") or "").strip()
+                if next_phase:
+                    break
+    except Exception:  # noqa: BLE001
+        next_phase = ""
+    if next_phase:
+        hint = (
+            f"本阶段首选流水线已齐；请执行 `acp advance {next_phase}`"
+            f"（禁止再 run-action 本阶段 Action）"
+        )
+    else:
+        hint = "本阶段首选流水线已齐；请 `acp advance <next_phase>` 或 `acp complete`"
     return {
         "id": None,
         "label_zh": "",
         "reason": "pipeline_complete",
         "pipeline": pipe,
-        "hint_zh": "本阶段首选流水线已齐；请 acp advance（禁止再 prepare 任意 Action）",
+        "next_phase": next_phase or None,
+        "hint_zh": hint,
+        "recommended_command": f"acp advance {next_phase}" if next_phase else "acp complete",
     }

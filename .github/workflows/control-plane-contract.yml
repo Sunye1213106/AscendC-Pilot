@@ -97,6 +97,12 @@ jobs:
         env:
           PYTHONPATH: pilot
         run: python scripts/check_generated_runtime_closure.py --repo . --host opencode
+      - name: Validate Host Session Driver + Bundle closure
+        env:
+          PYTHONPATH: pilot
+        run: |
+          python scripts/check_host_driver_contract.py
+          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py
       - name: Validate deterministic drive
         env:
           PYTHONPATH: pilot

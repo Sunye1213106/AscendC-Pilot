@@ -30,7 +30,14 @@ _pytest_tmp*/
 _*.log
 _*.err
 _*.out
-artifacts/scratch/
+
+# Local run products / obligation dumps / UO exports (never commit)
+artifacts/
+real-results/
+_tmp*/
+*.uo
+*.sqlite
+*.sqlite3
 
 # Packaging/build metadata
 *.egg-info/

@@ -38,7 +38,7 @@ def test_uo_init_pipeline_gate_reads_have_producers() -> None:
 
     wf = WORKFLOWS["uo-init"]
     # Restrict map to uo-init only so orphan scan is pipeline-local + still
-    # sees commit → ../uo/*.uo for product gates.
+    # sees commit → uo/*.uo for product gates.
     subset = {"uo-init": wf}
     errors = check_artifact_dag(subset)
     gate_orphans = [
@@ -64,7 +64,7 @@ def test_uo_init_pipeline_gate_reads_have_producers() -> None:
             assert path  # non-empty
         # Commit must produce the formal product used by uo_product_ready.
         if aid == "commit":
-            assert "../uo/*.uo" in normalize_produces(action)
+            assert "uo/*.uo" in normalize_produces(action)
 
 
 def test_check_artifact_dag_clean_on_full_workflows() -> None:

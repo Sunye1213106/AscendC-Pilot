@@ -45,6 +45,57 @@ def test_remap_primary_to_prepared_gap_investigator(tmp_path: Path) -> None:
     assert action == "investigate"
 
 
+def test_remap_primary_skips_finalized_actor(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-init", architecture="arch35")
+    _write_active_action(
+        op,
+        {
+            "action_id": "verify",
+            "actor_id": "deterministic-uo-engine",
+            "status": "finalized",
+        },
+    )
+    agent, action = _remap_primary_actor(op, "ascendc-pilot", "verify")
+    assert agent == "ascendc-pilot"
+    assert action == "verify"
+
+
+def test_primary_complete_allowed_after_finalized_engine_actor(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-init", architecture="arch35")
+    _write_active_action(
+        op,
+        {
+            "action_id": "verify",
+            "actor_id": "deterministic-uo-engine",
+            "status": "finalized",
+        },
+    )
+    verdict = authorize(
+        op,
+        tool="bash",
+        command=f'acp complete --project "{op}"',
+        agent="ascendc-pilot",
+        action="",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    engine = authorize(
+        op,
+        tool="bash",
+        command=f'acp complete --project "{op}"',
+        agent="deterministic-uo-engine",
+        action="verify",
+    )
+    assert engine.get("decision") == "deny", engine
+    assert engine.get("reason_code") == "FORBIDDEN_DECLARE_WORKFLOW_PASSED"
+
+
 def test_primary_mislabeled_report_write_allowed_via_active_investigator(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()

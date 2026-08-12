@@ -16,10 +16,11 @@
 | `acp complete` | 全部 gate 通过后标记 workflow 完成 |
 | `acp context` | 构建 context pack |
 | `acp debug` | 采集诊断信息并导出 session bundle |
+| `acp dispatch-result` | Host Session Driver: consume dispatch ticket, finalize, continue drive |
 | `acp doctor` | 执行环境预检 |
 | `acp emit-confidence-report` | 从 KB 生成确定性的 confidence report 与 gate |
 | `acp host-context` | Resolve arch-scoped Host adapter context (OpenCode plugin authority) |
-| `acp inspect` | 查询结构化 IR（candidates、tasks、YAML 计数） |
+| `acp inspect` | 查询结构化 IR / 证据窗口（tasks、YAML 计数、evidence-window） |
 | `acp inspect-failure` | 查看结构化 failure 信息 |
 | `acp next` | 查看可执行的下一动作与 obligations |
 | `acp retry-after-environment-fix` | 环境修复后恢复失败动作的 rework 状态 |
@@ -28,6 +29,8 @@
 | `acp route` | 将自然语言或 Slash 路由到 workflow |
 | `acp run-action` | 准备或 finalize 一个 workflow action |
 | `acp run-summary` | 汇总中断的 uo-init run，供人工询问使用 |
+| `acp scan-architectures` | 快速扫描算子 op_host/op_kernel 布局与 arch* 选项 |
+| `acp serve-authorize` | Long-lived authorize daemon (stdio JSON-lines; Host Session Driver) |
 | `acp spec-hashes` | 输出四类 Spec Hash 摘要 |
 | `acp start` | 从 entry state 启动 workflow |
 | `acp status` | 查看 workflow 状态 |

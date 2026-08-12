@@ -1,7 +1,7 @@
 id: deterministic-tg-engine
 version: 1
 name_zh: TG deterministic engine
-# Engine identity for authorize/write_scopes only ? not an LLM agent.
+# Engine identity for authorize/write_scopes only — not an LLM agent.
 # compose_runtime skips kind=deterministic_engine when emitting host agent MD.
 kind: deterministic_engine
 role: deterministic_engine
@@ -9,20 +9,19 @@ mode: subagent
 description: TG deterministic engine
 skill_ids: [testcase-generation, operator-analysis, source-proof]
 read_scopes:
-- tg/**
-- uo/**
-- ../uo/**
-- local/**
-- runs/**
-- context/**
-- skills/testcase-generation/**
-- skills/operator-analysis/**
-- skills/source-proof/**
+- pilot:tg/**
+- pilot:uo/**
+- pilot:local/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/testcase-generation/**
+- method:skills/operator-analysis/**
+- method:skills/source-proof/**
 write_scopes:
-- tg/**
-- runs/**
-- runs/**/actions/**
-- context/pilot_params.yaml
+- pilot:tg/**
+- pilot:runs/**
+- pilot:runs/**/actions/**
+- pilot:context/pilot_params.yaml
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

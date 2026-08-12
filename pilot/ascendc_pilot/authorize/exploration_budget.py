@@ -15,11 +15,11 @@ except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 DEFAULT_LIMITS = {
-    "semantic": 6,
-    "source": 2,
-    "repo": 2,
-    "total": 10,
-    "hard_total": 12,
+    "semantic": 12,
+    "source": 4,
+    "repo": 4,
+    "total": 18,
+    "hard_total": 22,
 }
 
 SOFT_REASON = "BUDGET_NEAR_LIMIT"
@@ -161,7 +161,7 @@ def check_and_record(
     warnings = list(body.get("warnings") or [])
     seen_sem = list(body.get("seen_semantic") or [])
     seen_spans = list(body.get("seen_spans") or [])
-    hard_total = int(limits.get("hard_total") or 12)
+    hard_total = int(limits.get("hard_total") or DEFAULT_LIMITS["hard_total"])
 
     if body.get("exhausted") or int(counts.get("total") or 0) >= hard_total:
         body["exhausted"] = True
@@ -219,7 +219,7 @@ def check_and_record(
 
     soft_hit = (
         counts.get(bucket, 0) >= int(limits.get(bucket) or 0)
-        or counts["total"] >= int(limits.get("total") or 10)
+        or counts["total"] >= int(limits.get("total") or DEFAULT_LIMITS["total"])
     )
     if soft_hit:
         warnings.append(
@@ -236,7 +236,7 @@ def check_and_record(
 
     save_budget(project_root, body, run_id=run_id, action_id=action_id)
     out: dict[str, Any] = {"ok": True, "budget": body, "bucket": bucket}
-    if soft_hit or counts["total"] >= max(1, int(limits.get("total") or 10) - 1):
+    if soft_hit or counts["total"] >= max(1, int(limits.get("total") or DEFAULT_LIMITS["total"]) - 1):
         out["warning"] = SOFT_REASON
         out["message_zh"] = (
             "接近/超过探索软预算，只有会改变结论的 material gap 才继续；否则立即收束答案"

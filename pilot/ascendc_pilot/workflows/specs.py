@@ -675,12 +675,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "retry_budget": 3,
         # Base = tilingkey_full_coverage.
         "states": [
-            _st("intent", "意图确认"),
-            _st("kb_ready", "KB 检查"),
-            _st("contract", "合同构建"),
-            _st("bind", "Host 视图绑定"),
-            _st("gate", "完整性校验"),
-            _st("confirm", "人工确认"),
+            _st("intent", "记录全覆盖模式"),
+            _st("kb_ready", "校验知识库"),
+            _st("contract", "建立覆盖合同"),
+            _st("bind", "建立 Host 视图绑定"),
+            _st("gate", "完整性与审计"),
+            _st("confirm", "确认进入规划"),
         ],
         "transitions": [
             _tr("intent", "kb_ready"),
@@ -715,7 +715,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "actions": [
             _act(
                 "init_intent",
-                label_zh="确认 TG 模式意图",
+                label_zh="采用默认全覆盖模式",
                 phases=["intent"],
                 workflow_id="tg-init",
                 agent_id="deterministic-tg-engine",
@@ -725,7 +725,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "kb_check",
-                label_zh="校验定稿 KB",
+                label_zh="校验定稿知识库",
                 phases=["kb_ready"],
                 workflow_id="tg-init",
                 agent_id="deterministic-tg-engine",
@@ -736,7 +736,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "contract_build",
-                label_zh="构建合同骨架",
+                label_zh="建立覆盖合同骨架",
                 phases=["contract"],
                 workflow_id="tg-init",
                 agent_id="deterministic-tg-engine",
@@ -746,7 +746,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "semantic_bind",
-                label_zh="语义绑定",
+                label_zh="建立 Host 视图绑定",
                 phases=["bind"],
                 workflow_id="tg-init",
                 agent_id="deterministic-tg-engine",
@@ -768,7 +768,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "init_audit",
-                label_zh="Init 审计",
+                label_zh="审计覆盖合同",
                 phases=["gate"],
                 workflow_id="tg-init",
                 agent_id="tg-init-audit",
@@ -781,7 +781,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "human_confirm",
-                label_zh="人工确认",
+                label_zh="确认进入规划",
                 phases=["confirm"],
                 workflow_id="tg-init",
                 agent_id="ascendc-pilot",
@@ -800,8 +800,8 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             {"id": "ascendc-pilot", "role": "controller"},
         ],
         "static_obligations": [
-            {"id": "uo_ready", "label_zh": "UO KB 就绪"},
-            {"id": "init_confirmed", "label_zh": "Init 已确认"},
+            {"id": "uo_ready", "label_zh": "知识库就绪"},
+            {"id": "init_confirmed", "label_zh": "已确认进入规划"},
         ],
         "dynamic_obligation_sources": [
             "realization/unresolved.yaml",
@@ -828,12 +828,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "tilingkey_full_coverage": {
                 "phases": ["intent", "kb_ready", "contract", "bind", "gate", "confirm"],
                 "states": [
-                    _st("intent", "意图确认"),
-                    _st("kb_ready", "KB 检查"),
-                    _st("contract", "合同构建"),
-                    _st("bind", "Host 视图绑定"),
-                    _st("gate", "完整性校验"),
-                    _st("confirm", "人工确认"),
+                    _st("intent", "记录全覆盖模式"),
+                    _st("kb_ready", "校验知识库"),
+                    _st("contract", "建立覆盖合同"),
+                    _st("bind", "建立 Host 视图绑定"),
+                    _st("gate", "完整性与审计"),
+                    _st("confirm", "确认进入规划"),
                 ],
                 "transitions": [
                     _tr("intent", "kb_ready"),
@@ -913,13 +913,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "terminal_ready_states": ["approve"],
         "retry_budget": 3,
         "states": [
-            _st("intent", "规划意图"),
-            _st("scope", "规划范围"),
-            _st("gate", "前置门禁"),
-            _st("build", "生成义务"),
-            _st("filter", "过滤裁剪"),
-            _st("review", "规划审查"),
-            _st("approve", "人工批准"),
+            _st("intent", "记录规划目标"),
+            _st("scope", "确定规划范围"),
+            _st("gate", "规划前置检查"),
+            _st("build", "生成测试义务"),
+            _st("filter", "裁剪义务范围"),
+            _st("review", "审查规划结果"),
+            _st("approve", "批准开始求解"),
         ],
         "transitions": [
             _tr("intent", "scope"),
@@ -947,7 +947,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "actions": [
             _act(
                 "plan_intent",
-                label_zh="确认规划意图",
+                label_zh="记录规划目标（默认覆盖全部合法 Key）",
                 phases=["intent"],
                 workflow_id="tg-plan",
                 agent_id="deterministic-tg-engine",
@@ -969,7 +969,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "plan_precheck",
-                label_zh="规划前置门禁",
+                label_zh="规划前置检查",
                 phases=["gate"],
                 workflow_id="tg-plan",
                 agent_id="deterministic-tg-engine",
@@ -980,7 +980,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "plan_build",
-                label_zh="生成覆盖义务",
+                label_zh="生成测试义务",
                 phases=["build", "filter", "review"],
                 workflow_id="tg-plan",
                 agent_id="deterministic-tg-engine",
@@ -990,7 +990,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "plan_approve",
-                label_zh="批准规划",
+                label_zh="批准开始求解",
                 phases=["approve"],
                 workflow_id="tg-plan",
                 agent_id="ascendc-pilot",
@@ -1007,7 +1007,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             {"id": "ascendc-pilot", "role": "controller"},
             {"id": "deterministic-tg-engine", "role": "deterministic_engine"},
         ],
-        "static_obligations": [{"id": "plan_approved", "label_zh": "规划已批准"}],
+        "static_obligations": [{"id": "plan_approved", "label_zh": "已批准开始求解"}],
         "dynamic_obligation_sources": ["plan/**/uncovered_obligations.yaml"],
         "write_roots": ["tg", "runs", "state", "context"],
         "read_only_uo": True,

@@ -23,3 +23,14 @@ def test_init_audit_schema_matches_tilingkey_ids() -> None:
     assert "verify-csv-closure" not in schema
     for cid in _TILINGKEY_IDS:
         assert cid in schema, cid
+    assert "conditional_pass" in schema or "空的 `reads`" in schema or "reads" in schema
+    method = (
+        root
+        / "skills"
+        / "testcase-generation"
+        / "capabilities"
+        / "tg-init-audit"
+        / "METHOD.md"
+    ).read_text(encoding="utf-8")
+    assert "status: pass" in method or "pass` 或 `fail" in method
+    assert "不是 blocker" in method

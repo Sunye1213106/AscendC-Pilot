@@ -1,5 +1,6 @@
 <task>
-确认机器无法安全自动决定的 init 边界（范围 / 模式 / 例外）。
+请用户确认：覆盖合同是否可以进入「规划测试义务」。
+用人话说明目标、刚完成事项、以及选项后果（禁止甩内部字段名）。
 </task>
 
 <targets>
@@ -10,16 +11,15 @@
 - Project: `<PROJECT_ROOT>`
 - TG: `<TG_ROOT>`
 
-人确认只冻结边界选择，不能豁免证据要求；未确认项必须继续阻塞。
-方法细节见打包 Skill `testcase-generation`（human-confirm）。
+人确认只冻结「是否进入下一步」；不能豁免证据要求。AskQuestion 文案由控制面按人话合同生成。
 </context>
 
 <instructions>
-1. 只确认 scope / mode / exceptions 等边界项。
-2. 不要用确认去“放行”缺失证据或未闭合义务。
-3. 歧义未消除则保持 unconfirmed。
+1. Host 弹出 AskQuestion（选项原样使用控制面返回）。
+2. 选「确认进入规划」后才能 finalize；返工/停止则不 finalize。
+3. 对用户转述只用意图/刚完成/下一步，禁止粘贴审计黑话。
 </instructions>
 
 <output>
-记录已确认项；未确认项保持 blocking。
+写入确认收据后由 Primary finalize；未确认则保持在确认阶段。
 </output>

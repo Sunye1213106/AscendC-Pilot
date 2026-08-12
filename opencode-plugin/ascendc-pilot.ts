@@ -18,8 +18,8 @@
  * On Task dispatch, injects action into args so child writes inherit it.
  */
 
-import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 
@@ -204,7 +204,7 @@ type AuthorizeResult = {
 function projectRootFromPath(pathHint: string): string {
   const norm = String(pathHint || "").replace(/\\/g, "/")
   if (!norm) return ""
-  // …/<op>/.ascendc-pilot/uo/ir/foo.yaml → <op>
+  // …/<op>/.ascendc-pilot/<arch>/uo/ir/foo.yaml → <op>
   const marker = "/.ascendc-pilot/"
   const idx = norm.toLowerCase().indexOf(marker)
   if (idx > 0) {
@@ -388,14 +388,25 @@ function resolveAgent(input: { agent?: string; sessionAgent?: string }): string 
 /** Prefer declared producer actor when the hook mislabels the session as primary. */
 function resolveEffectiveAgent(
   input: { agent?: string; sessionAgent?: string },
-  active: { action_id?: string; actor_id?: string },
+  active: { action_id?: string; actor_id?: string; status?: string },
   tool: string,
+  _command = "",
 ): string {
   let agent = resolveAgent(input)
   const actor = String(active.actor_id || "").trim()
   if (!actor) return agent
+  // Task + all bash stay Primary. Authorize remaps write tools only.
   const isTask = tool === "task" || tool === "subagent" || tool === "task_tool"
   if (isTask) return agent
+  if (tool === "bash" || tool === "shell" || tool === "terminal") return agent
+  const status = String(active.status || "")
+    .trim()
+    .toLowerCase()
+  // Lease finished: never remap Primary onto a stale producer.
+  if (status === "finalized" || status === "revoked") return agent
+  if (status && status !== "prepared" && status !== "running" && status !== "actor_running") {
+    return agent
+  }
   if (!agent || agent === "ascendc-pilot" || agent === "ascendc_agent") {
     return actor
   }
@@ -444,6 +455,7 @@ type HostContext = {
   status?: string
   action_id?: string
   actor_id?: string
+  active_action_status?: string
   error?: string
 }
 
@@ -515,12 +527,17 @@ function fetchHostContext(project: string): HostContext {
   return payload
 }
 
-function readActiveAction(project: string): { action_id?: string; actor_id?: string } {
+function readActiveAction(project: string): {
+  action_id?: string
+  actor_id?: string
+  status?: string
+} {
   // Authority is ACP host-context — Host must not open active_action.yaml itself.
   const ctx = fetchHostContext(project)
   return {
     action_id: String(ctx.action_id || "").trim(),
     actor_id: String(ctx.actor_id || "").trim(),
+    status: String(ctx.active_action_status || "").trim(),
   }
 }
 
@@ -555,6 +572,89 @@ function resolveAcpBin(): string {
   return "acp"
 }
 
+type AuthorizeDaemon = {
+  proc: ChildProcessWithoutNullStreams
+  ready: boolean
+}
+
+let _authDaemon: AuthorizeDaemon | null = null
+let _authReqSeq = 0
+
+function authIpcDir(): string {
+  return resolve(homedir(), ".config", "opencode", "ascendc-auth-ipc")
+}
+
+function ensureAuthorizeDaemon(): boolean {
+  if (_authDaemon && _authDaemon.ready && !_authDaemon.proc.killed) return true
+  if (process.env.ASCENDC_AUTHORIZE_SPAWN === "1") return false
+  const acpBin = resolveAcpBin()
+  try {
+    mkdirSync(authIpcDir(), { recursive: true })
+    const proc = spawn(acpBin, ["serve-authorize", "--ipc-dir", authIpcDir()], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
+      detached: false,
+    }) as ChildProcessWithoutNullStreams
+    const daemon: AuthorizeDaemon = { proc, ready: false }
+    proc.stdout.setEncoding("utf-8")
+    let buf = ""
+    proc.stdout.on("data", (chunk: string) => {
+      buf += chunk
+      if (buf.includes('"event": "ready"') || buf.includes('"event":"ready"')) {
+        daemon.ready = true
+      }
+    })
+    proc.on("exit", () => {
+      if (_authDaemon === daemon) _authDaemon = null
+    })
+    proc.on("error", () => {
+      if (_authDaemon === daemon) _authDaemon = null
+    })
+    _authDaemon = daemon
+    const deadline = Date.now() + 2000
+    while (!daemon.ready && Date.now() < deadline && !proc.killed) {
+      spawnSync(process.execPath, ["-e", ""], { timeout: 15 })
+    }
+    return daemon.ready
+  } catch {
+    return false
+  }
+}
+
+function runAuthorizeViaIpc(req: Record<string, unknown>): AuthorizeResult | null {
+  if (!ensureAuthorizeDaemon()) return null
+  const dir = authIpcDir()
+  const id = `r${Date.now().toString(36)}_${(++_authReqSeq).toString(36)}`
+  const reqPath = resolve(dir, `${id}.req.json`)
+  const respPath = resolve(dir, `${id}.resp.json`)
+  try {
+    writeFileSync(reqPath, JSON.stringify({ id, method: "authorize", ...req }), "utf-8")
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline) {
+      if (existsSync(respPath)) {
+        try {
+          const text = readFileSync(respPath, "utf-8")
+          unlinkSync(respPath)
+          try {
+            unlinkSync(reqPath)
+          } catch {
+            /* ignore */
+          }
+          return JSON.parse(text) as AuthorizeResult
+        } catch {
+          return null
+        }
+      }
+      spawnSync(process.execPath, ["-e", ""], { timeout: 10 })
+    }
+  } catch {
+    return null
+  }
+  return null
+}
+
 function runAuthorize(args: {
   tool: string
   command?: string
@@ -563,31 +663,40 @@ function runAuthorize(args: {
   action?: string
   project?: string
   leaseId?: string
+  sessionId?: string
 }): AuthorizeResult {
   const project = args.project || detectProjectRoot()
-  // IMPORTANT (Windows):
-  // 1) never pass empty optional flags (shell drops "" → argparse error)
-  // 2) never use shell:true with argv arrays — Node concatenates unsafely and
-  //    Windows cmd mangles --command values, so authorize always fails.
-  const argv = ["authorize", "--project", project, "--tool", args.tool]
-  const command = String(args.command ?? "").trim()
-  if (command) {
-    argv.push("--command", command)
-  }
-  const path = String(args.path ?? "").trim()
-  if (path) {
-    argv.push("--path", path)
-  }
   const agent = String(args.agent || "ascendc-pilot").trim() || "ascendc-pilot"
-  argv.push("--agent", agent)
   const action = String(args.action || "").trim()
-  if (action) {
-    argv.push("--action", action)
-  }
+  const command = String(args.command ?? "").trim()
+  const path = String(args.path ?? "").trim()
   const leaseId = String(args.leaseId || "").trim()
-  if (leaseId) {
-    argv.push("--lease-id", leaseId)
+  const sessionId = String(args.sessionId || "").trim()
+
+  const ipcReq: Record<string, unknown> = {
+    project,
+    tool: args.tool,
+    command,
+    path,
+    agent,
+    action,
+    lease_id: leaseId,
+    session_id: sessionId,
   }
+  const viaIpc = runAuthorizeViaIpc(ipcReq)
+  if (viaIpc) {
+    rememberProjectRoot(project)
+    return viaIpc
+  }
+
+  // Fallback: one-shot spawnSync (cold start). Always correct.
+  const argv = ["authorize", "--project", project, "--tool", args.tool]
+  if (command) argv.push("--command", command)
+  if (path) argv.push("--path", path)
+  argv.push("--agent", agent)
+  if (action) argv.push("--action", action)
+  if (leaseId) argv.push("--lease-id", leaseId)
+  if (sessionId) argv.push("--session-id", sessionId)
 
   const acpBin = resolveAcpBin()
   const result = spawnSync(acpBin, argv, {
@@ -627,6 +736,36 @@ function runAuthorize(args: {
     return JSON.parse(text.slice(jsonStart)) as AuthorizeResult
   } catch {
     return { ok: false, decision: "deny", reason_code: "AUTHORIZE_PARSE", reason_zh: "authorize 输出无法解析" }
+  }
+}
+
+/** Persist child session identity for ticket-based authorize (cross-process). */
+function registerAuthorizeSession(args: {
+  project: string
+  sessionId: string
+  actorId: string
+  actionId: string
+  leaseId?: string
+  runId?: string
+}): void {
+  try {
+    const dir = resolve(homedir(), ".config", "opencode", "ascendc-sessions")
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      resolve(dir, `${args.sessionId.replace(/[^\w.-]/g, "_")}.json`),
+      JSON.stringify({
+        project: args.project,
+        session_id: args.sessionId,
+        actor_id: args.actorId,
+        action_id: args.actionId,
+        lease_id: args.leaseId || "",
+        run_id: args.runId || "",
+        ts: Date.now(),
+      }),
+      "utf-8",
+    )
+  } catch {
+    /* ignore */
   }
 }
 
@@ -1007,29 +1146,61 @@ function injectActionContext(
   args: Record<string, unknown>,
   action: string,
   actor?: string,
+  projectRoot?: string,
 ): void {
-  if (!action) return
+  if (!action && !projectRoot) return
   // Ensure subsequent authorize/resolvers see action without relying on LLM memory.
-  if (!args.action && !args.action_id && !args.actionId) {
+  if (action && !args.action && !args.action_id && !args.actionId) {
     args.action = action
     args.action_id = action
+  }
+  // Pin child working directory to the operator package when Host supports it.
+  if (projectRoot) {
+    if (!args.cwd && !args.workdir && !args.working_directory && !args.directory) {
+      args.cwd = projectRoot
+      args.workdir = projectRoot
+      args.directory = projectRoot
+    }
+    // OpenCode session.create location (Host Driver / Task bridges).
+    if (!args.location || typeof args.location !== "object") {
+      args.location = { directory: projectRoot }
+    } else {
+      const loc = args.location as Record<string, unknown>
+      if (!loc.directory) loc.directory = projectRoot
+    }
   }
   // Identity travels via env/metadata only — do NOT mutate Task prompt body
   // (ses_0622: prefix + FIX ONLY identity churn). Finalize trusts artifact_identity.
   const envBag = (args.env || args.environment || args.envVars) as Record<string, string> | undefined
+  const envPatch: Record<string, string> = {}
+  if (action) envPatch.ASCENDC_ACTION = action
+  if (actor) envPatch.ASCENDC_AGENT = actor
+  if (projectRoot) envPatch.ASCENDC_PROJECT_ROOT = projectRoot
   if (envBag && typeof envBag === "object") {
-    envBag.ASCENDC_ACTION = action
-    if (actor) envBag.ASCENDC_AGENT = actor
+    Object.assign(envBag, envPatch)
   } else {
-    args.env = {
-      ASCENDC_ACTION: action,
-      ...(actor ? { ASCENDC_AGENT: actor } : {}),
-    }
+    args.env = { ...envPatch }
   }
 }
 
-export const AscendCHarnessPlugin = async () => {
+export const AscendCHarnessPlugin = async (ctx?: {
+  client?: unknown
+  directory?: string
+  project?: unknown
+  $?: unknown
+}) => {
+  const client = ctx && typeof ctx === "object" ? (ctx as any).client : undefined
+  let pilotTools: Record<string, unknown> = {}
+  try {
+    // Dynamic import keeps older OpenCode hosts working if this file is absent.
+    const mod = await import("./pilot-driver")
+    pilotTools = mod.createPilotRunTool(client) || {}
+  } catch {
+    pilotTools = {}
+  }
+
   return {
+    tool: pilotTools,
     "tool.execute.before": async (
       input: { tool?: string; agent?: string; sessionAgent?: string },
       output: { args?: Record<string, unknown> },
@@ -1054,7 +1225,7 @@ export const AscendCHarnessPlugin = async () => {
         : detectProjectRoot(path)
       if (project) rememberProjectRoot(project)
       const active = readActiveAction(project)
-      let agent = resolveEffectiveAgent(input, active, tool)
+      let agent = resolveEffectiveAgent(input, active, tool, command)
 
       // OpenCode todowrite schema requires priority — inject when Host omitted it.
       if (tool === "todowrite" || tool === "todo_write" || (tool.includes("todo") && tool.includes("write"))) {
@@ -1162,9 +1333,18 @@ export const AscendCHarnessPlugin = async () => {
       if (tool === "task" || tool === "subagent" || tool === "task_tool") {
         const dispatchAction = action || String(active.action_id || "")
         const dispatchActor = taskAgent || String(active.actor_id || "")
-        injectActionContext(args, dispatchAction, dispatchActor)
+        injectActionContext(args, dispatchAction, dispatchActor, project)
         const hostSession = extractHostSessionId(input as Record<string, unknown>)
         const taskInvocationId = extractTaskInvocationId(input as Record<string, unknown>)
+        // Ticket identity for child authorize (even before child session id is known).
+        registerAuthorizeSession({
+          project,
+          sessionId: taskInvocationId || `task_${dispatchAction}_${Date.now().toString(36)}`,
+          actorId: dispatchActor,
+          actionId: dispatchAction,
+          leaseId: "",
+          runId: "",
+        })
         const promptText = String(args.prompt || args.description || args.task || "")
         const promptTrim = promptText.trim()
         // Empty / placeholder Task bodies poison producer sessions (ses_0627).
@@ -1186,8 +1366,7 @@ export const AscendCHarnessPlugin = async () => {
         ) {
           throw new Error(
             "[ascendc-pilot] 禁止 FIX ONLY 只改 action_session_id；" +
-              "ARTIFACT_SESSION_MISMATCH 须 resume 原 stub 或完整 re-prepare 后整份重写产物。" +
-              "semantic_patches 权威字段是 candidate_set_hash（勿写 patch_candidate_set_hash）。",
+              "ARTIFACT_SESSION_MISMATCH 须 resume 原 stub 或完整 re-prepare 后整份重写产物。",
           )
         }
         if (hostSession) {

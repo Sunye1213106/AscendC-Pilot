@@ -2,7 +2,7 @@
 """Pilot Action engines for the clang-based uo-init workflow.
 
 Each entrypoint has signature ``fn(project_root, payload) -> dict`` with an
-``ok`` field.  Engines write under ``.ascendc-pilot/uo/`` only.
+``ok`` field.  Engines write under ``.ascendc-pilot/<arch>/uo/`` only.
 """
 from __future__ import annotations
 
@@ -235,7 +235,7 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
 
 
 # Prepare-only working dirs under <arch>/uo/.
-# Canonical product is `.ascendc-pilot/uo/<op>.<arch>.uo` (commit). Layered KB
+# Canonical product is `.ascendc-pilot/<arch>/uo/<op>.<arch>.uo` (commit). Layered KB
 # YAML under flow/ / pipeline / data_model is legacy and must not be seeded.
 _UO_SEED_DIRS = (
     "tiling",   # extract receipts (key_bind / families), not layered data_model

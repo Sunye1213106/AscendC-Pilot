@@ -55,7 +55,6 @@ KB_GRAPH_SQLITE = "indexes/kb_graph.sqlite"
 OPTIONAL_KB_EXPORT_FILES = (
     "test/contract.yaml",
     "tiling/data_model.yaml",
-    "kernel/pipeline.yaml",
     "kernel/resources.yaml",
     "flow/golden_model.yaml",
     "flow/numerical_model.yaml",

@@ -9,8 +9,8 @@
 | `engines/` | UO、TG、CE 和 common 的确定性 packages。 |
 | `evals/` | Eval cases、harnesses 与大型可复用 fixtures。 |
 | `generated/` | 生成的 host runtime output。 |
-| `opencode-plugin/` | OpenCode-specific integration。 |
-| `pilot/` | Runtime control plane。 |
+| `opencode-plugin/` | OpenCode integration：authorize hooks + Session Driver（`ascendc-pilot.ts`、`pilot-driver.ts`）。 |
+| `pilot/` | Runtime control plane（含 dispatch、authorize daemon、host_doctor）。 |
 | `prompts/` | Task prompt assets。 |
 | `schemas/` | Local extension 与 artifact schemas。 |
 | `scripts/` | 生成、校验、replay 与 developer tools。 |
@@ -31,6 +31,8 @@
 | 修改 TG closure | `engines/testcase-generation/testcase_agent/closure/` |
 | 修改 CE impact | `engines/code-engineering/code_engineering/` |
 | 修改 host install | `adapters/`, `opencode-plugin/`, `install.*` |
+| 修改 Host Session Driver | `opencode-plugin/pilot-driver.ts`、`pilot/ascendc_pilot/actions/dispatch.py`、`drive.py` |
+| 修改 authorize 热路径 | `pilot/ascendc_pilot/authorize/`、`opencode-plugin/ascendc-pilot.ts` |
 | 新增人类文档 | `docs/` |
 
 ## 文档边界

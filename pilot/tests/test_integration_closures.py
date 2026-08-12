@@ -157,4 +157,7 @@ def test_plugin_reads_active_action_helpers():
     assert "ASCENDC_ACTION" in text
     assert "projectRootFromPath" in text
     assert "resolveEffectiveAgent" in text
+    assert "finalized" in text
     assert "subagent_type" in text
+    # Bash must stay Primary (authorize remaps writes only).
+    assert 'tool === "bash"' in text or "tool === 'bash'" in text

@@ -739,6 +739,123 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
     }
 
 
+def discover_available_archs(project_root: Path) -> list[str]:
+    """List architecture dirs under op_host/op_kernel (e.g. arch22, arch35)."""
+    root = Path(project_root).expanduser().resolve()
+    try:
+        from uo_init.op_spec import _discover_archs
+
+        return list(_discover_archs(root))
+    except Exception:  # noqa: BLE001
+        import re
+
+        arch_re = re.compile(r"^arch\d+$")
+        seen: set[str] = set()
+        for parent in (root / "op_host", root / "op_kernel"):
+            if not parent.is_dir():
+                continue
+            for child in parent.iterdir():
+                if child.is_dir() and arch_re.match(child.name):
+                    seen.add(child.name)
+        return sorted(seen)
+
+
+def architecture_decision_payload(
+    project_root: Path,
+    workflow_id: str,
+    *,
+    available: list[str] | None = None,
+) -> dict[str, Any]:
+    """AskQuestion payload when architecture is ambiguous."""
+    root = Path(project_root).expanduser().resolve()
+    arches = list(available if available is not None else discover_available_archs(root))
+    ask_opts = [
+        {
+            "label": arch,
+            "description": f"为 {arch} 建立/继续本工作流产物",
+        }
+        for arch in arches
+    ]
+    commands = {
+        arch: f"acp start {workflow_id} --project . --architecture {arch}"
+        for arch in arches
+    }
+    return {
+        "ok": False,
+        "needs_human_decision": True,
+        "error": "ARCHITECTURE_NEEDS_DECISION",
+        "message_zh": (
+            f"算子存在多个架构目录（{', '.join(arches)}），且未指定 --architecture。"
+            "必须用 OpenCode `question`（AskQuestion）弹出可点选框，等人选择后执行对应 "
+            "`acp start … --architecture <arch>`。禁止静默默认 arch35。"
+        ),
+        "ask_question": {
+            "header": "选择目标架构",
+            "question": (
+                f"检测到多个架构：{', '.join(arches)}。"
+                "请选择本次要分析的 architecture："
+            ),
+            "options": ask_opts,
+        },
+        "decision_values": {arch: arch for arch in arches},
+        "commands": commands,
+        "available_architectures": arches,
+        "workflow_id": workflow_id,
+    }
+
+
+def resolve_start_architecture(
+    project_root: Path,
+    architecture: str = "",
+    *,
+    workflow_id: str = "uo-init",
+) -> dict[str, Any]:
+    """Resolve architecture for a new start/reinit, or return AskQuestion payload.
+
+    - Explicit --architecture: validate against discovered dirs when any exist.
+    - Unspecified + 2+ dirs: needs_human_decision (no silent arch35).
+    - Unspecified + exactly 1 dir: auto-select that dir.
+    - Unspecified + 0 dirs: fall back to arch35 (ops without arch folders).
+    """
+    root = Path(project_root).expanduser().resolve()
+    available = discover_available_archs(root)
+    arch = (architecture or "").strip()
+    if arch:
+        if available and arch not in available:
+            return {
+                "ok": False,
+                "error": "ARCHITECTURE_NOT_PRESENT",
+                "architecture": arch,
+                "available_architectures": available,
+                "message_zh": (
+                    f"指定的 architecture={arch} 不在算子目录中；"
+                    f"可选：{', '.join(available)}"
+                ),
+                "workflow_id": workflow_id,
+            }
+        return {
+            "ok": True,
+            "architecture": arch,
+            "available_architectures": available,
+            "selected_by": "explicit",
+        }
+    if len(available) >= 2:
+        return architecture_decision_payload(root, workflow_id, available=available)
+    if len(available) == 1:
+        return {
+            "ok": True,
+            "architecture": available[0],
+            "available_architectures": available,
+            "selected_by": "sole_arch",
+        }
+    return {
+        "ok": True,
+        "architecture": "arch35",
+        "available_architectures": available,
+        "selected_by": "default_no_arch_dirs",
+    }
+
+
 def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
     root = Path(project_root).expanduser().resolve()
     state = load_state(root)
@@ -752,19 +869,21 @@ def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
         return True
     if workflow_id != "uo-init":
         return False
-    # Prefer arch-neutral product root; fall back to arch-scoped uo when arch known.
-    from ascendc_pilot.paths import uo_product_root
+    # Any existing CodeMap / uo work under any arch (or legacy top-level) means
+    # uo-init should ask continue vs reinit — do not require a pinned arch yet.
+    from ascendc_pilot.intake import discover_uo_products
 
-    candidates: list[Path] = [uo_product_root(root)]
-    try:
-        candidates.append(uo_root(root))
-    except ValueError:
-        pass
-    for uo in candidates:
-        if uo.is_dir() and any(uo.iterdir()):
-            wid = str((state or {}).get("workflow_id") or "")
-            if not state or wid in {"", "uo-init"}:
-                return True
+    if discover_uo_products(root):
+        wid = str((state or {}).get("workflow_id") or "")
+        if not state or wid in {"", "uo-init"}:
+            return True
+    pilot = root / ".ascendc-pilot"
+    if pilot.is_dir():
+        for uo in [pilot / "uo", *[p / "uo" for p in pilot.iterdir() if p.is_dir()]]:
+            if uo.is_dir() and any(uo.iterdir()):
+                wid = str((state or {}).get("workflow_id") or "")
+                if not state or wid in {"", "uo-init"}:
+                    return True
     return False
 
 
@@ -872,6 +991,17 @@ def apply_resume_decision(
             state=state,
         )
         return {"ok": True, **payload}
+
+    arch_res = resolve_start_architecture(
+        root,
+        str(kwargs.get("architecture") or ""),
+        workflow_id=workflow_id,
+    )
+    if arch_res.get("needs_human_decision"):
+        return arch_res
+    if not arch_res.get("ok"):
+        return arch_res
+    kwargs["architecture"] = arch_res["architecture"]
 
     state = load_state(root)
     if cross and choice == "reinit":

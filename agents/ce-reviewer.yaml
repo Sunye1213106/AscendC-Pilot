@@ -3,18 +3,20 @@ version: 1
 name_zh: Code review analyst
 role: readonly_reviewer
 mode: subagent
-description: Code review analyst. Read session prompt.md first, then skills/code-review/SKILL.md.
+description: >
+  Code review analyst. Read session prompt.md and method.md first
+  (method is materialized into the action session).
 skill_ids: [code-review, operator-analysis]
 read_scopes:
-- uo/**
-- ce/**
-- runs/**
-- context/**
-- skills/code-review/**
-- skills/operator-analysis/**
+- pilot:uo/**
+- pilot:ce/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/code-review/**
+- method:skills/operator-analysis/**
 write_scopes:
-- ce/review/**
-- runs/**/actions/code_review/**
+- pilot:ce/review/**
+- pilot:runs/**/actions/code_review/**
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

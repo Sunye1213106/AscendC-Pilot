@@ -218,10 +218,15 @@ def _remap_primary_actor(
     """When hooks mislabel producer writes as primary, trust prepared active_action.
 
     Only for write tools — Task dispatch must keep agent=primary.
+    Never remap after finalize/revoke (Primary must retain control-plane identity).
     """
     if agent_l not in _PRIMARY_AGENTS:
         return agent_l, action_id
     active = _load_active_action(project_root)
+    status = str(active.get("status") or "").strip().lower()
+    # Live lease only. finalized/revoked/empty must not re-attribute Primary writes.
+    if status not in {"prepared", "running", "actor_running"}:
+        return agent_l, action_id
     actor = str(active.get("actor_id") or "").strip().lower()
     act = str(active.get("action_id") or "").strip()
     if not actor or actor in _PRIMARY_AGENTS:
@@ -236,6 +241,9 @@ def _fill_action_from_active(project_root: Path | None, action_id: str) -> str:
     if action_id:
         return action_id
     active = _load_active_action(project_root)
+    status = str(active.get("status") or "").strip().lower()
+    if status not in {"prepared", "running", "actor_running"}:
+        return ""
     return str(active.get("action_id") or "").strip()
 
 
@@ -598,7 +606,124 @@ def _is_readonly_inspect_bash(command: str) -> bool:
     return True
 
 
+def _uses_exploration_budget(tool_l: str, agent_l: str, action_id: str, workflow_id: str) -> bool:
+    """Exploration budget mutates disk — never cache those authorize verdicts."""
+    if tool_l not in (_BASH_TOOLS | _READ_TOOLS | frozenset({"grep", "glob"})):
+        return False
+    if workflow_id == "uo-query" or agent_l == "uo-query" or action_id == "kb_lookup":
+        return True
+    return False
+
+
+def _is_containment_method_read(path_s: str, project_root: Path | None) -> bool:
+    """Allow reading session method/prompt/skill text while run is contained."""
+    if not path_s:
+        return False
+    norm = path_s.replace("\\", "/").lower()
+    # Action session pack (always under .ascendc-pilot/.../runs/.../actions/...)
+    if "/.ascendc-pilot/" in norm and "/runs/" in norm and "/actions/" in norm:
+        base = norm.rsplit("/", 1)[-1]
+        if base in {
+            "method.md",
+            "prompt.md",
+            "bundle.yaml",
+            "task_prompt_stub.md",
+            "skill.md",
+            "action_result.yaml",
+        }:
+            return True
+        if "/refs/" in norm or norm.endswith("/refs") or "/method/" in norm:
+            return True
+    # Host-installed cognitive / workflow skills (read-only method delivery)
+    if "/skills/" in norm and norm.endswith("skill.md"):
+        return True
+    if "/cognitive-skills/" in norm and (
+        norm.endswith("skill.md") or "/references/" in norm or "/capabilities/" in norm
+    ):
+        return True
+    return False
+
+
 def authorize(
+    project_root: Path | None = None,
+    *,
+    tool: str,
+    command: str = "",
+    path: str = "",
+    agent: str = "",
+    action: str = "",
+    lease_id: str = "",
+    session_id: str = "",
+) -> dict[str, Any]:
+    """Authorize with optional in-process verdict cache (hot under serve-authorize)."""
+    tool_l = (tool or "").strip().lower()
+    agent_l = (agent or "").strip().lower()
+    action_id = (action or "").strip()
+    lease_id_s = (lease_id or "").strip()
+    session_id_s = (session_id or "").strip()
+
+    # Identity from Host Session Driver ticket (child session registry).
+    if session_id_s:
+        try:
+            from ascendc_pilot.authorize.session_registry import lookup_child_session
+
+            binding = lookup_child_session(session_id_s)
+            if binding:
+                if binding.get("actor_id") and not agent_l:
+                    agent_l = str(binding["actor_id"]).strip().lower()
+                if binding.get("action_id") and not action_id:
+                    action_id = str(binding["action_id"]).strip()
+                if binding.get("lease_id") and not lease_id_s:
+                    lease_id_s = str(binding["lease_id"]).strip()
+                if binding.get("project") and project_root is None:
+                    project_root = Path(str(binding["project"]))
+        except Exception:  # noqa: BLE001
+            pass
+
+    cache_key = None
+    try:
+        from ascendc_pilot.authorize import cache as auth_cache
+
+        skip_budget = _uses_exploration_budget(tool_l, agent_l, action_id, "")
+        if not skip_budget:
+            cache_key = auth_cache.build_cache_key(
+                Path(project_root).resolve() if project_root is not None else None,
+                tool=tool_l,
+                command=command or "",
+                path=path or "",
+                agent=agent_l,
+                action=action_id,
+                lease_id=lease_id_s,
+            )
+            cached = auth_cache.get(cache_key)
+            if cached is not None:
+                return cached
+    except Exception:  # noqa: BLE001
+        cache_key = None
+
+    verdict = _authorize_impl(
+        project_root,
+        tool=tool,
+        command=command,
+        path=path,
+        agent=agent_l or agent,
+        action=action_id or action,
+        lease_id=lease_id_s or lease_id,
+    )
+    try:
+        from ascendc_pilot.authorize import cache as auth_cache
+
+        wid = str(verdict.get("workflow_id") or "")
+        if cache_key is not None and not _uses_exploration_budget(
+            tool_l, agent_l, action_id, wid
+        ):
+            auth_cache.put(cache_key, verdict)
+    except Exception:  # noqa: BLE001
+        pass
+    return verdict
+
+
+def _authorize_impl(
     project_root: Path | None = None,
     *,
     tool: str,
@@ -764,6 +889,8 @@ def authorize(
             )
         # Containment may Read failed Action IR / session pack for inspect
         # (product: human_required must not blind the host to the broken artifact).
+        # Also allow method/prompt/skill text so Host can re-load domain method
+        # after abort without being stuck behind containment.
         if tool_l in _READ_TOOLS and path_s and project_root is not None:
             rel_try = str(path_s).replace("\\", "/")
             marker = "/.ascendc-pilot/"
@@ -790,11 +917,13 @@ def authorize(
                         allow_inspect = True
                 except Exception:  # noqa: BLE001
                     pass
+            if not allow_inspect and _is_containment_method_read(path_s, project_root):
+                allow_inspect = True
             if allow_inspect:
                 return _ok(
                     "allow",
                     "CONTAINMENT_INSPECT_READ",
-                    f"失败收敛模式允许读取失败 Action 合同路径以便 inspect（status={status}）",
+                    f"失败收敛模式允许读取失败 Action / method 文本以便 inspect（status={status}）",
                     status=status,
                     path=path_s,
                 )
@@ -1005,9 +1134,9 @@ def authorize(
                 path_matches_scope,
                 rel_under_agent_dir,
             )
-            from ascendc_pilot.authorize.lease import lease_allows_read_path, load_lease
+            from ascendc_pilot.authorize.lease import lease_allows_read_path
 
-            lease = load_lease(project_root) if project_root is not None else {}
+            # Reuse lease already loaded in _load_context (avoid double YAML read).
             if lease and str(lease.get("status") or "") == "active":
                 if lease.get("run_id") and str(lease.get("run_id")) != str(state.get("run_id") or ""):
                     return _ok(
@@ -1055,15 +1184,19 @@ def authorize(
                 if rel is not None:
                     scopes = agent_read_scopes(agent_l, project_root)
                     if scopes and not path_matches_scope(rel, scopes):
-                        return _ok(
-                            "deny",
-                            "ACTION_READ_SCOPE_DENIED",
-                            f"代理 {agent_l} 不得读取声明 read_scopes 之外的路径",
-                            path=path_s,
-                            agent=agent_l,
-                            read_scopes=scopes,
-                            rel=rel,
-                        )
+                        # Namespaced method/source scopes need absolute-path matching.
+                        from ascendc_pilot.agents_registry import scope_allows_path
+
+                        if not scope_allows_path(path_s or norm, scopes, project_root=project_root):
+                            return _ok(
+                                "deny",
+                                "ACTION_READ_SCOPE_DENIED",
+                                f"代理 {agent_l} 不得读取声明 read_scopes 之外的路径",
+                                path=path_s,
+                                agent=agent_l,
+                                read_scopes=scopes,
+                                rel=rel,
+                            )
                     if lease.get("allowed_read_paths") or lease.get("forbidden_read_paths"):
                         path_check = lease_allows_read_path(lease, rel)
                         if not path_check.get("ok"):
@@ -1077,34 +1210,47 @@ def authorize(
                                 forbidden_read_paths=lease.get("forbidden_read_paths") or [],
                             )
                 else:
-                    # Outside .ascendc-pilot: confirmed-scope operator sources only.
+                    # Outside .ascendc-pilot: method roots (cognitive-skills) OR
+                    # confirmed-scope operator sources.
+                    from ascendc_pilot.agents_registry import (
+                        agent_read_scopes,
+                        scope_allows_path,
+                    )
                     from ascendc_pilot.authorize.lease import lease_allows_source_path
 
-                    src_rel = None
-                    if project_root is not None:
-                        try:
-                            src_rel = (
-                                Path(path_s).resolve().relative_to(Path(project_root).resolve()).as_posix()
+                    scopes = agent_read_scopes(agent_l, project_root)
+                    if scopes and scope_allows_path(path_s, scopes, project_root=project_root):
+                        # method: / source: agent ceiling matched
+                        pass
+                    else:
+                        src_rel = None
+                        if project_root is not None:
+                            try:
+                                src_rel = (
+                                    Path(path_s)
+                                    .resolve()
+                                    .relative_to(Path(project_root).resolve())
+                                    .as_posix()
+                                )
+                            except Exception:  # noqa: BLE001
+                                src_rel = None
+                        if src_rel is None:
+                            return _ok(
+                                "deny",
+                                "ACTION_SOURCE_SCOPE_DENIED",
+                                "禁止读取算子 project_root / method root / confirmed scope 之外的路径",
+                                path=path_s,
                             )
-                        except Exception:  # noqa: BLE001
-                            src_rel = None
-                    if src_rel is None:
-                        return _ok(
-                            "deny",
-                            "ACTION_SOURCE_SCOPE_DENIED",
-                            "禁止读取算子 project_root / confirmed scope 之外的源码路径",
-                            path=path_s,
-                        )
-                    src_check = lease_allows_source_path(lease, src_rel)
-                    if not src_check.get("ok"):
-                        return _ok(
-                            "deny",
-                            str(src_check.get("error") or "ACTION_SOURCE_SCOPE_DENIED"),
-                            "当前 Action lease 不允许读取该算子源码路径（confirmed scope）",
-                            path=path_s,
-                            rel=src_rel,
-                            allowed_source_roots=lease.get("allowed_source_roots") or [],
-                        )
+                        src_check = lease_allows_source_path(lease, src_rel)
+                        if not src_check.get("ok"):
+                            return _ok(
+                                "deny",
+                                str(src_check.get("error") or "ACTION_SOURCE_SCOPE_DENIED"),
+                                "当前 Action lease 不允许读取该算子源码路径（confirmed scope）",
+                                path=path_s,
+                                rel=src_rel,
+                                allowed_source_roots=lease.get("allowed_source_roots") or [],
+                            )
 
         return _ok("allow", "READ_OK", "读取授权通过", tool=tool_l, path=path_s or None)
 
@@ -1248,7 +1394,7 @@ def authorize(
                         rel=rel,
                     )
 
-                lease = load_lease(project_root)
+                # Reuse lease from _load_context (avoid double YAML read).
                 if lease and str(lease.get("status") or "") == "active":
                     if lease.get("run_id") and state and str(lease.get("run_id")) != str(state.get("run_id") or ""):
                         return _ok(

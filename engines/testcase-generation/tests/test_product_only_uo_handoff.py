@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Product-only UO→TG handoff: .uo is enough; arch YAML/DB tree is optional."""
+"""Product-only UO→TG handoff: .uo is enough; YAML/IR work files are optional."""
 
 from __future__ import annotations
 
@@ -78,18 +78,19 @@ def _seed_audit(out_root: Path) -> None:
 
 def test_kb_exists_accepts_product_only_layout(tmp_path: Path) -> None:
     project = tmp_path / "op"
-    product = project / ".ascendc-pilot" / "uo" / "DemoOp.arch35.uo"
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
-    assert not (project / ".ascendc-pilot" / "arch35" / "uo").exists()
+    # No YAML work files — only the durable *.uo.
+    assert not (product.parent / "ir").exists()
     found = kb_exists(project, "DemoOp")
     assert found is not None
     assert found == product.parent
     assert require_kb(project, "DemoOp") == product.parent
 
 
-def test_mark_init_confirmed_fingerprints_product_without_arch_tree(tmp_path: Path) -> None:
+def test_mark_init_confirmed_fingerprints_product_without_yaml_worktree(tmp_path: Path) -> None:
     project = tmp_path / "op"
-    product = project / ".ascendc-pilot" / "uo" / "DemoOp.arch35.uo"
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
     out = output_root(project, "DemoOp")
     write_init_status(
@@ -99,8 +100,7 @@ def test_mark_init_confirmed_fingerprints_product_without_arch_tree(tmp_path: Pa
             "op_name": "DemoOp",
             "status": "pending_confirm",
             "project_root": project.as_posix(),
-            # Intentionally point at the retired arch tree that does not exist.
-            "understand_root": (project / ".ascendc-pilot" / "arch35" / "uo").as_posix(),
+            "understand_root": product.parent.as_posix(),
         },
     )
     _seed_audit(out)
@@ -115,7 +115,7 @@ def test_mark_init_confirmed_fingerprints_product_without_arch_tree(tmp_path: Pa
 
 def test_product_mutation_invalidates_fingerprint(tmp_path: Path) -> None:
     project = tmp_path / "op"
-    product = project / ".ascendc-pilot" / "uo" / "DemoOp.arch35.uo"
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
     out = output_root(project, "DemoOp")
     write_init_status(

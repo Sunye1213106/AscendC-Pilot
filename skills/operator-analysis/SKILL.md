@@ -36,19 +36,22 @@ prepare → extract → analyze → commit → verify
 1. 先读 **`references/uo-product-map.md`**（权威分层 + claim 层级 + 何时 fallback）。
 2. 按 METHOD 做 **claim-driven bounded exploration**：够 claim 就停；**无**固定证据槽表。
 3. 结构化 `acp uo-query` 优先；`source_span` / packing site 的 path:line **足够引用**，不为行号而 Read。
-4. 交付 `kb-answer-v1`；未找到用 `UNKNOWN` + `reason_code=NOT_FOUND_IN_SCOPE`。
+4. 交付 `kb-answer-v1`（Explorer 不写文件）；未找到用 `UNKNOWN` + `reason_code=NOT_FOUND_IN_SCOPE`。
+5. **复杂多 claim**：Primary 拆 2–4 个窄 `Task(actor=uo-query)` 并行，再合成确切答案；简单题单 Task。
+6. 高置信：`acp inspect evidence-window --project … --path … --lines A-B` 取 sha + snippet。
 
 ## 构建
 
-1. **确定性提取优先**：Clang、source pass、写入与结构校验由 engine 执行。
-2. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。探针 / include 失败时：对照算子仓官方编译文件修正 `build_context.yaml`（见 `references/codemap-build-gotchas.md`）。
-3. **关系必须有证据**：CALLS / READS / WRITES / DERIVES 等必须回到源码或 compiler provenance。
-4. **不为闭环制造公式**：复杂 Key producer 保留 producer、all-writes、guards、upstream roots 与 source span。
-5. **编译期是一等语义**：macro、compile var、template、BuildVariant、ARCH 显式建模。
-6. **SHARED 必须进 KB**：`common/` 等 SHARED 进入 ScopeSet 后，Host/Kernel walk 不得再用裸 `op_needle` 过滤掉。
-7. **单一产品权威**：`.ascendc-pilot/uo/<op>.<arch>.uo`。
-8. **保留 unresolved**：deterministic pass 无法闭合的语义 residual 写入 `unresolved.yaml`；**不得**默认用 LLM 补进 canonical `.uo`。部分 incomplete UO 合法（`semantic_completeness=partial`）。调查用 `/uo-investigate`。
-9. **Projection freshness**：写入 `.uo` 前先 drop 未证边，再重投影并 stamp provenance（digest + counts + builder）；详见 map 与 `docs/architecture/artifacts-and-authority.md`。
+1. **缺 architecture 时先扫再问**：跑 `acp scan-architectures --project <算子目录>`，阅读 `layout` / `architecture_option_details`，再 AskQuestion（选项原样）；禁止仓根 Glob `arch*` 或翻 cmake/classify_rule 考古。Harness 启动细节见 control invariants / pilot-control policy。
+2. **确定性提取优先**：Clang、source pass、写入与结构校验由 engine 执行。
+3. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。探针 / include 失败时：对照算子仓官方编译文件修正 `build_context.yaml`（见 `references/codemap-build-gotchas.md`）。
+4. **关系必须有证据**：CALLS / READS / WRITES / DERIVES 等必须回到源码或 compiler provenance。
+5. **不为闭环制造公式**：复杂 Key producer 保留 producer、all-writes、guards、upstream roots 与 source span。
+6. **编译期是一等语义**：macro、compile var、template、BuildVariant、ARCH 显式建模。
+7. **SHARED 必须进 KB**：`common/` 等 SHARED 进入 ScopeSet 后，Host/Kernel walk 不得再用裸 `op_needle` 过滤掉。
+8. **单一产品权威**：`.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`。
+9. **保留 unresolved**：deterministic pass 无法闭合的语义 residual 写入 `unresolved.yaml`；**不得**默认用 LLM 补进 canonical `.uo`。部分 incomplete UO 合法（`semantic_completeness=partial`）。调查用 `/uo-investigate`。
+10. **Projection freshness**：写入 `.uo` 前先 drop 未证边，再重投影并 stamp provenance（digest + counts + builder）；详见 map 与 `docs/architecture/artifacts-and-authority.md`。
 
 ## 按需参考
 

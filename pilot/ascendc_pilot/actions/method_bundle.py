@@ -1,0 +1,247 @@
+"""Materialize cognitive skill method + refs into an action session directory.
+
+Subagents then read only ``session_dir/method.md`` and ``session_dir/refs/**``,
+eliminating host-specific skill discovery paths.
+"""
+
+from __future__ import annotations
+
+import re
+import shutil
+from pathlib import Path
+from typing import Any
+
+
+def _repo_candidates(project_root: Path | None) -> list[Path]:
+    roots: list[Path] = []
+    here = Path(__file__).resolve()
+    # actions/ → ascendc_pilot → pilot → repo
+    roots.append(here.parents[2])
+    home = Path.home()
+    roots.extend(
+        [
+            home / ".config" / "opencode" / "ascendc-pilot-plugin",
+            home / ".cursor" / "ascendc-pilot-plugin",
+            home / ".agents" / "ascendc-pilot-plugin",
+        ]
+    )
+    if project_root is not None:
+        roots.append(Path(project_root).resolve())
+    seen: set[str] = set()
+    out: list[Path] = []
+    for r in roots:
+        k = str(r)
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(r)
+    return out
+
+
+def find_cognitive_skill_dir(skill_id: str, project_root: Path | None = None) -> Path | None:
+    sid = (skill_id or "").strip()
+    if not sid:
+        return None
+    for root in _repo_candidates(project_root):
+        for rel in (
+            Path("cognitive-skills") / sid,
+            Path("skills") / sid,
+            Path("generated") / "opencode" / "cognitive-skills" / sid,
+        ):
+            cand = root / rel
+            if (cand / "SKILL.md").is_file():
+                return cand
+    return None
+
+
+def materialize_method_bundle(
+    session_dir: Path,
+    *,
+    skill_ids: list[str],
+    existing_method: str = "",
+    project_root: Path | None = None,
+    max_refs: int = 24,
+) -> dict[str, Any]:
+    """Write method.md (if empty) and copy skill references into session_dir/refs/.
+
+    Returns ``{ok, method_path, refs_dir, copied, missing}``.
+    """
+    sdir = Path(session_dir)
+    sdir.mkdir(parents=True, exist_ok=True)
+    refs_dir = sdir / "refs"
+    refs_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    missing: list[str] = []
+    method_chunks: list[str] = []
+    if existing_method.strip():
+        method_chunks.append(existing_method.rstrip() + "\n")
+
+    for sid in skill_ids:
+        skill_dir = find_cognitive_skill_dir(sid, project_root)
+        if skill_dir is None:
+            missing.append(sid)
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if skill_md.is_file() and not existing_method.strip():
+            method_chunks.append(f"# Materialized skill: {sid}\n\n")
+            method_chunks.append(skill_md.read_text(encoding="utf-8"))
+            method_chunks.append("\n")
+        # Copy references/ (bounded)
+        ref_src = skill_dir / "references"
+        if ref_src.is_dir():
+            dest = refs_dir / sid
+            dest.mkdir(parents=True, exist_ok=True)
+            count = 0
+            for src in sorted(ref_src.rglob("*")):
+                if not src.is_file():
+                    continue
+                if count >= max_refs:
+                    break
+                rel = src.relative_to(ref_src)
+                target = dest / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, target)
+                copied.append(f"refs/{sid}/{rel.as_posix()}")
+                count += 1
+
+    method_path = sdir / "method.md"
+    if method_chunks:
+        # Append refs index so subagent knows local copies exist.
+        if copied:
+            method_chunks.append("\n## Materialized refs (session-local)\n\n")
+            for c in copied:
+                method_chunks.append(f"- `{c}`\n")
+        method_path.write_text("".join(method_chunks), encoding="utf-8")
+    elif not method_path.is_file():
+        method_path.write_text("# method\n\n(no cognitive skill materialized)\n", encoding="utf-8")
+
+    return {
+        "ok": len(missing) == 0 or bool(existing_method.strip()) or method_path.is_file(),
+        "method_path": method_path.as_posix(),
+        "refs_dir": refs_dir.as_posix(),
+        "copied": copied,
+        "missing": missing,
+    }
+
+
+_PATH_RE = re.compile(
+    r"(?P<p>(?:[A-Za-z]:)?(?:/|\\)[^\s`'\"<>|]+|"
+    r"runs/[^\s`'\"<>|]+|"
+    r"uo/[^\s`'\"<>|]+|"
+    r"tg/[^\s`'\"<>|]+|"
+    r"ce/[^\s`'\"<>|]+|"
+    r"skills/[^\s`'\"<>|]+|"
+    r"cognitive-skills/[^\s`'\"<>|]+)"
+)
+
+
+def extract_stub_paths(stub: str) -> list[str]:
+    """Collect path-like tokens from a task_prompt_stub for BUNDLE_NOT_READABLE."""
+    found: list[str] = []
+    for line in str(stub or "").splitlines():
+        if ":" not in line and "prompt" not in line.lower() and "method" not in line.lower():
+            # Still scan for absolute / relative product paths
+            pass
+        for m in _PATH_RE.finditer(line):
+            p = m.group("p").rstrip("),.;")
+            if p and p not in found:
+                found.append(p)
+    return found
+
+
+def check_bundle_readable(
+    *,
+    stub: str,
+    session_dir: Path,
+    project_root: Path,
+    allowed_read_paths: list[str],
+    allowed_source_roots: list[str] | None = None,
+) -> dict[str, Any]:
+    """Fail-closed: every concrete path referenced by stub must exist and be leased."""
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    missing: list[str] = []
+    unleased: list[str] = []
+    sdir = Path(session_dir).resolve()
+    # Always require session pack essentials.
+    for name in ("prompt.md", "method.md", "bundle.yaml"):
+        p = sdir / name
+        if not p.is_file():
+            missing.append(p.as_posix())
+
+    for raw in extract_stub_paths(stub):
+        p = Path(raw)
+        if not p.is_absolute():
+            # Try session-relative then project-relative then agent-relative.
+            candidates = [
+                sdir / raw,
+                Path(project_root) / raw,
+            ]
+            try:
+                from ascendc_pilot.paths import agent_root
+
+                candidates.append(agent_root(project_root) / raw)
+            except Exception:  # noqa: BLE001
+                pass
+            hit = next((c for c in candidates if c.exists()), None)
+            if hit is None:
+                # Globs / templates — skip non-existing soft refs
+                if "*" in raw or "{" in raw:
+                    continue
+                missing.append(raw)
+                continue
+            p = hit
+        elif not p.exists():
+            if "*" in raw:
+                continue
+            missing.append(raw)
+            continue
+
+        # Lease check for pilot-relative paths
+        try:
+            from ascendc_pilot.paths import agent_root
+
+            rel = p.resolve().relative_to(agent_root(project_root).resolve()).as_posix()
+            if allowed_read_paths and not path_matches_patterns(rel, list(allowed_read_paths)):
+                # Session dir always ok
+                try:
+                    p.resolve().relative_to(sdir)
+                except ValueError:
+                    unleased.append(rel)
+        except ValueError:
+            # Outside agent root: source roots
+            try:
+                src_rel = p.resolve().relative_to(Path(project_root).resolve()).as_posix()
+            except ValueError:
+                # Host method path outside project — allow if under session refs or skills
+                continue
+            roots = [str(x).replace("\\", "/").lstrip("/") for x in (allowed_source_roots or [])]
+            if roots:
+                ok = any(
+                    src_rel == r or src_rel.startswith(r.rstrip("/") + "/")
+                    for r in roots
+                )
+                if not ok:
+                    unleased.append(src_rel)
+
+    if missing or unleased:
+        return {
+            "ok": False,
+            "error": "BUNDLE_NOT_READABLE",
+            "reason_code": "BUNDLE_NOT_READABLE",
+            "missing": missing,
+            "unleased": unleased,
+            "message_zh": (
+                "Action Bundle 读闭合失败：stub/session 引用的路径缺失或不在 lease 可读集合内；"
+                "禁止派发子代理。"
+            ),
+        }
+    return {"ok": True}
+
+
+__all__ = [
+    "find_cognitive_skill_dir",
+    "materialize_method_bundle",
+    "extract_stub_paths",
+    "check_bundle_readable",
+]

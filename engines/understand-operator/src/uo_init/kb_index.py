@@ -444,7 +444,6 @@ def load_yaml_view_layers(uo_root: str | Path) -> dict[str, Any]:
         "kernel/paths.yaml",
         "kernel/compile_model.yaml",
         "kernel/variables.yaml",
-        "kernel/pipeline.yaml",
         "kernel/resources.yaml",
         "cross_layer/tiling_to_kernel.yaml",
         "cross_layer/impact_graph.yaml",

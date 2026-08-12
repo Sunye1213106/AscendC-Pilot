@@ -117,8 +117,9 @@ def _td_obligations_for_key(fields: list[dict[str, Any]], dims: dict[str, Any]) 
         value_classes = list(fld.get("value_classes") or [])
         if not value_classes:
             # Without extracted classes, still ask for a non-default / default pair
-            # on control/boundary fields so the collector has a lower bound.
-            if fclass in {"control", "boundary"}:
+            # on control/boundary fields, and on payload fields that carry risk
+            # markers / coverage_priority (overflow/tail/align/zero/min/max).
+            if fclass in {"control", "boundary"} or priority or risk:
                 value_classes = [
                     {"field": name, "op": "==", "value": 0, "predicate": f"{name} == 0"},
                     {"field": name, "op": "!=", "value": 0, "predicate": f"{name} != 0"},

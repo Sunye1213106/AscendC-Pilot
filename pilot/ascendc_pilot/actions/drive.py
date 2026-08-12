@@ -9,6 +9,7 @@ an engine or an agent should run next.
 
 from __future__ import annotations
 
+import json
 import sys
 import threading
 import time
@@ -53,9 +54,37 @@ def _unconditional_forward_phase(meta: dict[str, Any], phase: str) -> str:
     return targets[0] if len(targets) == 1 else ""
 
 
-def _progress(msg: str) -> None:
+def _progress(msg: str, *, event: str = "heartbeat", extra: dict[str, Any] | None = None) -> None:
+    """Emit human stderr heartbeat and append a machine-readable host stage event."""
     sys.stderr.write(f"[acp-auto] {msg}\n")
     sys.stderr.flush()
+    try:
+        from ascendc_pilot.paths import agent_root
+        from ascendc_pilot.state import load_state
+
+        # Best-effort: resolve project from env when drive is running under Host.
+        import os
+
+        root_s = (os.environ.get("ASCENDC_PROJECT_ROOT") or "").strip()
+        if not root_s:
+            return
+        root = Path(root_s)
+        st = load_state(root) or {}
+        run_id = str(st.get("run_id") or "").strip()
+        if not run_id:
+            return
+        events = agent_root(root) / "runs" / run_id / "host_stage.jsonl"
+        events.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": time.time(),
+            "event": event,
+            "message": msg,
+            **(extra or {}),
+        }
+        with events.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _run_with_heartbeat(label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
@@ -122,7 +151,13 @@ def drive_until_interaction(
             f"drain stop reason={payload.get('stop_reason') or payload.get('error') or 'done'} "
             f"executed={len(executed)}"
         )
-        return _attach_todo(root, payload)
+        attached = _attach_todo(root, payload)
+        try:
+            from ascendc_pilot.actions.dispatch import attach_host_step
+
+            return attach_host_step(root, attached)
+        except Exception:  # noqa: BLE001
+            return attached
 
     for _ in range(max_steps):
         state = load_state(root)

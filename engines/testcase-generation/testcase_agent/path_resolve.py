@@ -28,16 +28,24 @@ class PlanPathBundle:
 
 
 def resolve_operator_project_root(path: Path) -> Path:
-    """Accept op package, `.ascendc-pilot`, `.ascendc-pilot/uo`, or `.ascendc-pilot/tg`.
+    """Accept op package, `.ascendc-pilot`, arch-scoped `uo`/`tg`, or legacy top-level.
 
     Also accepts legacy markers: `.ascendc-agent`, `.understand-operator`.
     """
     root = path.expanduser().resolve(strict=False)
     # Structural markers can be resolved even if the marker dir was not created yet
-    if root.name == "uo" and root.parent.name in {".ascendc-pilot", ".ascendc-agent"}:
-        return root.parent.parent
-    if root.name == "tg" and root.parent.name in {".ascendc-pilot", ".ascendc-agent"}:
-        return root.parent.parent
+    if root.name == "uo":
+        parent = root.parent
+        if parent.name in {".ascendc-pilot", ".ascendc-agent"}:
+            return parent.parent
+        if parent.parent.name in {".ascendc-pilot", ".ascendc-agent"} and parent.name.startswith("arch"):
+            return parent.parent.parent
+    if root.name == "tg":
+        parent = root.parent
+        if parent.name in {".ascendc-pilot", ".ascendc-agent"}:
+            return parent.parent
+        if parent.parent.name in {".ascendc-pilot", ".ascendc-agent"} and parent.name.startswith("arch"):
+            return parent.parent.parent
     if root.name in {".ascendc-pilot", ".ascendc-agent", ".understand-operator"}:
         return root.parent
     if root.exists() and (
@@ -159,7 +167,7 @@ def resolve_plan_paths(
         raw_project = kb_hint
     if raw_project is None:
         raise ValueError(
-            "OPERATOR_ROOT_REQUIRED: pass project_root (算子仓) or --kb-root (.ascendc-pilot/uo)."
+            "OPERATOR_ROOT_REQUIRED: pass project_root (算子仓) or --kb-root (.ascendc-pilot/<arch>/uo)."
         )
 
     resolved_project = resolve_operator_project_root(raw_project)
@@ -167,7 +175,16 @@ def resolve_plan_paths(
     if kb_hint is None and (
         raw_resolved.name == ".ascendc-pilot"
         or raw_resolved.parent.name == ".ascendc-pilot"
-        or (raw_resolved.name == "uo" and raw_resolved.parent.name == ".ascendc-pilot")
+        or (
+            raw_resolved.name == "uo"
+            and (
+                raw_resolved.parent.name == ".ascendc-pilot"
+                or (
+                    raw_resolved.parent.parent.name == ".ascendc-pilot"
+                    and raw_resolved.parent.name.startswith("arch")
+                )
+            )
+        )
     ):
         kb_hint = raw_resolved
 

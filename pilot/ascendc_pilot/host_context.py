@@ -26,7 +26,7 @@ def _list_arch_candidates(project_root: Path) -> list[str]:
 def _active_action_payload(project_root: Path, *, arch: str | None) -> dict[str, Any]:
     path = state_root(project_root, arch=arch) / "active_action.yaml"
     if not path.is_file():
-        return {"path": str(path), "action_id": "", "actor_id": ""}
+        return {"path": str(path), "action_id": "", "actor_id": "", "status": ""}
     try:
         import yaml
 
@@ -35,10 +35,17 @@ def _active_action_payload(project_root: Path, *, arch: str | None) -> dict[str,
         doc = {}
     if not isinstance(doc, dict):
         doc = {}
+    status = str(doc.get("status") or "").strip().lower()
+    actor_id = str(doc.get("actor_id") or "").strip()
+    # After finalize/revoke the producer lease is done. Suppress actor remapping so
+    # Primary can run control-plane bash (`acp complete` / `advance` / `next`).
+    if status in {"finalized", "revoked"}:
+        actor_id = ""
     return {
         "path": str(path),
         "action_id": str(doc.get("action_id") or "").strip(),
-        "actor_id": str(doc.get("actor_id") or "").strip(),
+        "actor_id": actor_id,
+        "status": status,
     }
 
 
@@ -106,6 +113,7 @@ def build_host_context(
     base["active_action_path"] = str(aa["path"])
     base["action_id"] = str(aa.get("action_id") or "")
     base["actor_id"] = str(aa.get("actor_id") or "")
+    base["active_action_status"] = str(aa.get("status") or "")
 
     state = load_state(root, arch=arch) or {}
     if not state:
@@ -119,9 +127,11 @@ def build_host_context(
     base["phase"] = str(state.get("phase") or "")
     base["status"] = str(state.get("status") or "")
     # Prefer active_action.yaml identity; fall back to state fields if present.
+    # Never resurrect a producer actor after finalize/revoke (blocks acp complete).
+    aa_status = str(aa.get("status") or "").strip().lower()
     if not base["action_id"]:
         base["action_id"] = str(state.get("active_action_id") or "")
-    if not base["actor_id"]:
+    if not base["actor_id"] and aa_status not in {"finalized", "revoked"}:
         base["actor_id"] = str(state.get("active_actor_id") or "")
     try:
         from ascendc_pilot.active_run import active_run_path

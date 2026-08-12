@@ -118,6 +118,108 @@ def describe_architectures(root: Path | str | None) -> list[dict[str, str]]:
     return options
 
 
+def _list_dir_names(dir_path: Path, *, max_entries: int = 64) -> list[str]:
+    if not dir_path.is_dir():
+        return []
+    names: list[str] = []
+    try:
+        for child in sorted(dir_path.iterdir(), key=lambda p: p.name.lower()):
+            if child.name.startswith("."):
+                continue
+            suffix = "/" if child.is_dir() else ""
+            names.append(f"{child.name}{suffix}")
+            if len(names) >= max_entries:
+                names.append("…")
+                break
+    except OSError:
+        return []
+    return names
+
+
+def scan_operator_directory(root: Path | str | None) -> dict[str, Any]:
+    """Fast operator-layout scan for agent arch selection (no repo archaeology).
+
+    Scopes to ``op_host`` / ``op_kernel`` only. Returns a compact JSON summary the
+    agent should read, then AskQuestion from ``architecture_option_details``.
+    """
+    if root is None:
+        return {
+            "ok": False,
+            "error": "project_required",
+            "message_zh": "需要 --project 算子目录",
+        }
+    path = Path(root).expanduser().resolve()
+    if not path.is_dir():
+        return {
+            "ok": False,
+            "error": "project_not_dir",
+            "project": str(path),
+            "message_zh": f"路径不是目录：{path}",
+        }
+    if is_pilot_harness_root(path):
+        return {
+            "ok": False,
+            "error": "pilot_checkout_forbidden",
+            "project": str(path),
+            "message_zh": "禁止把 AscendC-Pilot 仓根当作算子目录",
+        }
+    if not looks_like_operator_package(path):
+        return {
+            "ok": False,
+            "error": "not_operator_package",
+            "project": str(path),
+            "top_level": _list_dir_names(path),
+            "message_zh": "未找到 op_host/ 或 op_kernel/；请确认 --project 指向算子包",
+        }
+
+    details = describe_architectures(path)
+    arches = [str(o.get("label") or "") for o in details if o.get("label")]
+    layout = {
+        "top_level": _list_dir_names(path),
+        "op_host": _list_dir_names(path / "op_host"),
+        "op_kernel": _list_dir_names(path / "op_kernel"),
+    }
+    ask_options = [
+        {
+            "label": str(o.get("label") or ""),
+            "description": str(o.get("description") or ""),
+        }
+        for o in details
+    ]
+    out: dict[str, Any] = {
+        "ok": True,
+        "project": str(path),
+        "op_name": path.name,
+        "layout": layout,
+        "architectures": arches,
+        "architecture_options": arches,
+        "architecture_option_details": details,
+        "ask_question": {
+            "header": "选择架构",
+            "question": "请选择要建立知识库的目标架构（选项来自算子目录 op_host|op_kernel/arch*）：",
+            "options": ask_options,
+        }
+        if arches
+        else None,
+        "message_zh": (
+            f"扫描到 {len(arches)} 个 architecture：{', '.join(arches)}。"
+            "阅读 layout 后用 AskQuestion 选项原样提问；禁止 Glob 仓根或翻 cmake/classify_rule。"
+            if arches
+            else "未扫到 arch* 目录；请确认算子包布局或手工提供 architecture。"
+        ),
+        "suggested_command": (
+            f'acp start uo-init --project "{path}" --architecture <arch*>'
+            if arches
+            else f'acp start uo-init --project "{path}" --architecture <arch>'
+        ),
+    }
+    if not arches:
+        out["ok"] = False
+        out["error"] = "ARCHITECTURE_NOT_FOUND"
+        out["reason_code"] = "ARCHITECTURE_NOT_FOUND"
+    return out
+
+
 def parse_uo_product_name(path: Path) -> dict[str, str]:
     """Parse ``<op>.<arch>.uo`` filename into op_name / architecture."""
     stem = path.name[: -len(path.suffix)] if path.suffix == ".uo" else path.stem
@@ -128,15 +230,41 @@ def parse_uo_product_name(path: Path) -> dict[str, str]:
 
 
 def discover_uo_products(root: Path | str | None) -> list[dict[str, str]]:
-    """List finalized CodeMap products under ``.ascendc-pilot/uo/*.uo``."""
+    """List finalized CodeMap products under ``.ascendc-pilot/<arch>/uo/*.uo``.
+
+    Also accepts legacy top-level ``.ascendc-pilot/uo/*.uo`` (pre-unification).
+    """
     if root is None:
         return []
-    product_dir = Path(root).expanduser().resolve() / ".ascendc-pilot" / "uo"
-    if not product_dir.is_dir():
+    base = Path(root).expanduser().resolve() / ".ascendc-pilot"
+    if not base.is_dir():
         return []
+    # Prefer migrating legacy products into arch trees when possible.
+    try:
+        from ascendc_pilot.paths import migrate_top_level_uo_products
+
+        migrate_top_level_uo_products(base.parent)
+    except Exception:
+        pass
     out: list[dict[str, str]] = []
-    for path in sorted(product_dir.glob("*.uo")):
-        if path.is_file():
+    seen: set[str] = set()
+    search_dirs: list[Path] = []
+    for child in sorted(base.iterdir()):
+        if child.is_dir() and child.name.startswith("arch"):
+            search_dirs.append(child / "uo")
+    legacy = base / "uo"
+    if legacy.is_dir():
+        search_dirs.append(legacy)
+    for product_dir in search_dirs:
+        if not product_dir.is_dir():
+            continue
+        for path in sorted(product_dir.glob("*.uo")):
+            if not path.is_file():
+                continue
+            key = path.resolve().as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
             out.append(parse_uo_product_name(path))
     return out
 
@@ -286,7 +414,7 @@ def _uo_product_gate(
                 "workflow_id": workflow_id,
                 "project": str(root),
                 "message_zh": (
-                    f"未找到正式 CodeMap（`.ascendc-pilot/uo/*.uo`），不能启动 `{workflow_id}`。\n"
+                    f"未找到正式 CodeMap（`.ascendc-pilot/<arch>/uo/*.uo`），不能启动 `{workflow_id}`。\n"
                     "TG/CE/查询以 UO 产物为准：请先 `/uo-init --project <算子目录> --architecture <arch*>` "
                     "建立 CodeMap，再回来启动本工作流。"
                 ),

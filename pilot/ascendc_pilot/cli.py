@@ -44,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_doctor = sub.add_parser("doctor", help="Environment precheck")
     p_doctor.add_argument("--project", type=Path, default=None)
+    p_doctor.add_argument(
+        "--host",
+        default="",
+        help="Also check Host adapter contract (e.g. opencode)",
+    )
 
     p_gates = sub.add_parser("validate-key-gates", help="Run KEY hard gates (ses_076d)")
     p_gates.add_argument("project", type=Path)
@@ -70,6 +75,17 @@ def main(argv: list[str] | None = None) -> int:
         "--architecture",
         default="",
         help="Optional architecture pin; omit to discover from env / sole active state",
+    )
+
+    p_scan_arch = sub.add_parser(
+        "scan-architectures",
+        help="Fast scan op_host/op_kernel layout + arch* options (no repo archaeology)",
+    )
+    p_scan_arch.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Operator package root (op_host/op_kernel). Required.",
     )
 
     p_ctx = sub.add_parser("context", help="Build context pack")
@@ -126,6 +142,19 @@ def main(argv: list[str] | None = None) -> int:
             "from subagent Task return; finalize materializes answer.yaml"
         ),
     )
+
+    p_dres = sub.add_parser(
+        "dispatch-result",
+        help="Host Session Driver: consume dispatch ticket, finalize, continue drive",
+    )
+    p_dres.add_argument("--project", type=Path, default=None)
+    p_dres.add_argument("--ticket", required=True, help="dispatch_ticket id from host_step")
+    p_dres.add_argument("--result-file", type=Path, default=None)
+    p_dres.add_argument(
+        "--result-text",
+        default="",
+        help="Inline kb-answer-v1 / action result YAML (or fenced) from subagent return",
+    )
     p_run.add_argument(
         "--set",
         action="append",
@@ -172,6 +201,22 @@ def main(argv: list[str] | None = None) -> int:
     p_ir_y.add_argument("--rel", required=True, help="Path relative to .ascendc-pilot/")
     p_ir_d = p_ir_sub.add_parser("duplicates", help="Find duplicate llm_tasks targets")
     p_ir_d.add_argument("--project", type=Path, default=None)
+    p_ir_ew = p_ir_sub.add_parser(
+        "evidence-window",
+        help="Compute pad=0 disk window sha256 + snippet for high-confidence evidence",
+    )
+    p_ir_ew.add_argument("--project", type=Path, default=None)
+    p_ir_ew.add_argument(
+        "--path",
+        required=True,
+        help="Source path relative to operator project (e.g. op_host/arch35/foo.cpp)",
+    )
+    p_ir_ew.add_argument(
+        "--lines",
+        required=True,
+        help="1-based inclusive range A-B (or single line A)",
+    )
+    p_ir_ew.add_argument("--max-lines", type=int, default=400)
 
     p_ro = sub.add_parser(
         "ro-search",
@@ -222,6 +267,23 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.add_argument("--agent", default="")
     p_auth.add_argument("--action", default="")
     p_auth.add_argument("--lease-id", default="", help="Optional lease id (LEASE_REVOKED if stale)")
+    p_auth.add_argument("--session-id", default="", help="OpenCode child session id (identity ticket)")
+
+    p_serve_auth = sub.add_parser(
+        "serve-authorize",
+        help="Long-lived authorize daemon (stdio JSON-lines; Host Session Driver)",
+    )
+    p_serve_auth.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Optional default project (requests may override)",
+    )
+    p_serve_auth.add_argument(
+        "--ipc-dir",
+        default="",
+        help="Directory for *.req.json / *.resp.json sync IPC (OpenCode plugin)",
+    )
 
     p_scope = sub.add_parser(
         "uo-scope",
@@ -447,7 +509,16 @@ def main(argv: list[str] | None = None) -> int:
     _normalize_project_arg(args)
 
     if args.cmd == "doctor":
-        return _doctor(args.project)
+        code = _doctor(args.project)
+        host = str(getattr(args, "host", "") or "").strip()
+        if host:
+            from ascendc_pilot.host_doctor import doctor_host
+
+            payload = doctor_host(host, project=args.project)
+            print_json(payload)
+            if not payload.get("ok"):
+                return 1
+        return code
     if args.cmd == "validate-key-gates":
         from ascendc_pilot.gates import run_key_gates
 
@@ -488,6 +559,12 @@ def main(argv: list[str] | None = None) -> int:
             args.project,
             architecture=str(getattr(args, "architecture", "") or ""),
         )
+        print_json(result)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "scan-architectures":
+        from ascendc_pilot.intake import scan_operator_directory
+
+        result = scan_operator_directory(args.project)
         print_json(result)
         return 0 if result.get("ok") else 1
     if args.cmd == "answer":
@@ -643,6 +720,43 @@ def main(argv: list[str] | None = None) -> int:
             out.write_text(yaml.safe_dump(params, allow_unicode=True, sort_keys=False), encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass
+        # User Goal: NL full-coverage phrases (or active goal) → control/user_goal.yaml
+        try:
+            from ascendc_pilot.user_goal import (
+                ensure_goal_for_intent,
+                progress_line_zh,
+            )
+
+            intent_bits = " ".join(
+                x
+                for x in (
+                    str(start_kwargs.get("intent") or ""),
+                    str(getattr(args, "intent", "") or ""),
+                    str(args.workflow_id or ""),
+                )
+                if x
+            )
+            # Treat explicit tg-* slash as part of full-coverage chain when
+            # Primary already created / will create the product goal via phrases
+            # in --intent; also accept bare "全量/全覆盖/tilingkey case".
+            goal = ensure_goal_for_intent(
+                args.project,
+                intent_text=intent_bits,
+                architecture=str(state.get("architecture") or arch or ""),
+                workflow_id=str(args.workflow_id or ""),
+                op_name=str(state.get("op_name") or start_kwargs.get("op_name") or ""),
+            )
+            if goal:
+                state = dict(state) if isinstance(state, dict) else state
+                if isinstance(state, dict):
+                    state["user_goal"] = goal
+                    state["user_summary_zh"] = progress_line_zh(goal)
+                    state["message_zh"] = (
+                        progress_line_zh(goal)
+                        + " 对人说明意图与当前动作；完成后按 Goal 串联下一步。"
+                    )
+        except Exception:  # noqa: BLE001
+            pass
         print_json(state)
         return 0
     if args.cmd == "run-action":
@@ -666,6 +780,24 @@ def main(argv: list[str] | None = None) -> int:
         if applied:
             result = dict(result)
             result["pilot_params_updated"] = applied
+        if result.get("ok"):
+            write_last_project_cache(args.project)
+        print_json(result, default=str)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "dispatch-result":
+        from ascendc_pilot.actions.dispatch import dispatch_result
+        from ascendc_pilot.intake import assert_operator_project, write_last_project_cache
+
+        bad = assert_operator_project(args.project, action="dispatch-result")
+        if bad is not None:
+            print_json(bad)
+            return 2
+        result = dispatch_result(
+            args.project,
+            ticket_id=str(args.ticket or ""),
+            result_file=getattr(args, "result_file", None),
+            result_text=str(getattr(args, "result_text", "") or ""),
+        )
         if result.get("ok"):
             write_last_project_cache(args.project)
         print_json(result, default=str)
@@ -838,6 +970,7 @@ def main(argv: list[str] | None = None) -> int:
             agent=args.agent,
             action=args.action,
             lease_id=getattr(args, "lease_id", "") or "",
+            session_id=getattr(args, "session_id", "") or "",
         )
         print_json(verdict)
         if verdict.get("decision") == "allow" or verdict.get("ok"):
@@ -845,6 +978,10 @@ def main(argv: list[str] | None = None) -> int:
         if verdict.get("decision") == "ask":
             return 2
         return 1
+    if args.cmd == "serve-authorize":
+        from ascendc_pilot.authorize.serve import serve_forever
+
+        return serve_forever(ipc_dir=getattr(args, "ipc_dir", "") or None)
     if args.cmd == "uo-scope":
         from ascendc_pilot.uo_scope import print_result, run_uo_scope
 
@@ -1315,6 +1452,23 @@ def _cmd_inspect(args: Any) -> int:
         dups = {k: v for k, v in c.items() if k and v > 1}
         print_json({"ok": True, "duplicate_targets": dups, "count": len(dups)}, default=str)
         return 0
+    if sub == "evidence-window":
+        from ascendc_pilot.evidence_window import disk_window_proof
+        from ascendc_pilot.paths import resolve_operator_root
+
+        try:
+            project = resolve_operator_root(getattr(args, "project", None))
+        except ValueError as exc:
+            print_json({"ok": False, "error": "project_unresolved", "message": str(exc)})
+            return 2
+        out = disk_window_proof(
+            project,
+            path=str(getattr(args, "path", "") or ""),
+            lines=str(getattr(args, "lines", "") or ""),
+            max_lines=int(getattr(args, "max_lines", 400) or 400),
+        )
+        print_json(out, default=str)
+        return 0 if out.get("ok") else 1
     print_json({"ok": False, "error": "unknown_inspect_cmd", "inspect_cmd": sub})
     return 2
 

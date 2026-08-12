@@ -500,7 +500,6 @@ def assemble_artifacts(kb: KnowledgeBase) -> dict[str, Any]:
         "kernel/variables.yaml": _view(
             nodes=variables, domains=payload["domains"]
         ),
-        "kernel/pipeline.yaml": _view(status="not_extracted"),
         "kernel/resources.yaml": _view(status="not_extracted"),
         "cross_layer/tiling_to_kernel.yaml": {
             "version": FORMAT_VERSION,

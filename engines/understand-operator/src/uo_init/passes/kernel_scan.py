@@ -162,6 +162,14 @@ def site_as_dict(site: Any) -> dict[str, Any]:
         "receiver": getattr(site, "receiver", "") or "",
         "path_conditions": getattr(site, "path_conditions", None) or (),
         "entry_reachable": bool(getattr(site, "entry_reachable", True)),
+        "caller_usr": getattr(site, "caller_usr", "") or "",
+        "caller_qualified": getattr(site, "caller_qualified", "") or "",
+        "callee_usr": getattr(site, "callee_usr", "") or "",
+        "callee_qualified": getattr(site, "callee_qualified", "") or "",
+        "callee_decl_file": getattr(site, "callee_decl_file", "") or "",
+        "receiver_type": getattr(site, "receiver_type", "") or "",
+        "receiver_canonical_type": getattr(site, "receiver_canonical_type", "") or "",
+        "provenance": getattr(site, "provenance", "") or "clang_walk_cache",
     }
 
 
@@ -259,6 +267,94 @@ def collect_call_sites_from_walks(
     if len(walks) >= _WALK_CACHE_LIMIT:
         provenance = "clang_walk_cache_partial"
     return calls, decls, controls, provenance
+
+
+def collect_type_graph_from_walks(
+    source_root: Path,
+    *,
+    architecture: str,
+    deadline: float,
+) -> dict[str, list[dict[str, Any]]]:
+    """Clang-first type / member / alias / base facts from walk cache."""
+    from uo_init import tu_cache
+
+    walks = tu_cache.iter_cached_walks(
+        source_root, architecture, path_substr="op_kernel", limit=_WALK_CACHE_LIMIT
+    )
+    members: list[dict[str, Any]] = []
+    aliases: list[dict[str, Any]] = []
+    types: list[dict[str, Any]] = []
+    bases: list[dict[str, Any]] = []
+    if time.perf_counter() > deadline:
+        return {"members": members, "aliases": aliases, "types": types, "bases": bases}
+    for wr in walks:
+        if time.perf_counter() > deadline:
+            break
+        for fd in (getattr(wr, "field_decls", None) or {}).values():
+            host = str(getattr(fd, "host", "") or "")
+            name = str(getattr(fd, "name", "") or "")
+            if not host or not name:
+                continue
+            type_text = str(getattr(fd, "type_text", "") or "")
+            members.append(
+                {
+                    "owner": host,
+                    "owner_qualified": str(getattr(fd, "owner_qualified", "") or host),
+                    "member": name,
+                    "type_text": type_text,
+                    "canonical_type": str(getattr(fd, "canonical_type", "") or ""),
+                    "referenced_type_usr": str(getattr(fd, "referenced_type_usr", "") or ""),
+                    "base_type": type_text.split("<", 1)[0].split("::")[-1].strip()
+                    if type_text
+                    else "",
+                    "file": str(getattr(fd, "file", "") or ""),
+                    "line": int(getattr(fd, "line", 0) or 0),
+                    "column": int(getattr(fd, "column", 0) or 0),
+                    "provenance": "clang_field_decl",
+                }
+            )
+        for ad in getattr(wr, "alias_decls", None) or []:
+            aliases.append(
+                {
+                    "alias": str(getattr(ad, "name", "") or ""),
+                    "qualified_name": str(getattr(ad, "qualified_name", "") or ""),
+                    "target": str(getattr(ad, "target_type", "") or ""),
+                    "canonical_type": str(getattr(ad, "canonical_type", "") or ""),
+                    "target_usr": str(getattr(ad, "target_usr", "") or ""),
+                    "file": str(getattr(ad, "file", "") or ""),
+                    "line": int(getattr(ad, "line", 0) or 0),
+                    "column": int(getattr(ad, "column", 0) or 0),
+                    "provenance": "clang_alias_decl",
+                }
+            )
+        for td in getattr(wr, "type_decls", None) or []:
+            types.append(
+                {
+                    "name": str(getattr(td, "name", "") or ""),
+                    "qualified_name": str(getattr(td, "qualified_name", "") or ""),
+                    "usr": str(getattr(td, "usr", "") or ""),
+                    "kind": str(getattr(td, "kind", "") or "class"),
+                    "file": str(getattr(td, "file", "") or ""),
+                    "line": int(getattr(td, "line", 0) or 0),
+                    "column": int(getattr(td, "column", 0) or 0),
+                    "provenance": "clang_type_decl",
+                }
+            )
+        for bd in getattr(wr, "base_decls", None) or []:
+            bases.append(
+                {
+                    "derived": str(getattr(bd, "derived_name", "") or ""),
+                    "derived_usr": str(getattr(bd, "derived_usr", "") or ""),
+                    "base": str(getattr(bd, "base_name", "") or ""),
+                    "base_usr": str(getattr(bd, "base_usr", "") or ""),
+                    "canonical_type": str(getattr(bd, "canonical_type", "") or ""),
+                    "file": str(getattr(bd, "file", "") or ""),
+                    "line": int(getattr(bd, "line", 0) or 0),
+                    "column": int(getattr(bd, "column", 0) or 0),
+                    "provenance": "clang_base_decl",
+                }
+            )
+    return {"members": members, "aliases": aliases, "types": types, "bases": bases}
 
 
 def update_enclosing_func(line: str, current: str) -> str:

@@ -172,8 +172,108 @@ def _base_type_name(type_text: str) -> str:
     return token if token.isidentifier() else ""
 
 
+def _type_identity_key(type_text: str, *, usr: str = "", qualified: str = "") -> str:
+    """Stable TYPE key: USR > qualified > templated spelling > short base name."""
+    if usr:
+        return f"usr:{usr}"
+    if qualified:
+        return f"q:{qualified}"
+    text = str(type_text or "").strip()
+    if not text:
+        return ""
+    # Keep template args so Buffer<TPosition::VECIN> ≠ bare / project Buffer.
+    if "<" in text:
+        compact = re.sub(r"\s+", "", text)
+        return f"tpl:{compact}"
+    return _base_type_name(text)
+
+
 def _is_ascendc_root_spelling(name: str) -> bool:
+    """Catalog candidate check only — not REACHED proof."""
     return name in _ASCENDC_API_ROOTS or name in ASCENDC_BUFFER_TYPES or name in ASCENDC_REGISTER_TYPES
+
+
+_FRAMEWORK_DECL_MARKERS = (
+    "/ascendc",
+    "ascendc/",
+    "/cann",
+    "cann-",
+    "tikcfw",
+    "bisheng",
+    "metadef",
+    "kernel_operator",
+    "basic_api",
+    "impl/dav_",
+    "include/aclnn",
+)
+
+
+def _is_framework_decl_file(path: str) -> bool:
+    f = str(path or "").replace("\\", "/").lower()
+    if not f:
+        return False
+    # Operator project sources are never AscendC catalog origins.
+    if "/op_kernel/" in f or "/op_host/" in f:
+        return False
+    return any(m in f for m in _FRAMEWORK_DECL_MARKERS)
+
+
+def _qualified_looks_ascendc(qualified: str) -> bool:
+    q = str(qualified or "")
+    if not q:
+        return False
+    return q.startswith("AscendC::") or "::AscendC::" in f"::{q}" or q.startswith("Cann::")
+
+
+def _short_from_qualified(qualified: str, fallback: str = "") -> str:
+    text = str(qualified or fallback or "").strip()
+    if not text:
+        return ""
+    no_tpl = text.split("<", 1)[0].strip()
+    return no_tpl.split("::")[-1].strip()
+
+
+def _prove_ascendc_api_root(
+    *,
+    callee: str,
+    callee_qualified: str = "",
+    callee_usr: str = "",
+    callee_decl_file: str = "",
+    receiver: str = "",
+    receiver_type: str = "",
+    receiver_canonical_type: str = "",
+    has_identity: bool = False,
+) -> tuple[bool, str]:
+    """Return (proven, root_spelling). Spelling alone never proves member calls.
+
+    Proof order:
+      1. AscendC/CANN qualified name
+      2. Framework declaration file
+      3. Free-function catalog match only when identity is unavailable (lexical)
+         and there is no receiver (not a member call)
+    """
+    short = _short_from_qualified(callee_qualified, callee)
+    if not short or not _is_ascendc_root_spelling(short):
+        # Still allow proof when qualified names AscendC but short is template-odd.
+        if _qualified_looks_ascendc(callee_qualified):
+            short = _short_from_qualified(callee_qualified, callee)
+            if short and _is_ascendc_root_spelling(short):
+                return True, short
+        return False, ""
+
+    if _qualified_looks_ascendc(callee_qualified):
+        return True, short
+    if _is_framework_decl_file(callee_decl_file):
+        return True, short
+
+    # Identity present but not AscendC/framework → project symbol, never root.
+    if has_identity or callee_usr or callee_qualified or callee_decl_file:
+        return False, ""
+
+    # Lexical / unresolved free call: catalog match without receiver only.
+    if receiver or receiver_type or receiver_canonical_type:
+        return False, ""
+    return True, short
 
 
 def _root_entity_id(spelling: str) -> str:
@@ -429,13 +529,37 @@ def _link(
     attrs: dict[str, Any] | None = None,
     status: str = "confirmed",
 ) -> None:
-    codemap.link(
-        kind,
-        src,
-        dst,
-        attrs={**(attrs or {}), "provenance": "kernel_root_trace"},
-        status=status,
-    )
+    """Topology-unique edge; accumulate call-site evidence under attrs['sites']."""
+    payload = {**(attrs or {}), "provenance": "kernel_root_trace"}
+    site = None
+    if any(k in payload for k in ("file", "line", "column")):
+        site = {
+            "file": str(payload.get("file") or ""),
+            "line": int(payload.get("line") or 0),
+            "column": int(payload.get("column") or 0),
+            "receiver": str(payload.get("receiver") or ""),
+            "via": str(payload.get("via") or ""),
+        }
+    rel = codemap.link(kind, src, dst, attrs=payload, status=status)
+    if site is None:
+        return
+    sites = list(rel.attrs.get("sites") or [])
+    key = (site["file"], site["line"], site["column"], site["receiver"], site["via"])
+    seen = {
+        (
+            str(s.get("file") or ""),
+            int(s.get("line") or 0),
+            int(s.get("column") or 0),
+            str(s.get("receiver") or ""),
+            str(s.get("via") or ""),
+        )
+        for s in sites
+        if isinstance(s, dict)
+    }
+    if key not in seen:
+        sites.append(site)
+        rel.attrs["sites"] = sites
+    # Keep first-seen file/line as the primary display site; do not overwrite.
 
 
 def _propagate_reachability(codemap: CodeMap) -> None:
@@ -563,11 +687,53 @@ def finalize_kernel_root_trace(
         )
         decls = list(decls or []) + list(lex_decls or [])
 
-    aliases = _scan_type_aliases(files, root=root, deadline=deadline) if files else []
-    members = _scan_class_members(files, root=root, deadline=deadline) if files else []
+    aliases_lex = _scan_type_aliases(files, root=root, deadline=deadline) if files else []
+    members_lex = _scan_class_members(files, root=root, deadline=deadline) if files else []
+    clang_graph = kscan.collect_type_graph_from_walks(
+        Path(root), architecture=arch, deadline=deadline
+    )
+    # Clang-first; lexical regex only fills parse gaps.
+    aliases = list(clang_graph.get("aliases") or [])
+    members = list(clang_graph.get("members") or [])
+    clang_types = list(clang_graph.get("types") or [])
+    clang_bases = list(clang_graph.get("bases") or [])
+    seen_alias = {
+        (str(r.get("alias") or ""), str(r.get("file") or ""), int(r.get("line") or 0))
+        for r in aliases
+    }
+    for row in aliases_lex:
+        key = (str(row.get("alias") or ""), str(row.get("file") or ""), int(row.get("line") or 0))
+        if key in seen_alias:
+            continue
+        row = dict(row)
+        row.setdefault("provenance", "lexical_regex")
+        aliases.append(row)
+        seen_alias.add(key)
+    seen_member = {
+        (
+            str(r.get("owner") or ""),
+            str(r.get("member") or ""),
+            str(r.get("file") or ""),
+            int(r.get("line") or 0),
+        )
+        for r in members
+    }
+    for row in members_lex:
+        key = (
+            str(row.get("owner") or ""),
+            str(row.get("member") or ""),
+            str(row.get("file") or ""),
+            int(row.get("line") or 0),
+        )
+        if key in seen_member:
+            continue
+        row = dict(row)
+        row.setdefault("provenance", "lexical_regex")
+        members.append(row)
+        seen_member.add(key)
 
     alias_to_target: dict[str, str] = {
-        str(row["alias"]): str(row["target"]) for row in aliases
+        str(row["alias"]): str(row["target"]) for row in aliases if row.get("alias")
     }
 
     def _resolve_alias_chain(type_text: str) -> str:
@@ -673,6 +839,46 @@ def finalize_kernel_root_trace(
             )
             type_ents[owner] = ent.id
 
+    # Seed clang TypeDecl nodes (USR / qualified identity).
+    for row in clang_types:
+        name = str(row.get("name") or "")
+        if not name:
+            continue
+        ikey = _type_identity_key(
+            name,
+            usr=str(row.get("usr") or ""),
+            qualified=str(row.get("qualified_name") or ""),
+        ) or name
+        if ikey in type_ents:
+            continue
+        display = str(row.get("qualified_name") or name)
+        mid = make_id(
+            "Type",
+            "clang",
+            str(row.get("usr") or display),
+            row.get("file") or "",
+            int(row.get("line") or 0),
+        )
+        ment = codemap.upsert(
+            EntityKind.TYPE,
+            name,
+            eid=mid,
+            attrs={
+                "role": "source_type",
+                "root_status": "UNRESOLVED",
+                "qualified_name": str(row.get("qualified_name") or ""),
+                "usr": str(row.get("usr") or ""),
+                "trace": [name],
+            },
+            file=str(row.get("file") or ""),
+            line=int(row.get("line") or 0),
+            status="partial",
+            confidence=0.6,
+        )
+        type_ents[ikey] = ment.id
+        if name and name not in type_ents:
+            type_ents[name] = ment.id
+
     wraps_edges: list[tuple[str, str, dict[str, Any]]] = []
     for row in members:
         owner = str(row["owner"])
@@ -680,29 +886,40 @@ def finalize_kernel_root_trace(
             continue
         type_text = str(row["type_text"])
         resolved = _resolve_alias_chain(type_text)
-        resolved_base = _base_type_name(resolved) or str(row["base_type"])
+        resolved_base = _base_type_name(resolved) or str(row.get("base_type") or "")
         if not resolved_base or resolved_base in _CXX_SKIP_BASE:
             continue
-        if resolved_base not in type_ents:
+        member_ikey = _type_identity_key(
+            resolved,
+            usr=str(row.get("referenced_type_usr") or ""),
+            qualified="",
+        ) or resolved_base
+        # Reuse an already-materialised owner/class node for the same short name.
+        if member_ikey not in type_ents and resolved_base in type_ents and "<" not in resolved:
+            type_ents[member_ikey] = type_ents[resolved_base]
+        display = resolved.strip() if "<" in resolved else resolved_base
+        if member_ikey not in type_ents:
             if is_storage_wrapper_type(resolved) or resolved_base in ASCENDC_STORAGE_WRAPPER_TYPES:
-                mid = make_id("Type", "wrapper", resolved_base, row["file"], int(row["line"]))
+                mid = make_id("Type", "wrapper", member_ikey, row["file"], int(row["line"]))
                 ment = codemap.upsert(
                     EntityKind.TYPE,
-                    resolved_base,
+                    display,
                     eid=mid,
                     attrs={
                         "role": "storage_wrapper_type",
                         "root_status": "UNRESOLVED",
                         "type_text": resolved,
+                        "spelling_base": resolved_base,
                     },
                     file=str(row["file"]),
                     line=int(row["line"]),
                     status="partial",
                     confidence=0.5,
                 )
-                type_ents[resolved_base] = ment.id
+                type_ents[member_ikey] = ment.id
+                type_ents.setdefault(resolved_base, ment.id)
             elif _is_ascendc_root_spelling(resolved_base):
-                type_ents[resolved_base] = _ensure_ascendc_root(
+                type_ents[member_ikey] = _ensure_ascendc_root(
                     codemap,
                     resolved_base,
                     root_kind=(
@@ -715,27 +932,30 @@ def finalize_kernel_root_trace(
                         )
                     ),
                 )
+                type_ents.setdefault(resolved_base, type_ents[member_ikey])
             else:
-                mid = make_id("Type", "member_type", resolved_base, row["file"], int(row["line"]))
+                mid = make_id("Type", "member_type", member_ikey, row["file"], int(row["line"]))
                 ment = codemap.upsert(
                     EntityKind.TYPE,
-                    resolved_base,
+                    display,
                     eid=mid,
                     attrs={
                         "role": "source_type",
                         "root_status": "UNRESOLVED",
                         "type_text": resolved,
+                        "spelling_base": resolved_base,
                     },
                     file=str(row["file"]),
                     line=int(row["line"]),
                     status="partial",
                     confidence=0.5,
                 )
-                type_ents[resolved_base] = ment.id
+                type_ents[member_ikey] = ment.id
+                type_ents.setdefault(resolved_base, ment.id)
         wraps_edges.append(
             (
                 type_ents[owner],
-                type_ents[resolved_base],
+                type_ents[member_ikey],
                 {
                     "member": row["member"],
                     "type_text": type_text,
@@ -747,6 +967,52 @@ def finalize_kernel_root_trace(
 
     for src, dst, attrs in wraps_edges:
         _link(codemap, RelationKind.WRAPS, src, dst, attrs=attrs)
+
+    # Inheritance edges from Clang BaseDecl.
+    for row in clang_bases:
+        derived = str(row.get("derived") or "")
+        base = str(row.get("base") or "")
+        if not derived or not base:
+            continue
+        dkey = _type_identity_key(
+            derived, usr=str(row.get("derived_usr") or "")
+        ) or derived
+        bkey = _type_identity_key(base, usr=str(row.get("base_usr") or "")) or base
+        if dkey not in type_ents and derived in type_ents:
+            type_ents[dkey] = type_ents[derived]
+        if bkey not in type_ents:
+            if _is_ascendc_root_spelling(base):
+                type_ents[bkey] = _ensure_ascendc_root(
+                    codemap,
+                    base,
+                    root_kind="STORAGE" if base in ASCENDC_BUFFER_TYPES else "COMPUTE_API",
+                )
+            else:
+                mid = make_id("Type", "base", bkey, row.get("file") or "", int(row.get("line") or 0))
+                ment = codemap.upsert(
+                    EntityKind.TYPE,
+                    base,
+                    eid=mid,
+                    attrs={"role": "source_type", "root_status": "UNRESOLVED", "usr": str(row.get("base_usr") or "")},
+                    file=str(row.get("file") or ""),
+                    line=int(row.get("line") or 0),
+                    status="partial",
+                    confidence=0.5,
+                )
+                type_ents[bkey] = ment.id
+                type_ents.setdefault(base, ment.id)
+        if type_ents.get(dkey) and type_ents.get(bkey):
+            _link(
+                codemap,
+                RelationKind.WRAPS,
+                type_ents[dkey],
+                type_ents[bkey],
+                attrs={
+                    "via": "inherits",
+                    "file": row.get("file") or "",
+                    "line": int(row.get("line") or 0),
+                },
+            )
 
     # --- 3. Seed AscendC / CANN roots (+ framework wrapper contracts) ----
     for spell in sorted(ASCENDC_BUFFER_TYPES):
@@ -761,11 +1027,29 @@ def finalize_kernel_root_trace(
             _ensure_ascendc_root(codemap, spell, root_kind=_category_root_kind("", spell)),
         )
 
-    # Framework wrapper contract: MutexBuffer (etc.) wraps LocalTensor when
-    # the CANN-backed storage lives outside project source scope.
+    def _seed_wrapper_contract(eid: str, spell: str) -> None:
+        rid = _ensure_ascendc_root(codemap, "LocalTensor", root_kind="STORAGE")
+        _link(
+            codemap,
+            RelationKind.WRAPS,
+            eid,
+            rid,
+            attrs={"via": "framework_storage_contract"},
+        )
+        me = codemap.entities[eid]
+        me.attrs["root_status"] = "REACHED"
+        me.attrs["root"] = "AscendC::LocalTensor"
+        me.attrs["root_kind"] = "STORAGE"
+        me.attrs["role"] = "storage_wrapper_type"
+        me.attrs["trace"] = list(me.attrs.get("trace") or [spell]) + ["AscendC::LocalTensor"]
+        me.status = "extracted"
+        _link(codemap, RelationKind.ROOTED_AT, eid, rid)
+
+    # Framework wrapper contract: concrete MutexBuffer / Buffer<...> nodes.
+    # Bare ambiguous "Buffer" spelling is never seeded; templated Buffer is.
     for spell in sorted(ASCENDC_STORAGE_WRAPPER_TYPES):
         if spell == "Buffer":
-            continue  # ambiguous bare Buffer
+            continue
         if spell not in type_ents:
             mid = make_id("Type", "wrapper", spell, "catalog", 0)
             ment = codemap.upsert(
@@ -776,27 +1060,26 @@ def finalize_kernel_root_trace(
                     "role": "storage_wrapper_type",
                     "root_status": "UNRESOLVED",
                     "trace": [spell],
+                    "type_text": spell,
                 },
                 status="partial",
                 confidence=0.5,
             )
             type_ents[spell] = ment.id
-        rid = _ensure_ascendc_root(codemap, "LocalTensor", root_kind="STORAGE")
-        _link(
-            codemap,
-            RelationKind.WRAPS,
-            type_ents[spell],
-            rid,
-            attrs={"via": "framework_storage_contract"},
-        )
-        me = codemap.entities[type_ents[spell]]
-        me.attrs["root_status"] = "REACHED"
-        me.attrs["root"] = "AscendC::LocalTensor"
-        me.attrs["root_kind"] = "STORAGE"
-        me.attrs["role"] = "storage_wrapper_type"
-        me.attrs["trace"] = list(me.attrs.get("trace") or [spell]) + ["AscendC::LocalTensor"]
-        me.status = "extracted"
-        _link(codemap, RelationKind.ROOTED_AT, type_ents[spell], rid)
+        _seed_wrapper_contract(type_ents[spell], spell)
+
+    for e in list(codemap.by_kind(EntityKind.TYPE)):
+        if e.attrs.get("catalog") == "ascendc":
+            continue
+        tt = str(e.attrs.get("type_text") or "")
+        base = str(e.attrs.get("spelling_base") or _base_type_name(tt) or e.name)
+        if not (is_storage_wrapper_type(tt) or is_storage_wrapper_type(e.name) or base == "MutexBuffer"):
+            # Buffer only when templated (Buffer<...>), never bare Buffer.
+            if not (base == "Buffer" and ("<" in tt or "<" in e.name)):
+                continue
+        if e.attrs.get("root_status") == "REACHED" and "LocalTensor" in str(e.attrs.get("root") or ""):
+            continue
+        _seed_wrapper_contract(e.id, base or e.name)
 
     # --- 4. BUFFER / REGISTER decl sites ---------------------------------
     buffer_by_key: dict[tuple[str, str], str] = {}
@@ -1000,15 +1283,41 @@ def finalize_kernel_root_trace(
             _link(codemap, RelationKind.ROOTED_AT, ent.id, rid)
 
     # --- 5. METHOD + OPERATION call sites (all source calls) -------------
-    method_ents: dict[str, str] = {}  # short method name → METHOD entity id
+    method_ents: dict[str, str] = {}  # identity key → METHOD entity id
 
-    def _ensure_method(name: str, *, file: str = "", line: int = 0) -> str:
+    def _ensure_method(
+        name: str,
+        *,
+        file: str = "",
+        line: int = 0,
+        usr: str = "",
+        qualified: str = "",
+        owner: str = "",
+    ) -> str:
         short = str(name or "").split("::")[-1]
         if not short or not short.isidentifier():
             return ""
-        if short in method_ents:
-            return method_ents[short]
-        mid = make_id("Method", "kernel", short, file or "kernel", line)
+        q = str(qualified or "").strip()
+        if not q and owner:
+            q = f"{owner}::{short}"
+        # Bare short "qualified" from lexical enclosing-func is not a real
+        # qualifier — collapse it so caller/callee METHOD nodes unify.
+        if q and "::" not in q and q.split("::")[-1] == short:
+            q = ""
+        # Identity: USR > qualified > owner::name > spelling.
+        # Do not key by call-site line — that forks caller/callee METHOD nodes
+        # for the same lexical function and breaks CALLS closure.
+        if usr:
+            key = f"usr:{usr}"
+        elif q:
+            key = f"q:{q}"
+        elif owner:
+            key = f"q:{owner}::{short}"
+        else:
+            key = f"name:{short}"
+        if key in method_ents:
+            return method_ents[key]
+        mid = make_id("Method", "kernel", key, file or "kernel", line)
         ent = codemap.upsert(
             EntityKind.METHOD,
             short,
@@ -1018,14 +1327,17 @@ def finalize_kernel_root_trace(
                 "root_status": "UNRESOLVED",
                 "root_kind": "",
                 "root": "",
-                "trace": [short],
+                "trace": [q or short],
+                "usr": usr,
+                "qualified_name": q,
+                "spelling": short,
             },
             file=file,
             line=line,
             status="partial",
             confidence=0.5,
         )
-        method_ents[short] = ent.id
+        method_ents[key] = ent.id
         return ent.id
 
     op_count = 0
@@ -1045,7 +1357,14 @@ def finalize_kernel_root_trace(
         receiver = str(d.get("receiver") or "")
         function = str(d.get("caller") or "")
         nfile = _norm_file(file, root)
-        caller_short = function.split("::")[-1] if function else ""
+        caller_qualified = str(d.get("caller_qualified") or "")
+        caller_usr = str(d.get("caller_usr") or "")
+        callee_qualified = str(d.get("callee_qualified") or "")
+        callee_usr = str(d.get("callee_usr") or "")
+        callee_decl_file = str(d.get("callee_decl_file") or "")
+        receiver_type = str(d.get("receiver_type") or "")
+        receiver_canonical = str(d.get("receiver_canonical_type") or "")
+        has_identity = bool(callee_usr or callee_qualified or callee_decl_file)
 
         # Receiver buffer / type for framework bridges (MutexBuffer methods).
         bid_recv = ""
@@ -1058,33 +1377,51 @@ def finalize_kernel_root_trace(
                 "storage_wrapper",
                 "project_wrapper",
             } or is_storage_wrapper_type(str(be.attrs.get("type_text") or ""))
+        if not recv_is_wrapper and (receiver_type or receiver_canonical):
+            recv_is_wrapper = is_storage_wrapper_type(receiver_type) or is_storage_wrapper_type(
+                receiver_canonical
+            )
 
         bridge = MUTEX_BUFFER_METHOD_BRIDGES.get(callee) if recv_is_wrapper else None
-        is_terminal = _is_ascendc_root_spelling(callee) or callee in SYNC_MECHANISM
-        is_root = bool(is_terminal or bridge)
+        proven, proven_spell = _prove_ascendc_api_root(
+            callee=callee,
+            callee_qualified=callee_qualified,
+            callee_usr=callee_usr,
+            callee_decl_file=callee_decl_file,
+            receiver=receiver,
+            receiver_type=receiver_type,
+            receiver_canonical_type=receiver_canonical,
+            has_identity=has_identity,
+        )
+        is_root = bool(proven or bridge)
         root_kind = ""
         root_spell = ""
         if bridge:
             root_spell, root_kind = bridge
-        elif is_terminal:
-            root_spell = callee
-            root_kind = _category_root_kind(category, callee)
+        elif proven:
+            root_spell = proven_spell
+            root_kind = _category_root_kind(category, proven_spell)
 
         oid = operation_site_id(
             file=file, line=line, column=column, callee=callee, ordinal=ordinal, root=root
         )
         args = [str(a) for a in (d.get("args") or [])]
         targs = [str(a) for a in (d.get("template_args") or [])]
-        trace = [callee]
-        if bridge:
+        trace = [callee_qualified or callee]
+        if bridge or proven:
             trace.append(f"AscendC::{root_spell}")
         attrs = {
             "callee": callee,
-            "category": category if is_terminal else ("framework_bridge" if bridge else "UNKNOWN"),
+            "callee_qualified": callee_qualified,
+            "callee_usr": callee_usr,
+            "callee_decl_file": callee_decl_file,
+            "category": category if proven else ("framework_bridge" if bridge else "UNKNOWN"),
             "function": function,
             "args": args,
             "template_args": targs,
             "receiver": receiver,
+            "receiver_type": receiver_type,
+            "receiver_canonical_type": receiver_canonical,
             "root_status": "REACHED" if is_root else "UNRESOLVED",
             "root_kind": root_kind if is_root else "",
             "root": f"AscendC::{root_spell}" if is_root and root_spell else "",
@@ -1092,6 +1429,15 @@ def finalize_kernel_root_trace(
             "trace": trace,
             "provenance": str(d.get("provenance") or provenance),
             "column": column,
+            "root_proof": (
+                "framework_bridge"
+                if bridge
+                else (
+                    "qualified_or_decl"
+                    if proven and has_identity
+                    else ("lexical_free_catalog" if proven else "")
+                )
+            ),
         }
         if not is_root and (category != "UNKNOWN" or conf not in {"", "unresolved"}):
             attrs["gap_code"] = REASON_CALL_UNRESOLVED
@@ -1100,6 +1446,7 @@ def finalize_kernel_root_trace(
                     "code": REASON_CALL_UNRESOLVED,
                     "entity_id": oid,
                     "callee": callee,
+                    "callee_qualified": callee_qualified,
                     "file": nfile,
                     "line": line,
                 }
@@ -1117,10 +1464,30 @@ def finalize_kernel_root_trace(
         op_count += 1
 
         # Source METHOD CALLS graph (caller → callee method or this op).
-        caller_mid = _ensure_method(caller_short, file=nfile, line=line) if caller_short else ""
+        caller_mid = (
+            _ensure_method(
+                function.split("::")[-1] if function else "",
+                file=nfile,
+                line=line,
+                usr=caller_usr,
+                qualified=caller_qualified or function,
+            )
+            if function
+            else ""
+        )
         callee_mid = ""
-        if not is_terminal and not bridge:
-            callee_mid = _ensure_method(callee, file=nfile, line=line)
+        if not proven and not bridge:
+            owner_guess = ""
+            if receiver_type or receiver_canonical:
+                owner_guess = _base_type_name(receiver_canonical or receiver_type)
+            callee_mid = _ensure_method(
+                callee,
+                file=nfile,
+                line=line,
+                usr=callee_usr,
+                qualified=callee_qualified,
+                owner=owner_guess,
+            )
         if caller_mid and callee_mid and caller_mid != callee_mid:
             _link(
                 codemap,
@@ -1149,7 +1516,6 @@ def finalize_kernel_root_trace(
                     "receiver": receiver,
                 },
             )
-            # METHOD → OPERATION also participates in reachability reverse.
         if is_root and root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind=root_kind or "COMPUTE_API")
             if bridge and "MutexBuffer" in type_ents:
@@ -1174,7 +1540,12 @@ def finalize_kernel_root_trace(
                     RelationKind.CALLS,
                     caller_mid,
                     rid,
-                    attrs={"via": "rooted_call", "file": nfile, "line": line},
+                    attrs={
+                        "via": "rooted_call",
+                        "file": nfile,
+                        "line": line,
+                        "column": column,
+                    },
                     status="partial",
                 )
         if bid_recv:
@@ -1281,6 +1652,8 @@ def finalize_kernel_root_trace(
         "selected_files": len(files),
         "class_members": len(members),
         "type_aliases": len(aliases),
+        "clang_type_decls": len(clang_types),
+        "clang_base_decls": len(clang_bases),
         "operations": op_count,
         "buffers": buf_count,
         "registers": reg_count,

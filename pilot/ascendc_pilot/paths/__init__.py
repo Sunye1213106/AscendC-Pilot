@@ -186,14 +186,22 @@ def uo_root(
     *,
     arch: str | None = None,
 ) -> Path:
+    """Arch-scoped UO tree: ``<op>/.ascendc-pilot/<arch>/uo/``.
+
+    Holds both the durable ``*.uo`` CodeMap product and transient work
+    (``ir/``, ``checks/``, …). Multi-arch analysis uses sibling ``<arch>/`` dirs.
+    """
     del op_name
     return agent_root(project_root, arch) / UO_SUBDIR
 
 
-def uo_product_root(project_root: Path) -> Path:
-    """Arch-neutral CodeMap product dir: ``<op>/.ascendc-pilot/uo/``."""
-    root = Path(project_root).expanduser().resolve()
-    return root / AGENT_DIR / UO_SUBDIR
+def uo_product_root(project_root: Path, *, arch: str | None = None) -> Path:
+    """CodeMap product directory (same as arch-scoped ``uo_root``).
+
+    Historical name kept for callers; products live under
+    ``.ascendc-pilot/<arch>/uo/``, not a top-level sibling ``uo/``.
+    """
+    return uo_root(project_root, arch=arch)
 
 
 def uo_codemap_path(
@@ -202,13 +210,66 @@ def uo_codemap_path(
     *,
     arch: str | None = None,
 ) -> Path:
-    """``<op>/.ascendc-pilot/uo/<op_name>.<arch>.uo``."""
+    """``<op>/.ascendc-pilot/<arch>/uo/<op_name>.<arch>.uo``."""
     root = Path(project_root).expanduser().resolve()
     arch_name = (
         resolve_arch(arch) if (arch and str(arch).strip()) else discover_arch(root)
     )
     safe = (op_name or "operator").replace("/", "_").replace("\\", "_")
-    return uo_product_root(root) / f"{safe}.{arch_name}.uo"
+    return uo_root(root, arch=arch_name) / f"{safe}.{arch_name}.uo"
+
+
+def migrate_top_level_uo_products(project_root: Path) -> dict[str, object]:
+    """Move legacy ``.ascendc-pilot/uo/*.uo`` into ``.ascendc-pilot/<arch>/uo/``.
+
+    Arch is taken from the ``.<arch>.uo`` filename suffix. Empty top-level
+    ``uo/`` is removed after a successful move.
+    """
+    root = Path(project_root).expanduser().resolve()
+    legacy = root / AGENT_DIR / UO_SUBDIR
+    if not legacy.is_dir():
+        return {"ok": True, "migrated": False, "moved": []}
+    moved: list[str] = []
+    for path in sorted(legacy.glob("*.uo")):
+        if not path.is_file():
+            continue
+        stem = path.name[: -len(path.suffix)] if path.suffix == ".uo" else path.stem
+        parts = stem.rsplit(".", 1)
+        if len(parts) != 2 or not parts[1].startswith("arch"):
+            continue
+        arch_name = parts[1]
+        dest_dir = root / AGENT_DIR / arch_name / UO_SUBDIR
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / path.name
+        if dest.exists():
+            # Prefer the arch-scoped copy; drop the legacy duplicate.
+            path.unlink()
+            moved.append(f"{path.name}->exists:{dest.as_posix()}")
+            continue
+        shutil.move(str(path), str(dest))
+        moved.append(f"{path.name}->{dest.as_posix()}")
+    # Remove empty legacy tree (or leftover non-.uo junk after products moved).
+    if legacy.is_dir() and not any(legacy.glob("*.uo")):
+        try:
+            # Only rmtree when no other meaningful files remain, else leave.
+            leftovers = [p for p in legacy.rglob("*") if p.is_file()]
+            if not leftovers:
+                shutil.rmtree(legacy)
+            elif moved:
+                # Products moved; clear empty dirs if possible.
+                for p in sorted(legacy.rglob("*"), reverse=True):
+                    if p.is_dir():
+                        try:
+                            p.rmdir()
+                        except OSError:
+                            pass
+                try:
+                    legacy.rmdir()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    return {"ok": True, "migrated": bool(moved), "moved": moved}
 
 
 def tg_root(
@@ -277,11 +338,13 @@ def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> 
     if not modern.exists():
         return {"ok": True, "migrated": False, "root": ""}
 
-    # Nest control-plane dirs under <arch>/. Never move the arch-neutral
-    # CodeMap product dir ``.ascendc-pilot/uo/*.uo`` — that is the UO authority.
+    # Nest control-plane dirs under <arch>/. Also fold legacy top-level
+    # CodeMap products (``.ascendc-pilot/uo/*.uo``) into ``<arch>/uo/``.
+    migrate_top_level_uo_products(root)
     product_uo = modern / UO_SUBDIR
     has_codemap_product = product_uo.is_dir() and any(product_uo.glob("*.uo"))
     flat_control = (modern / TG_SUBDIR, modern / STATE_SUBDIR, modern / CONTEXT_SUBDIR)
+    # After product migrate, leftover top-level uo/ is YAML work (move under arch).
     flat_yaml_uo = product_uo.is_dir() and not has_codemap_product
     if (any(p.exists() for p in flat_control) or flat_yaml_uo) and not target.exists():
         target.mkdir(parents=True, exist_ok=True)

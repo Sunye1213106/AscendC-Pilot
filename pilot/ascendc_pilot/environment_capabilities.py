@@ -169,7 +169,32 @@ def write_environment_capabilities(
 
 
 def source_scope_for_lease(project_root: Path, *, run_id: str = "") -> dict[str, list[str]]:
-    """Roots/files for Lease allowed_source_* (posix, project-relative preferred)."""
+    """Roots/files for Lease allowed_source_* (posix, project-relative preferred).
+
+    Prefer run-level ``runs/<run_id>/source_scope.yaml`` when present (set at start).
+    """
+    from ascendc_pilot.paths import runs_root
+
+    rid = str(run_id or "").strip()
+    if rid:
+        try:
+            scope_path = runs_root(project_root) / rid / "source_scope.yaml"
+            cached = _load_yaml(scope_path)
+            if cached.get("allowed_source_roots") or cached.get("allowed_source_files"):
+                return {
+                    "allowed_source_roots": [
+                        str(x).replace("\\", "/").lstrip("/")
+                        for x in (cached.get("allowed_source_roots") or [])
+                        if str(x).strip()
+                    ],
+                    "allowed_source_files": [
+                        str(x).replace("\\", "/").lstrip("/")
+                        for x in (cached.get("allowed_source_files") or [])
+                        if str(x).strip()
+                    ],
+                }
+        except Exception:  # noqa: BLE001
+            pass
     scope = _source_scope(project_root, run_id=run_id)
     roots = [str(r).replace("\\", "/").lstrip("/") for r in (scope.get("roots") or []) if str(r).strip()]
     files = [

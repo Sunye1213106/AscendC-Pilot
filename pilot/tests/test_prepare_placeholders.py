@@ -84,8 +84,13 @@ def test_kb_lookup_stub_requires_answer_yaml_not_integrity() -> None:
     assert "return_value" in stub
     assert "uo/checks" in stub
     assert "Do NOT write uo/checks" in stub
-    assert "--result-file" in stub
     assert "Hard stop" in stub
+    assert "uo-query≤12" in stub
+    assert "evidence-window" in stub
+    write_line = next((ln for ln in stub.splitlines() if ln.startswith("write:")), "")
+    assert write_line.startswith("write: (none")
+    assert "runs/" not in write_line
+    assert "fallback" in stub.lower()
 
 
 def test_task_prompt_stub_injects_must_read_order_for_summary() -> None:
@@ -217,11 +222,16 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     assert "return_value" in stub
     assert "SplitAxis=1" in stub
     assert "Do NOT write uo/checks" in stub
-    assert "--result-file" in str(result.get("message_zh") or "")
+    assert "write: (none" in stub
+    msg = str(result.get("message_zh") or "")
+    assert "finalize" in msg
+    assert result.get("finalize_hint") == "acp run-action kb_lookup --finalize"
+    assert "result-file" in str(result.get("finalize_hint_fallback") or "")
     session = Path(str(result["session_dir"]))
     method = (session / "method.md").read_text(encoding="utf-8")
     assert "claim" in method.lower() or "Claim" in method
-    assert "硬预算" in method or "≤6" in method or "<= 6" in method or "上限" in method
+    assert "12" in method
+    assert "22" in method
     bundle = yaml.safe_load((session / "bundle.yaml").read_text(encoding="utf-8"))
     assert bundle.get("output_mode") == "return_value"
     writes = [str(p).replace("\\", "/") for p in (bundle.get("allowed_write_paths") or [])]

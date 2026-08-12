@@ -481,7 +481,16 @@ def render_failure_card(state: dict[str, Any], observation: dict[str, Any] | Non
     fc = str(lf.get("failure_class") or obs.get("failure_class") or "")
     code = str(lf.get("error_code") or obs.get("error_code") or "")
     findings = lf.get("findings") or obs.get("findings") or []
+    try:
+        from ascendc_pilot.human_voice import user_summary_from_failure
+
+        user_summary = user_summary_from_failure(state, obs)
+    except Exception:  # noqa: BLE001
+        user_summary = str(lf.get("message_zh") or "当前步骤未通过，请按合法后续处理。")
+    state["user_summary_zh"] = user_summary
     lines = [
+        f"【给你】{user_summary}",
+        "",
         f"当前阶段：{phase}",
         f"失败 Action：{action_id or '(unknown)'}",
         f"失败步骤：{step_id or '(unknown)'}",

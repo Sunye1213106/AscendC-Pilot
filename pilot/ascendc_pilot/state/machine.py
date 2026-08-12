@@ -552,6 +552,27 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
     append_event(project_root, {"type": "workflow_passed"})
     fresh = load_state(project_root)
     payload = {"ok": True, "status": "passed", "state": fresh}
+    try:
+        from ascendc_pilot.user_goal import mark_workflow_passed
+
+        goal_adv = mark_workflow_passed(project_root, wid)
+        if goal_adv:
+            payload["user_goal"] = goal_adv.get("goal")
+            payload["user_goal_next_workflow_id"] = goal_adv.get("next_workflow_id") or ""
+            payload["user_goal_next_summary_zh"] = goal_adv.get("next_summary_zh") or ""
+            payload["user_summary_zh"] = str(goal_adv.get("message_zh") or "")
+            payload["message_zh"] = str(goal_adv.get("message_zh") or "")
+            if goal_adv.get("next_workflow_id"):
+                payload["recommended_next_workflow"] = goal_adv["next_workflow_id"]
+                payload["primary_directive_zh"] = (
+                    "本阶段工作流已完成。"
+                    + str(goal_adv.get("message_zh") or "")
+                    + " 对人只说意图/刚完成/下一步；禁止粘贴内部字段名。"
+                    + f" 下一步：acp start {goal_adv['next_workflow_id']} "
+                    f"--project <算子目录>（若需 architecture 则带上）。"
+                )
+    except Exception:  # noqa: BLE001
+        pass
     from ascendc_pilot.todo import attach_todo
 
     return attach_todo(payload, project_root, state=fresh)

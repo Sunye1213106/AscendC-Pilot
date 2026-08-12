@@ -199,7 +199,7 @@ def find_uo_product(
     op_name: str = "",
     architecture: str = "",
 ) -> Path | None:
-    """Locate the CodeMap product ``.ascendc-pilot/uo/<op>.<arch>.uo``."""
+    """Locate the CodeMap product ``.ascendc-pilot/<arch>/uo/<op>.<arch>.uo``."""
     from uo_init.store.writer import uo_product_dir, uo_product_path
 
     root = Path(op_root).expanduser().resolve()
@@ -207,24 +207,44 @@ def find_uo_product(
         p = uo_product_path(root, op_name, architecture)
         if p.is_file():
             return p
-    product_dir = uo_product_dir(root)
-    if product_dir.is_dir():
-        arch = (architecture or "").strip()
-        candidates = sorted(product_dir.glob("*.uo"))
-        if arch:
-            narrowed = [c for c in candidates if c.name.endswith(f".{arch}.uo")]
-            if narrowed:
-                if op_name:
-                    for c in narrowed:
-                        if c.name.startswith(f"{op_name}."):
-                            return c
-                return narrowed[0]
-        if op_name:
-            for c in candidates:
-                if c.name.startswith(f"{op_name}."):
-                    return c
-        if candidates:
-            return candidates[0]
+
+    # Prefer the requested arch tree; else scan all arch-scoped uo/ dirs.
+    # Also accept a one-time legacy top-level ``.ascendc-pilot/uo/*.uo``.
+    search_dirs: list[Path] = []
+    arch = (architecture or "").strip()
+    if arch:
+        search_dirs.append(uo_product_dir(root, architecture=arch))
+    pilot = root / ".ascendc-pilot"
+    if pilot.is_dir():
+        for child in sorted(pilot.iterdir()):
+            if child.is_dir() and child.name.startswith("arch"):
+                cand = child / "uo"
+                if cand not in search_dirs:
+                    search_dirs.append(cand)
+        legacy = pilot / "uo"
+        if legacy.is_dir() and legacy not in search_dirs:
+            search_dirs.append(legacy)
+
+    candidates: list[Path] = []
+    for product_dir in search_dirs:
+        if not product_dir.is_dir():
+            continue
+        candidates.extend(sorted(p for p in product_dir.glob("*.uo") if p.is_file()))
+
+    if arch:
+        narrowed = [c for c in candidates if c.name.endswith(f".{arch}.uo")]
+        if narrowed:
+            if op_name:
+                for c in narrowed:
+                    if c.name.startswith(f"{op_name}."):
+                        return c
+            return narrowed[0]
+    if op_name:
+        for c in candidates:
+            if c.name.startswith(f"{op_name}."):
+                return c
+    if candidates:
+        return candidates[0]
     return None
 
 

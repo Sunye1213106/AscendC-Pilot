@@ -2365,8 +2365,9 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/ir/unresolved.yaml",
         "uo/ir/codemap_analyze_receipt.yaml",
     ],
-    "uo-commit-v1": ["../uo/*.uo"],
-    "uo-verify-v1": ["../uo/*.uo"],
+    "uo-commit-v1": ["uo/*.uo"],
+    # verify audits the committed .uo but writes the integrity receipt under uo/checks/
+    "uo-verify-v1": ["uo/checks/integrity.yaml"],
     "integrity-v1": ["uo/checks/integrity.yaml"],
     "change-detect-v1": ["uo/diff/change_set.yaml"],
     "update-plan-v1": ["uo/summary/update_plan.yaml"],

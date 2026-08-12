@@ -64,6 +64,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "用户要求建立知识库、建库、建 UO/CodeMap、索引/分析算子、首次理解算子或指定 "
             "architecture 建图时使用——这些口语一律走本 workflow，禁止改用外部 MCP/"
             "通用代码图谱索引。"
+            "缺 architecture 时先 `acp scan-architectures --project <算子目录>` 阅读 layout/"
+            "arch 选项再 AskQuestion；禁止仓根 Glob 或翻 cmake/classify_rule 考古。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
     },
@@ -96,22 +98,28 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     },
     "tg-init": {
         "description": (
-            "测例契约与绑定：变量/IO/TilingKey 维信息提取。用户说 tg-init、建测例契约、"
-            "tilingkey 绑定时加载。默认 tilingkey_full_coverage（无需 CSV）。"
+            "建立覆盖合同（测例契约与绑定）。用户说 tg-init、建测例契约、tilingkey 绑定、"
+            "全量/全覆盖/tilingkey case/建立 TilingKey 全覆盖测试时加载。"
+            "全覆盖产品目标：写入 control/user_goal 后串联 init→plan→solve；"
+            "start 时 --intent 带全覆盖短语。默认 tilingkey_full_coverage（无需 CSV）。"
+            "对人只说「建立覆盖合同」进度与确认后果；禁止甩内部字段名。"
             "Pilot 管阶段；加载后 acp start tg-init。"
         ),
     },
     "tg-plan": {
         "description": (
-            "制定 TG 测试目标并冻结 target set。用户未指定目标时默认计划全部源码声明 TilingKey；"
-            "指定 packed keys 或维度过滤条件时只计划该子集。Plan 不构造 case、不做可达性求解。"
+            "规划测试义务并冻结目标集（全覆盖 Goal 的第二步）。"
+            "用户未指定目标时默认计划全部合法 TilingKey（覆盖全部合法 Key）；"
+            "指定 packed keys 或维度过滤时只计划该子集。Plan 不构造 case、不做可达性求解。"
+            "对人说明「规划测试义务」与批准后进入求解的后果。"
         ),
     },
     "tg-solve": {
         "description": (
-            "执行已批准 TG Plan：按轮构造→Replay→Round Analysis。"
+            "求解并生成用例（全覆盖 Goal 的第三步）：按轮构造→Replay→Round Analysis。"
             "增长符合预期则轮内对 reject 证源码引理扩 E；不符合则基于已发现 key+源码定向再构造；"
-            "直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。"
+            "直到覆盖义务关闭。未指定目标由 tg-plan 默认覆盖全部合法 Key。"
+            "对人报告求解进度与真实需人门禁，禁止粘贴内部 reason_code 当唯一说明。"
         ),
     },
     "operator": {
@@ -255,7 +263,8 @@ def _start_requirements_line(repo: Path) -> str:
     proj = "/".join(sorted(workflows_needing_project()))
     return (
         f"11. `{arch}` 启动必须同时有 `--project`（算子目录）与 `--architecture`（仓内 `arch*`）。"
-        f"缺一 → AskQuestion（arch 选项只来自扫描结果，禁止编造）；齐了 → "
+        f"缺 arch → 先 `acp scan-architectures --project …` 阅读 layout/选项再 AskQuestion"
+        f"（禁止仓根 Glob / cmake 考古；也可直接 `acp start` 拿 `ARCHITECTURE_REQUIRED`）；齐了 → "
         f"`acp start … --project … --architecture …` 一次启动。"
         f"`{uo}` 以已有 `.uo` CodeMap 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`，先 `/uo-init`；"
         f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
@@ -359,7 +368,7 @@ def validate_domain_skills(repo: Path) -> list[str]:
     return errors
 
 
-def _entry_skill_shell(wid: str, *, skill_id: str = "") -> str:
+def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     """Thin slash entry body (orchestration pointer only)."""
     lines = [
         f"# {wid}",
@@ -368,7 +377,10 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "") -> str:
         "",
     ]
     if skill_id:
-        lines.append(f"Domain method: `skills/{skill_id}/SKILL.md`.")
+        if host == "opencode":
+            lines.append(f"Domain method: `cognitive-skills/{skill_id}/SKILL.md`.")
+        else:
+            lines.append(f"Domain method: `skills/{skill_id}/SKILL.md`.")
         lines.append("")
     lines.extend(
         [
@@ -669,7 +681,15 @@ def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
             "| `{id}` | `{mode}` | `{agent}` | `{role}` | `{method}` | `{prompt}` | `{contract}` |".format(
                 id=a.get("id"),
                 mode=a.get("execution_mode") or "-",
-                agent=a.get("agent_id") or "human",
+                agent=(
+                    a.get("agent_id")
+                    or (
+                        "engine"
+                        if str(a.get("role_id") or "") == "deterministic_engine"
+                        or str(a.get("execution_mode") or "") == "deterministic"
+                        else "human"
+                    )
+                ),
                 role=a.get("role_id") or "-",
                 method=a.get("action_method_id") or "-",
                 prompt=a.get("task_prompt_id") or "-",
@@ -695,12 +715,12 @@ def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
     return body.rstrip() + "\n\n" + wrapped
 
 
-def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any]) -> str:
+def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any], *, host: str = "") -> str:
     skill_id = str(meta.get("cognitive_skill_id") or "").strip()
-    body = _entry_skill_shell(wid, skill_id=skill_id)
+    body = _entry_skill_shell(wid, skill_id=skill_id, host=host)
     body = _replace_actions_table(body, meta)
     # Short invariant pack only (full POLICY.md stays under pilot/policies/ for humans).
-    pack = _read_invariant_pack(repo)
+    pack = _host_remap_skill_paths(_read_invariant_pack(repo), host=host)
     marker = "## Composed: policy-invariants"
     if marker not in body and pack.strip():
         body = body.rstrip() + f"\n\n{marker}\n\n" + pack + "\n"
@@ -723,7 +743,15 @@ def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any]) -> str:
                 caps=",".join(a.get("capability_ids") or []) or "-",
                 method=a.get("action_method_id") or "-",
                 prompt=a.get("task_prompt_id") or "-",
-                agent=a.get("agent_id") or "human",
+                agent=(
+                    a.get("agent_id")
+                    or (
+                        "engine"
+                        if str(a.get("role_id") or "") == "deterministic_engine"
+                        or str(a.get("execution_mode") or "") == "deterministic"
+                        else "human"
+                    )
+                ),
             )
         )
         mid = str(a.get("action_method_id") or "")
@@ -822,10 +850,23 @@ def _opencode_bash_permission() -> dict[str, str]:
     }
 
 
-def _project_primary_description(repo: Path, description: str) -> str:
-    """No-op: start requirements live only in Spec-projected invariant pack item 11."""
+def _host_remap_skill_paths(text: str, *, host: str) -> str:
+    """Rewrite ``skills/<cognitive>`` → ``cognitive-skills/<cognitive>`` for OpenCode."""
+    if host != "opencode" or not text:
+        return text
+    out = text
+    for cid in COGNITIVE_SKILL_IDS:
+        out = out.replace(f"method:skills/{cid}/", f"method:cognitive-skills/{cid}/")
+        out = out.replace(f"skills/{cid}/", f"cognitive-skills/{cid}/")
+        out = out.replace(f"`skills/{cid}`", f"`cognitive-skills/{cid}`")
+        out = out.replace(f"skills/{cid}.", f"cognitive-skills/{cid}.")
+    return out
+
+
+def _project_primary_description(repo: Path, description: str, *, host: str = "") -> str:
+    """Remap skill paths in agent description for the target host."""
     del repo
-    return str(description or "")
+    return _host_remap_skill_paths(str(description or ""), host=host)
 
 
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "") -> str:
@@ -839,9 +880,13 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         remapped: list[str] = []
         for scope in read_scopes:
             s = str(scope)
-            if s.startswith("skills/") and any(
-                s.startswith(f"skills/{cid}")
-                for cid in COGNITIVE_SKILL_IDS
+            # Namespaced: method:skills/<id> → method:cognitive-skills/<id>
+            if s.startswith("method:skills/") and any(
+                s.startswith(f"method:skills/{cid}") for cid in COGNITIVE_SKILL_IDS
+            ):
+                remapped.append("method:cognitive-" + s[len("method:") :])
+            elif s.startswith("skills/") and any(
+                s.startswith(f"skills/{cid}") for cid in COGNITIVE_SKILL_IDS
             ):
                 remapped.append("cognitive-" + s)
             else:
@@ -851,8 +896,10 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
     forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
     # Short invariant pack for ALL agents (same pack as workflow skills).
-    inv_pack = _read_invariant_pack(repo)
-    desc = _project_primary_description(repo, str(agent_meta.get("description") or aid))
+    inv_pack = _host_remap_skill_paths(_read_invariant_pack(repo), host=host)
+    desc = _project_primary_description(
+        repo, str(agent_meta.get("description") or aid), host=host
+    )
     front: dict[str, Any] = {
         "name": aid,
         "description": desc,
@@ -972,11 +1019,11 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             meta.pop("disable_model_invocation", None)
         wf_meta = WORKFLOWS.get(wid) or {}
         if wid == "operator":
-            body = _entry_skill_shell(wid, skill_id="")
+            body = _entry_skill_shell(wid, skill_id="", host=host)
             hc = _read_policy(repo, "pilot-control")
             body = body.rstrip() + "\n\n## Composed: pilot-control\n\n" + hc + "\n"
         else:
-            body = _compose_skill_body(repo, wid, wf_meta)
+            body = _compose_skill_body(repo, wid, wf_meta, host=host)
         dest = out_skills / wid
         dest.mkdir(parents=True, exist_ok=True)
         skill_out = dest / "SKILL.md"
@@ -1145,7 +1192,15 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
                 if not isinstance(action, dict):
                     continue
                 aid = str(action.get("id") or "")
-                agent = str(action.get("agent_id") or "human")
+                agent = str(
+                    action.get("agent_id")
+                    or (
+                        "engine"
+                        if str(action.get("role_id") or "") == "deterministic_engine"
+                        or str(action.get("execution_mode") or "") == "deterministic"
+                        else "human"
+                    )
+                )
                 role = str(action.get("role_id") or "-")
                 # Composition index row must list the workflow agent
                 if aid and f"| `{aid}` |" in text:

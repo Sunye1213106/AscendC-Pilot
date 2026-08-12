@@ -230,7 +230,14 @@ def _build_task_prompt_stub(
         # misread as ``<op>/uo/ir/...`` (missing .ascendc-pilot) by subagents.
         lines.append("read: " + ", ".join(_abs_under_agent(str(x)) for x in dt["read"]))
     write_list = list(dt.get("write") or []) or list(write_paths or [])
-    if write_list:
+    if action_id == "kb_lookup":
+        # return_value: Explorer must not Write. Do not advertise answer.yaml /
+        # scratch as subagent write targets (Runtime materializes on finalize).
+        lines.append(
+            "write: (none — Explorer return_value only; "
+            "Runtime materializes answer.yaml on Primary finalize)"
+        )
+    elif write_list:
         lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in write_list))
     if dt.get("forbid_read"):
         lines.append("forbid_read: " + ", ".join(str(x) for x in dt["forbid_read"]))
@@ -256,24 +263,42 @@ def _build_task_prompt_stub(
     if action_id == "kb_lookup" or answer_rels:
         lines.append(
             "MUST end with one fenced yaml block `schema: kb-answer-v1` "
-            "(return_value for Primary). Do NOT Write answer.yaml — "
-            "Runtime materializes from return_value."
+            "(return_value for Primary). Do NOT Write answer.yaml or scratch — "
+            "Runtime materializes from return_value (OpenCode plugin injects "
+            "ASCENDC_ACTION_RESULT; Primary should NOT hand-write a result file)."
         )
         lines.append(
             "Do NOT write uo/checks/* or modify the `.uo` product; those are not this Action's outputs."
         )
         lines.append(
             "Hard stop: claim sufficient OR exploration budget exhausted "
-            "(uo-query≤6, ro-search≤2, Read≤2, total≤10)."
+            "(uo-query≤12, ro-search≤4, Read≤4, total≤18, hard≤22)."
         )
-    lines.extend(
-        [
-            "Return a short summary when done.",
-            "Do NOT finalize; primary runs `acp run-action "
-            + action_id
-            + " --finalize` (optionally `--result-file <kb-answer.yaml>`).",
-        ]
-    )
+        lines.append(
+            "After a directed source Read for high confidence, run "
+            "`acp inspect evidence-window --project <op> --path <rel> --lines A-B` "
+            "for evidence_window_sha256 + snippet; do not invent hashes or "
+            "self-downgrade to medium when the window proof is available."
+        )
+    if action_id == "kb_lookup":
+        lines.extend(
+            [
+                "Return a short summary when done.",
+                "Do NOT finalize; Primary runs "
+                "`acp run-action kb_lookup --finalize` "
+                "(plugin/env return_value preferred; "
+                "`--result-file` only as manual fallback).",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "Return a short summary when done.",
+                "Do NOT finalize; primary runs `acp run-action "
+                + action_id
+                + " --finalize` (optionally `--result-file <kb-answer.yaml>`).",
+            ]
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -289,6 +314,18 @@ def _uo_query_method_path(repo: Path) -> Path:
     )
 
 
+def _tg_init_audit_method_path(repo: Path) -> Path:
+    """Referee playbook for ``tg-init-audit`` (materialized as session/method.md)."""
+    return (
+        repo
+        / "skills"
+        / "testcase-generation"
+        / "capabilities"
+        / "tg-init-audit"
+        / "METHOD.md"
+    )
+
+
 def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, str]:
     """Load task prompt and optional Skill METHOD playbook.
 
@@ -299,6 +336,7 @@ def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, st
     prompt = ""
     tpid = str(action.get("task_prompt_id") or "")
     mid = str(action.get("action_method_id") or "")
+    aid = str(action.get("id") or action.get("action_id") or "")
     if tpid:
         if "/" in tpid:
             dom, name = tpid.split("/", 1)
@@ -310,6 +348,15 @@ def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, st
     # uo-query/kb-lookup → skills/operator-analysis/capabilities/uo-query/METHOD.md
     if mid.startswith("uo-query/") or tpid == "uo/codemap-query":
         mp = _uo_query_method_path(repo)
+        if mp.is_file():
+            method = mp.read_text(encoding="utf-8")
+    # tg-init/init-audit → skills/testcase-generation/capabilities/tg-init-audit/METHOD.md
+    elif (
+        mid.startswith("tg-init/init-audit")
+        or tpid == "tg/init-audit"
+        or aid == "init_audit"
+    ):
+        mp = _tg_init_audit_method_path(repo)
         if mp.is_file():
             method = mp.read_text(encoding="utf-8")
     return method, prompt
@@ -954,6 +1001,22 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         intent=f"run-action:{action_id}",
         repo_root=repo,
     )
+    if isinstance(context_slice, dict) and context_slice.get("ok") is False:
+        missing_refs = list(context_slice.get("missing_references") or [])
+        return {
+            "ok": False,
+            "error": str(context_slice.get("error") or "BUNDLE_NOT_READABLE"),
+            "reason_code": str(
+                context_slice.get("reason_code") or "CONTEXT_REFERENCES_MISSING"
+            ),
+            "missing": missing_refs,
+            "message_zh": str(
+                context_slice.get("message_zh")
+                or "Context references 缺失；禁止派发"
+            ),
+            "action_id": action_id,
+            "context_profile_id": context_profile_id,
+        }
     method, prompt = _load_method_and_prompt(repo, action)
     if execution_mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
         tpid = str(action.get("task_prompt_id") or "")
@@ -1510,8 +1573,85 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
     (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
+
+    # Materialize cognitive skill method/refs into session so subagents never
+    # hunt host-specific skill discovery paths.
+    try:
+        from ascendc_pilot.actions.method_bundle import (
+            check_bundle_readable,
+            materialize_method_bundle,
+        )
+        from ascendc_pilot.agents_registry import load_agent_meta
+
+        skill_ids = list((load_agent_meta(actor_id, str(project_root)).get("skill_ids") or []))
+        mat = materialize_method_bundle(
+            sdir,
+            skill_ids=[str(x) for x in skill_ids],
+            existing_method=method_r,
+            project_root=project_root,
+        )
+        bundle["method_materialized"] = {
+            "copied": mat.get("copied") or [],
+            "missing": mat.get("missing") or [],
+        }
+        # Session refs always readable.
+        refs_glob = f"runs/{run_id}/actions/{action_id}/refs/**"
+        if refs_glob not in read_paths:
+            read_paths.append(refs_glob)
+            lease_read_extra = True
+        else:
+            lease_read_extra = False
+        if lease_read_extra:
+            # Re-issue is heavy; append into active lease file best-effort.
+            try:
+                from ascendc_pilot.authorize.lease import load_lease, lease_path
+                import yaml as _yaml
+
+                cur = load_lease(project_root)
+                if cur and str(cur.get("status") or "") == "active":
+                    ar = list(cur.get("allowed_read_paths") or [])
+                    if refs_glob not in ar:
+                        ar.append(refs_glob)
+                        cur["allowed_read_paths"] = ar
+                        lease_path(project_root).write_text(
+                            _yaml.safe_dump(cur, allow_unicode=True, sort_keys=False),
+                            encoding="utf-8",
+                        )
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception as _mat_exc:  # noqa: BLE001
+        bundle["method_materialized"] = {"error": str(_mat_exc)[:200]}
+
     if stub:
         (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
+        # BUNDLE_NOT_READABLE: symmetric to OUTPUT_NOT_WRITABLE.
+        try:
+            from ascendc_pilot.actions.method_bundle import check_bundle_readable
+
+            br = check_bundle_readable(
+                stub=stub,
+                session_dir=sdir,
+                project_root=project_root,
+                allowed_read_paths=read_paths,
+                allowed_source_roots=list(
+                    (src_scope or {}).get("allowed_source_roots") or []
+                ),
+            )
+            if not br.get("ok"):
+                return {
+                    "ok": False,
+                    "error": "BUNDLE_NOT_READABLE",
+                    "reason_code": "BUNDLE_NOT_READABLE",
+                    "missing": br.get("missing") or [],
+                    "unleased": br.get("unleased") or [],
+                    "message_zh": br.get("message_zh")
+                    or "Action Bundle 读闭合失败；禁止派发",
+                    "action_id": action_id,
+                    "session_dir": sdir.as_posix(),
+                }
+        except Exception:  # noqa: BLE001
+            pass
+
     _dump(
         sdir / "bundle.yaml",
         {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
@@ -1600,42 +1740,30 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             attach_interaction_request,
         )
 
+        from ascendc_pilot.human_voice import (
+            build_generic_interactive_ask,
+            build_human_confirm_ask,
+            build_plan_approve_ask,
+        )
+        from ascendc_pilot.state import load_state as _load_state_for_voice
+
+        voice_state = _load_state_for_voice(project_root) or state
         if action_id == "human_confirm":
-            ask = {
-                "header": "TG Init 人工确认",
-                "question": "确认当前 TG Init 契约与绑定可以进入后续 Plan 吗？",
-                "options": [
-                    {"label": "确认", "value": "confirm"},
-                    {"label": "返工", "value": "rework"},
-                    {"label": "停止", "value": "stop"},
-                ],
-            }
+            ask = build_human_confirm_ask(project_root, voice_state)
             kind = KIND_PRIMARY_CONFIRM
+            user_summary = ask.get("question") or ""
         elif action_id == "plan_approve":
-            ask = {
-                "header": "TG Plan 批准",
-                "question": "批准当前 TG Plan 并允许进入 Solve 吗？",
-                "options": [
-                    {"label": "批准", "value": "approve"},
-                    {"label": "返工", "value": "rework"},
-                    {"label": "停止", "value": "stop"},
-                ],
-            }
+            ask = build_plan_approve_ask(project_root, voice_state)
             kind = KIND_PRIMARY_APPROVE
+            user_summary = ask.get("question") or ""
         else:
-            ask = {
-                "header": f"{action_id} 人工确认",
-                "question": f"是否继续 finalize Action `{action_id}`？",
-                "options": [
-                    {"label": "继续", "value": "confirm"},
-                    {"label": "返工", "value": "rework"},
-                    {"label": "停止", "value": "stop"},
-                ],
-            }
+            ask = build_generic_interactive_ask(action_id)
             kind = KIND_PRIMARY_CONFIRM
+            user_summary = ask.get("question") or ""
         result["needs_human_decision"] = True
         result["ask_question"] = ask
         result["action_id"] = action_id
+        result["user_summary_zh"] = user_summary
         result = attach_interaction_request(
             result,
             project_root,
@@ -1645,10 +1773,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         from ascendc_pilot.actions.tg_primary import primary_interactive_steps
 
         result["interactive_steps"] = primary_interactive_steps(action_id, project_root, result)
+        # Machine-facing dispatch note for Primary; Host shows ask_question / user_summary_zh.
         result["message_zh"] = (
-            f"已准备 primary_interactive Action `{action_id}`。"
-            f"Host 必须弹出 AskQuestion；回答经 `acp answer` 写入 HumanDecisionReceipt 后，"
-            f"才能 `--finalize`。"
+            "已准备需要你确认的步骤。请按弹出的选项作答；"
+            "作答写入后才能完成本步并进入下一阶段。"
         )
         result["dispatch_task"] = False
         return result
@@ -1662,10 +1790,14 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     )
     if str(action.get("output_mode") or "") == "return_value":
         result["message_zh"] += (
-            f" 子代理最终消息返回 kb-answer-v1；完成后 "
-            f"`acp run-action {action_id} --finalize --result-file <kb-answer.yaml>`。"
+            f" 子代理最终消息返回 kb-answer-v1（禁止 Write answer.yaml/scratch）。"
+            f" Task 结束后若 metadata 含 `ascendc_uo_query_return_value.captured=true`，"
+            f" Primary 直接 `acp run-action {action_id} --finalize`（插件注入 return_value）；"
+            f" 禁止再手写 scratch yaml。仅无插件/环境时才用 "
+            f"`--result-file <kb-answer.yaml>` fallback。"
         )
-        result["finalize_hint"] = (
+        result["finalize_hint"] = f"acp run-action {action_id} --finalize"
+        result["finalize_hint_fallback"] = (
             f"acp run-action {action_id} --finalize --result-file <kb-answer.yaml>"
         )
     else:
@@ -2250,10 +2382,11 @@ def finalize_action(
             **contract,
             "message": (
                 str(contract.get("message") or "")
-                + "; return_value 模式请提供 --result-file <kb-answer.yaml> "
-                "或写入 session action_result.yaml"
+                + "; return_value 模式：优先依赖 ASCENDC_ACTION_RESULT / "
+                "session action_result.yaml；无注入时再用 "
+                "--result-file <kb-answer.yaml> fallback"
             ).lstrip("; "),
-            "hint": "acp run-action kb_lookup --finalize --result-file <path>",
+            "hint": "acp run-action kb_lookup --finalize",
         }
 
     # apply_result was previously set by the removed semantic-parts reduce path;
@@ -2378,7 +2511,10 @@ def finalize_action(
                 "workflow_id": wid,
                 "phase": phase,
                 "action_id": action_id,
-                "actor_id": actor_id,
+                # Clear live actor so Host/authorize never remap Primary onto the
+                # producer after finalize (blocks acp complete / Primary writes).
+                "actor_id": "",
+                "last_actor_id": actor_id,
                 "role_id": session.get("role_id"),
                 "prepare_nonce": str(session.get("prepare_nonce") or ""),
                 "lease_id": str(session.get("lease_id") or ""),

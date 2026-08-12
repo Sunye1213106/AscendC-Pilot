@@ -1,4 +1,4 @@
-﻿# 历史材料
+# 历史材料
 
 本目录保存历史记录、benchmark snapshots 和 case studies。它们用于保留上下文，不是当前架构权威。
 

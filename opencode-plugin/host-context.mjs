@@ -72,6 +72,8 @@ export function readActiveActionFromContext(ctx) {
   return {
     action_id: String(ctx.action_id || "").trim(),
     actor_id: String(ctx.actor_id || "").trim(),
+    // Never fall back to workflow status (`running`) — that defeats finalized skip.
+    status: String(ctx.active_action_status || "").trim(),
   }
 }
 

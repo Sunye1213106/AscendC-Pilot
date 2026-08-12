@@ -41,6 +41,33 @@ def test_describe_architectures_has_source_counts(tmp_path: Path):
     assert "shared" in opts[0]["description"]
 
 
+def test_scan_operator_directory_returns_layout_and_arch_options(tmp_path: Path):
+    (tmp_path / "op_host" / "arch22").mkdir(parents=True)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_kernel" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_host" / "tiling.cpp").write_text("//", encoding="utf-8")
+    (tmp_path / "README.md").write_text("x", encoding="utf-8")
+    scanned = intake.scan_operator_directory(tmp_path)
+    assert scanned["ok"] is True
+    assert scanned["architectures"] == ["arch22", "arch35"]
+    assert "op_host/" in scanned["layout"]["top_level"] or "op_host" in [
+        x.rstrip("/") for x in scanned["layout"]["top_level"]
+    ]
+    assert "arch22/" in scanned["layout"]["op_host"] or "arch22" in [
+        x.rstrip("/") for x in scanned["layout"]["op_host"]
+    ]
+    labels = [o["label"] for o in scanned["ask_question"]["options"]]
+    assert labels == ["arch22", "arch35"]
+    assert "scan" in scanned["message_zh"].lower() or "architecture" in scanned["message_zh"].lower()
+
+
+def test_scan_operator_directory_rejects_non_operator(tmp_path: Path):
+    (tmp_path / "src").mkdir()
+    scanned = intake.scan_operator_directory(tmp_path)
+    assert scanned["ok"] is False
+    assert scanned["error"] == "not_operator_package"
+
+
 def test_start_intake_gate_requires_architecture_from_tree(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("UO_ARCH", raising=False)
     monkeypatch.delenv("ASCENDC_ARCH", raising=False)

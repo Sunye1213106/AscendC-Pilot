@@ -1,5 +1,6 @@
 <task>
-审计 TG init 的缺口与阻塞项，按可处置方式分类。
+审计 TG Init 产物：按 tilingkey 全覆盖 checklist 出具 `init/audit_report.yaml`。
+顶层 `status` 只能是 `pass` 或 `fail`（禁止 conditional_pass / 嵌套 verdict.status）。
 </task>
 
 <targets>
@@ -10,17 +11,33 @@
 - Project: `<PROJECT_ROOT>`
 - TG: `<TG_ROOT>`
 - UO: `<UO_ROOT>`
+- Op: `<OP_NAME>`
+- Architecture: `<ARCHITECTURE>`
 
-Init 要把覆盖义务建立在新鲜、完整的 UO 之上；审计只分类缺口，不擅自改契约或跳过证据。
-方法细节见打包 Skill `testcase-generation`（audit）。
+方法细节见 session 物化的 `method.md`（Skill `tg-init-audit` METHOD）与
+`agents/references/init-audit-schema.md`。
 </context>
 
 <instructions>
-1. 对照当前 TG init 产物与 UO 就绪状态，列出 gaps / blockers。
-2. 每个 gap 归为：`auto-fixable` / `needs human` / `needs UO rebuild`。
-3. 证据不足时保留为 blocking，禁止用猜测“修掉”。
+1. 对照 init/realization 产物，对下列 id 逐条给出 `pass|fail`：
+   `tilingkey_contract`, `declared_set_nonempty`, `binding_inventory`,
+   `host_view_aligned`, `graph_fingerprint`, `integrity_gate`。
+2. 全覆盖确定性模式下：绑定项的空 `reads` / 空 `exactness` **不是** blocker，不得因此 `fail`。
+3. 真实缺失（合同空、声明集空、指纹不一致、完整性产物缺失等）才 `fail` 并写入 `blockers`。
+4. 证据不足时对该 id 标 `fail` 并说明缺什么；禁止用猜测“修掉”。
+5. 写入 Action 声明的 audit 报告路径；完成后短摘要即可，禁止 finalize。
 </instructions>
 
 <output>
-输出分类后的 gap 清单与简短依据；写入 Action 声明的 audit 报告路径。
+```yaml
+version: 1
+status: pass | fail
+checked_at: <iso>
+op_name: <op>
+checks:
+  - { id: <checklist_id>, status: pass|fail, detail: "..." }
+blockers: []
+warnings: []
+next: "acp run-action human_confirm"
+```
 </output>

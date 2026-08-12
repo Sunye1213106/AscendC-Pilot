@@ -96,7 +96,7 @@ node_kinds:
     prefix: CON
     layer: constraints
     id_rule: content
-    id_material: [owner_id, polarity, canonical_smt]
+    id_material: [owner_id, polarity, canonical_expr]
     carries: [expr, polarity, status]
   Family:
     prefix: FAM
@@ -188,7 +188,6 @@ layers:
       - kernel/compile_model.yaml
       - kernel/variables.yaml
     optional:
-      - kernel/pipeline.yaml
       - kernel/resources.yaml
   views:
     required:

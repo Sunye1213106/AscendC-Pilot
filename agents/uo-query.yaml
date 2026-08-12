@@ -13,12 +13,11 @@ description: >
   are empty. Never write uo/checks/* or modify `.uo`. Do NOT finalize.
 skill_ids: [operator-analysis]
 read_scopes:
-- uo/**
-- ../uo/*.uo
-- runs/**
-- context/**
-- memory/**
-- skills/operator-analysis/**
+- pilot:uo/**
+- pilot:runs/**
+- pilot:context/**
+- pilot:memory/**
+- method:skills/operator-analysis/**
 write_scopes: []
 forbidden:
 - modify_pilot_state

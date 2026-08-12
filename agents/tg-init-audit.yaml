@@ -3,17 +3,19 @@ version: 1
 name_zh: TG init audit referee
 role: referee
 mode: subagent
-description: TG init audit referee. Read session prompt.md first, then skills/testcase-generation/SKILL.md.
+description: >
+  TG init audit referee. Read session prompt.md and method.md first
+  (method is materialized into the action session; do not hunt host skill paths).
 skill_ids: [testcase-generation, operator-analysis]
 read_scopes:
-- tg/**
-- uo/**
-- runs/**
-- skills/testcase-generation/**
-- skills/operator-analysis/**
+- pilot:tg/**
+- pilot:uo/**
+- pilot:runs/**
+- method:skills/testcase-generation/**
+- method:skills/operator-analysis/**
 write_scopes:
-- tg/init/audit_report.yaml
-- runs/**/actions/init_audit/**
+- pilot:tg/init/audit_report.yaml
+- pilot:runs/**/actions/init_audit/**
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

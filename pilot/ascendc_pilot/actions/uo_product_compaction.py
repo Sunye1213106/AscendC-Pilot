@@ -1,9 +1,8 @@
 """Final UO product compaction.
 
-UO is allowed to materialize a YAML/IR work tree while the compiler is running,
-but that tree is not a durable API.  After the binary CodeMap passes review,
-remove the arch-scoped work tree so the only durable UO authority is
-``.ascendc-pilot/uo/<op>.<arch>.uo``.
+UO may materialize YAML/IR under ``.ascendc-pilot/<arch>/uo/`` while compiling.
+After the binary CodeMap passes review, scrub transient work files but keep the
+durable ``*.uo`` product in the same arch-scoped tree (multi-arch friendly).
 """
 from __future__ import annotations
 
@@ -37,12 +36,6 @@ def compact_reviewed_uo(project_root: Path, result: dict[str, Any]) -> dict[str,
             "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
         }
     root = Path(project_root).expanduser().resolve()
-    formal = root / ".ascendc-pilot" / "uo"
-    try:
-        product.relative_to(formal.resolve())
-    except ValueError:
-        return {"ok": False, "skipped": "product_outside_formal_uo", "path": str(product)}
-
     try:
         from ascendc_pilot.paths import uo_root
 
@@ -51,27 +44,49 @@ def compact_reviewed_uo(project_root: Path, result: dict[str, Any]) -> dict[str,
         work = root / ".ascendc-pilot" / arch / "uo"
     work = Path(work).expanduser().resolve()
 
-    # Never allow compaction to touch the formal product namespace even if a
-    # future path helper changes shape.
-    if work == formal.resolve() or formal.resolve() in work.parents:
-        return {"ok": False, "skipped": "unsafe_worktree_path", "path": str(work)}
+    # Product must live inside the arch-scoped uo tree.
+    try:
+        product.relative_to(work)
+    except ValueError:
+        return {"ok": False, "skipped": "product_outside_arch_uo", "path": str(product)}
 
     removed_files = 0
     removed_bytes = 0
     if work.exists():
-        for p in work.rglob("*"):
+        for p in sorted(work.rglob("*"), reverse=True):
+            if p == product or not p.exists():
+                continue
             if p.is_file():
+                # Preserve every durable CodeMap product under this arch tree.
+                if p.suffix == ".uo":
+                    continue
                 removed_files += 1
                 try:
                     removed_bytes += p.stat().st_size
                 except OSError:
                     pass
-        shutil.rmtree(work)
-    # Keep an empty compatibility mount point for old is_dir() probes.  It is
-    # deliberately not an authority and contains no YAML/DB/cache products.
-    work.mkdir(parents=True, exist_ok=True)
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            elif p.is_dir():
+                try:
+                    # Drop empty dirs; leave dirs that still hold *.uo.
+                    next(p.iterdir())
+                except StopIteration:
+                    try:
+                        p.rmdir()
+                    except OSError:
+                        pass
+                except OSError:
+                    pass
 
-    remaining = [p for p in work.rglob("*") if p.is_file()]
+    work.mkdir(parents=True, exist_ok=True)
+    remaining = [
+        p
+        for p in work.rglob("*")
+        if p.is_file() and p.suffix != ".uo"
+    ]
     return {
         "ok": not remaining,
         "compacted": True,

@@ -14,10 +14,12 @@ Source → UO CodeMap → TG / CE
 
 ```text
 <operator-repo>/.ascendc-pilot/
-├── uo/
-│   └── <op_name>.<arch>.uo        # Canonical Operator CodeMap
-└── <arch>/
-    ├── uo/                        # UO projections / receipts
+├── control/                       # arch-neutral control plane
+└── <arch>/                        # e.g. arch35 / arch22 (multi-arch siblings)
+    ├── uo/
+    │   ├── <op_name>.<arch>.uo    # Canonical Operator CodeMap (durable)
+    │   ├── checks/                # verify receipts (work tree)
+    │   └── ir/ …                  # transient UO work (compacted after review)
     ├── tg/                        # contract / plan / closure / replay
     ├── ce/                        # review / impact
     ├── state/                     # workflow state / lease
@@ -28,7 +30,7 @@ Source → UO CodeMap → TG / CE
     └── cache/                     # rebuildable cache
 ```
 
-顶层 `uo/<op_name>.<arch>.uo` 是对外 CodeMap 产品。`state/` / `runs/` 属 Pilot；`context/` / `cache/` 可重建；`local/` 属于算子仓扩展，不进入 Pilot 通用实现。
+`<arch>/uo/<op_name>.<arch>.uo` 是对外 CodeMap 产品，与同目录工作树共存（多架构时各占一个 `<arch>/`）。`control/` 与 `state/` / `runs/` 属 Pilot；`context/` / `cache/` 可重建；`local/` 属于算子仓扩展，不进入 Pilot 通用实现。
 
 ## 产物分层
 
@@ -62,7 +64,7 @@ Producer → Staging → Check / Review → Finalize → Canonical
 
 | 区域 | 主要写入者 | 消费者 |
 | --- | --- | --- |
-| `uo/<op>.<arch>.uo` | UO deterministic commit | Query / TG / CE |
+| `<arch>/uo/<op>.<arch>.uo` | UO deterministic commit | Query / TG / CE |
 | `<arch>/tg/closure/**` | TG finalizer | TG / regression |
 | `<arch>/state/**` | Pilot Runtime | Pilot |
 | `<arch>/runs/**` | 当前 Action | Checker / recovery |

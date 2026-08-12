@@ -164,12 +164,24 @@ def _fit_slice_doc_to_budget(slice_doc: dict[str, Any], budget: int) -> list[str
 
 def _repo_root_from_project(project_root: Path) -> Path:
     # project_root is the operator dir; AscendC-Pilot repo is a sibling or cwd.
-    # Prefer env/cwd discovery: walk up for skills/ + pilot/.
+    # Prefer env/cwd discovery: walk up for skills/ + pilot/ (or cognitive-skills/).
     def _looks_like_repo(base: Path) -> bool:
         skills = base / "skills"
-        if not (base / "pilot").is_dir() or not skills.is_dir():
+        cog = base / "cognitive-skills"
+        if not (base / "pilot").is_dir():
+            # Installed plugin bundle: cognitive-skills without pilot/
+            if cog.is_dir() and any(
+                (cog / name).is_dir()
+                for name in (
+                    "operator-analysis",
+                    "testcase-generation",
+                    "source-proof",
+                    "code-review",
+                )
+            ):
+                return True
             return False
-        return any(
+        if skills.is_dir() and any(
             (skills / name).is_dir()
             for name in (
                 "operator-analysis",
@@ -178,12 +190,20 @@ def _repo_root_from_project(project_root: Path) -> Path:
                 "code-review",
                 "domain",
             )
-        )
+        ):
+            return True
+        if cog.is_dir():
+            return True
+        return False
 
     cur = Path(project_root).expanduser().resolve()
     for base in [cur, *cur.parents]:
         if _looks_like_repo(base):
             return base
+    # Installed OpenCode plugin tree
+    home_plug = Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin"
+    if _looks_like_repo(home_plug):
+        return home_plug
     cwd = Path.cwd().resolve()
     if _looks_like_repo(cwd):
         return cwd
@@ -362,12 +382,36 @@ def _run_query(
 
 
 def _load_references(repo: Path, refs: tuple[str, ...]) -> list[dict[str, str]]:
+    """Load profile references. Missing paths are marked ``status: missing``;
+
+    callers must fail-closed (``BUNDLE_NOT_READABLE`` / prepare abort) — do not
+    silently degrade for the model.
+    """
     out: list[dict[str, str]] = []
     for rel in refs:
         path = repo / rel
         if not path.is_file():
-            out.append({"path": rel, "status": "missing"})
-            continue
+            # OpenCode installs cognitive skills under cognitive-skills/.
+            alt = rel
+            if rel.startswith("skills/"):
+                alt = "cognitive-" + rel
+            alt_path = repo / alt
+            home_alt = (
+                Path.home()
+                / ".config"
+                / "opencode"
+                / "ascendc-pilot-plugin"
+                / alt
+            )
+            if alt_path.is_file():
+                path = alt_path
+                rel = alt
+            elif home_alt.is_file():
+                path = home_alt
+                rel = alt
+            else:
+                out.append({"path": rel, "status": "missing"})
+                continue
         text = path.read_text(encoding="utf-8")
         # Per-reference cap prevents one document from dominating before the
         # final bundle-level budget pass.
@@ -379,6 +423,19 @@ def _load_references(repo: Path, refs: tuple[str, ...]) -> list[dict[str, str]]:
                 "text": text[:max_chars] + ("\n…(truncated)…" if len(text) > max_chars else ""),
             }
         )
+    return out
+
+
+def missing_reference_paths(references: list[dict[str, str]] | None) -> list[str]:
+    """Paths recorded as missing by ``_load_references``."""
+    out: list[str] = []
+    for row in references or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "") == "missing":
+            p = str(row.get("path") or "").strip()
+            if p:
+                out.append(p)
     return out
 
 
@@ -482,6 +539,7 @@ def compile_context_slice(
             )
 
     references = _load_references(repo, profile.references)
+    missing_refs = missing_reference_paths(references)
     prior = _prior_failure(project_root, action_id) if profile.include_prior_failure else None
 
     slice_doc: dict[str, Any] = {
@@ -495,7 +553,18 @@ def compile_context_slice(
         "excluded": list(profile.excluded),
         "query_errors": query_errors,
         "token_budget": profile.token_budget,
+        # Fail-closed: missing references must not silently degrade the agent.
+        "ok": not missing_refs,
+        "missing_references": missing_refs,
     }
+    if missing_refs:
+        slice_doc["error"] = "BUNDLE_NOT_READABLE"
+        slice_doc["reason_code"] = "CONTEXT_REFERENCES_MISSING"
+        slice_doc["message_zh"] = (
+            "Context profile 引用的 references 缺失："
+            + ", ".join(missing_refs[:8])
+            + "；禁止派发（禁止静默 missing 降级）。"
+        )
     trim_receipts = _fit_slice_doc_to_budget(slice_doc, profile.token_budget)
     slice_doc["budget_receipts"] = trim_receipts
     slice_doc["token_estimate"] = _estimate_tokens(_model_payload(slice_doc))
@@ -535,4 +604,10 @@ def maybe_compile_slice(
     )
 
 
-__all__ = ["compile_context_slice", "maybe_compile_slice", "get_profile", "ContextProfile"]
+__all__ = [
+    "compile_context_slice",
+    "maybe_compile_slice",
+    "get_profile",
+    "ContextProfile",
+    "missing_reference_paths",
+]

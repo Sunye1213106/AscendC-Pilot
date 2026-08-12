@@ -9,7 +9,7 @@ Inputs that may exist without a Workflow Spec producer use external roots
 (context/**, local/**, runs/**, source trees, control/**).
 
 Formal UO handoff is modeled as logical resources:
-  ../uo/*.uo / uo:product / uo:view:*
+  uo/*.uo / uo:product / uo:view:*
 produced by uo-commit (output contract uo-commit-v1).
 """
 
@@ -43,7 +43,7 @@ _UO_LOGICAL = {
     "uo:view:ir/operator_graph",
     "uo:view:views/kernel",
     "uo:view:views/tilingdata",
-    "../uo/*.uo",
+    "uo/*.uo",
 }
 
 
@@ -52,7 +52,7 @@ def _normalize_read(path: str) -> str:
     if not p:
         return ""
     if p == "uo" or p == "uo/**" or p.startswith("uo/"):
-        return "../uo/*.uo"
+        return "uo/*.uo"
     return p
 
 
@@ -88,7 +88,7 @@ def _collect_producers(repo: Path) -> dict[str, set[str]]:
         if not path:
             return
         producers.setdefault(path, set()).add(owner)
-        if path == "../uo/*.uo" or path.endswith(".uo"):
+        if path == "uo/*.uo" or path.endswith(".uo"):
             for logical in _UO_LOGICAL:
                 producers.setdefault(logical, set()).add(owner)
 
@@ -111,7 +111,7 @@ def _collect_producers(repo: Path) -> dict[str, set[str]]:
                 add(str(rel), owner)
 
     # Formal product ownership even if contract list is incomplete.
-    producers.setdefault("../uo/*.uo", set()).add("uo-init/commit")
+    producers.setdefault("uo/*.uo", set()).add("uo-init/commit")
     for logical in _UO_LOGICAL:
         producers.setdefault(logical, set()).add("uo-init/commit")
     return producers
@@ -151,8 +151,8 @@ def check_contract_dag(repo: Path) -> list[str]:
                 path = _normalize_read(str(raw))
                 if not path or _is_external(path):
                     continue
-                if path in _UO_LOGICAL or path == "../uo/*.uo":
-                    if _producer_covers(path, producers) or _producer_covers("../uo/*.uo", producers):
+                if path in _UO_LOGICAL or path == "uo/*.uo":
+                    if _producer_covers(path, producers) or _producer_covers("uo/*.uo", producers):
                         continue
                 owners = _producer_covers(path, producers)
                 if owners:

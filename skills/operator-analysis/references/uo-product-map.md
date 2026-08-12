@@ -6,7 +6,7 @@
 
 | 层 | 是什么 | 不是什么 |
 | --- | --- | --- |
-| **Semantic authority** | 已 commit 的 `.ascendc-pilot/uo/<op>.<arch>.uo` | LLM 记忆、未校验 staging |
+| **Semantic authority** | 已 commit 的 `.ascendc-pilot/<arch>/uo/<op>.<arch>.uo` | LLM 记忆、未校验 staging |
 | **Canonical representation** | `entity` / `relation` / `attribute` / `source_span`（及 `entity.data` 派生字段） | 任何可重建索引的「捷径」本身 |
 | **Materialized projections** | `view_blob/*`（加速索引） | 独立事实源；由 engine 管 freshness |
 

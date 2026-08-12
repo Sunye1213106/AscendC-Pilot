@@ -22,7 +22,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
@@ -187,18 +187,24 @@ def serialize_walk_result(result: Any) -> dict[str, Any]:
             {"key": [k[0], k[1]], "value": _to_plain(v)} for k, v in decls.items()
         ],
         "local_decls": _to_plain(result.local_decls),
+        "type_decls": _to_plain(getattr(result, "type_decls", None) or []),
+        "alias_decls": _to_plain(getattr(result, "alias_decls", None) or []),
+        "base_decls": _to_plain(getattr(result, "base_decls", None) or []),
     }
     return {"version": CACHE_VERSION, "kind": "WalkResult", "data": plain}
 
 
 def deserialize_walk_result(payload: dict[str, Any]) -> Any:
     from uo_init.clang_walk import (
+        AliasDecl,
+        BaseDecl,
         CallSite,
         CtrlNode,
         FieldDecl,
         FuncRecord,
         LocalDecl,
         PathCond,
+        TypeDecl,
         WalkResult,
         WriteRecord,
     )
@@ -258,6 +264,13 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
             path_conditions=pcs,
             receiver=str(row.get("receiver") or ""),
             column=int(row.get("column") or 0),
+            caller_usr=str(row.get("caller_usr") or ""),
+            caller_qualified=str(row.get("caller_qualified") or ""),
+            callee_usr=str(row.get("callee_usr") or ""),
+            callee_qualified=str(row.get("callee_qualified") or ""),
+            callee_decl_file=str(row.get("callee_decl_file") or ""),
+            receiver_type=str(row.get("receiver_type") or ""),
+            receiver_canonical_type=str(row.get("receiver_canonical_type") or ""),
         )
 
     def _func(name: str, row: dict[str, Any]) -> FuncRecord:
@@ -280,6 +293,8 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
             assigns=dict(row.get("assigns") or {}),
             appends={str(k): list(v) for k, v in (row.get("appends") or {}).items()},
             assign_lists={str(k): list(v) for k, v in (row.get("assign_lists") or {}).items()},
+            usr=str(row.get("usr") or ""),
+            qualified_name=str(row.get("qualified_name") or ""),
         )
 
     field_decls: dict[tuple[str, str], FieldDecl] = {}
@@ -296,6 +311,11 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
             init=val.get("init"),
             file=str(val.get("file") or ""),
             line=int(val.get("line") or 0),
+            type_text=str(val.get("type_text") or ""),
+            canonical_type=str(val.get("canonical_type") or ""),
+            owner_qualified=str(val.get("owner_qualified") or ""),
+            referenced_type_usr=str(val.get("referenced_type_usr") or ""),
+            column=int(val.get("column") or 0),
         )
 
     local_decls = [
@@ -309,6 +329,48 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
             column=int(r.get("column") or 0),
         )
         for r in (data.get("local_decls") or [])
+        if isinstance(r, dict)
+    ]
+
+    type_decls = [
+        TypeDecl(
+            name=str(r.get("name") or ""),
+            qualified_name=str(r.get("qualified_name") or ""),
+            usr=str(r.get("usr") or ""),
+            file=str(r.get("file") or ""),
+            line=int(r.get("line") or 0),
+            kind=str(r.get("kind") or "class"),
+            column=int(r.get("column") or 0),
+        )
+        for r in (data.get("type_decls") or [])
+        if isinstance(r, dict)
+    ]
+    alias_decls = [
+        AliasDecl(
+            name=str(r.get("name") or ""),
+            qualified_name=str(r.get("qualified_name") or ""),
+            target_type=str(r.get("target_type") or ""),
+            canonical_type=str(r.get("canonical_type") or ""),
+            target_usr=str(r.get("target_usr") or ""),
+            file=str(r.get("file") or ""),
+            line=int(r.get("line") or 0),
+            column=int(r.get("column") or 0),
+        )
+        for r in (data.get("alias_decls") or [])
+        if isinstance(r, dict)
+    ]
+    base_decls = [
+        BaseDecl(
+            derived_name=str(r.get("derived_name") or ""),
+            derived_usr=str(r.get("derived_usr") or ""),
+            base_name=str(r.get("base_name") or ""),
+            base_usr=str(r.get("base_usr") or ""),
+            canonical_type=str(r.get("canonical_type") or ""),
+            file=str(r.get("file") or ""),
+            line=int(r.get("line") or 0),
+            column=int(r.get("column") or 0),
+        )
+        for r in (data.get("base_decls") or [])
         if isinstance(r, dict)
     ]
 
@@ -334,6 +396,9 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
         class_fields=set(data.get("class_fields") or []),
         field_decls=field_decls,
         local_decls=local_decls,
+        type_decls=type_decls,
+        alias_decls=alias_decls,
+        base_decls=base_decls,
     )
 
 

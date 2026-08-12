@@ -22,7 +22,7 @@
 
 ```text
 架构总览
-  -> Agent Runtime（含 ACP / Harness）
+  -> Agent Runtime（ACP / Harness / Host Session Driver）
   -> UO / TG 的数据模型
   -> 产物与权威
   -> 扩展与测试
@@ -30,7 +30,7 @@
 ```
 
 - [架构总览](architecture/overview.md)
-- [Agent Runtime](architecture/agent-runtime.md)
+- [Agent Runtime](architecture/agent-runtime.md)（含 `pilot_run`、`host_step`、Bundle 读闭合）
 - [产物与权威](architecture/artifacts-and-authority.md)
 - UO 查询产品地图：[`skills/operator-analysis/references/uo-product-map.md`](../skills/operator-analysis/references/uo-product-map.md)（progressive；域文档按需）
 - [扩展指南](development/extending.md)

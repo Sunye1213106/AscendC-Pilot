@@ -277,7 +277,7 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
                 "ok": False,
                 "engine": "verify",
                 "error": "missing_uo_product",
-                "message": "commit must write .ascendc-pilot/uo/<op>.<arch>.uo",
+                "message": "commit must write .ascendc-pilot/<arch>/uo/<op>.<arch>.uo",
             }
         with step("verify.audit_uo"):
             report = audit_uo(product)

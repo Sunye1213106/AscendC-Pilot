@@ -16,15 +16,28 @@ from uo_init.ir.relation import RelationKind
 from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
-def uo_product_dir(op_root: str | Path) -> Path:
+def uo_product_dir(op_root: str | Path, *, architecture: str = "") -> Path:
+    """Arch-scoped UO tree that holds the ``*.uo`` product and work files.
+
+    ``architecture`` is required in production; when omitted, fall back to
+    pilot path discovery (env / active_run / sole arch).
+    """
     root = Path(op_root).expanduser().resolve()
-    return root / ".ascendc-pilot" / "uo"
+    arch = (architecture or "").strip()
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        return uo_root(root, arch=arch or None)
+    except Exception:
+        if not arch:
+            raise
+        return root / ".ascendc-pilot" / arch / "uo"
 
 
 def uo_product_path(op_root: str | Path, op_name: str, architecture: str) -> Path:
     safe_op = (op_name or "operator").replace("/", "_").replace("\\", "_")
     arch = require_architecture(architecture)
-    return uo_product_dir(op_root) / f"{safe_op}.{arch}.uo"
+    return uo_product_dir(op_root, architecture=arch) / f"{safe_op}.{arch}.uo"
 
 
 def _drop_unproven_direct_selection_edges(codemap: CodeMap) -> int:
