@@ -59,7 +59,7 @@ _ALLOW_BASH_READONLY_HEAD = [
     # PowerShell listing / path probes / navigation
     re.compile(
         r"^\s*(Get-ChildItem|gci|Get-Item|gi|Get-Location|gl|"
-        r"Test-Path|Resolve-Path|Get-Command|gcm|"
+        r"Test-Path|Resolve-Path|Get-Command|gcm|where(?:\.exe)?|"
         r"cd|Set-Location|sl|Push-Location|Pop-Location)\b",
         re.I,
     ),

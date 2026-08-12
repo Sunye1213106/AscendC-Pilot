@@ -129,20 +129,6 @@ def audit(repo: Path) -> list[str]:
                         errors.append(f"TASK_PROMPT_MISSING {wid}/{aid}: {tpid}")
                     else:
                         ptext = pp.read_text(encoding="utf-8")
-                        if aid == "scope_confirmation":
-                            for i, line in enumerate(ptext.splitlines(), 1):
-                                low = line.lower()
-                                if any(x in line for x in ("严禁", "禁止", "must not", "不得", "勿")):
-                                    continue
-                                if re.search(
-                                    r"acp\s+run-action\s+scope_confirmation(?!\s+--finalize)",
-                                    line,
-                                ):
-                                    errors.append(
-                                        f"{wid}/{aid}: scope prompt must not reinvoke run-action prepare "
-                                        f"(line {i})"
-                                    )
-                                    break
                         # Hardcoded owner conflicting with Spec placeholders
                         if re.search(r"(?m)^-\s*workflow_id:\s*`?(?!<WORKFLOW_ID>)[a-z0-9-]+`?\s*$", ptext):
                             # Allow only if matches Spec via placeholder preference
@@ -218,7 +204,7 @@ def audit(repo: Path) -> list[str]:
                             f"{wid}/{aid}: run-scoped contract uses unconstrained *: {rel}"
                         )
 
-            if mode == EXECUTION_PRIMARY_INTERACTIVE and aid == "scope_confirmation":
+            if mode == EXECUTION_PRIMARY_INTERACTIVE and aid in {"human_confirm", "plan_approve"}:
                 if role_id not in {"controller", "primary_interactive"}:
                     errors.append(f"{wid}/{aid}: primary_interactive should use controller role")
 

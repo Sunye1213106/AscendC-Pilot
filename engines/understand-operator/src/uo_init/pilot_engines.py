@@ -110,6 +110,29 @@ def _cann_root(ctx: dict[str, Any]) -> str:
     return str(found)
 
 
+def _cann_env_block(engine: str, ctx: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Fail closed before any clang parse when extracted CANN is incomplete."""
+    root, issues = paths.require_cann_ready((ctx or {}).get("cann_root"))
+    if not issues:
+        return None
+    detail = "; ".join(issues[:8])
+    return {
+        "ok": False,
+        "engine": engine,
+        "error": "CANN_ENV_NOT_READY",
+        "cann_root": str(root) if root else None,
+        "issues": issues,
+        "message_zh": (
+            "UO 解析前 CANN 环境未就绪。"
+            f"{detail}。"
+            "请设置 UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH，"
+            "或运行 scripts/cann_extract.py 解包到 _cann/pkg，"
+            "并确保 post_extract_fixups（含 asc/impl/include  junction）已完成。"
+            "可先执行: acp doctor"
+        ),
+    }
+
+
 def _ops_root(ctx: dict[str, Any], project_root: Path) -> str | None:
     raw = ctx.get("ops_root")
     if raw:
@@ -132,11 +155,12 @@ def _run_dir(uo: Path, ctx: dict[str, Any]) -> Path:
 
 
 def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Discover operator layout and seed the contract KB skeleton.
+    """Discover operator layout and seed the prepare working tree.
 
-    Resets ``.ascendc-pilot/uo/`` to the allowed prepare layout, seeds OPTIONAL
-    layers as ``status: not_extracted``, and writes manifest / operator /
-    layout_receipt.
+    Resets ``.ascendc-pilot/<arch>/uo/`` to runs/summary/tiling/kernel (+ cache),
+    writes manifest / operator / layout_receipt. Does **not** seed legacy layered
+    KB stubs (``flow/``, ``data_model``, ``pipeline``, …) — canonical product is
+    the single ``.uo`` CodeMap written at commit.
     """
     from uo_init.op_spec import discover
 
@@ -150,6 +174,9 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
             "error": "run_id_required",
             "message_zh": "prepare_layout 需要 Pilot state.run_id",
         }
+    blocked = _cann_env_block("prepare_layout", ctx)
+    if blocked is not None:
+        return blocked
     try:
         spec = discover(root, arch_dir=ctx.get("arch_dir"))
     except Exception as exc:  # noqa: BLE001
@@ -201,18 +228,18 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
         "manifest": (uo / "manifest.yaml").as_posix(),
         "ambiguous": bool(spec.ambiguities),
         "scrubbed_paths": scrub.get("removed") or [],
+        "seeded_not_extracted": list(scrub.get("seeded_not_extracted") or []),
         "layout_reset": bool(scrub.get("removed")),
     }
 
 
-# New-contract product roots under uo/.
-# Empty product dirs (ir/checks/…) are created on demand by export — prepare
-# only seeds meta + declared-optional stubs + the current run scope.
+# Prepare-only working dirs under <arch>/uo/.
+# Canonical product is `.ascendc-pilot/uo/<op>.<arch>.uo` (commit). Layered KB
+# YAML under flow/ / pipeline / data_model is legacy and must not be seeded.
 _UO_SEED_DIRS = (
-    "tiling",
-    "kernel",
-    "flow",
-    "summary",
+    "tiling",   # extract receipts (key_bind / families), not layered data_model
+    "kernel",   # extract receipts (fold_receipt), not pipeline/resources views
+    "summary",  # scope mirrors for gates / update fallback
     "runs",
 )
 
@@ -223,19 +250,11 @@ _DISALLOWED_TOP_DIRS = (
     "test",
     "generated",
     "ledger",
+    # Legacy layered-KB product tree — replaced by single .uo CodeMap.
+    "flow",
 )
 
-# Optional layers seeded as declared-missing so TG intake does not treat them
-# as "file absent by accident".
-_NOT_EXTRACTED_SEEDS = (
-    "tiling/data_model.yaml",
-    "kernel/pipeline.yaml",
-    "kernel/resources.yaml",
-    "flow/golden_model.yaml",
-    "flow/numerical_model.yaml",
-)
-
-# Created by extract/export; prepare must not leave them around.
+# Created by extract/analyze/export; prepare must not leave them around.
 _DEFER_UNTIL_EXPORT = (
     "ir",
     "checks",
@@ -244,9 +263,18 @@ _DEFER_UNTIL_EXPORT = (
     "review",
 )
 
+# Leftover files from the old prepare stub / layered-KB path.
+_LEGACY_STUB_FILES = (
+    "tiling/data_model.yaml",
+    "kernel/pipeline.yaml",
+    "kernel/resources.yaml",
+    "flow/golden_model.yaml",
+    "flow/numerical_model.yaml",
+)
+
 
 def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) -> dict[str, Any]:
-    """Reset uo/ to the prepare-allowed skeleton and seed OPTIONAL stubs."""
+    """Reset uo/ to the prepare-allowed skeleton (no layered-KB stubs)."""
     import shutil
 
     removed: list[str] = []
@@ -308,17 +336,13 @@ def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) 
             child.unlink()
         removed.append(child.name)
 
-    stub = {
-        "version": 1,
-        "status": "not_extracted",
-        "nodes": [],
-        "edges": [],
-        "note": "declared missing by prepare_layout (clang uo-init contract)",
-    }
-    for rel in _NOT_EXTRACTED_SEEDS:
-        _dump(uo / rel, stub)
+    for rel in _LEGACY_STUB_FILES:
+        path = uo / rel
+        if path.is_file():
+            path.unlink()
+            removed.append(rel)
 
-    return {"removed": sorted(set(removed)), "seeded_not_extracted": list(_NOT_EXTRACTED_SEEDS)}
+    return {"removed": sorted(set(removed)), "seeded_not_extracted": []}
 
 
 def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -334,6 +358,9 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root)
     run = _run_dir(uo, ctx)
+    blocked = _cann_env_block("scope_scan", ctx)
+    if blocked is not None:
+        return blocked
     try:
         spec = discover(root, arch_dir=ctx.get("arch_dir"))
         cann = _cann_root(ctx)
@@ -383,38 +410,67 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     allow_unverified = str(
         os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE") or ""
     ).strip().lower() in {"1", "true", "yes"}
+
+    def _probe_score(res: dict[str, Any]) -> tuple[int, int, list[str]]:
+        """Relevant probe errors: operator-source + any fatal (missing includes)."""
+        if "probe_relevant_errors" in res:
+            relevant = int(res.get("probe_relevant_errors") or 0)
+        else:
+            # Back-compat for older cached probe payloads.
+            op_errs = int(res.get("operator_error_count") or res.get("error_count") or 0)
+            fatals = int(res.get("fatal_count") or 0)
+            relevant = op_errs + (0 if fatals == 0 else fatals)
+        fatals = int(res.get("fatal_count") or 0)
+        samples = [str(s) for s in (res.get("samples") or [])[:5]]
+        return relevant, fatals, samples
+
+    from uo_init.progress import emit as _progress
+
+    probe_total = len(hosts) + (1 if kernel is not None else 0)
+    probe_i = 0
     for path in hosts:
+        probe_i += 1
+        _progress(f"prepare probe host ({probe_i}/{probe_total}) {path.name}")
         try:
             res = probe_diagnostics(str(path), bctx, side="host")
-            errs = int(res.get("error_count") or 0)
+            errs, fatals, samples = _probe_score(res)
         except Exception as exc:  # noqa: BLE001
             probes.append({"file": path.as_posix(), "error": str(exc)[:200]})
             host_errors += 1
             continue
         host_errors += max(errs, 0)
-        probes.append(
-            {
-                "file": path.as_posix(),
-                "errors": errs,
-                "side": "host",
-                "probe": "declarations_only",
-            }
-        )
+        entry: dict[str, Any] = {
+            "file": path.as_posix(),
+            "errors": errs,
+            "fatal": fatals,
+            "raw_error_count": int(res.get("error_count") or 0),
+            "operator_error_count": int(res.get("operator_error_count") or 0),
+            "side": "host",
+            "probe": "declarations_only",
+        }
+        if samples:
+            entry["samples"] = samples
+        probes.append(entry)
     if kernel is not None:
+        probe_i += 1
+        _progress(f"prepare probe kernel ({probe_i}/{probe_total}) {kernel.name}")
         try:
             res = probe_diagnostics(
                 str(kernel), bctx, side="kernel", dtype_variant="DT_FLOAT16"
             )
-            kernel_errors = int(res.get("error_count") or 0)
-            probes.append(
-                {
-                    "file": kernel.as_posix(),
-                    "errors": kernel_errors,
-                    "side": "kernel",
-                    "raw_error_count": kernel_errors,
-                    "probe": "declarations_only",
-                }
-            )
+            kernel_errors, fatals, samples = _probe_score(res)
+            entry = {
+                "file": kernel.as_posix(),
+                "errors": kernel_errors,
+                "fatal": fatals,
+                "side": "kernel",
+                "raw_error_count": int(res.get("error_count") or 0),
+                "operator_error_count": int(res.get("operator_error_count") or 0),
+                "probe": "declarations_only",
+            }
+            if samples:
+                entry["samples"] = samples
+            probes.append(entry)
         except Exception as exc:  # noqa: BLE001
             probes.append(
                 {"file": kernel.as_posix(), "error": str(exc)[:200], "side": "kernel"}
@@ -554,14 +610,32 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
     scope = run / "scope"
     cand = _load(scope / "candidates.yaml") or _load(uo / "summary" / "scope_candidates.yaml") or {}
     prior = _load(scope / "scope_confirmed.yaml") or _load(uo / "summary" / "scope_confirmed.yaml")
-    if str((prior or {}).get("status") or "") == "confirmed":
-        return {
-            "ok": True,
-            "engine": "scope_validate",
-            "auto": bool((prior or {}).get("auto", True)),
-            "already_validated": True,
-            "receipt": prior,
+    if isinstance(prior, dict) and str(prior.get("status") or "") == "confirmed":
+        prior_action = str(prior.get("action_id") or "").strip()
+        prior_run = str(prior.get("run_id") or "").strip()
+        ctx_run = str(ctx.get("run_id") or "").strip()
+        source = str(prior.get("source") or "").strip().lower()
+        auto = prior.get("auto")
+        machine_ok = source == "machine" or auto is True or str(auto).strip().lower() in {
+            "1",
+            "true",
+            "yes",
         }
+        # Reuse only canonical machine stamps for this run. Legacy prepare stamps
+        # and mismatched run ids must be rewritten (ses_00bb sticky false-green).
+        reusable = (
+            prior_action == "scope_confirmation"
+            and machine_ok
+            and (not ctx_run or prior_run == ctx_run)
+        )
+        if reusable:
+            return {
+                "ok": True,
+                "engine": "scope_validate",
+                "auto": bool(prior.get("auto", True)),
+                "already_validated": True,
+                "receipt": prior,
+            }
     probe_clean = bool(cand.get("probe_clean", False))
     clang_scope_status = str(cand.get("clang_scope_status") or "incomplete")
     arch_user_specified = bool(
@@ -585,6 +659,32 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             if "SCOPE_CLANG_CLOSURE_INCOMPLETE" in blockers
             else "SCOPE_VALIDATE_BLOCKED"
         )
+        probe_samples: list[str] = []
+        dirty_probes: list[dict[str, Any]] = []
+        for item in cand.get("probes") or []:
+            if not isinstance(item, dict):
+                continue
+            errs = int(item.get("errors") or 0)
+            if errs <= 0 and not item.get("error"):
+                continue
+            dirty = {
+                "file": item.get("file"),
+                "side": item.get("side"),
+                "errors": errs,
+                "fatal": item.get("fatal"),
+                "samples": list(item.get("samples") or [])[:5],
+            }
+            if item.get("error"):
+                dirty["error"] = item.get("error")
+            dirty_probes.append(dirty)
+            for sample in dirty["samples"]:
+                if sample and sample not in probe_samples:
+                    probe_samples.append(str(sample))
+        detail_zh = "范围校验失败（Clang Source Scope 不完整或探针失败），已记为 blocker；不要求人工确认文件清单"
+        if probe_samples:
+            detail_zh = (
+                f"{detail_zh}；探针样例: " + "; ".join(probe_samples[:3])
+            )
         return {
             "ok": False,
             "engine": "scope_validate",
@@ -594,10 +694,9 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             "ambiguous": bool(ambiguities),
             "probe_clean": probe_clean,
             "clang_scope_status": clang_scope_status,
-            "message_zh": (
-                "范围校验失败（Clang Source Scope 不完整或探针失败），已记为 blocker；"
-                "不要求人工确认文件清单"
-            ),
+            "probe_samples": probe_samples,
+            "dirty_probes": dirty_probes,
+            "message_zh": detail_zh,
             "error": err,
         }
     receipt = {
@@ -611,8 +710,10 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
         # Run-scoped identity is required by the Pilot output contract.
         "run_id": str(ctx.get("run_id") or ""),
         "workflow_id": str(ctx.get("workflow_id") or "uo-init"),
-        # Keep legacy action_id spelling so scope_receipt gate stays stable.
-        "action_id": str(ctx.get("action_id") or "scope_confirmation"),
+        # Gate identity for scope_receipt — always machine clang validation.
+        # Do NOT stamp the parent Action id (`prepare`); that caused
+        # SCOPE_RECEIPT_ACTION_MISMATCH after auto drain (ses_00bf).
+        "action_id": "scope_confirmation",
         "op_name": cand.get("op_name") or root.name,
         "arch_dir": cand.get("arch_dir") or "",
         "host_targets": hosts,
@@ -662,6 +763,9 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         default_with_kernel,
         profile_name,
     )
+    from uo_init.progress import emit as _progress
+
+    _progress("extract_host: building host/kernel IR bundle …")
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()

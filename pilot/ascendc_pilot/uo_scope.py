@@ -83,6 +83,7 @@ def run_uo_scope(
         "scope_scan": "scope_scan",
         "validate": "scope_validate",
         "scope_validate": "scope_validate",
+        # Deprecated aliases — still map to machine validate; prefer `acp run-action prepare`.
         "confirm": "scope_validate",
         "scope_confirm": "scope_validate",
         "checkpoint": "scope_validate",
@@ -92,7 +93,7 @@ def run_uo_scope(
         payload = {
             "ok": False,
             "error": "legacy_scope_step_removed",
-            "message_zh": f"步骤 {step} 已随旧引擎移除；请使用 prepare/scan/validate",
+            "message_zh": f"步骤 {step} 已随旧引擎移除；请使用 acp run-action prepare（machine Clang scope）",
             "step": step,
         }
         return _record_step_result(root, payload, action_id="uo_scope", step_id=step)

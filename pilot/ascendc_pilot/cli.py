@@ -11,6 +11,24 @@ from typing import Any
 from ascendc_pilot.io import configure_stdio, print_json
 
 
+def _cli_project_default() -> Path:
+    """Prefer remembered operator root over AscendC-Pilot checkout cwd."""
+    from ascendc_pilot.intake import default_cli_project
+
+    return default_cli_project()
+
+
+def _normalize_project_arg(args: argparse.Namespace) -> None:
+    """Resolve args.project through intake defaults when present."""
+    if not hasattr(args, "project"):
+        return
+    from ascendc_pilot.intake import default_cli_project
+
+    raw = getattr(args, "project", None)
+    # argparse default may already be Path.cwd(); re-resolve via intake.
+    args.project = default_cli_project(raw)
+
+
 def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
     """Apply --set / --raise-extract-limits into pilot_params + process env (ses_0662)."""
     project = Path(args.project).resolve()
@@ -92,32 +110,37 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_doctor = sub.add_parser("doctor", help="Environment precheck")
-    p_doctor.add_argument("--project", type=Path, default=Path.cwd())
+    p_doctor.add_argument("--project", type=Path, default=None)
 
     p_gates = sub.add_parser("validate-key-gates", help="Run KEY hard gates (ses_076d)")
     p_gates.add_argument("project", type=Path)
     p_gates.add_argument("--op-name", default="")
 
     p_validate = sub.add_parser("validate", help="Run all gates for the active workflow")
-    p_validate.add_argument("--project", type=Path, default=Path.cwd())
+    p_validate.add_argument("--project", type=Path, default=None)
 
     p_route = sub.add_parser("route", help="Route natural language / slash to workflow")
     p_route.add_argument("text", nargs="+")
 
     p_status = sub.add_parser("status", help="Show workflow state")
-    p_status.add_argument("--project", type=Path, default=Path.cwd())
+    p_status.add_argument("--project", type=Path, default=None)
 
     p_next = sub.add_parser("next", help="Show next allowed actions / obligations")
-    p_next.add_argument("--project", type=Path, default=Path.cwd())
+    p_next.add_argument("--project", type=Path, default=None)
 
     p_ctx = sub.add_parser("context", help="Build context pack")
-    p_ctx.add_argument("--project", type=Path, default=Path.cwd())
+    p_ctx.add_argument("--project", type=Path, default=None)
     p_ctx.add_argument("--intent", required=True)
     p_ctx.add_argument("--topic", default="")
 
     p_start = sub.add_parser("start", help="Start workflow at entry_state (idempotent if same workflow active)")
     p_start.add_argument("workflow_id")
-    p_start.add_argument("--project", type=Path, default=Path.cwd())
+    p_start.add_argument(
+        "--project",
+        type=Path,
+        default=None,
+        help="Operator package root (op_host/op_kernel). Required; never the AscendC-Pilot checkout.",
+    )
     p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
     p_start.add_argument("--force-new", action="store_true", help="Force a new run even if same workflow is active")
     p_start.add_argument(
@@ -126,18 +149,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Human AskQuestion decision for existing run: continue | reinit",
     )
     p_start.add_argument("--op-name", default="", help="Operator name for UO/TG engines")
-    p_start.add_argument("--architecture", default="", help="Target architecture (default arch35)")
+    p_start.add_argument(
+        "--architecture",
+        default="",
+        help="Target architecture (required for uo-init/tg-*; no silent arch35 default)",
+    )
     p_start.add_argument("--test-script-root", type=Path, default=None, help="Test script root")
     p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
     p_start.add_argument("--focus", default="", help="TG plan focus")
 
     p_run_sum = sub.add_parser("run-summary", help="Summarize interrupted uo-init run for AskQuestion")
-    p_run_sum.add_argument("--project", type=Path, default=Path.cwd())
+    p_run_sum.add_argument("--project", type=Path, default=None)
     p_run_sum.add_argument("--workflow", default="uo-init")
 
     p_run = sub.add_parser("run-action", help="Prepare or finalize a workflow Action (sole execution entry)")
     p_run.add_argument("action_id")
-    p_run.add_argument("--project", type=Path, default=Path.cwd())
+    p_run.add_argument("--project", type=Path, default=None)
     p_run.add_argument(
         "--finalize",
         action="store_true",
@@ -164,24 +191,24 @@ def main(argv: list[str] | None = None) -> int:
 
     p_adv = sub.add_parser("advance", help="Advance phase only if phase_gates pass")
     p_adv.add_argument("next_phase")
-    p_adv.add_argument("--project", type=Path, default=Path.cwd())
+    p_adv.add_argument("--project", type=Path, default=None)
 
     p_rework = sub.add_parser("rework", help="Follow an explicit rework edge")
-    p_rework.add_argument("--project", type=Path, default=Path.cwd())
+    p_rework.add_argument("--project", type=Path, default=None)
     p_rework.add_argument("--reason", default="", help="reason_code for selecting rework edge")
     p_rework.add_argument("--to", default="", help="optional explicit destination phase")
 
     p_done = sub.add_parser("complete", help="Mark workflow passed only if all gates succeed")
-    p_done.add_argument("--project", type=Path, default=Path.cwd())
+    p_done.add_argument("--project", type=Path, default=None)
     p_done.add_argument("--reason", default="")
 
     p_block = sub.add_parser("block", help="Mark workflow blocked/failed/human_required")
     p_block.add_argument("status", choices=["blocked", "failed", "human_required", "human"])
-    p_block.add_argument("--project", type=Path, default=Path.cwd())
+    p_block.add_argument("--project", type=Path, default=None)
     p_block.add_argument("--reason", default="")
 
     p_inspect = sub.add_parser("inspect-failure", help="Show structured last_failure / failure card")
-    p_inspect.add_argument("--project", type=Path, default=Path.cwd())
+    p_inspect.add_argument("--project", type=Path, default=None)
 
     p_ir = sub.add_parser(
         "inspect",
@@ -189,22 +216,22 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_ir_sub = p_ir.add_subparsers(dest="inspect_cmd", required=True)
     p_ir_c = p_ir_sub.add_parser("candidates", help="Summarize extract_plan_candidates")
-    p_ir_c.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_c.add_argument("--project", type=Path, default=None)
     p_ir_c.add_argument("--kind", default="alias", help="writer|receiver|alias|receiver_binding")
     p_ir_c.add_argument("--min-score", type=float, default=0.0)
     p_ir_c.add_argument("--limit", type=int, default=50)
     p_ir_t = p_ir_sub.add_parser("tasks", help="Summarize llm_tasks")
-    p_ir_t.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_t.add_argument("--project", type=Path, default=None)
     p_ir_t.add_argument("--severity", default="")
     p_ir_t.add_argument("--object-type", default="")
     p_ir_t.add_argument("--limit", type=int, default=50)
     p_ir_y = p_ir_sub.add_parser("yaml", help="Count top-level keys / list lengths in a YAML IR file")
-    p_ir_y.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_y.add_argument("--project", type=Path, default=None)
     p_ir_y.add_argument("--rel", required=True, help="Path relative to .ascendc-pilot/")
     p_ir_d = p_ir_sub.add_parser("duplicates", help="Find duplicate llm_tasks targets")
-    p_ir_d.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_d.add_argument("--project", type=Path, default=None)
     p_ir_v = p_ir_sub.add_parser("validate", help="Validate producer staging / tri-state coverage")
-    p_ir_v.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_v.add_argument("--project", type=Path, default=None)
     p_ir_v.add_argument(
         "--what",
         default="extract_plan",
@@ -215,20 +242,20 @@ def main(argv: list[str] | None = None) -> int:
         "extract-plan-obligations",
         help="汇总 extract_plan semantic_obligations / snapshot",
     )
-    p_ir_wl.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_wl.add_argument("--project", type=Path, default=None)
     p_ir_wl.add_argument("--run-id", default="")
     p_ir_cov = p_ir_sub.add_parser(
         "extract-plan-relations",
         help="汇总 semantic_relations / unresolved 计数",
     )
-    p_ir_cov.add_argument("--project", type=Path, default=Path.cwd())
+    p_ir_cov.add_argument("--project", type=Path, default=None)
     p_ir_cov.add_argument("--run-id", default="")
 
     p_ro = sub.add_parser(
         "ro-search",
         help="Readonly source search wrapper (no shell redirects)",
     )
-    p_ro.add_argument("--project", type=Path, default=Path.cwd())
+    p_ro.add_argument("--project", type=Path, default=None)
     p_ro.add_argument("--pattern", required=True)
     p_ro.add_argument("--paths", nargs="*", default=["."], help="Relative paths under project")
     p_ro.add_argument("--glob", default="*.{cpp,h,hpp,cc}", dest="file_glob")
@@ -238,27 +265,27 @@ def main(argv: list[str] | None = None) -> int:
         "retry-after-environment-fix",
         help="After human_required environment fix, restore rework_required for failed action",
     )
-    p_retry_env.add_argument("--project", type=Path, default=Path.cwd())
+    p_retry_env.add_argument("--project", type=Path, default=None)
 
     p_abort = sub.add_parser("abort", help="Abort current run (mark failed)")
-    p_abort.add_argument("--project", type=Path, default=Path.cwd())
+    p_abort.add_argument("--project", type=Path, default=None)
     p_abort.add_argument("--reason", default="aborted_by_operator")
 
     p_hashes = sub.add_parser("spec-hashes", help="Print four Spec Hash digests")
-    p_hashes.add_argument("--project", type=Path, default=Path.cwd())
+    p_hashes.add_argument("--project", type=Path, default=None)
     p_hashes.add_argument("--workflow", default="")
 
     p_conf = sub.add_parser(
         "emit-confidence-report",
         help="Deterministic engine: assemble confidence_report + confidence_gate from KB",
     )
-    p_conf.add_argument("--project", type=Path, default=Path.cwd())
+    p_conf.add_argument("--project", type=Path, default=None)
     p_conf.add_argument("--op-name", default="")
     p_conf.add_argument("--no-write-report", action="store_true", help="do not rewrite confidence_report.md")
     p_conf.add_argument("--no-skeleton", action="store_true", help="deprecated alias for --no-write-report")
 
     p_auth = sub.add_parser("authorize", help="Authorize tool call (OpenCode plugin hook)")
-    p_auth.add_argument("--project", type=Path, default=Path.cwd())
+    p_auth.add_argument("--project", type=Path, default=None)
     p_auth.add_argument("--tool", required=True)
     p_auth.add_argument("--command", default="")
     p_auth.add_argument("--path", default="")
@@ -279,7 +306,7 @@ def main(argv: list[str] | None = None) -> int:
         ],
         help="Deterministic scope step",
     )
-    p_scope.add_argument("--project", type=Path, default=Path.cwd())
+    p_scope.add_argument("--project", type=Path, default=None)
     p_scope.add_argument("--op-name", default="")
     p_scope.add_argument("--architecture", default="arch35")
     p_scope.add_argument(
@@ -290,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
     p_scope.add_argument("--notes", default="")
 
     p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
-    p_uq.add_argument("--project", type=Path, default=Path.cwd())
+    p_uq.add_argument("--project", type=Path, default=None)
     p_uq.add_argument("--op-name", default="")
     p_uq.add_argument("--pattern", default="")
     p_uq.add_argument("--target", default="")
@@ -328,7 +355,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         p_ex = p_uo_sub.add_parser(explain_name, help=help_zh)
         p_ex.add_argument("entity_id", nargs="?", default="", help="实体 id / 字段名 / 检索词")
-        p_ex.add_argument("--project", type=Path, default=Path.cwd())
+        p_ex.add_argument("--project", type=Path, default=None)
         p_ex.add_argument("--op-name", default="")
         p_ex.add_argument("--file", default="")
         p_ex.add_argument("--line", type=int, default=0)
@@ -341,12 +368,12 @@ def main(argv: list[str] | None = None) -> int:
         default="",
         help="view 名/别名：manifest, quality, tilingdata, kernel, …",
     )
-    p_dump.add_argument("--project", type=Path, default=Path.cwd())
+    p_dump.add_argument("--project", type=Path, default=None)
     p_dump.add_argument("--out", type=Path, default=None, help="输出路径（省略则打印 YAML）")
     p_dump.add_argument("--list", action="store_true", help="列出 DB 中可用 view")
     p_loc = p_uo_sub.add_parser("locate", help="定位实体源码 file:line")
     p_loc.add_argument("query", help="实体 id / 维名 / 字段名 / 分支 id")
-    p_loc.add_argument("--project", type=Path, default=Path.cwd())
+    p_loc.add_argument("--project", type=Path, default=None)
     p_loc.add_argument("--kind", default="", help="逗号分隔 node kinds")
     p_loc.add_argument(
         "--mode",
@@ -361,18 +388,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_dbg_sub = p_dbg.add_subparsers(dest="debug_cmd", required=True)
     p_dbg_on = p_dbg_sub.add_parser("enable", help="Enable debug capture")
-    p_dbg_on.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_on.add_argument("--project", type=Path, default=None)
     p_dbg_on.add_argument("--global", dest="global_scope", action="store_true")
     p_dbg_on.add_argument("--thought-char-limit", type=int, default=2500)
     p_dbg_on.add_argument("--parent-session-id", default="", help="Host session id (ses_…)")
     p_dbg_off = p_dbg_sub.add_parser("disable", help="Disable debug capture")
-    p_dbg_off.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_off.add_argument("--project", type=Path, default=None)
     p_dbg_off.add_argument("--global", dest="global_scope", action="store_true")
     p_dbg_st = p_dbg_sub.add_parser("status", help="Show debug config + recent anomalies")
-    p_dbg_st.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_st.add_argument("--project", type=Path, default=None)
     p_dbg_st.add_argument("--limit", type=int, default=20)
     p_dbg_exp = p_dbg_sub.add_parser("export-session", help="Export run + anomalies (+ transcript if found)")
-    p_dbg_exp.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_exp.add_argument("--project", type=Path, default=None)
     p_dbg_exp.add_argument("--reason", default="manual")
     p_dbg_exp.add_argument("--subagent", default="")
     p_dbg_exp.add_argument("--session-id", default="", help="Child/task session id (ses_…)")
@@ -390,7 +417,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_hook = p_dbg_sub.add_parser("hook", help="Hook stdin JSON handler (Cursor/OpenCode)")
     p_dbg_hook.add_argument("event", help="postToolUseFailure | afterAgentThought | subagentStop | …")
     p_dbg_rec = p_dbg_sub.add_parser("record-tool-failure", help="Manually record a tool failure")
-    p_dbg_rec.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_rec.add_argument("--project", type=Path, default=None)
     p_dbg_rec.add_argument("--tool", required=True)
     p_dbg_rec.add_argument("--error", required=True)
     p_dbg_rec.add_argument("--agent", default="")
@@ -402,13 +429,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Record even if classifier says this is not a real failure",
     )
     p_dbg_th = p_dbg_sub.add_parser("record-thought", help="Analyze/record a thought blob")
-    p_dbg_th.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_th.add_argument("--project", type=Path, default=None)
     p_dbg_th.add_argument("--agent", default="")
     p_dbg_th.add_argument("--text", default="")
     p_dbg_th.add_argument("--stdin", action="store_true")
 
     p_dbg_reg = p_dbg_sub.add_parser("register-child", help="Register a Task child (parent-scoped debug)")
-    p_dbg_reg.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_reg.add_argument("--project", type=Path, default=None)
     p_dbg_reg.add_argument("--parent-session-id", required=True)
     p_dbg_reg.add_argument("--child-session-id", default="")
     p_dbg_reg.add_argument("--workflow-id", default="")
@@ -425,7 +452,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_reg.add_argument("--host-reported-resumed-from", default="", dest="host_reported_resumed_from")
 
     p_dbg_patch = p_dbg_sub.add_parser("patch-child-session", help="Set child session id from Task output")
-    p_dbg_patch.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_patch.add_argument("--project", type=Path, default=None)
     p_dbg_patch.add_argument("--child-session-id", required=True)
     p_dbg_patch.add_argument("--parent-session-id", default="")
     p_dbg_patch.add_argument("--action-id", default="")
@@ -436,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_patch.add_argument("--task-result", default="")
 
     p_dbg_ev = p_dbg_sub.add_parser("record-tool-event", help="Record a tool call for debug audit")
-    p_dbg_ev.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_ev.add_argument("--project", type=Path, default=None)
     p_dbg_ev.add_argument("--tool", required=True)
     p_dbg_ev.add_argument("--parent-session-id", default="")
     p_dbg_ev.add_argument("--child-session-id", default="")
@@ -453,7 +480,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_ev.add_argument("--if-enabled", action="store_true")
 
     p_dbg_cex = p_dbg_sub.add_parser("export-child-session", help="Export registered child debug bundle")
-    p_dbg_cex.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_cex.add_argument("--project", type=Path, default=None)
     p_dbg_cex.add_argument("--child-session-id", required=True)
     p_dbg_cex.add_argument("--reason", default="manual")
     p_dbg_cex.add_argument("--subagent", default="")
@@ -464,7 +491,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     p_dbg_anom = p_dbg_sub.add_parser("record-anomaly", help="Append a debug anomaly (export failures etc.)")
-    p_dbg_anom.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_anom.add_argument("--project", type=Path, default=None)
     p_dbg_anom.add_argument("--kind", required=True)
     p_dbg_anom.add_argument("--summary", required=True)
 
@@ -472,11 +499,12 @@ def main(argv: list[str] | None = None) -> int:
         "finalize-parent-index",
         help="Write parent_session_summary.yaml + children_index.yaml",
     )
-    p_dbg_fin.add_argument("--project", type=Path, default=Path.cwd())
+    p_dbg_fin.add_argument("--project", type=Path, default=None)
     p_dbg_fin.add_argument("--parent-session-id", default="")
     p_dbg_fin.add_argument("--if-enabled", action="store_true")
 
     args = parser.parse_args(argv)
+    _normalize_project_arg(args)
 
     if args.cmd == "doctor":
         return _doctor(args.project)
@@ -535,6 +563,11 @@ def main(argv: list[str] | None = None) -> int:
         print_json(payload)
         return 2
     if args.cmd == "start":
+        from ascendc_pilot.intake import (
+            architecture_from_env,
+            start_intake_gate,
+            write_last_project_cache,
+        )
         from ascendc_pilot.run_resume import (
             apply_resume_decision,
             existing_run_decision_payload,
@@ -545,10 +578,16 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.workflows import get_workflow
 
         get_workflow(args.workflow_id)  # validate
+        arch_cli = str(getattr(args, "architecture", "") or "").strip()
+        arch = arch_cli or architecture_from_env()
+        argv_list = list(argv if argv is not None else sys.argv[1:])
+        project_explicit = any(
+            a == "--project" or a.startswith("--project=") for a in argv_list
+        )
         start_kwargs = {
             "intent": getattr(args, "intent", "") or "",
             "op_name": getattr(args, "op_name", "") or "",
-            "architecture": getattr(args, "architecture", "") or "",
+            "architecture": arch,
             "test_script_root": (
                 str(args.test_script_root.resolve())
                 if getattr(args, "test_script_root", None)
@@ -563,6 +602,16 @@ def main(argv: list[str] | None = None) -> int:
             decision = "reinit"
 
         if decision:
+            if decision == "reinit":
+                gate = start_intake_gate(
+                    project=args.project,
+                    workflow_id=args.workflow_id,
+                    architecture=arch,
+                    project_explicit=project_explicit,
+                )
+                if gate is not None:
+                    print_json(gate)
+                    return 2
             result = apply_resume_decision(
                 args.project,
                 args.workflow_id,
@@ -578,7 +627,7 @@ def main(argv: list[str] | None = None) -> int:
                         "op_name": result.get("op_name") or start_kwargs.get("op_name") or "",
                         "architecture": result.get("architecture")
                         or start_kwargs.get("architecture")
-                        or "arch35",
+                        or arch,
                         "test_script_root": result.get("test_script_root") or "",
                         "level": result.get("level") or "L0",
                         "focus": result.get("focus") or "",
@@ -591,6 +640,8 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 except Exception:  # noqa: BLE001
                     pass
+            if result.get("ok"):
+                write_last_project_cache(args.project)
             print_json(result)
             return 0 if result.get("ok") else 1
 
@@ -599,15 +650,25 @@ def main(argv: list[str] | None = None) -> int:
             print_json(payload)
             return 2
 
+        gate = start_intake_gate(
+            project=args.project,
+            workflow_id=args.workflow_id,
+            architecture=arch,
+            project_explicit=project_explicit,
+        )
+        if gate is not None:
+            print_json(gate)
+            return 2
+
         state = start_workflow(args.project, args.workflow_id, **start_kwargs)
-        # Persist acp params for subsequent context packs / engines.
+        write_last_project_cache(args.project)
         try:
             from ascendc_pilot.paths import context_root
             import yaml
 
             params = {
                 "op_name": state.get("op_name") or "",
-                "architecture": state.get("architecture") or "arch35",
+                "architecture": state.get("architecture") or arch,
                 "test_script_root": state.get("test_script_root") or "",
                 "level": state.get("level") or "L0",
                 "focus": state.get("focus") or "",
@@ -621,12 +682,22 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "run-action":
         from ascendc_pilot.actions import run_action
+        from ascendc_pilot.intake import assert_operator_project, write_last_project_cache
+
+        # Never create/use .ascendc-pilot under OpenCode cwd / monorepo parent.
+        bad = assert_operator_project(args.project, action=str(args.action_id or ""))
+        if bad is not None:
+            bad["action_id"] = args.action_id
+            print_json(bad)
+            return 2
 
         applied = _apply_run_action_limit_flags(args)
         result = run_action(args.project, args.action_id, finalize=bool(args.finalize))
         if applied:
             result = dict(result)
             result["pilot_params_updated"] = applied
+        if result.get("ok"):
+            write_last_project_cache(args.project)
         print_json(result, default=str)
         return 0 if result.get("ok") else 1
     if args.cmd == "advance":
@@ -1444,6 +1515,26 @@ def _doctor(project: Path) -> int:
             "ASCENDC_TEST_SCRIPT_ROOT / ASCENDC_CSV_CONSUMER_ROOT unset — "
             "/tg-init contract_build requires --test-script-root"
         )
+
+    # UO clang parse needs extracted CANN packages (not just ASCEND_HOME_PATH).
+    try:
+        from uo_init import paths as uo_paths
+
+        cann_root, cann_issues = uo_paths.require_cann_ready()
+        if cann_root is not None:
+            print(f"cann_root={cann_root}")
+        if cann_issues:
+            for item in cann_issues:
+                issues.append(f"cann: {item}")
+            issues.append(
+                "UO prepare/scope_scan requires extracted CANN under UO_CANN_ROOT "
+                "or _cann/pkg (see scripts/cann_extract.py); installed toolkit "
+                "ASCEND_HOME_PATH alone is not enough for BuildContext."
+            )
+        else:
+            print("cann_layout=ok")
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"cann precheck skipped: {exc}")
 
     if warnings:
         print("WARNINGS:")

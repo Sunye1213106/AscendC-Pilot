@@ -225,6 +225,17 @@ fi
 
 mkdir -p "$DEST/templates/$PLATFORM"
 echo "plugin_root=$DEST" > "$DEST/templates/$PLATFORM/install_stamp.txt"
+
+# Cache absolute acp path for OpenCode plugin (Node often has a thinner PATH).
+if command -v acp >/dev/null 2>&1; then
+  ACP_BIN="$(command -v acp)"
+  mkdir -p "$HOME/.config/opencode"
+  printf '%s\n' "$ACP_BIN" > "$HOME/.config/opencode/ascendc-harness-bin"
+  echo "Cached acp bin → $ACP_BIN"
+else
+  echo "WARN: acp not on PATH after pip install; OpenCode may fail to find harness"
+fi
+
 echo "Installed AscendC-Pilot → $DEST"
 echo "Run: acp doctor"
 

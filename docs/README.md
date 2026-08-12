@@ -23,6 +23,7 @@
 ```text
 架构总览
   -> Agent Runtime
+  -> ACP Harness（Pilot / Engine / Host / 权限）
   -> UO / TG 的数据模型
   -> 产物与权威
   -> 扩展与测试
@@ -31,6 +32,7 @@
 
 - [架构总览](architecture/overview.md)
 - [Agent Runtime](architecture/agent-runtime.md)
+- [ACP Harness](modules/acp-harness.md)
 - [产物与权威](architecture/artifacts-and-authority.md)
 - [扩展指南](development/extending.md)
 - [测试与评估](development/testing.md)

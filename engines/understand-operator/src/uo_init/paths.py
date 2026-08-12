@@ -32,6 +32,18 @@ CANN_ENV_VARS = ("UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT")
 OPS_ENV_VARS = ("UO_OPS_ROOT", "OPS_ROOT", "OPS_TRANSFORMER_ROOT")
 OP_DIR_ENV_VARS = ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR")
 
+# Minimum layout for UO clang probes (extracted packages under cann_root).
+# Aligned with engines/understand-operator/spec/build_context.yaml kernel -I.
+REQUIRED_CANN_RELATIVE = (
+    "cann-asc-devkit/x86_64-linux/asc/include",
+    "cann-asc-devkit/x86_64-linux/asc/include/basic_api",
+    "cann-asc-devkit/x86_64-linux/asc/include/utils/std",
+    "cann-asc-devkit/x86_64-linux/asc/include/utils/std/tuple.h",
+    "cann-asc-devkit/x86_64-linux/asc/impl/basic_api",
+    "cann-asc-devkit/x86_64-linux/asc/impl/include",
+    "cann-metadef/x86_64-linux/include",
+)
+
 
 def repo_root() -> Path:
     """The AscendC-Pilot checkout root."""
@@ -128,6 +140,38 @@ def cann_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
             continue
         return cand
     return None
+
+
+def cann_layout_issues(root: Path | None = None) -> list[str]:
+    """Missing pieces that block UO kernel/host clang probes.
+
+    Empty list means the extracted CANN tree is ready for prepare/scope_scan.
+    """
+    path = root if root is not None else cann_root()
+    if path is None:
+        return [
+            "CANN packages not found. Set UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH "
+            f"or extract under _cann/pkg. Looked in:\n"
+            + "\n".join(f"  {p}" for p in _cann_candidates())
+        ]
+    if not _looks_like_cann(path):
+        return [
+            f"{path} does not look like an extracted CANN root "
+            "(need cann-asc-devkit/ or cann-metadef/)."
+        ]
+    issues: list[str] = []
+    for rel in REQUIRED_CANN_RELATIVE:
+        if not (path / rel).exists():
+            issues.append(f"missing: {(path / rel).as_posix()}")
+    return issues
+
+
+def require_cann_ready(
+    explicit: str | os.PathLike[str] | None = None,
+) -> tuple[Path | None, list[str]]:
+    """Resolve cann_root and report layout issues (empty issues => ready)."""
+    root = cann_root(explicit)
+    return root, cann_layout_issues(root)
 
 
 def ops_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:

@@ -181,7 +181,7 @@ Replay 过程中会观察：
 * Runtime 状态；
 * Kernel 分支结果。
 
-对于无法通过测试触发的路径，TG 不会简单认为“没有问题”，而是引入 lemma 和 referee 机制，通过证明不可达性形成 exclusion evidence。
+对于无法通过测试触发的路径，TG 不会简单认为“没有问题”，而是在**每一轮 Replay 之后的 Round Analysis** 中引入 lemma 和 referee：增长符合预期时立刻消化 reject；增长不符合预期时基于已发现 key 定向再构造。证明不可达性形成 exclusion evidence，而不是等搜索结束再统一补锅。
 
 最终覆盖闭环：
 

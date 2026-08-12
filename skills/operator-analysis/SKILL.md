@@ -1,8 +1,10 @@
 ---
 name: operator-analysis
 description: >
-  构建、审查与查询 AscendC `.uo` CodeMap：API、Host、TilingKey、TilingData、
-  Kernel、模板、宏、编译期变量与跨层证据。首次建图、重建、完整性检查或只读查询时使用。
+  构建、刷新与查询 AscendC 算子知识库（`.uo` Operator CodeMap）：API、Host、
+  TilingKey、TilingData、Kernel、模板、宏、编译期变量与跨层证据。用户说建立知识库、
+  建库、建 CodeMap、索引/分析算子、刷新知识库或只读查询时使用；优先走 uo-init /
+  uo-update / uo-query，禁止外部 MCP 通用索引。
 ---
 
 # Operator Analysis（UO CodeMap）
@@ -24,7 +26,7 @@ prepare → extract → analyze → commit → verify
 ## 构建规则
 
 1. **确定性提取优先**：Clang、source pass、写入与结构校验由 engine 执行。
-2. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。
+2. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。探针 / include 失败时：对照算子仓官方编译文件修正 `build_context.yaml`（见 `references/codemap-build-gotchas.md`）。
 3. **关系必须有证据**：CALLS / READS / WRITES / DERIVES 等必须回到源码或 compiler provenance。
 4. **不为闭环制造公式**：复杂 Key producer 保留 producer、all-writes、guards、upstream roots 与 source span。
 5. **编译期是一等语义**：macro、compile var、template、BuildVariant、ARCH 显式建模。

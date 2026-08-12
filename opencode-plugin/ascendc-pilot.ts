@@ -245,9 +245,21 @@ function resolveAction(args: Record<string, unknown>, project: string): string {
   return String(active.action_id || "").trim()
 }
 
+function harnessBinCachePath(): string {
+  return resolve(homedir(), ".config", "opencode", "ascendc-harness-bin")
+}
+
 function resolveAcpBin(): string {
   const fromEnv = String(process.env.ASCENDC_HARNESS_BIN || "").trim()
   if (fromEnv && existsSync(fromEnv)) return fromEnv
+
+  // Written by install.ps1 / install.sh after pip installs the console script.
+  try {
+    const cached = readFileSync(harnessBinCachePath(), "utf-8").trim()
+    if (cached && existsSync(cached)) return cached
+  } catch {
+    // ignore
+  }
 
   const exeName = process.platform === "win32" ? "acp.exe" : "acp"
 
@@ -823,7 +835,10 @@ export const AscendCHarnessPlugin = async () => {
       )
 
       if (tool === "bash" || tool === "shell" || tool === "terminal") {
-        // Always authorize — including acp CLI — so containment can revoke domain steps.
+        // Do NOT rewrite agent bash to an absolute acp.exe path.
+        // OpenCode frontmatter only allows `acp *`; rewriting to
+        // `C:\...\Scripts\acp.exe --help` turns green allow into red deny (ses_00c4 follow-up).
+        // resolveAcpBin() is only for this plugin's internal spawnSync(authorize).
         const verdict = runAuthorize({
           tool: "bash",
           command,

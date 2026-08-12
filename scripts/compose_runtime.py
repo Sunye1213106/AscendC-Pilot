@@ -57,33 +57,36 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "uo-init": {
         "description": (
-            "首次构建 AscendC `.uo` CodeMap：机器解析源码范围与构建变体、抽取 CompilerFacts、"
-            "运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
+            "首次构建 AscendC 算子知识库 / Operator CodeMap（`.uo`）：机器解析源码范围与构建变体、"
+            "抽取 CompilerFacts、运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
             "semantic residual 保留在 unresolved.yaml，不由 LLM 写入 canonical UO。"
-            "用户要求建 UO/CodeMap、首次分析算子或指定 architecture 建图时使用。"
+            "用户要求建立知识库、建库、建 UO/CodeMap、索引/分析算子、首次理解算子或指定 "
+            "architecture 建图时使用——这些口语一律走本 workflow，禁止改用外部 MCP/"
+            "通用代码图谱索引。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
         "skill_id": "operator-analysis",
     },
     "uo-update": {
         "description": (
-            "在已有 `.uo` 上根据源码变更执行确定性增量刷新、重建受影响 CodeMap 关系、"
-            "校验完整性并输出差异摘要。用户要求刷新已有 UO/CodeMap 或查看源码变更对 CodeMap 的影响时使用。"
+            "在已有算子知识库 / `.uo` CodeMap 上根据源码变更执行确定性增量刷新、重建受影响 "
+            "CodeMap 关系、校验完整性并输出差异摘要。用户要求刷新知识库、更新已有 UO/CodeMap "
+            "或查看源码变更对 CodeMap 的影响时使用；禁止改用外部 MCP 重新索引。"
         ),
         "skill_id": "operator-analysis",
     },
     "uo-query": {
         "description": (
-            "只读查询已有 AscendC `.uo` CodeMap，回答 API、Host、TilingKey/TilingData、"
-            "Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问已有 UO 内容、"
-            "某个 KEY/字段/路径或 CodeMap 完整性时使用。"
+            "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap，回答 API、Host、TilingKey/"
+            "TilingData、Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问知识库内容、"
+            "已有 UO、某个 KEY/字段/路径或 CodeMap 完整性时使用。"
         ),
         "skill_id": "operator-analysis",
     },
     "uo-investigate": {
         "description": (
-            "调查 `.uo` 中保留的 unresolved semantic residual：分类根因、指出 deterministic "
-            "engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
+            "调查算子知识库 / `.uo` 中保留的 unresolved semantic residual：分类根因、指出 "
+            "deterministic engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
             "或要改进 analyzer 时使用。"
         ),
         "skill_id": "operator-analysis",
@@ -112,8 +115,9 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     },
     "tg-solve": {
         "description": (
-            "执行已批准 TG Plan：对 target set T 构造/replay case，用真实 Host witness 扩大 R，"
-            "对残差按需推导源码引理扩大 E，直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。"
+            "执行已批准 TG Plan：按轮构造→Replay→Round Analysis。"
+            "增长符合预期则轮内对 reject 证源码引理扩 E；不符合则基于已发现 key+源码定向再构造；"
+            "直到 T=(R∩T)∪E。未指定目标由 tg-plan 默认 T=D。"
         ),
         "skill_id": "testcase-generation",
     },
@@ -731,7 +735,14 @@ def _opencode_bash_permission() -> dict[str, str]:
     """
     return {
         "*": "deny",
+        # Exact + prefixed; agent must invoke bare `acp` (not absolute acp.exe path).
+        "acp": "allow",
         "acp *": "allow",
+        # Absolute Scripts path sometimes appears if Host expands PATH; keep allowlisted.
+        "*\\Scripts\\acp.exe": "allow",
+        "*\\Scripts\\acp.exe *": "allow",
+        "*/bin/acp": "allow",
+        "*/bin/acp *": "allow",
         # Locate-only search (bash tool; OpenCode Grep tool is separate → permission.grep)
         "grep *": "allow",
         "Grep *": "allow",
@@ -757,6 +768,15 @@ def _opencode_bash_permission() -> dict[str, str]:
         "gl": "allow",
         "Test-Path *": "allow",
         "Resolve-Path *": "allow",
+        # acp discovery only (ses_00c4: Get-Command was denied by frontmatter)
+        "Get-Command acp": "allow",
+        "Get-Command acp *": "allow",
+        "gcm acp": "allow",
+        "gcm acp *": "allow",
+        "where acp": "allow",
+        "where acp *": "allow",
+        "where.exe acp": "allow",
+        "where.exe acp *": "allow",
         "cd *": "allow",
         "Set-Location *": "allow",
         "sl *": "allow",
@@ -828,8 +848,8 @@ You may read:
 
 {reads}
 
-Confirmed-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
-Locate with UO KB query first, then confirmed-scope windowed `Read` — never whole-file dumps.
+Machine-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
+Locate with UO KB query / ScopeSet first, then machine-scope windowed `Read` — never whole-file dumps.
 
 You may write:
 

@@ -19,9 +19,35 @@ def test_prepare_layout_requires_run_id(tmp_path: Path):
     assert out["error"] == "run_id_required"
 
 
-def test_prepare_layout_scrubs_disallowed_and_seeds_not_extracted(tmp_path: Path):
-    """Disallowed top-level paths must not survive prepare_layout."""
+def test_prepare_layout_blocks_when_cann_missing(tmp_path: Path, monkeypatch):
+    from uo_init import paths as paths_mod
+
+    monkeypatch.setattr(paths_mod, "require_cann_ready", lambda explicit=None: (None, ["CANN missing"]))
+    out = prepare_layout(tmp_path, {"run_id": "r1"})
+    assert out["ok"] is False
+    assert out["error"] == "CANN_ENV_NOT_READY"
+
+
+def test_prepare_layout_scrubs_legacy_layers_without_stubs(tmp_path: Path, monkeypatch):
+    """Legacy layered-KB paths must not survive prepare_layout; no not_extracted stubs."""
+    from uo_init import paths as paths_mod
     from uo_init.op_spec import OpSpec
+
+    fake_cann = tmp_path / "cann"
+    for rel in paths_mod.REQUIRED_CANN_RELATIVE:
+        p = fake_cann / rel
+        if rel.endswith(".h"):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("//", encoding="utf-8")
+        else:
+            p.mkdir(parents=True, exist_ok=True)
+    (fake_cann / "cann-asc-devkit").mkdir(exist_ok=True)
+    (fake_cann / "cann-metadef").mkdir(exist_ok=True)
+    monkeypatch.setattr(
+        paths_mod,
+        "require_cann_ready",
+        lambda explicit=None: (fake_cann, []),
+    )
 
     op = tmp_path / "DummyOp"
     op.mkdir()
@@ -38,6 +64,10 @@ def test_prepare_layout_scrubs_disallowed_and_seeds_not_extracted(tmp_path: Path
     (uo / "docs_cache").mkdir()
     (uo / "docs_cache" / "x.bin").write_text("x", encoding="utf-8")
     (uo / "analysis").mkdir()
+    (uo / "flow").mkdir(parents=True)
+    (uo / "flow" / "golden_model.yaml").write_text("status: not_extracted\n", encoding="utf-8")
+    (uo / "tiling").mkdir(parents=True)
+    (uo / "tiling" / "data_model.yaml").write_text("status: not_extracted\n", encoding="utf-8")
 
     import uo_init.op_spec as op_spec_mod
 
@@ -66,12 +96,17 @@ def test_prepare_layout_scrubs_disallowed_and_seeds_not_extracted(tmp_path: Path
     assert not (uo / "ir" / "bridge.yaml").exists()
     assert not (uo / "docs_cache").exists()
     assert not (uo / "analysis").exists()
+    assert not (uo / "flow").exists()
+    assert not (uo / "tiling" / "data_model.yaml").exists()
+    assert not (uo / "kernel" / "pipeline.yaml").exists()
+    assert out.get("seeded_not_extracted") == []
     manifest = (uo / "manifest.yaml").read_text(encoding="utf-8")
     assert "kb_schema-v1" in manifest
     assert "prepared" in manifest
-    assert (uo / "flow" / "golden_model.yaml").is_file()
-    assert "not_extracted" in (uo / "flow" / "golden_model.yaml").read_text(encoding="utf-8")
     assert (uo / "runs" / "r_new" / "scope" / "layout_receipt.yaml").is_file()
+    assert (uo / "summary").is_dir()
+    assert (uo / "tiling").is_dir()
+    assert (uo / "kernel").is_dir()
 
 
 def test_resolve_gaps_autoskips_when_closed(tmp_path: Path):
@@ -101,7 +136,14 @@ def test_scope_validate_blocks_when_probe_unclean(tmp_path: Path):
         "arch_user_specified: true\n"
         "host_targets:\n"
         "  - a.cpp\n"
-        "kernel_entry: k.cpp\n",
+        "kernel_entry: k.cpp\n"
+        "probes:\n"
+        "  - file: k.cpp\n"
+        "    side: kernel\n"
+        "    errors: 1\n"
+        "    fatal: 1\n"
+        "    samples:\n"
+        "      - \"'../../../../include/utils/std/tuple.h' file not found\"\n",
         encoding="utf-8",
     )
     out = scope_validate(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
@@ -109,6 +151,8 @@ def test_scope_validate_blocks_when_probe_unclean(tmp_path: Path):
     assert out.get("blocker") is True
     assert out.get("need_human") is False
     assert "clang_probe_unclean" in (out.get("blockers") or [])
+    assert any("tuple.h" in s for s in (out.get("probe_samples") or []))
+    assert "tuple.h" in str(out.get("message_zh") or "")
 
 
 def test_scope_validate_blocks_when_clang_scope_incomplete(tmp_path: Path):
@@ -186,9 +230,15 @@ def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
         "scope_shared: 1\n",
         encoding="utf-8",
     )
+    # Parent Action id must not leak into the scope_receipt gate identity.
     out = scope_validate(
         tmp_path,
-        {"run_id": "r1", "arch_dir": "arch35", "workflow_id": "uo-init"},
+        {
+            "run_id": "r1",
+            "arch_dir": "arch35",
+            "workflow_id": "uo-init",
+            "action_id": "prepare",
+        },
     )
     assert out["ok"] is True
     assert out.get("auto") is True
@@ -197,7 +247,11 @@ def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
     assert receipt["source"] == "machine"
     assert receipt["validated"] is True
     assert receipt["clang_scope_status"] == "complete"
+    assert receipt["action_id"] == "scope_confirmation"
     assert (scope / "scope_confirmed.yaml").is_file()
+    text = (scope / "scope_confirmed.yaml").read_text(encoding="utf-8")
+    assert "action_id: scope_confirmation" in text
+    assert "action_id: prepare" not in text
 
 
 def test_scope_confirm_alias_is_scope_validate():

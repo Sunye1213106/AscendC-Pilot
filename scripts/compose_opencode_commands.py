@@ -14,13 +14,13 @@ if str(PILOT) not in sys.path:
 
 
 _DESCRIPTIONS = {
-    "uo-init": "Build and verify an AscendC Operator CodeMap",
-    "uo-update": "Refresh an existing AscendC Operator CodeMap",
-    "uo-query": "Query an existing AscendC Operator CodeMap",
-    "uo-investigate": "Investigate unresolved CodeMap gaps without mutating canonical UO",
+    "uo-init": "建立算子知识库 / Build and verify AscendC Operator CodeMap (.uo)",
+    "uo-update": "刷新算子知识库 / Refresh existing AscendC Operator CodeMap",
+    "uo-query": "查询算子知识库 / Query existing AscendC Operator CodeMap",
+    "uo-investigate": "调查知识库 gap / Investigate unresolved CodeMap gaps",
     "tg-init": "Initialize the TG contract and TilingKey binding",
     "tg-plan": "Freeze the TG coverage target set",
-    "tg-solve": "Close the approved TG target set with replay/proof evidence",
+    "tg-solve": "Close T via per-round replay analysis: lemma rejects or directed construct",
     "ce-review": "Run CodeMap-backed AscendC code review",
 }
 

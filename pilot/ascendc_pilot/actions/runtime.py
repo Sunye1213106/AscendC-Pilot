@@ -258,6 +258,14 @@ _ACTION_OWNED_ARTIFACT_NAMES = _PRODUCER_OWNED_ARTIFACT_NAMES | {
     "scope_confirmed.yaml",
     "receipt.yaml",
 }
+# Public Action is ``prepare``; machine gate stamp is ``scope_confirmation``.
+# Legacy spellings remain accepted so older receipts do not fail finalize.
+_SCOPE_GATE_ACTION_IDS = frozenset({"prepare", "scope_confirm", "scope_confirmation"})
+
+
+def _is_run_scoped_scope_artifact(path: Path) -> bool:
+    posix = path.as_posix().replace("\\", "/")
+    return path.name in {"scope_confirmed.yaml", "receipt.yaml"} and "/scope/" in posix
 
 
 def _hash_prepare_nonce(prepare_nonce: str = "", prepare_nonce_hash: str = "") -> str:
@@ -397,14 +405,13 @@ def _contract_identity_ok(
         expected_value = expected.get(field, "")
         if not expected_value or not actual or actual == expected_value:
             continue
-        # ``uo-init`` exposes the public action as ``scope_confirm`` while
-        # the scope receipt contract historically used the canonical producer
-        # id ``scope_confirmation``.  Treat these two spellings as the same
-        # owner so a valid run-scoped receipt is not rejected at finalize.
+        # Public Action is ``prepare``; machine Clang scope stamps
+        # ``scope_confirmation``. Treat the gate/Action spellings as one owner
+        # on run-scoped scope artifacts (ses_00bb).
         if (
             field == "action_id"
-            and {str(expected_value), str(actual)}
-            == {"scope_confirm", "scope_confirmation"}
+            and _is_run_scoped_scope_artifact(path)
+            and {str(expected_value), str(actual)} <= _SCOPE_GATE_ACTION_IDS
         ):
             continue
         # Shared / upstream IR (e.g. tg/init/status.yaml on tg-plan plan_precheck)
@@ -819,22 +826,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
 
     eng_ctx = _eng_ctx_from_pack(pack, state, run_id)
     prepare_engine: dict[str, Any] | None = None
-    # Producer semantic_bind: deterministic materials must exist before LLM dispatch.
-    if wid == "tg-init" and action_id == "semantic_bind" and role_id == "producer":
-        prepare_engine = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
-        if not prepare_engine.get("ok"):
-            return {
-                "ok": False,
-                "error": "SEMANTIC_BIND_PREPARE_FAILED",
-                "engine": prepare_engine,
-                "message_zh": str(prepare_engine.get("error") or "semantic_bind prepare failed"),
-            }
-        bundle["prepare_stamp"] = stamp
-        bundle["prepare_engine"] = {
-            "ok": True,
-            "inventory_path": prepare_engine.get("inventory_path"),
-            "test_script_root": prepare_engine.get("test_script_root"),
-        }
+    # semantic_bind is deterministic-only now (no LLM producer overlay). The old
+    # producer prepare_stamp path referenced an unbound `stamp` local and is gone.
     # adjudicate_llm_tasks: producer writes patches for deterministic apply.
     adjudicate_not_applicable = False
     if wid == "uo-init" and action_id == "adjudicate_llm_tasks" and role_id == "producer":
@@ -1546,21 +1539,32 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         return result
 
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
-        interactive_steps = [
-            f"acp uo-scope scan --project <PROJECT_ROOT> --architecture {architecture}",
-            "AskQuestion: continue | revise | stop | manual_supplement",
-            "acp uo-scope checkpoint --project <PROJECT_ROOT> --decision <decision>",
-            "acp uo-scope finalize --project <PROJECT_ROOT>",
-            f"acp run-action {action_id} --finalize --project <PROJECT_ROOT>",
-        ]
-        # Render project root into the interactive step list for the primary.
-        interactive_steps = [s.replace("<PROJECT_ROOT>", root_s) for s in interactive_steps]
+        # Action-specific steps; never default to retired uo-scope CLI.
+        if action_id == "human_confirm":
+            interactive_steps = [
+                f"Review {root_s}/.ascendc-pilot/tg/init/audit_report.yaml and remaining realization gaps.",
+                "AskQuestion: confirm | rework | stop",
+                f"Only after `confirm`: acp run-action human_confirm --finalize --project {root_s}",
+            ]
+        elif action_id == "plan_approve":
+            interactive_steps = [
+                f"Review the current level under {root_s}/.ascendc-pilot/tg/plan/levels/.",
+                "Check coverage_obligations.yaml, unresolved.yaml, and human-required items.",
+                "AskQuestion: approve | rework | stop",
+                f"Only after `approve`: acp run-action plan_approve --finalize --project {root_s}",
+            ]
+        else:
+            interactive_steps = [
+                f"Review the prepared bundle for Action `{action_id}` under the current workflow.",
+                "AskQuestion: continue | rework | stop",
+                f"Only after affirmative choice: acp run-action {action_id} --finalize --project {root_s}",
+            ]
         result["interactive_steps"] = interactive_steps
         result["message_zh"] = (
             f"已准备 primary_interactive Action `{action_id}`。"
             f"请在当前 primary 会话按 `primary_instructions_path` / interactive_steps 执行；"
             f"禁止 Task 派发自身或再次 `acp run-action {action_id}`（prepare）。"
-            f"完成后 `acp run-action {action_id} --finalize`。"
+            f"必须先 AskQuestion，再 `--finalize`。"
         )
         result["dispatch_task"] = False
         return result
@@ -1664,21 +1668,21 @@ def _finalize_owned_artifact_path(
 ) -> Path | None:
     from ascendc_pilot.paths import uo_root as _uo_root
 
+    scope_confirmed = (
+        _uo_root(project_root)
+        / "runs"
+        / str(session.get("run_id") or "")
+        / "scope"
+        / "scope_confirmed.yaml"
+    )
     owned: dict[str, Path] = {
         "adjudicate_llm_tasks": _uo_root(project_root) / "ir" / "semantic_patches.yaml",
         "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
         "kb_review": _uo_root(project_root) / "review" / "kb_product_review.yaml",
-        "scope_confirmation": _uo_root(project_root)
-        / "runs"
-        / str(session.get("run_id") or "")
-        / "scope"
-        / "scope_confirmed.yaml",
-        "env_probe": _uo_root(project_root) / "tk" / "env_probe.yaml",
-        "derive_fields": _uo_root(project_root) / "tk" / "derive_fields.yaml",
-        "export_codemap": _uo_root(project_root) / "tk" / "export_codemap.yaml",
-        "mine_recipe": _uo_root(project_root) / "tk" / "mine_recipe.yaml",
-        "apply_recipe": _uo_root(project_root) / "tk" / "recipe.yaml",
-        "coverage_gate": _uo_root(project_root) / "tk" / "coverage_gate.yaml",
+        # prepare owns the machine scope receipt; gate stamp remains scope_confirmation.
+        "prepare": scope_confirmed,
+        "scope_confirm": scope_confirmed,
+        "scope_confirmation": scope_confirmed,
     }
     return owned.get(action_id)
 
@@ -1764,7 +1768,20 @@ def _finalize_inject_artifact_identity(
             "path": path.as_posix(),
             "message": "artifact must be a YAML mapping to stamp identity",
         }
-    trusted = inject_trusted_identity(doc, identity)
+
+    def _stamp_scope_safe(raw: dict[str, Any]) -> dict[str, Any]:
+        """Stamp nested artifact_identity; keep top-level gate action_id."""
+        prior_action = str(raw.get("action_id") or "").strip()
+        stamped = inject_trusted_identity(raw, identity)
+        if _is_run_scoped_scope_artifact(path) or action_id in _SCOPE_GATE_ACTION_IDS:
+            # Canonical machine gate stamp — never rewrite to parent Action prepare.
+            if prior_action in _SCOPE_GATE_ACTION_IDS and prior_action != "prepare":
+                stamped["action_id"] = prior_action
+            else:
+                stamped["action_id"] = "scope_confirmation"
+        return stamped
+
+    trusted = _stamp_scope_safe(doc)
     try:
         _dump(path, trusted)
     except Exception as exc:  # noqa: BLE001
@@ -1774,8 +1791,8 @@ def _finalize_inject_artifact_identity(
             "path": path.as_posix(),
             "message": str(exc),
         }
-    # Also stamp scope receipt when present.
-    if action_id == "scope_confirmation":
+    # Also stamp scope receipt when present (prepare / scope_* owners).
+    if action_id in _SCOPE_GATE_ACTION_IDS:
         receipt = path.parent / "receipt.yaml"
         if receipt.is_file():
             try:
@@ -1789,7 +1806,7 @@ def _finalize_inject_artifact_identity(
                 }
             if isinstance(rdoc, dict):
                 try:
-                    _dump(receipt, inject_trusted_identity(rdoc, identity))
+                    _dump(receipt, _stamp_scope_safe(rdoc))
                 except Exception as exc:  # noqa: BLE001
                     return {
                         "ok": False,
@@ -2033,58 +2050,19 @@ def finalize_action(
     )
     producer_identity_ok = bool(producer_identity.get("ok"))
 
-    # adjudicate_llm_tasks finalize: reduce Map parts → canonical semantic_patches.yaml
+    # adjudicate_llm_tasks Map-reduce finalize path removed with legacy UO scripts.
     if (
         producer_identity_ok
         and wid == "uo-init"
         and action_id == "adjudicate_llm_tasks"
         and engine_result is None
+        and (Path(sdir) / "semantic_batches.yaml").is_file()
     ):
-        man_path = Path(sdir) / "semantic_batches.yaml"
-        if man_path.is_file():
-            try:
-                from ascendc_pilot.uo_artifacts import write_yaml
-                return {"ok": False, "error": "legacy_uo_scripts_removed", "message_zh": "旧 extract/semantic 路径已移除"}
-
-                reduced = reduce_semantic_parts(Path(sdir))
-                if not reduced.get("ok"):
-                    session["status"] = "finalize_failed"
-                    session["apply_result"] = reduced
-                    _dump(sdir / "session.yaml", session)
-                    return _attach_finalize_observation(
-                        project_root,
-                        {
-                            "ok": False,
-                            "phase_runtime": "finalize",
-                            "action_id": action_id,
-                            "error": "SEMANTIC_PARTS_REDUCE_FAILED",
-                            "apply_result": reduced,
-                            "message_zh": "semantic patch parts reduce 失败",
-                        },
-                        action_id=action_id,
-                        messages=list(reduced.get("errors") or [])[:20],
-                    )
-                merged = reduced.get("merged") or {
-                    "version": 1,
-                    "patches": reduced.get("patches") or [],
-                }
-                write_yaml(uo_root(project_root) / "ir" / "semantic_patches.yaml", merged)
-                session["reduce_report"] = reduced.get("report")
-            except Exception as exc:  # noqa: BLE001
-                session["status"] = "finalize_failed"
-                _dump(sdir / "session.yaml", session)
-                return _attach_finalize_observation(
-                    project_root,
-                    {
-                        "ok": False,
-                        "phase_runtime": "finalize",
-                        "action_id": action_id,
-                        "error": "SEMANTIC_PARTS_REDUCE_EXCEPTION",
-                        "message_zh": str(exc),
-                    },
-                    action_id=action_id,
-                    messages=[str(exc)],
-                )
+        return {
+            "ok": False,
+            "error": "legacy_uo_scripts_removed",
+            "message_zh": "旧 extract/semantic 路径已移除",
+        }
 
     if producer_identity_ok:
         contract = _check_output_contract(
@@ -2112,15 +2090,35 @@ def finalize_action(
             ),
         }
 
+    # apply_result was previously set by the removed semantic-parts reduce path;
+    # keep a defined local so every finalize path can report it without NameError.
+    apply_result: dict[str, Any] | None = (
+        session.get("apply_result") if isinstance(session.get("apply_result"), dict) else None
+    )
     target_violation: dict[str, Any] | None = None
 
     from ascendc_pilot.gates import run_named_gate
     from ascendc_pilot.spec_hashes import workflow_spec_hash
+    from ascendc_pilot.state import record_gate
 
     gate_results = []
     if producer_identity_ok:
         for gid in session.get("gates") or action.get("gates") or []:
             gate_results.append(run_named_gate(project_root, str(gid)))
+        # Persist Action gate outcomes into passed_gates / failed_gates so
+        # static obligations (e.g. scope_confirmed←scope_receipt) can settle
+        # without waiting for advance/complete to re-run the same gate.
+        for g in gate_results:
+            try:
+                record_gate(
+                    project_root,
+                    str(g.get("gate") or "gate"),
+                    ok=bool(g.get("ok")),
+                    detail=g if isinstance(g, dict) else None,
+                    bump=False,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
     checker_required = bool(session.get("checker_required", action.get("checker_required", True)))
     gates_ok = all(g.get("ok") for g in gate_results) if gate_results else True
@@ -2339,6 +2337,17 @@ def _attach_finalize_observation(
                 st_lf["recoveries"] = recoveries
             st["last_failure"] = st_lf
             save_state(project_root, st)
+    if str(out.get("status") or "") == "human_required":
+        from ascendc_pilot.state import describe_next
+
+        nxt = describe_next(project_root)
+        if nxt.get("ask_question"):
+            out["needs_human_decision"] = True
+            out["ask_question"] = nxt["ask_question"]
+            out["human_required"] = nxt.get("human_required")
+            out["primary_instruction_zh"] = nxt.get("primary_instruction_zh") or (
+                "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options。"
+            )
     return out
 
 

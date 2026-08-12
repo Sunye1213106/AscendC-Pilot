@@ -2126,6 +2126,9 @@ def probe_diagnostics(
     problems it looks for (missing headers, bad flags) are all reported while
     parsing declarations. Skipping function bodies keeps that answer without
     paying for the deep walk extract will do anyway.
+
+    Residuals inside CANN AscendC headers (bisheng builtins, etc.) are expected
+    under libclang; ``operator_error_count`` / fatal diagnostics decide cleanliness.
     """
     import time as _time
 
@@ -2168,18 +2171,43 @@ def probe_diagnostics(
     )
     errors = 0
     fatals = 0
+    op_errors = 0
+    op_fatals = 0
     samples: list[str] = []
+    op_needle = str(op_dir).replace("\\", "/").rstrip("/").lower()
+    path_norm = path.replace("\\", "/").lower()
     for d in tu.diagnostics:
         sev = int(d.severity)
+        if sev < 3:
+            continue
+        errors += 1
         if sev >= 4:
             fatals += 1
-        if sev >= 3:
-            errors += 1
-            if len(samples) < 5:
-                samples.append(str(d.spelling)[:200])
+        loc_file = ""
+        try:
+            if d.location.file is not None:
+                loc_file = str(d.location.file.name).replace("\\", "/").lower()
+        except Exception:  # noqa: BLE001
+            loc_file = ""
+        in_op = bool(loc_file) and (
+            loc_file == path_norm
+            or (op_needle and op_needle in loc_file)
+        )
+        if in_op:
+            op_errors += 1
+            if sev >= 4:
+                op_fatals += 1
+        if len(samples) < 5:
+            samples.append(str(d.spelling)[:200])
+    # Clean for scope: no fatals (missing includes etc.) and no errors in
+    # operator sources. CANN-header residuals under libclang are expected.
+    relevant = op_errors if fatals == 0 else op_errors + fatals
     out = {
         "error_count": errors,
         "fatal_count": fatals,
+        "operator_error_count": op_errors,
+        "operator_fatal_count": op_fatals,
+        "probe_relevant_errors": relevant,
         "samples": samples,
         "skipped_bodies": True,
     }
@@ -2190,7 +2218,8 @@ def probe_diagnostics(
             pass
     _tlog(
         f"{_time.perf_counter() - t0:7.3f}s  probe  file={name} side={side} "
-        f"cache={'store' if cache_key else 'off'} errors={errors} fatal={fatals}"
+        f"cache={'store' if cache_key else 'off'} errors={errors} fatal={fatals} "
+        f"op_errors={op_errors}"
     )
     return out
 

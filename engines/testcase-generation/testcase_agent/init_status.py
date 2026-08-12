@@ -136,7 +136,10 @@ def require_init_confirmed(project_root: Path, op_name: str) -> dict[str, Any]:
             payload={
                 "output_root": out_root.as_posix(),
                 "init_status": doc.get("status") or "missing",
-                "next": f"tg-init <算子仓> --op-name {op_name} --test-script-root <测试工具>",
+                "next": (
+                    f"/uo-init then /tg-init (op={op_name}) → init_audit → "
+                    "AskQuestion → acp run-action human_confirm --finalize"
+                ),
             },
         )
     require_kb_fingerprint_fresh(project_root, op_name, out_root=out_root, status_doc=doc)
@@ -170,7 +173,10 @@ def require_kb_fingerprint_fresh(
             payload={
                 "output_root": root.as_posix(),
                 "understand_root": uo_path.as_posix(),
-                "next": f"tg-init <算子仓> --op-name {op_name} --confirm",
+                "next": (
+                    f"/tg-init (op={op_name}) → AskQuestion → "
+                    "acp run-action human_confirm --finalize"
+                ),
             },
         )
     ok, detail = kb_fingerprint_matches(root, uo_path)
@@ -184,7 +190,10 @@ def require_kb_fingerprint_fresh(
             "understand_root": uo_path.as_posix(),
             "stored_digest": (detail.get("stored") or {}).get("digest"),
             "current_digest": (detail.get("current") or {}).get("digest"),
-            "next": f"tg-init <算子仓> --op-name {op_name} --test-script-root <测试工具> then --confirm",
+            "next": (
+                f"/uo-init then /tg-init (op={op_name}) → AskQuestion → "
+                "acp run-action human_confirm --finalize"
+            ),
         },
     )
 
@@ -206,11 +215,11 @@ def mark_init_pending(
         "updated_at": _now(),
         "artifacts": artifacts or {},
         "next": [
-            "Task Follow uo-query per needs_binding KEY → uo_query_resolve/",
-            "tg-init --merge-uo-resolve (lexicon + domain symmetry)",
-            "Task tg-init-audit → init/audit_report.yaml (pass required)",
-            "tg-init --confirm",
-            "Then tg-plan",
+            "acp run-action auto (drain tg-init deterministic phases)",
+            "Task tg-init-audit → init/audit_report.yaml (TILINGKEY_AUDIT_CHECKLIST_IDS)",
+            "AskQuestion: confirm | rework | stop",
+            "acp run-action human_confirm --finalize",
+            "Then /tg-plan",
         ],
     }
     write_init_status(out_root, doc)
@@ -253,7 +262,7 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
             payload={
                 "output_root": out_root.as_posix(),
                 "fingerprint_hint": uo_path.as_posix(),
-                "next": f"uo-init <算子仓> --op-name {op} then tg-init --confirm",
+                "next": f"/uo-init (op={op}) then /tg-init → human_confirm --finalize",
             },
         )
     doc["kb_fingerprint_digest"] = digest
@@ -296,13 +305,11 @@ def require_audit_pass(
     checklist: str = "tilingkey",
 ) -> dict[str, Any]:
     """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
-    from .resolve_policy import AUDIT_CHECKLIST_IDS, TILINGKEY_AUDIT_CHECKLIST_IDS
+    from .resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
 
-    required = (
-        TILINGKEY_AUDIT_CHECKLIST_IDS
-        if checklist in {"tilingkey", "tilingkey_full_coverage", "full"}
-        else AUDIT_CHECKLIST_IDS
-    )
+    # csv_consumer checklist removed; only tilingkey ids are accepted.
+    del checklist  # call-site compat; always tilingkey
+    required = TILINGKEY_AUDIT_CHECKLIST_IDS
 
     path = Path(out_root) / "init" / "audit_report.yaml"
     if not path.is_file():

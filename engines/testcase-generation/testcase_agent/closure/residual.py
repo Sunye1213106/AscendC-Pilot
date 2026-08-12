@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""What is left of the gap, and which way each leftover leans.
+"""What is left of the gap after each replay round.
 
-A key one dimension away from something the host already produced is most
-likely reachable and merely unfound; a key far from everything is where a
-missing lemma would be. Sorting the residue that way says whether to keep
-replaying or go back to the source.
+Used by Round Analysis immediately after Host Replay — not as an end-game
+cleanup. Near keys (distance 1) prefer directed construct from known witnesses;
+exclusive open patterns / refuse observations feed in-round lemma attempts when
+growth matched intent.
 """
 
 from __future__ import annotations

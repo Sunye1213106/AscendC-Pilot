@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -157,3 +158,21 @@ def test_completed_prepare_pipeline_blocks_duplicate_prepare(tmp_path: Path) -> 
     denied = prepare_action(tmp_path, "prepare")
     assert denied["ok"] is False
     assert denied["error"] == "PIPELINE_COMPLETE_ADVANCE_REQUIRED"
+
+
+def test_finalize_after_prepare_does_not_nameerror_on_apply_result(tmp_path: Path) -> None:
+    """Regression: finalize_action used unbound apply_result (ses_00c6 / uo-init prepare)."""
+    ensure_agent_layout(tmp_path)
+    start_workflow(tmp_path, "uo-init")
+    with patch(
+        "ascendc_pilot.actions.runtime.invoke_engine",
+        return_value={"ok": True, "engine": "uo-prepare-stub"},
+    ):
+        result = prepare_action(tmp_path, "prepare")
+    assert result.get("auto_finalize") is True
+    fin = result.get("finalize") or {}
+    assert isinstance(fin, dict)
+    # Must not crash with NameError; checker payload always exposes apply.
+    checker = fin.get("checker_result") or {}
+    assert "apply" in checker
+    assert checker["apply"] == {}

@@ -2,6 +2,16 @@
 
 **何时加载**：残差停滞、假 gap=0、E 与 R 冲突、出现未声明运行态时。
 
+## 把引理留到最后
+
+多轮 Replay 有 reject / exclusive open，却一直 SEARCH_PROGRESS，等搜索耗尽才进 lemma。  
+**对策**：`search.md` — 每轮 Round Analysis；expected growth 立刻对 reject 证引理。
+
+## 非预期增长仍盲搜
+
+Host 系统性 rewrite / ΔR 落在无关维时，重复同一 mutation，而不是用已发现 R + 源码定向构造。  
+**对策**：`search.md` 分支 B → `CONSTRUCT_TARGETS`。
+
 ## 把预测写进 R
 
 用构造目标 key 或模型预测充当可达证据。  
@@ -9,7 +19,7 @@
 
 ## 负证据进 E
 
-搜索耗尽 / 样本缺失 / 模型分数直接抬 E。  
+搜索耗尽 / 样本缺失 / 模型分数 / 单次 Replay reject 直接抬 E。  
 **对策**：`closure-safety.md` §2–3。
 
 ## 冲突时丢弃 R

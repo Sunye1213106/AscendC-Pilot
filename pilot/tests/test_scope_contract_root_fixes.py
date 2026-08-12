@@ -10,6 +10,7 @@ from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_NONEMPTY_GLOBS, OUTPUT
 from ascendc_pilot.actions.runtime import _check_output_contract
 from ascendc_pilot.authorize import authorize
 from ascendc_pilot.authorize.lease import extract_pilot_command
+from ascendc_pilot.gates import gate_scope_receipt
 from ascendc_pilot.paths import uo_root
 from ascendc_pilot.state import start_workflow
 
@@ -17,6 +18,9 @@ from ascendc_pilot.state import start_workflow
 def test_prepare_contract_is_run_scoped() -> None:
     paths = OUTPUT_CONTRACT_PATHS["uo-prepare-v1"]
     joined = ",".join(paths)
+    assert "uo/manifest.yaml" in joined
+    assert "uo/operator.yaml" in joined
+    assert "uo/ir/build_variant.yaml" in joined
     assert "uo/runs/{run_id}/scope/scope_confirmed.yaml" in joined
     assert "uo/runs/{run_id}/scope/receipt.yaml" in joined
     assert "uo/runs/*/" not in joined
@@ -24,32 +28,45 @@ def test_prepare_contract_is_run_scoped() -> None:
 
 
 def _write_prepare_scope(tmp_path: Path, run_id: str) -> Path:
+    """Production machine stamp (scope_confirmation), not parent Action prepare."""
     run = uo_root(tmp_path) / "runs" / run_id / "scope"
     run.mkdir(parents=True, exist_ok=True)
+    receipt = {
+        "status": "confirmed",
+        "source": "machine",
+        "auto": True,
+        "run_id": run_id,
+        "workflow_id": "uo-init",
+        "phase": "prepare",
+        "action_id": "scope_confirmation",
+        "probe_clean": True,
+        "clang_scope_status": "complete",
+        "scope_files": [{"path": "a.cpp"}],
+    }
     (run / "scope_confirmed.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "status": "confirmed",
-                "run_id": run_id,
-                "workflow_id": "uo-init",
-                "phase": "prepare",
-                "action_id": "prepare",
-                "confirmed_file_list": [{"path": "a.cpp"}],
-            },
-            sort_keys=False,
-        ),
+        yaml.safe_dump(receipt, sort_keys=False),
         encoding="utf-8",
     )
     (run / "receipt.yaml").write_text(
-        yaml.safe_dump({"status": "pass", "run_id": run_id}, sort_keys=False),
+        yaml.safe_dump({"ok": True, "gate": "scope_receipt", **receipt}, sort_keys=False),
         encoding="utf-8",
     )
     return run
 
 
+def _write_layout_artifacts(tmp_path: Path) -> None:
+    uo = uo_root(tmp_path)
+    uo.mkdir(parents=True, exist_ok=True)
+    (uo / "ir").mkdir(parents=True, exist_ok=True)
+    (uo / "manifest.yaml").write_text("version: 1\n", encoding="utf-8")
+    (uo / "operator.yaml").write_text("op_name: test_op\n", encoding="utf-8")
+    (uo / "ir" / "build_variant.yaml").write_text("arch: arch35\n", encoding="utf-8")
+
+
 def test_output_contract_accepts_current_run_prepare_scope(tmp_path: Path) -> None:
     state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
     run_id = str(state["run_id"])
+    _write_layout_artifacts(tmp_path)
     _write_prepare_scope(tmp_path, run_id)
     checked = _check_output_contract(
         tmp_path,
@@ -64,8 +81,30 @@ def test_output_contract_accepts_current_run_prepare_scope(tmp_path: Path) -> No
     assert checked.get("ok") is True, checked
 
 
+def test_ses_00bb_prepare_accepts_scope_confirmation_stamp(tmp_path: Path) -> None:
+    """Engine stamps scope_confirmation; prepare finalize must not OWNER_MISMATCH."""
+    state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    run_id = str(state["run_id"])
+    _write_layout_artifacts(tmp_path)
+    _write_prepare_scope(tmp_path, run_id)
+    checked = _check_output_contract(
+        tmp_path,
+        "uo-prepare-v1",
+        run_id=run_id,
+        workflow_id="uo-init",
+        phase="prepare",
+        action_id="prepare",
+        actor_id="ascendc-pilot",
+        role_id="controller",
+    )
+    assert checked.get("ok") is True, checked
+    gate = gate_scope_receipt(tmp_path, uo_root(tmp_path))
+    assert gate.get("ok") is True, gate
+
+
 def test_summary_only_scope_does_not_satisfy_prepare_contract(tmp_path: Path) -> None:
     state = start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True)
+    _write_layout_artifacts(tmp_path)
     summary = uo_root(tmp_path) / "summary"
     summary.mkdir(parents=True)
     (summary / "scope_confirmed.yaml").write_text("status: confirmed\n", encoding="utf-8")

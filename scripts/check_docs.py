@@ -103,14 +103,14 @@ def check_agent_matrix(errors: list[str]) -> None:
 
 
 def check_engines_doc(errors: list[str]) -> None:
-    path = ROOT / "docs" / "modules" / "engines.md"
+    path = ROOT / "docs" / "modules" / "acp-harness.md"
     if not path.is_file():
-        errors.append("missing docs/modules/engines.md")
+        errors.append("missing docs/modules/acp-harness.md")
         return
     text = path.read_text(encoding="utf-8")
     for name in ENGINE_NAMES:
         if f"`{name}`" not in text:
-            errors.append(f"engines.md missing {name}")
+            errors.append(f"acp-harness.md missing engine {name}")
 
 
 def check_generated_references_fresh(errors: list[str]) -> None:

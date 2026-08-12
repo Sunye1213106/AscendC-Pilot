@@ -87,7 +87,8 @@ def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() 
 
     intent = action_by_id("tg-plan", "plan_intent") or {}
     assert intent["execution_mode"] == "deterministic"
-    assert intent["task_prompt_id"] == "tg/plan-intent"
+    # Deterministic engines prune Host task prompts at registry normalize time.
+    assert intent.get("task_prompt_id") in {None, ""}
     assert "tg/plan/plan_intent.yaml" in (intent.get("allowed_write_paths") or [])
 
 
@@ -142,7 +143,7 @@ def test_plan_intent_is_deterministic() -> None:
     intent = action_by_id("tg-plan", "plan_intent")
     assert intent is not None
     assert intent.get("execution_mode") == "deterministic"
-    assert intent.get("task_prompt_id") == "tg/plan-intent"
+    assert intent.get("task_prompt_id") in {None, ""}
     assert intent.get("agent_id") == "deterministic-tg-engine"
 
 

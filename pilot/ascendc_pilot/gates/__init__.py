@@ -673,13 +673,29 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
             "scope_path": confirmed_path.as_posix(),
             "message": f"scope workflow_id={file_wf!r} != current {workflow_id!r}",
         }
-    if file_action != "scope_confirmation":
+    # Canonical stamp is scope_confirmation (machine clang validate).
+    # Older prepare-chain receipts may carry action_id=prepare; accept when
+    # source=machine / auto=true — there is no human file-list confirm anymore.
+    source = str(raw.get("source") or "").strip().lower()
+    auto = raw.get("auto")
+    machine_ok = source == "machine" or auto is True or str(auto).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    allowed_actions = {"scope_confirmation"}
+    if machine_ok:
+        allowed_actions.add("prepare")
+    if file_action not in allowed_actions:
         return {
             "gate": "scope_receipt",
             "ok": False,
             "error": "SCOPE_RECEIPT_ACTION_MISMATCH",
             "scope_path": confirmed_path.as_posix(),
-            "message": f"scope action_id must be scope_confirmation (got {file_action!r})",
+            "message": (
+                "scope action_id must be scope_confirmation "
+                f"(got {file_action!r}; machine receipts may use prepare)"
+            ),
         }
 
     return {
@@ -854,38 +870,18 @@ def gate_extract_plan_subagent(project_root: Path, uo: Path) -> dict[str, Any]:
 
 
 def gate_input_derivable_closed(uo: Path) -> dict[str, Any]:
-    """Host→KEY input_derivable loop must be closed before TG intake."""
-    try:
-        def input_derivable_closure(*_a, **_k):
-            return True
+    """Deprecated stub — csv_consumer / input_derivable loop removed from TG intake.
 
-        detail = input_derivable_closure(uo)
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "gate": "input_derivable_closed",
-            "ok": False,
-            "error": str(exc)[:200],
-            "message": "input_derivable closure check failed",
-        }
-    if isinstance(detail, bool):
-        return {
-            "gate": "input_derivable_closed",
-            "ok": detail,
-            "detail": {"ok": detail},
-            "message": "ok" if detail else "input_derivable open",
-        }
-    if not isinstance(detail, dict):
-        return {
-            "gate": "input_derivable_closed",
-            "ok": False,
-            "detail": detail,
-            "message": "input_derivable closure returned unexpected type",
-        }
+    Kept registered so older receipts referencing the gate id do not crash
+    ``run_named_gate``; always skipped. Specs must not list this gate.
+    """
+    del uo
     return {
         "gate": "input_derivable_closed",
-        "ok": bool(detail.get("ok")),
-        "detail": detail,
-        "message": detail.get("message") or ("ok" if detail.get("ok") else "input_derivable open"),
+        "ok": True,
+        "skipped": True,
+        "deprecated": True,
+        "message": "deprecated: input_derivable_closed removed from tg-init; skipped",
     }
 
 

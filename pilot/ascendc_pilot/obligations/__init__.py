@@ -60,7 +60,14 @@ def _is_closed(status: str) -> bool:
 
 
 def _gate_passed(project_root: Path, gate_id: str) -> bool:
-    """Settle static obligations from recorded passed_gates only (no live gate re-entry)."""
+    """Settle static obligations from ``passed_gates``, with live gate fallback.
+
+    Prefer the harness ledger. If a settling gate was never recorded (older
+    prepare without ``scope_receipt`` on the Action/phase gate list), re-check
+    the live gate so machine-validated receipts can still close obligations.
+    Live fallback does **not** write ``passed_gates`` (complete/advance/finalize
+    remain the writers).
+    """
     try:
         from ascendc_pilot.state import load_state
 
@@ -70,7 +77,13 @@ def _gate_passed(project_root: Path, gate_id: str) -> bool:
             return True
     except Exception:  # noqa: BLE001
         pass
-    return False
+    try:
+        from ascendc_pilot.gates import run_named_gate
+
+        live = run_named_gate(project_root, gate_id)
+        return bool(live.get("ok"))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _settle_static(project_root: Path, row: dict[str, Any]) -> dict[str, Any]:

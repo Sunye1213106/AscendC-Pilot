@@ -327,14 +327,18 @@ tg-solver agent -> 生成覆盖结果
 而是：
 
 ```text
-TG Workflow -> Action Bundle -> {Closure Engine, Lemma Producer}
-            -> Host Replay -> Observed Evidence -> Closure Referee -> Finalize Ledger
+TG Workflow -> Round Loop:
+     construct/search -> Host Replay -> Round Analysis
+       ├ expected growth -> Lemma Producer/Referee -> E
+       └ unexpected growth -> directed construct from R + source
+  -> Finalize Ledger / Certify
 ```
 
 其中：
 
 * replay evidence 属于确定事实；
-* lemma 属于待审查证据；
+* Round Analysis 每轮立刻做，不攒到搜索结束；
+* lemma 属于待审查证据，在增长符合预期时消化本轮 reject；
 * referee 判断 lemma 是否可靠；
 * finalizer 才更新 coverage ledger。
 

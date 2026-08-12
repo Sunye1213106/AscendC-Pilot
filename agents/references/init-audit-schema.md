@@ -4,8 +4,10 @@
 清单权威：`$PLUGIN_ROOT/skills/tg-init/references/tg-init-audit.md`  
 合法 skip：`$PLUGIN_ROOT/skills/tg-init/references/legitimate-skips.md`
 
-`checks[].id` **MUST** 覆盖清单全量（与 `resolve_policy.AUDIT_CHECKLIST_IDS` 同构）。  
-`--verify-csv-closure` 的 `gates` 键 = `VERIFY_GATE_IDS`（清单子集，同名）。
+`checks[].id` **MUST** 覆盖 `resolve_policy.TILINGKEY_AUDIT_CHECKLIST_IDS` 全量  
+（`checklist=tilingkey`；csv_consumer / CSV closure 清单已移除，不得再要求任何旧 CSV checklist id）。
+
+Live gate `audit_pass` / `init_status.require_audit_pass(..., checklist="tilingkey")` 只认下列 id：
 
 ```yaml
 version: 1
@@ -13,66 +15,30 @@ status: pass | fail
 checked_at: <iso>
 op_name: <op>
 checks:
-  - id: lexicon_resolve_sync
-    status: pass | fail | warn
-    detail: "..."
-  - id: confidence_high_only
+  - id: tilingkey_contract
     status: pass | fail
-    detail: "..."
-  - id: chain_to_csv
+    detail: "tilingkey contract skeleton present and well-formed"
+  - id: declared_set_nonempty
     status: pass | fail
-    detail: "..."
-  - id: no_opaque_fn_leaf
+    detail: "declared TilingKey set is nonempty"
+  - id: binding_inventory
     status: pass | fail
-    detail: "..."
-  - id: nonempty_keys_resolved
+    detail: "host binding inventory covers declared keys"
+  - id: host_view_aligned
     status: pass | fail
-    detail: "..."
-  - id: binding_resolve_coverage
+    detail: "host view aligns with binding inventory"
+  - id: graph_fingerprint
     status: pass | fail
-    detail: "needs_binding_keys ⊆ uo_query_resolve/KEY_*.yaml"
-  - id: unresolved_honesty
+    detail: "graph fingerprint matches current KB/product"
+  - id: integrity_gate
     status: pass | fail
-    detail: "skip ∈ legitimate-skips.md（含 not_input_derivable）"
-  - id: domain_symmetry
-    status: pass | fail
-    detail: "..."
-  - id: domain_align
-    status: pass | fail
-    detail: "..."
-  - id: tiling_domain_ok
-    status: pass | fail
-    detail: "..."
-  - id: no_placeholders
-    status: pass | fail
-    detail: "..."
-  - id: merge_report
-    status: pass | fail
-    detail: "..."
-  - id: merge_artifacts
-    status: pass | fail
-    detail: "..."
-  - id: full_csv_closure
-    status: pass | fail
-    detail: "..."
-  - id: mid_symbol_drained
-    status: pass | fail
-    detail: "..."
-  - id: shape_graph_built
-    status: pass | fail
-    detail: "..."
-  - id: shape_chain_consistent
-    status: pass | fail
-    detail: "..."
-  - id: unbound_reducible
-    status: pass | fail
-    detail: "..."
-  - id: kernel_shape_progress
-    status: pass | fail | warn
-    detail: "..."
+    detail: "integrity gate artifacts present"
 blockers: []
 warnings: []
-next: "tg-init --confirm" | "PARENT: auto nested Tasks → re-merge → --verify-csv-closure (do NOT ask user)"
+next: "acp run-action human_confirm" | "acp next"
 ```
 
-warn 仅允许：`lexicon_resolve_sync`、`kernel_shape_progress`。
+warn 仅允许非阻塞说明；任一 required id 为 `fail` → `status: fail`，不得进入 `human_confirm` finalize。
+
+恢复路径（失败时）：`/uo-init` 产出定稿 `.uo` → `/tg-init` 重跑 contract/bind/gate → AskQuestion 后 `human_confirm --finalize`。  
+禁止引导已删除的 CSV closure / merge / csv_consumer 动作。

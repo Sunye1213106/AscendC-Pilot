@@ -787,6 +787,20 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             root_obl = _tg(project_root) / "plan" / "coverage_obligations.yaml"
             root_obl.parent.mkdir(parents=True, exist_ok=True)
             root_obl.write_text(text, encoding="utf-8")
+            unresolved = {
+                "schema": "tg-unresolved/v1",
+                "status": "ready_for_manual_review",
+                "allow_solve": True,
+                "allow_solve_reason": "tilingkey_full_coverage T=D approved for closure",
+                "blocking_hard_obligations": [],
+                "contract_gaps": [],
+                "plan_hash": fp,
+            }
+            unresolved_path = obl.parent / "unresolved.yaml"
+            unresolved_path.write_text(
+                yaml.safe_dump(unresolved, allow_unicode=True, sort_keys=False),
+                encoding="utf-8",
+            )
             return {
                 "ok": True,
                 "engine": "plan_build",
@@ -795,6 +809,7 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                 "mode": "tilingkey_full_coverage",
                 "artifact": obl.as_posix(),
                 "root_artifact": root_obl.as_posix(),
+                "unresolved": unresolved_path.as_posix(),
                 "declared_count": count,
             }
 
@@ -1156,6 +1171,7 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     route_doc = {
         "schema": "tg-closure-route/v1",
         "reason": reason,
+        "growth_match": routed.get("growth_match"),
         "round_budget": {"used": used, "budget": budget},
         "auto_rework": auto_rework,
         "rework_hint": (
@@ -1171,11 +1187,16 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         "state": {k: routed.get(k) for k in ("declared", "R", "E", "gap", "violation")},
         "target_hit_rate": routed.get("target_hit_rate"),
         "rewrite_share": routed.get("rewrite_share"),
+        "refuse_share": routed.get("refuse_share"),
+        "round_growth": routed.get("round_growth") or {},
+        "lemma_trigger": routed.get("lemma_trigger"),
+        "construct_trigger": routed.get("construct_trigger"),
     }
     out = _tg(project_root) / "closure" / "route.yaml"
     _dump_closure_yaml(out, route_doc)
 
     new_r = None
+    new_declared_r = None
     rounds_dir = ws.state / "rounds"
     if rounds_dir.is_dir():
         rounds = sorted(rounds_dir.glob("round_*"))
@@ -1187,6 +1208,7 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
 
                     prog_doc = yaml.safe_load(latest_prog.read_text(encoding="utf-8")) or {}
                     new_r = prog_doc.get("new_R")
+                    new_declared_r = prog_doc.get("new_declared_R", new_r)
                 except Exception:
                     new_r = None
 
@@ -1199,11 +1221,21 @@ def _run_closure_residual(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
         "pattern_dims": analysis.get("pattern_dims"),
         "r_witness_values": analysis.get("r_witness_values"),
         "reason": reason,
+        "growth_match": routed.get("growth_match"),
         "state": route_doc["state"],
         "target_hit_rate": routed.get("target_hit_rate"),
         "rewrite_share": routed.get("rewrite_share"),
+        "refuse_share": routed.get("refuse_share"),
+        "round_growth": routed.get("round_growth") or {},
+        "lemma_trigger": routed.get("lemma_trigger"),
+        "construct_trigger": routed.get("construct_trigger"),
         "new_R": new_r,
+        "new_declared_R": new_declared_r,
         "timestamp": time.time(),
+        "note": (
+            "Analyse after every replay round. expected→lemma on rejects; "
+            "unexpected→directed construct from discovered R + source."
+        ),
     }
     analysis_out = _tg(project_root) / "closure" / "round_analysis.yaml"
     _dump_closure_yaml(analysis_out, round_analysis)
@@ -2304,21 +2336,26 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
 
 # Output contract id → relative paths under .ascendc-pilot (existence + nonempty where applicable)
 OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
+    # Layout artifacts + machine scope receipt (SSOT; composite overlay must match).
     "uo-prepare-v1": [
         "uo/manifest.yaml",
         "uo/operator.yaml",
         "uo/ir/build_variant.yaml",
+        "uo/runs/{run_id}/scope/scope_confirmed.yaml",
+        "uo/runs/{run_id}/scope/receipt.yaml",
     ],
     "uo-extract-v1": [
         "uo/ir/host_extract_receipt.yaml",
         "uo/tiling/key_bind_receipt.yaml",
+        "uo/tiling/families.yaml",
+        "uo/kernel/fold_receipt.yaml",
     ],
     "uo-analyze-v1": [
         "uo/ir/unresolved.yaml",
         "uo/ir/codemap_analyze_receipt.yaml",
     ],
     "uo-commit-v1": ["../uo/*.uo"],
-    "uo-verify-v1": ["uo/checks/integrity.yaml"],
+    "uo-verify-v1": ["../uo/*.uo"],
     "integrity-v1": ["uo/checks/integrity.yaml"],
     "change-detect-v1": ["uo/diff/change_set.yaml"],
     "update-plan-v1": ["uo/summary/update_plan.yaml"],
@@ -2360,7 +2397,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "plan-precheck-v1": ["tg/init/status.yaml"],
     "plan-build-v1": ["tg/plan"],
     "plan-approved-v1": ["tg/plan/levels/*/human_supplement.yaml"],
-    "solve-precheck-v1": ["tg/plan/levels/*/human_supplement.yaml"],
+    # Precondition only (produced by plan_approve); not a solve-precheck output.
+    "solve-precheck-v1": ["tg/plan/levels/*/plan_scope.yaml"],
     "oracle-probe-v1": ["tg/closure/oracle_probe.yaml"],
     "closure-ledger-v1": [
         "tg/closure/R.txt",
@@ -2372,6 +2410,10 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "closure-construct-v1": ["tg/closure/construct/**"],
     "closure-explain-v1": ["tg/closure/construct/explain_receipt.yaml"],
     "lemma-leads-v1": ["tg/closure/lemmas/leads.yaml"],
+    "lemma-verify-v1": [
+        "runs/{run_id}/actions/lemma_verify/verify.yaml",
+        "tg/closure/lemmas/verify.yaml",
+    ],
     "lemma-evidence-v1": [
         "tg/closure/lemmas/evidence_receipt.yaml",
         "tg/closure/lemmas/evidence/**",
@@ -2443,6 +2485,8 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
 
 
 def invoke_engine(project_root: Path, workflow_id: str, action_id: str, *, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
+    from ascendc_pilot.progress import engine_span
+
     key = (workflow_id, action_id)
     fn = ENGINE_REGISTRY.get(key)
     if fn is None:
@@ -2450,4 +2494,5 @@ def invoke_engine(project_root: Path, workflow_id: str, action_id: str, *, ctx: 
     payload = dict(ctx or {})
     payload["action_id"] = action_id
     payload["workflow_id"] = workflow_id
-    return fn(project_root, payload)
+    with engine_span(workflow_id, action_id):
+        return fn(project_root, payload)

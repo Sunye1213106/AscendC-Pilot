@@ -26,12 +26,23 @@ def _chain(
     *,
     engine: str,
 ) -> dict[str, Any]:
+    from uo_init.progress import emit
+
     ctx = dict(payload or {})
     results: list[dict[str, Any]] = []
-    for name, fn in steps:
+    total = len(steps)
+    for idx, (name, fn) in enumerate(steps, start=1):
+        emit(f"{engine} ({idx}/{total}) {name} …")
+        import time
+
+        t0 = time.perf_counter()
         out = fn(project_root, ctx)
+        dt = time.perf_counter() - t0
+        ok = bool(out.get("ok", False))
+        mark = "ok" if ok else "FAIL"
+        emit(f"{engine} ({idx}/{total}) {name} {mark} ({dt:.1f}s)")
         results.append({"step": name, **{k: out.get(k) for k in ("ok", "error", "engine")}})
-        if not out.get("ok", False):
+        if not ok:
             return {
                 "ok": False,
                 "engine": engine,
@@ -146,22 +157,26 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     LLM-resolved into canonical ``.uo``.
     """
     from uo_init.build import compile_codemap, store_compile_cache
+    from uo_init.progress import step
 
     ctx = dict(payload or {})
     root = Path(project_root).expanduser().resolve()
     try:
-        op_name, arch, host_ir, kernel_ir, declared, uo = _compiler_inputs(root, ctx)
-        result = compile_codemap(
-            op_name=op_name,
-            architecture=arch,
-            op_root=root,
-            host_ir=host_ir,
-            kernel_ir=kernel_ir,
-            declared=declared,
-            key_fields=[],
-            commit=False,
-        )
-        store_compile_cache(root, op_name, arch, result)
+        with step("analyze.resolve_inputs"):
+            op_name, arch, host_ir, kernel_ir, declared, uo = _compiler_inputs(root, ctx)
+        with step("analyze.compile_codemap"):
+            result = compile_codemap(
+                op_name=op_name,
+                architecture=arch,
+                op_root=root,
+                host_ir=host_ir,
+                kernel_ir=kernel_ir,
+                declared=declared,
+                key_fields=[],
+                commit=False,
+            )
+        with step("analyze.store_cache"):
+            store_compile_cache(root, op_name, arch, result)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "analyze", "error": str(exc)[:400]}
 
@@ -217,8 +232,11 @@ def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     incomplete CodeMap (``semantic_completeness=partial``). Hard extraction
     failures still fail this stage.
     """
+    from uo_init.progress import step
+
     ctx = dict(payload or {})
-    product = _commit_uo_product(Path(project_root), ctx)
+    with step("commit.write_uo_product"):
+        product = _commit_uo_product(Path(project_root), ctx)
     return {
         "ok": bool(product.get("ok")),
         "engine": "commit",
@@ -237,15 +255,18 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     This is not semantic completeness: open ``unresolved`` blockers do not fail
     verify by themselves. Failures are schema/invariant/dangling-edge issues.
     """
+    from uo_init.progress import step
+
     ctx = dict(payload or {})
     root = Path(project_root).expanduser().resolve()
     try:
         from uo_init.diagnostics.audit import audit_uo
         from uo_init.store.reader import find_uo_product
 
-        arch = str(ctx.get("arch_dir") or ctx.get("architecture") or "arch35")
-        op_name = str(ctx.get("op_name") or "")
-        product = find_uo_product(root, op_name=op_name, architecture=arch)
+        with step("verify.find_uo_product"):
+            arch = str(ctx.get("arch_dir") or ctx.get("architecture") or "arch35")
+            op_name = str(ctx.get("op_name") or "")
+            product = find_uo_product(root, op_name=op_name, architecture=arch)
         if product is None or product.suffix != ".uo":
             return {
                 "ok": False,
@@ -253,7 +274,8 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
                 "error": "missing_uo_product",
                 "message": "commit must write .ascendc-pilot/uo/<op>.<arch>.uo",
             }
-        report = audit_uo(product)
+        with step("verify.audit_uo"):
+            report = audit_uo(product)
         return {
             "ok": bool(report.get("ok")),
             "engine": "verify",

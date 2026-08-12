@@ -25,7 +25,11 @@ from ascendc_pilot.actions.uo_product_compaction import install as _install_uo_p
 # The final product is arch-neutral under .ascendc-pilot/uo/, one level above
 # the arch-scoped agent root used by Action contract resolution.
 _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
+    # Must stay identical to engines.OUTPUT_CONTRACT_PATHS["uo-prepare-v1"].
     "uo-prepare-v1": [
+        "uo/manifest.yaml",
+        "uo/operator.yaml",
+        "uo/ir/build_variant.yaml",
         "uo/runs/{run_id}/scope/scope_confirmed.yaml",
         "uo/runs/{run_id}/scope/receipt.yaml",
     ],

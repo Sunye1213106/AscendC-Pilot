@@ -279,6 +279,18 @@ if ($Platform -eq "opencode") {
 $stampDir = Join-Path $Dest "templates\$Platform"
 New-Item -ItemType Directory -Force -Path $stampDir | Out-Null
 Set-Content -Path (Join-Path $stampDir "install_stamp.txt") -Value "plugin_root=$Dest"
+
+# Cache absolute acp path for OpenCode plugin (Node often has a thinner PATH).
+$acpCmd = Get-Command acp -ErrorAction SilentlyContinue
+if ($acpCmd -and $acpCmd.Source) {
+  $cacheDir = Join-Path $HOME ".config\opencode"
+  New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+  Set-Content -Path (Join-Path $cacheDir "ascendc-harness-bin") -Value $acpCmd.Source -Encoding utf8
+  Write-Host "Cached acp bin → $($acpCmd.Source)"
+} else {
+  Write-Host "WARN: acp not on PATH after pip install; OpenCode may fail to find harness"
+}
+
 Write-Host "Installed AscendC-Pilot → $Dest"
 Write-Host "Run: acp doctor"
 

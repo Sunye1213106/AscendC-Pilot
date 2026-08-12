@@ -44,6 +44,32 @@ def describe_next(project_root: Path) -> dict[str, Any]:
     if status == "human_required":
         allowed = []
         rework = []
+        ask = {
+            "header": f"{wid or 'workflow'} 需要人工介入",
+            "question": (
+                f"当前 workflow `{wid or 'unknown'}` 已进入 human_required，自动执行已停止。\n"
+                f"失败：{lf.get('error_code') or lf.get('reason_code') or 'unknown'}\n"
+                f"{lf.get('message_zh') or ''}\n\n"
+                "请选择下一步："
+            ).strip(),
+            "options": [
+                {
+                    "label": "环境已修好，继续重试失败 Action",
+                    "value": "retry_after_environment_fix",
+                    "description": "acp retry-after-environment-fix --project <算子目录>",
+                },
+                {
+                    "label": "查看结构化失败信息",
+                    "value": "inspect_failure",
+                    "description": "acp inspect-failure --project <算子目录>",
+                },
+                {
+                    "label": "终止本次运行",
+                    "value": "abort_run",
+                    "description": "acp abort --project <算子目录>",
+                },
+            ],
+        }
         human_required = {
             "required_actor": "maintainer",
             "legal_actions": list(
@@ -55,9 +81,10 @@ def describe_next(project_root: Path) -> dict[str, Any]:
                 ]
             ),
             "message_zh": (
-                "自动执行已停止。请向用户报告失败，或等待环境修复后 "
-                "`acp retry-after-environment-fix` / `acp abort`。"
+                "自动执行已停止。必须用 question/AskQuestion 让用户选择："
+                "环境修好后重试 / 查看失败 / 终止运行。"
             ),
+            "ask_question": ask,
         }
     elif status == "rework_required":
         allowed = []
@@ -136,6 +163,13 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         payload["message_zh"] = str(recommended.get("hint_zh") or payload["message_zh"])
     if human_required is not None:
         payload["human_required"] = human_required
+        if human_required.get("ask_question"):
+            payload["needs_human_decision"] = True
+            payload["ask_question"] = human_required["ask_question"]
+            payload["primary_instruction_zh"] = (
+                "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options，"
+                "禁止静默重试或自动 abort。"
+            )
     if state.get("failure_card"):
         payload["failure_card"] = state.get("failure_card")
     from ascendc_pilot.todo import attach_todo

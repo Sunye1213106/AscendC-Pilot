@@ -95,7 +95,6 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/closure_audit/review.yaml",
         ],
         "closure_certify": [
-            "tg/closure/closure.csv",
             "tg/closure/certificate.yaml",
             "tg/closure/audit_report.yaml",
         ],
@@ -176,8 +175,6 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "closure_explain": ["tg/closure/why.csv", "tg/closure/construct/**"],
         "lemma_leads": [
             "tg/closure/lemmas/leads.yaml",
-            "tg/closure/leads.csv",
-            "tg/closure/leads3.csv",
         ],
         "lemma_evidence": [
             "tg/closure/lemmas/evidence/**",
@@ -219,7 +216,6 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/closure_audit/review.yaml",
         ],
         "closure_certify": [
-            "tg/closure/closure.csv",
             "tg/closure/certificate.yaml",
             "tg/closure/audit_report.yaml",
         ],

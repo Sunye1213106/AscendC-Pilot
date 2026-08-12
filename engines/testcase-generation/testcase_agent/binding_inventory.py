@@ -277,7 +277,7 @@ def build_domain_review(
         "status": "confirmed" if not pending else "pending",
         "columns": columns_out,
         "pending_columns": pending,
-        "hint": "Continue /tg-init: uo-query → merge → verify → audit; AskQuestion only for domain lock before --confirm / tg-solve",
+        "hint": "Continue /tg-init: contract → bind → integrity → audit; AskQuestion before human_confirm --finalize / tg-plan",
     }
 
 

@@ -93,6 +93,19 @@ def build_environment_capabilities(
     rg = _which("rg") or _which("ripgrep")
     python = _which("python") or _which("python3")
     scope = _source_scope(root, run_id=run_id)
+
+    cann_root = None
+    cann_ready = False
+    cann_issues: list[str] = []
+    try:
+        from uo_init import paths as uo_paths
+
+        cann_path, cann_issues = uo_paths.require_cann_ready()
+        cann_root = cann_path.as_posix() if cann_path is not None else None
+        cann_ready = not cann_issues
+    except Exception as exc:  # noqa: BLE001
+        cann_issues = [f"uo_init.paths unavailable: {exc}"]
+
     return {
         "version": 1,
         "kind": "environment_capabilities",
@@ -112,6 +125,13 @@ def build_environment_capabilities(
             "acp": acp,
             "rg": rg,
             "python": python,
+            "cann_root": cann_root,
+        },
+        "cann": {
+            "ready": cann_ready,
+            "root": cann_root,
+            "issues": cann_issues[:12],
+            "env_hints": ["UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT"],
         },
         "source_scope": scope,
         "commands": {
@@ -120,8 +140,8 @@ def build_environment_capabilities(
             "rg": rg,
         },
         "note": (
-            "Deterministic prepare snapshot. Use UO KB queries or a bounded source read "
-            "within source_scope."
+            "Deterministic prepare snapshot. UO parse requires cann.ready=true. "
+            "Use UO KB queries or a bounded source read within source_scope."
         ),
     }
 

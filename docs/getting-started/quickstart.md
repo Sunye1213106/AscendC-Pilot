@@ -214,10 +214,14 @@ TG 的 deterministic Action 统一绑定 `deterministic-tg-engine`；`init_audit
 
 ### `/tg-solve`
 
-根据计划寻找 candidate，并通过 Host Replay 验证。
+根据计划寻找 candidate，并通过 Host Replay 验证。每轮 Replay 后立刻做 Round Analysis，不把引理证明留到最后：
 
 ```text
-CodeMap → Obligation → Candidate → Host Replay → Evidence → Closure
+CodeMap → Obligation
+  → Round: Candidate → Host Replay → Round Analysis
+        ├ expected growth → lemma on rejects → E
+        └ unexpected growth → directed construct from R + source
+  → Closure when Open=∅
 ```
 
 候选输入、SAT 结果或者模型判断本身都不算 coverage。
@@ -298,7 +302,7 @@ CE 的 `code_review` 明确派发到 `ce-reviewer` subagent；Primary 只负责 
 | `/uo-investigate`     | 调查 unresolved                       |
 | `/tg-init`            | 建立 TG contract 和 coverage domain    |
 | `/tg-plan`            | 生成覆盖计划                              |
-| `/tg-solve`           | Candidate、Replay 和 Coverage Closure |
+| `/tg-solve`           | 轮次：构造/Replay/分析（轮内引理或定向构造）至闭环 |
 | `/ce-review`          | 代码审查与影响分析                           |
 | `acp run-action auto` | 自动执行连续 deterministic Action，交互边界自动停下 |
 | `acp doctor`          | 检查基础 Pilot 安装                       |

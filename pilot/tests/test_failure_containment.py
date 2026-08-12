@@ -108,6 +108,12 @@ def test_next_after_failure_no_normal_actions(tmp_path: Path):
     legal = nxt["human_required"]["legal_actions"]
     assert "inspect_failure" in legal
     assert "abort_run" in legal
+    assert nxt.get("needs_human_decision") is True
+    ask = nxt.get("ask_question") or {}
+    assert ask.get("options")
+    values = {o.get("value") for o in ask["options"]}
+    assert "retry_after_environment_fix" in values
+    assert "abort_run" in values
     lf = nxt.get("last_failure") or {}
     assert lf.get("failure_class") == ENVIRONMENT_INVARIANT
 

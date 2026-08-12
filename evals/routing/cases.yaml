@@ -7,6 +7,16 @@ cases:
     should_trigger: [uo-init]
     should_not_trigger: [tg-solve, ce-review]
 
+  - id: route_uo_init_knowledge_base
+    query: 帮我为这个算子建立知识库
+    should_trigger: [uo-init, operator-analysis]
+    should_not_trigger: [tg-init, ce-review]
+
+  - id: route_uo_init_index_operator
+    query: 索引分析这个算子，建一下算子知识库
+    should_trigger: [uo-init, operator-analysis]
+    should_not_trigger: [tg-solve, ce-review]
+
   - id: route_uo_query
     query: 查询已有 .uo 里某个 TilingKey 维度和 Host 字段关系
     should_trigger: [uo-query, operator-analysis]

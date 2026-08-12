@@ -3,8 +3,9 @@ version: 1
 name_zh: TG 引理挖掘 producer
 role: producer
 mode: subagent
-description: Bounded lemma producer. Read session prompt.md first, then skills/source-proof/SKILL.md.
-  Write staging certificates only.
+description: In-round lemma producer for tg-solve Round Analysis (expected-growth
+  rejects). Read session prompt.md first, then skills/source-proof/SKILL.md.
+  Write staging certificates only; never defer proofs to end-of-search cleanup.
 skill_ids: [source-proof, testcase-generation, operator-analysis]
 read_scopes:
 - tg/closure/lemmas/leads.yaml

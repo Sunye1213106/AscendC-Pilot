@@ -219,7 +219,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("verify", "prepare", kind="rework", reason_codes=["scope", "SCOPE_REWORK"]),
         ],
         "phase_gates": {
-            "prepare": ["layout_receipt"],
+            "prepare": ["layout_receipt", "scope_receipt"],
             "extract": ["extract_receipt"],
             "analyze": [],
             "commit": ["uo_product_ready"],
@@ -232,7 +232,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "commit": ["commit"],
             "verify": ["verify"],
         },
-        "complete_gates": ["uo_product_ready"],
+        "complete_gates": ["scope_receipt", "uo_product_ready"],
         "meta": {
             "product": "codemap-uo",
             "canonical_policy": "compiler_plus_deterministic_only",
@@ -258,7 +258,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id=None,
                 role_id="deterministic_engine",
                 execution_mode="deterministic",
-                gates=["layout_receipt"],
+                gates=["layout_receipt", "scope_receipt"],
                 capability_ids=[],
                 task_prompt_id=None,
                 output_contract_id="uo-prepare-v1",
@@ -328,6 +328,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "phases": ["prepare", "extract", "analyze", "commit", "verify"],
         "gates": [
             "layout_receipt",
+            "scope_receipt",
             "extract_receipt",
             "uo_product_ready",
         ],
@@ -588,6 +589,12 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         ],
         "phase_gates": {"context": ["kb_ready", "context_pack"]},
         "complete_gates": ["kb_ready", "context_pack"],
+        "pipelines": {
+            "context": ["code_review"],
+            "bug": ["code_review"],
+            "functional": ["code_review"],
+            "summary": ["code_review"],
+        },
         "actions": [
             _act(
                 "code_review",
@@ -599,6 +606,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 task_prompt_id="ce/code-review",
                 output_contract_id="code-review-v1",
+                gates=["kb_ready", "context_pack"],
             ),
         ],
         "agents": [{"id": "ce-reviewer", "role": "readonly_reviewer"}],
@@ -639,14 +647,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("confirm", "gate", kind="rework", reason_codes=["AUDIT_REWORK"]),
         ],
         "phase_gates": {
-            "kb_ready": ["uo_ready", "input_derivable_closed"],
+            "kb_ready": ["uo_ready"],
             "bind": ["tilingkey_binding_ready"],
             "gate": ["audit_pass"],
             "confirm": ["init_confirmed", "kb_fingerprint_fresh"],
         },
         "complete_gates": [
             "uo_ready",
-            "input_derivable_closed",
             "tilingkey_binding_ready",
             "audit_pass",
             "init_confirmed",
@@ -678,7 +685,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 workflow_id="tg-init",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                gates=["uo_ready", "input_derivable_closed"],
+                gates=["uo_ready"],
                 capability_ids=["kb-query"],
                 output_contract_id="uo-ready-v1",
             ),
@@ -792,14 +799,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     _tr("confirm", "gate", kind="rework", reason_codes=["AUDIT_REWORK"]),
                 ],
                 "phase_gates": {
-                    "kb_ready": ["uo_ready", "input_derivable_closed"],
+                    "kb_ready": ["uo_ready"],
                     "bind": ["tilingkey_binding_ready"],
                     "gate": ["audit_pass"],
                     "confirm": ["init_confirmed", "kb_fingerprint_fresh"],
                 },
                 "complete_gates": [
                     "uo_ready",
-                    "input_derivable_closed",
                     "tilingkey_binding_ready",
                     "audit_pass",
                     "init_confirmed",
@@ -981,10 +987,10 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _st("gate", "求解前置"),
             _st("oracle", "Oracle 探测"),
             _st("ledger", "重建账本"),
-            _st("search", "定向搜索一轮"),
-            _st("residual", "残差路由"),
-            _st("construct", "构造式收尾"),
-            _st("lemma", "引理封口"),
+            _st("search", "构造并 Replay 一轮"),
+            _st("residual", "轮次分析与路由"),
+            _st("construct", "定向再构造"),
+            _st("lemma", "轮内引理"),
             _st("audit", "闭环审查"),
             _st("certify", "签发证书"),
         ],
@@ -997,10 +1003,15 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("audit", "certify"),
             _tr("construct", "residual"),
             _tr("lemma", "ledger"),
-            # residual 回边：search / construct / lemma（由 route reason 驱动 acp rework）
+            # residual 回边：每轮分析后立刻分支（不攒到最后再证明）
             _tr("residual", "search", kind="rework", reason_codes=["SEARCH_PROGRESS"]),
-            _tr("residual", "construct", kind="rework", reason_codes=["CONSTRUCT_TARGETS"]),
-            _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA", "SEARCH_STALLED"]),
+            _tr(
+                "residual",
+                "construct",
+                kind="rework",
+                reason_codes=["CONSTRUCT_TARGETS", "SEARCH_STALLED"],
+            ),
+            _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA"]),
             _tr("audit", "lemma", kind="rework", reason_codes=["AUDIT_REWORK", "LEMMA_REWORK"]),
         ],
         "phase_gates": {
@@ -1041,8 +1052,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     _tr("construct", "residual"),
                     _tr("lemma", "ledger"),
                     _tr("residual", "search", kind="rework", reason_codes=["SEARCH_PROGRESS"]),
-                    _tr("residual", "construct", kind="rework", reason_codes=["CONSTRUCT_TARGETS"]),
-                    _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA", "SEARCH_STALLED"]),
+                    _tr(
+                        "residual",
+                        "construct",
+                        kind="rework",
+                        reason_codes=["CONSTRUCT_TARGETS", "SEARCH_STALLED"],
+                    ),
+                    _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA"]),
                     _tr("audit", "lemma", kind="rework", reason_codes=["AUDIT_REWORK", "LEMMA_REWORK"]),
                 ],
                 "pipelines": {
@@ -1081,8 +1097,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     _tr("construct", "residual"),
                     _tr("lemma", "ledger"),
                     _tr("residual", "search", kind="rework", reason_codes=["SEARCH_PROGRESS"]),
-                    _tr("residual", "construct", kind="rework", reason_codes=["CONSTRUCT_TARGETS"]),
-                    _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA", "SEARCH_STALLED"]),
+                    _tr(
+                        "residual",
+                        "construct",
+                        kind="rework",
+                        reason_codes=["CONSTRUCT_TARGETS", "SEARCH_STALLED"],
+                    ),
+                    _tr("residual", "lemma", kind="rework", reason_codes=["NEED_LEMMA"]),
                     _tr("audit", "lemma", kind="rework", reason_codes=["AUDIT_REWORK", "LEMMA_REWORK"]),
                 ],
                 "pipelines": {
@@ -1111,7 +1132,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "capability_ids": [],
             "recovery_by_reason": {
                 "SEARCH_PROGRESS": {"type": "phase", "phase": "search"},
-                "SEARCH_STALLED": {"type": "phase", "phase": "lemma"},
+                "SEARCH_STALLED": {"type": "phase", "phase": "construct"},
                 "CONSTRUCT_TARGETS": {"type": "phase", "phase": "construct"},
                 "NEED_LEMMA": {"type": "phase", "phase": "lemma"},
                 "AUDIT_REWORK": {"type": "phase", "phase": "lemma"},
@@ -1153,7 +1174,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "closure_search",
-                label_zh="定向搜索一轮",
+                label_zh="构造并 Replay 一轮",
                 phases=["search"],
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
@@ -1163,7 +1184,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "closure_residual",
-                label_zh="残差分析与路由",
+                label_zh="轮次分析与路由",
                 phases=["residual"],
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
@@ -1173,7 +1194,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "closure_construct",
-                label_zh="构造式收尾",
+                label_zh="基于已发现 key 定向构造",
                 phases=["construct"],
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
@@ -1193,7 +1214,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "lemma_leads",
-                label_zh="生成引理线索包",
+                label_zh="从本轮 reject 生成引理线索",
                 phases=["lemma"],
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
@@ -1240,6 +1261,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
                 capability_ids=[],
+                output_contract_id="lemma-verify-v1",
                 allowed_write_paths=[
                     "runs/{run_id}/actions/lemma_verify/verify.yaml",
                     "tg/closure/lemmas/verify.yaml",
@@ -1270,7 +1292,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "lemma_loop",
-                label_zh="引理可重入收敛",
+                label_zh="轮内引理可重入收敛",
                 phases=["lemma"],
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",

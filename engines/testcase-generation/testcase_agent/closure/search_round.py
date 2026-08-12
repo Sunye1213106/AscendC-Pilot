@@ -1,10 +1,15 @@
 # -*- coding: utf-8 -*-
-"""One bounded directed-search round (fit → generate → replay → progress).
+"""One bounded directed-search round (fit → generate → replay → analyse).
 
-The workflow state machine drives the outer loop via SEARCH_PROGRESS; this
-module never loops forever inside a single action. L3 branch-outcome coverage
-reuses the same outer state machine but dispatches the search round to the
-replay-backed branch runtime.
+After every replay round the residual router classifies growth:
+
+- expected growth → prove this round's rejects into E (NEED_LEMMA), then continue
+- unexpected growth → directed construct from discovered R + source
+
+The workflow state machine drives the outer loop; this module never loops
+forever inside a single action. L3 branch-outcome coverage reuses the same
+outer state machine but dispatches the search round to the replay-backed
+branch runtime.
 """
 
 from __future__ import annotations
@@ -33,18 +38,23 @@ def _fp(rows: Any, *extra: str) -> str:
     return h.hexdigest()[:16]
 
 
-def _oracle_saturation(ws: W.Workspace) -> tuple[float, float]:
-    """Return (target_hit_rate, rewrite_share) from recent oracle rows."""
-    target_hit_rate = 0.0
-    rewrite_share = 0.0
+def _oracle_saturation(ws: W.Workspace) -> dict[str, float]:
+    """Return hit / rewrite / refuse shares from recent oracle rows."""
+    out = {
+        "target_hit_rate": 0.0,
+        "rewrite_share": 0.0,
+        "refuse_share": 0.0,
+        "judged": 0.0,
+    }
     try:
         from testcase_agent.closure import observations as OBS
 
         df = C.dedup(C.load(ws))
         if df is None or getattr(df, "empty", True):
-            return target_hit_rate, rewrite_share
+            return out
         hits = 0
         rewrites = 0
+        refuses = 0
         non_hits = 0
         recent = df.tail(128)
         for _, row in recent.iterrows():
@@ -57,14 +67,87 @@ def _oracle_saturation(ws: W.Workspace) -> tuple[float, float]:
                 non_hits += 1
                 if kind == OBS.KIND_REWRITE:
                     rewrites += 1
+                elif kind == OBS.KIND_REFUSE:
+                    refuses += 1
         judged = hits + non_hits
+        out["judged"] = float(judged)
         if judged:
-            target_hit_rate = hits / judged
+            out["target_hit_rate"] = hits / judged
         if non_hits:
-            rewrite_share = rewrites / non_hits
+            out["rewrite_share"] = rewrites / non_hits
+            out["refuse_share"] = refuses / non_hits
     except Exception:
         pass
-    return target_hit_rate, rewrite_share
+    return out
+
+
+def _latest_round_progress(ws: W.Workspace) -> dict[str, Any]:
+    progress_path = ws.state / "rounds"
+    if not progress_path.is_dir():
+        return {}
+    rounds = sorted(progress_path.glob("round_*"))
+    if not rounds:
+        return {}
+    prog = rounds[-1] / "progress.yaml"
+    if not prog.is_file():
+        return {}
+    try:
+        import yaml
+
+        doc = yaml.safe_load(prog.read_text(encoding="utf-8")) or {}
+        return doc if isinstance(doc, dict) else {}
+    except Exception:
+        return {}
+
+
+def _classify_growth(
+    *,
+    progress: dict[str, Any],
+    sat: dict[str, float],
+    res: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify this round's ΔR against construction intent.
+
+    Expected: declared R grew and Host did not mostly rewrite away from targets.
+    Unexpected: no declared growth while rewrite/refuse dominate, or undeclared
+    keys appear. Mixed/unknown keep the router conservative.
+    """
+    new_declared = int(progress.get("new_declared_R") or progress.get("new_R") or 0)
+    new_undeclared = int(progress.get("new_undeclared_R") or 0)
+    domain_suspect = bool(progress.get("domain_suspect"))
+    hit = float(sat.get("target_hit_rate") or 0.0)
+    rewrite = float(sat.get("rewrite_share") or 0.0)
+    refuse = float(sat.get("refuse_share") or 0.0)
+    judged = float(sat.get("judged") or 0.0)
+    exclusive = [
+        p for p in (res.get("open_patterns") or [])
+        if isinstance(p, dict) and p.get("exclusive_to_open")
+    ]
+
+    match = "unknown"
+    if domain_suspect or new_undeclared > 0:
+        match = "unexpected"
+    elif new_declared > 0 and rewrite < 0.7:
+        match = "expected"
+    elif judged > 0 and new_declared == 0 and (rewrite >= 0.5 or hit <= 0.05):
+        match = "unexpected"
+    elif judged > 0 and new_declared > 0 and rewrite >= 0.7:
+        match = "mixed"
+    elif new_declared > 0:
+        match = "expected"
+
+    return {
+        "growth_match": match,
+        "new_declared_R": new_declared,
+        "new_undeclared_R": new_undeclared,
+        "target_hit_rate": hit,
+        "rewrite_share": rewrite,
+        "refuse_share": refuse,
+        "judged": judged,
+        "exclusive_open_patterns": len(exclusive),
+        "mostly_distance_1": bool(res.get("mostly_distance_1")),
+        "domain_suspect": domain_suspect,
+    }
 
 
 def _leads_available(ws: W.Workspace) -> bool:
@@ -132,7 +215,12 @@ def lockout_active(ws: W.Workspace, st: dict[str, Any]) -> bool:
 
 
 def route(ws: W.Workspace | None = None) -> dict[str, Any]:
-    """Deterministic residual router reason codes for the tg-solve state machine."""
+    """Per-round residual router for the tg-solve state machine.
+
+    Analyse immediately after each replay round — do not defer lemmas until the
+    end of search. Expected growth digests rejects via NEED_LEMMA; unexpected
+    growth redirects to CONSTRUCT_TARGETS from discovered witnesses + source.
+    """
     ws = (ws or W.default_workspace()).ensure()
     try:
         from testcase_agent.closure import branch_runtime as BR
@@ -149,18 +237,34 @@ def route(ws: W.Workspace | None = None) -> dict[str, Any]:
     st = ledger.state(ws)
     if st.get("gap", 1) == 0 and st.get("violation", 1) == 0:
         clear_lockout(ws)
-        return {"reason": "GAP_ZERO", "target_hit_rate": 0.0, "rewrite_share": 0.0, **st}
+        return {
+            "reason": "GAP_ZERO",
+            "growth_match": "closed",
+            "target_hit_rate": 0.0,
+            "rewrite_share": 0.0,
+            "refuse_share": 0.0,
+            **st,
+        }
 
     # Oracle suspect flag left by a prior round.
     flag = ws.state / "oracle_suspect"
     if flag.is_file():
-        return {"reason": "ORACLE_SUSPECT", "target_hit_rate": 0.0, "rewrite_share": 0.0, **st}
+        return {
+            "reason": "ORACLE_SUSPECT",
+            "growth_match": "unknown",
+            "target_hit_rate": 0.0,
+            "rewrite_share": 0.0,
+            "refuse_share": 0.0,
+            **st,
+        }
 
     if lockout_active(ws, st):
         return {
             "reason": "NEED_LEMMA",
+            "growth_match": "locked",
             "target_hit_rate": 0.0,
             "rewrite_share": 1.0,
+            "refuse_share": 0.0,
             "search_locked": True,
             **st,
         }
@@ -168,7 +272,13 @@ def route(ws: W.Workspace | None = None) -> dict[str, Any]:
     res = R.analyse(ws)
     open_n = int(st.get("gap") or 0)
     mostly_near = bool(res.get("mostly_distance_1"))
-    target_hit_rate, rewrite_share = _oracle_saturation(ws)
+    sat = _oracle_saturation(ws)
+    progress = _latest_round_progress(ws)
+    growth = _classify_growth(progress=progress, sat=sat, res=res)
+    target_hit_rate = float(growth["target_hit_rate"])
+    rewrite_share = float(growth["rewrite_share"])
+    refuse_share = float(growth["refuse_share"])
+    growth_match = str(growth["growth_match"])
 
     progress_path = ws.state / "rounds"
     zero_gain = 0
@@ -184,7 +294,7 @@ def route(ws: W.Workspace | None = None) -> dict[str, Any]:
                 import yaml
 
                 doc = yaml.safe_load(prog.read_text(encoding="utf-8")) or {}
-                if int(doc.get("new_R") or 0) == 0:
+                if int(doc.get("new_declared_R") or doc.get("new_R") or 0) == 0:
                     zero_gain += 1
                 hist = doc.get("distance_histogram")
                 if prev_hist is not None and hist == prev_hist:
@@ -193,40 +303,63 @@ def route(ws: W.Workspace | None = None) -> dict[str, Any]:
             except Exception:
                 pass
 
+    exclusive_n = int(growth.get("exclusive_open_patterns") or 0)
+    has_reject_leads = (
+        refuse_share >= 0.2
+        or exclusive_n > 0
+        or _leads_available(ws)
+    )
+
     def _routed(reason: str, **extra: Any) -> dict[str, Any]:
         if reason == "NEED_LEMMA":
             set_lockout(ws, st)
         return {
             "reason": reason,
+            "growth_match": growth_match,
             "mostly_distance_1": mostly_near,
             "target_hit_rate": target_hit_rate,
             "rewrite_share": rewrite_share,
+            "refuse_share": refuse_share,
+            "round_growth": growth,
             **extra,
             **st,
         }
 
+    # Branch A — growth matched intent: digest rejects with source lemmas now.
+    if growth_match == "expected" and has_reject_leads and open_n > 0:
+        return _routed("NEED_LEMMA", lemma_trigger="expected_growth_rejects")
+
+    # Branch B — growth diverged: directed construct from discovered R + source.
+    if growth_match == "unexpected" and open_n > 0:
+        return _routed(
+            "CONSTRUCT_TARGETS",
+            mostly_distance_1=mostly_near,
+            construct_trigger="unexpected_growth",
+        )
+
+    if growth_match == "mixed" and open_n > 0:
+        if has_reject_leads:
+            return _routed("NEED_LEMMA", lemma_trigger="mixed_growth_rejects")
+        return _routed(
+            "CONSTRUCT_TARGETS",
+            mostly_distance_1=mostly_near,
+            construct_trigger="mixed_growth",
+        )
+
+    # Fallbacks when the latest round has no clear growth signal.
     if zero_gain >= 2 and target_hit_rate <= 0.05 and rewrite_share >= 0.7:
-        return _routed("NEED_LEMMA")
+        return _routed("CONSTRUCT_TARGETS", construct_trigger="rewrite_saturated")
     if zero_gain >= 2 and hist_unchanged >= 1 and not mostly_near:
-        return _routed("NEED_LEMMA" if _leads_available(ws) else "SEARCH_STALLED")
+        if has_reject_leads:
+            return _routed("NEED_LEMMA", lemma_trigger="stalled_with_leads")
+        return _routed("SEARCH_STALLED", construct_trigger="stalled_no_leads")
     if zero_gain >= 2 and mostly_near:
         return _routed("CONSTRUCT_TARGETS", mostly_distance_1=True)
-    if zero_gain >= 2:
-        return _routed("NEED_LEMMA")
+    if zero_gain >= 2 and has_reject_leads:
+        return _routed("NEED_LEMMA", lemma_trigger="zero_gain_rejects")
     if open_n > 0:
-        return {
-            "reason": "SEARCH_PROGRESS",
-            "mostly_distance_1": mostly_near,
-            "target_hit_rate": target_hit_rate,
-            "rewrite_share": rewrite_share,
-            **st,
-        }
-    return {
-        "reason": "PROOF_BLOCKED",
-        "target_hit_rate": target_hit_rate,
-        "rewrite_share": rewrite_share,
-        **st,
-    }
+        return _routed("SEARCH_PROGRESS")
+    return _routed("PROOF_BLOCKED")
 
 
 def run_round(

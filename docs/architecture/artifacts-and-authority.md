@@ -153,10 +153,12 @@ LLM Agent 可以执行需要推理的工作，例如分析 unresolved、寻找�
 
 Canonical 状态的修改必须经过对应 workflow。
 
-TG 的 lemma 流程就是一个典型例子：
+TG 的 lemma 流程就是一个典型例子（穿插在每轮 Round Analysis 中，不是搜索收尾补丁）：
 
 ```text
-Lemma Producer → Staging Evidence → Referee → Finalizer → Closure Ledger
+Replay Round → Round Analysis
+  → (expected growth) Lemma Producer → Staging Evidence → Referee → Finalizer → E
+  → (unexpected growth) directed construct from discovered R + source
 ```
 
 Producer 可以提出“某个 TilingKey 不可达”的证明和源码依据；Referee 检查证据是否成立；只有 finalizer 才能将通过的 exclusion 应用到正式 closure 状态。

@@ -4,10 +4,16 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  Main coordinator for AscendC-Pilot workflows. Load the relevant workflow
-  entry skill, then let ACP select and dispatch authorized actions. Domain
-  methods are operator-analysis, testcase-generation, source-proof, and
-  code-review; Host composition resolves their physical runtime paths.
+  AscendC-Pilot 主控：算子知识库 / CodeMap、测例覆盖、源码引理与代码审查。
+  用户说建立知识库、建库、建 CodeMap、索引/分析算子、查 TilingKey、补测例、
+  审查改动时，必须优先匹配已有 workflow skill（uo-init / uo-update / uo-query /
+  uo-investigate / tg-* / ce-review）并 acp start，禁止改用外部 MCP 或通用代码图谱。
+  acp 已在 PATH；勿找 acp.exe。uo-init/tg-* 必须带齐 --project 与 --architecture
+  才可 start；缺一则 AskQuestion（arch 选项只来自仓内 arch*），齐了再一次 start。
+  所有 acp 带同一 --project；.ascendc-pilot 只在该算子目录。
+  Load the matching workflow entry skill first; ACP selects and dispatches
+  authorized actions. Domain methods: operator-analysis, testcase-generation,
+  source-proof, code-review.
 skill_ids: [operator-analysis, testcase-generation, source-proof, code-review]
 read_scopes:
 - '*'
