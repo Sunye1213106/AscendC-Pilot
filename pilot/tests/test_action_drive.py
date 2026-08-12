@@ -140,3 +140,21 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
     assert result["next"]["execution_kind"] == "subagent"
     assert result["recommended_command"] == "acp run-action lemma_mine"
     assert called is False
+
+
+def test_run_with_heartbeat_emits_while_blocked(monkeypatch, capsys):
+    import time
+
+    import ascendc_pilot.actions.drive as drive
+
+    monkeypatch.setattr(drive, "_HEARTBEAT_SEC", 0.05)
+
+    def slow() -> dict:
+        time.sleep(0.18)
+        return {"ok": True}
+
+    out = drive._run_with_heartbeat("unit", slow)
+    err = capsys.readouterr().err
+    assert out["ok"] is True
+    assert "still running" in err
+    assert "[acp-auto]" in err

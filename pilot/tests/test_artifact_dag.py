@@ -74,6 +74,61 @@ def test_check_artifact_dag_clean_on_full_workflows() -> None:
     assert errors == [], errors
 
 
+def test_rework_backedge_cannot_justify_future_producer() -> None:
+    """Forward-only: C→A rework must not make C's produce precede B's consume."""
+    from ascendc_pilot.workflows.artifact_dag import check_artifact_dag
+
+    probe = {
+        "slash": "/artifact-dag-rework-order",
+        "entry_state": "A",
+        "states": [{"id": "A"}, {"id": "B"}, {"id": "C"}],
+        "transitions": [
+            {"from": "A", "to": "B", "kind": "forward"},
+            {"from": "B", "to": "C", "kind": "forward"},
+            {"from": "C", "to": "A", "kind": "rework"},
+        ],
+        "pipelines": {
+            "A": ["act_a"],
+            "B": ["act_b"],
+            "C": ["act_c"],
+        },
+        "actions": [
+            {
+                "id": "act_a",
+                "label_zh": "a",
+                "phases": ["A"],
+                "gates": [],
+                "produces": [],
+                "consumes": [],
+                "schema_version": "1",
+            },
+            {
+                "id": "act_b",
+                "label_zh": "b",
+                "phases": ["B"],
+                "gates": [],
+                "produces": [],
+                "consumes": ["kb/future_x.yaml"],
+                "schema_version": "1",
+            },
+            {
+                "id": "act_c",
+                "label_zh": "c",
+                "phases": ["C"],
+                "gates": [],
+                "produces": ["kb/future_x.yaml"],
+                "consumes": [],
+                "schema_version": "1",
+            },
+        ],
+    }
+    errors = check_artifact_dag({"_rework_order_probe": probe})
+    assert any(
+        "ARTIFACT_PRODUCER_NOT_BEFORE_CONSUMER" in e and "act_b" in e
+        for e in errors
+    ), errors
+
+
 def test_synthetic_orphan_consume_detected() -> None:
     from ascendc_pilot.workflows.artifact_dag import check_artifact_dag
     from ascendc_pilot.workflows.specs import WORKFLOWS

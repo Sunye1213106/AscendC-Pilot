@@ -499,7 +499,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "start":
         from ascendc_pilot.intake import (
             architecture_from_env,
-            start_intake_gate,
+            prepare_workflow_start,
             write_last_project_cache,
         )
         from ascendc_pilot.run_resume import (
@@ -538,15 +538,17 @@ def main(argv: list[str] | None = None) -> int:
 
         if decision:
             if decision == "reinit":
-                gate = start_intake_gate(
+                prep = prepare_workflow_start(
                     project=args.project,
                     workflow_id=args.workflow_id,
                     architecture=arch,
                     project_explicit=project_explicit,
                 )
-                if gate is not None:
-                    print_json(gate)
+                if not prep.get("ok"):
+                    print_json(prep)
                     return 2
+                arch = str(prep.get("architecture") or arch)
+                start_kwargs["architecture"] = arch
             result = apply_resume_decision(
                 args.project,
                 args.workflow_id,
@@ -586,15 +588,17 @@ def main(argv: list[str] | None = None) -> int:
             print_json(payload)
             return 2
 
-        gate = start_intake_gate(
+        prep = prepare_workflow_start(
             project=args.project,
             workflow_id=args.workflow_id,
             architecture=arch,
             project_explicit=project_explicit,
         )
-        if gate is not None:
-            print_json(gate)
+        if not prep.get("ok"):
+            print_json(prep)
             return 2
+        arch = str(prep.get("architecture") or arch)
+        start_kwargs["architecture"] = arch
 
         state = start_workflow(args.project, args.workflow_id, **start_kwargs)
         write_last_project_cache(args.project)

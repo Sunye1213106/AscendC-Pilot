@@ -255,6 +255,10 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
 
     This is not semantic completeness: open ``unresolved`` blockers do not fail
     verify by themselves. Failures are schema/invariant/dangling-edge issues.
+
+    Also materializes a lightweight ``uo/checks/integrity.yaml`` so Pilot gates
+    and readiness consumers still have a workspace receipt (without requiring
+    the legacy YAML KB export_integrity path).
     """
     from uo_init.progress import step
 
@@ -277,12 +281,28 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             }
         with step("verify.audit_uo"):
             report = audit_uo(product)
+        ok = bool(report.get("ok"))
+        with step("verify.write_integrity_receipt"):
+            uo = pe._uo_root(root)
+            integrity = {
+                "version": 1,
+                "schema": "uo-product-integrity/v1",
+                "status": "pass" if ok else "fail",
+                "ok": ok,
+                "uo_product": str(product),
+                "architecture": arch,
+                "op_name": op_name or product.stem.split(".")[0],
+                "audit_ok": ok,
+                "source": "uo-init/verify",
+            }
+            pe._dump(uo / "checks" / "integrity.yaml", integrity)
         return {
-            "ok": bool(report.get("ok")),
+            "ok": ok,
             "engine": "verify",
             "path": str(product),
             "audit": report,
-            "verdict": "pass" if report.get("ok") else "fail",
+            "verdict": "pass" if ok else "fail",
+            "integrity": str(uo / "checks" / "integrity.yaml"),
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "verify", "error": str(exc)[:400], "verdict": "fail"}

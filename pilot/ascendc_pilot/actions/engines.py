@@ -238,13 +238,23 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Resolve op_name / architecture / consumer root / level / focus / mode for TG engines."""
     import os
 
-    from ascendc_pilot.paths import resolve_arch
+    from ascendc_pilot.paths import discover_arch, resolve_arch
     from ascendc_pilot.state import load_state
 
+    # Prefer ctx.architecture; otherwise discover (env → active_run → sole workflow).
+    # Do not call resolve_arch(None): that only reads env and breaks fresh acp
+    # subprocesses after start already pinned active_run.yaml.
     arch_explicit = str(ctx.get("architecture") or "").strip() or None
     try:
-        arch_hint = resolve_arch(arch_explicit)
+        arch_hint = (
+            resolve_arch(arch_explicit)
+            if arch_explicit
+            else discover_arch(project_root)
+        )
     except ValueError as exc:
+        text = str(exc)
+        if "ARCHITECTURE_AMBIGUOUS" in text:
+            raise
         raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE") from exc
     state = load_state(project_root) or {}
     params = _load_yaml(_ctx_root(project_root, arch=arch_hint) / "pilot_params.yaml") or {}
@@ -2371,8 +2381,9 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/diff/impact.yaml",
         "uo/diff/unresolved.yaml",
     ],
-    # kb-answer: readiness precondition (existing workspace), not answer payload.
-    "kb-answer-v1": ["uo/manifest.yaml", "uo/checks/integrity.yaml"],
+    # kb-answer: subagent payload under Action lease (never uo/checks/*).
+    # UO readiness is enforced by requires_uo_product + intake, not this contract.
+    "kb-answer-v1": ["runs/{run_id}/actions/kb_lookup/answer.yaml"],
     "code-review-v1": [
         "ce/review/index.yaml",
         "ce/review/functional_report.yaml",

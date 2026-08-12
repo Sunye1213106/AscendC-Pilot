@@ -206,15 +206,24 @@ def _phase_of_owner(meta: dict[str, Any], aid: str) -> str:
     return ""
 
 
-def _reachable_including_rework(
+def _reachable_forward_only(
     entry: str,
     transitions: list[dict[str, Any]],
     phases: set[str],
 ) -> dict[str, set[str]]:
-    """Map phase -> set of phases reachable from it (forward + rework)."""
+    """Map phase -> phases reachable via *forward* edges only.
+
+    Rework edges encode recovery legality, not initial artifact availability.
+    Including them would falsely allow a later producer to precede an earlier
+    consumer through a back-edge (e.g. commit → analyze → extract).
+    """
+    del entry  # reachability is computed from each phase; entry unused
     adj: dict[str, set[str]] = {p: set() for p in phases}
     for edge in transitions:
         if not isinstance(edge, dict):
+            continue
+        kind = str(edge.get("kind") or "forward").strip().lower()
+        if kind != "forward":
             continue
         frm = str(edge.get("from") or "")
         to = str(edge.get("to") or "")
@@ -337,7 +346,7 @@ def check_artifact_dag(
             if isinstance(st, dict) and st.get("id"):
                 phases.add(str(st["id"]))
         entry = str(meta.get("entry_state") or "")
-        reach = _reachable_including_rework(entry, transitions, phases)
+        reach = _reachable_forward_only(entry, transitions, phases)
 
         for path, owners in sorted(producers.items()):
             if path in _UO_LOGICAL or path == "../uo/*.uo":

@@ -73,7 +73,7 @@ def scenario_happy_path_phases(workflow_id: str, _project: Path) -> dict[str, An
 
 
 def scenario_start_without_arch_fails_closed(workflow_id: str, project: Path) -> dict[str, Any]:
-    """start_workflow must fail closed when architecture is empty (all eight workflows)."""
+    """start_workflow must fail closed when architecture is empty for arch builders."""
     import os
 
     from ascendc_pilot.state import start_workflow
@@ -83,11 +83,7 @@ def scenario_start_without_arch_fails_closed(workflow_id: str, project: Path) ->
         os.environ.pop(key, None)
 
     if not workflow_requires_architecture(workflow_id):
-        return {
-            "ok": False,
-            "error": "spec_architecture_not_required",
-            "message": f"{workflow_id} must require architecture (Spec/State SSOT)",
-        }
+        return {"ok": True, "skipped": True, "reason": "architecture_not_required"}
 
     try:
         start_workflow(project, workflow_id, architecture="")
@@ -109,14 +105,32 @@ def scenario_missing_architecture(workflow_id: str, project: Path) -> dict[str, 
     import os
 
     from ascendc_pilot import intake
-    from ascendc_pilot.workflows import workflow_requires_architecture
+    from ascendc_pilot.workflows import (
+        workflow_requires_architecture,
+        workflow_requires_uo_product,
+    )
+
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        os.environ.pop(key, None)
+
+    if workflow_requires_uo_product(workflow_id):
+        # Valid operator package first — then fail closed on missing UO product
+        # (architecture may still be empty; UO product gate must win).
+        (project / "op_host").mkdir(parents=True, exist_ok=True)
+        gate = intake.start_intake_gate(
+            project=project,
+            workflow_id=workflow_id,
+            architecture="",
+            project_explicit=True,
+        )
+        if not gate:
+            return {"ok": False, "error": "expected_uo_product_gate"}
+        if gate.get("reason_code") != "UO_PRODUCT_REQUIRED":
+            return {"ok": False, "error": "wrong_reason", "gate": gate}
+        return {"ok": True, "reason_code": gate.get("reason_code")}
 
     if not workflow_requires_architecture(workflow_id):
         return {"ok": True, "skipped": True, "reason": "architecture_not_required"}
-
-    # Intake must not silently inherit host env architecture.
-    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
-        os.environ.pop(key, None)
 
     (project / "op_host" / "arch22").mkdir(parents=True)
     (project / "op_host" / ("arch" + "35")).mkdir(parents=True)

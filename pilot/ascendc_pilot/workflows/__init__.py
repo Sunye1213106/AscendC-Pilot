@@ -299,6 +299,15 @@ def workflow_requires_architecture(workflow_id: str) -> bool:
     return False
 
 
+def workflow_requires_uo_product(workflow_id: str) -> bool:
+    """True when start must use an existing ``.uo`` CodeMap (arch comes from it)."""
+    wid = resolve_workflow_id(workflow_id)
+    meta = WORKFLOWS.get(wid) or {}
+    if "requires_uo_product" in meta:
+        return bool(meta.get("requires_uo_product"))
+    return False
+
+
 def workflows_needing_project() -> frozenset[str]:
     return frozenset(
         wid for wid in list_user_workflows() if workflow_requires_project(wid)
@@ -308,6 +317,12 @@ def workflows_needing_project() -> frozenset[str]:
 def workflows_needing_architecture() -> frozenset[str]:
     return frozenset(
         wid for wid in list_user_workflows() if workflow_requires_architecture(wid)
+    )
+
+
+def workflows_needing_uo_product() -> frozenset[str]:
+    return frozenset(
+        wid for wid in list_user_workflows() if workflow_requires_uo_product(wid)
     )
 
 

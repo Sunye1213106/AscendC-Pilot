@@ -16,6 +16,7 @@ from .paths import (
     TG_SUBDIR,
     UO_SUBDIR,
     artifact_root,
+    discover_arch,
     pilot_checkout_root,
     resolve_arch,
     resolve_operator_root,
@@ -46,9 +47,12 @@ class OperatorWorkspace:
         op_root = resolve_operator_root(
             explicit, allow_pilot_checkout=allow_pilot_checkout
         )
+        arch_name = (
+            resolve_arch(arch) if (arch and str(arch).strip()) else discover_arch(op_root)
+        )
         return cls(
             operator_root=op_root,
-            arch=resolve_arch(arch),
+            arch=arch_name,
             pilot_root=pilot_checkout_root(),
             allow_pilot_checkout=allow_pilot_checkout,
         )

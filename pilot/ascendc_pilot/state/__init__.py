@@ -326,6 +326,15 @@ def start_workflow(
     }
     state = _apply_progress(project_root, state)
     save_state(project_root, state)
+    from ascendc_pilot.active_run import write_active_run
+
+    write_active_run(
+        project_root,
+        architecture=arch,
+        run_id=run_id,
+        workflow_id=workflow_id,
+        status=str(state.get("status") or "running"),
+    )
     (runs_root(project_root, arch=arch) / run_id).mkdir(parents=True, exist_ok=True)
     try:
         from ascendc_pilot.authorize.lease import clear_lease

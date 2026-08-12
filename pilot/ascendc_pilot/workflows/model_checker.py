@@ -128,6 +128,13 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
         errors.append(f"{wid}: missing requires_project")
     if "requires_architecture" not in meta:
         errors.append(f"{wid}: missing requires_architecture")
+    if "requires_uo_product" not in meta:
+        errors.append(f"{wid}: missing requires_uo_product")
+    if bool(meta.get("requires_architecture")) and bool(meta.get("requires_uo_product")):
+        errors.append(
+            f"{wid}: requires_architecture and requires_uo_product are mutually exclusive "
+            "(build UO chooses arch*; consumers inherit arch from .uo)"
+        )
     if not str(meta.get("cognitive_skill_id") or "").strip():
         errors.append(f"{wid}: missing cognitive_skill_id")
 

@@ -87,7 +87,7 @@ def build_host_context(
         except ValueError as exc:
             msg = str(exc)
             code = "ARCHITECTURE_MISSING_IN_RUN_STATE"
-            if "multiple architectures" in msg:
+            if "ARCHITECTURE_AMBIGUOUS" in msg or "multiple architectures" in msg:
                 code = "ARCHITECTURE_AMBIGUOUS"
             base["error"] = code
             base["message_zh"] = msg
@@ -123,4 +123,10 @@ def build_host_context(
         base["action_id"] = str(state.get("active_action_id") or "")
     if not base["actor_id"]:
         base["actor_id"] = str(state.get("active_actor_id") or "")
+    try:
+        from ascendc_pilot.active_run import active_run_path
+
+        base["active_run_path"] = str(active_run_path(root))
+    except Exception:  # noqa: BLE001
+        base["active_run_path"] = ""
     return base

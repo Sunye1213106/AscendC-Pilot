@@ -242,19 +242,23 @@ def _read_policy(repo: Path, pid: str) -> str:
 
 
 def _start_requirements_line(repo: Path) -> str:
-    """Project Spec requires_project / requires_architecture into model-facing prose."""
+    """Project Spec start modes into model-facing prose."""
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows import (  # noqa: WPS433
         workflows_needing_architecture,
         workflows_needing_project,
+        workflows_needing_uo_product,
     )
 
     arch = "/".join(sorted(workflows_needing_architecture()))
+    uo = "/".join(sorted(workflows_needing_uo_product()))
     proj = "/".join(sorted(workflows_needing_project()))
     return (
         f"11. `{arch}` 启动必须同时有 `--project`（算子目录）与 `--architecture`（仓内 `arch*`）。"
         f"缺一 → AskQuestion（arch 选项只来自扫描结果，禁止编造）；齐了 → "
         f"`acp start … --project … --architecture …` 一次启动。"
+        f"`{uo}` 以已有 `.uo` CodeMap 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`，先 `/uo-init`；"
+        f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
         f"需要算子目录的 workflow：`{proj}`。"
         f"所有后续 `acp *` 带同一 `--project`；`.ascendc-pilot/` 只允许在该算子目录下。"
     )

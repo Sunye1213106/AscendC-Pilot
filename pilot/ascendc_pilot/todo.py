@@ -163,7 +163,6 @@ def _todo_sync_block(
     *,
     merge: bool,
 ) -> dict[str, Any]:
-    merge_lit = "true" if merge else "false"
     return {
         "tool": "todowrite",
         "merge": merge,
@@ -171,13 +170,6 @@ def _todo_sync_block(
         "require_ids": True,
         "forbid_partial_overwrite": True,
         "items": list(native_items),
-        "instruction_zh": (
-            f"有变化才 todowrite（merge={merge_lit}）；"
-            "items 与上次同步完全相同则跳过；"
-            "一旦调用必须全量等于 todo.todo_sync.items"
-            "（含全部 id/content/status/priority）；"
-            "禁止子集；禁止在回复里讨论要不要同步；与下一步 acp 同轮并行。"
-        ),
     }
 
 

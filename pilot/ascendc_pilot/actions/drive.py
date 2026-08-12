@@ -10,11 +10,17 @@ an engine or an agent should run next.
 from __future__ import annotations
 
 import sys
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 PrepareAction = Callable[[Path, str], dict[str, Any]]
+
+# Heartbeat while a single deterministic prepare/engine may run for minutes
+# (clang extract / codemap compile). Hosts must not buffer stderr.
+_HEARTBEAT_SEC = 15.0
 
 
 def _execution_descriptor(action: dict[str, Any]) -> dict[str, Any]:
@@ -50,6 +56,25 @@ def _unconditional_forward_phase(meta: dict[str, Any], phase: str) -> str:
 def _progress(msg: str) -> None:
     sys.stderr.write(f"[acp-auto] {msg}\n")
     sys.stderr.flush()
+
+
+def _run_with_heartbeat(label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run ``fn`` while emitting stderr heartbeats so long work does not look stuck."""
+    stop = threading.Event()
+    t0 = time.monotonic()
+
+    def _beat() -> None:
+        while not stop.wait(_HEARTBEAT_SEC):
+            elapsed = int(time.monotonic() - t0)
+            _progress(f"{label} still running ({elapsed}s)…")
+
+    thread = threading.Thread(target=_beat, name="acp-auto-heartbeat", daemon=True)
+    thread.start()
+    try:
+        return fn()
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
 
 
 def _attach_todo(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -90,8 +115,13 @@ def drive_until_interaction(
 
     root = Path(project_root)
     executed: list[dict[str, Any]] = []
+    _progress("drain start (live stderr; do not pipe acp through Select-Object -Last / tail)")
 
     def _done(payload: dict[str, Any]) -> dict[str, Any]:
+        _progress(
+            f"drain stop reason={payload.get('stop_reason') or payload.get('error') or 'done'} "
+            f"executed={len(executed)}"
+        )
         return _attach_todo(root, payload)
 
     for _ in range(max_steps):
@@ -108,6 +138,7 @@ def drive_until_interaction(
         workflow_id = str(state.get("workflow_id") or "")
         phase = str(state.get("phase") or "")
         status = str(state.get("status") or "")
+        phase_label = str(state.get("phase_label_zh") or phase)
         if status != "running":
             payload: dict[str, Any] = {
                 "ok": status == "passed",
@@ -181,8 +212,11 @@ def drive_until_interaction(
                     }
                 )
 
-            _progress(f"run {action_id} (phase={phase})")
-            result = prepare(root, action_id)
+            _progress(f"run {action_id} (phase={phase} {phase_label})")
+            result = _run_with_heartbeat(
+                f"{action_id}/{phase}",
+                lambda aid=action_id: prepare(root, aid),
+            )
             executed.append(
                 {
                     "action_id": action_id,

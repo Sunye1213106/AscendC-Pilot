@@ -108,14 +108,25 @@ def resolve_arch(explicit: str | None = None) -> str:
 
 
 def discover_arch(project_root: Path | str) -> str:
-    """Resolve arch from env, or the sole ``.ascendc-pilot/<arch>/state/workflow.yaml``.
+    """Resolve arch for path helpers without an explicit argument.
 
-    Not a silent default: multiple or zero candidates fail closed.
+    Order:
+    1. ``UO_ARCH`` / ``ASCENDC_ARCH`` env (same-process / explicit override)
+    2. ``.ascendc-pilot/control/active_run.yaml`` (durable cross-process pointer)
+    3. Sole ``.ascendc-pilot/<arch>/state/workflow.yaml``
+    4. Fail closed (missing or ambiguous)
     """
     try:
         return resolve_arch(None)
     except ValueError:
         pass
+
+    from ascendc_pilot.active_run import active_architecture
+
+    pinned = active_architecture(project_root)
+    if pinned:
+        return pinned
+
     root = Path(project_root).expanduser().resolve() / AGENT_DIR
     if not root.is_dir():
         raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
@@ -129,8 +140,8 @@ def discover_arch(project_root: Path | str) -> str:
     if not candidates:
         raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
     raise ValueError(
-        "ARCHITECTURE_MISSING_IN_RUN_STATE: multiple architectures "
-        f"{candidates}; pass --architecture or set UO_ARCH"
+        "ARCHITECTURE_AMBIGUOUS: multiple architectures "
+        f"{candidates}; pass --architecture or set active_run via acp start"
     )
 
 
@@ -147,7 +158,9 @@ def artifact_root(
             raise ValueError(
                 f"refusing artifact_root under AscendC-Pilot checkout: {root}"
             )
-    return root / AGENT_DIR / resolve_arch(arch)
+    return root / AGENT_DIR / (
+        resolve_arch(arch) if arch else discover_arch(root)
+    )
 
 
 def agent_root(
@@ -190,9 +203,12 @@ def uo_codemap_path(
     arch: str | None = None,
 ) -> Path:
     """``<op>/.ascendc-pilot/uo/<op_name>.<arch>.uo``."""
-    arch_name = resolve_arch(arch)
+    root = Path(project_root).expanduser().resolve()
+    arch_name = (
+        resolve_arch(arch) if (arch and str(arch).strip()) else discover_arch(root)
+    )
     safe = (op_name or "operator").replace("/", "_").replace("\\", "_")
-    return uo_product_root(project_root) / f"{safe}.{arch_name}.uo"
+    return uo_product_root(root) / f"{safe}.{arch_name}.uo"
 
 
 def tg_root(
@@ -235,11 +251,18 @@ def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> 
     """Migrate flat ``.ascendc-pilot/`` → ``.ascendc-pilot/<arch>/`` when needed.
 
     Also migrates ``.ascendc-agent`` → ``.ascendc-pilot`` when only legacy exists.
+
+    When ``arch`` is omitted, resolve via ``discover_arch`` (env → active_run →
+    sole workflow.yaml). Do **not** call ``resolve_arch(None)`` here: that only
+    looks at env vars and breaks ``acp run-action`` after a successful
+    ``acp start --architecture …`` that already pinned ``active_run.yaml``.
     """
     root = Path(project_root).expanduser().resolve()
     legacy = root / LEGACY_AGENT_DIR
     modern = root / AGENT_DIR
-    arch_name = resolve_arch(arch)
+    arch_name = (
+        resolve_arch(arch) if (arch and str(arch).strip()) else discover_arch(root)
+    )
     target = modern / arch_name
 
     if modern.exists() and legacy.exists():

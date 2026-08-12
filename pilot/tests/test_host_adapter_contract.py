@@ -70,24 +70,44 @@ def test_host_context_no_workflow_fails_closed(tmp_path: Path) -> None:
     assert "pending_interaction.yaml" in str(ctx.get("pending_interaction_path") or "")
 
 
-def test_host_context_multi_arch_ambiguous(tmp_path: Path, monkeypatch) -> None:
+def test_host_context_multi_arch_uses_active_run(tmp_path: Path, monkeypatch) -> None:
+    """Two arch state trees + active_run → host-context selects current arch."""
     for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
         monkeypatch.delenv(key, raising=False)
     ensure_agent_layout(tmp_path, arch="arch22")
     ensure_agent_layout(tmp_path, arch="arch35")
     start_workflow(tmp_path, "uo-init", architecture="arch22")
-    # Clear env pin from start_workflow before second arch start.
     for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
         monkeypatch.delenv(key, raising=False)
     start_workflow(tmp_path, "uo-query", architecture="arch35")
     for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
         monkeypatch.delenv(key, raising=False)
     ctx = build_host_context(tmp_path, architecture="")
+    assert ctx.get("ok") is True
+    assert ctx.get("architecture") == "arch35"
+    assert ctx.get("workflow_id") == "uo-query"
+    assert "active_run" in str(ctx.get("active_run_path") or "")
+
+
+def test_host_context_multi_arch_ambiguous_without_pointer(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from ascendc_pilot.active_run import clear_active_run
+
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        monkeypatch.delenv(key, raising=False)
+    ensure_agent_layout(tmp_path, arch="arch22")
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch22")
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        monkeypatch.delenv(key, raising=False)
+    start_workflow(tmp_path, "uo-query", architecture="arch35")
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        monkeypatch.delenv(key, raising=False)
+    clear_active_run(tmp_path)
+    ctx = build_host_context(tmp_path, architecture="")
     assert ctx.get("ok") is False
-    assert ctx.get("error") in {
-        "ARCHITECTURE_MISSING_IN_RUN_STATE",
-        "ARCHITECTURE_AMBIGUOUS",
-    }
+    assert ctx.get("error") == "ARCHITECTURE_AMBIGUOUS"
     arches = set(ctx.get("architectures") or [])
     assert "arch22" in arches and "arch35" in arches
 
@@ -136,3 +156,29 @@ def test_plugin_source_no_flat_state_path_literals() -> None:
     assert "pending_interaction.yaml" in text
     assert '".ascendc-pilot", "control"' in text or "'.ascendc-pilot', 'control'" in text
     assert "function findPilotStateFile" in text
+    # Active-run pointer must be consulted before inventing an arch.
+    assert "active_run.yaml" in text
+
+
+def test_host_context_mjs_contract_executes() -> None:
+    """Run the Node host-context resolver contract (fake acp, no OpenCode)."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        import pytest
+
+        pytest.skip("node not available")
+    script = REPO / "opencode-plugin" / "host-context.test.mjs"
+    assert script.is_file()
+    proc = subprocess.run(
+        [node, str(script)],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    assert "host-context.mjs contract OK" in (proc.stdout or "")

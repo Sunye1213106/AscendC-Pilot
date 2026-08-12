@@ -20,8 +20,6 @@ Operator CodeMap
     → Candidate → Host Replay → Round Analysis → Closure（Open = ∅）
 ```
 
-Round Analysis 的具体路由见第 5 节；产品路径不含 CBM / 全局 Z3，权威证据只有 Host Replay（R）与经审查的源码引理（E）。
-
 TG 的核心目标不是生成尽可能多的 testcase，而是回答：
 
 > 对约定的覆盖范围，每一个目标最终由什么证据处理掉。

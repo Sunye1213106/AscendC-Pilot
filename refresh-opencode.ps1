@@ -123,8 +123,12 @@ $pluginText = Get-Content -LiteralPath $pluginDst -Raw -Encoding UTF8
 Assert-True ($pluginText -match 'tool === "read"') "installed plugin intercepts read"
 Assert-True ($pluginText -match 'shell:\s*false') "installed plugin uses shell:false (Windows-safe)"
 Assert-True ($pluginText -match 'resolveAcpBin|never use shell:true') "installed plugin documents Windows spawn fix"
-Assert-True ($pluginText -match '\["acp"\]') "installed plugin resolves acp (not legacy pilot)"
-Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin no longer looks up pilot binary"
+# Current resolveAcpBin() returns bare "acp" (or cached ASCENDC_HARNESS_BIN path).
+# Older builds used a candidates loop like ["acp"] / ["pilot"] — do not require that shape.
+Assert-True ($pluginText -match 'function resolveAcpBin') "installed plugin defines resolveAcpBin"
+Assert-True ($pluginText -match 'return\s+"acp"') "installed plugin resolves acp (not legacy pilot)"
+Assert-True ($pluginText -notmatch 'return\s+"pilot"') "installed plugin no longer looks up pilot binary"
+Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin has no pilot binary candidate list"
 
 # Skills / primary agent / native slash commands
 $skillLink = Join-Path $HOME ".config\opencode\skills\uo-init"

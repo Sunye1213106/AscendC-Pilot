@@ -200,6 +200,8 @@ def _build_task_prompt_stub(
     architecture: str = "",
     candidates_sha256: str = "",
     environment_path: str = "",
+    write_paths: list[str] | None = None,
+    user_question: str = "",
 ) -> str:
     """Minimal Host→subagent Task body: pointers only, no METHOD paraphrase."""
     lines = [
@@ -227,19 +229,38 @@ def _build_task_prompt_stub(
         # Absolute paths under .ascendc-pilot — relative ``uo/ir/...`` is often
         # misread as ``<op>/uo/ir/...`` (missing .ascendc-pilot) by subagents.
         lines.append("read: " + ", ".join(_abs_under_agent(str(x)) for x in dt["read"]))
-    if dt.get("write"):
-        lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in dt["write"]))
+    write_list = list(dt.get("write") or []) or list(write_paths or [])
+    if write_list:
+        lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in write_list))
     if dt.get("forbid_read"):
         lines.append("forbid_read: " + ", ".join(str(x) for x in dt["forbid_read"]))
     if candidates_sha256:
         lines.append(f"candidates_sha256: {candidates_sha256}")
     if environment_path:
         lines.append(f"environment: {environment_path}")
+    q = str(user_question or "").strip()
+    if q:
+        lines.append("USER QUESTION (answer this against the CodeMap / minimal source windows):")
+        lines.append(q)
     # Public: any Action that lists *.summary.yaml in dispatch read gets MUST_READ_ORDER.
     from ascendc_pilot.ir_summary import large_ir_must_read_order_lines
 
     read_list = [str(x) for x in (dt.get("read") or [])]
     lines.extend(large_ir_must_read_order_lines(read_list))
+    answer_rels = [
+        str(p).replace("\\", "/")
+        for p in write_list
+        if str(p).replace("\\", "/").endswith("/answer.yaml")
+        or str(p).replace("\\", "/").endswith("answer.yaml")
+    ]
+    if answer_rels:
+        lines.append(
+            "MUST write the contract payload to write path "
+            f"`{answer_rels[0]}` before returning (schema kb-answer-v1)."
+        )
+        lines.append(
+            "Do NOT write uo/checks/* or modify the `.uo` product; those are not this Action's outputs."
+        )
     lines.extend(
         [
             "Return a short summary when done.",
@@ -618,6 +639,11 @@ def _check_output_contract(
     parts = []
     if missing:
         parts.append(f"missing outputs: {missing}")
+        if any(str(m).replace("\\", "/").startswith("runs/") for m in missing):
+            parts.append(
+                "subagent must Write these lease paths before primary finalize; "
+                "do not invent uo/checks/* as a substitute"
+            )
     if empty:
         parts.append(f"empty outputs: {empty}")
     if glob_miss:
@@ -820,6 +846,18 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
+    user_question = str(state.get("intent") or "").strip()
+    if (
+        user_question
+        and action_id == "kb_lookup"
+        and "## User question" not in prompt_r
+    ):
+        prompt_r = (
+            prompt_r.rstrip()
+            + "\n\n## User question\n\n"
+            + user_question
+            + "\n"
+        )
 
     identity = build_bundle_identity(
         run_id=run_id,
@@ -1119,26 +1157,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         host="opencode",
     )
     env_posix = env_path.as_posix()
+    # Stub is built after write_paths are known (see below).
     stub = ""
-    if execution_mode == EXECUTION_SUBAGENT:
-        stub = _build_task_prompt_stub(
-            actor_id=actor_id,
-            action_id=action_id,
-            run_id=run_id,
-            session_dir=sdir.as_posix(),
-            prompt_path=prompt_path,
-            method_path=method_path,
-            bundle_path=bundle_path,
-            dispatch_targets=bundle.get("dispatch_targets")
-            if isinstance(bundle.get("dispatch_targets"), dict)
-            else None,
-            agent_root_path=agent_root_posix,
-            project_root=root_s,
-            architecture=architecture,
-            candidates_sha256=str(bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""),
-            environment_path=env_posix,
-        )
-        bundle["task_prompt_stub"] = stub
 
     from ascendc_pilot.authorize.lease import issue_action_lease
     from datetime import datetime, timezone
@@ -1295,6 +1315,28 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     bundle["forbidden_read_paths"] = forbid_read
     bundle["allowed_target_ids"] = allowed_targets
     bundle["staging_dir"] = staging_dir(sdir).as_posix()
+
+    if execution_mode == EXECUTION_SUBAGENT and not dt.get("map_reduce"):
+        stub = _build_task_prompt_stub(
+            actor_id=actor_id,
+            action_id=action_id,
+            run_id=run_id,
+            session_dir=sdir.as_posix(),
+            prompt_path=prompt_path,
+            method_path=method_path,
+            bundle_path=bundle_path,
+            dispatch_targets=dt if isinstance(dt, dict) else None,
+            agent_root_path=agent_root_posix,
+            project_root=root_s,
+            architecture=architecture,
+            candidates_sha256=str(
+                bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""
+            ),
+            environment_path=env_posix,
+            write_paths=write_paths,
+            user_question=user_question,
+        )
+        bundle["task_prompt_stub"] = stub
 
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")

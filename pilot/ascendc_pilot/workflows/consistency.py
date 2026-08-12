@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 
 _ACTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
-_PRECONDITION_CONTRACTS = frozenset({"kb-answer-v1"})
+# Contracts that only assert pre-existing readiness (no producer write_scopes).
+# kb-answer-v1 is a real Action payload (runs/.../answer.yaml), not a precondition.
+_PRECONDITION_CONTRACTS = frozenset()
 _HARDCODED_WORKFLOW_IN_PROMPT = re.compile(
     r"workflow_id:\s*`(uo-init|uo-update|tg-init|tg-plan|tg-solve|ce-review|uo-query)`"
 )
@@ -160,46 +162,69 @@ def _check_architecture_start_requirements(
     workflows: dict[str, dict[str, Any]] | None,
     root: Path,
 ) -> list[str]:
-    """Spec ``requires_architecture`` set must include uo-update; projection stays aligned."""
+    """Spec start modes: uo-init/update choose arch*; consumers inherit from .uo."""
     del workflows
     errors: list[str] = []
     from ascendc_pilot.workflows import (
         workflow_requires_architecture,
+        workflow_requires_uo_product,
         workflows_needing_architecture,
+        workflows_needing_uo_product,
     )
 
     from ascendc_pilot.workflows.model_checker import MATRIX_WORKFLOWS
 
     if not workflow_requires_architecture("uo-update"):
         errors.append("workflow_requires_architecture('uo-update') must be True")
-    needed = set(workflows_needing_architecture())
+    if not workflow_requires_architecture("uo-init"):
+        errors.append("workflow_requires_architecture('uo-init') must be True")
+
+    arch_needed = set(workflows_needing_architecture())
+    uo_needed = set(workflows_needing_uo_product())
     matrix = set(MATRIX_WORKFLOWS)
-    if needed != matrix:
+    if arch_needed | uo_needed != matrix:
         errors.append(
-            "workflows_needing_architecture() must equal MATRIX_WORKFLOWS; "
-            f"missing={sorted(matrix - needed)} extra={sorted(needed - matrix)}"
+            "workflows_needing_architecture() | workflows_needing_uo_product() "
+            "must equal MATRIX_WORKFLOWS; "
+            f"missing={sorted(matrix - (arch_needed | uo_needed))} "
+            f"extra={sorted((arch_needed | uo_needed) - matrix)}"
         )
-    for wid in MATRIX_WORKFLOWS:
-        if not workflow_requires_architecture(wid):
-            errors.append(f"workflow_requires_architecture({wid!r}) must be True")
+    if arch_needed & uo_needed:
+        errors.append(
+            "architecture builders and uo-product consumers must be disjoint; "
+            f"overlap={sorted(arch_needed & uo_needed)}"
+        )
+    for wid in ("uo-init", "uo-update"):
+        if wid not in arch_needed:
+            errors.append(f"{wid} must require architecture (tree arch*)")
+        if workflow_requires_uo_product(wid):
+            errors.append(f"{wid} must not require_uo_product")
+    for wid in ("tg-init", "tg-plan", "tg-solve", "ce-review", "uo-query", "uo-investigate"):
+        if wid not in uo_needed:
+            errors.append(f"{wid} must require_uo_product (arch from .uo)")
+        if workflow_requires_architecture(wid):
+            errors.append(f"{wid} must not require_architecture (inherit from .uo)")
 
     inv = root / "pilot" / "policies" / "invariants" / "control-invariants.md"
     if inv.is_file():
-        text = inv.read_text(encoding="utf-8")
+        text_inv = inv.read_text(encoding="utf-8")
         item11 = ""
-        for line in text.splitlines():
+        for line in text_inv.splitlines():
             if line.startswith("11."):
                 item11 = line
                 break
         if "uo-update" not in item11:
             errors.append("control-invariants.md item 11 must mention uo-update")
+        if ".uo" not in item11:
+            errors.append(
+                "control-invariants.md item 11 must mention .uo / UO-first for TG/CE consumers"
+            )
     else:
         errors.append("missing pilot/policies/invariants/control-invariants.md")
 
     agent = root / "agents" / "ascendc-pilot.yaml"
     if agent.is_file():
         desc = agent.read_text(encoding="utf-8")
-        # Thin primary: do not hardcode architecture start lists in agent yaml.
         if "必须带齐" in desc or (
             "--architecture" in desc and "uo-update" in desc and "tg-init" in desc
         ):
@@ -211,7 +236,6 @@ def _check_architecture_start_requirements(
     else:
         errors.append("missing agents/ascendc-pilot.yaml")
 
-    # Model-facing compose projection helper must stay importable and include uo-update.
     try:
         import sys
 
@@ -223,6 +247,10 @@ def _check_architecture_start_requirements(
         line = _start_requirements_line(root)
         if "uo-update" not in line:
             errors.append("compose _start_requirements_line projection missing uo-update")
+        if "uo-init" not in line or ".uo" not in line:
+            errors.append(
+                "compose _start_requirements_line must describe UO-first for TG/CE consumers"
+            )
     except Exception as exc:  # noqa: BLE001
         errors.append(f"compose projection helper check failed: {exc}")
     return errors

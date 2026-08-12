@@ -835,6 +835,18 @@ def apply_resume_decision(
             }
         scrub = scrub_incomplete_on_continue(root)
         state = load_state(root) or state
+        try:
+            from ascendc_pilot.active_run import write_active_run
+
+            write_active_run(
+                root,
+                architecture=str(state.get("architecture") or ""),
+                run_id=str(state.get("run_id") or ""),
+                workflow_id=str(state.get("workflow_id") or ""),
+                status=str(state.get("status") or ""),
+            )
+        except ValueError:
+            pass
         summary = build_run_resume_summary(root, workflow_id=workflow_id)
         next_action = scrub.get("resume_next_action") or summary.get("resume_next_action") or ""
         payload = attach_todo(

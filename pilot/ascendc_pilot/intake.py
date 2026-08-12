@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""CLI intake gates: operator --project + architecture before uo/tg start.
+"""CLI intake gates: operator --project, architecture, and existing .uo CodeMap.
 
-Prevents:
-- silent arch35 default / invented arch options
-- prepare against AscendC-Pilot checkout or monorepo parent
-- ``.ascendc-pilot/`` appearing under OpenCode cwd instead of the operator
+Two start modes (Spec SSOT):
+- ``requires_architecture`` (uo-init / uo-update): choose arch* from the operator tree
+- ``requires_uo_product`` (tg-*/ce-review/uo-query/uo-investigate): architecture comes
+  from an existing ``.uo``; missing CodeMap → ask user to run /uo-init first
 """
 
 from __future__ import annotations
@@ -30,6 +30,12 @@ def _workflows_need_operator() -> frozenset[str]:
     from ascendc_pilot.workflows import workflows_needing_project
 
     return workflows_needing_project()
+
+
+def _workflows_need_uo() -> frozenset[str]:
+    from ascendc_pilot.workflows import workflows_needing_uo_product
+
+    return workflows_needing_uo_product()
 
 
 def looks_like_operator_package(root: Path | str | None) -> bool:
@@ -94,7 +100,6 @@ def describe_architectures(root: Path | str | None) -> list[dict[str, str]]:
             d = path / side / name  # type: ignore[operator]
             if d.is_dir():
                 bits.append(f"{side}/{name}: {_count_sources(d)} sources")
-        # Shared sources outside arch* still matter for BuildVariant.
         for side in ("op_host", "op_kernel"):
             shared = 0
             base = path / side  # type: ignore[operator]
@@ -108,6 +113,48 @@ def describe_architectures(root: Path | str | None) -> list[dict[str, str]]:
             {
                 "label": name,
                 "description": "; ".join(bits) if bits else f"found under op_host|op_kernel/{name}",
+            }
+        )
+    return options
+
+
+def parse_uo_product_name(path: Path) -> dict[str, str]:
+    """Parse ``<op>.<arch>.uo`` filename into op_name / architecture."""
+    stem = path.name[: -len(path.suffix)] if path.suffix == ".uo" else path.stem
+    parts = stem.rsplit(".", 1)
+    if len(parts) == 2 and re.fullmatch(r"arch\d+", parts[1]):
+        return {"op_name": parts[0], "architecture": parts[1], "path": str(path)}
+    return {"op_name": stem, "architecture": "", "path": str(path)}
+
+
+def discover_uo_products(root: Path | str | None) -> list[dict[str, str]]:
+    """List finalized CodeMap products under ``.ascendc-pilot/uo/*.uo``."""
+    if root is None:
+        return []
+    product_dir = Path(root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+    if not product_dir.is_dir():
+        return []
+    out: list[dict[str, str]] = []
+    for path in sorted(product_dir.glob("*.uo")):
+        if path.is_file():
+            out.append(parse_uo_product_name(path))
+    return out
+
+
+def describe_uo_products(root: Path | str | None) -> list[dict[str, str]]:
+    """AskQuestion options derived from existing ``.uo`` products."""
+    options: list[dict[str, str]] = []
+    for item in discover_uo_products(root):
+        arch = item.get("architecture") or ""
+        op_name = item.get("op_name") or ""
+        label = arch or Path(item["path"]).name
+        options.append(
+            {
+                "label": label,
+                "description": f"{op_name}.{arch}.uo" if arch else Path(item["path"]).name,
+                "architecture": arch,
+                "op_name": op_name,
+                "path": item["path"],
             }
         )
     return options
@@ -187,7 +234,6 @@ def assert_operator_project(root: Path | str, *, action: str = "") -> dict[str, 
     if looks_like_operator_package(path) and not is_pilot_harness_root(path):
         return None
     if looks_like_operator_package(path) and is_pilot_harness_root(path):
-        # Synthetic tests may use checkout; allow only if op_host present under checkout tests.
         return None
     label = f" Action={action}" if action else ""
     return {
@@ -222,17 +268,169 @@ def _attach_intake_request(payload: dict[str, Any], root: Path) -> dict[str, Any
     )
 
 
-def start_intake_gate(
+def _uo_product_gate(
+    *,
+    root: Path,
+    workflow_id: str,
+    architecture: str,
+) -> dict[str, Any] | None:
+    """For TG/CE/query consumers: require .uo and resolve architecture from it."""
+    products = discover_uo_products(root)
+    if not products:
+        return _attach_intake_request(
+            {
+                "ok": False,
+                "needs_human_decision": True,
+                "decision_kind": "uo_product",
+                "reason_code": "UO_PRODUCT_REQUIRED",
+                "workflow_id": workflow_id,
+                "project": str(root),
+                "message_zh": (
+                    f"未找到正式 CodeMap（`.ascendc-pilot/uo/*.uo`），不能启动 `{workflow_id}`。\n"
+                    "TG/CE/查询以 UO 产物为准：请先 `/uo-init --project <算子目录> --architecture <arch*>` "
+                    "建立 CodeMap，再回来启动本工作流。"
+                ),
+                "ask_question": {
+                    "prompt_zh": "尚未建立 CodeMap。请先运行 /uo-init，或选择下一步",
+                    "options": [
+                        {
+                            "label": "先 /uo-init 建立 CodeMap",
+                            "value": "uo-init",
+                            "description": "需要 --project 与 --architecture（来自仓内 arch*）",
+                        }
+                    ],
+                    "allow_free_text": False,
+                    "field": "next_workflow",
+                },
+                "suggested_command": (
+                    f'acp start uo-init --project "{root}" --architecture <arch*>'
+                ),
+                "primary_instruction_zh": (
+                    "先 AskQuestion 确认去跑 /uo-init；不要从 op_host/arch* 猜测 TG 架构，"
+                    "也不要在没有 .uo 时启动 tg-*/ce-review/uo-query。"
+                ),
+            },
+            root,
+        )
+
+    by_arch = {
+        str(p.get("architecture") or ""): p
+        for p in products
+        if str(p.get("architecture") or "").strip()
+    }
+    arches = sorted(by_arch)
+    arch = (architecture or "").strip()
+
+    if arch and arch not in by_arch:
+        details = describe_uo_products(root)
+        ask_opts = [
+            {
+                "label": o["label"],
+                "value": o.get("architecture") or o["label"],
+                "description": o.get("description") or "",
+            }
+            for o in details
+        ]
+        return _attach_intake_request(
+            {
+                "ok": False,
+                "needs_human_decision": True,
+                "decision_kind": "architecture",
+                "reason_code": "ARCHITECTURE_NOT_IN_UO",
+                "workflow_id": workflow_id,
+                "project": str(root),
+                "architecture": arch,
+                "architecture_options": arches,
+                "architecture_option_details": details,
+                "uo_products": products,
+                "message_zh": (
+                    f"指定的 architecture={arch} 没有对应的 `.uo` CodeMap。"
+                    f"已有产物: {', '.join(Path(p['path']).name for p in products)}。"
+                    "请改用已有 CodeMap 的架构，或先 /uo-init 建立该架构。"
+                ),
+                "ask_question": {
+                    "prompt_zh": "请选择已有 CodeMap 的 architecture",
+                    "options": ask_opts,
+                    "allow_free_text": False,
+                    "field": "architecture",
+                },
+                "suggested_command": (
+                    f'acp start {workflow_id} --project "{root}" --architecture <{",".join(arches)}>'
+                    if arches
+                    else f'acp start uo-init --project "{root}" --architecture <arch*>'
+                ),
+            },
+            root,
+        )
+
+    if not arch:
+        if len(arches) == 1:
+            return {
+                "ok": True,
+                "resolved_architecture": arches[0],
+                "resolved_from": "uo_product",
+                "uo_product": by_arch[arches[0]].get("path") or "",
+            }
+        details = describe_uo_products(root)
+        ask_opts = [
+            {
+                "label": o["label"],
+                "value": o.get("architecture") or o["label"],
+                "description": o.get("description") or "",
+            }
+            for o in details
+        ]
+        return _attach_intake_request(
+            {
+                "ok": False,
+                "needs_human_decision": True,
+                "decision_kind": "architecture",
+                "reason_code": "UO_ARCHITECTURE_REQUIRED",
+                "workflow_id": workflow_id,
+                "project": str(root),
+                "architecture_options": arches,
+                "architecture_option_details": details,
+                "uo_products": products,
+                "message_zh": (
+                    f"存在多个 CodeMap，请选择要用哪一个架构: {', '.join(arches)}。"
+                    "TG/CE 以 `.uo` 为准，不从源码目录另选 arch*。"
+                ),
+                "ask_question": {
+                    "prompt_zh": "请选择已有 CodeMap 的 architecture",
+                    "options": ask_opts,
+                    "allow_free_text": False,
+                    "field": "architecture",
+                },
+                "suggested_command": (
+                    f'acp start {workflow_id} --project "{root}" --architecture <{",".join(arches)}>'
+                ),
+                "primary_instruction_zh": (
+                    "选项必须来自已有 `.uo`；禁止编造未建库的 arch。"
+                ),
+            },
+            root,
+        )
+
+    return {
+        "ok": True,
+        "resolved_architecture": arch,
+        "resolved_from": "cli_or_env_matched_uo",
+        "uo_product": (by_arch.get(arch) or {}).get("path") or "",
+    }
+
+
+def prepare_workflow_start(
     *,
     project: Path | str,
     workflow_id: str,
     architecture: str = "",
     project_explicit: bool = False,
-) -> dict[str, Any] | None:
-    """Return a needs_human_decision payload, or None when start may proceed.
+) -> dict[str, Any]:
+    """Validate start inputs and resolve architecture.
 
-    Rule for uo/tg: both operator ``--project`` and ``--architecture`` are
-    required. Missing either → AskQuestion; both present and valid → start.
+    Always returns a dict:
+    - ok True → ``architecture`` is ready for ``acp start``
+    - ok False → AskQuestion / needs_human_decision payload
     """
     wf = (workflow_id or "").strip()
     root = Path(project).expanduser().resolve()
@@ -240,6 +438,7 @@ def start_intake_gate(
 
     need_op = wf in _workflows_need_operator()
     need_arch = wf in _workflows_need_arch()
+    need_uo = wf in _workflows_need_uo()
 
     if need_op:
         bad = assert_operator_project(root)
@@ -273,6 +472,21 @@ def start_intake_gate(
                 },
                 root,
             )
+
+    if need_uo:
+        uo_gate = _uo_product_gate(root=root, workflow_id=wf, architecture=arch)
+        if uo_gate is None:
+            return {"ok": True, "architecture": arch, "workflow_id": wf, "project": str(root)}
+        if uo_gate.get("ok") and uo_gate.get("resolved_architecture"):
+            return {
+                "ok": True,
+                "architecture": str(uo_gate["resolved_architecture"]),
+                "resolved_from": uo_gate.get("resolved_from") or "uo_product",
+                "uo_product": uo_gate.get("uo_product") or "",
+                "workflow_id": wf,
+                "project": str(root),
+            }
+        return uo_gate
 
     if need_arch and not arch:
         options = describe_architectures(root)
@@ -382,4 +596,26 @@ def start_intake_gate(
                 root,
             )
 
-    return None
+    return {"ok": True, "architecture": arch, "workflow_id": wf, "project": str(root)}
+
+
+def start_intake_gate(
+    *,
+    project: Path | str,
+    workflow_id: str,
+    architecture: str = "",
+    project_explicit: bool = False,
+) -> dict[str, Any] | None:
+    """Compatibility wrapper: None when start may proceed, else AskQuestion payload.
+
+    Prefer ``prepare_workflow_start`` when the caller needs the resolved architecture.
+    """
+    result = prepare_workflow_start(
+        project=project,
+        workflow_id=workflow_id,
+        architecture=architecture,
+        project_explicit=project_explicit,
+    )
+    if result.get("ok"):
+        return None
+    return result

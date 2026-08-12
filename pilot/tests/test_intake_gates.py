@@ -148,3 +148,36 @@ def test_cli_prepare_rejects_pilot_checkout(capsys):
     assert code == 2
     out = json.loads(capsys.readouterr().out)
     assert out["reason_code"] == "OPERATOR_PROJECT_REQUIRED"
+
+
+def test_start_intake_gate_tg_requires_uo_product(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    gate = intake.start_intake_gate(
+        project=tmp_path,
+        workflow_id="tg-init",
+        architecture="",
+        project_explicit=True,
+    )
+    assert gate is not None
+    assert gate["reason_code"] == "UO_PRODUCT_REQUIRED"
+    assert "uo-init" in gate["suggested_command"]
+
+
+def test_prepare_workflow_start_inherits_arch_from_uo(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    uo_dir = tmp_path / ".ascendc-pilot" / "uo"
+    uo_dir.mkdir(parents=True)
+    (uo_dir / "demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
+    prep = intake.prepare_workflow_start(
+        project=tmp_path,
+        workflow_id="tg-init",
+        architecture="",
+        project_explicit=True,
+    )
+    assert prep.get("ok") is True
+    assert prep.get("architecture") == "arch35"
+    assert prep.get("resolved_from") == "uo_product"

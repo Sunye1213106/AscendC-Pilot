@@ -24,6 +24,10 @@ CBM_ALLOW = ("docs/history/",)
 BANNED_TOKEN_RE = re.compile(
     r"(?i)\b(csv_consumer(?:_root)?|scope_confirm\w*|stage_cbm)\b"
 )
+# Exact legacy TG Z3 product identifiers (not the Z3 library name itself).
+BANNED_Z3_LEGACY_RE = re.compile(
+    r"(?i)\b(z3_solve|z3-solve(?:-v1)?|legacy_z3_solver|z3_solver_v1)\b"
+)
 # Silent architecture fallback patterns (not legitimate arch string uses).
 ARCH35_FALLBACK_PATTERNS = (
     re.compile(r"""or\s+["']arch35["'](?!\s+in\b)"""),
@@ -81,6 +85,8 @@ def _scan_plugin_host_adapter(repo: Path, errors: list[str]) -> None:
     # Arch-neutral control plane must remain.
     if "pending_interaction.yaml" not in text or "control" not in text:
         errors.append("plugin must keep arch-neutral control/pending_interaction path")
+    if "active_run.yaml" not in text:
+        errors.append("plugin must consult control/active_run.yaml for multi-arch state")
 
 
 def _scan_banned_production_symbols(repo: Path, errors: list[str]) -> None:
@@ -119,6 +125,10 @@ def _scan_banned_production_symbols(repo: Path, errors: list[str]) -> None:
             if BANNED_TOKEN_RE.search(body):
                 errors.append(
                     f"banned token (csv_consumer/scope_confirm/stage_cbm) in production path: {rel}"
+                )
+            if BANNED_Z3_LEGACY_RE.search(body):
+                errors.append(
+                    f"banned legacy Z3 product id in production path: {rel}"
                 )
             for pat in ARCH35_FALLBACK_PATTERNS:
                 if pat.search(body):

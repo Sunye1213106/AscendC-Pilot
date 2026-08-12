@@ -223,8 +223,8 @@ function projectRootFromPath(pathHint: string): string {
 
 /**
  * Sole Host helper that knows Pilot state directory layout.
- * Prefer arch-scoped `.ascendc-pilot/<arch>/state/workflow.yaml`;
- * also recognize legacy flat `.ascendc-pilot/state/workflow.yaml` so ACP can migrate.
+ * Prefer ``control/active_run.yaml`` → arch-scoped state; then sole arch;
+ * then legacy flat ``.ascendc-pilot/state/workflow.yaml``.
  * Do not call this for control/pending_interaction (arch-neutral by design).
  */
 function findPilotStateFile(root: string): string {
@@ -233,16 +233,34 @@ function findPilotStateFile(root: string): string {
   const pilot = resolve(r, ".ascendc-pilot")
   if (!existsSync(pilot)) return ""
 
+  // Durable active-run pointer (written by ACP; Host must not invent arch).
+  const activeRun = resolve(pilot, "control", "active_run.yaml")
+  if (existsSync(activeRun)) {
+    try {
+      const text = readFileSync(activeRun, "utf-8")
+      const m = text.match(/^\s*architecture:\s*["']?([A-Za-z0-9_.-]+)["']?\s*$/m)
+      const arch = m ? String(m[1] || "").trim() : ""
+      if (arch) {
+        const candidate = resolve(pilot, arch, "state", "workflow.yaml")
+        if (existsSync(candidate)) return candidate
+      }
+    } catch {
+      // fall through
+    }
+  }
+
   // Legacy flat layout (migrated by Python migrate_legacy_agent_dir via host-context).
   const flat = resolve(pilot, "state", "workflow.yaml")
   if (existsSync(flat)) return flat
 
   try {
+    const hits: string[] = []
     for (const name of readdirSync(pilot)) {
       if (!name || name === "control" || name === "uo") continue
       const candidate = resolve(pilot, name, "state", "workflow.yaml")
-      if (existsSync(candidate)) return candidate
+      if (existsSync(candidate)) hits.push(candidate)
     }
+    if (hits.length === 1) return hits[0]
   } catch {
     // ignore
   }

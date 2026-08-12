@@ -32,7 +32,7 @@ User arguments: $ARGUMENTS
 
 Execution contract:
 1. Treat Workflow Spec / ACP as orchestration authority. Start `{workflow_id}` with `acp start` when it is not already the active workflow; do not call domain CLIs directly.
-2. After start, prefer `acp run-action auto` to drain consecutive deterministic Actions and phase transitions. Do not dispatch deterministic engine identities as OpenCode Tasks.
+2. After start, prefer `acp run-action auto` to drain consecutive deterministic Actions and phase transitions. Do not dispatch deterministic engine identities as OpenCode Tasks. Run `acp` directly (with `--project`); **never** pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail` — those buffer all output until exit and hide live `[acp-auto]` / `[uo]` progress.
 3. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
 4. Finalize the interactive Action through ACP, then call `acp run-action auto` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.
 5. Canonical UO/TG/CE artifacts and workflow state are written only through the declared actor + ACP finalizer/gates.
