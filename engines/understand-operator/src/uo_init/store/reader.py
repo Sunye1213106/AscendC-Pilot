@@ -125,10 +125,12 @@ def load_view_blob_checked(
     codemap: CodeMap | None = None,
     fallback_canonical: bool = True,
 ) -> dict[str, Any]:
-    """Load a projection with provenance check.
+    """Load a projection with fail-closed provenance validation.
 
-    On mismatch returns ``reason_code=VIEW_STALE`` and, when possible, a
-    canonical rebuild of known TG views (engine-side; not LLM).
+    A stale/legacy blob is never returned as the usable ``view``.  Known
+    projections are rebuilt from the canonical CodeMap engine-side; unknown
+    projections return ``view=None`` so callers cannot accidentally consume an
+    unverifiable shortcut.  ``stale_blob`` is retained only for diagnostics.
     """
     from uo_init.projection_provenance import VIEW_STALE, validate_view_against_codemap
     from uo_init.tg_views import (
@@ -150,7 +152,8 @@ def load_view_blob_checked(
         "ok": False,
         "reason_code": check.get("reason_code") or VIEW_STALE,
         "name": name,
-        "view": blob,
+        "view": None,
+        "stale_blob": blob,
         "check": check,
     }
     if not fallback_canonical:
@@ -173,13 +176,12 @@ def load_view_blob_checked(
     if rebuilt is not None:
         from uo_init.projection_provenance import stamp_provenance
 
-        # Ensure fingerprint meta exists for stamp
+        # Ensure fingerprint meta exists for stamp.
         if not cm.meta.get("graph_fingerprint"):
             finalize_tg_views(cm, existing={})
         result["ok"] = True
         result["fallback"] = "canonical"
         result["view"] = stamp_provenance(rebuilt, cm)
-        result["stale_blob"] = blob
     return result
 
 

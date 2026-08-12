@@ -4,7 +4,7 @@
 2. Never declare workflow `done` / `passed`; only Pilot completion may finish.
 3. Do not call domain CLIs directly; use `acp run-action`. Prefer `acp run-action auto` after start/finalize to drain consecutive deterministic Actions; it must stop before subagent or primary-interactive work. **`auto` 返回后必须立刻 `todowrite` 同步 `todo.todo_sync.items`（`force`/`after_auto`）**——auto 内部多步不会回到 Host，不能等下一轮再同步。Invoke `acp` **without** buffering pipes (`Select-Object -Last`, `Out-String`, `tail`) so `[acp-auto]` / `[uo]` stderr progress stays live.
 4. Deterministic engine identities are internal ACP actors, never OpenCode Task agents. When auto stops at an interaction boundary, dispatch exactly the returned LLM actor / primary interaction.
-4a. `uo-query` `kb_lookup`: subagent MUST Write lease `answer.yaml` (`kb-answer-v1`) then Primary `--finalize`. Never treat missing `uo/checks/integrity.yaml` as the kb_lookup payload — that file is a uo-init verify receipt, not a query answer.
+4a. `uo-query` `kb_lookup` is `return_value`: subagent MUST NOT Write `answer.yaml`; it returns one `kb-answer-v1` payload. Host/Runtime finalizes and materializes action-local `answer.yaml`. Never treat missing `uo/checks/integrity.yaml` as the kb_lookup payload — that file is a uo-init verify receipt, not a query answer.
 5. Writes must stay inside Agent `write_scopes` ∩ Action lease ∩ workflow `write_roots`.
 6. Primary never writes formal `uo/**` / `tg/**` IR products for a declared sub-actor.
 7. Lease invariant: anything you may Write is also Readable.

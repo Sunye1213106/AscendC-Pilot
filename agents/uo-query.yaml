@@ -5,14 +5,16 @@ role: readonly_analyst
 mode: subagent
 description: >
   Claim-driven CodeMap Explore (progressive uo-product-map + claim sufficiency).
-  Read session prompt.md and method.md first. Prefer `acp uo-query`; minimal
-  source windows only when span missing. Return kb-answer-v1 in the final
-  message only (return_value). Runtime/Primary materializes answer.yaml —
-  Explorer write_scopes are empty. Never write uo/checks/* or modify `.uo`.
-  Do NOT finalize.
+  Read session prompt.md and method.md first. Prefer `acp uo-query`; open a
+  minimal source window only when UO semantic evidence is insufficient for the
+  current claim (for example missing enum mapping, expression detail, span, or
+  contradictory facts). Return kb-answer-v1 in the final message only
+  (return_value). Runtime/Host materializes answer.yaml — Explorer write_scopes
+  are empty. Never write uo/checks/* or modify `.uo`. Do NOT finalize.
 skill_ids: [operator-analysis]
 read_scopes:
 - uo/**
+- ../uo/*.uo
 - runs/**
 - context/**
 - memory/**

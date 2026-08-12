@@ -125,9 +125,12 @@ def _semantic_key(command: str) -> str:
     return hashlib.sha256(cmd.encode("utf-8")).hexdigest()[:16]
 
 
-def _span_key(path: str) -> str:
+def _span_key(path: str, command: str = "") -> str:
+    """Identity for one source window, not for the whole source file."""
     norm = (path or "").replace("\\", "/").lstrip("./")
-    return hashlib.sha256(norm.encode("utf-8")).hexdigest()[:16]
+    range_hint = re.sub(r"\s+", "", str(command or "").strip().lower())
+    raw = f"{norm}|{range_hint}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def check_and_record(
@@ -139,7 +142,13 @@ def check_and_record(
     command: str = "",
     path: str = "",
 ) -> dict[str, Any]:
-    """Update budget; return allow/deny verdict fragment for authorize."""
+    """Update budget; return allow/deny verdict fragment for authorize.
+
+    Per-bucket and total limits are *soft*: crossing them warns the Agent to
+    converge but does not turn into a hidden hard stop. ``hard_total`` is the
+    single hard ceiling; the call that reaches it is allowed, and the next
+    counted exploration call is denied.
+    """
     body = load_budget(project_root, run_id=run_id, action_id=action_id)
     if body is None:
         body = init_budget(project_root, run_id=run_id, action_id=action_id)
@@ -152,18 +161,20 @@ def check_and_record(
     warnings = list(body.get("warnings") or [])
     seen_sem = list(body.get("seen_semantic") or [])
     seen_spans = list(body.get("seen_spans") or [])
+    hard_total = int(limits.get("hard_total") or 12)
 
-    if body.get("exhausted") or int(counts.get("total") or 0) >= int(limits.get("hard_total") or 12):
+    if body.get("exhausted") or int(counts.get("total") or 0) >= hard_total:
+        body["exhausted"] = True
         save_budget(project_root, body, run_id=run_id, action_id=action_id)
         return {
             "ok": False,
             "decision": "deny",
             "reason_code": HARD_REASON,
-            "message_zh": "探索预算耗尽：请立即输出 ANSWERED|PARTIAL|UNKNOWN 并停止",
+            "message_zh": "探索预算硬顶耗尽：请立即输出 ANSWERED|PARTIAL|UNKNOWN 并停止",
             "budget": body,
         }
 
-    # Duplicate suppression
+    # Duplicate suppression.
     if bucket == "semantic":
         key = _semantic_key(command)
         if key in seen_sem:
@@ -180,53 +191,57 @@ def check_and_record(
         seen_sem.append(key)
         body["seen_semantic"] = seen_sem[-64:]
     if bucket == "source":
-        key = _span_key(path)
-        if key in seen_spans:
-            warnings.append({"reason_code": DUP_REASON, "bucket": bucket, "key": key})
-            body["warnings"] = warnings[-20:]
-            save_budget(project_root, body, run_id=run_id, action_id=action_id)
-            return {
-                "ok": False,
-                "decision": "deny",
-                "reason_code": DUP_REASON,
-                "message_zh": "同一源码 span 重复 Read 已抑制",
-                "budget": body,
-            }
-        seen_spans.append(key)
-        body["seen_spans"] = seen_spans[-64:]
+        # Older Host adapters expose only a file path for Read.  Without a
+        # range hint we cannot distinguish line 100 from line 800, so fail open
+        # on duplicate suppression rather than incorrectly banning the second
+        # window. Range-aware Hosts pass offset/limit in ``command`` and get
+        # exact window deduplication.
+        range_hint = str(command or "").strip()
+        if range_hint:
+            key = _span_key(path, range_hint)
+            if key in seen_spans:
+                warnings.append({"reason_code": DUP_REASON, "bucket": bucket, "key": key})
+                body["warnings"] = warnings[-20:]
+                save_budget(project_root, body, run_id=run_id, action_id=action_id)
+                return {
+                    "ok": False,
+                    "decision": "deny",
+                    "reason_code": DUP_REASON,
+                    "message_zh": "同一源码 span 重复 Read 已抑制",
+                    "budget": body,
+                }
+            seen_spans.append(key)
+            body["seen_spans"] = seen_spans[-64:]
 
-    # Soft near-limit warning before increment if already at soft limit
-    soft_hit = int(counts.get(bucket) or 0) >= int(limits.get(bucket) or 0) or int(
-        counts.get("total") or 0
-    ) >= int(limits.get("total") or 10)
-    if soft_hit:
-        warnings.append({"reason_code": SOFT_REASON, "bucket": bucket})
-        body["warnings"] = warnings[-20:]
-        # Soft: allow this call but mark exhausted after if over hard
     counts[bucket] = int(counts.get(bucket) or 0) + 1
     counts["total"] = int(counts.get("total") or 0) + 1
     body["counts"] = counts
-    if counts["total"] >= int(limits.get("hard_total") or 12):
+
+    soft_hit = (
+        counts.get(bucket, 0) >= int(limits.get(bucket) or 0)
+        or counts["total"] >= int(limits.get("total") or 10)
+    )
+    if soft_hit:
+        warnings.append(
+            {
+                "reason_code": SOFT_REASON,
+                "bucket": bucket,
+                "counts": dict(counts),
+            }
+        )
+        body["warnings"] = warnings[-20:]
+    if counts["total"] >= hard_total:
+        # This call is allowed. The next counted tool is denied.
         body["exhausted"] = True
-    elif (
-        counts.get(bucket, 0) > int(limits.get(bucket) or 0)
-        or counts["total"] > int(limits.get("total") or 10)
-    ):
-        # Over soft limit → force stop on *next* counted tool
-        body["exhausted"] = True
-        save_budget(project_root, body, run_id=run_id, action_id=action_id)
-        return {
-            "ok": False,
-            "decision": "deny",
-            "reason_code": HARD_REASON,
-            "message_zh": f"探索预算超限（{bucket}）；请立即 ANSWERED|PARTIAL|UNKNOWN",
-            "budget": body,
-            "near_limit": True,
-        }
 
     save_budget(project_root, body, run_id=run_id, action_id=action_id)
     out: dict[str, Any] = {"ok": True, "budget": body, "bucket": bucket}
-    if soft_hit or int(counts.get("total") or 0) >= int(limits.get("total") or 10) - 1:
+    if soft_hit or counts["total"] >= max(1, int(limits.get("total") or 10) - 1):
         out["warning"] = SOFT_REASON
-        out["message_zh"] = "接近探索预算上限，准备收束答案"
+        out["message_zh"] = (
+            "接近/超过探索软预算，只有会改变结论的 material gap 才继续；否则立即收束答案"
+        )
+    if counts["total"] >= hard_total:
+        out["hard_limit_reached"] = True
+        out["message_zh"] = "本次为最后一次允许的探索调用；现在必须收束答案"
     return out

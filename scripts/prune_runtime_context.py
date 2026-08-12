@@ -109,15 +109,11 @@ def _rewrite_deterministic_skill_owners(
         original = text
         for action_id in sorted(deterministic):
             aid = re.escape(action_id)
-            # Generated Actions table: action | deterministic | <agent> | role ...
-            # The engine identity remains in Action Bundle/lease; model-facing
-            # tables deliberately render it as the non-spawnable token `engine`.
             text = re.sub(
                 rf"(?m)^(\|\s*`{aid}`\s*\|\s*`deterministic`\s*\|\s*)`[^`]+`(\s*\|)",
                 r"\1`engine`\2",
                 text,
             )
-            # Composition index ends with the agent column.
             text = re.sub(
                 rf"(?m)^(\|\s*`{aid}`\s*\|[^\n]*\|\s*)`[^`]+`\s*\|$",
                 r"\1`engine` |",
@@ -129,7 +125,19 @@ def _rewrite_deterministic_skill_owners(
     return changed
 
 
-def prune(repo: Path, host: str) -> dict[str, Any]:
+def prune(
+    repo: Path,
+    host: str,
+    *,
+    generated_root: Path | None = None,
+) -> dict[str, Any]:
+    """Prune one generated host runtime.
+
+    ``generated_root`` is the host runtime root itself (the directory containing
+    ``skills/``, ``agents/`` and ``prompts/``).  It defaults to the committed
+    ``generated/<host>`` tree, but an explicit root lets drift checks prune a
+    temporary compose with exactly the same pipeline used by installers/CI.
+    """
     repo = repo.expanduser().resolve()
     pilot = repo / "pilot"
     if str(pilot) not in sys.path:
@@ -138,15 +146,17 @@ def prune(repo: Path, host: str) -> dict[str, Any]:
     from ascendc_pilot.workflows import WORKFLOWS
 
     agent_ids, prompt_ids = referenced_runtime_assets(WORKFLOWS)
-    generated = repo / "generated" / host
+    generated = (
+        Path(generated_root).expanduser().resolve()
+        if generated_root is not None
+        else repo / "generated" / host
+    )
     skills_dir = generated / "skills"
     agents_dir = generated / "agents"
     prompts_dir = generated / "prompts"
     removed_agents: list[str] = []
     removed_prompts: list[str] = []
 
-    # Also drop host MD for source agents marked kind=deterministic_engine
-    # (compose should already skip them; prune is belt-and-suspenders).
     engine_ids: set[str] = set()
     agents_src = repo / "agents"
     if agents_src.is_dir():
@@ -188,6 +198,7 @@ def prune(repo: Path, host: str) -> dict[str, Any]:
     return {
         "ok": not missing_agents and not missing_prompts,
         "host": host,
+        "generated_root": generated.as_posix(),
         "kept_agents": sorted(agent_ids),
         "kept_prompts": sorted(prompt_ids),
         "removed_agents": removed_agents,

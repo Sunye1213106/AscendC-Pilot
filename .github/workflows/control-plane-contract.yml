@@ -6,6 +6,9 @@ on:
       - "agents/**"
       - "pilot/**"
       - "prompts/**"
+      - "skills/operator-analysis/**"
+      - "engines/understand-operator/**"
+      - "opencode-plugin/**"
       - "scripts/**"
       - "install.sh"
       - "install.ps1"
@@ -17,10 +20,14 @@ on:
       - "agents/**"
       - "pilot/**"
       - "prompts/**"
+      - "skills/operator-analysis/**"
+      - "engines/understand-operator/**"
+      - "opencode-plugin/**"
       - "scripts/**"
       - "install.sh"
       - "install.ps1"
       - "refresh-opencode.ps1"
+      - ".github/workflows/control-plane-contract.yml"
 
 jobs:
   execution-contract:
@@ -61,6 +68,24 @@ jobs:
         env:
           PYTHONPATH: pilot
         run: python scripts/check_skill_architecture.py
+      - name: Validate uo-query Explore control plane
+        env:
+          PYTHONPATH: pilot
+        run: >-
+          pytest -q
+          pilot/tests/test_exploration_budget.py
+          pilot/tests/test_uo_query_return_value_transport.py
+          pilot/tests/test_uo_query_policy_ssot.py
+          pilot/tests/test_uo_query_opencode_hook.py
+          pilot/tests/test_uo_query_eval_gates.py
+          pilot/tests/test_prepare_placeholders.py::test_kb_lookup_stub_requires_answer_yaml_not_integrity
+      - name: Validate UO projection freshness and aggregate queries
+        env:
+          PYTHONPATH: engines/understand-operator/src
+        run: >-
+          pytest -q
+          engines/understand-operator/tests/unit/test_projection_provenance.py
+          engines/understand-operator/tests/unit/test_uo_query_aggregate_modes.py
       - name: Compose the real OpenCode runtime
         env:
           PYTHONPATH: pilot
@@ -68,21 +93,10 @@ jobs:
           python scripts/compose_runtime.py --repo . --host opencode
           python scripts/prune_runtime_context.py --repo . --host opencode
           python scripts/compose_opencode_commands.py
-      - name: Assert generated runtime has no drift
+      - name: Validate composed OpenCode runtime closure
         env:
           PYTHONPATH: pilot
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          import sys
-          sys.path.insert(0, "scripts")
-          from compose_runtime import check_generated_drift
-          errs = check_generated_drift(Path(".").resolve(), hosts=["opencode"])
-          if errs:
-              print("\n".join(errs))
-              raise SystemExit(1)
-          print("generated drift: ok")
-          PY
+        run: python scripts/check_generated_runtime_closure.py --repo . --host opencode
       - name: Validate deterministic drive
         env:
           PYTHONPATH: pilot

@@ -26,6 +26,8 @@
 
 主问只需前几层时，不要拖到 full reachability。optional 边角（RoPE×DTemplate）不得阻塞主 verdict。
 
+**不要把不同层级混成一个“合法/非法”结论。** 例如模板接纳但 Host 不产生，应分别回答 `template-admissible=YES`、`host-produced=NO`。仅当当前 claim 本身是 `host-produced` / `full reachability` 时，已证明的 Host blocker 才能直接收束为不可达。
+
 ## 探索环
 
 ```text
@@ -38,28 +40,29 @@ mission → identify_claim → uo-product-map → choose_semantic_next_hop
 ## 工具优先级
 
 1. `acp uo-query` 聚合 mode（`search` / `tiling_key` / `tiling_data` / `kernel_branch` / `template_match` / `buffer` / `gaps` / …）
-2. 仅当图无 `source_span` 时：`ro-search` / 窗口 Read（极少）
-3. **禁止**手搓 SQLite join；**禁止**整包 `json.loads` legal_key_index
+2. 仅当 **UO 对当前 claim 的语义证据不足** 时，打开最小源码窗口。典型原因：enum 名↔数值缺失、表达式细节缺失、两个 UO 事实矛盾、无 `source_span`，或用户明确问实现细节。
+3. **禁止**手搓 SQLite join；**禁止**整包 `json.loads` legal_key_index。
 
-Citation：`source_span` / packing site 的 `path:line` **足够**；不为行号而 Read。
+Citation：`source_span` / packing site 的 `path:line` **足够**；不要仅为了获得行号而 Read。
 
 ## 预算与停条件
 
-| 项 | 上限 |
+| 项 | 软上限 |
 | --- | ---: |
 | structured `acp uo-query` | 6 |
 | `acp ro-search` | 2 |
 | 源码 Read 窗口 | 2 |
 | 总工具调用 | 10 |
-| 硬顶 | 12 |
+| 总工具硬顶 | 12 |
 
-- 同一 pattern / 同 span **不得**重复当新证据  
-- 预算耗尽 → `PARTIAL` 并 STOP  
-- Host 已否定合法性 → 可直接 `ANSWERED`（非法）
+- 同一 semantic query / 同一 source span **不得**重复当新证据。  
+- 达软上限：优先收束；仅 material gap 可继续，最多到硬顶。  
+- 达硬顶：`ANSWERED | PARTIAL | UNKNOWN` 三选一并 STOP。  
+- optional 交叉不得为了“更有信心”继续探索。
 
 ## 交付（return_value）
 
-最终消息输出**一个** `kb-answer-v1` YAML 块。**Explorer 不写文件**；Runtime/`--finalize --result-file` 物化 `answer.yaml`。  
+最终消息输出**一个** `kb-answer-v1` YAML 块。**Explorer 不写文件**；Host/Runtime 从 Task return 直接 finalize 并物化 `answer.yaml`。`--result-file` 仅作为人工/兼容 fallback。  
 禁止 Write 合同文件；禁止写 `uo/**`；禁止 `--finalize`。
 
 ```yaml
