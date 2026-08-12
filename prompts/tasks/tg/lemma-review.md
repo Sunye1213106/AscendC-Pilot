@@ -8,7 +8,7 @@ Replay producer lemma certificates and adjudicate.
 
 # Evidence
 
-- Evidence pack: `<LEMMA_EVIDENCE_PATH>`
+- Use the evidence pack declared by the current Action bundle/session context
 - Producer certificates for the assigned targets
 
 # Context
