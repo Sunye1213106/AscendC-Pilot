@@ -19,6 +19,10 @@ CE 输入是 source diff 或 review target，以及 UO CodeMap 和 query view。
 
 如果 CodeMap 缺失或 stale，先运行 `/uo-init` 或 `/uo-update`；CE 不会为审查任务重建完整源码理解，也不替代 TG 的覆盖闭环。
 
+### 委托只读查询
+
+跨层影响需要结构解释时，CE 使用 `Task(actor=uo-query)` + 显式 **UO Product Handle**（禁止子代理自找 `.uo`），**不要**嵌套完整 `/uo-query` workflow。详见 [Agent Runtime](../architecture/agent-runtime.md)。
+
 ## 后续方向
 
 影响分析、修改建议、调试和 PR 辅助是合理的扩展方向，但不是当前公开工作流的既有承诺。新增这些能力时，应先在 workflow、权限、输出合同和测试中落地，再将其写入本文档。

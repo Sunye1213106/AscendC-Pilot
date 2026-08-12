@@ -118,6 +118,21 @@ def test_uo_query_uses_codemap_prompt() -> None:
 
     action = next(a for a in WORKFLOWS["uo-query"]["actions"] if a["id"] == "kb_lookup")
     assert action["task_prompt_id"] == "uo/codemap-query"
+    assert action["output_contract_id"] == "kb-answer-v1"
+    assert action.get("output_mode") == "return_value"
+    assert "runs/{run_id}/actions/kb_lookup/answer.yaml" in (
+        action.get("allowed_write_paths") or []
+    )
+
+
+def test_kb_answer_contract_is_lease_answer_not_integrity() -> None:
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+    from ascendc_pilot.workflows.consistency import _PRECONDITION_CONTRACTS
+
+    assert OUTPUT_CONTRACT_PATHS["kb-answer-v1"] == [
+        "runs/{run_id}/actions/kb_lookup/answer.yaml"
+    ]
+    assert "kb-answer-v1" not in _PRECONDITION_CONTRACTS
 
 
 def test_uo_init_pipeline_matches_preferred() -> None:

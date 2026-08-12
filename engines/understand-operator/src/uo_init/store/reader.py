@@ -118,6 +118,71 @@ def load_view_blob(path: str | Path, name: str) -> Any | None:
         conn.close()
 
 
+def load_view_blob_checked(
+    path: str | Path,
+    name: str,
+    *,
+    codemap: CodeMap | None = None,
+    fallback_canonical: bool = True,
+) -> dict[str, Any]:
+    """Load a projection with provenance check.
+
+    On mismatch returns ``reason_code=VIEW_STALE`` and, when possible, a
+    canonical rebuild of known TG views (engine-side; not LLM).
+    """
+    from uo_init.projection_provenance import VIEW_STALE, validate_view_against_codemap
+    from uo_init.tg_views import (
+        finalize_tg_views,
+        project_kernel_view,
+        project_operator_graph,
+        project_tilingdata_view,
+        project_tg_host_view,
+    )
+
+    blob = load_view_blob(path, name)
+    cm = codemap if codemap is not None else read_codemap(path)
+    if blob is None:
+        return {"ok": False, "reason_code": "VIEW_MISSING", "name": name, "view": None}
+    check = validate_view_against_codemap(blob, cm)
+    if check.get("ok"):
+        return {"ok": True, "reason_code": "", "name": name, "view": blob}
+    result: dict[str, Any] = {
+        "ok": False,
+        "reason_code": check.get("reason_code") or VIEW_STALE,
+        "name": name,
+        "view": blob,
+        "check": check,
+    }
+    if not fallback_canonical:
+        return result
+    rebuilt: Any = None
+    if name == "ir/operator_graph.yaml":
+        rebuilt = project_operator_graph(cm)
+    elif name == "ir/tg_host_view.yaml":
+        rebuilt = project_tg_host_view(cm)
+    elif name == "views/kernel.yaml":
+        rebuilt = project_kernel_view(cm)
+    elif name == "views/tilingdata.yaml":
+        rebuilt = project_tilingdata_view(cm)
+    elif name == "summary":
+        rebuilt = {
+            "entity_count": len(cm.entities),
+            "relation_count": len(cm.relations),
+            "graph_fingerprint": cm.meta.get("graph_fingerprint"),
+        }
+    if rebuilt is not None:
+        from uo_init.projection_provenance import stamp_provenance
+
+        # Ensure fingerprint meta exists for stamp
+        if not cm.meta.get("graph_fingerprint"):
+            finalize_tg_views(cm, existing={})
+        result["ok"] = True
+        result["fallback"] = "canonical"
+        result["view"] = stamp_provenance(rebuilt, cm)
+        result["stale_blob"] = blob
+    return result
+
+
 def list_views(path: str | Path) -> list[str]:
     conn = open_uo(path)
     try:

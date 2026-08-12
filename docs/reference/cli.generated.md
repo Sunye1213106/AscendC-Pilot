@@ -18,6 +18,7 @@
 | `acp debug` | 采集诊断信息并导出 session bundle |
 | `acp doctor` | 执行环境预检 |
 | `acp emit-confidence-report` | 从 KB 生成确定性的 confidence report 与 gate |
+| `acp host-context` | Resolve arch-scoped Host adapter context (OpenCode plugin authority) |
 | `acp inspect` | 查询结构化 IR（candidates、tasks、YAML 计数） |
 | `acp inspect-failure` | 查看结构化 failure 信息 |
 | `acp next` | 查看可执行的下一动作与 obligations |

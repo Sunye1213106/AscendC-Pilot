@@ -521,6 +521,8 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 task_prompt_id="uo/codemap-query",
                 output_contract_id="kb-answer-v1",
+                # Ephemeral Q&A: subagent returns kb-answer-v1; finalize materializes.
+                output_mode="return_value",
                 allowed_write_paths=[
                     "runs/{run_id}/actions/kb_lookup/answer.yaml",
                     "runs/{run_id}/actions/kb_lookup/scratch/**",

@@ -339,6 +339,145 @@ class CodeMapUoQuery:
     def available_arch(self) -> list[dict[str, Any]]:
         return self.query.available_arch()
 
+    # ---- aggregate Explore modes ------------------------------------------
+
+    def aggregate_tiling_key(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        keys = self.tiling_keys()
+        if needle:
+            low = needle.lower()
+            keys = [
+                k
+                for k in keys
+                if low in str(k.get("name") or "").lower()
+                or low in str(k.get("id") or "").lower()
+            ]
+        keys = keys[: max(0, int(limit))]
+        legal = self.legal_key_query(pattern=needle, limit=min(20, int(limit)))
+        return {
+            "ok": True,
+            "mode": "tiling_key",
+            "pattern": needle,
+            "keys": keys,
+            "count": len(keys),
+            "legal_key_sample": legal,
+        }
+
+    def aggregate_tiling_data(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        if needle:
+            fields = self.tiling_field(needle)[: int(limit)]
+            impact = self.field_impact(needle) if fields else {"ok": False}
+            data = self.tiling_data(needle)
+        else:
+            fields = self.tiling_fields()[: int(limit)]
+            impact = {}
+            data = self.tiling_data()
+        return {
+            "ok": True,
+            "mode": "tiling_data",
+            "pattern": needle,
+            "tiling_data": data[: int(limit)],
+            "fields": fields,
+            "impact": impact,
+            "count": len(fields),
+        }
+
+    def aggregate_kernel_branch(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        branches = self.branches_for_key(needle) if needle else [
+            _entity_row(e) for e in self.codemap.by_kind(EntityKind.BRANCH)
+        ]
+        kernels = self.selected_kernel(needle) if needle else [
+            _entity_row(e) for e in self.codemap.by_kind(EntityKind.KERNEL)
+        ]
+        overview = self.query.kernel_overview()
+        return {
+            "ok": True,
+            "mode": "kernel_branch",
+            "pattern": needle,
+            "branches": branches[: int(limit)],
+            "kernels": kernels[: int(limit)],
+            "overview": overview,
+            "count": len(branches),
+        }
+
+    def aggregate_template_match(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        templates = self.templates_for_key(needle) if needle else [
+            _entity_row(e)
+            for e in self.codemap.entities.values()
+            if e.kind_name()
+            in {
+                EntityKind.TEMPLATE.value,
+                EntityKind.TEMPLATE_ARG.value,
+                EntityKind.TEMPLATE_INSTANCE.value,
+            }
+        ]
+        macros = self.constant(needle) if needle else [
+            _entity_row(e)
+            for e in self.codemap.entities.values()
+            if e.kind_name() in {EntityKind.MACRO.value, EntityKind.COMPILE_VAR.value}
+        ]
+        return {
+            "ok": True,
+            "mode": "template_match",
+            "pattern": needle,
+            "templates": templates[: int(limit)],
+            "macros_compile_vars": macros[: int(limit)],
+            "count": len(templates),
+        }
+
+    def aggregate_buffer(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        rows = self.query.buffer(needle) if needle else self.query.buffers()
+        return {
+            "ok": True,
+            "mode": "buffer",
+            "pattern": needle,
+            "buffers": rows[: int(limit)],
+            "count": min(len(rows), int(limit)),
+            "total": len(rows),
+        }
+
+    def aggregate_gaps(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip().lower()
+        rows = self.unresolved()
+        if needle:
+            rows = [
+                r
+                for r in rows
+                if needle in json.dumps(r, ensure_ascii=False, default=str).lower()
+            ]
+        return {
+            "ok": True,
+            "mode": "gaps",
+            "pattern": needle,
+            "gaps": rows[: int(limit)],
+            "count": min(len(rows), int(limit)),
+            "total": len(rows),
+        }
+
+    def legal_key_query(
+        self,
+        *,
+        pattern: str = "",
+        dim: str = "",
+        value: str = "",
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        from uo_init.query.legal_key_cache import query_legal_keys
+
+        return query_legal_keys(
+            self.product,
+            pattern=pattern,
+            dim=dim,
+            value=value,
+            limit=limit,
+            offset=offset,
+        )
+
     # ---- internals ---------------------------------------------------------
 
     def _entity(self, name_or_id: str) -> Entity | None:

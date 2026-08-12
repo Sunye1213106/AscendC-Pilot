@@ -32,6 +32,7 @@
 - [架构总览](architecture/overview.md)
 - [Agent Runtime](architecture/agent-runtime.md)
 - [产物与权威](architecture/artifacts-and-authority.md)
+- UO 查询产品地图：[`skills/operator-analysis/references/uo-product-map.md`](../skills/operator-analysis/references/uo-product-map.md)（progressive；域文档按需）
 - [扩展指南](development/extending.md)
 - [测试与评估](development/testing.md)
 - [文档维护](development/documentation.md)

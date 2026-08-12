@@ -1,0 +1,23 @@
+# UO · Kernel
+
+按需阅读。分支、root trace、与 TilingKey/TilingData 的消费关系。
+
+## 查什么
+
+- BRANCH 条件、stage（constexpr / runtime）  
+- Kernel 对 key dim / tiling field 的读取  
+- OPERATION / ROOT / WRAPS / ROOTED_AT（root trace）  
+- SELECTS / LAUNCHES（须有 provenance；无证据边不算事实）
+
+## 推荐接口
+
+```text
+acp uo-query --mode kernel_branch --pattern <branch_or_key>
+acp uo-query --mode branches --pattern <key>
+acp uo-query --mode neighbors --pattern <kernel_or_branch_id>
+```
+
+## Claim 提示
+
+- Host 已否定合法性 → 可直接 ANSWERED（非法），不必穷举 kernel 组合  
+- 缺 compile-time 硬过滤 → 主答案可发，边角标 PARTIAL

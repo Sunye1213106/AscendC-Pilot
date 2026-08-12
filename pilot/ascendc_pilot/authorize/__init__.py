@@ -676,6 +676,44 @@ def authorize(
     if tool_l in _QUESTION_TOOLS:
         return _ok("allow", "QUESTION_OK", "允许向用户提问或报告", status=status or None)
 
+    # --- uo-query exploration budget (claim-driven Explore) ---
+    wid_state = str(state.get("workflow_id") or "")
+    if (
+        project_root is not None
+        and state
+        and (wid_state == "uo-query" or agent_l == "uo-query" or action_id == "kb_lookup")
+        and tool_l in (_BASH_TOOLS | _READ_TOOLS | frozenset({"grep", "glob"}))
+    ):
+        from ascendc_pilot.authorize.exploration_budget import (
+            DUP_REASON,
+            HARD_REASON,
+            check_and_record,
+        )
+
+        run_id = str(state.get("run_id") or "")
+        act = action_id or str(lease.get("action_id") or "kb_lookup")
+        if run_id:
+            budget = check_and_record(
+                project_root,
+                run_id=run_id,
+                action_id=act,
+                tool=tool_l,
+                command=cmd,
+                path=path_s,
+            )
+            if not budget.get("ok") and budget.get("reason_code") in {HARD_REASON, DUP_REASON}:
+                return _ok(
+                    "deny",
+                    str(budget.get("reason_code")),
+                    str(budget.get("message_zh") or "探索预算拒绝"),
+                    status=status or None,
+                    tool=tool_l,
+                    command=cmd[:200] if cmd else None,
+                    path=path_s or None,
+                    exploration_budget=budget.get("budget"),
+                )
+            # Soft warning is advisory; fall through to normal allow path.
+
     # --- Always allow starting a new run (escape hatch from failed/human/rework) ---
     if tool_l in _BASH_TOOLS and _is_acp_start(cmd):
         return _ok(

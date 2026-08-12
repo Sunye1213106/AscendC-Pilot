@@ -78,6 +78,19 @@ CodeMap 绑定 Source Scope、BuildVariant、架构与编译环境 fingerprint�
 Source / Build Change → /uo-update or /uo-init → Fresh CodeMap → TG / CE
 ```
 
+### Projection freshness（view_blob）
+
+Semantic authority 是已 commit 的 `.uo` canonical 表。`view_blob/*` 是可重建投影，提交顺序为：
+
+```text
+semantic change → canonical finalize → digest → build projections
+  → validate provenance → atomic write
+```
+
+每个投影应携带 provenance：`canonical_revision` / `canonical_graph_digest` / `entity_count` / `relation_count` / `schema_version` / `projection_builder(+version)`。
+
+**仅 fingerprint 不够**：kind 直方图相同但边被 drop 后，summary 与 `ir/operator_graph` 的 edge 计数仍可能漂移。Query 路径在 mismatch 时返回 `VIEW_STALE`，由 engine fallback 到 canonical 重投影（不进 LLM）。
+
 TG / CE 不应在 UO 过期时自行从源码推导正式语义。上游变化后，旧 coverage / review 结论不能无条件沿用。
 
 ## 失败与恢复

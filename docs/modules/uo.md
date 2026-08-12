@@ -191,14 +191,14 @@ Canonical Kernel UO **不**做执行时序分析：不推断 exec_rank、RAW/WAR
 
 | 表                          | 内容                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------- |
-| `meta`                     | 产品元数据：schema、authority、op_name、architecture、生成时间、实体/关系计数、fingerprint 等                  |
+| `meta`                     | 产品元数据：schema、authority、op_name、architecture、生成时间、实体/关系计数、fingerprint / canonical_graph_digest 等 |
 | `build_variant`            | 当前架构下的构建变体（宏、include、编译参数等）                                                             |
 | `entity`                   | CodeMap 节点：kind、name、status、confidence、源码位置、完整 JSON `data`                              |
 | `relation`                 | 有向边：kind、src、dst、status、confidence、完整 JSON `data`                                       |
 | `file`                     | 涉及的源文件路径与角色                                                                             |
 | `source_span`              | 实体到 `path:line`（及短 snippet）的定位                                                          |
 | `attribute`                | 实体属性键值（便于查询）                                                                            |
-| `view_blob`                | 导出视图与摘要（JSON），至少含 `summary`；TG 还依赖如 `ir/tg_host_view.yaml`、`ir/operator_graph.yaml` 等投影 |
+| `view_blob`                | 可重建投影与摘要（JSON）；须带 provenance（digest + counts + builder）；mismatch → `VIEW_STALE` → engine fallback；TG 依赖如 `ir/tg_host_view.yaml` 等 |
 | `predicate` / `provenance` | 谓词与溯源槽位（schema 预留；随 passes 填充）                                                          |
 
 
@@ -233,6 +233,16 @@ Source -> CodeMap -> {/uo-query 只读消费 | /uo-update 受控增量刷新 | /
 `/uo-update` 在源码或 build 指纹变化后执行 `detect -> plan -> apply -> export -> diff`。基于 fingerprint 的受控刷新，不是在 YAML 上随意打补丁；只需查看变化时可走 `diff_only`。
 
 `/uo-query` 经过 `route -> lookup -> answer` 回答已有 CodeMap 上的问题。可借助模型解释，但不得改写 canonical CodeMap。
+
+### `/uo-query`（claim-driven Explore）
+
+身份一律 `uo-query`（不新增 explorer 品牌）。推理入口：
+
+- 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)（progressive；域文档按需）
+- METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`（claim sufficiency + 预算停条件）
+- 交付：`kb-answer-v1`（`answer_zh` 必填；`findings`/`gaps`/`useful_locations` optional）
+
+`readonly_analyst` 语义：**禁止改 domain 正式产物**（`.uo` / TG / CE）。Explorer 不写正式产物；Runtime 可物化 action-local `answer.yaml`。
 
 `/uo-investigate` 调查 unresolved residual：分类根因、指出确定性引擎还缺什么能力，产出 bounded report。不修改 canonical `.uo`。
 

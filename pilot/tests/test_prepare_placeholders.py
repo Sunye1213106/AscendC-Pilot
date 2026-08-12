@@ -63,6 +63,31 @@ def test_task_prompt_stub_is_pointer_only() -> None:
     assert "MUST_READ_ORDER" not in stub
 
 
+def test_kb_lookup_stub_requires_answer_yaml_not_integrity() -> None:
+    stub = _build_task_prompt_stub(
+        actor_id="uo-query",
+        action_id="kb_lookup",
+        run_id="RUN_Q",
+        session_dir="/s",
+        prompt_path="/s/prompt.md",
+        method_path="/s/method.md",
+        bundle_path="/s/bundle.yaml",
+        write_paths=[
+            "runs/RUN_Q/actions/kb_lookup/answer.yaml",
+            "runs/RUN_Q/actions/kb_lookup/scratch/**",
+        ],
+        user_question="TND 下 SplitAxis=1 是否合法？",
+    )
+    assert "USER QUESTION" in stub
+    assert "SplitAxis=1" in stub
+    assert "kb-answer-v1" in stub
+    assert "return_value" in stub
+    assert "uo/checks" in stub
+    assert "Do NOT write uo/checks" in stub
+    assert "--result-file" in stub
+    assert "Hard stop" in stub
+
+
 def test_task_prompt_stub_injects_must_read_order_for_summary() -> None:
     stub = _build_task_prompt_stub(
         actor_id="uo-semantic-resolve",
@@ -167,3 +192,95 @@ def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) 
     assert "prompt.md" in stub
     assert (Path(str(result["session_dir"])) / "task_prompt_stub.md").is_file()
     assert "llm_tasks" in stub
+
+
+def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -> None:
+    """kb_lookup prepare: METHOD playbook + return_value finalize hint."""
+    import yaml
+
+    op = tmp_path / "demo_op"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    uo_prod = op / ".ascendc-pilot" / "uo"
+    uo_prod.mkdir(parents=True, exist_ok=True)
+    (uo_prod / "Demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
+    start_workflow(
+        op,
+        "uo-query",
+        architecture="arch35",
+        intent="TND 布局下 SplitAxis=1 是否合法？",
+    )
+    result = prepare_action(op, "kb_lookup")
+    assert result.get("ok") is True, result
+    stub = str(result.get("task_prompt_stub") or "")
+    assert "kb-answer-v1" in stub
+    assert "return_value" in stub
+    assert "SplitAxis=1" in stub
+    assert "Do NOT write uo/checks" in stub
+    assert "--result-file" in str(result.get("message_zh") or "")
+    session = Path(str(result["session_dir"]))
+    method = (session / "method.md").read_text(encoding="utf-8")
+    assert "claim" in method.lower() or "Claim" in method
+    assert "硬预算" in method or "≤6" in method or "<= 6" in method or "上限" in method
+    bundle = yaml.safe_load((session / "bundle.yaml").read_text(encoding="utf-8"))
+    assert bundle.get("output_mode") == "return_value"
+    writes = [str(p).replace("\\", "/") for p in (bundle.get("allowed_write_paths") or [])]
+    assert any(p.endswith("kb_lookup/answer.yaml") for p in writes)
+    prompt = Path(str(result["prompt_path"])).read_text(encoding="utf-8")
+    assert "## User question" in prompt
+    assert "SplitAxis=1" in prompt
+
+
+def test_uo_query_agent_has_empty_write_scopes() -> None:
+    """A2: Explorer does not Write; Runtime materializes kb-answer."""
+    from ascendc_pilot.agents_registry import agent_write_scopes
+
+    root = Path(__file__).resolve().parents[2]
+    scopes = agent_write_scopes("uo-query", root)
+    assert scopes == []
+
+
+def test_finalize_kb_lookup_from_result_file(tmp_path: Path) -> None:
+    """return_value: finalize materializes answer.yaml from --result-file."""
+    import yaml
+
+    from ascendc_pilot.actions.runtime import finalize_action
+    from ascendc_pilot.paths import agent_root
+
+    op = tmp_path / "demo_op"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    uo_prod = op / ".ascendc-pilot" / "uo"
+    uo_prod.mkdir(parents=True, exist_ok=True)
+    (uo_prod / "Demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
+    start_workflow(op, "uo-query", architecture="arch35", intent="q?")
+    prep = prepare_action(op, "kb_lookup")
+    assert prep.get("ok"), prep
+    result_path = tmp_path / "kb-answer.yaml"
+    result_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "kb-answer-v1",
+                "status": "ANSWERED",
+                "question": "q?",
+                "answer_zh": "合法（有条件）。",
+                "citations": [{"path": "op_host/x.cpp", "lines": "1-2"}],
+                "adequacy": "ANSWERED",
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    fin = finalize_action(op, "kb_lookup", result_file=result_path)
+    assert fin.get("ok") is True, fin
+    answer = (
+        agent_root(op, "arch35")
+        / f"runs/{prep['run_id']}/actions/kb_lookup/answer.yaml"
+    )
+    assert answer.is_file()
+    body = yaml.safe_load(answer.read_text(encoding="utf-8"))
+    assert body.get("schema") == "kb-answer-v1"
+    assert "合法" in str(body.get("answer_zh") or "")
+    assert body.get("_transport") == "return_value"
+    # Trusted stamp is injected by finalize after contract check.
+    assert (body.get("artifact_identity") or {}).get("produced_by") == "pilot-finalizer"

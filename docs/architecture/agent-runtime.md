@@ -125,7 +125,8 @@ Workflow 允许的根目录
 * **能写就能读**：写入路径自动并入可读范围（写完还要能读回来核对）。
 * **人对上号**：非主控 Agent 的读写必须匹配通行证上的 `actor_id` / `action_id` / `run_id`。
 * **主控不写正式结论**：主控 Agent（`ascendc-pilot`）即使角色叫 controller，也不能直接写正式 IR / summary / checks / review / TG 正式产物；这些由声明的 Producer、Referee 或 Engine 写入。
-* **角色只是上限**：例如 `readonly_analyst` 不写正式产物；`referee` 只写 review。最终权限仍以「角色 ∩ Agent 上限 ∩ 本步通行证 ∩ Workflow 根目录 ∩ 身份禁令」为准。
+* **角色只是上限**：例如 `readonly_analyst` 不写正式 domain 产物（`.uo` / TG / CE），但**允许** action-local result / scratch；`referee` 只写 review。最终权限仍以「角色 ∩ Agent 上限 ∩ 本步通行证 ∩ Workflow 根目录 ∩ 身份禁令」为准。
+* **prepare 静态闭合**：`direct` 模式下合同产物必须落在 `agent.write_scopes ∩ action.allowed_write_paths`，否则 `OUTPUT_NOT_WRITABLE` 当场失败，不派发子代理。`return_value` 由 finalizer 物化，不要求子代理先 Write。
 
 Agent YAML 里 `forbidden` 标签的确定含义：
 
@@ -231,6 +232,20 @@ LLM Action 端到端：
 ```text
 prepare -> Task(stub 原样) -> authorize Read/Write -> finalize -> Gate -> advance
 ```
+
+`uo-query` / `kb_lookup` 是 **claim-driven Explore**：先读 progressive `uo-product-map`，按 claim sufficiency 有界探索。使用 `output_mode: return_value`（Explorer `write_scopes: []`）：子代理在最终消息返回 `kb-answer-v1`，Primary 执行 `acp run-action kb_lookup --finalize --result-file <yaml>`，由 **Runtime 物化** action-local `answer.yaml` 并注入 identity。**Explorer 不写；Runtime 物化。** Domain 正式产物仍禁止 LLM 直写。
+
+### `/uo-query` workflow vs delegated `Task(actor=uo-query)`
+
+```text
+uo-query Agent
+├── /uo-query workflow（kb_lookup：完整 prepare → Task → finalize）
+└── Task(actor=uo-query)  ← TG / CE / Primary 委托（共用 Agent/Skill/METHOD/return contract）
+```
+
+- **Workflow `/uo-query`**：完整 lifecycle（start → prepare `kb_lookup` → Explore → finalize）。
+- **Delegated Task**：TG/CE/Primary **不得**再开完整 `/uo-query` lifecycle；直接 `Task(actor=uo-query)`，共用同一 Agent / Skill / METHOD / `kb-answer-v1`。
+- Parent **必须**传入显式 **UO Product Handle**（`op_name` / `architecture` / `path` / `schema` / fingerprint|digest）；禁止子代理自找 `.uo`。构造见 `ascendc_pilot.uo_product_handle.build_uo_product_handle`。
 
 确定性 Action 跳过 Task：prepare 后由 Pilot 调度 Engine，再 finalize。
 

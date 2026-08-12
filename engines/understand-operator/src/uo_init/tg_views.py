@@ -360,17 +360,31 @@ def project_tilingdata_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[
 
 
 def finalize_tg_views(codemap: CodeMap, *, existing: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Merge TPL blobs with all TG projections and stamp one graph identity."""
+    """Merge TPL blobs with all TG projections and stamp one graph identity.
+
+    Callers that persist via ``write_codemap`` should finalize **after** any
+    canonical mutations (e.g. dropping unproven edges); ``write_codemap``
+    re-finalizes itself so commit order stays: semantic → finalize → digest →
+    stamp provenance → validate → atomic write.
+    """
+    from uo_init.projection_provenance import (
+        canonical_graph_digest,
+        stamp_all_views,
+    )
+
     views = dict(existing or {})
     fp = graph_fingerprint(codemap)
     codemap.meta["graph_fingerprint"] = fp
+    codemap.meta["canonical_graph_digest"] = canonical_graph_digest(codemap)
+    if not codemap.meta.get("canonical_revision"):
+        codemap.meta["canonical_revision"] = str(codemap.meta["canonical_graph_digest"])[:16]
     if isinstance(views.get("tiling/exhaustive_key_space.yaml"), dict):
         views["tiling/exhaustive_key_space.yaml"]["fingerprint"] = fp
     views["ir/operator_graph.yaml"] = project_operator_graph(codemap, fingerprint=fp)
     views["ir/tg_host_view.yaml"] = project_tg_host_view(codemap, fingerprint=fp)
     views["views/kernel.yaml"] = project_kernel_view(codemap, fingerprint=fp)
     views["views/tilingdata.yaml"] = project_tilingdata_view(codemap, fingerprint=fp)
-    return views
+    return stamp_all_views(views, codemap)
 
 
 def _host_symbols_for_key(codemap: CodeMap, key: Any, incoming: dict[str, list[Any]]) -> list[Any]:

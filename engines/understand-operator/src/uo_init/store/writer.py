@@ -63,7 +63,11 @@ def write_codemap(
     meta: dict[str, Any] | None = None,
     summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist CodeMap to ``path`` (``.uo`` SQLite). Overwrites atomically."""
+    """Persist CodeMap to ``path`` (``.uo`` SQLite). Overwrites atomically.
+
+    Commit order: drop unproven edges → finalize projections → digest /
+    provenance stamp → validate → atomic replace.
+    """
     dest = Path(path).expanduser().resolve()
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -72,12 +76,33 @@ def write_codemap(
 
     _drop_unproven_direct_selection_edges(codemap)
 
+    from uo_init.projection_provenance import (
+        stamp_provenance,
+        validate_view_against_codemap,
+    )
+    from uo_init.tg_views import finalize_tg_views
+
+    # Re-project after canonical mutations so counts/digest match tables.
+    finalized = finalize_tg_views(codemap, existing=dict(views or {}))
+
     if summary is None:
         from uo_init.diagnostics.audit import audit_codemap
 
         strict_summary = dict(audit_codemap(codemap)["summary"])
     else:
         strict_summary = dict(summary)
+    strict_summary = stamp_provenance(strict_summary, codemap)
+
+    stale: list[dict[str, Any]] = []
+    for name, payload in finalized.items():
+        check = validate_view_against_codemap(payload, codemap)
+        if not check.get("ok"):
+            stale.append({"name": name, **check})
+    if stale:
+        raise ValueError(
+            "VIEW_STALE_ON_COMMIT: projections drifted from canonical before write: "
+            + json.dumps(stale[:5], ensure_ascii=False)[:800]
+        )
 
     conn = sqlite3.connect(str(tmp))
     try:
@@ -159,7 +184,7 @@ def write_codemap(
                     json.dumps(rel.to_dict(), ensure_ascii=False),
                 ),
             )
-        for name, payload in (views or {}).items():
+        for name, payload in finalized.items():
             conn.execute(
                 "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
                 (

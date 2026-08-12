@@ -212,9 +212,10 @@ class CodeMapQuery:
         if not self.path:
             return None
         try:
-            from uo_init.store.reader import load_view_blob
+            from uo_init.store.reader import load_view_blob_checked
 
-            return load_view_blob(self.path, name)
+            checked = load_view_blob_checked(self.path, name, codemap=self.codemap)
+            return checked.get("view")
         except Exception:
             return None
 

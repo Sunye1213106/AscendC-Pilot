@@ -36,7 +36,8 @@ def test_uo_update_contracts_aligned() -> None:
 
 
 def test_uo_query_review_ready_contracts_not_bare_dirs() -> None:
-    assert _joined("kb-answer-v1") == "uo/manifest.yaml,uo/checks/integrity.yaml"
+    # kb-answer is the Action payload under lease, not a uo/checks readiness gate.
+    assert _joined("kb-answer-v1") == "runs/{run_id}/actions/kb_lookup/answer.yaml"
     assert "ce/review/index.yaml" in _joined("code-review-v1")
     assert _joined("uo-ready-v1") == "tg/init/uo_ready.yaml"
     assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_PATHS

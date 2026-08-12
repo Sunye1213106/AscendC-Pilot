@@ -20,7 +20,7 @@ AscendC-Pilot
 > 由 Host（OpenCode / Cursor 等）注册，**不是**终端里的 shell 命令；安装后会出现在补全列表里，并由 `ascendc-pilot` 主控接管。
 > 也可以不敲 `/`，直接用自然语言描述目标。
 
-Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时给出**算子路径**与 **architecture**；缺一会要求从已发现架构中选择，不会静默默认。
+Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。
 
 TG / CE / 查询 **不以源码目录另选架构**：以已有 `.uo` 为准。没有 CodeMap 就直接跑 `/tg-init` 等，会提示先 `/uo-init`。
 
@@ -78,6 +78,8 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 ```
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
+
+`/uo-query` 是 claim-driven Explore：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，用结构化 `acp uo-query` 证明 claim，够了就停。调查 unresolved：`/uo-investigate`。
 
 ---
 

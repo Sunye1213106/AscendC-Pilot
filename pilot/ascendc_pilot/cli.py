@@ -118,6 +118,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Finalize prepared action: check contract/gates and issue signed receipt",
     )
     p_run.add_argument(
+        "--result-file",
+        type=Path,
+        default=None,
+        help=(
+            "For return_value actions (e.g. kb_lookup): path to kb-answer-v1 YAML "
+            "from subagent Task return; finalize materializes answer.yaml"
+        ),
+    )
+    p_run.add_argument(
         "--set",
         action="append",
         default=[],
@@ -247,8 +256,16 @@ def main(argv: list[str] | None = None) -> int:
             "field",
             "branches",
             "templates",
+            "tiling_key",
+            "tiling_data",
+            "kernel_branch",
+            "template_match",
+            "buffer",
+            "gaps",
+            "legal_key",
         ),
-        help="search|constraints|neighbors|impact|field|branches|templates",
+        help="search|constraints|neighbors|impact|field|branches|templates|"
+        "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|legal_key",
     )
     p_uq.add_argument("--file", default="", help="impact 模式：源码相对路径")
     p_uq.add_argument("--line", type=int, default=0, help="impact 模式：起始行")
@@ -296,6 +313,14 @@ def main(argv: list[str] | None = None) -> int:
         default="search",
     )
     p_loc.add_argument("--limit", type=int, default=20)
+    p_handle = p_uo_sub.add_parser(
+        "product-handle",
+        help="Emit UO Product Handle for Task(actor=uo-query) delegation",
+    )
+    p_handle.add_argument("--project", type=Path, default=None)
+    p_handle.add_argument("--op-name", default="")
+    p_handle.add_argument("--architecture", default="")
+    p_handle.add_argument("--uo-path", type=Path, default=None)
 
     p_dbg = sub.add_parser(
         "debug",
@@ -632,7 +657,12 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
         applied = _apply_run_action_limit_flags(args)
-        result = run_action(args.project, args.action_id, finalize=bool(args.finalize))
+        result = run_action(
+            args.project,
+            args.action_id,
+            finalize=bool(args.finalize),
+            result_file=getattr(args, "result_file", None),
+        )
         if applied:
             result = dict(result)
             result["pilot_params_updated"] = applied
@@ -845,12 +875,22 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if db.is_file() else 1
         pattern = str(args.pattern or args.target or "").strip()
         mode = str(getattr(args, "mode", "search") or "search")
-        if mode != "impact" and not pattern:
+        allow_empty = mode in {
+            "impact",
+            "gaps",
+            "buffer",
+            "tiling_key",
+            "tiling_data",
+            "kernel_branch",
+            "template_match",
+            "legal_key",
+        }
+        if mode != "impact" and not pattern and not allow_empty:
             print_json(
                 {
                     "ok": False,
                     "error": "pattern_required",
-                    "message_zh": "非 --status-only 时需要 --pattern（impact 模式用 --file/--line）",
+                    "message_zh": "非 --status-only 时需要 --pattern（impact 用 --file/--line；聚合 mode 可空）",
                 }
             )
             return 2
@@ -889,6 +929,20 @@ def main(argv: list[str] | None = None) -> int:
             elif mode == "templates":
                 rows = q.templates_for_key(pattern)
                 payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
+            elif mode == "tiling_key":
+                payload = q.aggregate_tiling_key(pattern, limit=limit)
+            elif mode == "tiling_data":
+                payload = q.aggregate_tiling_data(pattern, limit=limit)
+            elif mode == "kernel_branch":
+                payload = q.aggregate_kernel_branch(pattern, limit=limit)
+            elif mode == "template_match":
+                payload = q.aggregate_template_match(pattern, limit=limit)
+            elif mode == "buffer":
+                payload = q.aggregate_buffer(pattern, limit=limit)
+            elif mode == "gaps":
+                payload = q.aggregate_gaps(pattern, limit=limit)
+            elif mode == "legal_key":
+                payload = q.legal_key_query(pattern=pattern, limit=limit)
             else:
                 kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
                 rows = q.search(pattern, kinds=kinds, limit=limit)
@@ -973,6 +1027,21 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001
                 print_json({"ok": False, "error": str(exc)[:300]})
                 return 1
+        if args.uo_cmd == "product-handle":
+            from ascendc_pilot.uo_product_handle import (
+                build_uo_product_handle,
+                format_handle_for_task,
+            )
+
+            handle = build_uo_product_handle(
+                project,
+                op_name=str(getattr(args, "op_name", "") or ""),
+                architecture=str(getattr(args, "architecture", "") or ""),
+                uo_path=getattr(args, "uo_path", None),
+            )
+            handle["task_block"] = format_handle_for_task(handle)
+            print_json(handle)
+            return 0 if handle.get("ok") else 1
 
         from uo_init.uo_query import open_query
 

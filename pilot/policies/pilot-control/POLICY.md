@@ -51,6 +51,8 @@ Pilot 独占状态、合法边、门禁与完成态。
 1. 加载匹配的 workflow skill → `acp start`（若返回 `needs_human_decision`：用 `question`/AskQuestion 可点选框 → `--decision continue|reinit`）→ 立刻 `todowrite`（全量）
 2. 确定性段：`acp run-action auto` → **同一轮立刻 `todowrite`（merge=true，全量 `todo.todo_sync.items`）**；若返回 `ask_question` / `needs_human_decision` → **同一轮 AskQuestion**（选项原样使用 `ask_question.options`）
 3. 交互边界：按 `recommended_next_action` / `interactive_steps` 执行 subagent 或 primary_interactive → `--finalize` → 再 `auto` 或 `acp next`；**禁止**从 `allowed_actions` 跳步
+3a. **`uo-query` / `kb_lookup`**：subagent 必须把答案写入 lease 的 `answer.yaml`（合同 `kb-answer-v1`），再由 Primary `--finalize`。**禁止**把缺产物误判成要写 `uo/checks/integrity.yaml`（那是 uo-init verify 收据，不是查询答案）。finalize 失败且 `missing outputs` 含 `answer.yaml` → 返工让 subagent 补写该文件；含 `integrity.yaml` 且 workflow 是 uo-query → 视为旧合约残留，应升级 Pilot 而非硬写 checks。
+3b. Task 正文只用 prepare 返回的 `task_prompt_stub`；用户问题已由控制面注入 stub / `prompt.md` 的 `USER QUESTION` / `## User question`。Primary **禁止**在 stub 外另塞长篇分析目标。
 4. `advance` / `rework` / `complete` 后若阶段状态变了 → 再 `todowrite`；否则继续下一步
 
 

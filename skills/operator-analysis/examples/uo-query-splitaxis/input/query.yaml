@@ -1,0 +1,5 @@
+question: "TND 布局下，SplitAxis=1 是否合法？"
+op_name: FlashAttentionScoreGrad
+architecture: arch35
+claim_level: host-produced
+notes: non-normative fixture for Explore eval families

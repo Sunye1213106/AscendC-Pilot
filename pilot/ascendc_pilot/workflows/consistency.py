@@ -543,43 +543,61 @@ def check_all(
                 elif (
                     agent_id
                     and agent_id not in {"", "ascendc-pilot"}
-                    and role in {"producer", "referee"}
+                    and role in {"producer", "referee", "readonly_analyst"}
                     and contract_id not in _PRECONDITION_CONTRACTS
                 ):
                     scopes = _effective_write_scopes(agent_id, aid, root)
-                    if not scopes:
-                        errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
-                    rel_paths = [str(rel).replace("\\", "/") for rel in paths or []]
-                    rel_paths = [rel for rel in rel_paths if not rel.startswith("runs/")]
-                    if rel_paths:
-                        output_mode = str(action.get("output_mode") or "direct").strip().lower()
-                        if output_mode == "staged":
-                            errors.extend(
-                                _check_staged_output(
-                                    wid=wid,
-                                    aid=aid,
-                                    action=action,
-                                    actions_by_id=actions_by_id,
-                                    pipeline_order=pipeline_order,
-                                    agent_id=agent_id,
-                                    scopes=scopes,
-                                    formal_contract_id=contract_id,
-                                    formal_paths=rel_paths,
-                                    root=root,
-                                )
-                            )
-                        else:
-                            in_scope = [rel for rel in rel_paths if scopes and path_matches_scope(rel, scopes)]
-                            if not in_scope:
-                                errors.append(
-                                    f"{wid}/{aid}: agent has no writable output path for contract {contract_id}"
+                    output_mode = str(action.get("output_mode") or "direct").strip().lower()
+                    if output_mode == "return_value":
+                        # Explorer may have write_scopes: []; Runtime materializes.
+                        if role in {"producer", "referee"} and not scopes:
+                            errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
+                        # readonly_analyst + return_value: empty scopes are intentional.
+                    else:
+                        if not scopes:
+                            errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
+                        rel_paths = [str(rel).replace("\\", "/") for rel in paths or []]
+                        # Historical: formal IR checks ignore runs/**. Action-local
+                        # contracts (kb-answer-v1) must still be in agent scopes.
+                        formal_paths = [rel for rel in rel_paths if not rel.startswith("runs/")]
+                        local_paths = [rel for rel in rel_paths if rel.startswith("runs/")]
+                        if formal_paths:
+                            if output_mode == "staged":
+                                errors.extend(
+                                    _check_staged_output(
+                                        wid=wid,
+                                        aid=aid,
+                                        action=action,
+                                        actions_by_id=actions_by_id,
+                                        pipeline_order=pipeline_order,
+                                        agent_id=agent_id,
+                                        scopes=scopes,
+                                        formal_contract_id=contract_id,
+                                        formal_paths=formal_paths,
+                                        root=root,
+                                    )
                                 )
                             else:
-                                for rel in rel_paths:
-                                    if scopes and not path_matches_scope(rel, scopes):
-                                        errors.append(
-                                            f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
-                                        )
+                                in_scope = [
+                                    rel
+                                    for rel in formal_paths
+                                    if scopes and path_matches_scope(rel, scopes)
+                                ]
+                                if not in_scope:
+                                    errors.append(
+                                        f"{wid}/{aid}: agent has no writable output path for contract {contract_id}"
+                                    )
+                                else:
+                                    for rel in formal_paths:
+                                        if scopes and not path_matches_scope(rel, scopes):
+                                            errors.append(
+                                                f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
+                                            )
+                        for rel in local_paths:
+                            if scopes and not path_matches_scope(rel, scopes):
+                                errors.append(
+                                    f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
+                                )
 
             for gate in action.get("gates") or []:
                 gate_id = str(gate)

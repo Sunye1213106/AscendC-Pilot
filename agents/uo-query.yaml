@@ -1,12 +1,15 @@
 id: uo-query
 version: 1
-name_zh: UO CodeMap readonly query
+name_zh: UO CodeMap readonly Explore
 role: readonly_analyst
 mode: subagent
 description: >
-  Read-only answers for the current Action Bundle UO CodeMap query.
-  Read session prompt.md first, then skills/operator-analysis/SKILL.md as needed.
-  Prefer structured `.uo` queries; only open minimal source windows when evidence is insufficient.
+  Claim-driven CodeMap Explore (progressive uo-product-map + claim sufficiency).
+  Read session prompt.md and method.md first. Prefer `acp uo-query`; minimal
+  source windows only when span missing. Return kb-answer-v1 in the final
+  message only (return_value). Runtime/Primary materializes answer.yaml —
+  Explorer write_scopes are empty. Never write uo/checks/* or modify `.uo`.
+  Do NOT finalize.
 skill_ids: [operator-analysis]
 read_scopes:
 - uo/**
@@ -14,10 +17,10 @@ read_scopes:
 - context/**
 - memory/**
 - skills/operator-analysis/**
-write_scopes:
-- runs/**/scratch/**
+write_scopes: []
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
 - modify_uo_product
+- write_uo_checks

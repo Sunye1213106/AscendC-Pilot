@@ -83,6 +83,10 @@ R - D
 
 它代表 UO 声明域和真实 Host 行为之间可能存在不一致，需要作为独立问题调查。
 
+### 委托只读查询（非嵌套 `/uo-query`）
+
+TG 需要解释 Host packing / guard / 字段写读时，应 `Task(actor=uo-query)` 并传入显式 **UO Product Handle**（op / arch / `.uo` path / fingerprint），**不要**再 `acp start /uo-query`。共用 `uo-query` Agent、METHOD 与 `kb-answer-v1` return contract。详见 [Agent Runtime](../architecture/agent-runtime.md)。
+
 ---
 
 
