@@ -1593,7 +1593,21 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         bundle["method_materialized"] = {
             "copied": mat.get("copied") or [],
             "missing": mat.get("missing") or [],
+            "ok": bool(mat.get("ok")),
         }
+        if skill_ids and not mat.get("ok"):
+            return {
+                "ok": False,
+                "error": str(mat.get("error") or "METHOD_BUNDLE_MISSING"),
+                "reason_code": str(mat.get("reason_code") or "METHOD_BUNDLE_MISSING"),
+                "missing": mat.get("missing") or [],
+                "message_zh": str(
+                    mat.get("message_zh")
+                    or "Required cognitive skill missing；禁止派发"
+                ),
+                "action_id": action_id,
+                "session_dir": sdir.as_posix(),
+            }
         # Session refs always readable.
         refs_glob = f"runs/{run_id}/actions/{action_id}/refs/**"
         if refs_glob not in read_paths:

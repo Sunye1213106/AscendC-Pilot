@@ -372,9 +372,12 @@ def update_enclosing_func(line: str, current: str) -> str:
 _CXX_CALL_SKIP = frozenset(
     {
         "if",
+        "else",
         "for",
         "while",
+        "do",
         "switch",
+        "catch",
         "return",
         "sizeof",
         "alignof",
@@ -383,9 +386,63 @@ _CXX_CALL_SKIP = frozenset(
         "sizeof...",
         "new",
         "delete",
-        "catch",
+        "constexpr",
+        "consteval",
+        "constinit",
+        "static_cast",
+        "reinterpret_cast",
+        "const_cast",
+        "dynamic_cast",
+        "likely",
+        "unlikely",
+        "ASCENDC_TPL_BOOL_SEL",
+        "ASCENDC_TPL_UINT_SEL",
+        "ASCENDC_TPL_TILING_STRUCT_SEL",
+        "ASCENDC_TPL_ARGS_SEL",
+        "ASCENDC_TPL_BOOL_DECL",
+        "ASCENDC_TPL_UINT_DECL",
     }
 )
+
+_TPL_DSL_NAME_MARKERS = (
+    "template_tiling_key.h",
+    "tiling_key.h",
+)
+
+
+def _strip_line_noise(line: str) -> str:
+    """Remove // comments and rough string/char literals before call scanning."""
+    out: list[str] = []
+    i = 0
+    n = len(line)
+    in_str = False
+    in_char = False
+    while i < n:
+        ch = line[i]
+        nxt = line[i + 1] if i + 1 < n else ""
+        if not in_str and not in_char and ch == "/" and nxt == "/":
+            break
+        if not in_char and ch == '"' and (i == 0 or line[i - 1] != "\\"):
+            in_str = not in_str
+            out.append(" ")
+            i += 1
+            continue
+        if not in_str and ch == "'" and (i == 0 or line[i - 1] != "\\"):
+            in_char = not in_char
+            out.append(" ")
+            i += 1
+            continue
+        if in_str or in_char:
+            out.append(" ")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _is_tpl_dsl_file(path: Path) -> bool:
+    name = path.name.lower().replace("\\", "/")
+    return any(marker in name for marker in _TPL_DSL_NAME_MARKERS)
 
 
 def lexical_source_call_sites(
@@ -395,31 +452,61 @@ def lexical_source_call_sites(
     filter_strict: bool,
     root: str,
     deadline: float,
+    primitives_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Collect all source-scope identifier call sites (Clang fallback).
+    """Collect source-scope identifier call sites (Clang fallback).
 
-    Provenance is lexical; not filtered by AscendC registry primitives.
+    When ``primitives_only`` is True, only callees present in the AscendC
+    semantics registry are kept.
     """
+    registry_names: set[str] | None = None
+    if primitives_only:
+        try:
+            # Prefer registry lookup table keys when available.
+            names = set()
+            lookup = getattr(semreg, "_TABLE", None) or getattr(semreg, "TABLE", None)
+            if isinstance(lookup, dict):
+                names.update(str(k) for k in lookup)
+            if not names:
+                from uo_init.semantics.ascendc_sync import SYNC_MECHANISM
+
+                names.update(SYNC_MECHANISM)
+            registry_names = names or None
+        except Exception:  # noqa: BLE001
+            registry_names = None
+
     sites: list[dict[str, Any]] = []
     for path in files:
         if time.perf_counter() > deadline:
             break
+        if _is_tpl_dsl_file(path):
+            continue
         try:
             text = read_text(path)
         except OSError:
             continue
+        text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
         func = ""
         for i, line in enumerate(text.splitlines(), start=1):
             if time.perf_counter() > deadline:
                 break
-            func = update_enclosing_func(line, func)
-            for m in _CALL_RE.finditer(line):
+            cleaned = _strip_line_noise(line)
+            func = update_enclosing_func(cleaned, func)
+            for m in _CALL_RE.finditer(cleaned):
                 name = m.group("name")
                 if not name or name in _CXX_CALL_SKIP or not name.isidentifier():
                     continue
+                if registry_names is not None and name not in registry_names:
+                    # Also accept names the classifier already knows.
+                    try:
+                        cat, _, conf = semreg.classify(name)
+                        if cat == "UNKNOWN" or conf == "unresolved":
+                            continue
+                    except Exception:  # noqa: BLE001
+                        continue
                 if not caller_allowed(func, reachable, filter_strict=filter_strict):
                     continue
-                rest = line[m.end() :]
+                rest = cleaned[m.end() :]
                 depth = 1
                 end = 0
                 for j, ch in enumerate(rest):

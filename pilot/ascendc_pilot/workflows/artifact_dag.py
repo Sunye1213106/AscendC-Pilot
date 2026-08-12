@@ -42,6 +42,15 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
         "tg/closure/open.txt",
         "tg/closure/excluded.txt",
     ],
+    "obligations_classified": [
+        "ce/impact/risk_classification.yaml",
+        "ce/impact/obligations.yaml",
+    ],
+    "impact_ledger_ready": [
+        "ce/impact/obligations.yaml",
+        "ce/impact/ledger.yaml",
+    ],
+    "ce_certificate_sound": ["ce/verify/certificate.yaml"],
 }
 
 _EXTERNAL_ROOTS = (

@@ -16,6 +16,7 @@ read_scopes:
 - method:skills/operator-analysis/**
 write_scopes:
 - pilot:ce/review/**
+- pilot:ce/verify/code_review.yaml
 - pilot:runs/**/actions/code_review/**
 forbidden:
 - modify_pilot_state

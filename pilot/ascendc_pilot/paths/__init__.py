@@ -401,8 +401,11 @@ def ensure_closure_layout(project_root: Path, *, arch: str | None = None) -> Pat
 
 def ensure_ce_layout(project_root: Path, *, arch: str | None = None) -> Path:
     root = ensure_control_layout(project_root, arch=arch)
-    (root / CE_SUBDIR).mkdir(parents=True, exist_ok=True)
-    return root / CE_SUBDIR
+    ce = root / CE_SUBDIR
+    ce.mkdir(parents=True, exist_ok=True)
+    for rel in ("intent", "impact", "verify", "review"):
+        (ce / rel).mkdir(parents=True, exist_ok=True)
+    return ce
 
 
 def ensure_memory_layout(project_root: Path, *, arch: str | None = None) -> Path:

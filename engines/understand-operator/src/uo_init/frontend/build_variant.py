@@ -54,27 +54,58 @@ def build_variant_from_context(
 
     ctx = build_context
     if ctx is not None:
-        host = getattr(ctx, "host", None) or {}
-        kernel = getattr(ctx, "kernel", None) or {}
-        if hasattr(ctx, "host_args"):
-            # BuildContext dataclass-style
+        # Prefer BuildContext accessor methods (defines are dicts of name→value).
+        if hasattr(ctx, "host_defines") and callable(ctx.host_defines):
             try:
-                host_defs = list(getattr(ctx, "host_defines", None) or [])
+                hd = ctx.host_defines() or {}
+                host_defs = [f"{k}={v}" if v not in (None, "") else str(k) for k, v in dict(hd).items()]
             except Exception:
                 host_defs = []
-            if hasattr(ctx, "host") and isinstance(ctx.host, dict):
-                host = ctx.host
-            if hasattr(ctx, "kernel") and isinstance(ctx.kernel, dict):
-                kernel = ctx.kernel
-        if isinstance(host, dict):
-            host_defs = [str(x) for x in (host.get("defines") or host_defs)]
+        if hasattr(ctx, "kernel_defines") and callable(ctx.kernel_defines):
+            try:
+                kd = ctx.kernel_defines() or {}
+                kernel_defs = [f"{k}={v}" if v not in (None, "") else str(k) for k, v in dict(kd).items()]
+            except Exception:
+                kernel_defs = []
+        if hasattr(ctx, "host_includes") and callable(ctx.host_includes):
+            try:
+                includes.extend(str(x) for x in (ctx.host_includes() or []))
+            except Exception:
+                pass
+        if hasattr(ctx, "kernel_includes") and callable(ctx.kernel_includes):
+            try:
+                includes.extend(str(x) for x in (ctx.kernel_includes() or []))
+            except Exception:
+                pass
+        if hasattr(ctx, "base_flags") and callable(getattr(ctx, "base_flags", None)):
+            try:
+                flags.extend(str(x) for x in (ctx.base_flags() or []))
+            except Exception:
+                pass
+        elif hasattr(ctx, "raw") and isinstance(ctx.raw, dict):
+            flags.extend(str(x) for x in (ctx.raw.get("base_flags") or []))
+
+        host = getattr(ctx, "host", None) or {}
+        kernel = getattr(ctx, "kernel", None) or {}
+        if not host_defs and isinstance(host, dict):
+            defs = host.get("defines") or {}
+            if isinstance(defs, dict):
+                host_defs = [f"{k}={v}" if v not in (None, "") else str(k) for k, v in defs.items()]
+            else:
+                host_defs = [str(x) for x in defs]
             includes.extend(str(x) for x in (host.get("include_paths") or host.get("includes") or []))
             flags.extend(str(x) for x in (host.get("flags") or []))
-        if isinstance(kernel, dict):
-            kernel_defs = [str(x) for x in (kernel.get("defines") or [])]
+        if not kernel_defs and isinstance(kernel, dict):
+            defs = kernel.get("defines") or {}
+            if isinstance(defs, dict):
+                kernel_defs = [f"{k}={v}" if v not in (None, "") else str(k) for k, v in defs.items()]
+            else:
+                kernel_defs = [str(x) for x in defs]
             includes.extend(str(x) for x in (kernel.get("include_paths") or kernel.get("includes") or []))
         soc = str(getattr(ctx, "soc", "") or "")
         target = str(getattr(ctx, "compiler_target", "") or getattr(ctx, "target", "") or "")
+        if not target and hasattr(ctx, "raw") and isinstance(ctx.raw, dict):
+            target = str(ctx.raw.get("target") or "")
 
     return BuildVariant(
         name=name or arch,

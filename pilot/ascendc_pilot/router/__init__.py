@@ -9,10 +9,8 @@ from ascendc_pilot.workflows import list_user_workflows
 
 
 CE_FUTURE_SLASHES = {
-    "/ce-impact",
-    "/ce-fix",
+    "/ce-form",
     "/ce-implement",
-    "/ce-explain",
     "/ce-debug",
     "/ce-refactor",
 }

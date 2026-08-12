@@ -74,9 +74,20 @@ def main() -> int:
 
     # Driver must own Todo/AskQuestion helpers (string markers)
     driver_src = (plug / "pilot-driver.ts").read_text(encoding="utf-8")
-    for marker in ("syncTodos", "invokeAskHuman", "pendingStep", "host_owned_ask"):
+    for marker in (
+        "syncTodos",
+        "invokeAskHuman",
+        "pendingStep",
+        "host_owned_ask",
+        "parseAcpStdoutJson",
+        "continue_goal",
+        "--intent",
+    ):
         if marker not in driver_src:
             errors.append(f"pilot-driver.ts missing {marker}")
+    # Must not concat stderr into JSON parse buffer
+    if 'stdout || ""}\n${result.stderr' in driver_src or "stdout + stderr" in driver_src:
+        errors.append("pilot-driver.ts still concatenates stderr into JSON parse")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

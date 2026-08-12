@@ -1,0 +1,29 @@
+id: ce-change-referee
+version: 1
+name_zh: CE 变更审查 referee
+role: referee
+mode: subagent
+description: >
+  Independent referee for CE impact, plan, and exclusion reviews.
+  Read session prompt.md and method.md first. Verify CodeMap anchors against
+  source evidence and never replace deterministic ledger facts.
+skill_ids: [code-review, operator-analysis]
+read_scopes:
+- pilot:ce/**
+- pilot:uo/**
+- pilot:tg/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/code-review/**
+- method:skills/operator-analysis/**
+write_scopes:
+- pilot:ce/impact/audit_report.yaml
+- pilot:ce/verify/exclusion_review.yaml
+- pilot:ce/intent/feature_decomposition.yaml
+- pilot:ce/intent/plan_review.yaml
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- rewrite_deterministic_ledger
+- approve_own_producer_output

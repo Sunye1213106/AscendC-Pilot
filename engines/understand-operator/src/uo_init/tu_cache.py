@@ -27,7 +27,7 @@ _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
 # Process-local hit stats for tests / timing lines.
-_STATS = {"hit": 0, "miss": 0, "store": 0, "bypass": 0}
+_STATS = {"hit": 0, "miss": 0, "store": 0, "bypass": 0, "load_failures": 0}
 _LOCK = threading.Lock()
 
 
@@ -448,6 +448,7 @@ def iter_cached_walks(
         return []
     needle = str(path_substr or "").replace("\\", "/").lower()
     out: list[Any] = []
+    failures: list[dict[str, str]] = []
     for path in sorted(root.glob("*.pkl")):
         if path.name.endswith(".probe.pkl"):
             continue
@@ -457,8 +458,12 @@ def iter_cached_walks(
             with open(path, "rb") as fh:
                 payload = pickle.load(fh)
             if not isinstance(payload, dict) or int(payload.get("version") or 0) != CACHE_VERSION:
+                failures.append(
+                    {"path": str(path), "reason": "version_or_payload_mismatch"}
+                )
                 continue
             if str(payload.get("kind") or "") not in {"", "WalkResult"}:
+                failures.append({"path": str(path), "reason": "unexpected_kind"})
                 continue
             result = deserialize_walk_result(payload)
             tu = str(getattr(result, "path", "") or "").replace("\\", "/").lower()
@@ -466,8 +471,30 @@ def iter_cached_walks(
                 continue
             out.append(result)
             _bump("hit")
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            failures.append(
+                {
+                    "path": str(path),
+                    "reason": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            _bump("miss")
             continue
+    # Persist last-load failure reasons for kernel_root_trace / meta visibility.
+    # Empty list is also meaningful: it means the cache was readable.
+    with _LOCK:
+        _STATS["load_failures"] = len(failures)
+    if failures:
+        try:
+            fail_path = root / "_load_failures.json"
+            import json
+
+            fail_path.write_text(
+                json.dumps(failures[:64], ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
     return out
 
 

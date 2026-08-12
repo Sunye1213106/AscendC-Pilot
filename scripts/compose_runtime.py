@@ -96,6 +96,23 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "Pilot 管阶段；加载后执行 acp start ce-review。"
         ),
     },
+    "ce-impact": {
+        "description": (
+            "变更影响面分析：基于 CodeMap 与 diff 建立 impact ledger。"
+            "用户要评估改动影响、回归面时加载；acp start ce-impact。"
+        ),
+    },
+    "ce-verify": {
+        "description": (
+            "验证闭环：gate / residual / exclusion / certificate。"
+            "用户要验证覆盖或签发 CE 证书时加载；acp start ce-verify。"
+        ),
+    },
+    "ce-intent": {
+        "description": (
+            "意图澄清与变更目标冻结。用户要明确改什么/测什么时加载；acp start ce-intent。"
+        ),
+    },
     "tg-init": {
         "description": (
             "建立覆盖合同（测例契约与绑定）。用户说 tg-init、建测例契约、tilingkey 绑定、"
@@ -425,10 +442,10 @@ def _scopes_conflict(a: str, b: str) -> bool:
 def _scope_overlap_errors(producer_writes: set[str], referee_writes: set[str]) -> list[str]:
     errors: list[str] = []
     for p in sorted(producer_writes):
-        if str(p).startswith("runs"):
+        if str(p).removeprefix("pilot:").startswith("runs"):
             continue
         for r in sorted(referee_writes):
-            if str(r).startswith("runs"):
+            if str(r).removeprefix("pilot:").startswith("runs"):
                 continue
             if _scopes_conflict(str(p), str(r)):
                 errors.append(f"producer/referee write_scopes overlap: {p!r} vs {r!r}")

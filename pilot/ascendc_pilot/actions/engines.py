@@ -29,6 +29,266 @@ def _ctx_root(project_root: Path, *, arch: str | None = None):
     return context_root(project_root, arch=arch)
 
 
+def _ce(project_root: Path, *, arch: str | None = None) -> Path:
+    from ascendc_pilot.paths import agent_root
+
+    return agent_root(project_root, arch) / "ce"
+
+
+def _resolve_ce_arch(project_root: Path, ctx: dict[str, Any]) -> str:
+    from ascendc_pilot.paths import discover_arch
+
+    return str(ctx.get("architecture") or "").strip() or discover_arch(project_root)
+
+
+def _dump_ce_yaml(path: Path, doc: Any) -> Path:
+    import yaml
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def _run_ce_change_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.change.capture import capture
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    out = _ce(project_root, arch=arch) / "impact" / "change_capture.yaml"
+    try:
+        payload = capture(
+            project_root,
+            base=str(ctx.get("base") or "HEAD"),
+            head=str(ctx.get("head") or ""),
+            architecture=arch,
+            output=out,
+        )
+        return {"ok": out.is_file(), "engine": "change_capture", "artifact": out.as_posix(), **payload}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "change_capture", "error": str(exc)[:400]}
+
+
+def _run_ce_uo_freshness(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.change.freshness import check_freshness
+    from code_engineering.product_uo import identity
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    product_identity = identity(project_root, architecture=arch)
+    expected = str(ctx.get("expected_fingerprint") or product_identity.get("graph_fingerprint") or "")
+    result = check_freshness(project_root, expected, architecture=arch)
+    doc = {"schema": "ce-uo-freshness/v1", "product": product_identity, **result}
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "impact" / "freshness.yaml", doc)
+    return {
+        "ok": result.get("mode") != "stale",
+        "engine": "uo_freshness",
+        "artifact": out.as_posix(),
+        **doc,
+    }
+
+
+def _run_ce_impact_slice(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.impact import impact_from_diff
+    from code_engineering.primitives import anchor_resolve, slice_backward, slice_forward
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    capture = _load_yaml(_ce(project_root, arch=arch) / "impact" / "change_capture.yaml") or {}
+    diff_text = str(capture.get("diff") or "")
+    report = impact_from_diff(
+        diff_text,
+        project_root=project_root,
+        uo_root=_uo(project_root, arch=arch),
+    ).to_dict()
+    spans = {
+        str(path): [(int(pair[0]), int(pair[1])) for pair in pairs if len(pair) >= 2]
+        for path, pairs in (capture.get("diff_spans") or {}).items()
+    }
+    anchors = anchor_resolve(spans, project_root=project_root, architecture=arch)
+    seed_ids = [str(row.get("id")) for row in anchors if row.get("id")]
+    edge_kinds = list(ctx.get("edge_kinds") or [])
+    depth = int(ctx.get("depth") or 2)
+    budget = int(ctx.get("budget") or 10_000)
+    doc = {
+        "schema": "ce-impact-slice/v1",
+        **report,
+        "anchors": anchors,
+        "forward": slice_forward(
+            seed_ids, edge_kinds, depth,
+            project_root=project_root, architecture=arch, budget=budget,
+        ),
+        "backward": slice_backward(
+            seed_ids, edge_kinds, depth,
+            project_root=project_root, architecture=arch, budget=budget,
+        ),
+    }
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "impact" / "impact_slice.yaml", doc)
+    return {"ok": True, "engine": "impact_slice", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_risk_classify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.risk.rules import evaluate_risks
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    impact = _load_yaml(_ce(project_root, arch=arch) / "impact" / "impact_slice.yaml") or {}
+    obligations = evaluate_risks(
+        list(impact.get("anchors") or []),
+        list(ctx.get("risk_classes") or []) or None,
+    )
+    doc = {
+        "schema": "ce-risk-classification/v1",
+        "risk_classes": sorted({str(row.get("risk_class")) for row in obligations}),
+        "obligations": obligations,
+    }
+    out = _dump_ce_yaml(
+        _ce(project_root, arch=arch) / "impact" / "risk_classification.yaml", doc
+    )
+    return {"ok": True, "engine": "risk_classify", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_obligation_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.ledger import Ledger, save_ledger
+    from code_engineering.validation import validate_obligations
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    risk = _load_yaml(_ce(project_root, arch=arch) / "impact" / "risk_classification.yaml") or {}
+    obligations = [row for row in (risk.get("obligations") or []) if isinstance(row, dict)]
+    validation = validate_obligations(obligations)
+    doc = {
+        "schema": "ce-obligations/v1",
+        "obligations": obligations,
+        "validation": validation,
+    }
+    root = _ce(project_root, arch=arch) / "impact"
+    out = _dump_ce_yaml(root / "obligations.yaml", doc)
+    ledger = Ledger(O={str(row["id"]) for row in obligations if row.get("id")})
+    ledger_path = save_ledger(ledger, project_root, architecture=arch, path=root / "ledger.yaml")
+    return {
+        "ok": bool(validation.get("ok")),
+        "engine": "obligation_build",
+        "artifact": out.as_posix(),
+        "ledger": ledger_path.as_posix(),
+        **doc,
+    }
+
+
+def _run_ce_verify_gate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.gates import run_named_gate
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    gate = run_named_gate(project_root, "impact_ledger_ready")
+    doc = {"schema": "ce-verify-gate/v1", "ok": bool(gate.get("ok")), "gate": gate}
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "verify" / "gate.yaml", doc)
+    return {"engine": "verify_gate", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_coverage_bridge(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.bridge_tg import bridge_tg
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    impact = _load_yaml(_ce(project_root, arch=arch) / "impact" / "impact_slice.yaml") or {}
+    result = bridge_tg(project_root, impact, architecture=arch, limit=int(ctx.get("limit") or 256))
+    return {"engine": "coverage_bridge", **result}
+
+
+def _run_ce_residual_analyse(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.ledger import load_ledger, save_ledger
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ledger = load_ledger(project_root, architecture=arch)
+    ledger.V.update(str(value) for value in (ctx.get("verified") or []))
+    ledger.X.update(str(value) for value in (ctx.get("excepted") or []))
+    save_ledger(ledger, project_root, architecture=arch)
+    doc = {
+        "schema": "ce-verify-residual/v1",
+        **ledger.to_dict(),
+        "closed": not ledger.Open,
+    }
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "verify" / "residual.yaml", doc)
+    return {"ok": True, "engine": "residual_analyse", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.external_evidence import load_external_evidence
+    from code_engineering.ledger import load_ledger, save_ledger
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    declared = str(ctx.get("external_evidence_path") or "").strip()
+    try:
+        receipts = load_external_evidence(declared) if declared else []
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "external_ingest", "error": str(exc)[:400]}
+    verified = {
+        str(value)
+        for receipt in receipts
+        for value in (receipt.get("verified_obligations") or [])
+    }
+    excepted = {
+        str(value)
+        for receipt in receipts
+        for value in (receipt.get("excepted_obligations") or [])
+    }
+    ledger = load_ledger(project_root, architecture=arch)
+    ledger.V.update(verified)
+    ledger.X.update(excepted)
+    save_ledger(ledger, project_root, architecture=arch)
+    doc = {
+        "schema": "ce-external-evidence-batch/v1",
+        "declared_path": declared,
+        "receipts": receipts,
+        "verified_obligations": sorted(verified),
+        "excepted_obligations": sorted(excepted),
+    }
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "verify" / "external_evidence.yaml", doc)
+    return {"ok": True, "engine": "external_ingest", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.certificate import write_certificate
+    from code_engineering.ledger import load_ledger
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ledger = load_ledger(project_root, architecture=arch)
+    out = _ce(project_root, arch=arch) / "verify" / "certificate.yaml"
+    doc = write_certificate(
+        project_root, ledger, architecture=arch, path=out
+    )
+    return {"ok": bool(doc.get("closed")), "engine": "ce_certify", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_intent_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    arch = _resolve_ce_arch(project_root, ctx)
+    doc = {
+        "schema": "ce-intent/v1",
+        "intent": str(ctx.get("intent") or ctx.get("description") or ""),
+        "targets": list(ctx.get("targets") or []),
+        "constraints": list(ctx.get("constraints") or []),
+    }
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "intent" / "intent.yaml", doc)
+    return {"ok": bool(doc["intent"] or doc["targets"]), "engine": "intent_capture", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_intent_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.gates import run_named_gate
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    gate = run_named_gate(project_root, "kb_ready")
+    doc = {"schema": "ce-intent-kb-check/v1", "ok": bool(gate.get("ok")), "gate": gate}
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "intent" / "kb_check.yaml", doc)
+    return {"engine": "kb_check", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_anchor_locate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.primitives import anchor_resolve
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    spans = {
+        str(path): [(int(pair[0]), int(pair[1])) for pair in pairs if len(pair) >= 2]
+        for path, pairs in (ctx.get("diff_spans") or {}).items()
+    }
+    anchors = anchor_resolve(spans, project_root=project_root, architecture=arch)
+    doc = {"schema": "ce-intent-anchors/v1", "anchors": anchors, "span_count": len(spans)}
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "intent" / "anchors.yaml", doc)
+    return {"ok": True, "engine": "anchor_locate", "artifact": out.as_posix(), **doc}
+
+
 
 def _run_export_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Delegate integrity to uo_init.pilot_engines.export_integrity."""
@@ -2317,6 +2577,19 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-update", "export_integrity"): _run_export_integrity,
     ("uo-update", "diff_summary"): _run_diff_summary,
     ("uo-update", "diff_only"): _run_diff_summary,
+    ("ce-impact", "change_capture"): _run_ce_change_capture,
+    ("ce-impact", "uo_freshness"): _run_ce_uo_freshness,
+    ("ce-impact", "impact_slice"): _run_ce_impact_slice,
+    ("ce-impact", "risk_classify"): _run_ce_risk_classify,
+    ("ce-impact", "obligation_build"): _run_ce_obligation_build,
+    ("ce-verify", "verify_gate"): _run_ce_verify_gate,
+    ("ce-verify", "coverage_bridge"): _run_ce_coverage_bridge,
+    ("ce-verify", "residual_analyse"): _run_ce_residual_analyse,
+    ("ce-verify", "external_ingest"): _run_ce_external_ingest,
+    ("ce-verify", "ce_certify"): _run_ce_certify,
+    ("ce-intent", "intent_capture"): _run_ce_intent_capture,
+    ("ce-intent", "kb_check"): _run_ce_intent_kb_check,
+    ("ce-intent", "anchor_locate"): _run_ce_anchor_locate,
     ("tg-init", "init_intent"): _run_tg_init_intent,
     ("tg-init", "kb_check"): _run_tg_kb_check,
     ("tg-init", "contract_build"): _run_tg_contract_build,
@@ -2390,6 +2663,32 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "ce/review/functional_report.yaml",
         "ce/review/bug_report.yaml",
     ],
+    "change-capture-v1": ["ce/impact/change_capture.yaml"],
+    "uo-freshness-v1": ["ce/impact/freshness.yaml"],
+    "impact-slice-v1": ["ce/impact/impact_slice.yaml"],
+    "risk-classify-v1": ["ce/impact/risk_classification.yaml"],
+    "obligation-ledger-v1": [
+        "ce/impact/obligations.yaml",
+        "ce/impact/ledger.yaml",
+    ],
+    "impact-audit-v1": ["ce/impact/audit_report.yaml"],
+    "verify-gate-v1": ["ce/verify/gate.yaml"],
+    "verify-code-review-v1": ["ce/verify/code_review.yaml"],
+    "coverage-bridge-v1": ["ce/verify/tg_handoff.yaml"],
+    "residual-analysis-v1": ["ce/verify/residual.yaml"],
+    "external-evidence-v1": ["ce/verify/external_evidence.yaml"],
+    "exclusion-review-v1": ["ce/verify/exclusion_review.yaml"],
+    "ce-certificate-v1": ["ce/verify/certificate.yaml"],
+    "intent-capture-v1": ["ce/intent/intent.yaml"],
+    "intent-kb-check-v1": ["ce/intent/kb_check.yaml"],
+    "feature-decompose-v1": ["ce/intent/feature_decomposition.yaml"],
+    "feature-decompose-staging-v1": [
+        "runs/{run_id}/actions/feature_decompose/parts/**",
+        "runs/{run_id}/actions/feature_decompose/staging.yaml",
+    ],
+    "anchor-locate-v1": ["ce/intent/anchors.yaml"],
+    "plan-review-v1": ["ce/intent/plan_review.yaml"],
+    "intent-confirmed-v1": ["ce/intent/confirmation.yaml"],
     # tg-init kb_check receipt: proves CodeMap .uo TG views are readable.
     "uo-ready-v1": ["tg/init/uo_ready.yaml"],
     "tg-init-intent-v1": ["tg/init/init_intent.yaml"],

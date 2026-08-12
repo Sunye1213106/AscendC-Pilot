@@ -48,20 +48,61 @@ function runAcpJson(
       ...(opts?.env || {}),
     },
   })
-  const text = `${result.stdout || ""}\n${result.stderr || ""}`.trim()
-  const jsonStart = text.indexOf("{")
+  // Machine protocol: stdout = JSON only; stderr = progress/diagnostics.
+  // Never concatenate stderr into the parse buffer (heartbeat would break JSON).
+  const stdout = String(result.stdout || "").trim()
+  const stderr = String(result.stderr || "").trim()
+  const jsonStart = stdout.indexOf("{")
   if (jsonStart < 0) {
     return {
       ok: false,
       error: "ACP_NO_JSON",
-      message: (result.stderr || result.stdout || "").toString().slice(0, 800),
+      message: (stderr || stdout).slice(0, 800),
+      stdout: stdout.slice(0, 400),
+      stderr: stderr.slice(0, 400),
       exit: result.status,
     }
   }
   try {
-    return JSON.parse(text.slice(jsonStart)) as Record<string, unknown>
+    return JSON.parse(stdout.slice(jsonStart)) as Record<string, unknown>
   } catch {
-    return { ok: false, error: "ACP_JSON_PARSE", message: text.slice(0, 800) }
+    return {
+      ok: false,
+      error: "ACP_JSON_PARSE",
+      message: stdout.slice(0, 800),
+      stdout: stdout.slice(0, 400),
+      stderr: stderr.slice(0, 400),
+    }
+  }
+}
+
+/** Test helper: parse ACP machine JSON from stdout, ignoring stderr heartbeats. */
+export function parseAcpStdoutJson(
+  stdout: string,
+  stderr: string = "",
+): Record<string, unknown> {
+  const out = String(stdout || "").trim()
+  const err = String(stderr || "").trim()
+  const jsonStart = out.indexOf("{")
+  if (jsonStart < 0) {
+    return {
+      ok: false,
+      error: "ACP_NO_JSON",
+      message: (err || out).slice(0, 800),
+      stdout: out.slice(0, 400),
+      stderr: err.slice(0, 400),
+    }
+  }
+  try {
+    return JSON.parse(out.slice(jsonStart)) as Record<string, unknown>
+  } catch {
+    return {
+      ok: false,
+      error: "ACP_JSON_PARSE",
+      message: out.slice(0, 800),
+      stdout: out.slice(0, 400),
+      stderr: err.slice(0, 400),
+    }
   }
 }
 
@@ -154,12 +195,16 @@ type HostStep = {
   run_id?: string
   ask_question?: Record<string, unknown>
   message_zh?: string
+  next_workflow_id?: string
+  architecture?: string
+  intent?: string
 }
 
 export type PilotRunArgs = {
   workflow: string
   project: string
   architecture?: string
+  intent?: string
   forceNew?: boolean
 }
 
@@ -478,7 +523,7 @@ export async function runPilotDriver(
   toolCtx?: PilotToolContext,
 ): Promise<Record<string, unknown>> {
   const project = resolve(String(args.project || "").trim())
-  const workflow = String(args.workflow || "").trim()
+  let workflow = String(args.workflow || "").trim()
   if (!project || !workflow) {
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
   }
@@ -487,8 +532,12 @@ export async function runPilotDriver(
     toolCtx?.sessionID || toolCtx?.sessionId || "",
   ).trim()
 
+  let architecture = args.architecture ? String(args.architecture) : ""
+  let intent = args.intent ? String(args.intent) : ""
+
   const startArgv = ["start", workflow, "--project", project]
-  if (args.architecture) startArgv.push("--architecture", String(args.architecture))
+  if (architecture) startArgv.push("--architecture", architecture)
+  if (intent) startArgv.push("--intent", intent)
   if (args.forceNew) startArgv.push("--force-new")
   const started = runAcpJson(startArgv, project)
   if (!started.ok && !started.run_id) {
@@ -522,7 +571,7 @@ export async function runPilotDriver(
     }
   }
 
-  const log: Array<Record<string, unknown>> = [{ event: "start", ok: !!started.ok }]
+  const log: Array<Record<string, unknown>> = [{ event: "start", ok: !!started.ok, workflow }]
   let guard = 0
   let lastStep: HostStep | null = null
   /** When dispatch-result already returned the next dispatch_subagent, skip re-auto. */
@@ -537,6 +586,9 @@ export async function runPilotDriver(
       step = pendingStep
       pendingStep = null
       log.push({ event: "reuse_host_step", host_step_kind: step.kind })
+    } else if (pendingStep && pendingStep.kind === "continue_goal") {
+      step = pendingStep
+      pendingStep = null
     } else {
       const driven = runAcpJson(["run-action", "auto", "--project", project], project, {
         timeoutMs: 900_000,
@@ -554,14 +606,14 @@ export async function runPilotDriver(
       const synced = await syncTodos(client, parentSessionId, todoPayload)
       log.push({ event: "todo_sync", ...synced })
 
-      if (step.kind === "done") {
+      if (step.kind === "continue_goal") {
+        // Fall through to continue_goal handler below.
+      } else if (step.kind === "done") {
         await syncTodos(client, parentSessionId, todoPayload)
         return { ok: true, host_step: step, log, todo: todoPayload, drive: driven }
-      }
-      if (step.kind === "failed") {
+      } else if (step.kind === "failed") {
         return { ok: false, host_step: step, log, drive: driven, todo: todoPayload }
-      }
-      if (step.kind === "ask_human") {
+      } else if (step.kind === "ask_human") {
         const ask =
           (step.ask_question as Record<string, unknown>) ||
           (driven.ask_question as Record<string, unknown>) ||
@@ -575,8 +627,7 @@ export async function runPilotDriver(
           log,
           todo: todoPayload,
         })
-      }
-      if (step.kind !== "dispatch_subagent") {
+      } else if (step.kind !== "dispatch_subagent") {
         return {
           ok: false,
           host_step: step,
@@ -585,9 +636,7 @@ export async function runPilotDriver(
           error: "UNKNOWN_HOST_STEP",
           todo: todoPayload,
         }
-      }
-
-      if (!client?.session?.create || !client?.session?.prompt) {
+      } else if (!client?.session?.create || !client?.session?.prompt) {
         return {
           ok: true,
           deferred_to_llm: true,
@@ -598,6 +647,66 @@ export async function runPilotDriver(
             "OpenCode client.session API 不可用；请 Primary 用 Task 原样派发 task_prompt_stub，再 acp dispatch-result",
         }
       }
+    }
+
+    if (step.kind === "continue_goal") {
+      const nextWf = String(step.next_workflow_id || "").trim()
+      if (!nextWf) {
+        return {
+          ok: false,
+          error: "CONTINUE_GOAL_MISSING_WORKFLOW",
+          host_step: step,
+          log,
+        }
+      }
+      const nextArch = String(step.architecture || architecture || "").trim()
+      const nextIntent = String(step.intent || intent || "").trim()
+      architecture = nextArch || architecture
+      intent = nextIntent || intent
+      workflow = nextWf
+      const contArgv = ["start", nextWf, "--project", project]
+      if (architecture) contArgv.push("--architecture", architecture)
+      if (intent) contArgv.push("--intent", intent)
+      const continued = runAcpJson(contArgv, project)
+      log.push({
+        event: "continue_goal",
+        next_workflow_id: nextWf,
+        ok: !!continued.ok || !!continued.run_id,
+      })
+      if (!continued.ok && !continued.run_id) {
+        const ask =
+          continued.ask_question && typeof continued.ask_question === "object"
+            ? (continued.ask_question as Record<string, unknown>)
+            : {}
+        if (continued.needs_human_decision || Object.keys(ask).length) {
+          return handleAskHumanStep({
+            client,
+            toolCtx,
+            parentSessionId,
+            step: {
+              kind: "ask_human",
+              ask_question: ask,
+              message_zh: String(
+                continued.message_zh || continued.error || `start ${nextWf} needs human`,
+              ),
+            },
+            ask,
+            log,
+            todo: continued.todo,
+          })
+        }
+        return {
+          ok: false,
+          host_step: {
+            kind: "failed",
+            message_zh: continued.message_zh || continued.error || `start ${nextWf} failed`,
+          },
+          log,
+          start: continued,
+        }
+      }
+      pendingTodo = continued.todo
+      continue
     }
 
     lastStep = step
@@ -656,6 +765,10 @@ export async function runPilotDriver(
       if (next.kind === "failed") {
         return { ok: false, host_step: next, log, todo: finished.todo }
       }
+      if (next.kind === "continue_goal") {
+        pendingStep = next
+        continue
+      }
       if (next.kind === "dispatch_subagent") {
         // Consume finished.host_step directly — do not re-call auto.
         pendingStep = next
@@ -697,6 +810,11 @@ export function createPilotRunTool(client: any) {
           type: "string",
           description: "Optional arch* (required for uo-init/uo-update)",
         },
+        intent: {
+          type: "string",
+          description:
+            "User product intent verbatim (e.g. 建立全量 TilingKey 覆盖测试). Required for User Goal chaining.",
+        },
         force_new: { type: "boolean", description: "Pass --force-new to acp start" },
       },
       async execute(toolArgs: Record<string, unknown>, ctx?: PilotToolContext) {
@@ -718,6 +836,7 @@ export function createPilotRunTool(client: any) {
             workflow: String(toolArgs.workflow || ""),
             project: String(toolArgs.project || ""),
             architecture: toolArgs.architecture ? String(toolArgs.architecture) : undefined,
+            intent: toolArgs.intent ? String(toolArgs.intent) : undefined,
             forceNew: Boolean(toolArgs.force_new),
           },
           toolCtx,

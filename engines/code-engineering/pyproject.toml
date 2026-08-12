@@ -6,10 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "code-engineering"
 version = "0.1.0"
 description = "AscendC Code Engineering (CE) engine for AscendC-Pilot"
+readme = "README.md"
 requires-python = ">=3.10"
+# Sibling engines are installed via repo-root requirements.txt editable paths
+# (same pattern as testcase-generation → acp-common by name, not path=).
+# Core operation remains usable without UO; CodeMap-backed APIs import uo_init
+# lazily. The repository workspace installs the optional sibling package.
 dependencies = [
   "PyYAML>=6.0",
 ]
+
+[project.optional-dependencies]
+uo = ["uo-init>=0.1.0"]
+dev = ["pytest>=8.0"]
 
 [project.scripts]
 ce-impact = "code_engineering.cli:main"

@@ -198,6 +198,18 @@ class CallSite:
     #: `prefix0.push_back(x)` and `prefix0.back()` share a line in FAG. Ordering
     #: them needs the column; the line alone cannot say which ran first.
     column: int = 0
+    #: Clang USR / qualified name / declaration file for the *caller* function
+    #: (when available). Empty for lexical sites and dependent names.
+    caller_usr: str = ""
+    caller_qualified: str = ""
+    #: Clang identity for the *callee* declaration. Required by AscendC root
+    #: proof paths 1–2 in ``kernel_root_trace``; spelling alone is not enough.
+    callee_usr: str = ""
+    callee_qualified: str = ""
+    callee_decl_file: str = ""
+    #: Receiver object type when this is a member call (spelling + canonical).
+    receiver_type: str = ""
+    receiver_canonical_type: str = ""
 
 
 #: Methods that add to a container. The argument is one element, never the
@@ -247,6 +259,52 @@ class FieldDecl:
     init: str | None
     file: str
     line: int
+    type_text: str = ""
+    canonical_type: str = ""
+    owner_qualified: str = ""
+    referenced_type_usr: str = ""
+    column: int = 0
+
+
+@dataclass(frozen=True)
+class TypeDecl:
+    """A class / struct / union / enum type declaration in operator scope."""
+
+    name: str
+    qualified_name: str = ""
+    usr: str = ""
+    file: str = ""
+    line: int = 0
+    kind: str = "class"
+    column: int = 0
+
+
+@dataclass(frozen=True)
+class AliasDecl:
+    """A typedef / using-alias that names another type."""
+
+    name: str
+    qualified_name: str = ""
+    target_type: str = ""
+    canonical_type: str = ""
+    target_usr: str = ""
+    file: str = ""
+    line: int = 0
+    column: int = 0
+
+
+@dataclass(frozen=True)
+class BaseDecl:
+    """One base-class edge of a derived class/struct."""
+
+    derived_name: str
+    derived_usr: str = ""
+    base_name: str = ""
+    base_usr: str = ""
+    canonical_type: str = ""
+    file: str = ""
+    line: int = 0
+    column: int = 0
 
 
 @dataclass(frozen=True)
@@ -324,6 +382,12 @@ class WalkResult:
     field_decls: dict[tuple[str, str], FieldDecl] = field(default_factory=dict)
     #: Local declarations, including the ones that initialise nothing.
     local_decls: list[LocalDecl] = field(default_factory=list)
+    #: Class / struct / union / enum declarations (for kernel root-trace WRAPS).
+    type_decls: list[TypeDecl] = field(default_factory=list)
+    #: Typedef / using-alias declarations.
+    alias_decls: list[AliasDecl] = field(default_factory=list)
+    #: Base-class edges of derived types.
+    base_decls: list[BaseDecl] = field(default_factory=list)
 
     @property
     def error_count(self) -> int:
@@ -758,6 +822,12 @@ class _Walker:
         self.class_fields: set[str] = set()
         self.field_decls: dict[tuple[str, str], FieldDecl] = {}
         self.local_decls: list[LocalDecl] = []
+        self.type_decls: list[TypeDecl] = []
+        self.alias_decls: list[AliasDecl] = []
+        self.base_decls: list[BaseDecl] = []
+        self._type_seen: set[str] = set()
+        self._alias_seen: set[str] = set()
+        self._base_edge_seen: set[tuple[str, str]] = set()
         self.macro_idioms = 0
         self._ordinal: dict[tuple[str, int, str], int] = {}
         # induction variables of every loop currently enclosing the cursor
@@ -937,7 +1007,138 @@ class _Walker:
                 init=init,
                 file=file,
                 line=cursor.location.line,
+                type_text=(cursor.type.spelling if cursor.type else "") or "",
+                canonical_type=(
+                    cursor.type.get_canonical().spelling
+                    if cursor.type is not None
+                    else ""
+                )
+                or "",
+                owner_qualified=(
+                    str(getattr(parent, "displayname", None) or parent.spelling or "")
+                    if parent is not None
+                    else host
+                ),
+                referenced_type_usr="",
+                column=int(cursor.location.column or 0),
             ),
+        )
+
+    def _record_type_decl(self, cursor, file: str) -> None:
+        """Record a class/struct/union/enum declaration for kernel root-trace."""
+        name = cursor.spelling or ""
+        if not name:
+            return
+        try:
+            usr = str(cursor.get_usr() or "")
+        except Exception:  # noqa: BLE001
+            usr = ""
+        key = usr or f"{file}:{name}:{cursor.location.line}"
+        if key in self._type_seen:
+            return
+        self._type_seen.add(key)
+        kind = {
+            "CLASS_DECL": "class",
+            "STRUCT_DECL": "struct",
+            "UNION_DECL": "union",
+            "ENUM_DECL": "enum",
+            "CLASS_TEMPLATE": "class_template",
+        }.get(cursor.kind.name, "class")
+        self.type_decls.append(
+            TypeDecl(
+                name=name,
+                qualified_name=str(
+                    getattr(cursor, "displayname", None) or cursor.spelling or ""
+                ),
+                usr=usr,
+                file=file,
+                line=int(cursor.location.line or 0),
+                kind=kind,
+                column=int(cursor.location.column or 0),
+            )
+        )
+
+    def _record_alias_decl(self, cursor, file: str) -> None:
+        """Record typedef / using-alias declarations."""
+        name = cursor.spelling or ""
+        if not name:
+            return
+        try:
+            usr = str(cursor.get_usr() or "")
+        except Exception:  # noqa: BLE001
+            usr = ""
+        key = usr or f"{file}:{name}:{cursor.location.line}"
+        if key in self._alias_seen:
+            return
+        self._alias_seen.add(key)
+        target = ""
+        canonical = ""
+        target_usr = ""
+        try:
+            t = cursor.underlying_typedef_type
+            if t is not None:
+                target = str(t.spelling or "")
+                canonical = str(t.get_canonical().spelling or "")
+                decl = t.get_declaration()
+                if decl is not None:
+                    target_usr = str(decl.get_usr() or "")
+        except Exception:  # noqa: BLE001
+            pass
+        self.alias_decls.append(
+            AliasDecl(
+                name=name,
+                qualified_name=str(
+                    getattr(cursor, "displayname", None) or cursor.spelling or ""
+                ),
+                target_type=target,
+                canonical_type=canonical,
+                target_usr=target_usr,
+                file=file,
+                line=int(cursor.location.line or 0),
+                column=int(cursor.location.column or 0),
+            )
+        )
+
+    def _record_base_edge(self, derived, base_cursor, file: str) -> None:
+        """Record one base-class edge under a derived class/struct."""
+        derived_name = derived.spelling or ""
+        if not derived_name:
+            return
+        try:
+            derived_usr = str(derived.get_usr() or "")
+        except Exception:  # noqa: BLE001
+            derived_usr = ""
+        base_name = ""
+        base_usr = ""
+        canonical = ""
+        try:
+            t = base_cursor.type
+            if t is not None:
+                canonical = str(t.get_canonical().spelling or t.spelling or "")
+                base_name = str(t.spelling or "")
+                decl = t.get_declaration()
+                if decl is not None:
+                    base_name = decl.spelling or base_name
+                    base_usr = str(decl.get_usr() or "")
+        except Exception:  # noqa: BLE001
+            pass
+        if not base_name:
+            return
+        edge = (derived_usr or derived_name, base_usr or base_name)
+        if edge in self._base_edge_seen:
+            return
+        self._base_edge_seen.add(edge)
+        self.base_decls.append(
+            BaseDecl(
+                derived_name=derived_name,
+                derived_usr=derived_usr,
+                base_name=base_name,
+                base_usr=base_usr,
+                canonical_type=canonical,
+                file=file,
+                line=int(base_cursor.location.line or 0),
+                column=int(base_cursor.location.column or 0),
+            )
         )
 
     def _record_var_decl(self, cursor, func: str, stack=()) -> None:
@@ -1045,6 +1246,59 @@ class _Walker:
         # is about whether the call happens, not about what is passed. The
         # receiver matters for the same reason — `v.clear()` passes nothing and
         # changes everything.
+        caller_usr = ""
+        caller_qualified = ""
+        callee_usr = ""
+        callee_qualified = ""
+        callee_decl_file = ""
+        receiver_type = ""
+        receiver_canonical_type = ""
+        try:
+            # Prefer the semantic definition of the enclosing function when
+            # available; spelling-only identity is not enough for root proof.
+            parent = cursor.semantic_parent
+            if parent is not None and parent.kind.name in _FUNCTION_DEF_KINDS:
+                caller_usr = str(getattr(parent, "get_usr", lambda: "")() or "")
+                caller_qualified = str(
+                    getattr(parent, "displayname", None) or parent.spelling or ""
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            ref = cursor.referenced
+            if ref is not None:
+                callee_usr = str(getattr(ref, "get_usr", lambda: "")() or "")
+                callee_qualified = str(
+                    getattr(ref, "displayname", None) or ref.spelling or callee
+                )
+                try:
+                    loc = ref.location
+                    if loc is not None and loc.file is not None:
+                        callee_decl_file = _norm(loc.file.name)
+                except Exception:  # noqa: BLE001
+                    pass
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            # Member calls expose the object type on the first child / type.
+            recv = _receiver_path(cursor, callee)
+            if recv:
+                # Prefer the type of the member expression's base.
+                for ch in cursor.get_children():
+                    kn = ch.kind.name
+                    if kn in ("MEMBER_REF_EXPR", "UNEXPOSED_EXPR", "DECL_REF_EXPR"):
+                        t = ch.type
+                        if t is not None:
+                            receiver_type = str(t.spelling or "")
+                            try:
+                                receiver_canonical_type = str(
+                                    t.get_canonical().spelling or ""
+                                )
+                            except Exception:  # noqa: BLE001
+                                receiver_canonical_type = receiver_type
+                        break
+        except Exception:  # noqa: BLE001
+            pass
         self.call_sites.append(
             CallSite(
                 caller=func,
@@ -1060,6 +1314,13 @@ class _Walker:
                 # free function, which is the only distinction needed.
                 receiver=_receiver_path(cursor, callee),
                 column=cursor.location.column,
+                caller_usr=caller_usr,
+                caller_qualified=caller_qualified,
+                callee_usr=callee_usr,
+                callee_qualified=callee_qualified,
+                callee_decl_file=callee_decl_file,
+                receiver_type=receiver_type,
+                receiver_canonical_type=receiver_canonical_type,
             )
         )
 
@@ -1369,6 +1630,21 @@ class _Walker:
             ):
                 self.class_fields.add(cursor.spelling)
                 self._record_field_decl(cursor, file)
+        elif kind_name in (
+            "CLASS_DECL",
+            "STRUCT_DECL",
+            "UNION_DECL",
+            "ENUM_DECL",
+            "CLASS_TEMPLATE",
+        ):
+            if self._in_scope(file) and cursor.spelling:
+                self._record_type_decl(cursor, file)
+                for ch in cursor.get_children():
+                    if ch.kind.name == "CXX_BASE_SPECIFIER":
+                        self._record_base_edge(cursor, ch, file)
+        elif kind_name in ("TYPEDEF_DECL", "TYPE_ALIAS_DECL"):
+            if self._in_scope(file) and cursor.spelling:
+                self._record_alias_decl(cursor, file)
         elif kind_name == "VAR_DECL":
             self._record_var_decl(cursor, func, stack)
         # `CXX_MEMBER_CALL_EXPR` is not a kind this libclang has — `v.clear()`
@@ -2054,6 +2330,9 @@ def _walk_result_from_native(data: dict, *, path: str) -> WalkResult:
         class_fields=set(data.get("class_fields") or []),
         field_decls={},
         local_decls=[],
+        type_decls=[],
+        alias_decls=[],
+        base_decls=[],
     )
 
 
@@ -2370,6 +2649,9 @@ def walk_file(
         class_fields=w.class_fields,
         field_decls=w.field_decls,
         local_decls=w.local_decls,
+        type_decls=w.type_decls,
+        alias_decls=w.alias_decls,
+        base_decls=w.base_decls,
     )
     if cache_key:
         try:

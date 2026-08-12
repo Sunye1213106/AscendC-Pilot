@@ -130,6 +130,7 @@ def create_tilingkey_full_coverage_goal(
     mode: str = "tilingkey_full_coverage",
     op_name: str = "",
     current_step: str = "tg_init",
+    intent_text: str = "",
 ) -> dict[str, Any]:
     """Materialize the default full-coverage product goal."""
     root = Path(project_root).expanduser().resolve()
@@ -165,6 +166,7 @@ def create_tilingkey_full_coverage_goal(
         "schema": USER_GOAL_SCHEMA,
         "goal_id": GOAL_TILINGKEY_FULL,
         "label_zh": label,
+        "intent_text": str(intent_text or label).strip(),
         "project": root.as_posix(),
         "architecture": arch,
         "op_name": op,
@@ -198,10 +200,13 @@ def ensure_goal_for_intent(
         and str(existing.get("goal_id")) == GOAL_TILINGKEY_FULL
         and str(existing.get("status")) == "active"
     ):
-        # Keep architecture/op if newly known.
+        # Keep architecture/op/intent if newly known.
         changed = False
         if architecture and not str(existing.get("architecture") or "").strip():
             existing["architecture"] = architecture
+            changed = True
+        if intent_text and not str(existing.get("intent_text") or "").strip():
+            existing["intent_text"] = intent_text
             changed = True
         if changed:
             return write_user_goal(project_root, existing)
@@ -212,6 +217,7 @@ def ensure_goal_for_intent(
         architecture=architecture,
         op_name=op_name,
         current_step=step if step != "ensure_uo" else "tg_init",
+        intent_text=intent_text,
     )
 
 

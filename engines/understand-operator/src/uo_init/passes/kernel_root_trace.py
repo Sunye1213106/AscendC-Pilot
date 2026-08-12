@@ -667,15 +667,77 @@ def finalize_kernel_root_trace(
         filter_strict=filter_strict,
         deadline=deadline,
     )
-    # Lexical fallback: all identifier calls in selected files (not primitive-only).
+    walk_stats = {}
+    try:
+        from uo_init import tu_cache as _tu_cache
+
+        walk_stats = dict(_tu_cache.stats() or {})
+    except Exception:  # noqa: BLE001
+        walk_stats = {}
+
+    # Files already covered by a successful clang walk: skip full lexical merge
+    # there (primitives-only lexical fill-in only). Uncovered files still get
+    # the broader lexical fallback so we do not go silent.
+    clang_files: set[str] = set()
+    try:
+        from uo_init import tu_cache as _tu_cache
+
+        for wr in _tu_cache.iter_cached_walks(
+            Path(root), arch, path_substr="op_kernel", limit=96
+        ):
+            p = str(getattr(wr, "path", "") or "").replace("\\", "/")
+            if p:
+                clang_files.add(Path(p).name.lower())
+                # Also keep relative path tails for matching selected files.
+                clang_files.add(p.lower())
+    except Exception:  # noqa: BLE001
+        clang_files = set()
+
+    uncovered = [
+        f
+        for f in files
+        if f.name.lower() not in clang_files
+        and str(f).replace("\\", "/").lower() not in clang_files
+        and not any(str(f).replace("\\", "/").lower().endswith(cf) for cf in clang_files if "/" in cf)
+    ]
+    covered = [f for f in files if f not in uncovered]
+
+    # Lexical fallback: uncovered files get full scan; covered files only
+    # registry primitives (to catch APIs clang may have missed as dependent names).
     if files and time.perf_counter() < deadline:
-        lexical = kscan.lexical_source_call_sites(
-            files,
-            reachable=reachable,
-            filter_strict=filter_strict,
-            root=root,
-            deadline=deadline,
-        )
+        lexical: list = []
+        if uncovered:
+            lexical.extend(
+                kscan.lexical_source_call_sites(
+                    uncovered,
+                    reachable=reachable,
+                    filter_strict=filter_strict,
+                    root=root,
+                    deadline=deadline,
+                    primitives_only=False,
+                )
+            )
+        if covered and provenance.startswith("clang_walk"):
+            lexical.extend(
+                kscan.lexical_source_call_sites(
+                    covered,
+                    reachable=reachable,
+                    filter_strict=filter_strict,
+                    root=root,
+                    deadline=deadline,
+                    primitives_only=True,
+                )
+            )
+        elif not provenance.startswith("clang_walk"):
+            # No walk cache at all — full lexical across all selected files.
+            lexical = kscan.lexical_source_call_sites(
+                files,
+                reachable=reachable,
+                filter_strict=filter_strict,
+                root=root,
+                deadline=deadline,
+                primitives_only=False,
+            )
         calls, added = kscan.merge_lexical_sites(calls, lexical, root=root)
         if added:
             provenance = f"{provenance}+lexical_source_calls"
@@ -686,6 +748,12 @@ def finalize_kernel_root_trace(
             deadline=deadline,
         )
         decls = list(decls or []) + list(lex_decls or [])
+
+    kernel_backend = (
+        "clang"
+        if provenance.startswith("clang_walk")
+        else ("lexical" if "lexical" in provenance else "none")
+    )
 
     aliases_lex = _scan_type_aliases(files, root=root, deadline=deadline) if files else []
     members_lex = _scan_class_members(files, root=root, deadline=deadline) if files else []
@@ -1649,6 +1717,10 @@ def finalize_kernel_root_trace(
         "elapsed_s": round(elapsed, 3),
         "budget_s": _budget_s(),
         "provenance": provenance,
+        "kernel_backend": kernel_backend,
+        "walk_cache_stats": walk_stats,
+        "clang_covered_files": len(covered),
+        "lexical_uncovered_files": len(uncovered),
         "selected_files": len(files),
         "class_members": len(members),
         "type_aliases": len(aliases),
@@ -1666,6 +1738,7 @@ def finalize_kernel_root_trace(
         "quality": quality,
     }
     codemap.meta["kernel_root_trace"] = meta
+    codemap.meta["kernel_backend"] = kernel_backend
     # Thin compat for older query helpers (not an execution model).
     codemap.meta["kernel_execution"] = {
         "operations": op_count,
@@ -1673,5 +1746,6 @@ def finalize_kernel_root_trace(
         "registers": reg_count,
         "elapsed_s": meta["elapsed_s"],
         "root_trace": True,
+        "kernel_backend": kernel_backend,
     }
     return codemap

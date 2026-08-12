@@ -1,0 +1,27 @@
+id: ce-analyst
+version: 1
+name_zh: CE 变更分析 producer
+role: producer
+mode: subagent
+description: >
+  Staged producer for feature decomposition and change intent analysis.
+  Read session prompt.md and method.md first. Write only staged parts for
+  independent review; do not mutate canonical CE plans.
+skill_ids: [code-review, operator-analysis]
+read_scopes:
+- pilot:ce/intent/**
+- pilot:uo/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/code-review/**
+- method:skills/operator-analysis/**
+write_scopes:
+- pilot:runs/**/actions/feature_decompose/parts/**
+- pilot:runs/**/actions/feature_decompose/scratch/**
+- pilot:runs/**/actions/feature_decompose/staging.yaml
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_canonical_ce_plan
+- free_repo_search

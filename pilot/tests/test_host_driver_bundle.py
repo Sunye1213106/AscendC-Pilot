@@ -8,6 +8,7 @@ import yaml
 
 from ascendc_pilot.actions.dispatch import (
     build_host_step,
+    claim_dispatch_ticket,
     consume_dispatch_ticket,
     issue_dispatch_ticket,
     load_dispatch_ticket,
@@ -71,11 +72,23 @@ def test_dispatch_ticket_oneshot(tmp_path: Path) -> None:
     assert tid.startswith("dxt_")
     loaded = load_dispatch_ticket(tmp_path, tid)
     assert loaded.get("status") == "open"
-    consumed = consume_dispatch_ticket(tmp_path, tid)
-    assert consumed.get("ok") is True
-    again = consume_dispatch_ticket(tmp_path, tid)
+    claimed = claim_dispatch_ticket(tmp_path, tid)
+    assert claimed.get("ok") is True
+    assert claimed["ticket"].get("status") == "processing"
+    # Second claim while processing fails
+    again = claim_dispatch_ticket(tmp_path, tid)
     assert again.get("ok") is False
-    assert again.get("error") == "TICKET_NOT_OPEN"
+    # Finalize fail → reopen
+    from ascendc_pilot.actions.dispatch import release_dispatch_ticket, mark_dispatch_ticket_consumed
+
+    released = release_dispatch_ticket(tmp_path, tid, error="bad payload")
+    assert released.get("ok") is True
+    assert load_dispatch_ticket(tmp_path, tid).get("status") == "open"
+    # Retry claim + consume
+    assert claim_dispatch_ticket(tmp_path, tid).get("ok") is True
+    assert mark_dispatch_ticket_consumed(tmp_path, tid).get("ok") is True
+    assert load_dispatch_ticket(tmp_path, tid).get("status") == "consumed"
+    assert claim_dispatch_ticket(tmp_path, tid).get("ok") is False
 
 
 def test_build_host_step_kinds() -> None:
@@ -201,3 +214,87 @@ def test_agent_yaml_uses_scope_namespaces() -> None:
         assert "skills/" not in desc or "method.md" in desc, (
             f"{name} description still points at host skill paths without session method"
         )
+
+
+def test_path_within_scopes_namespace_aware() -> None:
+    from ascendc_pilot.ownership import path_within_scopes
+
+    assert path_within_scopes("uo/**", ["pilot:uo/**", "pilot:runs/**"])
+    assert path_within_scopes("pilot:uo/**", ["uo/**", "runs/**"])
+    assert path_within_scopes("uo/summary/overview.yaml", ["pilot:uo/**"])
+    # Cross-namespace must not match
+    assert not path_within_scopes("method:skills/**", ["pilot:skills/**", "pilot:uo/**"])
+    assert not path_within_scopes("source:op_kernel/**", ["pilot:op_kernel/**"])
+    # Universal pilot ceiling
+    assert path_within_scopes("uo/**", ["pilot:*"])
+    assert path_within_scopes("runs/x/**", ["*"])
+
+
+def test_attach_host_step_continue_goal(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+    from ascendc_pilot.user_goal import create_tilingkey_full_coverage_goal
+
+    ensure_agent_layout(tmp_path, arch="arch0")
+    start_workflow(tmp_path, "tg-init", force_phase=True, architecture="arch0")
+    create_tilingkey_full_coverage_goal(
+        tmp_path,
+        architecture="arch0",
+        intent_text="建立全量 TilingKey 覆盖测试",
+        current_step="tg_init",
+    )
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "workflow_complete",
+            "status": "passed",
+            "complete": {
+                "user_goal_next_workflow_id": "tg-plan",
+                "user_goal_next_summary_zh": "规划测试义务",
+                "state": {"workflow_id": "tg-init", "architecture": "arch0"},
+            },
+        },
+    )
+    step = out.get("host_step") or {}
+    assert step.get("kind") == "continue_goal"
+    assert step.get("next_workflow_id") == "tg-plan"
+    assert "全量" in str(step.get("intent") or "") or bool(step.get("intent"))
+
+
+def test_method_bundle_fail_closed_without_placeholder(tmp_path: Path) -> None:
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    mat = materialize_method_bundle(
+        sdir,
+        skill_ids=["definitely-missing-skill-xyz"],
+        existing_method="",
+        project_root=tmp_path,
+    )
+    assert mat.get("ok") is False
+    assert mat.get("reason_code") == "METHOD_BUNDLE_MISSING"
+    assert not (sdir / "method.md").is_file()
+
+
+def test_parse_acp_stdout_ignores_stderr_heartbeat() -> None:
+    """Mirror Host Driver protocol: stdout JSON only; stderr heartbeats ignored."""
+    import json
+
+    stdout = json.dumps({"ok": True, "host_step": {"kind": "done"}}, ensure_ascii=False)
+    stderr = (
+        "[acp-auto] drain start (deterministic…)\n"
+        "[acp-auto] run prepare still running (15s)…\n"
+        "[acp-auto] drain stop interaction_required\n"
+    )
+    # Simulate the fixed parser (must NOT concat stderr).
+    text = stdout  # not stdout + stderr
+    parsed = json.loads(text[text.index("{") :])
+    assert parsed["ok"] is True
+    assert parsed["host_step"]["kind"] == "done"
+    # Old buggy concat would fail:
+    broken = f"{stdout}\n{stderr}"
+    try:
+        json.loads(broken[broken.index("{") :])
+        concat_ok = True
+    except json.JSONDecodeError:
+        concat_ok = False
+    assert concat_ok is False

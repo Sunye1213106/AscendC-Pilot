@@ -1,0 +1,26 @@
+id: deterministic-ce-engine
+version: 1
+name_zh: CE deterministic engine
+# Engine identity for authorize/write_scopes only — not an LLM agent.
+# compose_runtime skips kind=deterministic_engine when emitting host agent MD.
+kind: deterministic_engine
+role: deterministic_engine
+mode: subagent
+description: CE deterministic engine
+skill_ids: [code-review]
+read_scopes:
+- pilot:ce/**
+- pilot:uo/**
+- pilot:tg/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/code-review/**
+- method:skills/operator-analysis/**
+write_scopes:
+- pilot:ce/**
+- pilot:runs/**
+- pilot:runs/**/actions/**
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope

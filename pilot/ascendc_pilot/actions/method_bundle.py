@@ -112,15 +112,41 @@ def materialize_method_bundle(
             for c in copied:
                 method_chunks.append(f"- `{c}`\n")
         method_path.write_text("".join(method_chunks), encoding="utf-8")
-    elif not method_path.is_file():
-        method_path.write_text("# method\n\n(no cognitive skill materialized)\n", encoding="utf-8")
+    elif existing_method.strip():
+        method_path.write_text(existing_method, encoding="utf-8")
+    # Fail-closed: required skill missing and no pre-rendered method → do not
+    # invent a placeholder that would pass BUNDLE_NOT_READABLE.
+    ok = len(missing) == 0 or bool(existing_method.strip())
+    if not ok and not method_path.is_file():
+        # Leave no placeholder; prepare must abort with METHOD_BUNDLE_MISSING.
+        pass
+    elif not ok:
+        # Do not keep a stale/empty method.md as a false positive for existence.
+        try:
+            if method_path.is_file() and not existing_method.strip():
+                text = method_path.read_text(encoding="utf-8")
+                if "(no cognitive skill materialized)" in text or not text.strip():
+                    method_path.unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
 
     return {
-        "ok": len(missing) == 0 or bool(existing_method.strip()) or method_path.is_file(),
-        "method_path": method_path.as_posix(),
+        "ok": ok,
+        "error": "" if ok else "METHOD_BUNDLE_MISSING",
+        "reason_code": "" if ok else "METHOD_BUNDLE_MISSING",
+        "method_path": method_path.as_posix() if method_path.is_file() else "",
         "refs_dir": refs_dir.as_posix(),
         "copied": copied,
         "missing": missing,
+        "message_zh": (
+            ""
+            if ok
+            else (
+                "Required cognitive skill missing: "
+                + ", ".join(missing[:8])
+                + "；禁止派发（禁止 placeholder method.md）。"
+            )
+        ),
     }
 
 

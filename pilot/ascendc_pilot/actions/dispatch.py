@@ -22,6 +22,14 @@ def _ticket_dir(project_root: Path) -> Path:
     return d
 
 
+def _write_ticket(project_root: Path, doc: dict[str, Any]) -> None:
+    path = _ticket_dir(project_root) / f"{doc['ticket_id']}.yaml"
+    if yaml is not None:
+        path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    else:
+        path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def issue_dispatch_ticket(
     project_root: Path,
     *,
@@ -32,7 +40,7 @@ def issue_dispatch_ticket(
     session_dir: str = "",
     task_prompt_stub: str = "",
 ) -> dict[str, Any]:
-    """Create a one-shot ticket for Host Session Driver."""
+    """Create a one-shot ticket for Host Session Driver (status=open)."""
     raw = f"{run_id}:{action_id}:{actor_id}:{time.time_ns()}"
     ticket_id = "dxt_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
     doc = {
@@ -50,11 +58,7 @@ def issue_dispatch_ticket(
         if task_prompt_stub
         else "",
     }
-    path = _ticket_dir(project_root) / f"{ticket_id}.yaml"
-    if yaml is not None:
-        path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    else:
-        path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_ticket(project_root, doc)
     return doc
 
 
@@ -75,25 +79,78 @@ def load_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any]:
         return {}
 
 
-def consume_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any]:
+def claim_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any]:
+    """open | retryable_failed → processing. Finalize must succeed before consume."""
     doc = load_dispatch_ticket(project_root, ticket_id)
     if not doc:
         return {"ok": False, "error": "TICKET_NOT_FOUND", "ticket_id": ticket_id}
-    if str(doc.get("status") or "") != "open":
+    status = str(doc.get("status") or "")
+    if status not in {"open", "retryable_failed"}:
         return {
             "ok": False,
-            "error": "TICKET_NOT_OPEN",
+            "error": "TICKET_NOT_CLAIMABLE",
+            "ticket_id": ticket_id,
+            "status": status,
+        }
+    doc["status"] = "processing"
+    doc["claimed_at"] = time.time()
+    doc.pop("retryable_error", None)
+    _write_ticket(project_root, doc)
+    return {"ok": True, "ticket": doc}
+
+
+def mark_dispatch_ticket_consumed(project_root: Path, ticket_id: str) -> dict[str, Any]:
+    """processing → consumed (only after finalize success)."""
+    doc = load_dispatch_ticket(project_root, ticket_id)
+    if not doc:
+        return {"ok": False, "error": "TICKET_NOT_FOUND", "ticket_id": ticket_id}
+    if str(doc.get("status") or "") != "processing":
+        return {
+            "ok": False,
+            "error": "TICKET_NOT_PROCESSING",
             "ticket_id": ticket_id,
             "status": doc.get("status"),
         }
     doc["status"] = "consumed"
     doc["consumed_at"] = time.time()
-    path = _ticket_dir(project_root) / f"{ticket_id}.yaml"
-    if yaml is not None:
-        path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    else:
-        path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_ticket(project_root, doc)
     return {"ok": True, "ticket": doc}
+
+
+def release_dispatch_ticket(
+    project_root: Path,
+    ticket_id: str,
+    *,
+    error: str = "",
+) -> dict[str, Any]:
+    """processing → retryable_failed → open so Host can resubmit return payload."""
+    doc = load_dispatch_ticket(project_root, ticket_id)
+    if not doc:
+        return {"ok": False, "error": "TICKET_NOT_FOUND", "ticket_id": ticket_id}
+    if str(doc.get("status") or "") != "processing":
+        return {
+            "ok": False,
+            "error": "TICKET_NOT_PROCESSING",
+            "ticket_id": ticket_id,
+            "status": doc.get("status"),
+        }
+    doc["status"] = "retryable_failed"
+    doc["retryable_error"] = (error or "")[:400]
+    doc["failed_at"] = time.time()
+    _write_ticket(project_root, doc)
+    # Immediately re-open for retry (one-shot claim, multi-attempt finalize).
+    doc["status"] = "open"
+    doc["reopened_at"] = time.time()
+    _write_ticket(project_root, doc)
+    return {"ok": True, "ticket": doc, "retryable": True}
+
+
+def consume_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any]:
+    """Backward-compatible alias: claim (does not finalize-consume).
+
+    Prefer ``claim_dispatch_ticket`` + ``mark_dispatch_ticket_consumed``.
+    """
+    return claim_dispatch_ticket(project_root, ticket_id)
 
 
 def build_host_step(
@@ -111,7 +168,8 @@ def build_host_step(
     """Structured Host Session Driver step."""
     prep = prepare or {}
     step: dict[str, Any] = {
-        "kind": kind,  # dispatch_subagent | ask_human | done | failed
+        # dispatch_subagent | ask_human | done | failed | continue_goal
+        "kind": kind,
         "action_id": action_id or str(prep.get("action_id") or ""),
         "actor_id": actor_id or str(prep.get("actor_id") or ""),
         "cwd": str(project_root or ""),
@@ -141,23 +199,23 @@ def dispatch_result(
     result_file: Path | str | None = None,
     result_text: str = "",
 ) -> dict[str, Any]:
-    """Consume ticket → finalize action → continue drive_until_interaction."""
+    """Claim ticket → finalize action → consume on success (else reopen) → drive."""
     from ascendc_pilot.actions import run_action
     from ascendc_pilot.actions.drive import drive_until_interaction
     from ascendc_pilot.actions.runtime import prepare_action
 
-    consumed = consume_dispatch_ticket(project_root, ticket_id)
-    if not consumed.get("ok"):
-        return {**consumed, "ok": False}
-    ticket = consumed.get("ticket") or {}
+    claimed = claim_dispatch_ticket(project_root, ticket_id)
+    if not claimed.get("ok"):
+        return {**claimed, "ok": False}
+    ticket = claimed.get("ticket") or {}
     action_id = str(ticket.get("action_id") or "").strip()
     if not action_id:
+        release_dispatch_ticket(project_root, ticket_id, error="TICKET_MISSING_ACTION")
         return {"ok": False, "error": "TICKET_MISSING_ACTION"}
 
     payload = action_result
     if payload is None and result_text.strip():
         text = result_text.strip()
-        # Strip fenced yaml if present
         if "```" in text:
             import re
 
@@ -180,19 +238,28 @@ def dispatch_result(
         action_result=payload,
     )
     if not fin.get("ok"):
+        release_dispatch_ticket(
+            project_root,
+            ticket_id,
+            error=str(fin.get("error") or fin.get("message_zh") or "finalize failed"),
+        )
         return {
             "ok": False,
             "stop_reason": "finalize_failed",
             "finalize": fin,
+            "ticket_retryable": True,
+            "dispatch_ticket": ticket_id,
             "host_step": build_host_step(
                 kind="failed",
                 project_root=project_root,
                 action_id=action_id,
                 message_zh=str(fin.get("message_zh") or fin.get("error") or "finalize failed"),
+                extra={"ticket_retryable": True, "dispatch_ticket": ticket_id},
             ),
         }
 
-    # Continue draining deterministic work / next interaction boundary.
+    mark_dispatch_ticket_consumed(project_root, ticket_id)
+
     driven = drive_until_interaction(project_root, prepare=prepare_action)
     driven = attach_host_step(project_root, driven)
     return {
@@ -211,6 +278,48 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
     status = str(out.get("status") or "")
 
     if stop == "workflow_complete" or status == "passed":
+        complete = out.get("complete") if isinstance(out.get("complete"), dict) else {}
+        next_wf = str(
+            complete.get("user_goal_next_workflow_id")
+            or out.get("user_goal_next_workflow_id")
+            or ""
+        ).strip()
+        if next_wf:
+            arch = ""
+            intent = ""
+            try:
+                from ascendc_pilot.state import load_state
+                from ascendc_pilot.user_goal import load_user_goal
+
+                st = load_state(project_root) or {}
+                arch = str(st.get("architecture") or "").strip()
+                goal = load_user_goal(project_root) or {}
+                if not arch:
+                    arch = str(goal.get("architecture") or "").strip()
+                intent = str(goal.get("intent_text") or goal.get("label_zh") or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+            out["host_step"] = build_host_step(
+                kind="continue_goal",
+                project_root=project_root,
+                message_zh=str(
+                    complete.get("user_goal_next_summary_zh")
+                    or complete.get("message_zh")
+                    or f"continue goal → {next_wf}"
+                ),
+                extra={
+                    "status": status or "passed",
+                    "next_workflow_id": next_wf,
+                    "architecture": arch,
+                    "intent": intent,
+                    "completed_workflow_id": str(
+                        (complete.get("state") or {}).get("workflow_id")
+                        if isinstance(complete.get("state"), dict)
+                        else ""
+                    ),
+                },
+            )
+            return out
         out["host_step"] = build_host_step(
             kind="done",
             project_root=project_root,
@@ -249,7 +358,6 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
     actor_id = str(nxt.get("actor_id") or "").strip()
 
     if stop == "interaction_required" and kind in {"subagent", "primary_interactive"} and action_id:
-        # Auto-prepare the interactive action so Host gets stub + ticket in one shot.
         from ascendc_pilot.actions.runtime import prepare_action
 
         prep = prepare_action(project_root, action_id)
@@ -314,6 +422,9 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
 __all__ = [
     "issue_dispatch_ticket",
     "load_dispatch_ticket",
+    "claim_dispatch_ticket",
+    "mark_dispatch_ticket_consumed",
+    "release_dispatch_ticket",
     "consume_dispatch_ticket",
     "build_host_step",
     "dispatch_result",

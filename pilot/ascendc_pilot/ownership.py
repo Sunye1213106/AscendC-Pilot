@@ -65,6 +65,13 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/closure_audit/review.yaml",
         ],
     },
+    "ce-intent": {
+        "feature_decompose": [
+            "runs/{run_id}/actions/feature_decompose/parts/**",
+            "runs/{run_id}/actions/feature_decompose/scratch/**",
+            "runs/{run_id}/actions/feature_decompose/staging.yaml",
+        ],
+    },
 }
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "tg-solve": {
@@ -232,6 +239,41 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/audit_report.yaml",
         ],
     },
+    "ce-review": {
+        "code_review": [
+            "ce/review/**",
+            "runs/**/actions/code_review/**",
+        ],
+    },
+    "ce-impact": {
+        "change_capture": ["ce/impact/change_capture.yaml"],
+        "uo_freshness": ["ce/impact/freshness.yaml"],
+        "impact_slice": ["ce/impact/impact_slice.yaml"],
+        "risk_classify": ["ce/impact/risk_classification.yaml"],
+        "obligation_build": ["ce/impact/obligations.yaml", "ce/impact/ledger.yaml"],
+        "impact_audit": ["ce/impact/audit_report.yaml"],
+    },
+    "ce-verify": {
+        "verify_gate": ["ce/verify/gate.yaml"],
+        "code_review": ["ce/verify/code_review.yaml"],
+        "coverage_bridge": ["ce/verify/tg_handoff.yaml", "ce/verify/regress_cases.csv"],
+        "residual_analyse": ["ce/verify/residual.yaml", "ce/impact/ledger.yaml"],
+        "external_ingest": ["ce/verify/external_evidence.yaml", "ce/impact/ledger.yaml"],
+        "exclusion_review": ["ce/verify/exclusion_review.yaml"],
+        "ce_certify": ["ce/verify/certificate.yaml"],
+    },
+    "ce-intent": {
+        "intent_capture": ["ce/intent/intent.yaml"],
+        "kb_check": ["ce/intent/kb_check.yaml"],
+        "feature_decompose": [
+            "runs/{run_id}/actions/feature_decompose/parts/**",
+            "runs/{run_id}/actions/feature_decompose/scratch/**",
+            "runs/{run_id}/actions/feature_decompose/staging.yaml",
+        ],
+        "anchor_locate": ["ce/intent/anchors.yaml"],
+        "plan_review": ["ce/intent/feature_decomposition.yaml", "ce/intent/plan_review.yaml"],
+        "human_confirm": ["ce/intent/confirmation.yaml"],
+    },
 }
 ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
@@ -365,6 +407,41 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/closure/**",
             "runs/**/actions/closure_audit/review.yaml",
         ],
+    },
+    "ce-review": {
+        "code_review": [
+            "uo/**",
+            "ce/**",
+            "runs/**",
+            "context/**",
+            "skills/code-review/**",
+            "skills/operator-analysis/**",
+        ],
+    },
+    "ce-impact": {
+        "change_capture": ["context/**", "source/**"],
+        "uo_freshness": ["uo/*.uo", "ce/impact/change_capture.yaml"],
+        "impact_slice": ["uo/*.uo", "ce/impact/change_capture.yaml", "ce/impact/freshness.yaml"],
+        "risk_classify": ["ce/impact/impact_slice.yaml"],
+        "obligation_build": ["ce/impact/impact_slice.yaml", "ce/impact/risk_classification.yaml"],
+        "impact_audit": ["uo/*.uo", "ce/impact/**", "runs/**", "context/**"],
+    },
+    "ce-verify": {
+        "verify_gate": ["uo/*.uo", "ce/impact/**"],
+        "code_review": ["uo/*.uo", "ce/impact/**", "ce/verify/**", "context/**"],
+        "coverage_bridge": ["ce/impact/**", "tg/closure/**"],
+        "residual_analyse": ["ce/impact/**", "ce/verify/**"],
+        "external_ingest": ["ce/impact/**", "ce/verify/**", "context/**", "local/**"],
+        "exclusion_review": ["uo/*.uo", "ce/impact/**", "ce/verify/**", "runs/**"],
+        "ce_certify": ["ce/impact/**", "ce/verify/**"],
+    },
+    "ce-intent": {
+        "intent_capture": ["context/**"],
+        "kb_check": ["uo/*.uo"],
+        "feature_decompose": ["uo/*.uo", "ce/intent/**", "context/**", "runs/**"],
+        "anchor_locate": ["uo/*.uo", "ce/intent/**", "runs/**"],
+        "plan_review": ["uo/*.uo", "ce/intent/**", "runs/**"],
+        "human_confirm": ["ce/intent/**"],
     },
 }
 ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {
@@ -644,38 +721,58 @@ def path_within_scopes(path_or_pattern: str, scopes: list[str], *, run_id: str =
     """True if a concrete path or glob pattern is covered by ceiling scopes.
 
     Used for Action ⊆ Agent ⊆ Workflow ownership audits.
+
+    Scope namespaces (``pilot:`` / ``method:`` / ``source:``) are part of the
+    ownership type — patterns only compare within the same namespace. Bare
+    legacy paths normalize to ``pilot:`` (or ``method:`` / ``source:`` via
+    ``split_scope_ns`` heuristics).
     """
     if not scopes:
         return False
-    raw = expand_path_template(str(path_or_pattern or ""), run_id=run_id or "_RUN_")
-    rel = raw.replace("\\", "/").lstrip("/")
-    ceilings = [
-        expand_path_template(str(s or ""), run_id=run_id or "_RUN_").replace("\\", "/").lstrip("/")
-        for s in scopes
-        if str(s or "").strip()
-    ]
+    from ascendc_pilot.agents_registry import split_scope_ns
+
+    path_ns, path_raw = split_scope_ns(str(path_or_pattern or ""))
+    rel = expand_path_template(path_raw, run_id=run_id or "_RUN_").replace("\\", "/").lstrip("/")
+
+    ceilings: list[tuple[str, str]] = []
+    for s in scopes:
+        if not str(s or "").strip():
+            continue
+        c_ns, c_raw = split_scope_ns(str(s))
+        c_pat = expand_path_template(c_raw, run_id=run_id or "_RUN_").replace("\\", "/").lstrip("/")
+        ceilings.append((c_ns, c_pat))
     if not ceilings:
         return False
-    # Universal ceilings cover every path / pattern.
-    if any(c in {"**", "*", "**/**"} for c in ceilings):
+
+    same = [(ns, pat) for ns, pat in ceilings if ns == path_ns]
+    if not same:
+        return False
+
+    # Universal ceilings cover every path / pattern in this namespace.
+    if any(pat in {"**", "*", "**/**"} for _ns, pat in same):
         return True
+
+    same_pats = [pat for _ns, pat in same]
+
     # Concrete file / already-expanded path.
     if "*" not in rel and "?" not in rel and "[" not in rel:
-        return path_matches_patterns(rel, ceilings)
+        return path_matches_patterns(rel, same_pats)
     # Pattern ⊆ ceiling: prefix of the narrower pattern must match a ceiling.
     prefix = _pattern_prefix(rel)
-    if prefix and path_matches_patterns(prefix, ceilings):
+    if prefix and path_matches_patterns(prefix, same_pats):
         return True
-    for c in ceilings:
+    for c in same_pats:
         c_prefix = _pattern_prefix(c)
         if not c_prefix:
-            # Broad ``**`` / ``*`` ceiling.
             if c in {"**", "*", "**/**"}:
                 return True
             continue
         if prefix == c_prefix or (prefix and prefix.startswith(c_prefix + "/")):
             return True
         if c.endswith("/**") and prefix and (prefix == c[:-3] or prefix.startswith(c[:-3] + "/")):
+            return True
+        # Exact pattern match after namespace strip (pilot:uo/** vs uo/**).
+        if rel == c:
             return True
     return False
 

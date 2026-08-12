@@ -1322,6 +1322,24 @@ def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
     }
 
 
+def _gate_ce_artifacts(
+    project_root: Path, gate_id: str, relative_paths: list[str]
+) -> dict[str, Any]:
+    root = agent_root(project_root)
+    missing = [
+        rel
+        for rel in relative_paths
+        if not (root / rel).is_file() or (root / rel).stat().st_size <= 0
+    ]
+    return {
+        "gate": gate_id,
+        "ok": not missing,
+        "paths": relative_paths,
+        "missing": missing,
+        "message": "ok" if not missing else f"missing CE artifacts: {missing}",
+    }
+
+
 def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
     from ascendc_pilot.gates import tg_adapters
@@ -1359,6 +1377,21 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
         "uo_product_ready": lambda: gate_uo_product_ready(project_root, uo),
         "closure_soundness": lambda: gate_closure_soundness(project_root),
+        "impact_ledger_ready": lambda: _gate_ce_artifacts(
+            project_root,
+            "impact_ledger_ready",
+            ["ce/impact/obligations.yaml", "ce/impact/ledger.yaml"],
+        ),
+        "obligations_classified": lambda: _gate_ce_artifacts(
+            project_root,
+            "obligations_classified",
+            ["ce/impact/risk_classification.yaml", "ce/impact/obligations.yaml"],
+        ),
+        "ce_certificate_sound": lambda: _gate_ce_artifacts(
+            project_root,
+            "ce_certificate_sound",
+            ["ce/verify/certificate.yaml"],
+        ),
     }
     fn = mapping.get(gate_id)
     if fn is None:

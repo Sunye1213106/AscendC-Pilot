@@ -19,21 +19,32 @@ def regress_cases(
 ) -> dict[str, Any]:
     """Pick existing witnesses that exercise the impacted dimensions.
 
-    Falls back to the closure reachable_cases deliverable when present.
+    Prefers TG's ``tg/closure/closure.csv`` under the arch-scoped pilot root.
+    Falls back to legacy ``reachable_cases.csv`` when present.
     """
     root = Path(project_root or ".")
-    candidates = []
+    candidates: list[Path] = []
     if reachable_csv:
         candidates.append(Path(reachable_csv))
     # Prefer runtime closure corpus; never fall back to checked-in FAG answers.
-    for arch_dir in sorted((root / ".ascendc-pilot").glob("*")) if (root / ".ascendc-pilot").is_dir() else []:
-        candidates.append(arch_dir / "tg" / "closure" / "reachable_cases.csv")
-    candidates.append(root / ".ascendc-pilot" / "tg" / "closure" / "reachable_cases.csv")
+    arch_dirs = (
+        sorted(p for p in (root / ".ascendc-pilot").glob("*") if p.is_dir())
+        if (root / ".ascendc-pilot").is_dir()
+        else []
+    )
+    # TG writes closure.csv; keep reachable_cases.csv for backward compatibility.
+    for name in ("closure.csv", "reachable_cases.csv"):
+        for arch_dir in arch_dirs:
+            candidates.append(arch_dir / "tg" / "closure" / name)
+        candidates.append(root / ".ascendc-pilot" / "tg" / "closure" / name)
     path = next((p for p in candidates if p.is_file()), None)
     if path is None:
         return {
             "ok": False,
-            "error": "no reachable_cases.csv found (pass --reachable-csv or run closure first)",
+            "error": (
+                "no closure.csv / reachable_cases.csv found "
+                "(pass --reachable-csv or run TG closure first)"
+            ),
             "cases": [],
             "fields": impact.fields,
         }
