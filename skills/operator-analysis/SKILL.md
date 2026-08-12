@@ -48,7 +48,7 @@ prepare → extract → analyze → commit → verify
 6. **SHARED 必须进 KB**：`common/` 等 SHARED 进入 ScopeSet 后，Host/Kernel walk 不得再用裸 `op_needle` 过滤掉。
 7. **单一产品权威**：`.ascendc-pilot/uo/<op>.<arch>.uo`。
 8. **保留 unresolved**：deterministic pass 无法闭合的语义 residual 写入 `unresolved.yaml`；**不得**默认用 LLM 补进 canonical `.uo`。部分 incomplete UO 合法（`semantic_completeness=partial`）。调查用 `/uo-investigate`。
-9. **Projection freshness**：commit 在 drop 未证边之后 finalize 投影并 stamp provenance（digest + counts + builder）；详见 map 与 `docs/architecture/artifacts-and-authority.md`。
+9. **Projection freshness**：写入 `.uo` 前先 drop 未证边，再重投影并 stamp provenance（digest + counts + builder）；详见 map 与 `docs/architecture/artifacts-and-authority.md`。
 
 ## 按需参考
 
