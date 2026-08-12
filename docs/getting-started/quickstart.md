@@ -2,7 +2,9 @@
 
 本页假设 AscendC-Pilot 已完成安装。所有操作都应在**目标 AscendC 算子仓或算子目录**中进行，而不是在 AscendC-Pilot 自身仓库中。
 
-内部机制（Lease、Engine、Producer/Referee）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)。
+内部机制见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)。
+
+> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。详情见 Runtime 文档。
 
 ## 1. 打开目标算子
 
@@ -12,15 +14,30 @@
 AscendC-Pilot
 ```
 
-直接描述任务，或使用 Slash Command。Architecture 选项从当前算子仓的 `op_host/arch*` / `op_kernel/arch*` 中发现。启动 UO/TG 时必须明确 architecture；如果任务或环境变量没有提供，AscendC-Pilot 会要求从发现的架构中选择，而不会使用固定默认值。
+直接描述任务，或使用 Slash Command。
+
+> 聊天框里以 `/` 开头的快捷入口（如 `/uo-init`），用来显式启动某个工作流。
+> 由 Host（OpenCode / Cursor 等）注册，**不是**终端里的 shell 命令；安装后会出现在补全列表里，并由 `ascendc-pilot` 主控接管。
+> 也可以不敲 `/`，直接用自然语言描述目标。
+
+`/uo-init`（以及 UO/TG 启动类入口）必须同时明确两件事：
+
+1. **算子路径**（`--project`）：目标算子目录，不是 AscendC-Pilot 仓根或 monorepo 父目录
+2. **架构**（`--architecture`）：仓内真实存在的 `arch*`（如 `arch35`），从 `op_host/arch*` / `op_kernel/arch*` 扫描得到；缺一会弹出选择，不会静默默认或编造
+
+自然语言示例：
 
 ```text
-帮我为 flash_attention_score_grad 的 arch35 建立 CodeMap。
+帮我为 <算子目录> 的 arch35 建立 CodeMap。
 ```
+
+Slash 示例（缺参数时会追问算子路径与架构）：
 
 ```text
 /uo-init
 ```
+
+齐备后等价于一次 `acp start uo-init --project <算子目录> --architecture <arch>`。
 
 > OpenCode 安装会生成原生 `/uo-init`、`/tg-init`、`/tg-plan`、`/tg-solve`、`/ce-review` 等 command，并固定由 `ascendc-pilot` Primary 接管。它们不是 shell 命令。
 
@@ -28,19 +45,19 @@ AscendC-Pilot
 
 ## 2. 建立 Operator CodeMap
 
-`/uo-init` 在真实编译上下文中建立 CodeMap：
+在已指定**算子路径**与**架构**的前提下，`/uo-init` 在真实编译上下文中建立 CodeMap：
 
 ```text
 operator + architecture → source scope → Clang CompilerFacts
                         → semantic analysis → CodeMap → verify
 ```
 
-UO 五个阶段均由 deterministic execution 执行，不需要 LLM 生成 canonical CodeMap。
+UO 五个阶段均由 deterministic execution 执行，不需要 LLM 生成 canonical CodeMap。产物落在该算子目录下的 `.ascendc-pilot/`。
 
 成功后正式产物位于：
 
 ```text
-<operator-repo>/.ascendc-pilot/uo/<op_name>.<arch>.uo
+<算子目录>/.ascendc-pilot/uo/<op_name>.<arch>.uo
 ```
 
 失败时先看：
@@ -125,7 +142,7 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。
 
 | 入口 | 用途 |
 | --- | --- |
-| `/uo-init` | 第一次建立 Operator CodeMap |
+| `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + 架构） |
 | `/uo-update` | 源码变化后更新 CodeMap |
 | `/uo-query` | 查询 Host / Tiling / Kernel 关系 |
 | `/uo-investigate` | 调查 unresolved |

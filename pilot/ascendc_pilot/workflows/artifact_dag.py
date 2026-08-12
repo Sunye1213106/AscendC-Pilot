@@ -1,4 +1,8 @@
-"""Static Producer/Consumer DAG for Workflow Spec artifacts."""
+"""Static Producer/Consumer DAG for Workflow Spec artifacts.
+
+``produces`` / output contracts are facts. ``allowed_write_paths`` are
+permissions only and must never be treated as producers.
+"""
 
 from __future__ import annotations
 
@@ -99,7 +103,7 @@ def _is_uo_logical(path: str) -> bool:
 
 
 def normalize_produces(action: dict[str, Any]) -> list[str]:
-    """Resolve produced artifact paths for an action."""
+    """Resolve produced artifact paths for an action (facts only)."""
     from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
 
     explicit = action.get("produces")
@@ -187,28 +191,103 @@ def _iter_user_workflows(
     return out
 
 
+def _action_phases(action: dict[str, Any]) -> set[str]:
+    return {str(p) for p in (action.get("phases") or []) if str(p).strip()}
+
+
+def _phase_of_owner(meta: dict[str, Any], aid: str) -> str:
+    for action in meta.get("actions") or []:
+        if not isinstance(action, dict):
+            continue
+        if str(action.get("id") or "") != aid:
+            continue
+        phases = list(_action_phases(action))
+        return phases[0] if phases else ""
+    return ""
+
+
+def _reachable_including_rework(
+    entry: str,
+    transitions: list[dict[str, Any]],
+    phases: set[str],
+) -> dict[str, set[str]]:
+    """Map phase -> set of phases reachable from it (forward + rework)."""
+    adj: dict[str, set[str]] = {p: set() for p in phases}
+    for edge in transitions:
+        if not isinstance(edge, dict):
+            continue
+        frm = str(edge.get("from") or "")
+        to = str(edge.get("to") or "")
+        if frm in adj and to in phases:
+            adj[frm].add(to)
+
+    def flood(start: str) -> set[str]:
+        seen: set[str] = set()
+        stack = [start] if start in phases else []
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(sorted(adj.get(cur) or ()))
+        return seen
+
+    return {p: flood(p) for p in phases}
+
+
+def _producer_precedes_consumer(
+    *,
+    producer_owner: str,
+    consumer_owner: str,
+    meta: dict[str, Any],
+    reach: dict[str, set[str]],
+) -> bool:
+    """True when producer phase can reach consumer phase (incl. same phase earlier in pipeline)."""
+    p_wid, _, p_aid = producer_owner.partition("/")
+    c_wid, _, c_aid = consumer_owner.partition("/")
+    del p_wid, c_wid
+    p_phase = _phase_of_owner(meta, p_aid)
+    c_phase = _phase_of_owner(meta, c_aid)
+    if not p_phase or not c_phase:
+        return True  # cannot prove; leave to orphan check only
+    if p_phase == c_phase:
+        # Same phase: producer must appear at or before consumer in pipeline list.
+        pipes = meta.get("pipelines") if isinstance(meta.get("pipelines"), dict) else {}
+        pipe = [str(x) for x in (pipes.get(p_phase) or [])]
+        if p_aid in pipe and c_aid in pipe:
+            return pipe.index(p_aid) <= pipe.index(c_aid)
+        # Shared multi-phase action covering both — ok.
+        return True
+    return c_phase in (reach.get(p_phase) or set())
+
+
 def check_artifact_dag(
     workflows: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    """Return ARTIFACT_ORPHAN_CONSUME errors for slash workflows."""
+    """Return orphan / topology / ambiguity errors for slash workflows."""
     # Ensure composite OUTPUT_CONTRACT_PATHS overlays are applied.
     try:
         import ascendc_pilot.actions  # noqa: F401
     except Exception:  # noqa: BLE001
         pass
 
-    producers: dict[str, set[str]] = {}
+    # Per-workflow producers: path -> set of owner ids within that workflow.
+    # Cross-workflow UO product uses dedicated logical ownership.
+    errors: list[str] = []
+    user_wfs = _iter_user_workflows(workflows)
 
-    def add_producer(path: str, owner: str) -> None:
+    # Global producers for cross-workflow existence (e.g. tg-init → tg-plan).
+    global_producers: dict[str, set[str]] = {}
+
+    def add_global(path: str, owner: str) -> None:
         path = _norm(path)
         if not path:
             return
-        producers.setdefault(path, set()).add(owner)
+        global_producers.setdefault(path, set()).add(owner)
         if path == "../uo/*.uo" or path.endswith(".uo"):
             for logical in _UO_LOGICAL:
-                producers.setdefault(logical, set()).add(owner)
+                global_producers.setdefault(logical, set()).add(owner)
 
-    user_wfs = _iter_user_workflows(workflows)
     for wid, meta in user_wfs:
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
@@ -218,19 +297,83 @@ def check_artifact_dag(
                 continue
             owner = f"{wid}/{aid}"
             for path in normalize_produces(action):
-                add_producer(path, owner)
-            # Declared write scopes also count as producers (e.g. overlay paths
-            # like tg/init/kb_fingerprint.yaml beyond the output contract).
-            for raw in action.get("allowed_write_paths") or []:
-                add_producer(str(raw), owner)
+                add_global(path, owner)
+    add_global("../uo/*.uo", "uo-init/commit")
 
-    # Formal UO product ownership even if contract list is incomplete.
-    producers.setdefault("../uo/*.uo", set()).add("uo-init/commit")
-    for logical in _UO_LOGICAL:
-        producers.setdefault(logical, set()).add("uo-init/commit")
-
-    errors: list[str] = []
     for wid, meta in user_wfs:
+        producers: dict[str, set[str]] = {}
+
+        def add_producer(path: str, owner: str) -> None:
+            path = _norm(path)
+            if not path:
+                return
+            producers.setdefault(path, set()).add(owner)
+            if path == "../uo/*.uo" or path.endswith(".uo"):
+                for logical in _UO_LOGICAL:
+                    producers.setdefault(logical, set()).add(owner)
+
+        for action in meta.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            aid = str(action.get("id") or "")
+            if not aid:
+                continue
+            owner = f"{wid}/{aid}"
+            for path in normalize_produces(action):
+                add_producer(path, owner)
+            # NOTE: allowed_write_paths are permissions, never producers.
+
+        if wid == "uo-init":
+            producers.setdefault("../uo/*.uo", set()).add("uo-init/commit")
+            for logical in _UO_LOGICAL:
+                producers.setdefault(logical, set()).add("uo-init/commit")
+
+        transitions = [e for e in (meta.get("transitions") or []) if isinstance(e, dict)]
+        phases = set()
+        for action in meta.get("actions") or []:
+            if isinstance(action, dict):
+                phases |= _action_phases(action)
+        for st in meta.get("states") or []:
+            if isinstance(st, dict) and st.get("id"):
+                phases.add(str(st["id"]))
+        entry = str(meta.get("entry_state") or "")
+        reach = _reachable_including_rework(entry, transitions, phases)
+
+        for path, owners in sorted(producers.items()):
+            if path in _UO_LOGICAL or path == "../uo/*.uo":
+                continue
+            if _is_external(path):
+                continue
+            if len(owners) <= 1:
+                continue
+            # Sequential rewrites along the pipeline are allowed; flag only when
+            # two producers are incomparable on the reachability graph.
+            owner_list = sorted(owners)
+            unordered = False
+            for i, a in enumerate(owner_list):
+                for b in owner_list[i + 1 :]:
+                    ab = _producer_precedes_consumer(
+                        producer_owner=a,
+                        consumer_owner=b,
+                        meta=meta,
+                        reach=reach,
+                    )
+                    ba = _producer_precedes_consumer(
+                        producer_owner=b,
+                        consumer_owner=a,
+                        meta=meta,
+                        reach=reach,
+                    )
+                    if not ab and not ba:
+                        unordered = True
+                        break
+                if unordered:
+                    break
+            if unordered:
+                errors.append(
+                    f"ARTIFACT_PRODUCER_AMBIGUOUS: {wid} path {path} owners={owner_list}"
+                )
+
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
                 continue
@@ -239,7 +382,6 @@ def check_artifact_dag(
                 continue
             owner = f"{wid}/{aid}"
             consume_paths = normalize_consumes(action)
-            # Also require every GATE_ARTIFACT_READS entry for action gates.
             for gate in action.get("gates") or []:
                 gid = str(gate or "").strip()
                 if gid not in GATE_ARTIFACT_READS:
@@ -251,13 +393,35 @@ def check_artifact_dag(
             for path in consume_paths:
                 if not path or _is_external(path):
                     continue
+                local_owners = _producer_covers(path, producers)
+                global_owners = _producer_covers(path, global_producers)
                 if _is_uo_logical(path):
-                    if _producer_covers(path, producers) or _producer_covers("../uo/*.uo", producers):
+                    if local_owners or global_owners or _producer_covers("../uo/*.uo", global_producers):
                         continue
-                owners = _producer_covers(path, producers)
-                if owners:
+                    errors.append(f"ARTIFACT_ORPHAN_CONSUME: {owner} consumes {path}")
                     continue
-                errors.append(
-                    f"ARTIFACT_ORPHAN_CONSUME: {owner} consumes {path}"
-                )
+                if not local_owners and not global_owners:
+                    errors.append(f"ARTIFACT_ORPHAN_CONSUME: {owner} consumes {path}")
+                    continue
+                # Topology only for same-workflow producers.
+                if not local_owners:
+                    continue
+                ok_order = False
+                for prod_owner in local_owners:
+                    if prod_owner == owner:
+                        ok_order = True
+                        break
+                    if _producer_precedes_consumer(
+                        producer_owner=prod_owner,
+                        consumer_owner=owner,
+                        meta=meta,
+                        reach=reach,
+                    ):
+                        ok_order = True
+                        break
+                if not ok_order:
+                    errors.append(
+                        "ARTIFACT_PRODUCER_NOT_BEFORE_CONSUMER: "
+                        f"{owner} consumes {path} producers={sorted(local_owners)}"
+                    )
     return sorted(set(errors))

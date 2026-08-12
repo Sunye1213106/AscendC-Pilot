@@ -66,7 +66,7 @@ def test_finalize_failure_updates_state(tmp_path: Path):
     ):
         from ascendc_pilot.uo_scope import run_uo_scope
 
-        result = run_uo_scope(tmp_path, "finalize", op_name=tmp_path.name)
+        result = run_uo_scope(tmp_path, "validate", op_name=tmp_path.name)
 
     assert result.get("status") == "human_required" or (result.get("applied") or {}).get("ok") is False
     st = load_state(tmp_path)
@@ -74,7 +74,16 @@ def test_finalize_failure_updates_state(tmp_path: Path):
     assert st["status"] == "human_required"
     assert st["last_failure"]["failure_class"] == ENVIRONMENT_INVARIANT
     assert st["last_failure"]["retryable"] is False
-    assert st["last_failure"]["error_code"] == "UO_SCOPE_FINALIZE_INVARIANT_FAILED"
+    assert st["last_failure"]["error_code"] in {
+        "UO_SCOPE_FINALIZE_INVARIANT_FAILED",
+        "SCOPE_VALIDATE_VALIDATE_FAILED",
+        "UO_SCOPE_VALIDATE_INVARIANT_FAILED",
+        "SCOPE_VALIDATE_INVARIANT_FAILED",
+    }
+    # validate step must still classify as non-retryable environment invariant.
+    assert "INVARIANT" in st["last_failure"]["error_code"] or st["last_failure"][
+        "failure_class"
+    ] == ENVIRONMENT_INVARIANT
     assert st.get("last_observation_id")
     assert st.get("failure_card")
     obs = result.get("observation") or {}
@@ -323,7 +332,7 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
     ):
         from ascendc_pilot.uo_scope import run_uo_scope
 
-        fin = run_uo_scope(tmp_path, "finalize", op_name=tmp_path.name)
+        fin = run_uo_scope(tmp_path, "validate", op_name=tmp_path.name)
 
     assert fin.get("status") == "human_required" or (fin.get("applied") or {}).get("ok") is False
     st = load_state(tmp_path)

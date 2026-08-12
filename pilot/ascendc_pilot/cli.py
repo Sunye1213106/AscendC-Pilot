@@ -61,6 +61,17 @@ def main(argv: list[str] | None = None) -> int:
     p_next = sub.add_parser("next", help="Show next allowed actions / obligations")
     p_next.add_argument("--project", type=Path, default=None)
 
+    p_host = sub.add_parser(
+        "host-context",
+        help="Resolve arch-scoped Host adapter context (OpenCode plugin authority)",
+    )
+    p_host.add_argument("--project", type=Path, default=None)
+    p_host.add_argument(
+        "--architecture",
+        default="",
+        help="Optional architecture pin; omit to discover from env / sole active state",
+    )
+
     p_ctx = sub.add_parser("context", help="Build context pack")
     p_ctx.add_argument("--project", type=Path, default=None)
     p_ctx.add_argument("--intent", required=True)
@@ -205,25 +216,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p_scope = sub.add_parser(
         "uo-scope",
-        help="Run UO scope validate steps (scan/validate; legacy aliases: checkpoint/finalize)",
+        help="Run UO scope machine steps (scan / validate)",
     )
     p_scope.add_argument(
         "step",
         choices=[
             "scan",
-            "checkpoint",
-            "finalize",
+            "validate",
         ],
         help="Deterministic scope step",
     )
     p_scope.add_argument("--project", type=Path, default=None)
     p_scope.add_argument("--op-name", default="")
     p_scope.add_argument("--architecture", default="")
-    p_scope.add_argument(
-        "--decision",
-        default="",
-        help="For checkpoint: continue|revise|stop|manual_supplement",
-    )
     p_scope.add_argument("--notes", default="")
 
     p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
@@ -449,6 +454,15 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.state import describe_next
 
         result = describe_next(args.project)
+        print_json(result)
+        return 0 if result.get("ok") else 1
+    if args.cmd == "host-context":
+        from ascendc_pilot.host_context import build_host_context
+
+        result = build_host_context(
+            args.project,
+            architecture=str(getattr(args, "architecture", "") or ""),
+        )
         print_json(result)
         return 0 if result.get("ok") else 1
     if args.cmd == "answer":
@@ -805,7 +819,6 @@ def main(argv: list[str] | None = None) -> int:
             args.step,
             op_name=args.op_name or "",
             architecture=args.architecture or "",
-            decision=args.decision or "",
             notes=args.notes or "",
         )
         return print_result(payload)

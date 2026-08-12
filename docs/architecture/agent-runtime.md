@@ -102,49 +102,53 @@ TG Workflow -> deterministic closure engine
 
 # 权限模型与 Action Lease
 
-有效权限由三层约束共同决定：
+> 一步任务开始时签发的**临时通行证**（Action Lease）——限定谁可以动、能读/写哪些路径、本步结束或失败后作废。
+> 写在 `.ascendc-pilot/<arch>/state/action_lease.yaml`，与 `active_action.yaml` 绑定；`acp run-action` 准备时签发，收尾或失败处理后撤销。
+> 这是 Pilot 的软约束（靠 hook 拦越权），不是 OS 沙箱。
+
+## 权限怎么收窄
+
+最终能写什么，取三层交集（再叠加身份禁令）：
 
 ```text
-Agent declared write_scopes / forbidden
+Agent 声明的可写范围 / 禁令
         ∩
-Action allowed_write_paths (+ forbidden)
+本步 Action 允许的路径
         ∩
-Workflow write_roots
+Workflow 允许的根目录
         =
-Current Action Lease
+当前 Action Lease（本步通行证）
 ```
 
-`acp run-action` prepare 时签发 Lease，写入 `.ascendc-pilot/<arch>/state/action_lease.yaml`，并记录 `active_action.yaml`。finalize 或失败收敛后撤销。
+实现上还会强制：
 
-实现中额外强制：
+* **能写就能读**：写入路径自动并入可读范围（写完还要能读回来核对）。
+* **人对上号**：非主控 Agent 的读写必须匹配通行证上的 `actor_id` / `action_id` / `run_id`。
+* **主控不写正式结论**：主控 Agent（`ascendc-pilot`）即使角色叫 controller，也不能直接写正式 IR / summary / checks / review / TG 正式产物；这些由声明的 Producer、Referee 或 Engine 写入。
+* **角色只是上限**：例如 `readonly_analyst` 不写正式产物；`referee` 只写 review。最终权限仍以「角色 ∩ Agent 上限 ∩ 本步通行证 ∩ Workflow 根目录 ∩ 身份禁令」为准。
 
-* **写 ⊆ 读**：每个 write path 自动并入 read paths；
-* **Actor 绑定**：非 primary 的读写须匹配 `lease.actor_id` / `action_id` / `run_id`；
-* **Primary 不写正式产物**：`ascendc-pilot` 即使角色为 `controller`，仍受 `PRIMARY_PROTECTED_WRITE` 等 identity 限制；`ir/`、`summary/`、`checks/`、`review/`、TG formal 路径须由声明的 Producer / Referee / Engine 写入。
-* **Role 只是上限，不是最终权限**：`producer` / `deterministic_engine` 可在 Action 合同允许时写 formal；`referee` / `readonly_reviewer` 只写 review；`deterministic_checker` 仅 checks；`readonly_analyst` 不写 formal。`controller` 角色可能声明 formal-write capability，但 Primary identity 仍被额外保护。最终权限以 **Role ∩ Agent ceiling ∩ Action Lease ∩ Workflow roots ∩ identity-specific policy** 的交集为准。
-
-Agent YAML 的 `forbidden` 标签有确定性含义：
+Agent YAML 里 `forbidden` 标签的确定含义：
 
 | Tag | 效果 |
 | --- | --- |
 | `modify_pilot_state` | 禁止写 `state/` |
 | `modify_uo_product` | 禁止写 `.uo` / `uo/summary` / `uo/checks` |
-| `declare_workflow_passed` | 禁止用 bash 走 `acp complete` 等宣布通过路径 |
-| `write_outside_declared_scope` | 空 `write_scopes` 即不可写 |
+| `declare_workflow_passed` | 禁止用 bash 走 `acp complete` 等宣布通过 |
+| `write_outside_declared_scope` | 未声明可写范围则不可写 |
 
-未知 tool 对 Pilot-family agent **fail-closed**（`TOOL_UNKNOWN`）。
+对 Pilot 相关 Agent，未知 tool **默认拒绝**（`TOOL_UNKNOWN`）。
 
-## Status → Authorization Mode
+## 工作流状态 → 授权模式
 
-Mode 只由 workflow **status** 推导，不以过期 Lease 升级权限：
+授权模式只跟 workflow **status** 走，不会因为旧通行证过期就自动放开权限：
 
-| Status | Mode | 允许面 |
+| Status | Mode | 允许做什么 |
 | --- | --- | --- |
-| `running`（及默认） | `normal` | `acp *` 主路径、声明路径上的 Read/Write/Task、只读探查 |
-| `rework_required` | `rework` | 重试失败 Action / 声明的 recovery；禁止 advance/complete |
-| `human_required` / `blocked` / `failed` | `containment` | 仅恢复类命令；默认禁止 Write/Task |
+| `running`（及默认） | `normal` | 正常跑 `acp *`、在声明路径上读写、派 Task、只读探查 |
+| `rework_required` | `rework` | 重试失败的那一步 / 声明的恢复动作；禁止 advance/complete |
+| `human_required` / `blocked` / `failed` | `containment` | 几乎只能做恢复类命令；默认禁止 Write/Task |
 
-`acp start` 在各 mode 下始终允许。仅 **Pilot-family** agent（`ascendc-pilot`、`uo-*` / `tg-*` / `ce-*` / `deterministic-*`）套用 Harness；Build / Plan / General 等 Tab pass-through。
+`acp start` 在各 mode 下始终允许。只有 Pilot 相关 Agent（`ascendc-pilot`、`uo-*` / `tg-*` / `ce-*` / `deterministic-*`）走这套约束；普通 Build / Plan / General Tab 不套用。
 
 ---
 
@@ -157,7 +161,7 @@ acp next
 Workflow selects Action
     |
     v
-Build Action Bundle + Create Action Lease
+Build Action Bundle + Create Action Lease（本步通行证）
     |
     +----------------+
     v                v
@@ -202,7 +206,7 @@ Pilot 解析算子工作区，驱动一次 run：
 ```text
 acp start
   -> acp next
-  -> acp run-action <id>           # prepare：Lease + Bundle
+  -> acp run-action <id>           # prepare：发通行证 + 打包任务
   -> Engine 或 LLM Subagent 执行
   -> acp run-action <id> --finalize
   -> acp advance / complete        # 仅 gate 通过后
@@ -212,7 +216,7 @@ acp start
 | --- | --- |
 | `acp start` | 启动或复用 run；失败态逃生口 |
 | `acp next` | 下一 Action / 恢复提示 |
-| `acp run-action` | **workflow run 内**唯一正式执行入口：prepare 或 `--finalize`（显式 developer CLI / engine package 命令不经此路径，也不推进 Pilot 状态） |
+| `acp run-action` | **workflow run 内**唯一正式执行入口：prepare（发通行证 + 打包任务）或 `--finalize`（收尾）；显式 developer CLI / engine 包命令不经此路径，也不推进 Pilot 状态 |
 | `acp authorize` | Host plugin 在 tool 调用前的授权裁决 |
 | `acp advance` / `complete` | 仅 gate 通过后推进或结束 |
 | `acp rework` / `abort` / `block` | 沿声明边恢复、终止或收敛 |
@@ -220,7 +224,7 @@ acp start
 
 完整命令表见 [CLI Reference](../reference/cli.generated.md)。
 
-Host 侧（以 OpenCode 为例）在 `tool.execute.before` 调用 `acp authorize`。典型拒绝包括：直调领域脚本（`DOMAIN_CLI_BYPASS`）、bash 写入 `.ascendc-pilot/`（`BASH_PROTECTED_WRITE`）、超出 Lease（`ACTION_WRITE_SCOPE_DENIED`）、Primary 写 formal IR（`PRIMARY_PROTECTED_WRITE`）、未声明子代理（`TASK_AGENT_UNKNOWN`）。默认 bash 优先 `acp *` 与只读探查；其他 shell 对 primary 为 `ask`。
+Host 侧（以 OpenCode 为例）在工具真正执行前调用 `acp authorize`。常见拒绝：直调领域脚本、用 bash 乱写 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了未声明的子代理。默认 bash 优先走 `acp *` 与只读探查；其他 shell 对主控多为 `ask`。
 
 LLM Action 端到端：
 
@@ -283,10 +287,10 @@ Reference：[Workflow](../reference/workflows.generated.md)、[Agent Matrix](../
 
 ```text
 Host Hook -> acp authorize / run-action
-  -> Action Lease (Agent ∩ Action ∩ Workflow)
-  -> Engine 事实 或 LLM staging
+  -> 本步通行证 Action Lease（谁 × 哪些路径 × 何时作废）
+  -> Engine 写事实，或 LLM 先写到暂存区
   -> Finalize + Gate
-  -> 规范状态
+  -> 正式状态 / 正式产物
 ```
 
 Agent Runtime 解决的不是“让 Agent 更聪明”，而是：在复杂工程环境中，让 Agent 的行为可约束、可验证、可恢复，并让模型生成的内容经过验证后才能成为系统事实。

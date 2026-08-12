@@ -14,12 +14,12 @@
  * Action context propagation:
  * 1. ASCENDC_ACTION env
  * 2. tool args action / action_id / actionId
- * 3. `.ascendc-pilot/state/active_action.yaml` written by acp prepare
+ * 3. `acp host-context` (arch-scoped active_action.yaml) — Host must not hardcode flat paths
  * On Task dispatch, injects action into args so child writes inherit it.
  */
 
 import { spawnSync } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
 
@@ -221,10 +221,36 @@ function projectRootFromPath(pathHint: string): string {
   return ""
 }
 
-function isPilotProjectRoot(root: string): boolean {
+/**
+ * Sole Host helper that knows Pilot state directory layout.
+ * Prefer arch-scoped `.ascendc-pilot/<arch>/state/workflow.yaml`;
+ * also recognize legacy flat `.ascendc-pilot/state/workflow.yaml` so ACP can migrate.
+ * Do not call this for control/pending_interaction (arch-neutral by design).
+ */
+function findPilotStateFile(root: string): string {
   const r = String(root || "").trim()
-  if (!r) return false
-  return existsSync(resolve(r, ".ascendc-pilot", "state", "workflow.yaml"))
+  if (!r) return ""
+  const pilot = resolve(r, ".ascendc-pilot")
+  if (!existsSync(pilot)) return ""
+
+  // Legacy flat layout (migrated by Python migrate_legacy_agent_dir via host-context).
+  const flat = resolve(pilot, "state", "workflow.yaml")
+  if (existsSync(flat)) return flat
+
+  try {
+    for (const name of readdirSync(pilot)) {
+      if (!name || name === "control" || name === "uo") continue
+      const candidate = resolve(pilot, name, "state", "workflow.yaml")
+      if (existsSync(candidate)) return candidate
+    }
+  } catch {
+    // ignore
+  }
+  return ""
+}
+
+function isPilotProjectRoot(root: string): boolean {
+  return Boolean(findPilotStateFile(root))
 }
 
 function lastProjectCachePath(): string {
@@ -386,19 +412,97 @@ function shouldEnforceHarness(agent: string): boolean {
   return isPilotFamilyAgent(agent)
 }
 
-function readActiveAction(project: string): { action_id?: string; actor_id?: string } {
-  const path = resolve(project, ".ascendc-pilot", "state", "active_action.yaml")
-  if (!existsSync(path)) return {}
+type HostContext = {
+  ok?: boolean
+  project_root?: string
+  architecture?: string
+  architectures?: string[]
+  workflow_state_path?: string
+  active_action_path?: string
+  pending_interaction_path?: string
+  run_id?: string
+  workflow_id?: string
+  phase?: string
+  status?: string
+  action_id?: string
+  actor_id?: string
+  error?: string
+}
+
+type HostContextCache = { mtimeNs: string; payload: HostContext }
+
+const hostContextCache = new Map<string, HostContextCache>()
+
+function hostContextMemoKey(project: string, stateFile: string): string {
+  let mtime = "0"
   try {
-    const text = readFileSync(path, "utf-8")
-    const actionMatch = text.match(/^\s*action_id:\s*["']?([^\s"'#]+)/m)
-    const actorMatch = text.match(/^\s*actor_id:\s*["']?([^\s"'#]+)/m)
-    return {
-      action_id: actionMatch?.[1]?.trim() || "",
-      actor_id: actorMatch?.[1]?.trim() || "",
+    if (stateFile && existsSync(stateFile)) {
+      mtime = String(statSync(stateFile).mtimeMs)
     }
   } catch {
-    return {}
+    mtime = "0"
+  }
+  const activeHint = stateFile ? resolve(stateFile, "..", "active_action.yaml") : ""
+  let activeM = "0"
+  try {
+    if (activeHint && existsSync(activeHint)) {
+      activeM = String(statSync(activeHint).mtimeMs)
+    }
+  } catch {
+    activeM = "0"
+  }
+  return `${project}|${stateFile}|${mtime}|${activeM}`
+}
+
+function fetchHostContext(project: string): HostContext {
+  const root = String(project || "").trim()
+  if (!root) return { ok: false, error: "missing_project" }
+  const stateFile = findPilotStateFile(root)
+  const key = hostContextMemoKey(root, stateFile)
+  const hit = hostContextCache.get(key)
+  if (hit) return hit.payload
+
+  const acpBin = resolveAcpBin()
+  const argv = ["host-context", "--project", root]
+  const res = spawnSync(acpBin, argv, {
+    encoding: "utf-8",
+    shell: false,
+    windowsHide: true,
+    cwd: root,
+    env: { ...process.env, ASCENDC_PROJECT_ROOT: root },
+    timeout: 15_000,
+  })
+  const text = `${res.stdout || ""}\n${res.stderr || ""}`.trim()
+  const jsonStart = text.indexOf("{")
+  let payload: HostContext = { ok: false, error: "host_context_parse_failed" }
+  if (jsonStart >= 0) {
+    try {
+      payload = JSON.parse(text.slice(jsonStart)) as HostContext
+    } catch {
+      payload = { ok: false, error: "host_context_json_invalid", project_root: root }
+    }
+  } else if (res.error || res.status === 127) {
+    payload = {
+      ok: false,
+      error: "HARNESS_MISSING",
+      project_root: root,
+    }
+  }
+  hostContextCache.set(key, { mtimeNs: key, payload })
+  // Bound cache size.
+  if (hostContextCache.size > 32) {
+    const first = hostContextCache.keys().next().value
+    if (first) hostContextCache.delete(first)
+  }
+  return payload
+}
+
+function readActiveAction(project: string): { action_id?: string; actor_id?: string } {
+  // Authority is ACP host-context — Host must not open active_action.yaml itself.
+  const ctx = fetchHostContext(project)
+  return {
+    action_id: String(ctx.action_id || "").trim(),
+    actor_id: String(ctx.actor_id || "").trim(),
   }
 }
 

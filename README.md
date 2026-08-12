@@ -13,7 +13,7 @@ AscendC Source → UO → Operator CodeMap → TG → Coverage
                                   └────→ CE → Review / Impact
 ```
 
-> 项目当前处于 **active / experimental** 阶段。
+> 项目当前处于 **experimental** 阶段。
 
 ---
 

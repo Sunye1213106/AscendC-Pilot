@@ -72,6 +72,39 @@ def scenario_happy_path_phases(workflow_id: str, _project: Path) -> dict[str, An
     return {"ok": True, "entry": entry, "terminals": sorted(terminals), "forward": sorted(forward)}
 
 
+def scenario_start_without_arch_fails_closed(workflow_id: str, project: Path) -> dict[str, Any]:
+    """start_workflow must fail closed when architecture is empty (all eight workflows)."""
+    import os
+
+    from ascendc_pilot.state import start_workflow
+    from ascendc_pilot.workflows import workflow_requires_architecture
+
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        os.environ.pop(key, None)
+
+    if not workflow_requires_architecture(workflow_id):
+        return {
+            "ok": False,
+            "error": "spec_architecture_not_required",
+            "message": f"{workflow_id} must require architecture (Spec/State SSOT)",
+        }
+
+    try:
+        start_workflow(project, workflow_id, architecture="")
+    except ValueError as exc:
+        text = str(exc)
+        if "ARCHITECTURE_MISSING_IN_RUN_STATE" not in text:
+            return {"ok": False, "error": "wrong_exception", "exception": text}
+        return {"ok": True, "error_code": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "unexpected_exception",
+            "exception": f"{type(exc).__name__}: {exc}",
+        }
+    return {"ok": False, "error": "start_succeeded_without_architecture"}
+
+
 def scenario_missing_architecture(workflow_id: str, project: Path) -> dict[str, Any]:
     import os
 
@@ -373,6 +406,7 @@ def scenario_tg_solve_routing(workflow_id: str, project: Path) -> dict[str, Any]
 
 SCENARIO_HANDLERS: dict[str, ScenarioFn] = {
     "happy_path_phases": scenario_happy_path_phases,
+    "start_without_arch_fails_closed": scenario_start_without_arch_fails_closed,
     "missing_architecture": scenario_missing_architecture,
     "wrong_project": scenario_wrong_project,
     "wrong_phase": scenario_wrong_phase,

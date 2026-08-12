@@ -32,6 +32,57 @@ ARCH35_FALLBACK_PATTERNS = (
 )
 
 
+def _scan_uo_scope_vocab(repo: Path, errors: list[str]) -> None:
+    """Fail closed if uo-scope public CLI reintroduces checkpoint/finalize/decision."""
+    cli = repo / "pilot" / "ascendc_pilot" / "cli.py"
+    scope = repo / "pilot" / "ascendc_pilot" / "uo_scope.py"
+    if cli.is_file():
+        text = cli.read_text(encoding="utf-8", errors="replace")
+        # Isolate the uo-scope parser block.
+        idx = text.find('sub.add_parser(\n        "uo-scope"')
+        if idx < 0:
+            idx = text.find('"uo-scope"')
+        chunk = text[idx : idx + 1200] if idx >= 0 else ""
+        if '"checkpoint"' in chunk or '"finalize"' in chunk:
+            errors.append("cli.py uo-scope must not expose checkpoint/finalize choices")
+        if "--decision" in chunk:
+            errors.append("cli.py uo-scope must not expose --decision")
+    if scope.is_file():
+        text = scope.read_text(encoding="utf-8", errors="replace")
+        # Active alias map must not remap retired vocabulary.
+        if re.search(r'''["']checkpoint["']\s*:\s*["']scope_validate["']''', text):
+            errors.append("uo_scope.py must not alias checkpoint → scope_validate")
+        if re.search(r'''["']finalize["']\s*:\s*["']scope_validate["']''', text):
+            errors.append("uo_scope.py must not alias finalize → scope_validate")
+        if re.search(r'''["']confirm["']\s*:\s*["']scope_validate["']''', text):
+            errors.append("uo_scope.py must not alias confirm → scope_validate")
+
+
+def _scan_plugin_host_adapter(repo: Path, errors: list[str]) -> None:
+    """Fail closed if OpenCode plugin reintroduces flat .ascendc-pilot/state paths."""
+    plugin = repo / "opencode-plugin" / "ascendc-pilot.ts"
+    if not plugin.is_file():
+        errors.append("missing opencode-plugin/ascendc-pilot.ts")
+        return
+    text = plugin.read_text(encoding="utf-8", errors="replace")
+    if "function findPilotStateFile" not in text:
+        errors.append("plugin missing findPilotStateFile helper")
+    if "host-context" not in text:
+        errors.append("plugin must call acp host-context for active action identity")
+    # Flat concatenations outside findPilotStateFile.
+    for m in re.finditer(r"""["']\.ascendc-pilot["']\s*,\s*["']state["']""", text):
+        before = text[: m.start()]
+        fns = list(re.finditer(r"function\s+(\w+)\s*\(", before))
+        if not fns or fns[-1].group(1) != "findPilotStateFile":
+            errors.append(
+                "plugin flat .ascendc-pilot/state path outside findPilotStateFile"
+            )
+            break
+    # Arch-neutral control plane must remain.
+    if "pending_interaction.yaml" not in text or "control" not in text:
+        errors.append("plugin must keep arch-neutral control/pending_interaction path")
+
+
 def _scan_banned_production_symbols(repo: Path, errors: list[str]) -> None:
     scan_roots = [
         repo / "pilot",
@@ -233,6 +284,8 @@ def _main() -> int:
                 errors.append(f"CBM marker in production path: {rel}")
 
     _scan_banned_production_symbols(REPO, errors)
+    _scan_plugin_host_adapter(REPO, errors)
+    _scan_uo_scope_vocab(REPO, errors)
 
     if errors:
         print(f"check_runtime_graph: {len(errors)} issue(s)")

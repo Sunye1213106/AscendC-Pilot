@@ -15,15 +15,10 @@ def test_uo_update_requires_architecture() -> None:
 
 def test_workflows_needing_architecture_set() -> None:
     from ascendc_pilot.workflows import workflows_needing_architecture
+    from ascendc_pilot.workflows.model_checker import MATRIX_WORKFLOWS
 
     needed = set(workflows_needing_architecture())
-    assert {
-        "uo-init",
-        "uo-update",
-        "tg-init",
-        "tg-plan",
-        "tg-solve",
-    } <= needed
+    assert needed == set(MATRIX_WORKFLOWS)
 
 
 def test_ascendc_pilot_agent_does_not_hardcode_architecture_lists() -> None:

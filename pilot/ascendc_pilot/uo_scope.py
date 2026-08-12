@@ -58,10 +58,9 @@ def run_uo_scope(
     *,
     op_name: str = "",
     architecture: str = "",
-    decision: str = "",
     notes: str = "",
 ) -> dict[str, Any]:
-    """Map legacy acp uo-scope steps onto uo_init.pilot_engines."""
+    """Map acp uo-scope steps onto uo_init.pilot_engines (scan / validate only)."""
     root = Path(project).expanduser().resolve()
     op = _resolve_op_name(root, op_name)
     arch = (architecture or "").strip()
@@ -78,6 +77,8 @@ def run_uo_scope(
     if not arch:
         raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
     ctx = {"op_name": op, "arch_dir": arch, "architecture": arch, "run_id": run_id}
+    if notes:
+        ctx["notes"] = notes
 
     from uo_init import pilot_engines as pe
 
@@ -89,16 +90,25 @@ def run_uo_scope(
         "scope_scan": "scope_scan",
         "validate": "scope_validate",
         "scope_validate": "scope_validate",
-        # Deprecated aliases — still map to machine validate; prefer `acp run-action prepare`.
-        "confirm": "scope_validate",
-        "checkpoint": "scope_validate",
-        "finalize": "scope_validate",
     }
-    if step in {"build-evidence", "closure", "stage", "record-index", "stage_cbm"}:
+    # Retired public vocabulary — fail closed (no alias remap).
+    if step in {
+        "confirm",
+        "checkpoint",
+        "finalize",
+        "build-evidence",
+        "closure",
+        "stage",
+        "record-index",
+        "stage_cbm",
+    }:
         payload = {
             "ok": False,
             "error": "legacy_scope_step_removed",
-            "message_zh": f"步骤 {step} 已随旧引擎移除；请使用 acp run-action prepare（machine Clang scope）",
+            "message_zh": (
+                f"步骤 {step} 已移除；请使用 acp uo-scope scan|validate "
+                "或 acp run-action prepare（machine Clang scope）"
+            ),
             "step": step,
         }
         return _record_step_result(root, payload, action_id="uo_scope", step_id=step)
@@ -107,11 +117,6 @@ def run_uo_scope(
     if action is None:
         payload = {"ok": False, "error": f"unknown_step:{step}", "step": step}
         return _record_step_result(root, payload, action_id="uo_scope", step_id=step)
-
-    if action == "scope_validate" and decision:
-        # Notes only — never promote decision=yes into a compiler bypass.
-        ctx["decision"] = decision
-        ctx["notes"] = notes
 
     fn = pe.ENGINES[action]
     try:

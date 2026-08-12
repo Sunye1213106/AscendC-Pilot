@@ -18,6 +18,8 @@ workflows:
 scenarios:
   - id: happy_path_phases
     description: Forward path from entry reaches a terminal; every phase has an action.
+  - id: start_without_arch_fails_closed
+    description: start_workflow without architecture must raise ARCHITECTURE_MISSING_IN_RUN_STATE for all eight workflows.
   - id: missing_architecture
     description: Architecture required workflows must AskQuestion from tree — never invent arch.
   - id: wrong_project

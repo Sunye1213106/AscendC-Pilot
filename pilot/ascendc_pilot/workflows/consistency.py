@@ -168,12 +168,20 @@ def _check_architecture_start_requirements(
         workflows_needing_architecture,
     )
 
+    from ascendc_pilot.workflows.model_checker import MATRIX_WORKFLOWS
+
     if not workflow_requires_architecture("uo-update"):
         errors.append("workflow_requires_architecture('uo-update') must be True")
     needed = set(workflows_needing_architecture())
-    for wid in ("uo-init", "uo-update", "tg-init", "tg-plan", "tg-solve"):
-        if wid not in needed:
-            errors.append(f"workflows_needing_architecture() missing {wid!r}")
+    matrix = set(MATRIX_WORKFLOWS)
+    if needed != matrix:
+        errors.append(
+            "workflows_needing_architecture() must equal MATRIX_WORKFLOWS; "
+            f"missing={sorted(matrix - needed)} extra={sorted(needed - matrix)}"
+        )
+    for wid in MATRIX_WORKFLOWS:
+        if not workflow_requires_architecture(wid):
+            errors.append(f"workflow_requires_architecture({wid!r}) must be True")
 
     inv = root / "pilot" / "policies" / "invariants" / "control-invariants.md"
     if inv.is_file():

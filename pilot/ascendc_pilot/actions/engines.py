@@ -2392,7 +2392,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/contract/integrity_gate.yaml",
     ],
     "init-audit-v1": ["tg/init/audit_report.yaml"],
-    "init-confirmed-v1": ["tg/init/status.yaml"],
+    "init-confirmed-v1": ["tg/init/status.yaml", "tg/init/kb_fingerprint.yaml"],
     "plan-scope-v1": ["tg/plan/levels/*/plan_scope.yaml"],
     "plan-intent-v1": ["tg/plan/plan_intent.yaml"],
     "plan-precheck-v1": ["tg/init/status.yaml"],
