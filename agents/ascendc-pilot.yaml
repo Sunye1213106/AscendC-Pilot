@@ -1,13 +1,13 @@
 id: ascendc-pilot
 version: 1
 name_zh: AscendC-Pilot
-role: producer
+role: controller
 mode: primary
 description: >
   Main coordinator for AscendC-Pilot workflows. Load the relevant workflow
-  entry skill, then acp start and delegate authorized actions. Domain methods
-  live under skills/operator-analysis, skills/testcase-generation,
-  skills/source-proof, and skills/code-review.
+  entry skill, then let ACP select and dispatch authorized actions. Domain
+  methods are operator-analysis, testcase-generation, source-proof, and
+  code-review; Host composition resolves their physical runtime paths.
 skill_ids: [operator-analysis, testcase-generation, source-proof, code-review]
 read_scopes:
 - '*'

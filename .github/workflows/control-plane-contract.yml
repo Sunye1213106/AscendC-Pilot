@@ -1,0 +1,72 @@
+name: control-plane-contract
+
+on:
+  pull_request:
+    paths:
+      - "agents/**"
+      - "pilot/**"
+      - "prompts/**"
+      - "scripts/**"
+      - "install.sh"
+      - "install.ps1"
+      - "refresh-opencode.ps1"
+      - ".github/workflows/control-plane-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "agents/**"
+      - "pilot/**"
+      - "prompts/**"
+      - "scripts/**"
+      - "install.sh"
+      - "install.ps1"
+      - "refresh-opencode.ps1"
+
+jobs:
+  execution-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install control-plane test dependencies
+        run: python -m pip install --disable-pip-version-check PyYAML jsonschema pytest
+      - name: Validate execution ownership and prompts
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_execution_contracts.py
+      - name: Validate existing runtime graph
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_runtime_graph.py
+      - name: Validate existing ownership contracts
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_ownership_contracts.py --repo .
+      - name: Validate skill architecture
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_skill_architecture.py
+      - name: Compose the real OpenCode runtime
+        env:
+          PYTHONPATH: pilot
+        run: |
+          python scripts/compose_runtime.py --repo . --host opencode
+          python scripts/prune_runtime_context.py --repo . --host opencode
+          python scripts/compose_opencode_commands.py
+      - name: Validate deterministic drive
+        env:
+          PYTHONPATH: pilot
+        run: pytest -q pilot/tests/test_action_drive.py
+      - name: Validate UO TG CE bindings and OpenCode commands
+        env:
+          PYTHONPATH: pilot
+        run: >-
+          pytest -q pilot/tests/test_compose_runtime.py::test_execution_contract_audit_clean
+          pilot/tests/test_compose_runtime.py::test_uo_actions_match_engine_and_prompt_boundary
+          pilot/tests/test_compose_runtime.py::test_tg_and_ce_execution_bindings_are_explicit
+          pilot/tests/test_compose_runtime.py::test_native_opencode_commands_are_generated
+      - name: Validate shell installer syntax
+        run: bash -n install.sh

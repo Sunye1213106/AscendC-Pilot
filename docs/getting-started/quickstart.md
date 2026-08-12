@@ -28,7 +28,7 @@ AscendC-Pilot
 /uo-init
 ```
 
-> `/uo-init`、`/tg-init` 等是 Agent 中的 Slash Command，不是需要在 shell 中执行的命令。
+> OpenCode 安装会生成原生 `/uo-init`、`/tg-init`、`/tg-plan`、`/tg-solve`、`/ce-review` 等 command，并固定由 `ascendc-pilot` Primary 接管。它们不是 shell 命令；自然语言入口仍可通过 workflow Skill 发现。
 
 ---
 
@@ -42,6 +42,8 @@ operator + architecture → source scope → Clang CompilerFacts
 ```
 
 其中 Source Scope 不局限于当前目录。只要公共文件属于当前 BuildVariant 的真实 include 或依赖关系，就会进入分析范围。
+
+UO 的 `prepare / extract / analyze / commit / verify` 都是 deterministic Action。ACP 会把它们绑定到 `deterministic-uo-engine`；Primary 不会把这个 engine identity 当成 OpenCode Task agent。Host 可通过 `acp run-action auto` 连续执行确定性步骤并自动推进 phase，直到需要 LLM/人工交互或 workflow 完成。
 
 成功后，正式 CodeMap 位于：
 
@@ -183,6 +185,8 @@ CodeMap 就绪后，可以开始 TG。
 帮我为这个算子建立 TilingKey 全覆盖测试。
 ```
 
+TG 的 deterministic Action 统一绑定 `deterministic-tg-engine`；`init_audit`、lemma producer/referee 和人工确认仍保持独立 LLM/Primary 边界。`acp run-action auto` 只会吃掉 deterministic 段，遇到这些交互 Action 会返回准确的 `actor_id` 和下一条 `acp run-action <action>`，不会把 engine 当 subagent，也不会跳过 referee/gate。
+
 ### `/tg-init`
 
 从 UO CodeMap 建立 coverage contract，检查当前 CodeMap、TilingKey binding 和输入条件是否满足 TG 前置要求。
@@ -278,7 +282,7 @@ TG 产物位于：
 分析这个 TilingData 字段变化最终会影响哪些 Kernel 行为。
 ```
 
-CE 会尽量沿已有 CodeMap 做跨层影响分析，而不是重新从头构建另一套源码模型。
+CE 的 `code_review` 明确派发到 `ce-reviewer` subagent；Primary 只负责 workflow 控制，不代写 review 产物。CE 会尽量沿已有 CodeMap 做跨层影响分析，而不是重新从头构建另一套源码模型。
 
 当前 CE 主要提供 review 和 impact analysis。
 
@@ -296,12 +300,13 @@ CE 会尽量沿已有 CodeMap 做跨层影响分析，而不是重新从头构�
 | `/tg-plan`            | 生成覆盖计划                              |
 | `/tg-solve`           | Candidate、Replay 和 Coverage Closure |
 | `/ce-review`          | 代码审查与影响分析                           |
+| `acp run-action auto` | 自动执行连续 deterministic Action，交互边界自动停下 |
 | `acp doctor`          | 检查基础 Pilot 安装                       |
 | `acp status`          | 查看当前 Workflow 状态                    |
 | `acp next`            | 查看下一步可执行 Action                     |
 | `acp inspect-failure` | 查看结构化失败原因                           |
 
-正常使用时不需要记住所有底层 `acp` 命令。优先直接向 `AscendC-Pilot` 描述目标，让 Primary Agent 根据当前状态选择对应 workflow。
+正常使用时不需要记住所有底层 `acp` 命令。优先直接向 `AscendC-Pilot` 描述目标，或使用原生 Slash Command；Primary 只选择 workflow，后续 Action/engine 顺序由 ACP 决定。
 
 ---
 
@@ -324,6 +329,14 @@ CE 会尽量沿已有 CodeMap 做跨层影响分析，而不是重新从头构�
 ```text
 帮我建立 TilingKey 全覆盖测试。
 ```
+
+完整覆盖控制面按以下顺序运行：
+
+```text
+/uo-init → /tg-init → /tg-plan → /tg-solve
+```
+
+其中每个 workflow 内的 deterministic 段由 ACP 自动执行；只有审查、lemma producer/referee 或明确人工确认才回到 LLM/Primary。
 
 完成 L2 后：
 

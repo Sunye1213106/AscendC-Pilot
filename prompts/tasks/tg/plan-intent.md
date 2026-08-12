@@ -14,7 +14,7 @@ Determine the exact TilingKey target selector for this TG run. Do not construct 
 3. If the user did not specify a target, choose `target_mode: all_declared`; this means T equals the complete current Kernel-declared domain D.
 4. Do not infer unreachable keys, derive 19-dimensional formulas, or call global SAT backend in planning.
 5. Surface contradictory or ambiguous target requests instead of silently broadening them.
-6. Follow `skills/testcase-generation/SKILL.md`.
+6. Follow the packaged `testcase-generation` domain skill; do not assume a Host-specific physical Skill path.
 </instructions>
 
 <output>

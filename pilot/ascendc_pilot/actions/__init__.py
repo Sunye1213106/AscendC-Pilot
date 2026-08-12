@@ -64,8 +64,6 @@ _install_tg_full_precheck(_engines.ENGINE_REGISTRY)
 _install_uo_product_compaction(_engines.ENGINE_REGISTRY)
 
 
-
-
 def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str, Any]:
     """Scope a temporary engine router to one synchronous CLI prepare call."""
 
@@ -139,6 +137,22 @@ def finalize_action(
 
 
 def run_action(project_root: Path, action_id: str, *, finalize: bool = False) -> dict[str, Any]:
+    # Host-side meta action: drain only deterministic work selected by the
+    # workflow state machine.  It deliberately stops before subagent / human
+    # work and therefore cannot bypass Action contracts or gates.
+    if not finalize and action_id in {"auto", "drive"}:
+        from ascendc_pilot.actions.drive import drive_until_interaction
+
+        return drive_until_interaction(
+            Path(project_root),
+            prepare=prepare_action,
+        )
+    if finalize and action_id in {"auto", "drive"}:
+        return {
+            "ok": False,
+            "error": "AUTO_DRIVE_NOT_FINALIZABLE",
+            "message_zh": "auto/drive 是 Host 调度动作，不是可 finalize 的 Workflow Action。",
+        }
     if finalize:
         return finalize_action(project_root, action_id)
     return prepare_action(project_root, action_id)

@@ -8,7 +8,7 @@ Approve or reject the exact TG target set produced by plan_build.
 3. Require non-empty T, T ⊆ D, and present `target_hash`, `snapshot_hash`, and `plan_hash`.
 4. Approval freezes that exact target set. `tg-solve` must not widen it; any target change requires a new plan.
 5. Do not approve reachability/unreachability conclusions here; Plan only approves what Solve must attempt to close.
-6. Follow `skills/testcase-generation/SKILL.md`.
+6. Follow the packaged `testcase-generation` domain skill; do not assume a Host-specific physical Skill path.
 </instructions>
 
 <output>

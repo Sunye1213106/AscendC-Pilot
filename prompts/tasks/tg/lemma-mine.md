@@ -18,7 +18,7 @@ Closed lead pack only (do not invent leads). Use the companion evidence pack whe
 
 # Requirements
 
-- Follow `skills/source-proof/SKILL.md` and the current Action output contract / session prompt fields
+- Follow the packaged `source-proof` domain skill and the current Action output contract / session prompt fields; do not assume a Host-specific physical Skill path
 - Close required proof obligations; actively seek counterexamples
 - Do not convert missing/search failure into exclusion
 - Verdict must be `PROVED` | `REFUTED` | `INSUFFICIENT` with source-window evidence

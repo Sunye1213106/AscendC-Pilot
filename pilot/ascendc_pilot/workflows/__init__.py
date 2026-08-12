@@ -1,10 +1,100 @@
-"""Read-only workflow registry accessors."""
+"""Read-only workflow registry accessors.
+
+Workflow Spec stays the source of truth. This module derives the runtime
+execution binding that Host adapters consume so deterministic actions always
+have an explicit engine identity and never carry a Host Task prompt.
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
-from ascendc_pilot.workflows.specs import WORKFLOWS
+from ascendc_pilot.workflows.specs import WORKFLOWS as _SPEC_WORKFLOWS
+
+
+_DETERMINISTIC_ENGINE_BY_DOMAIN = {
+    "uo": "deterministic-uo-engine",
+    "tg": "deterministic-tg-engine",
+}
+
+
+def _normalize_execution_registry(
+    specs: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Derive explicit Action execution ownership for Host/runtime consumption.
+
+    ``agent_id=None`` historically meant "internal deterministic engine" for
+    UO while TG already named ``deterministic-tg-engine`` explicitly. Some
+    legacy deterministic Actions also retained a model-facing ``task_prompt_id``
+    even though their implementation is an ``ENGINE_REGISTRY`` function. Those
+    two asymmetries leaked into generated Skills, OpenCode Task routing, leases,
+    and prompt pruning. Normalize them once at the registry boundary instead of
+    teaching every Host adapter another heuristic.
+    """
+    registry: dict[str, dict[str, Any]] = {}
+    for workflow_id, source in specs.items():
+        if not isinstance(source, dict):
+            continue
+        meta = dict(source)
+        domain = str(meta.get("engine") or "").strip().lower()
+        deterministic_actor = _DETERMINISTIC_ENGINE_BY_DOMAIN.get(domain, "")
+        actions: list[dict[str, Any]] = []
+        used_agents: dict[str, str] = {}
+
+        # UO runtime state lives under the arch-scoped agent root, while the
+        # canonical CodeMap product is deliberately arch-neutral one directory
+        # above it (`../uo/*.uo`). Keep that canonical root explicit in the
+        # workflow ceiling for the two deterministic UO writers.
+        if workflow_id in {"uo-init", "uo-update"}:
+            write_roots = list(meta.get("write_roots") or [])
+            if "../uo" not in write_roots:
+                write_roots.append("../uo")
+            meta["write_roots"] = write_roots
+
+        for raw in source.get("actions") or []:
+            if not isinstance(raw, dict):
+                continue
+            action = dict(raw)
+            role = str(action.get("role_id") or "").strip()
+            mode = str(action.get("execution_mode") or "").strip()
+            actor = str(action.get("agent_id") or "").strip()
+            deterministic = mode == "deterministic" or role == "deterministic_engine"
+            if deterministic:
+                if not actor:
+                    if not deterministic_actor:
+                        raise RuntimeError(
+                            f"{workflow_id}/{action.get('id')}: deterministic Action has no engine actor"
+                        )
+                    actor = deterministic_actor
+                    action["agent_id"] = actor
+                # Deterministic Actions consume structured Action context through
+                # the engine function. A Host Task prompt is both unreachable and
+                # dangerous: prune_runtime_context intentionally removes it, while
+                # prepare_action renders prompts before invoking the engine.
+                action["task_prompt_id"] = None
+            action["actors"] = [actor] if actor else []
+            if actor:
+                used_agents[actor] = role or (
+                    "deterministic_engine" if deterministic else ""
+                )
+            actions.append(action)
+
+        meta["actions"] = actions
+        agents: list[dict[str, Any]] = [
+            dict(row) for row in (source.get("agents") or []) if isinstance(row, dict)
+        ]
+        present = {str(row.get("id") or "") for row in agents}
+        for actor, role in used_agents.items():
+            if actor and actor not in present:
+                agents.append({"id": actor, "role": role})
+                present.add(actor)
+        meta["agents"] = agents
+        registry[workflow_id] = meta
+    return registry
+
+
+# Runtime/Host-facing registry. Raw editable authority remains specs.WORKFLOWS.
+WORKFLOWS = _normalize_execution_registry(_SPEC_WORKFLOWS)
 
 
 def resolve_workflow_id(workflow_id: str) -> str:
@@ -60,6 +150,11 @@ def _rederive_actor_fields(merged: dict[str, Any], patch: dict[str, Any]) -> Non
         )
     except Exception:
         pass
+    if (
+        str(merged.get("execution_mode") or "") == "deterministic"
+        or str(merged.get("role_id") or "") == "deterministic_engine"
+    ):
+        merged["task_prompt_id"] = None
 
 
 def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any]:

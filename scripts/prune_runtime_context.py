@@ -4,7 +4,7 @@
 Deterministic Actions are engine calls, not model-selectable agents. Keep only
 agents/prompts reachable from non-deterministic workflow actions (including
 mode-overlay variants), and make generated Skill tables display deterministic
-owners as ``engine`` rather than ``human``.
+owners as ``engine`` rather than a Host-spawnable agent.
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def _rewrite_deterministic_skill_owners(
     skills_dir: Path,
     workflows: dict[str, dict[str, Any]],
 ) -> list[str]:
-    """Render deterministic Actions as engine-owned, never human/agent-owned."""
+    """Render deterministic Actions as internal engine-owned, never Task actors."""
     changed: list[str] = []
     for workflow_id, meta in workflows.items():
         if not isinstance(meta, dict) or meta.get("reserved") or not meta.get("slash"):
@@ -109,15 +109,17 @@ def _rewrite_deterministic_skill_owners(
         original = text
         for action_id in sorted(deterministic):
             aid = re.escape(action_id)
-            # Generated Actions table: execution_mode | agent | role.
+            # Generated Actions table: action | deterministic | <agent> | role ...
+            # The engine identity remains in Action Bundle/lease; model-facing
+            # tables deliberately render it as the non-spawnable token `engine`.
             text = re.sub(
-                rf"(?m)^(\|\s*`{aid}`\s*\|\s*`deterministic`\s*\|\s*)`human`(\s*\|)",
+                rf"(?m)^(\|\s*`{aid}`\s*\|\s*`deterministic`\s*\|\s*)`[^`]+`(\s*\|)",
                 r"\1`engine`\2",
                 text,
             )
             # Composition index ends with the agent column.
             text = re.sub(
-                rf"(?m)^(\|\s*`{aid}`\s*\|[^\n]*\|\s*)`human`\s*\|$",
+                rf"(?m)^(\|\s*`{aid}`\s*\|[^\n]*\|\s*)`[^`]+`\s*\|$",
                 r"\1`engine` |",
                 text,
             )

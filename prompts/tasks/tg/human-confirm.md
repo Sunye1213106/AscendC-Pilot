@@ -13,7 +13,7 @@ Confirm init boundaries that machines cannot safely decide.
 
 # Requirements
 
-- Follow `skills/testcase-generation/SKILL.md` (human-confirm)
+- Follow the packaged `testcase-generation` domain skill (human-confirm); do not assume a Host-specific physical Skill path
 - Confirm scope/mode/exceptions only; do not waive evidence
 
 # Return
