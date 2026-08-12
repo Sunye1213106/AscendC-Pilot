@@ -18,7 +18,7 @@ Replay producer lemma certificates and adjudicate.
 
 # Requirements
 
-- Follow the packaged `source-proof` domain skill and its `references/referee-replay.md`; do not assume a Host-specific physical Skill path
+- Follow the packaged `source-proof` domain skill; let that skill select any referee-replay reference it needs, and do not assume a Host-specific physical Skill/reference path
 - Replay only; do not open new hypotheses
 
 # Return
