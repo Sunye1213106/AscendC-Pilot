@@ -11,7 +11,7 @@
 * 模型生成的推理结果容易被误认为事实；
 * Workflow 状态可能被非确定性行为推进。
 
-因此 AscendC-Pilot 不把 Agent 看作一个直接执行任务的黑盒，而是引入 Runtime Control Plane。
+因此 AscendC-Pilot 不把 Agent 看作一个直接执行任务的黑盒，而是引入 Runtime Control Plane（ACP Harness）。
 
 Runtime 负责管理：
 
@@ -23,7 +23,7 @@ Runtime 负责管理：
 
 核心原则：
 
-> LLM Agent 负责分析和生成候选结果，Pilot Runtime 负责约束执行、验证结果和推进状态。
+> Deterministic Engine 负责事实，LLM Agent 负责推理，Pilot Runtime 负责约束执行、验证结果和推进状态。
 
 ---
 
@@ -38,57 +38,49 @@ Workflow -> Action -> {Deterministic Engine, Agent Execution (LLM)}
         -> Contract Check -> Gate -> State Transition
 ```
 
-Workflow 定义系统允许发生什么。
+```text
+Host (OpenCode / Cursor / Codex)
+  -> Host Adapter (compose + plugin/hooks)
+       -> Primary Agent / Subagent
+            -> acp CLI  (Pilot Runtime)
+                 |- start / next / run-action / advance / complete
+                 |- authorize
+                 |- Engine actions (deterministic)
+                 |- LLM actions (prepare -> Task -> finalize)
+```
 
-Action 定义当前一步具体做什么。
+Workflow 定义系统允许发生什么。Action 定义当前一步具体做什么。Engine 和 Agent 负责产生结果。Checker 和 Gate 决定结果是否可以成为系统状态。
 
-Engine 和 Agent 负责产生结果。
+| 部件 | 作用 | 非职责 |
+| --- | --- | --- |
+| Pilot Runtime (`ascendc_pilot`) | workflow 状态、Action prepare/finalize、Lease、gate、context、recovery、`acp` CLI | 不实现领域分析本身 |
+| Engines | 确定性计算与 canonical 产物写入 | 不拥有 workflow 权威；不替代 Lease |
+| Host Adapters | 安装/生成 skills、agents、prompts、policies、hooks | 不定义领域语义；不改写 workflow 事实 |
 
-Checker 和 Gate 决定结果是否可以成为系统状态。
+Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端仍可能改文件，但拿不到 Pilot 认可的 `passed` / receipt / complete。
 
 ---
 
 # Runtime 对象
 
-| 对象         | 作用                                    | Source of Truth                          |
-| ---------- | ------------------------------------- | ---------------------------------------- |
-| Workflow   | 定义 phase、transition、action、gate 和写入范围 | `pilot/ascendc_pilot/workflows/specs.py` |
-| Action     | 定义一次可执行任务，包括输入输出 contract             | Workflow specification                   |
-| Agent      | 定义稳定身份、角色和权限上限                        | `agents/*.yaml`                          |
-| Skill      | 定义领域方法、分析流程和证据要求                      | `skills/*/SKILL.md`                      |
-| Prompt     | 定义某一次 Action 的具体任务描述                  | `prompts/tasks/`                         |
-| Policy     | 定义运行约束和行为规则                           | `pilot/policies/`                        |
-| Capability | 定义 Agent 或 Engine 可以调用的能力             | runtime capability registry              |
-| Engine     | 执行确定性逻辑并生成可信产物                        | `engines/`                               |
+| 对象 | 作用 | Source of Truth |
+| --- | --- | --- |
+| Workflow | 定义 phase、transition、action、gate 和写入范围 | `pilot/ascendc_pilot/workflows/specs.py` |
+| Action | 定义一次可执行任务，包括输入输出 contract | Workflow specification |
+| Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
+| Skill | 定义领域方法、分析流程和证据要求 | `skills/*/SKILL.md` |
+| Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |
+| Policy | 定义运行约束和行为规则 | `pilot/policies/` |
+| Capability | 定义 Agent 或 Engine 可以调用的能力 | runtime capability registry |
+| Engine | 执行确定性逻辑并生成可信产物 | `engines/` |
 
-这些对象的职责不同：
+职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管领域方法；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
 
-* Workflow 管状态；
-* Action 管任务；
-* Agent 管身份；
-* Skill 管领域方法；
-* Prompt 管当前任务；
-* Policy 管约束；
-* Engine 管确定性计算。
-
-例如：
-
-一个 TG closure 任务中：
-
-* “如何判断不可达”属于 Skill；
-* “生成 lemma”属于 Prompt；
-* “验证 replay 结果”属于 Engine；
-* “是否允许更新 closure ledger”属于 Workflow + Gate。
-
-它们不能混在一个 Agent 中。
+例如在 TG closure 中：“如何判断不可达”属于 Skill；“生成 lemma”属于 Prompt；“验证 replay 结果”属于 Engine；“是否允许更新 closure ledger”属于 Workflow + Gate。它们不能混在一个 Agent 中。
 
 ---
 
 # Agent、Skill 与 Engine 的边界
-
-AscendC-Pilot 不通过不断增加 Agent 数量解决问题。
-
-一个新的能力应该根据职责选择合适的位置：
 
 ```text
 确定性计算                    -> Engine
@@ -98,24 +90,7 @@ AscendC-Pilot 不通过不断增加 Agent 数量解决问题。
 需要独立身份、权限或隔离上下文 -> Agent
 ```
 
-例如：
-
-不应该创建：
-
-```
-CoverageAgent
-```
-
-然后把：
-
-* solver；
-* replay；
-* lemma；
-* referee；
-
-全部放进去。
-
-正确方式是：
+不应创建把 solver、replay、lemma、referee 全部塞进同一个 `CoverageAgent`。正确方式是：
 
 ```text
 TG Workflow -> deterministic closure engine
@@ -123,51 +98,57 @@ TG Workflow -> deterministic closure engine
             -> closure referee
 ```
 
-每个部分具有明确职责。
-
 ---
 
 # 权限模型与 Action Lease
 
-AscendC-Pilot 不直接相信 Agent 自己声明的写入范围。
-
 有效权限由三层约束共同决定：
 
 ```text
-Agent declared scope
-
+Agent declared write_scopes / forbidden
         ∩
-
-Action allowed_write_paths
-
+Action allowed_write_paths (+ forbidden)
         ∩
-
 Workflow write_roots
-
         =
-
 Current Action Lease
 ```
 
-其中：
+`acp run-action` prepare 时签发 Lease，写入 `.ascendc-pilot/<arch>/state/action_lease.yaml`，并记录 `active_action.yaml`。finalize 或失败收敛后撤销。
 
-* Agent YAML 定义该身份最大能力；
-* Action 定义当前任务允许修改的位置；
-* Workflow 定义当前阶段允许写入的位置。
+实现中额外强制：
 
-Pilot 根据当前 run/action/actor 生成 Action Lease。
+* **写 ⊆ 读**：每个 write path 自动并入 read paths；
+* **Actor 绑定**：非 primary 的读写须匹配 `lease.actor_id` / `action_id` / `run_id`；
+* **Primary 不写正式产物**：`ir/`、`summary/`、`checks/`、`review/`、TG formal 路径须由声明的 Producer / Referee / Engine 写入；
+* **Role 策略**：`producer`/`controller`/`deterministic_engine` 可写 formal；`referee`/`readonly_reviewer` 仅 review；`deterministic_checker` 仅 checks；`readonly_analyst` 不可写。
 
-只有 Lease 覆盖范围内的路径才能被修改。
+Agent YAML 的 `forbidden` 标签有确定性含义：
 
-因此：
+| Tag | 效果 |
+| --- | --- |
+| `modify_pilot_state` | 禁止写 `state/` |
+| `modify_uo_product` | 禁止写 `.uo` / `uo/summary` / `uo/checks` |
+| `declare_workflow_passed` | 禁止用 bash 走 `acp complete` 等宣布通过路径 |
+| `write_outside_declared_scope` | 空 `write_scopes` 即不可写 |
 
-即使一个 Agent 拥有更高权限，也不能在当前 Action 中越界写入。
+未知 tool 对 Pilot-family agent **fail-closed**（`TOOL_UNKNOWN`）。
+
+## Status → Authorization Mode
+
+Mode 只由 workflow **status** 推导，不以过期 Lease 升级权限：
+
+| Status | Mode | 允许面 |
+| --- | --- | --- |
+| `running`（及默认） | `normal` | `acp *` 主路径、声明路径上的 Read/Write/Task、只读探查 |
+| `rework_required` | `rework` | 重试失败 Action / 声明的 recovery；禁止 advance/complete |
+| `human_required` / `blocked` / `failed` | `containment` | 仅恢复类命令；默认禁止 Write/Task |
+
+`acp start` 在各 mode 下始终允许。仅 **Pilot-family** agent（`ascendc-pilot`、`uo-*` / `tg-*` / `ce-*` / `deterministic-*`）套用 Harness；Build / Plan / General 等 Tab pass-through。
 
 ---
 
 # Action 生命周期
-
-一次 Action 的完整生命周期：
 
 ```text
 acp next
@@ -176,279 +157,136 @@ acp next
 Workflow selects Action
     |
     v
-Build Action Bundle
-
-    |- identity
-    |- role
-    |- execution mode
-    |- prompt
-    |- skill
-    |- policy
-    |- capability
-    |- input contract
-    |- output contract
-    |- read/write scope
-
-    |
-    v
-
-Create Action Lease
-
-    |
-    v
-
-Execute
-
+Build Action Bundle + Create Action Lease
     |
     +----------------+
-    |                |
     v                v
-
  Engine          LLM Agent
-
-
     |
     v
-
-Staging Artifact
-
+Staging Artifact -> Checker / Referee
     |
-    v
-
-Checker / Referee
-
-    |
-    +-------------+
-    |             |
- failed        passed
-    |             |
-    v             v
-
-rework       Finalize
-
-                  |
-                  v
-
-                Gate
-
-                  |
-                  v
-
-          Workflow State Transition
+    +-- failed -> rework
+    +-- passed -> Finalize -> Gate -> Workflow State Transition
 ```
 
-关键设计：
+Agent 输出永远不是最终事实。只有经过 contract validation、checker、referee、gate 之后，才能写入 canonical artifact。目录与 freshness 规则见 [产物与权威](artifacts-and-authority.md)。
 
-Agent 输出永远不是最终事实。
-
-执行结果首先进入 staging。
-
-只有经过：
-
-* contract validation；
-* checker；
-* referee；
-* gate；
-
-之后，才能写入 canonical artifact。
-
----
-
-# State Machine
-
-Workflow 状态推进由 Pilot 控制，而不是 Agent 自己决定。
-
-典型流程：
+典型状态：
 
 ```text
 pending -> running -> checking -> passed -> finalize -> gate -> completed
 checking -> failed -> rework
 ```
 
-失败状态可能进入：
-
-* `rework_required`
-* `human_required`
-* `blocked`
-* `failed`
-
-恢复路径必须由 Workflow 显式声明。
-
-Agent 不能通过自然语言要求：
-
-> “认为已经完成，继续下一步”。
+失败可进入 `rework_required` / `human_required` / `blocked` / `failed`。恢复路径必须由 Workflow 显式声明。Agent 不能通过自然语言宣布完成。
 
 ---
 
 # Producer / Referee 模型
 
-对于需要推理但又不能直接修改规范状态的任务，Pilot 使用 Producer / Referee 分离。
-
-Producer：
-
-负责生成候选结果。
-
-例如：
-
-* coverage lemma；
-* analysis report；
-* change suggestion。
-
-Referee：
-
-负责检查：
-
-* 证据是否充分；
-* 是否违反 contract；
-* 是否满足 policy。
-
-最终：
+需要推理但又不能直接修改规范状态时，使用 Producer / Referee 分离：
 
 ```text
 Producer -> Staging Evidence -> Referee -> Deterministic Finalizer -> Canonical Artifact
 ```
 
-这种模式避免：
-
-> 模型提出的判断直接成为系统事实。
+这避免模型提出的判断直接成为系统事实。TG 中 lemma 的轮次路由细节见 [TG](../modules/tg.md)；Runtime 只保证：replay 是确定事实，lemma 须经 referee，finalizer 才更新 coverage ledger。
 
 ---
 
-# TG 中的 Runtime 示例
+# ACP 实现：控制环与 authorize
 
-TG 是 Agent Runtime 设计的典型应用。
-
-一次 `/tg-solve` 并不是一个 Agent 自由执行：
+Pilot 解析算子工作区，驱动一次 run：
 
 ```text
-tg-solver agent -> 生成覆盖结果
+acp start
+  -> acp next
+  -> acp run-action <id>           # prepare：Lease + Bundle
+  -> Engine 或 LLM Subagent 执行
+  -> acp run-action <id> --finalize
+  -> acp advance / complete        # 仅 gate 通过后
 ```
 
-而是：
+| 命令 | 作用 |
+| --- | --- |
+| `acp start` | 启动或复用 run；失败态逃生口 |
+| `acp next` | 下一 Action / 恢复提示 |
+| `acp run-action` | **唯一**正式执行入口：prepare 或 `--finalize` |
+| `acp authorize` | Host plugin 在 tool 调用前的授权裁决 |
+| `acp advance` / `complete` | 仅 gate 通过后推进或结束 |
+| `acp rework` / `abort` / `block` | 沿声明边恢复、终止或收敛 |
+| `acp status` / `inspect-failure` | 只读观测 |
+
+完整命令表见 [CLI Reference](../reference/cli.generated.md)。
+
+Host 侧（以 OpenCode 为例）在 `tool.execute.before` 调用 `acp authorize`。典型拒绝包括：直调领域脚本（`DOMAIN_CLI_BYPASS`）、bash 写入 `.ascendc-pilot/`（`BASH_PROTECTED_WRITE`）、超出 Lease（`ACTION_WRITE_SCOPE_DENIED`）、Primary 写 formal IR（`PRIMARY_PROTECTED_WRITE`）、未声明子代理（`TASK_AGENT_UNKNOWN`）。默认 bash 优先 `acp *` 与只读探查；其他 shell 对 primary 为 `ask`。
+
+LLM Action 端到端：
 
 ```text
-TG Workflow -> Round Loop:
-     construct/search -> Host Replay -> Round Analysis
-       ├ expected growth -> Lemma Producer/Referee -> E
-       └ unexpected growth -> directed construct from R + source
-  -> Finalize Ledger / Certify
+prepare -> Task(stub 原样) -> authorize Read/Write -> finalize -> Gate -> advance
 ```
 
-其中：
-
-* replay evidence 属于确定事实；
-* Round Analysis 每轮立刻做，不攒到搜索结束；
-* lemma 属于待审查证据，在增长符合预期时消化本轮 reject；
-* referee 判断 lemma 是否可靠；
-* finalizer 才更新 coverage ledger。
-
-因此：
-
-“模型认为不可达”
-
-不会直接变成：
-
-“系统认为不可达”。
+确定性 Action 跳过 Task：prepare 后由 Pilot 调度 Engine，再 finalize。
 
 ---
 
-# Runtime 与 Artifact Authority
+# Engines
 
-AscendC-Pilot 明确区分：
+| Engine | Package | 职责 |
+| --- | --- | --- |
+| `common` | `acp-common` | 共享 engine utilities |
+| `understand-operator` | `uo_init` | UO CodeMap extraction、analysis、commit、query、dump |
+| `testcase-generation` | `testcase_agent` | TG contract、plan、solve、closure、replay |
+| `code-engineering` | `code_engineering` | CE impact 与 review 支持 |
 
-## Canonical Artifact
-
-系统认可的正式结果。
-
-例如：
-
-* verified CodeMap；
-* coverage ledger；
-* closure certificate。
-
-只能由受控流程写入。
+规则：Engine 只有经声明的 Pilot Action 或显式 developer CLI 才写 canonical products；`deterministic-*-engine` 是 authorization identity，不是 LLM subagent。新增 engine 目录时须在本表登记并通过 docs check。
 
 ---
 
-## Staging Artifact
+# Host Adapters
 
-Agent 或 Engine 的中间结果。
+支持 OpenCode、Cursor、Codex。Adapter 安装 generated skills/agents/prompts/policies/hooks，隔离 host-specific path/syntax，保持同一套 workflow 与 Lease 模型。
 
-例如：
+```bash
+python scripts/compose_runtime.py --repo . --host opencode
+python scripts/compose_runtime.py --repo . --host cursor
+python scripts/compose_runtime.py --repo . --host codex
+```
 
-* candidate；
-* report；
-* proposal；
-* evidence draft。
-
-可以被修改和重新生成。
-
----
-
-## Cache / Derived Data
-
-为了效率保存的数据。
-
-不作为事实来源。
+`generated/` 是镜像，不是源文档。人类说明以 `docs/` 为准；模型消费的 Skill / Prompt / Policy 留在 runtime 位置（见 [文档维护](../development/documentation.md)）。
 
 ---
 
 # 实现与 Reference
 
-Runtime 的精确信息以代码和 generated reference 为准。
+| 主题 | 路径 |
+| --- | --- |
+| CLI | `pilot/ascendc_pilot/cli.py` |
+| Workflow Spec | `pilot/ascendc_pilot/workflows/specs.py` |
+| Action prepare/finalize | `pilot/ascendc_pilot/actions/` |
+| Lease / Authorize | `pilot/ascendc_pilot/authorize/` |
+| Agent ceiling / forbidden | `pilot/ascendc_pilot/agents_registry.py`、`agents/*.yaml` |
+| Ownership | `pilot/ascendc_pilot/ownership.py` |
+| State machine | `pilot/ascendc_pilot/state/` |
+| Compose / adapters | `scripts/compose_runtime.py`、`adapters/hosts/` |
+| OpenCode plugin | `opencode-plugin/ascendc-pilot.ts` |
+| Engines | `engines/{common,understand-operator,testcase-generation,code-engineering}/` |
+| 测试 | `pilot/tests/`、`evals/harness_e2e/` |
 
-主要实现：
-
-* Workflow：
-
-  ```
-  pilot/ascendc_pilot/workflows/specs.py
-  ```
-
-* Action / execution：
-
-  ```
-  pilot/ascendc_pilot/actions/
-  ```
-
-* Lease / authorization：
-
-  ```
-  pilot/ascendc_pilot/authorize/
-  ```
-
-* State machine：
-
-  ```
-  pilot/ascendc_pilot/state/
-  ```
-
-* Ownership：
-
-  ```
-  pilot/ascendc_pilot/ownership.py
-  ```
-
-Reference：
-
-* Workflow:
-  `docs/reference/workflows.generated.md`
-
-* Agent Matrix:
-  `docs/reference/agent-matrix.generated.md`
+Reference：[Workflow](../reference/workflows.generated.md)、[Agent Matrix](../reference/agent-matrix.generated.md)、[CLI](../reference/cli.generated.md)、[产物与权威](artifacts-and-authority.md)。
 
 ---
 
 # 总结
 
-AscendC-Pilot 的 Agent Runtime 本质上不是一个 Agent 调度器，而是一个面向工程自动化的控制层：
-
 ```text
-CodeMap + Workflow + Action Contract + Permission Lease + Deterministic Verification + Bounded LLM Reasoning
+Host Hook -> acp authorize / run-action
+  -> Action Lease (Agent ∩ Action ∩ Workflow)
+  -> Engine 事实 或 LLM staging
+  -> Finalize + Gate
+  -> 规范状态
 ```
 
-它解决的问题不是“让 Agent 更聪明”，而是：
-
-> 在复杂工程环境中，让 Agent 的行为可约束、可验证、可恢复，并让模型生成的内容经过验证后才能成为系统事实。
-
----
+Agent Runtime 解决的不是“让 Agent 更聪明”，而是：在复杂工程环境中，让 Agent 的行为可约束、可验证、可恢复，并让模型生成的内容经过验证后才能成为系统事实。

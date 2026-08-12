@@ -17,6 +17,10 @@ DEPRECATED_PATHS = (
     "docs/architecture/harness-and-permissions.md",
     "docs/architecture/skills-prompts-policies.md",
     "docs/architecture/state-and-artifacts.md",
+    "docs/modules/acp-harness.md",
+    "docs/modules/engines.md",
+    "docs/modules/host-adapters.md",
+    "docs/modules/pilot-runtime.md",
     "docs/development/extending-agent.md",
     "docs/development/extending-engine.md",
     "docs/development/extending-skill.md",
@@ -28,7 +32,18 @@ DEPRECATED_PATHS = (
     "skills/_shared/README.md",
 )
 ENGINE_NAMES = ("common", "understand-operator", "testcase-generation", "code-engineering")
+UO_SLASH_COMMANDS = ("/uo-init", "/uo-update", "/uo-query", "/uo-investigate")
 LINK_RE = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+# Docs (excluding history) must not claim a silent arch35 default.
+ARCH35_DEFAULT_RE = re.compile(r"默认\s*architecture\s*为\s*`?arch35`?", re.I)
+# Canonical product naming (hand-written docs).
+OPERATOR_UO_LEGACY_RE = re.compile(r"operator\.<arch>\.uo")
+UO_CANONICAL_NAME = "<op_name>.<arch>.uo"
+# Quick Start must not imply UO is bound to a named engine identity.
+UO_ENGINE_BIND_RE = re.compile(
+    r"绑定到\s*`?deterministic-uo-engine`?|deterministic-uo-engine",
+    re.I,
+)
 
 
 def rel(path: Path) -> str:
@@ -103,14 +118,14 @@ def check_agent_matrix(errors: list[str]) -> None:
 
 
 def check_engines_doc(errors: list[str]) -> None:
-    path = ROOT / "docs" / "modules" / "acp-harness.md"
+    path = ROOT / "docs" / "architecture" / "agent-runtime.md"
     if not path.is_file():
-        errors.append("missing docs/modules/acp-harness.md")
+        errors.append("missing docs/architecture/agent-runtime.md")
         return
     text = path.read_text(encoding="utf-8")
     for name in ENGINE_NAMES:
         if f"`{name}`" not in text:
-            errors.append(f"acp-harness.md missing engine {name}")
+            errors.append(f"agent-runtime.md missing engine {name}")
 
 
 def check_generated_references_fresh(errors: list[str]) -> None:
@@ -126,6 +141,48 @@ def check_generated_references_fresh(errors: list[str]) -> None:
         errors.append(f"generated references are stale: {detail}")
 
 
+def _iter_live_docs() -> list[Path]:
+    """Hand-written docs excluding history (historical notes may mention arch35)."""
+    paths = [ROOT / "README.md"]
+    for path in ROOT.joinpath("docs").rglob("*.md"):
+        if "docs/history/" in rel(path) or "\\docs\\history\\" in str(path):
+            continue
+        if "/history/" in f"/{rel(path)}":
+            continue
+        paths.append(path)
+    return paths
+
+
+def check_semantic_drift(errors: list[str]) -> None:
+    """Light checks for known doc/implementation drifts (no NLP)."""
+    for path in _iter_live_docs():
+        text = path.read_text(encoding="utf-8")
+        if ARCH35_DEFAULT_RE.search(text):
+            errors.append(f"{rel(path)} claims silent arch35 architecture default")
+        if OPERATOR_UO_LEGACY_RE.search(text):
+            errors.append(f"{rel(path)} uses legacy `operator.<arch>.uo` naming")
+
+    uo = ROOT / "docs" / "modules" / "uo.md"
+    if not uo.is_file():
+        errors.append("missing docs/modules/uo.md")
+    else:
+        text = uo.read_text(encoding="utf-8")
+        for cmd in UO_SLASH_COMMANDS:
+            if cmd not in text:
+                errors.append(f"uo.md missing slash command {cmd}")
+        if UO_CANONICAL_NAME not in text:
+            errors.append(f"uo.md missing canonical product name `{UO_CANONICAL_NAME}`")
+
+    quickstart = ROOT / "docs" / "getting-started" / "quickstart.md"
+    if quickstart.is_file():
+        qs = quickstart.read_text(encoding="utf-8")
+        if UO_ENGINE_BIND_RE.search(qs):
+            errors.append(
+                "quickstart.md must not bind UO phases to `deterministic-uo-engine` "
+                "(UO uses agent_id=None + deterministic execution)"
+            )
+
+
 def main() -> int:
     errors: list[str] = []
     check_readme_locations(errors)
@@ -133,6 +190,7 @@ def main() -> int:
     check_links(errors)
     check_agent_matrix(errors)
     check_engines_doc(errors)
+    check_semantic_drift(errors)
     check_generated_references_fresh(errors)
     if errors:
         for item in errors:

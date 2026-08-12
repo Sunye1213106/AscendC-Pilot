@@ -250,16 +250,14 @@ cd /path/to/operator
 /uo-init
 ```
 
-Architecture 可以直接在任务中指定，也可以通过：
+Architecture 通常由当前算子仓中的 `op_host/arch*` 和 `op_kernel/arch*` 自动发现。存在多个架构时，AscendC-Pilot 会要求选择目标架构；扫描不到时不会编造固定 architecture 作为兜底。
+
+也可以在任务中显式指定，或通过环境变量设置：
 
 ```text id="pvhzcf"
 UO_ARCH
 ASCENDC_ARCH
 ```
-
-设置。
-
-当前默认 architecture 为 `arch35`。
 
 正常使用时不需要配置算子源码路径，也不需要手工维护 include 文件列表。UO 会从当前目标算子和实际编译依赖中确定 Source Scope。
 

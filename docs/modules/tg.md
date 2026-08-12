@@ -20,13 +20,14 @@ Operator CodeMap
     → Round Loop:
           Candidate Construction
               → Host Replay
-              → Round Analysis（本轮立刻做）
-                    ├→ 增长符合预期 → 对 reject 做源码引理，能排除则进 E
-                    └→ 增长不符合预期 → 用已发现 key + 源码定向再构造
+              → Round Analysis（概念名；由 search → residual 完成）
+                    → 有源码证明线索 → lemma
+                    → 增长偏离且需定向 → construct
+                    → 其余 → 继续 search / construct，或 blocked
     → Coverage Closure（Open = ∅）
 ```
 
-每一轮 Replay 结束后都必须做一轮分析；引理证明穿插在轮次中，不攒到最后。
+**Round Analysis** 是概念名称，不是独立的 workflow action/state；实现上落在 `search → residual`。每轮 Replay 后立刻分析，引理证明穿插在符合条件的轮次中，不攒到最后。
 
 TG 的核心目标不是生成尽可能多的 testcase，而是回答：
 
@@ -351,7 +352,7 @@ mismatch dimensions
 
 实际 K2 可以作为新的 replay witness 进入 R，但 K1 仍然保持 open。
 
-这种 Host rewrite 信息反而会成为**当轮 Round Analysis** 的输入：增长不符合预期时，用 actual key 当锚点做下一轮定向构造；增长符合预期时，再对本轮 reject 尝试源码引理。
+这种 Host rewrite 信息反而会成为**当轮 Round Analysis** 的输入：按新增 witness、target hit、rewrite/refuse 与 residual 决定下一步；有源码证明线索时进 lemma，否则继续 search 或 directed construct。
 
 ### R 从真实运行记录重建
 
@@ -380,103 +381,45 @@ R = all confirmed Host observations
 
 ## 5. 每轮 Replay 后立刻分析（Round Analysis）
 
-TG 的主循环是：
+**Round Analysis** 是概念名，由 workflow 的 `search → residual` 阶段完成，不是独立的 action 或 state。
+
+主循环：
 
 ```text
 构造 Candidate
     → Host Replay
-    → Round Analysis（本轮立刻做，不攒到最后）
+    → Round Analysis（本轮立刻做；search → residual）
     → 更新 R / E / Open
-    → 决定下一轮构造策略
+    → 决定下一轮：lemma / construct / search / blocked
 ```
 
-每轮 Replay 结束后都重新计算：
+每轮 Replay 后重新计算：
 
 ```text
 Open = D - (R ∩ D) - E
 ΔR   = 本轮新进入 R 的 key
 ```
 
-同时对照本轮构造意图，判断增长是否符合预期。例如本轮目标是扩展某几个维度或补一批邻近 hole，则比较：
+并对照本轮构造意图，看增长、target hit、rewrite/refuse 与 residual 分布。路由原则（不暴露内部 heuristic 阈值）：
 
 ```text
-expected growth（本轮计划命中 / 推进的 key 模式）
-actual growth  （ΔR 以及 rewrite / reject 分布）
+每轮 Replay 后：
+  有源码证明线索（reject / source leads）→ lemma
+  增长偏离且需定向 → construct（以已发现 R + 源码为锚）
+  其余 → 继续 search / construct，或 blocked
 ```
 
-### 分支 A：增长符合预期
-
-若本轮 `ΔR` 的模式与构造意图一致（例如目标邻近维被命中，或按计划扩大了已覆盖子空间），说明当前构造方向有效。此时：
-
-1. 把新的 accepted witness 并入 R；
-2. **立刻**对本轮（以及稳定重复的）`rejected` 结果做源码引理尝试，看能否把对应 open key 排进 E；
-3. 对仍 open 的邻近目标，继续沿已验证有效的方向做下一轮构造。
-
-关键点：reject 不是等全部搜完再处理。只要本轮增长符合预期，就趁热对 reject 去源码里找约束：
-
-```text
-本轮 Reject Pattern
-    → 对照 CodeMap / Host guard
-    → Lemma Proposal
-    → Check against R
-    → Review
-    → 能证明则进 E；不能证明则保持 open，下一轮继续构造
-```
-
-仍然遵守：
+例如：增长与意图一致且本轮有稳定 reject 时，趁热对 reject 做源码引理；增长落到无关 key 或系统性 rewrite 时，用 actual witness 解码差异维再定向构造。仍然遵守：
 
 ```text
 Replay reject ≠ 不可达
 ```
 
-只有完整源码证明通过后才能进 E。
-
-### 分支 B：增长不符合预期
-
-若本轮实际增长与预期不一致，例如：
-
-- 目标 key 没命中，却大量落到别的 key；
-- Host 系统性 rewrite 到同一批实际 key；
-- `ΔR` 几乎为空，或增长落在与计划无关的维度上；
-- reject / crash 模式与构造假设矛盾；
-
-则**不要**先转入大规模盲搜或最后才证明，而是立刻基于**已经发现的 key（R）+ 源码**做定向再构造：
-
-```text
-已发现 key ∈ R
-    → 解码差异维 / rewrite 维
-    → CodeMap：packing / Host producer / guard
-    → 定向修改相关 knob
-    → 下一轮 Candidate
-    → Host Replay
-    → 再分析
-```
-
-也就是说，不符合预期时优先用真实 witness 当锚点，结合源码把下一轮候选收束到“差在哪一维、Host 在哪改写”，而不是重复同一套随机 mutation。
+只有完整源码证明通过后才能进 E。引理的 Producer / Referee / Finalizer 边界见 [Agent Runtime](../architecture/agent-runtime.md)；产物目录见 [产物与权威](../architecture/artifacts-and-authority.md)。
 
 ### Residual 服务本轮决策
 
-Round Analysis 仍会做 residual 统计，但用途是**决定下一轮怎么构造 / 是否对本轮 reject 做引理**，而不是攒到闭环前才用一次：
-
-- 每个 open key 到最近 R witness 的距离；
-- 主要差异维度与 rewrite 维度；
-- 哪些组合集中出现在 open / reject 中；
-- 每个维度哪些值已在 R 中真实出现。
-
-例如：
-
-```text
-R witness : [dtype=0, layout=1, sparse=0, rope=0]
-Open key  : [dtype=0, layout=1, sparse=1, rope=0]
-```
-
-只差 `sparse` 一维时，下一轮应直接：
-
-```text
-known witness → change sparse-related knob → replay → 立刻再分析
-```
-
-需要注意：
+residual 统计用于**决定下一轮怎么走**，不是攒到闭环前才用一次：open key 到最近 R 的距离、差异维 / rewrite 维、集中出现的组合模式。例如只差一维时，下一轮应直接改相关 knob 再 replay。
 
 ```text
 某个组合从未出现在 R
@@ -545,29 +488,17 @@ construct failure ≠ unreachable
 
 ## 7. 轮内源码引理：用证明消化 reject / 稳定不可达模式
 
-引理证明是 Round Analysis 的一部分，在**每一轮**符合条件时执行，而不是 L2 收尾阶段的补锅步骤。
+引理证明是 Round Analysis 的一部分，在**存在源码证明线索时**于轮内执行，而不是 L2 收尾补锅。Producer / Referee / Finalizer 权限边界见 [Agent Runtime](../architecture/agent-runtime.md)。
 
-典型触发时机：
-
-- 本轮增长符合预期，但对某些目标持续 `rejected`；
-- residual 显示稳定结构模式（例如所有剩余 key 都满足 `A=1,B=0`，且 R 中从未出现）；
-- 定向构造多次被同一类 Host guard 挡住。
-
-这时要证明的不是“我们这轮没找到”，而是：
+典型触发：本轮有稳定 reject / source leads；residual 显示稳定结构模式；定向构造多次被同一类 Host guard 挡住。要证明的不是“这轮没找到”，而是：
 
 > 对所有合法 Host 执行路径，该模式不可能产生目标 key。
 
-轮内过程为：
-
 ```text
 本轮 Reject / Residual Pattern
-    → Source Evidence
-    → Lemma Proposal
-    → Check against R
-    → Review
-    → Deterministic Apply
-    → E
-    → 立刻缩小 Open，再进入下一轮构造
+    → Source Evidence → Lemma Proposal
+    → Check against R → Review → Deterministic Apply → E
+    → 缩小 Open，再进入下一轮
 ```
 
 
@@ -851,7 +782,7 @@ Target
 | ----------- | ------------------------------------------------------------- |
 | `/tg-init`  | 读取 UO，固定算子、架构、TilingKey domain 和 fingerprint；`human_confirm` 经 AskQuestion 后 finalize 写出 `tg/init/confirmation.yaml` |
 | `/tg-plan`  | 将覆盖目标转成明确 obligation；`plan_approve` 经 AskQuestion 后写出 `human_supplement.yaml` |
-| `/tg-solve` | 轮次循环：构造 → Replay → Round Analysis（增长判定 / 轮内引理 / 定向再构造）→ 直至闭环 |
+| `/tg-solve` | 轮次循环：构造 → Replay → Round Analysis（search→residual；lemma / construct / search）→ 直至闭环 |
 
 
 可以简化理解为：
@@ -927,12 +858,9 @@ Declared Domain D
 │   Candidate Generation               │
 │       → Host Replay                  │
 │       → Round Analysis               │
-│            ├ expected growth         │
-│            │    → lemma on rejects → E
-│            └ unexpected growth       │
-│                 → directed construct │
-│                   from discovered R  │
-│                   + source           │
+│         (search → residual)          │
+│            → lemma / construct /     │
+│              search / blocked        │
 └──────────────────────────────────────┘
   ↓（重复直到）
 Open = D - (R ∩ D) - E = ∅

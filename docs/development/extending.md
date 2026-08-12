@@ -49,7 +49,7 @@ python scripts/check_skill_architecture.py
 
 Engine 放在 `engines/<name>/`，应有 package metadata、测试和需要时的 CLI entry point；若 Pilot 需要授权它，则新增 deterministic identity 并把 action 接入 workflow。Capability 应描述可调用的工具或 runtime 方法合同，而非承载领域解释。
 
-Host Adapter 负责将具体 host 接到 composition/runtime，不应改写 workflow 事实。修改后重新 compose 对应 host，并在 [ACP Harness](../modules/acp-harness.md) 中登记对人类有意义的 Engine / adapter 边界。
+Host Adapter 负责将具体 host 接到 composition/runtime，不应改写 workflow 事实。修改后重新 compose 对应 host，并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。
 
 ## Gate、测试与 Reference
 
