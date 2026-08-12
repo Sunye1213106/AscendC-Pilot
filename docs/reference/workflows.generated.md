@@ -1,10 +1,10 @@
 # 工作流 Reference
 
-本文件由 `pilot/ascendc_pilot/workflows/specs.py` 生成，请不要手工编辑。
+本文件由 Workflow Spec + runtime execution binding 生成，请不要手工编辑。
 
 | 工作流 | 入口 | 状态 | 动作 | 执行者 | Gate |
 | --- | --- | --- | --- | --- | --- |
-| `uo-init` | `/uo-init` | prepare, extract, analyze, commit, verify | prepare, extract, analyze, commit, verify | ascendc-pilot | layout_receipt, extract_receipt, uo_product_ready |
+| `uo-init` | `/uo-init` | prepare, extract, analyze, commit, verify | prepare, extract, analyze, commit, verify | ascendc-pilot, deterministic-uo-engine | layout_receipt, extract_receipt, uo_product_ready |
 | `uo-update` | `/uo-update` | detect, plan, apply, export, diff | detect_changes, plan_update, apply_update, export_integrity, diff_summary, diff_only | deterministic-uo-engine | integrity |
 | `uo-query` | `/uo-query` | route, lookup, answer | kb_lookup | uo-query |  |
 | `uo-investigate` | `/uo-investigate` | investigate, report | investigate | uo-gap-investigator, ascendc-pilot |  |
