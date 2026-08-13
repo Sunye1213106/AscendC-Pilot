@@ -8,16 +8,16 @@ version = "0.1.0"
 description = "AscendC Code Engineering (CE) engine for AscendC-Pilot"
 readme = "README.md"
 requires-python = ">=3.10"
-# Sibling engines are installed via repo-root requirements.txt editable paths
-# (same pattern as testcase-generation → acp-common by name, not path=).
-# Core operation remains usable without UO; CodeMap-backed APIs import uo_init
-# lazily. The repository workspace installs the optional sibling package.
+# CE closure workflows consume the finalized UO CodeMap directly. Keep this
+# explicit so standalone CE installs cannot silently degrade because the
+# sibling UO package was omitted.
 dependencies = [
   "PyYAML>=6.0",
+  "acp-common",
+  "uo-init>=0.1.0",
 ]
 
 [project.optional-dependencies]
-uo = ["uo-init>=0.1.0"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]

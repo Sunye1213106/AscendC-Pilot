@@ -11,7 +11,12 @@ import yaml
 
 
 def load_external_evidence(declared_path: Path | str) -> list[dict[str, Any]]:
-    """Accept only ``ce-external-evidence/v1`` receipts from a declared path."""
+    """Accept only ``ce-external-evidence/v1`` verification receipts.
+
+    External evidence may verify obligations (V), but it may not place an
+    obligation directly into the exclusion set (X). Exclusions require the
+    dedicated referee review and Tier-A proof path.
+    """
     path = Path(declared_path).expanduser().resolve()
     files = (
         sorted(p for p in path.iterdir() if p.suffix.lower() in {".json", ".yaml", ".yml"})
@@ -28,6 +33,16 @@ def load_external_evidence(declared_path: Path | str) -> list[dict[str, Any]]:
         for value in values:
             if not isinstance(value, dict) or value.get("schema") != "ce-external-evidence/v1":
                 raise ValueError(f"invalid external evidence receipt: {source}")
+            if value.get("excepted_obligations"):
+                raise ValueError(
+                    "external evidence cannot exclude obligations; "
+                    "use ce-change-referee exclusion_review with Tier-A proof"
+                )
+            if not str(value.get("change_head_sha") or "").strip():
+                raise ValueError(f"external evidence missing change_head_sha: {source}")
+            verified = value.get("verified_obligations") or []
+            if not isinstance(verified, list):
+                raise ValueError(f"verified_obligations must be a list: {source}")
             receipt = dict(value)
             receipt["declared_path"] = str(source)
             receipts.append(receipt)
