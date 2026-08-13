@@ -16,6 +16,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.symbol_identity import normalize_symbol
+from uo_init.source_layout import selected_host_files as _layout_host_files
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
@@ -118,19 +119,7 @@ def enrich_tiling_host_writes(
 
 
 def _selected_host_files(root: Path, architecture: str) -> list[Path]:
-    out: set[Path] = set()
-    arch_dir = root / "op_host" / architecture
-    if arch_dir.is_dir():
-        out.update(p.resolve() for p in arch_dir.rglob("*") if p.is_file() and p.suffix.lower() in _SUFFIXES)
-    host_root = root / "op_host"
-    if host_root.is_dir():
-        for path in host_root.iterdir():
-            if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
-                continue
-            raw = path.read_text(encoding="utf-8", errors="replace")
-            if f"/op_kernel/{architecture}/" in raw or f'"../op_kernel/{architecture}/' in raw or f'"{architecture}/' in raw:
-                out.add(path.resolve())
-    return sorted(out)
+    return [p.resolve() for p in _layout_host_files(root, architecture)]
 
 
 def _targets(receiver, field_name, receiver_types, fields, nested, known) -> list[Entity]:

@@ -11,3 +11,5 @@ skills:
     disable-model-invocation: true
   code-review:
     disable-model-invocation: true
+  code-engineering:
+    disable-model-invocation: true

@@ -11,17 +11,12 @@ from __future__ import annotations
 
 import json
 import sys
-import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 PrepareAction = Callable[[Path, str], dict[str, Any]]
-
-# Heartbeat while a single deterministic prepare/engine may run for minutes
-# (clang extract / codemap compile). Hosts must not buffer stderr.
-_HEARTBEAT_SEC = 15.0
 
 
 def _execution_descriptor(action: dict[str, Any]) -> dict[str, Any]:
@@ -54,8 +49,13 @@ def _unconditional_forward_phase(meta: dict[str, Any], phase: str) -> str:
     return targets[0] if len(targets) == 1 else ""
 
 
-def _progress(msg: str, *, event: str = "heartbeat", extra: dict[str, Any] | None = None) -> None:
-    """Emit human stderr heartbeat and append a machine-readable host stage event."""
+def _progress(msg: str, *, event: str = "stage", extra: dict[str, Any] | None = None) -> None:
+    """Emit a compact stage line on stderr and append host_stage.jsonl.
+
+    Live UX for long runs belongs to Host ``pilot_run`` (OpenCode tool metadata
+    progress bar). These lines are a machine protocol for that bar to parse,
+    not a 15s "still running" heartbeat for bash.
+    """
     sys.stderr.write(f"[acp-auto] {msg}\n")
     sys.stderr.flush()
     try:
@@ -85,25 +85,6 @@ def _progress(msg: str, *, event: str = "heartbeat", extra: dict[str, Any] | Non
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     except Exception:  # noqa: BLE001
         pass
-
-
-def _run_with_heartbeat(label: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
-    """Run ``fn`` while emitting stderr heartbeats so long work does not look stuck."""
-    stop = threading.Event()
-    t0 = time.monotonic()
-
-    def _beat() -> None:
-        while not stop.wait(_HEARTBEAT_SEC):
-            elapsed = int(time.monotonic() - t0)
-            _progress(f"{label} still running ({elapsed}s)…")
-
-    thread = threading.Thread(target=_beat, name="acp-auto-heartbeat", daemon=True)
-    thread.start()
-    try:
-        return fn()
-    finally:
-        stop.set()
-        thread.join(timeout=1.0)
 
 
 def _attach_todo(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
@@ -144,7 +125,7 @@ def drive_until_interaction(
 
     root = Path(project_root)
     executed: list[dict[str, Any]] = []
-    _progress("drain start (live stderr; do not pipe acp through Select-Object -Last / tail)")
+    _progress("drain start")
 
     def _done(payload: dict[str, Any]) -> dict[str, Any]:
         _progress(
@@ -248,10 +229,7 @@ def drive_until_interaction(
                 )
 
             _progress(f"run {action_id} (phase={phase} {phase_label})")
-            result = _run_with_heartbeat(
-                f"{action_id}/{phase}",
-                lambda aid=action_id: prepare(root, aid),
-            )
+            result = prepare(root, action_id)
             executed.append(
                 {
                     "action_id": action_id,

@@ -80,7 +80,26 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert ce["execution_mode"] == "subagent"
     assert ce["agent_id"] == "ce-reviewer"
     assert ce["actors"] == ["ce-reviewer"]
-    assert ce["task_prompt_id"] == "ce/code-review"
+    assert ce["task_prompt_id"] == "ce/standalone-review"
+    verify = next(a for a in WORKFLOWS["ce-verify"]["actions"] if a["id"] == "code_review")
+    assert verify["task_prompt_id"] == "ce/code-review"
+
+    intent = WORKFLOWS["ce-intent"]
+    assert intent["cognitive_skill_id"] == "code-engineering"
+    assert WORKFLOWS["ce-impact"]["cognitive_skill_id"] == "code-engineering"
+    assert WORKFLOWS["ce-verify"]["cognitive_skill_id"] == "code-engineering"
+    assert WORKFLOWS["ce-review"]["cognitive_skill_id"] == "code-review"
+    assert "code-edit" not in WORKFLOWS
+    assert "git-ops" not in WORKFLOWS
+    assert "perf-analyze" not in WORKFLOWS
+    assert intent["phases"] == [
+        "intent",
+        "kb_ready",
+        "decompose",
+        "review",
+        "locate",
+        "confirm",
+    ]
 
 
 def test_compose_and_prune_runtime_context(tmp_path: Path):
@@ -134,10 +153,35 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
     result = compose(tmp_path)
     assert result["ok"]
     commands = tmp_path / "generated" / "opencode" / "commands"
-    for name in ("uo-init", "uo-update", "uo-query", "uo-investigate", "tg-init", "tg-plan", "tg-solve", "ce-review"):
+    for name in (
+        "uo-init",
+        "uo-update",
+        "uo-query",
+        "uo-investigate",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+        "ce-review",
+        "ce-impact",
+        "ce-intent",
+        "ce-verify",
+    ):
         path = commands / f"{name}.md"
         assert path.is_file(), name
         text = path.read_text(encoding="utf-8")
         assert "agent: ascendc-pilot" in text
         assert "subtask: false" in text
         assert "acp run-action auto" in text
+
+
+def test_cognitive_skill_ids_include_code_engineering():
+    from compose_runtime import COGNITIVE_SKILL_IDS, _host_remap_skill_paths
+
+    assert "code-engineering" in COGNITIVE_SKILL_IDS
+    remapped = _host_remap_skill_paths(
+        "method:skills/code-engineering/** and `skills/code-engineering`",
+        host="opencode",
+    )
+    assert remapped == (
+        "method:cognitive-skills/code-engineering/** and `cognitive-skills/code-engineering`"
+    )

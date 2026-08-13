@@ -23,11 +23,12 @@ def main() -> int:
     import yaml
 
     failures: list[str] = []
+    arch = "arch35"
     with tempfile.TemporaryDirectory(prefix="harness_e2e_") as td:
         op = Path(td) / "DemoOp"
         op.mkdir()
-        ensure_agent_layout(op)
-        intent = tg_root(op) / "init" / "init_intent.yaml"
+        ensure_agent_layout(op, arch=arch)
+        intent = tg_root(op, arch=arch) / "init" / "init_intent.yaml"
         intent.parent.mkdir(parents=True, exist_ok=True)
         intent.write_text(
             yaml.safe_dump(
@@ -35,13 +36,13 @@ def main() -> int:
             ),
             encoding="utf-8",
         )
-        start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
+        start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture=arch)
 
         # Unknown tool
         v = authorize(
             op,
             tool="filesystem_write_v2",
-            path=str(agent_root(op) / "x"),
+            path=str(agent_root(op, arch) / "x"),
             agent="tg-lemma-producer",
         )
         if v.get("reason_code") != "TOOL_UNKNOWN":
@@ -54,7 +55,7 @@ def main() -> int:
             actor_id="tg-lemma-producer",
             allowed_write_paths=["runs/x/actions/lemma_mine/parts/part_001.yaml"],
         )
-        outside = agent_root(op) / "tg" / "closure" / "lemmas" / "active_rules.yaml"
+        outside = agent_root(op, arch) / "tg" / "closure" / "lemmas" / "active_rules.yaml"
         outside.parent.mkdir(parents=True, exist_ok=True)
         v = authorize(
             op,
@@ -74,7 +75,15 @@ def main() -> int:
         lease = yaml.safe_load(lp.read_text(encoding="utf-8"))
         lease["run_id"] = "STALE"
         lp.write_text(yaml.safe_dump(lease), encoding="utf-8")
-        target = agent_root(op) / "runs" / "x" / "actions" / "lemma_mine" / "parts" / "part_001.yaml"
+        target = (
+            agent_root(op, arch)
+            / "runs"
+            / "x"
+            / "actions"
+            / "lemma_mine"
+            / "parts"
+            / "part_001.yaml"
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         v = authorize(
             op,
@@ -87,7 +96,7 @@ def main() -> int:
             failures.append(f"stale lease: {v}")
 
         # Referee cannot write producer path
-        start_workflow(op, "tg-solve", phase="audit", force_phase=True, architecture="arch35")
+        start_workflow(op, "tg-solve", phase="audit", force_phase=True, architecture=arch)
         v = authorize(
             op,
             tool="write",

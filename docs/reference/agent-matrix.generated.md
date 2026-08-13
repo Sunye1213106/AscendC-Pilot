@@ -5,11 +5,11 @@
 | Agent | 类型 | 角色 | 模式 | 可读范围 | 可写范围 | 来源 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ascendc-pilot` | `llm` | `controller` | `primary` | `pilot:*` |  | `agents/ascendc-pilot.yaml` |
-| `ce-analyst` | `llm` | `producer` | `subagent` | `pilot:ce/intent/**`, `pilot:uo/**`, +4 | `pilot:runs/**/actions/feature_decompose/parts/**`, `pilot:runs/**/actions/feature_decompose/scratch/**`, +1 | `agents/ce-analyst.yaml` |
-| `ce-change-referee` | `llm` | `referee` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +5 | `pilot:ce/impact/audit_report.yaml`, `pilot:ce/verify/exclusion_review.yaml`, +2 | `agents/ce-change-referee.yaml` |
-| `ce-reviewer` | `llm` | `readonly_reviewer` | `subagent` | `pilot:uo/**`, `pilot:ce/**`, +4 | `pilot:ce/review/**`, `pilot:ce/verify/code_review.yaml`, +1 | `agents/ce-reviewer.yaml` |
-| `deterministic-ce-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +5 | `pilot:ce/**`, `pilot:runs/**`, +1 | `agents/deterministic-ce-engine.yaml` |
-| `deterministic-tg-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:tg/**`, `pilot:uo/**`, +6 | `pilot:tg/**`, `pilot:runs/**`, +2 | `agents/deterministic-tg-engine.yaml` |
+| `ce-analyst` | `llm` | `producer` | `subagent` | `pilot:ce/intent/**`, `pilot:ce/impact/**`, +8 | `pilot:runs/**/actions/feature_decompose/parts/**`, `pilot:runs/**/actions/feature_decompose/scratch/**`, +4 | `agents/ce-analyst.yaml` |
+| `ce-change-referee` | `llm` | `referee` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +6 | `pilot:ce/impact/audit_report.yaml`, `pilot:ce/verify/exclusion_review.yaml`, +1 | `agents/ce-change-referee.yaml` |
+| `ce-reviewer` | `llm` | `readonly_reviewer` | `subagent` | `pilot:uo/**`, `pilot:ce/**`, +5 | `pilot:ce/review/**`, `pilot:ce/verify/code_review.yaml`, +2 | `agents/ce-reviewer.yaml` |
+| `deterministic-ce-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +6 | `pilot:ce/**`, `pilot:runs/**`, +1 | `agents/deterministic-ce-engine.yaml` |
+| `deterministic-tg-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:tg/**`, `pilot:uo/**`, +8 | `pilot:tg/**`, `pilot:runs/**`, +2 | `agents/deterministic-tg-engine.yaml` |
 | `deterministic-uo-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:uo/**`, `pilot:runs/**`, +2 | `pilot:uo/**`, `pilot:runs/**/actions/**`, +1 | `agents/deterministic-uo-engine.yaml` |
 | `tg-closure-referee` | `llm` | `referee` | `subagent` | `pilot:tg/closure/**`, `pilot:uo/**`, +4 | `pilot:runs/**/actions/lemma_review/review.yaml`, `pilot:runs/**/actions/closure_audit/review.yaml` | `agents/tg-closure-referee.yaml` |
 | `tg-init-audit` | `llm` | `referee` | `subagent` | `pilot:tg/**`, `pilot:uo/**`, +3 | `pilot:tg/init/audit_report.yaml`, `pilot:runs/**/actions/init_audit/**` | `agents/tg-init-audit.yaml` |

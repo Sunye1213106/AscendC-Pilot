@@ -21,7 +21,7 @@ from uo_init.tiling_data_ir import (
     parse_tiling_data_file,
     scan_kernel_readers,
 )
-from uo_init.uo_query import open_query
+from uo_init.uo_query import UoQuery, open_query
 
 
 MACRO_SRC = """
@@ -170,12 +170,17 @@ def test_materialize_exports_view_and_query(tmp_path: Path):
     field_names = [f["name"] for f in view["structs"][0]["fields"]]
     assert "s1" in field_names
 
-    q = open_query(tmp_path / ".ascendc-pilot" / "uo")
+    q = UoQuery(Path(receipt["database"]))
     hit = q.field_impact("s1")
     assert hit["ok"] is True
     assert hit["writers"] or hit["field"]
     rows = q.search("enablePreSfmg", kinds=("TilingDataField",), limit=10)
     assert rows
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        open_query(tmp_path / ".ascendc-pilot" / "uo")
 
 
 def test_fag_header_smoke_if_present():

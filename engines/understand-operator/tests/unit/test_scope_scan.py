@@ -257,7 +257,7 @@ def test_enrich_with_clang_replaces_regex_shared(domain: Path) -> None:
     extra_shared.write_text("// clang-only\n", encoding="utf-8")
     external = Path("/opt/cann-asc-devkit/include/ghost.h")
 
-    def _fake_includes(tu_path, args):
+    def _fake_includes(tu_path, args, op_dir=""):
         return ss.ClangIncludeResult(ok=True, paths=[extra_shared, external])
 
     old = ss.clang_include_paths
@@ -287,7 +287,7 @@ def test_enrich_with_clang_replaces_regex_shared(domain: Path) -> None:
 def test_enrich_with_clang_incomplete_when_parse_fails(domain: Path) -> None:
     scope = ss.scan(domain, arch_dir="arch35")
 
-    def _fail(tu_path, args):
+    def _fail(tu_path, args, op_dir=""):
         return ss.ClangIncludeResult(ok=False, error=f"clang_parse_failed:{Path(tu_path).name}")
 
     old = ss.clang_include_paths
@@ -316,3 +316,102 @@ def test_classify_path_marks_workspace_non_owned_as_shared(domain: Path) -> None
         ss.classify_path(other, op_dir=scope.op_dir, workspace_root=scope.workspace_root)
         == ss.KIND_SHARED
     )
+
+
+def test_enrich_with_clang_collects_probes(domain: Path) -> None:
+    scope = ss.scan(domain, arch_dir="arch35")
+
+    def _fake(tu_path, args, op_dir=""):
+        return ss.ClangIncludeResult(
+            ok=True,
+            paths=[],
+            probe={
+                "error_count": 0,
+                "fatal_count": 0,
+                "operator_error_count": 0,
+                "probe_relevant_errors": 0,
+                "samples": [],
+                "skipped_bodies": False,
+            },
+        )
+
+    old = ss.clang_include_paths
+    ss.clang_include_paths = _fake  # type: ignore[assignment]
+    try:
+        enrichment = ss.enrich_with_clang(
+            scope,
+            host_args=[],
+            kernel_args=[],
+            host_tus=scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True)[:1],
+            kernel_tu=None,
+        )
+    finally:
+        ss.clang_include_paths = old  # type: ignore[assignment]
+
+    assert enrichment.complete
+    assert enrichment.probes
+    assert enrichment.probes[0]["probe_relevant_errors"] == 0
+    assert enrichment.probes[0]["file"]
+
+
+def test_load_prepared_scope_reuses_complete_receipt(tmp_path: Path) -> None:
+    import yaml
+
+    op = tmp_path / "widget"
+    uo = op / ".ascendc-pilot" / "arch35" / "uo" / "summary"
+    uo.mkdir(parents=True)
+    payload = {
+        "op_dir": str(op),
+        "workspace_root": str(tmp_path),
+        "arch_dir": "arch35",
+        "files": [
+            {
+                "path": str(op / "a.cpp"),
+                "role": "host",
+                "side": "host",
+                "is_tu": True,
+                "shared": False,
+            }
+        ],
+        "notes": [],
+    }
+    (uo / "scope_set.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+    (uo / "scope_candidates.yaml").write_text(
+        yaml.safe_dump({"clang_scope_status": "complete"}), encoding="utf-8"
+    )
+    got = ss.load_prepared_scope(op, "arch35")
+    assert got is not None
+    assert len(got.files) == 1
+
+
+def test_load_prepared_scope_rejects_incomplete(tmp_path: Path) -> None:
+    import yaml
+
+    op = tmp_path / "widget"
+    uo = op / ".ascendc-pilot" / "arch35" / "uo" / "summary"
+    uo.mkdir(parents=True)
+    payload = {
+        "op_dir": str(op),
+        "workspace_root": str(tmp_path),
+        "arch_dir": "arch35",
+        "files": [
+            {
+                "path": str(op / "a.cpp"),
+                "role": "host",
+                "side": "host",
+                "is_tu": True,
+                "shared": False,
+            }
+        ],
+        "notes": [],
+    }
+    (uo / "scope_set.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+    (uo / "scope_candidates.yaml").write_text(
+        yaml.safe_dump({"clang_scope_status": "incomplete"}), encoding="utf-8"
+    )
+    assert ss.load_prepared_scope(op, "arch35") is None
+
+
+def test_load_prepared_scope_force_env(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("UO_FORCE_SCOPE_ENRICH", "1")
+    assert ss.load_prepared_scope(tmp_path, "arch35") is None

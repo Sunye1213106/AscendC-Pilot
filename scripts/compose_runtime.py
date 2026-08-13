@@ -51,6 +51,7 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
     "testcase-generation",
     "source-proof",
     "code-review",
+    "code-engineering",
 )
 
 # Slash / discovery entry metadata. Body is generated from Spec; no skills/workflows source.
@@ -92,25 +93,27 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     },
     "ce-review": {
         "description": (
-            "基于 KB 的代码审查 / code review / 查 bug。用户要审查算子代码时加载。"
-            "Pilot 管阶段；加载后执行 acp start ce-review。"
+            "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
+            "假设检验；证据先 CodeMap。Pilot 管 scope→review→summary；acp start ce-review。"
         ),
     },
     "ce-impact": {
         "description": (
-            "变更影响面分析：基于 CodeMap 与 diff 建立 impact ledger。"
+            "有 diff 时做变更影响面：切片并按 kind 挂验证义务。"
             "用户要评估改动影响、回归面时加载；acp start ce-impact。"
         ),
     },
     "ce-verify": {
         "description": (
-            "验证闭环：gate / residual / exclusion / certificate。"
+            "验证闭环：gate / residual / 测量收据 / certificate。"
+            "V 只收 UT/ST/精度/profiling/复测通过的 ce-external-evidence/v1。"
             "用户要验证覆盖或签发 CE 证书时加载；acp start ce-verify。"
         ),
     },
     "ce-intent": {
         "description": (
-            "意图澄清与变更目标冻结。用户要明确改什么/测什么时加载；acp start ce-intent。"
+            "无 diff 时定位改哪里：先查 CodeMap 再下结论，冻结变更目标。"
+            "用户要明确改什么/测什么时加载；acp start ce-intent。"
         ),
     },
     "tg-init": {
@@ -873,10 +876,12 @@ def _host_remap_skill_paths(text: str, *, host: str) -> str:
         return text
     out = text
     for cid in COGNITIVE_SKILL_IDS:
-        out = out.replace(f"method:skills/{cid}/", f"method:cognitive-skills/{cid}/")
-        out = out.replace(f"skills/{cid}/", f"cognitive-skills/{cid}/")
-        out = out.replace(f"`skills/{cid}`", f"`cognitive-skills/{cid}`")
-        out = out.replace(f"skills/{cid}.", f"cognitive-skills/{cid}.")
+        token = f"\x00CS:{cid}\x00"
+        # Protect already-remapped paths so ``skills/{cid}`` cannot match inside
+        # ``cognitive-skills/{cid}``.
+        out = out.replace(f"cognitive-skills/{cid}", token)
+        out = out.replace(f"skills/{cid}", token)
+        out = out.replace(token, f"cognitive-skills/{cid}")
     return out
 
 

@@ -34,9 +34,15 @@ def update_operator(
 ) -> dict[str, Any]:
     del run_gates
     repo_root = Path(repo_root).expanduser().resolve()
-    uo_root = resolve_uo_root(repo_root)
-    if not (uo_root / "manifest.yaml").exists():
-        raise FileNotFoundError(f"KB missing at {uo_root}; run /uo-init first")
+    uo_root = resolve_uo_root(repo_root, architecture=architecture)
+    from uo_init.store.reader import find_uo_product
+
+    product = find_uo_product(repo_root, op_name=op_name, architecture=architecture)
+    if product is None or product.suffix != ".uo":
+        raise FileNotFoundError(
+            f"missing .uo product under {repo_root}; run /uo-init first "
+            "(expected .ascendc-pilot/<arch>/uo/<op>.<arch>.uo)"
+        )
 
     change_set: dict[str, Any] | None = None
     plan: dict[str, Any] | None = None
@@ -45,9 +51,22 @@ def update_operator(
         if change_set is not None:
             plan = load_update_plan_if_fresh(uo_root, change_set=change_set)
     if change_set is None:
-        change_set = detect_kb_changes(repo_root, op_name, base=base, head=head, write=True)
+        change_set = detect_kb_changes(
+            repo_root,
+            op_name,
+            base=base,
+            head=head,
+            write=True,
+            architecture=architecture,
+        )
     if plan is None:
-        plan = plan_kb_update(repo_root, op_name, change_set=change_set, write=True)
+        plan = plan_kb_update(
+            repo_root,
+            op_name,
+            change_set=change_set,
+            write=True,
+            architecture=architecture,
+        )
 
     run_id = str(run_id or "").strip() or _new_run_id()
     update_dir = uo_root / "runs" / run_id / "update"
@@ -61,7 +80,13 @@ def update_operator(
         and not plan.get("scoped_changed_files")
     ):
         export_diff_product(
-            repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True
+            repo_root,
+            op_name,
+            change_set=change_set,
+            update_plan=plan,
+            status="blocked",
+            write=True,
+            architecture=architecture,
         )
         receipt = _receipt(
             run_id, change_set, plan, status="blocked", message="needs scope confirmation"
@@ -79,7 +104,13 @@ def update_operator(
         suspicious = [f for f in (change_set.get("files") or []) if f.get("suspicious_out_of_scope")]
         if suspicious:
             export_diff_product(
-                repo_root, op_name, change_set=change_set, update_plan=plan, status="blocked", write=True
+                repo_root,
+                op_name,
+                change_set=change_set,
+                update_plan=plan,
+                status="blocked",
+                write=True,
+                architecture=architecture,
             )
             receipt = _receipt(
                 run_id,
@@ -99,7 +130,13 @@ def update_operator(
 
     if plan.get("mode") == "noop":
         export_diff_product(
-            repo_root, op_name, change_set=change_set, update_plan=plan, status="ready", write=True
+            repo_root,
+            op_name,
+            change_set=change_set,
+            update_plan=plan,
+            status="ready",
+            write=True,
+            architecture=architecture,
         )
         _bump_manifest(uo_root, change_set.get("head_revision"), run_id)
         receipt = _receipt(run_id, change_set, plan, status="pass", message="no in-scope changes")
@@ -125,7 +162,13 @@ def update_operator(
     failed = [r for r in action_results if not r.get("ok")]
     if failed:
         export_diff_product(
-            repo_root, op_name, change_set=change_set, update_plan=plan, status="fail", write=True
+            repo_root,
+            op_name,
+            change_set=change_set,
+            update_plan=plan,
+            status="fail",
+            write=True,
+            architecture=architecture,
         )
         receipt = _receipt(
             run_id,
@@ -146,7 +189,13 @@ def update_operator(
 
     _bump_manifest(uo_root, change_set.get("head_revision"), run_id)
     export_diff_product(
-        repo_root, op_name, change_set=change_set, update_plan=plan, status="ready", write=True
+        repo_root,
+        op_name,
+        change_set=change_set,
+        update_plan=plan,
+        status="ready",
+        write=True,
+        architecture=architecture,
     )
     receipt = _receipt(run_id, change_set, plan, status="pass", message="uo_init rebuild ok")
     write_yaml(update_dir / "receipt.yaml", receipt)
@@ -175,6 +224,7 @@ def _run_rebuild_actions(
     ctx = {
         "op_name": plan.get("op_name") or repo_root.name,
         "arch_dir": architecture,
+        "architecture": architecture,
         "run_id": run_id,
         "cann_root": cann_root or "",
         "ops_root": ops_root or str(repo_root.parent),

@@ -90,9 +90,13 @@ def test_source_contract_recovers_19_keys_api_tilingdata_and_kernel_flow(tmp_pat
     assert cm.by_name("IsEmptyTensor", kind=EntityKind.TILING_KEY)
     assert len(cm.by_kind(EntityKind.TILING_DATA)) == 2
     assert len(cm.by_kind(EntityKind.TILING_FIELD)) == 4
-    assert len([e for e in cm.by_kind(EntityKind.INPUT) if e.attrs.get("api_kind") == "tensor"]) == 2
+    tensor_inputs = [e for e in cm.by_kind(EntityKind.INPUT) if e.attrs.get("api_kind") == "tensor"]
+    assert len(tensor_inputs) == 2
+    assert tensor_inputs[0].attrs.get("dtype") == ["DT_FLOAT16"]
     assert len([e for e in cm.by_kind(EntityKind.INPUT) if e.attrs.get("api_kind") == "attribute"]) == 1
-    assert len(cm.by_kind(EntityKind.OUTPUT)) == 1
+    outputs = list(cm.by_kind(EntityKind.OUTPUT))
+    assert len(outputs) == 1
+    assert outputs[0].attrs.get("dtype") == ["DT_FLOAT16"]
 
     bound = {
         cm.entities[r.src].name
@@ -105,3 +109,60 @@ def test_source_contract_recovers_19_keys_api_tilingdata_and_kernel_flow(tmp_pat
     assert report["counts"]["source_declared_tiling_keys"] == 19
     assert report["evidence_backed_tilingdata_kernel_path"] is True
     assert report["evidence_backed_input_output_path"] is True
+
+
+def test_registered_type_without_tiling_data_filename_has_fields(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n"
+        "  .INPUT(query, TensorType({DT_FLOAT16}))\n"
+        "  .OUTPUT(out, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch35" / "layout_types.h").write_text(
+        "class PackedLayout { public:\n  uint32_t blockDim;\n  int64_t s1;\n};\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy_apt.cpp").write_text(
+        '#include "arch35/layout_types.h"\n'
+        "template <bool Flag>\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *query, __gm__ uint8_t *out, "
+        "__gm__ uint8_t *workspace, __gm__ uint8_t *tiling_data) {\n"
+        '  REGISTER_TILING_FOR_TILINGKEY("(TILING_KEY_VAR & 0x1)", PackedLayout);\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    from uo_init.passes.tiling_field_complete import complete_tiling_fields
+    from uo_init.passes.tiling_registration import enrich_tiling_registrations
+
+    complete_tiling_fields(cm, op, architecture="arch35")
+    enrich_tiling_registrations(cm, op, architecture="arch35")
+
+    assert cm.by_name("PackedLayout", kind=EntityKind.TILING_DATA)
+    fields = {e.name for e in cm.by_kind(EntityKind.TILING_FIELD) if e.attrs.get("owner") == "PackedLayout"}
+    assert {"blockDim", "s1"} <= fields
+    td = cm.by_name("PackedLayout", kind=EntityKind.TILING_DATA)[0]
+    kernels = cm.by_kind(EntityKind.KERNEL)
+    assert kernels
+    assert any(
+        r.src == td.id and r.dst == kernels[0].id and r.kind_name() == "FLOWS_TO"
+        for r in cm.relations.values()
+    )
+
+    from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
+    from uo_init.passes.kernel_tiling_metrics import finalize_kernel_tiling_metrics
+
+    finalize_kernel_tiling_closure(cm, op, architecture="arch35")
+    finalize_kernel_tiling_metrics(cm)
+    assert any(
+        r.src == td.id
+        and r.dst in {k.id for k in cm.by_kind(EntityKind.KERNEL)}
+        and r.kind_name() == "FLOWS_TO"
+        for r in cm.relations.values()
+    )

@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
@@ -518,6 +518,7 @@ class ClangIncludeResult:
     ok: bool
     paths: list[Path] = field(default_factory=list)
     error: str = ""
+    probe: dict[str, Any] | None = None
 
 
 @dataclass
@@ -529,26 +530,130 @@ class ClangEnrichment:
     tus_expected: int = 0
     tus_parsed: int = 0
     errors: list[str] = field(default_factory=list)
+    probes: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def complete(self) -> bool:
         return self.status == "complete"
 
 
-def clang_include_paths(tu_path: str | Path, args: list[str]) -> ClangIncludeResult:
+def load_prepared_scope(op_dir: str | Path, arch_dir: str | None) -> ScopeSet | None:
+    """Reuse prepare's clang-complete ``scope_set.yaml`` so extract does not re-parse.
+
+    ``UO_FORCE_SCOPE_ENRICH=1`` ignores the receipt and re-walks includes.
+    """
+    import os
+
+    import yaml
+
+    from uo_init.paths import require_architecture
+
+    if str(os.environ.get("UO_FORCE_SCOPE_ENRICH") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        return None
+    try:
+        arch = require_architecture(arch_dir)
+    except Exception:
+        return None
+    root = Path(op_dir).expanduser().resolve()
+    uo = root / ".ascendc-pilot" / arch / "uo"
+    cand_path = uo / "summary" / "scope_candidates.yaml"
+    scope_path = uo / "summary" / "scope_set.yaml"
+    if not scope_path.is_file():
+        return None
+    status = ""
+    if cand_path.is_file():
+        try:
+            cand = yaml.safe_load(cand_path.read_text(encoding="utf-8")) or {}
+            status = str((cand or {}).get("clang_scope_status") or "")
+        except Exception:  # noqa: BLE001
+            return None
+    if status != "complete":
+        return None
+    try:
+        data = yaml.safe_load(scope_path.read_text(encoding="utf-8")) or {}
+        if not isinstance(data, dict) or not data.get("files"):
+            return None
+        return ScopeSet.from_dict(data)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _probe_from_parsed_tu(tu: Any, path: str, op_dir: str) -> dict[str, Any]:
+    """Same cleanliness score as ``probe_diagnostics``, from an already-parsed TU."""
+    from uo_init.diag_scope import diagnostic_in_operator
+
+    errors = 0
+    fatals = 0
+    op_errors = 0
+    op_fatals = 0
+    samples: list[str] = []
+    try:
+        diags = list(tu.diagnostics)
+    except Exception:  # noqa: BLE001
+        diags = []
+    for d in diags:
+        try:
+            sev = int(d.severity)
+        except Exception:  # noqa: BLE001
+            continue
+        if sev < 3:
+            continue
+        errors += 1
+        if sev >= 4:
+            fatals += 1
+        loc_file = ""
+        try:
+            if d.location.file is not None:
+                loc_file = str(d.location.file.name)
+        except Exception:  # noqa: BLE001
+            loc_file = ""
+        in_op = diagnostic_in_operator(loc_file, op_dir, path)
+        if in_op:
+            op_errors += 1
+            if sev >= 4:
+                op_fatals += 1
+        if len(samples) < 5:
+            try:
+                samples.append(str(d.spelling)[:200])
+            except Exception:  # noqa: BLE001
+                pass
+    relevant = op_errors if fatals == 0 else op_errors + fatals
+    return {
+        "error_count": errors,
+        "fatal_count": fatals,
+        "operator_error_count": op_errors,
+        "operator_fatal_count": op_fatals,
+        "probe_relevant_errors": relevant,
+        "samples": samples,
+        "skipped_bodies": False,
+    }
+
+
+def clang_include_paths(
+    tu_path: str | Path,
+    args: list[str],
+    *,
+    op_dir: str | Path = "",
+) -> ClangIncludeResult:
     """Files Clang actually included while parsing ``tu_path``.
 
     Requires ``PARSE_DETAILED_PROCESSING_RECORD``. Distinguishes parse failure
-    from a successful parse that simply pulled no project headers.
+    from a successful parse that simply pulled no project headers. Also scores
+    diagnostics so prepare does not re-parse the same TU for ``probe``.
     """
     try:
         from clang import cindex
     except ImportError:
         return ClangIncludeResult(ok=False, error="libclang_not_installed")
+    path_s = str(tu_path)
     try:
         idx = cindex.Index.create()
         tu = idx.parse(
-            str(tu_path),
+            path_s,
             args=list(args),
             options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
         )
@@ -580,7 +685,8 @@ def clang_include_paths(tu_path: str | Path, args: list[str]) -> ClangIncludeRes
             continue
         seen.add(key)
         out.append(Path(name))
-    return ClangIncludeResult(ok=True, paths=out)
+    probe = _probe_from_parsed_tu(tu, path_s, str(op_dir or ""))
+    return ClangIncludeResult(ok=True, paths=out, probe=probe)
 
 
 def enrich_with_clang(
@@ -629,9 +735,32 @@ def enrich_with_clang(
     external_hits = 0
     parsed = 0
     errors: list[str] = []
+    probes: list[dict[str, Any]] = []
+    op_dir_s = str(scope.op_dir)
 
-    for tu_path, args, side in jobs:
-        result = clang_include_paths(tu_path, args)
+    def _parse_one(job: tuple[Path, list[str], str]) -> tuple[Path, str, ClangIncludeResult]:
+        tu_path, args, side = job
+        return tu_path, side, clang_include_paths(tu_path, args, op_dir=op_dir_s)
+
+    parsed_jobs: list[tuple[Path, str, ClangIncludeResult]]
+    if len(jobs) <= 1:
+        parsed_jobs = [_parse_one(j) for j in jobs]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+
+        workers = min(len(jobs), 8)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            parsed_jobs = list(pool.map(_parse_one, jobs))
+
+    for tu_path, side, result in parsed_jobs:
+        if result.probe:
+            probes.append(
+                {
+                    "file": tu_path.as_posix(),
+                    "side": side,
+                    **result.probe,
+                }
+            )
         if not result.ok:
             err = result.error or f"clang_includes_failed:{tu_path.name}"
             errors.append(err)
@@ -706,4 +835,5 @@ def enrich_with_clang(
         tus_expected=len(jobs),
         tus_parsed=parsed,
         errors=errors,
+        probes=probes,
     )

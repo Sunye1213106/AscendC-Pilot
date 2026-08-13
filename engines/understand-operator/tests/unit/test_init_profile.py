@@ -26,14 +26,23 @@ def test_fast_is_default(monkeypatch):
     monkeypatch.delenv("UO_FAST_HARNESS_LIMIT", raising=False)
     assert profile_name() == "fast"
     assert default_closure_mode({}) == "keypath"
-    # AscendC compile-time fold stays on; cost is capped by harness_limit.
-    assert default_fold_kernel({}) is True
+    # Cold path: skip clang -ast-dump fold; uninstantiated kernel_ir is enough.
+    assert default_fold_kernel({}) is False
     assert default_harness_limit({}) == 8
     assert default_with_kernel({}) is True
     assert default_kernel_max_variants({}) == 1
     assert default_with_api({}) is False
     assert default_closure_max_nodes({}) == 96
     assert cold_budget_s() == 180.0
+
+
+def test_explicit_fast_caps_kernel_variants(monkeypatch):
+    monkeypatch.setenv("UO_INIT_PROFILE", "fast")
+    monkeypatch.delenv("UO_KERNEL_MAX_VARIANTS", raising=False)
+    monkeypatch.delenv("UO_FOLD_KERNEL", raising=False)
+    assert profile_name() == "fast"
+    assert default_kernel_max_variants({}) == 1
+    assert default_fold_kernel({}) is False
 
 
 def test_full_profile(monkeypatch):

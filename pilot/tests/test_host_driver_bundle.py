@@ -145,8 +145,44 @@ def test_materialize_method_bundle_copies_refs(tmp_path: Path) -> None:
         project_root=REPO,
     )
     assert (sdir / "method.md").is_file()
-    # Either copied refs or recorded missing — must not raise.
     assert "copied" in mat or "missing" in mat
+    method = (sdir / "method.md").read_text(encoding="utf-8")
+    assert "Available refs (index)" in method
+    # Default: index only; unnamed refs are not copied.
+    assert mat.get("copied") == []
+    assert mat.get("indexed")
+
+
+def test_materialize_method_bundle_copies_named_refs_only(tmp_path: Path) -> None:
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    mat = materialize_method_bundle(
+        sdir,
+        skill_ids=["code-engineering"],
+        existing_method="See playbook `references/gotchas.md`.\n",
+        project_root=REPO,
+        prompt="Also `references/risk-classes.md`.\n",
+    )
+    copied = list(mat.get("copied") or [])
+    assert copied == [
+        "refs/code-engineering/gotchas.md",
+        "refs/code-engineering/risk-classes.md",
+    ]
+    assert (sdir / "refs" / "code-engineering" / "gotchas.md").is_file()
+    assert (sdir / "refs" / "code-engineering" / "risk-classes.md").is_file()
+    assert not (sdir / "refs" / "code-engineering" / "scenario-catalog.md").is_file()
+    assert any("scenario-catalog.md" in x for x in (mat.get("indexed") or []))
+
+
+def test_method_bundle_repo_root_is_parents_3() -> None:
+    from ascendc_pilot.actions import method_bundle as mb
+
+    here = Path(mb.__file__).resolve()
+    assert here.parents[3] in mb._repo_candidates(None)
+    found = mb.find_cognitive_skill_dir("code-engineering", project_root=None)
+    assert found is not None
+    assert (found / "SKILL.md").is_file()
+    assert (found / "references" / "gotchas.md").is_file()
 
 
 def test_serve_authorize_ping_and_register_session(tmp_path: Path) -> None:
@@ -281,8 +317,8 @@ def test_parse_acp_stdout_ignores_stderr_heartbeat() -> None:
 
     stdout = json.dumps({"ok": True, "host_step": {"kind": "done"}}, ensure_ascii=False)
     stderr = (
-        "[acp-auto] drain start (deterministic…)\n"
-        "[acp-auto] run prepare still running (15s)…\n"
+        "[acp-auto] drain start\n"
+        "[acp-auto] run prepare (phase=prepare 准备范围)\n"
         "[acp-auto] drain stop interaction_required\n"
     )
     # Simulate the fixed parser (must NOT concat stderr).

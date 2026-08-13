@@ -220,56 +220,28 @@ def uo_codemap_path(
 
 
 def migrate_top_level_uo_products(project_root: Path) -> dict[str, object]:
-    """Move legacy ``.ascendc-pilot/uo/*.uo`` into ``.ascendc-pilot/<arch>/uo/``.
+    """Refuse leftover ``.ascendc-pilot/uo/*.uo``; they are not products.
 
-    Arch is taken from the ``.<arch>.uo`` filename suffix. Empty top-level
-    ``uo/`` is removed after a successful move.
+    Automatic move into ``<arch>/uo/`` is disabled. Callers must relocate
+    or delete the files. Empty leftover directories are ignored.
     """
     root = Path(project_root).expanduser().resolve()
     legacy = root / AGENT_DIR / UO_SUBDIR
     if not legacy.is_dir():
         return {"ok": True, "migrated": False, "moved": []}
-    moved: list[str] = []
-    for path in sorted(legacy.glob("*.uo")):
-        if not path.is_file():
-            continue
-        stem = path.name[: -len(path.suffix)] if path.suffix == ".uo" else path.stem
-        parts = stem.rsplit(".", 1)
-        if len(parts) != 2 or not parts[1].startswith("arch"):
-            continue
-        arch_name = parts[1]
-        dest_dir = root / AGENT_DIR / arch_name / UO_SUBDIR
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / path.name
-        if dest.exists():
-            # Prefer the arch-scoped copy; drop the legacy duplicate.
-            path.unlink()
-            moved.append(f"{path.name}->exists:{dest.as_posix()}")
-            continue
-        shutil.move(str(path), str(dest))
-        moved.append(f"{path.name}->{dest.as_posix()}")
-    # Remove empty legacy tree (or leftover non-.uo junk after products moved).
-    if legacy.is_dir() and not any(legacy.glob("*.uo")):
-        try:
-            # Only rmtree when no other meaningful files remain, else leave.
-            leftovers = [p for p in legacy.rglob("*") if p.is_file()]
-            if not leftovers:
-                shutil.rmtree(legacy)
-            elif moved:
-                # Products moved; clear empty dirs if possible.
-                for p in sorted(legacy.rglob("*"), reverse=True):
-                    if p.is_dir():
-                        try:
-                            p.rmdir()
-                        except OSError:
-                            pass
-                try:
-                    legacy.rmdir()
-                except OSError:
-                    pass
-        except OSError:
-            pass
-    return {"ok": True, "migrated": bool(moved), "moved": moved}
+    leftover = [p for p in sorted(legacy.glob("*.uo")) if p.is_file()]
+    if leftover:
+        return {
+            "ok": False,
+            "error": "legacy_top_level_uo",
+            "message": (
+                "top-level .ascendc-pilot/uo/*.uo is not a product; "
+                "move into .ascendc-pilot/<arch>/uo/ or delete. "
+                "Automatic migrate is disabled."
+            ),
+            "paths": [p.name for p in leftover],
+        }
+    return {"ok": True, "migrated": False, "moved": []}
 
 
 def tg_root(
@@ -309,38 +281,36 @@ def state_root(project_root: Path, *, arch: str | None = None) -> Path:
 
 
 def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> dict[str, object]:
-    """Migrate flat ``.ascendc-pilot/`` → ``.ascendc-pilot/<arch>/`` when needed.
+    """Normalize ``.ascendc-pilot/<arch>/`` layout. Never silently merge legacy dirs.
 
-    Also migrates ``.ascendc-agent`` → ``.ascendc-pilot`` when only legacy exists.
-
-    When ``arch`` is omitted, resolve via ``discover_arch`` (env → active_run →
-    sole workflow.yaml). Do **not** call ``resolve_arch(None)`` here: that only
-    looks at env vars and breaks ``acp run-action`` after a successful
-    ``acp start --architecture …`` that already pinned ``active_run.yaml``.
+    ``.ascendc-agent`` and top-level ``.ascendc-pilot/uo/*.uo`` are refused.
+    Flat control-plane dirs already under ``.ascendc-pilot/`` may still nest
+    under ``<arch>/`` (same modern tree, not a second authority).
     """
     root = Path(project_root).expanduser().resolve()
     legacy = root / LEGACY_AGENT_DIR
     modern = root / AGENT_DIR
-    arch_name = (
-        resolve_arch(arch) if (arch and str(arch).strip()) else discover_arch(root)
-    )
-    target = modern / arch_name
-
-    if modern.exists() and legacy.exists():
+    if legacy.exists():
         return {
             "ok": False,
-            "error": "both_agent_dirs_exist",
-            "message": "Both .ascendc-agent and .ascendc-pilot exist; refuse automatic merge.",
+            "error": "legacy_agent_dir",
+            "message": (
+                ".ascendc-agent is retired; move contents to "
+                ".ascendc-pilot/<arch>/ manually. Automatic merge is disabled."
+            ),
         }
-    if not modern.exists() and legacy.exists():
-        shutil.move(str(legacy), str(modern))
+
+    leftover = migrate_top_level_uo_products(root)
+    if leftover.get("ok") is False:
+        return leftover
 
     if not modern.exists():
         return {"ok": True, "migrated": False, "root": ""}
 
-    # Nest control-plane dirs under <arch>/. Also fold legacy top-level
-    # CodeMap products (``.ascendc-pilot/uo/*.uo``) into ``<arch>/uo/``.
-    migrate_top_level_uo_products(root)
+    arch_name = (
+        resolve_arch(arch) if (arch and str(arch).strip()) else discover_arch(root)
+    )
+    target = modern / arch_name
     product_uo = modern / UO_SUBDIR
     has_codemap_product = product_uo.is_dir() and any(product_uo.glob("*.uo"))
     flat_control = (modern / TG_SUBDIR, modern / STATE_SUBDIR, modern / CONTEXT_SUBDIR)
@@ -373,7 +343,9 @@ def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> 
 
 def ensure_control_layout(project_root: Path, *, arch: str | None = None) -> Path:
     """Create only control-plane dirs: state / context / runs."""
-    migrate_legacy_agent_dir(project_root, arch=arch)
+    result = migrate_legacy_agent_dir(project_root, arch=arch)
+    if result.get("ok") is False:
+        raise ValueError(f"{result.get('error')}: {result.get('message')}")
     root = agent_root(project_root, arch)
     for rel in (STATE_SUBDIR, CONTEXT_SUBDIR, RUNS_SUBDIR):
         (root / rel).mkdir(parents=True, exist_ok=True)
@@ -421,7 +393,9 @@ def ensure_agent_layout(project_root: Path, *, arch: str | None = None) -> Path:
     Prefer ``ensure_control_layout`` / ``ensure_uo_layout`` / ``ensure_tg_layout``
     at workflow entry points so unused product trees are not pre-created.
     """
-    migrate_legacy_agent_dir(project_root, arch=arch)
+    result = migrate_legacy_agent_dir(project_root, arch=arch)
+    if result.get("ok") is False:
+        raise ValueError(f"{result.get('error')}: {result.get('message')}")
     root = agent_root(project_root, arch)
     for rel in (
         UO_SUBDIR,

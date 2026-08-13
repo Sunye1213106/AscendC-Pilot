@@ -3,7 +3,7 @@
 
 Two start modes (Spec SSOT):
 - ``requires_architecture`` (uo-init / uo-update): choose arch* from the operator tree
-- ``requires_uo_product`` (tg-*/ce-review/uo-query/uo-investigate): architecture comes
+- ``requires_uo_product`` (tg-*/ce-*/uo-query/uo-investigate): architecture comes
   from an existing ``.uo``; missing CodeMap → ask user to run /uo-init first
 """
 
@@ -232,29 +232,19 @@ def parse_uo_product_name(path: Path) -> dict[str, str]:
 def discover_uo_products(root: Path | str | None) -> list[dict[str, str]]:
     """List finalized CodeMap products under ``.ascendc-pilot/<arch>/uo/*.uo``.
 
-    Also accepts legacy top-level ``.ascendc-pilot/uo/*.uo`` (pre-unification).
+    Top-level ``.ascendc-pilot/uo/*.uo`` is not a product and is not listed.
     """
     if root is None:
         return []
     base = Path(root).expanduser().resolve() / ".ascendc-pilot"
     if not base.is_dir():
         return []
-    # Prefer migrating legacy products into arch trees when possible.
-    try:
-        from ascendc_pilot.paths import migrate_top_level_uo_products
-
-        migrate_top_level_uo_products(base.parent)
-    except Exception:
-        pass
     out: list[dict[str, str]] = []
     seen: set[str] = set()
     search_dirs: list[Path] = []
     for child in sorted(base.iterdir()):
         if child.is_dir() and child.name.startswith("arch"):
             search_dirs.append(child / "uo")
-    legacy = base / "uo"
-    if legacy.is_dir():
-        search_dirs.append(legacy)
     for product_dir in search_dirs:
         if not product_dir.is_dir():
             continue

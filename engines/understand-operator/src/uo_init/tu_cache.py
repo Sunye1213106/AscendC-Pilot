@@ -84,6 +84,7 @@ def build_context_fingerprint(
     side: str,
     dtype_variant: str | None,
     parse_flags: Iterable[str] | None = None,
+    source_path: str | Path | None = None,
 ) -> str:
     """Fingerprint include roots / CANN paths / parse args that affect the walk."""
     parts: list[str] = [
@@ -97,7 +98,9 @@ def build_context_fingerprint(
     ]
     try:
         args = list(parse_flags) if parse_flags is not None else (
-            ctx.host_args() if side == "host" else ctx.kernel_args(dtype_variant=dtype_variant)
+            ctx.host_args()
+            if side == "host"
+            else ctx.kernel_args(dtype_variant=dtype_variant, source_path=source_path)
         )
     except Exception:  # noqa: BLE001
         args = []
@@ -133,7 +136,9 @@ def walk_cache_key(
     source_sha: str | None = None,
 ) -> str:
     src_sha = source_sha or sha256_file(path)
-    ctx_fp = build_context_fingerprint(ctx, side=side, dtype_variant=dtype_variant)
+    ctx_fp = build_context_fingerprint(
+        ctx, side=side, dtype_variant=dtype_variant, source_path=path
+    )
     payload = "\0".join(
         [
             f"v{CACHE_VERSION}",

@@ -392,7 +392,7 @@ def start_workflow(
     from ascendc_pilot.todo import attach_todo
 
     return attach_todo(
-        {**(fresh or {}), "fresh_start": True},
+        {**(fresh or {}), "fresh_start": True, "ok": True},
         project_root,
         state=fresh,
         sync_merge=False,

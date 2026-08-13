@@ -40,7 +40,7 @@ python scripts/check_ownership_contracts.py
 
 Skill 是自包含的 runtime method bundle。修改 `skills/<domain>/SKILL.md`，将必要的证据、完整性和易错点规则放在 `references/`，将可执行示例放在 `examples/`。行为改变时更新 `evals/skills/<domain>/`。
 
-不要依赖已废弃的 `skills/_shared/`，也不要把项目架构说明复制进 Skill。运行：
+不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。运行：
 
 ```bash
 python scripts/check_skill_architecture.py

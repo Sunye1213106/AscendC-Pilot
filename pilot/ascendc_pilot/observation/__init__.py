@@ -39,11 +39,19 @@ RETRYABLE_CLASSES = frozenset(
 )
 # Do not increment no_progress_streak / decrement retry_budget (semantic attempts).
 NON_SEMANTIC_BURN_CLASSES = frozenset({IDENTITY_CONTRACT, FORMAT_TRANSPORT, TRANSIENT_TOOL})
+# Quality-gate classes: retry only when an LLM producer can change the output.
+_QUALITY_CLASSES = frozenset({PRODUCER_OUTPUT, CHECKER_GATE})
+_LLM_EXECUTION_MODES = frozenset({"subagent", "primary_interactive"})
 
 # Legal recovery verbs surfaced to agents / humans
 HUMAN_LEGAL_ACTIONS = (
     "inspect_failure",
     "retry_after_environment_fix",
+    "abort_run",
+)
+# Deterministic quality failures have no environment to "fix"; do not retry the script.
+QUALITY_HUMAN_LEGAL_ACTIONS = (
+    "inspect_failure",
     "abort_run",
 )
 CONTAINMENT_HARNESS_COMMANDS = (
@@ -114,6 +122,90 @@ def new_observation_id() -> str:
     return f"OBS_{uuid.uuid4().hex[:12]}"
 
 
+def _is_llm_action(action: dict[str, Any] | None) -> bool:
+    if not isinstance(action, dict):
+        return False
+    mode = str(action.get("execution_mode") or "").strip().lower()
+    role = str(action.get("role_id") or "")
+    if role == "deterministic_engine" or mode == "deterministic":
+        return False
+    return mode in _LLM_EXECUTION_MODES
+
+
+def llm_rework_action_ids(
+    workflow_id: str,
+    *,
+    failed_action_id: str = "",
+    phase: str = "",
+    reason_code: str = "",
+) -> list[str]:
+    """LLM Actions that can change the failed quality output. Deterministic scripts never qualify."""
+    if not workflow_id:
+        return []
+    try:
+        from ascendc_pilot.workflows import action_by_id, actions_for_phase, rework_targets
+    except Exception:  # noqa: BLE001
+        return []
+    failed = action_by_id(workflow_id, failed_action_id) if failed_action_id else None
+    if _is_llm_action(failed):
+        return [str(failed_action_id)]
+    out: list[str] = []
+    if not phase:
+        return out
+    for target_phase in rework_targets(workflow_id, phase, reason_code=reason_code):
+        for act in actions_for_phase(workflow_id, target_phase):
+            if not _is_llm_action(act):
+                continue
+            aid = str(act.get("id") or "")
+            if aid and aid not in out:
+                out.append(aid)
+    return out
+
+
+def _apply_execution_rework_policy(
+    result: dict[str, Any],
+    *,
+    execution_mode: str = "",
+    workflow_id: str = "",
+    action_id: str = "",
+    phase: str = "",
+) -> dict[str, Any]:
+    """Deterministic quality failures are not reworkable; only LLM producers are."""
+    fc = str(result.get("failure_class") or "")
+    if fc in HUMAN_CLASSES:
+        return result
+    if fc == TRANSIENT_TOOL:
+        result["retryable"] = True
+        result["recommended_transition"] = "rework_required"
+        if action_id:
+            result["rework_action_ids"] = [action_id]
+        return result
+    if fc in NON_SEMANTIC_BURN_CLASSES:
+        return result
+    if fc not in _QUALITY_CLASSES:
+        return result
+    llm_ids = llm_rework_action_ids(
+        workflow_id,
+        failed_action_id=action_id,
+        phase=phase,
+        reason_code=str(result.get("failure_class") or ""),
+    )
+    mode = str(execution_mode or "").strip().lower()
+    if not llm_ids and _is_llm_action({"execution_mode": mode, "role_id": ""}):
+        llm_ids = [action_id] if action_id else []
+    if llm_ids:
+        result["retryable"] = True
+        result["recommended_transition"] = "rework_required"
+        result["rework_action_ids"] = llm_ids
+        return result
+    if mode == "deterministic" or (workflow_id and action_id and not llm_ids):
+        result["retryable"] = False
+        result["recommended_transition"] = "human_required"
+        result["rework_action_ids"] = []
+        return result
+    return result
+
+
 def classify_failure(
     *,
     error_code: str | None = None,
@@ -122,17 +214,27 @@ def classify_failure(
     action_id: str = "",
     source: str = "",
     explicit_class: str | None = None,
+    execution_mode: str = "",
+    workflow_id: str = "",
+    phase: str = "",
 ) -> dict[str, Any]:
     """Centralized failure classification. Do not scatter string checks in callers."""
     if explicit_class:
         fc = str(explicit_class)
-        return {
+        result = {
             "failure_class": fc,
             "retryable": fc in RETRYABLE_CLASSES,
             "recommended_transition": (
                 "human_required" if fc in HUMAN_CLASSES else "rework_required"
             ),
         }
+        return _apply_execution_rework_policy(
+            result,
+            execution_mode=execution_mode,
+            workflow_id=workflow_id,
+            action_id=action_id,
+            phase=phase,
+        )
 
     blob = " ".join(
         [
@@ -147,87 +249,98 @@ def classify_failure(
     def _hit(pats: tuple[re.Pattern[str], ...]) -> bool:
         return any(p.search(blob) for p in pats)
 
+    result: dict[str, Any]
     # uo-scope finalize failures are environment invariants (ses_0711), not agent rework
     step_l = str(step_id).lower().replace("-", "_")
     if step_l in {"finalize", "uo_scope_finalize", "finalize_scope"} or (
         source == "uo_scope" and "finalize" in step_l
     ):
         if not _hit(_TRANSIENT_PATTERNS):
-            return {
+            result = {
                 "failure_class": ENVIRONMENT_INVARIANT,
                 "retryable": False,
                 "recommended_transition": "human_required",
             }
-
-    if _hit(_POLICY_PATTERNS):
-        return {
+        else:
+            result = {
+                "failure_class": TRANSIENT_TOOL,
+                "retryable": True,
+                "recommended_transition": "rework_required",
+            }
+    elif _hit(_POLICY_PATTERNS):
+        result = {
             "failure_class": POLICY_VIOLATION,
             "retryable": False,
             "recommended_transition": "human_required",
         }
-    # Missing required CLI args / agent usage errors → producer rework, not env
-    if re.search(r"decision[_-]?required|missing[_-]?required|argument", blob, re.I):
-        return {
+    elif re.search(r"decision[_-]?required|missing[_-]?required|argument", blob, re.I):
+        result = {
             "failure_class": PRODUCER_OUTPUT,
             "retryable": True,
             "recommended_transition": "rework_required",
         }
-    if _hit(_SPEC_PATTERNS):
-        return {
+    elif _hit(_SPEC_PATTERNS):
+        result = {
             "failure_class": WORKFLOW_SPEC_ERROR,
             "retryable": False,
             "recommended_transition": "human_required",
         }
-    if _hit(_ENV_INVARIANT_PATTERNS):
-        return {
+    elif _hit(_ENV_INVARIANT_PATTERNS):
+        result = {
             "failure_class": ENVIRONMENT_INVARIANT,
             "retryable": False,
             "recommended_transition": "human_required",
         }
-    if _hit(_TRANSIENT_PATTERNS):
-        return {
+    elif _hit(_TRANSIENT_PATTERNS):
+        result = {
             "failure_class": TRANSIENT_TOOL,
             "retryable": True,
             "recommended_transition": "rework_required",
         }
-    if _hit(_IDENTITY_PATTERNS):
-        return {
+    elif _hit(_IDENTITY_PATTERNS):
+        result = {
             "failure_class": IDENTITY_CONTRACT,
             "retryable": True,
             "recommended_transition": "rework_required",
         }
-    if _hit(_FORMAT_TRANSPORT_PATTERNS):
-        return {
+    elif _hit(_FORMAT_TRANSPORT_PATTERNS):
+        result = {
             "failure_class": FORMAT_TRANSPORT,
             "retryable": True,
             "recommended_transition": "rework_required",
         }
-    if _hit(_PRODUCER_PATTERNS) or source in {"finalize_action", "output_contract"}:
-        # checker/output-contract failures that agents can rework
+    elif _hit(_PRODUCER_PATTERNS) or source in {"finalize_action", "output_contract"}:
         if source in {"finalize_action", "checker", "gate"} and not _hit(_ENV_INVARIANT_PATTERNS):
-            return {
+            result = {
                 "failure_class": CHECKER_GATE,
                 "retryable": True,
                 "recommended_transition": "rework_required",
             }
-        return {
-            "failure_class": PRODUCER_OUTPUT,
-            "retryable": True,
-            "recommended_transition": "rework_required",
-        }
-    if source in {"advance", "complete", "gate", "checker", "finalize_action"}:
-        return {
+        else:
+            result = {
+                "failure_class": PRODUCER_OUTPUT,
+                "retryable": True,
+                "recommended_transition": "rework_required",
+            }
+    elif source in {"advance", "complete", "gate", "checker", "finalize_action"}:
+        result = {
             "failure_class": CHECKER_GATE,
             "retryable": True,
             "recommended_transition": "rework_required",
         }
-
-    # Default: treat unknown acp failures as reworkable checker-style
-    return {
-        "failure_class": CHECKER_GATE,
-        "retryable": True,
-        "recommended_transition": "rework_required",
-    }
+    else:
+        result = {
+            "failure_class": CHECKER_GATE,
+            "retryable": True,
+            "recommended_transition": "rework_required",
+        }
+    return _apply_execution_rework_policy(
+        result,
+        execution_mode=execution_mode,
+        workflow_id=workflow_id,
+        action_id=action_id,
+        phase=phase,
+    )
 
 
 def failure_fingerprint(
@@ -284,6 +397,19 @@ def build_observation(
                 }
             )
 
+    workflow_id = str(state.get("workflow_id") or "")
+    phase = str(state.get("phase") or "")
+    execution_mode = ""
+    if workflow_id and action_id:
+        try:
+            from ascendc_pilot.workflows import action_by_id
+
+            act = action_by_id(workflow_id, action_id)
+            if isinstance(act, dict):
+                execution_mode = str(act.get("execution_mode") or "")
+        except Exception:  # noqa: BLE001
+            execution_mode = ""
+
     if outcome == "success":
         classification = {
             "failure_class": None,
@@ -299,6 +425,9 @@ def build_observation(
             action_id=action_id,
             source=source,
             explicit_class=explicit_class,
+            execution_mode=execution_mode,
+            workflow_id=workflow_id,
+            phase=phase,
         )
         err = error_code or _default_error_code(
             action_id=action_id,
@@ -327,6 +456,7 @@ def build_observation(
         "recommended_transition": classification.get("recommended_transition"),
         "legal_recovery_actions": [],
         "forbidden_recovery_actions": [],
+        "rework_action_ids": list(classification.get("rework_action_ids") or []),
         "source": source or "",
         "created_at": _now(),
         "failure_fingerprint": (
@@ -343,7 +473,11 @@ def build_observation(
     }
     if outcome != "success":
         if classification.get("recommended_transition") == "human_required":
-            obs["legal_recovery_actions"] = list(HUMAN_LEGAL_ACTIONS)
+            fc = str(classification.get("failure_class") or "")
+            if fc in _QUALITY_CLASSES:
+                obs["legal_recovery_actions"] = list(QUALITY_HUMAN_LEGAL_ACTIONS)
+            else:
+                obs["legal_recovery_actions"] = list(HUMAN_LEGAL_ACTIONS)
             obs["forbidden_recovery_actions"] = [
                 "glob_pilot_internals",
                 "read_engine_source",
@@ -351,6 +485,7 @@ def build_observation(
                 "direct_domain_cli",
                 "continue_phase_actions",
                 "advance",
+                "retry_failed_action",
             ]
         else:
             obs["legal_recovery_actions"] = ["retry_failed_action", "inspect_failure"]
@@ -458,6 +593,7 @@ def build_failure_summary(observation: dict[str, Any]) -> dict[str, Any]:
         "recommended_transition": observation.get("recommended_transition"),
         "legal_recovery_actions": list(observation.get("legal_recovery_actions") or []),
         "forbidden_recovery_actions": list(observation.get("forbidden_recovery_actions") or []),
+        "rework_action_ids": list(observation.get("rework_action_ids") or []),
     }
 
 
@@ -504,7 +640,12 @@ def render_failure_card(state: dict[str, Any], observation: dict[str, Any] | Non
     if findings:
         for f in findings:
             if isinstance(f, dict):
-                lines.append(f"- {f.get('message') or f.get('code')}")
+                code = str(f.get("code") or "").strip()
+                msg = str(f.get("message") or f.get("detail") or "")
+                if code and msg:
+                    lines.append(f"- [{code}] {msg}")
+                else:
+                    lines.append(f"- {msg or code}")
             else:
                 lines.append(f"- {f}")
     else:
@@ -797,6 +938,8 @@ __all__ = [
     "CONTAINMENT_HARNESS_COMMANDS",
     "ENVIRONMENT_INVARIANT",
     "HUMAN_LEGAL_ACTIONS",
+    "QUALITY_HUMAN_LEGAL_ACTIONS",
+    "llm_rework_action_ids",
     "POLICY_VIOLATION",
     "PRODUCER_OUTPUT",
     "RETRY_EXHAUSTED",

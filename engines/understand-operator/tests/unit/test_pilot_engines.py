@@ -100,8 +100,9 @@ def test_prepare_layout_scrubs_legacy_layers_without_stubs(tmp_path: Path, monke
     assert not (uo / "kernel" / "pipeline.yaml").exists()
     assert out.get("seeded_not_extracted") == []
     manifest = (uo / "manifest.yaml").read_text(encoding="utf-8")
-    assert "kb_schema-v1" in manifest
+    assert "uo-codemap/v1" in manifest
     assert "prepared" in manifest
+    assert "DummyOp.arch35.uo" in manifest
     assert (uo / "runs" / "r_new" / "scope" / "layout_receipt.yaml").is_file()
     assert (uo / "summary").is_dir()
     assert (uo / "tiling").is_dir()
@@ -115,10 +116,10 @@ def test_resolve_gaps_autoskips_when_closed(tmp_path: Path):
         "version: 1\nstatus: closed\nblocker_count: 0\nblockers: []\n",
         encoding="utf-8",
     )
-    out = resolve_gaps(tmp_path, {"run_id": "r1"})
+    out = resolve_gaps(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
     assert out["ok"] and out["skipped"]
     assert (uo / "resolve_gaps_receipt.yaml").is_file()
-    patch = apply_gap_patch(tmp_path, {"run_id": "r1"})
+    patch = apply_gap_patch(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
     assert patch["ok"] and patch.get("skipped")
 
 
@@ -251,3 +252,27 @@ def test_scope_validate_auto_passes_when_clean(tmp_path: Path):
     text = (scope / "scope_validated.yaml").read_text(encoding="utf-8")
     assert "action_id: scope_validated" in text
     assert "action_id: prepare" not in text
+
+
+def test_scope_validate_soft_tiling_key_header_not_found(tmp_path: Path):
+    scope = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "runs" / "r1" / "scope"
+    scope.mkdir(parents=True)
+    (scope / "candidates.yaml").write_text(
+        "probe_clean: true\n"
+        "clang_scope_status: complete\n"
+        "clang_scope_tus_expected: 2\n"
+        "clang_scope_tus_parsed: 2\n"
+        "ambiguities:\n"
+        "  - 'tiling_key_header_not_found: no *template_tiling_key.h'\n"
+        "op_name: X\n"
+        "arch_dir: arch35\n"
+        "arch_user_specified: true\n"
+        "host_targets:\n"
+        "  - a.cpp\n"
+        "kernel_entry: k.cpp\n"
+        "scope_files: 3\n",
+        encoding="utf-8",
+    )
+    out = scope_validate(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
+    assert out["ok"] is True
+    assert "tiling_key_header_not_found" not in str(out.get("blockers") or [])

@@ -283,7 +283,7 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             report = audit_uo(product)
         ok = bool(report.get("ok"))
         with step("verify.write_integrity_receipt"):
-            uo = pe._uo_root(root)
+            uo = pe._uo_root(root, arch=arch)
             integrity = {
                 "version": 1,
                 "schema": "uo-product-integrity/v1",
@@ -338,11 +338,15 @@ def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                     "reused_analyze": True,
                 }
             path = uo_product_path(root, op_name, arch)
+            from uo_init.store.writer import detect_source_revision
+
+            revision = detect_source_revision(root)
             written = write_codemap(
                 cached["codemap"],
                 path,
                 views=views,
                 summary=cached.get("summary"),
+                meta={"source_revision": revision} if revision else None,
             )
             return {
                 "ok": bool(written.get("ok")),

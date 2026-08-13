@@ -16,6 +16,16 @@ from typing import Any, Iterable
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.query.engine import CodeMapQuery
+from uo_init.query.evidence import (
+    USEFUL_EDGE_KINDS,
+    bucket_hits,
+    field_edge_kinds,
+    is_flag_sync_api_name,
+    is_kernel_api_name,
+    is_tque_api_name,
+    project_entity,
+    project_relation,
+)
 from uo_init.store.reader import read_codemap
 
 _LEGACY_KIND_MAP: dict[str, set[str]] = {
@@ -24,8 +34,10 @@ _LEGACY_KIND_MAP: dict[str, set[str]] = {
     "OptionalInput": {"INPUT"},
     "Output": {"OUTPUT"},
     "TilingDataField": {"TILING_FIELD"},
+    "TilingKeyDim": {"TILING_KEY"},
     "HostBranch": {"BRANCH"},
     "KernelBranch": {"BRANCH"},
+    "Predicate": {"PREDICATE"},
     "TemplateBinding": {"TEMPLATE", "TEMPLATE_ARG", "TEMPLATE_INSTANCE"},
 }
 
@@ -45,13 +57,26 @@ def _kind_names(kinds: Iterable[str]) -> set[str]:
     return out
 
 
-def _entity_row(ent: Entity, *, distance: int | None = None) -> dict[str, Any]:
-    row = ent.to_dict()
-    row["data"] = dict(ent.attrs)
-    if distance is not None:
-        row["distance"] = int(distance)
-    row.setdefault("evidence_refs", [])
-    return row
+def _entity_row(ent: Entity, *, distance: int | None = None, why: str = "") -> dict[str, Any]:
+    hit = project_entity(
+        ent,
+        why=why,
+        distance=distance,
+        require_span_for_branch=False,
+    )
+    if hit is None:
+        return {
+            "id": ent.id,
+            "kind": ent.kind_name(),
+            "name": ent.name,
+            "status": ent.status,
+            "file": ent.file,
+            "line_start": ent.line_start,
+            "line_end": ent.line_end,
+            "why": why,
+            "facts": {},
+        }
+    return hit
 
 
 def _template_block_rows(blob: Any) -> list[dict[str, Any]]:
@@ -236,7 +261,7 @@ class CodeMapUoQuery:
                 rows.append(_entity_row(ent))
         return sorted(rows, key=lambda r: (str(r.get("kind")), str(r.get("id"))))
 
-    def impact_of(self, file: str, line_range: tuple[int, int]) -> list[dict[str, Any]]:
+    def impact_of(self, file: str, line_range: tuple[int, int]) -> dict[str, Any]:
         start, end = sorted((int(line_range[0]), int(line_range[1])))
         needle = str(file or "").replace("\\", "/").lstrip("./")
         seeds: list[Entity] = []
@@ -246,25 +271,39 @@ class CodeMapUoQuery:
                 continue
             lo = int(ent.line_start or 0)
             hi = int(ent.line_end or lo)
-            if not lo or not hi or (hi >= start and lo <= end):
+            if lo and hi and hi >= start and lo <= end:
                 seeds.append(ent)
+        useful = set(USEFUL_EDGE_KINDS)
         seen: dict[str, int] = {e.id: 0 for e in seeds}
         queue: deque[tuple[str, int]] = deque((e.id, 0) for e in seeds)
         while queue:
             cur, dist = queue.popleft()
             if dist >= 2:
                 continue
-            for _rel, other in self.codemap.neighbors(cur, direction="both"):
+            for rel, other in self.codemap.neighbors(cur, direction="out"):
+                if rel.kind_name() not in useful:
+                    continue
                 if other.id in seen:
                     continue
                 seen[other.id] = dist + 1
                 queue.append((other.id, dist + 1))
-        rows = [
-            _entity_row(self.codemap.entities[eid], distance=dist)
+        hits = [
+            _entity_row(
+                self.codemap.entities[eid],
+                distance=dist,
+                why="seed" if dist == 0 else "slice_neighbor",
+            )
             for eid, dist in seen.items()
             if eid in self.codemap.entities
         ]
-        return sorted(rows, key=lambda r: (int(r.get("distance") or 0), str(r.get("kind")), str(r.get("id"))))
+        hits.sort(key=lambda r: (int(r.get("distance") or 0), str(r.get("kind")), str(r.get("id"))))
+        return {
+            "ok": True,
+            "seeds": [row for row in hits if int(row.get("distance") or 0) == 0],
+            "hits": hits,
+            "buckets": bucket_hits(hits),
+            "count": len(hits),
+        }
 
     def tiling_field(self, name_or_id: str) -> list[dict[str, Any]]:
         key = str(name_or_id or "").strip().lower()
@@ -284,16 +323,21 @@ class CodeMapUoQuery:
             return {"ok": False, "error": "tiling_field_not_found", "query": name_or_id}
         primary = fields[0]
         fid = str(primary["id"])
-        edges = self.edges_of(fid, limit=300)
+        allowed = field_edge_kinds()
+        edges = [
+            project_relation(rel)
+            for rel in self.edges_of(fid, limit=300)
+            if str(rel.get("kind") or "") in allowed
+        ]
         readers = []
         writers = []
         for rel in edges:
             src = self.codemap.entities.get(str(rel.get("src") or ""))
             dst = self.codemap.entities.get(str(rel.get("dst") or ""))
             if rel.get("kind") == RelationKind.READS.value and dst and dst.id == fid and src:
-                readers.append(_entity_row(src))
+                readers.append(_entity_row(src, why="kernel_reader"))
             if rel.get("kind") in {RelationKind.WRITES.value, RelationKind.DERIVES.value} and dst and dst.id == fid and src:
-                writers.append(_entity_row(src))
+                writers.append(_entity_row(src, why="host_writer"))
         return {
             "ok": True,
             "field": primary,
@@ -301,7 +345,6 @@ class CodeMapUoQuery:
             "writers": writers,
             "readers": readers,
             "edges": edges,
-            "neighbors": self.neighbors(fid, depth=2, limit=120),
         }
 
     def constant(self, name: str) -> list[dict[str, Any]]:
@@ -324,7 +367,7 @@ class CodeMapUoQuery:
             _entity_row(e)
             for e in self.codemap.by_name(name, kind=EntityKind.TILING_KEY)
         ]
-        return [self._location(row) for row in rows[:limit] if row.get("file")]
+        return self._locations_with_sites(rows, limit=limit)
 
     def locate_branch(self, branch_id: str, *, limit: int = 20) -> list[dict[str, Any]]:
         ent = self._entity(branch_id)
@@ -333,7 +376,39 @@ class CodeMapUoQuery:
         return [self._location(_entity_row(ent))][:limit]
 
     def locate_field(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
-        return [self._location(row) for row in self.tiling_field(name)[:limit] if row.get("file")]
+        return self._locations_with_sites(self.tiling_field(name), limit=limit)
+
+    def _locations_with_sites(
+        self, rows: list[dict[str, Any]], *, limit: int
+    ) -> list[dict[str, Any]]:
+        from uo_init.source_locator import locations_from_attr_sites
+
+        out: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, int]] = set()
+        for row in rows:
+            loc = self._location(row)
+            file = str(loc.get("file") or "")
+            line = int(loc.get("line_start") or 0)
+            key = (str(loc.get("id") or ""), file, line)
+            if file and line > 0 and key not in seen:
+                seen.add(key)
+                out.append(loc)
+            attrs = {}
+            if isinstance(row.get("facts"), dict):
+                attrs.update(row["facts"])
+            if isinstance(row.get("data"), dict):
+                attrs.update(row["data"])
+            for extra in locations_from_attr_sites(
+                str(row.get("id") or ""), str(row.get("kind") or ""), attrs or row
+            ):
+                extra_key = (extra.entity_id, extra.file, extra.line_start)
+                if extra_key in seen:
+                    continue
+                seen.add(extra_key)
+                out.append(extra.to_dict())
+            if len(out) >= int(limit):
+                break
+        return out[: int(limit)]
 
     # ---- new unified CodeMap API ------------------------------------------
 
@@ -347,7 +422,11 @@ class CodeMapUoQuery:
         return self.query.output_roots()
 
     def tiling_keys(self) -> list[dict[str, Any]]:
-        return self.query.tiling_keys()
+        rows = sorted(
+            self.codemap.by_kind(EntityKind.TILING_KEY),
+            key=lambda e: int(e.attrs.get("decl_order") or 0),
+        )
+        return [_entity_row(e) for e in rows]
 
     def tiling_data(self, name: str = "") -> list[dict[str, Any]]:
         return self.query.tiling_data(name)
@@ -455,12 +534,20 @@ class CodeMapUoQuery:
 
     def aggregate_kernel_branch(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip()
-        branches = self.branches_for_key(needle) if needle else [
-            _entity_row(e) for e in self.codemap.by_kind(EntityKind.BRANCH)
-        ]
-        kernels = self.selected_kernel(needle) if needle else [
-            _entity_row(e) for e in self.codemap.by_kind(EntityKind.KERNEL)
-        ]
+        if needle:
+            branches = self.branches_for_key(needle)
+            kernels = self.selected_kernel(needle)
+        else:
+            branches = [
+                _entity_row(e)
+                for e in self.codemap.by_kind(EntityKind.BRANCH)
+                if e.file and int(e.line_start or 0) > 0
+            ]
+            kernels = [
+                _entity_row(e)
+                for e in self.codemap.by_kind(EntityKind.KERNEL)
+                if e.file and int(e.line_start or 0) > 0
+            ]
         overview = self.query.kernel_overview()
         return {
             "ok": True,
@@ -539,7 +626,11 @@ class CodeMapUoQuery:
 
     def aggregate_buffer(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip()
-        rows = self.query.buffer(needle) if needle else self.query.buffers()
+        raw = self.query.buffer(needle) if needle else self.query.buffers()
+        rows: list[dict[str, Any]] = []
+        for item in raw:
+            ent = self.codemap.entities.get(str(item.get("id") or "")) if isinstance(item, dict) else None
+            rows.append(_entity_row(ent) if ent is not None else item)
         return {
             "ok": True,
             "mode": "buffer",
@@ -547,6 +638,76 @@ class CodeMapUoQuery:
             "buffers": rows[: int(limit)],
             "count": min(len(rows), int(limit)),
             "total": len(rows),
+        }
+
+    def aggregate_locate(self, pattern: str = "", *, limit: int = 20) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        rows = self.locate_dim(needle, limit=limit) if needle else []
+        if not rows and needle:
+            rows = self.locate_field(needle, limit=limit)
+        if not rows and needle:
+            rows = self.locate(needle, limit=limit)
+        return {
+            "ok": True,
+            "mode": "locate",
+            "pattern": needle,
+            "locations": rows[: int(limit)],
+            "count": min(len(rows), int(limit)),
+        }
+
+    def aggregate_kernel_api(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        needle = str(pattern or "").strip().lower()
+        hits: list[dict[str, Any]] = []
+        for ent in self.codemap.by_kind(EntityKind.OPERATION):
+            name = str(ent.attrs.get("callee") or ent.name or "")
+            if needle:
+                if needle not in name.lower() and needle not in ent.id.lower():
+                    continue
+            elif not is_kernel_api_name(name):
+                continue
+            row = _entity_row(ent, why="api_call")
+            facts = dict(row.get("facts") or {})
+            sync = []
+            queues = []
+            for rel, other in self.codemap.neighbors(ent.id, direction="out"):
+                if rel.kind_name() in {
+                    RelationKind.SIGNALS.value,
+                    RelationKind.AWAITS.value,
+                }:
+                    sync.append(
+                        {
+                            "kind": rel.kind_name(),
+                            "id": other.id,
+                            "name": other.name,
+                            "file": other.file,
+                            "line_start": other.line_start,
+                            "paired": bool(other.attrs.get("paired")),
+                        }
+                    )
+                if other.kind_name() == EntityKind.QUEUE.value:
+                    queues.append(
+                        {
+                            "id": other.id,
+                            "name": other.name,
+                            "tposition": other.attrs.get("tposition") or "",
+                            "memory_space": other.attrs.get("memory_space") or "",
+                        }
+                    )
+            if is_flag_sync_api_name(name) and sync:
+                facts["sync"] = sync
+            if is_tque_api_name(name) and queues:
+                facts["queue"] = queues
+            if facts:
+                row["facts"] = facts
+            hits.append(row)
+        hits.sort(key=lambda r: (str(r.get("file")), int(r.get("line_start") or 0), str(r.get("id"))))
+        return {
+            "ok": True,
+            "mode": "kernel_api",
+            "pattern": needle,
+            "calls": hits[: int(limit)],
+            "count": min(len(hits), int(limit)),
+            "total": len(hits),
         }
 
     def aggregate_gaps(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
@@ -625,5 +786,8 @@ class CodeMapUoQuery:
             "file": row.get("file"),
             "line_start": row.get("line_start"),
             "line_end": row.get("line_end"),
-            "snippet": (row.get("data") or {}).get("snippet") if isinstance(row.get("data"), dict) else "",
+            "snippet": (
+                ((row.get("facts") or {}).get("snippet") if isinstance(row.get("facts"), dict) else "")
+                or ((row.get("data") or {}).get("snippet") if isinstance(row.get("data"), dict) else "")
+            ),
         }

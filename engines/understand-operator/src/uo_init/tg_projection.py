@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Backfill TG view blobs into an existing ``.uo`` without a full re-extract."""
+"""Read TG view blobs from an existing ``.uo``. TG never writes CodeMap products."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from uo_init.passes.tpl_schema import run as run_tpl_schema
-from uo_init.store.reader import find_uo_product, read_codemap, read_meta
+from uo_init.store.reader import find_uo_product, load_view_blob, read_codemap, read_meta
 from uo_init.store.writer import write_codemap
 from uo_init.tg_views import finalize_tg_views
 
@@ -34,6 +34,8 @@ REQUIRED_COMMIT_VIEWS = (
     "views/tilingdata.yaml",
 )
 
+_RERUN_UO_INIT = "rerun /uo-init; TG must not write .uo"
+
 
 def require_tg_views(views: dict[str, Any] | None) -> list[str]:
     """Names in ``REQUIRED_TG_VIEWS`` that are absent from ``views``."""
@@ -53,8 +55,14 @@ def require_commit_views(views: dict[str, Any] | None) -> list[str]:
 
 
 def load_tg_view(uo_path: str | Path, name: str) -> dict[str, Any] | list[Any] | None:
-    from uo_init.store.reader import load_view_blob
-    return load_view_blob(uo_path, name)
+    """Load one view with fail-closed provenance. Never returns a stale blob."""
+    from uo_init.store.reader import load_view_blob_checked
+
+    checked = load_view_blob_checked(uo_path, name)
+    if not checked.get("ok"):
+        return None
+    view = checked.get("view")
+    return view if view is not None else None
 
 
 def list_view_names(uo_path: str | Path) -> list[str]:
@@ -66,12 +74,16 @@ def list_view_names(uo_path: str | Path) -> list[str]:
 
 
 def _existing_views(product: Path) -> dict[str, Any]:
-    """Read every embedded view before ``write_codemap`` atomically replaces DB."""
+    """Read every embedded view before ``write_codemap`` atomically replaces DB.
+
+    Backfill (UO-side) preserves on-disk blobs, including ones TG would reject
+    as stale; TG read paths use ``load_tg_view`` / ``load_view_blob_checked``.
+    """
     out: dict[str, Any] = {}
     for name in list_view_names(product):
         if name == "summary":
             continue
-        value = load_tg_view(product, name)
+        value = load_view_blob(product, name)
         if value is not None:
             out[name] = value
     return out
@@ -119,10 +131,7 @@ def backfill_from_source(
 ) -> dict[str, Any]:
     """Upgrade a CodeMap product in place while preserving existing view blobs.
 
-    A product that already embeds the declared TilingKey domain is self-contained:
-    adding newer derived views (kernel/TilingData/host/graph) must not require the
-    original source checkout or a replay environment.  TPL parsing is therefore
-    rerun only when D is absent, or when the caller explicitly supplies a header.
+    UO-side only. TG/CE must not call this; they read via ``ensure_tg_views``.
     """
     root = Path(project_root).expanduser().resolve()
     product = Path(uo_path).expanduser().resolve() if uo_path else find_uo_product(root, op_name=op_name, architecture=architecture)
@@ -186,14 +195,34 @@ def ensure_tg_views(
     architecture: str = "",
     tiling_key_header: str | Path | None = None,
 ) -> dict[str, Any]:
+    """Read-only TG readiness. Missing views fail closed; never ``write_codemap``.
+
+    ``tiling_key_header`` is accepted for call-site compatibility and ignored:
+    TG cannot backfill a CodeMap product.
+    """
+    del tiling_key_header
     root = Path(project_root).expanduser().resolve()
-    product = find_uo_product(root, op_name=op_name, architecture=architecture)
+    arch = str(architecture or "").strip()
+    if not arch:
+        return {"ok": False, "error": "ARCHITECTURE_MISSING_IN_RUN_STATE", "backfilled": False}
+    product = find_uo_product(root, op_name=op_name, architecture=arch)
     if product is None:
-        return {"ok": False, "error": "missing .uo CodeMap product"}
-    docs = {name: load_tg_view(product, name) for name in REQUIRED_TG_VIEWS}
+        return {
+            "ok": False,
+            "error": f"missing .uo CodeMap product; {_RERUN_UO_INIT}",
+            "backfilled": False,
+        }
+    docs: dict[str, Any] = {}
+    missing: list[str] = []
+    for name in REQUIRED_TG_VIEWS:
+        view = load_tg_view(product, name)
+        if view is None:
+            missing.append(name)
+        else:
+            docs[name] = view
     count = legal_key_count(product)
-    if count > 0 and all(doc is not None for doc in docs.values()):
-        graph = docs["ir/operator_graph.yaml"] if isinstance(docs["ir/operator_graph.yaml"], dict) else {}
+    if count > 0 and not missing:
+        graph = docs["ir/operator_graph.yaml"] if isinstance(docs.get("ir/operator_graph.yaml"), dict) else {}
         return {
             "ok": True,
             "path": str(product),
@@ -202,11 +231,16 @@ def ensure_tg_views(
             "graph_fingerprint": str(graph.get("fingerprint") or ""),
             "views": list(REQUIRED_TG_VIEWS),
         }
-    result = backfill_from_source(
-        root,
-        op_name=op_name,
-        architecture=architecture,
-        tiling_key_header=tiling_key_header,
-        uo_path=product,
-    )
-    return {**result, "backfilled": True}
+    reason = []
+    if missing:
+        reason.append(f"missing views {missing}")
+    if count <= 0:
+        reason.append("legal_key_count is 0")
+    return {
+        "ok": False,
+        "error": f"TG views not ready ({'; '.join(reason) or 'incomplete'}); {_RERUN_UO_INIT}",
+        "missing": missing,
+        "path": str(product),
+        "legal_key_count": count,
+        "backfilled": False,
+    }

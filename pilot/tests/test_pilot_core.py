@@ -594,20 +594,28 @@ def test_install_skill_lists_symmetric():
     sh = (repo / "install.sh").read_text(encoding="utf-8")
     assert (
         '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate",'
-        '"ce-review","tg-init","tg-plan","tg-solve","operator")'
+        '"ce-review","ce-intent","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")'
     ) in ps1
     assert (
         "for name in uo-init uo-update uo-query uo-investigate "
-        "ce-review tg-init tg-plan tg-solve operator; do"
+        "ce-review ce-intent ce-impact ce-verify tg-init tg-plan tg-solve operator; do"
     ) in sh
     # Retired skills must not be in the install junction list (uninstall purge may still name them).
     install_lists = [
-        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator")',
-        "for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator; do",
+        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")',
+        "for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-impact ce-verify tg-init tg-plan tg-solve operator; do",
     ]
     for block in install_lists:
         for retired in ("uo-diff", "tg-domain-review", "tg-contract"):
             assert retired not in block
+    assert (
+        '$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")'
+    ) in ps1
+    cog = next(line for line in ps1.splitlines() if line.startswith("$cognitiveSkills"))
+    assert "code-engineering" in cog
+    assert "_shared" not in cog
+    assert "code-engineering" in sh
+    assert "for name in operator-analysis testcase-generation source-proof code-review code-engineering; do" in sh
     assert "ascendc-pilot" in ps1
     assert "ascendc-pilot.ts" in ps1
     assert "ascendc-pilot.ts" in sh

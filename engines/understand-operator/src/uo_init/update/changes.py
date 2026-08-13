@@ -26,12 +26,13 @@ def detect_kb_changes(
     base: str | None = None,
     head: str | None = None,
     write: bool = True,
+    architecture: str = "",
 ) -> dict[str, Any]:
     del op_name  # op identity comes from project layout / manifest
     repo_root = Path(repo_root).expanduser().resolve()
-    uo_root = resolve_uo_root(repo_root)
+    uo_root = resolve_uo_root(repo_root, architecture=architecture)
     if not (uo_root / "manifest.yaml").exists():
-        raise FileNotFoundError(f"KB missing at {uo_root}; run /uo-init first")
+        raise FileNotFoundError(f"UO working tree missing at {uo_root}; run /uo-init first")
 
     manifest = read_yaml(uo_root / "manifest.yaml")
     source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}

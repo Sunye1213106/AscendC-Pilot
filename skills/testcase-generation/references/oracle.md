@@ -16,3 +16,6 @@
 - `withheld_from`：禁止用同源日志字段自证同一维度
 - 常量按名解析，禁止手抄易漂移数字
 - 批次送入与完成标记不符 → 裁决可疑，停止当负样本训练
+
+精度/性能场景的 oracle 是 harness `only_grad` / `profiler`，不是上表 Host HIT。
+详见 `references/harness-oracle.md`。Host 回放不能把 `P-*`/`F-*` 写入 CE `V`。

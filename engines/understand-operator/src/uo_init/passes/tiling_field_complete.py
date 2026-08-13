@@ -13,9 +13,13 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_contract import _kernel_candidates, _rel as _src_rel
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
-_CLASS_RE = re.compile(r"(?:template\s*<.*?>\s*)?class\s+([A-Za-z_]\w*)[^\{;]*\{", re.S)
+_CLASS_RE = re.compile(
+    r"(?:template\s*<.*?>\s*)?(?:class|struct)\s+([A-Za-z_]\w*)[^\{;]*\{",
+    re.S,
+)
 # Type text is intentionally permissive.  The field declarator at the end of a
 # top-level class line is the stable anchor; restricting the type grammar loses
 # valid std::conditional/decltype/template spellings.
@@ -34,19 +38,21 @@ def complete_tiling_fields(
     architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
-    kernel_dir = root / "op_kernel" / architecture
-    if not kernel_dir.is_dir():
+    kernel_root = root / "op_kernel"
+    if not kernel_root.is_dir():
         return codemap
 
     owners = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
     added = 0
     arrays = 0
     initializers = 0
-    for path in sorted(kernel_dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in _SUFFIXES or "tiling_data" not in path.name.lower():
+    for path in _kernel_candidates(root, architecture):
+        if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for match in _CLASS_RE.finditer(text):
+            if re.search(r"\benum\s+$", text[: match.start()]):
+                continue
             owner_name = match.group(1)
             owner = owners.get(owner_name)
             if owner is None:
@@ -86,7 +92,7 @@ def complete_tiling_fields(
                                     "cpp_type": cpp_type,
                                     "provenance": "source_tiling_data_member_complete",
                                 },
-                                file=_rel(root, path),
+                                file=_src_rel(root, path),
                                 line=body_line + offset,
                                 status="confirmed",
                             )
@@ -110,7 +116,7 @@ def complete_tiling_fields(
                         if initializer:
                             field.attrs["default_initializer"] = initializer
                             field.attrs["default_initializer_site"] = {
-                                "file": _rel(root, path),
+                                "file": _src_rel(root, path),
                                 "line": body_line + offset,
                             }
                             initializers += 1
@@ -152,13 +158,6 @@ def _matching_brace(text: str, open_pos: int) -> int:
             if depth == 0:
                 return idx
     return -1
-
-
-def _rel(root: Path, path: Path) -> str:
-    try:
-        return path.relative_to(root.parent).as_posix()
-    except ValueError:
-        return path.as_posix()
 
 
 def _line(text: str, offset: int) -> int:

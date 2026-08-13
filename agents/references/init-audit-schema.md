@@ -1,8 +1,7 @@
 # tg-init-audit — `init/audit_report.yaml` schema
 
 路径（装机后）：`$PLUGIN_ROOT/agents/references/init-audit-schema.md`  
-清单权威：`$PLUGIN_ROOT/skills/tg-init/references/tg-init-audit.md`  
-合法 skip：`$PLUGIN_ROOT/skills/tg-init/references/legitimate-skips.md`
+清单权威：`$PLUGIN_ROOT/skills/testcase-generation/capabilities/tg-init-audit/METHOD.md`
 
 `checks[].id` **MUST** 覆盖 `resolve_policy.TILINGKEY_AUDIT_CHECKLIST_IDS` 全量  
 （`checklist=tilingkey`；旧 CSV closure 清单已移除，不得再要求任何旧 CSV checklist id）。

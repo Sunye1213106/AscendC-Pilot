@@ -14,6 +14,29 @@ from uo_init import paths
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 DEFAULT_CONTEXT = SPEC_DIR / "build_context.yaml"
 FUNCTION_LIKE_QUALIFIERS = {"__in_pipe__", "__out_pipe__", "__inout_pipe__"}
+_DTYPE_VARIANT_MACROS = ("ORIG_DTYPE_QUERY",)
+
+
+def dtype_macro_for_source(source_path: str | Path | None) -> str | None:
+    """Return a dtype-gate macro only when the TU text actually mentions it."""
+    if not source_path:
+        return None
+    path = Path(source_path)
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for name in _DTYPE_VARIANT_MACROS:
+        if name in text:
+            return name
+    return None
+
+
+def source_uses_dtype_variants(source_path: str | Path | None) -> bool:
+    return dtype_macro_for_source(source_path) is not None
+
 
 
 def _sub(s: str, mapping: dict[str, str]) -> str:
@@ -28,6 +51,21 @@ def _sub(s: str, mapping: dict[str, str]) -> str:
     return out
 
 
+def _dedupe_includes(paths: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in paths:
+        p = str(raw).replace("\\", "/").rstrip("/")
+        if not p:
+            continue
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
 @dataclass
 class BuildContext:
     raw: dict[str, Any]
@@ -37,6 +75,10 @@ class BuildContext:
     op_dir: str = ""
     arch_dir: str = ""
     repo_root: str = ""
+    extra_host_includes: list[str] = field(default_factory=list)
+    extra_kernel_includes: list[str] = field(default_factory=list)
+    extra_host_force_includes: list[str] = field(default_factory=list)
+    extra_kernel_force_includes: list[str] = field(default_factory=list)
 
     @classmethod
     def load(
@@ -48,6 +90,7 @@ class BuildContext:
         op_dir: str | None = None,
         arch_dir: str = "",
         repo_root: str | None = None,
+        apply_saved_extras: bool = True,
     ) -> "BuildContext":
         p = Path(path) if path else DEFAULT_CONTEXT
         raw = yaml.safe_load(p.read_text(encoding="utf-8"))
@@ -75,7 +118,7 @@ class BuildContext:
             mapping["cann_root"] = cann_root.replace("\\", "/")
         if ops_root:
             mapping["ops_root"] = ops_root.replace("\\", "/")
-        return cls(
+        obj = cls(
             raw=raw,
             cann_root=mapping["cann_root"],
             ops_root=mapping["ops_root"],
@@ -84,6 +127,11 @@ class BuildContext:
             arch_dir=arch_dir,
             repo_root=rr.replace("\\", "/"),
         )
+        if apply_saved_extras:
+            from uo_init.include_heal import apply_saved_extras as _apply_extras
+
+            _apply_extras(obj)
+        return obj
 
     def mapping(self) -> dict[str, str]:
         return {
@@ -101,17 +149,74 @@ class BuildContext:
     def sysroot_includes(self) -> list[str]:
         return [self.resolve_path(p) for p in self.raw.get("sysroot_includes") or []]
 
+    def _ops_family_includes(self) -> list[str]:
+        """Family ``common/`` and ``3rd/`` next to the operator (mc2/common, gmm/common, …)."""
+        ops = (self.ops_root or "").replace("\\", "/").rstrip("/")
+        op_dir = (self.op_dir or "").replace("\\", "/").rstrip("/")
+        if not ops or not op_dir:
+            return []
+        ops_l = ops.lower()
+        op_l = op_dir.lower()
+        if not (op_l == ops_l or op_l.startswith(ops_l + "/")):
+            return []
+        rest = op_dir[len(ops):].lstrip("/")
+        family = rest.split("/")[0] if rest else ""
+        if not family or family in {"common", "tests", "scripts", "examples"}:
+            return []
+        base = f"{ops}/{family}"
+        return [
+            f"{base}/common",
+            f"{base}/common/utils",
+            f"{base}/common/inc",
+            f"{base}/3rd",
+        ]
+
+    def add_include(self, path: str, *, side: str) -> bool:
+        """Append a runtime extra -I. Returns False when already present or empty."""
+        p = str(path or "").replace("\\", "/").rstrip("/")
+        if not p:
+            return False
+        current = self.kernel_includes() if side == "kernel" else self.host_includes()
+        if p.lower() in {x.replace("\\", "/").rstrip("/").lower() for x in current}:
+            return False
+        target = self.extra_kernel_includes if side == "kernel" else self.extra_host_includes
+        target.append(p)
+        return True
+
+    def add_force_include(self, path: str, *, side: str) -> bool:
+        p = str(path or "").replace("\\", "/")
+        if not p:
+            return False
+        current = self.kernel_force_includes() if side == "kernel" else self.host_force_includes()
+        if p.lower() in {x.replace("\\", "/").lower() for x in current}:
+            return False
+        target = (
+            self.extra_kernel_force_includes if side == "kernel" else self.extra_host_force_includes
+        )
+        target.append(p)
+        return True
+
     def host_includes(self) -> list[str]:
-        return [self.resolve_path(p) for p in (self.raw.get("host") or {}).get("includes") or []]
+        out = [self.resolve_path(p) for p in (self.raw.get("host") or {}).get("includes") or []]
+        out.extend(self._ops_family_includes())
+        out.extend(self.extra_host_includes)
+        return _dedupe_includes(out)
 
     def kernel_includes(self) -> list[str]:
-        return [self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("includes") or []]
+        out = [self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("includes") or []]
+        out.extend(self._ops_family_includes())
+        out.extend(self.extra_kernel_includes)
+        return _dedupe_includes(out)
 
     def host_defines(self) -> dict[str, str]:
         return dict((self.raw.get("host") or {}).get("defines") or {})
 
     def kernel_defines(self) -> dict[str, str]:
-        return dict((self.raw.get("kernel") or {}).get("defines") or {})
+        out = dict((self.raw.get("kernel") or {}).get("defines") or {})
+        from uo_init.platform_ini import kernel_macros_for_arch
+
+        out.update(kernel_macros_for_arch(self.arch_dir))
+        return out
 
     def erase_qualifiers(self) -> list[str]:
         return list((self.raw.get("kernel") or {}).get("erase_qualifiers") or [])
@@ -120,7 +225,17 @@ class BuildContext:
         return dict((self.raw.get("kernel") or {}).get("dtype_variants") or {})
 
     def force_includes(self) -> list[str]:
-        return [self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("force_include") or []]
+        return self.kernel_force_includes()
+
+    def kernel_force_includes(self) -> list[str]:
+        out = [self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("force_include") or []]
+        out.extend(self.extra_kernel_force_includes)
+        return _dedupe_includes(out)
+
+    def host_force_includes(self) -> list[str]:
+        out = [self.resolve_path(p) for p in (self.raw.get("host") or {}).get("force_include") or []]
+        out.extend(self.extra_host_force_includes)
+        return _dedupe_includes(out)
 
     def base_flags(self) -> list[str]:
         flags = list(self.raw.get("base_flags") or [])
@@ -137,6 +252,8 @@ class BuildContext:
         args = list(self.base_flags())
         for d, v in self.host_defines().items():
             args.append(f"-D{d}" if v == "" else f"-D{d}={v}")
+        for fi in self.host_force_includes():
+            args += ["-include", fi]
         for p in self.sysroot_includes():
             args += ["-isystem", p]
         for p in self.host_includes():
@@ -153,6 +270,10 @@ class BuildContext:
             "op_dir": self.op_dir,
             "arch_dir": self.arch_dir,
             "repo_root": self.repo_root,
+            "extra_host_includes": list(self.extra_host_includes),
+            "extra_kernel_includes": list(self.extra_kernel_includes),
+            "extra_host_force_includes": list(self.extra_host_force_includes),
+            "extra_kernel_force_includes": list(self.extra_kernel_force_includes),
         }
 
     @classmethod
@@ -165,9 +286,15 @@ class BuildContext:
             op_dir=str(data.get("op_dir") or ""),
             arch_dir=require_architecture(data.get("arch_dir")),
             repo_root=str(data.get("repo_root") or ""),
+            extra_host_includes=list(data.get("extra_host_includes") or []),
+            extra_kernel_includes=list(data.get("extra_kernel_includes") or []),
+            extra_host_force_includes=list(data.get("extra_host_force_includes") or []),
+            extra_kernel_force_includes=list(data.get("extra_kernel_force_includes") or []),
         )
 
-    def kernel_args(self, dtype_variant: str | None = None) -> list[str]:
+    def kernel_args(
+        self, dtype_variant: str | None = None, *, source_path: str | Path | None = None
+    ) -> list[str]:
         args = list(self.base_flags())
         for q in self.erase_qualifiers():
             if q in FUNCTION_LIKE_QUALIFIERS:
@@ -178,11 +305,12 @@ class BuildContext:
             args.append(f"-D{d}" if v == "" else f"-D{d}={v}")
         dv = self.dtype_variants()
         if dtype_variant:
-            macro = dv.get("macro") or "ORIG_DTYPE_QUERY"
-            args.append(f"-D{macro}={dtype_variant}")
-            for name, val in (dv.get("dt_enum_defines") or {}).items():
-                args.append(f"-D{name}={val}")
-        for fi in self.force_includes():
+            macro = dtype_macro_for_source(source_path)
+            if macro:
+                args.append(f"-D{macro}={dtype_variant}")
+                for name, val in (dv.get("dt_enum_defines") or {}).items():
+                    args.append(f"-D{name}={val}")
+        for fi in self.kernel_force_includes():
             args += ["-include", fi]
         for p in self.sysroot_includes():
             args += ["-isystem", p]

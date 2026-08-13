@@ -82,12 +82,45 @@ def main() -> int:
         "parseAcpStdoutJson",
         "continue_goal",
         "--intent",
+        "compactPilotRunPayload",
+        "toPluginToolResult",
+        "createProgressReporter",
+        "invokeToolMetadata",
+        "publishVisibleProgress",
+        "publishToolRow",
+        "withProgressArg",
+        "patchRunningToolPart",
+        "clientBaseUrl",
+        "isHumanDecision",
+        "isAcpStartSuccess",
+        "normalizeResumeDecision",
+        "applyForceNew",
+        "ctx.metadata",
     ):
         if marker not in driver_src:
             errors.append(f"pilot-driver.ts missing {marker}")
     # Must not concat stderr into JSON parse buffer
     if 'stdout || ""}\n${result.stderr' in driver_src or "stdout + stderr" in driver_src:
         errors.append("pilot-driver.ts still concatenates stderr into JSON parse")
+    if "compactPilotRunPayload(result)" not in driver_src:
+        errors.append("toPluginToolResult must serialize compactPilotRunPayload, not the full ACP blob")
+    if "return runPilotDriver(" in driver_src:
+        errors.append("pilot_run execute must wrap runPilotDriver with toPluginToolResult")
+    if '"uo-update": ["prepare"' in driver_src:
+        errors.append("pilot-driver.ts must not hardcode uo-update as prepare/extract/analyze")
+    if "JSON.stringify(rec, null, 2)" in driver_src:
+        errors.append("toPluginToolResult must not pretty-print the full ACP result to the model")
+    if "spawnSync" in driver_src:
+        errors.append("pilot-driver.ts must stream acp via spawn (not spawnSync) so progress can update")
+    plugin_src = (plug / "ascendc-pilot.ts").read_text(encoding="utf-8")
+    for marker in (
+        "extractProjectFromAcpCommand",
+        "isAcpResumeStartCommand",
+        'status !== "pending"',
+        "isPilotDriver",
+    ):
+        if marker not in plugin_src:
+            errors.append(f"ascendc-pilot.ts missing {marker}")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

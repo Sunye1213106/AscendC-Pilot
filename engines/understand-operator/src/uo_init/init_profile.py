@@ -1,12 +1,9 @@
 # -*- coding: utf-8 -*-
 """uo-init wall-time profiles.
 
-``fast`` (default) targets cold uo-init ≤ ``UO_COLD_BUDGET_S`` (default 180s
-with kernel+tilingdata): keypath controllability, one dtype kernel walk,
-no API clang contract, and a *sampled* pairwise ``if constexpr`` fold
-(AscendC compile-time specialization is first-class — never fully skipped).
-``full`` enables the complete extract path (full closure + all dtype
-variants + unrestricted fold).
+Default / ``fast``: keypath closure, one kernel dtype, no API clang, no
+explicit-instantiation fold. ``full`` enables complete extract (full closure +
+all dtypes + unrestricted fold + API clang).
 """
 from __future__ import annotations
 
@@ -67,18 +64,17 @@ def default_closure_max_nodes(ctx: dict[str, Any] | None = None) -> int:
 def default_fold_kernel(ctx: dict[str, Any] | None = None) -> bool:
     """Whether to run the explicit-instantiation ``if constexpr`` harness.
 
-    AscendC kernels are template / ``if constexpr`` heavy: folding is on by
-    default whenever a clang driver is available.  Disable only with
-    ``UO_FOLD_KERNEL=0`` or ``fold_kernel: false``.  Cost is controlled by
-    :func:`default_harness_limit` under the ``fast`` profile.
+    Uninstantiated ``kernel_ir`` already maps tilingkey → ``if constexpr``
+    branches.  The clang ``-ast-dump`` fold is opt-in (``full`` profile,
+    ``UO_FOLD_KERNEL=1``, or ``fold_kernel: true``) because it dominates
+    cold extract when a clang driver is on PATH.
     """
     if isinstance(ctx, dict) and "fold_kernel" in ctx:
         return bool(ctx.get("fold_kernel"))
     env = os.environ.get("UO_FOLD_KERNEL")
     if env is not None and str(env).strip() != "":
         return str(env).strip().lower() not in {"0", "false", "off", "no"}
-    # Compile-time specialization is an AscendC hallmark — do not skip.
-    return True
+    return profile_name(ctx) == "full"
 
 
 def default_harness_limit(ctx: dict[str, Any] | None = None) -> int | None:
@@ -106,8 +102,9 @@ def default_harness_limit(ctx: dict[str, Any] | None = None) -> int | None:
 def default_with_kernel(ctx: dict[str, Any] | None = None) -> bool:
     """Always extract uninstantiated kernel branches (tilingkey → code map).
 
-    ``fast`` limits cost via ``default_kernel_max_variants`` (1 dtype) and
-    overlapping the walk with ``build_host_ir``.  Override with ``UO_WITH_KERNEL=0``.
+    ``fast`` caps the kernel walk at one dtype; ``full`` walks every declared
+    dtype. Cost is also capped by overlapping the walk with ``build_host_ir``.
+    Override with ``UO_WITH_KERNEL=0``.
     """
     if isinstance(ctx, dict) and "with_kernel" in ctx:
         return bool(ctx.get("with_kernel"))
@@ -118,7 +115,11 @@ def default_with_kernel(ctx: dict[str, Any] | None = None) -> bool:
 
 
 def default_kernel_max_variants(ctx: dict[str, Any] | None = None) -> int:
-    """Cap kernel dtype walks.  ``0`` means all variants (full profile)."""
+    """Cap kernel dtype walks.  ``0`` means all declared variants.
+
+    Branch conditions are shared across dtypes on FAG-class kernels; ``fast``
+    walks one preferred dtype.  ``full`` walks every declared variant.
+    """
     if isinstance(ctx, dict) and ctx.get("kernel_max_variants") not in (None, ""):
         try:
             return max(0, int(ctx.get("kernel_max_variants")))
@@ -130,7 +131,7 @@ def default_kernel_max_variants(ctx: dict[str, Any] | None = None) -> int:
             return max(0, int(str(env).strip()))
         except ValueError:
             pass
-    return 1 if profile_name(ctx) == "fast" else 0
+    return 0 if profile_name(ctx) == "full" else 1
 
 
 def default_with_api(ctx: dict[str, Any] | None = None) -> bool:

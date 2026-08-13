@@ -1,40 +1,32 @@
 #!/usr/bin/env python3
-"""Compatibility forwarder for uo_kb_query.
+"""Forwarder: query the committed ``.uo`` CodeMap via ``acp uo-query``.
 
-Agents sometimes invent SCRIPT_DIR as skills/uo-query/scripts/. The real CLI
-lives at $PLUGIN_ROOT/engines/understand-operator/uo/scripts/uo_kb_query.py. This stub keeps both paths
-working when the skill tree is junctioned from the plugin repo.
+Historical path ``engines/understand-operator/uo/scripts/uo_kb_query.py`` is gone.
+Product query is ``acp uo-query`` (no sqlite fallback). Extra argv are passed through.
 """
 
 from __future__ import annotations
 
-import runpy
+import shutil
+import subprocess
 import sys
-from pathlib import Path
 
 
-def _resolve_real_script() -> Path:
-    # .../skills/<wf>/capabilities/kb-query/scripts/uo_kb_query.py
-    # or .../skills/<wf>/scripts/uo_kb_query.py → plugin root varies by depth.
-    here = Path(__file__).resolve()
-    home_plugin = Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin"
-    candidates = [
-        here.parents[3] / "engines" / "understand-operator" / "uo" / "scripts" / "uo_kb_query.py",
-        here.parents[3] / "uo" / "scripts" / "uo_kb_query.py",
-        here.parents[4] / "engines" / "understand-operator" / "uo" / "scripts" / "uo_kb_query.py",
-        home_plugin / "engines" / "understand-operator" / "uo" / "scripts" / "uo_kb_query.py",
-        home_plugin / "uo" / "scripts" / "uo_kb_query.py",
-    ]
-    for path in candidates:
-        if path.is_file():
-            return path
-    raise FileNotFoundError(
-        "uo_kb_query.py not found. Expected under PLUGIN_ROOT/engines/understand-operator/uo/scripts/. "
-        f"Tried: {[str(p) for p in candidates]}"
-    )
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    acp = shutil.which("acp")
+    cmd = [acp, "uo-query", *args] if acp else [sys.executable, "-m", "ascendc_pilot", "uo-query", *args]
+    if not args or args[0] in {"-h", "--help"}:
+        print(
+            "uo_kb_query is a wrapper for `acp uo-query`.\n"
+            "Example: uo_kb_query.py --project <op> --mode locate --pattern s1Inner",
+            file=sys.stderr,
+        )
+        if not args:
+            return 2
+    proc = subprocess.run(cmd, check=False)
+    return int(proc.returncode)
 
 
 if __name__ == "__main__":
-    real = _resolve_real_script()
-    sys.argv[0] = str(real)
-    runpy.run_path(str(real), run_name="__main__")
+    raise SystemExit(main())

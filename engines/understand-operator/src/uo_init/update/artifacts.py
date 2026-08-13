@@ -260,8 +260,40 @@ def load_update_plan_if_fresh(
     return doc
 
 
-def resolve_uo_root(project_root: Path) -> Path:
-    return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "uo"
+def resolve_uo_root(project_root: Path, *, architecture: str = "") -> Path:
+    """Arch-scoped working tree: ``.ascendc-pilot/<arch>/uo/``.
+
+    The durable product is ``<op>.<arch>.uo`` inside this directory. Top-level
+    ``.ascendc-pilot/uo/`` is not a production path.
+    """
+    root = Path(project_root).expanduser().resolve()
+    arch = (architecture or "").strip()
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        return uo_root(root, arch=arch or None)
+    except Exception:
+        if arch:
+            return root / ".ascendc-pilot" / arch / "uo"
+        pilot = root / ".ascendc-pilot"
+        if pilot.is_dir():
+            arch_dirs = sorted(
+                p
+                for p in pilot.iterdir()
+                if p.is_dir() and p.name.startswith("arch") and (p / "uo").is_dir()
+            )
+            with_product = [p for p in arch_dirs if any((p / "uo").glob("*.uo"))]
+            chosen = with_product[0] if len(with_product) == 1 else (
+                arch_dirs[0] if len(arch_dirs) == 1 else None
+            )
+            if chosen is not None:
+                return chosen / "uo"
+        # Soft fallback: callers such as extract_cache overlay ``arch`` next.
+        # Do not use top-level ``.ascendc-pilot/uo/`` (legacy, not a product).
+        import os
+
+        env_arch = (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "").strip()
+        return root / ".ascendc-pilot" / (arch or env_arch or "_missing_arch") / "uo"
 
 
 def source_content_fingerprint(

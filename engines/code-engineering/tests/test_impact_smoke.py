@@ -26,18 +26,19 @@ def test_parse_diff_ranges():
 
 def test_impact_against_live_codemap():
     from code_engineering.impact import impact_from_diff
+    from uo_init.store.reader import find_uo_product
 
-    uo = REPO / ".ascendc-pilot" / "uo"
-    if not (uo / "ir" / "host_codemap.yaml").is_file():
+    product = find_uo_product(REPO)
+    if product is None:
         import pytest
-        pytest.skip("no live codemap")
+        pytest.skip("no live .uo CodeMap product")
     # Synthetic hunk unlikely to hit writers; still must not crash.
     text = (
         "+++ b/does_not_exist.cpp\n"
         "@@ -1,1 +1,2 @@\n"
         "+x\n"
     )
-    report = impact_from_diff(text, uo_root=uo)
+    report = impact_from_diff(text, project_root=REPO)
     assert report.files == ["does_not_exist.cpp"]
     assert report.hit_writers == []
 
@@ -45,6 +46,12 @@ def test_impact_against_live_codemap():
 def test_gate_closure_soundness():
     from ascendc_pilot.gates import gate_closure_soundness
 
-    result = gate_closure_soundness(REPO)
+    try:
+        result = gate_closure_soundness(REPO)
+    except ValueError as exc:
+        if "ARCHITECTURE_MISSING" in str(exc):
+            import pytest
+            pytest.skip("Pilot checkout is not an operator tree with architecture")
+        raise
     assert result["ok"] is True
     assert result.get("gap", 1) == 0

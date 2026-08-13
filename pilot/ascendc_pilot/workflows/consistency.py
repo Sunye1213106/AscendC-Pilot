@@ -199,7 +199,17 @@ def _check_architecture_start_requirements(
             errors.append(f"{wid} must require architecture (tree arch*)")
         if workflow_requires_uo_product(wid):
             errors.append(f"{wid} must not require_uo_product")
-    for wid in ("tg-init", "tg-plan", "tg-solve", "ce-review", "uo-query", "uo-investigate"):
+    for wid in (
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+        "ce-review",
+        "ce-intent",
+        "ce-impact",
+        "ce-verify",
+        "uo-query",
+        "uo-investigate",
+    ):
         if wid not in uo_needed:
             errors.append(f"{wid} must require_uo_product (arch from .uo)")
         if workflow_requires_architecture(wid):
@@ -301,10 +311,13 @@ def _check_staged_output(
         for rel in staging_paths
         if not str(rel).replace("\\", "/").startswith("runs/")
     ]
-    if not staging_rels:
+    # Staged producers are allowed to write only under runs/; those paths still
+    # have to sit inside the producer write_scopes.
+    check_staging = staging_rels or [str(rel).replace("\\", "/") for rel in staging_paths]
+    if not check_staging:
         errors.append(f"{wid}/{aid}: staging contract {staging_id} has no checkable paths")
         return errors
-    for rel in staging_rels:
+    for rel in check_staging:
         if not scopes or not path_matches_scope(rel, scopes):
             errors.append(f"{wid}/{aid}: staging path {rel!r} outside {agent_id} write scopes")
 
@@ -402,7 +415,7 @@ def _check_workflow_model(
     *,
     workflows: dict[str, dict[str, Any]] | None = None,
 ) -> list[str]:
-    """Phase/transition/obligation model checker for the eight-workflow matrix."""
+    """Phase/transition/obligation model checker for the user-facing workflow matrix."""
     from ascendc_pilot.workflows.model_checker import check_all_models
 
     return list(check_all_models(workflows))

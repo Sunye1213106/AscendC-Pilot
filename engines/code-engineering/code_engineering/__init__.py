@@ -10,14 +10,22 @@ from code_engineering.certificate import certificate, write_certificate
 from code_engineering.change.capture import capture
 from code_engineering.change.freshness import check_freshness
 from code_engineering.evidence_tier import classify_entity, classify_relation, path_tier
+from code_engineering.harness import load_adapter
 from code_engineering.impact import ImpactReport, impact_from_diff
 from code_engineering.ledger import Ledger, load_ledger, save_ledger
+from code_engineering.scenarios import (
+    anchors_from_slice,
+    infer_scenario_set,
+    merge_knobs,
+    write_scenario_set,
+)
 from code_engineering.obligations import expand_obligations
 from code_engineering.regress import regress_cases
 
 __all__ = [
     "ImpactReport",
     "Ledger",
+    "anchors_from_slice",
     "bridge_tg",
     "capture",
     "certificate",
@@ -27,9 +35,13 @@ __all__ = [
     "expand_obligations",
     "file_analyzability",
     "impact_from_diff",
+    "infer_scenario_set",
+    "load_adapter",
     "load_ledger",
+    "merge_knobs",
     "path_tier",
     "regress_cases",
     "save_ledger",
     "write_certificate",
+    "write_scenario_set",
 ]

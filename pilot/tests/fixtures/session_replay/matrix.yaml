@@ -1,8 +1,9 @@
 # Control-plane Session Replay matrix (P2).
 # Cells drive intake / state machine / broker APIs — not a live OpenCode host.
-# Derived from the audit's eight-workflow contract + the seven OpenCode session
+# Derived from the user-facing slash-workflow contract + the OpenCode session
 # drift modes (silent arch, wrong project, forged human confirm, wrong phase,
 # stale scope receipt, resume, TG residual routing).
+# CE workflows inherit architecture from `.uo` (handlers skip arch-builder checks).
 
 version: 1
 workflows:
@@ -14,12 +15,15 @@ workflows:
   - tg-plan
   - tg-solve
   - ce-review
+  - ce-intent
+  - ce-impact
+  - ce-verify
 
 scenarios:
   - id: happy_path_phases
     description: Forward path from entry reaches a terminal; every phase has an action.
   - id: start_without_arch_fails_closed
-    description: start_workflow without architecture must raise ARCHITECTURE_MISSING_IN_RUN_STATE for all eight workflows.
+    description: start_workflow without architecture must raise ARCHITECTURE_MISSING_IN_RUN_STATE for architecture builders; .uo consumers skip.
   - id: missing_architecture
     description: Architecture required workflows must AskQuestion from tree — never invent arch.
   - id: wrong_project

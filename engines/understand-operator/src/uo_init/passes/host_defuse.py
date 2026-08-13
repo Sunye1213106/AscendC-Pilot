@@ -19,6 +19,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.symbol_identity import is_member_symbol, normalize_symbol, short_symbol
+from uo_init.source_layout import selected_host_files
 
 _SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _ENUM_INDEX_RE = re.compile(r"enum\s+class\s+(InputIndex|AttrIndex)\s*:[^{]+\{(.*?)\};", re.S)
@@ -91,15 +92,13 @@ def trace_host_key_roots(
     architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
-    host_dir = root / "op_host" / architecture
-    if not host_dir.is_dir():
+    host_files = selected_host_files(root, architecture)
+    if not host_files:
         return codemap
 
     texts: list[tuple[Path, str]] = []
     records: list[_Record] = []
-    for path in sorted(host_dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in _SOURCE_SUFFIXES:
-            continue
+    for path in host_files:
         text = path.read_text(encoding="utf-8", errors="replace")
         texts.append((path, text))
         records.extend(_assignments(root, path, text))
@@ -405,6 +404,17 @@ def _resolve_symbol(
                     codemap.link(RelationKind.DERIVES, compile_root.id, expr.id, attrs={"provenance": compile_root.attrs["provenance"]}, status="confirmed")
                     continue
 
+                api = _input_by_name(codemap, ref_norm)
+                if api is not None:
+                    codemap.link(
+                        RelationKind.DERIVES,
+                        api.id,
+                        expr.id,
+                        attrs={"provenance": "source_host_api_name", "symbol": ref_norm},
+                        status="confirmed",
+                    )
+                    continue
+
                 upstream_records, upstream_ambiguous = _select_records(
                     ref_norm,
                     by_exact=by_exact,
@@ -542,6 +552,24 @@ def _api_from_index(raw: str, kind: str, api_maps: dict[str, Any]) -> Entity | N
         return None
     table = api_maps.get("input_by_position" if kind == "input" else "attr_by_position", {})
     return table.get(int(position))
+
+
+def _input_by_name(codemap: CodeMap, name: str) -> Entity | None:
+    needle = normalize_symbol(name)
+    if not needle:
+        return None
+    hits = codemap.by_name(name, kind=EntityKind.INPUT) or codemap.by_name(short_symbol(name), kind=EntityKind.INPUT)
+    if hits:
+        return hits[0]
+    for ent in codemap.by_kind(EntityKind.INPUT):
+        spellings = {normalize_symbol(ent.name), short_symbol(ent.name)}
+        src = str(ent.attrs.get("source_name") or "")
+        if src:
+            spellings.add(normalize_symbol(src))
+            spellings.add(short_symbol(src))
+        if needle in spellings or short_symbol(needle) in spellings:
+            return ent
+    return None
 
 
 def _is_compile_reference(value: str, compile_symbols: set[str]) -> bool:

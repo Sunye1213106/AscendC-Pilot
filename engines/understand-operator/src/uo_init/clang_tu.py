@@ -174,7 +174,9 @@ def analyze_kernel(
     *,
     scope=None,
 ) -> ParseResult:
-    res = parse_path(path, ctx.kernel_args(dtype_variant=dtype_variant))
+    res = parse_path(
+        path, ctx.kernel_args(dtype_variant=dtype_variant, source_path=path)
+    )
     if res.tu is None:
         return res
     op_root = getattr(ctx, "op_dir", "") or ""

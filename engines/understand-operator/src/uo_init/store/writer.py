@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from uo_init.paths import require_architecture
 import json
+import os
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -104,6 +106,53 @@ def _canonicalize_views(codemap: CodeMap, views: dict[str, Any] | None) -> dict[
     return finalize_tg_views(codemap, existing=seed)
 
 
+_JSON_DUMP = {"ensure_ascii": False, "separators": (",", ":")}
+
+
+def _attrs_json(attrs: dict[str, Any]) -> str:
+    cleaned = {k: v for k, v in dict(attrs or {}).items() if k != "type_text"}
+    return json.dumps(cleaned, default=str, **_JSON_DUMP)
+
+
+def _entity_snippet(ent: Any) -> str:
+    existing = str(getattr(ent, "attrs", {}).get("snippet") or "")[:400]
+    if existing.strip():
+        return existing.strip()[:400]
+    file = str(getattr(ent, "file", "") or "")
+    line = int(getattr(ent, "line_start", 0) or 0)
+    if not file or line <= 0:
+        return ""
+    try:
+        from uo_init.passes.source_text_cache import cached_snippet
+
+        return cached_snippet(file, line)
+    except Exception:
+        return ""
+
+
+def detect_source_revision(root: str | Path) -> str:
+    """Return ``git rev-parse HEAD`` for ``root``, or empty when git is unavailable."""
+    path = Path(root).expanduser().resolve()
+    if not path.is_dir():
+        return ""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=path,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError:
+        return ""
+    if proc.returncode:
+        return ""
+    return str(proc.stdout or "").strip()
+
+
 def write_codemap(
     codemap: CodeMap,
     path: str | Path,
@@ -161,32 +210,46 @@ def write_codemap(
 
     conn = sqlite3.connect(str(tmp))
     try:
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute("PRAGMA journal_mode=OFF")
         conn.executescript(SCHEMA_SQL)
+        product_meta: dict[str, Any] = {
+            "schema": SCHEMA_VERSION,
+            "authority": "uo",
+            "op_name": codemap.op_name,
+            "architecture": codemap.architecture,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "entity_count": str(len(codemap.entities)),
+            "relation_count": str(len(codemap.relations)),
+            **{k: _jsonable(v) for k, v in (meta or {}).items()},
+            **{f"cm_{k}": _jsonable(v) for k, v in codemap.meta.items()},
+        }
+        if not str(product_meta.get("source_revision") or "").strip():
+            try:
+                if dest.parents[2].name == ".ascendc-pilot":
+                    revision = detect_source_revision(dest.parents[3])
+                    if revision:
+                        product_meta["source_revision"] = revision
+            except IndexError:
+                pass
         _write_meta(
             conn,
-            {
-                "schema": SCHEMA_VERSION,
-                "authority": "uo",
-                "op_name": codemap.op_name,
-                "architecture": codemap.architecture,
-                "generated_at": datetime.now(timezone.utc).isoformat(),
-                "entity_count": str(len(codemap.entities)),
-                "relation_count": str(len(codemap.relations)),
-                **{k: _jsonable(v) for k, v in (meta or {}).items()},
-                **{f"cm_{k}": _jsonable(v) for k, v in codemap.meta.items()},
-            },
+            product_meta,
         )
-        for ent in codemap.by_kind("BUILD_VARIANT"):
-            conn.execute(
+        variants = [
+            (ent.id, ent.name, codemap.architecture, _attrs_json(ent.attrs))
+            for ent in codemap.by_kind("BUILD_VARIANT")
+        ]
+        if variants:
+            conn.executemany(
                 "INSERT OR REPLACE INTO build_variant(id, name, architecture, data) VALUES (?,?,?,?)",
-                (ent.id, ent.name, codemap.architecture, json.dumps(ent.to_dict(), ensure_ascii=False)),
+                variants,
             )
+        entity_rows = []
+        file_rows = []
+        span_rows = []
         for ent in codemap.entities.values():
-            data = ent.to_dict()
-            conn.execute(
-                "INSERT OR REPLACE INTO entity("
-                "id, kind, name, status, confidence, file, line_start, line_end, data"
-                ") VALUES (?,?,?,?,?,?,?,?,?)",
+            entity_rows.append(
                 (
                     ent.id,
                     ent.kind_name(),
@@ -196,63 +259,102 @@ def write_codemap(
                     ent.file,
                     int(ent.line_start),
                     int(ent.line_end),
-                    json.dumps(data, ensure_ascii=False),
-                ),
+                    _attrs_json(ent.attrs),
+                )
             )
             if ent.file:
-                conn.execute(
-                    "INSERT OR IGNORE INTO file(id, path, sha256, role) VALUES (?,?,?,?)",
-                    (ent.file, ent.file, "", ent.attrs.get("layer") or ""),
+                file_rows.append(
+                    (ent.file, ent.file, "", ent.attrs.get("layer") or "")
                 )
-                conn.execute(
-                    "INSERT OR REPLACE INTO source_span("
-                    "id, entity_id, file, line_start, line_end, snippet"
-                    ") VALUES (?,?,?,?,?,?)",
-                    (
-                        f"span:{ent.id}",
-                        ent.id,
-                        ent.file,
-                        int(ent.line_start),
-                        int(ent.line_end or ent.line_start),
-                        str(ent.attrs.get("snippet") or "")[:400],
-                    ),
-                )
-            for key, value in ent.attrs.items():
-                conn.execute(
-                    "INSERT OR REPLACE INTO attribute(entity_id, key, value) VALUES (?,?,?)",
-                    (ent.id, str(key), _jsonable(value)),
-                )
-        for rel in codemap.relations.values():
-            if rel.src not in codemap.entities or rel.dst not in codemap.entities:
-                continue
-            conn.execute(
+                snippet = _entity_snippet(ent)
+                if snippet and int(ent.line_start or 0) > 0:
+                    span_rows.append(
+                        (
+                            f"span:{ent.id}",
+                            ent.id,
+                            ent.file,
+                            int(ent.line_start),
+                            int(ent.line_end or ent.line_start),
+                            snippet,
+                        )
+                    )
+        if entity_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO entity("
+                "id, kind, name, status, confidence, file, line_start, line_end, data"
+                ") VALUES (?,?,?,?,?,?,?,?,?)",
+                entity_rows,
+            )
+        if file_rows:
+            conn.executemany(
+                "INSERT OR IGNORE INTO file(id, path, sha256, role) VALUES (?,?,?,?)",
+                file_rows,
+            )
+        if span_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO source_span("
+                "id, entity_id, file, line_start, line_end, snippet"
+                ") VALUES (?,?,?,?,?,?)",
+                span_rows,
+            )
+        rel_rows = [
+            (
+                rel.id,
+                rel.kind_name(),
+                rel.src,
+                rel.dst,
+                rel.status,
+                float(rel.confidence),
+                _attrs_json(rel.attrs),
+            )
+            for rel in codemap.relations.values()
+            if rel.src in codemap.entities and rel.dst in codemap.entities
+        ]
+        if rel_rows:
+            conn.executemany(
                 "INSERT OR REPLACE INTO relation("
                 "id, kind, src, dst, status, confidence, data"
                 ") VALUES (?,?,?,?,?,?,?)",
-                (
-                    rel.id,
-                    rel.kind_name(),
-                    rel.src,
-                    rel.dst,
-                    rel.status,
-                    float(rel.confidence),
-                    json.dumps(rel.to_dict(), ensure_ascii=False),
-                ),
+                rel_rows,
             )
+        from uo_init.query.legal_key_cache import compact_legal_key_blob
+
+        view_rows = []
         for name, payload in finalized.items():
-            conn.execute(
-                "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
+            stored = payload
+            if name == "tiling/legal_key_index.jsonl" and isinstance(payload, dict):
+                stored = compact_legal_key_blob(payload)
+            view_rows.append(
                 (
                     str(name),
-                    str((payload or {}).get("schema") or "") if isinstance(payload, dict) else "",
-                    json.dumps(payload, ensure_ascii=False),
-                ),
+                    str((stored or {}).get("schema") or "") if isinstance(stored, dict) else "",
+                    json.dumps(stored, default=str, **_JSON_DUMP),
+                )
             )
-        conn.execute(
+        view_rows.append(
+            (
+                "summary",
+                "codemap-summary/v1",
+                json.dumps(strict_summary, default=str, **_JSON_DUMP),
+            )
+        )
+        conn.executemany(
             "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
-            ("summary", "codemap-summary/v1", json.dumps(strict_summary, ensure_ascii=False)),
+            view_rows,
         )
         conn.commit()
+        vacuum = str(os.environ.get("UO_VACUUM_UO") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if vacuum:
+            old_isolation = conn.isolation_level
+            conn.isolation_level = None
+            try:
+                conn.execute("VACUUM")
+            finally:
+                conn.isolation_level = old_isolation
     finally:
         conn.close()
 

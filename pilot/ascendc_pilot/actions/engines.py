@@ -72,7 +72,10 @@ def _run_ce_uo_freshness(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     from code_engineering.product_uo import identity
 
     arch = _resolve_ce_arch(project_root, ctx)
-    product_identity = identity(project_root, architecture=arch)
+    try:
+        product_identity = identity(project_root, architecture=arch)
+    except (FileNotFoundError, RuntimeError) as exc:
+        return {"ok": False, "engine": "uo_freshness", "error": str(exc)[:400]}
     expected = str(ctx.get("expected_fingerprint") or product_identity.get("graph_fingerprint") or "")
     result = check_freshness(project_root, expected, architecture=arch)
     doc = {"schema": "ce-uo-freshness/v1", "product": product_identity, **result}
@@ -95,30 +98,47 @@ def _run_ce_impact_slice(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     report = impact_from_diff(
         diff_text,
         project_root=project_root,
-        uo_root=_uo(project_root, arch=arch),
+        architecture=arch,
     ).to_dict()
     spans = {
         str(path): [(int(pair[0]), int(pair[1])) for pair in pairs if len(pair) >= 2]
         for path, pairs in (capture.get("diff_spans") or {}).items()
     }
-    anchors = anchor_resolve(spans, project_root=project_root, architecture=arch)
-    seed_ids = [str(row.get("id")) for row in anchors if row.get("id")]
-    edge_kinds = list(ctx.get("edge_kinds") or [])
+    from uo_init.query.evidence import USEFUL_EDGE_KINDS
+
+    edge_kinds = list(ctx.get("edge_kinds") or USEFUL_EDGE_KINDS)
     depth = int(ctx.get("depth") or 2)
     budget = int(ctx.get("budget") or 10_000)
+    try:
+        anchors = anchor_resolve(spans, project_root=project_root, architecture=arch)
+        seed_ids = [str(row.get("id")) for row in anchors if row.get("id")]
+        forward = slice_forward(
+            seed_ids, edge_kinds, depth,
+            project_root=project_root, architecture=arch, budget=budget,
+        )
+        backward = slice_backward(
+            seed_ids, edge_kinds, depth,
+            project_root=project_root, architecture=arch, budget=budget,
+        )
+    except (FileNotFoundError, RuntimeError) as exc:
+        return {"ok": False, "engine": "impact_slice", "error": str(exc)[:400]}
     doc = {
         "schema": "ce-impact-slice/v1",
         **report,
         "anchors": anchors,
-        "forward": slice_forward(
-            seed_ids, edge_kinds, depth,
-            project_root=project_root, architecture=arch, budget=budget,
-        ),
-        "backward": slice_backward(
-            seed_ids, edge_kinds, depth,
-            project_root=project_root, architecture=arch, budget=budget,
-        ),
+        "forward": forward,
+        "backward": backward,
     }
+    dim_values = ctx.get("affected_key_dims")
+    if isinstance(dim_values, dict) and dim_values and not doc.get("affected_keys"):
+        from code_engineering.primitives import key_subset
+
+        try:
+            doc["affected_keys"] = key_subset(
+                dim_values, project_root=project_root, architecture=arch
+            )
+        except (FileNotFoundError, RuntimeError) as exc:
+            return {"ok": False, "engine": "impact_slice", "error": str(exc)[:400]}
     out = _dump_ce_yaml(_ce(project_root, arch=arch) / "impact" / "impact_slice.yaml", doc)
     return {"ok": True, "engine": "impact_slice", "artifact": out.as_posix(), **doc}
 
@@ -169,11 +189,122 @@ def _run_ce_obligation_build(project_root: Path, ctx: dict[str, Any]) -> dict[st
     }
 
 
+def _run_ce_scenario_infer(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.scenarios import (
+        anchors_from_slice,
+        infer_scenario_set,
+        write_scenario_set,
+    )
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ce_root = _ce(project_root, arch=arch)
+    impact = _load_yaml(ce_root / "impact" / "impact_slice.yaml") or {}
+    intent = _load_yaml(ce_root / "intent" / "anchors.yaml") or {}
+    freshness = _load_yaml(ce_root / "impact" / "freshness.yaml") or {}
+    anchors = anchors_from_slice(impact)
+    for row in intent.get("anchors") or []:
+        if isinstance(row, dict):
+            anchors.append(row)
+    entry = "static" if str(ctx.get("workflow_id") or "") == "ce-intent" else "diff"
+    if not impact and intent.get("anchors"):
+        entry = "static"
+    fingerprint = str(
+        (freshness.get("product") or {}).get("graph_fingerprint")
+        or freshness.get("fingerprint")
+        or ctx.get("fingerprint")
+        or ""
+    )
+    doc = infer_scenario_set(anchors, entry=entry, fingerprint=fingerprint, origin="inferred")
+    out = write_scenario_set(doc, ce_root / "scenarios" / "scenario_set.yaml")
+    return {"ok": True, "engine": "scenario_infer", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_scenario_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.scenarios import merge_knobs, write_scenario_set
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ce_root = _ce(project_root, arch=arch)
+    skeleton = _load_yaml(ce_root / "scenarios" / "scenario_set.yaml") or {}
+    run_id = str(ctx.get("run_id") or "")
+    staging: dict[str, Any] = {}
+    if run_id:
+        staging = _load_yaml(
+            project_root / ".ascendc-pilot" / arch / "runs" / run_id
+            / "actions" / "scenario_knobs" / "staging.yaml"
+        ) or {}
+        if not staging:
+            parts_dir = (
+                project_root / ".ascendc-pilot" / arch / "runs" / run_id
+                / "actions" / "scenario_knobs" / "parts"
+            )
+            items: list[dict[str, Any]] = []
+            for part in sorted(parts_dir.glob("*.yaml")):
+                doc = _load_yaml(part) or {}
+                items.extend(row for row in (doc.get("items") or []) if isinstance(row, dict))
+            if items:
+                staging = {"schema": "ce-scenario-knobs/v1", "items": items}
+    doc = merge_knobs(skeleton, staging) if staging else skeleton
+    out = write_scenario_set(doc, ce_root / "scenarios" / "scenario_set.yaml")
+    return {
+        "ok": True,
+        "engine": "scenario_apply",
+        "artifact": out.as_posix(),
+        "merged": bool(staging),
+        **doc,
+    }
+
+
+def _run_ce_harness_evidence(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.harness import load_adapter
+    from code_engineering.scenarios.catalog import PERF_IDS, PRECISION_IDS
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ce_root = _ce(project_root, arch=arch)
+    capture = _load_yaml(ce_root / "impact" / "change_capture.yaml") or {}
+    head_sha = str(capture.get("head_sha") or capture.get("head") or "unknown")
+    obligations = _load_yaml(ce_root / "impact" / "obligations.yaml") or {}
+    scenarios = _load_yaml(ce_root / "scenarios" / "scenario_set.yaml") or {}
+    results = _load_yaml(
+        _tg(project_root, arch=arch) / "closure" / "scenarios" / "harness_results.yaml"
+    ) or {}
+    adapter = load_adapter(project_root, architecture=arch)
+    wanted = {
+        str(row.get("id"))
+        for row in (obligations.get("obligations") or [])
+        if isinstance(row, dict)
+        and str(row.get("risk_class") or "") in {"precision", "perf"}
+        and row.get("id")
+    }
+    items = [row for row in (scenarios.get("items") or []) if isinstance(row, dict)]
+    scenario_ids = {str(row.get("id") or "") for row in items}
+    precision_hit = bool(scenario_ids & set(PRECISION_IDS))
+    runs = list(results.get("runs") or [])
+    missing = (not runs) or any(str(row.get("reason") or "") == "harness_missing" for row in runs)
+    ok = bool(runs) and (not missing) and all(bool(row.get("ok")) for row in runs)
+    mode = "only_grad" if precision_hit else "profiler"
+    receipt = adapter.to_evidence(
+        {
+            "ok": ok,
+            "mode": mode,
+            "reason": "harness_missing" if missing else "",
+            "csv": str(results.get("csv") or ""),
+        },
+        change_head_sha=head_sha,
+        obligation_ids=sorted(wanted) if ok else [],
+    )
+    if missing:
+        receipt["reason"] = "harness_missing"
+        receipt["ok"] = False
+        receipt["verified_obligations"] = []
+    out = _dump_ce_yaml(ce_root / "verify" / "harness_evidence.yaml", receipt)
+    return {"ok": bool(receipt.get("ok")), "engine": "harness_evidence", "artifact": out.as_posix(), **receipt}
+
+
 def _run_ce_verify_gate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.gates import run_named_gate
 
     arch = _resolve_ce_arch(project_root, ctx)
-    gate = run_named_gate(project_root, "impact_ledger_ready")
+    gate = run_named_gate(project_root, "impact_ledger_ready", architecture=arch)
     doc = {"schema": "ce-verify-gate/v1", "ok": bool(gate.get("ok")), "gate": gate}
     out = _dump_ce_yaml(_ce(project_root, arch=arch) / "verify" / "gate.yaml", doc)
     return {"engine": "verify_gate", "artifact": out.as_posix(), **doc}
@@ -214,8 +345,17 @@ def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str
 
     arch = _resolve_ce_arch(project_root, ctx)
     declared = str(ctx.get("external_evidence_path") or "").strip()
+    verify_root = _ce(project_root, arch=arch) / "verify"
+    sources: list[str] = []
+    if declared:
+        sources.append(declared)
+    default_receipt = verify_root / "harness_evidence.yaml"
+    if default_receipt.is_file() and str(default_receipt) not in sources:
+        sources.append(str(default_receipt))
     try:
-        receipts = load_external_evidence(declared) if declared else []
+        receipts: list[dict[str, Any]] = []
+        for source in sources:
+            receipts.extend(load_external_evidence(source))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "external_ingest", "error": str(exc)[:400]}
     verified = {
@@ -228,7 +368,6 @@ def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str
         for receipt in receipts
         for value in (receipt.get("excepted_obligations") or [])
     }
-    verify_root = _ce(project_root, arch=arch) / "verify"
     verify_ledger = verify_root / "ledger.yaml"
     source = verify_ledger if verify_ledger.is_file() else _ce(project_root, arch=arch) / "impact" / "ledger.yaml"
     ledger = load_ledger(project_root, architecture=arch, path=source)
@@ -278,7 +417,12 @@ def _run_ce_intent_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str
     from ascendc_pilot.gates import run_named_gate
 
     arch = _resolve_ce_arch(project_root, ctx)
-    gate = run_named_gate(project_root, "kb_ready")
+    gate = run_named_gate(
+        project_root,
+        "kb_ready",
+        op_name=str(ctx.get("op_name") or "") or None,
+        architecture=arch,
+    )
     doc = {"schema": "ce-intent-kb-check/v1", "ok": bool(gate.get("ok")), "gate": gate}
     out = _dump_ce_yaml(_ce(project_root, arch=arch) / "intent" / "kb_check.yaml", doc)
     return {"engine": "kb_check", "artifact": out.as_posix(), **doc}
@@ -296,6 +440,17 @@ def _run_ce_anchor_locate(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
     doc = {"schema": "ce-intent-anchors/v1", "anchors": anchors, "span_count": len(spans)}
     out = _dump_ce_yaml(_ce(project_root, arch=arch) / "intent" / "anchors.yaml", doc)
     return {"ok": True, "engine": "anchor_locate", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_feature_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.intent import promote_feature_decomposition
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    return promote_feature_decomposition(
+        project_root,
+        architecture=arch,
+        run_id=str(ctx.get("run_id") or ""),
+    )
 
 
 
@@ -443,7 +598,7 @@ def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "legal_key_count": int(ready.get("legal_key_count") or 0),
         "error": "" if ok else str(ready.get("error") or "UO TG views not ready"),
     }
-    out = _tg(project_root) / "init" / "uo_ready.yaml"
+    out = _tg(project_root, arch=str(tg_ctx.get("architecture") or "") or None) / "init" / "uo_ready.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return {
@@ -462,7 +617,7 @@ def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def _ensure_uo_tg_views(project_root: Path, tg_ctx: dict[str, Any]) -> dict[str, Any]:
-    """Locate ``.uo`` and ensure TPL/D + host/graph view_blobs exist."""
+    """Locate ``.uo`` and confirm TPL/D + host/graph view_blobs are readable."""
     try:
         from uo_init.tg_projection import ensure_tg_views
 
@@ -478,7 +633,7 @@ def _ensure_uo_tg_views(project_root: Path, tg_ctx: dict[str, Any]) -> dict[str,
 def _load_uo_tg_doc(project_root: Path, tg_ctx: dict[str, Any], name: str) -> dict[str, Any]:
     """Load a TG view exclusively from the CodeMap ``.uo`` view_blob."""
     try:
-        from uo_init.store.reader import find_uo_product, load_view_blob
+        from uo_init.store.reader import find_uo_product, load_view_blob_checked
 
         product = find_uo_product(
             project_root,
@@ -487,7 +642,10 @@ def _load_uo_tg_doc(project_root: Path, tg_ctx: dict[str, Any], name: str) -> di
         )
         if product is None or product.suffix != ".uo":
             return {}
-        blob = load_view_blob(product, name)
+        checked = load_view_blob_checked(product, name)
+        if not checked.get("ok"):
+            return {}
+        blob = checked.get("view")
         return blob if isinstance(blob, dict) else {}
     except Exception:
         return {}
@@ -918,12 +1076,31 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     tg = _tg(project_root)
     init_intent = _load_yaml(tg / "init" / "init_intent.yaml") or {}
     existing = _load_yaml(tg / "plan" / "plan_intent.yaml") or {}
-    mode = (
+    requested = (
         str(ctx.get("mode") or "").strip()
         or str(existing.get("mode") or "").strip()
         or str(init_intent.get("mode") or "").strip()
-        or "tilingkey_full_coverage"
     )
+    full_coverage = {
+        "tilingkey_full_coverage",
+        "branch_outcome_coverage",
+        "ce_change_scoped",
+    }
+    arch = str(tg_ctx.get("architecture") or "").strip() or _resolve_ce_arch(project_root, ctx)
+    scenario_doc = _load_yaml(
+        _ce(project_root, arch=arch) / "scenarios" / "scenario_set.yaml"
+    ) or {}
+    scenario_ids = [
+        str(row.get("id"))
+        for row in (scenario_doc.get("items") or [])
+        if isinstance(row, dict) and row.get("id")
+    ]
+    if requested == "scenario_targeted" or requested == "scenario_set":
+        mode = "scenario_targeted"
+    elif requested in full_coverage:
+        mode = requested
+    else:
+        mode = requested or "tilingkey_full_coverage"
     source = (
         str(ctx.get("source") or "").strip()
         or str(existing.get("source") or "").strip()
@@ -938,6 +1115,10 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         "op_name": tg_ctx.get("op_name") or "",
         "architecture": tg_ctx.get("architecture") or "",
     }
+    if mode == "scenario_targeted":
+        intent["target_mode"] = "scenario_set"
+        intent["scenarios"] = scenario_ids
+        intent["scenario_set"] = "ce/scenarios/scenario_set.yaml"
     out = tg / "plan" / "plan_intent.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(yaml.safe_dump(intent, allow_unicode=True, sort_keys=False), encoding="utf-8")
@@ -988,9 +1169,11 @@ def _run_tg_plan_scope(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
 def _run_tg_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.gates import run_named_gate
 
-    op = str((_resolve_tg_ctx(project_root, ctx)).get("op_name") or "") or None
-    g1 = run_named_gate(project_root, "tg_init_confirmed", op_name=op)
-    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op)
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    op = str(tg_ctx.get("op_name") or "") or None
+    arch = str(tg_ctx.get("architecture") or "") or None
+    g1 = run_named_gate(project_root, "tg_init_confirmed", op_name=op, architecture=arch)
+    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op, architecture=arch)
     ok = bool(g1.get("ok")) and bool(g2.get("ok"))
     return {"ok": ok, "engine": "plan_precheck", "gates": {"tg_init_confirmed": g1, "kb_fingerprint_fresh": g2}}
 
@@ -1105,8 +1288,9 @@ def _run_tg_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str,
 
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     op = tg_ctx.get("op_name") or None
-    g1 = run_named_gate(project_root, "plan_approved", op_name=op)
-    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op)
+    arch = str(tg_ctx.get("architecture") or "") or None
+    g1 = run_named_gate(project_root, "plan_approved", op_name=op, architecture=arch)
+    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op, architecture=arch)
     ok = bool(g1.get("ok")) and bool(g2.get("ok"))
     return {
         "ok": ok,
@@ -2426,11 +2610,15 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     from testcase_agent.closure import report
 
     ws = _closure_ws(project_root)
-    gate = run_named_gate(project_root, "closure_soundness")
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    gate = run_named_gate(
+        project_root,
+        "closure_soundness",
+        architecture=str(tg_ctx.get("architecture") or "") or None,
+    )
     rep = report.report(ws, refresh=True)
     st = ledger.state(ws)
 
-    tg_ctx = _resolve_tg_ctx(project_root, ctx)
     uo = _uo(project_root, arch=tg_ctx.get("architecture"))
     man = _load_yaml(uo / "manifest.yaml") or {}
     uo_fp = str(man.get("fingerprint") or man.get("graph_fingerprint") or "")
@@ -2545,6 +2733,113 @@ def _run_closure_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
     }
 
 
+def _run_tg_targeted_construct(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.harness import load_adapter
+    from code_engineering.scenarios import merge_knobs
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ce_root = _ce(project_root, arch=arch)
+    skeleton = _load_yaml(ce_root / "scenarios" / "scenario_set.yaml") or {}
+    run_id = str(ctx.get("run_id") or "")
+    staging = {}
+    if run_id:
+        staging = _load_yaml(
+            project_root / ".ascendc-pilot" / arch / "runs" / run_id
+            / "actions" / "scenario_knobs" / "staging.yaml"
+        ) or {}
+    doc = merge_knobs(skeleton, staging) if staging else skeleton
+    items = [row for row in (doc.get("items") or []) if isinstance(row, dict) and row.get("id")]
+    adapter = load_adapter(project_root, architecture=arch)
+    dest_root = _tg(project_root, arch=arch) / "closure" / "scenarios"
+    emitted: list[dict[str, Any]] = []
+    for item in items:
+        sid = str(item.get("id") or "")
+        cases = adapter.retrieve(item)
+        if sid == "P-ILLEGAL":
+            patched = []
+            for row in cases or [{"Testcase_Name": "illegal_disable", "enable": "disable"}]:
+                payload = dict(row)
+                payload["enable"] = "disable"
+                patched.append(payload)
+            cases = patched
+        csv_path = dest_root / f"{sid}.csv"
+        adapter.emit(cases, csv_path)
+        emitted.append({
+            "id": sid,
+            "oracle": str(item.get("oracle") or ""),
+            "csv": csv_path.as_posix(),
+            "count": len(cases),
+        })
+    receipt = {
+        "schema": "tg-targeted-construct/v1",
+        "adapter": adapter.identity(),
+        "scenarios": emitted,
+    }
+    out = dest_root / "construct.yaml"
+    _dump_ce_yaml(out, receipt)
+    return {"ok": bool(items), "engine": "targeted_construct", "artifact": out.as_posix(), **receipt}
+
+
+def _run_tg_harness_run(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.harness import load_adapter
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    dest_root = _tg(project_root, arch=arch) / "closure" / "scenarios"
+    construct = _load_yaml(dest_root / "construct.yaml") or {}
+    adapter = load_adapter(project_root, architecture=arch)
+    runs: list[dict[str, Any]] = []
+    csv_paths: list[str] = []
+    for row in construct.get("scenarios") or []:
+        if not isinstance(row, dict):
+            continue
+        sid = str(row.get("id") or "")
+        csv_path = Path(str(row.get("csv") or dest_root / f"{sid}.csv"))
+        csv_paths.append(str(csv_path))
+        oracle = str(row.get("oracle") or "")
+        if sid == "P-ILLEGAL" or oracle == "none":
+            runs.append({
+                "id": sid,
+                "ok": True,
+                "mode": "none",
+                "reason": "disabled_no_npu",
+                "csv": str(csv_path),
+            })
+            continue
+        result = adapter.run(csv_path, oracle or "only_grad")
+        result["id"] = sid
+        runs.append(result)
+    doc = {
+        "schema": "tg-harness-run/v1",
+        "adapter": adapter.identity(),
+        "csv": csv_paths[0] if csv_paths else "",
+        "runs": runs,
+    }
+    out = dest_root / "harness_results.yaml"
+    _dump_ce_yaml(out, doc)
+    ok = all(bool(row.get("ok")) or str(row.get("reason") or "") == "disabled_no_npu" for row in runs) if runs else False
+    return {"ok": ok, "engine": "harness_run", "artifact": out.as_posix(), **doc}
+
+
+def _run_tg_scenario_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    arch = _resolve_ce_arch(project_root, ctx)
+    dest_root = _tg(project_root, arch=arch) / "closure" / "scenarios"
+    construct = _load_yaml(dest_root / "construct.yaml") or {}
+    results = _load_yaml(dest_root / "harness_results.yaml") or {}
+    intent = _load_yaml(_tg(project_root, arch=arch) / "plan" / "plan_intent.yaml") or {}
+    cert = {
+        "schema": "tg-scenario-coverage/v1",
+        "mode": "scenario_targeted",
+        "target_mode": "scenario_set",
+        "scenarios": list(intent.get("scenarios") or [row.get("id") for row in (construct.get("scenarios") or [])]),
+        "construct": construct,
+        "harness": results,
+        "ok": bool(construct.get("scenarios")),
+    }
+    out = _tg(project_root, arch=arch) / "closure" / "scenario_certificate.yaml"
+    _dump_ce_yaml(out, cert)
+    return {"ok": bool(cert["ok"]), "engine": "scenario_certify", "artifact": out.as_posix(), **cert}
+
+
 def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]:
     uo = _uo(project_root)
     op_name = str(ctx.get("op_name") or "").strip()
@@ -2591,14 +2886,19 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("ce-impact", "impact_slice"): _run_ce_impact_slice,
     ("ce-impact", "risk_classify"): _run_ce_risk_classify,
     ("ce-impact", "obligation_build"): _run_ce_obligation_build,
+    ("ce-impact", "scenario_infer"): _run_ce_scenario_infer,
+    ("ce-impact", "scenario_apply"): _run_ce_scenario_apply,
     ("ce-verify", "verify_gate"): _run_ce_verify_gate,
     ("ce-verify", "coverage_bridge"): _run_ce_coverage_bridge,
     ("ce-verify", "residual_analyse"): _run_ce_residual_analyse,
     ("ce-verify", "external_ingest"): _run_ce_external_ingest,
+    ("ce-verify", "harness_evidence"): _run_ce_harness_evidence,
     ("ce-verify", "ce_certify"): _run_ce_certify,
     ("ce-intent", "intent_capture"): _run_ce_intent_capture,
     ("ce-intent", "kb_check"): _run_ce_intent_kb_check,
     ("ce-intent", "anchor_locate"): _run_ce_anchor_locate,
+    ("ce-intent", "feature_promote"): _run_ce_feature_promote,
+    ("ce-intent", "scenario_infer"): _run_ce_scenario_infer,
     ("tg-init", "init_intent"): _run_tg_init_intent,
     ("tg-init", "kb_check"): _run_tg_kb_check,
     ("tg-init", "contract_build"): _run_tg_contract_build,
@@ -2615,6 +2915,9 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-solve", "closure_residual"): _run_closure_residual,
     ("tg-solve", "closure_construct"): _run_closure_construct,
     ("tg-solve", "closure_explain"): _run_closure_explain,
+    ("tg-solve", "targeted_construct"): _run_tg_targeted_construct,
+    ("tg-solve", "harness_run"): _run_tg_harness_run,
+    ("tg-solve", "scenario_certify"): _run_tg_scenario_certify,
     ("tg-solve", "lemma_leads"): _run_lemma_leads,
     ("tg-solve", "lemma_evidence"): _run_lemma_evidence,
     ("tg-solve", "lemma_mine"): _run_lemma_mine,
@@ -2680,6 +2983,18 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "ce/impact/obligations.yaml",
         "ce/impact/ledger.yaml",
     ],
+    "ce-scenario-set-v1": ["ce/scenarios/scenario_set.yaml"],
+    "scenario-knobs-staging-v1": [
+        "runs/{run_id}/actions/scenario_knobs/parts/**",
+        "runs/{run_id}/actions/scenario_knobs/staging.yaml",
+    ],
+    "scenario-confirm-v1": ["ce/scenarios/confirmation.yaml"],
+    "scenario-plan-v1": ["tg/plan/scenario_plan.yaml"],
+    "targeted-construct-v1": ["tg/closure/scenarios/**"],
+    "harness-run-v1": ["tg/closure/scenarios/harness_results.yaml"],
+    "harness-evidence-v1": ["ce/verify/harness_evidence.yaml"],
+    "harness-evidence-check-v1": ["ce/verify/harness_evidence_check.yaml"],
+    "scenario-coverage-v1": ["tg/closure/scenario_certificate.yaml"],
     "impact-audit-v1": ["ce/impact/audit_report.yaml"],
     "verify-gate-v1": ["ce/verify/gate.yaml"],
     "verify-code-review-v1": ["ce/verify/code_review.yaml"],
@@ -2712,7 +3027,11 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/contract/integrity_gate.yaml",
     ],
     "init-audit-v1": ["tg/init/audit_report.yaml"],
-    "init-confirmed-v1": ["tg/init/status.yaml", "tg/init/kb_fingerprint.yaml"],
+    "init-confirmed-v1": [
+        "tg/init/status.yaml",
+        "tg/init/kb_fingerprint.yaml",
+        "tg/init/confirmation.yaml",
+    ],
     "plan-scope-v1": ["tg/plan/levels/*/plan_scope.yaml"],
     "plan-intent-v1": ["tg/plan/plan_intent.yaml"],
     "plan-precheck-v1": ["tg/init/status.yaml"],

@@ -84,9 +84,11 @@ def issue_interaction_request(
     values = list(allowed_values or [])
     if not values:
         for opt in ask_question.get("options") or []:
-            if isinstance(opt, dict):
-                v = str(opt.get("value") or opt.get("label") or "").strip()
-                if v:
+            if not isinstance(opt, dict):
+                continue
+            for key in ("value", "label"):
+                v = str(opt.get(key) or "").strip()
+                if v and v not in values:
                     values.append(v)
     req = {
         "schema": "human-interaction-request/v1",
@@ -189,7 +191,17 @@ def record_answer(
             }:
                 answer = str(opt.get("value") or opt.get("label") or answer)
                 break
-    if allowed and answer not in allowed:
+    try:
+        from ascendc_pilot.run_resume import normalize_decision
+
+        canon = normalize_decision(answer)
+        if canon:
+            answer = canon
+        allowed_canon = {normalize_decision(v) or v for v in allowed} if allowed else set()
+    except Exception:  # noqa: BLE001
+        canon = None
+        allowed_canon = set(allowed)
+    if allowed and answer not in allowed and answer not in allowed_canon:
         return {
             "ok": False,
             "error": "VALUE_NOT_ALLOWED",
@@ -298,13 +310,27 @@ def require_decision_receipt(
         }
     value = str(receipt.get("value") or "")
     if expected_values and value not in expected_values:
-        return {
-            "ok": False,
-            "error": "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH",
-            "expected_values": list(expected_values),
-            "got": value,
-            "message_zh": f"收据值 {value!r} 不是本次操作所需的肯定选择",
-        }
+        try:
+            from ascendc_pilot.run_resume import normalize_decision
+
+            got = normalize_decision(value) or value
+            allowed = {normalize_decision(v) or v for v in expected_values}
+            if got not in allowed:
+                return {
+                    "ok": False,
+                    "error": "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH",
+                    "expected_values": list(expected_values),
+                    "got": value,
+                    "message_zh": f"收据值 {value!r} 不是本次操作所需的肯定选择",
+                }
+        except Exception:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH",
+                "expected_values": list(expected_values),
+                "got": value,
+                "message_zh": f"收据值 {value!r} 不是本次操作所需的肯定选择",
+            }
     if consume:
         receipt["consumed"] = True
         receipt["consumed_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

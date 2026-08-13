@@ -232,7 +232,7 @@ def test_direct_domain_script_denied_after_failure(tmp_path: Path):
 
 
 def test_repeated_retryable_failure_upgrades(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
+    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
     st = load_state(tmp_path)
     st["retry_budget"] = 2
     save_state(tmp_path, st)
@@ -241,9 +241,9 @@ def test_repeated_retryable_failure_upgrades(tmp_path: Path):
         return record_pilot_result(
             tmp_path,
             ok=False,
-            action_id="analyze",
+            action_id="investigate",
             step_id="action_finalize",
-            error_code="ACTION_FINALIZE_FAILED_ANALYZE",
+            error_code="ACTION_FINALIZE_FAILED_INVESTIGATE",
             messages=["output_contract_failed"],
             source="finalize_action",
             explicit_class="checker_gate",
@@ -264,6 +264,92 @@ def test_repeated_retryable_failure_upgrades(tmp_path: Path):
     }
     # After upgrade, last_failure should be retry_exhausted
     assert load_state(tmp_path)["last_failure"]["failure_class"] == "retry_exhausted"
+
+
+def test_deterministic_quality_failure_is_human_required(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
+    recorded = record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="analyze",
+        step_id="action_finalize",
+        messages=["output_contract_failed"],
+        source="finalize_action",
+        explicit_class="checker_gate",
+        findings=[{"code": "UNROOTED_TILING_KEYS", "message": "Mode::ON is unrooted"}],
+    )
+    assert recorded["status"] == "human_required"
+    nxt = describe_next(tmp_path)
+    assert nxt["status"] == "human_required"
+    assert nxt["allowed_actions"] == []
+    assert nxt["rework_targets"] == []
+    legal = nxt["human_required"]["legal_actions"]
+    assert "inspect_failure" in legal
+    assert "abort_run" in legal
+    assert "retry_failed_action" not in legal
+    assert "retry_after_environment_fix" not in legal
+    lf = nxt.get("last_failure") or {}
+    assert lf.get("rework_action_ids") == []
+    assert any(f.get("code") == "UNROOTED_TILING_KEYS" for f in (lf.get("findings") or []))
+
+
+def test_llm_checker_failure_reworks_that_action_with_findings(tmp_path: Path):
+    start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
+    recorded = record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="investigate",
+        step_id="action_finalize",
+        messages=["output_contract_failed"],
+        source="finalize_action",
+        explicit_class="checker_gate",
+        findings=[{"code": "OUTPUT_CONTRACT_FAILED", "message": "report.yaml missing findings"}],
+    )
+    assert recorded["status"] == "rework_required"
+    nxt = describe_next(tmp_path)
+    assert nxt["status"] == "rework_required"
+    assert nxt["allowed_actions"] == []
+    assert nxt["rework_targets"]
+    assert nxt["rework_targets"][0]["action_id"] == "investigate"
+    lf = nxt.get("last_failure") or {}
+    assert lf.get("rework_action_ids") == ["investigate"]
+    assert any(f.get("code") == "OUTPUT_CONTRACT_FAILED" for f in (lf.get("findings") or []))
+
+
+def test_transient_failure_may_retry_deterministic_action(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
+    recorded = record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="analyze",
+        step_id="action_finalize",
+        messages=["timeout waiting for clang"],
+        source="finalize_action",
+        explicit_class="transient_tool",
+    )
+    assert recorded["status"] == "rework_required"
+    nxt = describe_next(tmp_path)
+    # Transient retries the failed Action itself; it is not an LLM rework.
+    assert nxt["status"] == "rework_required"
+    assert nxt["rework_targets"]
+    assert nxt["rework_targets"][0]["action_id"] == "analyze"
+
+
+def test_rework_required_next_returns_targets_only(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="analyze",
+        step_id="action_finalize",
+        messages=["output_contract_failed"],
+        source="finalize_action",
+        explicit_class="checker_gate",
+    )
+    nxt = describe_next(tmp_path)
+    assert nxt["status"] == "human_required"
+    assert nxt["allowed_actions"] == []
+    assert nxt["rework_targets"] == []
 
 
 def test_old_lease_not_reusable(tmp_path: Path):
@@ -376,24 +462,6 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
         )
         assert v.get("ok") is False, (tool, path, cmd)
         assert v.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
-
-
-def test_rework_required_next_returns_targets_only(tmp_path: Path):
-    start_workflow(tmp_path, "uo-init", phase="analyze", force_phase=True, architecture="arch35")
-    record_pilot_result(
-        tmp_path,
-        ok=False,
-        action_id="analyze",
-        step_id="action_finalize",
-        messages=["output_contract_failed"],
-        source="finalize_action",
-        explicit_class="checker_gate",
-    )
-    nxt = describe_next(tmp_path)
-    assert nxt["status"] == "rework_required"
-    assert nxt["allowed_actions"] == []
-    assert nxt["rework_targets"]
-    assert nxt["rework_targets"][0]["action_id"] == "analyze"
 
 
 def test_observation_persisted_to_run_dir(tmp_path: Path):

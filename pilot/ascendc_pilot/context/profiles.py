@@ -2,6 +2,9 @@
 
 Profiles are opt-in. When no profile matches ``context_profile_id``, the
 legacy lightweight ``build_context_pack`` path is used unchanged.
+
+Unregistered Actions must omit ``context_profile_id`` (explicit None). Do not
+fabricate ``{workflow}-{action}`` ids that are not in this registry.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ class ContextProfile:
     id: str
     description: str = ""
     # Domain reference files relative to repo root (skills/<skill>/...).
+    # Compiler records paths only; bodies stay in the static method/skill prefix.
     references: tuple[str, ...] = ()
     query_slices: tuple[QuerySlice, ...] = ()
     include_prior_failure: bool = True
@@ -39,11 +43,11 @@ class ContextProfile:
         "full_source_tree",
         "full_memory",
         "unrelated_ir",
+        "reference_bodies",
     )
 
 
-# High-value Action profiles (P1c). Ids match specs.py default
-# context_profile_id = f"{workflow_id}-{action_id with dashes}".
+# High-value Action profiles. Ids are declared explicitly on LLM Actions in specs.py.
 PROFILES: dict[str, ContextProfile] = {
     "uo-investigate-investigate": ContextProfile(
         id="uo-investigate-investigate",
@@ -63,24 +67,20 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         token_budget=4500,
     ),
-    # Legacy alias kept for older session slices / tests.
-    "uo-init-resolve": ContextProfile(
-        id="uo-init-resolve",
-        description="Deprecated alias of uo-investigate-investigate (resolve removed from /uo-init).",
+    "uo-query-kb-lookup": ContextProfile(
+        id="uo-query-kb-lookup",
+        description="Read-only CodeMap Q&A: query gotchas + nearby unresolved neighborhood.",
         references=(
+            "skills/operator-analysis/references/codemap-query-gotchas.md",
+            "skills/operator-analysis/references/uo-scenario-hooks.md",
             "skills/operator-analysis/references/codemap-authority.md",
-            "skills/operator-analysis/references/codemap-completeness.md",
-            "skills/operator-analysis/references/semantic-resolution.md",
-            "skills/operator-analysis/references/codemap-build-gotchas.md",
             "skills/operator-analysis/references/evidence-quality.md",
-            "skills/operator-analysis/references/cpp-semantics.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="unresolved_blockers", limit=12),
-            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
-            QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
         ),
-        token_budget=4500,
+        token_budget=3500,
     ),
     "tg-solve-lemma-mine": ContextProfile(
         id="tg-solve-lemma-mine",
@@ -100,9 +100,82 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         token_budget=5000,
     ),
+    "tg-solve-lemma-review": ContextProfile(
+        id="tg-solve-lemma-review",
+        description="Lemma qualification: replay proof obligations against leads and open keys.",
+        references=(
+            "skills/source-proof/references/proof-obligations.md",
+            "skills/source-proof/references/referee-replay.md",
+            "skills/source-proof/references/static-evidence.md",
+            "skills/source-proof/references/failure-patterns.md",
+            "skills/source-proof/references/gotchas.md",
+            "skills/testcase-generation/references/closure-safety.md",
+        ),
+        query_slices=(
+            QuerySlice(method="branches_for_key", seed_from="lemma_leads", limit=6),
+            QuerySlice(method="constraints_for", seed_from="lemma_leads", limit=6),
+            QuerySlice(method="neighbors", seed_from="open_keys", limit=6),
+        ),
+        token_budget=4500,
+    ),
+    "tg-solve-closure-audit": ContextProfile(
+        id="tg-solve-closure-audit",
+        description="Closure invariant audit: open keys + certificate/safety gotchas.",
+        references=(
+            "skills/testcase-generation/references/closure-safety.md",
+            "skills/testcase-generation/references/closure-gotchas.md",
+            "skills/testcase-generation/references/certificate.md",
+            "skills/testcase-generation/references/failure-patterns.md",
+        ),
+        query_slices=(
+            QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
+            QuerySlice(method="constraints_for", seed_from="open_keys", limit=6),
+        ),
+        token_budget=4000,
+    ),
+    "tg-init-init-audit": ContextProfile(
+        id="tg-init-init-audit",
+        description="Coverage-contract audit after Host view bind.",
+        references=(
+            "skills/testcase-generation/references/construction-contract.md",
+            "skills/testcase-generation/references/planning.md",
+            "skills/testcase-generation/references/gotchas.md",
+        ),
+        query_slices=(),
+        token_budget=2500,
+    ),
+    "tg-init-human-confirm": ContextProfile(
+        id="tg-init-human-confirm",
+        description="Human confirm to enter planning; no CodeMap dump.",
+        references=("skills/testcase-generation/references/planning.md",),
+        query_slices=(),
+        token_budget=1500,
+    ),
+    "tg-plan-scenario-plan": ContextProfile(
+        id="tg-plan-scenario-plan",
+        description="Freeze ScenarioSet as the TG plan target.",
+        references=(
+            "skills/code-engineering/references/scenario-catalog.md",
+            "skills/testcase-generation/references/precision-scenarios.md",
+            "skills/testcase-generation/references/perf-scenarios.md",
+            "skills/testcase-generation/references/planning.md",
+        ),
+        query_slices=(),
+        token_budget=2500,
+    ),
+    "tg-plan-plan-approve": ContextProfile(
+        id="tg-plan-plan-approve",
+        description="Approve the generated test-obligation plan.",
+        references=(
+            "skills/testcase-generation/references/planning.md",
+            "skills/testcase-generation/references/planning-gotchas.md",
+        ),
+        query_slices=(),
+        token_budget=1500,
+    ),
     "ce-review-code-review": ContextProfile(
         id="ce-review-code-review",
-        description="Code review: impact neighborhood of changed files + cross-layer gotchas.",
+        description="Code review: quick/file/PR, CodeMap-first hypothesis testing, Kernel vs Tiling.",
         references=(
             "skills/code-review/references/ascendc-checks.md",
             "skills/code-review/references/cross-layer-contracts.md",
@@ -115,6 +188,124 @@ PROFILES: dict[str, ContextProfile] = {
             QuerySlice(method="neighbors", seed_from="impact_files", limit=8),
         ),
         token_budget=4500,
+    ),
+    "ce-verify-code-review": ContextProfile(
+        id="ce-verify-code-review",
+        description="Obligation-driven review during CE verify.",
+        references=(
+            "skills/code-review/references/ascendc-checks.md",
+            "skills/code-review/references/cross-layer-contracts.md",
+            "skills/code-review/references/precision-perf-findings.md",
+            "skills/code-review/references/gotchas.md",
+            "skills/code-engineering/references/evidence-tiers.md",
+        ),
+        query_slices=(
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=16),
+            QuerySlice(method="impact_of", seed_from="impact_files", limit=10),
+        ),
+        token_budget=4000,
+    ),
+    "ce-verify-harness-evidence-check": ContextProfile(
+        id="ce-verify-harness-evidence-check",
+        description="Check harness receipts against scenario obligations.",
+        references=(
+            "skills/testcase-generation/references/harness-oracle.md",
+            "skills/code-engineering/references/evidence-tiers.md",
+            "skills/code-engineering/references/evidence-discipline.md",
+        ),
+        query_slices=(),
+        token_budget=2500,
+    ),
+    "ce-verify-exclusion-review": ContextProfile(
+        id="ce-verify-exclusion-review",
+        description="Referee review of verification-obligation exclusions.",
+        references=(
+            "skills/code-engineering/references/evidence-discipline.md",
+            "skills/code-engineering/references/evidence-tiers.md",
+            "skills/code-engineering/references/gotchas.md",
+        ),
+        query_slices=(
+            QuerySlice(method="impact_of", seed_from="impact_files", limit=8),
+        ),
+        token_budget=3000,
+    ),
+    "ce-impact-impact-audit": ContextProfile(
+        id="ce-impact-impact-audit",
+        description="Audit impact ledger and verification obligations.",
+        references=(
+            "skills/code-engineering/references/evidence-discipline.md",
+            "skills/code-engineering/references/evidence-tiers.md",
+            "skills/code-engineering/references/risk-classes.md",
+            "skills/code-engineering/references/gotchas.md",
+        ),
+        query_slices=(
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=16),
+            QuerySlice(method="impact_of", seed_from="impact_files", limit=12),
+            QuerySlice(method="neighbors", seed_from="impact_files", limit=8),
+        ),
+        token_budget=4000,
+    ),
+    "ce-impact-scenario-knobs": ContextProfile(
+        id="ce-impact-scenario-knobs",
+        description="Fill precision/perf scenario knobs from impact slice.",
+        references=(
+            "skills/code-engineering/references/scenario-infer.md",
+            "skills/code-engineering/references/scenario-catalog.md",
+            "skills/testcase-generation/references/precision-scenarios.md",
+            "skills/testcase-generation/references/perf-scenarios.md",
+        ),
+        query_slices=(
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=12),
+            QuerySlice(method="impact_of", seed_from="impact_files", limit=8),
+        ),
+        token_budget=3500,
+    ),
+    "ce-impact-scenario-confirm": ContextProfile(
+        id="ce-impact-scenario-confirm",
+        description="Confirm inferred precision/perf ScenarioSet.",
+        references=(
+            "skills/code-engineering/references/scenario-catalog.md",
+            "skills/code-engineering/references/scenario-infer.md",
+            "skills/testcase-generation/references/precision-scenarios.md",
+        ),
+        query_slices=(),
+        token_budget=2000,
+    ),
+    "ce-intent-feature-decompose": ContextProfile(
+        id="ce-intent-feature-decompose",
+        description="Decompose a change intent into CodeMap-anchored features.",
+        references=(
+            "skills/code-engineering/references/slice-primitives.md",
+            "skills/code-engineering/references/risk-classes.md",
+            "skills/code-engineering/references/gotchas.md",
+            "skills/code-engineering/references/evidence-tiers.md",
+        ),
+        query_slices=(
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=12),
+            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="neighbors", seed_from="impact_files", limit=8),
+        ),
+        token_budget=4000,
+    ),
+    "ce-intent-plan-review": ContextProfile(
+        id="ce-intent-plan-review",
+        description="Referee review of the change-plan decomposition.",
+        references=(
+            "skills/code-engineering/references/gotchas.md",
+            "skills/code-engineering/references/slice-primitives.md",
+            "skills/code-engineering/references/evidence-discipline.md",
+        ),
+        query_slices=(
+            QuerySlice(method="impact_of", seed_from="impact_files", limit=8),
+        ),
+        token_budget=3000,
+    ),
+    "ce-intent-human-confirm": ContextProfile(
+        id="ce-intent-human-confirm",
+        description="Human confirm of the CE change plan.",
+        references=("skills/code-engineering/references/gotchas.md",),
+        query_slices=(),
+        token_budget=1500,
     ),
 }
 

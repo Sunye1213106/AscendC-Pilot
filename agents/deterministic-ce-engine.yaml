@@ -7,7 +7,7 @@ kind: deterministic_engine
 role: deterministic_engine
 mode: subagent
 description: CE deterministic engine
-skill_ids: [code-review]
+skill_ids: [code-review, code-engineering]
 read_scopes:
 - pilot:ce/**
 - pilot:uo/**
@@ -16,6 +16,7 @@ read_scopes:
 - pilot:context/**
 - method:skills/code-review/**
 - method:skills/operator-analysis/**
+- method:skills/code-engineering/**
 write_scopes:
 - pilot:ce/**
 - pilot:runs/**

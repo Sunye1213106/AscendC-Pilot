@@ -8,6 +8,16 @@ from pathlib import Path
 from typing import Any
 
 
+def _checked_view(path: Path, name: str) -> Any:
+    from uo_init.store.reader import load_view_blob_checked
+
+    checked = load_view_blob_checked(path, name)
+    if not checked.get("ok"):
+        reason = checked.get("reason_code") or "VIEW_UNUSABLE"
+        raise RuntimeError(f"{reason}: {name} in {path}")
+    return checked.get("view")
+
+
 def product(project_root: Path | str, *, op_name: str = "", architecture: str = "") -> Path:
     from uo_init.store.reader import find_uo_product
 
@@ -21,10 +31,8 @@ def product(project_root: Path | str, *, op_name: str = "", architecture: str = 
 
 
 def view(project_root: Path | str, name: str, *, op_name: str = "", architecture: str = "") -> Any:
-    from uo_init.store.reader import load_view_blob
-
     p = product(project_root, op_name=op_name, architecture=architecture)
-    return load_view_blob(p, name)
+    return _checked_view(p, name)
 
 
 def meta(project_root: Path | str, *, op_name: str = "", architecture: str = "") -> dict[str, Any]:
@@ -45,7 +53,12 @@ def identity(project_root: Path | str, *, op_name: str = "", architecture: str =
         "op_name": str(m.get("op_name") or op_name),
         "architecture": str(m.get("architecture") or architecture),
         "revision": str(m.get("revision") or m.get("source_revision") or ""),
-        "graph_fingerprint": str(graph.get("fingerprint") or m.get("graph_fingerprint") or ""),
+        "graph_fingerprint": str(
+            graph.get("fingerprint")
+            or m.get("cm_graph_fingerprint")
+            or m.get("graph_fingerprint")
+            or ""
+        ),
     }
 
 

@@ -119,14 +119,63 @@ RISK_RULES: dict[str, Callable[[list[dict[str, Any]]], list[dict[str, Any]]]] = 
 }
 
 
+_KIND_RISKS: dict[str, tuple[str, ...]] = {
+    "TILING_KEY": ("dispatch",),
+    "TEMPLATE": ("dispatch",),
+    "PREDICATE": ("dispatch",),
+    "BRANCH": ("coverage",),
+    "KERNEL": ("coverage",),
+    "TILING_FIELD": ("contract", "shape"),
+    "TILING_DATA": ("contract", "shape"),
+    "BUFFER": ("sync", "perf"),
+    "REGISTER": ("sync",),
+    "QUEUE": ("sync",),
+    "PIPE": ("sync",),
+    "EVENT": ("sync",),
+    "INPUT": ("contract",),
+    "OUTPUT": ("contract",),
+}
+_SYNC_OPS = {
+    "AllocTensor", "FreeTensor", "EnQue", "DeQue",
+    "SetFlag", "WaitFlag", "CrossCoreSetFlag", "CrossCoreWaitFlag",
+    "PipeBarrier", "InitBuffer",
+}
+_PRECISION_OPS = {"Cast", "DataCopy", "DataCopyPad"}
+
+
+def _classes_for_anchor(anchor: dict[str, Any]) -> tuple[str, ...]:
+    kind = str(anchor.get("kind") or "").upper()
+    facts = anchor.get("facts") if isinstance(anchor.get("facts"), dict) else {}
+    name = str(facts.get("callee") or anchor.get("name") or "")
+    if kind == "OPERATION":
+        out: list[str] = []
+        if name in _SYNC_OPS:
+            out.append("sync")
+        if name in _PRECISION_OPS:
+            out.append("precision")
+        return tuple(out) or ("coverage",)
+    return _KIND_RISKS.get(kind, ())
+
+
 def evaluate_risks(
     anchors: list[dict[str, Any]], risk_classes: list[str] | None = None
 ) -> list[dict[str, Any]]:
-    """Evaluate selected risks in stable class order."""
+    """Evaluate selected risks per anchor so a weak peer cannot cap others.
+
+    Kind routing still applies: BUFFER only yields sync/perf, not dispatch.
+    Unknown kinds stay unattached unless the caller **explicitly** passes
+    ``risk_classes``. That opt-in is not a silent default.
+    """
     selected = set(risk_classes or RISK_RULES)
-    return [
-        obligation
-        for name, rule in RISK_RULES.items()
-        if name in selected
-        for obligation in rule(anchors)
-    ]
+    explicit = risk_classes is not None
+    rows: list[dict[str, Any]] = []
+    for anchor in anchors:
+        if not isinstance(anchor, dict):
+            continue
+        classes = _classes_for_anchor(anchor)
+        if not classes and explicit:
+            classes = tuple(name for name in RISK_RULES if name in selected)
+        for name, rule in RISK_RULES.items():
+            if name in selected and name in classes:
+                rows.extend(rule([anchor]))
+    return rows

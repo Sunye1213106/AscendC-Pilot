@@ -16,6 +16,13 @@ ops:
     args:
       "0": write_buffer
       "1": read_register
+  StoreUnAlign:
+    category: reg_store
+    engine: VECTOR
+    confidence: confirmed
+    args:
+      "0": write_buffer
+      "1": read_register
   Cast:
     category: reg_compute
     engine: VECTOR

@@ -160,9 +160,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="KEY=VALUE",
-        help=(
-            "Legacy pilot param override (currently no-op; retained for CLI compat)."
-        ),
+        help="Deprecated no-op (extract-limit knobs retired; ignored).",
     )
 
     p_adv = sub.add_parser("advance", help="Advance phase only if phase_gates pass")
@@ -188,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_ir = sub.add_parser(
         "inspect",
-        help="Structured IR query (candidates/tasks/yaml counts) for producers",
+        help="Structured IR query (tasks/yaml/duplicates/evidence-window)",
     )
     p_ir_sub = p_ir.add_subparsers(dest="inspect_cmd", required=True)
     p_ir_t = p_ir_sub.add_parser("tasks", help="Summarize llm_tasks")
@@ -252,7 +250,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_conf = sub.add_parser(
         "emit-confidence-report",
-        help="Deterministic engine: assemble confidence_report + confidence_gate from KB",
+        help="Deprecated: removed. Use /uo-init verify / acp uo-query --status-only.",
     )
     p_conf.add_argument("--project", type=Path, default=None)
     p_conf.add_argument("--op-name", default="")
@@ -302,7 +300,10 @@ def main(argv: list[str] | None = None) -> int:
     p_scope.add_argument("--architecture", default="")
     p_scope.add_argument("--notes", default="")
 
-    p_uq = sub.add_parser("uo-query", help="Query UO KB graph (wraps uo_kb_query; no direct .py)")
+    p_uq = sub.add_parser(
+        "uo-query",
+        help="Query the arch-scoped .uo CodeMap product (no sqlite fallback)",
+    )
     p_uq.add_argument("--project", type=Path, default=None)
     p_uq.add_argument("--op-name", default="")
     p_uq.add_argument("--pattern", default="")
@@ -325,9 +326,11 @@ def main(argv: list[str] | None = None) -> int:
             "buffer",
             "gaps",
             "legal_key",
+            "locate",
+            "kernel_api",
         ),
         help="search|constraints|neighbors|impact|field|branches|templates|"
-        "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|legal_key",
+        "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|legal_key|locate|kernel_api",
     )
     p_uq.add_argument("--file", default="", help="impact 模式：源码相对路径")
     p_uq.add_argument("--line", type=int, default=0, help="impact 模式：起始行")
@@ -337,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--limit", type=int, default=50)
     p_uq.add_argument("--relation-type", default="")
     p_uq.add_argument("--status-only", action="store_true")
+    p_uq.add_argument(
+        "--architecture",
+        default="",
+        help="Architecture pin for .uo product lookup (arch35, arch22, …)",
+    )
 
     p_uo = sub.add_parser("uo", help="UO Host contract 查询与解释")
     p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
@@ -351,11 +359,12 @@ def main(argv: list[str] | None = None) -> int:
         p_ex.add_argument("entity_id", nargs="?", default="", help="实体 id / 字段名 / 检索词")
         p_ex.add_argument("--project", type=Path, default=None)
         p_ex.add_argument("--op-name", default="")
+        p_ex.add_argument("--architecture", default="")
         p_ex.add_argument("--file", default="")
         p_ex.add_argument("--line", type=int, default=0)
         p_ex.add_argument("--line-end", type=int, default=0)
         p_ex.add_argument("--limit", type=int, default=50)
-    p_dump = p_uo_sub.add_parser("dump", help="从 kb_graph.sqlite 按需导出 YAML view")
+    p_dump = p_uo_sub.add_parser("dump", help="从 .uo 按需导出 YAML view")
     p_dump.add_argument(
         "view",
         nargs="?",
@@ -363,11 +372,15 @@ def main(argv: list[str] | None = None) -> int:
         help="view 名/别名：manifest, quality, tilingdata, kernel, …",
     )
     p_dump.add_argument("--project", type=Path, default=None)
+    p_dump.add_argument("--op-name", default="")
+    p_dump.add_argument("--architecture", default="")
     p_dump.add_argument("--out", type=Path, default=None, help="输出路径（省略则打印 YAML）")
-    p_dump.add_argument("--list", action="store_true", help="列出 DB 中可用 view")
+    p_dump.add_argument("--list", action="store_true", help="列出 .uo 中可用 view")
     p_loc = p_uo_sub.add_parser("locate", help="定位实体源码 file:line")
     p_loc.add_argument("query", help="实体 id / 维名 / 字段名 / 分支 id")
     p_loc.add_argument("--project", type=Path, default=None)
+    p_loc.add_argument("--op-name", default="")
+    p_loc.add_argument("--architecture", default="")
     p_loc.add_argument("--kind", default="", help="逗号分隔 node kinds")
     p_loc.add_argument(
         "--mode",
@@ -946,19 +959,13 @@ def main(argv: list[str] | None = None) -> int:
         print_json(all_spec_hashes(repo, workflow_id=args.workflow or None))
         return 0
     if args.cmd == "emit-confidence-report":
-        from ascendc_pilot.paths import uo_root
-
-        uo = uo_root(args.project, args.op_name or None)
-        return print_json({"ok": False, "error": "legacy_command_removed"}) or 2
-
-        payload = check_final_confidence(
-            uo,
-            write_report=not (args.no_write_report or args.no_skeleton),
-            write_skeleton=False,
-        )
-        # Receipts are issued only via `acp run-action … --finalize`.
-        print_json(payload, default=str)
-        return 0 if payload.get("ok") or str(payload.get("status") or "") in {"pass", "reported"} else 1
+        return print_json(
+            {
+                "ok": False,
+                "error": "legacy_command_removed",
+                "message_zh": "emit-confidence-report 已删除；请用 /uo-init verify 或 acp uo-query --status-only",
+            }
+        ) or 2
     if args.cmd == "authorize":
         from ascendc_pilot.authorize import authorize
 
@@ -994,22 +1001,23 @@ def main(argv: list[str] | None = None) -> int:
         )
         return print_result(payload)
     if args.cmd == "uo-query":
-        from ascendc_pilot.paths import uo_root
+        from uo_init.store.reader import find_uo_product
         from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
-        uo = uo_root(project)
+        op_name = str(getattr(args, "op_name", "") or "")
+        architecture = str(getattr(args, "architecture", "") or "")
+        product = find_uo_product(project, op_name=op_name, architecture=architecture)
         if args.status_only:
-            db = uo / "indexes" / "kb_graph.sqlite"
+            ok = product is not None and product.suffix == ".uo"
             print_json(
                 {
-                    "ok": db.is_file(),
-                    "uo_root": uo.as_posix(),
-                    "sqlite": db.as_posix() if db.is_file() else "",
+                    "ok": ok,
+                    "product": product.as_posix() if ok else "",
                     "engine": "uo_init.uo_query",
                 }
             )
-            return 0 if db.is_file() else 1
+            return 0 if ok else 1
         pattern = str(args.pattern or args.target or "").strip()
         mode = str(getattr(args, "mode", "search") or "search")
         allow_empty = mode in {
@@ -1021,6 +1029,8 @@ def main(argv: list[str] | None = None) -> int:
             "kernel_branch",
             "template_match",
             "legal_key",
+            "locate",
+            "kernel_api",
         }
         if mode != "impact" and not pattern and not allow_empty:
             print_json(
@@ -1032,7 +1042,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         try:
-            q = open_query(uo)
+            q = open_query(project, op_name=op_name, architecture=architecture)
             limit = int(args.limit or 50)
             if mode == "constraints":
                 rows = q.constraints_for(pattern)
@@ -1047,16 +1057,26 @@ def main(argv: list[str] | None = None) -> int:
                 if not f or not line:
                     print_json({"ok": False, "error": "impact_needs_file_line"})
                     return 2
-                rows = q.impact_of(f, (line, line_end or line))
-                payload = {
-                    "ok": True,
-                    "mode": mode,
-                    "file": f,
-                    "line": line,
-                    "line_end": line_end or line,
-                    "count": len(rows),
-                    "rows": rows[:limit],
-                }
+                result = q.impact_of(f, (line, line_end or line))
+                if isinstance(result, dict):
+                    payload = {
+                        "ok": True,
+                        "mode": mode,
+                        "file": f,
+                        "line": line,
+                        "line_end": line_end or line,
+                        **result,
+                    }
+                else:
+                    payload = {
+                        "ok": True,
+                        "mode": mode,
+                        "file": f,
+                        "line": line,
+                        "line_end": line_end or line,
+                        "count": len(result),
+                        "rows": result[:limit],
+                    }
             elif mode == "field":
                 payload = q.field_impact(pattern)
                 payload["mode"] = mode
@@ -1080,6 +1100,10 @@ def main(argv: list[str] | None = None) -> int:
                 payload = q.aggregate_gaps(pattern, limit=limit)
             elif mode == "legal_key":
                 payload = q.legal_key_query(pattern=pattern, limit=limit)
+            elif mode == "locate":
+                payload = q.aggregate_locate(pattern, limit=limit)
+            elif mode == "kernel_api":
+                payload = q.aggregate_kernel_api(pattern, limit=limit)
             else:
                 kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
                 rows = q.search(pattern, kinds=kinds, limit=limit)
@@ -1098,25 +1122,40 @@ def main(argv: list[str] | None = None) -> int:
             print_json({"ok": False, "error": str(exc)[:300]})
             return 1
     if args.cmd == "uo":
-        from ascendc_pilot.paths import uo_root
+        from uo_init.store.reader import find_uo_product, list_views
+        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
-        uo = uo_root(project)
+        op_name = str(getattr(args, "op_name", "") or "")
+        architecture = str(getattr(args, "architecture", "") or "")
+        product = find_uo_product(project, op_name=op_name, architecture=architecture)
         if args.uo_cmd == "dump":
             from uo_init.dump import dump_view
-            from uo_init.kb_index import list_view_blobs
 
-            db = uo / "indexes" / "kb_graph.sqlite"
             if getattr(args, "list", False):
+                ok = product is not None and product.suffix == ".uo"
                 print_json(
-                    {"ok": db.is_file(), "views": list_view_blobs(db) if db.is_file() else []}
+                    {
+                        "ok": ok,
+                        "product": product.as_posix() if ok else "",
+                        "views": list_views(product) if ok else [],
+                    }
                 )
-                return 0 if db.is_file() else 1
+                return 0 if ok else 1
             if not str(getattr(args, "view", "") or "").strip():
                 print_json({"ok": False, "error": "view_required"})
                 return 2
+            if product is None or product.suffix != ".uo":
+                print_json(
+                    {
+                        "ok": False,
+                        "error": "missing_uo_product",
+                        "message_zh": "未找到 .ascendc-pilot/<arch>/uo/<op>.<arch>.uo，请先 /uo-init",
+                    }
+                )
+                return 1
             try:
-                result = dump_view(uo, str(args.view), out=getattr(args, "out", None))
+                result = dump_view(product, str(args.view), out=getattr(args, "out", None))
                 if getattr(args, "out", None):
                     print_json({k: v for k, v in result.items() if k != "payload"})
                 else:
@@ -1139,7 +1178,7 @@ def main(argv: list[str] | None = None) -> int:
             from uo_init.source_locator import open_locator
 
             try:
-                loc = open_locator(uo)
+                loc = open_locator(product if product is not None else project)
                 kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
                 mode = str(getattr(args, "mode", "search") or "search")
                 query = str(args.query or "")
@@ -1180,11 +1219,9 @@ def main(argv: list[str] | None = None) -> int:
             print_json(handle)
             return 0 if handle.get("ok") else 1
 
-        from uo_init.uo_query import open_query
-
         eid = str(args.entity_id or "")
         try:
-            q = open_query(uo)
+            q = open_query(project, op_name=op_name, architecture=architecture)
             if args.uo_cmd == "explain-host-value":
                 result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
             elif args.uo_cmd == "explain-tiling-field":
@@ -1204,14 +1241,17 @@ def main(argv: list[str] | None = None) -> int:
                 if not f or not line:
                     result = {"ok": False, "error": "impact_needs_file_line"}
                 else:
-                    rows = q.impact_of(f, (line, line_end or line))
-                    result = {
-                        "ok": True,
-                        "file": f,
-                        "line": line,
-                        "count": len(rows),
-                        "rows": rows[: int(getattr(args, "limit", 50) or 50)],
-                    }
+                    result = q.impact_of(f, (line, line_end or line))
+                    if isinstance(result, dict):
+                        result = {"ok": True, "file": f, "line": line, **result}
+                    else:
+                        result = {
+                            "ok": True,
+                            "file": f,
+                            "line": line,
+                            "count": len(result),
+                            "rows": result[: int(getattr(args, "limit", 50) or 50)],
+                        }
             elif args.uo_cmd == "search":
                 rows = q.search(eid, limit=int(getattr(args, "limit", 50) or 50))
                 result = {"ok": True, "pattern": eid, "count": len(rows), "rows": rows}
@@ -1587,12 +1627,9 @@ def _doctor(project: Path) -> int:
     # TG consumer root hint
     import os
 
-    if not (
-        os.environ.get("ASCENDC_TEST_SCRIPT_ROOT")
-        or os.environ.get("ASCENDC_CSV_CONSUMER_ROOT")
-    ):
+    if not os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"):
         warnings.append(
-            "ASCENDC_TEST_SCRIPT_ROOT / ASCENDC_CSV_CONSUMER_ROOT unset — "
+            "ASCENDC_TEST_SCRIPT_ROOT unset — "
             "/tg-init contract_build requires --test-script-root"
         )
 

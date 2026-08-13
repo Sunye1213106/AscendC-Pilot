@@ -299,7 +299,12 @@ def build_kernel_ir(
         ir.notes.append("no_kernel_entry")
         return ir
 
-    all_variants = list((ctx.dtype_variants() or {}).get("values") or []) or [None]
+    from uo_init.build_context import source_uses_dtype_variants
+
+    if any(source_uses_dtype_variants(e) for e in entries):
+        all_variants = list((ctx.dtype_variants() or {}).get("values") or []) or [None]
+    else:
+        all_variants = [None]
     variants = _select_dtype_variants(all_variants, max_variants)
     ir.variants = [v or "default" for v in variants]
     if len(variants) < len(all_variants):

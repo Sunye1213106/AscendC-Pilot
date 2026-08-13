@@ -4,7 +4,7 @@
 
 ```text
 <operator-repo>/.ascendc-pilot/
-  uo/<op_name>.<arch>.uo   UO canonical product
+  <arch>/uo/<op>.<arch>.uo     UO canonical product (uo_codemap_path)
   <arch>/uo/               UO projections and receipts
   <arch>/tg/               TG contracts, plans, closure, replay
   <arch>/ce/               CE review and impact products

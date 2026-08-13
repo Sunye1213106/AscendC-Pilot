@@ -39,6 +39,25 @@ function pendingInteractionPath(project: string): string {
   return resolve(project, ".ascendc-pilot", "control", "pending_interaction.yaml")
 }
 
+/** Prefer `--project` on `acp …` so pending locks bind to the operator dir, not cwd. */
+function extractProjectFromAcpCommand(command: string): string {
+  const m = String(command || "").match(
+    /--project(?:\s+|=)(?:"([^"]+)"|'([^']+)'|(\S+))/i,
+  )
+  const raw = (m?.[1] || m?.[2] || m?.[3] || "").trim()
+  if (!raw) return ""
+  try {
+    return resolve(raw)
+  } catch {
+    return raw
+  }
+}
+
+function isAcpResumeStartCommand(command: string): boolean {
+  if (!/\bacp(\.cmd|\.exe)?\s+start\b/i.test(command)) return false
+  return /(?:^|\s)--(?:decision|force-new)(?:\s|=|$)/i.test(command)
+}
+
 function readPendingFromDisk(project: string): PendingHumanInteraction | null {
   if (!project) return null
   const path = pendingInteractionPath(project)
@@ -47,6 +66,8 @@ function readPendingFromDisk(project: string): PendingHumanInteraction | null {
     const text = readFileSync(path, "utf8")
     const id = text.match(/request_id:\s*["']?([A-Za-z0-9_-]+)/)?.[1] || ""
     if (!id) return null
+    const status = text.match(/^\s*status:\s*["']?([A-Za-z0-9_-]+)/m)?.[1] || "pending"
+    if (status && status !== "pending") return null
     const kind = text.match(/kind:\s*["']?([A-Za-z0-9_-]+)/)?.[1] || ""
     const values: string[] = []
     const block = text.match(/allowed_values:\s*\n((?:\s*-\s*.+\n?)*)/)
@@ -70,10 +91,14 @@ function readPendingFromDisk(project: string): PendingHumanInteraction | null {
 
 function getPending(project: string): PendingHumanInteraction | null {
   if (!project) return null
-  const mem = pendingByProject.get(project)
-  if (mem) return mem
+  // Disk is source of truth. After `acp answer` the yaml is status=answered (or
+  // unlinked on consume). Stale in-memory pending must not keep blocking start.
   const disk = readPendingFromDisk(project)
-  if (disk) pendingByProject.set(project, disk)
+  if (!disk) {
+    pendingByProject.delete(project)
+    return null
+  }
+  pendingByProject.set(project, disk)
   return disk
 }
 
@@ -1194,7 +1219,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
   try {
     // Dynamic import keeps older OpenCode hosts working if this file is absent.
     const mod = await import("./pilot-driver")
-    pilotTools = mod.createPilotRunTool(client) || {}
+    pilotTools = mod.createPilotRunTool(client, ctx) || {}
   } catch {
     pilotTools = {}
   }
@@ -1220,9 +1245,13 @@ export const AscendCHarnessPlugin = async (ctx?: {
       )
       const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
       const taskPromptHint = String(args.prompt || args.description || args.task || "")
+      const fromCmd = extractProjectFromAcpCommand(command)
+      const fromArgs = String(
+        args.project || args.project_root || args.projectRoot || "",
+      ).trim()
       const project = isTaskTool
         ? detectProjectRootForTask(taskPromptHint)
-        : detectProjectRoot(path)
+        : detectProjectRoot(fromCmd || fromArgs || path)
       if (project) rememberProjectRoot(project)
       const active = readActiveAction(project)
       let agent = resolveEffectiveAgent(input, active, tool, command)
@@ -1262,10 +1291,16 @@ export const AscendCHarnessPlugin = async (ctx?: {
         const isInspectBash =
           (tool === "bash" || tool === "shell" || tool === "terminal") &&
           /\bacp(\.cmd|\.exe)?\s+(inspect-failure|next|status|run-summary)\b/i.test(command)
-        if (!isQuestion && !isAnswerBash && !isInspectBash) {
+        const isResumeStartBash =
+          (tool === "bash" || tool === "shell" || tool === "terminal") &&
+          isAcpResumeStartCommand(command)
+        // Host Driver owns AskQuestion + start --decision; do not deadlock
+        // a second pilot_run after EXISTING_RUN left pending yaml on disk.
+        const isPilotDriver = tool === "pilot_run" || tool === "pilotrun"
+        if (!isQuestion && !isAnswerBash && !isInspectBash && !isResumeStartBash && !isPilotDriver) {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}). ` +
-              `Only the question UI (or acp answer) is allowed until the user answers.`,
+              `Only the question UI, acp answer, acp start --decision continue|reinit, or pilot_run is allowed until the user answers.`,
           )
         }
       }
@@ -1451,11 +1486,16 @@ export const AscendCHarnessPlugin = async (ctx?: {
         const path = String(
           args.filePath || args.path || args.file || args.filepath || args.target || "",
         )
+        const command = String(args.command || args.cmd || "")
         const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
         const taskPromptHint = String(args.prompt || args.description || args.task || "")
+        const fromCmd = extractProjectFromAcpCommand(command)
+        const fromArgs = String(
+          args.project || args.project_root || args.projectRoot || "",
+        ).trim()
         const project = isTaskTool
           ? detectProjectRootForTask(taskPromptHint)
-          : detectProjectRoot(path)
+          : detectProjectRoot(fromCmd || fromArgs || path)
         if (project) rememberProjectRoot(project)
 
         const err = extractToolError(output, tool)
@@ -1475,7 +1515,13 @@ export const AscendCHarnessPlugin = async (ctx?: {
         // Capture human_interaction_request from acp stdout and record answers.
         if (tool === "bash" || tool === "shell" || tool === "terminal") {
           const text = toolOutputText(output)
-          if (project && text) captureHumanInteractionFromOutput(project, text)
+          if (project && text) {
+            if (/\bacp(\.cmd|\.exe)?\s+answer\b/i.test(command) && /"ok"\s*:\s*true/.test(text)) {
+              clearPending(project)
+            } else {
+              captureHumanInteractionFromOutput(project, text)
+            }
+          }
         }
         const isQuestionTool =
           tool === "question" ||

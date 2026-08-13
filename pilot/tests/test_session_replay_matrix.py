@@ -1,4 +1,4 @@
-"""P2: Workflow model checker + eight-workflow session replay matrix."""
+"""P2: Workflow model checker + user-facing session replay matrix."""
 
 from __future__ import annotations
 
@@ -36,9 +36,12 @@ def test_tg_solve_routing_codes_declared() -> None:
     }
 
 
-def test_matrix_fixture_covers_eight_workflows() -> None:
+def test_matrix_fixture_covers_matrix_workflows() -> None:
+    from ascendc_pilot.workflows import list_user_workflows
+
     doc = load_matrix()
     assert list(doc.get("workflows") or []) == list(MATRIX_WORKFLOWS)
+    assert set(MATRIX_WORKFLOWS) == set(list_user_workflows())
     scenario_ids = {str(s.get("id")) for s in (doc.get("scenarios") or []) if isinstance(s, dict)}
     assert set(SCENARIO_HANDLERS) == scenario_ids
     for sid in SCENARIO_HANDLERS:

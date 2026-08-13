@@ -6,7 +6,7 @@ mode: subagent
 description: >
   Code review analyst. Read session prompt.md and method.md first
   (method is materialized into the action session).
-skill_ids: [code-review, operator-analysis]
+skill_ids: [code-review, operator-analysis, code-engineering]
 read_scopes:
 - pilot:uo/**
 - pilot:ce/**
@@ -14,9 +14,11 @@ read_scopes:
 - pilot:context/**
 - method:skills/code-review/**
 - method:skills/operator-analysis/**
+- method:skills/code-engineering/**
 write_scopes:
 - pilot:ce/review/**
 - pilot:ce/verify/code_review.yaml
+- pilot:ce/verify/harness_evidence_check.yaml
 - pilot:runs/**/actions/code_review/**
 forbidden:
 - modify_pilot_state

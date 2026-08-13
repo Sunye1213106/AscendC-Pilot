@@ -13,6 +13,8 @@ import yaml
 def load_external_evidence(declared_path: Path | str) -> list[dict[str, Any]]:
     """Accept only ``ce-external-evidence/v1`` verification receipts.
 
+    ``V`` is for auditable measurement or test results (UT, ST, precision
+    compare, profiling, retest pass). A review narrative is not a receipt.
     External evidence may verify obligations (V), but it may not place an
     obligation directly into the exclusion set (X). Exclusions require the
     dedicated referee review and Tier-A proof path.

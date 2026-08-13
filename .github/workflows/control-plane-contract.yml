@@ -3,6 +3,7 @@ name: control-plane-contract
 on:
   pull_request:
     paths:
+      - "evals/**"
       - "agents/**"
       - "pilot/**"
       - "prompts/**"
@@ -17,6 +18,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "evals/**"
       - "agents/**"
       - "pilot/**"
       - "prompts/**"
@@ -32,7 +34,7 @@ on:
 jobs:
   execution-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -102,7 +104,7 @@ jobs:
           PYTHONPATH: pilot
         run: |
           python scripts/check_host_driver_contract.py
-          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py
+          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py pilot/tests/test_live_eval_skip.py
       - name: Validate deterministic drive
         env:
           PYTHONPATH: pilot
@@ -117,3 +119,7 @@ jobs:
           pilot/tests/test_compose_runtime.py::test_native_opencode_commands_are_generated
       - name: Validate shell installer syntax
         run: bash -n install.sh
+      - name: Eval smoke (dry; live skip without model)
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/pilot
+        run: python evals/smoke.py

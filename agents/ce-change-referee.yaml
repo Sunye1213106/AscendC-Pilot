@@ -7,7 +7,7 @@ description: >
   Independent referee for CE impact, plan, and exclusion reviews.
   Read session prompt.md and method.md first. Verify CodeMap anchors against
   source evidence and never replace deterministic ledger facts.
-skill_ids: [code-review, operator-analysis]
+skill_ids: [code-review, operator-analysis, code-engineering]
 read_scopes:
 - pilot:ce/**
 - pilot:uo/**
@@ -16,10 +16,10 @@ read_scopes:
 - pilot:context/**
 - method:skills/code-review/**
 - method:skills/operator-analysis/**
+- method:skills/code-engineering/**
 write_scopes:
 - pilot:ce/impact/audit_report.yaml
 - pilot:ce/verify/exclusion_review.yaml
-- pilot:ce/intent/feature_decomposition.yaml
 - pilot:ce/intent/plan_review.yaml
 forbidden:
 - modify_pilot_state

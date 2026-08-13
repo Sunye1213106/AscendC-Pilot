@@ -12,3 +12,16 @@ cases:
     query: 测例契约与语义绑定，TilingKey 初始化，不构造 Host replay
     expect_skill: testcase-generation
     forbid_skill: ce-review
+
+  - id: scenario_targeted_construct
+    query: 测试生成规划目标 T 为精度 ScenarioSet，针对性构造少量 CSV，禁止笛卡尔全量 legal key
+    expect_skill: testcase-generation
+    expect_references:
+      - references/precision-scenarios.md
+      - references/targeted-construct.md
+
+  - id: scenario_perf_split
+    query: 测试生成按性能 ScenarioSet 定向再构造少量 CSV，T 不是全量 legal key
+    expect_skill: testcase-generation
+    expect_references:
+      - references/perf-scenarios.md

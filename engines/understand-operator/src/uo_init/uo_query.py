@@ -1,10 +1,9 @@
 # -*- coding: utf-8 -*-
 """Agent-facing UO query facade.
 
-The unified ``.uo`` CodeMap is the primary query authority. ``UoQuery`` below
-is retained only as the legacy ``kb_graph.sqlite`` compatibility backend; new
-callers should obtain a backend through :func:`open_query` and remain storage
-agnostic.
+The unified ``.uo`` CodeMap is the only query authority. ``UoQuery`` below
+is a migrate/test helper over ``kb_graph.sqlite``; production callers must
+use :func:`open_query`, which fail-closes when no ``.uo`` product exists.
 """
 from __future__ import annotations
 
@@ -326,51 +325,24 @@ class UoQuery:
         )
 
 
-def _find_codemap_product(root: Path) -> Path | None:
-    """Locate the nearest unified product without assuming caller path shape."""
-    if root.is_file() and root.suffix == ".uo":
-        return root
-    if root.is_dir():
-        direct = sorted(root.glob("*.uo"))
-        if direct:
-            return direct[0]
-    bases = [root] + list(root.parents)[:8]
-    for base in bases:
-        product_dir = base / ".ascendc-pilot" / "uo"
-        if product_dir.is_dir():
-            products = sorted(product_dir.glob("*.uo"))
-            if products:
-                return products[0]
-    return None
+def open_query(
+    uo_root: str | Path,
+    *,
+    op_name: str = "",
+    architecture: str = "",
+):
+    """Open the unified ``.uo`` Explore backend.
 
+    Fail-closed: no product means no query. sqlite / YAML are not fallbacks.
+    """
+    from uo_init.store.reader import find_uo_product
+    from uo_init.query.explore_compat import ExploreCodeMapUoQuery
 
-def _find_legacy_database(root: Path) -> Path | None:
-    if root.is_file() and root.name == "kb_graph.sqlite":
-        return root
-    direct = root / "indexes" / "kb_graph.sqlite"
-    if direct.is_file():
-        return direct
-    for base in [root] + list(root.parents)[:8]:
-        pilot = base / ".ascendc-pilot"
-        if not pilot.is_dir():
-            continue
-        candidates = sorted(pilot.glob("*/uo/indexes/kb_graph.sqlite"))
-        if candidates:
-            return candidates[0]
-    return None
-
-
-def open_query(uo_root: str | Path):
-    """Open the unified ``.uo`` Explore backend, falling back to legacy SQLite only."""
     root = Path(uo_root).expanduser().resolve()
-    product = _find_codemap_product(root)
-    if product is not None:
-        from uo_init.query.explore_compat import ExploreCodeMapUoQuery
-
-        return ExploreCodeMapUoQuery(product)
-    legacy = _find_legacy_database(root)
-    if legacy is not None:
-        return UoQuery(legacy)
-    raise FileNotFoundError(
-        f"no unified .uo product or legacy indexes/kb_graph.sqlite reachable from {root}"
-    )
+    product = find_uo_product(root, op_name=op_name, architecture=architecture)
+    if product is None or product.suffix != ".uo":
+        raise FileNotFoundError(
+            f"no .uo product under {root}; expected "
+            ".ascendc-pilot/<arch>/uo/<op>.<arch>.uo (run /uo-init)"
+        )
+    return ExploreCodeMapUoQuery(product)

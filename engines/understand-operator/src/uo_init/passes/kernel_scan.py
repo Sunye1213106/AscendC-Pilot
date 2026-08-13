@@ -193,6 +193,17 @@ def _enrich_site_templates(dst: Any, src: dict[str, Any]) -> Any:
             dst["args"] = src_a
         if not dst.get("receiver") and src.get("receiver"):
             dst["receiver"] = src["receiver"]
+        for key in (
+            "receiver_type",
+            "receiver_canonical_type",
+            "callee_qualified",
+            "callee_decl_file",
+            "callee_decl_line",
+            "identity_kind",
+            "callee_return_type",
+        ):
+            if not dst.get(key) and src.get(key):
+                dst[key] = src[key]
         return dst
     d = site_as_dict(dst)
     if _targs_quality(src_t) > _targs_quality(list(d.get("template_args") or [])):
@@ -201,7 +212,18 @@ def _enrich_site_templates(dst: Any, src: dict[str, Any]) -> Any:
         d["args"] = src_a
     if not d.get("receiver") and src.get("receiver"):
         d["receiver"] = src["receiver"]
-    return d if (d.get("template_args") or d.get("args")) else dst
+    for key in (
+        "receiver_type",
+        "receiver_canonical_type",
+        "callee_qualified",
+        "callee_decl_file",
+        "callee_decl_line",
+        "identity_kind",
+        "callee_return_type",
+    ):
+        if not d.get(key) and src.get(key):
+            d[key] = src[key]
+    return d if (d.get("template_args") or d.get("args") or d.get("callee_qualified")) else dst
 
 
 def merge_lexical_sites(
@@ -426,6 +448,21 @@ def _is_false_lexical_callee(name: str, line: str, match_start: int) -> bool:
         if re.search(r"(^|[\s;{}])$", prefix) or not prefix:
             return True
         return False
+    prefix = line[:match_start]
+    # Member / qualified calls are never declarators.
+    if re.search(r"(?:\.|->|::)\s*$", prefix.rstrip()):
+        return False
+    if re.search(r"\b(return|else)\s+$", prefix):
+        return False
+    # ``void Init(`` / ``__aicore__ inline T Get(`` — function definition, not a call.
+    if re.search(r"\b(__aicore__|inline|constexpr|virtual|explicit|static)\b", prefix):
+        return True
+    if re.search(r"[=,]\s*$", prefix.rstrip()):
+        return False
+    if re.search(r"\b(if|while|for|switch|catch)\s*$", prefix.rstrip()):
+        return False
+    if re.search(r"(?:[\w:>]|[*&])\s+$", prefix):
+        return True
     return False
 
 _TPL_DSL_NAME_MARKERS = (

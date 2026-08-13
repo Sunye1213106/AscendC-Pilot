@@ -14,6 +14,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.source_layout import selected_host_files, selected_kernel_files
 
 _SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 
@@ -34,26 +35,16 @@ def inventory_source_files(
     files: dict[Path, str] = {}
     for role, directory in (
         ("api", root / "op_graph"),
-        ("host", root / "op_host" / architecture),
-        ("kernel", root / "op_kernel" / architecture),
     ):
         if not directory.is_dir():
             continue
         for path in directory.rglob("*"):
             if path.is_file() and path.suffix.lower() in _SOURCE_SUFFIXES:
                 files[path.resolve()] = role
-
-    # Architecture-neutral top-level kernel entry files often dispatch into an
-    # arch-specific implementation. Include only files with explicit source
-    # evidence that they reference the requested architecture.
-    kernel_root = root / "op_kernel"
-    if kernel_root.is_dir():
-        for path in kernel_root.iterdir():
-            if not path.is_file() or path.suffix.lower() not in _SOURCE_SUFFIXES:
-                continue
-            text = path.read_text(encoding="utf-8", errors="replace")
-            if f'"{architecture}/' in text or f"<{architecture}/" in text:
-                files[path.resolve()] = "kernel-entry"
+    for path in selected_host_files(root, architecture):
+        files[path.resolve()] = "host"
+    for path in selected_kernel_files(root, architecture):
+        files.setdefault(path.resolve(), "kernel")
 
     for path, role in sorted(files.items(), key=lambda item: item[0].as_posix()):
         rel = _rel(root, path)

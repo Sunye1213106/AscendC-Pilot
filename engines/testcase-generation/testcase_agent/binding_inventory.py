@@ -309,7 +309,7 @@ def build_llm_bind_prompt_bundle(inventory: dict[str, Any], unresolved: dict[str
             "Skip not_input_derivable_keys (legitimate kernel-local); for unsolved_input_derivable_keys read UO ir/input_derivable_gaps.yaml as evidence then Task uo-query → OUT_ROOT uo_query_resolve (never Edit $UO_ROOT)",
             "Propose domain_hints for thin/unreviewed columns; never confirm '_' as a legal cell value",
             "For operator host/kernel semantics: use UO KB query then a confirmed-scope source window, not full-file dumps",
-            "Prefer summary/human_overview.md + uo_kb_query before opening large YAML",
+            "Prefer summary/human_overview.md + `acp uo-query` before opening large YAML",
             "Output binding_lexicon key_derivations with locked:true only after human confirm",
             "Do not invent per-op AST heuristics in plugin Python",
         ],

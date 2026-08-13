@@ -12,8 +12,9 @@ from uo_init.update.artifacts import (
 )
 from uo_init.yaml_io import read_yaml, write_yaml
 
-# Layers map onto uo_init.pilot_engines actions (not old build_layered_kb).
-ALL_LAYERS = ("host", "tilingkey", "registry", "kernel", "normalize", "export")
+# Layers map onto uo_init.pilot_engines actions. Persistence is compile/commit
+# of the arch-scoped ``.uo`` product — never sqlite export_kb / build_index.
+ALL_LAYERS = ("host", "tilingkey", "registry", "kernel", "normalize", "compile", "commit")
 
 
 def plan_kb_update(
@@ -22,10 +23,11 @@ def plan_kb_update(
     *,
     change_set: dict[str, Any] | None = None,
     write: bool = True,
+    architecture: str = "",
 ) -> dict[str, Any]:
     del op_name
     repo_root = Path(repo_root).expanduser().resolve()
-    uo_root = resolve_uo_root(repo_root)
+    uo_root = resolve_uo_root(repo_root, architecture=architecture)
     change_set = change_set or read_yaml(uo_root / "diff" / "change_set.yaml")
     if not change_set:
         raise FileNotFoundError("diff/change_set.yaml missing; run detect_kb_changes first")
@@ -47,7 +49,8 @@ def plan_kb_update(
 
     if layers & {"host", "tilingkey", "kernel"}:
         layers.add("normalize")
-        layers.add("export")
+        layers.add("compile")
+        layers.add("commit")
 
     common_or_header = any(
         str(f.get("role") or "").lower() in {"common", "headers"}
@@ -94,9 +97,7 @@ def plan_kb_update(
         "mode": mode,
         "affected_layers": sorted(layers),
         "actions": actions,
-        "scripts": actions,  # compat with older consumers
         "needs_scope_review": needs_scope,
-        "needs_cbm_reindex": bool(scoped_files) or needs_scope,
         "needs_llm_resolve": False,
         "scoped_changed_files": [str(f.get("path")) for f in scoped_files],
         "reasons": reasons,
@@ -111,19 +112,19 @@ def plan_kb_update(
 
 def _layers_for_role(role: str, path: str) -> set[str]:
     if role in {"tilingkey"} or "template_tiling_key" in path:
-        return {"tilingkey", "normalize", "export"}
+        return {"tilingkey", "normalize", "compile", "commit"}
     if role in {"kernel"}:
-        return {"kernel", "normalize", "export"}
+        return {"kernel", "normalize", "compile", "commit"}
     if role in {"host", "tiling"}:
-        return {"host", "tilingkey", "registry", "normalize", "export"}
+        return {"host", "tilingkey", "registry", "normalize", "compile", "commit"}
     if role in {"golden"}:
-        return {"export"}
+        return {"compile", "commit"}
     if role in {"api", "input_output", "proto"}:
-        return {"host", "registry", "normalize", "export"}
+        return {"host", "registry", "normalize", "compile", "commit"}
     if role in {"common", "headers"}:
         return set(ALL_LAYERS)
     if role in {"other", ""}:
-        return {"host", "tilingkey", "kernel", "normalize", "export"}
+        return {"host", "tilingkey", "kernel", "normalize", "compile", "commit"}
     return set()
 
 
@@ -139,8 +140,8 @@ def _actions_for_layers(layers: set[str]) -> list[str]:
         ordered.append("extract_kernel")
     if "normalize" in layers:
         ordered.extend(["normalize_variables", "normalize_predicates"])
-    if "export" in layers or layers:
-        ordered.extend(["export_kb", "build_index", "export_integrity"])
+    if "compile" in layers or "commit" in layers or layers:
+        ordered.extend(["compile", "commit"])
     # de-dupe preserve order
     seen: set[str] = set()
     out: list[str] = []

@@ -48,6 +48,9 @@ def test_tg_solve_closure_actions_registered() -> None:
         "closure_residual",
         "closure_construct",
         "closure_explain",
+        "targeted_construct",
+        "harness_run",
+        "scenario_certify",
         "lemma_leads",
         "lemma_evidence",
         "lemma_mine",
@@ -61,7 +64,7 @@ def test_tg_solve_closure_actions_registered() -> None:
         assert ("tg-solve", action_id) in ENGINE_REGISTRY
         row = action_by_id("tg-solve", action_id) or {}
         assert row.get("id") == action_id
-        # Domain cognition lives in skills/{operator-analysis,testcase-generation,source-proof,code-review}; capability_ids are retrieval-only.
+        # Domain cognition lives in skills/{operator-analysis,testcase-generation,source-proof,code-review,code-engineering}; capability_ids are retrieval-only.
         caps = set(row.get("capability_ids") or [])
         assert "tilingkey-closure" not in caps
         assert "structured-review" not in caps
@@ -147,6 +150,34 @@ def test_plan_intent_is_deterministic() -> None:
     assert intent.get("agent_id") == "deterministic-tg-engine"
 
 
+def test_scenario_targeted_overlay_does_not_change_default_plan_intent() -> None:
+    from ascendc_pilot.workflows import get_workflow, phase_pipeline
+
+    default_intent = action_by_id("tg-plan", "plan_intent") or {}
+    assert default_intent.get("execution_mode") == "deterministic"
+    overlay = get_workflow("tg-plan", mode="scenario_targeted")
+    pipes = overlay.get("pipelines") or {}
+    assert pipes.get("intent") == ["plan_intent", "scenario_plan"]
+    assert phase_pipeline("tg-plan", "intent") == ["plan_intent"]
+    solve = get_workflow("tg-solve", mode="scenario_targeted")
+    assert (solve.get("pipelines") or {}).get("construct") == [
+        "targeted_construct",
+        "harness_run",
+    ]
+    assert (solve.get("pipelines") or {}).get("certify") == ["scenario_certify"]
+    assert phase_pipeline("tg-solve", "construct") == ["closure_construct", "closure_explain"]
+    assert "tilingkey_full_coverage" in (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
+    ce = get_workflow("ce-impact", mode="scenario_targeted")
+    assert (ce.get("pipelines") or {}).get("scenarios") == [
+        "scenario_infer",
+        "scenario_knobs",
+        "scenario_apply",
+        "scenario_confirm",
+    ]
+    assert phase_pipeline("ce-impact", "scenarios") == ["scenario_infer"]
+    assert phase_pipeline("ce-intent", "review") == ["plan_review", "feature_promote"]
+
+
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:
     steps = primary_interactive_steps("human_confirm", tmp_path, {})
     joined = "\n".join(steps)
@@ -177,3 +208,15 @@ def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Pa
     assert "approve" in joined
     assert "plan_approve --finalize" in joined
     assert "acp answer" in joined
+
+
+def test_scenario_knobs_binds_knobs_method() -> None:
+    from ascendc_pilot.actions.runtime import _resolve_capability_method
+
+    repo = Path(__file__).resolve().parents[2]
+    action = action_by_id("ce-impact", "scenario_knobs")
+    assert action is not None
+    path = _resolve_capability_method(repo, action)
+    assert path is not None
+    assert path.name == "METHOD.md"
+    assert "ce-scenario-knobs" in path.as_posix().replace("\\", "/")

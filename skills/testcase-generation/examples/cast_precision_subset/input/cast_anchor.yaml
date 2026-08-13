@@ -1,0 +1,3 @@
+OPERATION Cast
+facts.callee: Cast
+expected_scenarios: [P-CAST, P-DTYPE]

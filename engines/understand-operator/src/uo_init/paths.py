@@ -42,6 +42,8 @@ REQUIRED_CANN_RELATIVE = (
     "cann-asc-devkit/x86_64-linux/asc/impl/basic_api",
     "cann-asc-devkit/x86_64-linux/asc/impl/include",
     "cann-metadef/x86_64-linux/include",
+    "cann-npu-runtime/x86_64-linux/include/base/alog_pub.h",
+    "cann-opbase/x86_64-linux/include/op_common/op_host/util/math_util.h",
 )
 
 

@@ -40,3 +40,19 @@ ops:
     category: memory_atomic
     engine: MTE
     confidence: partial
+  SetGlobalBuffer:
+    category: memory_init
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: write
+  GetPhyAddr:
+    category: buffer_view
+    engine: UNKNOWN
+    confidence: confirmed
+    receiver: read
+  InitOutput:
+    category: memory_init
+    engine: MTE
+    confidence: confirmed
+    args:
+      "0": write_buffer

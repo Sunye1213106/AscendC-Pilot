@@ -15,6 +15,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.passes.symbol_identity import normalize_symbol
+from uo_init.source_layout import selected_host_files
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _ASSIGN_RE = re.compile(
@@ -30,15 +31,13 @@ def validate_host_defuse(
     architecture: str = "",
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
-    host_dir = root / "op_host" / architecture
-    if not host_dir.is_dir():
+    host_files = selected_host_files(root, architecture)
+    if not host_files:
         return codemap
 
     valid_sites: set[tuple[str, int, str]] = set()
     files: dict[str, str] = {}
-    for path in sorted(host_dir.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
-            continue
+    for path in host_files:
         raw = path.read_text(encoding="utf-8", errors="replace")
         masked = _mask_non_code(raw)
         file = _rel(root, path)

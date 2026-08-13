@@ -33,7 +33,7 @@ prepare → extract → analyze → commit → verify
 
 ## 查询（Explore）
 
-1. 先读 **`references/uo-product-map.md`**（权威分层 + claim 层级 + 何时 fallback）。
+1. 先读 **`references/uo-product-map.md`**（日常任务 → mode、权威分层、claim 层级、何时 fallback）。
 2. 按 METHOD 做 **claim-driven bounded exploration**：够 claim 就停；**无**固定证据槽表。
 3. 结构化 `acp uo-query` 优先；`source_span` / packing site 的 path:line **足够引用**，不为行号而 Read。
 4. 交付 `kb-answer-v1`（Explorer 不写文件）；未找到用 `UNKNOWN` + `reason_code=NOT_FOUND_IN_SCOPE`。
@@ -44,7 +44,7 @@ prepare → extract → analyze → commit → verify
 
 1. **缺 architecture 时先扫再问**：跑 `acp scan-architectures --project <算子目录>`，阅读 `layout` / `architecture_option_details`，再 AskQuestion（选项原样）；禁止仓根 Glob `arch*` 或翻 cmake/classify_rule 考古。Harness 启动细节见 control invariants / pilot-control policy。
 2. **确定性提取优先**：Clang、source pass、写入与结构校验由 engine 执行。
-3. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工文件清单确认，也不接受 `decision=yes` 绕过。探针 / include 失败时：对照算子仓官方编译文件修正 `build_context.yaml`（见 `references/codemap-build-gotchas.md`）。
+3. **用户定目标，编译器定范围**：operator + arch 由用户/编排给定；Source Scope 以 Clang include closure 为权威（regex 仅 bootstrap）；`clang_scope_status=complete` 才能过 validate。不经人工确认文件清单，也不接受 `decision=yes` 绕过。探针 / include 失败时：prepare 会跑 **include-heal**（在 CANN 解包树与 ops 仓定位缺头、补 runtime `-I`、写入 `uo/summary/build_context_extras.yaml`，extract 自动复用）。**禁止**产品路径使用 `UO_TEST_ALLOW_UNVERIFIED_SCOPE`。仅当 extras 的 `unresolved` 非空（头文件不在解包树）才改 `engines/understand-operator/spec/build_context.yaml`。TypeGet/ROUND 等非缺头残差走 prelude，不是 `unknown`。见 `references/codemap-build-gotchas.md`。
 4. **关系必须有证据**：CALLS / READS / WRITES / DERIVES 等必须回到源码或 compiler provenance。
 5. **不为闭环制造公式**：复杂 Key producer 保留 producer、all-writes、guards、upstream roots 与 source span。
 6. **编译期是一等语义**：macro、compile var、template、BuildVariant、ARCH 显式建模。
@@ -69,3 +69,4 @@ prepare → extract → analyze → commit → verify
 | 共用证据纪律 | `references/evidence-quality.md` |
 | SplitAxis 示例（non-normative） | `examples/uo-query-splitaxis/` |
 | 踩坑入口 | `references/gotchas.md` |
+| 查询 mode 如何喂精度/性能场景 | `references/uo-scenario-hooks.md` |

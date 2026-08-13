@@ -392,6 +392,11 @@ def test_source_evidence_and_no_execution_semantics(tmp_path: Path) -> None:
     assert "receiver" in sync_op.attrs
     assert "receiver_type" in sync_op.attrs
     assert "receiver_canonical_type" in sync_op.attrs
+    assert sync_op.attrs.get("flag_paired") is True
+    wait_op = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "WaitFlag")
+    assert wait_op.attrs.get("flag_paired") is True
+    gaps = (cm.meta.get("kernel_root_trace") or {}).get("gaps") or []
+    assert not any(g.get("code") == "UNPAIRED_FLAG_SYNC" for g in gaps)
 
 
 def test_nested_wrapper_and_alias_reach_localtensor(tmp_path: Path) -> None:
@@ -491,7 +496,8 @@ def test_mutexbuffer_get_bridges_without_policy_catalog(tmp_path: Path) -> None:
     lps = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LockProd"]
     assert lps and all(e.attrs.get("root") == "AscendC::Lock" for e in lps)
 
-    # Project WidgetHolder::Get must NOT be proven as AscendC::Get.
+    # Project WidgetHolder::Get must NOT be proven as AscendC::Get,
+    # but the call site must bind to the unique project declaration.
     project_gets = [
         e
         for e in cm.by_kind(EntityKind.OPERATION)
@@ -500,6 +506,15 @@ def test_mutexbuffer_get_bridges_without_policy_catalog(tmp_path: Path) -> None:
     assert project_gets, "expected call site for commonL1Buf.Get()"
     assert all(e.attrs.get("root_status") != "REACHED" for e in project_gets)
     assert all("AscendC::Get" not in str(e.attrs.get("root") or "") for e in project_gets)
+    assert all(e.status == "extracted" for e in project_gets)
+    assert all(str(e.attrs.get("callee_qualified") or "").endswith("WidgetHolder::Get") for e in project_gets)
+    assert all(str(e.attrs.get("root_proof") or "").startswith("project_") for e in project_gets)
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value and r.src in {e.id for e in project_gets}
+    ]
+    assert binds, "expected BINDS from call site to WidgetHolder::Get"
 
 
 def test_project_get_lock_not_ascendc_root(tmp_path: Path) -> None:
@@ -544,6 +559,8 @@ def test_project_get_lock_not_ascendc_root(tmp_path: Path) -> None:
         ]
         assert member_ops, f"missing member call {name}"
         assert all(e.attrs.get("root_status") != "REACHED" for e in member_ops), name
+        assert all(e.status == "extracted" for e in member_ops), name
+        assert all(str(e.attrs.get("callee_qualified") or "") == f"Foo::{name}" for e in member_ops), name
 
     free_dc = [
         e
@@ -757,6 +774,700 @@ def test_prove_root_helpers() -> None:
     lex_ok, spell2 = _prove_ascendc_api_root(callee="DataCopy")
     assert lex_ok and spell2 == "DataCopy"
 
+    lex_load, spell_load = _prove_ascendc_api_root(callee="LoadAlign")
+    assert lex_load and spell_load == "LoadAlign"
+
+    lex_init, spell_init = _prove_ascendc_api_root(callee="InitOutput")
+    assert lex_init and spell_init == "InitOutput"
+
     lex_bad, _ = _prove_ascendc_api_root(callee="Get", receiver="x")
     assert not lex_bad
+
+    member_sgb, _ = _prove_ascendc_api_root(callee="SetGlobalBuffer", receiver="queryGm")
+    assert not member_sgb
+
+
+def test_tque_enque_deque_outside_flag_pairing(tmp_path: Path) -> None:
+    """TQue handshake is CANN-encapsulated; flag pair appearance stays for Set/Wait."""
+    root = tmp_path / "tque"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            LocalTensor<float> ub;
+            TQue<QuePosition::VECIN, 1> inQue;
+            inQue.EnQue(ub);
+            ub = inQue.DeQue();
+            SetFlag<HardEvent::MTE2_V>(EVENT_ID0);
+            WaitFlag<HardEvent::MTE2_V>(EVENT_ID0);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="tque", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    enque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue")
+    deque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "DeQue")
+    assert enque.attrs.get("mechanism") == "tque"
+    assert deque.attrs.get("mechanism") == "tque"
+    assert enque.attrs.get("root_status") == "REACHED"
+    assert deque.attrs.get("root_status") == "REACHED"
+    for op in (enque, deque):
+        assert not any(
+            r.src == op.id
+            and r.kind_name() in {RelationKind.SIGNALS.value, RelationKind.AWAITS.value}
+            for r in cm.relations.values()
+        )
+        assert op.attrs.get("flag_paired") is None
+    queues = [
+        other
+        for _rel, other in cm.neighbors(enque.id, direction="out")
+        if other.kind_name() == EntityKind.QUEUE.value
+    ]
+    assert queues, "EnQue must bind to the TQue QUEUE entity"
+    assert queues[0].name == "inQue"
+
+    setf = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "SetFlag")
+    wait = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "WaitFlag")
+    assert setf.attrs.get("flag_paired") is True
+    assert wait.attrs.get("flag_paired") is True
+    quality = (cm.meta.get("kernel_root_trace") or {}).get("quality") or {}
+    assert int(quality.get("flag_pairs") or 0) >= 1
+    assert int(quality.get("unpaired_flag_sync") or 0) == 0
+    assert int(quality.get("tque_ops") or 0) >= 2
+    gaps = (cm.meta.get("kernel_root_trace") or {}).get("gaps") or []
+    assert not any(g.get("code") == "UNPAIRED_FLAG_SYNC" for g in gaps)
+
+
+def test_unpaired_flag_is_gap_but_enque_is_not(tmp_path: Path) -> None:
+    """Missing WaitFlag is UNPAIRED_FLAG_SYNC; EnQue without DeQue is not."""
+    root = tmp_path / "unpaired"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            LocalTensor<float> ub;
+            TQue<QuePosition::VECIN, 1> inQue;
+            inQue.EnQue(ub);
+            SetFlag<HardEvent::MTE2_V>(EVENT_ID0);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="unpaired", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    enque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue")
+    assert enque.attrs.get("mechanism") == "tque"
+    assert not any(
+        r.src == enque.id
+        and r.kind_name() in {RelationKind.SIGNALS.value, RelationKind.AWAITS.value}
+        for r in cm.relations.values()
+    )
+
+    gaps = (cm.meta.get("kernel_root_trace") or {}).get("gaps") or []
+    unpaired = [g for g in gaps if g.get("code") == "UNPAIRED_FLAG_SYNC"]
+    assert unpaired, "SetFlag without WaitFlag must be recorded"
+    assert all(g.get("present") == "SetFlag" for g in unpaired)
+    assert all(g.get("missing") == "WaitFlag" for g in unpaired)
+    assert all(g.get("present") != "EnQue" for g in unpaired)
+    setf = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "SetFlag")
+    assert setf.attrs.get("flag_paired") is False
+    quality = (cm.meta.get("kernel_root_trace") or {}).get("quality") or {}
+    assert int(quality.get("unpaired_flag_sync") or 0) >= 1
+
+
+def test_tpipe_initbuffer_and_fetcheventid(tmp_path: Path) -> None:
+    """TPipe::InitBuffer / FetchEventID root at TPipe, not TQue, and not Flag pairing."""
+    root = tmp_path / "tpipe"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          TPipe *pipe;
+          TQue<QuePosition::VECIN, 1> inQue;
+          __aicore__ inline void Process() {
+            pipe->InitBuffer(inQue, 1, 1024);
+            event_t evt = static_cast<event_t>(GetTPipePtr()->FetchEventID(HardEvent::S_MTE2));
+            WaitFlag<HardEvent::S_MTE2>(evt);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="tpipe", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    initb = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "InitBuffer")
+    assert initb.attrs.get("root_status") == "REACHED"
+    assert initb.attrs.get("mechanism") == "tpipe"
+    assert initb.attrs.get("root") == "AscendC::InitBuffer"
+    assert not any(
+        r.src == initb.id
+        and r.kind_name() in {RelationKind.SIGNALS.value, RelationKind.AWAITS.value}
+        for r in cm.relations.values()
+    )
+
+    fetch = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "FetchEventID")
+    assert fetch.attrs.get("root_status") == "REACHED"
+    ptr = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "GetTPipePtr")
+    assert ptr.attrs.get("root_status") == "REACHED"
+
+
+def test_reg_loadalign_and_create_mask(tmp_path: Path) -> None:
+    root = tmp_path / "reg"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            RegTensor<float> vreg;
+            MaskReg preg = CreateMask<float, MaskPattern::ALL>();
+            LoadAlign(vreg, ((__ubuf__ float *&)ptr));
+            Mul(vreg, vreg, vreg, preg);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="reg", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    load = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LoadAlign")
+    mask = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "CreateMask")
+    mul = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Mul")
+    assert load.attrs.get("root_status") == "REACHED"
+    assert mask.attrs.get("root_status") == "REACHED"
+    assert mul.attrs.get("root_status") == "REACHED"
+    assert load.attrs.get("root_kind") == "REGISTER"
+
+
+def test_setglobalbuffer_member_bridge(tmp_path: Path) -> None:
+    root = tmp_path / "gm"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          GlobalTensor<float> queryGm;
+          __aicore__ inline void Process(GM_ADDR query) {
+            queryGm.SetGlobalBuffer((__gm__ float *)query);
+            auto addr = queryGm.GetPhyAddr();
+            InitOutput<float>(queryGm, 16, 0);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="gm", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    sgb = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "SetGlobalBuffer")
+    phy = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "GetPhyAddr")
+    inito = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "InitOutput")
+    assert sgb.attrs.get("root_status") == "REACHED"
+    assert phy.attrs.get("root_status") == "REACHED"
+    assert inito.attrs.get("root_status") == "REACHED"
+
+
+def test_tque_enque_without_recovered_type(tmp_path: Path) -> None:
+    """EnQue on a receiver is TQue in CANN even when the TQue type is not recovered."""
+    root = tmp_path / "tque_param"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void CopyIn() {
+            LocalTensor<float> ub;
+            yInQue.EnQue(ub);
+            yInQue.DeQue();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="tque_param", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    enque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue")
+    deque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "DeQue")
+    assert enque.attrs.get("root_status") == "REACHED"
+    assert deque.attrs.get("root_status") == "REACHED"
+    assert enque.attrs.get("mechanism") == "tque"
+    assert deque.attrs.get("mechanism") == "tque"
+
+
+def test_min_scalar_unresolved_vector_min_reached(tmp_path: Path) -> None:
+    root = tmp_path / "minmax"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            int64_t a = Min(k, b);
+            Min(vreg, vregA, vregB, preg);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="minmax", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
+    assert len(mins) == 2
+    statuses = sorted(str(e.attrs.get("root_status")) for e in mins)
+    assert statuses == ["REACHED", "UNRESOLVED"]
+    two_arg = next(e for e in mins if len(e.attrs.get("args") or []) <= 2)
+    four_arg = next(e for e in mins if len(e.attrs.get("args") or []) >= 3)
+    assert two_arg.attrs.get("root_status") == "UNRESOLVED"
+    assert four_arg.attrs.get("root_status") == "REACHED"
+
+
+def test_policy_get_binds_declaration_not_catalog(tmp_path: Path) -> None:
+    """Receiver type + unique method is enough to name Get without AscendC::Get."""
+    root = tmp_path / "policy_get"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "policy.h").write_text(
+        """
+        class MutexBuffer {
+         public:
+          __aicore__ inline void Init() {}
+          template <typename T>
+          __aicore__ inline LocalTensor<T> GetTensor() { return tensor_; }
+        };
+        class MutexBuffersPolicyDB {
+         public:
+          MutexBuffer<BufferType::L0A, SyncType::INNER_CORE_SYNC> ping_;
+          __aicore__ inline MutexBuffer<BufferType::L0A, SyncType::INNER_CORE_SYNC> &Get() {
+            return ping_;
+          }
+          __aicore__ inline void Init() {
+            ping_.Init();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    (arch / "process.h").write_text(
+        """
+        #include "policy.h"
+        class Process {
+         public:
+          __aicore__ inline void Process(
+              MutexBuffersPolicyDB<BufferType::L0A, SyncType::INNER_CORE_SYNC> &aL0BuffsDb) {
+            auto &l0aBuffer = aL0BuffsDb.Get();
+            LocalTensor<float> L0ATensor = l0aBuffer.template GetTensor<float>();
+            aL0BuffsDb.Init();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="policy_get", architecture="arch35")
+    _seed(cm, root, files=[str(arch / "process.h"), str(arch / "policy.h")])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    gets = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "aL0BuffsDb"
+    ]
+    assert gets
+    assert all(e.status == "extracted" for e in gets)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
+    assert all("policy.h" in str(e.attrs.get("callee_decl_file") or "") for e in gets)
+
+    inits = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Init" and e.attrs.get("receiver") == "aL0BuffsDb"
+    ]
+    assert inits
+    assert all(e.status == "extracted" for e in inits)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in inits)
+    assert all("MutexBuffersPolicyDB::Init" in str(e.attrs.get("callee_qualified") or "") for e in inits)
+
+    ping_inits = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Init" and e.attrs.get("receiver") == "ping_"
+    ]
+    assert ping_inits
+    assert all("MutexBuffer::Init" in str(e.attrs.get("callee_qualified") or "") for e in ping_inits)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in ping_inits)
+
+    gts = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "GetTensor" and e.attrs.get("receiver") == "l0aBuffer"
+    ]
+    assert gts
+    assert all(e.attrs.get("root") == "AscendC::LocalTensor" for e in gts)
+
+
+def test_unique_project_min_is_not_ascendc(tmp_path: Path) -> None:
+    root = tmp_path / "proj_min"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        template <typename T1, typename T2>
+        __aicore__ inline T1 Min(T1 a, T2 b) { return (a > b) ? b : a; }
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            int64_t a = Min(k, b);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="proj_min", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
+    assert mins
+    assert all(e.status == "extracted" for e in mins)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in mins)
+    assert all(e.attrs.get("root_proof") == "project_free" for e in mins)
+    assert all("Min" in str(e.attrs.get("callee_qualified") or "") for e in mins)
+
+
+def test_ambiguous_free_min_stays_unbound(tmp_path: Path) -> None:
+    root = tmp_path / "ambig_min"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "a.h").write_text(
+        """
+        __aicore__ inline int Min(int a, int b) { return a < b ? a : b; }
+        """,
+        encoding="utf-8",
+    )
+    (arch / "b.h").write_text(
+        """
+        __aicore__ inline long Min(long a, long b) { return a < b ? a : b; }
+        """,
+        encoding="utf-8",
+    )
+    (arch / "process.h").write_text(
+        """
+        #include "a.h"
+        #include "b.h"
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            int64_t a = Min(k, b);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="ambig_min", architecture="arch35")
+    _seed(cm, root, files=[str(arch / "process.h"), str(arch / "a.h"), str(arch / "b.h")])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
+    assert mins
+    assert all(not e.attrs.get("callee_qualified") for e in mins)
+    assert all(e.status != "extracted" or e.attrs.get("root_status") == "REACHED" for e in mins)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in mins)
+
+
+def test_align_to16_unique_free_not_confused_by_calls(tmp_path: Path) -> None:
+    root = tmp_path / "align"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "common.h").write_text(
+        """
+        __aicore__ inline int64_t AlignTo16(int64_t num) { return (num + 15) >> 4 << 4; }
+        """,
+        encoding="utf-8",
+    )
+    (arch / "process.h").write_text(
+        """
+        #include "common.h"
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            uint32_t s1RealSizeAlignTo16 = AlignTo16(s1);
+            uint32_t dataSize = count * AlignTo16(dSize);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="align", architecture="arch35")
+    _seed(cm, root, files=[str(arch / "process.h"), str(arch / "common.h")])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    rows = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "AlignTo16"]
+    assert rows
+    assert all(e.status == "extracted" for e in rows)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in rows)
+    assert all("AlignTo16" in str(e.attrs.get("callee_qualified") or "") for e in rows)
+
+
+def test_conditional_member_type_binds_unique_method(tmp_path: Path) -> None:
+    root = tmp_path / "cond"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class MutexBuffersPolicyDB {
+         public:
+          __aicore__ inline MutexBuffer<BufferType::L1> &Get() { return buffer_; }
+          MutexBuffer<BufferType::L1> buffer_;
+        };
+        class Process {
+         public:
+          typename std::conditional<!IS_L1_REUSE, MutexBuffersPolicyDB<BufferType::L1>, std::nullptr_t>::type commonL1Buf;
+          __aicore__ inline void Process() {
+            auto &buf = commonL1Buf.Get();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="cond", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    gets = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf"
+    ]
+    assert gets
+    assert all(e.status == "extracted" for e in gets)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
+
+
+def test_outofline_method_binds_class_member(tmp_path: Path) -> None:
+    """Class-scope fields must be visible inside Owner::Method bodies."""
+    root = tmp_path / "outofline"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        template <int Kind = 0>
+        class MutexBuffersPolicyDB {
+         public:
+          __aicore__ inline MutexBuffer<BufferType::L1> &Get() { return buffer_; }
+          __aicore__ inline void Init() { buffer_.Init(); }
+          MutexBuffer<BufferType::L1> buffer_;
+        };
+        class Widget {
+         public:
+          typename std::conditional<!IS_L1_REUSE, MutexBuffersPolicyDB<BufferType::L1>, std::nullptr_t>::type commonL1Buf;
+          MutexBuffersPolicyDB<BufferType::L0A> l0aBuf;
+          __aicore__ inline void Process();
+          __aicore__ inline MutexBuffer<BufferType::L0C> Take();
+        };
+        __aicore__ inline void Widget<ARGS>::Process() {
+            auto &buf = commonL1Buf.Get();
+            l0aBuf.Init();
+        }
+        __aicore__ inline MutexBuffer<BufferType::L0C> Widget<ARGS>::Take() {
+            return l0aBuf.Get();
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="outofline", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    gets = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf"
+    ]
+    assert gets
+    assert all(e.status == "extracted" for e in gets)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
+    inits = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Init" and e.attrs.get("receiver") == "l0aBuf"
+    ]
+    assert inits
+    assert all(e.status == "extracted" for e in inits)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in inits)
+    assert all("MutexBuffersPolicyDB::Init" in str(e.attrs.get("callee_qualified") or "") for e in inits)
+    takes = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "l0aBuf"
+    ]
+    assert takes
+    assert all(e.status == "extracted" for e in takes)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in takes)
+
+
+def test_multiline_conditional_member_binds_unique_method(tmp_path: Path) -> None:
+    root = tmp_path / "multiline"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class MutexBuffersPolicyDB {
+         public:
+          __aicore__ inline MutexBuffer<BufferType::L1> &Get() { return buffer_; }
+          MutexBuffer<BufferType::L1> buffer_;
+        };
+        class Process {
+         public:
+          typename std::conditional<IS_L1_REUSE,
+                                    MutexBuffersPolicyDB<BufferType::L1>,
+                                    std::nullptr_t>::type dYL1Buf;
+          __aicore__ inline void Process() {
+            auto &buf = dYL1Buf.Get();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="multiline", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    gets = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "dYL1Buf"
+    ]
+    assert gets
+    assert all(e.status == "extracted" for e in gets)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
+
+
+def test_selector_alias_with_two_gets_stays_unbound(tmp_path: Path) -> None:
+    """Nested selector TYPE that names two Get methods must not guess."""
+    root = tmp_path / "selector"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class MutexBuffersPolicyDB {
+         public:
+          __aicore__ inline MutexBuffer<BufferType::L1> &Get() { return a_; }
+          MutexBuffer<BufferType::L1> a_;
+        };
+        class MutexBuffersPolicySingleBuffer {
+         public:
+          __aicore__ inline MutexBuffer<BufferType::L1> &Get() { return b_; }
+          MutexBuffer<BufferType::L1> b_;
+        };
+        struct Sel {
+          using TYPE = std::conditional_t<FLAG, MutexBuffersPolicyDB<BufferType::L1>,
+                                          MutexBuffersPolicySingleBuffer<BufferType::L1>>;
+        };
+        class Process {
+         public:
+          using L0CType = typename Sel::TYPE;
+          typename std::conditional<ON, L0CType, std::nullptr_t>::type mmBuf;
+          __aicore__ inline void Process() {
+            auto &buf = mmBuf.Get();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="selector", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    gets = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "mmBuf"
+    ]
+    assert gets
+    assert all(not e.attrs.get("callee_qualified") for e in gets)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+
+
+def test_cited_files_from_walk_covers_included_headers() -> None:
+    from types import SimpleNamespace
+
+    from uo_init.passes.kernel_root_trace import _cited_files_from_walk
+
+    wr = SimpleNamespace(
+        path="op_kernel/flash_attention_score_grad_apt.cpp",
+        call_sites=[
+            SimpleNamespace(
+                file="op_kernel/arch35/foo.h",
+                callee_decl_file="op_kernel/arch35/bar.h",
+            )
+        ],
+        local_decls=[SimpleNamespace(file="op_kernel/arch35/baz.h")],
+        type_decls=[SimpleNamespace(file="op_kernel/arch35/type.h")],
+        alias_decls=[],
+        field_decls={("T", "x"): SimpleNamespace(file="op_kernel/arch35/field.h")},
+        controls=[SimpleNamespace(file="op_kernel/arch35/ctrl.h")],
+        functions={"Process": SimpleNamespace(file="op_kernel/arch35/process.h")},
+    )
+    dst: set[str] = set()
+    _cited_files_from_walk(wr, dst)
+    for name in ("foo.h", "bar.h", "baz.h", "type.h", "field.h", "ctrl.h", "process.h"):
+        assert name in dst
+    assert "flash_attention_score_grad_apt.cpp" in dst
+
 

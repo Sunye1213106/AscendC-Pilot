@@ -6,9 +6,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
-
-import yaml
+from typing import Any
 
 _HUNK = re.compile(r"^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@")
 _DIFF_FILE = re.compile(r"^\+\+\+\s+b/(.+)$|^\+\+\+\s+(.+)$")
@@ -101,36 +99,46 @@ def _path_matches(writer_file: str, diff_path: str) -> bool:
     return wf.endswith(dp) or dp.endswith(wf.split("/")[-1])
 
 
+def _project_root_from_uo_root(uo_root: Path) -> Path | None:
+    """``<op>/.ascendc-pilot/<arch>/uo`` → ``<op>``."""
+    if uo_root.name == "uo" and uo_root.parent.name.startswith("arch"):
+        return uo_root.parents[2]
+    return None
+
+
+def _as_packed_key(value: Any) -> int | None:
+    """Packed tiling-key integers only. Dimension names never coerce."""
+    if isinstance(value, bool) or isinstance(value, float):
+        return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
 def _load_host_view(
-    uo_root: Path, project_root: Path | None
+    project_root: Path | None,
+    *,
+    architecture: str = "",
 ) -> tuple[dict[str, Any], str]:
-    """Prefer ``.uo`` tg_host_view; fall back to legacy host_codemap.yaml."""
+    """Load ``ir/tg_host_view.yaml`` from the arch-scoped ``.uo`` product."""
     try:
-        from uo_init.store.reader import find_uo_product, load_view_blob
+        from uo_init.store.reader import find_uo_product, load_view_blob_checked
+    except ImportError as exc:
+        return {}, f"uo_init unavailable: {exc}"
 
-        root = project_root
-        if root is None:
-            # uo_root may be <op>/.ascendc-pilot/uo or <op>/.ascendc-pilot/<arch>/uo
-            if uo_root.name == "uo" and uo_root.parent.name == ".ascendc-pilot":
-                root = uo_root.parent.parent
-            elif uo_root.name == "uo":
-                root = uo_root.parents[2]
-        if root is not None:
-            product = find_uo_product(root)
-            if product is not None and product.suffix == ".uo":
-                blob = load_view_blob(product, "ir/tg_host_view.yaml")
-                if isinstance(blob, dict) and blob:
-                    return blob, f"uo:{product.name}"
-    except Exception:
-        pass
-
-    for rel in ("ir/tg_host_view.yaml", "ir/host_codemap.yaml"):
-        path = uo_root / rel
-        if path.is_file():
-            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if isinstance(doc, dict) and doc:
-                return doc, path.as_posix()
-    return {}, ""
+    if project_root is None:
+        return {}, "missing project_root for find_uo_product"
+    product = find_uo_product(project_root, architecture=architecture)
+    if product is None or product.suffix != ".uo":
+        return {}, "missing CodeMap .uo"
+    checked = load_view_blob_checked(product, "ir/tg_host_view.yaml")
+    if not checked.get("ok"):
+        reason = str(checked.get("reason_code") or "VIEW_UNUSABLE")
+        return {}, f"uo:{product.name}:{reason}"
+    blob = checked.get("view")
+    if isinstance(blob, dict) and blob:
+        return blob, f"uo:{product.name}"
+    return {}, f"uo:{product.name}:empty_host_view"
 
 
 def impact_from_diff(
@@ -138,12 +146,15 @@ def impact_from_diff(
     *,
     uo_root: str | Path | None = None,
     project_root: str | Path | None = None,
+    architecture: str = "",
 ) -> ImpactReport:
     """Compute the tiling impact of a unified diff against the CodeMap."""
     proj = Path(project_root).expanduser().resolve() if project_root else None
-    root = Path(uo_root) if uo_root else (
-        (proj / ".ascendc-pilot" / "uo") if proj else Path(".ascendc-pilot") / "uo"
-    )
+    if proj is None and uo_root is not None:
+        inferred = _project_root_from_uo_root(Path(uo_root))
+        if inferred is not None:
+            proj = inferred
+    arch = str(architecture or "").strip()
     ranges = parse_diff_ranges(diff_text)
     report = ImpactReport(files=sorted(ranges))
     report.two_sided_spans = parse_two_sided_spans(diff_text)
@@ -151,16 +162,18 @@ def impact_from_diff(
         report.note = "no file hunks in diff"
         return report
 
-    doc, source = _load_host_view(root, proj)
+    doc, source = _load_host_view(proj, architecture=arch)
     if not doc:
-        # Last resort: scan CodeMap entities directly when only .uo exists.
         try:
             from uo_init.store.reader import find_uo_product, read_codemap
             from uo_init.ir.entity import EntityKind
 
-            product = find_uo_product(proj or root)
+            if proj is None:
+                report.note = source or "missing CodeMap .uo"
+                return report
+            product = find_uo_product(proj, architecture=arch)
             if product is None:
-                report.note = "missing CodeMap .uo and host_codemap.yaml"
+                report.note = source or "missing CodeMap .uo"
                 return report
             cm = read_codemap(product)
             fields_hit: set[str] = set()
@@ -169,6 +182,14 @@ def impact_from_diff(
                     EntityKind.FIELD.value,
                     EntityKind.VARIABLE.value,
                     EntityKind.PREDICATE.value,
+                    EntityKind.OPERATION.value,
+                    EntityKind.BUFFER.value,
+                    EntityKind.QUEUE.value,
+                    EntityKind.BRANCH.value,
+                    EntityKind.KERNEL.value,
+                    EntityKind.TILING_FIELD.value,
+                    EntityKind.INPUT.value,
+                    EntityKind.OUTPUT.value,
                 }:
                     continue
                 wf = str(ent.file or "")
@@ -186,6 +207,26 @@ def impact_from_diff(
                                     "fields": [],
                                 }
                             )
+                        elif ent.kind_name() in {
+                            EntityKind.OPERATION.value,
+                            EntityKind.BUFFER.value,
+                            EntityKind.QUEUE.value,
+                            EntityKind.BRANCH.value,
+                            EntityKind.KERNEL.value,
+                            EntityKind.INPUT.value,
+                            EntityKind.OUTPUT.value,
+                        }:
+                            report.hit_writers.append(
+                                {
+                                    "field": ent.name,
+                                    "file": wf,
+                                    "line": line,
+                                    "kind": ent.kind_name(),
+                                    "function": ent.attrs.get("function") or ent.attrs.get("callee"),
+                                    "callee": ent.attrs.get("callee") or ent.name,
+                                }
+                            )
+                            fields_hit.add(ent.name)
                         else:
                             report.hit_writers.append(
                                 {
@@ -203,7 +244,7 @@ def impact_from_diff(
                 if n[:1].isupper() and (len(n) == 1 or n[1:2].islower() or "_" not in n[:1])
             )
             report.note = (
-                f"codemap-entity scan: {len(report.hit_writers)} writers, "
+                f"codemap-entity scan ({source}): {len(report.hit_writers)} writers, "
                 f"{len(report.hit_predicates)} predicates, fields={report.fields}"
             )
             return report
@@ -216,7 +257,6 @@ def impact_from_diff(
         name = str(f.get("name") or "")
         writers = list(f.get("writers") or [])
         if not writers and f.get("entity_id"):
-            # tg_host_view from CodeMap may only stamp producer_sites as writers
             writers = list(f.get("writers") or [])
         for w in writers:
             if not isinstance(w, dict):
@@ -257,7 +297,19 @@ def impact_from_diff(
         ):
             key_dims.append(str(f.get("tiling_key") or name))
     report.key_dims = sorted(set(key_dims))
-    report.affected_keys = []
+    packed: list[int] = []
+    for raw in list(doc.get("keys") or []) + list(doc.get("packed_keys") or []):
+        key = _as_packed_key(raw)
+        if key is not None:
+            packed.append(key)
+    for f in doc.get("fields") or []:
+        if str(f.get("name") or "") not in fields_hit:
+            continue
+        for candidate in (f.get("packed_key"), f.get("key")):
+            key = _as_packed_key(candidate)
+            if key is not None:
+                packed.append(key)
+    report.affected_keys = sorted(set(packed))
     report.note = (
         f"source={source}; {len(report.hit_writers)} writers, "
         f"{len(report.hit_predicates)} predicates, fields={report.fields}"

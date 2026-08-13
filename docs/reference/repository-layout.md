@@ -16,6 +16,7 @@
 | `scripts/` | 生成、校验、replay 与 developer tools。 |
 | `skills/` | Runtime skill bundles、references、examples、templates。 |
 | `tests/` | 仓库级 tests 与 fixtures。 |
+| `tools/` | Runtime capability 合同：`tools/source/`、`tools/codemap/`（各含 `METHOD.md` / `capability.yaml`）。 |
 | `docs/` | 人类说明文档。 |
 
 ## 改什么去哪里
@@ -32,6 +33,7 @@
 | 修改 CE impact | `engines/code-engineering/code_engineering/` |
 | 修改 host install | `adapters/`, `opencode-plugin/`, `install.*` |
 | 修改 Host Session Driver | `opencode-plugin/pilot-driver.ts`、`pilot/ascendc_pilot/actions/dispatch.py`、`drive.py` |
+| 修改 runtime capability | `tools/source/`、`tools/codemap/` |
 | 修改 authorize 热路径 | `pilot/ascendc_pilot/authorize/`、`opencode-plugin/ascendc-pilot.ts` |
 | 新增人类文档 | `docs/` |
 

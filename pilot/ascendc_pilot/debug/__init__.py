@@ -136,26 +136,10 @@ def _ir_path_hint(path_s: str) -> bool:
     return "/ir/" in p or p.endswith(".ir.yaml") or "/.ascendc-pilot/ir/" in p
 
 
-def _cbm_tool_name(tool: str) -> bool:
-    t = tool.lower()
-    return any(
-        x in t
-        for x in (
-            "codebase",
-            "search_graph",
-            "query_graph",
-            "trace_path",
-            "get_architecture",
-            "index_repository",
-        )
-    )
-
-
 def audit_stats_from_tool_events(events: list[dict[str, Any]]) -> dict[str, int]:
     stats = {
         "source_files_read": 0,
         "ir_files_read": 0,
-        "cbm_queries": 0,
         "grep_queries": 0,
         "tool_call_count": 0,
         "tool_failures": 0,
@@ -177,8 +161,6 @@ def audit_stats_from_tool_events(events: list[dict[str, Any]]) -> dict[str, int]
                 stats["source_files_read"] += 1
         elif tool == "grep" or tool == "search":
             stats["grep_queries"] += 1
-        elif _cbm_tool_name(tool):
-            stats["cbm_queries"] += 1
         elif tool in {"write", "edit", "apply_patch", "strreplace", "patch"} and path_s:
             stats["written_artifacts"] += 1
     return stats

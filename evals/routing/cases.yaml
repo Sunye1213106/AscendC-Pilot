@@ -51,3 +51,23 @@ cases:
     query: 证明某字段只能取特定值，建立可审计源码引理
     should_trigger: [source-proof]
     should_not_trigger: [uo-query]
+
+  - id: route_ce_impact
+    query: 有 diff 时做变更影响面，切片并挂验证义务
+    should_trigger: [ce-impact]
+    should_not_trigger: [tg-solve, uo-init]
+
+  - id: route_ce_intent
+    query: 无 diff 时定位改哪里，冻结变更目标
+    should_trigger: [ce-intent]
+    should_not_trigger: [tg-init, uo-init]
+
+  - id: route_ce_verify
+    query: 验证闭环签发 CE 证书，测量收据关闭义务
+    should_trigger: [ce-verify]
+    should_not_trigger: [uo-init, tg-solve]
+
+  - id: route_code_engineering
+    query: Plan scope and verify AscendC code changes with UO slices, evidence tiers, risk classes, and a verification-obligation ledger
+    should_trigger: [code-engineering]
+    should_not_trigger: [tg-solve]

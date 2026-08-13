@@ -30,16 +30,17 @@ def bridge_tg(
         fields = getattr(impacted_keys, "key_dims", []) or getattr(impacted_keys, "fields", [])
     else:
         keys, fields = impacted_keys, []
-    wanted = {str(int(value)) for value in keys}
+    wanted = {_normal_key(str(value)) for value in keys if str(value).strip() != ""}
+    field_names = [str(name) for name in fields if str(name).strip()]
     selected: list[dict[str, str]] = []
     if source.is_file():
         with source.open(encoding="utf-8", newline="") as handle:
             for row in csv.DictReader(handle):
                 raw = row.get("tiling_key") or row.get("key") or row.get("key_id")
-                by_key = not wanted or (raw is not None and _normal_key(raw) in wanted)
-                by_field = any(
+                by_key = bool(wanted) and raw is not None and _normal_key(raw) in wanted
+                by_field = bool(field_names) and any(
                     row.get(name) not in (None, "") or row.get(f"dim_{name}") not in (None, "")
-                    for name in fields
+                    for name in field_names
                 )
                 if by_key or by_field:
                     selected.append(dict(row))
@@ -53,14 +54,21 @@ def bridge_tg(
             writer = csv.DictWriter(handle, fieldnames=list(selected[0]))
             writer.writeheader()
             writer.writerows(selected)
+    numeric_keys: list[int] = []
+    for value in wanted:
+        try:
+            numeric_keys.append(int(value, 0) if isinstance(value, str) else int(value))
+        except (TypeError, ValueError):
+            continue
     handoff = {
         "schema": "ce-tg-handoff/v1",
         "architecture": architecture,
-        "impacted_keys": sorted(int(value) for value in wanted),
-        "fields": sorted({str(value) for value in fields}),
+        "impacted_keys": sorted(numeric_keys),
+        "fields": sorted(set(field_names)),
         "closure_source": str(source),
         "regress_cases": str(cases_path),
         "case_count": len(selected),
+        "filter": "keys" if wanted else ("fields" if field_names else "none"),
     }
     handoff_path = verify / "tg_handoff.yaml"
     handoff_path.write_text(yaml.safe_dump(handoff, sort_keys=False), encoding="utf-8")

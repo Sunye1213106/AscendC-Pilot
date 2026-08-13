@@ -30,6 +30,7 @@ from typing import Any
 import yaml
 
 from uo_init import scope_scan as sscan
+from uo_init.source_layout import is_other_arch_path
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 OVERRIDE_DIR = SPEC_DIR / "operators"
@@ -183,6 +184,14 @@ def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
     arch_root = host_root / arch_dir
     if arch_root.is_dir():
         out.extend(sorted(p for p in arch_root.glob("*.cpp") if "_tiling" in p.stem))
+    tiling_root = host_root / "op_tiling"
+    if tiling_root.is_dir():
+        for path in sorted(tiling_root.rglob("*.cpp")):
+            if "tiling" not in path.name.lower():
+                continue
+            if is_other_arch_path(path, arch_dir):
+                continue
+            out.append(path)
     # Prefer files that belong to this operator when the folder is shared.
     owned = [p for p in out if op_snake and p.stem.startswith(op_snake)]
     return owned or out
@@ -230,22 +239,62 @@ def _kernel_entry(kernel_root: Path, op_snake: str) -> tuple[Path | None, list[s
     return None, ["kernel_entry_not_found: no op_kernel/*.cpp"]
 
 
+_TPL_HEADER_GLOBS = (
+    "*template_tiling_key.h",
+    "*tilingkey.h",
+    "*_tiling_key.h",
+)
+
+
+def _pick_tiling_key_header(
+    hits: list[Path], op_name: str, *, kernel_entry: Path | None = None
+) -> tuple[Path, list[str]]:
+    notes: list[str] = []
+    if len(hits) > 1:
+        notes.append(f"multiple_tiling_key_header: {', '.join(p.name for p in hits)}")
+    if len(hits) == 1:
+        return hits[0], notes
+    from uo_init.source_layout import quoted_include_basenames
+
+    if kernel_entry is not None:
+        names = quoted_include_basenames(kernel_entry)
+        included = [h for h in hits if h.name.lower() in names]
+        if included:
+            return included[0], notes
+    for h in hits:
+        m = TPL_TAG_RE.search(_read(h))
+        if m and m.group(1) == op_name:
+            return h, notes
+    snake = camel_to_snake(op_name)
+    for h in hits:
+        if snake and snake in h.name.lower():
+            return h, notes
+    return hits[0], notes
+
+
 def _tiling_key_header(
-    kernel_root: Path, arch_dir: str, op_name: str
+    kernel_root: Path,
+    arch_dir: str,
+    op_name: str,
+    *,
+    kernel_entry: Path | None = None,
 ) -> tuple[Path | None, list[str]]:
     arch_root = kernel_root / arch_dir
     search_roots = [r for r in (arch_root, kernel_root) if r.is_dir()]
-    for root in search_roots:
-        hits = sorted(root.glob("*template_tiling_key.h"))
-        if len(hits) == 1:
-            return hits[0], []
-        if len(hits) > 1:
-            # Disambiguate by the op tag inside the DSL itself.
-            for h in hits:
-                m = TPL_TAG_RE.search(_read(h))
-                if m and m.group(1) == op_name:
-                    return h, []
-            return hits[0], [f"multiple_tiling_key_header: {', '.join(p.name for p in hits)}"]
+    hits: list[Path] = []
+    seen: set[Path] = set()
+    for glob_pat in _TPL_HEADER_GLOBS:
+        for root in search_roots:
+            for path in sorted(root.glob(glob_pat)):
+                key = path.resolve()
+                if key in seen:
+                    continue
+                seen.add(key)
+                hits.append(path)
+        if hits:
+            return _pick_tiling_key_header(
+                hits, op_name, kernel_entry=kernel_entry
+            )
     return None, ["tiling_key_header_not_found: no *template_tiling_key.h"]
 
 
@@ -329,7 +378,10 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
         spec.ambiguities.extend(notes)
 
     spec.tiling_key_header, notes = _tiling_key_header(
-        spec.kernel_root, spec.arch_dir, spec.op_name
+        spec.kernel_root,
+        spec.arch_dir,
+        spec.op_name,
+        kernel_entry=spec.kernel_entry,
     )
     spec.ambiguities.extend(notes)
 

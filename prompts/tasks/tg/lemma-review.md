@@ -21,5 +21,5 @@
 </instructions>
 
 <output>
-每个候选返回 `accept` | `reject` | `defer`，并附简短理由。
+每个候选返回 `accept` | `reject` | `defer`，并附简短理由。写入 `runs/<RUN_ID>/actions/lemma_review/review.yaml`。
 </output>

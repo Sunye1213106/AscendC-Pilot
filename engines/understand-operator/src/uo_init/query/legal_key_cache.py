@@ -25,15 +25,75 @@ def clear_legal_key_cache(path: str | Path | None = None) -> None:
         _CACHE.pop(str(Path(path).resolve()), None)
 
 
-def _load_rows_from_blob(blob: Any) -> list[dict[str, Any]]:
-    if isinstance(blob, dict):
-        rows = blob.get("rows")
-        if isinstance(rows, list):
-            return [r for r in rows if isinstance(r, dict)]
-        return []
+def compact_legal_key_blob(blob: dict[str, Any]) -> dict[str, Any]:
+    """Store dim names once; each row is ``[index, key, hex, values, sel, status]``."""
+    rows = blob.get("rows") if isinstance(blob, dict) else None
+    if not isinstance(rows, list) or not rows:
+        return blob
+    if isinstance(rows[0], (list, tuple)):
+        return blob
+    first = next((r for r in rows if isinstance(r, dict)), None)
+    if not isinstance(first, dict) or not isinstance(first.get("dims"), dict):
+        return blob
+    dim_order = list(first["dims"].keys())
+    compact_rows: list[list[Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        dims = row.get("dims") if isinstance(row.get("dims"), dict) else {}
+        compact_rows.append(
+            [
+                row.get("index", len(compact_rows)),
+                row.get("tiling_key"),
+                row.get("tiling_key_hex") or "",
+                [dims.get(name) for name in dim_order],
+                row.get("sel_group_id") or "",
+                row.get("status") or "template_admissible",
+            ]
+        )
+    out = dict(blob)
+    out["dim_order"] = dim_order
+    out["rows"] = compact_rows
+    return out
+
+
+def expand_legal_key_rows(blob: Any) -> list[dict[str, Any]]:
+    """Expand compact or legacy legal-key blobs into dict rows with ``dims``."""
     if isinstance(blob, list):
-        return [r for r in blob if isinstance(r, dict)]
-    return []
+        return [row for row in blob if isinstance(row, dict)]
+    if not isinstance(blob, dict):
+        return []
+    rows = blob.get("rows")
+    if not isinstance(rows, list):
+        return []
+    dim_order = [str(n) for n in (blob.get("dim_order") or [])]
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            out.append(row)
+            continue
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        values = row[3] if isinstance(row[3], list) else []
+        dims = {
+            dim_order[i]: values[i]
+            for i in range(min(len(dim_order), len(values)))
+        }
+        out.append(
+            {
+                "index": row[0],
+                "tiling_key": row[1],
+                "tiling_key_hex": row[2] if len(row) > 2 else "",
+                "dims": dims,
+                "sel_group_id": row[4] if len(row) > 4 else "",
+                "status": row[5] if len(row) > 5 else "template_admissible",
+            }
+        )
+    return out
+
+
+def _load_rows_from_blob(blob: Any) -> list[dict[str, Any]]:
+    return expand_legal_key_rows(blob)
 
 
 def _pattern_filters(pattern: str) -> dict[str, str]:

@@ -113,9 +113,34 @@ def load_view_blob(path: str | Path, name: str) -> Any | None:
         ).fetchone()
         if row is None:
             return None
-        return json.loads(row["data"])
+        blob = json.loads(row["data"])
+        if name == "tiling/legal_key_index.jsonl" and isinstance(blob, dict):
+            from uo_init.query.legal_key_cache import expand_legal_key_rows
+
+            blob = dict(blob)
+            blob["rows"] = expand_legal_key_rows(blob)
+        return blob
     finally:
         conn.close()
+
+
+def load_production_view(path: str | Path, name: str) -> Any | None:
+    """Load a view for production callers. Stale blobs are never returned."""
+    checked = load_view_blob_checked(path, name)
+    if checked.get("ok"):
+        return checked.get("view")
+    return None
+
+
+def _architecture_from_uo_name(path: Path) -> str:
+    name = path.name
+    if not name.endswith(".uo"):
+        return ""
+    stem = name[: -len(".uo")]
+    parts = stem.rsplit(".", 1)
+    if len(parts) == 2 and parts[1].startswith("arch"):
+        return parts[1]
+    return ""
 
 
 def load_view_blob_checked(
@@ -199,37 +224,79 @@ def find_uo_product(
     op_name: str = "",
     architecture: str = "",
 ) -> Path | None:
-    """Locate the CodeMap product ``.ascendc-pilot/<arch>/uo/<op>.<arch>.uo``."""
+    """Locate the CodeMap product ``.ascendc-pilot/<arch>/uo/<op>.<arch>.uo``.
+
+    Production authority is arch-scoped ``*.<arch>.uo`` only. Top-level
+    ``.ascendc-pilot/uo/*.uo`` and ``indexes/kb_graph.sqlite`` are not products.
+
+    Without ``architecture``, only a unique arch among candidates is accepted.
+    Multiple arches never return ``candidates[0]`` (arch22 would sort first).
+    """
     from uo_init.store.writer import uo_product_dir, uo_product_path
 
     root = Path(op_root).expanduser().resolve()
-    if op_name and architecture:
-        p = uo_product_path(root, op_name, architecture)
-        if p.is_file():
-            return p
+    if root.is_file() and root.suffix == ".uo":
+        arch = (architecture or "").strip()
+        if arch and not root.name.endswith(f".{arch}.uo"):
+            return None
+        if op_name and not root.name.startswith(f"{op_name}."):
+            return None
+        return root
 
-    # Prefer the requested arch tree; else scan all arch-scoped uo/ dirs.
-    # Also accept a one-time legacy top-level ``.ascendc-pilot/uo/*.uo``.
     search_dirs: list[Path] = []
     arch = (architecture or "").strip()
+
+    def _add_dir(path: Path) -> None:
+        if path not in search_dirs:
+            search_dirs.append(path)
+
+    if root.is_dir():
+        # Already standing in a uo product directory or an arch dir.
+        if root.name == "uo" or root.name.startswith("arch"):
+            _add_dir(root)
+        if root.name.startswith("arch") and (root / "uo").is_dir():
+            _add_dir(root / "uo")
+
+    if op_name and arch:
+        try:
+            p = uo_product_path(root, op_name, arch)
+            if p.is_file():
+                return p
+        except Exception:
+            pass
+
     if arch:
-        search_dirs.append(uo_product_dir(root, architecture=arch))
+        try:
+            _add_dir(uo_product_dir(root, architecture=arch))
+        except Exception:
+            _add_dir(root / ".ascendc-pilot" / arch / "uo")
+        _add_dir(root / ".ascendc-pilot" / arch / "uo")
+
     pilot = root / ".ascendc-pilot"
+    if not pilot.is_dir() and root.name == "uo" and root.parent.name.startswith("arch"):
+        # ``<op>/.ascendc-pilot/<arch>/uo`` → climb to op root's pilot dir.
+        maybe_pilot = root.parent.parent
+        if maybe_pilot.name == ".ascendc-pilot":
+            pilot = maybe_pilot
+            root = maybe_pilot.parent
+    if not pilot.is_dir() and root.name == ".ascendc-pilot":
+        pilot = root
+
     if pilot.is_dir():
         for child in sorted(pilot.iterdir()):
             if child.is_dir() and child.name.startswith("arch"):
-                cand = child / "uo"
-                if cand not in search_dirs:
-                    search_dirs.append(cand)
-        legacy = pilot / "uo"
-        if legacy.is_dir() and legacy not in search_dirs:
-            search_dirs.append(legacy)
+                _add_dir(child / "uo")
+        # Intentionally skip legacy top-level ``.ascendc-pilot/uo/``.
 
     candidates: list[Path] = []
+    seen: set[Path] = set()
     for product_dir in search_dirs:
         if not product_dir.is_dir():
             continue
-        candidates.extend(sorted(p for p in product_dir.glob("*.uo") if p.is_file()))
+        for p in sorted(product_dir.glob("*.uo")):
+            if p.is_file() and p not in seen:
+                seen.add(p)
+                candidates.append(p)
 
     if arch:
         narrowed = [c for c in candidates if c.name.endswith(f".{arch}.uo")]
@@ -239,12 +306,23 @@ def find_uo_product(
                     if c.name.startswith(f"{op_name}."):
                         return c
             return narrowed[0]
+        return None
+    by_arch: dict[str, list[Path]] = {}
+    for c in candidates:
+        a = _architecture_from_uo_name(c)
+        if not a:
+            continue
+        by_arch.setdefault(a, []).append(c)
+    if len(by_arch) != 1:
+        return None
+    arch_candidates = next(iter(by_arch.values()))
     if op_name:
-        for c in candidates:
+        for c in arch_candidates:
             if c.name.startswith(f"{op_name}."):
                 return c
-    if candidates:
-        return candidates[0]
+        return None
+    if len(arch_candidates) == 1:
+        return arch_candidates[0]
     return None
 
 

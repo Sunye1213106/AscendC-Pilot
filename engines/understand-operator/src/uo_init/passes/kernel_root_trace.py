@@ -9,8 +9,10 @@ Algorithm (no execution analysis):
   4. Single reverse fixed-point over WRAPS / ALIASES / CALLS
   5. Mark REACHED / UNRESOLVED / EXTERNAL with auditable gaps
 
-Does **not** compute exec_rank, RAW/WAR/WAW, sync pairing, pipeline,
-buffer lifecycle, or engine scheduling.
+Does **not** compute exec_rank, RAW/WAR/WAW, happens-before, pipeline,
+buffer lifecycle, or engine scheduling. Flag APIs (Set/Wait, CrossCore*, IB*)
+record identity-level pair appearance. TQue EnQue/DeQue stay outside that
+check — CANN encapsulates their handshake.
 """
 
 from __future__ import annotations
@@ -35,6 +37,9 @@ from uo_init.semantics.ascendc_storage import (
     ASCENDC_REGISTER_TYPES,
     ASCENDC_STORAGE_WRAPPER_TYPES,
     MUTEX_BUFFER_METHOD_BRIDGES,
+    TENSOR_METHOD_BRIDGES,
+    TPIPE_METHOD_BRIDGES,
+    TQUE_METHOD_BRIDGES,
     is_non_storage_type,
     is_storage_type_text,
     is_storage_wrapper_type,
@@ -43,8 +48,17 @@ from uo_init.semantics.ascendc_storage import (
     register_class_from_type,
     resolve_buffer_decl,
     storage_root_kind_from_space,
+    tposition_from_type_text,
 )
-from uo_init.semantics.ascendc_sync import SYNC_MECHANISM, resolve_sync_site
+from uo_init.semantics.ascendc_sync import (
+    FLAG_PAIR_MATE,
+    SYNC_MECHANISM,
+    flag_pair_key,
+    is_flag_sync,
+    is_tpipe_callee,
+    is_tque_callee,
+    resolve_sync_site,
+)
 
 # ---------------------------------------------------------------------------
 # Reason codes (auditable gaps)
@@ -54,6 +68,7 @@ REASON_NO_ASCENDC_ROOT = "NO_ASCENDC_ROOT_REACHED"
 REASON_TYPE_UNRESOLVED = "TYPE_CANONICALIZATION_FAILED"
 REASON_CALL_UNRESOLVED = "NO_ASCENDC_ROOT_REACHED"
 REASON_EXTERNAL = "EXTERNAL_DECL_UNAVAILABLE"
+REASON_UNPAIRED_FLAG_SYNC = "UNPAIRED_FLAG_SYNC"
 
 _ROOT_KIND_BY_CATEGORY: dict[str, str] = {
     "memory_transfer": "MEMORY_API",
@@ -67,10 +82,9 @@ _ROOT_KIND_BY_CATEGORY: dict[str, str] = {
     "sync_signal": "SYNC",
     "sync_wait": "SYNC",
     "sync_barrier": "SYNC",
-    "reg_load": "REGISTER",
-    "reg_store": "REGISTER",
-    "reg_compute": "REGISTER",
+    "reg_mask": "REGISTER",
     "vector": "COMPUTE_API",
+    "vector_compute": "COMPUTE_API",
     "cube": "COMPUTE_API",
     "cube_compute": "COMPUTE_API",
     "cube_load": "COMPUTE_API",
@@ -91,6 +105,7 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "FreeTensor",
         "EnQue",
         "DeQue",
+        "Cast",
         "Get",
         "GetTensor",
         "SetAtomicAdd",
@@ -100,8 +115,35 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "LoadData",
         "Fixpipe",
         "Matmul",
+        # TPipe / tensor (kernel_tpipe.h, kernel_tensor.h, kernel_common.h)
+        "FetchEventID",
+        "GetTPipePtr",
+        "SetGlobalBuffer",
+        "GetPhyAddr",
+        "InitOutput",
+        # AscendC::Reg public free functions (kernel_reg_compute_*_intf.h)
+        "LoadAlign",
+        "StoreAlign",
+        "StoreUnAlign",
+        "CreateMask",
+        "UpdateMask",
+        "Interleave",
+        "Duplicate",
+        "ReduceSum",
+        "Muls",
+        "Adds",
+        "Mul",
+        "Add",
+        "Sub",
+        "Div",
+        "Exp",
+        "Abs",
     }
 )
+
+# Min/Max are CANN vector/Reg APIs and also project scalar helpers. Prove only
+# when the call looks like vector/Reg (3+ args or a typed tensor/register operand).
+_VECTOR_AMBIGUOUS_ROOTS: frozenset[str] = frozenset({"Min", "Max"})
 
 _CLASS_RE = re.compile(r"\b(?:class|struct)\s+(?P<name>[A-Za-z_]\w*)\b")
 _USING_RE = re.compile(
@@ -170,6 +212,32 @@ def _base_type_name(type_text: str) -> str:
     no_tpl = text.split("<", 1)[0].strip()
     token = no_tpl.split("::")[-1].strip()
     return token if token.isidentifier() else ""
+
+
+def _persist_type_name(type_text: str) -> str:
+    """Short type spelling for CodeMap attrs — never the class body."""
+    return _base_type_name(type_text) or str(type_text or "").split("<", 1)[0].strip()[:120]
+
+
+_SYNC_PRECEDES_CALLEES: frozenset[str] = frozenset(
+    {
+        "DataCopy",
+        "DataCopyPad",
+        "AllocTensor",
+        "FreeTensor",
+        "EnQue",
+        "DeQue",
+        "SetFlag",
+        "WaitFlag",
+        "CrossCoreSetFlag",
+        "CrossCoreWaitFlag",
+        "PipeBarrier",
+        "DataSyncBarrier",
+        "InitBuffer",
+        "Cast",
+    }
+    | set(SYNC_MECHANISM)
+)
 
 
 def _type_identity_key(type_text: str, *, usr: str = "", qualified: str = "") -> str:
@@ -338,6 +406,90 @@ def _sync_object_kind(type_text: str) -> EntityKind | None:
         return EntityKind.QUEUE
     if re.search(r"(?:^|::)HardEvent(?:Aic|Aiv)?(?:<|$)", text):
         return EntityKind.EVENT
+    return None
+
+
+def _receiver_is_tque(
+    *,
+    bid_recv: str,
+    receiver_type: str,
+    receiver_canonical: str,
+    codemap: CodeMap,
+) -> bool:
+    if bid_recv and bid_recv in codemap.entities:
+        ent = codemap.entities[bid_recv]
+        if ent.kind_name() == EntityKind.QUEUE.value:
+            return True
+        blob = " ".join(
+            str(ent.attrs.get(k) or "")
+            for k in ("type_name", "root", "wrapper")
+        )
+        if "TQue" in blob:
+            return True
+    for text in (receiver_type, receiver_canonical):
+        if _sync_object_kind(text) == EntityKind.QUEUE:
+            return True
+        if "TQue" in str(text or ""):
+            return True
+    return False
+
+
+def _receiver_is_tpipe(
+    *,
+    bid_recv: str,
+    receiver_type: str,
+    receiver_canonical: str,
+    codemap: CodeMap,
+) -> bool:
+    if bid_recv and bid_recv in codemap.entities:
+        ent = codemap.entities[bid_recv]
+        if ent.kind_name() == EntityKind.PIPE.value:
+            return True
+        blob = " ".join(
+            str(ent.attrs.get(k) or "")
+            for k in ("type_name", "root", "wrapper")
+        )
+        if "TPipe" in blob:
+            return True
+    for text in (receiver_type, receiver_canonical):
+        if _sync_object_kind(text) == EntityKind.PIPE:
+            return True
+        if "TPipe" in str(text or ""):
+            return True
+    return False
+
+
+def _looks_like_reg_or_vector_call(args: list[str] | None, targs: list[str] | None) -> bool:
+    """True for CANN vector/Reg Min/Max, not 2-arg project scalar helpers."""
+    args = [str(a) for a in (args or [])]
+    targs = [str(a) for a in (targs or [])]
+    blob = " ".join(targs + args)
+    if any(tok in blob for tok in ("MaskReg", "RegTensor", "LocalTensor", "GlobalTensor")):
+        return True
+    return len(args) >= 3
+
+
+def _select_framework_bridge(
+    *,
+    callee: str,
+    receiver: str,
+    recv_is_wrapper: bool,
+    recv_is_tque: bool,
+    recv_is_tpipe: bool,
+) -> tuple[str, str] | None:
+    """Explicit CANN/framework method contracts. Spelling alone never proves members."""
+    if recv_is_wrapper:
+        hit = MUTEX_BUFFER_METHOD_BRIDGES.get(callee)
+        if hit:
+            return hit
+    # TPipe::InitBuffer / FetchEventID. Receiver is the pipe; TQue is an argument.
+    if callee in TPIPE_METHOD_BRIDGES and (recv_is_tpipe or (receiver and not recv_is_tque)):
+        return TPIPE_METHOD_BRIDGES[callee]
+    # EnQue/DeQue/Alloc/Free exist only on TQueBind in CANN.
+    if callee in TQUE_METHOD_BRIDGES and (recv_is_tque or (receiver and not recv_is_tpipe)):
+        return TQUE_METHOD_BRIDGES[callee]
+    if callee in TENSOR_METHOD_BRIDGES and receiver:
+        return TENSOR_METHOD_BRIDGES[callee]
     return None
 
 
@@ -577,6 +729,70 @@ def _link(
     # Keep first-seen file/line as the primary display site; do not overwrite.
 
 
+def _record_flag_pair_appearance(codemap: CodeMap, gaps: list[dict[str, Any]]) -> dict[str, int]:
+    """Identity-level Set/Wait appearance. TQue ops never enter this check."""
+    groups: dict[tuple[str, str, str], dict[str, list[str]]] = defaultdict(
+        lambda: {"signals": [], "awaits": []}
+    )
+    event_ids: dict[tuple[str, str, str], set[str]] = defaultdict(set)
+    for rel in codemap.relations.values():
+        kn = rel.kind_name()
+        if kn not in {RelationKind.SIGNALS.value, RelationKind.AWAITS.value}:
+            continue
+        op = codemap.entities.get(rel.src)
+        event = codemap.entities.get(rel.dst)
+        if op is None or event is None:
+            continue
+        callee = str(op.attrs.get("callee") or op.name or "")
+        if is_tque_callee(callee) or not is_flag_sync(callee):
+            continue
+        identity = str(event.attrs.get("identity") or event.name or "")
+        sync = {
+            "mechanism": str(event.attrs.get("mechanism") or op.attrs.get("mechanism") or ""),
+            "event": str(event.attrs.get("event_type") or ""),
+        }
+        key = flag_pair_key(identity, sync)
+        if not key[1]:
+            continue
+        side = "signals" if kn == RelationKind.SIGNALS.value else "awaits"
+        groups[key][side].append(op.id)
+        event_ids[key].add(event.id)
+
+    paired_keys = 0
+    unpaired_keys = 0
+    for key, sides in groups.items():
+        paired = bool(sides["signals"] and sides["awaits"])
+        if paired:
+            paired_keys += 1
+        else:
+            unpaired_keys += 1
+            present_id = (sides["signals"] or sides["awaits"])[0]
+            present_op = codemap.entities.get(present_id)
+            present = str((present_op.attrs.get("callee") if present_op else "") or "")
+            gaps.append(
+                {
+                    "code": REASON_UNPAIRED_FLAG_SYNC,
+                    "mechanism": key[0],
+                    "identity": key[1],
+                    "event": key[2],
+                    "present": present,
+                    "missing": FLAG_PAIR_MATE.get(present, ""),
+                    "entity_id": present_id,
+                }
+            )
+        for oid in sides["signals"] + sides["awaits"]:
+            ent = codemap.entities.get(oid)
+            if ent is not None:
+                ent.attrs["flag_paired"] = paired
+        for eid in event_ids.get(key, ()):
+            ev = codemap.entities.get(eid)
+            if ev is not None:
+                ev.attrs["paired"] = paired
+                ev.attrs["signal_count"] = len(sides["signals"])
+                ev.attrs["await_count"] = len(sides["awaits"])
+    return {"flag_pairs": paired_keys, "unpaired_flag_sync": unpaired_keys}
+
+
 def _propagate_reachability(codemap: CodeMap) -> None:
     """Single reverse fixed-point over WRAPS / ALIASES / CALLS from REACHED nodes."""
     reverse: dict[str, list[tuple[str, str]]] = defaultdict(list)
@@ -655,6 +871,40 @@ def _propagate_reachability(codemap: CodeMap) -> None:
                 queue.append(parent)
 
 
+def _add_clang_path(dst: set[str], raw: str) -> None:
+    p = str(raw or "").replace("\\", "/")
+    if not p:
+        return
+    dst.add(Path(p).name.lower())
+    dst.add(p.lower())
+
+
+def _cited_files_from_walk(wr: Any, dst: set[str]) -> None:
+    """Union files named by a WalkResult so lexical skip covers included headers."""
+    _add_clang_path(dst, str(getattr(wr, "path", "") or ""))
+    for site in getattr(wr, "call_sites", None) or []:
+        _add_clang_path(dst, getattr(site, "file", "") or "")
+        _add_clang_path(dst, getattr(site, "callee_decl_file", "") or "")
+    for decl in getattr(wr, "local_decls", None) or []:
+        _add_clang_path(dst, getattr(decl, "file", "") or "")
+    for decl in getattr(wr, "type_decls", None) or []:
+        _add_clang_path(dst, getattr(decl, "file", "") or "")
+    for decl in getattr(wr, "alias_decls", None) or []:
+        _add_clang_path(dst, getattr(decl, "file", "") or "")
+    fds = getattr(wr, "field_decls", None) or {}
+    if isinstance(fds, dict):
+        fds = fds.values()
+    for fd in fds:
+        _add_clang_path(dst, getattr(fd, "file", "") or "")
+    for ctrl in getattr(wr, "controls", None) or []:
+        _add_clang_path(dst, getattr(ctrl, "file", "") or "")
+    fns = getattr(wr, "functions", None) or {}
+    if isinstance(fns, dict):
+        fns = fns.values()
+    for rec in fns:
+        _add_clang_path(dst, getattr(rec, "file", "") or "")
+
+
 def finalize_kernel_root_trace(
     codemap: CodeMap,
     source_root: Path | str,
@@ -671,6 +921,7 @@ def finalize_kernel_root_trace(
     arch = require_architecture(architecture or codemap.architecture)
     reachable, filter_strict = kscan.reachable_function_names(codemap)
     files = kscan.selected_kernel_files(codemap, Path(root))
+    identity_filled = 0
 
     _purge_root_trace_entities(codemap)
 
@@ -700,11 +951,7 @@ def finalize_kernel_root_trace(
         for wr in _tu_cache.iter_cached_walks(
             Path(root), arch, path_substr="op_kernel", limit=96
         ):
-            p = str(getattr(wr, "path", "") or "").replace("\\", "/")
-            if p:
-                clang_files.add(Path(p).name.lower())
-                # Also keep relative path tails for matching selected files.
-                clang_files.add(p.lower())
+            _cited_files_from_walk(wr, clang_files)
     except Exception:  # noqa: BLE001
         clang_files = set()
 
@@ -756,6 +1003,16 @@ def finalize_kernel_root_trace(
         calls, added = kscan.merge_lexical_sites(calls, lexical, root=root)
         if added:
             provenance = f"{provenance}+lexical_source_calls"
+        identity_filled = 0
+        if files and time.perf_counter() < deadline:
+            from uo_init.passes.kernel_call_identity import (
+                build_source_symbol_index,
+                enrich_call_sites,
+            )
+
+            calls = [kscan.site_as_dict(s) for s in (calls or [])]
+            sym_index = build_source_symbol_index(files, root=root, deadline=deadline)
+            identity_filled = enrich_call_sites(calls, sym_index, root=root)
         lex_decls = kscan.lexical_buffer_decls(
             files,
             reachable=reachable,
@@ -991,7 +1248,7 @@ def finalize_kernel_root_trace(
                     attrs={
                         "role": "storage_wrapper_type",
                         "root_status": "UNRESOLVED",
-                        "type_text": resolved,
+                        "type_name": _persist_type_name(resolved),
                         "spelling_base": resolved_base,
                     },
                     file=str(row["file"]),
@@ -1025,7 +1282,7 @@ def finalize_kernel_root_trace(
                     attrs={
                         "role": "source_type",
                         "root_status": "UNRESOLVED",
-                        "type_text": resolved,
+                        "type_name": _persist_type_name(resolved),
                         "spelling_base": resolved_base,
                     },
                     file=str(row["file"]),
@@ -1041,7 +1298,7 @@ def finalize_kernel_root_trace(
                 type_ents[member_ikey],
                 {
                     "member": row["member"],
-                    "type_text": type_text,
+                    "type_name": _persist_type_name(type_text),
                     "file": row["file"],
                     "line": row["line"],
                 },
@@ -1143,7 +1400,7 @@ def finalize_kernel_root_trace(
                     "role": "storage_wrapper_type",
                     "root_status": "UNRESOLVED",
                     "trace": [spell],
-                    "type_text": spell,
+                    "type_name": spell,
                 },
                 status="partial",
                 confidence=0.5,
@@ -1154,7 +1411,7 @@ def finalize_kernel_root_trace(
     for e in list(codemap.by_kind(EntityKind.TYPE)):
         if e.attrs.get("catalog") == "ascendc":
             continue
-        tt = str(e.attrs.get("type_text") or "")
+        tt = str(e.attrs.get("type_name") or e.attrs.get("type_text") or "")
         base = str(e.attrs.get("spelling_base") or _base_type_name(tt) or e.name)
         if not (is_storage_wrapper_type(tt) or is_storage_wrapper_type(e.name) or base == "MutexBuffer"):
             # Buffer only when templated (Buffer<...>), never bare Buffer.
@@ -1200,7 +1457,13 @@ def finalize_kernel_root_trace(
                 eid=sid,
                 attrs={
                     "scope": owner,
-                    "type_text": type_text,
+                    "type_name": _persist_type_name(type_text),
+                    "tposition": tposition_from_type_text(expanded)
+                    or tposition_from_type_text(type_text)
+                    or "",
+                    "memory_space": memory_space_from_type_text(expanded)
+                    or memory_space_from_type_text(type_text)
+                    or "",
                     "root_status": "REACHED",
                     "root_kind": "SYNC",
                     "root": f"AscendC::{root_spell}",
@@ -1246,8 +1509,11 @@ def finalize_kernel_root_trace(
             root_spell = str(codemap.entities[type_ents[base]].attrs.get("root") or "").replace("AscendC::", "")
         attrs = {
             "memory_space": space,
+            "tposition": tposition_from_type_text(expanded)
+            or tposition_from_type_text(type_text)
+            or "",
             "scope": owner,
-            "type_text": type_text,
+            "type_name": _persist_type_name(type_text),
             "role": "storage_wrapper" if is_wrapper else "project_wrapper",
             "wrapper": "MutexBuffer" if is_wrapper and "MutexBuffer" in (expanded + type_text) else (
                 _base_type_name(expanded) if is_wrapper else ""
@@ -1299,7 +1565,13 @@ def finalize_kernel_root_trace(
                 eid=sid,
                 attrs={
                     "scope": function,
-                    "type_text": type_text,
+                    "type_name": _persist_type_name(type_text),
+                    "tposition": tposition_from_type_text(expanded)
+                    or tposition_from_type_text(type_text)
+                    or "",
+                    "memory_space": memory_space_from_type_text(expanded)
+                    or memory_space_from_type_text(type_text)
+                    or "",
                     "root_status": "REACHED",
                     "root_kind": "SYNC",
                     "root": f"AscendC::{root_spell}",
@@ -1333,6 +1605,8 @@ def finalize_kernel_root_trace(
         nfile = _norm_file(file, root)
         reg_class = register_class_from_type(expanded) or register_class_from_type(type_text)
         if reg_class:
+            if not nfile or int(line or 0) <= 0:
+                continue
             rid = register_site_id(file=file, line=line, scope=function, name=name, root=root)
             root_id = _ensure_ascendc_root(
                 codemap, _base_type_name(expanded) or "RegTensor", root_kind="REGISTER"
@@ -1343,7 +1617,7 @@ def finalize_kernel_root_trace(
                 eid=rid,
                 attrs={
                     "register_class": reg_class,
-                    "type_text": type_text,
+                    "type_name": _persist_type_name(type_text),
                     "scope": function,
                     "root_status": "REACHED",
                     "root_kind": "REGISTER",
@@ -1390,8 +1664,11 @@ def finalize_kernel_root_trace(
         bid = buffer_site_id(file=file, line=line, scope=function, name=name, root=root)
         attrs = {
             "memory_space": space,
+            "tposition": tposition_from_type_text(expanded)
+            or tposition_from_type_text(type_text)
+            or "",
             "scope": function,
-            "type_text": type_text,
+            "type_name": _persist_type_name(type_text),
             "role": (
                 "storage_wrapper"
                 if is_wrapper
@@ -1518,11 +1795,13 @@ def finalize_kernel_root_trace(
         callee_qualified = str(d.get("callee_qualified") or "")
         callee_usr = str(d.get("callee_usr") or "")
         callee_decl_file = str(d.get("callee_decl_file") or "")
+        callee_decl_line = int(d.get("callee_decl_line") or 0)
+        identity_kind = str(d.get("identity_kind") or "")
         receiver_type = str(d.get("receiver_type") or "")
         receiver_canonical = str(d.get("receiver_canonical_type") or "")
         has_identity = bool(callee_usr or callee_qualified or callee_decl_file)
 
-        # Receiver buffer / type for framework bridges (MutexBuffer methods).
+        # Receiver buffer / type for framework bridges (MutexBuffer / TQue).
         bid_recv = ""
         if receiver:
             bid_recv = buffer_by_key.get((function, receiver)) or buffer_by_name.get(receiver) or ""
@@ -1532,13 +1811,35 @@ def finalize_kernel_root_trace(
             recv_is_wrapper = be.attrs.get("role") in {
                 "storage_wrapper",
                 "project_wrapper",
-            } or is_storage_wrapper_type(str(be.attrs.get("type_text") or ""))
+            } or is_storage_wrapper_type(
+                str(be.attrs.get("wrapper") or be.attrs.get("type_name") or "")
+            )
         if not recv_is_wrapper and (receiver_type or receiver_canonical):
             recv_is_wrapper = is_storage_wrapper_type(receiver_type) or is_storage_wrapper_type(
                 receiver_canonical
             )
+        recv_is_tque = _receiver_is_tque(
+            bid_recv=bid_recv,
+            receiver_type=receiver_type,
+            receiver_canonical=receiver_canonical,
+            codemap=codemap,
+        )
+        recv_is_tpipe = _receiver_is_tpipe(
+            bid_recv=bid_recv,
+            receiver_type=receiver_type,
+            receiver_canonical=receiver_canonical,
+            codemap=codemap,
+        )
 
-        bridge = MUTEX_BUFFER_METHOD_BRIDGES.get(callee) if recv_is_wrapper else None
+        args = [str(a) for a in (d.get("args") or [])]
+        targs = [str(a) for a in (d.get("template_args") or [])]
+        bridge = _select_framework_bridge(
+            callee=callee,
+            receiver=receiver,
+            recv_is_wrapper=recv_is_wrapper,
+            recv_is_tque=recv_is_tque,
+            recv_is_tpipe=recv_is_tpipe,
+        )
         proven, proven_spell = _prove_ascendc_api_root(
             callee=callee,
             callee_qualified=callee_qualified,
@@ -1549,6 +1850,14 @@ def finalize_kernel_root_trace(
             receiver_canonical_type=receiver_canonical,
             has_identity=has_identity,
         )
+        if (
+            not proven
+            and not bridge
+            and callee in _VECTOR_AMBIGUOUS_ROOTS
+            and not receiver
+            and _looks_like_reg_or_vector_call(args, targs)
+        ):
+            proven, proven_spell = True, callee
         is_root = bool(proven or bridge)
         root_kind = ""
         root_spell = ""
@@ -1557,21 +1866,47 @@ def finalize_kernel_root_trace(
         elif proven:
             root_spell = proven_spell
             root_kind = _category_root_kind(category, proven_spell)
+        is_project = bool(
+            not is_root
+            and callee_qualified
+            and callee_decl_file
+            and not _qualified_looks_ascendc(callee_qualified)
+            and not _is_framework_decl_file(callee_decl_file)
+        )
+        # The declaration line itself is not a call site.
+        if (
+            not is_root
+            and not receiver
+            and callee_decl_line == line
+            and _norm_file(callee_decl_file, root) == nfile
+        ):
+            continue
 
         oid = operation_site_id(
             file=file, line=line, column=column, callee=callee, ordinal=ordinal, root=root
         )
-        args = [str(a) for a in (d.get("args") or [])]
-        targs = [str(a) for a in (d.get("template_args") or [])]
         trace = [callee_qualified or callee]
         if bridge or proven:
             trace.append(f"AscendC::{root_spell}")
+        elif is_project:
+            trace.append(callee_qualified)
+        project_proof = (
+            "project_method"
+            if identity_kind == "method" or (is_project and receiver)
+            else ("project_free" if is_project else "")
+        )
         attrs = {
             "callee": callee,
             "callee_qualified": callee_qualified,
             "callee_usr": callee_usr,
             "callee_decl_file": callee_decl_file,
-            "category": category if proven else ("framework_bridge" if bridge else "UNKNOWN"),
+            "callee_decl_line": callee_decl_line,
+            "identity_kind": identity_kind,
+            "category": (
+                category
+                if category != "UNKNOWN"
+                else ("framework_bridge" if bridge else ("project_symbol" if is_project else "UNKNOWN"))
+            ),
             "function": function,
             "args": args,
             "template_args": targs,
@@ -1591,11 +1926,24 @@ def finalize_kernel_root_trace(
                 else (
                     "qualified_or_decl"
                     if proven and has_identity
-                    else ("lexical_free_catalog" if proven else "")
+                    else (
+                        "lexical_free_catalog"
+                        if proven
+                        else project_proof
+                    )
                 )
             ),
         }
-        if not is_root and (category != "UNKNOWN" or conf not in {"", "unresolved"}):
+        if is_tque_callee(callee):
+            attrs["mechanism"] = "tque"
+        elif is_tpipe_callee(callee):
+            attrs["mechanism"] = "tpipe"
+        elif is_flag_sync(callee) or callee in SYNC_MECHANISM:
+            attrs["mechanism"] = str(resolve_sync_site(callee, args, targs).get("mechanism") or "")
+        if not is_root:
+            if not nfile or line <= 0 or not callee.isidentifier():
+                continue
+        if not is_root and not is_project and (category != "UNKNOWN" or conf not in {"", "unresolved"}):
             attrs["gap_code"] = REASON_CALL_UNRESOLVED
             gaps.append(
                 {
@@ -1614,17 +1962,21 @@ def finalize_kernel_root_trace(
             attrs=attrs,
             file=nfile,
             line=line,
-            status="extracted" if is_root else "partial",
-            confidence=1.0 if is_root and conf == "confirmed" else (0.85 if bridge else 0.5),
+            status="extracted" if (is_root or is_project) else "partial",
+            confidence=(
+                1.0
+                if is_root and conf == "confirmed"
+                else (0.85 if bridge else (0.9 if is_project else 0.5))
+            ),
         )
         op_count += 1
 
-        # Persist direct synchronization identities only.  An edge means this
-        # call names this event; it does not pair signal/wait sites.
-        if re.fullmatch(r"(?:CrossCore)?(?:SetFlag|WaitFlag)", callee) and args:
-            identity = args[0].strip()
+        # Flag identity only. TQue EnQue/DeQue have no user event; CANN owns that
+        # handshake, so they never get SIGNALS/AWAITS.
+        if is_flag_sync(callee) and not is_tque_callee(callee):
+            sync = resolve_sync_site(callee, args, targs)
+            identity = str(sync.get("flag") or (args[0] if args else "")).strip()
             if re.fullmatch(r"[A-Za-z_]\w*", identity):
-                sync = resolve_sync_site(callee, args, targs)
                 event_id = make_id("Event", "sync", function, identity)
                 event = codemap.upsert(
                     EntityKind.EVENT,
@@ -1644,7 +1996,9 @@ def finalize_kernel_root_trace(
                     confidence=1.0,
                 )
                 relation_kind = (
-                    RelationKind.SIGNALS if "SetFlag" in callee else RelationKind.AWAITS
+                    RelationKind.SIGNALS
+                    if "Wait" in FLAG_PAIR_MATE.get(callee, "")
+                    else RelationKind.AWAITS
                 )
                 _link(
                     codemap,
@@ -1704,16 +2058,39 @@ def finalize_kernel_root_trace(
         callee_mid = ""
         if not proven and not bridge:
             owner_guess = ""
-            if receiver_type or receiver_canonical:
+            if callee_qualified and "::" in callee_qualified:
+                owner_guess = callee_qualified.rsplit("::", 1)[0].split("::")[-1]
+            elif receiver_type or receiver_canonical:
                 owner_guess = _base_type_name(receiver_canonical or receiver_type)
             callee_mid = _ensure_method(
                 callee,
-                file=nfile,
-                line=line,
+                file=_norm_file(callee_decl_file, root) or nfile,
+                line=callee_decl_line or line,
                 usr=callee_usr,
                 qualified=callee_qualified,
                 owner=owner_guess,
             )
+            if is_project and callee_mid:
+                me = codemap.entities.get(callee_mid)
+                if me is not None:
+                    me.status = "extracted"
+                    me.confidence = max(float(me.confidence or 0), 0.9)
+                    me.attrs["decl_file"] = _norm_file(callee_decl_file, root) or nfile
+                    me.attrs["decl_line"] = callee_decl_line or line
+                _link(
+                    codemap,
+                    RelationKind.BINDS,
+                    ent.id,
+                    callee_mid,
+                    attrs={
+                        "via": "project_decl",
+                        "file": nfile,
+                        "line": line,
+                        "column": column,
+                        "decl_file": _norm_file(callee_decl_file, root),
+                        "decl_line": callee_decl_line,
+                    },
+                )
         if caller_mid and callee_mid and caller_mid != callee_mid:
             _link(
                 codemap,
@@ -1782,24 +2159,33 @@ def finalize_kernel_root_trace(
                 bid_recv,
                 attrs={"symbol": receiver},
             )
-            _link(
-                codemap,
-                RelationKind.CALLS,
-                bid_recv,
-                ent.id,
-                attrs={
-                    "via": "method_receiver",
-                    "file": nfile,
-                    "line": line,
-                    "column": column,
-                },
-                status="partial",
-            )
+            if not is_project:
+                _link(
+                    codemap,
+                    RelationKind.CALLS,
+                    bid_recv,
+                    ent.id,
+                    attrs={
+                        "via": "method_receiver",
+                        "file": nfile,
+                        "line": line,
+                        "column": column,
+                    },
+                    status="partial",
+                )
+
+    pair_stats = _record_flag_pair_appearance(codemap, gaps)
 
     # Bounded lexical statement order.  PRECEDES is adjacency in one source
-    # function/file, not a happens-before or engine schedule relation.
+    # function/file, not flag pairing and not a happens-before relation.
+    def _sync_op(item: Any) -> bool:
+        name = str(item.attrs.get("callee") or item.name or "")
+        return name in _SYNC_PRECEDES_CALLEES
+
     ordered_ops: dict[tuple[str, str], list[Any]] = defaultdict(list)
     for operation in codemap.by_kind(EntityKind.OPERATION):
+        if not _sync_op(operation):
+            continue
         ordered_ops[
             (str(operation.attrs.get("function") or ""), str(operation.file or ""))
         ].append(operation)
@@ -1828,6 +2214,18 @@ def finalize_kernel_root_trace(
 
     # --- 6. Single fixed-point -------------------------------------------
     _propagate_reachability(codemap)
+
+    # Project declaration identity is not an AscendC root. Undo any
+    # CALLS/WRAPS climb that would stamp catalog REACHED on those sites.
+    for e in codemap.by_kind(EntityKind.OPERATION):
+        proof = str(e.attrs.get("root_proof") or "")
+        if not proof.startswith("project_"):
+            continue
+        e.attrs["root_status"] = "UNRESOLVED"
+        e.attrs["root"] = ""
+        e.attrs["root_kind"] = ""
+        e.status = "extracted"
+        e.confidence = max(float(e.confidence or 0), 0.9)
 
     # Propagate REACHED onto METHOD entities that CALL a REACHED node.
     # (Fixed-point already walks CALLS; refresh METHOD attrs from ROOTED_AT.)
@@ -1900,6 +2298,18 @@ def finalize_kernel_root_trace(
         "awaits": sum(
             1 for r in codemap.relations.values() if r.kind_name() == RelationKind.AWAITS.value
         ),
+        "tque_ops": sum(
+            1
+            for e in codemap.by_kind(EntityKind.OPERATION)
+            if is_tque_callee(str(e.attrs.get("callee") or e.name or ""))
+        ),
+        "tpipe_ops": sum(
+            1
+            for e in codemap.by_kind(EntityKind.OPERATION)
+            if is_tpipe_callee(str(e.attrs.get("callee") or e.name or ""))
+        ),
+        "flag_pairs": int(pair_stats.get("flag_pairs") or 0),
+        "unpaired_flag_sync": int(pair_stats.get("unpaired_flag_sync") or 0),
         "reached_operations": reached_ops,
         "reached_buffers": reached_bufs,
         "wraps": sum(1 for r in codemap.relations.values() if r.kind_name() == RelationKind.WRAPS.value),
@@ -1908,6 +2318,15 @@ def finalize_kernel_root_trace(
         ),
         "aliases": sum(
             1 for r in codemap.relations.values() if r.kind_name() == RelationKind.ALIASES.value
+        ),
+        "project_resolved_ops": sum(
+            1
+            for e in codemap.by_kind(EntityKind.OPERATION)
+            if str(e.attrs.get("root_proof") or "").startswith("project_")
+        ),
+        "identity_filled": identity_filled,
+        "binds": sum(
+            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.BINDS.value
         ),
     }
     meta = {
@@ -1937,6 +2356,7 @@ def finalize_kernel_root_trace(
         "gap_count": len(gaps),
         "gap_counts": dict(gap_counts),
         "gaps": gaps[:200],
+        "identity_filled": identity_filled,
         "quality": quality,
     }
     codemap.meta["kernel_root_trace"] = meta

@@ -1,0 +1,14 @@
+version: 1
+skill: code-engineering
+mode: dry
+cases:
+  - id: plan_scope_verify
+    query: Plan scope and verify AscendC code changes with UO slices, evidence tiers, risk classes, and a verification-obligation ledger
+    expect_skill: code-engineering
+    expect_references:
+      - references/gotchas.md
+
+  - id: not_readonly_review
+    query: Plan and verify code changes with a persistent verification-obligation ledger, not a readonly code review certificate
+    expect_skill: code-engineering
+    forbid_skill: ce-review

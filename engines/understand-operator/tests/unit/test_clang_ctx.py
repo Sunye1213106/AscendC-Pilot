@@ -20,7 +20,7 @@ def test_dtype_variant_injects_macro():
     ctx = BuildContext.load(cann_root="D:/c", ops_root="D:/o", op_dir="D:/o/fag")
     for dt in ("DT_FLOAT16", "DT_FLOAT", "DT_BF16"):
         joined = " ".join(ctx.kernel_args(dtype_variant=dt))
-        assert f"ORIG_DTYPE_QUERY={dt}" in joined
+        assert f"ORIG_DTYPE_QUERY={dt}" not in joined
 
 
 @pytest.mark.requires_cann

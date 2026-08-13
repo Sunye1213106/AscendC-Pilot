@@ -17,5 +17,5 @@
 
 <output>
 返回 `APPROVE` | `REVISE` | `BLOCKED`，并附简短理由。
-`APPROVE` 后由确定性 primary action 记录已批准的 plan hash。
+`APPROVE` 后由确定性 primary action 把已批准的 plan hash 写入 `tg/plan/levels/*/human_supplement.yaml`。
 </output>

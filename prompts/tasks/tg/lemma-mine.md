@@ -24,5 +24,5 @@
 
 <output>
 每个候选给出 `PROVED` | `REFUTED` | `INSUFFICIENT`，并附源码窗口证据。
-只写入 Action 声明的输出路径。
+只写入本 Action 的 `parts/` 草稿，不要写正式 closure IR。
 </output>

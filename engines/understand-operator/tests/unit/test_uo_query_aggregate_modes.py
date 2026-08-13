@@ -131,7 +131,7 @@ def test_tiling_key_does_not_implicitly_enumerate_legal_keys(tmp_path: Path) -> 
     _add_tpl_key(cm, name="SplitAxis", order=0, bw=3, domain=[0, 1, 5])
     key = cm.by_name("SplitAxis", kind=EntityKind.TILING_KEY)[0]
     key.attrs["packing_value_sites"] = [{"file": "op_host/x.cpp", "line": 10}]
-    product = tmp_path / ".ascendc-pilot" / "uo" / "toy.arch35.uo"
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
     product.parent.mkdir(parents=True, exist_ok=True)
     write_codemap(cm, product)
     q = open_query(tmp_path)
@@ -158,7 +158,7 @@ def test_template_match_filters_fixed_fields_and_domains(tmp_path: Path) -> None
         fixed={"SplitAxis": 1, "IsTnd": 1},
         domains={"DTemplate": [64, 128, 256]},
     )
-    product = tmp_path / ".ascendc-pilot" / "uo" / "toy.arch35.uo"
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
     product.parent.mkdir(parents=True, exist_ok=True)
     write_codemap(cm, product)
     q = open_query(tmp_path)
@@ -186,7 +186,7 @@ def test_aggregate_modes(tmp_path: Path) -> None:
     cm.add_entity(
         Entity(id="U1", kind=EntityKind.OTHER, name="gap", attrs={}, status="unresolved")
     )
-    product = tmp_path / ".ascendc-pilot" / "uo" / "toy.arch35.uo"
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
     product.parent.mkdir(parents=True, exist_ok=True)
     write_codemap(cm, product)
     q = open_query(tmp_path)

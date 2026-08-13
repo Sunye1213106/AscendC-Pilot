@@ -169,20 +169,27 @@ def test_dump_reconstructs_manifest_and_quality(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("UO_KB_YAML", "0")
     root = tmp_path / "uo"
     export_kb(_sample_kb(), root)
+    db = root / "indexes" / "kb_graph.sqlite"
     out = tmp_path / "manifest.yaml"
-    result = dump_view(root, "manifest", out=out)
+    result = dump_view(db, "manifest", out=out)
     assert result["ok"]
     doc = yaml.safe_load(out.read_text(encoding="utf-8"))
     assert doc["authority"] == "db"
     assert resolve_view_name("tilingdata") == "views/tilingdata.yaml"
-    td = dump_view(root, "tilingdata")
+    td = dump_view(db, "tilingdata")
     assert td["payload"]["schema"] == "uo-view-tilingdata/v1"
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        dump_view(root, "manifest")
 
 
 def test_source_locator_finds_dim_branch_field(tmp_path: Path):
     root = tmp_path / "uo"
     export_kb(_sample_kb(), root)
-    loc = open_locator(root)
+    db = root / "indexes" / "kb_graph.sqlite"
+    loc = SourceLocator(db)
     dims = loc.locate_dim("mode")
     assert dims
     assert dims[0].file.endswith("sample_tiling.cpp")
@@ -197,12 +204,20 @@ def test_source_locator_finds_dim_branch_field(tmp_path: Path):
     assert fields
     assert fields[0].kind == "TilingDataField"
 
-    # UoQuery wrappers
-    q = open_query(root)
+    from uo_init.uo_query import UoQuery
+
+    q = UoQuery(db)
     assert q.locate("mode", kinds=["TilingKeyDim"])
     assert q.locate_dim("mode")
     assert q.locate_branch("HBR_0123456789AB")
     assert q.locate_field("tile.M")
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        open_locator(root)
+    with pytest.raises(FileNotFoundError):
+        open_query(root)
 
 
 def test_in_memory_sqlite_locator_fixture(tmp_path: Path):

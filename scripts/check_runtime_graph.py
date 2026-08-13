@@ -22,11 +22,13 @@ FORBIDDEN_PROD_MARKERS = re.compile(
 CBM_ALLOW = ("docs/history/",)
 # Active-product vocabulary bans (deny-lists / history docs exempt via path rules).
 BANNED_TOKEN_RE = re.compile(
-    r"(?i)\b(csv_consumer(?:_root)?|scope_confirm\w*|stage_cbm)\b"
+    r"(?i)\b(csv_consumer(?:_root)?|scope_confirm\w*|stage_cbm|"
+    r"cbm_queries|needs_cbm_reindex|ASCENDC_CSV_CONSUMER_ROOT)\b"
 )
 # Exact legacy TG Z3 product identifiers (not the Z3 library name itself).
+# Include unsuffixed ``legacy_z3`` as well as ``legacy_z3_solver``.
 BANNED_Z3_LEGACY_RE = re.compile(
-    r"(?i)\b(z3_solve|z3-solve(?:-v1)?|legacy_z3_solver|z3_solver_v1)\b"
+    r"(?i)\b(z3_solve|z3-solve(?:-v1)?|legacy_z3(?:_solver)?|z3_solver_v1)\b"
 )
 # Silent architecture fallback patterns (not legitimate arch string uses).
 ARCH35_FALLBACK_PATTERNS = (
@@ -34,6 +36,23 @@ ARCH35_FALLBACK_PATTERNS = (
     re.compile(r"""default\s*=\s*["']arch35["']"""),
     re.compile(r"""(?m)^\s*return\s+["']arch35["']\s*$"""),
 )
+
+
+def _scan_sqlite_product_engines(repo: Path, errors: list[str]) -> None:
+    """Fail if the public UO ENGINES dict re-registers sqlite export/index."""
+    path = repo / "engines" / "understand-operator" / "src" / "uo_init" / "pilot_engines.py"
+    if not path.is_file():
+        errors.append("missing uo_init/pilot_engines.py")
+        return
+    text = path.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r"^ENGINES: dict\[str, Any\] = \{.*?\n\}\n", text, re.M | re.S)
+    if not match:
+        errors.append("pilot_engines.py missing ENGINES dict")
+        return
+    block = match.group(0)
+    for name in ("export_kb", "build_index"):
+        if re.search(rf'["\']{name}["\']\s*:', block):
+            errors.append(f"ENGINES must not register {name}")
 
 
 def _scan_uo_scope_vocab(repo: Path, errors: list[str]) -> None:
@@ -124,7 +143,9 @@ def _scan_banned_production_symbols(repo: Path, errors: list[str]) -> None:
                 continue
             if BANNED_TOKEN_RE.search(body):
                 errors.append(
-                    f"banned token (csv_consumer/scope_confirm/stage_cbm) in production path: {rel}"
+                    f"banned token (csv_consumer/scope_confirm/stage_cbm/"
+                    f"cbm_queries/needs_cbm_reindex/ASCENDC_CSV_CONSUMER_ROOT) "
+                    f"in production path: {rel}"
                 )
             if BANNED_Z3_LEGACY_RE.search(body):
                 errors.append(
@@ -296,6 +317,7 @@ def _main() -> int:
     _scan_banned_production_symbols(REPO, errors)
     _scan_plugin_host_adapter(REPO, errors)
     _scan_uo_scope_vocab(REPO, errors)
+    _scan_sqlite_product_engines(REPO, errors)
 
     if errors:
         print(f"check_runtime_graph: {len(errors)} issue(s)")

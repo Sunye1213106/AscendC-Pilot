@@ -6,6 +6,20 @@
 #include <cstdint>
 #include <cstddef>
 
+// Catlass (template_linear_algebra) writes bisheng postfix attributes
+// `__forceinline__[aicore]`. Vanilla clang cannot parse that. Map to the
+// same qualifiers erase_qualifiers already empties. Close the include guard
+// so operator 3rd copies of macros.hpp do not reintroduce `[aicore]`.
+#ifndef CATLASS_DETAIL_MACROS_HPP
+#define CATLASS_DETAIL_MACROS_HPP
+#ifndef __forceinline__
+#define __forceinline__ inline
+#endif
+#define CATLASS_DEVICE __forceinline__ __aicore__
+#define CATLASS_HOST_DEVICE __forceinline__ __host_aicore__
+#define CATLASS_GLOBAL __global__ __aicore__
+#endif
+
 // ---- scalar builtin types -------------------------------------------------
 // Each FP8/FP4 spelling must be a DISTINCT type: CANN specializes templates on
 // float8_e4m3_t / float8_e5m2_t / ... separately, and aliasing them all to one
@@ -27,6 +41,7 @@ struct __bs_f4_e2m1x2 { uint8_t v; };
 struct __bs_f4_e1m2x2 { uint8_t v; };
 
 using half = __bs_f16;
+using float32_t = float;
 using bfloat16_t = __bs_b16;
 using hifloat8_t = __bs_hif8;
 using float8_e4m3_t = __bs_f8_e4m3;
@@ -39,6 +54,8 @@ using float4_e2m1x2_t = __bs_f4_e2m1x2;
 using float4_e1m2x2_t = __bs_f4_e1m2x2;
 using fp4x2_e1m2_t = __bs_f4_e1m2x2;
 using fp4x2_e2m1_t = __bs_f4_e2m1x2;
+struct __bs_i4x2 { uint8_t v; };
+using int4x2_t = __bs_i4x2;
 
 #ifndef uint
 using uint = unsigned int;
@@ -68,30 +85,67 @@ enum dcci_dst_t { CACHELINE_ALL = 0, CACHELINE_OUT = 2 };
 enum mem_dsb_t { MEM_DSB_NONE = 0 };
 enum Spr { SPR_NONE = 0 };
 
+// cce_aicore_intrinsics.h / __clang_cce_vector_intrinsics.h are compiler
+// builtins. CANN headers use these names without including those files.
+enum atomic_op_t { ATOMIC_SUM = 0 };
+enum atomic_type_t {
+    ATOMIC_NONE = 0,
+    ATOMIC_F32 = 1,
+    ATOMIC_F16 = 2,
+    ATOMIC_S16 = 3,
+    ATOMIC_S32 = 4,
+    ATOMIC_S8 = 5,
+    ATOMIC_BF16 = 6,
+};
+enum class Mode {
+    UNKNOWN_VALUE,
+    MERGING_VALUE,
+    ZEROING_VALUE,
+    MERGING_SRC0_VALUE
+};
+
 // ---- vector / mask register builtins (Bisheng MicroAPI foundation) -------
 // CANN: MaskReg=vector_bool, UnalignRegForStore=vector_align, AddrReg=vector_address.
+// Do not stub RegTensor / VecReg here: CANN headers already declare them.
 struct vector_bool { uint64_t bits[4]; };
 struct vector_align { uint8_t data[32]; };
 struct vector_address { uint32_t addr; };
 struct vector_u8 { uint8_t v[256]; };
 struct vector_u16 { uint16_t v[128]; };
 struct vector_u32 { uint32_t v[64]; };
+struct vector_u64 { uint64_t v[32]; };
 struct vector_s8 { int8_t v[256]; };
 struct vector_s16 { int16_t v[128]; };
 struct vector_s32 { int32_t v[64]; };
+struct vector_s64 { int64_t v[32]; };
 struct vector_f16 { uint16_t v[128]; };
 struct vector_f32 { float v[64]; };
+struct vector_f64 { double v[32]; };
 struct vector_bf16 { uint16_t v[128]; };
+struct vector_hif8 { uint8_t v[256]; };
+struct vector_f8e4m3 { uint8_t v[256]; };
+struct vector_f8e5m2 { uint8_t v[256]; };
+struct vector_f8e8m0 { uint8_t v[256]; };
+struct vector_f4e2m1x2 { uint8_t v[256]; };
+struct vector_f4e1m2x2 { uint8_t v[256]; };
+// Packed 4-bit lanes (s4x2 / u4x2). Absent from CANN headers under vanilla clang;
+// operator TUs then fail probe as `unknown type name 'vector_s4x2'`.
+struct vector_s4x2 { uint8_t v[128]; };
+struct vector_u4x2 { uint8_t v[128]; };
+struct vector_s4 { uint8_t v[128]; };
+struct vector_u4 { uint8_t v[128]; };
+
+// Rounding mode tag. Bisheng builtin is `enum class ROUND { R, A, F, C, Z, O, H }`
+// in `__clang_dpp_types.h`. An enumerator named ROUND is the wrong stub:
+// kernel/CANN code writes `ROUND::…` and then reports
+// `'ROUND' is not a class, namespace, or enumeration`.
+enum class ROUND { R, A, F, C, Z, O, H };
 
 using MaskReg = vector_bool;
 using UnalignRegForLoad = vector_align;
 using UnalignRegForStore = vector_align;
 using UnalignReg = vector_align;
 using AddrReg = vector_address;
-template <typename T, typename Trait = void>
-struct VecReg { T lane; };
-template <typename T, typename Trait = void>
-struct RegTensor { T lane; };
 
 namespace __cce_scalar {
 inline uint64_t get_ctrl(...) { return 0; }

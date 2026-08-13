@@ -182,8 +182,8 @@ if (Test-Path (Join-Path $genRoot "commands")) {
 # Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
 
-$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator")
-$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","_shared")
+$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
+$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
 
 foreach ($name in $workflowSkills) {
   $target = Join-Path $Dest "skills\$name"
@@ -231,6 +231,9 @@ if ($Platform -eq "opencode") {
     }
   }
 }
+
+$legacyShared = Join-Path $Skills "_shared"
+if (Test-Path -LiteralPath $legacyShared) { Remove-Item -Recurse -Force -LiteralPath $legacyShared }
 
 $agentDir = Join-Path $Dest "agents"
 if (-not (Test-Path $agentDir)) {

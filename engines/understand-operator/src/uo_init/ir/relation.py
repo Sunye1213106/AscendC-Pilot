@@ -45,7 +45,8 @@ class RelationKind(str, Enum):
     WRAPS = "WRAPS"
     ROOTED_AT = "ROOTED_AT"
 
-    # Source-order and synchronization facts only; no inferred pairing.
+    # Source-order facts. PRECEDES is adjacency, not pairing.
+    # Flag pair appearance is SIGNALS/AWAITS + UNPAIRED_FLAG_SYNC, not this kind.
     PRECEDES = "PRECEDES"
     SIGNALS = "SIGNALS"
     AWAITS = "AWAITS"

@@ -302,28 +302,42 @@ def _build_task_prompt_stub(
     return "\n".join(lines) + "\n"
 
 
+def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
+    """``skills/<domain>/capabilities/<cap>/METHOD.md`` (Spec identity → playbook)."""
+    return repo / "skills" / domain / "capabilities" / capability / "METHOD.md"
+
+
 def _uo_query_method_path(repo: Path) -> Path:
     """Claim-driven Explore playbook for ``uo-query`` (materialized as session/method.md)."""
-    return (
-        repo
-        / "skills"
-        / "operator-analysis"
-        / "capabilities"
-        / "uo-query"
-        / "METHOD.md"
-    )
+    return _capability_method_path(repo, "operator-analysis", "uo-query")
 
 
 def _tg_init_audit_method_path(repo: Path) -> Path:
     """Referee playbook for ``tg-init-audit`` (materialized as session/method.md)."""
-    return (
-        repo
-        / "skills"
-        / "testcase-generation"
-        / "capabilities"
-        / "tg-init-audit"
-        / "METHOD.md"
-    )
+    return _capability_method_path(repo, "testcase-generation", "tg-init-audit")
+
+
+def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | None:
+    """Map ``action_method_id`` / prompt / action id onto a capability METHOD.md."""
+    mid = str(action.get("action_method_id") or "")
+    tpid = str(action.get("task_prompt_id") or "")
+    aid = str(action.get("id") or action.get("action_id") or "")
+
+    if mid.startswith("uo-query/") or tpid == "uo/codemap-query":
+        return _capability_method_path(repo, "operator-analysis", "uo-query")
+    if mid.startswith("tg-init/init-audit") or tpid == "tg/init-audit" or aid == "init_audit":
+        return _capability_method_path(repo, "testcase-generation", "tg-init-audit")
+    if mid.endswith("/impact-audit") or tpid == "ce/impact-audit" or aid == "impact_audit":
+        return _capability_method_path(repo, "code-engineering", "ce-impact-audit")
+    if (
+        mid.endswith("/exclusion-review")
+        or tpid == "ce/exclusion-review"
+        or aid == "exclusion_review"
+    ):
+        return _capability_method_path(repo, "code-engineering", "ce-exclusion-review")
+    if aid == "scenario_knobs" or tpid == "ce/scenario-infer":
+        return _capability_method_path(repo, "code-engineering", "ce-scenario-knobs")
+    return None
 
 
 def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, str]:
@@ -331,12 +345,11 @@ def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, st
 
     Spec remains identity authority; METHOD is the query state machine for
     ephemeral workflows such as ``uo-query`` (not a second Spec).
+    Deterministic Actions have no ``task_prompt_id`` and therefore load no prompt.
     """
     method = ""
     prompt = ""
     tpid = str(action.get("task_prompt_id") or "")
-    mid = str(action.get("action_method_id") or "")
-    aid = str(action.get("id") or action.get("action_id") or "")
     if tpid:
         if "/" in tpid:
             dom, name = tpid.split("/", 1)
@@ -345,20 +358,9 @@ def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, st
             pp = repo / "prompts" / "tasks" / f"{tpid}.md"
         if pp.is_file():
             prompt = pp.read_text(encoding="utf-8")
-    # uo-query/kb-lookup → skills/operator-analysis/capabilities/uo-query/METHOD.md
-    if mid.startswith("uo-query/") or tpid == "uo/codemap-query":
-        mp = _uo_query_method_path(repo)
-        if mp.is_file():
-            method = mp.read_text(encoding="utf-8")
-    # tg-init/init-audit → skills/testcase-generation/capabilities/tg-init-audit/METHOD.md
-    elif (
-        mid.startswith("tg-init/init-audit")
-        or tpid == "tg/init-audit"
-        or aid == "init_audit"
-    ):
-        mp = _tg_init_audit_method_path(repo)
-        if mp.is_file():
-            method = mp.read_text(encoding="utf-8")
+    mp = _resolve_capability_method(repo, action)
+    if mp is not None and mp.is_file():
+        method = mp.read_text(encoding="utf-8")
     return method, prompt
 
 
@@ -2149,15 +2151,50 @@ def _finalize_bind_session_lease(
 
 
 
+def _engine_audit_findings(*blobs: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Lift engine audit.blocking rows into Observation findings."""
+    findings: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for blob in blobs:
+        if not isinstance(blob, dict):
+            continue
+        audit = blob.get("audit") if isinstance(blob.get("audit"), dict) else None
+        if not isinstance(audit, dict):
+            continue
+        blocking = audit.get("blocking")
+        if not isinstance(blocking, list):
+            continue
+        for item in blocking:
+            if not isinstance(item, dict):
+                continue
+            code = str(item.get("code") or "ENGINE_AUDIT")
+            detail = str(item.get("detail") or item.get("message") or code)
+            key = f"{code}:{detail}"
+            if key in seen:
+                continue
+            seen.add(key)
+            extra = {k: v for k, v in item.items() if k not in {"code", "detail", "message"}}
+            findings.append({"code": code, "message": detail, "evidence": extra})
+    return findings
+
+
 def _attach_finalize_observation(
     project_root: Path,
     payload: dict[str, Any],
     *,
     action_id: str,
     messages: list[str],
+    findings: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     from ascendc_pilot.observation import record_pilot_result
     from ascendc_pilot.state import load_state, save_state
+
+    eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
+    checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
+    eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
+    finding_rows = list(findings or [])
+    if not finding_rows:
+        finding_rows = _engine_audit_findings(eng, eng2)
 
     recorded = record_pilot_result(
         project_root,
@@ -2165,6 +2202,7 @@ def _attach_finalize_observation(
         action_id=action_id,
         step_id="action_finalize",
         messages=[m for m in messages if m],
+        findings=finding_rows or None,
         source="finalize_action",
     )
     out = dict(payload)
@@ -2174,9 +2212,6 @@ def _attach_finalize_observation(
     out["failure_card"] = recorded.get("failure_card")
 
     # Propagate engine recovery_actions into last_failure for rework authorize.
-    eng = payload.get("engine") if isinstance(payload.get("engine"), dict) else {}
-    checker = payload.get("checker_result") if isinstance(payload.get("checker_result"), dict) else {}
-    eng2 = checker.get("engine") if isinstance(checker.get("engine"), dict) else {}
     from ascendc_pilot.recovery import filter_executable_recovery_actions
 
     wid = str((load_state(project_root) or {}).get("workflow_id") or "uo-init")
@@ -2563,6 +2598,7 @@ def finalize_action(
         "actor_id": actor_id,
         "run_id": run_id,
         "receipt": str(receipt_path) if receipt_path else None,
+        "engine": engine_result or {},
         "checker_result": checker_result,
         "message_zh": (
             "Action 已 finalize 并签发可信收据；下一步必须 `acp next`（取 recommended_next_action），"
@@ -2598,9 +2634,18 @@ def finalize_action(
             msgs.append(str(g.get("message") or g.get("gate") or "gate_failed"))
     if not contract_ok:
         msgs.append(str(contract.get("message") or "output_contract_failed"))
-    if not engine_ok and engine_result:
+    findings = _engine_audit_findings(engine_result, checker_result.get("engine"))
+    for row in findings:
+        msgs.append(f"{row['code']}: {row['message']}")
+    if not engine_ok and engine_result and not findings:
         msgs.append(str(engine_result.get("error") or engine_result.get("message") or "engine_failed"))
-    return _attach_finalize_observation(project_root, result, action_id=action_id, messages=msgs)
+    return _attach_finalize_observation(
+        project_root,
+        result,
+        action_id=action_id,
+        messages=msgs,
+        findings=findings,
+    )
 
 
 

@@ -79,7 +79,9 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-`/uo-query` 是 claim-driven Explore：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，用结构化 `acp uo-query` 证明 claim，够了就停。调查 unresolved：`/uo-investigate`。
+`/uo-query` 是 claim-driven Explore：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，用结构化 `acp uo-query` 证明 claim，够了就停。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`。
+
+默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 
 ---
 
@@ -148,7 +150,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 帮我检查当前修改会影响哪些 Host、Tiling 和 Kernel 路径。
 ```
 
-CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。
+CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三种入口：快速看风险、文件检视、PR 检视（PR 需要已有 diff）。无 diff 要定位改点用 `/ce-intent`；有 diff 要验证义务用 `/ce-impact` → `/ce-verify`。
 
 ---
 
@@ -161,7 +163,9 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。
 | `/uo-query` | 查询 Host / Tiling / Kernel 关系（需已有 `.uo`） |
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
-| `/ce-review` | 代码审查与影响分析（需已有 `.uo`） |
+| `/ce-review` | 只读检视（快速 / 文件 / PR；需已有 `.uo`） |
+| `/ce-intent` | 无 diff：定位改哪里 |
+| `/ce-impact` / `/ce-verify` | 有 diff：影响切片与验证证书 |
 | `acp doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
 | `acp status` / `next` / `inspect-failure` | 状态与失败诊断 |
 | `acp scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |

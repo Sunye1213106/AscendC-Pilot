@@ -18,7 +18,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 PHYSICAL_COGNITIVE_PATH = re.compile(
-    r"(?<![A-Za-z0-9_-])skills/(operator-analysis|testcase-generation|source-proof|code-review)/",
+    r"(?<![A-Za-z0-9_-])skills/(operator-analysis|testcase-generation|source-proof|code-review|code-engineering)/",
     re.I,
 )
 TEMPLATE_TOKEN = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
@@ -171,7 +171,16 @@ def audit(repo: Path = REPO) -> list[str]:
                         )
 
     # End-to-end control-plane invariants for the supported operator flow.
-    required = ("uo-init", "tg-init", "tg-plan", "tg-solve", "ce-review")
+    required = (
+        "uo-init",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+        "ce-review",
+        "ce-impact",
+        "ce-intent",
+        "ce-verify",
+    )
     for workflow_id in required:
         if workflow_id not in WORKFLOWS:
             errors.append(f"FLOW_WORKFLOW_MISSING: {workflow_id}")

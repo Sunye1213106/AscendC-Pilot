@@ -10,7 +10,7 @@ from uo_init.ids import named_id, predicate_id
 from uo_init.kb_export import canonical_json_bytes, export_kb
 from uo_init.kb_index import index_summary, rebuild_index
 from uo_init.kb_model import Domain, Edge, Evidence, KnowledgeBase, Node
-from uo_init.uo_query import open_query
+from uo_init.uo_query import UoQuery, open_query
 
 
 def _sample_kb() -> KnowledgeBase:
@@ -150,7 +150,8 @@ def test_fixed_queries_return_evidence_and_recursive_impact(tmp_path: Path):
     kb = _sample_kb()
     export_kb(kb, root)
     rebuild_index(root)
-    query = open_query(root)
+    db = root / "indexes" / "kb_graph.sqlite"
+    query = UoQuery(db)
 
     key_id = named_id("TilingKeyDim", "mode")
     branches = query.branches_for_key(key_id)
@@ -165,3 +166,8 @@ def test_fixed_queries_return_evidence_and_recursive_impact(tmp_path: Path):
         "Predicate",
     }
     assert all("evidence_refs" in row for row in impacted)
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError):
+        open_query(root)

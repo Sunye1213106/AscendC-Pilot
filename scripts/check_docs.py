@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -62,6 +63,24 @@ def rel(path: Path) -> str:
     return path.relative_to(ROOT).as_posix()
 
 
+# Vendor / VCS / plugin trees are not product docs.
+SKIP_DIR_NAMES = frozenset({".git", ".opencode", "node_modules"})
+
+
+def _skip_tree(path: Path) -> bool:
+    return any(part in SKIP_DIR_NAMES for part in path.parts)
+
+
+def _iter_readme_files() -> list[Path]:
+    """README.md under the repo, pruning .git / .opencode / node_modules."""
+    found: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_NAMES]
+        if "README.md" in filenames:
+            found.append(Path(dirpath) / "README.md")
+    return found
+
+
 def is_runtime_readme(path: Path) -> bool:
     r = rel(path)
     if r == "README.md" or r.startswith("docs/"):
@@ -74,12 +93,16 @@ def is_runtime_readme(path: Path) -> bool:
 
 
 def check_readme_locations(errors: list[str]) -> None:
-    for path in ROOT.rglob("README.md"):
+    for path in _iter_readme_files():
+        if _skip_tree(path):
+            continue
         r = rel(path)
         if (
             r.startswith(".git/")
+            or r.startswith(".opencode/")
             or r.startswith("_pytest_tmp")
             or "/.pytest_cache/" in f"/{r}"
+            or "/node_modules/" in f"/{r}"
             or r.startswith("generated/")
         ):
             continue

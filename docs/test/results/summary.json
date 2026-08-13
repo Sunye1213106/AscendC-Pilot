@@ -1,0 +1,81 @@
+{
+  "schema": "uo-init-generalization-summary/v2",
+  "date": "2026-08-13",
+  "profile": "fast (1 dtype, fold off, with_api=False, keypath)",
+  "source": "TEST/ops-transformer",
+  "receipt": "artifacts/uo-init-generalization/pass7-accept",
+  "elapsed_s": 1073.109,
+  "n_cases": 34,
+  "product_path_ok": 1,
+  "products_with_uo": 5,
+  "unknown_entities_on_products": 0,
+  "cannbot_locate_ready": 3,
+  "prepare_ok_cold_start": 4,
+  "probe_clean_tiling_key_hard_block": 0,
+  "note": "Full 33 cold + FAG arch22 audit. Not the 119s quality gate. vs pass5: products 2→5, tiling_key hard block 3→0, CheckShapeValid locate hit.",
+  "families": {
+    "attention": {"n": 10, "ok": 1, "product": 3, "locate_ready": 2},
+    "ffn": {"n": 1, "ok": 0, "product": 0, "locate_ready": 0},
+    "gmm": {"n": 4, "ok": 0, "product": 1, "locate_ready": 0},
+    "mamba": {"n": 1, "ok": 0, "product": 0, "locate_ready": 0},
+    "mc2": {"n": 5, "ok": 0, "product": 0, "locate_ready": 0},
+    "mhc": {"n": 3, "ok": 0, "product": 1, "locate_ready": 1},
+    "moe": {"n": 5, "ok": 0, "product": 0, "locate_ready": 0},
+    "posembedding": {"n": 4, "ok": 0, "product": 0, "locate_ready": 0}
+  },
+  "products": [
+    {
+      "rel": "attention/flash_attention_score_grad",
+      "arch": "arch35",
+      "verify": "pass",
+      "elapsed_s": 137.85,
+      "unknown": 0,
+      "partial": 2019,
+      "other": 413,
+      "cannbot_locate_ready": true,
+      "locate_hit_rate": 1.0,
+      "function_locate_hit_rate": 1.0,
+      "host_check_span": "117/117",
+      "note": "CheckShapeValid -> tiling_common_regbase.cpp:194"
+    },
+    {
+      "rel": "attention/flash_attention_score_grad",
+      "arch": "arch22",
+      "verify": "audit_existing",
+      "elapsed_s": 3.772,
+      "unknown": 0,
+      "cannbot_locate_ready": true,
+      "function_locate_hit_rate": 0.0,
+      "note": "未 wipe"
+    },
+    {
+      "rel": "attention/fused_causal_conv1d",
+      "arch": "arch35",
+      "verify": "fail",
+      "unknown": 0,
+      "cannbot_locate_ready": false,
+      "note": "prepare 过；skip fold"
+    },
+    {
+      "rel": "gmm/grouped_matmul_add",
+      "arch": "arch35",
+      "verify": "fail",
+      "unknown": 0,
+      "note": "prepare 过；skip fold"
+    },
+    {
+      "rel": "mhc/mhc_post",
+      "arch": "arch22",
+      "verify": "fail",
+      "unknown": 0,
+      "cannbot_locate_ready": true,
+      "note": "prepare 过；1 key 无 packing"
+    }
+  ],
+  "prepare_blockers": {
+    "kernel_probe_dirty": 23,
+    "host_unresolved_acl_base_mdl": 5,
+    "host_undeclared_string": 1,
+    "probe_clean_tiling_key_header_not_found": 0
+  }
+}

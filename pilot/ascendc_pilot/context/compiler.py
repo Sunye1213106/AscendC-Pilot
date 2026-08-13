@@ -1,6 +1,6 @@
 """Context Compiler — compile a ContextProfile into a minimal action slice.
 
-Uses UoQuery (via open_query) to gather a bounded graph neighborhood plus
+Uses open_query (``.uo`` only) to gather a bounded graph neighborhood plus
 domain references and optional prior-failure receipts. Never loads the full KB.
 The profile token budget is enforced across the final model-facing bundle, not
 only across graph rows.
@@ -27,6 +27,35 @@ def _load_yaml(path: Path) -> Any:
     if yaml is None or not path.is_file():
         return None
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _impact_doc_seeds(doc: dict[str, Any]) -> list[str]:
+    """Collect changed files and tiling keys from CE impact artifacts."""
+    seeds: list[str] = []
+    files = list(doc.get("files") or doc.get("changed_files") or [])
+    if not files and isinstance(doc.get("diff_spans"), dict):
+        files = list(doc["diff_spans"].keys())
+    if not files:
+        for span in doc.get("two_sided_spans") or []:
+            if not isinstance(span, dict):
+                continue
+            for side in ("new", "old"):
+                node = span.get(side) if isinstance(span.get(side), dict) else {}
+                path = str((node or {}).get("file") or "").strip()
+                if path and path != "/dev/null":
+                    files.append(path)
+    for item in files:
+        if isinstance(item, dict):
+            path = str(item.get("path") or item.get("file") or "").strip()
+        else:
+            path = str(item).strip()
+        if path and path not in seeds:
+            seeds.append(path)
+    for key in list(doc.get("affected_keys") or []) + list(doc.get("affected_keys_sample") or []):
+        text = str(key).strip()
+        if text and text not in seeds:
+            seeds.append(text)
+    return seeds
 
 
 def _estimate_tokens(obj: Any) -> int:
@@ -86,7 +115,8 @@ def _fit_slice_doc_to_budget(slice_doc: dict[str, Any], budget: int) -> list[str
         references = []
         slice_doc["references"] = references
 
-    # First progressively shrink reference text while retaining paths/status.
+    # Reference bodies are not embedded (prompt-cache: paths only). These
+    # loops remain as a failsafe if a caller injects text.
     while current() > budget:
         candidates = [
             (idx, ref)
@@ -216,8 +246,10 @@ def _seed_ids(
     *,
     limit: int,
 ) -> list[str]:
-    uo = uo_root(project_root)
-    tg = tg_root(project_root)
+    loaded = load_state(project_root)
+    arch = str((loaded or {}).get("architecture") or "").strip() or None
+    uo = uo_root(project_root, arch=arch)
+    tg = tg_root(project_root, arch=arch)
     seeds: list[str] = []
 
     if seed_from == "unresolved_blockers":
@@ -262,23 +294,26 @@ def _seed_ids(
                     seeds.append(key)
 
     elif seed_from == "impact_files":
-        impact = _load_yaml(project_root / ".ascendc-pilot" / "ce" / "impact.json")
-        if impact is None:
-            # also under arch-scoped ce root if present
-            from ascendc_pilot.paths import agent_root
+        from ascendc_pilot.paths import agent_root
 
-            impact = _load_yaml(agent_root(project_root) / "ce" / "impact.json")
-        if isinstance(impact, dict):
-            files = list(impact.get("files") or impact.get("changed_files") or [])
-            for f in files:
-                if isinstance(f, dict):
-                    p = str(f.get("path") or f.get("file") or "").strip()
-                else:
-                    p = str(f).strip()
-                if p:
-                    seeds.append(p)
-            for key in impact.get("affected_keys") or []:
-                seeds.append(str(key))
+        state = load_state(project_root)
+        arch = str(state.get("architecture") or "").strip() or None
+        ce_root = agent_root(project_root, arch) / "ce"
+        candidates = [
+            ce_root / "impact" / "impact_slice.yaml",
+            ce_root / "impact" / "change_capture.yaml",
+            ce_root / "impact.json",
+            project_root / ".ascendc-pilot" / "ce" / "impact.json",
+        ]
+        for path in candidates:
+            impact = _load_yaml(path)
+            if not isinstance(impact, dict) or not impact:
+                continue
+            for seed in _impact_doc_seeds(impact):
+                if seed not in seeds:
+                    seeds.append(seed)
+            if seeds:
+                break
 
     return seeds[: max(1, limit)]
 
@@ -381,48 +416,38 @@ def _run_query(
     return rows[:limit]
 
 
-def _load_references(repo: Path, refs: tuple[str, ...]) -> list[dict[str, str]]:
-    """Load profile references. Missing paths are marked ``status: missing``;
+def _resolve_reference_path(repo: Path, rel: str) -> tuple[Path | None, str]:
+    """Return ``(path, recorded_rel)`` for a profile reference, or ``(None, rel)``."""
+    path = repo / rel
+    if path.is_file():
+        return path, rel
+    alt = rel
+    if rel.startswith("skills/"):
+        alt = "cognitive-" + rel
+    alt_path = repo / alt
+    home_alt = Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin" / alt
+    if alt_path.is_file():
+        return alt_path, alt
+    if home_alt.is_file():
+        return home_alt, alt
+    return None, rel
 
-    callers must fail-closed (``BUNDLE_NOT_READABLE`` / prepare abort) — do not
-    silently degrade for the model.
+
+def _load_references(repo: Path, refs: tuple[str, ...]) -> list[dict[str, str]]:
+    """Record profile reference *paths* only — never embed bodies into the slice.
+
+    Reference text belongs in the static method/skill prefix (prompt cache).
+    The per-action slice is user-round nonce material and must stay a path list.
+    Missing paths are marked ``status: missing``; callers fail-closed
+    (``BUNDLE_NOT_READABLE`` / prepare abort) — do not silently degrade.
     """
     out: list[dict[str, str]] = []
     for rel in refs:
-        path = repo / rel
-        if not path.is_file():
-            # OpenCode installs cognitive skills under cognitive-skills/.
-            alt = rel
-            if rel.startswith("skills/"):
-                alt = "cognitive-" + rel
-            alt_path = repo / alt
-            home_alt = (
-                Path.home()
-                / ".config"
-                / "opencode"
-                / "ascendc-pilot-plugin"
-                / alt
-            )
-            if alt_path.is_file():
-                path = alt_path
-                rel = alt
-            elif home_alt.is_file():
-                path = home_alt
-                rel = alt
-            else:
-                out.append({"path": rel, "status": "missing"})
-                continue
-        text = path.read_text(encoding="utf-8")
-        # Per-reference cap prevents one document from dominating before the
-        # final bundle-level budget pass.
-        max_chars = 3200
-        out.append(
-            {
-                "path": rel,
-                "status": "ok",
-                "text": text[:max_chars] + ("\n…(truncated)…" if len(text) > max_chars else ""),
-            }
-        )
+        path, recorded = _resolve_reference_path(repo, rel)
+        if path is None:
+            out.append({"path": recorded, "status": "missing"})
+            continue
+        out.append({"path": recorded, "status": "ok"})
     return out
 
 
@@ -450,13 +475,19 @@ def _prior_failure(project_root: Path, action_id: str) -> dict[str, Any] | None:
             # Still useful as prior context; keep compact.
             return {
                 "action_id": last.get("action_id"),
-                "error": last.get("error") or last.get("message") or last.get("reason"),
+                "error": last.get("error") or last.get("message_zh") or last.get("message") or last.get("reason"),
+                "error_code": last.get("error_code"),
+                "message_zh": last.get("message_zh"),
+                "findings": list(last.get("findings") or [])[:24],
                 "gate": last.get("gate"),
                 "note": "prior_failure_other_action",
             }
         return {
             "action_id": last.get("action_id") or action_id,
-            "error": last.get("error") or last.get("message") or last.get("reason"),
+            "error": last.get("error") or last.get("message_zh") or last.get("message") or last.get("reason"),
+            "error_code": last.get("error_code"),
+            "message_zh": last.get("message_zh"),
+            "findings": list(last.get("findings") or [])[:24],
             "gate": last.get("gate"),
             "failed_gates": list(state.get("failed_gates") or [])[:8],
         }
@@ -501,7 +532,8 @@ def compile_context_slice(
     try:
         from uo_init.uo_query import open_query  # type: ignore
 
-        q = open_query(uo_root(project_root))
+        arch = str(state.get("architecture") or "").strip()
+        q = open_query(project_root, architecture=arch)
     except Exception as exc:  # noqa: BLE001
         q = None
         query_errors.append(f"open_query:{exc}")

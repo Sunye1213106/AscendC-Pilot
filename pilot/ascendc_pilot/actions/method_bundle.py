@@ -16,7 +16,7 @@ def _repo_candidates(project_root: Path | None) -> list[Path]:
     roots: list[Path] = []
     here = Path(__file__).resolve()
     # actions/ → ascendc_pilot → pilot → repo
-    roots.append(here.parents[2])
+    roots.append(here.parents[3])
     home = Path.home()
     roots.extend(
         [
@@ -36,6 +36,31 @@ def _repo_candidates(project_root: Path | None) -> list[Path]:
         seen.add(k)
         out.append(r)
     return out
+
+
+_NAMED_REF_RE = re.compile(
+    r"`(?:(?:skills|cognitive-skills)/[a-z0-9-]+/)?references/([^`\s]+?\.md)`",
+    re.I,
+)
+
+
+def _named_reference_files(*texts: str) -> set[str]:
+    """Return ``references/*.md`` basenames/relpaths named in backticks."""
+    found: set[str] = set()
+    for text in texts:
+        for match in _NAMED_REF_RE.finditer(text or ""):
+            rel = match.group(1).replace("\\", "/").lstrip("/")
+            if rel:
+                found.add(rel)
+    return found
+
+
+def _ref_is_named(rel: str, wanted: set[str]) -> bool:
+    posix = rel.replace("\\", "/")
+    name = Path(posix).name
+    return posix in wanted or name in wanted or any(
+        posix.endswith("/" + w) or w.endswith("/" + posix) for w in wanted
+    )
 
 
 def find_cognitive_skill_dir(skill_id: str, project_root: Path | None = None) -> Path | None:
@@ -61,20 +86,30 @@ def materialize_method_bundle(
     existing_method: str = "",
     project_root: Path | None = None,
     max_refs: int = 24,
+    prompt: str = "",
 ) -> dict[str, Any]:
-    """Write method.md (if empty) and copy skill references into session_dir/refs/.
+    """Write method.md (SKILL.md if empty) and an index of available refs.
 
-    Returns ``{ok, method_path, refs_dir, copied, missing}``.
+    Copy a ``references/*.md`` file only when METHOD or the task prompt names it
+    in backticks. Default is SKILL.md + filename index, not the whole refs tree.
+
+    Returns ``{ok, method_path, refs_dir, copied, indexed, missing}``.
     """
     sdir = Path(session_dir)
     sdir.mkdir(parents=True, exist_ok=True)
     refs_dir = sdir / "refs"
     refs_dir.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
+    indexed: list[str] = []
     missing: list[str] = []
     method_chunks: list[str] = []
     if existing_method.strip():
         method_chunks.append(existing_method.rstrip() + "\n")
+
+    prompt_text = prompt
+    prompt_file = sdir / "prompt.md"
+    if not prompt_text and prompt_file.is_file():
+        prompt_text = prompt_file.read_text(encoding="utf-8")
 
     for sid in skill_ids:
         skill_dir = find_cognitive_skill_dir(sid, project_root)
@@ -82,31 +117,48 @@ def materialize_method_bundle(
             missing.append(sid)
             continue
         skill_md = skill_dir / "SKILL.md"
-        if skill_md.is_file() and not existing_method.strip():
+        skill_body = ""
+        include_skill = skill_md.is_file() and not existing_method.strip()
+        if include_skill:
+            skill_body = skill_md.read_text(encoding="utf-8")
             method_chunks.append(f"# Materialized skill: {sid}\n\n")
-            method_chunks.append(skill_md.read_text(encoding="utf-8"))
+            method_chunks.append(skill_body)
             method_chunks.append("\n")
-        # Copy references/ (bounded)
+        scan_texts = [existing_method, prompt_text]
+        if include_skill:
+            scan_texts.append(skill_body)
+        wanted = _named_reference_files(*scan_texts)
         ref_src = skill_dir / "references"
+        available: list[str] = []
         if ref_src.is_dir():
+            for src in sorted(ref_src.rglob("*")):
+                if not src.is_file():
+                    continue
+                available.append(src.relative_to(ref_src).as_posix())
             dest = refs_dir / sid
-            dest.mkdir(parents=True, exist_ok=True)
             count = 0
             for src in sorted(ref_src.rglob("*")):
                 if not src.is_file():
                     continue
+                rel = src.relative_to(ref_src).as_posix()
+                if not _ref_is_named(rel, wanted):
+                    continue
                 if count >= max_refs:
                     break
-                rel = src.relative_to(ref_src)
+                dest.mkdir(parents=True, exist_ok=True)
                 target = dest / rel
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, target)
-                copied.append(f"refs/{sid}/{rel.as_posix()}")
+                copied.append(f"refs/{sid}/{rel}")
                 count += 1
+        if available:
+            method_chunks.append(f"\n## Available refs (index): {sid}\n\n")
+            for rel in available:
+                method_chunks.append(f"- {rel}\n")
+                indexed.append(f"references/{sid}/{rel}")
 
     method_path = sdir / "method.md"
     if method_chunks:
-        # Append refs index so subagent knows local copies exist.
         if copied:
             method_chunks.append("\n## Materialized refs (session-local)\n\n")
             for c in copied:
@@ -137,6 +189,7 @@ def materialize_method_bundle(
         "method_path": method_path.as_posix() if method_path.is_file() else "",
         "refs_dir": refs_dir.as_posix(),
         "copied": copied,
+        "indexed": indexed,
         "missing": missing,
         "message_zh": (
             ""

@@ -32,6 +32,7 @@ from uo_init.passes.source_resolution import resolve_source_gaps
 from uo_init.passes.tiling_field_complete import complete_tiling_fields
 from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
 from uo_init.passes.value_defining_sites import enrich_value_defining_sites
+from uo_init.passes.host_checks import enrich_host_checks
 from uo_init.passes.tiling_kernel_reads import rebuild_verified_tiling_reads
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
 from uo_init.resolve.semantic_gap import list_gaps
@@ -209,6 +210,7 @@ def compile_codemap(
             ("tiling_reads", rebuild_verified_tiling_reads, {}),
             ("tiling_host_writes", enrich_tiling_host_writes, {}),
             ("value_defining_sites", enrich_value_defining_sites, {}),
+            ("host_checks", enrich_host_checks, {}),
             ("kernel_tiling_truth", finalize_kernel_tiling_truth, {"skip_arch": True}),
             ("kernel_tiling_metrics", finalize_kernel_tiling_metrics, {"skip_arch": True}),
             # Kernel Root Trace (UO canonical): wrappers / calls → AscendC root.
@@ -278,8 +280,15 @@ def compile_codemap(
     if commit and source_root is not None:
         t0 = time.perf_counter()
         path = uo_product_path(source_root, op_name, arch)
+        from uo_init.store.writer import detect_source_revision
+
+        revision = detect_source_revision(source_root)
         written = write_codemap(
-            cm, path, views=merged_views, summary=dict(audit["summary"])
+            cm,
+            path,
+            views=merged_views,
+            summary=dict(audit["summary"]),
+            meta={"source_revision": revision} if revision else None,
         )
         result["uo"] = written
         result["path"] = written.get("path")

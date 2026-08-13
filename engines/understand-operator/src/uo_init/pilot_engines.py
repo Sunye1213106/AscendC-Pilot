@@ -9,21 +9,58 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from uo_init.paths import require_architecture
 import yaml
 
 from uo_init import paths
 
 
+def _payload_arch(ctx: dict[str, Any] | None) -> str | None:
+    ctx = ctx or {}
+    for key in ("arch_dir", "architecture", "arch"):
+        val = str(ctx.get(key) or "").strip()
+        if val:
+            return val
+    return None
+
+
 def _uo_root(project_root: Path, *, arch: str | None = None) -> Path:
+    """Arch-scoped working tree ``.ascendc-pilot/<arch>/uo/``.
+
+    Prefer an explicit ``arch`` / env pin. When neither is set, a unique
+    ``.ascendc-pilot/arch*/uo`` directory is accepted (unit-test / single-arch
+    trees). Top-level ``.ascendc-pilot/uo/`` is never a production path.
+    """
     root = Path(project_root).expanduser().resolve()
+    name = (arch or "").strip() or None
     try:
         from ascendc_pilot.paths import uo_root
 
-        return uo_root(root, arch=arch)
+        return uo_root(root, arch=name)
     except Exception:
-        arch_name = require_architecture(arch)
-        return root / ".ascendc-pilot" / arch_name / "uo"
+        pass
+    if name:
+        return root / ".ascendc-pilot" / name / "uo"
+    import os
+
+    env_arch = (os.environ.get("UO_ARCH") or os.environ.get("ASCENDC_ARCH") or "").strip()
+    if env_arch:
+        return root / ".ascendc-pilot" / env_arch / "uo"
+    pilot = root / ".ascendc-pilot"
+    if pilot.is_dir():
+        arch_dirs = sorted(
+            p
+            for p in pilot.iterdir()
+            if p.is_dir() and p.name.startswith("arch") and (p / "uo").is_dir()
+        )
+        with_product = [p for p in arch_dirs if any((p / "uo").glob("*.uo"))]
+        chosen = (
+            with_product[0]
+            if len(with_product) == 1
+            else (arch_dirs[0] if len(arch_dirs) == 1 else None)
+        )
+        if chosen is not None:
+            return chosen / "uo"
+    raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
 
 
 def _dump(path: Path, payload: Any) -> None:
@@ -183,21 +220,25 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "prepare_layout", "error": str(exc)[:400]}
 
-    uo = _uo_root(root)
+    product_name = (
+        f"{spec.op_name}.{spec.arch_dir}.uo" if spec.arch_dir else f"{spec.op_name}.uo"
+    )
+    uo = _uo_root(root, arch=spec.arch_dir)
     scrub = _reset_uo_skeleton(uo, run_id=run_id, keep_other_runs=bool(ctx.get("keep_other_runs")))
 
     manifest = {
         "version": 1,
         "status": "prepared",
-        "authority": "yaml",
-        "derived_index": "indexes/kb_graph.sqlite",
+        "authority": "uo",
+        "product": product_name,
+        "derived_index": product_name,
         "op_name": spec.op_name,
         "architecture": spec.arch_dir,
-        "schema": "kb_schema-v1",
+        "schema": "uo-codemap/v1",
         "run_id": run_id,
         "source": "uo_init.pilot_engines.prepare_layout",
         "workflow": "uo-init",
-        "contract": "clang-layered-kb",
+        "contract": "clang-codemap",
     }
     operator = {
         "version": 1,
@@ -217,7 +258,7 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
             "ok": True,
             "op_name": spec.op_name,
             "run_id": run_id,
-            "schema": "kb_schema-v1",
+            "schema": "uo-codemap/v1",
             "scrubbed": scrub,
         },
     )
@@ -357,7 +398,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root)
+    uo = _uo_root(root, arch=_payload_arch(ctx))
     run = _run_dir(uo, ctx)
     blocked = _cann_env_block("scope_scan", ctx)
     if blocked is not None:
@@ -370,7 +411,13 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
             ops_root=_ops_root(ctx, root),
             op_dir=str(spec.op_dir),
             arch_dir=spec.arch_dir,
+            apply_saved_extras=False,
         )
+        from uo_init.kernel_tiling_view import install_kernel_tiling_view
+        from uo_init.include_heal import HealReport, save_extras
+
+        install_kernel_tiling_view(spec, bctx)
+        save_extras(bctx, HealReport(enabled=True))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "scope_scan", "error": str(exc)[:400]}
 
@@ -382,22 +429,46 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     clang_tus_expected = 0
     clang_tus_parsed = 0
     clang_errors: list[str] = []
+    enrich_probes: list[dict[str, Any]] = []
+    include_heal_report: dict[str, Any] = {}
     scope = spec.scope
     if scope is not None:
         try:
-            enrichment = sscan.enrich_with_clang(
-                scope,
-                host_args=bctx.host_args(),
-                kernel_args=bctx.kernel_args(dtype_variant="DT_FLOAT16"),
+            from uo_init.include_heal import (
+                clear_saved_extras,
+                enrich_scope_with_heal,
+            )
+
+            base_scope = scope
+            run_id = str(ctx.get("run_id") or "").strip() or None
+            clear_saved_extras(spec.op_dir, spec.arch_dir, run_id=run_id)
+
+            def _enrich():
+                return sscan.enrich_with_clang(
+                    base_scope,
+                    host_args=bctx.host_args(),
+                    kernel_args=bctx.kernel_args(
+                        dtype_variant="DT_FLOAT16", source_path=kernel
+                    ),
+                    host_tus=hosts,
+                    kernel_tu=kernel,
+                )
+
+            enrichment, heal_rep = enrich_scope_with_heal(
+                ctx=bctx,
                 host_tus=hosts,
                 kernel_tu=kernel,
+                enrich_fn=_enrich,
+                run_id=run_id,
             )
+            include_heal_report = heal_rep.to_dict()
             scope = enrichment.scope
             spec.scope = scope
             clang_status = enrichment.status
             clang_tus_expected = enrichment.tus_expected
             clang_tus_parsed = enrichment.tus_parsed
             clang_errors = list(enrichment.errors)
+            enrich_probes = list(enrichment.probes or [])
         except Exception as exc:  # noqa: BLE001
             clang_status = "incomplete"
             clang_errors = [f"clang_enrichment_failed:{str(exc)[:200]}"]
@@ -425,58 +496,115 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         samples = [str(s) for s in (res.get("samples") or [])[:5]]
         return relevant, fatals, samples
 
-    from uo_init.progress import emit as _progress
-
-    probe_total = len(hosts) + (1 if kernel is not None else 0)
-    probe_i = 0
-    for path in hosts:
-        probe_i += 1
-        _progress(f"prepare probe host ({probe_i}/{probe_total}) {path.name}")
-        try:
-            res = probe_diagnostics(str(path), bctx, side="host")
-            errs, fatals, samples = _probe_score(res)
-        except Exception as exc:  # noqa: BLE001
-            probes.append({"file": path.as_posix(), "error": str(exc)[:200]})
-            host_errors += 1
-            continue
-        host_errors += max(errs, 0)
+    def _probe_entry(path: Path, side: str, res: dict[str, Any], kind: str) -> tuple[dict[str, Any], int]:
+        errs, fatals, samples = _probe_score(res)
         entry: dict[str, Any] = {
             "file": path.as_posix(),
             "errors": errs,
             "fatal": fatals,
             "raw_error_count": int(res.get("error_count") or 0),
             "operator_error_count": int(res.get("operator_error_count") or 0),
-            "side": "host",
-            "probe": "declarations_only",
+            "side": side,
+            "probe": kind,
         }
         if samples:
             entry["samples"] = samples
-        probes.append(entry)
+        return entry, errs
+
+    from uo_init.progress import emit as _progress
+
+    reused_includes = False
+    expected = [(p, "host") for p in hosts]
     if kernel is not None:
-        probe_i += 1
-        _progress(f"prepare probe kernel ({probe_i}/{probe_total}) {kernel.name}")
-        try:
-            res = probe_diagnostics(
-                str(kernel), bctx, side="kernel", dtype_variant="DT_FLOAT16"
-            )
-            kernel_errors, fatals, samples = _probe_score(res)
-            entry = {
-                "file": kernel.as_posix(),
-                "errors": kernel_errors,
-                "fatal": fatals,
-                "side": "kernel",
-                "raw_error_count": int(res.get("error_count") or 0),
-                "operator_error_count": int(res.get("operator_error_count") or 0),
-                "probe": "declarations_only",
-            }
-            if samples:
-                entry["samples"] = samples
+        expected.append((kernel, "kernel"))
+    by_file = {
+        str(row.get("file") or "").replace("\\", "/").lower(): row
+        for row in enrich_probes
+        if row.get("file")
+    }
+    if expected and all(
+        p.as_posix().replace("\\", "/").lower() in by_file for p, _side in expected
+    ):
+        _progress("prepare probe reused from clang include parse")
+        reused_includes = True
+        for path, side in expected:
+            res = by_file[path.as_posix().replace("\\", "/").lower()]
+            entry, errs = _probe_entry(path, side, res, "clang_includes")
             probes.append(entry)
-        except Exception as exc:  # noqa: BLE001
-            probes.append(
-                {"file": kernel.as_posix(), "error": str(exc)[:200], "side": "kernel"}
-            )
-            kernel_errors = -1
+            if side == "host":
+                host_errors += max(errs, 0)
+            else:
+                kernel_errors = errs
+        # Full-body include parse of kernel TUs reports NPU asm / vector types
+        # that declarations-only probe (SKIP_FUNCTION_BODIES) correctly ignores.
+        # Fall back only for dirty TUs so the gate stays equivalent.
+        dirty = [
+            i
+            for i, row in enumerate(probes)
+            if int(row.get("errors") or 0) > 0 or row.get("error")
+        ]
+        for i in dirty:
+            path = Path(str(probes[i].get("file") or ""))
+            side = str(probes[i].get("side") or "host")
+            _progress(f"prepare probe fallback declarations_only {side} {path.name}")
+            try:
+                if side == "kernel":
+                    res = probe_diagnostics(
+                        str(path), bctx, side="kernel", dtype_variant="DT_FLOAT16"
+                    )
+                else:
+                    res = probe_diagnostics(str(path), bctx, side="host")
+                entry, _errs = _probe_entry(path, side, res, "declarations_only")
+                probes[i] = entry
+            except Exception as exc:  # noqa: BLE001
+                probes[i] = {
+                    "file": path.as_posix(),
+                    "error": str(exc)[:200],
+                    "side": side,
+                }
+        host_errors = 0
+        kernel_errors = 0
+        for row in probes:
+            side = str(row.get("side") or "host")
+            if row.get("error"):
+                if side == "kernel":
+                    kernel_errors = -1
+                else:
+                    host_errors += 1
+                continue
+            errs = int(row.get("errors") or 0)
+            if side == "kernel":
+                kernel_errors = errs
+            else:
+                host_errors += max(errs, 0)
+
+    if not reused_includes:
+        probe_total = len(expected)
+        probe_i = 0
+        for path, side in expected:
+            probe_i += 1
+            _progress(f"prepare probe {side} ({probe_i}/{probe_total}) {path.name}")
+            try:
+                if side == "kernel":
+                    res = probe_diagnostics(
+                        str(path), bctx, side="kernel", dtype_variant="DT_FLOAT16"
+                    )
+                else:
+                    res = probe_diagnostics(str(path), bctx, side="host")
+                entry, errs = _probe_entry(path, side, res, "declarations_only")
+                probes.append(entry)
+                if side == "host":
+                    host_errors += max(errs, 0)
+                else:
+                    kernel_errors = errs
+            except Exception as exc:  # noqa: BLE001
+                probes.append(
+                    {"file": path.as_posix(), "error": str(exc)[:200], "side": side}
+                )
+                if side == "host":
+                    host_errors += 1
+                else:
+                    kernel_errors = -1
 
     probe_clean = host_errors == 0 and kernel_errors == 0
     if allow_unverified and not probe_clean:
@@ -507,6 +635,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "kernel_probe_errors": kernel_errors,
         "probe_clean": probe_clean,
         "probe_skipped": False,
+        "probe_reused_includes": reused_includes,
         "clang_scope_status": clang_status,
         "clang_scope_tus_expected": clang_tus_expected,
         "clang_scope_tus_parsed": clang_tus_parsed,
@@ -517,6 +646,11 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         ),
         "scope_notes": list(scope.notes) if scope is not None else [],
         "arch_user_specified": bool(str(ctx.get("arch_dir") or "").strip()),
+        "include_heal": include_heal_report,
+        "build_context_extras": {
+            "host": list(getattr(bctx, "extra_host_includes", None) or []),
+            "kernel": list(getattr(bctx, "extra_kernel_includes", None) or []),
+        },
     }
     out = run / "scope" / "candidates.yaml"
     _dump(out, candidate)
@@ -535,6 +669,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "kernel_probe_errors": kernel_errors,
         "scope_files": candidate["scope_files"],
         "scope_shared": candidate["scope_shared"],
+        "include_heal": include_heal_report,
     }
 
 
@@ -547,6 +682,9 @@ _SOFT_AMBIGUITY_PREFIXES = (
     "multiple_opdef:",
     "multiple_kernel_entry:",
     "multiple_tiling_key_header:",
+    # Many families pack keys in host GetTilingKey() without the TPL DSL header.
+    # extract already skips fold when the header is missing.
+    "tiling_key_header_not_found:",
 )
 
 
@@ -577,7 +715,6 @@ def _hard_scope_blockers(
                 "opdef_not_found:",
                 "host_targets_not_found:",
                 "kernel_entry_not_found:",
-                "tiling_key_header_not_found:",
                 "override_missing_",
             )
         ):
@@ -606,7 +743,7 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
     """
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root)
+    uo = _uo_root(root, arch=_payload_arch(ctx))
     run = _run_dir(uo, ctx)
     scope = run / "scope"
     cand = _load(scope / "candidates.yaml") or _load(uo / "summary" / "scope_candidates.yaml") or {}
@@ -711,6 +848,30 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             detail_zh = (
                 f"{detail_zh}；探针样例: " + "; ".join(probe_samples[:3])
             )
+        missing = [s for s in probe_samples if "file not found" in s.lower()]
+        if missing:
+            unresolved = [
+                str(x.get("include") or x)
+                for x in ((cand.get("include_heal") or {}).get("unresolved") or [])
+            ]
+            healed_n = len((cand.get("include_heal") or {}).get("healed") or [])
+            if unresolved:
+                detail_zh = (
+                    f"{detail_zh}。include-heal 已搜 CANN/ops 仍找不到: "
+                    + ", ".join(unresolved[:4])
+                    + "。仅当头文件确实不在解包树时才改 engines/understand-operator/spec/build_context.yaml"
+                )
+            elif healed_n:
+                detail_zh = (
+                    f"{detail_zh}。include-heal 已补 {healed_n} 条 -I 仍有缺头文件；"
+                    "看 candidates.yaml 的 include_heal，不要用 UO_TEST_ALLOW_UNVERIFIED_SCOPE"
+                )
+            else:
+                detail_zh = (
+                    f"{detail_zh}。缺头文件由 prepare include-heal 自动补 -I；"
+                    "若仍失败，到解包树确认头文件是否存在，不要当算子噪声，"
+                    "也不要用 UO_TEST_ALLOW_UNVERIFIED_SCOPE 走产品路径"
+                )
         return {
             "ok": False,
             "engine": "scope_validate",
@@ -1033,9 +1194,8 @@ def extract_kernel(project_root: Path, payload: dict[str, Any] | None = None) ->
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    # AscendC kernels are ``if constexpr`` / NTTP heavy: fold is on by default.
-    # ``fast`` caps job count via default_harness_limit; never skip entirely
-    # unless clang is missing or fold_kernel is explicitly disabled.
+    # ``fast`` skips the clang -ast-dump fold; uninstantiated kernel_ir already
+    # maps tilingkey → branches.  ``full`` / UO_FOLD_KERNEL=1 turns fold on.
     fold = default_fold_kernel(ctx)
     limit = ctx.get("harness_limit")
     if limit is None:
@@ -1127,7 +1287,7 @@ def normalize_variables(project_root: Path, payload: dict[str, Any] | None = Non
         _uo_root(project_root) / "tiling" / "normalize_variables_receipt.yaml",
         {"ok": True, "status": "pending_export", "from_host": bool(meta)},
     )
-    return {"ok": True, "engine": "normalize_variables", "deferred_to": "export_kb"}
+    return {"ok": True, "engine": "normalize_variables", "deferred_to": "commit"}
 
 
 def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1167,7 +1327,7 @@ def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None)
         doc = derive_host_fields(bundle, **derive_kwargs)
         bundle["host_derivation"] = doc
         _dump(uo / "ir" / "host_derivation.yaml", doc.to_dict())
-        # TG-facing view is written early so export_kb can attach it without
+        # TG-facing view is written early so commit can attach it without
         # re-deriving; still a contract stub until TG consumes it.
         _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(doc))
         try:
@@ -1306,7 +1466,7 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(project_root)
+    uo = _uo_root(root, arch=_payload_arch(ctx))
     run = _run_dir(uo, ctx)
     unresolved = _load(uo / "ir" / "unresolved.yaml") or {}
     count = int(unresolved.get("blocker_count") or len(unresolved.get("blockers") or []))
@@ -1410,7 +1570,7 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root)
+    uo = _uo_root(root, arch=_payload_arch(ctx))
     run = _run_dir(uo, ctx)
     parts = run / "actions" / "resolve_gaps" / "parts"
     patch_files = list(parts.glob("**/*.yaml")) if parts.is_dir() else []
@@ -1538,166 +1698,34 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
 
 
 def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from uo_init.assemble_kb import assemble_kb, export_operator_kb
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    try:
-        from uo_init.harness import MintedKernelBranch
-
-        bundle = _ensure_bundle(root, ctx)
-        uo = _uo_root(root)
-        host_receipt = _load(uo / "ir" / "host_extract_receipt.yaml")
-        cached_quality = (
-            host_receipt.get("quality") if isinstance(host_receipt, dict) else None
-        )
-        if isinstance(cached_quality, dict) and cached_quality.get("total_nodes"):
-            from uo_init.controllability import ClosureMetrics
-
-            bundle["metrics"] = ClosureMetrics(
-                total_nodes=int(cached_quality.get("total_nodes") or 0),
-                closed_nodes=int(cached_quality.get("closed_nodes") or 0),
-                partial_nodes=int(cached_quality.get("partial_nodes") or 0),
-                open_nodes=int(cached_quality.get("open_nodes") or 0),
-                controllable_nodes=int(cached_quality.get("controllable_nodes") or 0),
-                normalized_predicates=int(
-                    cached_quality.get("normalized_predicates") or 0
-                ),
-                total_predicates=int(cached_quality.get("total_predicates") or 0),
-                root_histogram={
-                    str(k): int(v)
-                    for k, v in (cached_quality.get("root_histogram") or {}).items()
-                },
-                reason_histogram={
-                    str(k): int(v)
-                    for k, v in (cached_quality.get("reason_histogram") or {}).items()
-                },
-            )
-        fold = _load(uo / "kernel" / "fold_receipt.yaml")
-        kbr = list(_STORE.get("kbr") or [])
-        if not kbr:
-            rows = fold.get("kernel_branches") or []
-            kbr = [MintedKernelBranch.from_dict(r) for r in rows if isinstance(r, dict)]
-        if not kbr:
-            # Recover evidence-bearing KBR nodes from a previous export.
-            existing = _load(uo / "kernel" / "branches.yaml")
-            graph = _load(uo / "ir" / "operator_graph.yaml")
-            ev_by_id = {
-                str(e.get("id")): e
-                for e in (graph.get("evidence") or [])
-                if isinstance(e, dict) and e.get("id")
-            }
-            for node in existing.get("nodes") or []:
-                if not str(node.get("id") or "").startswith("KBR_"):
-                    continue
-                refs = node.get("evidence_refs") or []
-                ev = ev_by_id.get(str(refs[0])) if refs else None
-                kbr.append(
-                    MintedKernelBranch(
-                        id=str(node["id"]),
-                        file=str((ev or {}).get("file") or node.get("file") or ""),
-                        line=int((ev or {}).get("line_start") or node.get("line") or 0),
-                        snippet=str((ev or {}).get("snippet") or ""),
-                        condition=str(node.get("condition") or ""),
-                        function=str(node.get("function") or ""),
-                        kind=str(node.get("ctrl_kind") or "if"),
-                        dimensions=tuple(
-                            str(x) for x in (node.get("dimensions") or [])
-                        ),
-                        derived=tuple(str(x) for x in (node.get("derived") or [])),
-                        symbols=tuple(str(x) for x in (node.get("symbols") or [])),
-                        dtype_variants=tuple(
-                            str(x) for x in (node.get("dtype_variants") or [])
-                        ),
-                        stage=str(node.get("stage") or ""),
-                    )
-                )
-        if not kbr:
-            kbr = list(fold.get("kernel_branch_ids") or [])
-        from uo_init.host_derivation import (
-            HostDerivation,
-            host_derivation_from_dict,
-            to_key_derivations,
-        )
-
-        derivation = bundle.get("host_derivation")
-        if not isinstance(derivation, HostDerivation):
-            raw_derivation = _load(uo / "ir" / "host_derivation.yaml")
-            if isinstance(raw_derivation, dict) and raw_derivation.get("fields"):
-                derivation = host_derivation_from_dict(raw_derivation)
-                bundle["host_derivation"] = derivation
-        kernel_ir_count = len(getattr(bundle.get("kernel_ir"), "branches", []) or [])
-        kb = assemble_kb(
-            op_name=bundle["spec"].op_name,
-            architecture=bundle["spec"].arch_dir or "",
-            analyses=bundle["analyses"],
-            records=bundle["records"],
-            metrics=bundle["metrics"],
-            gap=bundle["gap"],
-            binding=bundle.get("binding"),
-            kernel_branches=kbr,
-            # Uninstantiated kernel branches: the only pass where the guard
-            # still names the dimension that decides it.
-            kernel_ir=bundle.get("kernel_ir"),
-            op_root=str(bundle["spec"].op_dir or ""),
-            notes={"kernel_fold": fold},
-            # Without these the key space is never materialized at all, and
-            # `legal_key_index.jsonl` keeps whatever a previous run left. The
-            # derivation is what turns the template product into a reachability
-            # answer; absent it every key is reported `underivable`.
-            tpl_schema=bundle.get("tpl_schema"),
-            var_model=bundle.get("var_model"),
-            derivation=derivation,
-            tpl_header=bundle.get("tpl_header") or "",
-            host_ir=bundle.get("host_ir"),
-            op_spec=bundle.get("spec"),
-        )
-        receipt = export_operator_kb(kb, root, uo_root_override=uo)
-        receipt["engine"] = "export_kb"
-        receipt["source_closure"] = bundle["metrics"].source_closure
-        receipt["blocker_count"] = len(bundle["gap"].blockers)
-        receipt["kernel_branch_count"] = len(kbr) or kernel_ir_count
-        receipt["folded_kernel_branch_count"] = len(kbr)
-        receipt["kernel_ir_branch_count"] = kernel_ir_count
-        materialized = kb.notes.get("tiling_materialize")
-        if isinstance(materialized, dict) and materialized.get("ok"):
-            receipt["key_status_counts"] = dict(materialized["key_status_counts"])
-            receipt["reachability"] = dict(materialized["reachability"])
-        # Re-emit the TG contract if derive_key_fields already ran in this process.
-        # export_kb does not wipe tiling/key_derivations.yaml, but a fresh
-        # in-memory derivation is the authoritative view.
-        if isinstance(derivation, HostDerivation):
-            _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(derivation))
-            receipt["key_derivations"] = derivation.status
-        elif (uo / "tiling" / "key_derivations.yaml").is_file():
-            receipt["key_derivations"] = "preserved"
-        return receipt
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "export_kb", "error": str(exc)[:400]}
+    """Removed: sqlite export is not a product path. Use compile/commit .uo."""
+    del project_root, payload
+    return {
+        "ok": False,
+        "engine": "export_kb",
+        "error": "legacy_engine_removed",
+        "message_zh": "sqlite export_kb 已移除；请走 compile/commit 写入 .uo",
+    }
 
 
 def build_index(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from uo_init.kb_index import rebuild_index
-
-    del payload
-    uo = _uo_root(project_root)
-    try:
-        out = rebuild_index(uo)
-        out["engine"] = "build_index"
-        out["ok"] = True
-        return out
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "build_index", "error": str(exc)[:400]}
+    """Removed: sqlite rebuild_index is not a product path."""
+    del project_root, payload
+    return {
+        "ok": False,
+        "engine": "build_index",
+        "error": "legacy_engine_removed",
+        "message_zh": "sqlite build_index 已移除；请走 compile/commit 写入 .uo",
+    }
 
 
 def export_tg_host_view(
     project_root: Path, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Project live HostIR into tg_host_view.yaml stamped with the KB fingerprint.
+    """Project live HostIR into tg_host_view.yaml stamped with the graph fingerprint.
 
-    Must run after ``export_kb`` + ``build_index``. Does not read
-    ``.probe_cache/fag_bundle.pkl`` — HostIR comes from the in-process extract
-    bundle (same source that fed the KB).
+    Prefer the committed ``.uo`` product; working-tree ``ir/operator_graph.yaml``
+    is accepted during extract before commit. Does not require sqlite.
     """
     from uo_init.host_codemap import (
         TG_HOST_VIEW_YAML,
@@ -1708,20 +1736,18 @@ def export_tg_host_view(
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root)
+    uo = _uo_root(root, arch=_payload_arch(ctx))
     graph_path = uo / "ir" / "operator_graph.yaml"
-    sqlite = uo / "indexes" / "kb_graph.sqlite"
-    if not sqlite.is_file() and not graph_path.is_file():
+    from uo_init.store.reader import find_uo_product
+
+    product = find_uo_product(
+        root, architecture=str(_payload_arch(ctx) or "")
+    )
+    if product is None and not graph_path.is_file():
         return {
             "ok": False,
             "engine": "export_tg_host_view",
-            "error": "missing KB product (indexes/kb_graph.sqlite); run export_kb first",
-        }
-    if not sqlite.is_file():
-        return {
-            "ok": False,
-            "engine": "export_tg_host_view",
-            "error": "missing indexes/kb_graph.sqlite; run build_index / export_kb first",
+            "error": "missing .uo product; run /uo-init commit first",
         }
     try:
         fingerprint = ""
@@ -2023,21 +2049,22 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
 
 def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Referee trigger: auto-skip when quality gate already green."""
-    del payload
-    from uo_init.kb_index import db_authority_ok, load_view_blob
+    from uo_init.store.reader import find_uo_product, load_view_blob
 
-    uo = _uo_root(project_root)
+    ctx = _ctx(payload)
+    root = Path(project_root).expanduser().resolve()
+    uo = _uo_root(root, arch=_payload_arch(ctx))
     q = _load(uo / "quality.yaml")
     ur = _load(uo / "ir" / "unresolved.yaml")
     host_meta = _load(uo / "ir" / "host_extract_receipt.yaml")
-    sqlite = uo / "indexes" / "kb_graph.sqlite"
-    if sqlite.is_file() and db_authority_ok(sqlite):
+    product = find_uo_product(root, architecture=str(_payload_arch(ctx) or ""))
+    if product is not None and product.suffix == ".uo":
         if not q:
-            blob = load_view_blob(sqlite, "quality.yaml")
+            blob = load_view_blob(product, "quality.yaml")
             if isinstance(blob, dict):
                 q = blob
         if not ur:
-            blob = load_view_blob(sqlite, "ir/unresolved.yaml")
+            blob = load_view_blob(product, "ir/unresolved.yaml")
             if isinstance(blob, dict):
                 ur = blob
     from uo_init.init_profile import review_skips_closure_gate
@@ -2117,10 +2144,11 @@ ENGINES: dict[str, Any] = {
     "normalize_predicates": normalize_predicates,
     "resolve_gaps": resolve_gaps,
     "apply_gap_patch": apply_gap_patch,
-    "export_kb": export_kb_action,
-    "build_index": build_index,
+    "compile": lambda project_root, payload=None: _codemap_engine("analyze")(
+        project_root, payload
+    ),
     "export_tg_host_view": export_tg_host_view,
     "export_adapter_pack": export_adapter_pack,
-    "export_integrity": export_integrity,
     "kb_review": kb_review,
 }
+

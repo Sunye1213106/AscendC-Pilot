@@ -17,10 +17,11 @@ def export_diff_product(
     update_plan: dict[str, Any] | None = None,
     status: str | None = None,
     write: bool = True,
+    architecture: str = "",
 ) -> dict[str, Any]:
     del op_name
     repo_root = Path(repo_root).expanduser().resolve()
-    uo_root = resolve_uo_root(repo_root)
+    uo_root = resolve_uo_root(repo_root, architecture=architecture)
     change_set = change_set or read_yaml(uo_root / "diff" / "change_set.yaml")
     update_plan = update_plan or read_yaml(uo_root / "summary" / "update_plan.yaml")
     if not change_set:

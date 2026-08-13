@@ -92,17 +92,23 @@ def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
     view: dict[str, Any] = {}
     graph: dict[str, Any] = {}
     try:
-        from uo_init.store.reader import find_uo_product, load_view_blob
+        from uo_init.store.reader import find_uo_product, load_production_view
+        from ascendc_pilot.paths import discover_arch
 
-        product = find_uo_product(project_root)
+        arch = ""
+        try:
+            arch = discover_arch(project_root)
+        except Exception:
+            arch = ""
+        product = find_uo_product(project_root, architecture=arch)
         if product is not None and product.suffix == ".uo":
-            blob = load_view_blob(product, "tiling/exhaustive_key_space.yaml")
+            blob = load_production_view(product, "tiling/exhaustive_key_space.yaml")
             if isinstance(blob, dict):
                 keys = blob
-            blob = load_view_blob(product, "ir/tg_host_view.yaml")
+            blob = load_production_view(product, "ir/tg_host_view.yaml")
             if isinstance(blob, dict):
                 view = blob
-            blob = load_view_blob(product, "ir/operator_graph.yaml")
+            blob = load_production_view(product, "ir/operator_graph.yaml")
             if isinstance(blob, dict):
                 graph = blob
         else:

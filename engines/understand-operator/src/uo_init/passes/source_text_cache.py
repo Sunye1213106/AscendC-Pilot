@@ -23,5 +23,28 @@ def read_text(path: str | Path) -> str:
     return text
 
 
+def cached_snippet(path: str | Path, line: int) -> str:
+    """Return one cached source line, or empty if the file was never read."""
+    if int(line or 0) <= 0:
+        return ""
+    raw = str(path or "").replace("\\", "/")
+    if not raw:
+        return ""
+    text = None
+    needle = raw.lstrip("./")
+    for key, val in _TEXT.items():
+        norm = key.replace("\\", "/")
+        if norm == raw or norm.endswith("/" + needle) or needle.endswith(norm.split("/")[-1]) and needle in norm:
+            text = val
+            break
+    if text is None:
+        return ""
+    lines = text.splitlines()
+    if int(line) > len(lines):
+        return ""
+    return lines[int(line) - 1].strip()[:400]
+
+
 def clear() -> None:
     _TEXT.clear()
+

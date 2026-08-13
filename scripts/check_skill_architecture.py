@@ -16,7 +16,30 @@ COGNITIVE_SKILLS = (
     "testcase-generation",
     "source-proof",
     "code-review",
+    "code-engineering",
 )
+
+# Keep in sync with scripts/check_execution_contracts.py RUNTIME_PROMPT_TOKENS.
+RUNTIME_PROMPT_TOKENS = {
+    "RUN_ID",
+    "ACTION_ID",
+    "WORKFLOW_ID",
+    "ACTOR_ID",
+    "TARGET_IDS_OR_FILES",
+    "TARGET",
+    "SHARD_ID",
+    "OP_NAME",
+    "PROJECT_ROOT",
+    "UO_ROOT",
+    "TG_ROOT",
+    "TOPIC",
+    "CONTEXT_PACK_PATH",
+    "ARCHITECTURE",
+    "ROLE_ID",
+    "LEASE_ID",
+    "ACTION_SESSION_ID",
+    "CANDIDATES_SHA256",
+}
 
 DELETED_CAPS = ("tilingkey-closure", "structured-review", "obligation-analysis")
 
@@ -141,7 +164,10 @@ def _errors() -> list[str]:
         for p in PROMPTS.rglob("*.md"):
             text = p.read_text(encoding="utf-8")
             for i, line in enumerate(text.splitlines(), 1):
-                if PROMPT_BAD.search(line):
+                scanned = line
+                for tok in RUNTIME_PROMPT_TOKENS:
+                    scanned = scanned.replace(f"<{tok}>", "")
+                if PROMPT_BAD.search(scanned):
                     errors.append(f"PROMPT_HARNESS_LEAK {p.as_posix()}:{i}: {line.strip()[:80]}")
                 # Forbid bare references/*.md (must go Prompt → Skill → references)
                 if re.search(r"(?<![/\w])references/[A-Za-z0-9_.-]+\.md", line):

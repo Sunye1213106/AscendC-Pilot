@@ -220,8 +220,12 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
         block("MISSING_KERNEL", "no Kernel entities")
 
     source_key_count = int(codemap.meta.get("source_declared_tiling_key_count") or 0)
-    if source_key_count and len(keys) != source_key_count:
-        block("TILING_KEY_CARDINALITY_MISMATCH", f"current source declares {source_key_count} TilingKeys but CodeMap contains {len(keys)}", declared=codemap.meta.get("source_declared_tiling_keys") or [])
+    if source_key_count and len(declared_keys) != source_key_count:
+        block(
+            "TILING_KEY_CARDINALITY_MISMATCH",
+            f"current source declares {source_key_count} TilingKeys but CodeMap contains {len(declared_keys)} source-declared keys",
+            declared=codemap.meta.get("source_declared_tiling_keys") or [],
+        )
 
     host_packing = codemap.meta.get("host_tiling_key_packing") or {}
     packing_calls = int(host_packing.get("calls") or 0)

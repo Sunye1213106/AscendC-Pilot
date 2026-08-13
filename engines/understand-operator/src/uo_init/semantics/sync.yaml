@@ -97,3 +97,16 @@ ops:
     engine: VECTOR
     confidence: partial
     mechanism: hard_event
+
+  # --- TPipe (kernel_tpipe.h / kernel_common.h) ---
+  FetchEventID:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: tpipe
+    receiver: pipe
+  GetTPipePtr:
+    category: sync_signal
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: tpipe

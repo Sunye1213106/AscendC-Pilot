@@ -21,4 +21,4 @@ Interface/validation 允许
 ## 历史材料位置
 
 - 原 bug report（git 历史，已从工作树删除）：`docs/debug/bug_report_fag_fp32_rope_undeclared_key.md` @ pre-`ed73e9c`
-- 闭合报告中的 undeclared 讨论：`docs/history/fag/tilingkey-closure-report.md`
+- 闭合报告中的 undeclared 讨论（历史材料，不当权威）：[`../fag_test/tilingkey-closure-report.md`](../fag_test/tilingkey-closure-report.md)

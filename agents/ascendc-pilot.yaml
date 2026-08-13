@@ -13,7 +13,7 @@ description: >
   对用户说话必须人话（意图/刚完成/下一步或请你决定）；禁止粘贴 subagent 黑话。
   用户要「全量/全覆盖 tilingkey case」时：先 Goal 串联 tg-init→tg-plan→tg-solve
   （start 带 --intent 含全覆盖短语；complete 后若有 recommended_next_workflow 则继续）。
-skill_ids: [operator-analysis, testcase-generation, source-proof, code-review]
+skill_ids: [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
 read_scopes:
 - pilot:*
 write_scopes: []

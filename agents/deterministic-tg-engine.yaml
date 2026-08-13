@@ -11,6 +11,8 @@ skill_ids: [testcase-generation, operator-analysis, source-proof]
 read_scopes:
 - pilot:tg/**
 - pilot:uo/**
+- pilot:ce/scenarios/**
+- pilot:ce/impact/**
 - pilot:local/**
 - pilot:runs/**
 - pilot:context/**

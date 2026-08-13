@@ -21,7 +21,7 @@ from uo_init.kb_index import (
     materialize_lazy_view,
 )
 
-# Short aliases → view_blob names stored by export_kb / rebuild_index.
+# Short aliases → view_blob names stored in the ``.uo`` product.
 VIEW_ALIASES: dict[str, str] = {
     "manifest": "manifest.yaml",
     "quality": "quality.yaml",
@@ -65,24 +65,24 @@ def resolve_view_name(view: str) -> str:
     return VIEW_ALIASES.get(text, text)
 
 
-def _resolve_db_or_uo(uo_root: Path) -> tuple[str, Path]:
-    """Return ('uo'|'db', path). Prefer ``.uo`` product; accept explicit sqlite only for dump."""
+def _resolve_db_or_uo(uo_root: Path, *, architecture: str = "") -> tuple[str, Path]:
+    """Return ('uo'|'db', path). Production path is ``.uo``; sqlite must be explicit."""
     if uo_root.is_file() and uo_root.suffix == ".uo":
         return "uo", uo_root
     if uo_root.is_file() and uo_root.suffix in {".sqlite", ".db"}:
         return "db", uo_root
-    try:
-        from uo_init.store.reader import find_uo_product
+    from uo_init.store.reader import find_uo_product
 
-        found = find_uo_product(uo_root if uo_root.is_dir() else uo_root.parent)
-        if found is not None and found.suffix == ".uo":
-            return "uo", found
-    except Exception:
-        pass
-    db = uo_root / "indexes" / "kb_graph.sqlite"
-    if db.is_file():
-        return "db", db
-    raise FileNotFoundError(f"missing CodeMap product (.uo) under {uo_root}")
+    found = find_uo_product(
+        uo_root if uo_root.is_dir() else uo_root.parent,
+        architecture=architecture,
+    )
+    if found is not None and found.suffix == ".uo":
+        return "uo", found
+    raise FileNotFoundError(
+        f"missing CodeMap product (.uo) under {uo_root}; "
+        "expected .ascendc-pilot/<arch>/uo/<op>.<arch>.uo"
+    )
 
 
 def dump_view(
@@ -177,7 +177,7 @@ def _dump_from_uo(
     out: str | Path | None = None,
 ) -> dict[str, Any]:
     from uo_init.query.engine import CodeMapQuery
-    from uo_init.store.reader import list_views, load_view_blob, read_codemap, read_meta
+    from uo_init.store.reader import list_views, load_production_view, read_codemap, read_meta
 
     meta = read_meta(uo_path)
     cm = read_codemap(uo_path)
@@ -200,7 +200,7 @@ def _dump_from_uo(
     elif name in {"kernel", "views/kernel.yaml"}:
         payload = {"kernels": [e.to_dict() for e in cm.by_kind("KERNEL")]}
     elif name in {"ir/tg_host_view.yaml", "tg_host_view", "host"}:
-        payload = load_view_blob(uo_path, "ir/tg_host_view.yaml") or load_view_blob(
+        payload = load_production_view(uo_path, "ir/tg_host_view.yaml") or load_production_view(
             uo_path, "tg_host_view"
         )
         if payload is None:
@@ -213,7 +213,7 @@ def _dump_from_uo(
                 "source": {"product": str(uo_path), "meta": meta},
             }
     else:
-        payload = load_view_blob(uo_path, name)
+        payload = load_production_view(uo_path, name)
         if payload is None:
             # Fall back to full codemap dict slices.
             if name in {"graph", "ir/operator_graph.yaml", "operator_graph"}:
@@ -254,10 +254,12 @@ def dump_all_views(
     target = Path(out_dir).expanduser().resolve() if out_dir else root
     written: list[str] = []
     if kind == "uo":
-        from uo_init.store.reader import list_views, load_view_blob, read_codemap
+        from uo_init.store.reader import list_views, load_production_view, read_codemap
 
         for name in list_views(product):
-            payload = load_view_blob(product, name)
+            payload = load_production_view(product, name)
+            if payload is None:
+                continue
             path = target / (name if "/" in name or name.endswith(".yaml") else f"{name}.yaml")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(
@@ -368,10 +370,17 @@ def main(argv: list[str] | None = None) -> int:
             kind, product = _resolve_db_or_uo(uo)
             if kind != "uo":
                 raise FileNotFoundError("--materialize-tg requires a .uo product")
-            op_root = Path(args.op_root).expanduser().resolve() if args.op_root else product.parent.parent.parent
-            # product is <op>/.ascendc-pilot/uo/<op>.<arch>.uo → op root = parents[2]
-            if product.parent.name == "uo" and product.parent.parent.name == ".ascendc-pilot":
+            # <op>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo → op root = parents[3]
+            if (
+                product.parent.name == "uo"
+                and product.parent.parent.name.startswith("arch")
+                and product.parent.parent.parent.name == ".ascendc-pilot"
+            ):
+                op_root = product.parent.parent.parent.parent
+            elif product.parent.name == "uo" and product.parent.parent.name == ".ascendc-pilot":
                 op_root = product.parent.parent.parent
+            else:
+                op_root = product.parent.parent.parent.parent
             if args.op_root:
                 op_root = Path(args.op_root).expanduser().resolve()
             result = backfill_from_source(

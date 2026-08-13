@@ -56,7 +56,7 @@ def _product(project: Path) -> Path:
     cm.link(RelationKind.FLOWS_TO, query.id, kernel.id, attrs={"provenance": "test"})
     cm.link(RelationKind.FLOWS_TO, kernel.id, output.id, attrs={"provenance": "test"})
 
-    product = project / ".ascendc-pilot" / "uo" / "toy.arch35.uo"
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
     write_codemap(cm, product)
     return product
 
@@ -73,11 +73,10 @@ def test_open_query_prefers_uo_from_project_root(tmp_path: Path) -> None:
     assert q.find_path("query", "dq")
 
 
-def test_open_query_from_legacy_uo_root_climbs_to_unified_product(tmp_path: Path) -> None:
+def test_open_query_from_arch_scoped_uo_dir(tmp_path: Path) -> None:
     _product(tmp_path)
-    legacy_root = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
-    legacy_root.mkdir(parents=True)
-    q = open_query(legacy_root)
+    uo_dir = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    q = open_query(uo_dir)
     assert q.backend == "codemap"
     assert q.summary()["has_input_output_path"] is True
 
@@ -97,7 +96,9 @@ def test_new_api_and_legacy_methods_share_same_codemap(tmp_path: Path) -> None:
     assert q.neighbors(key_id, depth=2)
     assert q.templates_for_key(key_id)
     assert q.tiling_field("s1")
-    assert q.field_impact("s1")["ok"] is True
+    field_hit = q.field_impact("s1")
+    assert field_hit["ok"] is True
+    assert "neighbors" not in field_hit
     forward = q.slice_forward([key_id], depth=2)
     assert any(row["id"] == key_id for row in forward["nodes"])
     assert forward["truncated"] is False
@@ -110,3 +111,25 @@ def test_open_query_accepts_direct_uo_path(tmp_path: Path) -> None:
     q = open_query(product)
     assert q.backend == "codemap"
     assert q.audit()["evidence_backed_input_output_path"] is True
+
+
+def test_open_query_rejects_legacy_top_level_uo_dir(tmp_path: Path) -> None:
+    import pytest
+
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.ARCH, "arch35")
+    legacy = tmp_path / ".ascendc-pilot" / "uo" / "toy.arch35.uo"
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, legacy)
+    with pytest.raises(FileNotFoundError):
+        open_query(tmp_path)
+
+
+def test_open_query_rejects_sqlite_only_tree(tmp_path: Path) -> None:
+    import pytest
+
+    db = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "indexes" / "kb_graph.sqlite"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    db.write_bytes(b"not-a-product")
+    with pytest.raises(FileNotFoundError):
+        open_query(tmp_path)

@@ -20,7 +20,7 @@ CLI_HELP_ZH = {
     "context": "构建 context pack",
     "debug": "采集诊断信息并导出 session bundle",
     "doctor": "执行环境预检",
-    "emit-confidence-report": "从 KB 生成确定性的 confidence report 与 gate",
+    "emit-confidence-report": "已移除：改用 /uo-init verify 或 `acp uo-query --status-only`",
     "inspect": "查询结构化 IR / 证据窗口（tasks、YAML 计数、evidence-window）",
     "inspect-failure": "查看结构化 failure 信息",
     "next": "查看可执行的下一动作与 obligations",
@@ -39,6 +39,10 @@ CLI_HELP_ZH = {
     "uo-scope": "执行 UO 源码范围扫描与校验",
     "validate": "执行当前 workflow 的全部 gate",
     "validate-key-gates": "执行关键硬 gate",
+    "answer": "把 Host 问答结果记为已签名的 HumanDecisionReceipt",
+    "dispatch-result": "Host Session Driver：消费 dispatch ticket、finalize 并继续驱动",
+    "host-context": "解析 arch 作用域的 Host 适配器上下文",
+    "serve-authorize": "长驻 authorize 守护进程（stdio JSON-lines）",
 }
 
 
@@ -104,6 +108,27 @@ def render_workflows() -> str:
     return "\n".join(lines)
 
 
+def _console_scripts(pyproject: Path) -> list[str]:
+    """Names from ``[project.scripts]``; comments and other tables are ignored."""
+    if not pyproject.is_file():
+        return []
+    names: list[str] = []
+    in_scripts = False
+    for line in pyproject.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped == "[project.scripts]":
+            in_scripts = True
+            continue
+        if in_scripts:
+            if stripped.startswith("["):
+                break
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" in stripped:
+                names.append(stripped.split("=", 1)[0].strip())
+    return names
+
+
 def render_cli() -> str:
     source = (ROOT / "pilot" / "ascendc_pilot" / "cli.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -150,12 +175,20 @@ def render_cli() -> str:
             "",
             "| 命令 | 软件包 |",
             "| --- | --- |",
-            "| `uo-init`、`uo-dump` | `engines/understand-operator` |",
-            "| `tg-init`、`tg-plan`、`tg-solve`、`tg-closure` | `engines/testcase-generation` |",
-            "| `ce-impact` | `engines/code-engineering` |",
-            "",
         ]
     )
+    engine_packages = (
+        (ROOT / "engines" / "understand-operator" / "pyproject.toml", "engines/understand-operator"),
+        (ROOT / "engines" / "testcase-generation" / "pyproject.toml", "engines/testcase-generation"),
+        (ROOT / "engines" / "code-engineering" / "pyproject.toml", "engines/code-engineering"),
+    )
+    for pyproject, package in engine_packages:
+        scripts = _console_scripts(pyproject)
+        if not scripts:
+            continue
+        listed = "、".join(f"`{name}`" for name in scripts)
+        lines.append(f"| {listed} | `{package}` |")
+    lines.extend(["", ""])
     return "\n".join(lines)
 
 
@@ -172,7 +205,15 @@ def render_artifacts() -> str:
         STATE_SUBDIR,
         TG_SUBDIR,
         UO_SUBDIR,
+        uo_codemap_path,
     )
+
+    example_op = "<op>"
+    example_arch = "<arch>"
+    codemap = uo_codemap_path(Path("operator-repo"), example_op, arch=example_arch)
+    product_rel = f"{example_arch}/{UO_SUBDIR}/{example_op}.{example_arch}.uo"
+    if codemap.name != f"{example_op}.{example_arch}.uo" or product_rel not in codemap.as_posix().replace("\\", "/"):
+        raise RuntimeError(f"uo_codemap_path() drifted from <arch>/uo/<op>.<arch>.uo: {codemap}")
 
     lines = [
         "# 产物布局 Reference",
@@ -181,7 +222,7 @@ def render_artifacts() -> str:
         "",
         "```text",
         f"<operator-repo>/{AGENT_DIR}/",
-        f"  {UO_SUBDIR}/<op_name>.<arch>.uo   UO canonical product",
+        f"  {product_rel:<28} UO canonical product (uo_codemap_path)",
         f"  <arch>/{UO_SUBDIR}/               UO projections and receipts",
         f"  <arch>/{TG_SUBDIR}/               TG contracts, plans, closure, replay",
         f"  <arch>/{CE_SUBDIR}/               CE review and impact products",

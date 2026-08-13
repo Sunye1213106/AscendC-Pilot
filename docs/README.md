@@ -15,8 +15,10 @@
 - [安装](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)
 - [UO - Understand Operator](modules/uo.md)
+- [当前版本 UO benchmark（FAG arch35 冷启动 119s、查询与未闭合项）](benchmark.md)
 - [TG - Testcase Generation](modules/tg.md)
 - [CE - Code Engineering](modules/ce.md)
+- 认知 Skill：`operator-analysis`、`testcase-generation`、`source-proof`、`code-review`、`code-engineering`（见 `skills/`）
 
 ## 开发 AscendC-Pilot
 
@@ -36,6 +38,7 @@
 - [扩展指南](development/extending.md)
 - [测试与评估](development/testing.md)
 - [文档维护](development/documentation.md)
+- 抽检记录（WIP，不当产品质量入口）：[docs/test/](test/README.md)
 
 ## Reference
 

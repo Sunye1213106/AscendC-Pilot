@@ -30,6 +30,39 @@
 
 **不要把不同层级混成一个“合法/非法”结论。** 例如模板接纳但 Host 不产生，应分别回答 `template-admissible=YES`、`host-produced=NO`。仅当当前 claim 本身是 `host-produced` / `full reachability` 时，已证明的 Host blocker 才能直接收束为不可达。
 
+## 结构化查询模式
+
+优先 `acp uo-query --mode`，按 claim 选最短下一跳：
+
+| mode | 用途 |
+| --- | --- |
+| `tiling_key` | 维域 / packing site；不要默认枚举 legal-key |
+| `legal_key` | 某组合是否模板可接纳（indexed filter） |
+| `tiling_data` / `field` | 字段 Host 写 / Kernel 读 |
+| `kernel_branch` / `template_match` | 分支与模板块 |
+| `buffer` | LocalTensor / 存储类 |
+| `locate` | 给名字拿 `file:line` |
+| `kernel_api` | DataCopy / SetFlag / Cast 等 catalog 调用 |
+| `impact` | 源码位置沿有向有用边的邻居，按 dispatch/layout/memory/sync/precision/contract 分桶 |
+| `gaps` | 已知 unresolved |
+
+`field` 回包只有 writers / readers / edges，没有无向 neighbors。`TILING_FIELD.facts` 含短 `rhs` / `value_defining_sites`；`BUFFER`/`QUEUE.facts` 含 `tposition`（VECIN/VECOUT）；Host `OP_CHECK_IF` 在字段/输入的 `facts.check_sites` 与 `locate`。
+
+### 按任务选 mode（最短下一跳）
+
+| 任务 | 第一跳 |
+| --- | --- |
+| 检视 / 快速看风险 | `impact` 或 `locate`；校验点看 `check_sites` |
+| 561002 Tiling 失败 / Kernel 找不到 | `tiling_key` → `legal_key`，不要先 dump 全量 Key |
+| 561003 声明 dtype | INPUT/OUTPUT `dtype` 与 source_contract；不要默认 `with_api` / `full` |
+| 卡死、越界、同步缺失 | `kernel_api` + `buffer`（`tposition`） |
+| 精度（搬运 / Cast / 多 dtype） | `kernel_api` Cast/DataCopy + `field` `rhs` |
+| 白盒 / UT 覆盖线索 | `legal_key` + `kernel_branch` + `gaps` |
+| Issue 无 diff 定位 | `locate` / `field` / `tiling_key` |
+| Issue 有 diff 改码影响 | `impact` 分桶 |
+
+配对、时序、profiling、sanitizer **不是** uo-query 的输出。
+
 ## 探索环
 
 ```text
@@ -42,7 +75,7 @@ mission → identify_claim → uo-product-map → choose_semantic_next_hop
 
 ## 工具优先级
 
-1. `acp uo-query` 聚合 mode（`search` / `tiling_key` / `tiling_data` / `kernel_branch` / `template_match` / `buffer` / `gaps` / …）——先窄 `--pattern`，禁止无目标全量 dump。
+1. `acp uo-query` 聚合 mode（`search` / `tiling_key` / `tiling_data` / `kernel_branch` / `template_match` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps` / `legal_key`）——先窄 `--pattern`，禁止无目标全量 dump。
 2. 仅当 **UO 对当前 claim 的语义证据不足** 时，打开最小源码窗口。典型原因：enum 名↔数值缺失、表达式细节缺失、两个 UO 事实矛盾、无 `source_span`，或用户明确问实现细节。
 3. 需要 `confidence: high` / `source_verified` 时：定向 Read 后立刻  
    `acp inspect evidence-window --project <算子目录> --path <rel> --lines A-B`  

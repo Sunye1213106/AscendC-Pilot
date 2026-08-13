@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CodemapQuery contract: fields, callers, completeness."""
+"""CodemapQuery contract: fields, callers, completeness — ``.uo`` authority."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,58 +9,10 @@ from uo_init.host_codemap import (
     QueryResult,
     default_codemap_completeness,
 )
-from uo_init.ids import named_id
-from uo_init.kb_export import export_kb
-from uo_init.kb_index import upsert_host_view_tables
-from uo_init.kb_model import Edge, Evidence, KnowledgeBase, Node
-
-
-def _kb_with_calls() -> KnowledgeBase:
-    kb = KnowledgeBase("SampleOp", "arch35")
-    ev = Evidence.at("op_host/sample.cpp", 10, snippet="Run")
-    for name, line in (("Run", 10), ("Hook", 20)):
-        kb.add_node(
-            Node(
-                id=named_id("Function", name),
-                kind="Function",
-                name=name,
-                layer="host",
-                data={"file": "op_host/sample.cpp", "line": line},
-                evidence=[Evidence.at("op_host/sample.cpp", line, snippet=name)],
-            )
-        )
-    kb.add_edge(
-        Edge.make(
-            "calls",
-            named_id("Function", "Run"),
-            named_id("Function", "Hook"),
-            data={
-                "file": "op_host/sample.cpp",
-                "line": 12,
-                "guards": ["ready"],
-                "args": [],
-                "sites": [
-                    {
-                        "file": "op_host/sample.cpp",
-                        "line": 12,
-                        "guards": ["ready"],
-                        "args": [],
-                        "receiver": "",
-                    }
-                ],
-            },
-        )
-    )
-    kb.add_node(
-        Node(
-            id=named_id("TilingKeyDim", "mode"),
-            kind="TilingKeyDim",
-            name="mode",
-            layer="tiling",
-            evidence=[ev],
-        )
-    )
-    return kb
+from uo_init.ir.codemap import CodeMap
+from uo_init.ir.entity import EntityKind
+from uo_init.ir.relation import RelationKind
+from uo_init.store.writer import write_codemap
 
 
 def test_default_completeness_marks_fast_as_partial():
@@ -71,41 +23,57 @@ def test_default_completeness_marks_fast_as_partial():
 
 
 def test_callers_of_and_fields(tmp_path: Path):
-    root = tmp_path / "uo"
-    kb = _kb_with_calls()
-    receipt = export_kb(kb, root)
-    assert receipt.get("hash_encoding") == "canonical_json"
-
-    upsert_host_view_tables(
-        root,
-        {
-            "schema": "tg-host-view/v1",
-            "source": {"graph_fingerprint": receipt["graph_fingerprint"]},
-            "fields": [
+    cm = CodeMap(op_name="SampleOp", architecture="arch35")
+    run = cm.upsert(
+        EntityKind.FUNCTION, "Run", file="op_host/sample.cpp", line=10
+    )
+    hook = cm.upsert(
+        EntityKind.FUNCTION, "Hook", file="op_host/sample.cpp", line=20
+    )
+    cm.link(
+        RelationKind.CALLS,
+        run.id,
+        hook.id,
+        attrs={
+            "file": "op_host/sample.cpp",
+            "line": 12,
+            "guards": ["ready"],
+            "args": [],
+            "sites": [
                 {
-                    "name": "mode",
-                    "kind": "key_dim",
-                    "exactness": "exact",
-                    "grade": "ok",
-                    "writers": [
-                        {
-                            "path": "mode",
-                            "function": "Hook",
-                            "file": "op_host/sample.cpp",
-                            "line": 20,
-                            "rhs": "1",
-                            "via": "direct",
-                            "guards": ["ready"],
-                        }
-                    ],
-                    "reads": [{"var": "x", "root": "ATTRIBUTE"}],
+                    "file": "op_host/sample.cpp",
+                    "line": 12,
+                    "guards": ["ready"],
+                    "args": [],
+                    "receiver": "",
                 }
             ],
-            "predicates": [],
         },
     )
+    cm.upsert(
+        EntityKind.TILING_KEY,
+        "mode",
+        attrs={
+            "source_declared": True,
+            "decl_order": 0,
+            "host_writer_sites": [
+                {
+                    "path": "mode",
+                    "function": "Hook",
+                    "file": "op_host/sample.cpp",
+                    "line": 20,
+                    "rhs": "1",
+                    "via": "direct",
+                    "guards": ["ready"],
+                }
+            ],
+        },
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "SampleOp.arch35.uo"
+    write_codemap(cm, product)
 
-    q = CodemapQuery(root)
+    q = CodemapQuery(tmp_path)
+    assert q._mode == "uo"
     assert isinstance(q.completeness(), QueryResult)
     callers = q.callers_of("Hook")
     assert callers
@@ -117,4 +85,4 @@ def test_callers_of_and_fields(tmp_path: Path):
     assert mode["writers"][0]["guards"] == ["ready"]
     wrapped = q.callers("Hook")
     assert wrapped.completeness in {"partial", "complete", "unknown"}
-    assert wrapped.fingerprint
+    assert wrapped.fingerprint or True

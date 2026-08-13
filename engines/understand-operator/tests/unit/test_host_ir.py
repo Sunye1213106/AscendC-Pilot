@@ -37,6 +37,9 @@ def test_summary_process_optional_input(fag_dir):
     )
     assert "ProcessOptionalInput" in ir.summaries
     assert any(w.startswith("fBaseParams") for w in ir.summaries["ProcessOptionalInput"].writes)
+    rec = ir.summaries["ProcessOptionalInput"]
+    assert rec.file
+    assert int(rec.line or 0) > 0
 
 
 def test_selection_precondition_threaded(fag_dir):

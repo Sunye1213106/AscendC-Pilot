@@ -44,6 +44,34 @@ def describe_next(project_root: Path) -> dict[str, Any]:
     if status == "human_required":
         allowed = []
         rework = []
+        legal = list(
+            lf.get("legal_recovery_actions")
+            or [
+                "inspect_failure",
+                "retry_after_environment_fix",
+                "abort_run",
+            ]
+        )
+        option_catalog = [
+            {
+                "label": "环境已修好，继续重试失败 Action",
+                "value": "retry_after_environment_fix",
+                "description": "acp retry-after-environment-fix --project <算子目录>",
+            },
+            {
+                "label": "查看结构化失败信息",
+                "value": "inspect_failure",
+                "description": "acp inspect-failure --project <算子目录>",
+            },
+            {
+                "label": "终止本次运行",
+                "value": "abort_run",
+                "description": "acp abort --project <算子目录>",
+            },
+        ]
+        options = [row for row in option_catalog if row["value"] in legal]
+        if not options:
+            options = [row for row in option_catalog if row["value"] in {"inspect_failure", "abort_run"}]
         ask = {
             "header": f"{wid or 'workflow'} 需要人工介入",
             "question": (
@@ -52,43 +80,21 @@ def describe_next(project_root: Path) -> dict[str, Any]:
                 f"{lf.get('message_zh') or ''}\n\n"
                 "请选择下一步："
             ).strip(),
-            "options": [
-                {
-                    "label": "环境已修好，继续重试失败 Action",
-                    "value": "retry_after_environment_fix",
-                    "description": "acp retry-after-environment-fix --project <算子目录>",
-                },
-                {
-                    "label": "查看结构化失败信息",
-                    "value": "inspect_failure",
-                    "description": "acp inspect-failure --project <算子目录>",
-                },
-                {
-                    "label": "终止本次运行",
-                    "value": "abort_run",
-                    "description": "acp abort --project <算子目录>",
-                },
-            ],
+            "options": options,
         }
         human_required = {
             "required_actor": "maintainer",
-            "legal_actions": list(
-                lf.get("legal_recovery_actions")
-                or [
-                    "inspect_failure",
-                    "retry_after_environment_fix",
-                    "abort_run",
-                ]
-            ),
+            "legal_actions": legal,
             "message_zh": (
                 "自动执行已停止。必须用 question/AskQuestion 让用户选择："
-                "环境修好后重试 / 查看失败 / 终止运行。"
+                "查看失败 / 终止运行"
+                + (" / 环境修好后重试" if "retry_after_environment_fix" in legal else "")
+                + "。"
             ),
             "ask_question": ask,
         }
     elif status == "rework_required":
         allowed = []
-        action_id = str(lf.get("action_id") or "")
         reason_codes = []
         if lf.get("error_code"):
             reason_codes.append(str(lf["error_code"]))
@@ -97,18 +103,19 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         if not reason_codes:
             reason_codes = [str(lf.get("reason_code") or "REWORK_REQUIRED")]
         phase_rework = rework_targets(wid, phase, reason_code=str(lf.get("reason_code") or ""))
-        if action_id:
-            rework = [
-                {
-                    "action_id": action_id,
-                    "reason_codes": reason_codes,
-                    "allowed_outputs": [],
-                    "retry_command": f"acp run-action {action_id}",
-                    "phase_rework_targets": phase_rework,
-                }
-            ]
-        else:
-            rework = [{"phase": p, "reason_codes": reason_codes} for p in phase_rework]
+        action_ids = [str(aid) for aid in (lf.get("rework_action_ids") or []) if str(aid)]
+        if not action_ids and lf.get("action_id"):
+            action_ids = [str(lf["action_id"])]
+        rework = [
+            {
+                "action_id": aid,
+                "reason_codes": reason_codes,
+                "allowed_outputs": [],
+                "retry_command": f"acp run-action {aid}",
+                "phase_rework_targets": phase_rework,
+            }
+            for aid in action_ids
+        ]
     elif status == "waiting_for_confirmation":
         allowed = []
         rework = []

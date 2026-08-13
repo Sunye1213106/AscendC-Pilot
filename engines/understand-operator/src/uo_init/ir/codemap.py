@@ -11,6 +11,53 @@ from typing import Any, Iterable, Iterator
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import Relation, RelationKind
 
+
+def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, str, str], int]) -> None:
+    """Mint locatable Host BRANCH nodes for OP_CHECK / VALIDATION_ONLY controls."""
+    from uo_init.ids import branch_id
+
+    for node in getattr(host_ir, "controls", None) or []:
+        universe = str(getattr(node, "universe", "") or "")
+        snippet = str(getattr(node, "snippet", "") or "")
+        cond = str(getattr(node, "condition", "") or "")
+        haystack = f"{snippet} {cond}"
+        if universe != "VALIDATION_ONLY" and "OP_CHECK" not in haystack and "OPS_CHECK" not in haystack:
+            continue
+        file = str(getattr(node, "file", "") or "")
+        line = int(getattr(node, "line", 0) or 0)
+        if not file or line <= 0:
+            continue
+        fn_name = str(getattr(node, "function", "") or "")
+        guard = (cond or snippet).strip()[:120]
+        if not guard:
+            continue
+        okey = (file, fn_name or "_check", guard)
+        ordinal = ordinals.get(okey, 0)
+        ordinals[okey] = ordinal + 1
+        eid = branch_id(
+            side="host",
+            file=file,
+            function=fn_name or "_check",
+            guard=guard,
+            ordinal=ordinal,
+        )
+        cm.upsert(
+            EntityKind.BRANCH,
+            guard,
+            eid=eid,
+            attrs={
+                "layer": "host",
+                "predicate": guard,
+                "branch_kind": "host_check",
+                "function": fn_name,
+                "universe": universe or "VALIDATION_ONLY",
+            },
+            file=file,
+            line=line,
+            status="confirmed",
+        )
+
+
 # Legacy KB kind → CodeMap entity kind.
 _KB_KIND_MAP: dict[str, EntityKind] = {
     "Variable": EntityKind.VARIABLE,
@@ -377,7 +424,13 @@ class CodeMap:
             cm.architecture = architecture
 
         for name, summary in (getattr(host_ir, "summaries", None) or {}).items():
-            fn = cm.upsert(EntityKind.FUNCTION, str(name), attrs={"layer": "host"})
+            fn = cm.upsert(
+                EntityKind.FUNCTION,
+                str(name),
+                attrs={"layer": "host"},
+                file=str(getattr(summary, "file", "") or ""),
+                line=int(getattr(summary, "line", 0) or 0),
+            )
             for callee, _args in getattr(summary, "calls", None) or []:
                 other = cm.upsert(EntityKind.FUNCTION, str(callee), attrs={"layer": "host"})
                 cm.link(RelationKind.CALLS, fn.id, other.id)
@@ -388,26 +441,70 @@ class CodeMap:
                 var_e = cm.upsert(EntityKind.VARIABLE, str(r), attrs={"layer": "host"})
                 cm.link(RelationKind.READS, fn.id, var_e.id)
 
+        from uo_init.ids import branch_id
+
+        host_branch_ordinals: dict[tuple[str, str, str], int] = {}
         for ev in getattr(host_ir, "writes", None) or []:
             path = str(getattr(ev, "path", "") or "")
             if not path:
                 continue
+            ev_file = str(getattr(ev, "file", "") or "")
+            ev_line = int(getattr(ev, "line", 0) or 0)
+            fn_name = str(getattr(ev, "function", "") or "")
+            guards = list((ev.guards() if hasattr(ev, "guards") else []) or [])
+            field_attrs: dict[str, Any] = {
+                "layer": "host",
+                "rhs": getattr(ev, "rhs", ""),
+            }
+            if guards and (not ev_file or ev_line <= 0):
+                # Keep short guard text on the write site when we cannot mint a
+                # located Host BRANCH (span is required for test/dev locate).
+                field_attrs["guards"] = [str(g)[:120] for g in guards]
             field_e = cm.upsert(
                 EntityKind.FIELD,
                 path,
-                attrs={"layer": "host", "rhs": getattr(ev, "rhs", "")},
-                file=str(getattr(ev, "file", "") or ""),
-                line=int(getattr(ev, "line", 0) or 0),
+                attrs=field_attrs,
+                file=ev_file,
+                line=ev_line,
             )
-            fn_name = str(getattr(ev, "function", "") or "")
             if fn_name:
-                fn = cm.upsert(EntityKind.FUNCTION, fn_name, attrs={"layer": "host"})
+                fn = cm.upsert(
+                    EntityKind.FUNCTION,
+                    fn_name,
+                    attrs={"layer": "host"},
+                    file=ev_file,
+                    line=ev_line,
+                )
                 cm.link(RelationKind.WRITES, fn.id, field_e.id)
-            for guard in (ev.guards() if hasattr(ev, "guards") else []) or []:
+            if not ev_file or ev_line <= 0:
+                continue
+            for guard in guards:
+                gtext = str(guard or "").strip()
+                if not gtext:
+                    continue
+                okey = (ev_file, fn_name, gtext)
+                ordinal = host_branch_ordinals.get(okey, 0)
+                host_branch_ordinals[okey] = ordinal + 1
+                eid = branch_id(
+                    side="host",
+                    file=ev_file,
+                    function=fn_name,
+                    guard=gtext,
+                    ordinal=ordinal,
+                )
                 br = cm.upsert(
                     EntityKind.BRANCH,
-                    str(guard)[:120],
-                    attrs={"layer": "host", "predicate": str(guard)},
+                    gtext[:120],
+                    eid=eid,
+                    attrs={
+                        "layer": "host",
+                        "predicate": gtext,
+                        "branch_kind": "host_guard",
+                        "function": fn_name,
+                    },
+                    file=ev_file,
+                    line=ev_line,
+                    status="confirmed",
                 )
                 cm.link(RelationKind.GUARDED_BY, field_e.id, br.id)
                 cm.link(RelationKind.CONTROLS, br.id, field_e.id)
@@ -417,6 +514,8 @@ class CodeMap:
                 EntityKind.FUNCTION,
                 str(getattr(site, "caller", "") or ""),
                 attrs={"layer": "host"},
+                file=str(getattr(site, "file", "") or ""),
+                line=int(getattr(site, "line", 0) or 0),
             )
             callee = cm.upsert(
                 EntityKind.FUNCTION,
@@ -425,6 +524,8 @@ class CodeMap:
             )
             if caller.name and callee.name:
                 cm.link(RelationKind.CALLS, caller.id, callee.id)
+
+        _ingest_host_checks(cm, host_ir, host_branch_ordinals)
 
         cm.meta["host_backend"] = str(getattr(host_ir, "backend", "") or "")
         return cm
@@ -437,43 +538,74 @@ class CodeMap:
         op_name: str = "",
         architecture: str = "",
         codemap: "CodeMap | None" = None,
+        op_root: str = "",
     ) -> "CodeMap":
         cm = codemap or cls(op_name=op_name, architecture=architecture)
         if architecture:
             arch = cm.upsert(EntityKind.ARCH, architecture, attrs={"layer": "arch"})
         else:
             arch = None
-        kernel = cm.upsert(
-            EntityKind.KERNEL,
-            op_name or "kernel",
-            attrs={
-                "layer": "kernel",
-                "variants": list(getattr(kernel_ir, "variants", None) or []),
-            },
-        )
-        if arch is not None:
-            cm.link(RelationKind.AVAILABLE_ON, kernel.id, arch.id)
+
+        # Prefer already-verified KERNEL entities (source signature / tiling
+        # closure). Never mint a span-less dummy KERNEL from the op name alone.
+        verified_kernels = [
+            e
+            for e in cm.by_kind(EntityKind.KERNEL)
+            if e.attrs.get("source_signature")
+            or e.attrs.get("source_definition")
+            or str(e.attrs.get("provenance") or "").startswith("source_kernel")
+            or (e.file and int(e.line_start or 0) > 0)
+        ]
+        variants = list(getattr(kernel_ir, "variants", None) or [])
+        for kernel in verified_kernels:
+            if variants:
+                existing = list(kernel.attrs.get("variants") or [])
+                for v in variants:
+                    if v not in existing:
+                        existing.append(v)
+                kernel.attrs["variants"] = existing
+            if arch is not None:
+                cm.link(RelationKind.AVAILABLE_ON, kernel.id, arch.id)
+
+        mint = getattr(kernel_ir, "mint_ids", None)
+        if callable(mint):
+            mint(op_root or "")
 
         for br in getattr(kernel_ir, "branches", None) or []:
+            bid = str(getattr(br, "id", "") or "").strip()
             cond = str(getattr(br, "condition", "") or "")
+            br_file = str(getattr(br, "file", "") or "")
+            br_line = int(getattr(br, "line", 0) or 0)
+            if not bid or not br_file or br_line <= 0:
+                continue
             branch = cm.upsert(
                 EntityKind.BRANCH,
-                cond[:120] or str(getattr(br, "id", "") or "branch"),
-                eid=str(getattr(br, "id", "") or "") or None,
+                cond[:120] or bid,
+                eid=bid,
                 attrs={
                     "layer": "kernel",
                     "condition": cond,
                     "dimensions": list(getattr(br, "dimensions", None) or []),
                     "variants": list(getattr(br, "variants", None) or []),
+                    "function": str(getattr(br, "function", "") or ""),
                 },
-                file=str(getattr(br, "file", "") or ""),
-                line=int(getattr(br, "line", 0) or 0),
+                file=br_file,
+                line=br_line,
+                status="confirmed",
             )
-            cm.link(RelationKind.CONTROLS, branch.id, kernel.id)
+            for kernel in verified_kernels:
+                cm.link(RelationKind.CONTROLS, branch.id, kernel.id)
             for dim in getattr(br, "dimensions", None) or []:
                 key = cm.upsert(EntityKind.TILING_KEY, str(dim), attrs={"layer": "tiling"})
                 cm.link(RelationKind.SELECTS, key.id, branch.id)
-                cm.link(RelationKind.SELECTS, key.id, kernel.id)
+                for kernel in verified_kernels:
+                    cm.link(
+                        RelationKind.SELECTS,
+                        key.id,
+                        kernel.id,
+                        attrs={"provenance": "kernel_branch_dimension"},
+                    )
+        cm.meta["kernel_ir_variants"] = variants
         return cm
 
     @classmethod

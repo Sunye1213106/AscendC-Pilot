@@ -12,6 +12,10 @@ UO 能够说明 TilingKey 如何定义、Host 中哪些状态参与构造、Tili
 
 因此 TG 不把“静态可行”或“模型认为可达”当作覆盖结果，而是把 CodeMap 目标空间变成可运行 testcase，再经 Host Replay 验证。
 
+### 场景 overlay 与 harness
+
+日常精度/性能走 `scenario_targeted`：规划目标 `T` 是已确认的 ScenarioSet，而不是全部声明 Key。构造从测试仓语料检索并变异少量 CSV，由 `TestHarnessAdapter` 跑 golden 或 profiling，收据回写 CE。`tilingkey_full_coverage` 证书与场景证书分 schema，默认全覆盖路径不变。
+
 整体过程为**构造—回放—分析**的轮次循环：
 
 ```text
@@ -560,7 +564,17 @@ new R ∩ old E ≠ ∅
 
 
 
-## 8. L2：TilingKey 覆盖
+## 8. L2：TilingKey 覆盖（概念层）
+
+两套「L*」不要混：
+
+| 名字 | 指什么 |
+| --- | --- |
+| **计划目录默认 L0** | CLI `/tg-plan` `/tg-solve` 的 `--level` 省略时为 **L0**；义务写在 `.ascendc-pilot/<arch>/tg/plan/levels/L0/`。这是磁盘档位，不是「已经在做 L2 闭合」。 |
+| **概念层 L2** | 本节：TilingKey 覆盖闭环 `D = (R ∩ D) ∪ E`。 |
+| **概念层 L3** | 下一节：同一 key 下的 TilingData / runtime branch。 |
+
+ST 设计里的 L0/L1/L2（threshold / functional / abnormal）也不是 TG 的 level 名。要把概念 L2 写进计划目录，需显式 `--level L2`，不要把默认 `plan/levels/L0/` 当成全量 TilingKey 闭合已经完成。
 
 TG 的第一层主要目标是 TilingKey closure。闭合不是“先搜完再证明”，而是由第 5–7 节的轮次循环逐步完成：每轮扩大 R，并在适当时机把可证明不可达的目标推进 E。
 
@@ -835,7 +849,7 @@ TG 的主要产物位于：
 | ----------- | ------------------------------------- |
 | `init/`     | UO identity、fingerprint 和初始化结果        |
 | `contract/` | TilingKey coverage contract           |
-| `plan/`     | coverage obligations 和目标范围            |
+| `plan/`     | coverage obligations 和目标范围；按 `--level` 落在 `plan/levels/<L>/`，**默认 L0**（概念层 TilingKey 闭合是 L2，见第 8 节） |
 | `replay/`   | Host Replay 相关产物                      |
 | `closure/`  | R、E、open、residual、proof 和 certificate |
 

@@ -1,13 +1,13 @@
 id: kb-query
 version: 1
 name_zh: KB 查询
-description: 对定稿或本 run UO/TG KB 做结构化查询与展开。
+description: 对已 commit 的 arch 作用域 .uo CodeMap 做结构化查询与展开。
 applies_when:
-  - 需要从 KB 回答问题或定位节点
-  - TG 需要只读引用 UO KB
-  - Code Review / Init Audit 需要 KB 证据
+  - 需要从 CodeMap 回答问题或定位节点
+  - TG 需要只读引用 UO 产品
+  - Code Review / Init Audit 需要 CodeMap 证据
 requires:
-  inputs: [question_or_pattern, kb_root]
+  inputs: [question_or_pattern, project_root]
   tools: [uo_kb_query, read_yaml]
   context: [uo_root, tg_root, kb_ready]
 produces: [kb_hits, kb_refs, gaps]

@@ -101,7 +101,20 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--repo", type=Path, default=REPO)
     ap.add_argument("--skill", default="operator-analysis")
+    ap.add_argument(
+        "--live",
+        action="store_true",
+        help="Run live cases (skips without model/product; never fakes pass@k)",
+    )
     args = ap.parse_args(argv)
+    if args.live:
+        from evals.live.run import evaluate_live
+
+        doc = evaluate_live(args.repo, skill=args.skill)
+        print(json.dumps(doc, ensure_ascii=False, indent=2))
+        if doc.get("skipped"):
+            return 0
+        return 0 if doc.get("ok") else 1
     skill_dir = args.repo / "evals" / "skills" / args.skill
     doc = evaluate_skill(args.repo, skill_dir)
     print(json.dumps(doc, ensure_ascii=False, indent=2))

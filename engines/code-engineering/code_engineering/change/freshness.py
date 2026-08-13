@@ -56,7 +56,7 @@ def check_freshness(
 
     if capture:
         if not revision:
-            mode, reason = "lexical", "uo_source_revision_missing"
+            mode, reason = "stale", "uo_source_revision_missing"
         elif head_sha and revision == head_sha:
             if base_sha == head_sha and diff_present:
                 mode, reason = "lexical", "working_tree_change_after_uo"

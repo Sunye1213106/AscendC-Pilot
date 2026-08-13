@@ -5,6 +5,7 @@ description: >
   Host replay（R）与源码不可达证明（E）闭环，直到 T=(R∩T)∪E。
   Solve 按轮循环：构造→Replay→Round Analysis；预期增长则轮内对 reject
   证引理，非预期增长则基于已发现 key + 源码定向再构造。
+  日常精度/性能 overlay：T 为 ScenarioSet，针对性构造少量 CSV，禁止笛卡尔全量 legal key。
 ---
 
 # Testcase Generation
@@ -23,11 +24,14 @@ T = (R ∩ T) ∪ E
 R ∩ E = ∅
 ```
 
+Solve 闭合的是计划目标 **T**。全覆盖证书还要求 `D = (R ∩ D) ∪ E`（当 `T=D` 时两者重合）。`scenario_targeted` 的 T 是 ScenarioSet，不会把 T 改写成 D。
+
 ## 三阶段方法（认知，非编排）
 
 1. **Init**：契约清楚、绑定有证据；权威是 `.uo`。细节：`references/construction-contract.md`、`references/construction-binding.md`。
 2. **Plan**：只冻结 T，不构造 case / 不跑 Host / 不证明不可达。默认 `T=D`。细节：`references/planning.md`。
 3. **Solve / Closure**：oracle → rebuild R → **轮次循环**（构造/Replay → Round Analysis → 轮内引理或定向构造）→ certify。
+   Overlay `scenario_targeted` 冻结的是 ScenarioSet（精度/性能场景），不是 `T=D`。全覆盖 overlay 仍是 `tilingkey_full_coverage`。
 
 ## 核心循环（每轮立刻分析）
 
@@ -71,5 +75,11 @@ Plan `level=L3` / `branch_outcome_coverage`：TD dump + `branch_eval` 增长 R�
 | Init 契约 | `references/construction-contract.md` |
 | Init 绑定 | `references/construction-binding.md` |
 | 踩坑 | `references/gotchas.md` |
+| 场景 overlay（日常精度/性能） | `references/targeted-construct.md`、`references/harness-oracle.md` |
+| 精度 knobs | `references/precision-scenarios.md` |
+| 性能 knobs | `references/perf-scenarios.md` |
+| 黑盒因子意图 | `references/blackbox-factors.md` |
+| 白盒路径 | `references/whitebox-paths.md` |
+| 针对性构造 METHOD | `capabilities/tg-targeted-construct/METHOD.md` |
 
 源码引理细节见独立 Skill：`source-proof`。

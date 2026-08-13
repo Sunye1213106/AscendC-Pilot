@@ -55,6 +55,12 @@ def test_start_with_explicit_architecture_when_multiple_archs(tmp_path: Path, ca
     state = load_state(tmp_path)
     assert state is not None
     assert state["architecture"] == "arch22"
+    import json
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get("ok") is True
+    assert payload.get("fresh_start") is True
+    assert payload.get("run_id")
 
 
 def test_resolve_start_architecture_sole_arch_auto_selects(tmp_path: Path) -> None:
@@ -76,6 +82,63 @@ def test_reinit_requires_architecture_when_multiple_archs(tmp_path: Path) -> Non
     assert result.get("error") == "ARCHITECTURE_NEEDS_DECISION"
     # Must not wipe / restart before architecture is chosen.
     assert load_state(tmp_path)["architecture"] == "arch35"
+
+
+def test_answer_then_start_decision_reinit(tmp_path: Path, capsys) -> None:
+    """ses_0072: after 删除重开, `acp start --decision reinit` must actually start."""
+    import json
+
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_kernel" / "arch35").mkdir(parents=True)
+    assert (
+        acp_main(
+            ["start", "uo-init", "--project", str(tmp_path), "--architecture", "arch35"]
+        )
+        == 0
+    )
+    old_run = load_state(tmp_path)["run_id"]
+    capsys.readouterr()
+
+    code = acp_main(
+        ["start", "uo-init", "--project", str(tmp_path), "--architecture", "arch35"]
+    )
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get("error") == "EXISTING_RUN_NEEDS_DECISION"
+    opts = payload.get("ask_question", {}).get("options") or []
+    assert any(o.get("value") == "reinit" for o in opts)
+    rid = payload["human_interaction_request"]["request_id"]
+
+    assert (
+        acp_main(
+            ["answer", "--project", str(tmp_path), "--request-id", rid, "--value", "删除重开"]
+        )
+        == 0
+    )
+    from ascendc_pilot.human_interaction import pending_path
+
+    pending = yaml.safe_load(pending_path(tmp_path).read_text(encoding="utf-8"))
+    assert pending.get("status") == "answered"
+    assert pending.get("answered_value") == "reinit"
+    capsys.readouterr()
+
+    code = acp_main(
+        [
+            "start",
+            "uo-init",
+            "--project",
+            str(tmp_path),
+            "--architecture",
+            "arch35",
+            "--decision",
+            "reinit",
+        ]
+    )
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("ok") is True
+    assert out.get("fresh_start") is True
+    assert load_state(tmp_path)["run_id"] != old_run
 
 
 def test_normalize_decision_labels() -> None:

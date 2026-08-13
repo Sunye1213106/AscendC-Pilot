@@ -1,7 +1,7 @@
 # TG Closure — Gotchas
 
 - **每轮立刻分析**：Replay 后马上看 `growth_match`；expected → 轮内 lemma 消化 reject，unexpected → 用已发现 R + 源码定向构造。禁止“先搜完再证明”。
-- **闭合定义是集合等式**：`T = (R∩T) ∪ E`；“看起来覆盖了”不是 PASS。
+- **闭合定义是集合等式**：Solve 闭合 `T = (R∩T) ∪ E`；全覆盖证书额外要求 `D = (R∩D) ∪ E`。overlay `scenario_targeted` 的 T 是 ScenarioSet，不是 `T=D`。
 - **R 只来自真实 Host witness**（或 L3 经真实 same-key replay + TD/STATE observation + branch_eval 的 outcome）；solver SAT alone 不能进 R。
 - **L3 off-key 不计覆盖**：候选 replay 后实际 TilingKey 与目标 key 不一致时，只记录 rewrite/诊断证据，不能结算 TD 或 Kernel branch obligation。
 - **candidate target / set-cover claim 不是 runtime evidence**：`solver_goals`、`covers`、静态 producer-cone 命中都只能指导搜索，不能把 obligation 标为 `COVERED`。

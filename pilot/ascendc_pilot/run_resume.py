@@ -213,11 +213,9 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
         "investigate": "调查 residual",
         "resolve_gaps": "缺口补齐（debug）",
         "apply_gap_patch": "缺口补丁应用（debug）",
-        "export_kb": "KB 导出",
         "export_adapter_pack": "适配包导出",
         "export_tg_host_view": "TG Host 视图",
         "export_integrity": "完整性检查",
-        "build_index": "KB 索引库",
         "kb_review": "KB 审查",
         # tg / ce
         "kb_check": "UO KB 就绪",
@@ -666,25 +664,28 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
     has_existing_run = same_workflow_running and cross is None
     ask_opts_src = ask_options_for(workflow_id)
 
+    def _ask_opt(src: dict[str, str]) -> dict[str, str]:
+        # Host AskQuestion UI returns the label; ACP receipts must store canonical value.
+        return {
+            "label": src["label"],
+            "description": src["description"],
+            "value": src["value"],
+        }
+
     if has_existing_run:
-        ask_opts = [{"label": o["label"], "description": o["description"]} for o in ask_opts_src]
+        ask_opts = [_ask_opt(o) for o in ask_opts_src]
         question_body = (
             f"检测到算子目录已有未完成的 {wf_label} run。请选择：继续上次，"
             f"或按策略删除后重新 start。\n\n" + "\n".join(lines)
         )
         header = f"发现未完成的 {wf_label}"
     elif cross:
-        ask_opts = [{"label": o["label"], "description": o["description"]} for o in ask_opts_src]
+        ask_opts = [_ask_opt(o) for o in ask_opts_src]
         question_body = cross["message_zh"] + "\n\n" + "\n".join(lines)
         header = f"工作流冲突（请求 {wf_label}）"
         has_existing_run = True
     elif workflow_id == "uo-init" and has_uo and (not state or state_wid in {"", "uo-init"}):
-        ask_opts = [
-            {
-                "label": "删除重开",
-                "description": ask_opts_src[1]["description"],
-            }
-        ]
+        ask_opts = [_ask_opt(ask_opts_src[1])]
         question_body = (
             "检测到残留 UO 产物，但无活动 run。请确认是否删除后重新 init。\n\n"
             + "\n".join(lines)
@@ -692,12 +693,7 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         header = f"发现 UO 残留（{wf_label}）"
         has_existing_run = True
     else:
-        ask_opts = [
-            {
-                "label": "删除重开",
-                "description": ask_opts_src[1]["description"],
-            }
-        ]
+        ask_opts = [_ask_opt(ask_opts_src[1])]
         question_body = (
             f"无可继续的活动 {wf_label} run。请确认是否按策略删除后重新 start。\n\n"
             + "\n".join(lines)
@@ -772,6 +768,7 @@ def architecture_decision_payload(
     ask_opts = [
         {
             "label": arch,
+            "value": arch,
             "description": f"为 {arch} 建立/继续本工作流产物",
         }
         for arch in arches
@@ -971,6 +968,7 @@ def apply_resume_decision(
         payload = attach_todo(
             {
                 **state,
+                "ok": True,
                 "resumed": True,
                 "decision": "continue",
                 "resume_scrub": scrub,

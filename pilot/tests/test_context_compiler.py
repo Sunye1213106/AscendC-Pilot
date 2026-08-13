@@ -10,17 +10,63 @@ from ascendc_pilot.context import build_context_pack, get_profile, maybe_compile
 from ascendc_pilot.context.profiles import PROFILES
 from ascendc_pilot.paths import context_root, ensure_agent_layout
 from ascendc_pilot.state import start_workflow
+from ascendc_pilot.workflows.specs import WORKFLOWS as SPEC_WORKFLOWS
 
 
 REPO = Path(__file__).resolve().parents[2]
 
+_REQUIRED_PROFILES = (
+    "uo-investigate-investigate",
+    "uo-query-kb-lookup",
+    "tg-solve-lemma-mine",
+    "tg-solve-lemma-review",
+    "tg-solve-closure-audit",
+    "ce-review-code-review",
+    "ce-intent-feature-decompose",
+    "ce-impact-impact-audit",
+    "ce-impact-scenario-knobs",
+    "ce-verify-exclusion-review",
+)
+
+_LLM_ROLES = {
+    "producer",
+    "referee",
+    "readonly_analyst",
+    "readonly_reviewer",
+    "controller",
+}
+_LLM_MODES = {"subagent", "primary_interactive"}
+
 
 def test_high_value_profiles_registered() -> None:
-    assert "uo-init-resolve" in PROFILES
-    assert "tg-solve-lemma-mine" in PROFILES
-    assert "ce-review-code-review" in PROFILES
+    assert "uo-init-resolve" not in PROFILES
+    assert get_profile("uo-init-resolve") is None
     assert get_profile("missing") is None
-    assert get_profile("uo-init-resolve") is not None
+    for pid in _REQUIRED_PROFILES:
+        assert pid in PROFILES, pid
+        assert get_profile(pid) is not None
+        assert get_profile(pid).id == pid
+
+
+def test_profile_reference_files_exist() -> None:
+    for pid, prof in PROFILES.items():
+        for rel in prof.references:
+            assert (REPO / rel).is_file(), f"{pid}: missing {rel}"
+
+
+def test_llm_actions_declare_registered_profiles() -> None:
+    for wid, meta in SPEC_WORKFLOWS.items():
+        for action in meta.get("actions") or []:
+            aid = action["id"]
+            pid = action.get("context_profile_id")
+            role = str(action.get("role_id") or "")
+            mode = str(action.get("execution_mode") or "")
+            llm = role in _LLM_ROLES or mode in _LLM_MODES
+            if llm:
+                assert pid, f"{wid}/{aid}: LLM Action missing context_profile_id"
+                assert pid in PROFILES, f"{wid}/{aid}: unregistered profile {pid}"
+            else:
+                assert not pid, f"{wid}/{aid}: deterministic Action must omit context_profile_id, got {pid!r}"
 
 
 def test_maybe_compile_returns_none_without_profile(tmp_path: Path) -> None:
@@ -35,27 +81,30 @@ def test_compile_slice_writes_file_even_without_uo(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init", intent="test", op_name="toy", architecture="arch0")
     slice_doc = maybe_compile_slice(
         tmp_path,
-        context_profile_id="uo-init-resolve",
-        action_id="resolve",
-        workflow_id="uo-init",
+        context_profile_id="uo-investigate-investigate",
+        action_id="investigate",
+        workflow_id="uo-investigate",
         repo_root=REPO,
     )
     assert slice_doc is not None
-    assert slice_doc["profile_id"] == "uo-init-resolve"
+    assert slice_doc["profile_id"] == "uo-investigate-investigate"
     assert "token_estimate" in slice_doc
     assert slice_doc["budget_ok"] is True
     assert slice_doc["token_estimate"] <= slice_doc["token_budget"]
     assert isinstance(slice_doc["budget_receipts"], list)
     assert Path(slice_doc["path"]).is_file()
     loaded = yaml.safe_load(Path(slice_doc["path"]).read_text(encoding="utf-8"))
-    assert loaded["task"]["action_id"] == "resolve"
+    assert loaded["task"]["action_id"] == "investigate"
     assert "excluded" in loaded
     assert loaded["budget_ok"] is True
-    # With repo_root=REPO, profile references must resolve — fail-closed, no silent missing.
     assert loaded.get("ok") is True
     assert not loaded.get("missing_references")
     assert isinstance(loaded["references"], list)
-    assert all(r.get("status") == "ok" for r in loaded["references"])
+    assert loaded["references"], "expected path-list references"
+    for row in loaded["references"]:
+        assert row.get("status") == "ok"
+        assert row.get("path")
+        assert "text" not in row, "slice must not embed reference bodies"
 
 
 def test_compile_slice_fails_closed_on_missing_refs(tmp_path: Path, monkeypatch) -> None:
@@ -69,9 +118,9 @@ def test_compile_slice_fails_closed_on_missing_refs(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(comp, "_load_references", _fake_load)
     slice_doc = maybe_compile_slice(
         tmp_path,
-        context_profile_id="uo-init-resolve",
-        action_id="resolve",
-        workflow_id="uo-init",
+        context_profile_id="uo-investigate-investigate",
+        action_id="investigate",
+        workflow_id="uo-investigate",
         repo_root=REPO,
     )
     assert slice_doc is not None
@@ -90,3 +139,20 @@ def test_legacy_pack_unchanged_shape(tmp_path: Path) -> None:
     assert (context_root(tmp_path) / "context_pack.yaml").is_file()
     # Pack must not grow a required slice key (backward compatible).
     assert "context_slice" not in pack
+
+
+def test_ce_review_seeds_from_arch_scoped_impact_slice(tmp_path: Path) -> None:
+    from ascendc_pilot.context.compiler import _seed_ids
+    from ascendc_pilot.paths import agent_root
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "ce-review", architecture="arch35")
+    slice_path = agent_root(tmp_path, "arch35") / "ce" / "impact" / "impact_slice.yaml"
+    slice_path.parent.mkdir(parents=True, exist_ok=True)
+    slice_path.write_text(
+        yaml.safe_dump({"files": ["op_host/tiling.cpp"], "affected_keys": [12]}),
+        encoding="utf-8",
+    )
+    seeds = _seed_ids(tmp_path, "impact_files", limit=20)
+    assert "op_host/tiling.cpp" in seeds
+    assert "12" in seeds

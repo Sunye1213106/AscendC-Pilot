@@ -6,7 +6,8 @@
 
 - [FAG runs](fag_test/)
 - [Case studies](case-studies/)
-- [Benchmarks](benchmarks/)
+- [Benchmarks](benchmarks/)（含 [打开 Clang API 的 FAG 对照](benchmarks/uo-fag-arch35-clang-api.md)）
+- 当前冷启动见 [../benchmark.md](../benchmark.md)。泛化抽检（WIP，不当质量入口）见 [../test/](../test/README.md)
 
 ## 规则
 

@@ -182,3 +182,48 @@ def test_host_context_mjs_contract_executes() -> None:
     )
     assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
     assert "host-context.mjs contract OK" in (proc.stdout or "")
+
+
+def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
+    """OpenCode Truncate.output crashes if plugin execute returns a bare object."""
+    driver = REPO / "opencode-plugin" / "pilot-driver.ts"
+    text = driver.read_text(encoding="utf-8")
+    assert "toPluginToolResult" in text
+    assert "compactPilotRunPayload" in text
+    assert "compactPilotRunPayload(result)" in text
+    assert "return toPluginToolResult(result)" in text
+    assert "return runPilotDriver(" not in text
+    assert '"uo-update": ["prepare"' not in text
+    assert "JSON.stringify(rec, null, 2)" not in text
+    assert "spawnSync" not in text
+    assert "createProgressReporter" in text
+    assert "isHumanDecision" in text
+    assert "isAcpStartSuccess" in text
+    assert "normalizeResumeDecision" in text
+    assert "renderPilotProgressBar" in text
+    assert "invokeToolMetadata" in text
+    assert "publishVisibleProgress" in text
+    assert "publishToolRow" in text
+    assert "withProgressArg" in text
+    assert "patchRunningToolPart" in text
+    assert "clientBaseUrl" in text
+    assert "/session/" in text
+    assert "showToast" in text
+    # EXISTING_RUN_NEEDS_DECISION includes run_id; must not treat run_id as start-ok.
+    assert "!started.ok && !started.run_id" not in text
+    # Successful start historically omitted ok:true — must not use !started.ok alone.
+    assert "isAcpStartSuccess(started)" in text
+
+
+def test_plugin_pending_lock_does_not_block_resume_start() -> None:
+    """ses_0072: after acp answer, stale pending must not block start --decision."""
+    plug = REPO / "opencode-plugin" / "ascendc-pilot.ts"
+    text = plug.read_text(encoding="utf-8")
+    assert 'status !== "pending"' in text
+    assert "isAcpResumeStartCommand" in text
+    assert "extractProjectFromAcpCommand" in text
+    assert "pendingByProject.delete" in text
+    assert "isPilotDriver" in text
+    assert "applyForceNew" in (REPO / "opencode-plugin" / "pilot-driver.ts").read_text(
+        encoding="utf-8"
+    )

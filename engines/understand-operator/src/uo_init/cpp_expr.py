@@ -26,6 +26,29 @@ TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 
+_NAMED_CASTS = ("static_cast", "reinterpret_cast", "const_cast", "dynamic_cast")
+_INT_CAST_CALLEES = frozenset(
+    {
+        "bool",
+        "char",
+        "short",
+        "int",
+        "long",
+        "float",
+        "double",
+        "unsigned",
+        "size_t",
+        "int8_t",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+    }
+)
+
 BIN_PRECEDENCE = {
     "||": 1,
     "&&": 2,
@@ -174,14 +197,14 @@ class Parser:
         if t.text in ("!", "-", "~", "+", "&", "*"):
             self.next()
             return Un(t.text, self.parse_unary())
-        if t.kind == "id" and t.text.startswith("static_cast"):
+        if t.kind == "id" and any(t.text.startswith(name) for name in _NAMED_CASTS):
             self.next()
             self._skip_template_args()
             if self.accept("("):
                 inner = self.parse_ternary()
                 self.accept(")")
                 return inner
-            return Unknown("malformed_static_cast")
+            return Unknown("malformed_named_cast")
         return self.parse_postfix()
 
     def _template_args_end(self) -> int | None:
@@ -239,7 +262,10 @@ class Parser:
                 self.next()
                 args = self.parse_args()
                 fname = e.symbol if isinstance(e, Ref) else "?"
-                e = Call(fname, tuple(args))
+                if fname in _INT_CAST_CALLEES and len(args) == 1:
+                    e = args[0]
+                else:
+                    e = Call(fname, tuple(args))
                 continue
             if t.text == "[":
                 self.next()

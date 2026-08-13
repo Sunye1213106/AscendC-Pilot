@@ -19,6 +19,7 @@ from typing import Any, Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.source_layout import selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CONSTEXPR_RE = re.compile(
@@ -105,19 +106,7 @@ def _files(path: Path, *, recursive: bool = True) -> list[Path]:
 
 
 def _kernel_files(root: Path, architecture: str) -> list[Path]:
-    kernel_root = root / "op_kernel"
-    out = list(_files(kernel_root / architecture))
-    for path in _files(kernel_root, recursive=False):
-        text = _read(path)
-        if "__aicore__" in text or f'"{architecture}/' in text or "GET_TILING_DATA_WITH_STRUCT" in text:
-            out.append(path)
-    seen: set[Path] = set()
-    result: list[Path] = []
-    for path in out:
-        if path not in seen:
-            seen.add(path)
-            result.append(path)
-    return result
+    return selected_kernel_files(root, architecture)
 
 
 def _read(path: Path) -> str:

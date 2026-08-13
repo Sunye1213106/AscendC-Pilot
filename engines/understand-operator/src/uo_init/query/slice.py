@@ -39,12 +39,17 @@ def _tier(status: str, provenance: str) -> str:
 
 
 def _row(value: Any) -> dict[str, Any]:
-    row = value.to_dict()
-    row["evidence_tier"] = _tier(
+    from uo_init.query.evidence import project_entity, project_relation
+
+    if hasattr(value, "src") and hasattr(value, "dst"):
+        hit = project_relation(value)
+    else:
+        hit = project_entity(value, require_span_for_branch=False) or value.to_dict()
+    hit["evidence_tier"] = _tier(
         str(getattr(value, "status", "") or ""),
         str(getattr(value, "attrs", {}).get("provenance") or ""),
     )
-    return row
+    return hit
 
 
 def _slice(
@@ -60,6 +65,10 @@ def _slice(
     max_depth = max(0, int(depth))
     cap = max(1, int(budget))
     wanted = {str(kind.value if hasattr(kind, "value") else kind).upper() for kind in (edge_kinds or ())}
+    if not wanted:
+        from uo_init.query.evidence import USEFUL_EDGE_KINDS
+
+        wanted = set(USEFUL_EDGE_KINDS)
 
     outgoing: dict[str, list[Any]] = defaultdict(list)
     for rel in codemap.relations.values():

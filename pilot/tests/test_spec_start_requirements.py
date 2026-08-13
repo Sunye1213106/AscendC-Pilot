@@ -25,6 +25,9 @@ def test_workflows_needing_architecture_are_uo_builders() -> None:
         "tg-plan",
         "tg-solve",
         "ce-review",
+        "ce-impact",
+        "ce-intent",
+        "ce-verify",
         "uo-query",
         "uo-investigate",
     }

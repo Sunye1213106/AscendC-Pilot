@@ -668,32 +668,23 @@ def scan_host_setters(
 
 def discover_tiling_data_headers(spec) -> list[Path]:
     """All tiling-data headers for this op (arch-scoped first, then shared)."""
+    from uo_init.source_layout import selected_tiling_headers
+
     hits: list[Path] = []
     seen: set[Path] = set()
     primary = getattr(spec, "tiling_data_header", None)
     if primary and Path(primary).is_file():
         hits.append(Path(primary))
         seen.add(Path(primary).resolve())
-    kernel_root = getattr(spec, "kernel_root", None)
+    op_dir = getattr(spec, "op_dir", None)
     arch_dir = getattr(spec, "arch_dir", None) or ""
-    host_root = getattr(spec, "host_root", None)
-    roots: list[Path] = []
-    if kernel_root:
-        roots.append(Path(kernel_root) / arch_dir)
-        roots.append(Path(kernel_root))
-    if host_root:
-        roots.append(Path(host_root) / arch_dir)
-        roots.append(Path(host_root))
-    for root in roots:
-        if not root.is_dir():
-            continue
-        for pattern in ("*tiling_data*.h", "*_tiling.h", "*tiling_data*.hpp"):
-            for p in sorted(root.glob(pattern)):
-                key = p.resolve()
-                if key in seen:
-                    continue
-                seen.add(key)
-                hits.append(p)
+    if op_dir:
+        for p in selected_tiling_headers(Path(op_dir), arch_dir):
+            key = p.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append(p)
     return hits
 
 

@@ -21,5 +21,5 @@ Closure 只能由 Replay confirmed 或经审查的 exclusion proof 正式关闭�
 </instructions>
 
 <output>
-返回 `PASS` 或 `REJECT`，并列出关键理由。
+返回 `PASS` 或 `REJECT`，并列出关键理由。写入 `runs/<RUN_ID>/actions/closure_audit/review.yaml`。
 </output>

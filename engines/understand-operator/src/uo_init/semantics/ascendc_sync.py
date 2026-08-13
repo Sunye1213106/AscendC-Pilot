@@ -1,10 +1,18 @@
 # -*- coding: utf-8 -*-
 """AscendC / CANN synchronization catalog for Kernel Root Trace.
 
-Terminal sync API classification and direct template/arg evidence only.
-Does **not** infer engine scheduling, producer/consumer pairing, or
-happens-before. Project wrapper methods are not auto-jumped to roots by name;
-source CALLS (or an explicit external framework bridge) must close the path.
+Two CANN contracts, kept separate:
+
+- **Flag sync** (SetFlag/WaitFlag, CrossCore*, IB*): user-visible event identity.
+  UO records SIGNALS/AWAITS and identity-level pair appearance. It does **not**
+  infer happens-before, engine scheduling, or which call-site waits on which.
+- **TQue** (EnQue/DeQue/AllocTensor/FreeTensor): handshake lives inside CANN
+  ``TQueBind`` (EnQue → SetFlag, DeQue → WaitFlag). No user event identity;
+  these APIs stay outside the flag pair check.
+- **TPipe** (InitBuffer, FetchEventID, GetTPipePtr): pipe/allocator, not TQue.
+
+Project wrapper methods are not auto-jumped to roots by name; source CALLS
+(or an explicit external framework bridge) must close the path.
 """
 
 from __future__ import annotations
@@ -79,6 +87,64 @@ SYNC_MECHANISM: dict[str, str] = {
     "Lock": "mutex",
     "Unlock": "mutex",
 }
+
+# User-level flag APIs that must appear as signal + wait on the same identity.
+# Mate is the other side of the family, not a happens-before edge.
+FLAG_PAIR_MATE: dict[str, str] = {
+    "SetFlag": "WaitFlag",
+    "WaitFlag": "SetFlag",
+    "CrossCoreSetFlag": "CrossCoreWaitFlag",
+    "CrossCoreWaitFlag": "CrossCoreSetFlag",
+    "IBSet": "IBWait",
+    "IBWait": "IBSet",
+}
+FLAG_SYNC_CALLEES: frozenset[str] = frozenset(FLAG_PAIR_MATE)
+
+# TQue programming model (queue.yaml). CANN encapsulates the pipe handshake;
+# these names must not enter FLAG_SYNC pairing or SIGNALS/AWAITS.
+TQUE_CALLEES: frozenset[str] = frozenset(
+    {
+        "EnQue",
+        "DeQue",
+        "AllocTensor",
+        "FreeTensor",
+    }
+)
+
+# TPipe (kernel_tpipe.h / kernel_common.h). InitBuffer binds a TQue/TBuf; not a TQue method.
+TPIPE_CALLEES: frozenset[str] = frozenset(
+    {
+        "InitBuffer",
+        "FetchEventID",
+        "GetTPipePtr",
+    }
+)
+
+
+def _short_callee(name: str) -> str:
+    return str(name or "").split("::")[-1]
+
+
+def is_flag_sync(name: str) -> bool:
+    return _short_callee(name) in FLAG_SYNC_CALLEES
+
+
+def is_tque_callee(name: str) -> bool:
+    return _short_callee(name) in TQUE_CALLEES
+
+
+def is_tpipe_callee(name: str) -> bool:
+    return _short_callee(name) in TPIPE_CALLEES
+
+
+def flag_pair_key(identity: str, sync: dict[str, Any] | None = None) -> tuple[str, str, str]:
+    """Group key for identity-level pair appearance (mechanism, id, HardEvent)."""
+    sync = sync or {}
+    return (
+        str(sync.get("mechanism") or ""),
+        str(identity or "").strip(),
+        str(sync.get("event") or ""),
+    )
 
 
 def parse_hard_event(text: str) -> tuple[str, str, str] | None:

@@ -58,6 +58,28 @@ MUTEX_BUFFER_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
     "GetReused": ("LocalTensor", "STORAGE"),
 }
 
+# TQue / TQueBind methods whose bodies live in CANN (kernel_tquebind_impl.h).
+# EnQue internally SetFlag, DeQue internally WaitFlag — keep the TQue root;
+# do not unfold to user-level flag pairing. InitBuffer is TPipe, not TQue.
+TQUE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
+    "EnQue": ("EnQue", "MEMORY_API"),
+    "DeQue": ("DeQue", "MEMORY_API"),
+    "AllocTensor": ("AllocTensor", "MEMORY_API"),
+    "FreeTensor": ("FreeTensor", "MEMORY_API"),
+}
+
+# TPipe / TBufPool methods (kernel_tpipe.h). Receiver is the pipe, TQue/TBuf is an argument.
+TPIPE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
+    "InitBuffer": ("InitBuffer", "MEMORY_API"),
+    "FetchEventID": ("FetchEventID", "SYNC"),
+}
+
+# GlobalTensor / LocalTensor methods (kernel_tensor.h). Unique CANN spellings.
+TENSOR_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
+    "SetGlobalBuffer": ("SetGlobalBuffer", "MEMORY_API"),
+    "GetPhyAddr": ("GetPhyAddr", "MEMORY_API"),
+}
+
 ASCENDC_NON_STORAGE_TYPES: frozenset[str] = frozenset({"TPipe"})
 
 BUFFER_MEMORY_SPACES: frozenset[str] = frozenset(
@@ -157,7 +179,7 @@ def is_buffer_type(type_text: str) -> bool:
 def is_storage_wrapper_type(type_text: str) -> bool:
     """True for framework types that wrap a CANN LocalTensor/GlobalTensor."""
     text = str(type_text or "")
-    if "MutexBuffer" in text:
+    if re.search(r"\bMutexBuffer\b", text):
         return True
     if re.search(r"\bBuffer\s*<", text):
         return True
@@ -178,6 +200,15 @@ def is_valid_storage_name(name: str) -> bool:
     if not text or text in _CXX_KEYWORDS:
         return False
     return text.isidentifier()
+
+
+def tposition_from_type_text(type_text: str) -> str | None:
+    """Return the TPosition/QuePosition token (VECIN/VECOUT/…) when spelled in the type."""
+    text = str(type_text or "")
+    for pos in TPOSITION_TO_SPACE:
+        if f"TPosition::{pos}" in text or f"QuePosition::{pos}" in text:
+            return pos
+    return None
 
 
 def memory_space_from_type_text(type_text: str) -> str | None:

@@ -153,8 +153,12 @@ def emit_instantiation(
     lines = [
         f"// dtype_variant={dtype}",
         f"// instance={inst}",
-        f"#define ORIG_DTYPE_QUERY {dtype}",
     ]
+    from uo_init.build_context import dtype_macro_for_source
+
+    macro = dtype_macro_for_source(include) if include else None
+    if macro:
+        lines.append(f"#define {macro} {dtype}")
     if include:
         lines.append(f'#include "{include}"')
     lines += [
@@ -282,14 +286,19 @@ def verify_harness_tu(path: str | Path, ctx, *, op_needle: str) -> list[tuple[st
 
     if not op_needle:
         raise ValueError("op_needle is required (use OpSpec.op_needle)")
+    from uo_init.diag_scope import diagnostic_in_operator
+
     index = cindex.Index.create()  # must outlive the TU
-    tu = index.parse(str(path), args=ctx.kernel_args(dtype_variant=None))
+    tu = index.parse(
+        str(path), args=ctx.kernel_args(dtype_variant=None, source_path=path)
+    )
     out: list[tuple[str, str]] = []
+    op_dir = str(getattr(ctx, "op_dir", "") or "")
     for d in tu.diagnostics:
         if d.severity < 3:
             continue
         fname = d.location.file.name.replace("\\", "/") if d.location.file else ""
-        if op_needle in fname or fname == str(path).replace("\\", "/"):
+        if diagnostic_in_operator(fname, op_dir, str(path)):
             out.append((d.spelling, fname))
     return out
 

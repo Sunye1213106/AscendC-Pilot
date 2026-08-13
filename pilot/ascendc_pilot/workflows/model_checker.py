@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Fixed eight-workflow matrix from the control-plane closure audit.
+# User-facing slash workflows: architecture builders ∪ .uo consumers.
 MATRIX_WORKFLOWS: tuple[str, ...] = (
     "uo-init",
     "uo-update",
@@ -19,6 +19,9 @@ MATRIX_WORKFLOWS: tuple[str, ...] = (
     "tg-plan",
     "tg-solve",
     "ce-review",
+    "ce-intent",
+    "ce-impact",
+    "ce-verify",
 )
 
 # tg-solve residual / audit routing codes that Session Replay must also cover.

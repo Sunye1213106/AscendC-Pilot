@@ -59,6 +59,50 @@ def test_get_tpl_tiling_key_binds_declared_fields_by_position(tmp_path: Path) ->
     )
 
 
+def test_enum_cast_and_bare_literal_are_both_compile_rooted(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    host = op / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (host / "mode.h").write_text("enum class Mode { OFF = 0, ON = 1 };\n", encoding="utf-8")
+    (host / "tiling.cpp").write_text(
+        '#include "mode.h"\n'
+        "uint64_t BuildKey() {\n"
+        "  return GET_TPL_TILING_KEY(0, static_cast<uint8_t>(Mode::ON));\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.TILING_KEY, "Empty", attrs={"source_declared": True, "decl_order": 0, "bit_width": 1})
+    cm.upsert(EntityKind.TILING_KEY, "ModeBit", attrs={"source_declared": True, "decl_order": 1, "bit_width": 1})
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+
+    exprs = {
+        e.attrs.get("tiling_key"): e
+        for e in cm.by_kind(EntityKind.PREDICATE)
+        if e.attrs.get("predicate_role") == "host_tiling_key_argument"
+    }
+    compile_roots = [
+        e for e in cm.entities.values()
+        if e.kind_name() == EntityKind.COMPILE_VAR.value and e.attrs.get("compile_root") is True
+    ]
+    assert len(compile_roots) >= 2
+    for key_name in ("Empty", "ModeBit"):
+        node = exprs[key_name]
+        assert any(
+            r.dst == node.id
+            and r.src in cm.entities
+            and cm.entities[r.src].kind_name() == EntityKind.COMPILE_VAR.value
+            for r in cm.relations.values()
+        )
+        assert not any(
+            r.dst == node.id
+            and r.src in cm.entities
+            and cm.entities[r.src].attrs.get("upstream_unresolved")
+            for r in cm.relations.values()
+        )
+
+
 def test_host_key_argument_count_mismatch_does_not_bind_fields(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     host = op / "op_host" / "arch35"

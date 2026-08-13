@@ -48,6 +48,31 @@ def _sample_result(path: str) -> WalkResult:
     )
 
 
+def test_deserialize_func_record_accepts_usr():
+    """Analyze loads walk cache; FuncRecord identity fields must round-trip."""
+    from uo_init.clang_walk import FuncRecord
+
+    wr = WalkResult(
+        path="op_kernel/k.cpp",
+        functions={
+            "Process": FuncRecord(
+                name="Process",
+                file="op_kernel/k.cpp",
+                line=10,
+                usr="c:@F@Process",
+                qualified_name="Ns::Process",
+            )
+        },
+    )
+    payload = tu_cache.serialize_walk_result(wr)
+    payload["data"]["functions"]["Process"]["usr"] = "c:@F@Process"
+    payload["data"]["functions"]["Process"]["qualified_name"] = "Ns::Process"
+    got = tu_cache.deserialize_walk_result(payload)
+    rec = got.functions["Process"]
+    assert rec.usr == "c:@F@Process"
+    assert rec.qualified_name == "Ns::Process"
+
+
 def test_walk_result_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setenv("UO_TU_CACHE", "1")
     monkeypatch.setenv("UO_CACHE_ROOT", str(tmp_path / "cache"))

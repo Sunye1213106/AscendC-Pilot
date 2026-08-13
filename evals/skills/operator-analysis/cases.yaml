@@ -14,3 +14,9 @@ cases:
     query: 只读查询已有 .uo，不要求解 TilingKey 输入公式
     expect_skill: operator-analysis
     forbid_skill: tg-solve
+
+  - id: scenario_query_hooks
+    query: 只读查询已有 .uo Operator CodeMap 的 Kernel 与 TilingData，禁止外部 MCP 通用索引
+    expect_skill: operator-analysis
+    expect_references:
+      - references/uo-scenario-hooks.md

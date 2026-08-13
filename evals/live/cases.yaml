@@ -1,0 +1,145 @@
+version: 1
+# Fixed live-eval set (~20). CI dry smoke never scores these as pass@k.
+# Source: evals/skills/*/cases.yaml + skills/operator-analysis/examples/uo-query-*.
+cases:
+  - id: oa_query_tilingkey_field
+    skill: operator-analysis
+    query: 基于 CodeMap 回答 TilingData 字段和 Kernel 分支的关系
+    expect_skill: operator-analysis
+    requires_uo: true
+    source: evals/skills/operator-analysis/cases.yaml#query_tilingkey_field
+
+  - id: oa_query_not_tg_solve
+    skill: operator-analysis
+    query: 只读查询已有 .uo，不要求解 TilingKey 输入公式
+    expect_skill: operator-analysis
+    forbid_skill: tg-solve
+    requires_uo: true
+    source: evals/skills/operator-analysis/cases.yaml#query_not_tg_solve
+
+  - id: oa_scenario_query_hooks
+    skill: operator-analysis
+    query: 只读查询已有 .uo Operator CodeMap 的 Kernel 与 TilingData，禁止外部 MCP 通用索引
+    expect_skill: operator-analysis
+    requires_uo: true
+    source: evals/skills/operator-analysis/cases.yaml#scenario_query_hooks
+
+  - id: uo_query_splitaxis
+    skill: operator-analysis
+    query: TND 布局下，SplitAxis=1 是否合法？
+    expect_skill: operator-analysis
+    requires_uo: true
+    source: skills/operator-analysis/examples/uo-query-splitaxis
+
+  - id: uo_query_empty_tensor
+    skill: operator-analysis
+    query: Are empty q/k/v tensors supported?
+    expect_skill: operator-analysis
+    requires_uo: true
+    source: skills/operator-analysis/examples/fa_empty_tensor_query
+
+  - id: uo_query_schmode
+    skill: operator-analysis
+    query: What is the domain of AddExample schMode?
+    expect_skill: operator-analysis
+    requires_uo: true
+    source: skills/operator-analysis/examples/add_example_schmode_query
+
+  - id: uo_query_tilingdata_field
+    skill: operator-analysis
+    query: 查询已有 .uo 里某个 TilingData 字段的写点与 Host 视图
+    expect_skill: operator-analysis
+    requires_uo: true
+    source: evals/routing/cases.yaml#route_uo_query
+
+  - id: uo_query_kernel_branch
+    skill: operator-analysis
+    query: 基于 CodeMap 查询 Kernel 分支与 TilingKey 的对应关系
+    expect_skill: operator-analysis
+    requires_uo: true
+
+  - id: uo_query_buffer_ub
+    skill: operator-analysis
+    query: 查询已有 .uo 的 Buffer / UB 分配与 storage class
+    expect_skill: operator-analysis
+    requires_uo: true
+
+  - id: uo_query_cross_layer
+    skill: operator-analysis
+    query: 查询 Host 到 TilingKey 到 Kernel 的跨层边，不要刷新 CodeMap
+    expect_skill: operator-analysis
+    forbid_skill: uo-init
+    requires_uo: true
+
+  - id: tg_closure_target_set
+    skill: testcase-generation
+    query: Host replay 闭环 target set，扩大 R 与 E，完成 T=(R∩T)∪E
+    expect_skill: testcase-generation
+    requires_uo: true
+    source: evals/skills/testcase-generation/cases.yaml#closure_target_set
+
+  - id: tg_init_contract_bind
+    skill: testcase-generation
+    query: 测例契约与语义绑定，TilingKey 初始化，不构造 Host replay
+    expect_skill: testcase-generation
+    forbid_skill: ce-review
+    requires_uo: true
+    source: evals/skills/testcase-generation/cases.yaml#init_contract_bind
+
+  - id: tg_scenario_targeted_construct
+    skill: testcase-generation
+    query: 测试生成规划目标 T 为精度 ScenarioSet，针对性构造少量 CSV，禁止笛卡尔全量 legal key
+    expect_skill: testcase-generation
+    requires_uo: true
+    source: evals/skills/testcase-generation/cases.yaml#scenario_targeted_construct
+
+  - id: tg_scenario_perf_split
+    skill: testcase-generation
+    query: 测试生成按性能 ScenarioSet 定向再构造少量 CSV，T 不是全量 legal key
+    expect_skill: testcase-generation
+    requires_uo: true
+    source: evals/skills/testcase-generation/cases.yaml#scenario_perf_split
+
+  - id: sp_prove_field_pin
+    skill: source-proof
+    query: 证明某字段只能取特定值，建立可审计源码引理
+    expect_skill: source-proof
+    requires_uo: true
+    source: evals/skills/source-proof/cases.yaml#prove_field_pin
+
+  - id: sp_not_uo_query
+    skill: source-proof
+    query: 证明前提 P 蕴含结论 Q，主动寻找反例
+    expect_skill: source-proof
+    forbid_skill: uo-query
+    requires_uo: true
+    source: evals/skills/source-proof/cases.yaml#not_uo_query
+
+  - id: cr_review_operator_diff
+    skill: code-review
+    query: 审查算子代码改动，找潜在 bug
+    expect_skill: code-review
+    requires_uo: false
+    source: evals/skills/code-review/cases.yaml#review_operator_diff
+
+  - id: cr_precision_perf_finding
+    skill: code-review
+    query: 代码审查 PR 检视 Cast 与 DataCopy 变更，假设检验精度或性能场景线索，不签发证书
+    expect_skill: code-review
+    requires_uo: false
+    source: evals/skills/code-review/cases.yaml#precision_perf_finding
+
+  - id: ce_plan_scope_verify
+    skill: code-engineering
+    query: Plan scope and verify AscendC code changes with UO slices, evidence tiers, risk classes, and a verification-obligation ledger
+    expect_skill: code-engineering
+    requires_uo: false
+    source: evals/skills/code-engineering/cases.yaml#plan_scope_verify
+
+  - id: ce_not_readonly_review
+    skill: code-engineering
+    query: Plan and verify code changes with a persistent verification-obligation ledger, not a readonly code review certificate
+    expect_skill: code-engineering
+    forbid_skill: ce-review
+    requires_uo: false
+    source: evals/skills/code-engineering/cases.yaml#not_readonly_review

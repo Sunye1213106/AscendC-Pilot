@@ -1,0 +1,8 @@
+schema: ce-scenario-set/v1
+items:
+  - id: P-ILLEGAL
+    oracle: none
+    budget: {max_cases: 0, suite: precision}
+csv:
+  enable: disable
+run_npu: false

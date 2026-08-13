@@ -24,6 +24,12 @@ def test_static_cast_is_transparent():
     assert e == Ref("AttrIndex::X")
 
 
+def test_named_and_functional_integer_casts_are_transparent():
+    assert parse_expr("reinterpret_cast<uint8_t>(Mode::ON)") == Ref("Mode::ON")
+    assert parse_expr("const_cast<int>(kFlag)") == Ref("kFlag")
+    assert parse_expr("uint8_t(Mode::ON)") == Ref("Mode::ON")
+
+
 def test_template_call_arguments_are_parsed():
     e = parse_expr("p->GetAttrPointer<char>(idx)")
     assert isinstance(e, Call)

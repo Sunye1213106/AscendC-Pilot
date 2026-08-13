@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_drive_drains_full_uo_pipeline_without_host_engine_guess(monkeypatch, tmp_path: Path):
+def test_drive_drains_full_uo_pipeline_without_host_engine_guess(monkeypatch, tmp_path: Path, capsys):
     import ascendc_pilot.state as state_mod
     import ascendc_pilot.workflows as workflows_mod
     from ascendc_pilot.actions.drive import drive_until_interaction
@@ -92,6 +92,11 @@ def test_drive_drains_full_uo_pipeline_without_host_engine_guess(monkeypatch, tm
     assert sync.get("force") is True
     assert sync.get("after_auto") is True
     assert "立刻" in str(sync.get("instruction_zh") or "")
+    err = capsys.readouterr().err
+    assert "[acp-auto] run prepare" in err
+    assert "[acp-auto] prepare ok" in err
+    assert "still running" not in err
+    assert "Select-Object" not in err
 
 
 def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
@@ -141,20 +146,3 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
     assert result["recommended_command"] == "acp run-action lemma_mine"
     assert called is False
 
-
-def test_run_with_heartbeat_emits_while_blocked(monkeypatch, capsys):
-    import time
-
-    import ascendc_pilot.actions.drive as drive
-
-    monkeypatch.setattr(drive, "_HEARTBEAT_SEC", 0.05)
-
-    def slow() -> dict:
-        time.sleep(0.18)
-        return {"ok": True}
-
-    out = drive._run_with_heartbeat("unit", slow)
-    err = capsys.readouterr().err
-    assert out["ok"] is True
-    assert "still running" in err
-    assert "[acp-auto]" in err

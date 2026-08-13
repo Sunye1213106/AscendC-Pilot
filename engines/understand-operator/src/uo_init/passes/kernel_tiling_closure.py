@@ -35,6 +35,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.symbol_identity import normalize_symbol
+from uo_init.source_layout import GLOBAL_KERNEL_RE, selected_host_files, selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CONTROL = {
@@ -42,11 +43,7 @@ _CONTROL = {
     "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast", "likely", "unlikely",
 }
 
-_GLOBAL_KERNEL_RE = re.compile(
-    r"template\s*<(?P<tpl>.*?)>\s*__global__\s+__aicore__\s+void\s+"
-    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>.*?)\)\s*\{",
-    re.S,
-)
+_GLOBAL_KERNEL_RE = GLOBAL_KERNEL_RE
 _TEMPLATE_PARAM_RE = re.compile(
     r"(?:bool|u?int(?:8|16|32|64)_t|int(?:8|16|32|64)_t|size_t|int|unsigned(?:\s+int)?)\s+([A-Za-z_]\w*)"
 )
@@ -86,6 +83,10 @@ _KEY_REG_RE = re.compile(
 )
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 
+_KEEP_REL_PROVENANCE = {
+    "source_register_tiling_for_key",
+    "source_tiling_registration_verified",
+}
 _PURGE_REL_PROVENANCE = {
     "source_call_site",
     "source_macro_invocation",
@@ -209,21 +210,9 @@ def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[st
     from uo_init.passes.source_text_cache import read_text
 
     out: dict[Path, tuple[str, str]] = {}
-    arch_dir = root / "op_kernel" / architecture
-    if arch_dir.is_dir():
-        for path in sorted(arch_dir.rglob("*")):
-            if path.is_file() and path.suffix.lower() in _CPP_SUFFIXES:
-                raw = read_text(path)
-                out[path.resolve()] = (raw, _mask_non_code(raw))
-    kernel_root = root / "op_kernel"
-    if kernel_root.is_dir():
-        for path in sorted(kernel_root.iterdir()):
-            if not path.is_file() or path.suffix.lower() not in _CPP_SUFFIXES:
-                continue
-            raw = read_text(path)
-            if f'"{architecture}/' not in raw and f"<{architecture}/" not in raw:
-                continue
-            out[path.resolve()] = (raw, _mask_non_code(raw))
+    for path in selected_kernel_files(root, architecture):
+        raw = read_text(path)
+        out[path.resolve()] = (raw, _mask_non_code(raw))
     return out
 
 
@@ -231,13 +220,9 @@ def _host_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
     from uo_init.passes.source_text_cache import read_text
 
     out: dict[Path, tuple[str, str]] = {}
-    host_dir = root / "op_host" / architecture
-    if not host_dir.is_dir():
-        return out
-    for path in sorted(host_dir.rglob("*")):
-        if path.is_file() and path.suffix.lower() in _CPP_SUFFIXES:
-            raw = read_text(path)
-            out[path.resolve()] = (raw, _mask_non_code(raw))
+    for path in selected_host_files(root, architecture):
+        raw = read_text(path)
+        out[path.resolve()] = (raw, _mask_non_code(raw))
     return out
 
 
@@ -248,6 +233,8 @@ def _purge_broad_kernel_facts(codemap: CodeMap, allowed_kernel_files: set[str]) 
     for rid, rel in codemap.relations.items():
         provenance = str(rel.attrs.get("provenance") or "")
         file = _norm_file(str(rel.attrs.get("file") or ""))
+        if provenance in _KEEP_REL_PROVENANCE:
+            continue
         if provenance in _PURGE_REL_PROVENANCE:
             remove_rel.add(rid)
         elif file and "/op_kernel/" in file and file not in allowed_kernel_files and provenance.startswith("source_"):
@@ -258,6 +245,8 @@ def _purge_broad_kernel_facts(codemap: CodeMap, allowed_kernel_files: set[str]) 
         file = _norm_file(str(ent.file or ""))
         broad = provenance in _PURGE_ENTITY_PROVENANCE or bool(ent.attrs.get("source_scope"))
         old_template = ent.kind_name() in {EntityKind.TEMPLATE.value, EntityKind.TEMPLATE_ARG.value} and provenance == "source_kernel_template"
+        if provenance in _KEEP_REL_PROVENANCE:
+            continue
         foreign_source = file and "/op_kernel/" in file and file not in allowed_kernel_files and provenance.startswith("source_")
         if broad or old_template or (foreign_source and ent.kind_name() != EntityKind.KERNEL.value):
             remove_ent.add(eid)
@@ -333,7 +322,7 @@ def _rebuild_kernel_contract(
                 attrs={"provenance": "source_kernel_template_verified", "file": file, "line": line},
                 status="confirmed",
             )
-            args = _TEMPLATE_PARAM_RE.findall(match.group("tpl"))
+            args = _TEMPLATE_PARAM_RE.findall(match.group("tpl") or "")
             for order, arg_name in enumerate(args):
                 arg = codemap.upsert(
                     EntityKind.TEMPLATE_ARG,

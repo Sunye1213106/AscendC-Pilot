@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from uo_init.paths import require_architecture
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
@@ -225,11 +224,9 @@ class CodeMapQuery:
     def legal_keys(self, *, limit: int = 0, offset: int = 0) -> list[dict[str, Any]]:
         """Stream legal packed keys from the index blob (not entity-per-key)."""
         blob = self._view("tiling/legal_key_index.jsonl")
-        rows: list[dict[str, Any]] = []
-        if isinstance(blob, dict):
-            rows = [r for r in (blob.get("rows") or []) if isinstance(r, dict)]
-        elif isinstance(blob, list):
-            rows = [r for r in blob if isinstance(r, dict)]
+        from uo_init.query.legal_key_cache import expand_legal_key_rows
+
+        rows = expand_legal_key_rows(blob)
         if offset:
             rows = rows[offset:]
         if limit and limit > 0:
@@ -431,10 +428,9 @@ def open_codemap_query(
     if path.is_file() and path.suffix == ".uo":
         return CodeMapQuery(codemap=read_codemap(path), path=str(path))
     found = find_uo_product(path, op_name=op_name, architecture=architecture)
-    if found is None:
-        raise FileNotFoundError(f"no .uo product under {path}")
-    if found.suffix == ".uo":
-        return CodeMapQuery(codemap=read_codemap(found), path=str(found))
-    cm = CodeMap(op_name=op_name, architecture=require_architecture(architecture))
-    cm.meta["legacy_db"] = str(found)
-    return CodeMapQuery(codemap=cm, path=str(found))
+    if found is None or found.suffix != ".uo":
+        raise FileNotFoundError(
+            f"no .uo product under {path}; expected "
+            ".ascendc-pilot/<arch>/uo/<op>.<arch>.uo"
+        )
+    return CodeMapQuery(codemap=read_codemap(found), path=str(found))

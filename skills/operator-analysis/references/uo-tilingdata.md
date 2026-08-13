@@ -6,7 +6,9 @@
 
 - 结构成员、owner、ctype  
 - Host writer sites / Kernel reader sites  
+- `facts.rhs`：短定值表达式（从 writer / value_defining 抽出）  
 - `value_defining_sites`（定值写点优先）  
+- `check_sites`：Host `OP_CHECK_IF` 等校验点（`file:line` + 短 guard）  
 - registration：packed key → TilingData 绑定
 
 ## 推荐接口

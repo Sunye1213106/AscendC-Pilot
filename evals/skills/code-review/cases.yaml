@@ -9,6 +9,12 @@ cases:
       - references/ascendc-checks.md
 
   - id: not_tg_solve
-    query: 分析改动影响范围与跨层契约一致性
+    query: 代码审查分析改动与跨层契约，假设检验，先 CodeMap 再源码窗，不签发证书
     expect_skill: code-review
     forbid_skill: tg-solve
+
+  - id: precision_perf_finding
+    query: 代码审查 PR 检视 Cast 与 DataCopy 变更，假设检验精度或性能场景线索，不签发证书
+    expect_skill: code-review
+    expect_references:
+      - references/precision-perf-findings.md

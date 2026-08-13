@@ -199,3 +199,102 @@ def test_audit_accepts_source_producer_root_chain() -> None:
     assert report["summary"]["tiling_key_host_producer_coverage"] == "1/1"
     assert report["summary"]["tiling_key_root_coverage"] == "1/1"
     assert report["tiling_key_evidence"][0]["producer_sites"]
+
+
+def test_member_packed_from_input_null_check_has_producer(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        void T::DoOpTiling() {
+          obj.flag = input != nullptr;
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(obj.flag);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.INPUT, "input", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    cm.upsert(EntityKind.TILING_KEY, "HasInput", attrs={"source_declared": True, "decl_order": 0})
+    field = cm.upsert(EntityKind.FIELD, "obj.flag")
+
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+
+    assert field.attrs.get("host_key_argument") is True
+    assert int(field.attrs.get("producer_site_count") or 0) >= 1
+    assert field.attrs.get("rooted_by_current_source") is True
+    assert field.attrs.get("upstream_unresolved") is not True
+
+
+def test_packing_local_is_not_stolen_by_same_named_tiling_field(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "mode.h").write_text(
+        "enum class Mode { OFF = 0, ON = 1 };\n",
+        encoding="utf-8",
+    )
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        uint64_t T::GetTilingKey() const {
+          Mode flag = Mode::OFF;
+          if (cond) {
+            flag = Mode::ON;
+          }
+          return GET_TPL_TILING_KEY(static_cast<uint8_t>(flag));
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    key = cm.upsert(EntityKind.TILING_KEY, "Flag", attrs={"source_declared": True, "decl_order": 0})
+    td_field = cm.upsert(
+        EntityKind.TILING_FIELD,
+        "flag",
+        eid="TDF::SomeTilingData::flag",
+        attrs={"owner": "SomeTilingData"},
+    )
+
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+
+    packing = next(
+        cm.entities[r.src]
+        for r in cm.relations.values()
+        if r.dst == key.id and r.attrs.get("provenance") == "source_get_tpl_tiling_key"
+    )
+    sources = [
+        cm.entities[r.src]
+        for r in cm.relations.values()
+        if r.dst == packing.id and r.attrs.get("provenance") == "source_get_tpl_tiling_key_symbol"
+    ]
+    assert td_field.id not in {e.id for e in sources}
+    assert any(e.kind_name() == EntityKind.VARIABLE.value and e.attrs.get("host_key_argument") for e in sources)
+    host = next(e for e in sources if e.kind_name() == EntityKind.VARIABLE.value)
+    assert int(host.attrs.get("producer_site_count") or 0) >= 1
+    assert host.attrs.get("rooted_by_current_source") is True
+
+
+def test_audit_ignores_non_declared_extra_tiling_keys() -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["source_declared_tiling_key_count"] = 1
+    cm.meta["host_tiling_key_packing"] = {"calls": 1, "fields_bound": 1, "argument_count_mismatches": []}
+    query = cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    key = cm.upsert(EntityKind.TILING_KEY, "SplitAxis", attrs={"source_declared": True, "decl_order": 0, "host_packing_expressions": ["splitAxis"]})
+    packing = cm.upsert(EntityKind.PREDICATE, "splitAxis", attrs={"predicate_role": "host_tiling_key_argument", "expression": "splitAxis"})
+    runtime = cm.upsert(
+        EntityKind.FIELD,
+        "fBaseParams.splitAxis",
+        attrs={"host_key_argument": True, "producer_site_count": 1, "producer_sites": [{"file": "op_host/arch35/a.cpp", "line": 10}]},
+    )
+    producer = cm.upsert(EntityKind.PREDICATE, "query dependent", attrs={"predicate_role": "host_definition"})
+    cm.upsert(EntityKind.TILING_KEY, "TemplateExtra", attrs={"source_declared": False})
+    cm.link(RelationKind.DERIVES, query.id, producer.id, attrs={"provenance": "source_host_api_accessor"})
+    cm.link(RelationKind.DERIVES, producer.id, runtime.id, attrs={"provenance": "source_host_defuse"})
+    cm.link(RelationKind.DERIVES, runtime.id, packing.id, attrs={"provenance": "source_get_tpl_tiling_key_symbol"})
+    cm.link(RelationKind.DERIVES, packing.id, key.id, attrs={"provenance": "source_get_tpl_tiling_key"})
+
+    report = audit_codemap(cm)
+    codes = {item["code"] for item in report["blocking"]}
+    assert "TILING_KEY_CARDINALITY_MISMATCH" not in codes

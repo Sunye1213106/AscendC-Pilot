@@ -4,11 +4,12 @@
 L0 entry:
 1. harness metric self-check
 2. routing dry eval
-3. skill dry eval (all four cognitive skills)
+3. skill dry eval (all five cognitive skills)
 4. closure acceptance harness (1 dry run)
 5. skill architecture + operator independence lints
 6. worked-example layout check
 7. harness E2E authorize scenarios (no LLM)
+8. live eval skip contract (no model → skip, never fake pass@k)
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ _COGNITIVE_SKILLS = (
     "testcase-generation",
     "source-proof",
     "code-review",
+    "code-engineering",
 )
 
 
@@ -104,6 +106,34 @@ def main() -> int:
     results.append(_run([sys.executable, "-m", "evals.run_example", "--all"]))
     results.append(
         _run([sys.executable, str(REPO / "evals" / "harness_e2e" / "run_harness_e2e.py")], env=env)
+    )
+
+    from evals.live.run import evaluate_live, load_cases
+
+    live_cases = load_cases(REPO)
+    live_doc = evaluate_live(REPO)
+    live_ok = (
+        18 <= len(live_cases) <= 24
+        and live_doc.get("skipped") is True
+        and live_doc.get("pass@k") is None
+        and live_doc.get("pass_rate") is None
+    )
+    results.append(
+        {
+            "cmd": ["evals.live.run", "--skip-check"],
+            "returncode": 0 if live_ok else 1,
+            "stdout": json.dumps(
+                {
+                    "n_cases": len(live_cases),
+                    "skipped": live_doc.get("skipped"),
+                    "skip_reason": live_doc.get("skip_reason"),
+                    "pass@k": live_doc.get("pass@k"),
+                },
+                ensure_ascii=False,
+            ),
+            "stderr": "" if live_ok else "live skip contract failed (must not fake pass@k)",
+            "ok": live_ok,
+        }
     )
 
     ok = all(r["ok"] for r in results)

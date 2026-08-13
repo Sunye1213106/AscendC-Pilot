@@ -148,6 +148,8 @@ class WriteEvent:
 @dataclass
 class FuncSummary:
     name: str
+    file: str = ""
+    line: int = 0
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
     guards: list[str] = field(default_factory=list)
@@ -994,6 +996,9 @@ def build_host_ir(
                 all_controls.append(node)
         for name, fr in res.functions.items():
             s = summaries.setdefault(name, FuncSummary(name=name))
+            if getattr(fr, "file", "") and not s.file:
+                s.file = str(fr.file)
+                s.line = int(getattr(fr, "line", 0) or 0)
             for w in fr.writes:
                 if w not in s.writes:
                     s.writes.append(w)
@@ -1061,6 +1066,9 @@ def _text_summaries(paths: list[str | Path]) -> dict[str, FuncSummary]:
                 continue
             body = text[m.end() : m.end() + 4000]
             s = out.setdefault(name, FuncSummary(name=name))
+            if not s.file:
+                s.file = str(Path(p))
+                s.line = text[: m.start()].count("\n") + 1
             for wm in _ASSIGN.finditer(body):
                 lhs = wm.group("lhs")
                 if lhs.count(".") >= 1 and lhs not in s.writes:

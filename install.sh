@@ -169,7 +169,7 @@ fi
 # Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
-for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator; do
+for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-impact ce-verify tg-init tg-plan tg-solve operator; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
@@ -178,7 +178,7 @@ done
 # Cognitive skills: Cursor/Codex install into skill discovery with
 # disable-model-invocation; OpenCode keeps them plugin-internal only.
 if [[ "$PLATFORM" == "opencode" ]]; then
-  for name in operator-analysis testcase-generation source-proof code-review _shared; do
+  for name in operator-analysis testcase-generation source-proof code-review code-engineering _shared; do
     rm -rf "$SKILLS/$name"
   done
   if [[ -d "$BUNDLE_ROOT/generated/opencode/cognitive-skills" ]]; then
@@ -186,15 +186,12 @@ if [[ "$PLATFORM" == "opencode" ]]; then
     cp -R "$BUNDLE_ROOT/generated/opencode/cognitive-skills" "$DEST/cognitive-skills"
   fi
 else
-  for name in operator-analysis testcase-generation source-proof code-review; do
+  for name in operator-analysis testcase-generation source-proof code-review code-engineering; do
     [[ -d "$DEST/skills/$name" ]] || continue
     rm -rf "$SKILLS/$name"
     ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
   done
-  if [[ -d "$DEST/skills/_shared" ]]; then
-    rm -rf "$SKILLS/_shared"
-    ln -sfn "$DEST/skills/_shared" "$SKILLS/_shared" 2>/dev/null || cp -R "$DEST/skills/_shared" "$SKILLS/_shared"
-  fi
+  rm -rf "$SKILLS/_shared"
 fi
 
 # Every installed agent is reachable from a non-deterministic Action.

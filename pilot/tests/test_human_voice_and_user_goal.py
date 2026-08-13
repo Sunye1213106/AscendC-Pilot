@@ -105,6 +105,54 @@ def test_init_audit_method_file_exists() -> None:
     assert "conditional_pass" in text
 
 
+def test_ce_capability_methods_load_from_action_method_id() -> None:
+    impact, prompt = _load_method_and_prompt(
+        ROOT,
+        {
+            "task_prompt_id": "ce/impact-audit",
+            "action_method_id": "ce-impact/impact-audit",
+            "id": "impact_audit",
+        },
+    )
+    assert "Open = O - V - X" in impact
+    assert prompt.strip()
+
+    excl, excl_prompt = _load_method_and_prompt(
+        ROOT,
+        {
+            "task_prompt_id": "ce/exclusion-review",
+            "action_method_id": "ce-verify/exclusion-review",
+            "id": "exclusion_review",
+        },
+    )
+    assert "Open = O - V - X" in excl
+    assert excl_prompt.strip()
+
+    infer, infer_prompt = _load_method_and_prompt(
+        ROOT,
+        {
+            "task_prompt_id": None,
+            "action_method_id": "ce-impact/scenario-infer",
+            "id": "scenario_infer",
+        },
+    )
+    assert "ce-scenario-set" in infer or "Scenario" in infer
+    assert infer_prompt == ""
+
+
+def test_deterministic_plan_intent_loads_no_prompt() -> None:
+    method, prompt = _load_method_and_prompt(
+        ROOT,
+        {
+            "task_prompt_id": None,
+            "action_method_id": "tg-plan/plan-intent",
+            "id": "plan_intent",
+        },
+    )
+    assert prompt == ""
+    assert method == ""
+
+
 def test_user_goal_match_and_advance(tmp_path: Path) -> None:
     assert matches_full_coverage_intent("帮我建立 TilingKey 全覆盖测试")
     assert matches_full_coverage_intent("全量 tilingkey case")

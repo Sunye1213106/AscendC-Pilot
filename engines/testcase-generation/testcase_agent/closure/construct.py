@@ -77,13 +77,13 @@ def _codemap_build(t: Mapping[str, str], *, seed: int = 0) -> list:
         return []
     try:
         from uo_init.query.engine import CodeMapQuery
-        from uo_init.store.reader import load_view_blob, read_codemap
+        from uo_init.store.reader import load_production_view, read_codemap
     except Exception:
         return []
 
     cm = read_codemap(product)
     q = CodeMapQuery(cm, path=str(product))
-    view = load_view_blob(product, "ir/tg_host_view.yaml") or {}
+    view = load_production_view(product, "ir/tg_host_view.yaml") or {}
     if not isinstance(view, dict):
         view = {}
 

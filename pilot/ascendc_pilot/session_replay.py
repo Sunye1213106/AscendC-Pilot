@@ -1,6 +1,6 @@
 """Control-plane Session Replay matrix runner.
 
-Replays the fixed eight-workflow matrix scenarios from the control-plane
+Replays the user-facing workflow matrix scenarios from the control-plane
 closure audit without requiring a live OpenCode host. Each cell drives
 intake / state machine / authorize-shaped APIs and asserts typed outcomes.
 """
@@ -288,6 +288,7 @@ def scenario_gate_fail(workflow_id: str, project: Path) -> dict[str, Any]:
         "error_code": "GATE_FAILED",
         "failure_class": "checker_gate",
         "message_zh": "fixture gate fail",
+        "rework_action_ids": [aid],
     }
     save_state(project, state)
     nxt = describe_next(project)
@@ -354,6 +355,7 @@ def scenario_subagent_failure(workflow_id: str, project: Path) -> dict[str, Any]
         "error_code": "SUBAGENT_FAILED",
         "failure_class": "subagent_failure",
         "message_zh": "fixture subagent failure",
+        "rework_action_ids": [aid],
     }
     save_state(project, state)
     nxt = describe_next(project)

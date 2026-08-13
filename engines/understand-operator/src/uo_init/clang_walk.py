@@ -354,6 +354,8 @@ class FuncRecord:
     appends: dict[str, list[str]] = field(default_factory=dict)
     # local_name → every RHS seen in order (init + assigns); enables cycle-safe chase
     assign_lists: dict[str, list[str]] = field(default_factory=dict)
+    usr: str = ""
+    qualified_name: str = ""
 
 
 @dataclass
@@ -1579,6 +1581,12 @@ class _Walker:
         file = _file_of(cursor)
         if self._should_prune(cursor, kind_name, file, func):
             return
+        if (
+            self.collect_bases
+            and kind_name in ("CLASS_DECL", "STRUCT_DECL", "CLASS_TEMPLATE")
+            and self._in_scope(file)
+        ):
+            self._collect_class_bases(cursor)
 
         if kind_name in _FUNCTION_DEF_KINDS:
             if cursor.is_definition():
@@ -2437,10 +2445,12 @@ def probe_diagnostics(
         except Exception:  # noqa: BLE001
             cache_key = ""
 
+    from uo_init.diag_scope import diagnostic_in_operator
+
     args = (
         ctx.host_args()
         if side == "host"
-        else ctx.kernel_args(dtype_variant=dtype_variant)
+        else ctx.kernel_args(dtype_variant=dtype_variant, source_path=path)
     )
     _require_clang()
     idx = cindex.Index.create()
@@ -2454,8 +2464,6 @@ def probe_diagnostics(
     op_errors = 0
     op_fatals = 0
     samples: list[str] = []
-    op_needle = str(op_dir).replace("\\", "/").rstrip("/").lower()
-    path_norm = path.replace("\\", "/").lower()
     for d in tu.diagnostics:
         sev = int(d.severity)
         if sev < 3:
@@ -2466,13 +2474,10 @@ def probe_diagnostics(
         loc_file = ""
         try:
             if d.location.file is not None:
-                loc_file = str(d.location.file.name).replace("\\", "/").lower()
+                loc_file = str(d.location.file.name)
         except Exception:  # noqa: BLE001
             loc_file = ""
-        in_op = bool(loc_file) and (
-            loc_file == path_norm
-            or (op_needle and op_needle in loc_file)
-        )
+        in_op = diagnostic_in_operator(loc_file, op_dir, path)
         if in_op:
             op_errors += 1
             if sev >= 4:
@@ -2502,6 +2507,11 @@ def probe_diagnostics(
         f"op_errors={op_errors}"
     )
     return out
+
+
+def _use_single_ast_pass(side: str) -> bool:
+    """Kernel TUs typically have no framework-header frames; skip index_walk."""
+    return str(side or "").strip().lower() != "host"
 
 
 def walk_file(
@@ -2564,7 +2574,7 @@ def walk_file(
     args = (
         ctx.host_args()
         if side == "host"
-        else ctx.kernel_args(dtype_variant=dtype_variant)
+        else ctx.kernel_args(dtype_variant=dtype_variant, source_path=path)
     )
     native = _try_native_walk(
         path, args, side=side, op_needle=op_needle, op_root=op_root
@@ -2595,48 +2605,94 @@ def walk_file(
         for d in tu.diagnostics
     ]
 
-    # Phase B pass 1 merges framework-header discovery into the index walk.
-    t0 = _time.perf_counter()
-    indexer = _Walker(
-        op_needle,
-        op_root=op_root,
-        collect_writes=False,
-        side=side,
-        frame_files=frozenset(),
-        scope=scope,
-        logs_rejections=logs_rejections,
-        collect_bases=True,
-    )
-    for child in tu.cursor.get_children():
-        indexer.index_walk(child, "")
-    frame_files = indexer.resolve_frame_files()
+    def _mk_walker(
+        *,
+        collect_writes_flag: bool,
+        frame_files: frozenset[str] = frozenset(),
+        reachable: frozenset[str] | None = None,
+        collect_bases: bool = False,
+    ) -> _Walker:
+        return _Walker(
+            op_needle,
+            op_root=op_root,
+            collect_writes=collect_writes_flag,
+            side=side,
+            frame_files=frame_files,
+            scope=scope,
+            logs_rejections=logs_rejections,
+            reachable=reachable,
+            collect_bases=collect_bases,
+        )
+
+    t_index = 0.0
     t_frame = 0.0
     frame_merged = True
-    reachable = reachable_function_names(
-        indexer.functions,
-        indexer.call_sites,
-        frame_files=frame_files,
-        needle=op_needle,
-        op_root=op_root,
-        scope=scope,
-    )
-    t_index = _time.perf_counter() - t0
-
-    w = _Walker(
-        op_needle,
-        op_root=op_root,
-        collect_writes=collect_writes,
-        side=side,
-        frame_files=frame_files,
-        scope=scope,
-        logs_rejections=logs_rejections,
-        reachable=reachable,
-    )
-    w.functions = indexer.functions
-    t0 = _time.perf_counter()
-    for child in tu.cursor.get_children():
-        w.walk(child, [], "")
-    t_walk = _time.perf_counter() - t0
+    if _use_single_ast_pass(side):
+        # Kernel: one walk() with collect_bases. Skip index_walk — frames are
+        # almost always empty, so the second AST pass was pure duplicate cost.
+        w = _mk_walker(
+            collect_writes_flag=collect_writes,
+            collect_bases=True,
+            reachable=None,
+        )
+        t0 = _time.perf_counter()
+        for child in tu.cursor.get_children():
+            w.walk(child, [], "")
+        t_walk = _time.perf_counter() - t0
+        frame_files = w.resolve_frame_files()
+        reachable = reachable_function_names(
+            w.functions,
+            w.call_sites,
+            frame_files=frame_files,
+            needle=op_needle,
+            op_root=op_root,
+            scope=scope,
+        )
+        if frame_files:
+            w2 = _mk_walker(
+                collect_writes_flag=collect_writes,
+                frame_files=frame_files,
+                reachable=reachable,
+            )
+            w2.functions = w.functions
+            t0 = _time.perf_counter()
+            for child in tu.cursor.get_children():
+                w2.walk(child, [], "")
+            t_walk = _time.perf_counter() - t0
+            w = w2
+            frame_merged = False
+        else:
+            frame_merged = True
+    else:
+        # Host: index walk discovers framework-header frames, then a filtered
+        # second walk reads only the call-closure (Phase B).
+        t0 = _time.perf_counter()
+        indexer = _mk_walker(
+            collect_writes_flag=False,
+            collect_bases=True,
+        )
+        for child in tu.cursor.get_children():
+            indexer.index_walk(child, "")
+        frame_files = indexer.resolve_frame_files()
+        reachable = reachable_function_names(
+            indexer.functions,
+            indexer.call_sites,
+            frame_files=frame_files,
+            needle=op_needle,
+            op_root=op_root,
+            scope=scope,
+        )
+        t_index = _time.perf_counter() - t0
+        w = _mk_walker(
+            collect_writes_flag=collect_writes,
+            frame_files=frame_files,
+            reachable=reachable,
+        )
+        w.functions = indexer.functions
+        t0 = _time.perf_counter()
+        for child in tu.cursor.get_children():
+            w.walk(child, [], "")
+        t_walk = _time.perf_counter() - t0
     result = WalkResult(
         path=_norm(path),
         controls=w.controls,
@@ -2661,7 +2717,12 @@ def walk_file(
     t_total = _time.perf_counter() - t_all
     budget = phase_budget_s()
     flag = " SLOW" if t_total > budget else ""
-    frame_label = "merged" if frame_merged else f"{t_frame:.3f}"
+    if _use_single_ast_pass(side) and frame_merged:
+        frame_label = "single"
+    elif frame_merged:
+        frame_label = "merged"
+    else:
+        frame_label = f"{t_frame:.3f}"
     _tlog(
         f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
         f"parse={t_parse:.3f}s frame={frame_label} index={t_index:.3f}s "

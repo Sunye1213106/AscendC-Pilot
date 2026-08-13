@@ -516,7 +516,7 @@ def gate_confidence_gate_file(uo: Path) -> dict[str, Any]:
 
 
 def _integrity_status_pass(doc: Any) -> tuple[bool, str]:
-    """Shared integrity status semantics for gate_integrity_file / gate_uo_ready.
+    """Shared integrity status semantics for gate_integrity_file.
 
     Only exact ``status == \"pass\"`` succeeds. Missing/empty/ok/reported/unknown all fail.
     """
@@ -722,7 +722,13 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
     }
 
 
-def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
+def gate_uo_product_ready(
+    project_root: Path,
+    uo: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
+) -> dict[str, Any]:
     """Pass when the single ``.uo`` CodeMap product exists under ``.ascendc-pilot/<arch>/uo/``."""
     try:
         import sys
@@ -732,15 +738,15 @@ def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
             sys.path.insert(0, str(uo_src))
         from uo_init.store.reader import find_uo_product
 
-        op_name = ""
-        arch = ""
+        name = str(op_name or "")
+        arch = str(architecture or "")
         try:
             manifest = _load(uo / "manifest.yaml") if (uo / "manifest.yaml").is_file() else {}
-            op_name = str((manifest or {}).get("op_name") or "")
-            arch = str((manifest or {}).get("architecture") or "")
+            name = name or str((manifest or {}).get("op_name") or "")
+            arch = arch or str((manifest or {}).get("architecture") or "")
         except Exception:  # noqa: BLE001
             pass
-        found = find_uo_product(project_root, op_name=op_name, architecture=arch)
+        found = find_uo_product(project_root, op_name=name, architecture=arch)
         ok = bool(found and found.is_file() and found.suffix == ".uo")
         return {
             "gate": "uo_product_ready",
@@ -757,10 +763,16 @@ def gate_uo_product_ready(project_root: Path, uo: Path) -> dict[str, Any]:
 
 
 def gate_uo_ready_tg(
-    project_root: Path, uo: Path, *, op_name: str | None = None
+    project_root: Path,
+    uo: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
 ) -> dict[str, Any]:
     """TG readiness: CodeMap ``.uo`` + view_blobs (D / host_view / operator_graph)."""
-    product_gate = gate_uo_product_ready(project_root, uo)
+    product_gate = gate_uo_product_ready(
+        project_root, uo, op_name=op_name, architecture=architecture
+    )
     if not product_gate.get("ok"):
         return {
             "gate": "uo_ready",
@@ -774,6 +786,7 @@ def gate_uo_ready_tg(
         ready = ensure_tg_views(
             project_root,
             op_name=str(op_name or ""),
+            architecture=str(architecture or ""),
         )
         path = str(ready.get("path") or product_gate.get("path") or "")
         count = int(ready.get("legal_key_count") or 0)
@@ -784,7 +797,7 @@ def gate_uo_ready_tg(
             "legal_key_count": count,
             "tg_host_view": isinstance(host, dict) and bool(host),
             "operator_graph": isinstance(graph, dict) and bool(graph),
-            "materialized": bool(ready.get("backfilled")) or count > 0,
+            "materialized": count > 0,
         }
         ok = bool(ready.get("ok")) and count > 0 and checks["tg_host_view"] and checks["operator_graph"]
         return {
@@ -803,27 +816,36 @@ def gate_uo_ready_tg(
 
 
 def gate_tg_host_view_ready(
-    project_root: Path, uo: Path, *, op_name: str | None = None
+    project_root: Path,
+    uo: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
 ) -> dict[str, Any]:
     del uo
     try:
-        from uo_init.store.reader import find_uo_product, load_view_blob
+        from uo_init.store.reader import find_uo_product, load_view_blob_checked
 
-        found = find_uo_product(project_root, op_name=str(op_name or ""))
+        found = find_uo_product(
+            project_root,
+            op_name=str(op_name or ""),
+            architecture=str(architecture or ""),
+        )
         if found is None or found.suffix != ".uo":
             return {
                 "gate": "tg_host_view_ready",
                 "ok": False,
                 "message": "missing .uo CodeMap product",
             }
-        blob = load_view_blob(found, "ir/tg_host_view.yaml")
+        checked = load_view_blob_checked(found, "ir/tg_host_view.yaml")
+        blob = checked.get("view") if checked.get("ok") else None
         ok = isinstance(blob, dict) and (
             blob.get("fields") is not None or blob.get("declared_keys")
         )
         return {
             "gate": "tg_host_view_ready",
             "ok": ok,
-            "message": "ok" if ok else "missing ir/tg_host_view.yaml in .uo",
+            "message": "ok" if ok else str(checked.get("reason_code") or "missing ir/tg_host_view.yaml in .uo"),
             "path": str(found),
         }
     except Exception as exc:  # noqa: BLE001
@@ -832,102 +854,6 @@ def gate_tg_host_view_ready(
             "ok": False,
             "message": str(exc)[:240],
         }
-
-
-def gate_uo_ready(uo: Path) -> dict[str, Any]:
-    """Arch-scoped workspace integrity helper. TG authority gate is ``gate_uo_ready_tg``."""
-    manifest = uo / "manifest.yaml"
-    integrity_path = uo / "checks" / "integrity.yaml"
-    manifest_exists = manifest.is_file() and manifest.stat().st_size > 0
-    integrity_exists = integrity_path.is_file() and integrity_path.stat().st_size > 0
-    status = ""
-    checks: dict[str, Any] = {}
-    if integrity_exists:
-        try:
-            integrity = _load(integrity_path)
-        except Exception:  # noqa: BLE001
-            return {
-                "gate": "uo_ready",
-                "ok": False,
-                "integrity_status": "",
-                "message": "UO KB not ready (integrity.yaml unreadable)",
-            }
-        ok_status, status = _integrity_status_pass(integrity)
-    else:
-        ok_status = False
-    checks["integrity_pass"] = bool(manifest_exists and integrity_exists and ok_status and status == "pass")
-
-    # SQLite derived index from new engine.
-    sqlite_path = uo / "indexes" / "kb_graph.sqlite"
-    checks["sqlite_present"] = sqlite_path.is_file()
-    checks["sqlite_fresh"] = False
-    try:
-        import sys
-
-        uo_src = Path(__file__).resolve().parents[3] / "engines" / "understand-operator" / "src"
-        if uo_src.is_dir() and str(uo_src) not in sys.path:
-            sys.path.insert(0, str(uo_src))
-        from uo_init.kb_index import index_summary
-
-        info = index_summary(sqlite_path)
-        checks["sqlite_fresh"] = bool(info.get("graph_fingerprint"))
-        checks["sqlite_status"] = "fresh" if checks["sqlite_fresh"] else "missing_meta"
-        checks["graph_fingerprint"] = info.get("graph_fingerprint")
-    except Exception as exc:  # noqa: BLE001
-        checks["sqlite_status"] = "error"
-        checks["sqlite_error"] = str(exc)[:200]
-        if checks["sqlite_present"]:
-            checks["sqlite_fresh"] = True  # file exists; meta probe optional
-
-    # New-contract tiling materialize gate.
-    exhaustive = {}
-    coverage = {}
-    try:
-        exhaustive = _load(uo / "tiling" / "exhaustive_key_space.yaml") if (uo / "tiling" / "exhaustive_key_space.yaml").is_file() else {}
-        coverage = _load(uo / "tiling" / "coverage_model.yaml") if (uo / "tiling" / "coverage_model.yaml").is_file() else {}
-    except Exception as exc:  # noqa: BLE001
-        checks["tiling_load_error"] = str(exc)[:200]
-    blocks = exhaustive.get("template_blocks") or []
-    kfo = coverage.get("key_field_obligations") or {}
-    key_index = uo / "tiling" / "legal_key_index.jsonl"
-    if key_index.is_file():
-        try:
-            key_rows = sum(1 for line in key_index.read_text(encoding="utf-8").splitlines() if line.strip())
-        except OSError:
-            key_rows = 0
-    else:
-        key_rows = int(exhaustive.get("legal_key_count") or 0)
-    checks["template_blocks"] = len(blocks)
-    checks["key_field_obligations"] = len(kfo)
-    checks["legal_key_rows"] = key_rows
-    checks["tiling_materialized"] = bool(blocks and kfo and key_rows)
-
-    branches = {}
-    try:
-        branches = _load(uo / "kernel" / "branches.yaml") if (uo / "kernel" / "branches.yaml").is_file() else {}
-    except Exception:  # noqa: BLE001
-        branches = {}
-    checks["branch_rows"] = len(branches.get("branches") or [])
-
-    ok = bool(
-        checks.get("integrity_pass")
-        and checks.get("sqlite_present")
-        and checks.get("tiling_materialized")
-    )
-    reasons = []
-    if not checks.get("integrity_pass"):
-        reasons.append("integrity")
-    if not checks.get("sqlite_present"):
-        reasons.append("sqlite")
-    if not checks.get("tiling_materialized"):
-        reasons.append("tiling_materialize")
-    return {
-        "gate": "uo_ready",
-        "ok": ok,
-        "integrity_status": status,
-        "checks": checks,
-        "message": "ok" if ok else f"UO KB not ready ({','.join(reasons) or 'unknown'})",
-    }
 
 
 def run_key_gates(project_root: Path, *, op_name: str | None = None) -> dict[str, Any]:
@@ -1340,11 +1266,18 @@ def _gate_ce_artifacts(
     }
 
 
-def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = None) -> dict[str, Any]:
+def run_named_gate(
+    project_root: Path,
+    gate_id: str,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
+) -> dict[str, Any]:
     """Dispatch a workflow registry gate id to a concrete checker."""
     from ascendc_pilot.gates import tg_adapters
 
-    uo = uo_root(project_root, op_name)
+    arch = str(architecture or "").strip() or None
+    uo = uo_root(project_root, op_name, arch=arch)
     mapping = {
         "layout_receipt": lambda: gate_layout_receipt(uo),
         "extract_receipt": lambda: gate_extract_receipt(uo),
@@ -1359,13 +1292,17 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_review": lambda: gate_kb_review_file(uo),
         "kb_review_consistency": lambda: gate_kb_review_consistency(uo),
         "scope_receipt": lambda: gate_scope_receipt(project_root, uo),
-        "uo_ready": lambda: gate_uo_ready_tg(project_root, uo, op_name=op_name),
-        "kb_ready": lambda: gate_uo_ready_tg(project_root, uo, op_name=op_name),
+        "uo_ready": lambda: gate_uo_ready_tg(
+            project_root, uo, op_name=op_name, architecture=arch
+        ),
+        "kb_ready": lambda: gate_uo_ready_tg(
+            project_root, uo, op_name=op_name, architecture=arch
+        ),
         "context_pack": lambda: {
             "gate": "context_pack",
-            "ok": (agent_root(project_root) / "context" / "context_pack.yaml").is_file(),
+            "ok": (agent_root(project_root, arch) / "context" / "context_pack.yaml").is_file(),
             "message": "ok"
-            if (agent_root(project_root) / "context" / "context_pack.yaml").is_file()
+            if (agent_root(project_root, arch) / "context" / "context_pack.yaml").is_file()
             else "context pack missing",
         },
         # TG — real engine adapters (kb_fingerprint is NOT an alias of uo_ready)
@@ -1375,7 +1312,9 @@ def run_named_gate(project_root: Path, gate_id: str, *, op_name: str | None = No
         "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(project_root, op_name=op_name),
         "tilingkey_binding_ready": lambda: tg_adapters.gate_tilingkey_binding_ready(project_root),
         "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
-        "uo_product_ready": lambda: gate_uo_product_ready(project_root, uo),
+        "uo_product_ready": lambda: gate_uo_product_ready(
+            project_root, uo, op_name=op_name, architecture=arch
+        ),
         "closure_soundness": lambda: gate_closure_soundness(project_root),
         "impact_ledger_ready": lambda: _gate_ce_artifacts(
             project_root,

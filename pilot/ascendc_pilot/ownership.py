@@ -72,6 +72,13 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/feature_decompose/staging.yaml",
         ],
     },
+    "ce-impact": {
+        "scenario_knobs": [
+            "runs/{run_id}/actions/scenario_knobs/parts/**",
+            "runs/{run_id}/actions/scenario_knobs/scratch/**",
+            "runs/{run_id}/actions/scenario_knobs/staging.yaml",
+        ],
+    },
 }
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "tg-solve": {
@@ -110,6 +117,16 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "closure_certify": [
             "tg/closure/certificate.yaml",
             "tg/closure/audit_report.yaml",
+        ],
+    },
+    "ce-intent": {
+        "feature_decompose": [
+            "ce/intent/feature_decomposition.yaml",
+        ],
+    },
+    "ce-impact": {
+        "scenario_knobs": [
+            "ce/scenarios/scenario_set.yaml",
         ],
     },
 }
@@ -165,6 +182,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "tg-plan": {
         "plan_intent": ["tg/plan/plan_intent.yaml"],
+        "scenario_plan": ["tg/plan/scenario_plan.yaml", "tg/plan/plan_intent.yaml"],
         "plan_scope": [
             "tg/plan/levels/*/plan_scope.yaml",
             "tg/plan/plan_intent.yaml",
@@ -191,6 +209,9 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "closure_search": ["tg/closure/rounds/**", "tg/closure/models/**"],
         "closure_residual": ["tg/closure/residual/**", "tg/closure/route.yaml"],
         "closure_construct": ["tg/closure/construct/**"],
+        "targeted_construct": ["tg/closure/scenarios/**"],
+        "harness_run": ["tg/closure/scenarios/harness_results.yaml"],
+        "scenario_certify": ["tg/closure/scenario_certificate.yaml"],
         "closure_explain": ["tg/closure/why.csv", "tg/closure/construct/**"],
         "lemma_leads": [
             "tg/closure/lemmas/leads.yaml",
@@ -250,14 +271,19 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "uo_freshness": ["ce/impact/freshness.yaml"],
         "impact_slice": ["ce/impact/impact_slice.yaml"],
         "risk_classify": ["ce/impact/risk_classification.yaml"],
+        "scenario_infer": ["ce/scenarios/scenario_set.yaml"],
+        "scenario_apply": ["ce/scenarios/scenario_set.yaml"],
         "obligation_build": ["ce/impact/obligations.yaml", "ce/impact/ledger.yaml"],
         "impact_audit": ["ce/impact/audit_report.yaml"],
+        "scenario_confirm": ["ce/scenarios/confirmation.yaml"],
     },
     "ce-verify": {
         "verify_gate": ["ce/verify/gate.yaml"],
         "code_review": ["ce/verify/code_review.yaml"],
         "coverage_bridge": ["ce/verify/tg_handoff.yaml", "ce/verify/regress_cases.csv"],
         "residual_analyse": ["ce/verify/residual.yaml", "ce/verify/ledger.yaml"],
+        "harness_evidence": ["ce/verify/harness_evidence.yaml"],
+        "harness_evidence_check": ["ce/verify/harness_evidence_check.yaml"],
         "external_ingest": ["ce/verify/external_evidence.yaml", "ce/verify/ledger.yaml"],
         "exclusion_review": ["ce/verify/exclusion_review.yaml"],
         "ce_certify": ["ce/verify/certificate.yaml"],
@@ -271,7 +297,9 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/feature_decompose/staging.yaml",
         ],
         "anchor_locate": ["ce/intent/anchors.yaml"],
-        "plan_review": ["ce/intent/feature_decomposition.yaml", "ce/intent/plan_review.yaml"],
+        "scenario_infer": ["ce/scenarios/scenario_set.yaml"],
+        "plan_review": ["ce/intent/plan_review.yaml"],
+        "feature_promote": ["ce/intent/feature_decomposition.yaml"],
         "human_confirm": ["ce/intent/confirmation.yaml"],
     },
 }
@@ -332,7 +360,8 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         ],
     },
     "tg-plan": {
-        "plan_intent": ["uo/*.uo", "tg/init/**", "context/**"],
+        "plan_intent": ["uo/*.uo", "tg/init/**", "context/**", "ce/scenarios/**"],
+        "scenario_plan": ["ce/scenarios/**", "tg/plan/plan_intent.yaml"],
         "plan_scope": [
             "uo/*.uo",
             "tg/init/**",
@@ -371,7 +400,10 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "closure_ledger": ["uo/*.uo", "tg/closure/**"],
         "closure_search": ["uo/*.uo", "tg/closure/**"],
         "closure_residual": ["tg/closure/**"],
-        "closure_construct": ["uo/*.uo", "tg/closure/**"],
+        "closure_construct": ["uo/*.uo", "tg/closure/**", "ce/scenarios/**"],
+        "targeted_construct": ["uo/*.uo", "ce/scenarios/**", "tg/plan/**", "tg/closure/**", "local/**"],
+        "harness_run": ["tg/closure/scenarios/**", "local/**"],
+        "scenario_certify": ["tg/closure/scenarios/**", "tg/plan/**", "ce/scenarios/**"],
         "closure_explain": ["tg/closure/**"],
         "lemma_leads": ["tg/closure/**"],
         "lemma_evidence": ["uo/*.uo", "tg/closure/lemmas/leads.yaml"],
@@ -423,14 +455,45 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "uo_freshness": ["uo/*.uo", "ce/impact/change_capture.yaml"],
         "impact_slice": ["uo/*.uo", "ce/impact/change_capture.yaml", "ce/impact/freshness.yaml"],
         "risk_classify": ["ce/impact/impact_slice.yaml"],
+        "scenario_infer": [
+            "ce/impact/impact_slice.yaml",
+            "ce/impact/freshness.yaml",
+            "ce/intent/anchors.yaml",
+            "uo/*.uo",
+        ],
+        "scenario_knobs": [
+            "ce/scenarios/scenario_set.yaml",
+            "ce/impact/**",
+            "uo/*.uo",
+            "skills/code-engineering/**",
+            "skills/testcase-generation/**",
+        ],
+        "scenario_apply": [
+            "ce/scenarios/scenario_set.yaml",
+            "runs/{run_id}/actions/scenario_knobs/**",
+        ],
+        "scenario_confirm": ["ce/scenarios/**"],
         "obligation_build": ["ce/impact/impact_slice.yaml", "ce/impact/risk_classification.yaml"],
-        "impact_audit": ["uo/*.uo", "ce/impact/**", "runs/**", "context/**"],
+        "impact_audit": ["uo/*.uo", "ce/impact/**", "ce/scenarios/**", "runs/**", "context/**"],
     },
     "ce-verify": {
         "verify_gate": ["uo/*.uo", "ce/impact/**"],
         "code_review": ["uo/*.uo", "ce/impact/**", "ce/verify/**", "context/**"],
         "coverage_bridge": ["ce/impact/**", "tg/closure/**"],
         "residual_analyse": ["ce/impact/**", "ce/verify/**"],
+        "harness_evidence": [
+            "ce/impact/**",
+            "ce/scenarios/**",
+            "ce/verify/**",
+            "tg/closure/scenarios/**",
+            "local/**",
+        ],
+        "harness_evidence_check": [
+            "ce/impact/**",
+            "ce/scenarios/**",
+            "ce/verify/**",
+            "tg/closure/scenarios/**",
+        ],
         "external_ingest": ["ce/impact/**", "ce/verify/**", "context/**", "local/**"],
         "exclusion_review": ["uo/*.uo", "ce/impact/**", "ce/verify/**", "runs/**"],
         "ce_certify": ["ce/impact/**", "ce/verify/**"],
@@ -440,7 +503,9 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "kb_check": ["uo/*.uo"],
         "feature_decompose": ["uo/*.uo", "ce/intent/**", "context/**", "runs/**"],
         "anchor_locate": ["uo/*.uo", "ce/intent/**", "runs/**"],
+        "scenario_infer": ["uo/*.uo", "ce/intent/**", "ce/impact/**"],
         "plan_review": ["uo/*.uo", "ce/intent/**", "runs/**"],
+        "feature_promote": ["ce/intent/plan_review.yaml", "runs/**"],
         "human_confirm": ["ce/intent/**"],
     },
 }

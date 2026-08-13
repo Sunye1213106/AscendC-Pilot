@@ -29,6 +29,7 @@ def _canonical_dims(codemap: CodeMap) -> tuple[list[dict[str, Any]], str]:
         e
         for e in codemap.by_kind(EntityKind.TILING_KEY)
         if bool(e.attrs.get("source_declared"))
+        and str(e.attrs.get("provenance") or "") == "source_tpl_args_decl"
     ]
     keys.sort(key=lambda e: (int(e.attrs.get("decl_order") or 0), e.name, e.id))
     dims: list[dict[str, Any]] = []

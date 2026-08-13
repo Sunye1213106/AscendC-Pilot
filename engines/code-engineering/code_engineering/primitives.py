@@ -33,7 +33,13 @@ def _decode(row: sqlite3.Row) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         data = {}
     record["attrs"] = data if isinstance(data, dict) else {}
-    return record
+    from uo_init.query.evidence import project_record
+
+    hit = project_record(record)
+    hit["evidence_tier"] = classify_entity(record)
+    if record.get("located_via"):
+        hit["located_via"] = record["located_via"]
+    return hit
 
 
 def _path_matches(left: str, right: str) -> bool:
@@ -92,21 +98,34 @@ def _intent_tokens(doc: Any) -> list[str]:
     return sorted({value for value in found if value})
 
 
+def _intent_source_tokens(scope: Path) -> list[str]:
+    """Tokens from reviewed decomposition, then staging, then raw intent."""
+    reviewed = _load_yaml(scope / "ce" / "intent" / "feature_decomposition.yaml")
+    tokens = sorted(_intent_tokens(reviewed))
+    if not tokens:
+        staging_docs: list[Any] = []
+        for path in sorted(scope.glob("runs/*/actions/feature_decompose/staging.yaml")):
+            staging_docs.append(_load_yaml(path))
+        for path in sorted(scope.glob("runs/*/actions/feature_decompose/parts/*.yaml")):
+            staging_docs.append(_load_yaml(path))
+        tokens = sorted({token for doc in staging_docs for token in _intent_tokens(doc)})
+    if not tokens:
+        tokens = sorted(_intent_tokens(_load_yaml(scope / "ce" / "intent" / "intent.yaml")))
+    return tokens
+
+
 def _intent_anchor_resolve(
     conn: sqlite3.Connection,
     project_root: Path | str,
     architecture: str,
 ) -> list[dict[str, Any]]:
-    """Resolve reviewed intent targets, then walk backward to candidate edit points."""
-    scope = _scope_root(project_root, architecture)
-    if (scope / "ce" / "impact" / "change_capture.yaml").is_file():
-        return []
+    """Resolve reviewed intent targets, then walk backward to candidate edit points.
 
-    docs = [
-        _load_yaml(scope / "ce" / "intent" / "feature_decomposition.yaml"),
-        _load_yaml(scope / "ce" / "intent" / "intent.yaml"),
-    ]
-    tokens = sorted({token for doc in docs for token in _intent_tokens(doc)})
+    A leftover impact ``change_capture.yaml`` must not suppress intent location.
+    Prefer canonical reviewed decomposition, then staging parts, then raw intent.
+    """
+    scope = _scope_root(project_root, architecture)
+    tokens = _intent_source_tokens(scope)
     if not tokens:
         return []
 
@@ -216,8 +235,12 @@ def _slice(
 ) -> dict[str, Any]:
     conn = _connect(project_root, architecture)
     if conn is None:
-        return {"entity_ids": [], "relations": [], "truncated": False}
+        return {"entity_ids": [], "nodes": [], "relations": [], "truncated": False}
     kinds = {str(kind) for kind in edge_kinds}
+    if not kinds:
+        from uo_init.query.evidence import USEFUL_EDGE_KINDS
+
+        kinds = set(USEFUL_EDGE_KINDS)
     seen = {str(value) for value in seed_ids}
     queue = deque((value, 0) for value in sorted(seen))
     relations: dict[str, dict[str, Any]] = {}
@@ -231,9 +254,25 @@ def _slice(
             for row in conn.execute(f"SELECT * FROM relation WHERE {column} = ? ORDER BY id", (current,)):
                 if kinds and str(row["kind"]) not in kinds:
                     continue
-                item = _decode(row)
-                item["evidence_tier"] = classify_relation(item)
-                relations[str(item["id"])] = item
+                rel = {
+                    "id": str(row["id"]),
+                    "kind": str(row["kind"]),
+                    "src": str(row["src"]),
+                    "dst": str(row["dst"]),
+                    "status": str(row["status"] or ""),
+                }
+                try:
+                    data = json.loads(row["data"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    data = {}
+                rel["attrs"] = data if isinstance(data, dict) else {}
+                rel["evidence_tier"] = classify_relation(rel)
+                from uo_init.query.evidence import project_relation
+
+                relations[rel["id"]] = {
+                    **project_relation(rel),
+                    "evidence_tier": rel.get("evidence_tier") or "",
+                }
                 neighbor = str(row["dst" if forward else "src"])
                 if neighbor not in seen:
                     if len(seen) >= max(1, budget):
@@ -242,8 +281,16 @@ def _slice(
                         break
                     seen.add(neighbor)
                     queue.append((neighbor, level + 1))
+        nodes: list[dict[str, Any]] = []
+        if seen:
+            marks = ",".join("?" for _ in seen)
+            for row in conn.execute(
+                f"SELECT * FROM entity WHERE id IN ({marks}) ORDER BY id", sorted(seen)
+            ):
+                nodes.append(_decode(row))
         return {
             "entity_ids": sorted(seen),
+            "nodes": nodes,
             "relations": [relations[key] for key in sorted(relations)],
             "truncated": truncated,
         }
@@ -345,7 +392,20 @@ def edge_audit(
                 ORDER BY id""",
             ids + ids,
         )
-        return [_decode(row) for row in rows]
+        from uo_init.query.evidence import project_relation
+
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            rel = {
+                "id": str(row["id"]),
+                "kind": str(row["kind"]),
+                "src": str(row["src"]),
+                "dst": str(row["dst"]),
+                "status": str(row["status"] or ""),
+            }
+            rel["evidence_tier"] = classify_relation(rel)
+            out.append({**project_relation(rel), "evidence_tier": rel["evidence_tier"]})
+        return out
     finally:
         conn.close()
 

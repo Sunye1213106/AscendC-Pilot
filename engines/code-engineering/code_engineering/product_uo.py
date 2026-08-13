@@ -8,40 +8,49 @@ from pathlib import Path
 from typing import Any
 
 
+def _missing_product(project_root: Path | str, op_name: str, architecture: str) -> FileNotFoundError:
+    return FileNotFoundError(
+        f"missing finalized .uo product for op={op_name or '*'} "
+        f"arch={architecture or '*'} under {project_root}"
+    )
+
+
+def _checked_view(path: Path, name: str) -> Any:
+    from uo_init.store.reader import load_view_blob_checked
+
+    checked = load_view_blob_checked(path, name)
+    if not checked.get("ok"):
+        reason = checked.get("reason_code") or "VIEW_UNUSABLE"
+        raise RuntimeError(f"{reason}: {name} in {path}")
+    return checked.get("view")
+
+
 def product(
     project_root: Path | str, *, op_name: str = "", architecture: str = ""
 ) -> Path:
-    """Return the finalized product, or an empty ``Path`` without ``uo_init``."""
+    """Return the finalized product, or raise when it is missing."""
     try:
         from uo_init.store.reader import find_uo_product
-    except ImportError:
-        return Path()
-    try:
-        found = find_uo_product(
-            Path(project_root).expanduser().resolve(),
-            op_name=op_name,
-            architecture=architecture,
-        )
-    except ImportError:
-        return Path()
-    return found if found is not None and found.suffix == ".uo" and found.is_file() else Path()
+    except ImportError as exc:
+        raise FileNotFoundError("uo_init is not installed; cannot locate .uo product") from exc
+    found = find_uo_product(
+        Path(project_root).expanduser().resolve(),
+        op_name=op_name,
+        architecture=architecture,
+    )
+    if found is None or found.suffix != ".uo" or not found.is_file():
+        raise _missing_product(project_root, op_name, architecture)
+    return found
 
 
 def meta(
     project_root: Path | str, *, op_name: str = "", architecture: str = ""
 ) -> dict[str, Any]:
-    """Read product metadata; return an empty mapping when unavailable."""
+    """Read product metadata; raise when the product is missing."""
     p = product(project_root, op_name=op_name, architecture=architecture)
-    if not p.is_file():
-        return {}
-    try:
-        from uo_init.store.reader import read_meta
-    except ImportError:
-        return {}
-    try:
-        value = read_meta(p)
-    except ImportError:
-        return {}
+    from uo_init.store.reader import read_meta
+
+    value = read_meta(p)
     return value if isinstance(value, dict) else {}
 
 
@@ -52,18 +61,9 @@ def view(
     op_name: str = "",
     architecture: str = "",
 ) -> Any:
-    """Load a named product view, returning ``None`` when unavailable."""
+    """Load a named product view. Missing/stale products fail closed."""
     p = product(project_root, op_name=op_name, architecture=architecture)
-    if not p.is_file():
-        return None
-    try:
-        from uo_init.store.reader import load_view_blob
-    except ImportError:
-        return None
-    try:
-        return load_view_blob(p, name)
-    except ImportError:
-        return None
+    return _checked_view(p, name)
 
 
 def identity(
@@ -71,8 +71,6 @@ def identity(
 ) -> dict[str, Any]:
     """Return stable identity fields for the selected CodeMap product."""
     p = product(project_root, op_name=op_name, architecture=architecture)
-    if not p.is_file():
-        return {}
     values = meta(project_root, op_name=op_name, architecture=architecture)
     graph = view(
         project_root,

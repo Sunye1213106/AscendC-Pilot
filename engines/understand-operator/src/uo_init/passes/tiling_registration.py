@@ -17,6 +17,7 @@ from typing import Any
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.source_layout import selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _REGISTER_RE = re.compile(
@@ -86,6 +87,20 @@ def enrich_tiling_registrations(
             )
             registrations += 1
 
+            for kernel in _kernels_in_registration_tu(codemap, root, path, text):
+                codemap.link(
+                    RelationKind.FLOWS_TO,
+                    target.id,
+                    kernel.id,
+                    attrs={
+                        "provenance": "source_register_tiling_for_key",
+                        "packed_key_expression": expr,
+                        "file": _rel(root, path),
+                        "line": line,
+                    },
+                    status="confirmed",
+                )
+
             mask = _constant_mask(expr)
             if mask is None or mask == 0:
                 continue
@@ -109,26 +124,24 @@ def enrich_tiling_registrations(
 
 
 def _candidate_files(root: Path, architecture: str) -> list[Path]:
-    candidates: list[Path] = []
-    kernel_root = root / "op_kernel"
-    apt = kernel_root / f"{root.name}_apt.cpp"
-    if apt.is_file() and f'"{architecture}/' in apt.read_text(encoding="utf-8", errors="replace"):
-        candidates.append(apt)
-    arch_dir = kernel_root / architecture
-    if arch_dir.is_dir():
-        candidates.extend(
-            p for p in arch_dir.rglob("*") if p.is_file() and p.suffix.lower() in _CPP_SUFFIXES
-        )
-    # Some operator entry files have a fixed name not derived from the directory.
-    candidates.extend(
-        p
-        for p in kernel_root.glob("*.cpp")
-        if p.is_file()
-        and p.suffix.lower() in _CPP_SUFFIXES
-        and f'"{architecture}/' in p.read_text(encoding="utf-8", errors="replace")
-    )
-    seen: set[Path] = set()
-    return [p for p in candidates if not (p in seen or seen.add(p))]
+    return selected_kernel_files(root, architecture)
+
+
+def _kernels_in_registration_tu(codemap: CodeMap, root: Path, path: Path, text: str):
+    """Kernels in the same translation unit as a REGISTER_TILING_* site."""
+    file_rel = _rel(root, path)
+    entry_names = {
+        m.group(1)
+        for m in re.finditer(r"__global__\s+__aicore__\s+void\s+([A-Za-z_]\w*)", text)
+    }
+    matched = []
+    for kernel in codemap.by_kind(EntityKind.KERNEL):
+        kfile = str(kernel.file or "").replace("\\", "/")
+        if kernel.name in entry_names or kfile == file_rel:
+            matched.append(kernel)
+    if matched:
+        return matched
+    return list(codemap.by_kind(EntityKind.KERNEL))
 
 
 def _rel(root: Path, path: Path) -> str:

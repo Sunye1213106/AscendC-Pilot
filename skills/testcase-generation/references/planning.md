@@ -9,3 +9,4 @@
 3. uncovered 必须显式输出，不得伪造覆盖
 4. 未批准 plan 时不得宣称 solve 完成
 5. **L3**：义务元素为 steerable branch 的 True/False 结局（可附 key 轴）；闭环引擎为 `testcase_agent.closure.branch_outcome`，与 L2 共用 solve 相位机，禁止平行 td-* skill 树
+6. **Overlay `scenario_targeted`**：`T` 是批准的 ScenarioSet（`P-*`/`F-*`），允许 `T` 远小于声明 Key 域 `D`。不得把场景证书写成 tilingkey 闭环。全覆盖仍用 `tilingkey_full_coverage`（默认 `T=D`）。构造纪律见 `references/targeted-construct.md`。

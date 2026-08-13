@@ -2,15 +2,17 @@
 
 ## Purpose
 
-用受控 `acp inspect` 查询 candidates / llm_tasks / YAML，禁止靠整文件手工扫 task_id。
+用受控 `acp inspect` 查询当前 run 的 tasks / YAML 计数 / 重复项 / 证据窗口，禁止靠整文件手工扫 id。
 
 ## Method
 
-1. 优先 `acp inspect candidates|tasks|yaml|duplicates|extract-plan-worklist|extract-plan-coverage`。
-2. 覆盖检查用 `acp inspect validate --what extract-plan-staging`（或 `extract_plan`）。
+1. 优先 `acp inspect tasks|yaml|duplicates|evidence-window`。
+2. `tasks` 枚举 `llm_tasks.yaml` 的 task_id；`yaml` 对指定相对路径做键计数；`duplicates` 查重复 target；源码窗用 `evidence-window --path <rel> --lines A-B`。
 3. 结果可写入 action scratch，不进正式 IR。
+
+已删除的 `extract_plan` / `adjudicate` / `candidates` / `extract-plan-*` inspect 子命令不得再调用。
 
 ## Hard Constraints
 
-- MUST NOT：用 Grep/offset-hunt 代替 inspect 枚举全量 task/candidate id。
+- MUST NOT：用 Grep/offset-hunt 代替 inspect 枚举全量 task id。
 - MUST NOT：把 inspect 输出当高置信源码证据。

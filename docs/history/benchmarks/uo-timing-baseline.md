@@ -98,7 +98,7 @@ serialize-once export (see Codemap / uo-init acceleration plan).
 Numbers from code comments / execution notes:
 
 - Kernel pairwise fold: expensive; disable with `fold_kernel=false`.
-- `export_tg_host_view`: FAG cached export **31.7s → 2.0s** after fingerprint reuse (`docs/history/fag/fag-arch35-static-blocker-execution-20260806.md`).
+- `export_tg_host_view`: FAG cached export **31.7s → 2.0s** after fingerprint reuse ([`../fag_test/fag-arch35-static-blocker-execution-20260806.md`](../fag_test/fag-arch35-static-blocker-execution-20260806.md)；历史材料，不当权威).
 
 ## Cache knobs (warm path)
 

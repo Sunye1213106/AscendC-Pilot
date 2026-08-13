@@ -4,7 +4,7 @@
 
 <context>
 CodeMap 是 Host→TilingKey/TilingData→Kernel 的可追溯关系权威。
-先读 session `method.md` 与 Skill `uo-product-map`；用户问题见 stub「USER QUESTION」。
+先读 session `method.md` 与 Skill `operator-analysis`；用户问题见 stub「USER QUESTION」。
 </context>
 
 <instructions>

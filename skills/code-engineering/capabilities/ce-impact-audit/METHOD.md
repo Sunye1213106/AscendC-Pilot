@@ -12,4 +12,6 @@ Audit the impact ledger after deterministic slicing and risk classification.
 6. Reject any entry in `V` or `X` supported only by Tier C evidence.
 7. Return pass only when omissions and slice boundaries are explicit and the
    ledger is internally consistent. External precision/performance claims stay
-   open until their measurements are supplied.
+   open until their measurements are supplied as `ce-external-evidence/v1`
+   (UT/ST/precision compare/profiling/retest). A review finding is not a
+   measurement receipt.

@@ -1,19 +1,10 @@
 # -*- coding: utf-8 -*-
 """TG Host View: a disposable projection of HostIR facts for TG/CE search.
 
-Authority lives in ``ir/operator_graph.yaml`` (KB). This module writes a
-human-reviewable search projection (``ir/tg_host_view.yaml``) stamped with
-``source.graph_fingerprint`` so freshness gates can detect drift.
-
-Schema ``tg-host-view/v1`` surfaces:
-
-  HostIR writes (+ one-level callee expansion)  → fields[].writers
-  PredicateNormalizer / var roots               → fields[].reads + predicates[]
-  kernel tiling-key header                      → declared_keys
-  npuArch / SocVersion guards                   → platform_gates
-
-The single SQLite product / authority is ``indexes/kb_graph.sqlite``. Legacy
-``host_codemap.yaml`` / ``host_codemap.sqlite`` aliases are no longer written.
+Authority lives in the arch-scoped ``.uo`` CodeMap product
+(``.ascendc-pilot/<arch>/uo/<op>.<arch>.uo``). This module may write a
+working-tree YAML projection during extract; production loaders read the
+``.uo`` view_blob only. sqlite / YAML are migrate/test helpers.
 """
 
 from __future__ import annotations
@@ -94,7 +85,7 @@ def export_tg_host_view(
     """Project HostIR into ``tg_host_view.yaml`` stamped with the KB fingerprint.
 
     Does not read ``.probe_cache/*.pkl``. Callers must supply a live HostIR
-    (typically from the same in-process extract that fed ``export_kb``).
+    (typically from the same in-process extract that later commits ``.uo``).
     """
     root = Path(uo_root)
     payload = host_ir_payload(
@@ -109,8 +100,7 @@ def export_tg_host_view(
     view_path.parent.mkdir(parents=True, exist_ok=True)
     text = yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
     view_path.write_text(text, encoding="utf-8")
-    # No host_codemap.yaml alias — single authority is tg_host_view.yaml +
-    # indexes/kb_graph.sqlite (W4b).
+    # Working-tree YAML is extract scratch. Production loaders read the .uo blob.
     summary = rebuild_codemap_index(root)
     kb_upsert: dict[str, Any] = {}
     try:
@@ -308,80 +298,93 @@ def _predicates_from_writers(writers: list[dict[str, Any]]) -> list[dict[str, An
     return out
 
 
-def load_host_codemap(uo_root: str | Path) -> dict[str, Any]:
-    """Load the TG host view.
+def load_host_codemap(
+    uo_root: str | Path,
+    *,
+    architecture: str = "",
+    op_name: str = "",
+) -> dict[str, Any]:
+    """Load the TG host view from the ``.uo`` product blob only."""
+    from uo_init.store.reader import find_uo_product
 
-    Preference order:
-    1. Durable YAML (legacy / transition)
-    2. ``view_blob`` inside ``.uo`` CodeMap product
-    3. ``view_blob`` / host_view tables inside ``kb_graph.sqlite``
-    """
+    root = Path(uo_root).expanduser().resolve()
+    product: Path | None
+    if root.is_file() and root.suffix == ".uo":
+        product = root
+    else:
+        product = find_uo_product(root, op_name=op_name, architecture=architecture)
+        if product is None and root.name == "uo" and root.parent.name.startswith("arch"):
+            product = find_uo_product(
+                root.parent.parent.parent,
+                op_name=op_name,
+                architecture=architecture or root.parent.name,
+            )
+    if product is None or product.suffix != ".uo":
+        return {}
+    from uo_init.store.reader import load_production_view
+
+    for key in ("ir/tg_host_view.yaml", "tg_host_view"):
+        blob = load_production_view(product, key)
+        if isinstance(blob, dict) and blob:
+            return blob
+    return {}
+
+
+def migrate_load_host_view_from_yaml(uo_root: str | Path) -> dict[str, Any]:
+    """Test/migrate helper: read working-tree YAML (not production authority)."""
     root = Path(uo_root)
-    path = root / TG_HOST_VIEW_YAML
-    if path.is_file():
-        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    # Read-only fallback for older checkouts that still have the alias.
-    legacy = root / CODEMAP_YAML
-    if legacy.is_file():
-        return yaml.safe_load(legacy.read_text(encoding="utf-8")) or {}
+    for rel in (TG_HOST_VIEW_YAML, CODEMAP_YAML):
+        path = root / rel
+        if path.is_file():
+            return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return {}
 
-    # Prefer single-file ``.uo`` product (arch-neutral or beside op root).
+
+def migrate_load_host_view_from_sqlite(uo_root: str | Path) -> dict[str, Any]:
+    """Test/migrate helper: read ``kb_graph.sqlite`` view_blob."""
+    root = Path(uo_root)
+    db = root if root.is_file() else root / KB_GRAPH_SQLITE
+    if not db.is_file():
+        return {}
     try:
-        from uo_init.store.reader import find_uo_product, load_view_blob
+        from uo_init.kb_index import load_view_blob as _kb_blob
 
-        # uo_root is typically ``<op>/.ascendc-pilot/<arch>/uo`` → op = parents[2]
-        # or ``<op>/.ascendc-pilot/uo`` → op = parents[1]
-        if root.name == "uo" and root.parent.name == ".ascendc-pilot":
-            op_root = root.parent.parent
-        elif root.name == "uo":
-            op_root = root.parents[2]
-        else:
-            op_root = root
-        found = find_uo_product(op_root)
-        if found is not None and found.suffix == ".uo":
-            for key in ("ir/tg_host_view.yaml", "tg_host_view"):
-                blob = load_view_blob(found, key)
-                if isinstance(blob, dict) and blob:
-                    return blob
+        for key in ("ir/tg_host_view.yaml", "tg_host_view"):
+            blob = _kb_blob(db, key)
+            if isinstance(blob, dict) and blob:
+                return blob
     except Exception:
-        pass
-
-    # Legacy sqlite view_blob.
-    db = root / KB_GRAPH_SQLITE
-    if db.is_file():
-        try:
-            from uo_init.kb_index import load_view_blob as _kb_blob
-
-            for key in ("ir/tg_host_view.yaml", "tg_host_view"):
-                blob = _kb_blob(db, key)
-                if isinstance(blob, dict) and blob:
-                    return blob
-        except Exception:
-            pass
+        return {}
     return {}
 
 
 def load_tg_host_view(uo_root: str | Path) -> dict[str, Any]:
-    """TG shim: materialize host view from YAML or ``.uo`` (no new authority)."""
+    """TG shim: materialize host view from ``.uo`` (no YAML/sqlite fallback)."""
     return load_host_codemap(uo_root)
 
 
 def rebuild_codemap_index(uo_root: str | Path) -> dict[str, Any]:
-    """Ensure host-view rows live in ``kb_graph.sqlite`` (no second sqlite).
+    """Optional sqlite upsert for migrate/tests. Production authority is ``.uo``.
 
-    Historically this wrote ``indexes/host_codemap.sqlite``. That dual
-    authority is removed: we only upsert into kb_graph and report counts.
+    During extract (no ``.uo`` yet) this may upsert from working-tree YAML into
+    ``kb_graph.sqlite`` if that file already exists. Missing sqlite is not an error.
     """
     root = Path(uo_root)
     doc = load_host_codemap(root)
+    if not doc:
+        doc = migrate_load_host_view_from_yaml(root)
     fp = str((doc.get("source") or {}).get("graph_fingerprint") or "")
     kb_upsert: dict[str, Any] = {}
-    try:
-        from uo_init.kb_index import upsert_host_view_tables
+    db = root / KB_GRAPH_SQLITE
+    if db.is_file() and doc:
+        try:
+            from uo_init.kb_index import upsert_host_view_tables
 
-        kb_upsert = upsert_host_view_tables(root, doc)
-    except Exception as exc:  # noqa: BLE001
-        kb_upsert = {"ok": False, "error": str(exc)[:200]}
+            kb_upsert = upsert_host_view_tables(root, doc)
+        except Exception as exc:  # noqa: BLE001
+            kb_upsert = {"ok": False, "error": str(exc)[:200]}
+    else:
+        kb_upsert = {"ok": True, "skipped": "no_legacy_sqlite"}
     legacy = root / CODEMAP_SQLITE
     if legacy.is_file():
         try:
@@ -390,7 +393,7 @@ def rebuild_codemap_index(uo_root: str | Path) -> dict[str, Any]:
             pass
     return {
         "ok": True,
-        "mode": "kb_graph",
+        "mode": "uo",
         "field_rows": len(doc.get("fields") or []),
         "predicate_rows": len(doc.get("predicates") or []),
         "graph_fingerprint": fp,
@@ -469,58 +472,90 @@ def default_codemap_completeness(
 
 
 class CodemapQuery:
-    """Unified read API over ``indexes/kb_graph.sqlite`` (Host view + graph)."""
+    """Unified read API over the ``.uo`` CodeMap product (host view + graph)."""
 
-    def __init__(self, uo_root: str | Path):
-        self.root = Path(uo_root)
-        kb = self.root / KB_GRAPH_SQLITE
-        if not _kb_has_host_view_tables(kb):
-            rebuild_codemap_index(self.root)
-        self.db = kb
-        self._mode = "kb"
-        self._fingerprint = self._load_fingerprint()
-        self._completeness = self._load_completeness()
+    def __init__(
+        self,
+        uo_root: str | Path,
+        *,
+        architecture: str = "",
+        op_name: str = "",
+    ):
+        from uo_init.store.reader import (
+            find_uo_product,
+            load_production_view,
+            read_codemap,
+            read_meta,
+        )
 
-    def _conn(self) -> sqlite3.Connection:
-        return sqlite3.connect(str(self.db))
+        root = Path(uo_root).expanduser().resolve()
+        if root.is_file() and root.suffix == ".uo":
+            product = root
+        else:
+            product = find_uo_product(root, op_name=op_name, architecture=architecture)
+        if product is None or product.suffix != ".uo":
+            raise FileNotFoundError(
+                f"no .uo product under {root}; expected "
+                ".ascendc-pilot/<arch>/uo/<op>.<arch>.uo"
+            )
+        self.product = product
+        self.root = product.parent
+        self.db = product
+        self._cm = read_codemap(product)
+        view = load_production_view(product, "ir/tg_host_view.yaml") or load_production_view(
+            product, "tg_host_view"
+        )
+        self._view: dict[str, Any] = view if isinstance(view, dict) else {}
+        self._mode = "uo"
+        meta = read_meta(product)
+        self._fingerprint = str(
+            (self._view.get("source") or {}).get("graph_fingerprint")
+            or meta.get("graph_fingerprint")
+            or self._cm.meta.get("graph_fingerprint")
+            or ""
+        )
+        completeness = load_production_view(product, "codemap/completeness.yaml")
+        self._completeness = (
+            completeness
+            if isinstance(completeness, dict)
+            else default_codemap_completeness()
+        )
 
-    def _load_fingerprint(self) -> str:
-        try:
-            with self._conn() as conn:
-                row = conn.execute(
-                    "SELECT value FROM meta WHERE key='graph_fingerprint'"
-                ).fetchone()
-                return str(row[0]) if row else ""
-        except sqlite3.Error:
-            return ""
+    def _fields_payload(self) -> list[dict[str, Any]]:
+        from uo_init.ir.entity import EntityKind
 
-    def _load_completeness(self) -> dict[str, Any]:
-        try:
-            with self._conn() as conn:
-                row = conn.execute(
-                    "SELECT value FROM meta WHERE key='codemap_completeness'"
-                ).fetchone()
-                if row:
-                    try:
-                        payload = json.loads(row[0])
-                        if isinstance(payload, dict):
-                            return payload
-                    except json.JSONDecodeError:
-                        pass
-                blob = conn.execute(
-                    "SELECT data FROM view_blob WHERE name=?",
-                    ("codemap/completeness.yaml",),
-                ).fetchone()
-                if blob:
-                    try:
-                        payload = json.loads(blob[0])
-                        if isinstance(payload, dict):
-                            return payload
-                    except json.JSONDecodeError:
-                        pass
-        except sqlite3.Error:
-            pass
-        return default_codemap_completeness()
+        view_fields = [f for f in (self._view.get("fields") or []) if isinstance(f, dict)]
+        by_name: dict[str, dict[str, Any]] = {}
+        for field in view_fields:
+            name = str(field.get("name") or "")
+            if name:
+                by_name[name] = dict(field)
+        for kind in (EntityKind.TILING_FIELD, EntityKind.FIELD, EntityKind.TILING_KEY):
+            for ent in self._cm.by_kind(kind):
+                writers = list(
+                    ent.attrs.get("host_writer_sites")
+                    or ent.attrs.get("producer_sites")
+                    or ent.attrs.get("writers")
+                    or []
+                )
+                reads = list(ent.attrs.get("reads") or [])
+                row = by_name.setdefault(
+                    ent.name,
+                    {
+                        "name": ent.name,
+                        "kind": ent.kind_name(),
+                        "exactness": ent.attrs.get("exactness") or "",
+                        "grade": ent.attrs.get("grade") or "",
+                        "writers": [],
+                        "reads": [],
+                        "entity_id": ent.id,
+                    },
+                )
+                if writers and not row.get("writers"):
+                    row["writers"] = writers
+                if reads and not row.get("reads"):
+                    row["reads"] = reads
+        return list(by_name.values())
 
     def _result(
         self,
@@ -558,12 +593,15 @@ class CodemapQuery:
                 level = str(cur.get("completeness") or cur.get("call_closure") or "partial")
         else:
             lemma = self._completeness.get("lemma_certificate") or {}
-            if all(bool(lemma.get(k)) for k in (
-                "assignment_sites_complete",
-                "call_closure_complete",
-                "alias_state_exact",
-                "macro_context_complete",
-            )):
+            if all(
+                bool(lemma.get(k))
+                for k in (
+                    "assignment_sites_complete",
+                    "call_closure_complete",
+                    "alias_state_exact",
+                    "macro_context_complete",
+                )
+            ):
                 level = "complete"
             else:
                 level = "partial"
@@ -575,63 +613,19 @@ class CodemapQuery:
 
     def fields(self) -> list[dict[str, Any]]:
         """All host-view fields with writers (and attached guards)."""
-        with self._conn() as conn:
-            metas = conn.execute(
-                "SELECT name, kind, exactness, grade FROM field_meta ORDER BY name"
-            ).fetchall()
-            writers = conn.execute(
-                "SELECT field, path, function, file, line, rhs, via FROM field_writer "
-                "ORDER BY field, file, line"
-            ).fetchall()
-            guards = conn.execute(
-                "SELECT file, line, guard FROM field_guard"
-            ).fetchall()
-        guard_map: dict[tuple[str, int], list[str]] = {}
-        for file, line, guard in guards:
-            if not guard:
-                continue
-            guard_map.setdefault((str(file), int(line or 0)), []).append(str(guard))
-        by_field: dict[str, dict[str, Any]] = {}
-        for name, kind, exactness, grade in metas:
-            by_field[str(name)] = {
-                "name": str(name),
-                "kind": kind,
-                "exactness": exactness,
-                "grade": grade,
-                "writers": [],
-            }
-        for field_name, path, function, file, line, rhs, via in writers:
-            key = str(field_name or path or "")
-            row = by_field.setdefault(
-                key, {"name": key, "kind": "", "exactness": "", "grade": "", "writers": []}
-            )
-            g = guard_map.get((str(file), int(line or 0)), [])
-            row["writers"].append(
-                {
-                    "path": path,
-                    "function": function,
-                    "file": file,
-                    "line": line,
-                    "rhs": rhs,
-                    "via": via,
-                    "guards": list(g),
-                }
-            )
-        return list(by_field.values())
+        return list(self._fields_payload())
 
     def writers_of(self, symbol: str) -> list[dict[str, Any]]:
-        table = "field_writer" if self._mode == "kb" else "writers"
-        with self._conn() as conn:
-            rows = conn.execute(
-                f"SELECT path, function, file, line, rhs, via FROM {table} "
-                "WHERE path LIKE ? OR field LIKE ? ORDER BY file, line",
-                (f"%{symbol}%", f"%{symbol}%"),
-            ).fetchall()
-        return [
-            {"path": r[0], "function": r[1], "file": r[2], "line": r[3],
-             "rhs": r[4], "via": r[5]}
-            for r in rows
-        ]
+        needle = str(symbol or "").strip()
+        out: list[dict[str, Any]] = []
+        for field in self._fields_payload():
+            name = str(field.get("name") or "")
+            if needle and needle not in name and needle not in str(field.get("path") or ""):
+                continue
+            for writer in field.get("writers") or []:
+                if isinstance(writer, dict):
+                    out.append(dict(writer))
+        return out
 
     def writers(self, symbol: str) -> QueryResult:
         host = (self._completeness.get("host") or {}).get("writes") or "partial"
@@ -639,25 +633,38 @@ class CodemapQuery:
         return self._result(facts, completeness=str(host), scope=f"writers:{symbol}")
 
     def guards_at(self, file: str, line: int) -> list[str]:
-        table = "field_guard" if self._mode == "kb" else "guards"
-        with self._conn() as conn:
-            rows = conn.execute(
-                f"SELECT DISTINCT guard FROM {table} WHERE file LIKE ? AND line = ?",
-                (f"%{file}%", int(line)),
-            ).fetchall()
-        return [r[0] for r in rows if r[0]]
+        target = str(file or "").replace("\\", "/")
+        out: list[str] = []
+        for field in self._fields_payload():
+            for writer in field.get("writers") or []:
+                if not isinstance(writer, dict):
+                    continue
+                wfile = str(writer.get("file") or "").replace("\\", "/")
+                if target and target not in wfile:
+                    continue
+                if int(writer.get("line") or 0) != int(line):
+                    continue
+                for g in writer.get("guards") or []:
+                    if g and str(g) not in out:
+                        out.append(str(g))
+        return out
 
     def guards(self, file: str, line: int) -> QueryResult:
         facts = [{"guard": g} for g in self.guards_at(file, line)]
         return self._result(facts, completeness="partial", scope=f"guards:{file}:{line}")
 
     def reads_of(self, field: str) -> list[dict[str, str]]:
-        table = "field_read" if self._mode == "kb" else "reads"
-        with self._conn() as conn:
-            rows = conn.execute(
-                f"SELECT var, root FROM {table} WHERE field = ?", (field,),
-            ).fetchall()
-        return [{"var": r[0], "root": r[1]} for r in rows]
+        needle = str(field or "").strip()
+        out: list[dict[str, str]] = []
+        for item in self._fields_payload():
+            if needle and str(item.get("name") or "") != needle:
+                continue
+            for row in item.get("reads") or []:
+                if isinstance(row, dict):
+                    out.append({"var": str(row.get("var") or ""), "root": str(row.get("root") or "")})
+                elif isinstance(row, str):
+                    out.append({"var": row, "root": ""})
+        return out
 
     def readers(self, field: str) -> QueryResult:
         host = (self._completeness.get("host") or {}).get("reads") or "partial"
@@ -675,65 +682,74 @@ class CodemapQuery:
         )
 
     def predicates(self, *, feature_hint: str | None = None) -> list[dict[str, Any]]:
-        table = "field_predicate" if self._mode == "kb" else "predicates"
-        with self._conn() as conn:
-            if feature_hint:
-                rows = conn.execute(
-                    f"SELECT id, file, line, function, condition, feature_hint "
-                    f"FROM {table} WHERE feature_hint = ?",
-                    (feature_hint,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    f"SELECT id, file, line, function, condition, feature_hint "
-                    f"FROM {table}"
-                ).fetchall()
-        return [
-            {"id": r[0], "file": r[1], "line": r[2], "function": r[3],
-             "condition": r[4], "feature_hint": r[5]}
-            for r in rows
-        ]
+        rows = [p for p in (self._view.get("predicates") or []) if isinstance(p, dict)]
+        if not rows:
+            for field in self._fields_payload():
+                for pred in field.get("predicates") or []:
+                    if isinstance(pred, dict):
+                        rows.append(pred)
+        if feature_hint:
+            rows = [r for r in rows if str(r.get("feature_hint") or "") == feature_hint]
+        return rows
 
-    def _function_node_id(self, function: str) -> str | None:
-        from uo_init.ids import named_id
-
+    def _function_ents(self, function: str):
         name = str(function or "").strip()
         if not name:
-            return None
-        return named_id("Function", name)
+            return []
+        hits = self._cm.by_name(name)
+        short = name.rsplit("::", 1)[-1]
+        extra = [
+            e
+            for e in self._cm.entities.values()
+            if e.name == short or e.name.endswith(f"::{short}")
+        ]
+        seen: set[str] = set()
+        out = []
+        for ent in hits + extra:
+            if ent.id not in seen:
+                seen.add(ent.id)
+                out.append(ent)
+        return out
 
     def callers_of(self, function: str) -> list[dict[str, Any]]:
-        """Callers of ``function`` from first-class ``calls`` edges."""
-        # edges where function is the callee
-        node_id = self._function_node_id(function)
-        if not node_id:
+        """Callers of ``function`` from first-class ``CALLS`` relations."""
+        from uo_init.ir.relation import RelationKind
+
+        targets = {e.id for e in self._function_ents(function)}
+        if not targets:
             return []
-        short = function.rsplit("::", 1)[-1]
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT e.src, e.dst, e.data, src.name, dst.name FROM edge e "
-                "JOIN node src ON src.id = e.src "
-                "JOIN node dst ON dst.id = e.dst "
-                "WHERE e.kind = 'calls' AND "
-                "(e.dst = ? OR dst.name = ? OR dst.name LIKE ?)",
-                (node_id, function, f"%{short}"),
-            ).fetchall()
+        rows: list[tuple] = []
+        for rel in self._cm.relations.values():
+            if rel.kind_name() != RelationKind.CALLS.value:
+                continue
+            if rel.dst not in targets:
+                continue
+            src = self._cm.entities.get(rel.src)
+            dst = self._cm.entities.get(rel.dst)
+            if not src or not dst:
+                continue
+            data = json.dumps(rel.attrs or {}, ensure_ascii=False)
+            rows.append((rel.src, rel.dst, data, src.name, dst.name))
         return _expand_call_rows(rows, want="caller")
 
     def callees_of(self, function: str) -> list[dict[str, Any]]:
-        node_id = self._function_node_id(function)
-        if not node_id:
+        from uo_init.ir.relation import RelationKind
+
+        sources = {e.id for e in self._function_ents(function)}
+        if not sources:
             return []
-        short = function.rsplit("::", 1)[-1]
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT e.src, e.dst, e.data, src.name, dst.name FROM edge e "
-                "JOIN node src ON src.id = e.src "
-                "JOIN node dst ON dst.id = e.dst "
-                "WHERE e.kind = 'calls' AND "
-                "(e.src = ? OR src.name = ? OR src.name LIKE ?)",
-                (node_id, function, f"%{short}"),
-            ).fetchall()
+        rows: list[tuple] = []
+        for rel in self._cm.relations.values():
+            if rel.kind_name() != RelationKind.CALLS.value:
+                continue
+            if rel.src not in sources:
+                continue
+            src = self._cm.entities.get(rel.src)
+            dst = self._cm.entities.get(rel.dst)
+            if not src or not dst:
+                continue
+            data = json.dumps(rel.attrs or {}, ensure_ascii=False)
+            rows.append((rel.src, rel.dst, data, src.name, dst.name))
         return _expand_call_rows(rows, want="callee")
 
     def callers(self, function: str) -> QueryResult:
@@ -759,80 +775,75 @@ class CodemapQuery:
         )
 
     def influence(self, symbol: str, *, limit: int = 64) -> QueryResult:
-        """Bounded BFS over outbound edges from nodes matching ``symbol``."""
-        with self._conn() as conn:
-            seeds = [
-                r[0]
-                for r in conn.execute(
-                    "SELECT id FROM node WHERE name LIKE ? OR id LIKE ? LIMIT 16",
-                    (f"%{symbol}%", f"%{symbol}%"),
-                ).fetchall()
-            ]
-            seen = set(seeds)
-            frontier = list(seeds)
-            facts: list[dict[str, Any]] = []
-            while frontier and len(facts) < limit:
-                cur = frontier.pop(0)
-                rows = conn.execute(
-                    "SELECT id, kind, src, dst, data FROM edge WHERE src = ?",
-                    (cur,),
-                ).fetchall()
-                for eid, kind, src, dst, data_json in rows:
-                    facts.append(
-                        {
-                            "edge_id": eid,
-                            "kind": kind,
-                            "src": src,
-                            "dst": dst,
-                        }
-                    )
-                    if dst not in seen and len(seen) < limit:
-                        seen.add(dst)
-                        frontier.append(dst)
-                    if len(facts) >= limit:
-                        break
+        """Bounded BFS over outbound relations from nodes matching ``symbol``."""
+        needle = str(symbol or "")
+        seeds = [
+            e.id
+            for e in self._cm.entities.values()
+            if needle in e.name or needle in e.id
+        ][:16]
+        seen = set(seeds)
+        frontier = list(seeds)
+        facts: list[dict[str, Any]] = []
+        while frontier and len(facts) < limit:
+            cur = frontier.pop(0)
+            for rel in self._cm.relations.values():
+                if rel.src != cur:
+                    continue
+                facts.append(
+                    {
+                        "edge_id": rel.id,
+                        "kind": rel.kind_name(),
+                        "src": rel.src,
+                        "dst": rel.dst,
+                    }
+                )
+                if rel.dst not in seen and len(seen) < limit:
+                    seen.add(rel.dst)
+                    frontier.append(rel.dst)
+                if len(facts) >= limit:
+                    break
         return self._result(facts, completeness="partial", scope=f"influence:{symbol}")
 
     def path(self, src: str, dst: str, *, limit: int = 32) -> QueryResult:
-        """Shortest node path via edges (ids or name substrings)."""
-        with self._conn() as conn:
-            def resolve(token: str) -> str | None:
-                row = conn.execute(
-                    "SELECT id FROM node WHERE id = ? OR name = ? LIMIT 1",
-                    (token, token),
-                ).fetchone()
-                if row:
-                    return row[0]
-                row = conn.execute(
-                    "SELECT id FROM node WHERE name LIKE ? OR id LIKE ? LIMIT 1",
-                    (f"%{token}%", f"%{token}%"),
-                ).fetchone()
-                return row[0] if row else None
+        """Shortest node path via relations (ids or names)."""
 
-            start = resolve(src)
-            goal = resolve(dst)
-            if not start or not goal:
-                return self._result([], completeness="unknown", scope=f"path:{src}->{dst}")
-            prev: dict[str, str | None] = {start: None}
-            queue = [start]
-            while queue and len(prev) < limit * 4:
-                cur = queue.pop(0)
-                if cur == goal:
-                    break
-                for (nxt,) in conn.execute(
-                    "SELECT dst FROM edge WHERE src = ?", (cur,)
-                ).fetchall():
-                    if nxt not in prev:
-                        prev[nxt] = cur
-                        queue.append(nxt)
-            if goal not in prev:
-                return self._result([], completeness="partial", scope=f"path:{src}->{dst}")
-            chain = []
-            cur: str | None = goal
-            while cur is not None:
-                chain.append(cur)
-                cur = prev.get(cur)
-            chain.reverse()
+        def resolve(token: str) -> str | None:
+            if token in self._cm.entities:
+                return token
+            hits = self._cm.by_name(token)
+            if hits:
+                return hits[0].id
+            for ent in self._cm.entities.values():
+                if token in ent.name or token in ent.id:
+                    return ent.id
+            return None
+
+        start = resolve(src)
+        goal = resolve(dst)
+        if not start or not goal:
+            return self._result([], completeness="unknown", scope=f"path:{src}->{dst}")
+        prev: dict[str, str | None] = {start: None}
+        queue = [start]
+        while queue and len(prev) < limit * 4:
+            cur = queue.pop(0)
+            if cur == goal:
+                break
+            for rel in self._cm.relations.values():
+                if rel.src != cur:
+                    continue
+                nxt = rel.dst
+                if nxt not in prev:
+                    prev[nxt] = cur
+                    queue.append(nxt)
+        if goal not in prev:
+            return self._result([], completeness="partial", scope=f"path:{src}->{dst}")
+        chain: list[str] = []
+        cur: str | None = goal
+        while cur is not None:
+            chain.append(cur)
+            cur = prev.get(cur)
+        chain.reverse()
         return self._result(
             [{"nodes": chain}],
             completeness="partial",
@@ -840,47 +851,29 @@ class CodemapQuery:
         )
 
     def search(self, text: str, *, limit: int = 32) -> QueryResult:
-        q = f"%{text}%"
-        with self._conn() as conn:
-            nodes = conn.execute(
-                "SELECT id, kind, name FROM node WHERE name LIKE ? OR id LIKE ? LIMIT ?",
-                (q, q, limit),
-            ).fetchall()
-            try:
-                fts = conn.execute(
-                    "SELECT evidence_id, snippet FROM evidence_fts "
-                    "WHERE evidence_fts MATCH ? LIMIT ?",
-                    (text, limit),
-                ).fetchall()
-            except sqlite3.Error:
-                fts = []
-        facts = (
-            [{"id": r[0], "kind": r[1], "name": r[2], "match": "node"} for r in nodes]
-            + [
-                {"id": r[0], "snippet": r[1], "match": "evidence"}
-                for r in fts
-            ]
-        )
+        q = str(text or "")
+        facts = [
+            {"id": e.id, "kind": e.kind_name(), "name": e.name, "match": "node"}
+            for e in self._cm.entities.values()
+            if q in e.name or q in e.id
+        ]
         return self._result(facts[:limit], completeness="partial", scope=f"search:{text}")
 
     def source(self, node_id: str) -> QueryResult:
-        with self._conn() as conn:
-            rows = conn.execute(
-                "SELECT e.id, e.file, e.line_start, e.line_end, e.snippet "
-                "FROM evidence e "
-                "LEFT JOIN node_evidence ne ON ne.evidence_id = e.id "
-                "WHERE e.node_id = ? OR ne.node_id = ? OR e.id = ?",
-                (node_id, node_id, node_id),
-            ).fetchall()
+        ent = self._cm.entities.get(node_id)
+        if ent is None:
+            hits = self._cm.by_name(node_id)
+            ent = hits[0] if hits else None
+        if ent is None:
+            return self._result([], completeness="partial", scope=f"source:{node_id}")
         facts = [
             {
-                "id": r[0],
-                "file": r[1],
-                "line_start": r[2],
-                "line_end": r[3],
-                "snippet": r[4],
+                "id": ent.id,
+                "file": ent.file,
+                "line_start": ent.line_start,
+                "line_end": ent.line_end,
+                "snippet": str(ent.attrs.get("snippet") or ""),
             }
-            for r in rows
         ]
         return self._result(facts, completeness="partial", scope=f"source:{node_id}")
 

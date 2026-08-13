@@ -20,11 +20,33 @@ ARCH_TO_NPU_ARCH = {
     "arch50": 5001,
 }
 
-# Default SKU when the run only names an arch (FAG arch35 probe).
+# Default SKU when the run only names an arch.
 DEFAULT_SKU_BY_ARCH = {
     "arch35": "Ascend950PR_9589",  # Server, cube_core_cnt=32
     "arch22": "Ascend910B2",
 }
+
+# Kernel -D set for a BuildVariant. Never silently fall back to 3510.
+ARCH_KERNEL_MACROS: dict[str, dict[str, str]] = {
+    "arch35": {"__NPU_ARCH__": "3510", "__DAV_C310__": "", "__CCE_AICORE__": "310"},
+    "arch22": {"__NPU_ARCH__": "2201", "__DAV_C220__": "", "__CCE_AICORE__": "220"},
+    "arch32": {"__NPU_ARCH__": "3202"},
+    "arch50": {"__NPU_ARCH__": "5001"},
+}
+
+
+def kernel_macros_for_arch(arch_dir: str | None) -> dict[str, str]:
+    """Clang -D map for this architecture. Unknown arch: NPU number only."""
+    arch = str(arch_dir or "").strip()
+    if not arch:
+        return {}
+    known = ARCH_KERNEL_MACROS.get(arch)
+    if known is not None:
+        return dict(known)
+    npu = ARCH_TO_NPU_ARCH.get(arch)
+    if npu is not None:
+        return {"__NPU_ARCH__": str(npu)}
+    return {}
 
 _PLATFORM_DIR_RE = re.compile(r"platform_config$", re.I)
 

@@ -111,16 +111,15 @@ def finalize_kernel_tiling_metrics(codemap: CodeMap) -> CodeMap:
         }
     )
 
-    # Certificate edge policy: the generic audit's TILING_DATA→KERNEL check is
-    # now backed by the same strict invariant rather than existential presence.
     cert_relations = [
         rid for rid, rel in codemap.relations.items()
         if str(rel.attrs.get("provenance") or "") == _CERT_EDGE_PROVENANCE
     ]
-    if not strict:
-        for rid in cert_relations:
-            codemap.relations.pop(rid, None)
-    elif not cert_relations:
+    # Registration-verified TILING_DATA→KERNEL is a source contract
+    # (REGISTER_TILING_* in the kernel TU). Strict consumed-field metrics may
+    # fail independently; they must not retract that contract. Only synthesize a
+    # cert edge when the strict invariant holds and none exists yet.
+    if strict and not cert_relations:
         kernels = codemap.by_kind(EntityKind.KERNEL)
         roots = set(closure.get("tiling_registered_root_types") or ())
         for td in codemap.by_kind(EntityKind.TILING_DATA):

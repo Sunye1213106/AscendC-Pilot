@@ -107,10 +107,28 @@ def test_codemap_store_does_not_promote_legacy_key_fields(tmp_path: Path):
     cm: CodeMap = result["codemap"]
     summary = cm.summary()
     assert summary["has_host"]
-    assert summary["has_kernel"]
     assert cm.by_kind(EntityKind.INPUT)
     assert cm.by_kind(EntityKind.TILING_KEY)
-    assert cm.by_kind(EntityKind.KERNEL)
+    branches = cm.by_kind(EntityKind.BRANCH)
+    assert branches
+    kernel_branches = [e for e in branches if str(e.id).startswith("KBR_")]
+    assert kernel_branches
+    assert kernel_branches[0].file == "kernel.cpp"
+    assert kernel_branches[0].line_start == 42
+    host_branches = [e for e in branches if str(e.id).startswith("HBR_")]
+    assert host_branches
+    assert host_branches[0].file == "host.cpp"
+    assert host_branches[0].line_start > 0
+    verified = [
+        e
+        for e in cm.by_kind(EntityKind.KERNEL)
+        if e.attrs.get("source_signature")
+        or e.attrs.get("source_definition")
+        or (e.file and int(e.line_start or 0) > 0)
+    ]
+    assert not verified
+    dummy = [e for e in cm.by_kind(EntityKind.KERNEL) if not e.file]
+    assert not dummy
     assert "input_root" not in list(cm.meta.get("passes_run") or [])
 
     path = Path(result["path"])
@@ -120,7 +138,8 @@ def test_codemap_store_does_not_promote_legacy_key_fields(tmp_path: Path):
     assert path.parent.name == "uo"
 
     loaded = read_codemap(path)
-    assert loaded.by_kind(EntityKind.KERNEL)
+    assert loaded.by_kind(EntityKind.BRANCH)
+    assert any(str(e.id).startswith("KBR_") for e in loaded.by_kind(EntityKind.BRANCH))
     q = CodeMapQuery(codemap=loaded, path=str(path))
     trail = q.find_path("queryType", end_kind="KERNEL")
     assert trail == [], "legacy key_fields/input_roots must not invent an Agent-visible source path"

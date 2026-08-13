@@ -10,16 +10,16 @@
 | --- | --- |
 | `acp abort` | 终止当前 run 并标记为失败 |
 | `acp advance` | 仅在当前 phase gate 通过后推进状态 |
-| `acp answer` | Record a Host question UI answer as a signed HumanDecisionReceipt |
+| `acp answer` | 把 Host 问答结果记为已签名的 HumanDecisionReceipt |
 | `acp authorize` | 执行 host hook 的授权检查 |
 | `acp block` | 标记为 blocked、failed 或 human_required |
 | `acp complete` | 全部 gate 通过后标记 workflow 完成 |
 | `acp context` | 构建 context pack |
 | `acp debug` | 采集诊断信息并导出 session bundle |
-| `acp dispatch-result` | Host Session Driver: consume dispatch ticket, finalize, continue drive |
+| `acp dispatch-result` | Host Session Driver：消费 dispatch ticket、finalize 并继续驱动 |
 | `acp doctor` | 执行环境预检 |
-| `acp emit-confidence-report` | 从 KB 生成确定性的 confidence report 与 gate |
-| `acp host-context` | Resolve arch-scoped Host adapter context (OpenCode plugin authority) |
+| `acp emit-confidence-report` | 已移除：改用 /uo-init verify 或 `acp uo-query --status-only` |
+| `acp host-context` | 解析 arch 作用域的 Host 适配器上下文 |
 | `acp inspect` | 查询结构化 IR / 证据窗口（tasks、YAML 计数、evidence-window） |
 | `acp inspect-failure` | 查看结构化 failure 信息 |
 | `acp next` | 查看可执行的下一动作与 obligations |
@@ -30,7 +30,7 @@
 | `acp run-action` | 准备或 finalize 一个 workflow action |
 | `acp run-summary` | 汇总中断的 uo-init run，供人工询问使用 |
 | `acp scan-architectures` | 快速扫描算子 op_host/op_kernel 布局与 arch* 选项 |
-| `acp serve-authorize` | Long-lived authorize daemon (stdio JSON-lines; Host Session Driver) |
+| `acp serve-authorize` | 长驻 authorize 守护进程（stdio JSON-lines） |
 | `acp spec-hashes` | 输出四类 Spec Hash 摘要 |
 | `acp start` | 从 entry state 启动 workflow |
 | `acp status` | 查看 workflow 状态 |
@@ -45,5 +45,6 @@
 | 命令 | 软件包 |
 | --- | --- |
 | `uo-init`、`uo-dump` | `engines/understand-operator` |
-| `tg-init`、`tg-plan`、`tg-solve`、`tg-closure` | `engines/testcase-generation` |
+| `tg-closure` | `engines/testcase-generation` |
 | `ce-impact` | `engines/code-engineering` |
+

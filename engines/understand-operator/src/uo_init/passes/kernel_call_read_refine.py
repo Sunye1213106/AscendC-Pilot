@@ -19,6 +19,7 @@ from typing import Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.source_layout import includes_architecture
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CONTROL = {
@@ -151,7 +152,7 @@ def _load_selected(
                 if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
                     continue
                 raw = read_text(path)
-                if f'"{architecture}/' in raw or f"<{architecture}/" in raw:
+                if includes_architecture(raw, architecture):
                     paths.add(path.resolve())
     out: dict[Path, tuple[str, str]] = {}
     for path in sorted(paths):
