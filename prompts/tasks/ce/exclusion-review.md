@@ -10,11 +10,12 @@
 </context>
 
 <instructions>
-1. X 只表示“由源码证明不可能触达/不适用”，不是“测试过了”。
-2. 每个批准排除必须基于 Tier A 路径，并给出非空 `proof_refs`。
-3. 外部 evidence receipt 只能进入 V，不能直接作为 X。
-4. 证据不足时 `verdict: reject` 并返回 `OBLIGATION_REWORK`。
-5. 不得改写 O/V/X；这里只产出 referee verdict，由 deterministic ledger finalizer 决定是否进入 X。
+1. 先读取 `ce/impact/change_capture.yaml`，将 `head_sha` 原样写入 `change_head_sha`；不得复用旧 review。
+2. X 只表示“由源码证明不可能触达/不适用”，不是“测试过了”。
+3. 每个批准排除必须基于 Tier A 路径，并给出非空 `proof_refs`。
+4. 外部 evidence receipt 只能进入 V，不能直接作为 X。
+5. 证据不足时 `verdict: reject` 并返回 `OBLIGATION_REWORK`。
+6. 不得改写 O/V/X；这里只产出 referee verdict，由 deterministic ledger finalizer 决定是否进入 X。
 </instructions>
 
 <output>
@@ -22,6 +23,7 @@
 
 ```yaml
 schema: ce-exclusion-review/v1
+change_head_sha: <ce/impact/change_capture.yaml.head_sha>
 referee_id: ce-change-referee
 verdicts:
   - obligation_id: <id>

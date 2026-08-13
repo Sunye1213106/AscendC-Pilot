@@ -38,6 +38,8 @@ def load_external_evidence(declared_path: Path | str) -> list[dict[str, Any]]:
                     "external evidence cannot exclude obligations; "
                     "use ce-change-referee exclusion_review with Tier-A proof"
                 )
+            if not str(value.get("change_head_sha") or "").strip():
+                raise ValueError(f"external evidence missing change_head_sha: {source}")
             verified = value.get("verified_obligations") or []
             if not isinstance(verified, list):
                 raise ValueError(f"verified_obligations must be a list: {source}")

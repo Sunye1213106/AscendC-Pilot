@@ -13,6 +13,10 @@ def _write(path: Path, doc: dict) -> None:
 def test_ledger_roundtrip_recomputes_vx_from_evidence(tmp_path: Path) -> None:
     root = tmp_path / ".ascendc-pilot" / "arch20"
     _write(
+        root / "ce" / "impact" / "change_capture.yaml",
+        {"base_sha": "base", "head_sha": "head", "diff": "diff"},
+    )
+    _write(
         root / "ce" / "impact" / "obligations.yaml",
         {
             "obligations": [
@@ -26,6 +30,7 @@ def test_ledger_roundtrip_recomputes_vx_from_evidence(tmp_path: Path) -> None:
         root / "ce" / "verify" / "code_review.yaml",
         {
             "schema": "ce-code-review-evidence/v1",
+            "change_head_sha": "head",
             "reviewer_id": "ce-reviewer",
             "verified_obligations": [
                 {
@@ -43,6 +48,7 @@ def test_ledger_roundtrip_recomputes_vx_from_evidence(tmp_path: Path) -> None:
             "receipts": [
                 {
                     "schema": "ce-external-evidence/v1",
+                    "change_head_sha": "head",
                     "id": "perf-run",
                     "verified_obligations": ["b"],
                     "declared_path": "/tmp/evidence.yaml",
@@ -54,6 +60,7 @@ def test_ledger_roundtrip_recomputes_vx_from_evidence(tmp_path: Path) -> None:
         root / "ce" / "verify" / "exclusion_review.yaml",
         {
             "schema": "ce-exclusion-review/v1",
+            "change_head_sha": "head",
             "referee_id": "ce-change-referee",
             "verdicts": [
                 {
@@ -88,3 +95,35 @@ def test_unbacked_transitions_are_rejected(tmp_path: Path) -> None:
     kinds = {row["kind"] for row in ledger.transition_audit}
     assert "rejected_unbacked_V" in kinds
     assert "rejected_unbacked_X" in kinds
+
+
+def test_stale_evidence_is_not_replayed_across_change_heads(tmp_path: Path) -> None:
+    root = tmp_path / ".ascendc-pilot" / "arch20"
+    _write(
+        root / "ce" / "impact" / "change_capture.yaml",
+        {"base_sha": "base", "head_sha": "new-head", "diff": "diff"},
+    )
+    _write(
+        root / "ce" / "impact" / "obligations.yaml",
+        {"obligations": [{"id": "a", "risk_class": "contract"}]},
+    )
+    _write(
+        root / "ce" / "verify" / "code_review.yaml",
+        {
+            "schema": "ce-code-review-evidence/v1",
+            "change_head_sha": "old-head",
+            "reviewer_id": "ce-reviewer",
+            "verified_obligations": [
+                {
+                    "obligation_id": "a",
+                    "verdict": "VERIFIED",
+                    "evidence_tier": "A",
+                    "evidence_refs": ["x.h:1-3"],
+                }
+            ],
+        },
+    )
+    ledger = Ledger(O={"a"})
+    save_ledger(ledger, tmp_path, architecture="arch20")
+    assert ledger.V == set()
+    assert ledger.Open == {"a"}

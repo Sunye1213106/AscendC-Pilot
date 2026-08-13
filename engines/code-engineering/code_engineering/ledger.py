@@ -42,6 +42,11 @@ def _obligation_records(root: Path) -> dict[str, dict[str, Any]]:
     }
 
 
+def _current_change_head(root: Path) -> str:
+    capture = _load_yaml(root / "ce" / "impact" / "change_capture.yaml")
+    return str(capture.get("head_sha") or "").strip()
+
+
 def _add_evidence(
     evidence: dict[str, list[dict[str, Any]]],
     obligation_id: str,
@@ -60,6 +65,9 @@ def _review_verified(
     if doc.get("schema") != "ce-code-review-evidence/v1":
         return set()
     if str(doc.get("reviewer_id") or "") != "ce-reviewer":
+        return set()
+    change_head = _current_change_head(root)
+    if not change_head or str(doc.get("change_head_sha") or "").strip() != change_head:
         return set()
     closed: set[str] = set()
     for row in doc.get("verified_obligations") or []:
@@ -88,6 +96,7 @@ def _review_verified(
                     "tier": tier,
                     "refs": refs,
                     "reviewer_id": "ce-reviewer",
+                    "change_head_sha": change_head,
                 },
             )
     return closed
@@ -99,11 +108,16 @@ def _external_verified(
 ) -> set[str]:
     """Accept only verification claims from validated external receipt batches."""
     doc = _load_yaml(root / "ce" / "verify" / "external_evidence.yaml")
+    change_head = _current_change_head(root)
+    if not change_head:
+        return set()
     closed: set[str] = set()
     for receipt in doc.get("receipts") or []:
         if not isinstance(receipt, dict):
             continue
         if receipt.get("schema") != "ce-external-evidence/v1":
+            continue
+        if str(receipt.get("change_head_sha") or "").strip() != change_head:
             continue
         for value in receipt.get("verified_obligations") or []:
             oid = str(value.get("obligation_id") if isinstance(value, dict) else value)
@@ -118,6 +132,7 @@ def _external_verified(
                     "type": "external_evidence",
                     "receipt_id": str(receipt.get("id") or receipt.get("receipt_id") or ""),
                     "declared_path": str(receipt.get("declared_path") or ""),
+                    "change_head_sha": change_head,
                 },
             )
     return closed
@@ -133,6 +148,9 @@ def _review_excluded(
         return set()
     referee = str(doc.get("referee_id") or "")
     if referee != "ce-change-referee":
+        return set()
+    change_head = _current_change_head(root)
+    if not change_head or str(doc.get("change_head_sha") or "").strip() != change_head:
         return set()
     closed: set[str] = set()
     for row in doc.get("verdicts") or []:
@@ -160,6 +178,7 @@ def _review_excluded(
                     "refs": refs,
                     "referee_id": referee,
                     "reason_codes": list(row.get("reason_codes") or []),
+                    "change_head_sha": change_head,
                 },
             )
     return closed
