@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Schema validation for CE obligation records."""
+"""Schema and evidence-policy validation for CE obligation records."""
 
 from __future__ import annotations
 
@@ -13,9 +13,11 @@ RISK_CLASSES = {"contract", "dispatch", "coverage", "shape", "sync", "precision"
 
 
 def validate_obligation(record: dict[str, Any]) -> list[str]:
-    """Return deterministic schema errors for one obligation."""
+    """Return deterministic schema and evidence-policy errors for one obligation."""
     errors = [f"missing:{name}" for name in sorted(FIELDS - set(record))]
-    if record.get("evidence_tier") not in {"A", "B", "C"}:
+    tier = record.get("evidence_tier")
+    verdict = record.get("max_verdict")
+    if tier not in {"A", "B", "C"}:
         errors.append("invalid:evidence_tier")
     if record.get("risk_class") not in RISK_CLASSES:
         errors.append("invalid:risk_class")
@@ -26,14 +28,20 @@ def validate_obligation(record: dict[str, Any]) -> list[str]:
     for name in ("id", "max_verdict", "closure_requirement"):
         if not isinstance(record.get(name), str) or not record.get(name):
             errors.append(f"invalid:{name}")
+    if tier == "C" and verdict != "open_only":
+        errors.append("policy:tier_c_must_remain_open")
+    if tier == "B" and verdict != "review_only":
+        errors.append("policy:tier_b_review_only")
+    if record.get("exclusion_eligible") is True and tier != "A":
+        errors.append("policy:exclusion_requires_tier_a")
     return errors
 
 
 def validate_obligations(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Validate a collection and report errors by record index."""
-    errors = {
-        str(index): validate_obligation(record)
-        for index, record in enumerate(records)
-        if validate_obligation(record)
-    }
+    errors: dict[str, list[str]] = {}
+    for index, record in enumerate(records):
+        row_errors = validate_obligation(record)
+        if row_errors:
+            errors[str(index)] = row_errors
     return {"ok": not errors, "errors": errors, "count": len(records)}

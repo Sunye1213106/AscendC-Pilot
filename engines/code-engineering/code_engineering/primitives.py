@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import sqlite3
 from collections import deque
 from pathlib import Path
 from typing import Any, Iterable
+
+import yaml
 
 from code_engineering.evidence_tier import classify_entity, classify_relation
 from code_engineering.product_uo import product, view
@@ -38,18 +41,149 @@ def _path_matches(left: str, right: str) -> bool:
     return left == right or left.endswith("/" + right) or right.endswith("/" + left)
 
 
+def _scope_root(project_root: Path | str, architecture: str) -> Path:
+    pilot = Path(project_root).expanduser().resolve() / ".ascendc-pilot"
+    return pilot / architecture if architecture else pilot
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {}
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+_INTENT_ANCHOR_KEYS = {
+    "anchor", "anchors", "candidate_anchor", "candidate_anchors",
+    "target", "targets", "symbol", "symbols", "entity_id", "entity_ids",
+}
+
+
+def _flatten_anchor_values(value: Any) -> list[str]:
+    out: list[str] = []
+    if isinstance(value, str):
+        text = value.strip()
+        if text:
+            out.append(text)
+    elif isinstance(value, dict):
+        for key in ("id", "entity_id", "name", "symbol", "target"):
+            if value.get(key):
+                out.extend(_flatten_anchor_values(value[key]))
+    elif isinstance(value, list):
+        for item in value:
+            out.extend(_flatten_anchor_values(item))
+    return out
+
+
+def _intent_tokens(doc: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(doc, dict):
+        for key, value in doc.items():
+            if str(key).lower() in _INTENT_ANCHOR_KEYS:
+                found.extend(_flatten_anchor_values(value))
+            if isinstance(value, (dict, list)):
+                found.extend(_intent_tokens(value))
+    elif isinstance(doc, list):
+        for item in doc:
+            found.extend(_intent_tokens(item))
+    return sorted({value for value in found if value})
+
+
+def _intent_anchor_resolve(
+    conn: sqlite3.Connection,
+    project_root: Path | str,
+    architecture: str,
+) -> list[dict[str, Any]]:
+    """Resolve reviewed intent targets, then walk backward to candidate edit points."""
+    scope = _scope_root(project_root, architecture)
+    if (scope / "ce" / "impact" / "change_capture.yaml").is_file():
+        return []
+
+    docs = [
+        _load_yaml(scope / "ce" / "intent" / "feature_decomposition.yaml"),
+        _load_yaml(scope / "ce" / "intent" / "intent.yaml"),
+    ]
+    tokens = sorted({token for doc in docs for token in _intent_tokens(doc)})
+    if not tokens:
+        return []
+
+    seeds: dict[str, dict[str, Any]] = {}
+    for token in tokens:
+        rows = conn.execute(
+            "SELECT * FROM entity WHERE id = ? OR name = ? OR lower(name) = lower(?) "
+            "ORDER BY id LIMIT 32",
+            (token, token, token),
+        ).fetchall()
+        heuristic = False
+        if not rows and re.fullmatch(r"[A-Za-z_]\w*(?:::\w+)*", token):
+            rows = conn.execute(
+                "SELECT * FROM entity WHERE lower(name) LIKE ? ORDER BY id LIMIT 8",
+                (f"%{token.lower()}%",),
+            ).fetchall()
+            heuristic = True
+        for row in rows:
+            item = _decode(row)
+            item["evidence_tier"] = "C" if heuristic else classify_entity(item)
+            item["located_via"] = "intent_name_hint" if heuristic else "intent_seed"
+            seeds[str(item["id"])] = item
+
+    if not seeds:
+        return []
+
+    allowed_edges = {
+        "WRITES", "READS", "CONTROLS", "BINDS", "SELECTS", "LAUNCHES",
+        "CALLS", "DERIVES", "FLOWS_TO",
+    }
+    seen = set(seeds)
+    queue = deque((eid, 0) for eid in sorted(seen))
+    while queue and len(seen) < 128:
+        current, depth = queue.popleft()
+        if depth >= 2:
+            continue
+        for row in conn.execute(
+            "SELECT * FROM relation WHERE dst = ? ORDER BY id", (current,)
+        ):
+            if str(row["kind"]).upper() not in allowed_edges:
+                continue
+            src = str(row["src"])
+            if src not in seen:
+                seen.add(src)
+                queue.append((src, depth + 1))
+                if len(seen) >= 128:
+                    break
+
+    if len(seen) > len(seeds):
+        marks = ",".join("?" for _ in seen)
+        for row in conn.execute(
+            f"SELECT * FROM entity WHERE id IN ({marks}) ORDER BY id", sorted(seen)
+        ):
+            eid = str(row["id"])
+            if eid in seeds:
+                continue
+            item = _decode(row)
+            item["evidence_tier"] = classify_entity(item)
+            item["located_via"] = "intent_backward_slice"
+            seeds[eid] = item
+    return [seeds[key] for key in sorted(seeds)]
+
+
 def anchor_resolve(
     diff_spans: dict[str, list[tuple[int, int]]],
     *,
     project_root: Path | str = ".",
     architecture: str = "",
 ) -> list[dict[str, Any]]:
-    """Resolve changed source ranges to intersecting CodeMap entities."""
+    """Resolve source ranges, or reviewed intent targets before a diff exists."""
     conn = _connect(project_root, architecture)
     if conn is None:
         return []
     try:
-        # Query by ranges to retain SQLite index-friendly predicates.
+        if not diff_spans:
+            return _intent_anchor_resolve(conn, project_root, architecture)
+
         found: dict[str, dict[str, Any]] = {}
         for path, spans in sorted(diff_spans.items()):
             for start, end in spans:

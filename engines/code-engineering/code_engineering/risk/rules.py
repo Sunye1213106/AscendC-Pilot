@@ -24,6 +24,15 @@ _VERDICTS = {
 }
 
 
+def _bounded_verdict(risk_class: str, tier: Tier) -> str:
+    """Cap the strongest verdict by the weakest evidence on the anchor path."""
+    if tier == "C":
+        return "open_only"
+    if tier == "B":
+        return "review_only"
+    return _VERDICTS[risk_class]
+
+
 def _spans(anchor: dict[str, Any]) -> list[dict[str, Any]]:
     spans = anchor.get("source_spans")
     if isinstance(spans, list):
@@ -46,6 +55,7 @@ def _rule(risk_class: str, anchors: list[dict[str, Any]]) -> list[dict[str, Any]
         for a in anchors
         if str(a.get("evidence_tier") or "C") in {"A", "B", "C"}
     ]
+    tier = path_tier(tiers)
     digest = hashlib.sha256(
         (risk_class + "\0" + "\0".join(anchor_ids)).encode("utf-8")
     ).hexdigest()[:16]
@@ -53,8 +63,9 @@ def _rule(risk_class: str, anchors: list[dict[str, Any]]) -> list[dict[str, Any]
         "id": f"ce-{risk_class}-{digest}",
         "risk_class": risk_class,
         "anchors": anchor_ids,
-        "evidence_tier": path_tier(tiers),
-        "max_verdict": _VERDICTS[risk_class],
+        "evidence_tier": tier,
+        "max_verdict": _bounded_verdict(risk_class, tier),
+        "exclusion_eligible": tier == "A",
         "closure_requirement": _REQUIREMENTS[risk_class],
         "source_spans": [
             span for anchor in anchors for span in _spans(anchor)
