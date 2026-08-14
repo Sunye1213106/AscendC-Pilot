@@ -172,6 +172,19 @@ class CodeMap:
             existing.file = entity.file
             existing.line_start = entity.line_start
             existing.line_end = entity.line_end
+        settled = str(existing.attrs.get("root_status") or "")
+        if settled in {"REACHED", "PROJECT", "BUILTIN"}:
+            existing.status = "extracted"
+            existing.confidence = max(float(existing.confidence or 0.0), float(entity.confidence or 0.0))
+        elif str(entity.status or "") == "extracted" and str(existing.status or "").lower() in {
+            "partial",
+            "unresolved",
+            "unknown",
+            "not_extracted",
+            "",
+        }:
+            existing.status = "extracted"
+            existing.confidence = max(float(existing.confidence or 0.0), float(entity.confidence or 0.0))
         return existing
 
     def upsert(

@@ -167,6 +167,98 @@ def test_tiling_reads_are_owner_qualified_and_entry_reachable(tmp_path: Path) ->
     assert meta["tiling_entry_reachable_fields"] == 1
 
 
+def test_nested_read_and_trailing_underscore_host_setter_resolve(tmp_path: Path) -> None:
+    """Generic packing: nested member types + host ``sub_`` mirroring ``sub``."""
+    root = _root(tmp_path)
+    (root / "op_kernel" / "toy_apt.cpp").write_text(
+        '''
+        #include "arch35/entry.h"
+        template <bool A, bool B>
+        __global__ __aicore__ void toy_kernel(
+            __gm__ uint8_t *q, __gm__ uint8_t *out,
+            __gm__ uint8_t *workspace, __gm__ uint8_t *tiling_data) {
+          RunKernel(q, out, tiling_data);
+        }
+        ''',
+        encoding="utf-8",
+    )
+    (root / "op_kernel" / "arch35" / "entry.h").write_text(
+        '''
+        class InnerParams { public: int scale; };
+        class OuterTiling {
+         public:
+          InnerParams base;
+          typename std::conditional<A, InnerParams, std::nullptr_t>::type opt;
+        };
+        inline __aicore__ void RunKernel(
+            __gm__ uint8_t *q, __gm__ uint8_t *out, __gm__ uint8_t *tiling_data) {
+          OuterTiling *tilingData = (OuterTiling *)tiling_data;
+          int v = tilingData->base.scale;
+          (void)v;
+        }
+        ''',
+        encoding="utf-8",
+    )
+    (root / "op_host" / "arch35" / "host.cpp").write_text(
+        '''
+        void Fill(OuterTiling *td, int value) {
+          InnerParams base_;
+          base_.set_scale(value);
+        }
+        ''',
+        encoding="utf-8",
+    )
+
+    cm = _base_cm()
+    outer = cm.upsert(EntityKind.TILING_DATA, "OuterTiling")
+    inner = cm.upsert(EntityKind.TILING_DATA, "InnerParams")
+    base = cm.upsert(
+        EntityKind.TILING_FIELD,
+        "base",
+        eid="TDF::OuterTiling::base",
+        attrs={"owner": "OuterTiling", "qualified_name": "OuterTiling::base", "cpp_type": "InnerParams"},
+    )
+    opt = cm.upsert(
+        EntityKind.TILING_FIELD,
+        "opt",
+        eid="TDF::OuterTiling::opt",
+        attrs={
+            "owner": "OuterTiling",
+            "qualified_name": "OuterTiling::opt",
+            "cpp_type": "typename std::conditional<A, InnerParams, std::nullptr_t>::type",
+        },
+    )
+    scale = cm.upsert(
+        EntityKind.TILING_FIELD,
+        "scale",
+        eid="TDF::InnerParams::scale",
+        attrs={"owner": "InnerParams", "qualified_name": "InnerParams::scale", "cpp_type": "int"},
+    )
+    cm.link(RelationKind.DECLARES, outer.id, base.id)
+    cm.link(RelationKind.DECLARES, outer.id, opt.id)
+    cm.link(RelationKind.DECLARES, inner.id, scale.id)
+
+    finalize_kernel_tiling_closure(cm, root, architecture="arch35")
+    enrich_tiling_host_writes(cm, root, architecture="arch35")
+
+    reads = [
+        r for r in cm.relations.values()
+        if r.kind_name() == RelationKind.READS.value
+        and r.attrs.get("provenance") == "source_tilingdata_read_qualified"
+    ]
+    assert {r.dst for r in reads} == {scale.id}
+    writes = [
+        r for r in cm.relations.values()
+        if r.kind_name() == RelationKind.WRITES.value
+        and r.attrs.get("provenance") in {
+            "source_tilingdata_host_write",
+            "source_tilingdata_host_write_verified",
+        }
+    ]
+    assert {r.dst for r in writes} == {scale.id}
+    assert cm.meta["kernel_tiling_closure"]["tiling_ambiguous_read_sites"] == 0
+
+
 def test_host_setter_is_bound_to_receiver_tiling_type_not_short_name(tmp_path: Path) -> None:
     root = _root(tmp_path)
     (root / "op_kernel" / "toy_apt.cpp").write_text(

@@ -99,7 +99,7 @@ uninstall() {
       done
     fi
     if [[ -n "$plugins" ]]; then
-      rm -f "$plugins/ascendc-pilot.ts" "$plugins/zz-uo-query-return-value.ts" "$plugins/ascendc-harness.ts"
+      rm -f "$plugins/ascendc-pilot.ts" "$plugins/zz-uo-query-return-value.ts" "$plugins/ascendc-harness.ts" "$plugins/pilot-driver.ts"
     fi
     rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
   fi
@@ -206,12 +206,15 @@ if [[ "$PLATFORM" == "opencode" ]]; then
   PLUGINS="$(plugins_dest opencode)"
   COMMANDS="$(commands_dest opencode)"
   mkdir -p "$PLUGINS" "$COMMANDS"
-  for f in "$BUNDLE_ROOT"/opencode-plugin/*.ts; do
+  # OpenCode autoloads every *.ts in this directory as a plugin factory.
+  # Copy only real plugins. pilot-driver.ts is a library loaded from $DEST.
+  for f in "$BUNDLE_ROOT"/opencode-plugin/ascendc-pilot.ts "$BUNDLE_ROOT"/opencode-plugin/zz-uo-query-return-value.ts; do
     [[ -f "$f" ]] || continue
     base="$(basename "$f")"
     cp "$f" "$PLUGINS/$base"
     echo "Installed plugin → $PLUGINS/$base"
   done
+  rm -f "$PLUGINS/pilot-driver.ts"
   if [[ -d "$DEST/commands" ]]; then
     for f in "$DEST/commands"/*.md; do
       [[ -f "$f" ]] || continue

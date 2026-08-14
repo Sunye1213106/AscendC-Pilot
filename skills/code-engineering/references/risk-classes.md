@@ -34,12 +34,4 @@ TQue EnQue/DeQue are outside the flag pair check. Precision and performance
 risks require external measurements (`ce-external-evidence/v1`) before they
 can enter `V`.
 
-Map classes to targeted scenarios (do not invent ids):
-
-| class | scenario_id |
-| --- | --- |
-| precision | `P-DTYPE`, `P-CAST`, `P-COPY-ALIGN`, `P-QUEUE`, `P-REDUCE-LONG`, `P-OPTIONAL`, `P-ILLEGAL`, `P-TAIL` |
-| perf | `F-SPLIT`, `F-BUFFER`, `F-SHAPE-TYPICAL`, `F-SHAPE-TAIL`, `F-DTYPE`, `F-BALANCE` |
-| dispatch | TilingKey overlay, not a `P-*`/`F-*` subset |
-
-Catalog and attach rules: `references/scenario-catalog.md`, `references/scenario-infer.md`.
+精度 → `P-*`，性能 → `F-*`，dispatch 走全量 Key overlay 而不是场景子集。id 与挂载规则只认 `references/scenario-catalog.md`。

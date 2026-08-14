@@ -695,6 +695,7 @@ def _rebuild_kernel_calls(codemap: CodeMap, scopes: list[_Scope], class_names: s
 
 def _tiling_index(codemap: CodeMap) -> dict[str, Any]:
     types = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
+    known = set(types)
     fields: dict[tuple[str, str], Entity] = {}
     by_name: dict[str, list[Entity]] = defaultdict(list)
     nested: dict[str, set[str]] = defaultdict(set)
@@ -702,7 +703,13 @@ def _tiling_index(codemap: CodeMap) -> dict[str, Any]:
         owner = str(field.attrs.get("owner") or "")
         fields[(owner, field.name)] = field
         by_name[field.name].append(field)
-        target = _base_type(str(field.attrs.get("cpp_type") or ""))
+        cpp_type = str(field.attrs.get("cpp_type") or "")
+        # std::conditional / decltype spellings need token intersection, not
+        # a single outer _base_type (which collapses to conditional_t).
+        nested[field.name].update(
+            t for t in re.findall(r"\b[A-Za-z_]\w*\b", cpp_type) if t in known
+        )
+        target = _base_type(cpp_type)
         if target in types:
             nested[field.name].add(target)
     return {"types": types, "fields": fields, "by_name": by_name, "nested": nested}
@@ -976,6 +983,19 @@ def _resolve_tiling_field(
 ) -> list[Entity]:
     if inner:
         nested_types = set(index["nested"].get(outer) or ())
+        # Walk base owner → outer member type when the nested map is incomplete.
+        if not nested_types:
+            for owner in var_types.get(base) or ():
+                parent = index["fields"].get((owner, outer))
+                if parent is None:
+                    continue
+                cpp_type = str(parent.attrs.get("cpp_type") or "")
+                nested_types.update(
+                    t for t in re.findall(r"\b[A-Za-z_]\w*\b", cpp_type) if t in index["types"]
+                )
+                target = _base_type(cpp_type)
+                if target in index["types"]:
+                    nested_types.add(target)
         candidates = [index["fields"].get((owner, inner)) for owner in nested_types]
         return _unique_entities(candidates)
     owner_types = set(var_types.get(base) or ())
@@ -1004,25 +1024,51 @@ def _resolve_writer_field(
     return []
 
 
+def _nested_owner_names(index: dict[str, Any], name: str) -> set[str]:
+    """Lookup nested packing types by member name, with trailing-``_`` tolerance.
+
+    Host code often names a local ``subParams_`` that mirrors the TilingData
+    member ``subParams``; both should resolve to the same nested type set.
+    """
+    out = set(index["nested"].get(name) or ())
+    if not out and name.endswith("_"):
+        out.update(index["nested"].get(name[:-1]) or ())
+    return out
+
+
 def _receiver_type_candidates(index: dict[str, Any], receiver: str, var_types: dict[str, set[str]]) -> set[str]:
     parts = [p for p in normalize_symbol(receiver).split(".") if p]
     if not parts:
         return set()
+    known = set(index["types"])
     owners = set(var_types.get(parts[0]) or ())
+    if not owners and parts[0].endswith("_"):
+        owners.update(var_types.get(parts[0][:-1]) or ())
+    # Bare nested packing receiver: ``subParams_.set_x`` where ``subParams`` is
+    # a TilingData member whose cpp_type is a packing type (or conditional).
+    if not owners:
+        owners.update(_nested_owner_names(index, parts[0]))
     for segment in parts[1:]:
         next_owners: set[str] = set()
         if owners:
             for owner in owners:
                 field = index["fields"].get((owner, segment))
-                if field is not None:
-                    nested = _base_type(str(field.attrs.get("cpp_type") or ""))
-                    if nested in index["types"]:
-                        next_owners.add(nested)
+                if field is None and segment.endswith("_"):
+                    field = index["fields"].get((owner, segment[:-1]))
+                if field is None:
+                    continue
+                cpp_type = str(field.attrs.get("cpp_type") or "")
+                next_owners.update(
+                    t for t in re.findall(r"\b[A-Za-z_]\w*\b", cpp_type) if t in known
+                )
+                nested = _base_type(cpp_type)
+                if nested in known:
+                    next_owners.add(nested)
         else:
-            next_owners.update(index["nested"].get(segment) or ())
+            next_owners.update(_nested_owner_names(index, segment))
         owners = next_owners
-    if not owners and parts[-1] in index["nested"]:
-        owners.update(index["nested"][parts[-1]])
+    if not owners:
+        owners.update(_nested_owner_names(index, parts[-1]))
     return owners
 
 

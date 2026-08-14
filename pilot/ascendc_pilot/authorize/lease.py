@@ -145,7 +145,11 @@ def _now() -> str:
 
 
 def lease_path(project_root: Path) -> Path:
-    return agent_root(project_root) / "state" / LEASE_FILENAME
+    from ascendc_pilot.state import load_state
+
+    st = load_state(project_root) or {}
+    arch = str(st.get("architecture") or "").strip() or None
+    return agent_root(project_root, arch=arch) / "state" / LEASE_FILENAME
 
 
 def _dump(path: Path, data: dict[str, Any]) -> None:
@@ -220,8 +224,9 @@ def issue_action_lease(
     from ascendc_pilot.runs import append_event
     from ascendc_pilot.state import load_state
 
-    ensure_agent_layout(project_root)
     st = state if state is not None else (load_state(project_root) or {})
+    arch = str(st.get("architecture") or "").strip() or None
+    ensure_agent_layout(project_root, arch=arch)
     mode_l = str(mode or MODE_NORMAL).strip().lower()
     if mode_l not in {MODE_NORMAL, MODE_REWORK, MODE_CONTAINMENT}:
         mode_l = MODE_NORMAL

@@ -125,6 +125,7 @@ kernel:
     - __simt_callee__
     - __simd__
     - __simd_vf__
+    - __no_simd_vf_fusion__
     - __vec_callee__
     - __ssbuf__
     - __sync_noalias__

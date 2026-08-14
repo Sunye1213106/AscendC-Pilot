@@ -111,6 +111,65 @@ def test_source_contract_recovers_19_keys_api_tilingdata_and_kernel_flow(tmp_pat
     assert report["evidence_backed_input_output_path"] is True
 
 
+def test_alias_register_and_tiling_data_header_seed_nested_types(tmp_path: Path) -> None:
+    """Entry may REGISTER an alias; *tiling_data* header still inventories ABI."""
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n"
+        "  .INPUT(query, TensorType({DT_FLOAT16}))\n"
+        "  .OUTPUT(out, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch35" / "toy_tiling_data.h").write_text(
+        "class InnerParams { public:\n  int64_t scale;\n};\n"
+        "template <bool Flag>\n"
+        "class PackTilingData { public:\n"
+        "  InnerParams base;\n"
+        "  typename std::conditional<Flag, InnerParams, std::nullptr_t>::type opt;\n"
+        "  int64_t blockStarts[4];\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch35" / "entry.h").write_text(
+        '#include "toy_tiling_data.h"\n'
+        "using PackAlias = PackTilingData<true>;\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy_apt.cpp").write_text(
+        '#include "arch35/entry.h"\n'
+        "template <bool Flag>\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *query, __gm__ uint8_t *out, "
+        "__gm__ uint8_t *workspace, __gm__ uint8_t *tiling_data) {\n"
+        "  REGISTER_TILING_DEFAULT(PackAlias);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    from uo_init.passes.tiling_field_complete import complete_tiling_fields
+
+    complete_tiling_fields(cm, op, architecture="arch35")
+
+    assert cm.by_name("PackTilingData", kind=EntityKind.TILING_DATA)
+    assert cm.by_name("InnerParams", kind=EntityKind.TILING_DATA)
+    outer_fields = {
+        e.name: e.attrs.get("cpp_type")
+        for e in cm.by_kind(EntityKind.TILING_FIELD)
+        if e.attrs.get("owner") == "PackTilingData"
+    }
+    assert "base" in outer_fields
+    assert "opt" in outer_fields
+    assert "blockStarts" in outer_fields
+    assert any(
+        e.name == "scale" and e.attrs.get("owner") == "InnerParams"
+        for e in cm.by_kind(EntityKind.TILING_FIELD)
+    )
+
+
 def test_registered_type_without_tiling_data_filename_has_fields(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     (op / "op_graph").mkdir(parents=True)

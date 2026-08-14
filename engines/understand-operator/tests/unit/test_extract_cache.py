@@ -33,11 +33,20 @@ class _FakeCtx:
 
 def _seed_scope(uo: Path, rels: list[str]) -> None:
     run = uo / "runs" / "r1" / "scope"
+    summary = uo / "summary"
     run.mkdir(parents=True, exist_ok=True)
+    summary.mkdir(parents=True, exist_ok=True)
     (uo / "manifest.yaml").write_text(
         yaml.safe_dump({"current_run_id": "r1", "scope_revision": 1}),
         encoding="utf-8",
     )
+    payload = {
+        "confirmed_source_files": rels,
+        "files": [{"path": r, "provenance": "clang_tu"} for r in rels],
+        "notes": ["clang_scope_status=complete"],
+    }
+    (summary / "scope_set.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+    (run / "scope_set.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
     (run / "receipt.yaml").write_text(
         yaml.safe_dump({"frozen_scope": {"confirmed_source_files": rels}}),
         encoding="utf-8",
@@ -69,6 +78,24 @@ def test_sources_unchanged_after_store(tmp_path):
     plan = skip_reextract_for_unchanged_tus(tmp_path, uo_root=uo, arch="arch35")
     assert plan["skip_reextract"] is True
     assert plan["unchanged_tus"] == ["op_host/a.cpp"]
+
+
+def test_fingerprint_fails_without_clang_confirmed_list(tmp_path):
+    import pytest
+
+    host = tmp_path / "op_host"
+    host.mkdir()
+    (host / "a.cpp").write_text("void f() {}\n", encoding="utf-8")
+    (host / "arch22").mkdir()
+    (host / "arch22" / "old.cpp").write_text("void g() {}\n", encoding="utf-8")
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    uo.mkdir(parents=True)
+    (uo / "manifest.yaml").write_text(
+        yaml.safe_dump({"current_run_id": "r1", "scope_revision": 1}),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="SCOPE_CONFIRMED_SOURCES_MISSING"):
+        compute_extract_fingerprint(tmp_path, uo_root=uo, arch="arch35")
 
 
 def test_warm_walk_reuses_tu_cache_without_cold_parse(tmp_path, monkeypatch):

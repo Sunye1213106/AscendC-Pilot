@@ -52,14 +52,14 @@ def compute_extract_fingerprint(
     scope = current_scope_identity(uo)
     rels = list(scope.get("confirmed_sources") or [])
     if not rels:
-        for pattern in (
-            "op_host/**/*.cpp",
-            "op_host/**/*.h",
-            "op_kernel/**/*.cpp",
-            "op_kernel/**/*.h",
-        ):
-            rels.extend(path.relative_to(root).as_posix() for path in root.glob(pattern) if path.is_file())
-        rels = sorted(set(rels))
+        # Never fall back to an arch-blind glob — that is how foreign-arch
+        # sources leak into confirmed_sources. Callers must finish prepare
+        # (Clang-complete scope_set.yaml) before extract fingerprinting.
+        raise RuntimeError(
+            "SCOPE_CONFIRMED_SOURCES_MISSING: no Clang-confirmed file list under "
+            f"{uo}; run prepare until clang_scope_status=complete writes "
+            "summary/scope_set.yaml confirmed_source_files"
+        )
     content_fp = content_fingerprint(root, rels)
     extract_fp = _stable_hash(
         {

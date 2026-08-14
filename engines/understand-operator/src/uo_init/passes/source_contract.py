@@ -72,8 +72,12 @@ _CLASS_RE = re.compile(
     re.S,
 )
 _MEMBER_RE = re.compile(
-    r"^\s*([A-Za-z_][\w:\s<>,*&]*?)\s+([A-Za-z_]\w*)\s*(?:=\s*[^;]+)?;\s*$"
+    r"^\s*(?P<type>[A-Za-z_][\w:\s<>,*&]*?)\s+"
+    r"(?P<name>[A-Za-z_]\w*)\s*"
+    r"(?P<arrays>(?:\[[^\]]+\]\s*)*)"
+    r"(?:=\s*(?P<init>[^;]+))?;\s*$"
 )
+_NON_TILING_TYPE_SUFFIXES = ("Helper", "Utils", "Util", "Traits", "Policy")
 
 
 def enrich_codemap_from_operator_source(
@@ -547,16 +551,24 @@ def _class_members(body: str, body_start_line: int) -> Iterable[tuple[str, str, 
         if depth == 0 and stripped and "(" not in stripped and not stripped.endswith(":"):
             m = _MEMBER_RE.match(stripped)
             if m:
-                cpp_type = " ".join(m.group(1).split())
-                name = m.group(2)
-                if name not in {"public", "private", "protected"}:
+                cpp_type = " ".join(m.group("type").split())
+                name = m.group("name")
+                arrays = re.sub(r"\s+", "", m.group("arrays") or "")
+                if arrays:
+                    cpp_type = f"{cpp_type}{arrays}"
+                if name not in {"public", "private", "protected"} and cpp_type:
                     yield cpp_type, name, body_start_line + off
         depth += line.count("{") - line.count("}")
         depth = max(0, depth)
 
 
+def _is_tiling_layout_type_name(name: str) -> bool:
+    """Reject helper/policy classes that sit beside packing structs."""
+    return bool(name) and not name.endswith(_NON_TILING_TYPE_SUFFIXES)
+
+
 def wanted_tiling_data_names(codemap: CodeMap, root: Path, architecture: str) -> set[str]:
-    """TilingData types identified by registration/read contract, not filename."""
+    """TilingData types from registration / GET_TILING_DATA contracts."""
     names = {e.name.split("::")[-1] for e in codemap.by_kind(EntityKind.TILING_DATA) if e.name}
     for path in _kernel_candidates(root, architecture):
         text = _read(path)
@@ -586,12 +598,37 @@ def _class_index(files: list[Path]) -> dict[str, tuple[Path, str, int, int, int]
 
 
 def _cpp_type_name(cpp_type: str) -> str:
-    cleaned = re.sub(r"\b(?:const|volatile|mutable|static|inline)\b", " ", cpp_type)
+    cleaned = re.sub(r"\b(?:const|volatile|mutable|static|inline|typename|class|struct)\b", " ", cpp_type)
     cleaned = re.sub(r"<.*", "", cleaned)
     cleaned = cleaned.replace("*", " ").replace("&", " ").strip()
     if not cleaned:
         return ""
     return cleaned.split()[-1].split("::")[-1]
+
+
+_WORD_TYPE_RE = re.compile(r"\b[A-Za-z_]\w*\b")
+_USING_ALIAS_RE = re.compile(
+    r"\busing\s+([A-Za-z_]\w*)\s*=\s*([^;]+);",
+    re.S,
+)
+
+
+def _referenced_type_names(cpp_type: str, known: set[str]) -> set[str]:
+    """All known type tokens inside a member type (incl. std::conditional arms)."""
+    return {t for t in _WORD_TYPE_RE.findall(cpp_type or "") if t in known}
+
+
+def _resolve_tiling_aliases(text: str, known_classes: set[str]) -> dict[str, str]:
+    """Map ``using Alias = ConcreteType<...>`` onto class-index names."""
+    out: dict[str, str] = {}
+    for match in _USING_ALIAS_RE.finditer(text):
+        alias = match.group(1)
+        targets = [
+            t for t in _WORD_TYPE_RE.findall(match.group(2) or "") if t in known_classes
+        ]
+        if len(targets) == 1:
+            out[alias] = targets[0]
+    return out
 
 
 def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[str, Any]:
@@ -608,12 +645,43 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
         seen_files.add(key)
         files.append(path)
     index = _class_index(files)
+    known_classes = set(index)
+    aliases: dict[str, str] = {}
+    for path in files:
+        try:
+            aliases.update(_resolve_tiling_aliases(_read(path), known_classes))
+        except OSError:
+            continue
     wanted = wanted_tiling_data_names(codemap, root, architecture)
+    # Generic AscendC packing layout: current-arch *tiling_data* headers declare
+    # the ABI structs. Entry TUs may only REGISTER an alias or a subset type;
+    # nested members still need owners for kernel reads / host setters.
+    for path in selected_tiling_headers(root, architecture):
+        name = path.name.lower()
+        if "tiling_data" not in name and "tilingdata" not in name:
+            continue
+        try:
+            text = _read(path)
+        except OSError:
+            continue
+        for match in _CLASS_RE.finditer(text):
+            if re.search(r"\benum\s+$", text[: match.start()]):
+                continue
+            type_name = match.group(1)
+            if _is_tiling_layout_type_name(type_name):
+                wanted.add(type_name)
+    # Collapse ``using Alias = ConcreteType<...>`` onto the class index name.
+    for alias, concrete in aliases.items():
+        if alias in wanted:
+            wanted.add(concrete)
     seen: set[str] = set()
     queue = list(wanted)
     while queue:
         owner = queue.pop()
         if not owner or owner in seen:
+            continue
+        owner = aliases.get(owner, owner)
+        if owner in seen:
             continue
         seen.add(owner)
         loc = index.get(owner)
@@ -664,10 +732,14 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
                 status="confirmed",
             )
             field_count += 1
+            nested_hits = _referenced_type_names(cpp_type, known_classes)
             nested = _cpp_type_name(cpp_type)
             if nested and nested not in _PRIMITIVE_TYPES and nested in index:
-                queue.append(nested)
-                wanted.add(nested)
+                nested_hits.add(nested)
+            for nested_name in nested_hits:
+                if nested_name not in _PRIMITIVE_TYPES:
+                    queue.append(nested_name)
+                    wanted.add(nested_name)
     from uo_init.tiling_data_ir import parse_macro_structs
 
     for path in files:
@@ -720,10 +792,17 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
 
 def _link_nested_tiling_data_types(codemap: CodeMap) -> None:
     owners = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
+    known = set(owners)
     for field in codemap.by_kind(EntityKind.TILING_FIELD):
-        cpp_type = str(field.attrs.get("cpp_type") or "").replace("const ", "").strip(" *&")
-        target = owners.get(cpp_type)
-        if target is not None:
+        cpp_type = str(field.attrs.get("cpp_type") or "")
+        targets = _referenced_type_names(cpp_type, known)
+        simple = _cpp_type_name(cpp_type)
+        if simple in known:
+            targets.add(simple)
+        for name in targets:
+            target = owners.get(name)
+            if target is None:
+                continue
             codemap.link(
                 RelationKind.REFERENCES,
                 field.id,

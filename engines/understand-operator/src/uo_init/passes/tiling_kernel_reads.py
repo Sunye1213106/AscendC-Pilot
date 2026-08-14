@@ -87,7 +87,18 @@ def rebuild_verified_tiling_reads(
                 leaf = leaf[4:]
             candidates: list[Entity] = []
             if inner:
-                for child_type in nested.get(outer) or ():
+                child_types = set(nested.get(outer) or ())
+                if not child_types:
+                    for owner in var_types.get(base) or ():
+                        parent = fields.get((owner, outer))
+                        if parent is None:
+                            continue
+                        child_types.update(
+                            _referenced_types(
+                                str(parent.attrs.get("cpp_type") or ""), known_types
+                            )
+                        )
+                for child_type in child_types:
                     candidates.append(fields.get((child_type, leaf)))
             else:
                 for owner in var_types.get(base) or ():

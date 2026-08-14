@@ -421,9 +421,22 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "scope_scan", "error": str(exc)[:400]}
 
-    # All selected Host TUs + kernel entry — never a fixed [:N] semantic cut.
+    # All selected Host TUs + current-arch kernel entry — never a fixed [:N] cut.
+    # Architecture only selects which entry TUs Clang parses; the file list is
+    # whatever those TUs actually include.
     hosts = [p for p in spec.host_targets if p.exists()]
     kernel = spec.kernel_entry if spec.kernel_entry and spec.kernel_entry.exists() else None
+    if kernel is not None:
+        owns = sscan.entry_architecture(kernel)
+        arch = (spec.arch_dir or "").strip().lower()
+        if owns and arch and owns != arch:
+            if spec.scope is not None:
+                spec.scope.notes.append(
+                    f"kernel_entry_other_arch: {kernel.name} builds {owns}; "
+                    "not used as clang entry"
+                )
+            kernel = None
+            spec.kernel_entry = None
 
     clang_status = "incomplete"
     clang_tus_expected = 0
@@ -618,6 +631,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         )
 
     scope_dict = scope.to_dict() if scope is not None else {}
+    confirmed = list(scope_dict.get("confirmed_source_files") or [])
     candidate = {
         "version": 3,
         "status": "extracted",
@@ -640,6 +654,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "clang_scope_tus_expected": clang_tus_expected,
         "clang_scope_tus_parsed": clang_tus_parsed,
         "clang_scope_errors": clang_errors,
+        "confirmed_source_files": confirmed,
         "scope_files": len(scope.files) if scope is not None else 0,
         "scope_shared": (
             sum(1 for f in scope.files if f.shared) if scope is not None else 0
@@ -658,6 +673,32 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     if scope_dict:
         _dump(run / "scope" / "scope_set.yaml", scope_dict)
         _dump(uo / "summary" / "scope_set.yaml", scope_dict)
+        # Run-level lease scope: same Clang set (posix, op-relative).
+        try:
+            from ascendc_pilot.paths import runs_root as _pilot_runs
+
+            run_id = str(ctx.get("run_id") or "").strip()
+            if run_id:
+                roots = sorted(
+                    {
+                        p.split("/", 1)[0]
+                        for p in confirmed
+                        if "/" in p and not p.startswith(".")
+                    }
+                )
+                src_scope = {
+                    "version": 1,
+                    "run_id": run_id,
+                    "allowed_source_roots": roots or ["op_host", "op_kernel"],
+                    "allowed_source_files": confirmed,
+                    "clang_scope_status": clang_status,
+                }
+                _dump(
+                    _pilot_runs(root, arch=spec.arch_dir) / run_id / "source_scope.yaml",
+                    src_scope,
+                )
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "ok": True,
         "engine": "scope_scan",
@@ -669,6 +710,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "kernel_probe_errors": kernel_errors,
         "scope_files": candidate["scope_files"],
         "scope_shared": candidate["scope_shared"],
+        "confirmed_source_files": len(confirmed),
         "include_heal": include_heal_report,
     }
 
@@ -886,6 +928,16 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             "message_zh": detail_zh,
             "error": err,
         }
+    scope_set = (
+        _load(scope / "scope_set.yaml")
+        or _load(uo / "summary" / "scope_set.yaml")
+        or {}
+    )
+    confirmed_files = list(
+        cand.get("confirmed_source_files")
+        or scope_set.get("confirmed_source_files")
+        or []
+    )
     receipt = {
         "version": 3,
         "status": "confirmed",
@@ -909,6 +961,8 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
         "probe_clean": probe_clean,
         "scope_files": cand.get("scope_files"),
         "scope_shared": cand.get("scope_shared"),
+        "confirmed_source_files": confirmed_files,
+        "frozen_scope": {"confirmed_source_files": confirmed_files},
         "soft_ambiguities": ambiguities,
     }
     _dump(scope / "scope_validated.yaml", receipt)

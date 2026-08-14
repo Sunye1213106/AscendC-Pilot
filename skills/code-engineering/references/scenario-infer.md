@@ -1,44 +1,20 @@
 # Infer scenarios from code or a diff
 
-**When to load**: building or reviewing a `ce-scenario-set/v1` after a
-static scan or an impact slice.
+**When to load**：freshness 确认后，审核 engine 写出的 `ce-scenario-set/v1`。
+
+合法 id 与何时挂上：`references/scenario-catalog.md`。Agent **不得发明 id**。
 
 ## Two entries
 
 | Entry | Source | What to scan |
 | --- | --- | --- |
-| `static` | no diff; operator as-is | `kernel_api` Cast/DataCopy/DataCopyPad/EnQue/DeQue, `buffer`, split-field writers |
-| `diff` | change capture | anchors in the slice, including OPERATION / BUFFER / BRANCH / KERNEL |
+| `static` | 无 diff | `kernel_api`（Cast/DataCopy/EnQue）、`buffer`、切分字段写点 |
+| `diff` | change capture | 切片里的锚点（OPERATION / BUFFER / BRANCH / KERNEL） |
 
-A truncated slice or stale UO is a disclosed boundary, never “no precision
-or perf impact”.
+截断切片或 stale UO 是披露边界，不是「没有精度/性能影响」。
 
-## Deterministic mapping (Agent must not invent ids)
-
-Use the engine table (same ids as `references/scenario-catalog.md`):
-
-| Anchor kind / callee | scenario_id |
-| --- | --- |
-| OPERATION `Cast` | `P-CAST`, `P-DTYPE` |
-| OPERATION `DataCopy` / `DataCopyPad` | `P-COPY-ALIGN` |
-| OPERATION `EnQue` / `DeQue` | `P-QUEUE` |
-| INPUT / OUTPUT dtype, key dim InputDType | `P-DTYPE` |
-| optional INPUT (mask, pse, dropout, rope) | `P-OPTIONAL` |
-| BRANCH tail / empty / remainder | `P-TAIL` |
-| reduction / online-softmax accumulate | `P-REDUCE-LONG` |
-| illegal combo (source guard or distilled matrix) | `P-ILLEGAL` |
-| TILING_FIELD split writer / rhs | `F-SPLIT`, `F-SHAPE-TYPICAL` |
-| BUFFER / QUEUE / `InitBuffer` | `F-BUFFER`, `F-SHAPE-TYPICAL` |
-| usedCoreNum / multi-core predicate | `F-BALANCE` |
-| compute dtype path (perf) | `F-DTYPE` |
-
-Engine writes the skeleton. Agent fills knobs via `ce-scenario-knobs` staging
-(`ce-scenario-knobs/v1`); Host `scenario_apply` merges into `scenario_set.yaml`
-before confirm. Agent may not add unknown `scenario_id` values or close
-precision/perf into `V` with a review narrative.
+Engine 写骨架。Agent 只填 knobs staging；Host `scenario_apply` 合并后再确认。不得用审查叙述把精度/性能放进 `V`。
 
 ## Output shape
 
-Each item: `id`, `risk_class`, `anchors[]` (`id/kind/file/line/callee`),
-`knobs`, `budget`, `oracle`, `origin` (`inferred` | `user`).
-`retrieve_from` is corpus (engine), not a skill playbook.
+每项：`id`、`risk_class`、`anchors[]`、`knobs`、`budget`、`oracle`、`origin`（`inferred` | `user`）。语料检索是 engine 的事。

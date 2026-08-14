@@ -513,10 +513,12 @@ def compile_context_slice(
     if profile is None:
         return None
 
-    ensure_agent_layout(project_root)
-    repo = Path(repo_root).resolve() if repo_root else _repo_root_from_project(project_root)
     loaded_state = load_state(project_root)
     state = loaded_state if isinstance(loaded_state, dict) else {}
+    arch = str(state.get("architecture") or "").strip() or None
+    if arch:
+        ensure_agent_layout(project_root, arch=arch)
+    repo = Path(repo_root).resolve() if repo_root else _repo_root_from_project(project_root)
     task = {
         "action_id": action_id,
         "workflow_id": workflow_id or state.get("workflow_id"),

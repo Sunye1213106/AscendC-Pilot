@@ -182,10 +182,17 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         return {"ok": False, "engine": "analyze", "error": str(exc)[:400]}
 
     gaps = [g for g in (result.get("gaps") or []) if isinstance(g, dict)]
+    from uo_init.resolve.semantic_gap import summarize_gaps
+
+    buckets = summarize_gaps(gaps)
+    locate_blocking = int(buckets.get("locate_blocking") or 0)
     unresolved = {
         "schema": "codemap-structural-gaps/v1",
         "status": "unresolved" if gaps else "closed",
         "blocker_count": len(gaps),
+        "locate_blocking": locate_blocking,
+        "host_runtime_leaf": int(buckets.get("host_runtime_leaf") or 0),
+        "catalog_unproven": int(buckets.get("catalog_unproven") or 0),
         "derivation_blocker_count": 0,
         "blockers": gaps,
         "scope": "structural_source_extraction",
@@ -206,11 +213,12 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         "architecture": arch,
         "summary": dict(result.get("summary") or {}),
         "gap_count": len(gaps),
+        "locate_blocking": locate_blocking,
         "analysis_policy": "structure_and_provenance_only",
         "deep_key_derivation": False,
         "global_sat": False,
         "compile_cached": True,
-        "semantic_completeness": "complete" if not gaps else "partial",
+        "semantic_completeness": "complete" if locate_blocking == 0 else "partial",
     }
     pe._dump(uo / "ir" / "unresolved.yaml", unresolved)
     pe._dump(uo / "ir" / "codemap_analyze_receipt.yaml", receipt)
@@ -251,14 +259,12 @@ def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
 
 
 def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Validate graph legality / integrity of the committed ``.uo`` product.
+    """Validate graph legality and emit a cannbot locate quality receipt.
 
-    This is not semantic completeness: open ``unresolved`` blockers do not fail
-    verify by themselves. Failures are schema/invariant/dangling-edge issues.
-
-    Also materializes a lightweight ``uo/checks/integrity.yaml`` so Pilot gates
-    and readiness consumers still have a workspace receipt (without requiring
-    the legacy YAML KB export_integrity path).
+    Integrity (``checks/integrity.yaml``) is schema/invariant/dangling-edge
+    legality and remains the workflow gate. Open unresolved blockers do not
+    fail it. Quality (``checks/quality.yaml``) grades whether the CodeMap can
+    replace grep for structural locate questions (ready / usable / not_ready).
     """
     from uo_init.progress import step
 
@@ -266,7 +272,9 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     root = Path(project_root).expanduser().resolve()
     try:
         from uo_init.diagnostics.audit import audit_uo
-        from uo_init.store.reader import find_uo_product
+        from uo_init.diagnostics.quality import codemap_quality
+        from uo_init.resolve.semantic_gap import list_gaps
+        from uo_init.store.reader import find_uo_product, read_codemap
 
         with step("verify.find_uo_product"):
             arch = require_architecture(ctx.get("arch_dir") or ctx.get("architecture"))
@@ -296,6 +304,18 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
                 "source": "uo-init/verify",
             }
             pe._dump(uo / "checks" / "integrity.yaml", integrity)
+        with step("verify.write_quality_receipt"):
+            cm = read_codemap(product)
+            quality = codemap_quality(
+                cm,
+                integrity_ok=ok,
+                audit=report,
+                gaps=list_gaps(cm),
+            )
+            quality["uo_product"] = str(product)
+            quality["architecture"] = arch
+            quality["op_name"] = op_name or product.stem.split(".")[0]
+            pe._dump(uo / "checks" / "quality.yaml", quality)
         return {
             "ok": ok,
             "engine": "verify",
@@ -303,6 +323,9 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             "audit": report,
             "verdict": "pass" if ok else "fail",
             "integrity": str(uo / "checks" / "integrity.yaml"),
+            "quality": str(uo / "checks" / "quality.yaml"),
+            "quality_grade": quality.get("grade"),
+            "locate_ready": quality.get("locate_ready"),
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "verify", "error": str(exc)[:400], "verdict": "fail"}

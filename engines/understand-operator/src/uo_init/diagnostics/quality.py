@@ -1,0 +1,270 @@
+# -*- coding: utf-8 -*-
+"""Cannbot locate-surface quality for a CodeMap — not unresolved-count."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from uo_init.ir.codemap import CodeMap
+from uo_init.ir.entity import Entity, EntityKind
+from uo_init.resolve.semantic_gap import list_gaps, summarize_gaps
+
+_KERNEL_API_NEEDLES = (
+    "EnQue",
+    "DeQue",
+    "InitBuffer",
+    "DataCopy",
+    "Cast",
+    "SetFlag",
+    "WaitFlag",
+    "DataCopyPad",
+    "SetGlobalBuffer",
+    "LoadAlign",
+)
+
+
+def _has_span(entity: Entity) -> bool:
+    return bool(str(entity.file or "").strip()) and int(entity.line_start or 0) > 0
+
+
+def _sites_with_span(attrs: dict[str, Any], *keys: str) -> bool:
+    for key in keys:
+        for site in attrs.get(key) or []:
+            if not isinstance(site, dict):
+                continue
+            if str(site.get("file") or "").strip() and int(
+                site.get("line") or site.get("line_start") or 0
+            ) > 0:
+                return True
+    return False
+
+
+def _surface(ok: bool, **extra: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {"ok": bool(ok)}
+    row.update(extra)
+    return row
+
+
+def codemap_quality(
+    codemap: CodeMap,
+    *,
+    integrity_ok: bool = True,
+    audit: dict[str, Any] | None = None,
+    gaps: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Scorecard aligned with cannbot locate / field / buffer / kernel_api.
+
+    integrity_ok is graph legality (verify pass/fail). grade is whether the
+    product can replace grep for structural questions.
+    """
+    if audit is None:
+        from uo_init.diagnostics.audit import audit_codemap
+
+        audit = audit_codemap(codemap)
+    if gaps is None:
+        gaps = list_gaps(codemap)
+    buckets = summarize_gaps(gaps)
+    summary = dict((audit or {}).get("summary") or {})
+
+    by_kind: dict[str, list[Entity]] = {}
+    for ent in codemap.entities.values():
+        by_kind.setdefault(ent.kind_name(), []).append(ent)
+
+    keys = by_kind.get(EntityKind.TILING_KEY.value) or []
+    fields = by_kind.get(EntityKind.TILING_FIELD.value) or []
+    kernels = by_kind.get(EntityKind.KERNEL.value) or []
+    inputs = by_kind.get(EntityKind.INPUT.value) or []
+    buffers = (by_kind.get(EntityKind.BUFFER.value) or []) + (
+        by_kind.get(EntityKind.QUEUE.value) or []
+    )
+    ops = by_kind.get(EntityKind.OPERATION.value) or []
+    host_checks = [
+        e
+        for e in (by_kind.get(EntityKind.BRANCH.value) or [])
+        if str((e.attrs or {}).get("branch_kind") or "") == "host_check"
+    ]
+
+    key_span_n = sum(1 for e in keys if _has_span(e))
+    kernel_span_n = sum(1 for e in kernels if _has_span(e))
+    input_span_n = sum(1 for e in inputs if _has_span(e))
+    pack_n = sum(
+        1
+        for e in keys
+        if _sites_with_span(e.attrs or {}, "packing_value_sites", "producer_sites")
+        or e.attrs.get("host_packing_expressions")
+    )
+    owner_n = sum(1 for e in fields if str((e.attrs or {}).get("owner") or "").strip())
+    writer_n = sum(
+        1
+        for e in fields
+        if _sites_with_span(
+            e.attrs or {},
+            "host_writer_sites",
+            "value_defining_sites",
+            "check_sites",
+        )
+        or str((e.attrs or {}).get("rhs") or "").strip()
+    )
+    field_owner_unknown = sum(
+        1
+        for e in fields
+        if str((e.attrs or {}).get("reason") or "")
+        in {"field_owner_unknown", "field_owner_ambiguous"}
+    )
+    host_check_span_n = sum(1 for e in host_checks if _has_span(e))
+    placed_buf = 0
+    for e in buffers:
+        attrs = e.attrs or {}
+        space = str(attrs.get("memory_space") or "")
+        tpos = str(attrs.get("tposition") or "")
+        if tpos or (space and space != "UNKNOWN"):
+            placed_buf += 1
+
+    dtype_n = 0
+    for e in inputs:
+        attrs = e.attrs or {}
+        facts = attrs.get("facts") if isinstance(attrs.get("facts"), dict) else {}
+        if attrs.get("dtype") or facts.get("dtype"):
+            dtype_n += 1
+
+    kernel_api: dict[str, dict[str, int]] = {}
+    api_ok = True
+    any_api = False
+    for needle in _KERNEL_API_NEEDLES:
+        n = 0
+        spanned = 0
+        reached = 0
+        for e in ops:
+            attrs = e.attrs or {}
+            blob = " ".join(str(x or "") for x in (e.name, attrs.get("callee"), attrs.get("api")))
+            if needle.lower() not in blob.lower():
+                continue
+            n += 1
+            if _has_span(e):
+                spanned += 1
+            if str(attrs.get("root_status") or "") == "REACHED":
+                reached += 1
+        kernel_api[needle] = {"n": n, "with_span": spanned, "reached": reached}
+        if n:
+            any_api = True
+            if spanned < n and reached < n:
+                api_ok = False
+    if not any_api:
+        api_ok = True
+
+    paths_ok = bool(
+        summary.get("has_host_kernel_path")
+        and summary.get("has_tilingdata_kernel_path")
+        and summary.get("has_input_output_path")
+    )
+    if not kernels:
+        paths_ok = False
+
+    tiling_key_ok = (not keys) or (pack_n == len(keys) and key_span_n >= 1)
+    field_ok = field_owner_unknown == 0 and (
+        not fields or ((owner_n / len(fields) >= 0.9) and writer_n >= 1)
+    )
+    host_check_ok = (not host_checks) or host_check_span_n == len(host_checks)
+    buffer_ok = (not buffers) or (placed_buf / len(buffers) >= 0.5)
+    dtype_ok = (not inputs) or dtype_n >= 1
+    symbol_ok = kernel_span_n >= 1 and input_span_n >= 1 and ((not keys) or key_span_n >= 1)
+
+    surfaces = {
+        "symbol_span": _surface(
+            symbol_ok,
+            kernel=f"{kernel_span_n}/{len(kernels)}",
+            input=f"{input_span_n}/{len(inputs)}",
+            tiling_key=f"{key_span_n}/{len(keys)}",
+        ),
+        "tiling_key": _surface(
+            tiling_key_ok,
+            packing=f"{pack_n}/{len(keys)}",
+            coverage=summary.get("tiling_key_host_packing_coverage"),
+        ),
+        "field_rw": _surface(
+            field_ok,
+            owner=f"{owner_n}/{len(fields)}",
+            writer=f"{writer_n}/{len(fields)}",
+            field_owner_unknown=field_owner_unknown,
+        ),
+        "host_check": _surface(
+            host_check_ok, span=f"{host_check_span_n}/{len(host_checks)}"
+        ),
+        "buffer": _surface(
+            buffer_ok,
+            placed=f"{placed_buf}/{len(buffers)}",
+        ),
+        "kernel_api": _surface(api_ok, apis=kernel_api),
+        "dtype": _surface(dtype_ok, count=f"{dtype_n}/{len(inputs)}"),
+        "paths": _surface(
+            paths_ok,
+            host_kernel=bool(summary.get("has_host_kernel_path")),
+            tilingdata_kernel=bool(summary.get("has_tilingdata_kernel_path")),
+            input_output=bool(summary.get("has_input_output_path")),
+        ),
+    }
+    surfaces_ok = all(bool(v.get("ok")) for v in surfaces.values())
+    locate_blocking = int(buckets.get("locate_blocking") or 0)
+
+    not_ready_reasons: list[str] = []
+    if not integrity_ok:
+        not_ready_reasons.append("integrity_fail")
+    if kernel_span_n < 1:
+        not_ready_reasons.append("no_kernel_span")
+    if keys and pack_n == 0:
+        not_ready_reasons.append("no_tiling_key_packing_site")
+    if field_owner_unknown > 0:
+        not_ready_reasons.append("field_owner_unknown")
+    if kernels and not bool(summary.get("has_host_kernel_path")):
+        not_ready_reasons.append("missing_host_kernel_path")
+    if (by_kind.get(EntityKind.TILING_DATA.value)) and not bool(
+        summary.get("has_tilingdata_kernel_path")
+    ):
+        not_ready_reasons.append("missing_tilingdata_kernel_path")
+
+    if not_ready_reasons:
+        grade = "not_ready"
+    elif integrity_ok and surfaces_ok and locate_blocking == 0:
+        grade = "ready"
+    else:
+        grade = "usable"
+
+    blockers = [
+        g
+        for g in gaps
+        if isinstance(g, dict) and str(g.get("bucket") or "") in {"locate_blocking", "audit_blocking"}
+    ][:20]
+
+    ke = {}
+    if isinstance(codemap.meta, dict):
+        ke = dict(codemap.meta.get("kernel_root_trace") or {})
+    kq = dict(ke.get("quality") or {})
+
+    locate_ready = grade == "ready"
+    source_lookup = (
+        "minimal windows at recorded file:line"
+        if grade in {"ready", "usable"}
+        else "CodeMap is not a substitute for source; locate surface is incomplete"
+    )
+    return {
+        "schema": "uo-product-quality/v1",
+        "grade": grade,
+        "locate_ready": locate_ready,
+        "integrity": "pass" if integrity_ok else "fail",
+        "surfaces": surfaces,
+        "unresolved": {
+            "locate_blocking": locate_blocking,
+            "host_runtime_leaf": int(buckets.get("host_runtime_leaf") or 0),
+            "catalog_unproven": int(buckets.get("catalog_unproven") or 0),
+            "total": int(buckets.get("total") or 0),
+        },
+        "source_lookup": source_lookup,
+        "blockers": blockers,
+        "not_ready_reasons": not_ready_reasons,
+        "aux": {
+            "tiling_key_dependency_coverage": summary.get("tiling_key_dependency_coverage"),
+            "unpaired_flag_sync": kq.get("unpaired_flag_sync") or ke.get("unpaired_flag_sync"),
+            "reached_operations": kq.get("reached_operations") or ke.get("reached_operations"),
+            "reached_buffers": kq.get("reached_buffers") or ke.get("reached_buffers"),
+        },
+    }

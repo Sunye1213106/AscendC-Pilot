@@ -76,8 +76,8 @@ Plan `level=L3` / `branch_outcome_coverage`：TD dump + `branch_eval` 增长 R�
 | Init 绑定 | `references/construction-binding.md` |
 | 踩坑 | `references/gotchas.md` |
 | 场景 overlay（日常精度/性能） | `references/targeted-construct.md`、`references/harness-oracle.md` |
-| 精度 knobs | `references/precision-scenarios.md` |
-| 性能 knobs | `references/perf-scenarios.md` |
+| 场景 id（权威在 CE） | `skills/code-engineering/references/scenario-catalog.md` |
+| 精度 / 性能 knobs | `references/precision-scenarios.md`、`references/perf-scenarios.md` |
 | 黑盒因子意图 | `references/blackbox-factors.md` |
 | 白盒路径 | `references/whitebox-paths.md` |
 | 针对性构造 METHOD | `capabilities/tg-targeted-construct/METHOD.md` |

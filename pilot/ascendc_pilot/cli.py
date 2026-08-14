@@ -583,11 +583,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "answer":
         from ascendc_pilot.human_interaction import record_answer
 
-        result = record_answer(
-            args.project,
-            request_id=str(args.request_id or ""),
-            value=str(args.value or ""),
-        )
+        try:
+            result = record_answer(
+                args.project,
+                request_id=str(args.request_id or ""),
+                value=str(args.value or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print_json(
+                {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:800],
+                    "message_zh": f"acp answer 失败：{exc}"[:400],
+                }
+            )
+            return 1
         print_json(result)
         return 0 if result.get("ok") else 1
     if args.cmd == "context":
@@ -651,6 +662,12 @@ def main(argv: list[str] | None = None) -> int:
         if force_new and not decision:
             decision = "reinit"
 
+        from ascendc_pilot.human_interaction import consume_intake_architecture
+
+        consume_intake_architecture(
+            args.project, architecture=arch, force_new=force_new
+        )
+
         if decision:
             if decision == "reinit":
                 prep = prepare_workflow_start(
@@ -664,13 +681,24 @@ def main(argv: list[str] | None = None) -> int:
                     return 2
                 arch = str(prep.get("architecture") or arch)
                 start_kwargs["architecture"] = arch
-            result = apply_resume_decision(
-                args.project,
-                args.workflow_id,
-                decision,
-                start_kwargs=start_kwargs,
-                require_receipt=not force_new,
-            )
+            try:
+                result = apply_resume_decision(
+                    args.project,
+                    args.workflow_id,
+                    decision,
+                    start_kwargs=start_kwargs,
+                    require_receipt=not force_new,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print_json(
+                    {
+                        "ok": False,
+                        "error": type(exc).__name__,
+                        "message": str(exc)[:800],
+                        "message_zh": f"acp start --decision 失败：{exc}"[:400],
+                    }
+                )
+                return 1
             if result.get("ok") and result.get("decision") == "reinit":
                 try:
                     from ascendc_pilot.paths import context_root
@@ -715,7 +743,18 @@ def main(argv: list[str] | None = None) -> int:
         arch = str(prep.get("architecture") or arch)
         start_kwargs["architecture"] = arch
 
-        state = start_workflow(args.project, args.workflow_id, **start_kwargs)
+        try:
+            state = start_workflow(args.project, args.workflow_id, **start_kwargs)
+        except Exception as exc:  # noqa: BLE001
+            print_json(
+                {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:800],
+                    "message_zh": f"acp start 失败：{exc}"[:400],
+                }
+            )
+            return 1
         write_last_project_cache(args.project)
         try:
             from ascendc_pilot.paths import context_root

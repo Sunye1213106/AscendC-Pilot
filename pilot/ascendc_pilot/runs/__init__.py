@@ -15,7 +15,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_pilot.paths import ensure_agent_layout, runs_root, state_root
+from ascendc_pilot.paths import AGENT_DIR, STATE_SUBDIR, ensure_agent_layout, runs_root
 
 
 def _now() -> str:
@@ -43,15 +43,37 @@ def _load_state(project_root: Path) -> dict[str, Any]:
 
 
 def hmac_key_path(project_root: Path) -> Path:
-    return state_root(project_root) / "pilot_hmac.key"
+    """Arch-neutral HMAC key: ``.ascendc-pilot/control/pilot_hmac.key``.
+
+    Intake receipts (architecture / project / resume) are signed before any
+    ``<arch>/`` tree exists. The key must not live under arch-scoped ``state/``.
+    """
+    from ascendc_pilot.active_run import control_root
+
+    return control_root(project_root) / "pilot_hmac.key"
 
 
 def get_or_create_hmac_key(project_root: Path) -> bytes:
-    """Load or create per-project HMAC key under private acp state."""
-    ensure_agent_layout(project_root)
+    """Load or create per-project HMAC key on the arch-neutral control plane."""
     path = hmac_key_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         return path.read_bytes()
+    root = Path(project_root).expanduser().resolve() / AGENT_DIR
+    if root.is_dir():
+        for child in sorted(root.iterdir()):
+            if not child.is_dir() or child.name == "control":
+                continue
+            legacy = child / STATE_SUBDIR / "pilot_hmac.key"
+            if legacy.is_file():
+                data = legacy.read_bytes()
+                if data:
+                    path.write_bytes(data)
+                    try:
+                        path.chmod(0o600)
+                    except OSError:
+                        pass
+                    return data
     key = secrets.token_bytes(32)
     path.write_bytes(key)
     try:

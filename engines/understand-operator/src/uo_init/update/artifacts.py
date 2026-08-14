@@ -94,22 +94,47 @@ def _extract_file_list(doc: dict[str, Any]) -> dict[str, str]:
     return out
 
 
+def _scope_files_from_scope_set(doc: dict[str, Any]) -> dict[str, str]:
+    """Prefer explicit confirmed_source_files (op-relative); fall back to files[]."""
+    confirmed = doc.get("confirmed_source_files")
+    if isinstance(confirmed, list) and confirmed:
+        out: dict[str, str] = {}
+        for item in confirmed:
+            path = str(item or "").replace("\\", "/").strip()
+            if path:
+                out[path] = infer_role(path)
+        if out:
+            return out
+    return _extract_file_list(doc)
+
+
 def load_scope_index(uo_root: Path) -> dict[str, str]:
+    """Load Clang-confirmed source list. Prefer prepare's summary/scope_set.yaml."""
     man = read_yaml(uo_root / "manifest.yaml")
     run_id = str(man.get("current_run_id") or "")
-    candidates: list[Path] = []
+    candidates: list[Path] = [
+        uo_root / "summary" / "scope_set.yaml",
+    ]
     if run_id:
+        candidates.append(uo_root / "runs" / run_id / "scope" / "scope_set.yaml")
         candidates.append(uo_root / "runs" / run_id / "scope" / "receipt.yaml")
         candidates.append(uo_root / "runs" / run_id / "scope" / "scope_validated.yaml")
+    # Pilot run tree mirrors under .ascendc-pilot/<arch>/runs (sibling of uo/).
+    pilot_runs = uo_root.parent / "runs"
+    if run_id:
+        candidates.append(pilot_runs / run_id / "scope" / "scope_set.yaml")
+    if pilot_runs.is_dir():
+        candidates.extend(sorted(pilot_runs.glob("*/scope/scope_set.yaml"), reverse=True))
     runs = uo_root / "runs"
     if runs.is_dir():
+        candidates.extend(sorted(runs.glob("*/scope/scope_set.yaml"), reverse=True))
         candidates.extend(sorted(runs.glob("*/scope/receipt.yaml"), reverse=True))
         candidates.extend(sorted(runs.glob("*/scope/scope_validated.yaml"), reverse=True))
     for path in candidates:
         doc = read_yaml(path)
         if not doc:
             continue
-        files = _extract_file_list(doc)
+        files = _scope_files_from_scope_set(doc)
         if files:
             return files
     return {}

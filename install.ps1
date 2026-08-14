@@ -13,6 +13,96 @@ $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkipPip = $env:SKIP_PIP
 
+function Get-PythonScriptsDir {
+  $dir = python -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>$null
+  if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dir)) { return $null }
+  return ([string]$dir).Trim()
+}
+
+function Stop-AcpConsoleScriptProcesses {
+  $scripts = Get-PythonScriptsDir
+  $targets = @()
+  if ($scripts) {
+    foreach ($name in @("acp.exe", "ascendc-pilot.exe")) {
+      $targets += (Join-Path $scripts $name)
+    }
+  }
+  $stopped = 0
+  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object {
+    $exe = $_.ExecutablePath
+    if (-not $exe) { return }
+    $hit = $false
+    foreach ($t in $targets) {
+      if ($t -and ($exe -ieq $t)) { $hit = $true; break }
+    }
+    if (-not $hit -and ($exe -match '[\\/](acp|ascendc-pilot)\.exe$')) { $hit = $true }
+    if (-not $hit) { return }
+    Write-Host ("  stopping PID {0} {1} (releases {2} for pip)" -f $_.ProcessId, $_.Name, $exe)
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    $stopped++
+  }
+  if ($stopped -gt 0) { Start-Sleep -Milliseconds 600 }
+  return $stopped
+}
+
+function Unlock-AcpConsoleScripts {
+  # Windows cannot overwrite a running console-script wrapper. OpenCode's
+  # leftover `acp serve-authorize` holds E:\...\Scripts\acp.exe and pip then
+  # dies with WinError 5. Stop the wrapper, then rename it so pip can write
+  # a new one even if OpenCode immediately tries to respawn.
+  $scripts = Get-PythonScriptsDir
+  if (-not $scripts -or -not (Test-Path -LiteralPath $scripts)) { return }
+  [void](Stop-AcpConsoleScriptProcesses)
+  Get-ChildItem -LiteralPath $scripts -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^(acp|ascendc-pilot)\.exe\.old-' } |
+    ForEach-Object {
+      try { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction Stop } catch { }
+    }
+  $purelib = python -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>$null
+  if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($purelib)) {
+    $purelib = ([string]$purelib).Trim()
+    Get-ChildItem -LiteralPath $purelib -Force -ErrorAction SilentlyContinue |
+      Where-Object { $_.Name -match '^~scendc_pilot' } |
+      ForEach-Object {
+        try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop } catch { }
+      }
+  }
+  $stamp = Get-Date -Format "yyyyMMddHHmmss"
+  foreach ($name in @("acp.exe", "ascendc-pilot.exe")) {
+    $p = Join-Path $scripts $name
+    if (-not (Test-Path -LiteralPath $p)) { continue }
+    $bak = "$p.old-$stamp"
+    try {
+      Move-Item -LiteralPath $p -Destination $bak -Force
+      Write-Host "  moved $name → $(Split-Path $bak -Leaf) so pip can install a new wrapper"
+    } catch {
+      Write-Host "  WARN: could not move locked $name : $_"
+    }
+  }
+}
+
+function Invoke-PipRequirements {
+  Unlock-AcpConsoleScripts
+  $ErrorActionPreference = "Continue"
+  $output = & python -m pip install -r "$BundleRoot\requirements.txt" 2>&1
+  $code = $LASTEXITCODE
+  $ErrorActionPreference = "Stop"
+  $output | ForEach-Object { Write-Host $_ }
+  if ($code -eq 0) { return }
+  $text = ($output | Out-String)
+  if ($text -match 'WinError 5|拒绝访问|Access is denied') {
+    Write-Host "pip hit a locked console-script; unlocking and retrying..."
+    Unlock-AcpConsoleScripts
+    $ErrorActionPreference = "Continue"
+    $output2 = & python -m pip install --upgrade --force-reinstall -r "$BundleRoot\requirements.txt" 2>&1
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = "Stop"
+    $output2 | ForEach-Object { Write-Host $_ }
+    if ($code -eq 0) { return }
+  }
+  throw "pip install failed"
+}
+
 function Get-PluginDest([string]$plat) {
   switch ($plat) {
     "opencode" { Join-Path $HOME ".config\opencode\ascendc-pilot-plugin" }
@@ -108,7 +198,7 @@ if ($Platform -like "uninstall-*") {
       }
     }
     if ($plugins) {
-      foreach ($pluginName in @("ascendc-pilot.ts", "zz-uo-query-return-value.ts", "ascendc-harness.ts")) {
+      foreach ($pluginName in @("ascendc-pilot.ts", "zz-uo-query-return-value.ts", "ascendc-harness.ts", "pilot-driver.ts")) {
         $pluginFile = Join-Path $plugins $pluginName
         if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
       }
@@ -121,8 +211,7 @@ if ($Platform -like "uninstall-*") {
 }
 
 if ($SkipPip -ne "1") {
-  python -m pip install -r "$BundleRoot\requirements.txt"
-  if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+  Invoke-PipRequirements
 }
 
 # Fail before Host composition if execution ownership is internally inconsistent.
@@ -264,9 +353,18 @@ if ($Platform -eq "opencode") {
   $plugins = Get-PluginsDest "opencode"
   $commands = Get-CommandsDest "opencode"
   New-Item -ItemType Directory -Force -Path $plugins, $commands | Out-Null
-  Get-ChildItem -Path (Join-Path $BundleRoot "opencode-plugin") -Filter "*.ts" -File | ForEach-Object {
-    Copy-Item -Force -LiteralPath $_.FullName -Destination (Join-Path $plugins $_.Name)
-    Write-Host "Installed plugin → $plugins\$($_.Name)"
+  # OpenCode autoloads every *.ts in this directory as a plugin factory.
+  # Copy only real plugins. pilot-driver.ts is a library loaded from
+  # ascendc-pilot-plugin/opencode-plugin/ (already copied into $Dest above).
+  foreach ($pluginName in @("ascendc-pilot.ts", "zz-uo-query-return-value.ts")) {
+    $src = Join-Path $BundleRoot "opencode-plugin\$pluginName"
+    Copy-Item -Force -LiteralPath $src -Destination (Join-Path $plugins $pluginName)
+    Write-Host "Installed plugin → $plugins\$pluginName"
+  }
+  $legacyDriver = Join-Path $plugins "pilot-driver.ts"
+  if (Test-Path -LiteralPath $legacyDriver) {
+    Remove-Item -Force -LiteralPath $legacyDriver
+    Write-Host "Removed autoloaded library → $legacyDriver"
   }
   $commandSrc = Join-Path $Dest "commands"
   if (Test-Path -LiteralPath $commandSrc) {

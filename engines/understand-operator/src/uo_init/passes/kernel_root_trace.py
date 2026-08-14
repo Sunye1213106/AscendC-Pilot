@@ -50,6 +50,13 @@ from uo_init.semantics.ascendc_storage import (
     storage_root_kind_from_space,
     tposition_from_type_text,
 )
+from uo_init.semantics.ascendc_vf import (
+    AMBIGUOUS_VF_ROOTS,
+    VF_ALIASES,
+    is_ambiguous_vf_name,
+    is_cann_vf_api,
+    vf_root_spelling,
+)
 from uo_init.semantics.ascendc_sync import (
     FLAG_PAIR_MATE,
     SYNC_MECHANISM,
@@ -116,8 +123,11 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "Fixpipe",
         "Matmul",
         # TPipe / tensor (kernel_tpipe.h, kernel_tensor.h, kernel_common.h)
+        "TPipe",
         "FetchEventID",
         "GetTPipePtr",
+        "GetBlockIdx",
+        "GetSubBlockIdx",
         "SetGlobalBuffer",
         "GetPhyAddr",
         "InitOutput",
@@ -138,12 +148,23 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "Div",
         "Exp",
         "Abs",
+        "Ceil",
+        "Select",
+        "sqrt",
+        "Log",
+        "DataCopyScatter",
+        "LocalMemBar",
     }
 )
 
-# Min/Max are CANN vector/Reg APIs and also project scalar helpers. Prove only
+# Min/Max/Or/And/Xor also exist as project scalar/logic helpers. Prove only
 # when the call looks like vector/Reg (3+ args or a typed tensor/register operand).
-_VECTOR_AMBIGUOUS_ROOTS: frozenset[str] = frozenset({"Min", "Max"})
+_VECTOR_AMBIGUOUS_ROOTS: frozenset[str] = frozenset(AMBIGUOUS_VF_ROOTS)
+
+# Catalog spellings that are member contracts, never free-function roots.
+_MEMBER_ONLY_ROOTS: frozenset[str] = frozenset(
+    {"Get", "GetTensor", "GetPre", "GetReused", "LockProd", "UnlockProd", "LockCons", "UnlockCons"}
+)
 
 _CLASS_RE = re.compile(r"\b(?:class|struct)\s+(?P<name>[A-Za-z_]\w*)\b")
 _USING_RE = re.compile(
@@ -258,7 +279,14 @@ def _type_identity_key(type_text: str, *, usr: str = "", qualified: str = "") ->
 
 def _is_ascendc_root_spelling(name: str) -> bool:
     """Catalog candidate check only — not REACHED proof."""
-    return name in _ASCENDC_API_ROOTS or name in ASCENDC_BUFFER_TYPES or name in ASCENDC_REGISTER_TYPES
+    short = vf_root_spelling(name)
+    return (
+        name in _ASCENDC_API_ROOTS
+        or short in _ASCENDC_API_ROOTS
+        or name in ASCENDC_BUFFER_TYPES
+        or name in ASCENDC_REGISTER_TYPES
+        or is_cann_vf_api(name)
+    )
 
 
 _FRAMEWORK_DECL_MARKERS = (
@@ -298,7 +326,75 @@ def _short_from_qualified(qualified: str, fallback: str = "") -> str:
     if not text:
         return ""
     no_tpl = text.split("<", 1)[0].strip()
-    return no_tpl.split("::")[-1].strip()
+    short = no_tpl.split("::")[-1].strip()
+    # Clang call-expr / ctor spellings: ``RegTensor()``, ``FixpipeConfig(CO2Layout, bool)``.
+    if "(" in short:
+        short = short.split("(", 1)[0].strip()
+    return short
+
+
+def _looks_like_framework_type_name(name: str) -> bool:
+    """CANN param/config structs and similar type-like identifiers."""
+    if not name or not name[0].isupper():
+        return False
+    if not re.match(r"^[A-Za-z_]\w*$", name):
+        return False
+    return True
+
+
+_SPELLING_ALIASES: dict[str, str] = {"abs": "Abs", **VF_ALIASES}
+
+_BUILTIN_SPELLINGS: frozenset[str] = frozenset(
+    {
+        "vector_bool",
+        "vector_align",
+        "__bs_f16",
+        "memcpy",
+        "conditional",
+        "conditional_t",
+    }
+)
+
+
+def _is_project_decl_file(path: str) -> bool:
+    f = str(path or "").replace("\\", "/").lower()
+    return "/op_kernel/" in f or "/op_host/" in f
+
+
+def _is_compiler_builtin(
+    name: str,
+    *,
+    usr: str = "",
+    decl_file: str = "",
+    qualified: str = "",
+) -> bool:
+    n = str(name or "")
+    if n.startswith("__builtin_") or n.startswith("__bs_"):
+        return True
+    if n in _BUILTIN_SPELLINGS:
+        return True
+    q = str(qualified or "")
+    if q.startswith("std::") or "::std::" in f"::{q}":
+        return True
+    f = str(decl_file or "").replace("\\", "/").lower()
+    if "bisheng_prelude" in f:
+        return True
+    u = str(usr or "")
+    if "c:@F@__builtin" in u or u.startswith("c:@S@vector_") or u.startswith("c:@S@__bs_"):
+        return True
+    return False
+
+
+def _receiver_looks_tensor(*texts: str) -> bool:
+    blob = " ".join(str(t or "") for t in texts)
+    return "LocalTensor" in blob or "GlobalTensor" in blob
+
+
+def _usr_is_ascendc_tensor_method(usr: str) -> bool:
+    u = str(usr or "")
+    if "AscendC" not in u:
+        return False
+    return "LocalTensor" in u or "GlobalTensor" in u
 
 
 def _prove_ascendc_api_root(
@@ -316,22 +412,75 @@ def _prove_ascendc_api_root(
 
     Proof order:
       1. AscendC/CANN qualified name
-      2. Framework declaration file
+      2. Framework declaration file (API catalog **or** param/config ctor)
       3. Free-function catalog match only when identity is unavailable (lexical)
          and there is no receiver (not a member call)
     """
     short = _short_from_qualified(callee_qualified, callee)
-    if not short or not _is_ascendc_root_spelling(short):
-        # Still allow proof when qualified names AscendC but short is template-odd.
+    short = _SPELLING_ALIASES.get(short, short)
+    callee_canon = _SPELLING_ALIASES.get(callee, callee)
+    in_catalog = bool(short and _is_ascendc_root_spelling(short)) or _is_ascendc_root_spelling(
+        callee_canon
+    )
+    if in_catalog and not (short and _is_ascendc_root_spelling(short)):
+        short = callee_canon
+    if not short:
+        short = callee_canon
+
+    if _usr_is_ascendc_tensor_method(callee_usr) and callee in TENSOR_METHOD_BRIDGES:
+        return True, callee
+    if _receiver_looks_tensor(receiver_type, receiver_canonical_type) and callee in TENSOR_METHOD_BRIDGES:
+        return True, callee
+    # Get/GetTensor/LockProd are member contracts. A CANN header hit is not
+    # proof of a free AscendC::Get — Policy/Selector/TBuf all share the name.
+    if short in _MEMBER_ONLY_ROOTS:
+        if _qualified_looks_ascendc(callee_qualified) and not (
+            receiver or receiver_type or receiver_canonical_type
+        ):
+            return True, short
+        return False, ""
+
+    # Framework-declared free/ctor symbols (DataCopyExtParams, FixpipeParams*, …)
+    # need not sit in the compute-API catalog — the CANN header is the proof.
+    if (
+        _is_framework_decl_file(callee_decl_file)
+        and not (receiver or receiver_type or receiver_canonical_type)
+        and _looks_like_framework_type_name(short)
+    ):
+        if short in _VECTOR_AMBIGUOUS_ROOTS:
+            # Min/Max still need call-shape evidence at the call site.
+            pass
+        else:
+            return True, short
+
+    if not in_catalog:
         if _qualified_looks_ascendc(callee_qualified):
-            short = _short_from_qualified(callee_qualified, callee)
+            short = _SPELLING_ALIASES.get(
+                _short_from_qualified(callee_qualified, callee),
+                _short_from_qualified(callee_qualified, callee),
+            )
             if short and _is_ascendc_root_spelling(short):
                 return True, short
+            # AscendC::DataCopyScatter and similar live in CANN headers even when
+            # they are not in the small catalog.
+            if _is_framework_decl_file(callee_decl_file) and not (
+                receiver or receiver_type or receiver_canonical_type
+            ):
+                return True, short or callee
+        if (
+            _is_framework_decl_file(callee_decl_file)
+            and "AscendC" in str(callee_usr or callee_qualified or "")
+            and not (receiver or receiver_type or receiver_canonical_type)
+        ):
+            return True, short or callee
         return False, ""
 
     if _qualified_looks_ascendc(callee_qualified):
         return True, short
     if _is_framework_decl_file(callee_decl_file):
+        return True, short
+    # USR often encodes AscendC::Reg::RegTensor even when qualified is bare.
+    if "AscendC" in str(callee_usr or "") and _is_ascendc_root_spelling(short):
         return True, short
 
     # Identity present but not AscendC/framework → project symbol, never root.
@@ -340,6 +489,9 @@ def _prove_ascendc_api_root(
 
     # Lexical / unresolved free call: catalog match without receiver only.
     if receiver or receiver_type or receiver_canonical_type:
+        return False, ""
+    # Member-only contracts and Min/Max/Or never prove from the spelling alone.
+    if short in _MEMBER_ONLY_ROOTS or short in _VECTOR_AMBIGUOUS_ROOTS or is_ambiguous_vf_name(short):
         return False, ""
     return True, short
 
@@ -376,6 +528,9 @@ def _category_root_kind(category: str, callee: str) -> str:
         return _ROOT_KIND_BY_CATEGORY[category]
     if callee in ASCENDC_BUFFER_TYPES or is_storage_wrapper_type(callee):
         return "STORAGE"
+    low = str(callee or "")
+    if low.endswith(("Params", "Config", "ExtParams", "PadParams")) or "Params" in low:
+        return "FRAMEWORK_TYPE"
     return "COMPUTE_API"
 
 
@@ -460,13 +615,59 @@ def _receiver_is_tpipe(
 
 
 def _looks_like_reg_or_vector_call(args: list[str] | None, targs: list[str] | None) -> bool:
-    """True for CANN vector/Reg Min/Max, not 2-arg project scalar helpers."""
+    """True for CANN vector/Reg APIs, not 2-arg project scalar helpers."""
     args = [str(a) for a in (args or [])]
     targs = [str(a) for a in (targs or [])]
     blob = " ".join(targs + args)
-    if any(tok in blob for tok in ("MaskReg", "RegTensor", "LocalTensor", "GlobalTensor")):
+    if any(
+        tok in blob
+        for tok in (
+            "MaskReg",
+            "RegTensor",
+            "UnalignReg",
+            "LocalTensor",
+            "GlobalTensor",
+            "preg_",
+            "vreg_",
+        )
+    ):
+        return True
+    if re.search(r"\b(?:preg|vreg)\b", blob):
         return True
     return len(args) >= 3
+
+
+_DTYPE_TARG_RE = re.compile(
+    r"^(?:CALC_TYPE|half|float|double|bool|bfloat16_t|(?:u?int(?:8|16|32|64)_t)|T(?:\d+)?)$"
+)
+
+
+def _looks_like_typed_buffer_get(targs: list[str] | None) -> bool:
+    """TBuf/TQue ``Get<DType>()`` — not a project Policy ``Get()``."""
+    if not targs or len(targs) != 1:
+        return False
+    tok = str(targs[0] or "").split("::")[-1].strip()
+    return bool(_DTYPE_TARG_RE.match(tok))
+
+
+def _owner_from_receiver_type(type_text: str) -> str:
+    """Class name for a member call, or empty when the type is a selector/conditional.
+
+    ``std::conditional<…, PolicyA, PolicyB>`` names several Get methods; picking
+    one Policy is a guess. cannbot locates via the buffer/receiver instead.
+    """
+    text = str(type_text or "")
+    if not text:
+        return ""
+    compact = re.sub(r"\s+", "", text)
+    if "std::conditional" in compact or "conditional_t" in compact:
+        return ""
+    if "Selector" in text:
+        return ""
+    base = _base_type_name(text)
+    if base.lower() in {"conditional", "conditional_t", "type", "nullptr_t"}:
+        return ""
+    return base
 
 
 def _select_framework_bridge(
@@ -476,19 +677,30 @@ def _select_framework_bridge(
     recv_is_wrapper: bool,
     recv_is_tque: bool,
     recv_is_tpipe: bool,
+    receiver_type: str = "",
+    receiver_canonical: str = "",
+    callee_usr: str = "",
+    targs: list[str] | None = None,
 ) -> tuple[str, str] | None:
     """Explicit CANN/framework method contracts. Spelling alone never proves members."""
     if recv_is_wrapper:
         hit = MUTEX_BUFFER_METHOD_BRIDGES.get(callee)
         if hit:
             return hit
+    # TBuf / TQueBind ``.template Get<T>()`` returns LocalTensor.
+    if callee == "Get" and _looks_like_typed_buffer_get(targs):
+        return ("LocalTensor", "STORAGE")
     # TPipe::InitBuffer / FetchEventID. Receiver is the pipe; TQue is an argument.
     if callee in TPIPE_METHOD_BRIDGES and (recv_is_tpipe or (receiver and not recv_is_tque)):
         return TPIPE_METHOD_BRIDGES[callee]
     # EnQue/DeQue/Alloc/Free exist only on TQueBind in CANN.
     if callee in TQUE_METHOD_BRIDGES and (recv_is_tque or (receiver and not recv_is_tpipe)):
         return TQUE_METHOD_BRIDGES[callee]
-    if callee in TENSOR_METHOD_BRIDGES and receiver:
+    if callee in TENSOR_METHOD_BRIDGES and (
+        receiver
+        or _receiver_looks_tensor(receiver_type, receiver_canonical)
+        or _usr_is_ascendc_tensor_method(callee_usr)
+    ):
         return TENSOR_METHOD_BRIDGES[callee]
     return None
 
@@ -869,6 +1081,72 @@ def _propagate_reachability(codemap: CodeMap) -> None:
             if parent not in seen:
                 seen.add(parent)
                 queue.append(parent)
+
+
+def _normalize_settled_entities(codemap: CodeMap) -> None:
+    """Four-state root_status: REACHED / PROJECT / BUILTIN / UNRESOLVED.
+
+    Project types, compiler intrinsics and settled buffers are extracted — they
+    are not locate-surface holes. Storage wrappers that never canonicalized
+    stay UNRESOLVED.
+    """
+    settled = {"REACHED", "PROJECT", "BUILTIN"}
+    for e in codemap.entities.values():
+        rs = str(e.attrs.get("root_status") or "")
+        kind = e.kind_name()
+        name = e.name
+        usr = str(e.attrs.get("usr") or e.attrs.get("callee_usr") or "")
+        decl = str(e.attrs.get("callee_decl_file") or e.file or "")
+        qualified = str(e.attrs.get("qualified_name") or e.attrs.get("callee_qualified") or "")
+        if rs in settled:
+            e.status = "extracted"
+            continue
+        if kind == EntityKind.TYPE.value:
+            if e.attrs.get("catalog") == "ascendc":
+                e.status = "extracted"
+                continue
+            if str(e.attrs.get("role") or "") == "storage_wrapper_type":
+                continue
+            if _is_compiler_builtin(name, usr=usr, decl_file=decl, qualified=qualified):
+                e.attrs["root_status"] = "BUILTIN"
+                e.attrs["root_kind"] = "STD"
+            else:
+                e.attrs["root_status"] = "PROJECT"
+                e.attrs["root_kind"] = e.attrs.get("root_kind") or "PROJECT"
+            e.status = "extracted"
+            continue
+        if kind == EntityKind.METHOD.value:
+            if _is_compiler_builtin(name, usr=usr, decl_file=decl, qualified=qualified):
+                e.attrs["root_status"] = "BUILTIN"
+                e.attrs["root_kind"] = "BUILTIN"
+            elif _usr_is_ascendc_tensor_method(usr):
+                e.attrs["root_status"] = "REACHED"
+                e.attrs["root"] = e.attrs.get("root") or "AscendC::LocalTensor"
+                e.attrs["root_kind"] = e.attrs.get("root_kind") or "MEMORY_API"
+            else:
+                e.attrs["root_status"] = "PROJECT"
+                e.attrs["root_kind"] = "PROJECT"
+            e.status = "extracted"
+            continue
+        if kind == EntityKind.OPERATION.value:
+            callee = str(e.attrs.get("callee") or name)
+            if _is_compiler_builtin(
+                callee,
+                usr=usr,
+                decl_file=decl,
+                qualified=qualified,
+            ):
+                e.attrs["root_status"] = "BUILTIN"
+                e.attrs["root_kind"] = "BUILTIN"
+                e.attrs["root_proof"] = e.attrs.get("root_proof") or "compiler_builtin"
+                e.status = "extracted"
+            elif str(e.attrs.get("root_proof") or "").startswith("project_"):
+                e.attrs["root_status"] = "PROJECT"
+                e.attrs["root_kind"] = "PROJECT"
+                e.status = "extracted"
+            continue
+        if kind == EntityKind.BUFFER.value and rs == "REACHED":
+            e.status = "extracted"
 
 
 def _add_clang_path(dst: set[str], raw: str) -> None:
@@ -1833,12 +2111,21 @@ def finalize_kernel_root_trace(
 
         args = [str(a) for a in (d.get("args") or [])]
         targs = [str(a) for a in (d.get("template_args") or [])]
+        # Incomplete member-Get / empty Or: spelling alone is a guess.
+        if callee == "Get" and not receiver and not targs and not has_identity:
+            continue
+        if callee in _VECTOR_AMBIGUOUS_ROOTS and not args and not targs and not has_identity:
+            continue
         bridge = _select_framework_bridge(
             callee=callee,
             receiver=receiver,
             recv_is_wrapper=recv_is_wrapper,
             recv_is_tque=recv_is_tque,
             recv_is_tpipe=recv_is_tpipe,
+            receiver_type=receiver_type,
+            receiver_canonical=receiver_canonical,
+            callee_usr=callee_usr,
+            targs=targs,
         )
         proven, proven_spell = _prove_ascendc_api_root(
             callee=callee,
@@ -1853,11 +2140,15 @@ def finalize_kernel_root_trace(
         if (
             not proven
             and not bridge
-            and callee in _VECTOR_AMBIGUOUS_ROOTS
             and not receiver
             and _looks_like_reg_or_vector_call(args, targs)
+            and (
+                callee in _VECTOR_AMBIGUOUS_ROOTS
+                or is_cann_vf_api(callee)
+                or is_ambiguous_vf_name(callee)
+            )
         ):
-            proven, proven_spell = True, callee
+            proven, proven_spell = True, vf_root_spelling(callee)
         is_root = bool(proven or bridge)
         root_kind = ""
         root_spell = ""
@@ -1866,12 +2157,35 @@ def finalize_kernel_root_trace(
         elif proven:
             root_spell = proven_spell
             root_kind = _category_root_kind(category, proven_spell)
+        is_builtin = _is_compiler_builtin(
+            callee,
+            usr=callee_usr,
+            decl_file=callee_decl_file,
+            qualified=callee_qualified,
+        )
+        is_scalar_minmax = bool(
+            callee in {"Min", "Max"}
+            and not receiver
+            and not _looks_like_reg_or_vector_call(args, targs)
+        )
         is_project = bool(
             not is_root
-            and callee_qualified
-            and callee_decl_file
-            and not _qualified_looks_ascendc(callee_qualified)
-            and not _is_framework_decl_file(callee_decl_file)
+            and not is_builtin
+            and (
+                (
+                    callee_qualified
+                    and callee_decl_file
+                    and not _qualified_looks_ascendc(callee_qualified)
+                    and not _is_framework_decl_file(callee_decl_file)
+                )
+                or (
+                    _is_project_decl_file(callee_decl_file)
+                    and not _qualified_looks_ascendc(callee_qualified)
+                    and not _is_framework_decl_file(callee_decl_file)
+                )
+                or is_scalar_minmax
+                or bool(receiver)
+            )
         )
         # The declaration line itself is not a call site.
         if (
@@ -1895,6 +2209,23 @@ def finalize_kernel_root_trace(
             if identity_kind == "method" or (is_project and receiver)
             else ("project_free" if is_project else "")
         )
+        if is_root:
+            op_root_status, op_root_kind = "REACHED", (root_kind or "")
+            op_root = f"AscendC::{root_spell}" if root_spell else ""
+            op_proof = (
+                "framework_bridge"
+                if bridge
+                else ("qualified_or_decl" if proven and has_identity else "lexical_free_catalog")
+            )
+        elif is_builtin:
+            op_root_status, op_root_kind, op_root = "BUILTIN", "BUILTIN", ""
+            op_proof = "compiler_builtin"
+        elif is_project:
+            op_root_status, op_root_kind, op_root = "PROJECT", "PROJECT", ""
+            op_proof = project_proof or "project_free"
+        else:
+            op_root_status, op_root_kind, op_root = "UNRESOLVED", "", ""
+            op_proof = project_proof
         attrs = {
             "callee": callee,
             "callee_qualified": callee_qualified,
@@ -1905,7 +2236,15 @@ def finalize_kernel_root_trace(
             "category": (
                 category
                 if category != "UNKNOWN"
-                else ("framework_bridge" if bridge else ("project_symbol" if is_project else "UNKNOWN"))
+                else (
+                    "framework_bridge"
+                    if bridge
+                    else (
+                        "compiler_builtin"
+                        if is_builtin
+                        else ("project_symbol" if is_project else "UNKNOWN")
+                    )
+                )
             ),
             "function": function,
             "args": args,
@@ -1913,26 +2252,14 @@ def finalize_kernel_root_trace(
             "receiver": receiver,
             "receiver_type": receiver_type,
             "receiver_canonical_type": receiver_canonical,
-            "root_status": "REACHED" if is_root else "UNRESOLVED",
-            "root_kind": root_kind if is_root else "",
-            "root": f"AscendC::{root_spell}" if is_root and root_spell else "",
+            "root_status": op_root_status,
+            "root_kind": op_root_kind,
+            "root": op_root,
             "wrapper": callee if bridge else "",
             "trace": trace,
             "provenance": str(d.get("provenance") or provenance),
             "column": column,
-            "root_proof": (
-                "framework_bridge"
-                if bridge
-                else (
-                    "qualified_or_decl"
-                    if proven and has_identity
-                    else (
-                        "lexical_free_catalog"
-                        if proven
-                        else project_proof
-                    )
-                )
-            ),
+            "root_proof": op_proof,
         }
         if is_tque_callee(callee):
             attrs["mechanism"] = "tque"
@@ -1940,10 +2267,15 @@ def finalize_kernel_root_trace(
             attrs["mechanism"] = "tpipe"
         elif is_flag_sync(callee) or callee in SYNC_MECHANISM:
             attrs["mechanism"] = str(resolve_sync_site(callee, args, targs).get("mechanism") or "")
-        if not is_root:
+        if not is_root and not is_builtin:
             if not nfile or line <= 0 or not callee.isidentifier():
                 continue
-        if not is_root and not is_project and (category != "UNKNOWN" or conf not in {"", "unresolved"}):
+        if (
+            not is_root
+            and not is_project
+            and not is_builtin
+            and (category != "UNKNOWN" or conf not in {"", "unresolved"})
+        ):
             attrs["gap_code"] = REASON_CALL_UNRESOLVED
             gaps.append(
                 {
@@ -1962,11 +2294,15 @@ def finalize_kernel_root_trace(
             attrs=attrs,
             file=nfile,
             line=line,
-            status="extracted" if (is_root or is_project) else "partial",
+            status="extracted" if (is_root or is_project or is_builtin) else "partial",
             confidence=(
                 1.0
                 if is_root and conf == "confirmed"
-                else (0.85 if bridge else (0.9 if is_project else 0.5))
+                else (
+                    0.85
+                    if bridge
+                    else (0.9 if is_project or is_builtin else 0.5)
+                )
             ),
         )
         op_count += 1
@@ -2060,8 +2396,10 @@ def finalize_kernel_root_trace(
             owner_guess = ""
             if callee_qualified and "::" in callee_qualified:
                 owner_guess = callee_qualified.rsplit("::", 1)[0].split("::")[-1]
+                if owner_guess.lower() in {"conditional", "conditional_t"}:
+                    owner_guess = ""
             elif receiver_type or receiver_canonical:
-                owner_guess = _base_type_name(receiver_canonical or receiver_type)
+                owner_guess = _owner_from_receiver_type(receiver_canonical or receiver_type)
             callee_mid = _ensure_method(
                 callee,
                 file=_norm_file(callee_decl_file, root) or nfile,
@@ -2077,18 +2415,29 @@ def finalize_kernel_root_trace(
                     me.confidence = max(float(me.confidence or 0), 0.9)
                     me.attrs["decl_file"] = _norm_file(callee_decl_file, root) or nfile
                     me.attrs["decl_line"] = callee_decl_line or line
+                    if receiver:
+                        me.attrs.setdefault("receivers", [])
+                        recs = me.attrs.get("receivers")
+                        if isinstance(recs, list) and receiver not in recs:
+                            recs.append(receiver)
+                bind_via = (
+                    "project_decl"
+                    if callee_decl_file
+                    else ("method_receiver" if receiver else "project_free")
+                )
                 _link(
                     codemap,
                     RelationKind.BINDS,
                     ent.id,
                     callee_mid,
                     attrs={
-                        "via": "project_decl",
+                        "via": bind_via,
                         "file": nfile,
                         "line": line,
                         "column": column,
                         "decl_file": _norm_file(callee_decl_file, root),
                         "decl_line": callee_decl_line,
+                        "receiver": receiver,
                     },
                 )
         if caller_mid and callee_mid and caller_mid != callee_mid:
@@ -2219,11 +2568,18 @@ def finalize_kernel_root_trace(
     # CALLS/WRAPS climb that would stamp catalog REACHED on those sites.
     for e in codemap.by_kind(EntityKind.OPERATION):
         proof = str(e.attrs.get("root_proof") or "")
+        if proof == "compiler_builtin":
+            e.attrs["root_status"] = "BUILTIN"
+            e.attrs["root_kind"] = "BUILTIN"
+            e.attrs["root"] = ""
+            e.status = "extracted"
+            e.confidence = max(float(e.confidence or 0), 0.9)
+            continue
         if not proof.startswith("project_"):
             continue
-        e.attrs["root_status"] = "UNRESOLVED"
+        e.attrs["root_status"] = "PROJECT"
         e.attrs["root"] = ""
-        e.attrs["root_kind"] = ""
+        e.attrs["root_kind"] = "PROJECT"
         e.status = "extracted"
         e.confidence = max(float(e.confidence or 0), 0.9)
 
@@ -2243,6 +2599,8 @@ def finalize_kernel_root_trace(
                 e.attrs["trace"] = trace
                 e.status = "extracted"
                 break
+
+    _normalize_settled_entities(codemap)
 
     # --- 7. Gaps for still-unresolved source types that participate in WRAPS
     unresolved_types = 0

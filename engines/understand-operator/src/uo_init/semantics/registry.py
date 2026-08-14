@@ -38,10 +38,32 @@ def load_registry() -> dict[str, dict[str, Any]]:
                 continue
             key = str(callee).split("::")[-1]
             row = dict(meta)
+            row.setdefault("category", "UNKNOWN")
             row.setdefault("callee", key)
             row["registry_version"] = REGISTRY_VERSION
             row["source_file"] = name
             out[key] = row
+    try:
+        from uo_init.semantics.ascendc_vf import cann_vf_api_names, vf_root_spelling
+
+        for spell in cann_vf_api_names():
+            key = vf_root_spelling(spell)
+            row = {
+                "category": "vector_compute",
+                "engine": "VECTOR",
+                "confidence": "confirmed",
+                "callee": key,
+                "registry_version": REGISTRY_VERSION,
+                "source_file": "cann_vf",
+            }
+            out.setdefault(key, dict(row))
+            if spell != key:
+                alias = dict(row)
+                alias["callee"] = spell
+                alias["alias_of"] = key
+                out.setdefault(spell, alias)
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

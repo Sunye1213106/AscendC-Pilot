@@ -282,6 +282,14 @@ def test_enrich_with_clang_replaces_regex_shared(domain: Path) -> None:
     hit = next(f for f in enrichment.scope.files if f.path.name == "extra_clang.h")
     assert hit.provenance == "clang_include"
     assert not any("cann-asc-devkit" in f.path.as_posix() for f in enrichment.scope.files)
+    # Layout-owned files Clang never referenced must not remain in scope.
+    names = {f.path.name for f in enrichment.scope.files}
+    assert "widget_def.cpp" not in names
+    assert "unused.h" not in names
+    for f in enrichment.scope.files:
+        assert f.provenance in {"clang_tu", "clang_include"}
+    assert "confirmed_source_files" in enrichment.scope.to_dict()
+    assert enrichment.scope.confirmed_source_files()
 
 
 def test_enrich_with_clang_incomplete_when_parse_fails(domain: Path) -> None:

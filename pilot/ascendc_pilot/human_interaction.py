@@ -54,6 +54,24 @@ def decisions_dir(project_root: Path) -> Path:
     return _control_root(project_root) / "decisions"
 
 
+def load_pending(project_root: Path) -> dict[str, Any]:
+    return _load(pending_path(Path(project_root).expanduser().resolve()))
+
+
+def pending_is_intake(pending: dict[str, Any] | None) -> bool:
+    """True when pending is pre-start intake (architecture / project / uo product)."""
+    if not pending:
+        return False
+    kind = str(pending.get("kind") or "").strip().lower()
+    dkind = str(pending.get("decision_kind") or "").strip().lower()
+    return kind == KIND_INTAKE or dkind in {
+        "architecture",
+        "intake",
+        "project",
+        "uo_product",
+    }
+
+
 def _sign(project_root: Path, payload: dict[str, Any]) -> str:
     from ascendc_pilot.runs import sign_receipt_payload
 
@@ -90,6 +108,22 @@ def issue_interaction_request(
                 v = str(opt.get(key) or "").strip()
                 if v and v not in values:
                     values.append(v)
+    decision = decision_kind or kind
+    existing = _load(pending_path(project_root))
+    if str(existing.get("status") or "") == "pending":
+        same_kind = str(existing.get("kind") or "") == kind
+        same_decision = str(existing.get("decision_kind") or "") == decision
+        if same_kind and same_decision:
+            return {
+                "request_id": str(existing.get("request_id") or request_id),
+                "run_id": str(existing.get("run_id") or rid),
+                "workflow_id": str(existing.get("workflow_id") or ""),
+                "action_id": str(existing.get("action_id") or action_id),
+                "kind": kind,
+                "decision_kind": decision,
+                "allowed_values": list(existing.get("allowed_values") or values),
+                "ask_question": existing.get("ask_question") or ask_question,
+            }
     req = {
         "schema": "human-interaction-request/v1",
         "request_id": request_id,
@@ -97,7 +131,7 @@ def issue_interaction_request(
         "workflow_id": str(state.get("workflow_id") or ""),
         "action_id": action_id,
         "kind": kind,
-        "decision_kind": decision_kind or kind,
+        "decision_kind": decision,
         "ask_question": ask_question,
         "allowed_values": values,
         "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -350,3 +384,38 @@ def clear_pending(project_root: Path) -> None:
     path = pending_path(Path(project_root))
     if path.is_file():
         path.unlink()
+
+
+def consume_intake_architecture(
+    project_root: Path,
+    *,
+    architecture: str,
+    force_new: bool = False,
+) -> dict[str, Any]:
+    """Record or clear pre-start intake so start/reinit is not deadlocked.
+
+    Architecture intake is answered with the chosen arch*. ``--force-new``
+    may drop a stale intake when no arch is available yet.
+    """
+    root = Path(project_root).expanduser().resolve()
+    pending = load_pending(root)
+    if str(pending.get("status") or "") != "pending":
+        return {"ok": True, "skipped": True}
+    if not pending_is_intake(pending):
+        return {"ok": True, "skipped": True, "kind": pending.get("kind")}
+    arch = str(architecture or "").strip()
+    rid = str(pending.get("request_id") or "")
+    allowed = [str(v) for v in (pending.get("allowed_values") or [])]
+    if arch and rid and (not allowed or arch in allowed):
+        rec = record_answer(root, request_id=rid, value=arch)
+        if rec.get("ok"):
+            return rec
+    if force_new:
+        clear_pending(root)
+        return {"ok": True, "cleared": True}
+    return {
+        "ok": True,
+        "pending": True,
+        "request_id": rid,
+        "kind": pending.get("kind"),
+    }

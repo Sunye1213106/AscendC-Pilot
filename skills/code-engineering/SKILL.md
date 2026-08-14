@@ -65,7 +65,9 @@ Git 写操作、fork、PR 文案 **不做**。只读审查走 `/ce-review`。
   `references/evidence-discipline.md`
 - Risk classification:
   `references/risk-classes.md`
-- Scenario infer (engine writes ScenarioSet skeleton):
+- Scenario ids (do not invent):
+  `references/scenario-catalog.md`
+- Scenario infer (engine writes skeleton):
   `references/scenario-infer.md`, `capabilities/ce-scenario-infer/METHOD.md`
 - Scenario knobs (agent overlay, Host merges before confirm):
   `capabilities/ce-scenario-knobs/METHOD.md`

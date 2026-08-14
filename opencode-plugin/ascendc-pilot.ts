@@ -22,6 +22,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:chil
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 
 /** Host-side pending human interaction (mirrors ACP pending_interaction.yaml). */
 type PendingHumanInteraction = {
@@ -29,6 +30,7 @@ type PendingHumanInteraction = {
   project: string
   allowed_values: string[]
   kind: string
+  prompt_zh: string
   recorded_at: number
 }
 
@@ -77,11 +79,16 @@ function readPendingFromDisk(project: string): PendingHumanInteraction | null {
         if (m?.[1]) values.push(m[1].trim())
       }
     }
+    const prompt =
+      text.match(/prompt_zh:\s*["']?([^\n"']+)/)?.[1]?.trim() ||
+      text.match(/question:\s*["']?([^\n"']+)/)?.[1]?.trim() ||
+      ""
     return {
       request_id: id,
       project,
       allowed_values: values,
       kind,
+      prompt_zh: prompt,
       recorded_at: Date.now(),
     }
   } catch {
@@ -151,6 +158,14 @@ function captureHumanInteractionFromOutput(project: string, outputText: string):
       project,
       allowed_values: allowed,
       kind: String(r.kind || ""),
+      prompt_zh: String(
+        (r.ask_question && typeof r.ask_question === "object"
+          ? (r.ask_question as Record<string, unknown>).prompt_zh ||
+            (r.ask_question as Record<string, unknown>).question
+          : "") ||
+          obj.message_zh ||
+          "",
+      ),
       recorded_at: Date.now(),
     })
     return
@@ -1216,20 +1231,40 @@ export const AscendCHarnessPlugin = async (ctx?: {
 }) => {
   const client = ctx && typeof ctx === "object" ? (ctx as any).client : undefined
   let pilotTools: Record<string, unknown> = {}
+  let capturePilotToolSession:
+    | ((input: Record<string, unknown>, output?: Record<string, unknown>) => void)
+    | undefined
   try {
-    // Dynamic import keeps older OpenCode hosts working if this file is absent.
-    const mod = await import("./pilot-driver")
+    // OpenCode autoloads every *.ts in ~/.config/opencode/plugins/.
+    // pilot-driver.ts is a library — load it from the installed bundle, never
+    // from the plugins/ root (that path is treated as a second plugin factory).
+    const bundled = resolve(
+      homedir(),
+      ".config",
+      "opencode",
+      "ascendc-pilot-plugin",
+      "opencode-plugin",
+      "pilot-driver.ts",
+    )
+    const mod = existsSync(bundled)
+      ? await import(pathToFileURL(bundled).href)
+      : await import("./pilot-driver")
+    capturePilotToolSession = mod.capturePilotToolSession
     pilotTools = mod.createPilotRunTool(client, ctx) || {}
   } catch {
     pilotTools = {}
   }
 
   return {
+    // OpenCode 1.18 calls N.config / N.dispose on every loaded plugin.
+    config: async () => {},
+    dispose: async () => {},
     tool: pilotTools,
     "tool.execute.before": async (
       input: { tool?: string; agent?: string; sessionAgent?: string },
       output: { args?: Record<string, unknown> },
     ) => {
+      capturePilotToolSession?.(input as Record<string, unknown>, output as Record<string, unknown>)
       const tool = String(input.tool || "").toLowerCase()
       const args = output.args || {}
       const command = String(args.command || args.cmd || "")
@@ -1290,17 +1325,33 @@ export const AscendCHarnessPlugin = async (ctx?: {
           /\bacp(\.cmd|\.exe)?\s+answer\b/i.test(command)
         const isInspectBash =
           (tool === "bash" || tool === "shell" || tool === "terminal") &&
-          /\bacp(\.cmd|\.exe)?\s+(inspect-failure|next|status|run-summary)\b/i.test(command)
+          /\bacp(\.cmd|\.exe)?\s+(inspect-failure|next|status|run-summary|scan-architectures|abort)\b/i.test(
+            command,
+          )
         const isResumeStartBash =
           (tool === "bash" || tool === "shell" || tool === "terminal") &&
           isAcpResumeStartCommand(command)
         // Host Driver owns AskQuestion + start --decision; do not deadlock
         // a second pilot_run after EXISTING_RUN left pending yaml on disk.
         const isPilotDriver = tool === "pilot_run" || tool === "pilotrun"
-        if (!isQuestion && !isAnswerBash && !isInspectBash && !isResumeStartBash && !isPilotDriver) {
+        const isSkillTool = tool === "skill" || tool.endsWith("skill")
+        if (
+          !isQuestion &&
+          !isAnswerBash &&
+          !isInspectBash &&
+          !isResumeStartBash &&
+          !isPilotDriver &&
+          !isSkillTool
+        ) {
+          const allowed = pending.allowed_values.length
+            ? ` allowed=${pending.allowed_values.join("|")}`
+            : ""
+          const prompt = pending.prompt_zh ? ` ${pending.prompt_zh}` : ""
           throw new Error(
-            `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}). ` +
-              `Only the question UI, acp answer, acp start --decision continue|reinit, or pilot_run is allowed until the user answers.`,
+            `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
+              `${prompt}${allowed}. ` +
+              `Only the question UI, acp answer, acp start --decision continue|reinit|--force-new, ` +
+              `acp scan-architectures, acp abort, skill, or pilot_run is allowed until the user answers.`,
           )
         }
       }

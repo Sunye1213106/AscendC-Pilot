@@ -40,10 +40,12 @@ export function parseAcpStdoutJson(
   const err = String(stderr || "").trim()
   const jsonStart = out.indexOf("{")
   if (jsonStart < 0) {
+    const detail = (err || out).slice(0, 800)
     return {
       ok: false,
       error: "ACP_NO_JSON",
-      message: (err || out).slice(0, 800),
+      message: detail,
+      message_zh: detail || "ACP_NO_JSON",
       stdout: out.slice(0, 400),
       stderr: err.slice(0, 400),
       exit: exit ?? undefined,
@@ -311,8 +313,18 @@ function invokeToolMetadata(
   if (typeof fn !== "function") return
   try {
     const ret = fn(input)
-    if (ret && typeof (ret as { then?: unknown }).then === "function") {
+    if (ret == null) return
+    if (typeof (ret as { then?: unknown }).then === "function") {
       void Promise.resolve(ret).catch(() => {})
+      return
+    }
+    // OpenCode Effect: fromPlugin sometimes returns an Effect instead of running it.
+    const obj = ret as Record<string, unknown> & { pipe?: unknown }
+    const runPromise =
+      (globalThis as { Effect?: { runPromise?: (e: unknown) => Promise<unknown> } }).Effect
+        ?.runPromise
+    if (typeof runPromise === "function" && (typeof obj.pipe === "function" || obj._op)) {
+      void runPromise(ret).catch(() => {})
     }
   } catch {
     /* Host metadata is best-effort; OpenCode 1.18.x fromPlugin does not bridge ctx.metadata Effect */
@@ -601,17 +613,33 @@ function createProgressReporter(
 
   const publishToolRow = (title: string) => {
     const client = opts?.client
-    const sessionId = String(opts?.sessionId || ctx?.sessionID || ctx?.sessionId || "").trim()
-    const messageId = String(opts?.messageId || ctx?.messageID || "").trim()
-    const callID = String(opts?.callID || ctx?.callID || "").trim()
-    if (!client || !sessionId || patchingToolRow) return
+    const sessionId = resolvedSessionId(ctx, opts)
+    const messageId = String(
+      opts?.messageId || ctx?.messageID || lastToolSession.messageID || "",
+    ).trim()
+    const callID = String(opts?.callID || ctx?.callID || lastToolSession.callID || "").trim()
+    if (!client || patchingToolRow) return
     patchingToolRow = true
     void (async () => {
       try {
+        let sid = sessionId
+        if (!sid) {
+          try {
+            const listed = await (client.session?.list?.() || client.session?.list?.({}))
+            const rows = (listed as { data?: unknown[] })?.data || listed
+            const arr = Array.isArray(rows) ? rows : []
+            const newest = arr[0] as Record<string, unknown> | undefined
+            sid = String(newest?.id || newest?.sessionID || "").trim()
+            if (sid) lastToolSession.sessionID = sid
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!sid) return
         if (!cachedPart) {
           cachedPart = await findRunningPilotPart(
             client,
-            sessionId,
+            sid,
             messageId,
             callID || undefined,
             opts?.serverUrl,
@@ -625,7 +653,7 @@ function createProgressReporter(
           }
         }
         if (!cachedPart) return
-        if (!cachedPart.sessionID) cachedPart.sessionID = sessionId
+        if (!cachedPart.sessionID) cachedPart.sessionID = sid
         if (!cachedPart.messageID && messageId) cachedPart.messageID = messageId
         await patchRunningToolPart(client, cachedPart, title, baseInput || {}, opts?.serverUrl)
       } catch {
@@ -639,7 +667,7 @@ function createProgressReporter(
 
   const showProgressToast = (title: string) => {
     const client = opts?.client
-    const toastKey = `${state.workflow}:${state.currentId}:${state.status}`
+    const toastKey = `${state.workflow}:${state.currentId}:${state.status}:${title.slice(0, 24)}`
     if (!client?.tui?.showToast || toastKey === lastToastKey) return
     lastToastKey = toastKey
     const variant =
@@ -982,6 +1010,60 @@ export type PilotToolContext = {
   question?: (input: Record<string, unknown>) => Promise<unknown>
   metadata?: (input: { title?: string; metadata?: Record<string, unknown> }) => void
   abort?: AbortSignal
+}
+
+type CapturedToolSession = {
+  sessionID: string
+  messageID: string
+  callID: string
+}
+
+const lastToolSession: CapturedToolSession = { sessionID: "", messageID: "", callID: "" }
+
+function pickSessionField(src: Record<string, unknown> | undefined, keys: string[]): string {
+  if (!src) return ""
+  for (const key of keys) {
+    const v = src[key]
+    if (typeof v === "string" && v.trim()) return v.trim()
+  }
+  const nested = src.session
+  if (nested && typeof nested === "object") {
+    const rec = nested as Record<string, unknown>
+    for (const key of ["id", "sessionID", "sessionId"]) {
+      const v = rec[key]
+      if (typeof v === "string" && v.trim()) return v.trim()
+    }
+  }
+  return ""
+}
+
+/** Hook `tool.execute.before` fills this so progress can patch the running tool row. */
+export function capturePilotToolSession(
+  input?: Record<string, unknown>,
+  output?: Record<string, unknown>,
+): void {
+  const sessionID =
+    pickSessionField(input, ["sessionID", "sessionId", "session_id"]) ||
+    pickSessionField(output, ["sessionID", "sessionId", "session_id"])
+  const messageID =
+    pickSessionField(input, ["messageID", "messageId", "message_id"]) ||
+    pickSessionField(output, ["messageID", "messageId", "message_id"])
+  const callID =
+    pickSessionField(input, ["callID", "callId", "call_id", "toolCallID"]) ||
+    pickSessionField(output, ["callID", "callId", "call_id", "toolCallID"])
+  if (sessionID) lastToolSession.sessionID = sessionID
+  if (messageID) lastToolSession.messageID = messageID
+  if (callID) lastToolSession.callID = callID
+}
+
+function resolvedSessionId(ctx?: PilotToolContext, opts?: { sessionId?: string }): string {
+  return String(
+    opts?.sessionId ||
+      ctx?.sessionID ||
+      ctx?.sessionId ||
+      lastToolSession.sessionID ||
+      "",
+  ).trim()
 }
 
 type TodoItem = {
@@ -1333,6 +1415,9 @@ export async function runPilotDriver(
   toolCtx?: PilotToolContext,
   reporter?: ProgressReporter,
 ): Promise<Record<string, unknown>> {
+  if (!args || typeof args !== "object") {
+    return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
+  }
   const project = resolve(String(args.project || "").trim())
   let workflow = String(args.workflow || "").trim()
   if (!project || !workflow) {
@@ -1420,13 +1505,18 @@ export async function runPilotDriver(
   }
   if (!isAcpStartSuccess(started)) {
     reporter?.setStatus("fail")
+    const failMsg = String(
+      started.message_zh || started.message || started.error || "acp start failed",
+    )
     return {
       ok: false,
       phase: "start",
       start: started,
+      error: String(started.error || "ACP_START_FAILED"),
+      message: String(started.message || failMsg),
       host_step: {
         kind: "failed",
-        message_zh: String(started.message_zh || started.error || "acp start failed"),
+        message_zh: failMsg,
       },
     }
   }
@@ -1695,17 +1785,23 @@ export function createPilotRunTool(client: any, pluginInput?: { serverUrl?: unkn
         force_new: { type: "boolean", description: "Pass --force-new to acp start" },
       },
       async execute(toolArgs: Record<string, unknown>, ctx?: PilotToolContext) {
+        capturePilotToolSession(ctx as unknown as Record<string, unknown>, toolArgs)
         const toolCtx: PilotToolContext = {
           sessionID: String(
             ctx?.sessionID ||
               ctx?.sessionId ||
+              lastToolSession.sessionID ||
               (toolArgs as any).sessionID ||
               (toolArgs as any).sessionId ||
               "",
           ).trim(),
-          sessionId: String(ctx?.sessionId || ctx?.sessionID || "").trim(),
-          messageID: String((ctx as any)?.messageID || "").trim(),
-          callID: String((ctx as any)?.callID || "").trim(),
+          sessionId: String(
+            ctx?.sessionId || ctx?.sessionID || lastToolSession.sessionID || "",
+          ).trim(),
+          messageID: String(
+            (ctx as any)?.messageID || lastToolSession.messageID || "",
+          ).trim(),
+          callID: String((ctx as any)?.callID || lastToolSession.callID || "").trim(),
           askQuestion: ctx?.askQuestion || (ctx as any)?.ask,
           question: ctx?.question,
           metadata: ctx?.metadata,
@@ -1748,5 +1844,19 @@ export function createPilotRunTool(client: any, pluginInput?: { serverUrl?: unkn
         }
       },
     },
+  }
+}
+
+/**
+ * OpenCode autoloads every `*.ts` in `~/.config/opencode/plugins/`.
+ * This file is a library imported by `ascendc-pilot.ts`. Without a default
+ * export, the host calls a named export (`runPilotDriver` / `capturePilotToolSession`)
+ * as the plugin factory: `args` is undefined → `args.project` throws, then the
+ * config hook chain dies (`N.config`) and the TUI shows "Unexpected server error".
+ */
+export default async function PilotDriverLibraryPlugin(_ctx?: unknown) {
+  return {
+    config: async () => {},
+    dispose: async () => {},
   }
 }

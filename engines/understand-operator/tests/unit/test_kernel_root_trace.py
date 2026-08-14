@@ -783,8 +783,69 @@ def test_prove_root_helpers() -> None:
     lex_bad, _ = _prove_ascendc_api_root(callee="Get", receiver="x")
     assert not lex_bad
 
+    bare_get, _ = _prove_ascendc_api_root(callee="Get")
+    assert not bare_get
+
+    or_bare, _ = _prove_ascendc_api_root(callee="Or")
+    assert not or_bare
+
+    expsub_lex, spell_exp = _prove_ascendc_api_root(callee="ExpSub")
+    assert expsub_lex and spell_exp == "ExpSub"
+
+    fused, spell_fused = _prove_ascendc_api_root(callee="FusedExpSub")
+    assert fused and spell_fused == "ExpSub"
+
     member_sgb, _ = _prove_ascendc_api_root(callee="SetGlobalBuffer", receiver="queryGm")
     assert not member_sgb
+
+    # Clang constructor sites spell qualified as ``RegTensor()`` while the
+    # declaration lives under cann-asc-devkit — must still prove REACHED.
+    ctor_ok, ctor_spell = _prove_ascendc_api_root(
+        callee="RegTensor",
+        callee_qualified="RegTensor()",
+        callee_usr=(
+            "c:kernel_reg_compute_struct_intf.h@N@AscendC@N@Reg@S@RegTensor>"
+            "#f#@N@AscendC@N@Reg@RegTraitNumOne@F@RegTensor#"
+        ),
+        callee_decl_file=(
+            "/opt/cann/cann-asc-devkit/x86_64-linux/asc/include/basic_api/"
+            "reg_compute/kernel_reg_compute_struct_intf.h"
+        ),
+        has_identity=True,
+    )
+    assert ctor_ok and ctor_spell == "RegTensor"
+
+    # Param/config structs in kernel_struct_*.h are framework types, not compute APIs.
+    params_ok, params_spell = _prove_ascendc_api_root(
+        callee="DataCopyExtParams",
+        callee_qualified="DataCopyExtParams()",
+        callee_decl_file=(
+            "/opt/cann/cann-asc-devkit/x86_64-linux/asc/include/basic_api/"
+            "kernel_struct_data_copy.h"
+        ),
+        has_identity=True,
+    )
+    assert params_ok and params_spell == "DataCopyExtParams"
+    fix_ok, fix_spell = _prove_ascendc_api_root(
+        callee="FixpipeParamsC310",
+        callee_qualified="FixpipeParamsC310()",
+        callee_decl_file=(
+            "/opt/cann/cann-asc-devkit/x86_64-linux/asc/include/basic_api/"
+            "kernel_struct_fixpipe.h"
+        ),
+        has_identity=True,
+    )
+    assert fix_ok and fix_spell == "FixpipeParamsC310"
+    cfg_ok, cfg_spell = _prove_ascendc_api_root(
+        callee="FixpipeConfig",
+        callee_qualified="FixpipeConfig(CO2Layout, bool)",
+        callee_decl_file=(
+            "/opt/cann/cann-asc-devkit/x86_64-linux/asc/include/basic_api/"
+            "kernel_struct_fixpipe.h"
+        ),
+        has_identity=True,
+    )
+    assert cfg_ok and cfg_spell == "FixpipeConfig"
 
 
 def test_tque_enque_deque_outside_flag_pairing(tmp_path: Path) -> None:
@@ -1056,10 +1117,11 @@ def test_min_scalar_unresolved_vector_min_reached(tmp_path: Path) -> None:
     mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
     assert len(mins) == 2
     statuses = sorted(str(e.attrs.get("root_status")) for e in mins)
-    assert statuses == ["REACHED", "UNRESOLVED"]
+    assert statuses == ["PROJECT", "REACHED"]
     two_arg = next(e for e in mins if len(e.attrs.get("args") or []) <= 2)
     four_arg = next(e for e in mins if len(e.attrs.get("args") or []) >= 3)
-    assert two_arg.attrs.get("root_status") == "UNRESOLVED"
+    assert two_arg.attrs.get("root_status") == "PROJECT"
+    assert two_arg.status == "extracted"
     assert four_arg.attrs.get("root_status") == "REACHED"
 
 
@@ -1218,8 +1280,9 @@ def test_ambiguous_free_min_stays_unbound(tmp_path: Path) -> None:
     mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
     assert mins
     assert all(not e.attrs.get("callee_qualified") for e in mins)
-    assert all(e.status != "extracted" or e.attrs.get("root_status") == "REACHED" for e in mins)
     assert all(e.attrs.get("root_status") != "REACHED" for e in mins)
+    assert all(e.status == "extracted" for e in mins)
+    assert all(e.attrs.get("root_status") == "PROJECT" for e in mins)
 
 
 def test_align_to16_unique_free_not_confused_by_calls(tmp_path: Path) -> None:
@@ -1441,7 +1504,17 @@ def test_selector_alias_with_two_gets_stays_unbound(tmp_path: Path) -> None:
     ]
     assert gets
     assert all(not e.attrs.get("callee_qualified") for e in gets)
-    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+    assert all(e.attrs.get("root_status") == "PROJECT" for e in gets)
+    assert all(e.status == "extracted" for e in gets)
+    assert all(e.attrs.get("receiver") == "mmBuf" for e in gets)
+    assert all("Policy" not in str(e.attrs.get("callee_qualified") or "") for e in gets)
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value and r.src in {e.id for e in gets}
+    ]
+    assert binds
+    assert all(str(r.attrs.get("receiver") or "") == "mmBuf" for r in binds)
 
 
 def test_cited_files_from_walk_covers_included_headers() -> None:
@@ -1469,5 +1542,258 @@ def test_cited_files_from_walk_covers_included_headers() -> None:
     for name in ("foo.h", "bar.h", "baz.h", "type.h", "field.h", "ctrl.h", "process.h"):
         assert name in dst
     assert "flash_attention_score_grad_apt.cpp" in dst
+
+
+def test_project_type_and_builtin_are_extracted_not_partial(tmp_path: Path) -> None:
+    root = tmp_path / "settle"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        struct LoopInfo {
+          int step;
+        };
+        class Process {
+         public:
+          LoopInfo info;
+          __aicore__ inline void Process() {
+            LocalTensor<float> ub;
+            if (__builtin_expect(1, 1)) {
+              (void)ub;
+            }
+            (void)info;
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="settle", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    loop = _type(cm, "LoopInfo")
+    assert loop is not None
+    assert loop.attrs.get("root_status") == "PROJECT"
+    assert loop.status == "extracted"
+    builtins = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "__builtin_expect" or e.attrs.get("root_status") == "BUILTIN"
+    ]
+    if builtins:
+        assert all(e.status == "extracted" for e in builtins)
+        assert all(e.attrs.get("root_status") in {"BUILTIN", "REACHED"} for e in builtins)
+
+
+def test_getvalue_on_local_tensor_reaches(tmp_path: Path) -> None:
+    root = tmp_path / "gval"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            LocalTensor<float> ub;
+            float x = ub.GetValue(0);
+            ub.SetValue(0, x);
+            (void)x;
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="gval", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    hits = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name in {"GetValue", "SetValue"}
+    ]
+    assert hits
+    assert all(e.attrs.get("root_status") == "REACHED" for e in hits)
+    assert all(e.status == "extracted" for e in hits)
+    buf = next(b for b in cm.by_kind(EntityKind.BUFFER) if b.name == "ub")
+    assert buf.attrs.get("root_status") == "REACHED"
+    assert buf.status == "extracted"
+
+
+def test_tbuf_indexed_template_get_bridges_localtensor(tmp_path: Path) -> None:
+    """mm1ResBuf[i].template Get<T>() is TBuf Get → LocalTensor, located via the buffer."""
+    root = tmp_path / "tbuf_get"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          TBuf<TPosition::VECCALC> mm1ResBuf;
+          TBuf<TPosition::VECCALC> mm2ResBuf;
+          __aicore__ inline void Process() {
+            auto a = this->mm1ResBuf[prevRunInfo.commonRunInfo.taskIdMod2].template Get<CALC_TYPE>();
+            auto b = this->mm2ResBuf[idx].template Get<float>();
+            auto c = dYL1Buf.Get();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="tbuf_get", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    typed = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("root_status") == "REACHED"
+    ]
+    assert typed, "expected TBuf Get<T> to reach LocalTensor"
+    assert all(e.attrs.get("root") == "AscendC::LocalTensor" for e in typed)
+    recvs = {e.attrs.get("receiver") for e in typed}
+    assert "mm1ResBuf" in recvs
+    assert "mm2ResBuf" in recvs
+    policy = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Get" and e.attrs.get("receiver") == "dYL1Buf"
+    ]
+    assert policy and all(e.attrs.get("root_status") == "PROJECT" for e in policy)
+
+
+def test_multiline_or_reg_call_reached(tmp_path: Path) -> None:
+    root = tmp_path / "or_ml"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            Or((RegTensor<uint16_t> &)vregCastRes, (RegTensor<uint16_t> &)vregCastEven,
+                (RegTensor<uint16_t> &)vregCastOdd, pregFullExe);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="or_ml", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    ors = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Or"]
+    assert ors
+    assert all(e.attrs.get("root_status") == "REACHED" for e in ors)
+    assert all(e.attrs.get("root") == "AscendC::Or" for e in ors)
+
+
+def test_lexical_vf_reg_apis_reached(tmp_path: Path) -> None:
+    """Reg-shaped ExpSub/Or/Fused* prove as CANN VF; bare Or does not."""
+    root = tmp_path / "vf"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "vf_anti_quant_compute_p_ds.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            ExpSub(vreg_sp1, vreg_sp1, vreg_max, preg_all);
+            FusedExpSub(vreg_sp1, vreg_sp1, vreg_max, preg_all);
+            FusedMulDstAdd(vreg_out, vreg_a, vreg_b, preg_all);
+            Or((RegTensor<uint8_t> &)vreg_p1, (RegTensor<uint8_t> &)vreg_p1, (RegTensor<uint8_t> &)vreg_p3, preg_all8);
+            bool flag = Or(mask_a, mask_b);
+            DataCopy(dst, src, 16);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="vf", architecture="arch35")
+    _seed(cm, root, files=[str(arch / "vf_anti_quant_compute_p_ds.h")])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    def _ops(name: str):
+        return [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == name]
+
+    exps = _ops("ExpSub")
+    assert exps and all(e.attrs.get("root_status") == "REACHED" for e in exps)
+    assert all(e.attrs.get("root") == "AscendC::ExpSub" for e in exps)
+
+    fused_exp = _ops("FusedExpSub")
+    assert fused_exp and all(e.attrs.get("root_status") == "REACHED" for e in fused_exp)
+    assert all(e.attrs.get("root") == "AscendC::ExpSub" for e in fused_exp)
+
+    fused_mul = _ops("FusedMulDstAdd")
+    assert fused_mul and all(e.attrs.get("root_status") == "REACHED" for e in fused_mul)
+    assert all(e.attrs.get("root") == "AscendC::MulDstAdd" for e in fused_mul)
+
+    ors = _ops("Or")
+    assert len(ors) >= 2
+    vec_or = [e for e in ors if _reg_shaped(e)]
+    scalar_or = [e for e in ors if not _reg_shaped(e)]
+    assert vec_or and all(e.attrs.get("root_status") == "REACHED" for e in vec_or)
+    assert all(e.attrs.get("root") == "AscendC::Or" for e in vec_or)
+    assert scalar_or and all(e.attrs.get("root_status") != "REACHED" for e in scalar_or)
+
+
+def _reg_shaped(ent) -> bool:
+    args = list(ent.attrs.get("args") or [])
+    blob = " ".join(args)
+    return len(args) >= 3 or "RegTensor" in blob or "preg_" in blob or "vreg_" in blob
+
+
+def test_lexical_selector_get_binds_receiver_not_policy(tmp_path: Path) -> None:
+    """dYL1Buf.Get() without unique Policy decl is PROJECT via the buffer name."""
+    root = tmp_path / "dyl1"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "block_cube.h").write_text(
+        """
+        class Process {
+         public:
+          typename std::conditional<IS_L1_REUSE,
+              typename DyL1BuffSelector<T, IS_L1_REUSE>::TYPE,
+              MutexBuffersPolicyDB<BufferType::L1>>::type dYL1Buf;
+          typename std::conditional<FLAG, typename Sel::TYPE, std::nullptr_t>::type pL1Buf;
+          __aicore__ inline void Process() {
+            auto dy = dYL1Buf.Get();
+            auto p = pL1Buf.Get();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="dyl1", architecture="arch35")
+    _seed(cm, root, files=[str(arch / "block_cube.h")])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    for recv in ("dYL1Buf", "pL1Buf"):
+        gets = [
+            e
+            for e in cm.by_kind(EntityKind.OPERATION)
+            if e.name == "Get" and e.attrs.get("receiver") == recv
+        ]
+        assert gets, recv
+        assert all(e.attrs.get("root_status") == "PROJECT" for e in gets), recv
+        assert all(e.status == "extracted" for e in gets), recv
+        assert all(e.attrs.get("root_status") != "REACHED" for e in gets), recv
+        assert all("AscendC::Get" not in str(e.attrs.get("root") or "") for e in gets), recv
+        assert all("Policy" not in str(e.attrs.get("callee_qualified") or "") for e in gets), recv
+        binds = [
+            r
+            for r in cm.relations.values()
+            if r.kind_name() == RelationKind.BINDS.value and r.src in {e.id for e in gets}
+        ]
+        assert binds, recv
+        assert all(str(r.attrs.get("receiver") or "") == recv for r in binds), recv
+
 
 

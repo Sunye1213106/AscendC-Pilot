@@ -108,6 +108,8 @@ function clearResult(project: string): void {
 
 export const UoQueryReturnValuePlugin = async () => {
   return {
+    config: async () => {},
+    dispose: async () => {},
     "tool.execute.before": async (
       input: { tool?: string },
       output: { args?: Record<string, unknown> },

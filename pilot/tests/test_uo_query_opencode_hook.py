@@ -23,7 +23,10 @@ def test_return_value_hook_is_ephemeral_and_narrow() -> None:
 def test_installers_copy_all_opencode_ts_hooks() -> None:
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
-    assert "opencode-plugin/*.ts" in sh
-    assert 'Filter "*.ts"' in ps1
+    assert "opencode-plugin/ascendc-pilot.ts" in sh
+    assert "ascendc-pilot.ts" in ps1
     assert "zz-uo-query-return-value.ts" in sh
     assert "zz-uo-query-return-value.ts" in ps1
+    # Library must not be copied into the OpenCode autoload directory.
+    assert 'Remove-Item -Force -LiteralPath $legacyDriver' in ps1 or "Removed autoloaded library" in ps1
+    assert 'rm -f "$PLUGINS/pilot-driver.ts"' in sh

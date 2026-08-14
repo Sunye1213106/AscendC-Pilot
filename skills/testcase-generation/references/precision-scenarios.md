@@ -1,42 +1,20 @@
-# Precision scenarios (distilled)
+# Precision scenarios (construct knobs)
 
-**When to load**: constructing cases for `P-*` ids. Distilled from
-precision-debug decision trees, dtype tolerances, and repo-test precision
-discipline. Do not copy DumpTensor step-by-step procedures here.
+**When to load**：已经有合法 `P-*` id，要构造少量 CSV。id 以 CE `scenario-catalog.md` 为准，不要在此再定义何时挂上。
 
-## Decision cues → scenario
+## Knobs
 
-| Code / failure cue | scenario_id | Knobs |
-| --- | --- | --- |
-| Cast site or dtype branch | `P-CAST`, `P-DTYPE` | each affected dtype; same shape; prefer FP32 then FP16/BF16 |
-| DataCopy vs DataCopyPad / last-dim align | `P-COPY-ALIGN` | aligned 32B multiple vs +1 |
-| EnQue/DeQue missing around compute (looks like wrong numbers) | `P-QUEUE` | smallest legal shape |
-| Long reduction / softmax accumulate | `P-REDUCE-LONG` | large S / reduce axis (clean values) |
-| Optional mask / pse / dropout / rope | `P-OPTIONAL` | present and absent; legal shapes only |
-| Combinations the host/kernel reject | `P-ILLEGAL` | Disable or exclusion; **no NPU** |
-| Tail core, empty tensor, rank-0 vs empty | `P-TAIL` | `[1]`, zero-axis; empty ≠ scalar |
+- **P-DTYPE / P-CAST**：受影响 dtype，同 shape；先 FP32 再 FP16/BF16
+- **P-COPY-ALIGN**：末维 32B 对齐 vs +1
+- **P-QUEUE**：最小可复现 shape
+- **P-REDUCE-LONG**：大 reduce 轴，干净数值
+- **P-OPTIONAL**：有/无可选输入，只走合法 shape
+- **P-ILLEGAL**：Disable 或排除；**不上 NPU**
+- **P-TAIL**：`[1]`、零轴；empty ≠ scalar
 
 ## Clean vs stress
 
-- **clean** (normal / zero / near_zero / all_ones): required gate.
-- **stress** (big / neg_big / denormal): informational; do not use as the
-  only hard gate.
+- **clean**（normal / zero / near_zero / all_ones）：必过门
+- **stress**（big / neg_big / denormal）：信息性，不得当唯一硬门
 
-## Tolerances (class, not a second golden)
-
-Default float compare class (authoritative tables live in ops-precision-standard):
-
-| dtype | rtol / atol class |
-| --- | --- |
-| FP32 | 1e-5 |
-| FP16 | 1e-3 |
-| BF16 | 1e-2 |
-
-Oracle for these scenarios is harness precision mode (`only_grad`), not
-Host tiling-key replay. A key HIT does not close `P-*`.
-
-## Illegal combos
-
-If a combination is known unsupported (shape/type matrix, host check), emit
-Disable + `block_reason` or a source exclusion. Do not send it to NPU to
-“see if it crashes”.
+Oracle 是 harness 精度比对（`only_grad`）。Host 命中 TilingKey 关不了 `P-*`。

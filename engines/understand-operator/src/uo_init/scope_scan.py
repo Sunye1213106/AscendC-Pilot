@@ -111,6 +111,19 @@ class ScopeSet:
     def paths(self, **kw) -> list[Path]:
         return [f.path for f in self.select(**kw)]
 
+    def confirmed_source_files(self) -> list[str]:
+        """Project-relative paths of the Clang-confirmed file set (op_dir root)."""
+        out: list[str] = []
+        for f in self.files:
+            try:
+                out.append(f.path.relative_to(self.op_dir).as_posix())
+            except ValueError:
+                try:
+                    out.append(f.path.relative_to(self.workspace_root).as_posix())
+                except ValueError:
+                    out.append(f.path.as_posix())
+        return sorted(set(out))
+
     def to_dict(self) -> dict:
         def rel(p: Path) -> str:
             try:
@@ -118,22 +131,24 @@ class ScopeSet:
             except ValueError:
                 return p.as_posix()
 
+        files = [
+            {
+                "path": rel(f.path),
+                "role": f.role,
+                "side": f.side,
+                "is_tu": f.is_tu,
+                "shared": f.shared,
+                "kind": f.kind,
+                "provenance": f.provenance,
+            }
+            for f in self.files
+        ]
         return {
             "op_dir": self.op_dir.as_posix(),
             "workspace_root": self.workspace_root.as_posix(),
             "arch_dir": self.arch_dir,
-            "files": [
-                {
-                    "path": rel(f.path),
-                    "role": f.role,
-                    "side": f.side,
-                    "is_tu": f.is_tu,
-                    "shared": f.shared,
-                    "kind": f.kind,
-                    "provenance": f.provenance,
-                }
-                for f in self.files
-            ],
+            "files": files,
+            "confirmed_source_files": self.confirmed_source_files(),
             "notes": list(self.notes),
         }
 
@@ -697,40 +712,68 @@ def enrich_with_clang(
     host_tus: Iterable[Path] | None = None,
     kernel_tu: Path | None = None,
 ) -> ClangEnrichment:
-    """Replace regex shared closure with Clang's authoritative include closure.
+    """Build Source Scope from Clang's authoritative include closure only.
 
-    Owned layout files are kept. Regex-discovered SHARED files are dropped and
-    rebuilt only from ``tu.get_includes()``. Status is ``complete`` only when
-    every entry TU parses successfully — callers must treat incomplete as a
-    blocker, not a silent fallback to regex.
+    Final ``scope.files`` = entry TUs that were parsed ∪ OWNED/SHARED paths
+    reported by ``tu.get_includes()``. Layout-owned files that this parse never
+    referenced are dropped. Architecture is used only to choose which entry TUs
+    to parse (foreign kernel entries are rejected here); common headers that
+    Clang actually includes stay in scope.
     """
     notes = list(scope.notes)
-    owned = [f for f in scope.files if not f.shared]
+    arch = (scope.arch_dir or "").strip().lower()
     jobs: list[tuple[Path, list[str], str]] = []
     for path in host_tus or ():
         if path is not None and Path(path).is_file():
             jobs.append((Path(path), list(host_args or []), SIDE_HOST))
     if kernel_tu is not None and Path(kernel_tu).is_file():
-        jobs.append((Path(kernel_tu), list(kernel_args or []), SIDE_KERNEL))
+        kpath = Path(kernel_tu)
+        owns = entry_architecture(kpath)
+        if owns and arch and owns != arch:
+            notes.append(
+                f"kernel_entry_other_arch: {kpath.name} builds {owns}; "
+                "not parsed for clang scope"
+            )
+        else:
+            jobs.append((kpath, list(kernel_args or []), SIDE_KERNEL))
 
     if not jobs:
         notes.append("clang_enrichment_skipped: no_entry_tus")
-        owned_scope = ScopeSet(
+        empty = ScopeSet(
             op_dir=scope.op_dir,
             workspace_root=scope.workspace_root,
             arch_dir=scope.arch_dir,
-            files=sorted(owned, key=lambda f: f.path.as_posix()),
+            files=[],
             notes=notes,
         )
         return ClangEnrichment(
-            scope=owned_scope,
+            scope=empty,
             status="skipped",
             tus_expected=0,
             tus_parsed=0,
             errors=["no_entry_tus"],
         )
 
-    index = {_key(f.path): f for f in owned}
+    # Seed only with entry TUs that will be (or were) parsed — not full layout.
+    index: dict[str, ScopeFile] = {}
+    layout_by_key = {_key(f.path): f for f in scope.files}
+    for tu_path, _args, side in jobs:
+        key = _key(tu_path)
+        prev = layout_by_key.get(key)
+        try:
+            resolved = tu_path.resolve()
+        except OSError:
+            resolved = Path(tu_path)
+        index[key] = ScopeFile(
+            path=resolved,
+            role=prev.role if prev is not None else _role_of(resolved),
+            side=prev.side if prev is not None else side,
+            is_tu=True,
+            shared=False,
+            kind=KIND_OWNED,
+            provenance="clang_tu",
+        )
+
     added = 0
     external_hits = 0
     parsed = 0
@@ -778,6 +821,8 @@ def enrich_with_clang(
             key = _key(inc)
             if key in index:
                 prev = index[key]
+                if prev.provenance == "clang_tu":
+                    continue
                 if prev.shared or kind == KIND_SHARED:
                     index[key] = ScopeFile(
                         path=prev.path,
@@ -788,27 +833,30 @@ def enrich_with_clang(
                         kind=KIND_SHARED,
                         provenance="clang_include",
                     )
-                elif prev.provenance != "clang_include":
-                    index[key] = ScopeFile(
-                        path=prev.path,
-                        role=prev.role,
-                        side=prev.side,
-                        is_tu=prev.is_tu,
-                        shared=False,
-                        kind=KIND_OWNED,
-                        provenance="clang_include",
-                    )
                 continue
             try:
                 resolved = Path(inc).resolve()
             except OSError:
                 resolved = Path(inc)
             is_shared = kind == KIND_SHARED
+            layout_prev = layout_by_key.get(key)
             index[key] = ScopeFile(
                 path=resolved,
-                role=_role_of(resolved) if not is_shared else ROLE_HEADER,
-                side=side if is_shared else _side_of(resolved),
-                is_tu=resolved.suffix.lower() in SOURCE_SUFFIXES,
+                role=(
+                    layout_prev.role
+                    if layout_prev is not None
+                    else (_role_of(resolved) if not is_shared else ROLE_HEADER)
+                ),
+                side=(
+                    layout_prev.side
+                    if layout_prev is not None
+                    else (side if is_shared else _side_of(resolved))
+                ),
+                is_tu=(
+                    layout_prev.is_tu
+                    if layout_prev is not None
+                    else resolved.suffix.lower() in SOURCE_SUFFIXES
+                ),
                 shared=is_shared,
                 kind=kind,
                 provenance="clang_include",
@@ -816,12 +864,12 @@ def enrich_with_clang(
             added += 1
 
     status = "complete" if parsed == len(jobs) and not errors else "incomplete"
+    files = sorted(index.values(), key=lambda f: f.path.as_posix())
     notes.append(
         f"clang_scope_status={status} tus_parsed={parsed}/{len(jobs)} "
         f"clang_shared_added={added} clang_external_seen={external_hits} "
-        f"regex_shared_replaced=1"
+        f"confirmed_count={len(files)} regex_shared_replaced=1"
     )
-    files = sorted(index.values(), key=lambda f: f.path.as_posix())
     out_scope = ScopeSet(
         op_dir=scope.op_dir,
         workspace_root=scope.workspace_root,

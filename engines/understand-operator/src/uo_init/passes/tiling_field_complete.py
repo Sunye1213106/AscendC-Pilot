@@ -14,6 +14,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.source_contract import _kernel_candidates, _rel as _src_rel
+from uo_init.source_layout import selected_tiling_headers
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CLASS_RE = re.compile(
@@ -46,15 +47,48 @@ def complete_tiling_fields(
     added = 0
     arrays = 0
     initializers = 0
-    for path in _kernel_candidates(root, architecture):
+    created_owners = 0
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for path in list(_kernel_candidates(root, architecture)) + list(
+        selected_tiling_headers(root, architecture)
+    ):
         if not path.is_file() or path.suffix.lower() not in _SUFFIXES:
             continue
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        paths.append(path)
+
+    for path in paths:
         text = path.read_text(encoding="utf-8", errors="replace")
+        path_is_tiling_data = (
+            "tiling_data" in path.name.lower() or "tilingdata" in path.name.lower()
+        )
         for match in _CLASS_RE.finditer(text):
             if re.search(r"\benum\s+$", text[: match.start()]):
                 continue
             owner_name = match.group(1)
             owner = owners.get(owner_name)
+            # Layout headers may declare packing structs before any REGISTER /
+            # GET_TILING_DATA names them. Create the owner from the header itself.
+            if owner is None and path_is_tiling_data and not owner_name.endswith(
+                ("Helper", "Utils", "Util", "Traits", "Policy")
+            ):
+                owner = codemap.upsert(
+                    EntityKind.TILING_DATA,
+                    owner_name,
+                    attrs={
+                        "provenance": "source_tiling_data_class_complete",
+                        "architecture": architecture,
+                    },
+                    file=_src_rel(root, path),
+                    line=_line(text, match.start()),
+                    status="confirmed",
+                )
+                owners[owner_name] = owner
+                created_owners += 1
             if owner is None:
                 continue
             open_pos = text.find("{", match.start(), match.end())
@@ -125,10 +159,11 @@ def complete_tiling_fields(
 
     codemap.meta["source_tiling_data_complete"] = {
         "added_fields": added,
+        "created_owners": created_owners,
         "array_fields": arrays,
         "default_initializers": initializers,
         "total_fields": len(codemap.by_kind(EntityKind.TILING_FIELD)),
-        "policy": "source-member-array-conditional/v2",
+        "policy": "source-member-array-conditional/v3",
     }
     return codemap
 

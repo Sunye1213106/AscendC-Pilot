@@ -28,7 +28,7 @@ _DECL_RE = re.compile(
     r"(?P<type>(?:[\w:<>,\s*&]+?))\s+(?P<name>[A-Za-z_]\w*)\s*(?:=|;)",
 )
 _CALL_RE = re.compile(
-    r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
+    r"(?:(?P<receiver>[A-Za-z_]\w*)(?:\s*\[[^\n]{0,300}\])?\s*(?:\.|->)\s*)?"
     r"(?:template\s+)?"
     r"(?P<name>[A-Za-z_]\w*)\s*"
     # Template args must stay inside one <> pair (no '=' / nested '>' from decls).
@@ -527,15 +527,8 @@ def lexical_source_call_sites(
     registry_names: set[str] | None = None
     if primitives_only:
         try:
-            # Prefer registry lookup table keys when available.
-            names = set()
-            lookup = getattr(semreg, "_TABLE", None) or getattr(semreg, "TABLE", None)
-            if isinstance(lookup, dict):
-                names.update(str(k) for k in lookup)
-            if not names:
-                from uo_init.semantics.ascendc_sync import SYNC_MECHANISM
-
-                names.update(SYNC_MECHANISM)
+            names = set(semreg.load_registry())
+            names.update({"Get", "GetTensor", "GetPre", "GetReused"})
             registry_names = names or None
         except Exception:  # noqa: BLE001
             registry_names = None
@@ -552,7 +545,8 @@ def lexical_source_call_sites(
             continue
         text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
         func = ""
-        for i, line in enumerate(text.splitlines(), start=1):
+        lines = text.splitlines()
+        for i, line in enumerate(lines, start=1):
             if time.perf_counter() > deadline:
                 break
             cleaned = _strip_line_noise(line)
@@ -574,17 +568,24 @@ def lexical_source_call_sites(
                 if not caller_allowed(func, reachable, filter_strict=filter_strict):
                     continue
                 rest = cleaned[m.end() :]
-                depth = 1
-                end = 0
-                for j, ch in enumerate(rest):
-                    if ch == "(":
-                        depth += 1
-                    elif ch == ")":
-                        depth -= 1
-                        if depth == 0:
-                            end = j
-                            break
-                arg_text = rest[:end] if end else ""
+                extra = 0
+                while True:
+                    depth = 0
+                    end = 0
+                    for j, ch in enumerate(rest):
+                        if ch == "(":
+                            depth += 1
+                        elif ch == ")":
+                            depth -= 1
+                            if depth < 0:
+                                end = j
+                                break
+                    if end or extra >= 6 or i + extra >= len(lines):
+                        break
+                    extra += 1
+                    rest = rest + " " + _strip_line_noise(lines[i + extra - 1])
+                # First char of rest is inside the opening '(' already consumed by _CALL_RE.
+                arg_text = rest[:end] if end else rest
                 args = [a.strip() for a in _ARG_SPLIT_RE.split(arg_text) if a.strip()]
                 targs = m.group("targs") or ""
                 targs_list = [a.strip() for a in targs.split(",") if a.strip()] if targs else []

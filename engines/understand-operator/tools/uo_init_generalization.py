@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import sys
 import time
@@ -18,9 +19,26 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[3]
-OPS_ROOT = Path(r"D:\PR-review\TEST\ops-transformer")
+OPS_ROOT = Path(
+    os.environ.get("UO_OPS_ROOT")
+    or os.environ.get("OPS_TRANSFORMER_ROOT")
+    or os.environ.get("OPS_ROOT")
+    or r"D:\TEST\ops-transformer"
+)
 OUT = Path(os.environ.get("UO_GEN_OUT") or (REPO / "artifacts" / "uo-init-generalization"))
 DOCS_TEST = REPO / "docs" / "test"
+
+_FAMILIES = (
+    "attention",
+    "ffn",
+    "gmm",
+    "mamba",
+    "mc2",
+    "mhc",
+    "moe",
+    "posembedding",
+)
+_SKIP_OP_NAMES = frozenset({"common", "include", "src"})
 
 # One arch per operator. Cover every family folder that has real op_host/op_kernel.
 # FAG arch22 is audit-only (no wipe).
@@ -69,6 +87,89 @@ CASES: list[dict[str, Any]] = [
     # Extra: existing FAG arch22 product — inspect only, never wipe.
     {"rel": "attention/flash_attention_score_grad", "arch": "arch22", "wipe": False, "audit_only": True},
 ]
+
+
+def _pick_arch(op: Path) -> str | None:
+    for arch in ("arch35", "arch22"):
+        if (op / "op_kernel" / arch).is_dir() or (op / "op_host" / arch).is_dir():
+            return arch
+    return None
+
+
+def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:
+    """One case per operator: prefer arch35, else arch22. Skip shared/common dirs."""
+    root = Path(ops_root or OPS_ROOT)
+    cases: list[dict[str, Any]] = []
+    for fam in _FAMILIES:
+        fam_dir = root / fam
+        if not fam_dir.is_dir():
+            continue
+        for op in sorted(fam_dir.iterdir()):
+            if not op.is_dir() or op.name in _SKIP_OP_NAMES:
+                continue
+            if not (op / "op_kernel").is_dir() and not (op / "op_host").is_dir():
+                continue
+            arch = _pick_arch(op)
+            if not arch:
+                continue
+            rel = f"{fam}/{op.name}"
+            cases.append(
+                {
+                    "rel": rel,
+                    "arch": arch,
+                    "wipe": not _forbidden_wipe(rel, arch),
+                    "family": fam,
+                }
+            )
+    return cases
+
+
+def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dict[str, Any]]:
+    """Stratified uniform sample across families; always keep FAG arch35 as the bar."""
+    pool = discover_ops(ops_root)
+    by_fam: dict[str, list[dict[str, Any]]] = {}
+    for case in pool:
+        by_fam.setdefault(str(case.get("family") or ""), []).append(case)
+    rng = random.Random(int(seed))
+    picked: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _take(case: dict[str, Any]) -> None:
+        key = f"{case['rel']}:{case['arch']}"
+        if key in seen:
+            return
+        seen.add(key)
+        picked.append(dict(case))
+
+    fag = next(
+        (c for c in pool if c["rel"] == "attention/flash_attention_score_grad" and c["arch"] == "arch35"),
+        None,
+    )
+    if fag is not None:
+        fag = dict(fag)
+        fag["wipe"] = False
+        _take(fag)
+
+    families = [f for f in _FAMILIES if by_fam.get(f)]
+    remain = max(0, int(n) - len(picked))
+    if families and remain:
+        base = remain // len(families)
+        extra = remain % len(families)
+        for i, fam in enumerate(families):
+            want = base + (1 if i < extra else 0)
+            cand = [c for c in by_fam[fam] if f"{c['rel']}:{c['arch']}" not in seen]
+            rng.shuffle(cand)
+            for case in cand[:want]:
+                _take(case)
+
+    if len(picked) < n:
+        rest = [c for c in pool if f"{c['rel']}:{c['arch']}" not in seen]
+        rng.shuffle(rest)
+        for case in rest:
+            if len(picked) >= n:
+                break
+            _take(case)
+    return picked[:n]
 
 sys.path[:0] = [
     str(REPO / "engines" / "understand-operator" / "src"),
@@ -190,6 +291,41 @@ def inspect_product(op: Path, arch: str, op_name: str) -> dict[str, Any]:
     krt = audit.get("kernel_root_trace_quality") or {}
     warnings = audit.get("warnings") or []
     blocking = audit.get("blocking") or []
+
+    quality_path = op / ".ascendc-pilot" / arch / "uo" / "checks" / "quality.yaml"
+    quality: dict[str, Any] = {}
+    if quality_path.is_file():
+        from uo_init import pilot_engines as pe
+
+        loaded = pe._load(quality_path) or {}
+        if isinstance(loaded, dict):
+            quality = {
+                "grade": loaded.get("grade"),
+                "locate_ready": loaded.get("locate_ready"),
+                "integrity": loaded.get("integrity"),
+                "unresolved": loaded.get("unresolved") or {},
+                "not_ready_reasons": loaded.get("not_ready_reasons") or [],
+                "surfaces": {
+                    key: {
+                        "ok": (val or {}).get("ok") if isinstance(val, dict) else None,
+                    }
+                    for key, val in (loaded.get("surfaces") or {}).items()
+                    if isinstance(val, dict)
+                },
+            }
+
+    unresolved_names: Counter[str] = Counter()
+    if unresolved_path.is_file():
+        from uo_init import pilot_engines as pe
+
+        payload = pe._load(unresolved_path) or {}
+        for b in payload.get("blockers") or []:
+            if not isinstance(b, dict):
+                continue
+            if str(b.get("bucket") or "") != "catalog_unproven":
+                continue
+            unresolved_names[str(b.get("name") or b.get("callee") or "")] += 1
+
     return {
         "ok": bool(audit.get("ok")),
         "product": str(product),
@@ -242,6 +378,8 @@ def inspect_product(op: Path, arch: str, op_name: str) -> dict[str, Any]:
         },
         "counts": audit.get("counts") or {},
         "locate": locate,
+        "quality": quality,
+        "catalog_unproven_names": dict(unresolved_names.most_common(16)),
     }
 
 
@@ -574,6 +712,13 @@ def _write_summary(doc: dict[str, Any]) -> None:
             "function_locate_hit_rate": locate.get("function_locate_hit_rate"),
             "input_dtype": locate.get("input_dtype"),
             "kernel_api": locate.get("kernel_api"),
+            "quality_grade": (noise.get("quality") or {}).get("grade"),
+            "locate_blocking": ((noise.get("quality") or {}).get("unresolved") or {}).get(
+                "locate_blocking"
+            ),
+            "catalog_unproven": ((noise.get("quality") or {}).get("unresolved") or {}).get(
+                "catalog_unproven"
+            ),
             "audit_only": case.get("audit_only"),
         }
         rows.append(rec)
@@ -736,6 +881,19 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     DOCS_TEST.mkdir(parents=True, exist_ok=True)
 
+    sample_n = str(os.environ.get("UO_GEN_SAMPLE") or "").strip()
+    sample_seed = int(str(os.environ.get("UO_GEN_SEED") or "20260814").strip() or "20260814")
+    cases = list(CASES)
+    if sample_n.isdigit() and int(sample_n) > 0:
+        cases = sample_cases(int(sample_n), seed=sample_seed, ops_root=OPS_ROOT)
+        print(
+            f"SAMPLE n={len(cases)} seed={sample_seed} families="
+            f"{Counter(c.get('family') for c in cases)}",
+            flush=True,
+        )
+        for c in cases:
+            print(f"  {c['rel']} {c['arch']}", flush=True)
+
     doc: dict[str, Any] = {
         "schema": "uo-init-generalization/v1",
         "date": time.strftime("%Y-%m-%d"),
@@ -745,6 +903,8 @@ def main() -> int:
             "ops_root": str(OPS_ROOT),
             "allow_unverified_scope": os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE", ""),
             "out": str(OUT),
+            "sample_n": sample_n,
+            "sample_seed": sample_seed if sample_n.isdigit() else None,
         },
         "cases": [],
     }
@@ -771,7 +931,7 @@ def main() -> int:
         if isinstance(prior, dict) and prior.get("rel") and prior.get("architecture"):
             skip.add(f"{prior['rel']}:{prior['architecture']}")
     t_all = time.perf_counter()
-    for case in CASES:
+    for case in cases:
         key = f"{case['rel']}:{case['arch']}"
         if only and key not in only and str(case["rel"]) not in only:
             continue

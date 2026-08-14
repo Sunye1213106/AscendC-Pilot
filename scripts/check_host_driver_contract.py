@@ -96,6 +96,8 @@ def main() -> int:
         "normalizeResumeDecision",
         "applyForceNew",
         "ctx.metadata",
+        "export default",
+        "PilotDriverLibraryPlugin",
     ):
         if marker not in driver_src:
             errors.append(f"pilot-driver.ts missing {marker}")

@@ -1,35 +1,13 @@
-# Performance scenarios (distilled)
+# Performance scenarios (construct knobs)
 
-**When to load**: constructing cases for `F-*` ids. Distilled from
-four-layer tiling/pipeline thinking and profiling metrics. Do not copy
-msprof command lines or simulator charts here.
+**When to load**：已经有合法 `F-*` id，要选少量 case。id 以 CE `scenario-catalog.md` 为准。
 
-## Four-layer cue → what to measure
+挂上任一性能场景时带上 `F-SHAPE-TYPICAL`（网络常用 shape）。切片里有 tail / 切不整再加 `F-SHAPE-TAIL`。
 
-| Layer (theory) | If the slice hits | scenario_id |
-| --- | --- | --- |
-| Tiling model (split, core count, UB) | split-field rhs / usedCoreNum | `F-SPLIT`, `F-BALANCE` |
-| Inter-core | CrossCore / multi-core predicate | `F-BALANCE` |
-| In-core / buffer | BUFFER, QUEUE, InitBuffer | `F-BUFFER` |
-| Dtype throughput | compute dtype path | `F-DTYPE` |
+## 选 case 时看什么（不是打分）
 
-Always include `F-SHAPE-TYPICAL` (L1 intent: competitive / network shapes)
-when any perf scenario attaches. Add `F-SHAPE-TAIL` when tail or
-non-divisible tile is in the slice.
+- 切分字段 / 核数 → `F-SPLIT`、`F-BALANCE`
+- Buffer / 队列方向 → `F-BUFFER`
+- 计算 dtype 路径 → `F-DTYPE`
 
-## Budgets
-
-- Typical perf subset: **3–8** cases. Never enumerate legal keys.
-- Same shape across dtypes when `F-DTYPE` is present.
-- Oracle is harness `profiler` (kernel time / pipe metrics). Host replay
-  HIT does not close `F-*`.
-
-## What “good enough” means (for selecting cases, not scoring)
-
-Prefer cases that expose:
-
-- Task duration vs expected bound class
-- Load balance (single-core vs full-core)
-- Bandwidth / UB pressure from buffer direction
-
-Closing `V` still requires a profiling receipt (`ce-external-evidence/v1`).
+预算 3–8 条，禁止枚举全部 legal key。Oracle 是 harness `profiler`。Host HIT 关不了 `F-*`。关 `V` 仍要 profiling 收据。

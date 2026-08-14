@@ -72,6 +72,26 @@ Write-Host "Repo: $BundleRoot"
 Write-Host "Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
 Write-Host "Prerequisite: OpenCode must be fully exited (plugin is loaded at process start)."
+$oc = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+  $_.Name -match '^opencode\.exe$' -or ($_.ExecutablePath -and $_.ExecutablePath -match '[\\/]opencode\.exe$')
+})
+if ($oc.Count -gt 0) {
+  Write-Host ("NOTE: {0} opencode.exe still running; stopping leftover serve processes so the TUI can bind." -f $oc.Count)
+  foreach ($p in $oc) {
+    $cmd = [string]$p.CommandLine
+    if ($cmd -match 'serve') {
+      Write-Host ("  stopping PID {0} {1}" -f $p.ProcessId, $cmd.Trim())
+      Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  }
+  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^cmd\.exe$' -and $_.CommandLine -match 'opencode\s+serve' } |
+    ForEach-Object {
+      Write-Host ("  stopping PID {0} leftover opencode serve wrapper" -f $_.ProcessId)
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  Start-Sleep -Milliseconds 400
+}
 Write-Host ""
 
 if ($WhatIf) {

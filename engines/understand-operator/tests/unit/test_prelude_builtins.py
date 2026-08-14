@@ -38,3 +38,15 @@ def test_prelude_parses_vector_s4x2_and_round_snippet(tmp_path: Path):
         and Path(d.location.file.name).name == "probe.cpp"
     ]
     assert not op_errs, [d.spelling for d in op_errs]
+
+
+def test_kernel_erases_no_simd_vf_fusion_qualifier():
+    import yaml
+
+    doc = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "spec" / "build_context.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    quals = (doc.get("kernel") or {}).get("erase_qualifiers") or []
+    assert "__no_simd_vf_fusion__" in quals

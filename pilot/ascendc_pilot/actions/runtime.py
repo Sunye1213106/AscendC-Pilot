@@ -2260,10 +2260,11 @@ def finalize_action(
     result_file: Path | str | None = None,
     action_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    ensure_control_layout(project_root)
     state = load_state(project_root)
     if not state:
         return {"ok": False, "error": "no_active_workflow"}
+    arch = str(state.get("architecture") or "").strip() or None
+    ensure_control_layout(project_root, arch=arch)
     wid = str(state.get("workflow_id") or "")
     phase = str(state.get("phase") or "")
     run_id = str(state.get("run_id") or "")

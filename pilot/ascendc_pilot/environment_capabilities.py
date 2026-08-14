@@ -35,12 +35,20 @@ def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
     files: list[str] = []
     confirmed = False
     rid = str(run_id or "").strip()
-    candidates = []
+    # Prefer Clang-confirmed prepare output over coarse operator_boundary roots.
+    candidates = [
+        uo_root(project_root) / "summary" / "scope_set.yaml",
+    ]
     if rid:
+        candidates.append(runs_root(project_root) / rid / "scope" / "scope_set.yaml")
+        candidates.append(runs_root(project_root) / rid / "source_scope.yaml")
         candidates.append(runs_root(project_root) / rid / "scope" / "scope_validated.yaml")
-    # Latest-ish fallback
+        candidates.append(runs_root(project_root) / rid / "scope" / "receipt.yaml")
     scope_dir = runs_root(project_root)
     if scope_dir.is_dir():
+        for p in sorted(scope_dir.glob("*/scope/scope_set.yaml"), reverse=True):
+            candidates.append(p)
+            break
         for p in sorted(scope_dir.glob("*/scope/scope_validated.yaml"), reverse=True):
             candidates.append(p)
             break
@@ -54,21 +62,44 @@ def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
         data = _load_yaml(path)
         if not data:
             continue
-        confirmed = True
-        for r in data.get("roots") or data.get("source_roots") or []:
-            s = str(r).replace("\\", "/").strip()
-            if s and s not in roots:
-                roots.append(s)
-        for f in data.get("files") or data.get("confirmed_files") or []:
+        raw_files = (
+            data.get("confirmed_source_files")
+            or data.get("allowed_source_files")
+            or (data.get("frozen_scope") or {}).get("confirmed_source_files")
+            or data.get("files")
+            or data.get("confirmed_files")
+            or []
+        )
+        collected: list[str] = []
+        for f in raw_files if isinstance(raw_files, list) else []:
             if isinstance(f, dict):
                 s = str(f.get("path") or f.get("file_path") or "").replace("\\", "/").strip()
             else:
                 s = str(f).replace("\\", "/").strip()
-            if s and s not in files:
+            if s and s not in collected:
+                collected.append(s)
+        if not collected and not data.get("allowed_source_roots"):
+            continue
+        confirmed = True
+        for r in (
+            data.get("roots")
+            or data.get("source_roots")
+            or data.get("allowed_source_roots")
+            or []
+        ):
+            s = str(r).replace("\\", "/").strip()
+            if s and s not in roots:
+                roots.append(s)
+        for s in collected:
+            if s not in files:
                 files.append(s)
         break
     if not roots:
-        # Sensible defaults under operator project
+        # Derive roots from confirmed files when present; else coarse defaults.
+        for f in files:
+            top = f.split("/", 1)[0]
+            if top and top not in roots and not top.startswith("."):
+                roots.append(top)
         for d in ("op_host", "op_kernel", "common", "op_graph"):
             if (project_root / d).is_dir() and d not in roots:
                 roots.append(d)

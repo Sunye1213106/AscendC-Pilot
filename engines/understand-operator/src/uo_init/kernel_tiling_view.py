@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from uo_init.source_layout import (
-    is_other_arch_path,
-    iter_cpp,
+    entry_include_architecture,
+    selected_host_files,
+    selected_kernel_files,
     selected_tiling_headers,
 )
 
@@ -135,13 +136,8 @@ def render_stub(op_dir: Path, architecture: str) -> str:
 
 def _kernel_defined_types(op_dir: Path, architecture: str) -> set[str]:
     names: set[str] = set()
-    kernel_root = op_dir / "op_kernel"
-    if not kernel_root.is_dir():
-        return names
-    for path in kernel_root.rglob("*"):
-        if not path.is_file() or path.suffix.lower() not in _CPP_SUFFIXES:
-            continue
-        if is_other_arch_path(path, architecture):
+    for path in selected_kernel_files(op_dir, architecture):
+        if path.suffix.lower() not in _CPP_SUFFIXES:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -153,31 +149,23 @@ def _kernel_defined_types(op_dir: Path, architecture: str) -> set[str]:
 
 def _collect_structs(op_dir: Path, architecture: str) -> list[dict[str, Any]]:
     merged: dict[str, dict[str, Any]] = {}
-    for path in selected_tiling_headers(op_dir, architecture):
+    seen: set[Path] = set()
+    for path in list(selected_tiling_headers(op_dir, architecture)) + [
+        p for p in selected_host_files(op_dir, architecture)
+        if p.suffix.lower() in {".h", ".hpp", ".hh"}
+    ]:
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if "BEGIN_TILING_DATA_DEF" not in text:
+            continue
         for st in _parse_macro_structs(text):
             merged.setdefault(st["name"], st)
-        if not _BEGIN_RE.search(text):
-            continue
-    # Host files that are not named *tiling* still carry BEGIN_TILING_DATA_DEF.
-    host_root = op_dir / "op_host"
-    if host_root.is_dir():
-        for path in iter_cpp(host_root):
-            if is_other_arch_path(path, architecture):
-                continue
-            if path.suffix.lower() not in {".h", ".hpp", ".hh"}:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            if "BEGIN_TILING_DATA_DEF" not in text:
-                continue
-            for st in _parse_macro_structs(text):
-                merged.setdefault(st["name"], st)
     return list(merged.values())
 
 
@@ -247,17 +235,16 @@ def _field_decl(kind: str, args: list[str]) -> str:
 
 
 def _default_tiling_type(op_dir: Path, architecture: str) -> str:
-    kernel_root = op_dir / "op_kernel"
-    if not kernel_root.is_dir():
-        return ""
-    for path in sorted(kernel_root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in _CPP_SUFFIXES:
-            continue
-        if is_other_arch_path(path, architecture):
+    arch = str(architecture or "").strip().lower()
+    for path in selected_kernel_files(op_dir, architecture):
+        if path.suffix.lower() not in _CPP_SUFFIXES:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
+            continue
+        owns = entry_include_architecture(text)
+        if owns and arch and owns != arch:
             continue
         m = _DEFAULT_REG_RE.search(text)
         if m:

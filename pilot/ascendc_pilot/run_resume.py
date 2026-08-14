@@ -480,12 +480,32 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
     }
 
 
-def apply_reinit_wipe(project_root: Path, workflow_id: str) -> dict[str, Any]:
-    """Workflow-scoped reinit wipe per Spec ``reset_policy``."""
+def apply_reinit_wipe(
+    project_root: Path,
+    workflow_id: str,
+    *,
+    architecture: str = "",
+) -> dict[str, Any]:
+    """Workflow-scoped reinit wipe per Spec ``reset_policy``.
+
+    Safe before an architecture tree exists: no-arch projects skip the
+    arch-scoped wipe instead of raising ARCHITECTURE_MISSING_IN_RUN_STATE.
+    """
     root = Path(project_root).expanduser().resolve()
     policy = reset_policy_for(workflow_id)
-    agent = agent_root(root)
-    state = load_state(root) or {}
+    from ascendc_pilot.paths import try_discover_arch
+
+    arch = str(architecture or "").strip() or try_discover_arch(root)
+    if not arch:
+        return {
+            "ok": True,
+            "removed": [],
+            "kept": ["control/pilot_hmac.key"],
+            "skipped": "no_arch_tree",
+            "policy": policy,
+        }
+    agent = agent_root(root, arch=arch)
+    state = load_state(root, arch=arch) or {}
     run_id = str(state.get("run_id") or "")
     removed: list[str] = []
     preserve_roots = [str(x) for x in (policy.get("reinit_preserve") or [])]
@@ -506,7 +526,7 @@ def apply_reinit_wipe(project_root: Path, workflow_id: str) -> dict[str, Any]:
             removed.extend(_remove_contract_paths(agent, (rel,)))
 
     wipe_runs = str(policy.get("reinit_wipe_runs") or "current")
-    runs = runs_root(root)
+    runs = runs_root(root, arch=arch)
     if wipe_runs == "all" and runs.exists():
         shutil.rmtree(runs, ignore_errors=True)
         removed.append(runs.as_posix())
@@ -516,19 +536,19 @@ def apply_reinit_wipe(project_root: Path, workflow_id: str) -> dict[str, Any]:
             shutil.rmtree(run_dir, ignore_errors=True)
             removed.append(run_dir.as_posix())
 
-    ctx = context_root(root)
+    ctx = context_root(root, arch=arch)
     if ctx.exists() and workflow_id in {"uo-init", "uo-update"}:
         shutil.rmtree(ctx, ignore_errors=True)
         removed.append(ctx.as_posix())
 
-    st = state_root(root)
+    st = state_root(root, arch=arch)
     for name in _STATE_FILES_ON_REINIT:
         path = st / name
         if path.is_file():
             path.unlink()
             removed.append(path.as_posix())
 
-    kept = ["state/pilot_hmac.key", "memory/"]
+    kept = ["control/pilot_hmac.key", "memory/"]
     kept.extend(preserve_roots)
     historical_runs = wipe_runs != "all"
     if historical_runs and runs.is_dir():
@@ -896,7 +916,13 @@ def apply_resume_decision(
 
     ``require_receipt=False`` is reserved for the ``--force-new`` script escape hatch.
     """
-    from ascendc_pilot.human_interaction import KIND_RESUME, require_decision_receipt
+    from ascendc_pilot.human_interaction import (
+        KIND_RESUME,
+        clear_pending,
+        load_pending,
+        pending_is_intake,
+        require_decision_receipt,
+    )
     from ascendc_pilot.state import mark_terminal, start_workflow
     from ascendc_pilot.todo import attach_todo
     from ascendc_pilot.workflows import entry_state, phase_pipeline
@@ -912,14 +938,18 @@ def apply_resume_decision(
         }
 
     if require_receipt:
-        receipt = require_decision_receipt(
-            root,
-            expected_values=[choice],
-            expected_kind=KIND_RESUME,
-            consume=True,
-        )
-        if not receipt.get("ok"):
-            return receipt
+        pending = load_pending(root)
+        if pending_is_intake(pending) and choice == "reinit":
+            clear_pending(root)
+        else:
+            receipt = require_decision_receipt(
+                root,
+                expected_values=[choice],
+                expected_kind=KIND_RESUME,
+                consume=True,
+            )
+            if not receipt.get("ok"):
+                return receipt
 
     summary = build_run_resume_summary(root, workflow_id=workflow_id)
     kwargs = dict(start_kwargs or {})
@@ -1022,7 +1052,9 @@ def apply_resume_decision(
             pass
         mark_terminal(root, "failed", reason="reinit_by_operator")
 
-    wipe = apply_reinit_wipe(root, workflow_id)
+    wipe = apply_reinit_wipe(
+        root, workflow_id, architecture=str(kwargs.get("architecture") or "")
+    )
     fresh = start_workflow(root, workflow_id, **kwargs)
     entry = entry_state(workflow_id)
     pipe = phase_pipeline(workflow_id, entry)

@@ -75,9 +75,15 @@ TPIPE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
 }
 
 # GlobalTensor / LocalTensor methods (kernel_tensor.h). Unique CANN spellings.
+# Get is *not* here: MutexBuffer::Get is a wrapper bridge; bare Get is often a
+# project Selector/Policy and must not be guessed.
 TENSOR_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
     "SetGlobalBuffer": ("SetGlobalBuffer", "MEMORY_API"),
     "GetPhyAddr": ("GetPhyAddr", "MEMORY_API"),
+    "GetValue": ("GetValue", "MEMORY_API"),
+    "SetValue": ("SetValue", "MEMORY_API"),
+    "Destroy": ("Destroy", "MEMORY_API"),
+    "ReinterpretCast": ("ReinterpretCast", "MEMORY_API"),
 }
 
 ASCENDC_NON_STORAGE_TYPES: frozenset[str] = frozenset({"TPipe"})

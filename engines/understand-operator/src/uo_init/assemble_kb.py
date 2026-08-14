@@ -577,8 +577,7 @@ def extract_host_bundle(
 
     with timer.span("discover"):
         spec = discover(op_dir, arch_dir=arch_dir)
-        targets = [p for p in spec.host_targets if p.exists()]
-    _tlog(f"  targets={[p.name for p in targets]}")
+    _tlog(f"  discover host_targets={[p.name for p in spec.host_targets]}")
 
     with timer.span("BuildContext.load"):
         ctx = BuildContext.load(
@@ -590,14 +589,25 @@ def extract_host_bundle(
 
     # Authoritative Clang include closure replaces regex shared discovery.
     # Prepare already wrote clang-complete scope_set.yaml — reuse it on extract.
+    # Do not re-discover / glob a second TU set once the Clang set exists.
     with timer.span("scope_clang_enrich"):
         import os
 
         from uo_init import scope_scan as sscan
+        from uo_init.op_spec import _targets_from_scope
 
         reused = sscan.load_prepared_scope(spec.op_dir, spec.arch_dir)
         if reused is not None:
             spec.scope = reused
+            _targets_from_scope(spec)
+            # Prefer Clang-confirmed kernel entry; reject foreign-arch fallbacks.
+            if spec.kernel_targets:
+                spec.kernel_entry = spec.kernel_targets[0]
+            elif spec.kernel_entry is not None:
+                owns = sscan.entry_architecture(spec.kernel_entry)
+                arch = (spec.arch_dir or "").strip().lower()
+                if owns and arch and owns != arch:
+                    spec.kernel_entry = None
             _tlog(
                 f"  clang_scope=reused_prepare "
                 f"scope_files={len(spec.scope.files)} "
@@ -606,17 +616,28 @@ def extract_host_bundle(
         else:
             if spec.scope is None:
                 spec.scope = sscan.scan(spec.op_dir, arch_dir=spec.arch_dir)
+            layout_hosts = [p for p in spec.host_targets if p.exists()]
+            kernel_tu = spec.kernel_entry
+            if kernel_tu is not None:
+                owns = sscan.entry_architecture(kernel_tu)
+                arch = (spec.arch_dir or "").strip().lower()
+                if owns and arch and owns != arch:
+                    kernel_tu = None
+                    spec.kernel_entry = None
             try:
                 enrichment = sscan.enrich_with_clang(
                     spec.scope,
                     host_args=ctx.host_args(),
                     kernel_args=ctx.kernel_args(
-                        dtype_variant="DT_FLOAT16", source_path=spec.kernel_entry
+                        dtype_variant="DT_FLOAT16", source_path=kernel_tu
                     ),
-                    host_tus=targets,
-                    kernel_tu=spec.kernel_entry,
+                    host_tus=layout_hosts,
+                    kernel_tu=kernel_tu,
                 )
                 spec.scope = enrichment.scope
+                _targets_from_scope(spec)
+                if spec.kernel_targets:
+                    spec.kernel_entry = spec.kernel_targets[0]
                 allow_unverified = str(
                     os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE") or ""
                 ).strip().lower() in {"1", "true", "yes"}
@@ -644,6 +665,16 @@ def extract_host_bundle(
                     ) from exc
                 spec.scope.notes.append(f"clang_enrichment_failed: {str(exc)[:200]}")
                 _tlog(f"  scope_clang_enrich failed (unverified override): {exc}")
+
+    # Host extract walks only Clang-confirmed host tiling TUs (or layout TUs
+    # that survived enrich as clang_tu / clang_include).
+    targets = [p for p in spec.host_targets if p.exists()]
+    if not targets:
+        raise RuntimeError(
+            "SCOPE_CONFIRMED_HOST_TUS_MISSING: Clang scope has no host tiling TU; "
+            "re-run prepare until clang_scope_status=complete"
+        )
+    _tlog(f"  extract targets={[p.name for p in targets]}")
 
     # Schema is cheap text parse; needed for kernel dimension tags before host IR.
     schema = parse_file(spec.tiling_key_header) if spec.tiling_key_header else None

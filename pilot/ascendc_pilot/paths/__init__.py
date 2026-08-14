@@ -145,6 +145,14 @@ def discover_arch(project_root: Path | str) -> str:
     )
 
 
+def try_discover_arch(project_root: Path | str) -> str:
+    """Like ``discover_arch`` but empty string instead of raising."""
+    try:
+        return discover_arch(project_root)
+    except ValueError:
+        return ""
+
+
 def artifact_root(
     op_src: Path | str,
     arch: str | None = None,

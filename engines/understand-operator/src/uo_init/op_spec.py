@@ -376,6 +376,16 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
     else:
         spec.kernel_entry, notes = _kernel_entry(spec.kernel_root, spec.op_snake)
         spec.ambiguities.extend(notes)
+        # Layout glob fallback can pick an arch-neutral *.cpp that builds another
+        # arch; never hand that TU to Clang for this architecture.
+        if spec.kernel_entry is not None and spec.arch_dir:
+            owns = sscan.entry_architecture(spec.kernel_entry)
+            arch = spec.arch_dir.strip().lower()
+            if owns and owns != arch:
+                spec.ambiguities.append(
+                    f"kernel_entry_other_arch: {spec.kernel_entry.name} builds {owns}"
+                )
+                spec.kernel_entry = None
 
     spec.tiling_key_header, notes = _tiling_key_header(
         spec.kernel_root,
