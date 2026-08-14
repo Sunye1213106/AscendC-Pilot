@@ -27,6 +27,9 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     all_text = "\n".join((control_text, prompt))
     assert "return_value" in control_text
     assert "MUST NOT Write `answer.yaml`" in invariant
+    assert "源码作答" in method
+    assert "禁止 Glob/dir/tree 找 `.uo`" in method
+    assert "源码作答" in policy
 
     # Task prompt stays cognitive/task-only; transport plumbing belongs to
     # METHOD/Policy/Runtime so skill architecture lint can enforce separation.

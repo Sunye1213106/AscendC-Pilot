@@ -13,6 +13,8 @@
 | 出口 | 要求 |
 | --- | --- |
 | Primary 阶段总结 | 三句式：目标 / 刚完成 / 下一步或需要你 |
+| `uo-init` / `uo-update` 完成 | 读 `host_step.quality_path`（`.ascendc-pilot/<arch>/uo/checks/quality.yaml`）后总结节点/关系/未闭合及原因（定位缺口 vs Host 运行时叶子 vs 目录未证根）；禁止只说「完成」 |
+| `uo-query` 完成 | 把答案正文（含 path:line）说给人听，不要只说 workflow complete |
 | AskQuestion | 标题人话；正文含背景 + 决定 + 选项后果；选项为人话动词短语 |
 | ACP `message_zh` / `user_summary_zh`（给人看） | 白话；机器字段留在 payload |
 | Todo / phase `label_zh` | 名实一致（勿叫「意图确认」却不问） |

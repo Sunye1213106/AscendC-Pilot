@@ -4,7 +4,10 @@
 Two start modes (Spec SSOT):
 - ``requires_architecture`` (uo-init / uo-update): choose arch* from the operator tree
 - ``requires_uo_product`` (tg-*/ce-*/uo-query/uo-investigate): architecture comes
-  from an existing ``.uo``; missing CodeMap → ask user to run /uo-init first
+  from an existing ``.uo``. Missing CodeMap is a human fork, not a search problem:
+  the product path is determined (``.ascendc-pilot/<arch>/uo/<op>.<arch>.uo``).
+  Query workflows offer ``/uo-init`` or answer-from-source; TG/CE still require
+  ``/uo-init``. Never Glob/dir the tree to find a ``.uo``.
 """
 
 from __future__ import annotations
@@ -386,6 +389,110 @@ def _attach_intake_request(payload: dict[str, Any], root: Path) -> dict[str, Any
     )
 
 
+# Query-like workflows may answer from operator sources when CodeMap is absent.
+# TG/CE consume the product as authority and cannot fall back to source answering.
+QUERY_SOURCE_FALLBACK_WORKFLOWS = frozenset({"uo-query", "uo-investigate"})
+
+
+def expected_uo_product_path(
+    root: Path | str,
+    *,
+    architecture: str = "",
+    op_name: str = "",
+) -> str:
+    """Determined product path. Do not Glob; this is the only location."""
+    root_p = Path(root).expanduser().resolve()
+    arch = (architecture or "").strip() or "<arch>"
+    name = (op_name or root_p.name or "<op>").replace("/", "_").replace("\\", "_")
+    return str(root_p / ".ascendc-pilot" / arch / "uo" / f"{name}.{arch}.uo")
+
+
+def missing_uo_product_payload(
+    *,
+    root: Path | str,
+    workflow_id: str,
+    architecture: str = "",
+    op_name: str = "",
+    persist: bool = True,
+) -> dict[str, Any]:
+    """Human fork when the determined ``.uo`` path is empty.
+
+    Query: ``uo-init`` (rebuild CodeMap) or ``source`` (answer from sources).
+    TG/CE: ``uo-init`` only. Never search the tree for another product.
+    """
+    root_p = Path(root).expanduser().resolve()
+    wf = (workflow_id or "").strip() or "uo-query"
+    allow_source = wf in QUERY_SOURCE_FALLBACK_WORKFLOWS
+    expected = expected_uo_product_path(
+        root_p, architecture=architecture, op_name=op_name
+    )
+    options: list[dict[str, str]] = [
+        {
+            "label": "先 /uo-init 建立 CodeMap",
+            "value": "uo-init",
+            "description": "在当前算子目录重建 .uo，然后再查询/启动本工作流",
+        },
+    ]
+    if allow_source:
+        options.append(
+            {
+                "label": "回退到源码作答",
+                "value": "source",
+                "description": "本次不查 CodeMap，只读算子源码回答；禁止 Glob/dir 找 .uo",
+            }
+        )
+    question = (
+        f"未找到确定路径的 CodeMap：`{expected}`。\n"
+        "不要 Glob/dir/Grep 找 `.uo`，不要猜 `--op-name`。\n"
+        + (
+            "请选择：先 `/uo-init` 建库，或回退到源码作答。"
+            if allow_source
+            else f"不能启动 `{wf}`：请先 `/uo-init` 建立 CodeMap。"
+        )
+    )
+    ask = {
+        "header": "缺少 CodeMap",
+        "question": question,
+        "prompt_zh": question,
+        "options": options,
+        "allow_free_text": False,
+        "field": "next_workflow",
+    }
+    payload: dict[str, Any] = {
+        "ok": False,
+        "needs_human_decision": True,
+        "decision_kind": "uo_product",
+        "reason_code": "UO_PRODUCT_REQUIRED",
+        "workflow_id": wf,
+        "project": str(root_p),
+        "architecture": (architecture or "").strip(),
+        "expected_path": expected,
+        "message_zh": question,
+        "ask_question": ask,
+        "suggested_command": (
+            f'acp start uo-init --project "{root_p}" --architecture <arch*>'
+        ),
+        "primary_instruction_zh": (
+            "立刻用 question/AskQuestion 弹出可点选框，选项必须原样使用。"
+            "禁止 Glob/dir/tree 找 `.uo`，禁止猜 `--op-name`。"
+            + (
+                "选 uo-init → `pilot_run` workflow=uo-init；"
+                "选 source → 只读算子源码作答，不要再调 acp uo-query。"
+                if allow_source
+                else "选 uo-init 后启动 `/uo-init`。"
+            )
+        ),
+        "host_step": {
+            "kind": "ask_human",
+            "message_zh": question,
+            "ask_question": ask,
+        },
+    }
+    if persist:
+        return _attach_intake_request(payload, root_p)
+    return payload
+
+
 def _uo_product_gate(
     *,
     root: Path,
@@ -395,40 +502,10 @@ def _uo_product_gate(
     """For TG/CE/query consumers: require .uo and resolve architecture from it."""
     products = discover_uo_products(root)
     if not products:
-        return _attach_intake_request(
-            {
-                "ok": False,
-                "needs_human_decision": True,
-                "decision_kind": "uo_product",
-                "reason_code": "UO_PRODUCT_REQUIRED",
-                "workflow_id": workflow_id,
-                "project": str(root),
-                "message_zh": (
-                    f"未找到正式 CodeMap（`.ascendc-pilot/<arch>/uo/*.uo`），不能启动 `{workflow_id}`。\n"
-                    "TG/CE/查询以 UO 产物为准：请先 `/uo-init --project <算子目录> --architecture <arch*>` "
-                    "建立 CodeMap，再回来启动本工作流。"
-                ),
-                "ask_question": {
-                    "prompt_zh": "尚未建立 CodeMap。请先运行 /uo-init，或选择下一步",
-                    "options": [
-                        {
-                            "label": "先 /uo-init 建立 CodeMap",
-                            "value": "uo-init",
-                            "description": "需要 --project 与 --architecture（来自仓内 arch*）",
-                        }
-                    ],
-                    "allow_free_text": False,
-                    "field": "next_workflow",
-                },
-                "suggested_command": (
-                    f'acp start uo-init --project "{root}" --architecture <arch*>'
-                ),
-                "primary_instruction_zh": (
-                    "先 AskQuestion 确认去跑 /uo-init；不要从 op_host/arch* 猜测 TG 架构，"
-                    "也不要在没有 .uo 时启动 tg-*/ce-review/uo-query。"
-                ),
-            },
-            root,
+        return missing_uo_product_payload(
+            root=root,
+            workflow_id=workflow_id,
+            architecture=architecture,
         )
 
     by_arch = {

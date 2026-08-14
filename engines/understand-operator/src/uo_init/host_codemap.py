@@ -42,7 +42,7 @@ _CMP_HINTS = (
     ("qkv_bytes", re.compile(r"qkv|dtypeBytes|GetSize|l2Size|L2", re.I)),
     ("s1_mod128", re.compile(r"%\s*128|s1\s*%", re.I)),
     ("band", re.compile(r"preTokens|nextTokens|s1Token|s2Token|pre_tokens", re.I)),
-    ("dtype_is_fp32", re.compile(r"DT_FLOAT\b|queryType\s*==\s*.*FLOAT", re.I)),
+    ("dtype_is_fp32", re.compile(r"DT_FLOAT\b", re.I)),
 )
 
 

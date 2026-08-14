@@ -25,7 +25,7 @@ cd AscendC-Pilot
 python -m pip install -r requirements.txt
 ```
 
-安装完成后检查：
+安装完成后检查（环境预检，不需要 `--architecture`，不创建算子 arch 树）：
 
 ```bash id="17r0qi"
 acp doctor

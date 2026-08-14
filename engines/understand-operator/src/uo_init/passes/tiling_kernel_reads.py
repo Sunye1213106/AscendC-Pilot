@@ -18,10 +18,30 @@ from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 
 _ACCESS_RE = re.compile(
-    r"(?:(?:this\s*->\s*)?(?P<base>[A-Za-z_]\w*))\s*->\s*"
+    r"(?:(?:this\s*(?:->|\.)\s*)?(?P<base>[A-Za-z_]\w*))\s*(?:->|\.)\s*"
     r"(?P<outer>[A-Za-z_]\w*)"
     r"(?:\s*(?:\.|->)\s*(?P<inner>[A-Za-z_]\w*))?"
 )
+_GET_TILING_WITH_RE = re.compile(
+    r"GET_TILING_DATA_WITH_STRUCT\s*\(\s*(?P<type>[A-Za-z_:]\w*(?:::\w+)*)\s*,\s*(?P<var>[A-Za-z_]\w*)"
+)
+_GET_TILING_BARE_VARS_RE = re.compile(
+    r"\bGET_TILING_DATA\s*\(\s*(?P<var>[A-Za-z_]\w*)\s*,"
+)
+_GET_TILING_MEMBER_RE = re.compile(
+    r"GET_TILING_DATA_MEMBER\s*\(\s*(?P<type>[A-Za-z_:]\w*(?:::\w+)*)\s*,\s*"
+    r"(?P<member>[A-Za-z_]\w*)\s*,\s*(?P<var>[A-Za-z_]\w*)"
+)
+# Pointer/reference declarators often insert ``const`` / ``__restrict`` between
+# ``*`` and the name (``Type *__restrict tilingData``). Those tokens are
+# qualifiers, not the variable.
+_DECL_AFTER_TYPE = (
+    r"(?:\s*(?:const|volatile|mutable|__restrict(?:__)?|restrict|[*&]))*"
+)
+_DECL_QUAL_NAMES = frozenset(
+    {"const", "volatile", "mutable", "restrict", "__restrict", "__restrict__"}
+)
+_DEFAULT_REG_RE = re.compile(r"\bREGISTER_TILING_DEFAULT\s*\(\s*([A-Za-z_:][A-Za-z0-9_:]*)\s*\)")
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 _ALIAS_RE = re.compile(r"\busing\s+([A-Za-z_]\w*)\s*=\s*([^;]+);", re.S)
 _BOUND_CALLS = {
@@ -60,7 +80,7 @@ def rebuild_verified_tiling_reads(
     ]
     aliases_by_file = {file: _aliases(raw, known_types) for file, raw in texts.items()}
     variable_types_by_file = {
-        file: _declared_variable_types(raw, known_types, aliases_by_file[file])
+        file: _declared_variable_types(raw, known_types, aliases_by_file[file], fields)
         for file, raw in texts.items()
     }
 
@@ -78,7 +98,10 @@ def rebuild_verified_tiling_reads(
         var_types = dict(variable_types_by_file.get(file) or {})
         for match in _ACCESS_RE.finditer(body_text):
             base, outer, inner = match.group("base"), match.group("outer"), match.group("inner")
-            looks_tiling = "tiling" in base.lower() or bool(var_types.get(base)) or outer in nested
+            # Nested TilingData field *names* also appear on ordinary locals
+            # (``info.s2Size``). Only typed TilingData values or tiling-named
+            # pointers are structurally TilingData-like.
+            looks_tiling = "tiling" in base.lower() or bool(var_types.get(base))
             if not looks_tiling:
                 continue
             sites += 1
@@ -87,24 +110,25 @@ def rebuild_verified_tiling_reads(
                 leaf = leaf[4:]
             candidates: list[Entity] = []
             if inner:
-                child_types = set(nested.get(outer) or ())
-                if not child_types:
-                    for owner in var_types.get(base) or ():
-                        parent = fields.get((owner, outer))
-                        if parent is None:
-                            continue
-                        child_types.update(
-                            _referenced_types(
-                                str(parent.attrs.get("cpp_type") or ""), known_types
-                            )
+                child_types: set[str] = set()
+                for owner in var_types.get(base) or ():
+                    parent = fields.get((owner, outer))
+                    if parent is None:
+                        continue
+                    child_types.update(
+                        _referenced_types(
+                            str(parent.attrs.get("cpp_type") or ""), known_types
                         )
+                    )
+                if not child_types:
+                    child_types = set(nested.get(outer) or ())
                 for child_type in child_types:
                     candidates.append(fields.get((child_type, leaf)))
             else:
                 for owner in var_types.get(base) or ():
                     candidates.append(fields.get((owner, leaf)))
                 candidates = _unique(candidates)
-                if not candidates:
+                if not candidates and "tiling" in base.lower():
                     declared = by_name.get(leaf) or []
                     if len(declared) == 1:
                         candidates.extend(declared)
@@ -130,14 +154,14 @@ def rebuild_verified_tiling_reads(
                 if site not in rel.attrs.setdefault("sites", []):
                     rel.attrs["sites"].append(site)
                 resolved += 1
-            else:
+            elif len(candidates) > 1:
                 ref = codemap.upsert(
                     EntityKind.OTHER,
                     expression,
                     eid=f"TDREADVER::{file}::{line}::{scope.id}::{outer}::{inner or ''}",
                     attrs={
                         "role": "tilingdata_read_unresolved",
-                        "reason": "field_owner_ambiguous" if candidates else "field_owner_unknown",
+                        "reason": "field_owner_ambiguous",
                         "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
                         "provenance": "source_tilingdata_read_unresolved_verified",
                     },
@@ -228,18 +252,53 @@ def _scope_body(raw: str, start_line: int, short_name: str) -> tuple[int, int] |
     return open_brace + 1, close_brace
 
 
-def _declared_variable_types(raw: str, known: set[str], aliases: dict[str, set[str]]) -> dict[str, set[str]]:
+def _declared_variable_types(
+    raw: str,
+    known: set[str],
+    aliases: dict[str, set[str]],
+    fields: dict[tuple[str, str], Entity] | None = None,
+) -> dict[str, set[str]]:
     out: dict[str, set[str]] = defaultdict(set)
+    field_index = fields or {}
     symbols = sorted(known | set(aliases), key=len, reverse=True)
-    if not symbols:
-        return out
-    alt = "|".join(re.escape(x) for x in symbols)
-    pattern = re.compile(rf"\b(?P<type>{alt})\b(?:\s*<[^;{{}}]*>)?\s*(?:const\s*)?[*&]*\s*(?P<name>[A-Za-z_]\w*)\b")
-    for match in pattern.finditer(raw):
-        token = match.group("type")
-        if token in known:
-            out[match.group("name")].add(token)
-        out[match.group("name")].update(aliases.get(token) or ())
+    if symbols:
+        alt = "|".join(re.escape(x) for x in symbols)
+        pattern = re.compile(
+            rf"\b(?P<type>{alt})\b(?:\s*<[^;{{}}]*>)?{_DECL_AFTER_TYPE}\s*(?P<name>[A-Za-z_]\w*)\b"
+        )
+        for match in pattern.finditer(raw):
+            name = match.group("name")
+            if name in _DECL_QUAL_NAMES or name in known or name in aliases:
+                continue
+            token = match.group("type")
+            if token in known:
+                out[name].add(token)
+            out[name].update(aliases.get(token) or ())
+    for match in _GET_TILING_WITH_RE.finditer(raw):
+        type_name = match.group("type").split("::")[-1]
+        if type_name in known:
+            out[match.group("var")].add(type_name)
+        out[match.group("var")].update(aliases.get(type_name) or ())
+    for match in _GET_TILING_MEMBER_RE.finditer(raw):
+        type_name = match.group("type").split("::")[-1]
+        member = match.group("member")
+        var = match.group("var")
+        parent = field_index.get((type_name, member))
+        child_types = _referenced_types(
+            str((parent.attrs.get("cpp_type") if parent else "") or ""), known
+        )
+        if child_types:
+            out[var].update(child_types)
+        elif type_name in known:
+            out[var].add(type_name)
+        out[var].update(aliases.get(type_name) or ())
+    defaults = {_DEFAULT_REG_RE.search(raw).group(1).split("::")[-1]} if _DEFAULT_REG_RE.search(raw) else set()
+    defaults &= known
+    if len(known) == 1:
+        defaults |= known
+    if defaults:
+        for match in _GET_TILING_BARE_VARS_RE.finditer(raw):
+            out[match.group("var")].update(defaults)
     return out
 
 

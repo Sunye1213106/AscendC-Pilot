@@ -488,8 +488,11 @@ def test_complete_rejects_open_obligations(tmp_path: Path):
     _write(uo / "checks" / "integrity.yaml", {"status": "pass"})
     result = complete_workflow(tmp_path)
     if result.get("ok"):
-        assert load_state(tmp_path)["status"] == "passed"
-        assert load_state(tmp_path).get("open_items") == []
+        snap = result.get("state") or {}
+        assert result["status"] == "passed"
+        assert snap.get("open_items") == []
+        assert not load_state(tmp_path)
+        assert result.get("released_execution", {}).get("released") is True
     else:
         assert result["status"] in {"rework_required", "human_required", "blocked"}
         assert load_state(tmp_path)["status"] != "passed"

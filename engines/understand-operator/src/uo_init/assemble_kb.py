@@ -602,7 +602,12 @@ def extract_host_bundle(
             _targets_from_scope(spec)
             # Prefer Clang-confirmed kernel entry; reject foreign-arch fallbacks.
             if spec.kernel_targets:
-                spec.kernel_entry = spec.kernel_targets[0]
+                from uo_init.source_layout import pick_kernel_entry
+
+                spec.kernel_entry = (
+                    pick_kernel_entry(spec.kernel_targets, spec.arch_dir)
+                    or spec.kernel_targets[0]
+                )
             elif spec.kernel_entry is not None:
                 owns = sscan.entry_architecture(spec.kernel_entry)
                 arch = (spec.arch_dir or "").strip().lower()
@@ -637,7 +642,12 @@ def extract_host_bundle(
                 spec.scope = enrichment.scope
                 _targets_from_scope(spec)
                 if spec.kernel_targets:
-                    spec.kernel_entry = spec.kernel_targets[0]
+                    from uo_init.source_layout import pick_kernel_entry
+
+                    spec.kernel_entry = (
+                        pick_kernel_entry(spec.kernel_targets, spec.arch_dir)
+                        or spec.kernel_targets[0]
+                    )
                 allow_unverified = str(
                     os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE") or ""
                 ).strip().lower() in {"1", "true", "yes"}
@@ -738,6 +748,10 @@ def extract_host_bundle(
             spec.host_root.glob("*.h")
         ):
             header_paths.append(h)
+        tiling_host = spec.host_root / "op_tiling"
+        if tiling_host.is_dir():
+            header_paths.extend(tiling_host.glob("*.h"))
+            header_paths.extend(tiling_host.glob("*.hpp"))
         # Kernel tiling-data headers often hold shared constexprs (e.g. prefix lengths)
         # referenced from host guards.
         kernel_arch = spec.op_dir / "op_kernel" / (spec.arch_dir or ".")

@@ -185,10 +185,35 @@ class ScopeSet:
 
 
 def _key(path: str | Path) -> str:
-    """Comparable form of a path: clang spells them with forward slashes and
-    whatever case the include line used."""
-    text = str(path).replace("\\", "/")
-    return text.lower()
+    """Comparable form of a path clang reports.
+
+    Clang keeps the include spelling, so ``op_kernel/./foo.h`` and
+    ``op_kernel/foo.h`` must be the same file. Case and separators also differ
+    on Windows.
+    """
+    text = str(path or "").replace("\\", "/")
+    if not text:
+        return ""
+    drive, rest = "", text
+    if len(text) >= 2 and text[1] == ":":
+        drive, rest = text[:2], text[2:]
+        if rest.startswith("/"):
+            rest = rest[1:]
+    parts: list[str] = []
+    for part in rest.split("/"):
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    body = "/".join(parts)
+    if drive:
+        return f"{drive}/{body}".lower()
+    if text.startswith("/"):
+        return ("/" + body).lower()
+    return body.lower()
 
 
 def _excluded(rel_parts: Iterable[str]) -> bool:
@@ -414,13 +439,13 @@ def entry_architecture(path: Path) -> str:
 
     A repository can keep one entry per architecture beside each other. Their
     names carry no reliable marker -- one may end in `_apt`, the other not --
-    but each includes only its own architecture's headers.
+    but each includes only its own architecture's headers. Mixed markers
+    (preprocessor-gated ``arch38/`` plus ``*_arch22.h``) yield empty so the
+    entry is kept for the requested arch.
     """
-    for include in _include_targets(_read_head(path)):
-        found = ARCH_IN_PATH_RE.search("/" + include)
-        if found:
-            return found.group(1).lower()
-    return ""
+    from uo_init.source_layout import entry_include_architecture
+
+    return entry_include_architecture(_read_head(path))
 
 
 def scan(op_dir: str | Path, *, arch_dir: str = "") -> ScopeSet:
@@ -599,53 +624,14 @@ def load_prepared_scope(op_dir: str | Path, arch_dir: str | None) -> ScopeSet | 
 
 def _probe_from_parsed_tu(tu: Any, path: str, op_dir: str) -> dict[str, Any]:
     """Same cleanliness score as ``probe_diagnostics``, from an already-parsed TU."""
-    from uo_init.diag_scope import diagnostic_in_operator
+    from uo_init.diag_scope import score_tu_diagnostics
 
-    errors = 0
-    fatals = 0
-    op_errors = 0
-    op_fatals = 0
-    samples: list[str] = []
     try:
         diags = list(tu.diagnostics)
     except Exception:  # noqa: BLE001
         diags = []
-    for d in diags:
-        try:
-            sev = int(d.severity)
-        except Exception:  # noqa: BLE001
-            continue
-        if sev < 3:
-            continue
-        errors += 1
-        if sev >= 4:
-            fatals += 1
-        loc_file = ""
-        try:
-            if d.location.file is not None:
-                loc_file = str(d.location.file.name)
-        except Exception:  # noqa: BLE001
-            loc_file = ""
-        in_op = diagnostic_in_operator(loc_file, op_dir, path)
-        if in_op:
-            op_errors += 1
-            if sev >= 4:
-                op_fatals += 1
-        if len(samples) < 5:
-            try:
-                samples.append(str(d.spelling)[:200])
-            except Exception:  # noqa: BLE001
-                pass
-    relevant = op_errors if fatals == 0 else op_errors + fatals
-    return {
-        "error_count": errors,
-        "fatal_count": fatals,
-        "operator_error_count": op_errors,
-        "operator_fatal_count": op_fatals,
-        "probe_relevant_errors": relevant,
-        "samples": samples,
-        "skipped_bodies": False,
-    }
+    scored = score_tu_diagnostics(diags, path, op_dir)
+    return {**scored, "skipped_bodies": False}
 
 
 def clang_include_paths(

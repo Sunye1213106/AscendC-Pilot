@@ -401,6 +401,9 @@ def consume_intake_architecture(
     pending = load_pending(root)
     if str(pending.get("status") or "") != "pending":
         return {"ok": True, "skipped": True}
+    if force_new:
+        clear_pending(root)
+        return {"ok": True, "cleared": True, "kind": pending.get("kind")}
     if not pending_is_intake(pending):
         return {"ok": True, "skipped": True, "kind": pending.get("kind")}
     arch = str(architecture or "").strip()
@@ -410,9 +413,6 @@ def consume_intake_architecture(
         rec = record_answer(root, request_id=rid, value=arch)
         if rec.get("ok"):
             return rec
-    if force_new:
-        clear_pending(root)
-        return {"ok": True, "cleared": True}
     return {
         "ok": True,
         "pending": True,

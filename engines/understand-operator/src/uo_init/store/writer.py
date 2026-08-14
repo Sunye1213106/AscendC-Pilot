@@ -110,11 +110,50 @@ _JSON_DUMP = {"ensure_ascii": False, "separators": (",", ":")}
 
 
 def _attrs_json(attrs: dict[str, Any]) -> str:
-    cleaned = {k: v for k, v in dict(attrs or {}).items() if k != "type_text"}
+    cleaned: dict[str, Any] = {}
+    for key, value in dict(attrs or {}).items():
+        if key == "type_text":
+            continue
+        cleaned[key] = _trim_attr(value)
     return json.dumps(cleaned, default=str, **_JSON_DUMP)
 
 
+_KEEP_ATTR_KEYS = frozenset({"rhs", "condition", "expression"})
+
+
+def _trim_attr(value: Any, *, depth: int = 0, key: str = "") -> Any:
+    if depth > 4:
+        return value
+    if isinstance(value, str):
+        if key in _KEEP_ATTR_KEYS:
+            return value
+        if len(value) > 400:
+            return value[:400]
+        return value
+    if isinstance(value, list):
+        child_key = "rhs" if key == "packing_value_sites" else key
+        return [_trim_attr(item, depth=depth + 1, key=child_key) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _trim_attr(v, depth=depth + 1, key=str(k)) for k, v in value.items()}
+    return value
+
+
+def _persistable_cm_meta(meta: dict[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    drop = {"walk_cache_stats", "gaps", "quality"}
+    for key, value in dict(meta or {}).items():
+        if key == "kernel_root_trace" and isinstance(value, dict):
+            value = {k: v for k, v in value.items() if k not in drop}
+        out[key] = value
+    return out
+
+
 def _entity_snippet(ent: Any) -> str:
+    kind_name = ""
+    if hasattr(ent, "kind_name"):
+        kind_name = str(ent.kind_name() or "")
+    if kind_name == "BRANCH":
+        return ""
     existing = str(getattr(ent, "attrs", {}).get("snippet") or "")[:400]
     if existing.strip():
         return existing.strip()[:400]
@@ -222,7 +261,7 @@ def write_codemap(
             "entity_count": str(len(codemap.entities)),
             "relation_count": str(len(codemap.relations)),
             **{k: _jsonable(v) for k, v in (meta or {}).items()},
-            **{f"cm_{k}": _jsonable(v) for k, v in codemap.meta.items()},
+            **{f"cm_{k}": _jsonable(v) for k, v in _persistable_cm_meta(codemap.meta).items()},
         }
         if not str(product_meta.get("source_revision") or "").strip():
             try:

@@ -197,6 +197,8 @@ def test_membership_ignores_how_a_path_is_spelt(domain: Path) -> None:
     assert scope.contains(entry.as_posix())
     assert scope.contains(str(entry).replace("/", "\\"))
     assert scope.contains(str(entry).upper())
+    dotted = entry.as_posix().rsplit("/", 1)
+    assert scope.contains(f"{dotted[0]}/./{dotted[1]}")
     assert not scope.contains(entry.parent / "nowhere.cpp")
     assert not scope.contains("")
 

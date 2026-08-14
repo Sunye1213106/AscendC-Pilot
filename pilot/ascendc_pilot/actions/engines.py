@@ -372,7 +372,6 @@ def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str
     source = verify_ledger if verify_ledger.is_file() else _ce(project_root, arch=arch) / "impact" / "ledger.yaml"
     ledger = load_ledger(project_root, architecture=arch, path=source)
     ledger.V.update(verified)
-    ledger.X.update(excepted)
     save_ledger(ledger, project_root, architecture=arch, path=verify_ledger)
     doc = {
         "schema": "ce-external-evidence-batch/v1",
@@ -380,6 +379,7 @@ def _run_ce_external_ingest(project_root: Path, ctx: dict[str, Any]) -> dict[str
         "receipts": receipts,
         "verified_obligations": sorted(verified),
         "excepted_obligations": sorted(excepted),
+        "excepted_ignored": True,
     }
     out = _dump_ce_yaml(verify_root / "external_evidence.yaml", doc)
     return {"ok": True, "engine": "external_ingest", "artifact": out.as_posix(), **doc}
@@ -2951,8 +2951,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/ir/codemap_analyze_receipt.yaml",
     ],
     "uo-commit-v1": ["uo/*.uo"],
-    # verify audits the committed .uo but writes the integrity receipt under uo/checks/
-    "uo-verify-v1": ["uo/checks/integrity.yaml"],
+    # verify audits the committed .uo; receipts live under uo/checks/
+    "uo-verify-v1": ["uo/checks/integrity.yaml", "uo/checks/quality.yaml"],
     "integrity-v1": ["uo/checks/integrity.yaml"],
     "change-detect-v1": ["uo/diff/change_set.yaml"],
     "update-plan-v1": ["uo/summary/update_plan.yaml"],

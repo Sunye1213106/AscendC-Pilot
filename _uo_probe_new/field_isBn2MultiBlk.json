@@ -1,0 +1,301 @@
+{
+  "ok": true,
+  "field": {
+    "id": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+    "kind": "TILING_FIELD",
+    "name": "blockOuter",
+    "status": "confirmed",
+    "file": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h",
+    "line_start": 204,
+    "line_end": 204,
+    "why": "field",
+    "facts": {
+      "owner": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase",
+      "host_writer_sites": [
+        {
+          "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1910,
+          "receiver": "s1s2BNGS1S2SplitCoreParams_",
+          "expression": "fBaseParams.blockOuter",
+          "mode": "setter"
+        }
+      ],
+      "value_defining_sites": [
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 541,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "DoBn2s2Sparse"
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 566,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "GetSparseBlockInfoBn2",
+          "caller_guards": [
+            {
+              "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 627,
+              "guards": [
+                {
+                  "keyword": "if",
+                  "condition": "fBaseParams.isSparse",
+                  "line": 626
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 638,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "DoBn2MultiBlkSparse",
+          "caller_guards": [
+            {
+              "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 676,
+              "guards": [
+                {
+                  "keyword": "if",
+                  "condition": "fBaseParams.splitAxis == SplitAxisEnum::BN2 && fBaseParams.isBn2MultiBlk",
+                  "line": 674
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 708,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "DoSparse"
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1569,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "GetSparseBlockInfo",
+          "caller_guards": [
+            {
+              "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 699,
+              "guards": [
+                {
+                  "keyword": "if",
+                  "condition": "fBaseParams.isSparse",
+                  "line": 694
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1658,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "GetSparsePrefixBlockInfo",
+          "caller_guards": [
+            {
+              "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 697,
+              "guards": [
+                {
+                  "keyword": "if",
+                  "condition": "fBaseParams.isSparse",
+                  "line": 694
+                },
+                {
+                  "keyword": "if",
+                  "condition": "fBaseParams.sparseMode == static_cast<uint32_t>(SparseMode::PREFIX) ||\n            fBaseParams.sparseMode == static_cast<uint32_t>(SparseMode::PREFIX_COMPRESS)",
+                  "line": 696
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 949,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "coreIdx + 1",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": "CaclePerCoreBlockInfoBn2"
+        },
+        {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_varlen_regbase.cpp",
+          "line": 968,
+          "lhs": "fBaseParams.blockOuter",
+          "rhs": "blockOuter",
+          "kind": "assignment",
+          "guards": [],
+          "unconditional": true,
+          "function": ""
+        }
+      ],
+      "rhs": "blockOuter"
+    },
+    "snippet": "192:};\n193:\n194:class FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase {\n195:public:\n196:    int64_t s1Outer;\n197:    uint32_t s1Inner;\n198:    uint32_t s1CvInner;\n199:    uint32_t s1Tail;\n200:    uint32_t s1CvTail;\n201:    int64_t s2Outer;\n202:    uint32_t s2Inner;\n203:    uint32_t s2Tail;\n204:    uint32_t blockOuter;\n205:    uint32_t maxValidBBLen;\n206:    int64_t bandIdx;\n207:\n208:    int64_t get_s1Outer() const { return s1Outer; }\n209:    uint32_t get_s1Inner() const { return s1Inner; }\n210:    uint32_t get_s1CvInner() const { return s1CvInner; }\n211:    uint32_t get_s1Tail() const { return s1Tail; }\n212:    uint32_t get_s1CvTail() const { return s1CvTail; }\n213:    int64_t get_s2Outer() const { return s2Outer; }\n214:    uint32_t get_s2Inner() const { return s2Inner; }\n215:    uint32_t get_s2Tail() const { return s2Tail; }\n216:    uint32_t get_blockOuter() const { return blockOuter; }\n217:    uint32_t get_maxValidBBLen() const { return maxValidBBLen; }\n218:    int64_t get_bandIdx() const { return bandIdx; }\n219:\n220:    void set_s1Outer(int64_t val) { s1Outer = val; }\n221:    void set_s1Inner(uint32_t val) { s1Inner = val; }\n222:    void set_s1CvInner(uint32_t val) { s1CvInner = val; }\n223:    void set_s1Tail(uint32_t val) { s1Tail = val; }\n224:    void set_s1CvTail(uint32_t val) { s1CvTail = val; }\n225:    void set_s2Outer(int64_t val) { s2Outer = val; }\n226:    void set_s2Inner(uint32_t val) { s2Inner = val; }\n227:    void set_s2Tail(uint32_t val) { s2Tail = val; }\n228:    void set_blockOuter(uint32_t val) { blockOuter = val; }\n229:    void set_maxValidBBLen(uint32_t val) { maxValidBBLen = val; }\n230:    void set_bandIdx(int64_t val) { bandIdx = val; }\n231:};",
+    "relationships": [
+      {
+        "kind": "DECLARES",
+        "src": "E_TILING_DATA_65c1c4d86c8f",
+        "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_id": "E_TILING_DATA_65c1c4d86c8f",
+        "other_kind": "TILING_DATA",
+        "other_name": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h",
+        "line_start": 194
+      },
+      {
+        "kind": "READS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h::492::FlashAttentionScoreGradKernelBase::SetConstInfo",
+        "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h::492::FlashAttentionScoreGradKernelBase::SetConstInfo",
+        "other_kind": "METHOD",
+        "other_name": "FlashAttentionScoreGradKernelBase::SetConstInfo",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+        "line_start": 492
+      },
+      {
+        "kind": "READS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h::104::FlashAttentionScoreGradNzPost::Init",
+        "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h::104::FlashAttentionScoreGradNzPost::Init",
+        "other_kind": "METHOD",
+        "other_name": "FlashAttentionScoreGradNzPost::Init",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h",
+        "line_start": 104
+      },
+      {
+        "kind": "WRITES",
+        "src": "TDWRITE::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_id": "TDWRITE::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_kind": "PREDICATE",
+        "other_name": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter <- fBaseParams.blockOuter",
+        "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line_start": 1910
+      },
+      {
+        "kind": "WRITES",
+        "src": "TDWRITEV::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_id": "TDWRITEV::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+        "other_kind": "PREDICATE",
+        "other_name": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter <- fBaseParams.blockOuter",
+        "file": "flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line_start": 1910
+      }
+    ]
+  },
+  "fields_matched": 3,
+  "writers": [
+    {
+      "id": "TDWRITE::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "kind": "PREDICATE",
+      "name": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter <- fBaseParams.blockOuter",
+      "status": "confirmed",
+      "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line_start": 1910,
+      "line_end": 1910,
+      "why": "host_writer",
+      "facts": {}
+    },
+    {
+      "id": "TDWRITEV::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "kind": "PREDICATE",
+      "name": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter <- fBaseParams.blockOuter",
+      "status": "confirmed",
+      "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+      "line_start": 1910,
+      "line_end": 1910,
+      "why": "host_writer",
+      "facts": {}
+    }
+  ],
+  "readers": [
+    {
+      "id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h::492::FlashAttentionScoreGradKernelBase::SetConstInfo",
+      "kind": "METHOD",
+      "name": "FlashAttentionScoreGradKernelBase::SetConstInfo",
+      "status": "extracted",
+      "file": "op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+      "line_start": 492,
+      "line_end": 492,
+      "why": "kernel_reader",
+      "facts": {}
+    },
+    {
+      "id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h::104::FlashAttentionScoreGradNzPost::Init",
+      "kind": "METHOD",
+      "name": "FlashAttentionScoreGradNzPost::Init",
+      "status": "extracted",
+      "file": "op_kernel/arch35/flash_attention_score_grad_nz_post.h",
+      "line_start": 104,
+      "line_end": 104,
+      "why": "kernel_reader",
+      "facts": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "R_READS_40fa7876cd18",
+      "kind": "READS",
+      "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_kernel_base.h::492::FlashAttentionScoreGradKernelBase::SetConstInfo",
+      "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "status": "confirmed",
+      "evidence_tier": ""
+    },
+    {
+      "id": "R_READS_86fdd18aa297",
+      "kind": "READS",
+      "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_nz_post.h::104::FlashAttentionScoreGradNzPost::Init",
+      "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "status": "confirmed",
+      "evidence_tier": ""
+    },
+    {
+      "id": "R_WRITES_a69aa9cea38d",
+      "kind": "WRITES",
+      "src": "TDWRITE::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "status": "confirmed",
+      "evidence_tier": ""
+    },
+    {
+      "id": "R_WRITES_3631ce15ef05",
+      "kind": "WRITES",
+      "src": "TDWRITEV::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1910::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "dst": "TDF::FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::blockOuter",
+      "status": "confirmed",
+      "evidence_tier": ""
+    }
+  ]
+}

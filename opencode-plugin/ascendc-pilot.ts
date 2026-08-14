@@ -60,6 +60,13 @@ function isAcpResumeStartCommand(command: string): boolean {
   return /(?:^|\s)--(?:decision|force-new)(?:\s|=|$)/i.test(command)
 }
 
+function isAcpHelpCommand(command: string): boolean {
+  return (
+    /\bacp(\.cmd|\.exe)?(\s+\S+)?\s+--help\b/i.test(command) ||
+    /\bacp(\.cmd|\.exe)?\s+help\b/i.test(command)
+  )
+}
+
 function readPendingFromDisk(project: string): PendingHumanInteraction | null {
   if (!project) return null
   const path = pendingInteractionPath(project)
@@ -199,17 +206,37 @@ function extractQuestionAnswer(args: Record<string, unknown>, output: Record<str
     args.response,
   ]
   for (const v of fromArgs) {
-    if (typeof v === "string" && v.trim()) return v.trim()
-    if (Array.isArray(v) && v.length) return String(v[0]).trim()
+    if (typeof v === "string" && v.trim()) return canonicalizeQuestionValue(v.trim())
+    if (Array.isArray(v) && v.length) return canonicalizeQuestionValue(String(v[0]).trim())
   }
   const text = toolOutputText(output)
-  // Prefer last non-empty line as the selection.
+  const pairs = [...text.matchAll(/"([^"]*)"\s*=\s*"([^"]+)"/g)]
+  if (pairs.length) {
+    return canonicalizeQuestionValue(pairs[pairs.length - 1][2].trim())
+  }
+  const eq = text.match(/=\s*"([^"]+)"/)
+  if (eq?.[1]) return canonicalizeQuestionValue(eq[1].trim())
   const lines = text
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
-  if (lines.length) return lines[lines.length - 1]
-  return text.trim()
+  const last = lines.length ? lines[lines.length - 1] : text.trim()
+  if (/User has answered/i.test(last) || last.length > 80) {
+    const m = last.match(/=\s*"([^"]+)"/)
+    if (m?.[1]) return canonicalizeQuestionValue(m[1].trim())
+  }
+  return canonicalizeQuestionValue(last)
+}
+
+function canonicalizeQuestionValue(raw: string): string {
+  const key = String(raw || "").trim()
+  if (!key) return ""
+  const low = key.toLowerCase()
+  if (low === "continue" || low === "reinit" || low === "query") return low
+  if (key.startsWith("开始") || key.includes("继续")) return "continue"
+  if (key.includes("删除") || key.includes("重开")) return "reinit"
+  if (key.includes("查询")) return "query"
+  return key
 }
 
 function runAcpAnswer(project: string, requestId: string, value: string): { ok: boolean; detail: string } {
@@ -308,18 +335,52 @@ function findPilotStateFile(root: string): string {
 }
 
 function isPilotProjectRoot(root: string): boolean {
-  return Boolean(findPilotStateFile(root))
+  const r = String(root || "").trim()
+  if (!r) return false
+  const pilot = resolve(r, ".ascendc-pilot")
+  try {
+    if (existsSync(pilot) && statSync(pilot).isDirectory()) return true
+  } catch {
+    // fall through
+  }
+  return Boolean(findPilotStateFile(r))
+}
+
+function looksLikeOperatorDir(root: string): boolean {
+  const r = String(root || "").trim()
+  if (!r) return false
+  return (
+    existsSync(resolve(r, ".ascendc-pilot")) ||
+    existsSync(resolve(r, "op_kernel")) ||
+    existsSync(resolve(r, "op_host"))
+  )
 }
 
 function lastProjectCachePath(): string {
   return resolve(homedir(), ".config", "opencode", "ascendc-last-project")
 }
 
+function pendingDispatchCachePath(): string {
+  return resolve(homedir(), ".config", "opencode", "ascendc-pending-dispatch.json")
+}
+
+function readPendingDispatchProject(): string {
+  try {
+    const cache = pendingDispatchCachePath()
+    if (!existsSync(cache)) return ""
+    const rec = JSON.parse(readFileSync(cache, "utf-8")) as { project?: string }
+    const root = String(rec?.project || "").trim()
+    if (root && isPilotProjectRoot(root)) return root
+  } catch {
+    // ignore
+  }
+  return ""
+}
+
 function rememberProjectRoot(project: string): void {
   const root = String(project || "").trim()
-  // Never cache workspace/git parents that are not a live Pilot project — that
-  // poisons Task dispatch when OpenCode cwd is D:\TEST (or similar).
-  if (!root || !isPilotProjectRoot(root)) return
+  // Cache operator dirs even before a live workflow.yaml exists.
+  if (!root || (!isPilotProjectRoot(root) && !looksLikeOperatorDir(root))) return
   try {
     const cache = lastProjectCachePath()
     mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
@@ -334,7 +395,7 @@ function readRememberedProjectRoot(): string {
     const cache = lastProjectCachePath()
     if (!existsSync(cache)) return ""
     const root = readFileSync(cache, "utf-8").trim()
-    if (root && isPilotProjectRoot(root)) {
+    if (root && (isPilotProjectRoot(root) || looksLikeOperatorDir(root))) {
       return root
     }
   } catch {
@@ -399,6 +460,11 @@ function detectProjectRootForTask(promptHint?: string): string {
   if (fromPrompt && isPilotProjectRoot(fromPrompt)) {
     return fromPrompt
   }
+
+  // pilot_run already stored the operator on dispatch_subagent. OpenCode Task
+  // often only exposes the short card description here — do not re-detect cwd.
+  const pending = readPendingDispatchProject()
+  if (pending) return pending
 
   const fromEnv =
     process.env.ASCENDC_PROJECT_ROOT ||
@@ -1195,8 +1261,10 @@ function injectActionContext(
     args.action_id = action
   }
   // Pin child working directory to the operator package when Host supports it.
+  // Overwrite workspace / Pilot-checkout cwd the model sometimes invents.
   if (projectRoot) {
-    if (!args.cwd && !args.workdir && !args.working_directory && !args.directory) {
+    const cwdNow = String(args.cwd || args.workdir || args.working_directory || args.directory || "").trim()
+    if (!cwdNow || !isPilotProjectRoot(cwdNow)) {
       args.cwd = projectRoot
       args.workdir = projectRoot
       args.directory = projectRoot
@@ -1206,7 +1274,8 @@ function injectActionContext(
       args.location = { directory: projectRoot }
     } else {
       const loc = args.location as Record<string, unknown>
-      if (!loc.directory) loc.directory = projectRoot
+      const locDir = String(loc.directory || "").trim()
+      if (!locDir || !isPilotProjectRoot(locDir)) loc.directory = projectRoot
     }
   }
   // Identity travels via env/metadata only — do NOT mutate Task prompt body
@@ -1234,6 +1303,21 @@ export const AscendCHarnessPlugin = async (ctx?: {
   let capturePilotToolSession:
     | ((input: Record<string, unknown>, output?: Record<string, unknown>) => void)
     | undefined
+  let submitDispatchResult:
+    | ((project: string, ticket: string, resultText: string) => Promise<Record<string, unknown>>)
+    | undefined
+  let extractKbAnswer: ((text: string) => string) | undefined
+  let readPendingDispatch: ((project: string) => Record<string, unknown> | null) | undefined
+  let clearPendingDispatch: ((project: string) => void) | undefined
+  let rememberPendingDispatch:
+    | ((entry: {
+        project: string
+        ticket: string
+        actor: string
+        action: string
+        ts: number
+      }) => void)
+    | undefined
   try {
     // OpenCode autoloads every *.ts in ~/.config/opencode/plugins/.
     // pilot-driver.ts is a library — load it from the installed bundle, never
@@ -1250,8 +1334,14 @@ export const AscendCHarnessPlugin = async (ctx?: {
       ? await import(pathToFileURL(bundled).href)
       : await import("./pilot-driver")
     capturePilotToolSession = mod.capturePilotToolSession
+    submitDispatchResult = mod.submitDispatchResult
+    extractKbAnswer = mod.extractKbAnswer
+    readPendingDispatch = mod.readPendingDispatch
+    clearPendingDispatch = mod.clearPendingDispatch
+    rememberPendingDispatch = mod.rememberPendingDispatch
     pilotTools = mod.createPilotRunTool(client, ctx) || {}
-  } catch {
+  } catch (err) {
+    console.error("[ascendc-pilot] failed to load pilot-driver", err)
     pilotTools = {}
   }
 
@@ -1328,6 +1418,8 @@ export const AscendCHarnessPlugin = async (ctx?: {
           /\bacp(\.cmd|\.exe)?\s+(inspect-failure|next|status|run-summary|scan-architectures|abort)\b/i.test(
             command,
           )
+        const isHelpBash =
+          (tool === "bash" || tool === "shell" || tool === "terminal") && isAcpHelpCommand(command)
         const isResumeStartBash =
           (tool === "bash" || tool === "shell" || tool === "terminal") &&
           isAcpResumeStartCommand(command)
@@ -1339,6 +1431,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           !isQuestion &&
           !isAnswerBash &&
           !isInspectBash &&
+          !isHelpBash &&
           !isResumeStartBash &&
           !isPilotDriver &&
           !isSkillTool
@@ -1350,7 +1443,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
-              `Only the question UI, acp answer, acp start --decision continue|reinit|--force-new, ` +
+              `Only the question UI, acp answer, acp --help, acp start --decision continue|reinit|--force-new, ` +
               `acp scan-architectures, acp abort, skill, or pilot_run is allowed until the user answers.`,
           )
         }
@@ -1544,9 +1637,21 @@ export const AscendCHarnessPlugin = async (ctx?: {
         const fromArgs = String(
           args.project || args.project_root || args.projectRoot || "",
         ).trim()
-        const project = isTaskTool
+        const projectRaw = isTaskTool
           ? detectProjectRootForTask(taskPromptHint)
           : detectProjectRoot(fromCmd || fromArgs || path)
+        const isQuestionTool =
+          tool === "question" ||
+          tool === "askquestion" ||
+          tool === "ask_question" ||
+          tool.includes("question")
+        let project = projectRaw
+        if (isQuestionTool) {
+          const remembered = readRememberedProjectRoot()
+          if (remembered && (!project || !getPending(project))) {
+            project = remembered
+          }
+        }
         if (project) rememberProjectRoot(project)
 
         const err = extractToolError(output, tool)
@@ -1574,11 +1679,6 @@ export const AscendCHarnessPlugin = async (ctx?: {
             }
           }
         }
-        const isQuestionTool =
-          tool === "question" ||
-          tool === "askquestion" ||
-          tool === "ask_question" ||
-          tool.includes("question")
         if (isQuestionTool && project) {
           const pending = getPending(project)
           if (pending) {
@@ -1588,15 +1688,8 @@ export const AscendCHarnessPlugin = async (ctx?: {
               if (answered.ok) {
                 clearPending(project)
               } else {
-                runDebug(
-                  [
-                    "record-tool-failure",
-                    "--tool",
-                    "question",
-                    "--error",
-                    `acp answer failed: ${answered.detail}`.slice(0, 1500),
-                  ],
-                  project,
+                throw new Error(
+                  `[ascendc-pilot] acp answer failed: ${answered.detail}`.slice(0, 1500),
                 )
               }
             }
@@ -1675,7 +1768,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
               const v = output[k]
               if (typeof v === "string" && v.trim()) chunks.push(v)
             }
-            return chunks.join("\n").slice(0, 8000)
+            return chunks.join("\n").slice(0, 24000)
           })()
 
           if (!hit) {
@@ -1766,6 +1859,42 @@ export const AscendCHarnessPlugin = async (ctx?: {
             pendingTaskRegs.delete(hit.key)
             if (hit.reg.dispatch_nonce) pendingTaskRegs.delete(hit.reg.dispatch_nonce)
             if (hit.reg.registration_id) pendingTaskRegs.delete(hit.reg.registration_id)
+          }
+
+          const pendingDispatch = readPendingDispatch ? readPendingDispatch(project) : null
+          const answerText = extractKbAnswer ? extractKbAnswer(resultText) : resultText
+          if (
+            pendingDispatch &&
+            submitDispatchResult &&
+            answerText &&
+            String(pendingDispatch.ticket || "")
+          ) {
+            const opProject = String(pendingDispatch.project || project)
+            const finished = await submitDispatchResult(
+              opProject,
+              String(pendingDispatch.ticket),
+              answerText,
+            )
+            if (finished && finished.ok !== false) {
+              clearPendingDispatch?.(opProject)
+            }
+            const next =
+              finished && finished.host_step && typeof finished.host_step === "object"
+                ? (finished.host_step as Record<string, unknown>)
+                : {}
+            if (String(next.kind || "") === "dispatch_subagent" && rememberPendingDispatch) {
+              rememberPendingDispatch({
+                project: opProject,
+                ticket: String(next.dispatch_ticket || ""),
+                actor: String(next.actor_id || ""),
+                action: String(next.action_id || ""),
+                ts: Date.now(),
+              })
+              if (output && typeof output.output === "string") {
+                output.output +=
+                  "\n\n还有下一步子代理。请再调用 pilot_run（同一 project，不要 force_new）领取原生 Task。"
+              }
+            }
           }
         }
       } catch {

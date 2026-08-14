@@ -278,7 +278,14 @@ def _tiling_key_header(
     op_name: str,
     *,
     kernel_entry: Path | None = None,
+    op_dir: Path | None = None,
 ) -> tuple[Path | None, list[str]]:
+    if op_dir is not None:
+        from uo_init.source_layout import select_tpl_decl_header
+
+        hit = select_tpl_decl_header(Path(op_dir), arch_dir)
+        if hit is not None and hit.is_file():
+            return hit, []
     arch_root = kernel_root / arch_dir
     search_roots = [r for r in (arch_root, kernel_root) if r.is_dir()]
     hits: list[Path] = []
@@ -369,7 +376,11 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
         spec.ambiguities.append("host_targets_not_found: no op_host tiling TU")
 
     if spec.kernel_targets:
-        spec.kernel_entry = spec.kernel_targets[0]
+        from uo_init.source_layout import pick_kernel_entry
+
+        spec.kernel_entry = pick_kernel_entry(spec.kernel_targets, spec.arch_dir)
+        if spec.kernel_entry is None:
+            spec.kernel_entry = spec.kernel_targets[0]
         if len(spec.kernel_targets) > 1:
             names = ", ".join(p.name for p in spec.kernel_targets)
             spec.ambiguities.append(f"multiple_kernel_entry: {names}")
@@ -392,6 +403,7 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
         spec.arch_dir,
         spec.op_name,
         kernel_entry=spec.kernel_entry,
+        op_dir=spec.op_dir,
     )
     spec.ambiguities.extend(notes)
 

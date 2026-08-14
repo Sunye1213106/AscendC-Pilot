@@ -139,7 +139,7 @@ def test_synthetic_orphan_consume_detected() -> None:
         {
             "id": "broken_consume",
             "label_zh": "broken",
-            "phases": ["route"],
+            "phases": ["answer"],
             "gates": [],
             "output_contract_id": None,
             "produces": [],

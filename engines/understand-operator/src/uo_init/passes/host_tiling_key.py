@@ -17,9 +17,11 @@ from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknow
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_contract import iter_packing_helper_calls
 from uo_init.passes.host_defuse import _compile_symbols, _is_compile_reference
 from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
 from uo_init.source_layout import quoted_include_basenames, selected_host_files
+from uo_init.tpl_dsl import expand_tpl_source, load_quoted_include_texts
 
 _CALL_TOKEN = "GET_TPL_TILING_KEY"
 _SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -39,6 +41,7 @@ _DIRECT_ROOT_KINDS = {
     EntityKind.ARCH.value,
 }
 _PACKING_SOURCE_KINDS = _RUNTIME_KINDS | _DIRECT_ROOT_KINDS
+_IF_COND_RE = re.compile(r"\bif\s*\((.+?)\)", re.S)
 
 
 def bind_host_tiling_key_expressions(
@@ -47,16 +50,29 @@ def bind_host_tiling_key_expressions(
     *,
     architecture: str = "",
 ) -> CodeMap:
+    architecture = str(architecture or getattr(codemap, "architecture", "") or "")
     root = Path(operator_root).expanduser().resolve()
-    keys = sorted(
+    all_declared = sorted(
         (
             e
             for e in codemap.by_kind(EntityKind.TILING_KEY)
             if e.attrs.get("source_declared")
-            and str(e.attrs.get("provenance") or "") == "source_tpl_args_decl"
         ),
-        key=lambda e: int(e.attrs.get("decl_order") or 0),
+        key=lambda e: (int(e.attrs.get("decl_order") or 0), e.name),
     )
+    meta_names = [str(n) for n in (codemap.meta.get("source_declared_tiling_keys") or []) if n]
+    if meta_names:
+        by_name = {e.name: e for e in all_declared}
+        keys = [by_name[name] for name in meta_names if name in by_name]
+    else:
+        tpl_keys = [
+            e
+            for e in all_declared
+            if str(e.attrs.get("provenance") or "") == "source_tpl_args_decl"
+        ]
+        keys = tpl_keys or all_declared
+    if not keys:
+        keys = sorted(codemap.by_kind(EntityKind.TILING_KEY), key=lambda e: e.name)
     if not keys:
         codemap.meta["host_tiling_key_packing"] = {"calls": 0, "fields_bound": 0, "declared": 0}
         return codemap
@@ -69,7 +85,9 @@ def bind_host_tiling_key_expressions(
 
     host_files: list[tuple[Path, str]] = []
     for path in selected_host_files(root, architecture):
-        host_files.append((path, path.read_text(encoding="utf-8", errors="replace")))
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        extras = load_quoted_include_texts(path)
+        host_files.append((path, expand_tpl_source(raw, extras)))
 
     compile_symbols = _compile_symbols(codemap, host_files)
     schema_headers = {
@@ -88,13 +106,22 @@ def bind_host_tiling_key_expressions(
             and schema_headers
             and name not in schema_headers
         }
-        if other_tpl and not (included & schema_headers):
+        if other_tpl and not (included & schema_headers) and _CALL_TOKEN not in text:
             continue
-        for start, _end, args_text in _calls(text, _CALL_TOKEN):
-            args = _split_args(args_text)
+        key_provs = {str(e.attrs.get("provenance") or "") for e in keys}
+        for start, _end, args, helper_name in iter_packing_helper_calls(text):
+            if "source_tpl_args_decl" in key_provs and helper_name != _CALL_TOKEN:
+                continue
+            if "source_packing_helper_arg" in key_provs and helper_name == _CALL_TOKEN:
+                continue
             calls += 1
             line = _line(text, start)
             function = _containing_function(text, start)
+            provenance = (
+                "source_get_tpl_tiling_key"
+                if helper_name == _CALL_TOKEN
+                else "source_packing_helper"
+            )
             if len(args) != len(keys):
                 mismatches.append(
                     {
@@ -117,7 +144,7 @@ def bind_host_tiling_key_expressions(
                         "argument_index": index,
                         "expression": expr,
                         "function": function,
-                        "provenance": "source_get_tpl_tiling_key",
+                        "provenance": provenance,
                     },
                     file=file,
                     line=line,
@@ -128,7 +155,7 @@ def bind_host_tiling_key_expressions(
                     node.id,
                     key.id,
                     attrs={
-                        "provenance": "source_get_tpl_tiling_key",
+                        "provenance": provenance,
                         "argument_index": index,
                         "expression": expr,
                         "file": file,
@@ -156,7 +183,7 @@ def bind_host_tiling_key_expressions(
                 if ambiguity:
                     ambiguous_sources.append(ambiguity)
 
-    if calls == 0:
+    if len(bound_names) < len(keys):
         extra_calls, extra_bound = _bind_non_tpl_packing(
             codemap,
             root,
@@ -184,6 +211,9 @@ def bind_host_tiling_key_expressions(
 
 _RETURN_RE = re.compile(r"\breturn\s+([^;]+);")
 _GET_TILING_KEY_NAME_RE = re.compile(r"GetTilingKey\s*$")
+_ASSIGN_TILING_KEY_RE = re.compile(
+    r"\b(?P<lhs>tilingKey_|tiling_key_)\s*=\s*(?P<rhs>[^;]+);"
+)
 
 
 def _bind_non_tpl_packing(
@@ -201,11 +231,44 @@ def _bind_non_tpl_packing(
     key_by_name = {k.name: k for k in keys}
     calls = 0
     extra: set[str] = set()
+    int_defs: dict[str, int] = {}
+    for _path, text in host_files:
+        int_defs.update(_int_literals(text))
+    key_values: dict[str, int] = {}
+    for key in keys:
+        if key.name in int_defs:
+            key_values[key.name] = int_defs[key.name]
+        elif str(key.attrs.get("value") or "").isdigit():
+            key_values[key.name] = int(key.attrs["value"])
+        elif key.name.isdigit():
+            key_values[key.name] = int(key.name)
 
-    def bind(key: Entity, expr: str, file: str, line: int, function: str, provenance: str) -> None:
+    def keys_for_expr(expr: str) -> list[Entity]:
+        hits: list[Entity] = []
+        seen: set[str] = set()
+        for key in keys:
+            if re.search(rf"\b{re.escape(key.name)}\b", expr) and key.id not in seen:
+                hits.append(key)
+                seen.add(key.id)
+        ident = expr.split("::")[-1].strip()
+        hit = key_by_name.get(ident)
+        if hit is not None and hit.id not in seen:
+            hits.append(hit)
+            seen.add(hit.id)
+        value: int | None = int_defs.get(ident)
+        if value is None and ident.isdigit():
+            value = int(ident)
+        if value is not None:
+            for key in keys:
+                if key_values.get(key.name) == value and key.id not in seen:
+                    hits.append(key)
+                    seen.add(key.id)
+        return hits
+
+    def bind(key: Entity, expr: str, file: str, line: int, function: str, provenance: str) -> Entity | None:
         expr = expr.strip()
         if not expr:
-            return
+            return None
         node = codemap.upsert(
             EntityKind.PREDICATE,
             expr,
@@ -238,9 +301,33 @@ def _bind_non_tpl_packing(
         if expr not in key.attrs["host_packing_expressions"]:
             key.attrs["host_packing_expressions"].append(expr)
         extra.add(key.name)
+        _link_expression_sources(
+            codemap,
+            node,
+            expr,
+            exact_index=exact_index,
+            short_index=short_index,
+            compile_symbols=compile_symbols,
+            file=file,
+            line=line,
+            function=function,
+            key_name=key.name,
+        )
+        return node
 
     for path, text in host_files:
         file = _rel(root, path)
+        for match in _ASSIGN_TILING_KEY_RE.finditer(text):
+            rhs = match.group("rhs").strip()
+            line = _line(text, match.start())
+            function = _containing_function(text, match.start())
+            calls += 1
+            hits = keys_for_expr(rhs)
+            if hits:
+                for key in hits:
+                    bind(key, rhs, file, line, function, "source_assign_tiling_key")
+            elif len(keys) == 1:
+                bind(keys[0], rhs, file, line, function, "source_assign_tiling_key")
         for start, _end, args_text in _calls(text, "SetTilingKey"):
             args = [a.strip() for a in _split_args(args_text) if a.strip()]
             if not args:
@@ -249,9 +336,14 @@ def _bind_non_tpl_packing(
             line = _line(text, start)
             function = _containing_function(text, start)
             calls += 1
-            hit = key_by_name.get(expr.split("::")[-1])
-            if hit is not None:
-                bind(hit, expr, file, line, function, "source_set_tiling_key")
+            hits = keys_for_expr(expr)
+            if hits:
+                for key in hits:
+                    bind(key, expr, file, line, function, "source_set_tiling_key")
+            elif re.search(r"\bGetTilingKey\s*\(", expr):
+                for key in keys:
+                    if key.name in bound_names or key.attrs.get("host_packing_expressions"):
+                        bind(key, expr, file, line, function, "source_set_tiling_key")
             elif len(keys) == 1:
                 bind(keys[0], expr, file, line, function, "source_set_tiling_key")
         for match in _FUNCTION_RE.finditer(text):
@@ -267,17 +359,42 @@ def _bind_non_tpl_packing(
                 continue
             body = text[open_brace : close + 1]
             function = name
+            conditions = [m.group(1).strip() for m in _IF_COND_RE.finditer(body) if m.group(1).strip()]
+            packed_nodes: list[tuple[Entity, Entity]] = []
             for ret in _RETURN_RE.finditer(body):
                 expr = ret.group(1).strip()
                 line = _line(text, open_brace + ret.start())
                 calls += 1
-                matched = False
-                for key in keys:
-                    if re.search(rf"\b{re.escape(key.name)}\b", expr):
-                        bind(key, expr, file, line, function, "source_get_tiling_key")
-                        matched = True
-                if not matched and len(keys) == 1:
-                    bind(keys[0], expr, file, line, function, "source_get_tiling_key")
+                hits = keys_for_expr(expr)
+                if hits:
+                    for key in hits:
+                        node = bind(key, expr, file, line, function, "source_get_tiling_key")
+                        if node is not None:
+                            packed_nodes.append((key, node))
+                elif re.fullmatch(r"tilingKey_|tiling_key_", expr.strip()):
+                    for key in keys:
+                        if key.name in bound_names or key.attrs.get("host_packing_expressions"):
+                            node = bind(key, expr, file, line, function, "source_get_tiling_key")
+                            if node is not None:
+                                packed_nodes.append((key, node))
+                elif len(keys) == 1:
+                    node = bind(keys[0], expr, file, line, function, "source_get_tiling_key")
+                    if node is not None:
+                        packed_nodes.append((keys[0], node))
+            for cond in conditions:
+                for key, node in packed_nodes:
+                    _link_expression_sources(
+                        codemap,
+                        node,
+                        cond,
+                        exact_index=exact_index,
+                        short_index=short_index,
+                        compile_symbols=compile_symbols,
+                        file=file,
+                        line=_line(text, open_brace),
+                        function=function,
+                        key_name=key.name,
+                    )
     return calls, extra
 
 
@@ -663,6 +780,34 @@ def _split_args(text: str) -> list[str]:
             buf.append(ch)
     if buf:
         out.append("".join(buf).strip())
+    return out
+
+
+_INT_DEFINE_RE = re.compile(
+    r"^\s*#\s*define\s+([A-Za-z_]\w*)\s+([-+]?0[xX][0-9A-Fa-f]+|[-+]?\d+)[uUlL]*\s*$",
+    re.M,
+)
+_INT_CONST_RE = re.compile(
+    r"\b(?:const\s+static|static\s+const|static\s+constexpr|constexpr\s+static|"
+    r"constexpr)\s+(?:const\s+)?"
+    r"(?:u?int(?:32|64)_t|int)\s+([A-Za-z_]\w*)\s*=\s*"
+    r"([-+]?0[xX][0-9A-Fa-f]+|[-+]?\d+)[uUlL]*\s*;"
+)
+
+
+def _int_literals(text: str) -> dict[str, int]:
+    """Integer macros / constexpr used as packed TilingKey values."""
+    out: dict[str, int] = {}
+    for name, raw in _INT_DEFINE_RE.findall(text or ""):
+        try:
+            out[name] = int(raw, 0)
+        except ValueError:
+            continue
+    for name, raw in _INT_CONST_RE.findall(text or ""):
+        try:
+            out[name] = int(raw, 0)
+        except ValueError:
+            continue
     return out
 
 

@@ -4,12 +4,24 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import Relation, RelationKind
+
+
+def _is_truncated_kernel_branch(cond: str) -> bool:
+    text = str(cond or "").strip()
+    if not text:
+        return False
+    if "..." in text:
+        return True
+    if text.count("<") != text.count(">"):
+        return True
+    return len(text) > 80 and "<" in text
 
 
 def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, str, str], int]) -> None:
@@ -591,13 +603,17 @@ class CodeMap:
             br_line = int(getattr(br, "line", 0) or 0)
             if not bid or not br_file or br_line <= 0:
                 continue
+            if _is_truncated_kernel_branch(cond):
+                continue
+            ident = re.search(r"\b(IS_[A-Z0-9_]+|[A-Z][A-Z0-9_]{2,})\b", cond)
+            name = ident.group(1) if ident else (cond[:120] or bid)
             branch = cm.upsert(
                 EntityKind.BRANCH,
-                cond[:120] or bid,
+                name,
                 eid=bid,
                 attrs={
                     "layer": "kernel",
-                    "condition": cond,
+                    "condition": cond[:200],
                     "dimensions": list(getattr(br, "dimensions", None) or []),
                     "variants": list(getattr(br, "variants", None) or []),
                     "function": str(getattr(br, "function", "") or ""),
@@ -753,15 +769,13 @@ class CodeMap:
                 root_name = str(root)
                 if not root_name:
                     continue
-                # Prefer INPUT entity when name looks like an API input.
-                kind = EntityKind.INPUT if root_name.isupper() or "." not in root_name else EntityKind.VARIABLE
-                if root_name.lower().startswith("input") or root_name in {
-                    "query",
-                    "key",
-                    "value",
-                    "queryType",
-                    "layoutType",
-                }:
+                known_inputs = {e.name for e in cm.by_kind(EntityKind.INPUT)}
+                kind = EntityKind.VARIABLE
+                if root_name in known_inputs:
+                    kind = EntityKind.INPUT
+                elif root_name.isupper() and "_" in root_name:
+                    kind = EntityKind.INPUT
+                elif root_name.startswith("INPUT_") or root_name.startswith("ATTR_"):
                     kind = EntityKind.INPUT
                 root_e = cm.upsert(kind, root_name, attrs={"layer": "api"})
                 cm.link(RelationKind.DERIVES, root_e.id, key_e.id)

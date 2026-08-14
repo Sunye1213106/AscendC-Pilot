@@ -34,7 +34,7 @@ checks:
     detail: "integrity gate artifacts present"
 blockers: []
 warnings: []
-next: "acp run-action human_confirm" | "acp next"
+next: "acp next"
 ```
 
 warn 仅允许非阻塞说明；任一 required id 为 `fail` → `status: fail`，不得进入 `human_confirm` finalize。

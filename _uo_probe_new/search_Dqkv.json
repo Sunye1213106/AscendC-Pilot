@@ -1,0 +1,140 @@
+[
+  {
+    "id": "MTH_2F9519239F4B",
+    "kind": "METHOD",
+    "name": "DqkvMulsAndCastFromGM",
+    "status": "extracted",
+    "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+    "line_start": 734,
+    "line_end": 734,
+    "why": "search",
+    "facts": {},
+    "snippet": "722:__aicore__ inline void FAGBlockVec<TEMPLATE_ARGS>::DqkvMulsAndCastFromGM(FagConstInfo &constInfo, FagRunInfo &runInfo,\n723:                                                                         GlobalTensor<CALC_TYPE> &inputTensor,\n724:                                                                         TQue<QuePosition::VECIN, 1> &inQue,\n725:                                                                         TQue<QuePosition::VECOUT, 1> &outQue)\n726:{\n727:    ////////////////////////////////////////////////////////////////////////////////////////////////////////\n728:    uint32_t dSize;\n729:    if constexpr (MM_IDX == DV_IDX && IS_D_NO_EQUAL) {\n730:        dSize = constInfo.commonConstInfo.dSizeV;\n731:    } else {\n732:        dSize = constInfo.commonConstInfo.dSize;\n733:    }\n734:    uint32_t curDAlign = AlignTo16(dSize);\n735:    uint64_t halfSRealSize = 0;\n736:    uint64_t firsthalfSRealSize = 0;\n737:    if constexpr (SPLIT_AXIS == BN2) {\n738:        halfSRealSize = (MM_IDX == DQ_IDX) ? runInfo.commonRunInfo.halfS1RealSize : runInfo.halfS2RealSize;\n739:        firsthalfSRealSize = (MM_IDX == DQ_IDX) ? runInfo.commonRunInfo.firstHalfS1RealSize : runInfo.firstHalfS2RealSize;\n740:    } else {\n741:        halfSRealSize = runInfo.halfS2RealSize;\n742:        firsthalfSRealSize = runInfo.firstHalfS2RealSize;\n743:    }\n744: \n745:    uint32_t maxLoopSize = VECTOR_BASEM * VECTOR_BASEN / curDAlign; \n746:    uint32_t loopNum = Ceil<uint32_t>(halfSRealSize, maxLoopSize);\n747:    if (loopNum == 0) {\n748:        return;\n749:    }\n750: \n751:    uint32_t loopSize = Ceil<uint32_t>(halfSRealSize, loopNum);\n752:    uint32_t tailLoopSize = halfSRealSize - (loopNum - 1) * loopSize;\n753:    uint32_t curLoopSize = loopSize;\n754:    DataCopyExtParams intriParamsOut;\n755:    intriParamsOut.srcStride = 0;\n756:    uint64_t dqkvGmOffset = (MM_IDX == DQ_IDX) ?    \n757:                               runInfo.commonRunInfo.queryOffset :\n758:                               (MM_IDX == DK_IDX ? runInfo.commonRunInfo.keyOffset : runInfo.commonRunInfo.valueOffset);\n759:    uint64_t ropeGmOffset;\n760:    GlobalTensor<OUTDTYPE> dqkRopeGmTensor;\n761:    int64_t ropeDstStride;",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "MTH_94FDAD74A626",
+        "other_id": "MTH_94FDAD74A626",
+        "other_kind": "METHOD",
+        "other_name": "AlignTo128",
+        "file": "op_kernel/arch35/flash_attention_score_grad_common.h",
+        "line_start": 810
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "MTH_26D35557E076",
+        "other_id": "MTH_26D35557E076",
+        "other_kind": "METHOD",
+        "other_name": "AlignTo16",
+        "file": "op_kernel/arch35/flash_attention_score_grad_common.h",
+        "line_start": 148
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "OP_629A17275644",
+        "other_id": "OP_629A17275644",
+        "other_kind": "OPERATION",
+        "other_name": "AlignTo128",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 810
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "OP_1B941B1C16EF",
+        "other_id": "OP_1B941B1C16EF",
+        "other_kind": "OPERATION",
+        "other_name": "AlignTo16",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 734
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "OP_3221BAAC335D",
+        "other_id": "OP_3221BAAC335D",
+        "other_kind": "OPERATION",
+        "other_name": "AllocTensor",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 801
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "OP_E1B7DD0A18D8",
+        "other_id": "OP_E1B7DD0A18D8",
+        "other_kind": "OPERATION",
+        "other_name": "AllocTensor",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 811
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "OP_17E1A9D3C47D",
+        "other_id": "OP_17E1A9D3C47D",
+        "other_kind": "OPERATION",
+        "other_name": "Cast",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 812
+      },
+      {
+        "kind": "CALLS",
+        "src": "MTH_2F9519239F4B",
+        "dst": "OP_416126BB3C98",
+        "other_id": "OP_416126BB3C98",
+        "other_kind": "OPERATION",
+        "other_name": "Ceil",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 746
+      }
+    ]
+  },
+  {
+    "id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h::722::FAGBlockVec::DqkvMulsAndCastFromGM",
+    "kind": "METHOD",
+    "name": "FAGBlockVec::DqkvMulsAndCastFromGM",
+    "status": "extracted",
+    "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+    "line_start": 722,
+    "line_end": 722,
+    "why": "search",
+    "facts": {},
+    "snippet": "710: \n711:    LocalTensor<OUTDTYPE> dqkvCastTensor = outQue.template AllocTensor<OUTDTYPE>();\n712:    Cast(dqkvCastTensor, inputTensor, RoundMode::CAST_ROUND, dataSize);\n713:    outQue.EnQue(dqkvCastTensor);\n714:    outQue.template DeQue<OUTDTYPE>();\n715: \n716:    DataCopyPad(dqkvGmTensor[dqkvGmOffset], dqkvCastTensor, intriParamsOut);\n717:    outQue.FreeTensor(dqkvCastTensor);\n718:}\n719: \n720:TEMPLATES_DEF_NO_DEFAULT\n721:template <uint8_t MM_IDX>\n722:__aicore__ inline void FAGBlockVec<TEMPLATE_ARGS>::DqkvMulsAndCastFromGM(FagConstInfo &constInfo, FagRunInfo &runInfo,\n723:                                                                         GlobalTensor<CALC_TYPE> &inputTensor,\n724:                                                                         TQue<QuePosition::VECIN, 1> &inQue,\n725:                                                                         TQue<QuePosition::VECOUT, 1> &outQue)\n726:{\n727:    ////////////////////////////////////////////////////////////////////////////////////////////////////////\n728:    uint32_t dSize;\n729:    if constexpr (MM_IDX == DV_IDX && IS_D_NO_EQUAL) {\n730:        dSize = constInfo.commonConstInfo.dSizeV;\n731:    } else {\n732:        dSize = constInfo.commonConstInfo.dSize;\n733:    }\n734:    uint32_t curDAlign = AlignTo16(dSize);\n735:    uint64_t halfSRealSize = 0;\n736:    uint64_t firsthalfSRealSize = 0;\n737:    if constexpr (SPLIT_AXIS == BN2) {\n738:        halfSRealSize = (MM_IDX == DQ_IDX) ? runInfo.commonRunInfo.halfS1RealSize : runInfo.halfS2RealSize;\n739:        firsthalfSRealSize = (MM_IDX == DQ_IDX) ? runInfo.commonRunInfo.firstHalfS1RealSize : runInfo.firstHalfS2RealSize;\n740:    } else {\n741:        halfSRealSize = runInfo.halfS2RealSize;\n742:        firsthalfSRealSize = runInfo.firstHalfS2RealSize;\n743:    }\n744: \n745:    uint32_t maxLoopSize = VECTOR_BASEM * VECTOR_BASEN / curDAlign; \n746:    uint32_t loopNum = Ceil<uint32_t>(halfSRealSize, maxLoopSize);\n747:    if (loopNum == 0) {\n748:        return;\n749:    }",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h::722::FAGBlockVec::DqkvMulsAndCastFromGM",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h::203::::AlignTo128",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h::203::::AlignTo128",
+        "other_kind": "FUNCTION",
+        "other_name": "AlignTo128",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h",
+        "line_start": 203
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h::722::FAGBlockVec::DqkvMulsAndCastFromGM",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h::188::::AlignTo16",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h::188::::AlignTo16",
+        "other_kind": "FUNCTION",
+        "other_name": "AlignTo16",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_common.h",
+        "line_start": 188
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h::657::FAGBlockVec::ProcessMulsAndCast",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h::722::FAGBlockVec::DqkvMulsAndCastFromGM",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h::657::FAGBlockVec::ProcessMulsAndCast",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockVec::ProcessMulsAndCast",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 657
+      }
+    ]
+  }
+]

@@ -6,6 +6,7 @@ On human_required / containment lease, tools are hard-denied before execution.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -183,10 +184,35 @@ def _read_last_project_cache() -> Path | None:
     return None
 
 
+def _read_pending_dispatch_project() -> Path | None:
+    """Operator root from the last ``dispatch_subagent`` handoff (pilot_run).
+
+    OpenCode Task hooks often re-detect cwd / a short Task description and miss
+    the stub path. ``ascendc-pending-dispatch.json`` is written with the live
+    operator before Primary calls Task — that is the source of truth.
+    """
+    cache = Path.home() / ".config" / "opencode" / "ascendc-pending-dispatch.json"
+    try:
+        if not cache.is_file():
+            return None
+        rec = json.loads(cache.read_text(encoding="utf-8"))
+        if not isinstance(rec, dict):
+            return None
+        root = Path(str(rec.get("project") or "").strip())
+        if _is_pilot_project_root(root):
+            return root.resolve()
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def _resolve_task_project_root(project_root: Path | None) -> Path | None:
     """Task hooks often pass workspace cwd (no workflow). Prefer last live Pilot root."""
     if _is_pilot_project_root(project_root):
         return Path(project_root).resolve()
+    pending = _read_pending_dispatch_project()
+    if pending is not None:
+        return pending
     cached = _read_last_project_cache()
     if cached is not None:
         return cached

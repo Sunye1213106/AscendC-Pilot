@@ -7,6 +7,9 @@ import yaml
 
 from uo_init.kernel_tiling_view import _default_tiling_type, render_stub
 from uo_init.source_layout import (
+    GLOBAL_KERNEL_RE,
+    KERNEL_ENTRY_NAME_RE,
+    entry_include_architecture,
     selected_host_files,
     selected_kernel_files,
     selected_tiling_headers,
@@ -102,3 +105,55 @@ def test_default_tiling_type_uses_current_arch_entry(tmp_path: Path) -> None:
     stub = render_stub(op, "arch35")
     assert "CurrentTiling" in stub
     assert "OldTiling" not in stub
+    assert "kernel_tiling/kernel_tiling.h" not in stub
+    assert "#ifndef GET_TILING_DATA" in stub
+
+
+def test_stub_emits_nested_macro_struct_referenced_by_parent(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _write(
+        op / "op_host" / "op_tiling" / "tiling.h",
+        "BEGIN_TILING_DATA_DEF(InnerArray)\n"
+        "TILING_DATA_FIELD_DEF_ARR(int32_t, 8, vals)\n"
+        "END_TILING_DATA_DEF\n"
+        "BEGIN_TILING_DATA_DEF(OuterTiling)\n"
+        "TILING_DATA_FIELD_DEF_STRUCT(InnerArray, inner)\n"
+        "TILING_DATA_FIELD_DEF_STRUCT(TCubeTiling, mmTiling)\n"
+        "END_TILING_DATA_DEF\n",
+    )
+    _write(
+        op / "op_kernel" / "arch35" / "inner.h",
+        "namespace Ns { struct InnerArray { int32_t vals[8]; }; }\n",
+    )
+    stub = render_stub(op, "arch35")
+    assert "kernel_tiling/kernel_tiling.h" not in stub
+    assert "struct InnerArray" in stub
+    assert "struct OuterTiling" in stub
+    assert "InnerArray inner" in stub
+    assert "mmTiling_opaque" in stub
+    assert "struct TCubeTiling" not in stub
+
+
+def test_kernel_entry_regex_accepts_qualifier_orders() -> None:
+    text = (
+        "extern \"C\" __global__ void plain(int x) { }\n"
+        "__aicore__ __global__ void reversed(int y) { }\n"
+        "template <bool Flag>\n"
+        "__global__ __aicore__ void classic(int z) { }\n"
+    )
+    names = {m.group("name") for m in GLOBAL_KERNEL_RE.finditer(text)}
+    assert names == {"plain", "reversed", "classic"}
+    assert KERNEL_ENTRY_NAME_RE.findall(text) == ["plain", "reversed", "classic"]
+
+
+def test_mixed_arch_includes_do_not_pin_a_foreign_entry() -> None:
+    text = (
+        '#if (__NPU_ARCH__ == 5102)\n'
+        '#include "../prompt_flash_attention/arch38/prompt_flash_attention_entry_regbase.h"\n'
+        '#else\n'
+        '#include "incre_flash_attention_arch22.h"\n'
+        '#endif\n'
+        'extern "C" __global__ __aicore__ void incre_flash_attention() {}\n'
+    )
+    assert entry_include_architecture(text) == ""
+    assert entry_include_architecture('#include "arch35/tiling.h"\n') == "arch35"

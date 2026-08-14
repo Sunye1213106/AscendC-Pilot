@@ -465,12 +465,39 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
     from ascendc_pilot.gates import run_named_gate
     from ascendc_pilot.obligations import all_obligations_closed, collect_obligations, open_obligations
     from ascendc_pilot.runs import append_event
+    from ascendc_pilot.state import release_live_execution
     from ascendc_pilot.workflows import get_workflow, state_ids
 
     state = load_state(project_root)
     if not state:
-        raise RuntimeError("No active workflow state")
+        from ascendc_pilot.active_run import clear_active_run
+
+        clear_active_run(project_root)
+        return {
+            "ok": True,
+            "status": "idle",
+            "message_zh": "没有活动执行槽",
+        }
     if state.get("status") in TERMINAL:
+        if str(state.get("status") or "") == "passed":
+            from ascendc_pilot.todo import attach_todo
+
+            snap = dict(state)
+            payload = attach_todo(
+                {
+                    "ok": True,
+                    "status": "passed",
+                    "already_complete": True,
+                    "state": snap,
+                    "message_zh": "工作流已完成；已释放执行槽。",
+                },
+                project_root,
+                state=snap,
+            )
+            release_live_execution(
+                project_root, reason="workflow_passed_idempotent", state=snap
+            )
+            return payload
         raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
 
     wid = str(state.get("workflow_id") or "")
@@ -582,4 +609,11 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
         pass
     from ascendc_pilot.todo import attach_todo
 
-    return attach_todo(payload, project_root, state=fresh)
+    payload = attach_todo(payload, project_root, state=fresh)
+    released = release_live_execution(
+        project_root, reason="workflow_passed", state=fresh
+    )
+    payload["released_execution"] = released
+    if not payload.get("message_zh"):
+        payload["message_zh"] = "工作流已完成；已释放执行槽。"
+    return payload

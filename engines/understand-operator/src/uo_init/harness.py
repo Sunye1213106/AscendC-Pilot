@@ -154,11 +154,12 @@ def emit_instantiation(
         f"// dtype_variant={dtype}",
         f"// instance={inst}",
     ]
-    from uo_init.build_context import dtype_macro_for_source
+    from uo_init.kernel_gates import discover_kernel_gates
 
-    macro = dtype_macro_for_source(include) if include else None
-    if macro:
-        lines.append(f"#define {macro} {dtype}")
+    gates = discover_kernel_gates(include) if include else None
+    if gates is not None:
+        for name in gates.orig_dtypes:
+            lines.append(f"#define {name} {dtype}")
     if include:
         lines.append(f'#include "{include}"')
     lines += [

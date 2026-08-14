@@ -1,6 +1,8 @@
 # UO Product Map（progressive）
 
-短地图：认清权威 → 选语义下一跳 → 够 claim 就停。怎么执行见 `capabilities/uo-query/METHOD.md`。
+短地图：认清权威 → 选 mode → 查完就答。短问主控自己查；深问再开 uo-query 子代理。怎么执行见 `capabilities/uo-query/METHOD.md`。
+
+同一场景可沿图跳：`locate`/`tiling_key` → `field` → `kernel_branch` → `impact`。互不相关的独立域再拆 Task。
 
 ## 权威分层
 
@@ -39,7 +41,7 @@
 | 精度/性能场景推断 | `kernel_api` / `buffer` / `field` / `impact` | `uo-scenario-hooks.md`；id 以 CE catalog 为准 | golden、profiler |
 | Issue 定位 / 改码影响 | 无 diff：`locate` / `field`；有 diff：`impact` | — | Git / PR |
 
-`source_span` 或 packing site 的 `path:line` **足够引用**，不为行号而 Read。缺语义用 `PARTIAL` / `UNKNOWN`，不要编事实。
+`source_span` 或查询返回的带行号 `snippet` **视为已 Read**，不要 Grep/再 Read 同一段。缺语义用 `PARTIAL` / `UNKNOWN`，不要编事实。不够就用更短名字再查一次。看到 `functions` 目录时按问题选函数名再查；`field` 只问字段名，packing 表达式走 `tiling_key`。
 
 ## 按需域文档
 

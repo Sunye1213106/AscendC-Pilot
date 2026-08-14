@@ -2,7 +2,8 @@
  * Host Session Driver for AscendC-Pilot (OpenCode).
  *
  * Moves control-plane transport out of the Primary LLM:
- *   start → drive (host_step) → session.create/prompt → dispatch-result → …
+ *   start → drive (host_step) → return dispatch_subagent → OpenCode native Task
+ *   (user can jump into the child and see thinking) → plugin dispatch-result.
  *
  * Owns Todo sync and AskQuestion when Host APIs exist; falls back to a
  * structured ask_human payload only when the question UI cannot be invoked.
@@ -11,9 +12,17 @@
  */
 
 import { spawn } from "node:child_process"
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { resolve } from "node:path"
+import {
+  createToolRowProgressReporter,
+  formatPilotElapsed,
+  renderPilotProgressBar,
+  withProgressArg,
+} from "./pilot-progress.mjs"
+
+export { formatPilotElapsed, renderPilotProgressBar, withProgressArg }
 
 function resolveAcpBin(): string {
   const fromEnv = String(process.env.ASCENDC_HARNESS_BIN || "").trim()
@@ -92,6 +101,14 @@ const HOST_STEP_MODEL_KEYS = [
   "next_workflow_id",
   "intent",
   "ticket_retryable",
+  "quality_path",
+  "unresolved_path",
+  "answer_path",
+  "answer_zh",
+  "answer_status",
+  "read_after_done",
+  "task_prompt_stub",
+  "session_dir",
 ] as const
 
 function compactHostStep(step: Record<string, unknown>): Record<string, unknown> {
@@ -127,6 +144,8 @@ export function compactPilotRunPayload(result: unknown): Record<string, unknown>
   if (Object.keys(step).length) out.host_step = step
   if (messageZh) out.message_zh = messageZh
   if (err) out.error = err
+  if (rec.answer_from_source === true) out.answer_from_source = true
+  if (rec.reason_code) out.reason_code = rec.reason_code
   return out
 }
 
@@ -171,6 +190,7 @@ export function toPluginToolResult(result: unknown): {
 
 export function isHumanDecision(payload: Record<string, unknown> | undefined | null): boolean {
   if (!payload || typeof payload !== "object") return false
+  if (payload.answered === true && payload.needs_human_decision === false) return false
   if (payload.needs_human_decision) return true
   const ask = payload.ask_question
   if (ask && typeof ask === "object" && Object.keys(ask as object).length) return true
@@ -199,7 +219,15 @@ export function normalizeResumeDecision(raw: string): string {
   const key = String(raw || "").trim()
   if (!key) return ""
   const low = key.toLowerCase()
-  if (low === "continue" || low === "reinit") return low
+  if (
+    low === "continue" ||
+    low === "reinit" ||
+    low === "query" ||
+    low === "uo-init" ||
+    low === "source"
+  ) {
+    return low
+  }
   const aliases: Record<string, string> = {
     resume: "continue",
     reuse: "continue",
@@ -210,12 +238,40 @@ export function normalizeResumeDecision(raw: string): string {
     force_new: "reinit",
     删除重开: "reinit",
     重开: "reinit",
+    去查询: "query",
+    query: "query",
+    "uo-init": "uo-init",
+    source: "source",
+    源码作答: "source",
+    回退到源码作答: "source",
   }
   if (aliases[key]) return aliases[key]
   if (aliases[low]) return aliases[low]
-  if (key.includes("继续")) return "continue"
+  if (key.startsWith("开始") || key.includes("继续")) return "continue"
   if (key.includes("删除") || key.includes("重开")) return "reinit"
+  if (key.includes("源码")) return "source"
+  if (key.includes("uo-init") || key.includes("CodeMap")) return "uo-init"
+  if (key.includes("查询")) return "query"
   return ""
+}
+
+function sourceFallbackPayload(log: Array<Record<string, unknown>>, todo?: unknown): Record<string, unknown> {
+  const messageZh =
+    "开发者选择本次不建 CodeMap。请只读算子源码回答当前问题。" +
+    "禁止再 Glob/dir/tree 找 .uo，禁止再调 acp uo-query。"
+  return {
+    ok: true,
+    answered: true,
+    needs_human_decision: false,
+    answer_from_source: true,
+    host_step: {
+      kind: "answer_from_source",
+      message_zh: messageZh,
+    },
+    message_zh: messageZh,
+    log,
+    todo,
+  }
 }
 
 export function extractAskAnswer(answers: unknown): string {
@@ -240,19 +296,6 @@ export function extractAskAnswer(answers: unknown): string {
   return ""
 }
 
-export function renderPilotProgressBar(done: number, total: number, width = 10): string {
-  const n = Math.max(1, total)
-  const filled = Math.max(0, Math.min(width, Math.round((Math.max(0, done) / n) * width)))
-  return `${"█".repeat(filled)}${"░".repeat(Math.max(0, width - filled))}`
-}
-
-export function formatPilotElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000))
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return m > 0 ? `${m}:${String(r).padStart(2, "0")}` : `${r}s`
-}
-
 export type ProgressStep = { id: string; content: string }
 
 export type ProgressReporter = {
@@ -262,6 +305,7 @@ export type ProgressReporter = {
   setWorkflow: (id: string) => void
   setStatus: (status: "running" | "ok" | "fail" | "ask" | "done") => void
   flush: () => void
+  flushAsync: () => Promise<unknown>
   close: () => void
 }
 
@@ -306,232 +350,30 @@ export function parseAcpProgressLine(line: string): {
   return { kind: "ignore" }
 }
 
-function invokeToolMetadata(
-  fn: ((input: { title?: string; metadata?: Record<string, unknown> }) => unknown) | undefined,
-  input: { title?: string; metadata?: Record<string, unknown> },
-): void {
-  if (typeof fn !== "function") return
-  try {
-    const ret = fn(input)
-    if (ret == null) return
-    if (typeof (ret as { then?: unknown }).then === "function") {
-      void Promise.resolve(ret).catch(() => {})
-      return
-    }
-    // OpenCode Effect: fromPlugin sometimes returns an Effect instead of running it.
-    const obj = ret as Record<string, unknown> & { pipe?: unknown }
-    const runPromise =
-      (globalThis as { Effect?: { runPromise?: (e: unknown) => Promise<unknown> } }).Effect
-        ?.runPromise
-    if (typeof runPromise === "function" && (typeof obj.pipe === "function" || obj._op)) {
-      void runPromise(ret).catch(() => {})
-    }
-  } catch {
-    /* Host metadata is best-effort; OpenCode 1.18.x fromPlugin does not bridge ctx.metadata Effect */
-  }
-}
-
-function unwrapSdk(res: unknown): unknown {
-  if (!res || typeof res !== "object") return res
-  const rec = res as Record<string, unknown>
-  if ("data" in rec && rec.data !== undefined && !("type" in rec)) return rec.data
-  return res
-}
-
-/** GenericTool renders `input(props.input)` and ignores state.title — put the bar first. */
-export function withProgressArg(
-  input: Record<string, unknown> | undefined,
-  progress: string,
-): Record<string, unknown> {
-  const rest = { ...(input || {}) }
-  delete rest.progress
-  return { progress, ...rest }
-}
-
-function partsFromMessagePayload(payload: unknown): any[] {
-  const data = unwrapSdk(payload) as Record<string, unknown> | unknown[] | null
-  const collect = (rows: unknown[]): any[] => {
-    const out: any[] = []
-    for (const row of rows) {
-      if (!row || typeof row !== "object") continue
-      const rec = row as Record<string, unknown>
-      if (typeof rec.type === "string" && rec.type === "tool") {
-        out.push(row)
-        continue
-      }
-      if (Array.isArray(rec.parts)) out.push(...(rec.parts as any[]))
-      else if (rec.info && Array.isArray((rec as any).parts)) out.push(...((rec as any).parts as any[]))
-    }
-    return out
-  }
-  if (Array.isArray(data)) {
-    if (data.length && (data[0] as any)?.type) return data
-    return collect(data)
-  }
-  if (!data || typeof data !== "object") return []
-  const rec = data as Record<string, unknown>
-  if (Array.isArray(rec.parts)) return rec.parts as any[]
-  if (Array.isArray(rec.messages)) return collect(rec.messages as unknown[])
-  return []
-}
-
-function isPilotRunPart(part: any, callID?: string): boolean {
-  if (!part || part.type !== "tool") return false
-  const name = String(part.tool || "").toLowerCase()
-  if (name !== "pilot_run" && name !== "pilotrun") return false
-  if (callID && part.callID && String(part.callID) !== callID) return false
-  return true
-}
-
-async function findRunningPilotPart(
-  client: any,
-  sessionId: string,
-  messageId: string,
-  callID?: string,
-  serverUrl?: unknown,
-): Promise<any | null> {
-  if (!sessionId) return null
-  const attempts: Array<() => Promise<unknown>> = []
-  if (client && messageId && typeof client.session?.message === "function") {
-    attempts.push(() => client.session.message({ sessionID: sessionId, messageID: messageId }))
-    attempts.push(() =>
-      client.session.message({ path: { sessionID: sessionId, messageID: messageId } }),
-    )
-  }
-  if (client && typeof client.session?.messages === "function") {
-    attempts.push(() => client.session.messages({ sessionID: sessionId, limit: 8 }))
-    attempts.push(() => client.session.messages({ path: { id: sessionId }, query: { limit: 8 } }))
-  }
-  const base = clientBaseUrl(client, serverUrl)
-  if (base && messageId) {
-    attempts.push(async () => {
-      const res = await fetch(
-        `${base}/session/${encodeURIComponent(sessionId)}/message/${encodeURIComponent(messageId)}`,
-      )
-      if (!res.ok) throw new Error(String(res.status))
-      return res.json()
-    })
-  }
-  if (base) {
-    attempts.push(async () => {
-      const res = await fetch(
-        `${base}/session/${encodeURIComponent(sessionId)}/message?limit=8`,
-      )
-      if (!res.ok) throw new Error(String(res.status))
-      return res.json()
-    })
-  }
-  for (const fn of attempts) {
-    try {
-      const parts = partsFromMessagePayload(await fn())
-      const running = [...parts]
-        .reverse()
-        .find(
-          (p) =>
-            isPilotRunPart(p, callID) &&
-            (p.state?.status === "running" || p.state?.status === "pending"),
-        )
-      if (running) return running
-      const anyHit = [...parts].reverse().find((p) => isPilotRunPart(p, callID))
-      if (anyHit) return anyHit
-    } catch {
-      /* try next shape */
+function primitiveToolArgs(args: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (!args) return out
+  for (const [key, value] of Object.entries(args)) {
+    if (key === "progress") continue
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      out[key] = value
     }
   }
-  return null
-}
-
-function sdkCallOk(res: unknown): boolean {
-  if (res == null) return true
-  if (typeof res !== "object") return true
-  const rec = res as Record<string, unknown>
-  if (rec.error) return false
-  const nested = rec.response as { status?: number } | undefined
-  if (nested && typeof nested.status === "number" && nested.status >= 400) return false
-  return true
-}
-
-function clientBaseUrl(client: any, serverUrl?: unknown): string {
-  const fromPlugin = serverUrl ? String(serverUrl) : ""
-  const fromClient = String(client?.baseUrl || client?._baseUrl || "")
-  return (fromPlugin || fromClient).replace(/\/$/, "")
-}
-
-async function patchRunningToolPart(
-  client: any,
-  part: any,
-  title: string,
-  baseInput: Record<string, unknown>,
-  serverUrl?: unknown,
-): Promise<boolean> {
-  if (!part?.id) return false
-  const sessionID = String(part.sessionID || "")
-  const messageID = String(part.messageID || "")
-  const partID = String(part.id)
-  const next = {
-    ...part,
-    state: {
-      ...(part.state || {}),
-      status: part.state?.status === "pending" ? "running" : part.state?.status || "running",
-      title,
-      metadata: { ...(part.state?.metadata || {}), progress: title },
-      input: withProgressArg(baseInput, title),
-    },
-  }
-  const attempts: Array<() => Promise<unknown>> = []
-  if (typeof client.part?.update === "function") {
-    attempts.push(() =>
-      client.part.update({ sessionID, messageID, partID, part: next }),
-    )
-    attempts.push(() =>
-      client.part.update({
-        path: { sessionID, messageID, partID },
-        body: next,
-        part: next,
-      }),
-    )
-  }
-  if (typeof client.session?.updatePart === "function") {
-    attempts.push(() =>
-      client.session.updatePart({ sessionID, messageID, partID, part: next }),
-    )
-  }
-  const base = clientBaseUrl(client, serverUrl)
-  if (base && sessionID && messageID && partID) {
-    const url = `${base}/session/${encodeURIComponent(sessionID)}/message/${encodeURIComponent(messageID)}/part/${encodeURIComponent(partID)}`
-    attempts.push(async () => {
-      const res = await fetch(url, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(next),
-      })
-      if (!res.ok) {
-        const retry = await fetch(url, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(next),
-        })
-        if (!retry.ok) throw new Error(`part update ${retry.status}`)
-        return retry
-      }
-      return res
-    })
-  }
-  for (const fn of attempts) {
-    try {
-      const res = await fn()
-      if (sdkCallOk(res)) return true
-    } catch {
-      /* try next shape */
-    }
-  }
-  return false
+  return out
 }
 
 function createProgressReporter(
   ctx: PilotToolContext | undefined,
   workflow: string,
-  opts?: { client?: any; sessionId?: string; messageId?: string; callID?: string; serverUrl?: unknown },
+  opts?: {
+    client?: any
+    sessionId?: string
+    messageId?: string
+    callID?: string
+    serverUrl?: unknown
+    directory?: string
+    baseInput?: Record<string, unknown>
+  },
 ): ProgressReporter {
   const state = {
     workflow: workflow || "pilot",
@@ -546,14 +388,15 @@ function createProgressReporter(
   let lastToastKey = ""
   let lastTodoAt = 0
   let lastTodoStage = ""
-  let cachedPart: any = null
-  let baseInput: Record<string, unknown> | null = null
-  let patchingToolRow = false
-
-  const emit = (title: string, extra?: Record<string, unknown>) => {
-    if (state.closed) return
-    invokeToolMetadata(ctx?.metadata, { title, metadata: extra })
-  }
+  const row = createToolRowProgressReporter({
+    client: opts?.client,
+    sessionId: resolvedSessionId(ctx, opts),
+    messageId: String(opts?.messageId || ctx?.messageID || lastToolSession.messageID || "").trim(),
+    callID: String(opts?.callID || ctx?.callID || lastToolSession.callID || "").trim(),
+    serverUrl: opts?.serverUrl,
+    directory: opts?.directory,
+    baseInput: primitiveToolArgs(opts?.baseInput),
+  })
 
   const currentIndex = (): number => {
     if (!state.steps.length) return 0
@@ -575,10 +418,11 @@ function createProgressReporter(
       state.status === "done" || state.status === "ok"
         ? `${total}/${total}`
         : `${Math.min(idx + 1, total)}/${total}`
-    const label = state.currentLabel || state.currentId || state.workflow
-    const detail = state.detail ? ` · ${state.detail.slice(0, 36)}` : ""
+    const label = String(state.currentLabel || state.currentId || state.workflow)
+      .replace(/\s+/g, " ")
+      .slice(0, 28)
     const elapsed = formatPilotElapsed(Date.now() - state.startedAt)
-    return `${state.workflow}  [${bar}] ${n}  ${label}${detail}  ${elapsed}`
+    return `${state.workflow} [${bar}] ${n} ${label} ${elapsed}`
   }
 
   const liveTodoItems = (): TodoItem[] => {
@@ -609,60 +453,6 @@ function createProgressReporter(
         priority: status === "in_progress" ? "high" : status === "completed" ? "low" : "medium",
       }
     })
-  }
-
-  const publishToolRow = (title: string) => {
-    const client = opts?.client
-    const sessionId = resolvedSessionId(ctx, opts)
-    const messageId = String(
-      opts?.messageId || ctx?.messageID || lastToolSession.messageID || "",
-    ).trim()
-    const callID = String(opts?.callID || ctx?.callID || lastToolSession.callID || "").trim()
-    if (!client || patchingToolRow) return
-    patchingToolRow = true
-    void (async () => {
-      try {
-        let sid = sessionId
-        if (!sid) {
-          try {
-            const listed = await (client.session?.list?.() || client.session?.list?.({}))
-            const rows = (listed as { data?: unknown[] })?.data || listed
-            const arr = Array.isArray(rows) ? rows : []
-            const newest = arr[0] as Record<string, unknown> | undefined
-            sid = String(newest?.id || newest?.sessionID || "").trim()
-            if (sid) lastToolSession.sessionID = sid
-          } catch {
-            /* ignore */
-          }
-        }
-        if (!sid) return
-        if (!cachedPart) {
-          cachedPart = await findRunningPilotPart(
-            client,
-            sid,
-            messageId,
-            callID || undefined,
-            opts?.serverUrl,
-          )
-          if (cachedPart?.state?.input && typeof cachedPart.state.input === "object") {
-            const inp = { ...(cachedPart.state.input as Record<string, unknown>) }
-            delete inp.progress
-            baseInput = inp
-          } else {
-            baseInput = {}
-          }
-        }
-        if (!cachedPart) return
-        if (!cachedPart.sessionID) cachedPart.sessionID = sid
-        if (!cachedPart.messageID && messageId) cachedPart.messageID = messageId
-        await patchRunningToolPart(client, cachedPart, title, baseInput || {}, opts?.serverUrl)
-      } catch {
-        cachedPart = null
-        baseInput = null
-      } finally {
-        patchingToolRow = false
-      }
-    })()
   }
 
   const showProgressToast = (title: string) => {
@@ -697,7 +487,9 @@ function createProgressReporter(
   }
 
   const publishVisibleProgress = (title: string) => {
-    publishToolRow(title)
+    // Do not call ctx.metadata: OpenCode fromPlugin does not run the Effect,
+    // and a successful metadata write resets input to the original args.
+    row.publish(title)
     const sessionId = String(opts?.sessionId || ctx?.sessionID || ctx?.sessionId || "").trim()
     const client = opts?.client
     if (client && sessionId && state.steps.length) {
@@ -717,14 +509,7 @@ function createProgressReporter(
   }
 
   const flush = () => {
-    const title = render()
-    emit(title, {
-      workflow: state.workflow,
-      phase: state.currentId,
-      status: state.status,
-      elapsed_ms: Date.now() - state.startedAt,
-    })
-    publishVisibleProgress(title)
+    publishVisibleProgress(render())
   }
 
   const timer = setInterval(flush, 1000)
@@ -786,8 +571,10 @@ function createProgressReporter(
       flush()
     },
     flush,
+    flushAsync: () => row.flushAsync(),
     close() {
       state.closed = true
+      row.close()
       clearInterval(timer)
     },
   }
@@ -899,7 +686,74 @@ function runAcpJson(
   })
 }
 
-function extractKbAnswer(text: string): string {
+export type PendingDispatch = {
+  project: string
+  ticket: string
+  actor: string
+  action: string
+  ts: number
+}
+
+export function pendingDispatchPath(): string {
+  return resolve(homedir(), ".config", "opencode", "ascendc-pending-dispatch.json")
+}
+
+export function rememberPendingDispatch(entry: PendingDispatch): void {
+  try {
+    mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
+    writeFileSync(pendingDispatchPath(), JSON.stringify(entry), "utf-8")
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Singleton handoff from the last ``dispatch_subagent`` (pilot_run project). */
+export function readLatestPendingDispatch(): PendingDispatch | null {
+  try {
+    const rec = JSON.parse(readFileSync(pendingDispatchPath(), "utf-8")) as PendingDispatch
+    if (!rec?.ticket || !rec?.project) return null
+    return rec
+  } catch {
+    return null
+  }
+}
+
+export function readPendingDispatch(_project?: string): PendingDispatch | null {
+  // Singleton slot: Task hooks often pass workspace cwd instead of the operator.
+  return readLatestPendingDispatch()
+}
+
+export function clearPendingDispatch(project: string): void {
+  try {
+    const rec = readPendingDispatch(project)
+    if (!rec) return
+    unlinkSync(pendingDispatchPath())
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function submitDispatchResult(
+  project: string,
+  ticket: string,
+  resultText: string,
+): Promise<Record<string, unknown>> {
+  return runAcpJson(
+    [
+      "dispatch-result",
+      "--project",
+      project,
+      "--ticket",
+      ticket,
+      "--result-text",
+      String(resultText || "").slice(0, 200_000),
+    ],
+    project,
+    { timeoutMs: 180_000 },
+  )
+}
+
+export function extractKbAnswer(text: string): string {
   const src = String(text || "")
   const fence = src.match(/```(?:ya?ml)?\s*\n([\s\S]*?```)/i)
   if (fence) {
@@ -1151,22 +1005,25 @@ async function syncTodos(
 function normalizeAskOptions(ask: Record<string, unknown>): Array<{
   label: string
   description?: string
+  value?: string
 }> {
   const opts = ask.options
   if (!Array.isArray(opts)) return []
-  const out: Array<{ label: string; description?: string }> = []
+  const out: Array<{ label: string; description?: string; value?: string }> = []
   for (const o of opts) {
     if (typeof o === "string") {
-      out.push({ label: o })
+      out.push({ label: o, value: o })
       continue
     }
     if (!o || typeof o !== "object") continue
     const row = o as Record<string, unknown>
     const label = String(row.label || row.value || row.id || "").trim()
     if (!label) continue
+    const value = String(row.value || "").trim()
     out.push({
       label,
       description: row.description ? String(row.description) : undefined,
+      value: value || undefined,
     })
   }
   return out
@@ -1193,6 +1050,7 @@ async function invokeAskHuman(
     options: options.map((o) => ({
       label: o.label,
       description: o.description || "",
+      value: o.value || o.label,
     })),
     multiple: Boolean(ask.multiple),
   }
@@ -1278,11 +1136,11 @@ async function handleAskHumanStep(args: {
       answered: true,
       needs_human_decision: false,
       host_owned_ask: true,
-      host_step: step,
-      ask_question: ask,
       answers: asked.answers,
       resume_decision: decision,
+      choice: label,
       architecture_choice: archChoice,
+      action_id: String(step.action_id || ""),
       log,
       message_zh: "Host Driver 已收集答复并写入 acp answer。",
       todo,
@@ -1409,6 +1267,44 @@ async function dispatchSubagentOnce(args: {
   return { ok: Boolean(finished.ok), finished, host_step: step }
 }
 
+function nativeTaskHandoff(args: {
+  step: HostStep
+  project: string
+  log: Array<Record<string, unknown>>
+  todo?: unknown
+}): Record<string, unknown> {
+  const actor = String(args.step.actor_id || "").trim()
+  const stub = String(args.step.task_prompt_stub || "").trim()
+  const ticket = String(args.step.dispatch_ticket || "").trim()
+  if (!actor || !stub || !ticket) {
+    return {
+      ok: false,
+      error: "DISPATCH_INCOMPLETE",
+      host_step: args.step,
+      log: args.log,
+      message_zh: "host_step 缺少 actor / stub / ticket",
+    }
+  }
+  rememberPendingDispatch({
+    project: args.project,
+    ticket,
+    actor,
+    action: String(args.step.action_id || ""),
+    ts: Date.now(),
+  })
+  const messageZh =
+    `请用 OpenCode 原生 Task：agent=\`${actor}\`，prompt 必须原样为 host_step.task_prompt_stub（禁止改写）。` +
+    `点 Task 卡片可跳进子会话看思考过程。子代理答完后把答案说给人听。`
+  return {
+    ok: true,
+    native_task: true,
+    host_step: { ...args.step, message_zh: messageZh },
+    log: args.log,
+    todo: args.todo,
+    message_zh: messageZh,
+  }
+}
+
 export async function runPilotDriver(
   client: any,
   args: PilotRunArgs,
@@ -1441,6 +1337,17 @@ export async function runPilotDriver(
 
   // force_new / 删除重开 applies only to this start, not continue_goal's next workflow.
   let applyForceNew = Boolean(args.forceNew)
+  try {
+    const cache = resolve(homedir(), ".config", "opencode", "ascendc-last-project")
+    mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
+    const looksLikeOperator =
+      existsSync(resolve(project, ".ascendc-pilot")) ||
+      existsSync(resolve(project, "op_kernel")) ||
+      existsSync(resolve(project, "op_host"))
+    if (looksLikeOperator) writeFileSync(cache, project, "utf-8")
+  } catch {
+    // best-effort
+  }
   const startOnce = (extra: string[] = []) => {
     const argv = ["start", workflow, "--project", project, ...extra]
     if (architecture) argv.push("--architecture", architecture)
@@ -1449,10 +1356,20 @@ export async function runPilotDriver(
     return runAcpJson(argv, project, acpOpts())
   }
 
+  let lastResumeDecision = ""
   const consumeStartAsks = async (
     initial: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
     let payload = initial
+    if (
+      String(payload.decision || "") === "query" ||
+      String(payload.next_workflow_id || "") === "uo-query"
+    ) {
+      workflow = "uo-query"
+      applyForceNew = false
+      lastResumeDecision = ""
+      payload = await startOnce()
+    }
     const logAcc: Array<Record<string, unknown>> = [
       { event: "start", ok: isAcpStartSuccess(payload), workflow },
     ]
@@ -1482,15 +1399,34 @@ export async function runPilotDriver(
         todo: payload.todo,
       })
       if (!asked.answered) return asked
-      const decision = String(asked.resume_decision || "")
+      const decision = String(asked.resume_decision || asked.choice || "")
       const archChoice = String(asked.architecture_choice || "")
+      if (decision === "query") {
+        workflow = "uo-query"
+        applyForceNew = false
+        lastResumeDecision = ""
+        payload = await startOnce()
+        continue
+      }
+      if (decision === "uo-init") {
+        workflow = "uo-init"
+        applyForceNew = false
+        lastResumeDecision = ""
+        payload = await startOnce()
+        continue
+      }
+      if (decision === "source") {
+        return sourceFallbackPayload(logAcc, payload.todo)
+      }
       if (decision) {
+        lastResumeDecision = decision
         payload = await startOnce(["--decision", decision])
         continue
       }
       if (archChoice) {
         architecture = archChoice
-        payload = await startOnce()
+        const extra = lastResumeDecision ? ["--decision", lastResumeDecision] : []
+        payload = await startOnce(extra)
         continue
       }
       return asked
@@ -1498,7 +1434,30 @@ export async function runPilotDriver(
     return payload
   }
 
-  const started = await consumeStartAsks(await startOnce())
+  const live = applyForceNew
+    ? { ok: false }
+    : await runAcpJson(["status", "--project", project], project, acpOpts(30_000))
+  const liveWf = String((live as Record<string, unknown>).workflow_id || "")
+  const liveStatus = String((live as Record<string, unknown>).status || "")
+  const sameLive =
+    !applyForceNew &&
+    liveWf === workflow &&
+    ["running", "rework_required", "human_required"].includes(liveStatus)
+
+  const started = sameLive
+    ? {
+        ok: true,
+        resumed: true,
+        skip_start: true,
+        run_id: (live as Record<string, unknown>).run_id,
+        status: liveStatus,
+        workflow_id: liveWf,
+        todo: (live as Record<string, unknown>).todo,
+      }
+    : await consumeStartAsks(await startOnce())
+  if (started.answer_from_source === true || String((started.host_step as HostStep | undefined)?.kind || "") === "answer_from_source") {
+    return started
+  }
   // Answered AskQuestion blobs still carry ask_question; do not treat them as start-failed.
   if (isHumanDecision(started)) {
     return started
@@ -1582,7 +1541,7 @@ export async function runPilotDriver(
           driven.human_interaction_request && typeof driven.human_interaction_request === "object"
             ? (driven.human_interaction_request as Record<string, unknown>)
             : {}
-        return handleAskHumanStep({
+        const asked = await handleAskHumanStep({
           client,
           toolCtx,
           parentSessionId,
@@ -1593,25 +1552,97 @@ export async function runPilotDriver(
           log,
           todo: todoPayload,
         })
-      } else if (step.kind !== "dispatch_subagent") {
+        if (!asked.answered) return asked
+        const decision = String(asked.resume_decision || asked.choice || "")
+        if (decision === "source") {
+          return sourceFallbackPayload(log, todoPayload)
+        }
+        if (decision === "uo-init") {
+          workflow = "uo-init"
+          applyForceNew = false
+          const switched = await consumeStartAsks(await startOnce())
+          if (switched.answer_from_source === true) return switched
+          if (isHumanDecision(switched)) return switched
+          if (!isAcpStartSuccess(switched)) {
+            reporter?.setStatus("fail")
+            return {
+              ok: false,
+              host_step: {
+                kind: "failed",
+                message_zh: String(switched.message_zh || switched.error || "start uo-init failed"),
+              },
+              log,
+            }
+          }
+          pendingTodo = switched.todo
+          continue
+        }
+        if (decision === "query") {
+          workflow = "uo-query"
+          applyForceNew = false
+          const switched = await consumeStartAsks(await startOnce())
+          if (isHumanDecision(switched)) return switched
+          if (!isAcpStartSuccess(switched)) {
+            reporter?.setStatus("fail")
+            return {
+              ok: false,
+              host_step: {
+                kind: "failed",
+                message_zh: String(switched.message_zh || switched.error || "start uo-query failed"),
+              },
+              log,
+            }
+          }
+          pendingTodo = switched.todo
+          continue
+        }
+        const actionId = String(step.action_id || asked.action_id || "")
+        if (actionId && decision !== "reinit" && decision !== "continue") {
+          const fin = await runAcpJson(
+            ["run-action", actionId, "--finalize", "--project", project],
+            project,
+            acpOpts(180_000),
+          )
+          log.push({ event: "finalize_after_ask", action_id: actionId, ok: fin.ok !== false })
+          if (fin.ok === false) {
+            reporter?.setStatus("fail")
+            return {
+              ok: false,
+              host_step: {
+                kind: "failed",
+                message_zh: String(fin.message_zh || fin.error || `finalize ${actionId} failed`),
+              },
+              log,
+              finalize: fin,
+            }
+          }
+        }
+        continue
+      } else if (!step.kind) {
         reporter?.setStatus("fail")
+        const err = String(driven.error || driven.error_code || "ACP_NO_JSON")
+        const failMsg = String(driven.message_zh || driven.message || err)
         return {
           ok: false,
-          host_step: step,
+          host_step: { kind: "failed", message_zh: failMsg },
           log,
           drive: driven,
-          error: "UNKNOWN_HOST_STEP",
+          error: err,
+          message_zh: failMsg,
           todo: todoPayload,
         }
-      } else if (!client?.session?.create || !client?.session?.prompt) {
+      } else if (step.kind !== "dispatch_subagent") {
+        reporter?.setStatus("fail")
+        const err = String(driven.error || step.kind || "UNEXPECTED_HOST_STEP")
+        const failMsg = String(driven.message_zh || driven.message || err)
         return {
-          ok: true,
-          deferred_to_llm: true,
-          host_step: step,
+          ok: false,
+          host_step: { kind: "failed", message_zh: failMsg },
           log,
+          drive: driven,
+          error: err,
+          message_zh: failMsg,
           todo: todoPayload,
-          message_zh:
-            "OpenCode client.session API 不可用；请 Primary 用 Task 原样派发 task_prompt_stub，再 acp dispatch-result",
         }
       }
     }
@@ -1640,6 +1671,9 @@ export async function runPilotDriver(
         next_workflow_id: nextWf,
         ok: isAcpStartSuccess(continued),
       })
+      if (continued.answer_from_source === true) {
+        return continued
+      }
       if (isHumanDecision(continued)) {
         return continued
       }
@@ -1661,94 +1695,11 @@ export async function runPilotDriver(
     }
 
     lastStep = step
-    const dispatched = await dispatchSubagentOnce({
-      client,
-      project,
-      workflow,
-      step,
-      log,
-      reporter,
-      abort: toolCtx?.abort,
-    })
-
-    if (dispatched.error === "SESSION_API_MISSING") {
-      return {
-        ok: true,
-        deferred_to_llm: true,
-        host_step: step,
-        log,
-        message_zh:
-          "OpenCode client.session API 不可用；请 Primary 用 Task 原样派发 task_prompt_stub，再 acp dispatch-result",
-      }
-    }
-    if (dispatched.error === "DISPATCH_INCOMPLETE") {
-      reporter?.setStatus("fail")
-      return {
-        ok: false,
-        error: "DISPATCH_INCOMPLETE",
-        host_step: step,
-        log,
-        message_zh: "host_step 缺少 actor / stub / ticket",
-      }
-    }
-    if (dispatched.error === "SESSION_CREATE_FAILED") {
-      reporter?.setStatus("fail")
-      return { ok: false, error: "SESSION_CREATE_FAILED", host_step: step, log }
-    }
-
-    const finished = dispatched.finished || {}
-    await syncTodos(client, parentSessionId, finished.todo)
-    pendingTodo = finished.todo
-
-    if (finished.host_step && typeof finished.host_step === "object") {
-      const next = finished.host_step as HostStep
-      if (next.kind === "done") {
-        reporter?.setStatus("done")
-        return { ok: true, host_step: next, log, todo: finished.todo }
-      }
-      if (next.kind === "ask_human") {
-        reporter?.setStatus("ask")
-        const ask = (next.ask_question as Record<string, unknown>) || {}
-        return handleAskHumanStep({
-          client,
-          toolCtx,
-          parentSessionId,
-          project,
-          requestId: String(
-            (finished.human_interaction_request &&
-            typeof finished.human_interaction_request === "object"
-              ? (finished.human_interaction_request as Record<string, unknown>).request_id
-              : "") || "",
-          ),
-          step: next,
-          ask,
-          log,
-          todo: finished.todo,
-        })
-      }
-      if (next.kind === "failed") {
-        reporter?.setStatus("fail")
-        return { ok: false, host_step: next, log, todo: finished.todo }
-      }
-      if (next.kind === "continue_goal") {
-        pendingStep = next
-        continue
-      }
-      if (next.kind === "dispatch_subagent") {
-        // Consume finished.host_step directly — do not re-call auto.
-        pendingStep = next
-        continue
-      }
-    }
-    if (!finished.ok) {
-      reporter?.setStatus("fail")
-      return {
-        ok: false,
-        host_step: (finished.host_step as HostStep) || lastStep,
-        log,
-        dispatch_result: finished,
-      }
-    }
+    reporter?.note(`Task ${String(step.actor_id || "")}`, String(step.action_id || ""))
+    const handed = nativeTaskHandoff({ step, project, log, todo: todoPayload })
+    if (handed.ok === false) reporter?.setStatus("fail")
+    else reporter?.setStatus("ok")
+    return handed
   }
 
   reporter?.setStatus("fail")
@@ -1762,12 +1713,17 @@ export async function runPilotDriver(
 }
 
 /** OpenCode plugin tool definition factory. */
-export function createPilotRunTool(client: any, pluginInput?: { serverUrl?: unknown }) {
+export function createPilotRunTool(
+  client: any,
+  pluginInput?: { serverUrl?: unknown; directory?: string },
+) {
   return {
     pilot_run: {
       description:
-        "Run an AscendC-Pilot workflow via Host Session Driver (start→auto→dispatch→finalize). " +
-        "Prefer this over manually chaining acp start / run-action / Task. " +
+        "Run an AscendC-Pilot workflow via Host Session Driver (start→auto). " +
+        "Prefer this over manually chaining acp start / run-action. " +
+        "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
+        "(agent=actor_id, prompt=task_prompt_stub verbatim) so the user can jump into the child and see thinking. " +
         "Host Driver syncs Todo and owns AskQuestion when the UI is available. " +
         "Args: workflow (e.g. uo-init), project (operator dir), optional architecture.",
       args: {
@@ -1782,7 +1738,11 @@ export function createPilotRunTool(client: any, pluginInput?: { serverUrl?: unkn
           description:
             "User product intent verbatim (e.g. 建立全量 TilingKey 覆盖测试). Required for User Goal chaining.",
         },
-        force_new: { type: "boolean", description: "Pass --force-new to acp start" },
+        force_new: {
+          type: "boolean",
+          description:
+            "Wipe an existing run and start fresh. Do not set on first start; omit unless the user asked to 删除重开.",
+        },
       },
       async execute(toolArgs: Record<string, unknown>, ctx?: PilotToolContext) {
         capturePilotToolSession(ctx as unknown as Record<string, unknown>, toolArgs)
@@ -1813,6 +1773,8 @@ export function createPilotRunTool(client: any, pluginInput?: { serverUrl?: unkn
           messageId: toolCtx.messageID,
           callID: toolCtx.callID,
           serverUrl: pluginInput?.serverUrl,
+          directory: pluginInput?.directory ? String(pluginInput.directory) : undefined,
+          baseInput: primitiveToolArgs(toolArgs),
         })
         try {
           const result = await runPilotDriver(
@@ -1840,6 +1802,11 @@ export function createPilotRunTool(client: any, pluginInput?: { serverUrl?: unkn
             message_zh: "pilot_run 内部异常，已返回结构化错误；请根据 message 排查。",
           })
         } finally {
+          try {
+            await reporter.flushAsync()
+          } catch {
+            /* last PATCH is best-effort */
+          }
           reporter.close()
         }
       },

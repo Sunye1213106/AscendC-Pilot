@@ -908,6 +908,37 @@ def test_tque_enque_deque_outside_flag_pairing(tmp_path: Path) -> None:
     assert not any(g.get("code") == "UNPAIRED_FLAG_SYNC" for g in gaps)
 
 
+def test_arch_header_enque_outside_confirmed_tu(tmp_path: Path) -> None:
+    """Preferred-dtype TU omits mixed-dtype headers; arch primitives still map."""
+    root = tmp_path / "mixedpath"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    entry = root / "op_kernel" / "entry.cpp"
+    entry.write_text("void KernelEntry() { DoFp16(); }\n", encoding="utf-8")
+    (arch / "quant.h").write_text(
+        """
+        class Preprocess {
+         public:
+          __aicore__ inline void ConvertLinearTile()
+          {
+            TQue<QuePosition::VECIN, 1> weightQueue_;
+            LocalTensor<int8_t> weightLocal;
+            weightQueue_.EnQue(weightLocal);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="mixedpath", architecture="arch35")
+    _seed(cm, root, files=[str(entry)])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    enque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue")
+    assert enque.attrs.get("mechanism") == "tque"
+    assert enque.file and "quant.h" in str(enque.file).replace("\\\\", "/")
+
+
 def test_unpaired_flag_is_gap_but_enque_is_not(tmp_path: Path) -> None:
     """Missing WaitFlag is UNPAIRED_FLAG_SYNC; EnQue without DeQue is not."""
     root = tmp_path / "unpaired"

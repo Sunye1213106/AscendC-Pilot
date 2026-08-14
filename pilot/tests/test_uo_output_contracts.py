@@ -16,7 +16,10 @@ def test_uo_init_contracts_aligned() -> None:
     assert "uo-extract-v1" in OUTPUT_CONTRACT_PATHS
     assert "uo-analyze-v1" in OUTPUT_CONTRACT_PATHS
     assert "uo/*.uo" in OUTPUT_CONTRACT_PATHS["uo-commit-v1"]
-    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == ["uo/checks/integrity.yaml"]
+    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == [
+        "uo/checks/integrity.yaml",
+        "uo/checks/quality.yaml",
+    ]
     assert "input-derivable-patch-v1" not in OUTPUT_CONTRACT_PATHS
     assert "key-triage-v1" not in OUTPUT_CONTRACT_PATHS
     assert "extract-plan-v1" not in OUTPUT_CONTRACT_PATHS

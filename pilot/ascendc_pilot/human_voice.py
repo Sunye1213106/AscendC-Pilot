@@ -171,59 +171,15 @@ def _goal_context(project_root: Path) -> dict[str, Any]:
 
 
 def build_human_confirm_ask(project_root: Path, state: dict[str, Any] | None = None) -> dict[str, Any]:
-    state = state or {}
-    op = str(state.get("op_name") or Path(project_root).name or "算子")
-    arch = str(state.get("architecture") or "").strip() or "当前架构"
-    gctx = _goal_context(project_root)
-    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）建立 TilingKey 全覆盖测试"
-    n = _declared_key_count(project_root)
-    scale = f"（约 {n} 个合法 Key）" if n else ""
-    background = f"覆盖合同已建立{scale}，检查已通过。"
-    if gctx.get("progress_line"):
-        background = f"{gctx['progress_line']} {background}"
-    return decision_question(
-        header="覆盖合同已就绪，是否进入规划？",
-        goal=goal,
-        background=background,
-        decide="是否进入「规划测试义务」阶段？",
-        consequences={
-            "确认进入规划": "开始规划测试义务（tg-plan）",
-            "返工": "回到建立合同阶段重做",
-            "停止": "结束本次目标（不进入规划）",
-        },
-        options=[
-            {"label": "确认进入规划", "value": "confirm"},
-            {"label": "返工建立合同", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
-        ],
-    )
+    from ascendc_pilot.human_confirm import build_ask
+
+    return build_ask(project_root, state, action_id="human_confirm")
 
 
 def build_plan_approve_ask(project_root: Path, state: dict[str, Any] | None = None) -> dict[str, Any]:
-    state = state or {}
-    op = str(state.get("op_name") or Path(project_root).name or "算子")
-    arch = str(state.get("architecture") or "").strip() or "当前架构"
-    gctx = _goal_context(project_root)
-    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）建立 TilingKey 全覆盖测试"
-    background = "测试义务规划已生成，等待你批准后才能开始求解与生成用例。"
-    if gctx.get("progress_line"):
-        background = f"{gctx['progress_line']} {background}"
-    return decision_question(
-        header="规划已就绪，是否开始求解？",
-        goal=goal,
-        background=background,
-        decide="是否批准规划并进入「求解并生成用例」？",
-        consequences={
-            "批准并开始求解": "启动求解与 Host Replay（tg-solve）",
-            "返工": "回到规划阶段调整义务",
-            "停止": "结束本次目标（不开始求解）",
-        },
-        options=[
-            {"label": "批准并开始求解", "value": "approve"},
-            {"label": "返工规划", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
-        ],
-    )
+    from ascendc_pilot.human_confirm import build_ask
+
+    return build_ask(project_root, state, action_id="plan_approve")
 
 
 def build_generic_interactive_ask(action_id: str) -> dict[str, Any]:

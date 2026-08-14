@@ -251,8 +251,8 @@ class Blocker:
             "affected_node_count": len(self.affected_nodes),
             "affected_nodes": sorted(self.affected_nodes)[:50],
             "evidence_refs": [e.id for e in self.evidence],
-            # Inline evidence so resolve_gaps staging can hand the LLM a closed
-            # pack without a second index lookup.
+            # Inline evidence so investigate / consumers can read a closed pack
+            # without a second index lookup.
             "evidence": [e.to_dict() for e in self.evidence[:5]],
             "hint": self.hint,
         }

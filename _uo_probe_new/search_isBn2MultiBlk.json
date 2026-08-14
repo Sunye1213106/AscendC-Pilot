@@ -1,0 +1,178 @@
+[
+  {
+    "id": "HOSTKEYCONST::IsBn2MultiBlk::0",
+    "kind": "COMPILE_VAR",
+    "name": "IsBn2MultiBlk=0",
+    "status": "confirmed",
+    "file": "op_host/flash_attention_score_grad_tiling.cpp",
+    "line_start": 237,
+    "line_end": 237,
+    "why": "search",
+    "facts": {},
+    "snippet": "225:        dkRopeNum = (dkRopeNum < SMLEST_ROPE_SIZE) ? 0 : dkRopeNum;\n226:        if (dkRopeNum % aivNum == 0ULL) {\n227:            emptyTensorTilingDataRegbase->set_formerDkRopeNum(aivNum);\n228:            emptyTensorTilingDataRegbase->set_singleCoreDkRopeNum(dkRopeNum / aivNum);\n229:            emptyTensorTilingDataRegbase->set_tailCoreDkRopeNum(0);\n230:        } else {\n231:            emptyTensorTilingDataRegbase->set_formerDkRopeNum(dkRopeNum % aivNum);\n232:            emptyTensorTilingDataRegbase->set_singleCoreDkRopeNum(dkRopeNum / aivNum + 1);\n233:            emptyTensorTilingDataRegbase->set_tailCoreDkRopeNum(dkRopeNum / aivNum);\n234:        }\n235:        emptyTensorTilingDataRegbase->isRope = (dqRopeNum > 0 || dkRopeNum > 0);\n236:\n237:        context->SetTilingKey(GET_TPL_TILING_KEY(TILING_KEY_1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, TILING_KEY_1));\n238:        auto sliceNum =\n239:            (dqNum < aivNum && dkNum < aivNum && dpseNum < aivNum) ? std::max(std::max(dqNum, dkNum), dpseNum) : aivNum;\n240:        context->SetBlockDim(CalculateTschBlockDim(sliceNum, aicNum, aivNum));\n241:        size_t *workspaces = context->GetWorkspaceSizes(1);\n242:        workspaces[0] = WORKSPACE_SIZE;\n243:        return ge::GRAPH_SUCCESS;\n244:    }\n245:};\n246:\n247:static bool IsEmptyOutput(gert::TilingContext *context)\n248:{\n249:    const gert::StorageShape *dqShape = context->GetOutputShape(OUTPUT_IDX_DQ);\n250:    const gert::StorageShape *dqRopeShape = context->GetOutputShape(OUTPUT_IDX_DQ_ROPE);\n251:    const gert::StorageShape *dkShape = context->GetOutputShape(OUTPUT_IDX_DK);\n252:    const gert::StorageShape *dkRopeShape = context->GetOutputShape(OUTPUT_IDX_DK_ROPE);\n253:    const gert::StorageShape *dvShape = context->GetOutputShape(OUTPUT_IDX_DV);\n254:    if (dqShape != nullptr && dkShape != nullptr && dvShape != nullptr) {\n255:        if (dqShape->GetStorageShape().GetShapeSize() == 0 || dkShape->GetStorageShape().GetShapeSize() == 0 ||\n256:            dvShape->GetStorageShape().GetShapeSize() == 0) {\n257:            return true;\n258:        }\n259:    }\n260:    if (dqRopeShape != nullptr && dkRopeShape != nullptr) {\n261:        if (dqRopeShape->GetStorageShape().GetShapeSize() == 0 || dkRopeShape->GetStorageShape().GetShapeSize() == 0) {\n262:            return true;\n263:        }\n264:    }"
+  },
+  {
+    "id": "HOSTDEF::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp::1621::isBn2MultiBlk::1",
+    "kind": "PREDICATE",
+    "name": "false",
+    "status": "confirmed",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+    "line_start": 1621,
+    "line_end": 1621,
+    "why": "search",
+    "facts": {},
+    "snippet": "1609:    if (fBaseParams.isBn2 && !fBaseParams.isBn2MultiBlk) {\n1610:        fBaseParams.isDeterministic = false;\n1611:        if ((fBaseParams.layoutType == INPUT_FORMAT_TND && fBaseParams.d > ALIGN128) ||\n1612:                fBaseParams.dropMaskOuter) {\n1613:            fBaseParams.isBn2 = false;\n1614:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1615:        }\n1616:    }\n1617:    if (fBaseParams.isBn2MultiBlk) {\n1618:        fBaseParams.isDeterministic = false;\n1619:        if (fBaseParams.dropMaskOuter) {\n1620:            fBaseParams.isBn2 = false;\n1621:            fBaseParams.isBn2MultiBlk = false;\n1622:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1623:        }\n1624:    }\n1625:\n1626:    bool bn2S2NotTndLimit = (fBaseParams.s1 < fBaseParams.s2) &&\n1627:        (fBaseParams.s2 <= BN2S2_MAX_S) &&\n1628:        (fBaseParams.s2 - fBaseParams.s1 >= BN2_MAX_S) &&\n1629:        (fBaseParams.d <= BN2S2_WRITE_UB_D) &&\n1630:        (!fBaseParams.isSparse) &&\n1631:        (!fBaseParams.isDeterministic);\n1632:    bool bn2S2RouteLimit =\n1633:        !fBaseParams.hasRope && fBaseParams.d <= BN2_MAX_D &&\n1634:        (fBaseParams.layoutType == INPUT_FORMAT_TND || (fBaseParams.isAllSame && !fBaseParams.isDeterministic) ||\n1635:         bn2S2NotTndLimit) &&\n1636:        (fBaseParams.keepProb >= 1 ||\n1637:         (fBaseParams.d <= static_cast<uint32_t>(ConstAxisTemplateNum::NUM128) && fBaseParams.keepProb < 1)) &&\n1638:        (fBaseParams.n1 == fBaseParams.n2) && (fBaseParams.queryType != ge::DT_FLOAT) &&\n1639:        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n1640:          fBaseParams.queryType == ge::DT_HIFLOAT8);\n1641:\n1642:    if (!fBaseParams.isBn2 && bn2S2RouteLimit) {\n1643:        fBaseParams.layoutType = fBaseParams.isAllSame ? INPUT_FORMAT_TND : fBaseParams.layoutType;\n1644:        fBaseParams.splitAxis = SplitAxisEnum::BN2S2;\n1645:    } else if (fBaseParams.isBn2) {\n1646:        fBaseParams.splitAxis = SplitAxisEnum::BN2;\n1647:    } else {\n1648:        fBaseParams.splitAxis = SplitAxisEnum::BN2GS1S2;"
+  },
+  {
+    "id": "HOSTDEF::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::682::isBn2MultiBlk::2",
+    "kind": "PREDICATE",
+    "name": "false",
+    "status": "confirmed",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+    "line_start": 682,
+    "line_end": 682,
+    "why": "search",
+    "facts": {},
+    "snippet": "670:            fBaseParams.layoutType = INPUT_FORMAT_BS2N2GD;\n671:            fBaseParams.sparseType = GetSparseType(); // 确保sparseType正确\n672:        }\n673:    }\n674:    if (fBaseParams.splitAxis == SplitAxisEnum::BN2 && fBaseParams.isBn2MultiBlk) {\n675:        bool earlyReturn = true;\n676:        bool res = DoBn2MultiBlkSparse();\n677:        // 当BN2多基本块场景，上方函数判断遇到无效行、列后，需要走S1S2模板，性能达到最优\n678:        OP_LOGD(\"DoBn2MultiBlkSparse\", \"fBaseParams.isInvalidCol %d, fBaseParams.isInvalidRow %d\",\n679:                fBaseParams.isInvalidCol, fBaseParams.isInvalidRow);\n680:        if ((fBaseParams.isInvalidCol || fBaseParams.isInvalidRow)) {\n681:            fBaseParams.isBn2 = false;\n682:            fBaseParams.isBn2MultiBlk = false;\n683:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n684:            fBaseParams.splitAxis = SplitAxisEnum::BN2GS1S2;\n685:            earlyReturn = false;\n686:        }\n687:        if (earlyReturn) {\n688:            return res;\n689:        }\n690:    }\n691:    fBaseParams.splitAxis = fBaseParams.isBn2 ? SplitAxisEnum::BN2 : SplitAxisEnum::BN2GS1S2;\n692:    if (fBaseParams.layoutType == INPUT_FORMAT_TND) {\n693:        GetSparseUnpadBlockInfo();\n694:    } else if (fBaseParams.isSparse) {\n695:        if (fBaseParams.sparseMode == static_cast<uint32_t>(SparseMode::PREFIX) ||\n696:            fBaseParams.sparseMode == static_cast<uint32_t>(SparseMode::PREFIX_COMPRESS)) {\n697:            GetSparsePrefixBlockInfo();\n698:        } else {\n699:            GetSparseBlockInfo();\n700:        }\n701:    } else {\n702:        int64_t blockStarts[CORE_LIST_NUM];\n703:        int64_t blockEnds[CORE_LIST_NUM];\n704:        int64_t fusedOuter = fBaseParams.b * fBaseParams.n2 * fBaseParams.g * fBaseParams.s1Outer * fBaseParams.s2Outer;\n705:        int64_t blockFactor = (fusedOuter + fBaseParams.aicNum - 1) / fBaseParams.aicNum;\n706:        int64_t blockOuter = (fusedOuter + blockFactor - 1) / blockFactor;\n707:\n708:        fBaseParams.blockOuter = blockOuter;\n709:        fBaseParams.blockFactor = blockFactor;"
+  },
+  {
+    "id": "E_FIELD_744817afa578",
+    "kind": "FIELD",
+    "name": "fBaseParams.isBn2MultiBlk",
+    "status": "extracted",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+    "line_start": 1597,
+    "line_end": 1597,
+    "why": "search",
+    "facts": {
+      "layer": "host",
+      "rhs": "false"
+    },
+    "snippet": "1585:                        (fBaseParams.n1 == fBaseParams.n2) &&\n1586:                        (fBaseParams.d <= BN2_MAX_D) &&\n1587:                        (fBaseParams.queryType != ge::DT_FLOAT) &&\n1588:                        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN || fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n1589:                        (fBaseParams.tailZeroCount == 0 && !tndBaseInfo.isSeqExistZero);\n1590:\n1591:    bool bnLimit = ((fBaseParams.b * fBaseParams.n1) >= BN2_MULTIBLK_BN_256) ||\n1592:                    ((fBaseParams.b * fBaseParams.n1) >= BN2_MULTIBLK_BN_128 && (fBaseParams.s1 % ALIGN128 == 0) && (fBaseParams.s2 % ALIGN128 == 0));\n1593:    bool bnSparseLimit = bnLimit &&\n1594:                        (fBaseParams.layoutType != INPUT_FORMAT_TND) &&\n1595:                        (fBaseParams.sparseMode != static_cast<uint32_t>(SparseMode::PREFIX)) &&\n1596:                        (fBaseParams.sparseMode != static_cast<uint32_t>(SparseMode::PREFIX_COMPRESS));\n1597:    fBaseParams.isBn2MultiBlk = bnSparseLimit &&\n1598:                                (fBaseParams.s1 > BN2_MAX_S || fBaseParams.s2 > BN2_MAX_S) &&\n1599:                                (fBaseParams.s1 <= BN2_MULTIBLK_SEQ && fBaseParams.s2 <= BN2_MULTIBLK_SEQ) &&\n1600:                                (fBaseParams.n1 == fBaseParams.n2) &&\n1601:                                fBaseParams.d <= BN2_MAX_D &&\n1602:                                (fBaseParams.queryType != ge::DT_FLOAT) &&\n1603:                                (fBaseParams.d == fBaseParams.d1) &&\n1604:                                !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 ||\n1605:                                fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n1606:                                fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n1607:                                !fBaseParams.hasRope;\n1608:    fBaseParams.isBn2 = fBaseParams.isBn2MultiBlk ? true : fBaseParams.isBn2; // 多基本块场景是原始bn2的子集\n1609:    if (fBaseParams.isBn2 && !fBaseParams.isBn2MultiBlk) {\n1610:        fBaseParams.isDeterministic = false;\n1611:        if ((fBaseParams.layoutType == INPUT_FORMAT_TND && fBaseParams.d > ALIGN128) ||\n1612:                fBaseParams.dropMaskOuter) {\n1613:            fBaseParams.isBn2 = false;\n1614:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1615:        }\n1616:    }\n1617:    if (fBaseParams.isBn2MultiBlk) {\n1618:        fBaseParams.isDeterministic = false;\n1619:        if (fBaseParams.dropMaskOuter) {\n1620:            fBaseParams.isBn2 = false;\n1621:            fBaseParams.isBn2MultiBlk = false;\n1622:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1623:        }\n1624:    }",
+    "relationships": [
+      {
+        "kind": "CONTROLS",
+        "src": "HBR_21EF41BA1E04",
+        "dst": "E_FIELD_744817afa578",
+        "other_id": "HBR_21EF41BA1E04",
+        "other_kind": "BRANCH",
+        "other_name": "fBaseParams.dropMaskOuter",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+        "line_start": 1621
+      },
+      {
+        "kind": "CONTROLS",
+        "src": "HBR_F9A63FCE8408",
+        "dst": "E_FIELD_744817afa578",
+        "other_id": "HBR_F9A63FCE8408",
+        "other_kind": "BRANCH",
+        "other_name": "fBaseParams.isBn2MultiBlk",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+        "line_start": 1621
+      },
+      {
+        "kind": "WRITES",
+        "src": "E_FUNCTION_2c95ee72abcc",
+        "dst": "E_FIELD_744817afa578",
+        "other_id": "E_FUNCTION_2c95ee72abcc",
+        "other_kind": "FUNCTION",
+        "other_name": "SetSplitAxis",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+        "line_start": 1581
+      }
+    ]
+  },
+  {
+    "id": "E_FIELD_4e541c4c7227",
+    "kind": "FIELD",
+    "name": "this.fBaseParams.isBn2MultiBlk",
+    "status": "confirmed",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+    "line_start": 682,
+    "line_end": 682,
+    "why": "search",
+    "facts": {
+      "layer": "host",
+      "rhs": "false"
+    },
+    "snippet": "670:            fBaseParams.layoutType = INPUT_FORMAT_BS2N2GD;\n671:            fBaseParams.sparseType = GetSparseType(); // 确保sparseType正确\n672:        }\n673:    }\n674:    if (fBaseParams.splitAxis == SplitAxisEnum::BN2 && fBaseParams.isBn2MultiBlk) {\n675:        bool earlyReturn = true;\n676:        bool res = DoBn2MultiBlkSparse();\n677:        // 当BN2多基本块场景，上方函数判断遇到无效行、列后，需要走S1S2模板，性能达到最优\n678:        OP_LOGD(\"DoBn2MultiBlkSparse\", \"fBaseParams.isInvalidCol %d, fBaseParams.isInvalidRow %d\",\n679:                fBaseParams.isInvalidCol, fBaseParams.isInvalidRow);\n680:        if ((fBaseParams.isInvalidCol || fBaseParams.isInvalidRow)) {\n681:            fBaseParams.isBn2 = false;\n682:            fBaseParams.isBn2MultiBlk = false;\n683:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n684:            fBaseParams.splitAxis = SplitAxisEnum::BN2GS1S2;\n685:            earlyReturn = false;\n686:        }\n687:        if (earlyReturn) {\n688:            return res;\n689:        }\n690:    }\n691:    fBaseParams.splitAxis = fBaseParams.isBn2 ? SplitAxisEnum::BN2 : SplitAxisEnum::BN2GS1S2;\n692:    if (fBaseParams.layoutType == INPUT_FORMAT_TND) {\n693:        GetSparseUnpadBlockInfo();\n694:    } else if (fBaseParams.isSparse) {\n695:        if (fBaseParams.sparseMode == static_cast<uint32_t>(SparseMode::PREFIX) ||\n696:            fBaseParams.sparseMode == static_cast<uint32_t>(SparseMode::PREFIX_COMPRESS)) {\n697:            GetSparsePrefixBlockInfo();\n698:        } else {\n699:            GetSparseBlockInfo();\n700:        }\n701:    } else {\n702:        int64_t blockStarts[CORE_LIST_NUM];\n703:        int64_t blockEnds[CORE_LIST_NUM];\n704:        int64_t fusedOuter = fBaseParams.b * fBaseParams.n2 * fBaseParams.g * fBaseParams.s1Outer * fBaseParams.s2Outer;\n705:        int64_t blockFactor = (fusedOuter + fBaseParams.aicNum - 1) / fBaseParams.aicNum;\n706:        int64_t blockOuter = (fusedOuter + blockFactor - 1) / blockFactor;\n707:\n708:        fBaseParams.blockOuter = blockOuter;\n709:        fBaseParams.blockFactor = blockFactor;",
+    "relationships": [
+      {
+        "kind": "CONTROLS",
+        "src": "HBR_941213A8C4C4",
+        "dst": "E_FIELD_4e541c4c7227",
+        "other_id": "HBR_941213A8C4C4",
+        "other_kind": "BRANCH",
+        "other_name": "!(DoBn2s2Sparse()&& fBaseParams.blockOuter>= fBaseParams.aicNum)",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line_start": 682
+      },
+      {
+        "kind": "CONTROLS",
+        "src": "HBR_6519B41DF320",
+        "dst": "E_FIELD_4e541c4c7227",
+        "other_id": "HBR_6519B41DF320",
+        "other_kind": "BRANCH",
+        "other_name": "(fBaseParams.isInvalidCol || fBaseParams.isInvalidRow)",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line_start": 682
+      },
+      {
+        "kind": "CONTROLS",
+        "src": "HBR_D99DF2BFFEE1",
+        "dst": "E_FIELD_4e541c4c7227",
+        "other_id": "HBR_D99DF2BFFEE1",
+        "other_kind": "BRANCH",
+        "other_name": "fBaseParams.splitAxis == SplitAxisEnum::BN2 && fBaseParams.isBn2MultiBlk",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line_start": 682
+      },
+      {
+        "kind": "WRITES",
+        "src": "E_FUNCTION_4d3f8d7886ef",
+        "dst": "E_FIELD_4e541c4c7227",
+        "other_id": "E_FUNCTION_4d3f8d7886ef",
+        "other_kind": "FUNCTION",
+        "other_name": "DoSparse",
+        "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "line_start": 660
+      }
+    ]
+  },
+  {
+    "id": "HOSTKEYEXPR::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp::1461::12",
+    "kind": "PREDICATE",
+    "name": "static_cast<uint8_t>(fBaseParams.isBn2MultiBlk)",
+    "status": "confirmed",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+    "line_start": 1461,
+    "line_end": 1461,
+    "why": "search",
+    "facts": {},
+    "snippet": "1449:        context_,\n1450:        \"splitAxis[%d], inputDtype[%d], isTnd[%d], dropValue[%d], pseValue[%d], attenMaskCfg[%d], s1TemplateType[%d], \"\n1451:        \"s2TemplateType[%d], dTemplateType[%u], isDeterministic[%d], nEqual[%d], isBn2MultiBlk[%d], dNoEqual[%d], \"\n1452:        \"hasRope[%d], outDtype[%d], isNzOut[%d], isTndSwizzle[%d], isRegbasePlatformValue[%d]\",\n1453:        static_cast<int>(splitAxis), static_cast<int>(fBaseParams.inputDtype), isTnd, static_cast<int>(dropValue),\n1454:        static_cast<int>(pseValue), static_cast<int>(attenMaskCfg), static_cast<int>(fBaseParams.s1TemplateType),\n1455:        static_cast<int>(fBaseParams.s2TemplateType), static_cast<uint32_t>(fBaseParams.dTemplateType),\n1456:        static_cast<int>(fBaseParams.deterSparseType), static_cast<int>(isDeterNEqual),\n1457:        static_cast<int>(fBaseParams.isBn2MultiBlk), dNoEqual, static_cast<int>(fBaseParams.hasRope),\n1458:        static_cast<int>(fBaseParams.outDtype), static_cast<int>(fBaseParams.isNzOut),\n1459:        static_cast<uint8_t>(tndBaseInfo.isTndSwizzle), static_cast<int>(isRegbasePlatformValue));\n1460:\n1461:    uint64_t tilingKey = GET_TPL_TILING_KEY(\n1462:        0, static_cast<uint8_t>(splitAxis), static_cast<uint8_t>(fBaseParams.inputDtype), static_cast<uint8_t>(isTnd),\n1463:        static_cast<uint8_t>(dropValue), static_cast<uint8_t>(pseValue), static_cast<uint8_t>(attenMaskCfg),\n1464:        static_cast<uint16_t>(fBaseParams.s1TemplateType), static_cast<uint16_t>(fBaseParams.s2TemplateType),\n1465:        static_cast<uint16_t>(fBaseParams.dTemplateType), static_cast<uint8_t>(fBaseParams.deterSparseType),\n1466:        static_cast<uint8_t>(isDeterNEqual), static_cast<uint8_t>(fBaseParams.isBn2MultiBlk),\n1467:        static_cast<uint8_t>(dNoEqual), static_cast<uint8_t>(fBaseParams.hasRope),\n1468:        static_cast<uint8_t>(fBaseParams.outDtype), static_cast<uint8_t>(fBaseParams.isNzOut),\n1469:        static_cast<uint8_t>(tndBaseInfo.isTndSwizzle), static_cast<uint8_t>(isRegbasePlatformValue));\n1470:\n1471:    OP_LOGI(context_, \"FAGTiling S1s2Bn2gs1s2 DoTiling success, tiling is %lu.\", tilingKey);\n1472:    return tilingKey;\n1473:}\n1474:\n1475:std::tuple<uint32_t, uint32_t, uint32_t> FlashAttentionScoreGradTilingNormalRegbase::FuzzyForBestSplit()\n1476:{\n1477:    auto s1s2TemplateSize = GetS1S2TemplateType(fBaseParams);\n1478:    uint32_t s1Inner = s1s2TemplateSize.first / 2;\n1479:    uint32_t s2Inner = s1s2TemplateSize.second;\n1480:    uint32_t dInner = GetDTemplateType(fBaseParams);\n1481:    return std::tie(s1Inner, s2Inner, dInner);\n1482:}\n1483:\n1484:ge::graphStatus FlashAttentionScoreGradTilingNormalRegbase::PostTiling()\n1485:{\n1486:    SaveToTilingData();\n1487:    auto numBlocks = 0;\n1488:    if (fBaseParams.isDeterministic ||"
+  },
+  {
+    "id": "HOSTDEF::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp::1608::isBn2::1",
+    "kind": "PREDICATE",
+    "name": "fBaseParams.isBn2MultiBlk ? true : fBaseParams.isBn2",
+    "status": "confirmed",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+    "line_start": 1608,
+    "line_end": 1608,
+    "why": "search",
+    "facts": {},
+    "snippet": "1596:                        (fBaseParams.sparseMode != static_cast<uint32_t>(SparseMode::PREFIX_COMPRESS));\n1597:    fBaseParams.isBn2MultiBlk = bnSparseLimit &&\n1598:                                (fBaseParams.s1 > BN2_MAX_S || fBaseParams.s2 > BN2_MAX_S) &&\n1599:                                (fBaseParams.s1 <= BN2_MULTIBLK_SEQ && fBaseParams.s2 <= BN2_MULTIBLK_SEQ) &&\n1600:                                (fBaseParams.n1 == fBaseParams.n2) &&\n1601:                                fBaseParams.d <= BN2_MAX_D &&\n1602:                                (fBaseParams.queryType != ge::DT_FLOAT) &&\n1603:                                (fBaseParams.d == fBaseParams.d1) &&\n1604:                                !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 ||\n1605:                                fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n1606:                                fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n1607:                                !fBaseParams.hasRope;\n1608:    fBaseParams.isBn2 = fBaseParams.isBn2MultiBlk ? true : fBaseParams.isBn2; // 多基本块场景是原始bn2的子集\n1609:    if (fBaseParams.isBn2 && !fBaseParams.isBn2MultiBlk) {\n1610:        fBaseParams.isDeterministic = false;\n1611:        if ((fBaseParams.layoutType == INPUT_FORMAT_TND && fBaseParams.d > ALIGN128) ||\n1612:                fBaseParams.dropMaskOuter) {\n1613:            fBaseParams.isBn2 = false;\n1614:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1615:        }\n1616:    }\n1617:    if (fBaseParams.isBn2MultiBlk) {\n1618:        fBaseParams.isDeterministic = false;\n1619:        if (fBaseParams.dropMaskOuter) {\n1620:            fBaseParams.isBn2 = false;\n1621:            fBaseParams.isBn2MultiBlk = false;\n1622:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1623:        }\n1624:    }\n1625:\n1626:    bool bn2S2NotTndLimit = (fBaseParams.s1 < fBaseParams.s2) &&\n1627:        (fBaseParams.s2 <= BN2S2_MAX_S) &&\n1628:        (fBaseParams.s2 - fBaseParams.s1 >= BN2_MAX_S) &&\n1629:        (fBaseParams.d <= BN2S2_WRITE_UB_D) &&\n1630:        (!fBaseParams.isSparse) &&\n1631:        (!fBaseParams.isDeterministic);\n1632:    bool bn2S2RouteLimit =\n1633:        !fBaseParams.hasRope && fBaseParams.d <= BN2_MAX_D &&\n1634:        (fBaseParams.layoutType == INPUT_FORMAT_TND || (fBaseParams.isAllSame && !fBaseParams.isDeterministic) ||\n1635:         bn2S2NotTndLimit) &&"
+  },
+  {
+    "id": "HOSTDEF::flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp::1597::isBn2MultiBlk::0",
+    "kind": "PREDICATE",
+    "name": "bnSparseLimit &&\n                                (fBaseParams.s1 > BN2_MAX_S || fBaseParams.s2 > BN2_MAX_S) &&\n                                (fBaseParams.s1 <= BN2_MULTIBLK_SEQ && fBaseParams.s2 <= BN2_MULTIBLK_SEQ) &&\n                                (fBaseParams.n1 == fBaseParams.n2) &&\n                                fBaseParams.d <= BN2_MAX_D &&\n                                (fBaseParams.queryType != ge::DT_FLOAT) &&\n                                (fBaseParams.d == fBaseParams.d1) &&\n                                !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 ||\n                                fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n                                fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n                                !fBaseParams.hasRope",
+    "status": "confirmed",
+    "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+    "line_start": 1597,
+    "line_end": 1597,
+    "why": "search",
+    "facts": {},
+    "snippet": "1585:                        (fBaseParams.n1 == fBaseParams.n2) &&\n1586:                        (fBaseParams.d <= BN2_MAX_D) &&\n1587:                        (fBaseParams.queryType != ge::DT_FLOAT) &&\n1588:                        !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 || fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN || fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n1589:                        (fBaseParams.tailZeroCount == 0 && !tndBaseInfo.isSeqExistZero);\n1590:\n1591:    bool bnLimit = ((fBaseParams.b * fBaseParams.n1) >= BN2_MULTIBLK_BN_256) ||\n1592:                    ((fBaseParams.b * fBaseParams.n1) >= BN2_MULTIBLK_BN_128 && (fBaseParams.s1 % ALIGN128 == 0) && (fBaseParams.s2 % ALIGN128 == 0));\n1593:    bool bnSparseLimit = bnLimit &&\n1594:                        (fBaseParams.layoutType != INPUT_FORMAT_TND) &&\n1595:                        (fBaseParams.sparseMode != static_cast<uint32_t>(SparseMode::PREFIX)) &&\n1596:                        (fBaseParams.sparseMode != static_cast<uint32_t>(SparseMode::PREFIX_COMPRESS));\n1597:    fBaseParams.isBn2MultiBlk = bnSparseLimit &&\n1598:                                (fBaseParams.s1 > BN2_MAX_S || fBaseParams.s2 > BN2_MAX_S) &&\n1599:                                (fBaseParams.s1 <= BN2_MULTIBLK_SEQ && fBaseParams.s2 <= BN2_MULTIBLK_SEQ) &&\n1600:                                (fBaseParams.n1 == fBaseParams.n2) &&\n1601:                                fBaseParams.d <= BN2_MAX_D &&\n1602:                                (fBaseParams.queryType != ge::DT_FLOAT) &&\n1603:                                (fBaseParams.d == fBaseParams.d1) &&\n1604:                                !(fBaseParams.queryType == ge::DT_FLOAT8_E5M2 ||\n1605:                                fBaseParams.queryType == ge::DT_FLOAT8_E4M3FN ||\n1606:                                fBaseParams.queryType == ge::DT_HIFLOAT8) &&\n1607:                                !fBaseParams.hasRope;\n1608:    fBaseParams.isBn2 = fBaseParams.isBn2MultiBlk ? true : fBaseParams.isBn2; // 多基本块场景是原始bn2的子集\n1609:    if (fBaseParams.isBn2 && !fBaseParams.isBn2MultiBlk) {\n1610:        fBaseParams.isDeterministic = false;\n1611:        if ((fBaseParams.layoutType == INPUT_FORMAT_TND && fBaseParams.d > ALIGN128) ||\n1612:                fBaseParams.dropMaskOuter) {\n1613:            fBaseParams.isBn2 = false;\n1614:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1615:        }\n1616:    }\n1617:    if (fBaseParams.isBn2MultiBlk) {\n1618:        fBaseParams.isDeterministic = false;\n1619:        if (fBaseParams.dropMaskOuter) {\n1620:            fBaseParams.isBn2 = false;\n1621:            fBaseParams.isBn2MultiBlk = false;\n1622:            fBaseParams.isDeterministic = (context_->GetDeterministic() == 1);\n1623:        }\n1624:    }"
+  }
+]

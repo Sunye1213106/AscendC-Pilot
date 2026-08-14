@@ -26,11 +26,17 @@ def build_uo_product_handle(
     if product is None or not product.is_file():
         product = find_uo_product(root, op_name=op_name, architecture=architecture)
     if product is None or not product.is_file():
-        return {
-            "ok": False,
-            "error": "UO_PRODUCT_REQUIRED",
-            "message_zh": "缺少已 commit 的 .uo；请先 /uo-init 或传入显式路径",
-        }
+        from ascendc_pilot.intake import missing_uo_product_payload
+
+        payload = missing_uo_product_payload(
+            root=root,
+            workflow_id="uo-query",
+            architecture=architecture,
+            op_name=op_name,
+            persist=False,
+        )
+        payload["error"] = "UO_PRODUCT_REQUIRED"
+        return payload
     meta = read_meta(product)
     digest = ""
     try:

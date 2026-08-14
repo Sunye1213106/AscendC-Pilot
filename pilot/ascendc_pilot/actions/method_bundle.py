@@ -203,8 +203,25 @@ def materialize_method_bundle(
     }
 
 
-_PATH_RE = re.compile(
-    r"(?P<p>(?:[A-Za-z]:)?(?:/|\\)[^\s`'\"<>|]+|"
+# Pointer keys Host writes into the stub. Values are leased paths.
+_POINTER_LINE_RE = re.compile(
+    r"^\s*(prompt|method|bundle|session_dir|read|write|forbid_read|environment)\s*:\s*(.+)$",
+    re.I,
+)
+_USER_QUESTION_RE = re.compile(r"^USER QUESTION\b", re.I)
+_QUESTION_END_PREFIXES = (
+    "MUST ",
+    "Do NOT",
+    "Hard stop:",
+    "Return a short",
+    "After a directed",
+)
+# Product / session paths. Do NOT match `/foo` after `a/foo` (user identifiers)
+# or `CodeMap / minimal` (prose). Unix abs needs 2+ segments.
+_PRODUCT_PATH_RE = re.compile(
+    r"(?P<p>"
+    r"(?:[A-Za-z]:[/\\][^\s`'\"<>|]+)|"
+    r"(?:/(?:[^\s`'\"<>|/]+/)[^\s`'\"<>|]+)|"
     r"runs/[^\s`'\"<>|]+|"
     r"uo/[^\s`'\"<>|]+|"
     r"tg/[^\s`'\"<>|]+|"
@@ -214,14 +231,44 @@ _PATH_RE = re.compile(
 )
 
 
+def _tokens_from_pointer_value(value: str) -> list[str]:
+    text = str(value or "").strip()
+    if not text or text.startswith("(none"):
+        return []
+    out: list[str] = []
+    for raw in text.split(","):
+        tok = raw.strip().rstrip("),.;")
+        if not tok or tok.startswith("(none"):
+            continue
+        out.append(tok)
+    return out
+
+
 def extract_stub_paths(stub: str) -> list[str]:
-    """Collect path-like tokens from a task_prompt_stub for BUNDLE_NOT_READABLE."""
+    """Collect leased paths from stub pointer lines — not from USER QUESTION.
+
+    User questions may contain identifiers like ``queryRope/keyRope`` or prose
+    like ``CodeMap / minimal``; those must not become BUNDLE_NOT_READABLE misses.
+    """
     found: list[str] = []
+    in_question = False
     for line in str(stub or "").splitlines():
-        if ":" not in line and "prompt" not in line.lower() and "method" not in line.lower():
-            # Still scan for absolute / relative product paths
-            pass
-        for m in _PATH_RE.finditer(line):
+        stripped = line.strip()
+        if _USER_QUESTION_RE.match(stripped):
+            in_question = True
+            continue
+        if in_question:
+            if stripped.startswith(_QUESTION_END_PREFIXES):
+                in_question = False
+            else:
+                continue
+        ptr = _POINTER_LINE_RE.match(line)
+        if ptr:
+            for tok in _tokens_from_pointer_value(ptr.group(2)):
+                if tok not in found:
+                    found.append(tok)
+            continue
+        for m in _PRODUCT_PATH_RE.finditer(line):
             p = m.group("p").rstrip("),.;")
             if p and p not in found:
                 found.append(p)

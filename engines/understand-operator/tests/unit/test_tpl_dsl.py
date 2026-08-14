@@ -49,7 +49,18 @@ def test_bool_direct_encoding():
     assert sch.encode_bool(0) == 0
 
 
-def test_undefined_bw_tokens():
+def test_uint_literal_and_named_macro_width():
+    sch = parse_args_decl(
+        "ASCENDC_TPL_ARGS_DECL(Op,"
+        "ASCENDC_TPL_UINT_DECL(Dx, ROPE_GRAD_BIT_WIDTH, ASCENDC_TPL_UI_RANGE, 1, 201, 206),"
+        "ASCENDC_TPL_UINT_DECL(Flag, 1, ASCENDC_TPL_UI_LIST, 0, 1),"
+        ")"
+    )
+    assert sch.dims[0].name == "Dx"
+    assert sch.dims[0].bw == 8
+    assert sch.dims[1].name == "Flag"
+    assert sch.dims[1].bw == 1
+    assert sch.dims[1].vals[0] == "ASCENDC_TPL_UI_LIST"
     sch = parse_args_decl(
         "ASCENDC_TPL_ARGS_DECL(Op,"
         "ASCENDC_TPL_UINT_DECL(A, ASCENDC_TPL_10_BW, ASCENDC_TPL_UI_LIST, 0),"

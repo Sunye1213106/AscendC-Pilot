@@ -2,7 +2,7 @@
 
 按需阅读。Deterministic pass 无法闭合的 residual 合法存在；**不得**默认用 LLM 补进 canonical `.uo`。
 
-评价建库看 `uo/checks/quality.yaml` 的 `grade`（ready / usable / not_ready）和 `unresolved.locate_blocking`，不要用 `unresolved.yaml` 总条数。HOST 运行时叶、PROJECT/BUILTIN 实体不算定位失败。
+评价建库看 `uo/checks/quality.yaml` 的 `grade`（ready / usable / not_ready）和 `unresolved.locate_blocking`，不要用 `unresolved.yaml` 总条数。HOST 运行时叶、PROJECT/BUILTIN 实体不算定位失败。节点/关系数量在同一份收据的 `graph.entity_count` / `graph.relation_count`（verify 写入）。
 
 ## 查什么
 

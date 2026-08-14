@@ -271,8 +271,7 @@ def _build_task_prompt_stub(
             "Do NOT write uo/checks/* or modify the `.uo` product; those are not this Action's outputs."
         )
         lines.append(
-            "Hard stop: claim sufficient OR exploration budget exhausted "
-            "(uo-query≤12, ro-search≤4, Read≤4, total≤18, hard≤22)."
+            "Hard stop: answer the USER QUESTION from CodeMap; do not stall on routing."
         )
         lines.append(
             "After a directed source Read for high confidence, run "
@@ -308,7 +307,7 @@ def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
 
 
 def _uo_query_method_path(repo: Path) -> Path:
-    """Claim-driven Explore playbook for ``uo-query`` (materialized as session/method.md)."""
+    """Query playbook for ``uo-query`` (materialized as session/method.md)."""
     return _capability_method_path(repo, "operator-analysis", "uo-query")
 
 
@@ -335,8 +334,10 @@ def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | Non
         or aid == "exclusion_review"
     ):
         return _capability_method_path(repo, "code-engineering", "ce-exclusion-review")
-    if aid == "scenario_knobs" or tpid == "ce/scenario-infer":
+    if aid == "scenario_knobs" or tpid in {"ce/scenario-infer", "ce/scenario-knobs"}:
         return _capability_method_path(repo, "code-engineering", "ce-scenario-knobs")
+    if aid == "scenario_infer" or mid.endswith("/scenario-infer"):
+        return _capability_method_path(repo, "code-engineering", "ce-scenario-infer")
     return None
 
 
@@ -972,12 +973,39 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         role_id=role_id,
         execution_mode=str(action.get("execution_mode") or "") or None,
     )
-    prepare_nonce = secrets.token_hex(16)
-    nonce = prepare_nonce  # mirror for legacy readers; finalize requires prepare_nonce
-    action_sid = make_action_session_id(run_id, action_id, prepare_nonce)
-    sdir = _session_dir(project_root, run_id, action_id)
-    sdir.mkdir(parents=True, exist_ok=True)
-    staging_dir(sdir).mkdir(parents=True, exist_ok=True)
+    existing_active = _load(agent_root(project_root, arch) / "state" / "active_action.yaml")
+    existing_sdir = Path(str(existing_active.get("session_dir") or "") or "")
+    reuse_prepared = (
+        execution_mode != EXECUTION_DETERMINISTIC
+        and str(existing_active.get("status") or "") == "prepared"
+        and str(existing_active.get("run_id") or "") == run_id
+        and str(existing_active.get("action_id") or "") == action_id
+        and existing_sdir.is_dir()
+        and (existing_sdir / "session.yaml").is_file()
+    )
+    if reuse_prepared:
+        session_prev = _load(existing_sdir / "session.yaml")
+        prepare_nonce = str(
+            existing_active.get("prepare_nonce") or session_prev.get("prepare_nonce") or ""
+        ).strip()
+        if not prepare_nonce:
+            reuse_prepared = False
+            prepare_nonce = secrets.token_hex(16)
+        nonce = prepare_nonce
+        action_sid = str(
+            existing_active.get("action_session_id")
+            or make_action_session_id(run_id, action_id, prepare_nonce)
+        )
+        sdir = existing_sdir
+        sdir.mkdir(parents=True, exist_ok=True)
+        staging_dir(sdir).mkdir(parents=True, exist_ok=True)
+    if not reuse_prepared:
+        prepare_nonce = secrets.token_hex(16)
+        nonce = prepare_nonce  # mirror for legacy readers; finalize requires prepare_nonce
+        action_sid = make_action_session_id(run_id, action_id, prepare_nonce)
+        sdir = _session_dir(project_root, run_id, action_id)
+        sdir.mkdir(parents=True, exist_ok=True)
+        staging_dir(sdir).mkdir(parents=True, exist_ok=True)
 
     from ascendc_pilot.context import build_context_pack, maybe_compile_slice
 
@@ -1128,222 +1156,24 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if eng_ctx.get("ok") is False:
         return eng_ctx
     prepare_engine: dict[str, Any] | None = None
-    # semantic_bind is deterministic-only now (no LLM producer overlay). The old
-    # producer prepare_stamp path referenced an unbound `stamp` local and is gone.
-    # resolve_gaps: shard blockers (≤30) for closed-vocabulary producer patches.
-    resolve_gaps_deferred = False
-    if wid == "uo-init" and action_id == "resolve_gaps" and role_id == "producer":
-        from ascendc_pilot.ownership import (
-            shard_producer_forbidden_read_paths,
-            shard_producer_read_paths,
-            shard_producer_write_paths,
-        )
-        from ascendc_pilot.paths import uo_root as _uo_root_fn
-        from ascendc_pilot.uo_artifacts import read_yaml, write_yaml
+    # semantic_bind is deterministic-only (no LLM producer overlay).
+    # Subagent scaffolds in ENGINE_REGISTRY (e.g. lemma_mine hypotheses)
+    # run at prepare; never auto-finalize on engine ok.
+    if execution_mode == EXECUTION_SUBAGENT:
+        from ascendc_pilot.actions.engines import ENGINE_REGISTRY
 
-        prepare_engine = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
-        if not prepare_engine.get("ok"):
-            return {
-                "ok": False,
-                "error": "RESOLVE_GAPS_PREPARE_FAILED",
-                "engine": prepare_engine,
-                "message_zh": str(
-                    prepare_engine.get("message_zh")
-                    or prepare_engine.get("error")
-                    or "resolve_gaps prepare failed"
-                ),
-            }
-        bundle["prepare_engine"] = {
-            "ok": True,
-            "need_subagent": bool(prepare_engine.get("need_subagent")),
-            "blocker_count": prepare_engine.get("blocker_count"),
-            "deferred": bool(prepare_engine.get("deferred")),
-        }
-        if prepare_engine.get("skipped") or prepare_engine.get("deferred") or not prepare_engine.get(
-            "need_subagent"
-        ):
-            resolve_gaps_deferred = True
-            bundle["dispatch_targets"] = {
-                "not_applicable": True,
-                "skip_subagent": True,
-                "deferred": True,
-                "write": ["uo/ir/resolve_gaps_receipt.yaml"],
-                "forbid_write": ["uo/ir/gap_bindings.yaml", "uo/ir/host_derivation.yaml"],
-            }
-            target_line = (
-                "NO LLM work — resolve_gaps deferred/skipped; Host will auto-finalize"
-            )
-            prompt_r = _render_placeholders(prompt, **{**ph_kwargs, "target": target_line})
-        else:
-            uo = _uo_root_fn(project_root)
-            unresolved = read_yaml(uo / "ir" / "unresolved.yaml") or {}
-            blockers = [
-                b for b in (unresolved.get("blockers") or []) if isinstance(b, dict)
-            ]
+        if (wid, action_id) in ENGINE_REGISTRY:
             try:
-                from uo_init.blocker_shards import (
-                    materialize_blocker_batches,
-                    plan_blocker_shards,
-                )
-            except ImportError:
-                import sys
-
-                eng_src = (
-                    Path(__file__).resolve().parents[3]
-                    / "engines"
-                    / "understand-operator"
-                    / "src"
-                )
-                if eng_src.is_dir() and str(eng_src) not in sys.path:
-                    sys.path.insert(0, str(eng_src))
-                from uo_init.blocker_shards import (
-                    materialize_blocker_batches,
-                    plan_blocker_shards,
-                )
-
-            manifest = plan_blocker_shards(blockers)
-            if not manifest.get("ok"):
-                return {
-                    "ok": False,
-                    "error": str(manifest.get("error") or "LLM_WORK_NOT_SHARDED"),
-                    "manifest": {
-                        k: manifest.get(k)
-                        for k in (
-                            "obligation_count",
-                            "shard_count",
-                            "max_per_shard",
-                            "message_zh",
-                        )
-                    },
-                    "message_zh": str(
-                        manifest.get("message_zh") or "resolve_gaps 分片失败"
-                    ),
+                scaffold = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
+            except Exception:  # noqa: BLE001
+                scaffold = None
+            if isinstance(scaffold, dict) and scaffold.get("ok"):
+                prepare_engine = scaffold
+                bundle["prepare_engine"] = {
+                    "ok": True,
+                    "scaffold": True,
+                    "engine": scaffold.get("engine"),
                 }
-            (Path(sdir) / "inputs" / "batches").mkdir(parents=True, exist_ok=True)
-            (Path(sdir) / "parts").mkdir(parents=True, exist_ok=True)
-            (Path(sdir) / "scratch").mkdir(parents=True, exist_ok=True)
-            materialize_blocker_batches(
-                Path(sdir),
-                manifest,
-                unresolved=unresolved if isinstance(unresolved, dict) else {},
-                closed_vocabulary=(
-                    unresolved.get("closed_vocabulary")
-                    if isinstance(unresolved, dict)
-                    else None
-                ),
-            )
-            write_yaml(
-                Path(sdir) / "inputs" / "blocker_batches.yaml",
-                {
-                    "version": 1,
-                    "obligation_count": manifest.get("obligation_count"),
-                    "shard_count": manifest.get("shard_count"),
-                    "max_per_shard": manifest.get("max_per_shard"),
-                    "shards": [
-                        {k: v for k, v in sh.items() if k != "blockers_by_id"}
-                        for sh in (manifest.get("shards") or [])
-                        if isinstance(sh, dict)
-                    ],
-                },
-            )
-            dispatch_tasks: list[dict[str, Any]] = []
-            for sh in manifest.get("shards") or []:
-                if not isinstance(sh, dict):
-                    continue
-                sid = str(sh.get("shard_id") or "")
-                idx = int(sh.get("shard_index") or 0)
-                batch_name = f"batch_{sid}.yaml"
-                bids = [str(x) for x in (sh.get("blocker_ids") or [])]
-                shard_target = (
-                    f"blockers ({len(bids)}): " + ", ".join(bids) + " → write "
-                    f"runs/{run_id}/actions/resolve_gaps/parts/part_{sid}.yaml"
-                )
-                dt: dict[str, Any] = {
-                    "shard_id": sid,
-                    "shard_index": idx,
-                    "actor_id": actor_id,
-                    "action_id": action_id,
-                    "blocker_ids": bids,
-                    "task_count": len(bids),
-                    "batch_file": f"inputs/batches/{batch_name}",
-                    "part_file": f"parts/part_{sid}.yaml",
-                    "allowed_read_paths": shard_producer_read_paths(
-                        wid,
-                        action_id,
-                        run_id=run_id,
-                        shard_id=sid,
-                        batch_name=batch_name,
-                    ),
-                    "allowed_write_paths": shard_producer_write_paths(
-                        wid, action_id, run_id=run_id, shard_id=sid
-                    ),
-                    "forbidden_read_paths": shard_producer_forbidden_read_paths(
-                        wid, action_id, run_id=run_id, shard_id=sid
-                    ),
-                    "forbidden_write_paths": [
-                        "uo/ir/**",
-                        "uo/tiling/**",
-                        "uo/quality.yaml",
-                    ],
-                }
-                shard_prompt = _render_placeholders(
-                    prompt,
-                    **{**ph_kwargs, "target": shard_target, "shard_id": sid},
-                )
-                stub_body = (
-                    f"action_id=resolve_gaps shard_id={sid}\n"
-                    f"actor_id={actor_id}\n"
-                    f"run_id={run_id}\n"
-                    f"batch: runs/{run_id}/actions/resolve_gaps/inputs/batches/{batch_name}\n"
-                    f"write: runs/{run_id}/actions/resolve_gaps/parts/part_{sid}.yaml\n"
-                    f"scratch: runs/{run_id}/actions/resolve_gaps/scratch/{sid}/**\n"
-                    "FORBIDDEN: read other batches/parts; FORBIDDEN: write uo/ir/**; "
-                    "FORBIDDEN: acp finalize/next/advance\n"
-                    f"blockers ({len(bids)}): {', '.join(bids)}\n"
-                    "Follow session prompt.md / method.md / bundle.yaml after reading the batch.\n"
-                )
-                dt["task_prompt_stub"] = stub_body
-                dt["prompt_rendered"] = shard_prompt
-                dispatch_tasks.append(dt)
-
-            first_sid = (
-                str(dispatch_tasks[0].get("shard_id") or "000") if dispatch_tasks else "000"
-            )
-            first_bids = list(dispatch_tasks[0].get("blocker_ids") or []) if dispatch_tasks else []
-            target_line = (
-                f"shard {first_sid} blockers: " + ", ".join(first_bids)
-                if first_bids
-                else "see dispatch_tasks[]"
-            )
-            prompt_r = _render_placeholders(
-                prompt, **{**ph_kwargs, "target": target_line, "shard_id": first_sid}
-            )
-            bundle["dispatch_tasks"] = dispatch_tasks
-            bundle["dispatch_targets"] = {
-                "map_reduce": True,
-                "output_mode": "staged",
-                "shard_count": len(dispatch_tasks),
-                "obligation_count": manifest.get("obligation_count"),
-                "read": [
-                    f"runs/{run_id}/actions/resolve_gaps/inputs/blocker_batches.yaml",
-                    f"runs/{run_id}/actions/resolve_gaps/inputs/batches/**",
-                    "uo/ir/unresolved.yaml",
-                    "uo/ir/resolve_gaps_staging.yaml",
-                ],
-                "write": [
-                    f"runs/{run_id}/actions/resolve_gaps/parts/**",
-                    f"runs/{run_id}/actions/resolve_gaps/scratch/**",
-                ],
-                "forbid_write": ["uo/ir/**", "uo/tiling/**", "uo/quality.yaml"],
-                "forbid_read": shard_producer_forbidden_read_paths(
-                    wid, action_id, run_id=run_id
-                ),
-            }
-            bundle["blocker_batches"] = {
-                "shard_count": len(dispatch_tasks),
-                "obligation_count": manifest.get("obligation_count"),
-                "max_per_shard": manifest.get("max_per_shard"),
-            }
 
     # Fail-closed: never dispatch a half-rendered prompt/method.
     unresolved = unresolved_placeholders(prompt_r) + unresolved_placeholders(method_r)
@@ -1638,6 +1468,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     except Exception as _mat_exc:  # noqa: BLE001
         bundle["method_materialized"] = {"error": str(_mat_exc)[:200]}
 
+    # Write bundle.yaml before BUNDLE_NOT_READABLE: the check always requires
+    # the session pack (prompt/method/bundle). Dumping after the check made
+    # the first kb_lookup prepare fail on its own missing bundle.yaml.
+    _dump(
+        sdir / "bundle.yaml",
+        {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
+    )
     if stub:
         (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
         # BUNDLE_NOT_READABLE: symmetric to OUTPUT_NOT_WRITABLE.
@@ -1667,11 +1504,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 }
         except Exception:  # noqa: BLE001
             pass
-
-    _dump(
-        sdir / "bundle.yaml",
-        {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
-    )
     _write_active_action(
         project_root,
         {
@@ -1722,6 +1554,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "ok": True,
         "phase_runtime": "prepare",
         "action_id": action_id,
+        "workflow_id": wid,
         "actor_id": actor_id,
         "role_id": role_id,
         "execution_mode": execution_mode,
@@ -1750,32 +1583,32 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         return result
 
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
+        from ascendc_pilot.human_confirm import (
+            build_ask,
+            interaction_kind,
+            primary_interactive_steps,
+        )
         from ascendc_pilot.human_interaction import (
             KIND_PRIMARY_APPROVE,
             KIND_PRIMARY_CONFIRM,
             attach_interaction_request,
         )
-
-        from ascendc_pilot.human_voice import (
-            build_generic_interactive_ask,
-            build_human_confirm_ask,
-            build_plan_approve_ask,
-        )
         from ascendc_pilot.state import load_state as _load_state_for_voice
 
-        voice_state = _load_state_for_voice(project_root) or state
-        if action_id == "human_confirm":
-            ask = build_human_confirm_ask(project_root, voice_state)
-            kind = KIND_PRIMARY_CONFIRM
-            user_summary = ask.get("question") or ""
-        elif action_id == "plan_approve":
-            ask = build_plan_approve_ask(project_root, voice_state)
-            kind = KIND_PRIMARY_APPROVE
-            user_summary = ask.get("question") or ""
-        else:
-            ask = build_generic_interactive_ask(action_id)
-            kind = KIND_PRIMARY_CONFIRM
-            user_summary = ask.get("question") or ""
+        voice_state = dict(_load_state_for_voice(project_root) or state or {})
+        if not voice_state.get("workflow_id"):
+            voice_state["workflow_id"] = wid
+        ask = build_ask(
+            project_root,
+            voice_state,
+            workflow_id=wid,
+            action_id=action_id,
+        )
+        kind_s = interaction_kind(
+            project_root, action_id, workflow_id=wid, state=voice_state
+        )
+        kind = KIND_PRIMARY_APPROVE if kind_s == "primary_approve" else KIND_PRIMARY_CONFIRM
+        user_summary = ask.get("question") or ""
         result["needs_human_decision"] = True
         result["ask_question"] = ask
         result["action_id"] = action_id
@@ -1786,9 +1619,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             kind=kind,
             action_id=action_id,
         )
-        from ascendc_pilot.actions.tg_primary import primary_interactive_steps
-
-        result["interactive_steps"] = primary_interactive_steps(action_id, project_root, result)
+        result["interactive_steps"] = primary_interactive_steps(
+            action_id, project_root, result, workflow_id=wid
+        )
         # Machine-facing dispatch note for Primary; Host shows ask_question / user_summary_zh.
         result["message_zh"] = (
             "已准备需要你确认的步骤。请按弹出的选项作答；"
@@ -1857,28 +1690,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         result.setdefault("resume_required", False)
         result.setdefault("resume_session_id", "")
-    if wid == "uo-init" and action_id == "resolve_gaps":
-        if resolve_gaps_deferred:
-            fin = finalize_action(project_root, action_id, engine_result=prepare_engine)
-            result["auto_finalize"] = True
-            result["dispatch_task"] = False
-            result["finalize"] = fin
-            result["ok"] = bool(fin.get("ok"))
-            result["message_zh"] = (
-                "resolve_gaps：无派生 blocker 且总数未达阈值，已 deferred 并 auto-finalize；请 `acp next`。"
-            )
-            return result
-        result["finalize_required"] = True
-        result["recommended_command"] = "acp run-action resolve_gaps --finalize"
-        result["dispatch_tasks"] = bundle.get("dispatch_tasks") or []
-        result["dispatch_targets"] = bundle.get("dispatch_targets")
-        result["blocker_batches"] = bundle.get("blocker_batches")
-        shard_n = len(result["dispatch_tasks"])
-        result["message_zh"] = (
-            f"已准备 resolve_gaps：{shard_n} 个 shard（每 shard≤30 blocker）；"
-            f"按 `dispatch_tasks[]` 派发 `{actor_id}`，各 task 原样使用其 `task_prompt_stub`。"
-            f"全部完成后 `acp run-action resolve_gaps --finalize`，然后必须 `acp next` → apply_gap_patch。"
-        )
     return result
 
 

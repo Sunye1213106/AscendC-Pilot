@@ -37,8 +37,9 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
             root_name = str(root)
             if not root_name:
                 continue
+            known_inputs = {e.name for e in codemap.by_kind(EntityKind.INPUT)}
             root_e = codemap.upsert(
-                EntityKind.INPUT if _looks_like_input(root_name) else EntityKind.VARIABLE,
+                EntityKind.INPUT if _looks_like_input(root_name, known_inputs) else EntityKind.VARIABLE,
                 root_name,
                 attrs={"layer": "api", "role": "input_root"},
             )
@@ -61,14 +62,14 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     return codemap
 
 
-def _looks_like_input(name: str) -> bool:
+def _looks_like_input(name: str, known_inputs: set[str] | None = None) -> bool:
     n = name.strip()
     if not n:
         return False
+    if known_inputs and n in known_inputs:
+        return True
     if n.isupper() and "_" in n:
         return True
     if n.startswith("INPUT_") or n.startswith("ATTR_"):
-        return True
-    if n in {"query", "key", "value", "queryType", "layoutType", "attenMask"}:
         return True
     return False

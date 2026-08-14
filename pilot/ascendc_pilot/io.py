@@ -18,8 +18,12 @@ def configure_stdio() -> None:
                 pass
 
 
-def print_json(payload: Any, *, default: Any = None) -> None:
-    kwargs: dict[str, Any] = {"ensure_ascii": False, "indent": 2}
+def print_json(payload: Any, *, default: Any = None, compact: bool = False) -> None:
+    kwargs: dict[str, Any] = {"ensure_ascii": False}
+    if compact:
+        kwargs["separators"] = (",", ":")
+    else:
+        kwargs["indent"] = 2
     if default is not None:
         kwargs["default"] = default
     text = json.dumps(payload, **kwargs)

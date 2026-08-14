@@ -18,4 +18,4 @@ index miss ≠ absence in source
 - writers / callers / 宏上下文 / 模板实例是否闭合
 - 对当前命题是否已补齐必要缺口
 
-不足时：继续读源码，或返回 `INSUFFICIENT` / `UNRESOLVED`。详见各 domain 的 completeness / derivation-quality。
+不足时：继续读源码，或返回 `INSUFFICIENT` / `UNRESOLVED`。详见各 domain 的 completeness / `evidence-quality.md`。

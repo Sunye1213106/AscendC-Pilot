@@ -32,6 +32,7 @@
 ```
 
 - [架构总览](architecture/overview.md)
+- [工作流流程图](architecture/workflows.md)
 - [Agent Runtime](architecture/agent-runtime.md)（含 `pilot_run`、`host_step`、Bundle 读闭合）
 - [产物与权威](architecture/artifacts-and-authority.md)
 - UO 查询产品地图：[`skills/operator-analysis/references/uo-product-map.md`](../skills/operator-analysis/references/uo-product-map.md)（progressive；域文档按需）

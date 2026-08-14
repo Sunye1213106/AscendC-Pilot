@@ -13,13 +13,14 @@ from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
 from ascendc_pilot.actions.tg_compaction import compact_after_plan_approve
 from ascendc_pilot.actions.tg_full_precheck import install as _install_tg_full_precheck
 from ascendc_pilot.actions.tg_plan_targets import install as _install_tg_plan_targets
-from ascendc_pilot.actions.tg_primary import (
-    PRIMARY_TG_ACTIONS,
+from ascendc_pilot.actions.uo_product_compaction import install as _install_uo_product_compaction
+from ascendc_pilot.human_confirm import (
+    compact_key,
+    is_hosted_confirm,
     materialize_primary_decision,
     primary_interactive_steps,
     rollback_primary_decision,
 )
-from ascendc_pilot.actions.uo_product_compaction import install as _install_uo_product_compaction
 
 _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     "uo-prepare-v1": [
@@ -40,7 +41,7 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
         "uo/ir/unresolved.yaml",
     ],
     "uo-commit-v1": ["uo/*.uo"],
-    "uo-verify-v1": ["uo/checks/integrity.yaml"],
+    "uo-verify-v1": ["uo/checks/integrity.yaml", "uo/checks/quality.yaml"],
     "uo-investigate-v1": [
         "uo/ir/gap_investigation.yaml",
         "runs/{run_id}/actions/investigate/report.yaml",
@@ -138,17 +139,19 @@ def _host_action_result_from_env(
 
 def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     result = _prepare_with_fast_uo_engine(project_root, action_id)
-    if result.get("ok") and action_id in PRIMARY_TG_ACTIONS:
+    root = Path(project_root)
+    wid = str(result.get("workflow_id") or "")
+    if result.get("ok") and is_hosted_confirm(root, action_id, workflow_id=wid):
         result["interactive_steps"] = primary_interactive_steps(
             action_id,
-            Path(project_root),
+            root,
             result,
+            workflow_id=wid,
         )
         result["dispatch_task"] = False
         result["message_zh"] = (
-            f"已准备 TG primary_interactive Action `{action_id}`。"
-            "请先审阅合同与 unresolved，并通过 AskQuestion 获取明确决定；"
-            "只有确认/批准分支才能调用 --finalize。"
+            f"已准备需要你确认的步骤 `{action_id}`。"
+            "请按弹出的选项作答；只有确认/批准分支才能调用 --finalize。"
         )
     return result
 
@@ -161,7 +164,8 @@ def finalize_action(
     result_file: Path | str | None = None,
     action_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if action_id not in PRIMARY_TG_ACTIONS or engine_result is not None:
+    root = Path(project_root)
+    if engine_result is not None or not is_hosted_confirm(root, action_id):
         return _runtime.finalize_action(
             project_root,
             action_id,
@@ -170,7 +174,7 @@ def finalize_action(
             action_result=action_result,
         )
 
-    materialized = materialize_primary_decision(Path(project_root), action_id)
+    materialized = materialize_primary_decision(root, action_id)
     if not materialized.get("ok"):
         return materialized
 
@@ -181,8 +185,8 @@ def finalize_action(
         result["primary_decision_rolled_back"] = True
         return result
 
-    if action_id == "plan_approve":
-        compact = compact_after_plan_approve(Path(project_root))
+    if compact_key(root, action_id) == "plan_approve":
+        compact = compact_after_plan_approve(root)
         result["compaction"] = compact
         if not compact.get("ok"):
             result["compaction_warning"] = "TG_COMPACTION_INCOMPLETE"

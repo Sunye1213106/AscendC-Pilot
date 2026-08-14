@@ -109,10 +109,18 @@ def _find_header(codemap: CodeMap, ctx: dict[str, Any]) -> Path | None:
     op_root = str(ctx.get("op_root") or "").strip()
     if op_root:
         root = Path(op_root).expanduser().resolve()
+        arch = str(ctx.get("architecture") or codemap.architecture or "")
+        try:
+            from uo_init.source_layout import select_tpl_decl_header
+
+            hit = select_tpl_decl_header(root, arch)
+            if hit is not None and hit.is_file():
+                return hit.resolve()
+        except Exception:
+            pass
         try:
             from uo_init.op_spec import discover
 
-            arch = str(ctx.get("architecture") or codemap.architecture or "")
             spec = discover(root, arch_dir=arch or None)
             if spec.tiling_key_header and Path(spec.tiling_key_header).is_file():
                 return Path(spec.tiling_key_header).resolve()

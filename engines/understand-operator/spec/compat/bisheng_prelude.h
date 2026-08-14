@@ -47,13 +47,11 @@ using hifloat8_t = __bs_hif8;
 using float8_e4m3_t = __bs_f8_e4m3;
 using float8_e5m2_t = __bs_f8_e5m2;
 using float8_e8m0_t = __bs_f8_e8m0;
-using fp8_e4m3fn_t = __bs_f8_e4m3;
-using fp8_e5m2_t = __bs_f8_e5m2;
-using fp8_e8m0_t = __bs_f8_e8m0;
 using float4_e2m1x2_t = __bs_f4_e2m1x2;
 using float4_e1m2x2_t = __bs_f4_e1m2x2;
-using fp4x2_e1m2_t = __bs_f4_e1m2x2;
-using fp4x2_e2m1_t = __bs_f4_e2m1x2;
+// Do not alias fp4x2_* / fp8_* here. tikcfw common_types.h defines those
+// as float4_*/float8_* on arch35 and as uint8_t on older arches; a prelude
+// using would make the uint8_t branch a type-alias redefinition.
 struct __bs_i4x2 { uint8_t v; };
 using int4x2_t = __bs_i4x2;
 
@@ -78,7 +76,23 @@ enum mem_t {
 // Enums from cce_aicore_intrinsics.h. Stubbed here because that header is only
 // reachable after several other builtins parse cleanly; without these stubs
 // DMA / pad structs fail early with "unknown type name".
-enum QuantMode_t { NoQuant = 0 };
+enum QuantMode_t {
+    NoQuant = 0,
+    F322F16 = 1,
+    VQF322HIF8_PRE = 2,
+    QF322HIF8_PRE = 3,
+    VDEQF16 = 10,
+    DEQF16 = 11,
+    F322BF16 = 16,
+    VQF162B8_PRE = 17,
+    QF162B8_PRE = 18,
+    VQF322B8_PRE = 23,
+    QF322B8_PRE = 24,
+    VQF322F16_PRE = 31,
+    QF322F16_PRE = 32,
+    VQF322BF16_PRE = 33,
+    QF322BF16_PRE = 34,
+};
 enum pad_t { PAD_NONE = 0 };
 enum cache_line_t { SINGLE_CACHE_LINE = 0, ENTIRE_DATA_CACHE = 1 };
 enum dcci_dst_t { CACHELINE_ALL = 0, CACHELINE_OUT = 2 };
@@ -103,6 +117,20 @@ enum class Mode {
     ZEROING_VALUE,
     MERGING_SRC0_VALUE
 };
+
+// Bisheng SIMT launch builtins. CANN `kernel_simt_utils.h` writes
+// `using Dim3 = cce::dim3` without including a compiler header vanilla clang
+// can see. Cube/softmax tiling PODs and RegTensor stay in CANN headers.
+namespace cce {
+struct dim3 {
+    unsigned int x, y, z;
+    constexpr dim3(unsigned int vx = 1, unsigned int vy = 1, unsigned int vz = 1)
+        : x(vx), y(vy), z(vz) {}
+};
+}
+using Dim3 = cce::dim3;
+struct half2 { half x; half y; };
+struct float2 { float x; float y; };
 
 // ---- vector / mask register builtins (Bisheng MicroAPI foundation) -------
 // CANN: MaskReg=vector_bool, UnalignRegForStore=vector_align, AddrReg=vector_address.

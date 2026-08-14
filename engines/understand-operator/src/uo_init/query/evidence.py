@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from uo_init.ir.entity import Entity, EntityKind
@@ -20,6 +21,10 @@ USEFUL_EDGE_KINDS: tuple[str, ...] = (
     "AWAITS",
     "FLOWS_TO",
     "BINDS",
+    "WRAPS",
+    "DECLARES",
+    "ROOTED_AT",
+    "ALIASES",
 )
 
 _FIELD_EDGE_KINDS = frozenset({"WRITES", "READS", "DERIVES", "CONTROLS"})
@@ -53,7 +58,16 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "producer_sites",
         "check_sites",
     ),
-    EntityKind.FIELD.value: ("layer", "rhs", "guards", "check_sites"),
+    EntityKind.FIELD.value: (
+        "layer",
+        "rhs",
+        "guards",
+        "check_sites",
+        "owner",
+        "cpp_type",
+        "default_initializer",
+    ),
+    EntityKind.TYPE.value: ("cpp_kind", "role", "root", "root_kind", "type_name", "owner"),
     EntityKind.BUFFER.value: (
         "memory_space",
         "tposition",
@@ -78,8 +92,17 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
     EntityKind.QUEUE.value: ("identity", "scope", "type_name", "tposition", "memory_space"),
     EntityKind.BRANCH.value: ("predicate", "condition", "branch_kind", "layer", "function", "dimensions"),
     EntityKind.KERNEL.value: ("source_signature", "variants"),
-    EntityKind.INPUT.value: ("dtype", "shape", "optional", "declaration", "check_sites"),
-    EntityKind.OUTPUT.value: ("dtype", "shape", "declaration"),
+    EntityKind.INPUT.value: (
+        "dtype",
+        "shape",
+        "optional",
+        "declaration",
+        "check_sites",
+        "api_kind",
+        "api_index",
+        "api_attr_index",
+    ),
+    EntityKind.OUTPUT.value: ("dtype", "shape", "declaration", "api_kind", "api_index"),
 }
 
 _DROP_ATTRS = frozenset({"type_text", "snippet"})
@@ -136,6 +159,23 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 
 
 _LONG_EXPR_KEYS = frozenset({"rhs", "expression", "guard", "predicate", "condition"})
+_FULL_FACT_KEYS = frozenset(
+    {
+        "packing_value_sites",
+        "host_writer_sites",
+        "value_defining_sites",
+        "producer_sites",
+        "check_sites",
+    }
+)
+_ARG_CUT_RE = re.compile(r";|\bif\b")
+
+
+def _sanitize_expr(text: str) -> str:
+    cut = _ARG_CUT_RE.search(text)
+    if cut:
+        text = text[: cut.start()].rstrip()
+    return text[:120]
 
 
 def _short_args(value: Any, *, depth: int = 0) -> Any:
@@ -188,7 +228,21 @@ def project_entity(
     for key in _KIND_FACTS.get(kind, ()):
         if key not in attrs or attrs[key] in (None, "", [], {}):
             continue
-        facts[key] = _short_args(attrs[key])
+        value = attrs[key]
+        if key in _FULL_FACT_KEYS:
+            facts[key] = value
+        elif key in _LONG_EXPR_KEYS and isinstance(value, str):
+            facts[key] = value
+        else:
+            facts[key] = _short_args(value)
+    if kind == EntityKind.OPERATION.value and "args" in facts:
+        args = facts["args"]
+        if isinstance(args, str):
+            facts["args"] = _sanitize_expr(args)
+        elif isinstance(args, list):
+            facts["args"] = [
+                _sanitize_expr(item) if isinstance(item, str) else item for item in args[:8]
+            ]
     if kind in {EntityKind.TILING_FIELD.value, EntityKind.FIELD.value} and not facts.get("rhs"):
         rhs = _first_rhs(attrs)
         if rhs:

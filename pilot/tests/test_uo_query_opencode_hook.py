@@ -20,6 +20,16 @@ def test_return_value_hook_is_ephemeral_and_narrow() -> None:
     assert "--result-file" not in text
 
 
+def test_task_hook_uses_pending_dispatch_project() -> None:
+    plugin = (ROOT / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
+    driver = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")
+    assert "ascendc-pending-dispatch.json" in plugin
+    assert "readPendingDispatchProject" in plugin
+    assert "isPilotProjectRoot(cwdNow)" in plugin
+    assert "readLatestPendingDispatch" in driver
+    assert "return readLatestPendingDispatch()" in driver
+
+
 def test_installers_copy_all_opencode_ts_hooks() -> None:
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")

@@ -47,7 +47,6 @@ checks:
   # ... 其余 5 个 id ...
 blockers: []
 warnings: []
-next: "acp run-action human_confirm"
 ```
 
 禁止：

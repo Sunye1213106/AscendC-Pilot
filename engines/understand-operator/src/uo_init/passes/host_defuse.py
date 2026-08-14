@@ -33,11 +33,16 @@ _CONST_ANY_RE = re.compile(
     r"(?P<name>[A-Za-z_]\w*)\s*=\s*(?P<value>[^;]+);"
 )
 _DEFINE_RE = re.compile(r"^\s*#define\s+(?P<name>[A-Za-z_]\w*)\s+(?P<value>[^\n\\]+)\s*$", re.M)
+_CONST_STATIC_INT_RE = re.compile(
+    r"\b(?:const\s+static|static\s+const|static\s+constexpr|constexpr\s+static)\s+"
+    r"(?:const\s+)?(?:u?int(?:32|64)_t|int)\s+(?P<name>[A-Za-z_]\w*)\s*="
+)
 _ASSIGN_RE = re.compile(
     r"(?P<lhs>[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*)\s*(?<![=!<>])=(?!=)\s*(?P<rhs>[^;]+);",
     re.S,
 )
 _IF_RE = re.compile(r"\b(?:if|else\s+if)\s*\((?P<cond>[^{};]*)\)\s*\{", re.S)
+_SWITCH_RE = re.compile(r"\bswitch\s*\((?P<cond>[^{};]*)\)\s*\{", re.S)
 _FUNCTION_RE = re.compile(
     r"(?:inline\s+|static\s+|virtual\s+|constexpr\s+)*"
     r"[A-Za-z_][\w:<>,\s*&~]*?\s+"
@@ -45,7 +50,7 @@ _FUNCTION_RE = re.compile(
     r"\([^;{}]*\)\s*(?:const\s*)?(?:override\s*)?\{",
     re.S,
 )
-_IDENT_RE = re.compile(r"[A-Za-z_]\w*(?:\s*(?:\.|->|::)\s*[A-Za-z_]\w*)*")
+_IDENT_RE = re.compile(r"(?<![0-9A-Za-z_])[A-Za-z_]\w*(?:\s*(?:\.|->|::)\s*[A-Za-z_]\w*)*")
 _API_TOKEN_RE = re.compile(r"\b(InputIndex|AttrIndex)::([A-Za-z_]\w*)")
 _INPUT_ACCESS_RE = re.compile(
     r"\bGet(?:Optional)?Input(?:Shape|Desc)\s*\(\s*(?P<arg>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?|[-+]?\d+)"
@@ -57,6 +62,7 @@ _CAST_RE = re.compile(r"\b(?:static_cast|reinterpret_cast|const_cast|dynamic_cas
 _LINE_COMMENT_RE = re.compile(r"//[^\n]*")
 _BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
 _STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+_CALL_SUFFIX_RE = re.compile(r"\s*(?:<[^;{}()]*>)?\s*\(")
 _CONTROL_NAMES = {"if", "else", "for", "while", "switch", "catch", "return", "sizeof", "alignof"}
 _IGNORED = {
     "auto", "const", "static_cast", "reinterpret_cast", "const_cast", "dynamic_cast", "true", "false",
@@ -91,6 +97,7 @@ def trace_host_key_roots(
     *,
     architecture: str = "",
 ) -> CodeMap:
+    architecture = str(architecture or getattr(codemap, "architecture", "") or "")
     root = Path(operator_root).expanduser().resolve()
     host_files = selected_host_files(root, architecture)
     if not host_files:
@@ -205,6 +212,11 @@ def _assignments(root: Path, path: Path, text: str) -> list[_Record]:
         close_pos = _matching_brace(text, open_pos)
         if close_pos >= 0:
             guard_scopes.append((open_pos + 1, close_pos, match.group("cond").strip()))
+    for match in _SWITCH_RE.finditer(text):
+        open_pos = text.find("{", match.start(), match.end())
+        close_pos = _matching_brace(text, open_pos)
+        if close_pos >= 0:
+            guard_scopes.append((open_pos + 1, close_pos, match.group("cond").strip()))
     out: list[_Record] = []
     for match in _ASSIGN_RE.finditer(text):
         lhs = normalize_symbol(match.group("lhs"))
@@ -263,6 +275,8 @@ def _compile_symbols(codemap: CodeMap, texts: list[tuple[Path, str]]) -> set[str
         for match in _CONST_ANY_RE.finditer(text):
             symbols.add(normalize_symbol(match.group("name")))
         for match in _DEFINE_RE.finditer(text):
+            symbols.add(normalize_symbol(match.group("name")))
+        for match in _CONST_STATIC_INT_RE.finditer(text):
             symbols.add(normalize_symbol(match.group("name")))
         for match in _ENUM_RE.finditer(text):
             enum_name = match.group("name")
@@ -382,9 +396,11 @@ def _resolve_symbol(
             },
             status="confirmed",
         )
+        resolved_any = False
         for text in [record.rhs, *record.guards]:
-            _link_api_accesses(codemap, expr, text, api_maps, file=record.file, line=record.line)
-            for ref in _identifiers(text):
+            if _link_api_accesses(codemap, expr, text, api_maps, file=record.file, line=record.line):
+                resolved_any = True
+            for ref, origin in _identifier_refs(text):
                 ref_norm = normalize_symbol(ref)
                 if ref_norm == normalized:
                     continue
@@ -402,6 +418,7 @@ def _resolve_symbol(
                         status="confirmed",
                     )
                     codemap.link(RelationKind.DERIVES, compile_root.id, expr.id, attrs={"provenance": compile_root.attrs["provenance"]}, status="confirmed")
+                    resolved_any = True
                     continue
 
                 api = _input_by_name(codemap, ref_norm)
@@ -413,6 +430,7 @@ def _resolve_symbol(
                         attrs={"provenance": "source_host_api_name", "symbol": ref_norm},
                         status="confirmed",
                     )
+                    resolved_any = True
                     continue
 
                 upstream_records, upstream_ambiguous = _select_records(
@@ -441,6 +459,7 @@ def _resolve_symbol(
                         )
                         symbol_nodes[ref_norm] = upstream
                     codemap.link(RelationKind.DERIVES, upstream.id, expr.id, attrs={"provenance": "source_host_defuse_dependency", "symbol": ref_norm}, status="confirmed")
+                    resolved_any = True
                     _resolve_symbol(
                         codemap,
                         upstream,
@@ -457,6 +476,11 @@ def _resolve_symbol(
                     )
                     continue
 
+                # A method-call receiver is a lookup key, not a value. Keep it
+                # when it names an INPUT or has a producer; otherwise do not
+                # invent a runtime leaf that pollutes TilingKey completeness.
+                if origin == "call_receiver":
+                    continue
                 if _looks_like_runtime_reference(ref_norm):
                     unresolved = codemap.upsert(
                         EntityKind.FIELD if is_member_symbol(ref_norm) else EntityKind.VARIABLE,
@@ -475,7 +499,7 @@ def _resolve_symbol(
                     )
                     codemap.link(RelationKind.DERIVES, unresolved.id, expr.id, attrs={"provenance": "source_host_unresolved_dependency", "symbol": ref_norm}, status="partial")
 
-        if not _identifiers(record.rhs) and not _link_api_accesses(codemap, expr, record.rhs, api_maps, file=record.file, line=record.line):
+        if not resolved_any and not _value_identifiers(record.rhs) and not _link_api_accesses(codemap, expr, record.rhs, api_maps, file=record.file, line=record.line):
             root = codemap.upsert(
                 EntityKind.COMPILE_VAR,
                 f"host-expr:{record.file}:{record.line}",
@@ -561,7 +585,8 @@ def _input_by_name(codemap: CodeMap, name: str) -> Entity | None:
     hits = codemap.by_name(name, kind=EntityKind.INPUT) or codemap.by_name(short_symbol(name), kind=EntityKind.INPUT)
     if hits:
         return hits[0]
-    for ent in codemap.by_kind(EntityKind.INPUT):
+    inputs = list(codemap.by_kind(EntityKind.INPUT))
+    for ent in inputs:
         spellings = {normalize_symbol(ent.name), short_symbol(ent.name)}
         src = str(ent.attrs.get("source_name") or "")
         if src:
@@ -569,11 +594,25 @@ def _input_by_name(codemap: CodeMap, name: str) -> Entity | None:
             spellings.add(short_symbol(src))
         if needle in spellings or short_symbol(needle) in spellings:
             return ent
+    # Member paths such as ``ifaContext.query.desc`` still name the API tensor.
+    for part in needle.replace("::", ".").split("."):
+        if not part:
+            continue
+        part_hits = [
+            ent
+            for ent in inputs
+            if part in {normalize_symbol(ent.name), short_symbol(ent.name)}
+            or part in {normalize_symbol(str(ent.attrs.get("source_name") or "")), short_symbol(str(ent.attrs.get("source_name") or ""))}
+        ]
+        if len(part_hits) == 1:
+            return part_hits[0]
     return None
 
 
 def _is_compile_reference(value: str, compile_symbols: set[str]) -> bool:
     if value in compile_symbols:
+        return True
+    if re.fullmatch(r"(?:T(?:I)?LING_KEY_|[A-Z0-9_]*TILING_KEY)[A-Z0-9_]*", value or ""):
         return True
     if "::" not in value:
         return False
@@ -599,21 +638,43 @@ def _code_only(text: str) -> str:
     return cleaned
 
 
-def _identifiers(text: str) -> list[str]:
+def _identifier_refs(text: str) -> list[tuple[str, str]]:
+    """Scan value names and method-call receivers.
+
+    A trailing ``(...)`` is a call, not a value. Nested receivers such as
+    ``context.query.desc->GetDataType()`` still name an API tensor and are
+    kept for INPUT lookup. A bare receiver such as ``context_->GetInputShape()``
+    is kept only as a lookup key (producer / INPUT); it must not become an
+    unresolved runtime leaf. Qualified ``ns::Type(...)`` construction is
+    dropped entirely.
+    """
     cleaned = _code_only(text)
-    out: list[str] = []
+    out: list[tuple[str, str]] = []
     for match in _IDENT_RE.finditer(cleaned):
         token = normalize_symbol(match.group(0))
         head = token.split(".")[0].split("::")[0]
         if head in _IGNORED or token in _IGNORED or token.isdigit():
             continue
         rest = cleaned[match.end():]
-        # Function/method calls, including template calls such as
-        # ``tensor.GetData<int64_t>()``, are call facts rather than values.
-        if re.match(r"\s*(?:<[^;{}()]*>)?\s*\(", rest):
-            continue
-        out.append(token)
+        origin = "value"
+        if _CALL_SUFFIX_RE.match(rest):
+            if "." not in token:
+                # Free function or qualified ctor/call: ``Foo()``, ``ns::Type()``.
+                continue
+            token = token.rsplit(".", 1)[0]
+            if not token or token.split(".")[0].split("::")[0] in _IGNORED:
+                continue
+            origin = "call_receiver"
+        out.append((token, origin))
     return out
+
+
+def _value_identifiers(text: str) -> list[str]:
+    return [name for name, kind in _identifier_refs(text) if kind == "value"]
+
+
+def _identifiers(text: str) -> list[str]:
+    return [name for name, _kind in _identifier_refs(text)]
 
 
 def _source_rooted_entities(codemap: CodeMap) -> set[str]:

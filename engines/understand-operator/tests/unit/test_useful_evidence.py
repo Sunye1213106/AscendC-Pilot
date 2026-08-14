@@ -295,3 +295,53 @@ def test_kernel_api_tque_queue_vs_flag_sync(tmp_path: Path) -> None:
     assert ff["flag_paired"] is True
     assert "queue" not in ff
 
+
+def test_writer_keeps_long_packing_rhs(tmp_path: Path) -> None:
+    long_rhs = "alpha && " + "beta && " * 80 + "omega"
+    assert len(long_rhs) > 400
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TK",
+            kind=EntityKind.TILING_KEY,
+            name="IsFoo",
+            attrs={
+                "packing_value_sites": [
+                    {"lhs": "foo", "rhs": long_rhs, "file": "op_host/x.cpp", "line": 10}
+                ]
+            },
+            file="op_kernel/key.h",
+            line_start=1,
+            status="confirmed",
+        )
+    )
+    product = _product(cm, tmp_path)
+    loaded = read_codemap(product)
+    sites = loaded.entities["TK"].attrs["packing_value_sites"]
+    assert sites[0]["rhs"] == long_rhs
+
+
+def test_writer_skips_branch_source_span(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="KBR",
+            kind=EntityKind.BRANCH,
+            name="IS_FOO",
+            attrs={"snippet": "if constexpr (IS_FOO) {", "function": "SetConstInfo"},
+            file="op_kernel/k.h",
+            line_start=20,
+            line_end=20,
+            status="confirmed",
+        )
+    )
+    product = _product(cm, tmp_path)
+    conn = sqlite3.connect(str(product))
+    try:
+        n = conn.execute(
+            "SELECT COUNT(*) FROM source_span WHERE entity_id = ?", ("KBR",)
+        ).fetchone()[0]
+        assert n == 0
+    finally:
+        conn.close()
+

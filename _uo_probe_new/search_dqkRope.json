@@ -1,0 +1,31 @@
+[
+  {
+    "id": "BUF_313A33CB1C55",
+    "kind": "BUFFER",
+    "name": "dqkRopeGmTensor",
+    "status": "extracted",
+    "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+    "line_start": 760,
+    "line_end": 760,
+    "why": "search",
+    "facts": {
+      "memory_space": "GM",
+      "scope": "DqkvMulsAndCastFromGM",
+      "type_name": "GlobalTensor",
+      "role": "project_wrapper"
+    },
+    "snippet": "748:        return;\n749:    }\n750: \n751:    uint32_t loopSize = Ceil<uint32_t>(halfSRealSize, loopNum);\n752:    uint32_t tailLoopSize = halfSRealSize - (loopNum - 1) * loopSize;\n753:    uint32_t curLoopSize = loopSize;\n754:    DataCopyExtParams intriParamsOut;\n755:    intriParamsOut.srcStride = 0;\n756:    uint64_t dqkvGmOffset = (MM_IDX == DQ_IDX) ?    \n757:                               runInfo.commonRunInfo.queryOffset :\n758:                               (MM_IDX == DK_IDX ? runInfo.commonRunInfo.keyOffset : runInfo.commonRunInfo.valueOffset);\n759:    uint64_t ropeGmOffset;\n760:    GlobalTensor<OUTDTYPE> dqkRopeGmTensor;\n761:    int64_t ropeDstStride;\n762:    if constexpr (IS_ROPE) {\n763:        dSize = constInfo.commonConstInfo.dSizeV;\n764:        dqkvGmOffset = (MM_IDX == DQ_IDX) ?\n765:                            runInfo.queryOffsetWithRopeForMm12 :\n766:                            (MM_IDX == DK_IDX ? runInfo.keyOffsetWithRopeForMm12 :\n767:                            runInfo.commonRunInfo.valueOffset);\n768:        ropeGmOffset = MM_IDX == DQ_IDX ? runInfo.commonRunInfo.qRopeOffset :\n769:            runInfo.commonRunInfo.kRopeOffset;\n770:        dqkRopeGmTensor = MM_IDX == DQ_IDX ? dqRopeGm : dkRopeGm;\n771:        if constexpr (IS_TND) {\n772:            ropeDstStride = (constInfo.commonConstInfo.n2G - 1) *\n773:                constInfo.dRopeSize * sizeof(OUTDTYPE);\n774:            ropeGmOffset += vSubBlockIdx * firsthalfSRealSize * constInfo.commonConstInfo.n2GDr;\n775:        } else {\n776:            if (constInfo.commonConstInfo.layoutType == BNGSD) {\n777:                ropeDstStride = 0;\n778:                ropeGmOffset += vSubBlockIdx * firsthalfSRealSize * constInfo.dRopeSize;\n779:            } else if (constInfo.commonConstInfo.layoutType == SBNGD) {\n780:                ropeDstStride = (constInfo.bSize * constInfo.commonConstInfo.n2G - 1) *\n781:                    constInfo.dRopeSize * sizeof(OUTDTYPE);\n782:                ropeGmOffset += vSubBlockIdx * firsthalfSRealSize * constInfo.commonConstInfo.bN2GDr;\n783:            } else if (constInfo.commonConstInfo.layoutType == BSNGD) {\n784:                ropeDstStride = (constInfo.commonConstInfo.n2G - 1) *\n785:                    constInfo.dRopeSize * sizeof(OUTDTYPE);\n786:                ropeGmOffset += vSubBlockIdx * firsthalfSRealSize * constInfo.commonConstInfo.n2GDr;\n787:            }",
+    "relationships": [
+      {
+        "kind": "WRAPS",
+        "src": "BUF_313A33CB1C55",
+        "dst": "ROOT_68AA6851BF49",
+        "other_id": "ROOT_68AA6851BF49",
+        "other_kind": "TYPE",
+        "other_name": "AscendC::GlobalTensor",
+        "file": "",
+        "line_start": 0
+      }
+    ]
+  }
+]

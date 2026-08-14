@@ -2445,7 +2445,7 @@ def probe_diagnostics(
         except Exception:  # noqa: BLE001
             cache_key = ""
 
-    from uo_init.diag_scope import diagnostic_in_operator
+    from uo_init.diag_scope import score_tu_diagnostics
 
     args = (
         ctx.host_args()
@@ -2459,41 +2459,14 @@ def probe_diagnostics(
         args=args,
         options=cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
     )
-    errors = 0
-    fatals = 0
-    op_errors = 0
-    op_fatals = 0
-    samples: list[str] = []
-    for d in tu.diagnostics:
-        sev = int(d.severity)
-        if sev < 3:
-            continue
-        errors += 1
-        if sev >= 4:
-            fatals += 1
-        loc_file = ""
-        try:
-            if d.location.file is not None:
-                loc_file = str(d.location.file.name)
-        except Exception:  # noqa: BLE001
-            loc_file = ""
-        in_op = diagnostic_in_operator(loc_file, op_dir, path)
-        if in_op:
-            op_errors += 1
-            if sev >= 4:
-                op_fatals += 1
-        if len(samples) < 5:
-            samples.append(str(d.spelling)[:200])
+    scored = score_tu_diagnostics(tu.diagnostics, path, op_dir)
+    errors = int(scored["error_count"])
+    fatals = int(scored["fatal_count"])
+    op_errors = int(scored["operator_error_count"])
     # Clean for scope: no fatals (missing includes etc.) and no errors in
     # operator sources. CANN-header residuals under libclang are expected.
-    relevant = op_errors if fatals == 0 else op_errors + fatals
     out = {
-        "error_count": errors,
-        "fatal_count": fatals,
-        "operator_error_count": op_errors,
-        "operator_fatal_count": op_fatals,
-        "probe_relevant_errors": relevant,
-        "samples": samples,
+        **scored,
         "skipped_bodies": True,
     }
     if cache_key:
@@ -2524,6 +2497,7 @@ def walk_file(
     collect_writes: bool = True,
     scope=None,
     logs_rejections: bool = False,
+    orig_assignment: dict[str, str] | None = None,
 ) -> WalkResult:
     """Parse one TU and extract control nodes / writes / function summaries.
 
@@ -2558,6 +2532,7 @@ def walk_file(
                 collect_writes=collect_writes,
                 scope=scope,
                 logs_rejections=logs_rejections,
+                orig_assignment=orig_assignment,
             )
             cached = tu_cache.load_walk(cache_key, op_dir=op_dir or None, arch=arch)
             if cached is not None:
@@ -2574,7 +2549,11 @@ def walk_file(
     args = (
         ctx.host_args()
         if side == "host"
-        else ctx.kernel_args(dtype_variant=dtype_variant, source_path=path)
+        else ctx.kernel_args(
+            dtype_variant=dtype_variant,
+            source_path=path,
+            orig_assignment=orig_assignment,
+        )
     )
     native = _try_native_walk(
         path, args, side=side, op_needle=op_needle, op_root=op_root

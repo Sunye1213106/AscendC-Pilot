@@ -2,7 +2,7 @@
 
 本页假设 AscendC-Pilot 已完成安装。所有操作都应在**目标 AscendC 算子仓或算子目录**中进行，而不是在 AscendC-Pilot 自身仓库中。
 
-内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)。
+内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)；各 workflow 阶段图见 [工作流流程图](../architecture/workflows.md)。
 
 > 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有），不必让主控手搓 `acp start` / `auto` / `finalize`。详情见 Runtime 文档。
 
@@ -21,6 +21,10 @@ AscendC-Pilot
 > 也可以不敲 `/`，直接用自然语言描述目标。
 
 Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。Agent 侧优先跑 `acp scan-architectures --project <算子目录>` 读目录摘要与选项，再 AskQuestion——不要 Glob 仓根或翻 cmake 猜架构。
+
+第一次启动不要传 `force_new` / `--force-new`。那是「删除重开」逃生口，会按策略 wipe 已有 `.uo`。已有未完成 run 时由 Host AskQuestion 选「继续上次」或「删除重开」，不要为了「确保能跑」先 wipe。
+
+`acp doctor` 是环境预检（Python 包、CANN、Host 契约），**不需要** `--architecture`，也不会创建 `.ascendc-pilot/<arch>/`。建树是 `acp start` 的事。
 
 TG / CE / 查询 **不以源码目录另选架构**：以已有 `.uo` 为准。没有 CodeMap 就直接跑 `/tg-init` 等，会提示先 `/uo-init`。
 
@@ -79,7 +83,7 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-`/uo-query` 是 claim-driven Explore：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，用结构化 `acp uo-query` 证明 claim，够了就停。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`。
+查询由主控用 skill 路由：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md) 选 mode，短问自己 `acp uo-query --mode`，内容多再开子代理。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`。
 
 默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 

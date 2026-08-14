@@ -144,6 +144,168 @@ def _split_args(inner: str) -> list[str]:
     return [p for p in parts if p != ""]
 
 
+def _uint_bit_width(token: str) -> int:
+    """Width from ``ASCENDC_TPL_N_BW``, a decimal literal, or a named macro.
+
+    Missing / unknown tokens keep a conservative 8-bit width so extract does
+    not crash; callers still see the dim.
+    """
+    raw = (token or "").strip()
+    if not raw:
+        return 8
+    m = BW_RE.fullmatch(raw) or BW_RE.search(raw)
+    if m:
+        return int(m.group(1))
+    if re.fullmatch(r"\d+", raw):
+        return int(raw)
+    return 8
+
+
+_QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
+_DEFINE_LINE_RE = re.compile(
+    r"^\s*#\s*define\s+([A-Za-z_]\w*)(?:\(([^)]*)\))?\s*(.*?)\s*$",
+    re.M,
+)
+_GET_TPL_HINT = "GET_TPL_TILING_KEY"
+_TPL_HINT = "ASCENDC_TPL_"
+
+
+def cann_include_search_roots() -> list[Path]:
+    try:
+        from uo_init.paths import cann_root
+    except Exception:
+        return []
+    root = cann_root()
+    if root is None:
+        return []
+    rels = (
+        "cann-opbase/x86_64-linux/pkg_inc",
+        "cann-opbase/x86_64-linux/pkg_inc/op_common",
+        "cann-opbase/x86_64-linux/include",
+        "cann-opbase/x86_64-linux/include/op_common",
+        "cann-asc-devkit/x86_64-linux/asc/include",
+        "cann-asc-devkit/x86_64-linux/ascendc/include/highlevel_api",
+    )
+    return [root / rel for rel in rels if (root / rel).is_dir()]
+
+
+def collect_defines(text: str) -> dict[str, tuple[list[str] | None, str]]:
+    """``#define NAME`` / ``#define NAME(a,...)`` after line-continuation join."""
+    src = _join_continuations(text or "")
+    out: dict[str, tuple[list[str] | None, str]] = {}
+    for match in _DEFINE_LINE_RE.finditer(src):
+        name, params, body = match.group(1), match.group(2), (match.group(3) or "").strip()
+        if not body or body.startswith("#"):
+            continue
+        if params is None:
+            out[name] = (None, body)
+            continue
+        args = [p.strip() for p in params.split(",") if p.strip()]
+        out[name] = (args, body)
+    return out
+
+
+def _subst_macro(body: str, params: list[str], args: list[str]) -> str:
+    named = list(params)
+    va: list[str] = []
+    if named and named[-1] in {"...", "__VA_ARGS__"}:
+        named = named[:-1]
+        va = args[len(named) :]
+        body = body.replace("__VA_ARGS__", ", ".join(va))
+    for param, value in zip(named, args):
+        body = re.sub(rf"\b{re.escape(param)}\b", value, body)
+    return body
+
+
+def expand_interesting_macros(text: str, defines: dict[str, tuple[list[str] | None, str]]) -> str:
+    """Inline macros whose body is a TPL / GET_TPL packing helper."""
+    interesting = {
+        name: spec
+        for name, spec in defines.items()
+        if name != "GET_TPL_TILING_KEY"
+        and (_TPL_HINT in spec[1] or _GET_TPL_HINT in spec[1])
+    }
+    if not interesting:
+        return text
+    src = _join_continuations(text or "")
+    for _ in range(24):
+        changed = False
+        for name, (params, body) in interesting.items():
+            if params is None:
+                nxt = re.sub(rf"\b{re.escape(name)}\b", body, src)
+                if nxt != src:
+                    src = nxt
+                    changed = True
+                continue
+            if not params:
+                nxt = re.sub(rf"\b{re.escape(name)}\s*\(\s*\)", body, src)
+                if nxt != src:
+                    src = nxt
+                    changed = True
+                continue
+            match = re.search(rf"\b{re.escape(name)}\s*\(", src)
+            if not match:
+                continue
+            open_pos = src.find("(", match.start())
+            try:
+                inner = _balanced_paren_body(src, open_pos)
+            except ValueError:
+                continue
+            close = open_pos + 1 + len(inner)
+            args = _split_args(inner)
+            repl = _subst_macro(body, params, args)
+            src = src[: match.start()] + repl + src[close + 1 :]
+            changed = True
+            break
+        if not changed:
+            break
+    return src
+
+
+def load_quoted_include_texts(path: Path, *, extra_roots: list[Path] | None = None) -> list[str]:
+    """Quoted includes from ``path`` (a few levels), plus CANN search roots."""
+    parent = Path(path).parent
+    try:
+        src = Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    roots = [parent, *(extra_roots or []), *cann_include_search_roots()]
+    texts: list[str] = []
+    seen: set[Path] = set()
+    pending: list[tuple[str, Path]] = [(src, parent)]
+    depth = 0
+    while pending and depth < 4:
+        nxt: list[tuple[str, Path]] = []
+        for text, base in pending:
+            for inc in _QUOTED_INCLUDE_RE.findall(text):
+                low = inc.replace("\\", "/").lower()
+                if not any(tok in low for tok in ("tiling", "tpl", "template_argument", "atvoss")):
+                    continue
+                search = [base, *roots]
+                for root in search:
+                    cand = (root / inc.replace("\\", "/")).resolve()
+                    if not cand.is_file() or cand in seen:
+                        continue
+                    seen.add(cand)
+                    try:
+                        body = cand.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        break
+                    texts.append(body)
+                    nxt.append((body, cand.parent))
+                    break
+        pending = nxt
+        depth += 1
+    return texts
+
+
+def expand_tpl_source(text: str, extra_texts: Iterable[str] | None = None) -> str:
+    defines = collect_defines(text)
+    for extra in extra_texts or ():
+        defines.update(collect_defines(extra))
+    return expand_interesting_macros(text, defines)
+
+
 def parse_args_decl(src: str) -> TplSchema:
     src = _join_continuations(src)
     m = re.search(r"ASCENDC_TPL_ARGS_DECL\s*\(", src)
@@ -159,9 +321,11 @@ def parse_args_decl(src: str) -> TplSchema:
         kind = dm.group(1)
         inner = _balanced_paren_body(body, dm.end() - 1)
         parts = _split_args(inner)
-        name = parts[0]
+        name = parts[0] if parts else ""
+        if not name:
+            continue
         if kind == "UINT":
-            bw = int(BW_RE.match(parts[1]).group(1))
+            bw = _uint_bit_width(parts[1] if len(parts) > 1 else "")
             vals = parts[2:]
         elif kind == "BOOL":
             bw, vals = 1, parts[1:]
@@ -196,7 +360,10 @@ def parse_args_sel(src: str) -> list[list[dict]]:
 
 
 def parse_file(path: str | Path) -> TplSchema:
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    header = Path(path)
+    text = header.read_text(encoding="utf-8", errors="replace")
+    extras = load_quoted_include_texts(header)
+    text = expand_tpl_source(text, extras)
     schema = parse_args_decl(text)
     schema.selections = parse_args_sel(text)
     return schema

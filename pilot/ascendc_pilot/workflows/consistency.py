@@ -471,15 +471,14 @@ def check_all(
 
         spec_action_set = set(action_ids)
         pipes = meta.get("pipelines") or {}
-        if wid in {"uo-init", "uo-update"}:
+        terminal = {str(x) for x in (meta.get("terminal_ready_states") or [])}
+        if isinstance(pipes, dict):
             for phase in meta.get("phases") or []:
                 if phase not in pipes:
                     errors.append(f"{wid}: phase {phase!r} missing pipelines entry (required)")
                 pipe = [str(x) for x in (pipes.get(phase) or []) if str(x).strip()]
-                if wid == "uo-init" and phase in {"extract", "resolve"} and not pipe:
+                if not pipe and str(phase) not in terminal:
                     errors.append(f"{wid}: phase {phase!r} must have non-empty pipeline")
-                if wid == "uo-update" and phase == "resolve" and not pipe:
-                    errors.append(f"{wid}: resolve phase must have non-empty pipeline")
                 if workflows is None and pipe != preferred_pipeline(wid, phase):
                     errors.append(
                         f"{wid}/{phase}: Spec pipelines mismatch preferred_pipeline(): {pipe!r} vs {preferred_pipeline(wid, phase)!r}"

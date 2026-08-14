@@ -32,6 +32,8 @@ Source → UO CodeMap → TG / CE
 
 `<arch>/uo/<op_name>.<arch>.uo` 是对外 CodeMap 产品，与同目录工作树共存（多架构时各占一个 `<arch>/`）。`control/` 与 `state/` / `runs/` 属 Pilot；`context/` / `cache/` 可重建；`local/` 属于算子仓扩展，不进入 Pilot 通用实现。
 
+`<arch>/state/` 只放 **live** 执行槽（`workflow.yaml` / lease）。`complete` 或 `abort` 后把当时状态归档到 `runs/{run_id}/final_state.yaml` 并清掉 live 指针（含 `control/active_run.yaml`），否则下一工作流仍会占在旧 run 上。正式产物仍在 `<arch>/uo/` 等目录。
+
 ## 产物分层
 
 ### Canonical

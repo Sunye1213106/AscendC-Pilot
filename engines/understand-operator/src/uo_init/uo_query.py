@@ -3,7 +3,8 @@
 
 The unified ``.uo`` CodeMap is the only query authority. ``UoQuery`` below
 is a migrate/test helper over ``kb_graph.sqlite``; production callers must
-use :func:`open_query`, which fail-closes when no ``.uo`` product exists.
+use :func:`open_query`, which fail-closes when no ``.uo`` product exists
+and queries SQLite indexes without hydrating the full graph.
 """
 from __future__ import annotations
 
@@ -331,18 +332,20 @@ def open_query(
     op_name: str = "",
     architecture: str = "",
 ):
-    """Open the unified ``.uo`` Explore backend.
+    """Open the unified ``.uo`` SQL query backend.
 
     Fail-closed: no product means no query. sqlite / YAML are not fallbacks.
     """
     from uo_init.store.reader import find_uo_product
-    from uo_init.query.explore_compat import ExploreCodeMapUoQuery
+    from uo_init.query.sql import UoSqlQuery
 
     root = Path(uo_root).expanduser().resolve()
     product = find_uo_product(root, op_name=op_name, architecture=architecture)
     if product is None or product.suffix != ".uo":
+        arch = architecture or "<arch>"
         raise FileNotFoundError(
             f"no .uo product under {root}; expected "
-            ".ascendc-pilot/<arch>/uo/<op>.<arch>.uo (run /uo-init)"
+            f".ascendc-pilot/{arch}/uo/<op>.{arch}.uo. "
+            "Run /uo-init or answer from source. Do not Glob or Grep for .uo."
         )
-    return ExploreCodeMapUoQuery(product)
+    return UoSqlQuery(product)

@@ -271,6 +271,106 @@ def dispatch_result(
     }
 
 
+def _posix_abs(path: Path) -> str:
+    return Path(path).expanduser().resolve().as_posix()
+
+
+def _existing_quality_yaml(project_root: Path, *, arch: str | None) -> Path:
+    """On-disk verify receipt under ``.ascendc-pilot/<arch>/uo/``, never the unscoped tree."""
+    from ascendc_pilot.paths import AGENT_DIR, uo_root
+
+    root = Path(project_root).expanduser().resolve()
+    expected: Path | None = None
+    if arch:
+        expected = uo_root(root, arch=arch) / "checks" / "quality.yaml"
+        if expected.is_file():
+            return expected
+    hits: list[Path] = []
+    pilot = root / AGENT_DIR
+    if pilot.is_dir():
+        hits = sorted(p for p in pilot.glob("arch*/uo/checks/quality.yaml") if p.is_file())
+    if arch:
+        for hit in hits:
+            if hit.parent.parent.parent.name == arch:
+                return hit
+    if hits:
+        return hits[0]
+    if expected is not None:
+        return expected
+    raise FileNotFoundError("quality.yaml")
+
+
+def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, Any]:
+    """Point Primary at verify/query artifacts. Do not synthesize a summary here."""
+    st = complete.get("state") if isinstance(complete.get("state"), dict) else {}
+    if not st:
+        try:
+            from ascendc_pilot.state import load_state
+
+            st = load_state(project_root) or {}
+        except Exception:  # noqa: BLE001
+            st = {}
+    wid = str(st.get("workflow_id") or complete.get("workflow_id") or "")
+    arch = str(st.get("architecture") or "").strip() or None
+    run_id = str(st.get("run_id") or "").strip()
+    hint: dict[str, Any] = {"workflow_id": wid}
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        if wid in {"uo-init", "uo-update"}:
+            quality = _existing_quality_yaml(Path(project_root), arch=arch)
+            unresolved = quality.parent.parent / "ir" / "unresolved.yaml"
+            q_abs = _posix_abs(quality)
+            u_abs = _posix_abs(unresolved)
+            hint["quality_path"] = q_abs
+            hint["unresolved_path"] = u_abs
+            hint["read_after_done"] = [q_abs, u_abs]
+            hint["message_zh"] = (
+                f"建库完成。请 Read `{q_abs}`（verify 收据），"
+                "对人总结节点/关系数量、未闭合桶及原因；"
+                f"要名单再读 `{u_abs}`。"
+                "不要打开 .uo 二进制，不要只说完成。"
+                "禁止读 `.ascendc-pilot/uo/`（无 arch 段的旧路径）。"
+            )
+        elif wid == "uo-query" and run_id:
+            ans = (
+                agent_root(project_root, arch)
+                / "runs"
+                / run_id
+                / "actions"
+                / "kb_lookup"
+                / "answer.yaml"
+            )
+            answer_zh = ""
+            status = ""
+            if ans.is_file() and yaml is not None:
+                try:
+                    body = yaml.safe_load(ans.read_text(encoding="utf-8")) or {}
+                    if isinstance(body, dict):
+                        answer_zh = str(
+                            body.get("answer_zh") or body.get("answer") or ""
+                        ).strip()
+                        status = str(body.get("status") or "")
+                except Exception:  # noqa: BLE001
+                    answer_zh = ""
+            if answer_zh:
+                hint["answer_zh"] = answer_zh
+                hint["answer_status"] = status
+                hint["message_zh"] = (
+                    "查询完成。下面是答案，直接对人说（含 path:line）。"
+                    "禁止再 Glob/Read answer.yaml 或其它 yaml。\n\n"
+                    f"{answer_zh}"
+                )
+            else:
+                hint["message_zh"] = (
+                    "查询完成。把本次子代理返回的答案正文说给人听。"
+                    "禁止再 Glob/Read yaml。"
+                )
+    except Exception:  # noqa: BLE001
+        pass
+    return hint
+
+
 def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[str, Any]:
     """Augment drive_until_interaction output with structured host_step + ticket."""
     out = dict(drive_payload or {})
@@ -288,11 +388,16 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             arch = ""
             intent = ""
             try:
-                from ascendc_pilot.state import load_state
                 from ascendc_pilot.user_goal import load_user_goal
 
-                st = load_state(project_root) or {}
-                arch = str(st.get("architecture") or "").strip()
+                complete_st = (
+                    complete.get("state") if isinstance(complete.get("state"), dict) else {}
+                )
+                arch = str(complete_st.get("architecture") or "").strip()
+                if not arch:
+                    from ascendc_pilot.state import load_state
+
+                    arch = str((load_state(project_root) or {}).get("architecture") or "").strip()
                 goal = load_user_goal(project_root) or {}
                 if not arch:
                     arch = str(goal.get("architecture") or "").strip()
@@ -320,12 +425,21 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                 },
             )
             return out
+        done = _done_read_hint(project_root, complete)
+        extra: dict[str, Any] = {"status": status or "passed"}
+        extra.update({k: v for k, v in done.items() if k != "message_zh"})
         out["host_step"] = build_host_step(
             kind="done",
             project_root=project_root,
-            message_zh=str(out.get("message_zh") or "workflow complete"),
-            extra={"status": status or "passed"},
+            message_zh=str(
+                done.get("message_zh")
+                or complete.get("message_zh")
+                or out.get("message_zh")
+                or "workflow complete"
+            ),
+            extra=extra,
         )
+        out["message_zh"] = str(out["host_step"].get("message_zh") or "")
         return out
 
     if stop in {"deterministic_action_failed", "advance_failed", "completion_gate_failed"} or (
@@ -339,10 +453,13 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
         )
         return out
 
-    if out.get("ask_question") or stop == "interaction_required" and status in {
-        "human_required",
-        "waiting_for_confirmation",
-    }:
+    if out.get("ask_question") or (
+        stop == "interaction_required"
+        and status in {
+            "human_required",
+            "waiting_for_confirmation",
+        }
+    ):
         out["host_step"] = build_host_step(
             kind="ask_human",
             project_root=project_root,
@@ -404,14 +521,20 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             actor_id=str(prep.get("actor_id") or actor_id),
             ticket=ticket,
             prepare=prep,
-            message_zh=str(prep.get("message_zh") or f"dispatch {actor_id}"),
+            message_zh=str(
+                prep.get("message_zh")
+                or (
+                    f"请用 OpenCode 原生 Task（agent={prep.get('actor_id') or actor_id}）"
+                    "原样派发 task_prompt_stub；点 Task 卡片可跳进子会话看思考。不要改写 stub。"
+                )
+            ),
         )
         out["prepare"] = prep
         out["dispatch_ticket"] = ticket.get("ticket_id")
         return out
 
     out["host_step"] = build_host_step(
-        kind="failed" if not out.get("ok") else "done",
+        kind="failed",
         project_root=project_root,
         message_zh=str(out.get("message_zh") or stop or "drive stopped"),
         extra={"stop_reason": stop, "status": status},

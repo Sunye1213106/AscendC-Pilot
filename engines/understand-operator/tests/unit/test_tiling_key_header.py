@@ -18,6 +18,34 @@ def test_tiling_key_header_accepts_underscore_tiling_key_h(tmp_path: Path):
     assert notes == []
 
 
+def test_tiling_key_header_entry_include_wins_over_root_glob(tmp_path: Path):
+    op = tmp_path / "toy"
+    kernel = op / "op_kernel"
+    variant = kernel / "arch35" / "variant"
+    variant.mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    entry_hdr = variant / "variant_tiling_key.h"
+    entry_hdr.write_text(
+        "ASCENDC_TPL_ARGS_DECL(Toy,\n"
+        "  ASCENDC_TPL_UINT_DECL(K0, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, 0, 1));\n",
+        encoding="utf-8",
+    )
+    (kernel / "toy_tiling_key.h").write_text(
+        "ASCENDC_TPL_ARGS_DECL(Toy,\n"
+        "  ASCENDC_TPL_DTYPE_DECL(DimA, DT_FLOAT, DT_FLOAT16),\n"
+        "  ASCENDC_TPL_BOOL_DECL(Flag, 0, 1));\n",
+        encoding="utf-8",
+    )
+    (kernel / "toy_apt.cpp").write_text(
+        '#include "arch35/variant/variant_tiling_key.h"\n'
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x) {}\n",
+        encoding="utf-8",
+    )
+    found, notes = _tiling_key_header(kernel, "arch35", "Toy", op_dir=op)
+    assert found == entry_hdr
+    assert notes == []
+
+
 def test_tiling_key_header_prefers_template_dsl(tmp_path: Path):
     kernel = tmp_path / "op_kernel"
     arch = kernel / "arch35"

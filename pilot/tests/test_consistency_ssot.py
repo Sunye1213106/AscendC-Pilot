@@ -42,7 +42,7 @@ def test_injected_action_missing_contract_fails(repo_root: Path, monkeypatch: py
         {
             "id": "broken_semantic",
             "label_zh": "broken",
-            "phases": ["route"],
+            "phases": ["answer"],
             "checker_required": True,
             "referee_required": False,
             "gates": [],

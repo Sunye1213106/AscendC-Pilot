@@ -499,8 +499,9 @@ def build_source_symbol_index(
             opened_func = False
 
             if stripped:
-                if _CLASS_RE.search(line) and ";" not in line:
-                    class_stack.append((_CLASS_RE.search(line).group("name"), brace))
+                class_m = _CLASS_RE.search(line)
+                if class_m and ";" not in line:
+                    class_stack.append((class_m.group("name"), brace))
                 ns = _NS_RE.search(line)
                 if ns and ";" not in line and "using" not in line:
                     ns_stack.append((ns.group("name"), brace))

@@ -25,7 +25,7 @@
 2. 全覆盖确定性模式下：绑定项的空 `reads` / 空 `exactness` **不是** blocker，不得因此 `fail`。
 3. 真实缺失（合同空、声明集空、指纹不一致、完整性产物缺失等）才 `fail` 并写入 `blockers`。
 4. 证据不足时对该 id 标 `fail` 并说明缺什么；禁止用猜测“修掉”。
-5. 写入本步声明的 audit 报告路径；完成后短摘要即可，不要替控制面结束本步。
+5. 写入本步声明的 audit 报告路径；完成后短摘要即可，不要替控制面结束本步或派发下一步 Action。
 </instructions>
 
 <output>
@@ -38,6 +38,5 @@ checks:
   - { id: <checklist_id>, status: pass|fail, detail: "..." }
 blockers: []
 warnings: []
-next: "acp run-action human_confirm"
 ```
 </output>

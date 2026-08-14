@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from uo_init.ids import buffer_site_id, make_id, operation_site_id, register_site_id
-from uo_init.ir.codemap import CodeMap
+from uo_init.ir.codemap import CodeMap, _rid
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes import kernel_scan as kscan
@@ -845,7 +845,62 @@ def _scan_class_members(files: list[Path], *, root: str, deadline: float) -> lis
     return out
 
 
+def _existing_type_id(codemap: CodeMap, spell: str) -> str | None:
+    name = str(spell or "").strip()
+    if not name:
+        return None
+    preferred: str | None = None
+    for hit in codemap.by_name(name, kind=EntityKind.TYPE):
+        if str(hit.id).startswith("SRCTYPE::"):
+            return hit.id
+        if preferred is None:
+            preferred = hit.id
+    return preferred
+
+
+def _collapse_duplicate_type_hashes(codemap: CodeMap) -> dict[str, str]:
+    """Drop clang ``TYPE_<hash>`` nodes when a same-name ``SRCTYPE::`` exists.
+
+    Rewrites incident edges onto the source type. Does not delete wrappers,
+    buffers, or other live graph nodes. Returns old-id → canonical-id.
+    """
+    canonical: dict[str, str] = {}
+    for ent in codemap.by_kind(EntityKind.TYPE):
+        if str(ent.id).startswith("SRCTYPE::"):
+            canonical.setdefault(str(ent.name), ent.id)
+    if not canonical:
+        return {}
+    rewrite: dict[str, str] = {}
+    for ent in list(codemap.by_kind(EntityKind.TYPE)):
+        eid = str(ent.id)
+        if not eid.startswith("TYPE_"):
+            continue
+        target = canonical.get(str(ent.name))
+        if not target or target == eid:
+            continue
+        rewrite[eid] = target
+    if not rewrite:
+        return {}
+    for eid in rewrite:
+        codemap.entities.pop(eid, None)
+    rebuilt: dict[str, Any] = {}
+    for rel in list(codemap.relations.values()):
+        src = rewrite.get(rel.src, rel.src)
+        dst = rewrite.get(rel.dst, rel.dst)
+        if src == dst or src not in codemap.entities or dst not in codemap.entities:
+            continue
+        rel.src = src
+        rel.dst = dst
+        rid = _rid(rel.kind_name(), src, dst)
+        rel.id = rid
+        rebuilt[rid] = rel
+    codemap.relations.clear()
+    codemap.relations.update(rebuilt)
+    return rewrite
+
+
 def _purge_root_trace_entities(codemap: CodeMap) -> None:
+    """Drop previously minted root-trace nodes so finalize can rebuild them."""
     drop_kinds = {
         EntityKind.OPERATION.value,
         EntityKind.BUFFER.value,
@@ -1281,6 +1336,25 @@ def finalize_kernel_root_trace(
         calls, added = kscan.merge_lexical_sites(calls, lexical, root=root)
         if added:
             provenance = f"{provenance}+lexical_source_calls"
+        # Confirmed TU closure is one ORIG_DTYPE instantiation. Mixed-dtype
+        # headers in op_kernel/<arch>/ still hold TQue/DataCopy/SetFlag sites.
+        extra_arch = [
+            f
+            for f in kscan.architecture_kernel_files(Path(root), arch)
+            if f.resolve() not in {p.resolve() for p in files}
+        ]
+        if extra_arch and time.perf_counter() < deadline:
+            extra_sites = kscan.lexical_source_call_sites(
+                extra_arch,
+                reachable=reachable,
+                filter_strict=False,
+                root=root,
+                deadline=deadline,
+                primitives_only=True,
+            )
+            calls, extra_added = kscan.merge_lexical_sites(calls, extra_sites, root=root)
+            if extra_added:
+                provenance = f"{provenance}+arch_kernel_primitives"
         identity_filled = 0
         if files and time.perf_counter() < deadline:
             from uo_init.passes.kernel_call_identity import (
@@ -1438,6 +1512,10 @@ def finalize_kernel_root_trace(
     for row in members:
         owner = str(row["owner"])
         if owner not in type_ents:
+            existing = _existing_type_id(codemap, owner)
+            if existing:
+                type_ents[owner] = existing
+                continue
             oid = make_id("Type", "class", owner, row["file"], int(row["line"]))
             ent = codemap.upsert(
                 EntityKind.TYPE,
@@ -1468,6 +1546,11 @@ def finalize_kernel_root_trace(
             qualified=str(row.get("qualified_name") or ""),
         ) or name
         if ikey in type_ents:
+            continue
+        existing = _existing_type_id(codemap, name)
+        if existing:
+            type_ents[ikey] = existing
+            type_ents.setdefault(name, existing)
             continue
         display = str(row.get("qualified_name") or name)
         mid = make_id(
@@ -1517,7 +1600,13 @@ def finalize_kernel_root_trace(
             type_ents[member_ikey] = type_ents[resolved_base]
         display = resolved.strip() if "<" in resolved else resolved_base
         if member_ikey not in type_ents:
-            if is_storage_wrapper_type(resolved) or resolved_base in ASCENDC_STORAGE_WRAPPER_TYPES:
+            existing = _existing_type_id(codemap, resolved_base) or _existing_type_id(
+                codemap, display
+            )
+            if existing:
+                type_ents[member_ikey] = existing
+                type_ents.setdefault(resolved_base, existing)
+            elif is_storage_wrapper_type(resolved) or resolved_base in ASCENDC_STORAGE_WRAPPER_TYPES:
                 mid = make_id("Type", "wrapper", member_ikey, row["file"], int(row["line"]))
                 ment = codemap.upsert(
                     EntityKind.TYPE,
@@ -1669,21 +1758,31 @@ def finalize_kernel_root_trace(
         if spell == "Buffer":
             continue
         if spell not in type_ents:
-            mid = make_id("Type", "wrapper", spell, "catalog", 0)
-            ment = codemap.upsert(
-                EntityKind.TYPE,
-                spell,
-                eid=mid,
-                attrs={
-                    "role": "storage_wrapper_type",
-                    "root_status": "UNRESOLVED",
-                    "trace": [spell],
-                    "type_name": spell,
-                },
-                status="partial",
-                confidence=0.5,
-            )
-            type_ents[spell] = ment.id
+            existing = None
+            for hit in codemap.by_name(spell, kind=EntityKind.TYPE):
+                if str(hit.id).startswith("SRCTYPE::"):
+                    existing = hit
+                    break
+                if existing is None:
+                    existing = hit
+            if existing is not None:
+                type_ents[spell] = existing.id
+            else:
+                mid = make_id("Type", "wrapper", spell, "catalog", 0)
+                ment = codemap.upsert(
+                    EntityKind.TYPE,
+                    spell,
+                    eid=mid,
+                    attrs={
+                        "role": "storage_wrapper_type",
+                        "root_status": "UNRESOLVED",
+                        "trace": [spell],
+                        "type_name": spell,
+                    },
+                    status="partial",
+                    confidence=0.5,
+                )
+                type_ents[spell] = ment.id
         _seed_wrapper_contract(type_ents[spell], spell)
 
     for e in list(codemap.by_kind(EntityKind.TYPE)):
@@ -1698,6 +1797,11 @@ def finalize_kernel_root_trace(
         if e.attrs.get("root_status") == "REACHED" and "LocalTensor" in str(e.attrs.get("root") or ""):
             continue
         _seed_wrapper_contract(e.id, base or e.name)
+
+    rewrite = _collapse_duplicate_type_hashes(codemap)
+    if rewrite:
+        for key, eid in list(type_ents.items()):
+            type_ents[key] = rewrite.get(eid, eid)
 
     # --- 4. BUFFER / REGISTER decl sites ---------------------------------
     buffer_by_key: dict[tuple[str, str], str] = {}

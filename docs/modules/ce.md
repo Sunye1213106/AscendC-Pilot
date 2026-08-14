@@ -64,7 +64,7 @@ impact ledger -> obligation-driven review -> TG coverage bridge
 
 ### `/ce-review`
 
-只读检视，三种入口（quick / file / pr）由 `scope` 阶段判定。证据先 CodeMap 再最小源码窗；假设检验（H0/H1）且必须有 `path:line`。不建立完整变更闭环。产物仍是 `ce/review/*.yaml`。
+只读检视，三种入口（quick / file / pr）由同一 Action `code_review` 跨 `scope` / `review` / `summary` 判定。证据先 CodeMap 再最小源码窗；假设检验（H0/H1）且必须有 `path:line`。不建立完整变更闭环。产物仍是 `ce/review/*.yaml`。
 
 ## Evidence tiers
 

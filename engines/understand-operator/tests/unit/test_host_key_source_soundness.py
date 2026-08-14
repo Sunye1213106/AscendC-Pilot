@@ -7,7 +7,12 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes import compile_time
-from uo_init.passes.host_defuse import _function_scopes, _identifiers, trace_host_key_roots
+from uo_init.passes.host_defuse import (
+    _function_scopes,
+    _identifier_refs,
+    _identifiers,
+    trace_host_key_roots,
+)
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
 from uo_init.passes.symbol_identity import normalize_symbol
 
@@ -59,9 +64,22 @@ def test_member_identity_strips_this_without_using_bare_initializer(tmp_path: Pa
     packing = [
         r for r in cm.relations.values()
         if r.dst == key.id and r.kind_name() == RelationKind.DERIVES.value
-        and r.attrs.get("provenance") == "source_get_tpl_tiling_key"
+        and r.attrs.get("provenance") in {
+            "source_get_tpl_tiling_key",
+            "source_get_tiling_key",
+            "source_packing_helper",
+        }
     ]
     assert len(packing) == 1
+    assert not any(
+        e.attrs.get("dependency_unresolved") and e.name in {"context_", "context"}
+        for e in cm.entities.values()
+    )
+    query = cm.by_name("query", kind=EntityKind.INPUT)[0]
+    assert any(
+        r.src == query.id and r.kind_name() == RelationKind.DERIVES.value
+        for r in cm.relations.values()
+    )
 
 
 def test_member_short_name_never_aliases_back_to_member_target(tmp_path: Path) -> None:
@@ -106,7 +124,11 @@ def test_ambiguous_short_name_is_not_linked_to_every_entity(tmp_path: Path) -> N
     bind_host_tiling_key_expressions(cm, root)
     packing_node = next(
         cm.entities[r.src] for r in cm.relations.values()
-        if r.dst == key.id and r.attrs.get("provenance") == "source_get_tpl_tiling_key"
+        if r.dst == key.id and r.attrs.get("provenance") in {
+            "source_get_tpl_tiling_key",
+            "source_get_tiling_key",
+            "source_packing_helper",
+        }
     )
     incoming = [r for r in cm.relations.values() if r.dst == packing_node.id]
     assert not any(r.src in {foo.id, bar.id} for r in incoming)
@@ -262,7 +284,11 @@ def test_packing_local_is_not_stolen_by_same_named_tiling_field(tmp_path: Path) 
     packing = next(
         cm.entities[r.src]
         for r in cm.relations.values()
-        if r.dst == key.id and r.attrs.get("provenance") == "source_get_tpl_tiling_key"
+        if r.dst == key.id and r.attrs.get("provenance") in {
+            "source_get_tpl_tiling_key",
+            "source_get_tiling_key",
+            "source_packing_helper",
+        }
     )
     sources = [
         cm.entities[r.src]
@@ -298,3 +324,100 @@ def test_audit_ignores_non_declared_extra_tiling_keys() -> None:
     report = audit_codemap(cm)
     codes = {item["code"] for item in report["blocking"]}
     assert "TILING_KEY_CARDINALITY_MISMATCH" not in codes
+
+
+def test_identifier_refs_classify_nested_receiver_and_drop_qualified_ctor() -> None:
+    nested = dict(_identifier_refs("inputQType_ = ctx.query.desc->GetDataType();"))
+    assert nested.get("ctx.query.desc") == "call_receiver"
+    assert nested.get("inputQType_") == "value"
+    bare = dict(_identifier_refs("shape = context_->GetInputShape(0);"))
+    assert bare.get("context_") == "call_receiver"
+    ctor = {name for name, _kind in _identifier_refs("auto p = ns::PlatformType();")}
+    assert not any("PlatformType" in name for name in ctor)
+
+
+def test_nested_desc_getdatatype_links_named_input(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        void T::DoOpTiling() {
+          inputQType_ = ctx.query.desc->GetDataType();
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(inputQType_);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    query = cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    cm.upsert(EntityKind.TILING_KEY, "InputDType", attrs={"source_declared": True, "decl_order": 0})
+
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+
+    assert any(
+        r.src == query.id and r.kind_name() == RelationKind.DERIVES.value
+        for r in cm.relations.values()
+    )
+    assert not any(e.attrs.get("dependency_unresolved") for e in cm.entities.values())
+    host = next(e for e in cm.by_kind(EntityKind.VARIABLE) if e.attrs.get("host_key_argument"))
+    assert host.attrs.get("rooted_by_current_source") is True
+
+
+def test_local_desc_then_getdatatype_follows_producer(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        void T::DoOpTiling() {
+          qDesc = ctx.query.desc;
+          inputQType_ = qDesc->GetDataType();
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(inputQType_);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    query = cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    cm.upsert(EntityKind.TILING_KEY, "InputDType", attrs={"source_declared": True, "decl_order": 0})
+
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+
+    assert any(
+        r.src == query.id and r.kind_name() == RelationKind.DERIVES.value
+        for r in cm.relations.values()
+    )
+    host = next(e for e in cm.by_kind(EntityKind.VARIABLE) if e.attrs.get("host_key_argument"))
+    assert host.attrs.get("rooted_by_current_source") is True
+    assert not any(e.attrs.get("dependency_unresolved") for e in cm.entities.values())
+
+
+def test_value_runtime_leaf_still_unresolved(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        void T::DoOpTiling() {
+          obj.flag = parseInfo.foo;
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(obj.flag);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    cm.upsert(EntityKind.TILING_KEY, "HasParse", attrs={"source_declared": True, "decl_order": 0})
+    field = cm.upsert(EntityKind.FIELD, "obj.flag")
+
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+
+    assert field.attrs.get("host_key_argument") is True
+    assert any(
+        e.attrs.get("dependency_unresolved") and "parseInfo" in e.name
+        for e in cm.entities.values()
+    )

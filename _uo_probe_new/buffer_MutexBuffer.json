@@ -1,0 +1,270 @@
+{
+  "ok": true,
+  "mode": "buffer",
+  "pattern": "MutexBuffer",
+  "buffers": [
+    {
+      "id": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+      "kind": "TYPE",
+      "name": "MutexBuffer",
+      "status": "extracted",
+      "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+      "line_start": 52,
+      "line_end": 52,
+      "why": "buffer",
+      "facts": {
+        "cpp_kind": "class",
+        "role": "storage_wrapper_type",
+        "root": "AscendC::LocalTensor",
+        "root_kind": "STORAGE"
+      },
+      "snippet": "40:            return PIPE_M;\n41:        } else if constexpr (Type == BufferType::L0C) {\n42:            return PIPE_FIX;\n43:        }\n44:    }\n45:\n46:    static constexpr pipe_t ProdPipeVal = ProdPipe();\n47:    static constexpr pipe_t ConsPipeVal = ConsPipe();\n48:    static constexpr TPosition Position = BufferInfo<Type>::Position;\n49:};\n50:\n51:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC>",
+      "relationships": [
+        {
+          "kind": "DECLARES",
+          "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+          "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TargetTensorType",
+          "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TargetTensorType",
+          "other_kind": "FIELD",
+          "other_name": "TargetTensorType",
+          "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line_start": 58
+        },
+        {
+          "kind": "DECLARES",
+          "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+          "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TensorType",
+          "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TensorType",
+          "other_kind": "FIELD",
+          "other_name": "TensorType",
+          "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line_start": 54
+        },
+        {
+          "kind": "DECLARES",
+          "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+          "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::mutexId_",
+          "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::mutexId_",
+          "other_kind": "FIELD",
+          "other_name": "mutexId_",
+          "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line_start": 148
+        },
+        {
+          "kind": "DECLARES",
+          "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+          "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::size_",
+          "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::size_",
+          "other_kind": "FIELD",
+          "other_name": "size_",
+          "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line_start": 147
+        },
+        {
+          "kind": "DECLARES",
+          "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+          "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::tensor_",
+          "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::tensor_",
+          "other_kind": "FIELD",
+          "other_name": "tensor_",
+          "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line_start": 146
+        },
+        {
+          "kind": "WRAPS",
+          "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+          "dst": "ROOT_4DC566A75E40",
+          "other_id": "ROOT_4DC566A75E40",
+          "other_kind": "TYPE",
+          "other_name": "AscendC::LocalTensor",
+          "file": "",
+          "line_start": 0
+        }
+      ]
+    }
+  ],
+  "count": 1,
+  "total": 2,
+  "files": {
+    "op_kernel/arch35/cube_api/mutex_buffer.h": [
+      {
+        "id": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+        "kind": "TYPE",
+        "name": "MutexBuffer",
+        "status": "extracted",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+        "line_start": 52,
+        "line_end": 52,
+        "why": "buffer",
+        "facts": {
+          "cpp_kind": "class",
+          "role": "storage_wrapper_type",
+          "root": "AscendC::LocalTensor",
+          "root_kind": "STORAGE"
+        },
+        "snippet": "40:            return PIPE_M;\n41:        } else if constexpr (Type == BufferType::L0C) {\n42:            return PIPE_FIX;\n43:        }\n44:    }\n45:\n46:    static constexpr pipe_t ProdPipeVal = ProdPipe();\n47:    static constexpr pipe_t ConsPipeVal = ConsPipe();\n48:    static constexpr TPosition Position = BufferInfo<Type>::Position;\n49:};\n50:\n51:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC>",
+        "relationships": [
+          {
+            "kind": "DECLARES",
+            "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+            "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TargetTensorType",
+            "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TargetTensorType",
+            "other_kind": "FIELD",
+            "other_name": "TargetTensorType",
+            "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+            "line_start": 58
+          },
+          {
+            "kind": "DECLARES",
+            "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+            "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TensorType",
+            "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::TensorType",
+            "other_kind": "FIELD",
+            "other_name": "TensorType",
+            "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+            "line_start": 54
+          },
+          {
+            "kind": "DECLARES",
+            "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+            "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::mutexId_",
+            "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::mutexId_",
+            "other_kind": "FIELD",
+            "other_name": "mutexId_",
+            "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+            "line_start": 148
+          },
+          {
+            "kind": "DECLARES",
+            "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+            "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::size_",
+            "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::size_",
+            "other_kind": "FIELD",
+            "other_name": "size_",
+            "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+            "line_start": 147
+          },
+          {
+            "kind": "DECLARES",
+            "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+            "dst": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::tensor_",
+            "other_id": "SRCFIELD::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer::tensor_",
+            "other_kind": "FIELD",
+            "other_name": "tensor_",
+            "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h",
+            "line_start": 146
+          },
+          {
+            "kind": "WRAPS",
+            "src": "SRCTYPE::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::MutexBuffer",
+            "dst": "ROOT_4DC566A75E40",
+            "other_id": "ROOT_4DC566A75E40",
+            "other_kind": "TYPE",
+            "other_name": "AscendC::LocalTensor",
+            "file": "",
+            "line_start": 0
+          }
+        ]
+      },
+      {
+        "id": "TYPE_0E5EF03E3D6D",
+        "kind": "TYPE",
+        "name": "MutexBuffer",
+        "status": "extracted",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+        "line_start": 146,
+        "line_end": 146,
+        "why": "buffer",
+        "facts": {
+          "role": "storage_wrapper_type",
+          "root": "AscendC::LocalTensor",
+          "root_kind": "STORAGE"
+        },
+        "snippet": "134:    {\n135:        return tensor_.template ReinterpretCast<T>();\n136:    }\n137:\n138:    template <typename T>\n139:    __aicore__ inline TargetTensorType<T> GetTensor(uint64_t startindex)\n140:    {\n141:        TargetTensorType<T> tmpTensor = tensor_.template ReinterpretCast<T>();\n142:        return tmpTensor[startindex];\n143:    }\n144:\n145:private:",
+        "relationships": [
+          {
+            "kind": "WRAPS",
+            "src": "BUF_A6A84A709905",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_A6A84A709905",
+            "other_kind": "BUFFER",
+            "other_name": "a_",
+            "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 246
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_F2C34D605AEF",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_F2C34D605AEF",
+            "other_kind": "BUFFER",
+            "other_name": "a_",
+            "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 329
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_A9208D814835",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_A9208D814835",
+            "other_kind": "BUFFER",
+            "other_name": "a_",
+            "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 246
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_54F9511B84B1",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_54F9511B84B1",
+            "other_kind": "BUFFER",
+            "other_name": "a_",
+            "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 329
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_95B2D34B713B",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_95B2D34B713B",
+            "other_kind": "BUFFER",
+            "other_name": "b_",
+            "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 247
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_8CC9F2593573",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_8CC9F2593573",
+            "other_kind": "BUFFER",
+            "other_name": "b_",
+            "file": "D:/PR-review/TEST/ops-transformer/attention/flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 330
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_9E072CFB4330",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_9E072CFB4330",
+            "other_kind": "BUFFER",
+            "other_name": "b_",
+            "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 247
+          },
+          {
+            "kind": "WRAPS",
+            "src": "BUF_0EE70DC5AB28",
+            "dst": "TYPE_0E5EF03E3D6D",
+            "other_id": "BUF_0EE70DC5AB28",
+            "other_kind": "BUFFER",
+            "other_name": "b_",
+            "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+            "line_start": 330
+          }
+        ]
+      }
+    ]
+  },
+  "truncated": true
+}

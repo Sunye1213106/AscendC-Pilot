@@ -171,8 +171,14 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
         if not isinstance(pipe, list):
             errors.append(f"{wid}: pipeline for {ph!r} must be a list")
             continue
-        # Empty pipeline is allowed when an action already covers the phase
-        # (e.g. uo-investigate report shares the investigate action).
+        # Empty pipeline is allowed only for terminal_ready_states (no-op final phase).
+        terminal = {str(x) for x in (meta.get("terminal_ready_states") or [])}
+        if not pipe:
+            if ph in terminal:
+                covered_phases.add(ph)
+            else:
+                errors.append(f"{wid}: non-terminal phase {ph!r} has empty pipeline")
+            continue
         for raw in pipe:
             pid = str(raw or "").strip()
             if pid and pid not in action_ids:

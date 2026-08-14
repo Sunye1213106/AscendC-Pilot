@@ -65,8 +65,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "用户要求建立知识库、建库、建 UO/CodeMap、索引/分析算子、首次理解算子或指定 "
             "architecture 建图时使用——这些口语一律走本 workflow，禁止改用外部 MCP/"
             "通用代码图谱索引。"
-            "缺 architecture 时先 `acp scan-architectures --project <算子目录>` 阅读 layout/"
-            "arch 选项再 AskQuestion；禁止仓根 Glob 或翻 cmake/classify_rule 考古。"
+            "缺 architecture 时由 Host `pilot_run` 弹出 AskQuestion；禁止仓根 Glob 或翻 cmake/classify_rule 考古。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
     },
@@ -79,9 +78,10 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     },
     "uo-query": {
         "description": (
-            "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap，回答 API、Host、TilingKey/"
-            "TilingData、Kernel、模板、宏、编译期变量、架构和数据流问题。用户询问知识库内容、"
-            "已有 UO、某个 KEY/字段/路径或 CodeMap 完整性时使用。"
+            "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
+            "TilingData、Kernel、字段、路径）。短问由主控自己 `acp uo-query --mode` 作答（当前会话可见）；"
+            "深问 `pilot_run` 立刻返回 `dispatch_subagent`，用原生 Task 打开子代理（可跳转看思考）。"
+            "不要为空转「问题路由」开子代理。"
         ),
     },
     "uo-investigate": {
@@ -94,26 +94,26 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "ce-review": {
         "description": (
             "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
-            "假设检验；证据先 CodeMap。Pilot 管 scope→review→summary；acp start ce-review。"
+            "假设检验；证据先 CodeMap。Pilot 管 scope→review→summary；用 `pilot_run`。"
         ),
     },
     "ce-impact": {
         "description": (
             "有 diff 时做变更影响面：切片并按 kind 挂验证义务。"
-            "用户要评估改动影响、回归面时加载；acp start ce-impact。"
+            "用户要评估改动影响、回归面时使用；用 `pilot_run`。"
         ),
     },
     "ce-verify": {
         "description": (
             "验证闭环：gate / residual / 测量收据 / certificate。"
             "V 只收 UT/ST/精度/profiling/复测通过的 ce-external-evidence/v1。"
-            "用户要验证覆盖或签发 CE 证书时加载；acp start ce-verify。"
+            "用户要验证覆盖或签发 CE 证书时使用；用 `pilot_run`。"
         ),
     },
     "ce-intent": {
         "description": (
             "无 diff 时定位改哪里：先查 CodeMap 再下结论，冻结变更目标。"
-            "用户要明确改什么/测什么时加载；acp start ce-intent。"
+            "用户要明确改什么/测什么时使用；用 `pilot_run`。"
         ),
     },
     "tg-init": {
@@ -123,7 +123,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "全覆盖产品目标：写入 control/user_goal 后串联 init→plan→solve；"
             "start 时 --intent 带全覆盖短语。默认 tilingkey_full_coverage（无需 CSV）。"
             "对人只说「建立覆盖合同」进度与确认后果；禁止甩内部字段名。"
-            "Pilot 管阶段；加载后 acp start tg-init。"
+            "Pilot 管阶段；加载后用 Host `pilot_run`。"
         ),
     },
     "tg-plan": {
@@ -282,14 +282,15 @@ def _start_requirements_line(repo: Path) -> str:
     uo = "/".join(sorted(workflows_needing_uo_product()))
     proj = "/".join(sorted(workflows_needing_project()))
     return (
-        f"11. `{arch}` 启动必须同时有 `--project`（算子目录）与 `--architecture`（仓内 `arch*`）。"
-        f"缺 arch → 先 `acp scan-architectures --project …` 阅读 layout/选项再 AskQuestion"
-        f"（禁止仓根 Glob / cmake 考古；也可直接 `acp start` 拿 `ARCHITECTURE_REQUIRED`）；齐了 → "
-        f"`acp start … --project … --architecture …` 一次启动。"
-        f"`{uo}` 以已有 `.uo` CodeMap 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`，先 `/uo-init`；"
+        f"11. `{arch}` 启动必须同时有算子目录（`--project`）与 architecture（仓内 `arch*`）。"
+        f"缺 arch → Host `pilot_run` 弹出 AskQuestion（禁止仓根 Glob / cmake 考古）。"
+        f"齐了 → `pilot_run`（workflow + project + architecture）一次启动。"
+        f"`{uo}` 以已有 `.uo` CodeMap 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`。"
+        f"产物路径确定（`<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`），禁止 Glob/dir 找 `.uo`。"
+        f"查询类 AskQuestion：`/uo-init` 或回退源码作答；TG/CE 仍须先 `/uo-init`。"
         f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
         f"需要算子目录的 workflow：`{proj}`。"
-        f"所有后续 `acp *` 带同一 `--project`；`.ascendc-pilot/` 只允许在该算子目录下。"
+        f"后续动作由 Host `pilot_run` 驱动；`.ascendc-pilot/` 只允许在该算子目录下。"
     )
 
 
@@ -402,9 +403,21 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
         else:
             lines.append(f"Domain method: `skills/{skill_id}/SKILL.md`.")
         lines.append("")
+    if wid == "uo-query":
+        run_via = (
+            "Short questions: follow Domain method query section; "
+            "run `acp uo-query --mode` yourself; speak the answer. Do not start a workflow. "
+            "Deep questions: `pilot_run` returns `dispatch_subagent` immediately — "
+            "use native OpenCode Task (exact `task_prompt_stub`) so the user can jump into the child and see thinking."
+        )
+    else:
+        run_via = (
+            "Run via Host tool `pilot_run` (workflow + project + architecture). "
+            "Do not bash `acp start` / `acp next`."
+        )
     lines.extend(
         [
-            "Run via `acp start` / `next` / `run-action` / `advance` / `complete`.",
+            run_via,
             "",
             "## Actions",
             "",

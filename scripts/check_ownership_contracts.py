@@ -204,7 +204,12 @@ def audit(repo: Path) -> list[str]:
                             f"{wid}/{aid}: run-scoped contract uses unconstrained *: {rel}"
                         )
 
-            if mode == EXECUTION_PRIMARY_INTERACTIVE and aid in {"human_confirm", "plan_approve"}:
+            if mode == EXECUTION_PRIMARY_INTERACTIVE and aid in {
+                "human_confirm",
+                "plan_approve",
+                "scenario_confirm",
+                "scenario_plan",
+            }:
                 if role_id not in {"controller", "primary_interactive"}:
                     errors.append(f"{wid}/{aid}: primary_interactive should use controller role")
 

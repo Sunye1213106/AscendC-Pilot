@@ -85,7 +85,10 @@ def test_effective_tg_io_contract_reads_only_binary_uo() -> None:
     from ascendc_pilot.workflows import WORKFLOWS
 
     assert OUTPUT_CONTRACT_PATHS["uo-commit-v1"] == ["uo/*.uo"]
-    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == ["uo/checks/integrity.yaml"]
+    assert OUTPUT_CONTRACT_PATHS["uo-verify-v1"] == [
+        "uo/checks/integrity.yaml",
+        "uo/checks/quality.yaml",
+    ]
     assert "uo-review-v1" not in OUTPUT_CONTRACT_PATHS
 
     # TG may read the durable product glob ``uo/*.uo`` only — not the YAML work tree.

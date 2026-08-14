@@ -26,6 +26,16 @@ _FIELD_HEAD_RE = re.compile(
 )
 _CLASS_RE = re.compile(r"\b(?:class|struct)\s+([A-Za-z_]\w*)\b")
 _DEFAULT_REG_RE = re.compile(r"\bREGISTER_TILING_DEFAULT\s*\(\s*([A-Za-z_:][A-Za-z0-9_:]*)\s*\)")
+_WITH_STRUCT_RE = re.compile(
+    r"GET_TILING_DATA_WITH_STRUCT\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,"
+)
+_FIELD_TYPE_RE = re.compile(r"^([A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)")
+_PRIMITIVE_FIELD_TYPES = {
+    "bool", "char", "short", "int", "long", "float", "double", "void",
+    "unsigned", "signed", "size_t", "ptrdiff_t",
+    "int8_t", "int16_t", "int32_t", "int64_t",
+    "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+}
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 
 
@@ -77,10 +87,18 @@ def write_stub(op_dir: Path, architecture: str, *, op_name: str = "") -> Path | 
 def render_stub(op_dir: Path, architecture: str) -> str:
     existing = _kernel_defined_types(op_dir, architecture)
     structs = _collect_structs(op_dir, architecture)
+    emit_structs = _structs_to_emit(structs, existing)
     default_type = _default_tiling_type(op_dir, architecture) or (
-        next((s["name"] for s in structs if s["name"] not in existing), "")
+        next((s["name"] for s in emit_structs), "")
         or (structs[0]["name"] if structs else "")
     )
+    emit_names = {s["name"] for s in emit_structs}
+    known_types = emit_names | existing
+    # Force-include runs before the TU. Do not #include kernel_tiling.h here:
+    # angle/quoted lookup from this operator-owned stub collides with
+    # kernel_operator atomic impls and with prelude fp8/fp4 aliases.
+    # CANN nested field types stay opaque; operator TUs still include the
+    # real header themselves.
     chunks: list[str] = [
         "#pragma once",
         "#include <cstdint>",
@@ -88,24 +106,26 @@ def render_stub(op_dir: Path, architecture: str) -> str:
         "",
         "// UO kernel tiling view: packed POD + GET_TILING_DATA* macros",
         "// matching the compiler/UT generated header. Do not redefine types",
-        "// already present under op_kernel/ (FAG-style vendored PODs).",
+        "// already present under op_kernel/ unless an emitted parent still",
+        "// references them (nested BEGIN_TILING_DATA_DEF).",
         "",
     ]
     emitted = 0
-    for st in structs:
-        if st["name"] in existing:
+    seen_emit: set[str] = set()
+    for st in emit_structs:
+        if st["name"] in seen_emit:
             continue
+        seen_emit.add(st["name"])
         chunks.append("#pragma pack(1)")
         chunks.append(f"struct {st['name']} {{")
         if not st["fields"]:
             chunks.append("  uint8_t _uo_placeholder = 0;")
         for field in st["fields"]:
-            chunks.append("  " + field)
+            chunks.append("  " + _opaque_if_external(str(field), known_types))
         chunks.append("};")
         chunks.append("#pragma pack()")
         chunks.append("")
         emitted += 1
-        existing.add(st["name"])
     chunks.append("#ifndef GET_TILING_DATA_WITH_STRUCT")
     chunks.append("#define GET_TILING_DATA_WITH_STRUCT(tiling_struct, tiling_data, tiling_arg) \\")
     chunks.append("  tiling_struct tiling_data; \\")
@@ -114,14 +134,17 @@ def render_stub(op_dir: Path, architecture: str) -> str:
     )
     chunks.append("#endif")
     chunks.append("")
+    chunks.append("#ifndef GET_TILING_DATA")
     if default_type:
-        chunks.append("#ifndef GET_TILING_DATA")
         chunks.append("#define GET_TILING_DATA(tiling_data, tiling_arg) \\")
         chunks.append(
             f"  GET_TILING_DATA_WITH_STRUCT({default_type}, tiling_data, tiling_arg)"
         )
-        chunks.append("#endif")
-        chunks.append("")
+    else:
+        chunks.append("#define GET_TILING_DATA(tiling_data, tiling_arg) \\")
+        chunks.append("  do { (void)(tiling_arg); } while (0)")
+    chunks.append("#endif")
+    chunks.append("")
     chunks.append("#ifndef GET_TILING_DATA_MEMBER")
     chunks.append("#define GET_TILING_DATA_MEMBER(tiling_type, member, var, tiling) \\")
     chunks.append("  decltype(tiling_type::member) var{}")
@@ -129,9 +152,78 @@ def render_stub(op_dir: Path, architecture: str) -> str:
     chunks.append("")
     if emitted == 0 and not default_type:
         # Macros alone still make GET_TILING_DATA_WITH_STRUCT parse when the
-        # operator already included a packed class (FAG).
+        # operator already included a packed class (vendored kernel PODs).
         pass
     return "\n".join(chunks) + "\n"
+
+
+def _opaque_if_external(decl: str, known_types: set[str]) -> str:
+    """Keep emitted nested structs; replace CANN-only nested types with bytes."""
+    dep = _field_type_name(decl)
+    if not dep or dep in known_types:
+        return decl
+    m = re.match(r"^(.+?)\s+([A-Za-z_]\w*)(\s*\[[^\]]*\])?\s*;\s*$", decl.strip())
+    if not m:
+        return decl
+    name, arr = m.group(2), m.group(3) or "[8]"
+    return f"uint8_t {name}_opaque{arr};"
+
+
+def _field_type_name(decl: str) -> str:
+    m = _FIELD_TYPE_RE.match((decl or "").strip())
+    if not m:
+        return ""
+    name = m.group(1).split("::")[-1]
+    if name in _PRIMITIVE_FIELD_TYPES:
+        return ""
+    return name
+
+
+def _structs_to_emit(
+    structs: list[dict[str, Any]], existing: set[str]
+) -> list[dict[str, Any]]:
+    """Emit macro structs that are not kernel-defined, plus any skipped type
+    still referenced by an emitted parent (nested GMMArray-style)."""
+    by_name = {s["name"]: s for s in structs}
+    emit: set[str] = {s["name"] for s in structs if s["name"] not in existing}
+    changed = True
+    while changed:
+        changed = False
+        extra: set[str] = set()
+        for name in emit:
+            st = by_name.get(name)
+            if st is None:
+                continue
+            for field in st.get("fields") or []:
+                dep = _field_type_name(str(field))
+                if dep in by_name and dep not in emit:
+                    extra.add(dep)
+        if extra:
+            emit |= extra
+            changed = True
+    ordered: list[dict[str, Any]] = []
+    remaining = [s for s in structs if s["name"] in emit]
+    ready: set[str] = set()
+    while remaining:
+        progressed = False
+        nxt: list[dict[str, Any]] = []
+        for st in remaining:
+            deps = {
+                dep
+                for field in st.get("fields") or []
+                if (dep := _field_type_name(str(field))) in by_name
+            }
+            if deps <= ready | (set(by_name) - emit):
+                ordered.append(st)
+                ready.add(st["name"])
+                progressed = True
+            else:
+                nxt.append(st)
+        if not progressed:
+            ordered.extend(nxt)
+            break
+        remaining = nxt
+    return ordered
 
 
 def _kernel_defined_types(op_dir: Path, architecture: str) -> set[str]:
@@ -236,6 +328,7 @@ def _field_decl(kind: str, args: list[str]) -> str:
 
 def _default_tiling_type(op_dir: Path, architecture: str) -> str:
     arch = str(architecture or "").strip().lower()
+    with_struct = ""
     for path in selected_kernel_files(op_dir, architecture):
         if path.suffix.lower() not in _CPP_SUFFIXES:
             continue
@@ -249,7 +342,11 @@ def _default_tiling_type(op_dir: Path, architecture: str) -> str:
         m = _DEFAULT_REG_RE.search(text)
         if m:
             return m.group(1).split("::")[-1]
-    return ""
+        if not with_struct:
+            wm = _WITH_STRUCT_RE.search(text)
+            if wm:
+                with_struct = wm.group(1).split("::")[-1]
+    return with_struct
 
 
 def _matching_paren(text: str, open_pos: int) -> int:

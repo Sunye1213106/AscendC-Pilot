@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Operator package root (op_host/op_kernel). Required; never the AscendC-Pilot checkout.",
     )
     p_start.add_argument("--intent", default="", help="e.g. diff_only for uo-update")
-    p_start.add_argument("--force-new", action="store_true", help="Force a new run even if same workflow is active")
+    p_start.add_argument("--force-new", action="store_true", help="Wipe an existing run and start fresh; no-op on a virgin project. Do not use on first start.")
     p_start.add_argument(
         "--decision",
         default="",
@@ -337,7 +337,7 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--line-end", type=int, default=0, help="impact 模式：结束行（默认=--line）")
     p_uq.add_argument("--kind", default="", help="search 时限定 node kind，逗号分隔")
     p_uq.add_argument("--depth", type=int, default=1)
-    p_uq.add_argument("--limit", type=int, default=50)
+    p_uq.add_argument("--limit", type=int, default=8)
     p_uq.add_argument("--relation-type", default="")
     p_uq.add_argument("--status-only", action="store_true")
     p_uq.add_argument(
@@ -657,10 +657,24 @@ def main(argv: list[str] | None = None) -> int:
             "focus": getattr(args, "focus", "") or "",
         }
         decision = normalize_decision(getattr(args, "decision", "") or "")
-        # --force-new alone ⇒ reinit (script escape). Skill path must AskQuestion first.
+        # --force-new ⇒ reinit only when there is something to resume/wipe.
+        # Virgin project: treat as a normal start so --architecture reaches
+        # start_workflow (do not enter apply_resume_decision first).
         force_new = bool(getattr(args, "force_new", False))
         if force_new and not decision:
-            decision = "reinit"
+            if needs_resume_decision(args.project, args.workflow_id):
+                decision = "reinit"
+
+        if not decision:
+            from ascendc_pilot.human_interaction import load_pending
+
+            pending = load_pending(args.project)
+            if str(pending.get("status") or "") == "answered":
+                kind = str(pending.get("kind") or pending.get("decision_kind") or "")
+                if kind in {"resume", "KIND_RESUME", ""}:
+                    adopted = normalize_decision(str(pending.get("answered_value") or ""))
+                    if adopted in {"continue", "reinit", "query"}:
+                        decision = adopted
 
         from ascendc_pilot.human_interaction import consume_intake_architecture
 
@@ -727,7 +741,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result.get("ok") else 1
 
         if needs_resume_decision(args.project, args.workflow_id):
-            payload = existing_run_decision_payload(args.project, args.workflow_id)
+            payload = existing_run_decision_payload(
+                args.project, args.workflow_id, architecture=arch
+            )
             print_json(payload)
             return 2
 
@@ -956,9 +972,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.cmd == "abort":
-        from ascendc_pilot.authorize.lease import issue_lease_for_status, revoke_active_lease
+        from ascendc_pilot.authorize.lease import revoke_active_lease
         from ascendc_pilot.human_interaction import KIND_HUMAN_REQUIRED, require_decision_receipt
-        from ascendc_pilot.state import load_state, mark_terminal
+        from ascendc_pilot.state import mark_terminal, release_live_execution
 
         # When aborting from human_required AskQuestion, require the receipt.
         # Direct abort (no pending interaction) remains allowed for operators.
@@ -976,13 +992,16 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         revoke_active_lease(args.project, reason="abort")
         st = mark_terminal(args.project, "failed", reason=args.reason or "aborted_by_operator")
-        issue_lease_for_status(args.project, state=st, action_id=str((st.get("last_failure") or {}).get("action_id") or ""))
+        released = release_live_execution(
+            args.project, reason="aborted_by_operator", state=st
+        )
         print_json(
             {
                 "ok": True,
-                "status": st.get("status"),
+                "status": "failed",
+                "released_execution": released,
                 "state": st,
-                "message_zh": "已 abort；可用 acp start --force-new 开启新 run",
+                "message_zh": "已 abort 并释放执行槽；可直接 acp start 开启下一工作流",
             }
         )
         return 0
@@ -1047,16 +1066,29 @@ def main(argv: list[str] | None = None) -> int:
         op_name = str(getattr(args, "op_name", "") or "")
         architecture = str(getattr(args, "architecture", "") or "")
         product = find_uo_product(project, op_name=op_name, architecture=architecture)
+        if product is None or product.suffix != ".uo":
+            from ascendc_pilot.intake import missing_uo_product_payload
+
+            payload = missing_uo_product_payload(
+                root=project,
+                workflow_id="uo-query",
+                architecture=architecture,
+                op_name=op_name,
+                persist=not bool(args.status_only),
+            )
+            payload["product"] = ""
+            payload["engine"] = "uo_init.uo_query"
+            print_json(payload)
+            return 1 if args.status_only else 2
         if args.status_only:
-            ok = product is not None and product.suffix == ".uo"
             print_json(
                 {
-                    "ok": ok,
-                    "product": product.as_posix() if ok else "",
+                    "ok": True,
+                    "product": product.as_posix(),
                     "engine": "uo_init.uo_query",
                 }
             )
-            return 0 if ok else 1
+            return 0
         pattern = str(args.pattern or args.target or "").strip()
         mode = str(getattr(args, "mode", "search") or "search")
         allow_empty = mode in {
@@ -1082,7 +1114,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         try:
             q = open_query(project, op_name=op_name, architecture=architecture)
-            limit = int(args.limit or 50)
+            limit = int(args.limit or 8)
             if mode == "constraints":
                 rows = q.constraints_for(pattern)
                 payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
@@ -1153,9 +1185,14 @@ def main(argv: list[str] | None = None) -> int:
                     "kinds": kinds,
                     "count": len(rows),
                     "rows": rows,
+                    "files": {},
                 }
+                for row in rows:
+                    file = str(row.get("file") or "")
+                    if file:
+                        payload["files"].setdefault(file, []).append(row)
             payload["engine"] = "uo_init.uo_query"
-            print_json(payload, default=str)
+            print_json(payload, default=str, compact=True)
             return 0 if payload.get("ok") else 1
         except Exception as exc:  # noqa: BLE001
             print_json({"ok": False, "error": str(exc)[:300]})
@@ -1595,7 +1632,7 @@ def _cmd_ro_search(args: Any) -> int:
     return 0
 
 
-def _doctor(project: Path) -> int:
+def _doctor(project: Path | None) -> int:
     issues: list[str] = []
     warnings: list[str] = []
     try:
@@ -1621,11 +1658,31 @@ def _doctor(project: Path) -> int:
             "code_engineering not installed (pip install -e ./engines/code-engineering)"
         )
 
-    from ascendc_pilot.paths import AGENT_DIR, ensure_agent_layout
+    from ascendc_pilot.paths import AGENT_DIR, try_discover_arch
 
-    root = ensure_agent_layout(project)
-    print(f"agent_root={root}")
-    print(f"canonical={AGENT_DIR}")
+    # Environment precheck must not require an active architecture tree.
+    # Creating .ascendc-pilot/<arch>/ is acp start's job, not doctor's.
+    if project is None:
+        print("project=<unset>")
+        print(f"canonical={AGENT_DIR}")
+        print("agent_layout=skipped")
+    else:
+        print(f"project={project}")
+        print(f"canonical={AGENT_DIR}")
+        arch = try_discover_arch(project)
+        agent_dir = Path(project).expanduser().resolve() / AGENT_DIR
+        if arch:
+            try:
+                from ascendc_pilot.paths import agent_root
+
+                print(f"architecture={arch}")
+                print(f"agent_root={agent_root(project, arch=arch)}")
+            except ValueError as exc:
+                warnings.append(f"agent_layout: {exc}")
+        elif agent_dir.is_dir():
+            print("agent_layout=present (no active architecture)")
+        else:
+            print("agent_layout=not_created")
 
     # Composer / agent wiring (same success bar as install)
     try:

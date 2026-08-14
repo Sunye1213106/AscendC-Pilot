@@ -1,4 +1,4 @@
-﻿"""Workflow state machine — sole authority for status transitions."""
+"""Workflow state machine — sole authority for status transitions."""
 
 from __future__ import annotations
 
@@ -252,6 +252,7 @@ def start_workflow(
     focus: str = "",
 ) -> dict[str, Any]:
     """Start at entry_state. Arbitrary phase only when force_phase=True (tests)."""
+    from ascendc_pilot.human_interaction import clear_pending
     from ascendc_pilot.obligations import collect_obligations, open_obligations
     from ascendc_pilot.runs import append_event
     from ascendc_pilot.paths import (
@@ -265,6 +266,7 @@ def start_workflow(
 
     import os
 
+    clear_pending(project_root)
     arch = require_architecture(architecture)
     # Pin process env so path helpers (uo_root/agent_root) resolve without
     # inventing a default architecture for the rest of this process.
@@ -399,6 +401,74 @@ def start_workflow(
     )
 
 
+_LIVE_STATE_FILES = (
+    "workflow.yaml",
+    "active_action.yaml",
+    "action_lease.yaml",
+    "resume.yaml",
+)
+
+
+def release_live_execution(
+    project_root: Path,
+    *,
+    reason: str = "",
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Archive the live run and free the execution slot.
+
+    Formal products (``.uo`` / tg / ce) stay. The next ``acp start`` must not
+    still see this workflow as the occupying run — including after ``passed``.
+    """
+    from ascendc_pilot.active_run import clear_active_run
+
+    root = Path(project_root).expanduser().resolve()
+    st = dict(state) if isinstance(state, dict) and state else (load_state(root) or {})
+    arch = str(st.get("architecture") or "").strip()
+    run_id = str(st.get("run_id") or "").strip()
+    archived_to = ""
+    if st and run_id:
+        try:
+            dest = runs_root(root, arch=arch or None) / run_id / "final_state.yaml"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            payload = dict(st)
+            if reason:
+                payload["release_reason"] = reason
+            payload["released_at"] = _now()
+            _dump(dest, payload)
+            archived_to = dest.as_posix()
+        except Exception:  # noqa: BLE001
+            archived_to = ""
+    try:
+        st_dir = state_root(root, arch=arch or None)
+    except ValueError:
+        st_dir = None
+    if st_dir and st_dir.is_dir():
+        for name in _LIVE_STATE_FILES:
+            path = st_dir / name
+            if path.is_file():
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                _STATE_LOAD_CACHE.pop(str(path.resolve()), None)
+    clear_active_run(root)
+    try:
+        from ascendc_pilot.human_interaction import clear_pending
+
+        clear_pending(root)
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "ok": True,
+        "released": bool(st),
+        "run_id": run_id,
+        "workflow_id": str(st.get("workflow_id") or ""),
+        "archived_to": archived_to,
+        "reason": reason,
+    }
+
+
 def mark_terminal(
     project_root: Path,
     status: str,
@@ -456,6 +526,7 @@ __all__ = [
     "new_run_id",
     "no_progress_exceeded",
     "record_gate",
+    "release_live_execution",
     "resume_path",
     "rework_phase",
     "save_state",

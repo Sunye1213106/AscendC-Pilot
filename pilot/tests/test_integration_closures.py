@@ -120,6 +120,19 @@ def test_doctor_flags_missing_prerequisites(tmp_path: Path, monkeypatch: pytest.
     assert _doctor(tmp_path) in {0, 1}
 
 
+def test_doctor_without_architecture_does_not_raise(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from ascendc_pilot.cli import _doctor
+
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch22").mkdir(parents=True)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_kernel" / "arch35").mkdir(parents=True)
+    assert _doctor(tmp_path) in {0, 1}
+
+
 def test_field_provenance_evidence_only():
     from testcase_agent.field_provenance import build_field_provenance
 

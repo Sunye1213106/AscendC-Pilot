@@ -15,11 +15,11 @@ except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 DEFAULT_LIMITS = {
-    "semantic": 12,
-    "source": 4,
-    "repo": 4,
-    "total": 18,
-    "hard_total": 22,
+    "semantic": 24,
+    "source": 8,
+    "repo": 8,
+    "total": 36,
+    "hard_total": 44,
 }
 
 SOFT_REASON = "BUDGET_NEAR_LIMIT"

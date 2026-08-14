@@ -28,6 +28,11 @@ _DIRECT_RE = re.compile(
     r"(?P<lhs>[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)+)\s*"
     r"(?<![=!<>])=(?!=)\s*(?P<rhs>[^;]+);", re.S,
 )
+_CLASS_HEAD_RE = re.compile(r"\b(?:class|struct)\s+(?P<name>[A-Za-z_]\w*)\b[^;{]*\{")
+_METHOD_HEAD_RE = re.compile(
+    r"\b(?P<cls>[A-Za-z_]\w*)::(?P<fn>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*"
+    r"(?:const\s*)?(?:override\s*)?\{"
+)
 
 
 def enrich_tiling_host_writes(
@@ -51,22 +56,42 @@ def enrich_tiling_host_writes(
     paths = _selected_host_files(root, architecture)
     texts: list[tuple[Path, str, str]] = []
     receiver_types: dict[str, set[str]] = defaultdict(set)
+    file_types: dict[Path, dict[str, set[str]]] = {}
+    class_members: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    method_spans: dict[Path, list[tuple[int, int, str]]] = {}
     type_alt = "|".join(re.escape(name) for name in sorted(known, key=len, reverse=True))
     decl_re = re.compile(
-        rf"\b(?P<type>{type_alt})\b(?:\s*<[^;{{}}]*>)?\s*(?:const\s*)?[*&]*\s*(?P<name>[A-Za-z_]\w*)\b"
-    )
+        rf"\b(?P<type>{type_alt})\b(?:\s*<[^;{{}}]*>)?"
+        rf"(?:\s*(?:const|volatile|mutable|__restrict(?:__)?|restrict|[*&]))*"
+        rf"\s*(?P<name>[A-Za-z_]\w*)\b"
+    ) if type_alt else None
     for path in paths:
         raw = path.read_text(encoding="utf-8", errors="replace")
         masked = _mask_non_code(raw)
         texts.append((path, raw, masked))
-        for match in decl_re.finditer(masked):
-            receiver_types[match.group("name")].add(match.group("type"))
+        local: dict[str, set[str]] = defaultdict(set)
+        if decl_re is not None:
+            for match in decl_re.finditer(masked):
+                name = match.group("name")
+                if name in {
+                    "const", "volatile", "mutable", "restrict", "__restrict", "__restrict__",
+                }:
+                    continue
+                local[name].add(match.group("type"))
+                receiver_types[name].add(match.group("type"))
+        file_types[path] = local
+        for cls, members in _class_members(masked, known).items():
+            for name, type_names in members.items():
+                class_members[cls][name].update(type_names)
+        method_spans[path] = _method_spans(masked)
 
     _purge(codemap)
     sites = resolved = ambiguous = 0
     written: set[str] = set()
     for path, raw, masked in texts:
         file = _rel(root, path)
+        local_types = dict(file_types.get(path) or {})
+        spans = method_spans.get(path) or []
         for match in _SETTER_RE.finditer(masked):
             close = _matching_paren(masked, match.end() - 1)
             if close < 0:
@@ -74,13 +99,16 @@ def enrich_tiling_host_writes(
             sites += 1
             receiver = normalize_symbol(match.group("receiver"))
             field_name = match.group("field")
-            targets = _targets(receiver, field_name, receiver_types, fields, nested, known)
+            lookup = _with_class_members(local_types, class_members, spans, match.start())
+            targets = _targets(
+                receiver, field_name, lookup, receiver_types, fields, nested, known
+            )
             line = _line(raw, match.start())
             expr = raw[match.end():close].strip()
             if len(targets) == 1:
                 _write(codemap, targets[0], file, line, receiver, expr, "setter")
                 written.add(targets[0].id); resolved += 1
-            else:
+            elif len(targets) > 1:
                 _unresolved(codemap, file, line, receiver, field_name, expr, targets)
                 ambiguous += 1
 
@@ -90,10 +118,12 @@ def enrich_tiling_host_writes(
             if len(parts) < 2:
                 continue
             receiver, field_name = ".".join(parts[:-1]), parts[-1]
-            owners = _receiver_owners(receiver, receiver_types, fields, nested, known)
-            if not owners:
+            lookup = _with_class_members(local_types, class_members, spans, match.start())
+            targets = _targets(
+                receiver, field_name, lookup, receiver_types, fields, nested, known
+            )
+            if not targets:
                 continue
-            targets = _unique([fields[(o, field_name)] for o in owners if (o, field_name) in fields])
             sites += 1
             line = _line(raw, match.start())
             expr = raw[match.start("rhs"):match.end("rhs")].strip()
@@ -122,9 +152,110 @@ def _selected_host_files(root: Path, architecture: str) -> list[Path]:
     return [p.resolve() for p in _layout_host_files(root, architecture)]
 
 
-def _targets(receiver, field_name, receiver_types, fields, nested, known) -> list[Entity]:
-    owners = _receiver_owners(receiver, receiver_types, fields, nested, known)
-    return _unique([fields[(o, field_name)] for o in owners if (o, field_name) in fields])
+def _with_class_members(
+    local_types: dict[str, set[str]],
+    class_members: dict[str, dict[str, set[str]]],
+    spans: list[tuple[int, int, str]],
+    pos: int,
+) -> dict[str, set[str]]:
+    """Prefer the enclosing class's member type over a globally ambiguous name."""
+    cls = _class_at(spans, pos)
+    if not cls or cls not in class_members:
+        return local_types
+    merged: dict[str, set[str]] = {k: set(v) for k, v in local_types.items()}
+    for name, types in class_members[cls].items():
+        merged[name] = set(types)
+    return merged
+
+
+def _class_members(text: str, known: set[str]) -> dict[str, dict[str, set[str]]]:
+    type_alt = "|".join(re.escape(name) for name in sorted(known, key=len, reverse=True))
+    if not type_alt:
+        return {}
+    member_re = re.compile(
+        rf"\b(?P<type>{type_alt})\b(?:\s*<[^;{{}}]*>)?"
+        rf"(?:\s*(?:const|volatile|mutable|__restrict(?:__)?|restrict|[*&]))*"
+        rf"\s*(?P<name>[A-Za-z_]\w*)\b"
+    )
+    out: dict[str, dict[str, set[str]]] = {}
+    for match in _CLASS_HEAD_RE.finditer(text):
+        open_b = match.end() - 1
+        if open_b < 0 or open_b >= len(text) or text[open_b] != "{":
+            continue
+        close_b = _matching_brace(text, open_b)
+        if close_b < 0:
+            continue
+        members: dict[str, set[str]] = defaultdict(set)
+        for mm in member_re.finditer(text[open_b + 1 : close_b]):
+            name = mm.group("name")
+            if name in {
+                "const", "volatile", "mutable", "restrict", "__restrict", "__restrict__",
+            }:
+                continue
+            members[name].add(mm.group("type"))
+        if members:
+            out[match.group("name")] = members
+    return out
+
+
+def _method_spans(text: str) -> list[tuple[int, int, str]]:
+    spans: list[tuple[int, int, str]] = []
+    for match in _METHOD_HEAD_RE.finditer(text):
+        open_b = match.end() - 1
+        close_b = _matching_brace(text, open_b)
+        if close_b < 0:
+            continue
+        spans.append((match.start(), close_b, match.group("cls")))
+    return spans
+
+
+def _class_at(spans: list[tuple[int, int, str]], pos: int) -> str:
+    for start, end, cls in spans:
+        if start <= pos <= end:
+            return cls
+    return ""
+
+
+def _matching_brace(text: str, open_pos: int) -> int:
+    if open_pos < 0 or open_pos >= len(text) or text[open_pos] != "{":
+        return -1
+    depth = 0
+    quote = ""
+    escape = False
+    for i in range(open_pos, len(text)):
+        ch = text[i]
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in {'"', "'"}:
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _targets(receiver, field_name, file_types, global_types, fields, nested, known) -> list[Entity]:
+    owners = _receiver_owners(receiver, file_types, fields, nested, known)
+    if not owners:
+        owners = _receiver_owners(receiver, global_types, fields, nested, known)
+    hits = _unique([fields[(o, field_name)] for o in owners if (o, field_name) in fields])
+    if len(hits) > 1:
+        file_owners: set[str] = set()
+        for types in (file_types or {}).values():
+            file_owners.update(types)
+        narrowed = [h for h in hits if str(h.attrs.get("owner") or "") in file_owners]
+        if len(narrowed) == 1:
+            return narrowed
+    return hits
 
 
 def _receiver_owners(receiver, receiver_types, fields, nested, known) -> set[str]:

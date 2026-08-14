@@ -317,3 +317,14 @@ def test_to_dict_roundtrips_extras(tmp_path: Path):
     assert ctx.add_include(str(extra), side="host")
     restored = BuildContext.from_dict(ctx.to_dict())
     assert restored.extra_host_includes == ctx.extra_host_includes
+
+
+def test_find_nlohmann_json_under_3rdparty(tmp_path: Path):
+    reset_index_cache()
+    ctx = _ctx(tmp_path)
+    leaf = tmp_path / "ops" / "3rdparty" / "include" / "nlohmann" / "json.hpp"
+    leaf.parent.mkdir(parents=True)
+    leaf.write_text("// real json\n", encoding="utf-8")
+    hit = find_include_dir(ctx, "nlohmann/json.hpp", side="host")
+    assert hit is not None
+    assert hit.include_dir.replace("\\", "/").endswith("3rdparty/include")

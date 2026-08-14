@@ -17,7 +17,7 @@ from typing import Any
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
-from uo_init.source_layout import selected_kernel_files
+from uo_init.source_layout import KERNEL_ENTRY_NAME_RE, selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _REGISTER_RE = re.compile(
@@ -132,7 +132,7 @@ def _kernels_in_registration_tu(codemap: CodeMap, root: Path, path: Path, text: 
     file_rel = _rel(root, path)
     entry_names = {
         m.group(1)
-        for m in re.finditer(r"__global__\s+__aicore__\s+void\s+([A-Za-z_]\w*)", text)
+        for m in KERNEL_ENTRY_NAME_RE.finditer(text)
     }
     matched = []
     for kernel in codemap.by_kind(EntityKind.KERNEL):

@@ -19,12 +19,21 @@ from pathlib import Path
 from typing import Any
 
 REPO = Path(__file__).resolve().parents[3]
+sys.path[:0] = [
+    str(REPO / "engines" / "understand-operator" / "src"),
+    str(REPO / "engines" / "common"),
+    str(REPO / "pilot"),
+]
+from uo_init.paths import ops_root as _resolve_ops_root
+
 OPS_ROOT = Path(
     os.environ.get("UO_OPS_ROOT")
     or os.environ.get("OPS_TRANSFORMER_ROOT")
     or os.environ.get("OPS_ROOT")
-    or r"D:\TEST\ops-transformer"
+    or ""
 )
+if not str(OPS_ROOT):
+    OPS_ROOT = Path(_resolve_ops_root() or (REPO.parent / "TEST" / "ops-transformer"))
 OUT = Path(os.environ.get("UO_GEN_OUT") or (REPO / "artifacts" / "uo-init-generalization"))
 DOCS_TEST = REPO / "docs" / "test"
 
@@ -84,6 +93,7 @@ CASES: list[dict[str, Any]] = [
     {"rel": "posembedding/apply_rotary_pos_emb", "arch": "arch35", "wipe": True},
     {"rel": "posembedding/rope_with_sin_cos_cache", "arch": "arch35", "wipe": True},
     {"rel": "posembedding/rotary_position_embedding_grad", "arch": "arch35", "wipe": True},
+    {"rel": "posembedding/kv_rms_norm_rope_cache", "arch": "arch35", "wipe": True},
     # Extra: existing FAG arch22 product — inspect only, never wipe.
     {"rel": "attention/flash_attention_score_grad", "arch": "arch22", "wipe": False, "audit_only": True},
 ]
@@ -170,12 +180,6 @@ def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dic
                 break
             _take(case)
     return picked[:n]
-
-sys.path[:0] = [
-    str(REPO / "engines" / "understand-operator" / "src"),
-    str(REPO / "engines" / "common"),
-    str(REPO / "pilot"),
-]
 
 
 def _forbidden_wipe(rel: str, arch: str) -> bool:
@@ -496,19 +500,6 @@ def _locate_quality(cm: Any, product: Path) -> dict[str, Any]:
     function_probes: list[dict[str, Any]] = []
     fn_samples: list[str] = []
     seen_fn: set[str] = set()
-    fn_names = {
-        str(e.name or "").strip()
-        for e in (by_kind.get("FUNCTION") or [])
-        if str(e.name or "").strip()
-    }
-    for name in (
-        "CheckShapeValid",
-        "CheckSoftmaxMaxShape",
-        "CheckSoftmaxSumShape",
-    ):
-        if name in fn_names and name not in seen_fn:
-            seen_fn.add(name)
-            fn_samples.append(name)
     for entity in by_kind.get("FUNCTION") or []:
         name = str(entity.name or "").strip()
         if not name or name in seen_fn:

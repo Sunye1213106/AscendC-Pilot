@@ -68,7 +68,7 @@ def main() -> int:
 
     # Plugin files present in repo
     plug = repo / "opencode-plugin"
-    for name in ("ascendc-pilot.ts", "pilot-driver.ts", "zz-uo-query-return-value.ts"):
+    for name in ("ascendc-pilot.ts", "pilot-driver.ts", "zz-uo-query-return-value.ts", "pilot-progress.mjs"):
         if not (plug / name).is_file():
             errors.append(f"missing opencode-plugin/{name}")
 
@@ -85,19 +85,22 @@ def main() -> int:
         "compactPilotRunPayload",
         "toPluginToolResult",
         "createProgressReporter",
-        "invokeToolMetadata",
+        "createToolRowProgressReporter",
         "publishVisibleProgress",
-        "publishToolRow",
         "withProgressArg",
-        "patchRunningToolPart",
-        "clientBaseUrl",
+        "Do not call ctx.metadata",
+        "await reporter.flushAsync()",
         "isHumanDecision",
         "isAcpStartSuccess",
         "normalizeResumeDecision",
+        "answer_from_source",
+        'decision === "uo-init"',
+        'decision === "source"',
         "applyForceNew",
         "ctx.metadata",
         "export default",
         "PilotDriverLibraryPlugin",
+        'from "./pilot-progress.mjs"',
     ):
         if marker not in driver_src:
             errors.append(f"pilot-driver.ts missing {marker}")
@@ -114,6 +117,29 @@ def main() -> int:
         errors.append("toPluginToolResult must not pretty-print the full ACP result to the model")
     if "spawnSync" in driver_src:
         errors.append("pilot-driver.ts must stream acp via spawn (not spawnSync) so progress can update")
+    if "invokeToolMetadata" in driver_src:
+        errors.append("pilot-driver.ts must not call ctx.metadata (it resets GenericTool input)")
+    progress_src = (plug / "pilot-progress.mjs").read_text(encoding="utf-8")
+    for marker in (
+        "buildToolPartProgressPatch",
+        "patchRunningToolPart",
+        "validateOpencodeToolPartPatch",
+        "createToolRowProgressReporter",
+        "clientBaseUrl",
+        "never call it from this path",
+        "session.message.v1",
+        "inner.patch.sessionID",
+        "inner.patch.v1",
+        "path: { id:",
+        "sdkInner",
+        "Never write stderr/stdout",
+        "transportDead",
+        "isDummyOpenCodeUrl",
+    ):
+        if marker not in progress_src:
+            errors.append(f"pilot-progress.mjs missing {marker}")
+    if "console.error(" in progress_src:
+        errors.append("pilot-progress.mjs must not console.error into the OpenCode TUI")
     plugin_src = (plug / "ascendc-pilot.ts").read_text(encoding="utf-8")
     for marker in (
         "extractProjectFromAcpCommand",

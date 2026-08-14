@@ -1,0 +1,264 @@
+[
+  {
+    "id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+    "kind": "METHOD",
+    "name": "MutexBuffer::LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+    "line_start": 106,
+    "line_end": 106,
+    "why": "search",
+    "facts": {},
+    "snippet": "94:    }\n95:\n96:    template <pipe_t pipe>\n97:    __aicore__ inline void Unlock()\n98:    {\n99:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) {\n100:            if ASCEND_IS_AIC {\n101:                AscendC::Mutex::Unlock<pipe>(mutexId_);\n102:            }\n103:        }\n104:    }\n105:\n106:    __aicore__ inline void LockProd()\n107:    {\n108:        Lock<MutexBufferInfo<bufferType>::ProdPipeVal>();\n109:    }\n110:\n111:    __aicore__ inline void UnlockProd()\n112:    {\n113:        Unlock<MutexBufferInfo<bufferType>::ProdPipeVal>();\n114:    }\n115:\n116:    __aicore__ inline void LockCons()\n117:    {\n118:        Lock<MutexBufferInfo<bufferType>::ConsPipeVal>();\n119:    }\n120:\n121:    __aicore__ inline void UnlockCons()\n122:    {\n123:        Unlock<MutexBufferInfo<bufferType>::ConsPipeVal>();\n124:    }\n125:\n126:    template <HardEvent EventType>\n127:    __aicore__ inline void Wait() = delete;\n128:\n129:    template <HardEvent EventType>\n130:    __aicore__ inline void Set() = delete;\n131:\n132:    template <typename T>\n133:    __aicore__ inline TargetTensorType<T> GetTensor()",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::954::FAGBlockCube::IterateMmDsK",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::954::FAGBlockCube::IterateMmDsK",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmDsK",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 954
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1060::FAGBlockCube::IterateMmDsKOlderDeter",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1060::FAGBlockCube::IterateMmDsKOlderDeter",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmDsKOlderDeter",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 1060
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1274::FAGBlockCube::IterateMmDsQ",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1274::FAGBlockCube::IterateMmDsQ",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmDsQ",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 1274
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1395::FAGBlockCube::IterateMmDsQOlderDeter",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1395::FAGBlockCube::IterateMmDsQOlderDeter",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmDsQOlderDeter",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 1395
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::466::FAGBlockCube::IterateMmDyV",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::466::FAGBlockCube::IterateMmDyV",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmDyV",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 466
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1602::FAGBlockCube::IterateMmPDy",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1602::FAGBlockCube::IterateMmPDy",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmPDy",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 1602
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1722::FAGBlockCube::IterateMmPDyOlderDeter",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::1722::FAGBlockCube::IterateMmPDyOlderDeter",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmPDyOlderDeter",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 1722
+      },
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::634::FAGBlockCube::IterateMmQK",
+        "dst": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/mutex_buffer.h::106::MutexBuffer::LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h::634::FAGBlockCube::IterateMmQK",
+        "other_kind": "METHOD",
+        "other_name": "FAGBlockCube::IterateMmQK",
+        "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 634
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::114::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex::l0aBuffer.LockProd",
+    "kind": "METHOD",
+    "name": "l0aBuffer.LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 114,
+    "line_end": 114,
+    "why": "search",
+    "facts": {},
+    "snippet": "102:        L1Aoffset = ((param.singleM + 31) >> 5 << 5) * baseK;\n103:        L1Boffset = ((param.singleN + 31) >> 5 << 5) * baseK;\n104:    }\n105:    if constexpr (IsSameType<A, float>::value) {\n106:        L1Aoffset = param.isLeftTranspose ? baseK << 3 : ((param.singleM + 15) >> 4 << 4) * baseK;\n107:        L1Boffset = param.isRightTranspose ? ((param.singleN + 15) >> 4 << 4) * baseK : baseK << 3;\n108:    }\n109:#endif\n110:\n111:    for (uint32_t k = 0; k < kLoops; k++) {\n112:        uint32_t tileK = (k == (kLoops - 1)) ? tailK : baseK;\n113:        auto &l0aBuffer = aL0BuffsDb.Get();\n114:        l0aBuffer.LockProd();\n115:        LocalTensor<L0ADType> L0ATensor = l0aBuffer.template GetTensor<L0ADType>();\n116:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n117:        if constexpr (IsSameType<L0ADType, mx_fp8_e4m3_t>::value) {\n118:            LoadDataToL0AMx<A, L0ADType>(L0ATensor, aL1Tensor, aScaleL1Tensor, param, k * L1Aoffset, tileK,\n119:                                         param.singleM);\n120:        } else\n121:#endif\n122:        {\n123:            LoadDataToL0A(L0ATensor, aL1Tensor, param, k * L1Aoffset, tileK, param.singleM);\n124:        }\n125:        l0aBuffer.UnlockProd();\n126:\n127:        auto &l0bBuffer = bL0BuffsDb.Get();\n128:        l0bBuffer.LockProd();\n129:        LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n130:        uint64_t loopNum = param.isRightTranspose ? 1 : kLoops;\n131:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n132:        if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n133:            LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, k * L1Boffset, tileK,\n134:                                         param.singleN, loopNum);\n135:        } else\n136:#endif\n137:        {\n138:            LoadDataToL0B(L0BTensor, bL1Tensor, param, k * L1Boffset, tileK, param.singleN, loopNum);\n139:        }\n140:        l0bBuffer.UnlockProd();\n141:",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::114::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex::l0aBuffer.LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulKMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 87
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::128::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex::l0bBuffer.LockProd",
+    "kind": "METHOD",
+    "name": "l0bBuffer.LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 128,
+    "line_end": 128,
+    "why": "search",
+    "facts": {},
+    "snippet": "116:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n117:        if constexpr (IsSameType<L0ADType, mx_fp8_e4m3_t>::value) {\n118:            LoadDataToL0AMx<A, L0ADType>(L0ATensor, aL1Tensor, aScaleL1Tensor, param, k * L1Aoffset, tileK,\n119:                                         param.singleM);\n120:        } else\n121:#endif\n122:        {\n123:            LoadDataToL0A(L0ATensor, aL1Tensor, param, k * L1Aoffset, tileK, param.singleM);\n124:        }\n125:        l0aBuffer.UnlockProd();\n126:\n127:        auto &l0bBuffer = bL0BuffsDb.Get();\n128:        l0bBuffer.LockProd();\n129:        LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n130:        uint64_t loopNum = param.isRightTranspose ? 1 : kLoops;\n131:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n132:        if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n133:            LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, k * L1Boffset, tileK,\n134:                                         param.singleN, loopNum);\n135:        } else\n136:#endif\n137:        {\n138:            LoadDataToL0B(L0BTensor, bL1Tensor, param, k * L1Boffset, tileK, param.singleN, loopNum);\n139:        }\n140:        l0bBuffer.UnlockProd();\n141:\n142:        l0aBuffer.LockCons();\n143:        l0bBuffer.LockCons();\n144:\n145:        MmadParams mmadParams;\n146:        mmadParams.m = param.singleM;\n147:        if (param.realM != 0) {\n148:            mmadParams.m = param.realM;\n149:        }\n150:        mmadParams.n = param.singleN;\n151:        mmadParams.k = tileK;\n152:        if (mmadParams.m == 1) {\n153:            mmadParams.m = 16;\n154:        }\n155:        mmadParams.cmatrixInitVal = param.isOutKFisrt && (k == 0);",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::128::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex::l0bBuffer.LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulKMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 87
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::196::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex::l0aBuffer.LockProd",
+    "kind": "METHOD",
+    "name": "l0aBuffer.LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 196,
+    "line_end": 196,
+    "why": "search",
+    "facts": {},
+    "snippet": "184:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n185:    if constexpr (IsSameType<A, fp8_e5m2_t>::value || IsSameType<A, fp8_e4m3fn_t>::value ||\n186:                  IsSameType<A, hifloat8_t>::value || IsSameType<A, int8_t>::value) {\n187:        L1Boffset = ((param.singleK + 31) >> 5 << 5) * baseN;\n188:    }\n189:#endif\n190:    uint64_t L0Coffset = ((param.singleM + 15) >> 4 << 4) * baseN;\n191:    if (param.realM != 0) {\n192:        L0Coffset = ((param.realM + 15) >> 4 << 4) * baseN;\n193:    }\n194:\n195:    auto &l0aBuffer = aL0BuffsDb.Get();\n196:    l0aBuffer.LockProd();\n197:    LocalTensor<L0ADType> L0ATensor = l0aBuffer.template GetTensor<L0ADType>();\n198:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n199:    if constexpr (IsSameType<L0ADType, mx_fp8_e4m3_t>::value) {\n200:        LoadDataToL0AMx<A, L0ADType>(L0ATensor, aL1Tensor, aScaleL1Tensor, param, 0, param.singleK, param.singleM);\n201:    } else\n202:#endif\n203:    {\n204:        LoadDataToL0A(L0ATensor, aL1Tensor, param, 0, param.singleK, param.singleM);\n205:    }\n206:    l0aBuffer.UnlockProd();\n207:\n208:    // L0A is loaded once and consumed by every n-iteration, so acquire the\n209:    // consumer lock a single time around the whole loop (matching the original\n210:    // event-based semantics where M_MTE1 is only set once after the loop).\n211:    l0aBuffer.LockCons();\n212:\n213:    for (uint32_t n = 0; n < nLoops; n++) {\n214:        uint32_t tileN = (n == (nLoops - 1)) ? tailN : baseN;\n215:\n216:        auto &l0bBuffer = bL0BuffsDb.Get();\n217:        l0bBuffer.LockProd();\n218:        LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n219:        uint64_t loopNum = param.isRightTranspose ? nLoops : 1;\n220:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n221:        if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n222:            LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, n * L1Boffset, param.singleK,\n223:                                         tileN, loopNum);",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::196::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex::l0aBuffer.LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulNMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 173
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::217::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex::l0bBuffer.LockProd",
+    "kind": "METHOD",
+    "name": "l0bBuffer.LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 217,
+    "line_end": 217,
+    "why": "search",
+    "facts": {},
+    "snippet": "205:    }\n206:    l0aBuffer.UnlockProd();\n207:\n208:    // L0A is loaded once and consumed by every n-iteration, so acquire the\n209:    // consumer lock a single time around the whole loop (matching the original\n210:    // event-based semantics where M_MTE1 is only set once after the loop).\n211:    l0aBuffer.LockCons();\n212:\n213:    for (uint32_t n = 0; n < nLoops; n++) {\n214:        uint32_t tileN = (n == (nLoops - 1)) ? tailN : baseN;\n215:\n216:        auto &l0bBuffer = bL0BuffsDb.Get();\n217:        l0bBuffer.LockProd();\n218:        LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n219:        uint64_t loopNum = param.isRightTranspose ? nLoops : 1;\n220:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n221:        if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n222:            LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, n * L1Boffset, param.singleK,\n223:                                         tileN, loopNum);\n224:        } else\n225:#endif\n226:        {\n227:            LoadDataToL0B(L0BTensor, bL1Tensor, param, n * L1Boffset, param.singleK, tileN, loopNum);\n228:        }\n229:        l0bBuffer.UnlockProd();\n230:\n231:        l0bBuffer.LockCons();\n232:\n233:        MmadParams mmadParams;\n234:        mmadParams.m = param.singleM;\n235:        if (param.realM != 0) {\n236:            mmadParams.m = param.realM;\n237:        }\n238:        mmadParams.n = tileN;\n239:        mmadParams.k = param.singleK;\n240:        if (mmadParams.m == 1) {\n241:            mmadParams.m = FP16_ONE_FRACTAL_ELEMENT;\n242:        }\n243:        mmadParams.cmatrixInitVal = param.isOutKFisrt;\n244:        mmadParams.cmatrixSource = false;",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::217::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex::l0bBuffer.LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::173::::MatmulNMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulNMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 173
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::35::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex::l0aBuffer.LockProd",
+    "kind": "METHOD",
+    "name": "l0aBuffer.LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 35,
+    "line_end": 35,
+    "why": "search",
+    "facts": {},
+    "snippet": "23:// Mutex override of MatmulFull for L0A/L0B ping-pong buffers.\n24:template <typename A, typename B, typename C, uint32_t baseM, uint32_t baseN, uint32_t baseK, ABLayout AL, ABLayout BL,\n25:          typename AScaleType = fp8_e8m0_t, typename BScaleType = fp8_e8m0_t, typename L0ADType = A,\n26:          typename L0BDType = B>\n27:__aicore__ inline void MatmulFullMutex(const LocalTensor<A> &aL1Tensor, const LocalTensor<B> &bL1Tensor,\n28:                                       MutexBuffersPolicyDB<BufferType::L0A, SyncType::INNER_CORE_SYNC> &aL0BuffsDb,\n29:                                       MutexBuffersPolicyDB<BufferType::L0B, SyncType::INNER_CORE_SYNC> &bL0BuffsDb,\n30:                                       const LocalTensor<C> &cL0Tensor, struct MMParam &param,\n31:                                       const LocalTensor<AScaleType> &aScaleL1Tensor = LocalTensor<AScaleType>(),\n32:                                       const LocalTensor<BScaleType> &bScaleL1Tensor = LocalTensor<AScaleType>())\n33:{\n34:    auto &l0aBuffer = aL0BuffsDb.Get();\n35:    l0aBuffer.LockProd();\n36:    LocalTensor<L0ADType> L0ATensor = l0aBuffer.template GetTensor<L0ADType>();\n37:#if ((__CCE_AICORE__ == 310) || (defined __DAV_310R6__) || (__NPU_ARCH__ == 5102))\n38:    if constexpr (IsSameType<L0ADType, mx_fp8_e4m3_t>::value) {\n39:        LoadDataToL0AMx<A, L0ADType>(L0ATensor, aL1Tensor, aScaleL1Tensor, param, 0, param.singleK, param.singleM);\n40:    } else\n41:#endif\n42:    {\n43:        LoadDataToL0A(L0ATensor, aL1Tensor, param, 0, param.singleK, param.singleM);\n44:    }\n45:    l0aBuffer.UnlockProd();\n46:\n47:    auto &l0bBuffer = bL0BuffsDb.Get();\n48:    l0bBuffer.LockProd();\n49:    LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n50:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n51:    if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n52:        LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, 0, param.singleK, param.singleN);\n53:    } else\n54:#endif\n55:    {\n56:        LoadDataToL0B(L0BTensor, bL1Tensor, param, 0, param.singleK, param.singleN);\n57:    }\n58:    l0bBuffer.UnlockProd();\n59:\n60:    l0aBuffer.LockCons();\n61:    l0bBuffer.LockCons();\n62:",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::35::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex::l0aBuffer.LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulFullMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 27
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::48::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex::l0bBuffer.LockProd",
+    "kind": "METHOD",
+    "name": "l0bBuffer.LockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 48,
+    "line_end": 48,
+    "why": "search",
+    "facts": {},
+    "snippet": "36:    LocalTensor<L0ADType> L0ATensor = l0aBuffer.template GetTensor<L0ADType>();\n37:#if ((__CCE_AICORE__ == 310) || (defined __DAV_310R6__) || (__NPU_ARCH__ == 5102))\n38:    if constexpr (IsSameType<L0ADType, mx_fp8_e4m3_t>::value) {\n39:        LoadDataToL0AMx<A, L0ADType>(L0ATensor, aL1Tensor, aScaleL1Tensor, param, 0, param.singleK, param.singleM);\n40:    } else\n41:#endif\n42:    {\n43:        LoadDataToL0A(L0ATensor, aL1Tensor, param, 0, param.singleK, param.singleM);\n44:    }\n45:    l0aBuffer.UnlockProd();\n46:\n47:    auto &l0bBuffer = bL0BuffsDb.Get();\n48:    l0bBuffer.LockProd();\n49:    LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n50:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n51:    if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n52:        LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, 0, param.singleK, param.singleN);\n53:    } else\n54:#endif\n55:    {\n56:        LoadDataToL0B(L0BTensor, bL1Tensor, param, 0, param.singleK, param.singleN);\n57:    }\n58:    l0bBuffer.UnlockProd();\n59:\n60:    l0aBuffer.LockCons();\n61:    l0bBuffer.LockCons();\n62:\n63:    MmadParams mmadParams;\n64:    mmadParams.m = param.singleM;\n65:    if (param.realM != 0) {\n66:        mmadParams.m = param.realM;\n67:    }\n68:    mmadParams.n = param.singleN;\n69:    mmadParams.k = param.singleK;\n70:    mmadParams.cmatrixInitVal = param.isOutKFisrt;\n71:    mmadParams.cmatrixSource = false;\n72:    mmadParams.unitFlag = param.unitFlag;\n73:    if (mmadParams.m == 1) {\n74:        mmadParams.m = 16;\n75:    }",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::48::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex::l0bBuffer.LockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::27::::MatmulFullMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulFullMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 27
+      }
+    ]
+  },
+  {
+    "id": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::125::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex::l0aBuffer.UnlockProd",
+    "kind": "METHOD",
+    "name": "l0aBuffer.UnlockProd",
+    "status": "extracted",
+    "file": "op_kernel/arch35/cube_api/matmul.h",
+    "line_start": 125,
+    "line_end": 125,
+    "why": "search",
+    "facts": {},
+    "snippet": "113:        auto &l0aBuffer = aL0BuffsDb.Get();\n114:        l0aBuffer.LockProd();\n115:        LocalTensor<L0ADType> L0ATensor = l0aBuffer.template GetTensor<L0ADType>();\n116:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n117:        if constexpr (IsSameType<L0ADType, mx_fp8_e4m3_t>::value) {\n118:            LoadDataToL0AMx<A, L0ADType>(L0ATensor, aL1Tensor, aScaleL1Tensor, param, k * L1Aoffset, tileK,\n119:                                         param.singleM);\n120:        } else\n121:#endif\n122:        {\n123:            LoadDataToL0A(L0ATensor, aL1Tensor, param, k * L1Aoffset, tileK, param.singleM);\n124:        }\n125:        l0aBuffer.UnlockProd();\n126:\n127:        auto &l0bBuffer = bL0BuffsDb.Get();\n128:        l0bBuffer.LockProd();\n129:        LocalTensor<L0BDType> L0BTensor = l0bBuffer.template GetTensor<L0BDType>();\n130:        uint64_t loopNum = param.isRightTranspose ? 1 : kLoops;\n131:#if (__CCE_AICORE__ == 310) || (defined __DAV_310R6__)\n132:        if constexpr (IsSameType<L0BDType, mx_fp8_e4m3_t>::value) {\n133:            LoadDataToL0BMx<B, L0BDType>(L0BTensor, bL1Tensor, bScaleL1Tensor, param, k * L1Boffset, tileK,\n134:                                         param.singleN, loopNum);\n135:        } else\n136:#endif\n137:        {\n138:            LoadDataToL0B(L0BTensor, bL1Tensor, param, k * L1Boffset, tileK, param.singleN, loopNum);\n139:        }\n140:        l0bBuffer.UnlockProd();\n141:\n142:        l0aBuffer.LockCons();\n143:        l0bBuffer.LockCons();\n144:\n145:        MmadParams mmadParams;\n146:        mmadParams.m = param.singleM;\n147:        if (param.realM != 0) {\n148:            mmadParams.m = param.realM;\n149:        }\n150:        mmadParams.n = param.singleN;\n151:        mmadParams.k = tileK;\n152:        if (mmadParams.m == 1) {",
+    "relationships": [
+      {
+        "kind": "CALLS",
+        "src": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex",
+        "dst": "SRCKCALLV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::125::SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex::l0aBuffer.UnlockProd",
+        "other_id": "SRCKDEFV2::flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h::87::::MatmulKMutex",
+        "other_kind": "FUNCTION",
+        "other_name": "MatmulKMutex",
+        "file": "flash_attention_score_grad/op_kernel/arch35/cube_api/matmul.h",
+        "line_start": 87
+      }
+    ]
+  }
+]

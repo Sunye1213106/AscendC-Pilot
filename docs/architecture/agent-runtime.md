@@ -246,7 +246,7 @@ acp start
 
 | 命令 | 作用 |
 | --- | --- |
-| `acp start` | 启动或复用 run；失败态逃生口；全覆盖 NL 可写入 `control/user_goal.yaml`；解析 run 级 `source_scope.yaml` |
+| `acp start` | 启动或复用 run；`--architecture` 在写路径之前就会钉住；`--force-new` 只在已有 run/产物时 wipe，处女项目是 no-op；失败态逃生口；全覆盖 NL 可写入 `control/user_goal.yaml`；解析 run 级 `source_scope.yaml` |
 | `acp next` | 下一 Action / 恢复提示 |
 | `acp run-action` | **workflow run 内**唯一正式执行入口：prepare / `--finalize` / `auto`（drive + `host_step`） |
 | `acp dispatch-result` | 消费一次性 `dispatch_ticket`，finalize 后继续 drive |
@@ -272,31 +272,23 @@ prepare（物化 method.md / refs + Bundle 读闭合）
   -> dispatch-result / finalize -> Gate -> advance
 ```
 
-`uo-query` / `kb_lookup` 是 **claim-driven Explore**：先读 progressive `uo-product-map`，按 claim sufficiency 有界探索。使用 `output_mode: return_value`（Explorer `write_scopes: []`）：子代理在最终消息返回 `kb-answer-v1`；Host Driver 经 `dispatch-result`（或人工 `acp run-action kb_lookup --finalize`）收尾。OpenCode return_value 插件可将 Task 末尾 payload 注入 `ASCENDC_ACTION_RESULT`，**无需手写 scratch / `--result-file`**。Runtime 物化 action-local `answer.yaml` 并注入 identity。`--result-file` 仅人工 fallback。**Explorer 不写；Runtime 物化。** Domain 正式产物仍禁止 LLM 直写。
+查询路由在主控：看 skill / 短地图，大体判断查什么。短问直接 `acp uo-query --mode` 作答；内容多再派 `uo-query` 子代理或启动 `/uo-query`。不要为空转「问题路由」开子代理。
+
+深问走 `kb_lookup` 时使用 `output_mode: return_value`（Explorer `write_scopes: []`）：子代理在最终消息返回 `kb-answer-v1`；Host Driver 经 `dispatch-result`（或人工 `acp run-action kb_lookup --finalize`）收尾。OpenCode return_value 插件可将 Task 末尾 payload 注入 `ASCENDC_ACTION_RESULT`，**无需手写 scratch / `--result-file`**。Runtime 物化 action-local `answer.yaml` 并注入 identity。`--result-file` 仅人工 fallback。**Explorer 不写；Runtime 物化。** Domain 正式产物仍禁止 LLM 直写。
 
 ### `/uo-query` workflow vs delegated `Task(actor=uo-query)`
 
 ```text
-uo-query Agent
-├── /uo-query workflow（kb_lookup：完整 prepare → Task → finalize）
-└── Task(actor=uo-query)  ← TG / CE / Primary 委托（共用 Agent/Skill/METHOD/return contract）
+主控（operator-analysis skill）
+├── 短问：自己 acp uo-query --mode，把答案说给人听
+└── 深问：Task(actor=uo-query) 或 /uo-query（单阶段「查询」→ kb_lookup → done）
 ```
 
-- **Workflow `/uo-query`**：完整 lifecycle（start → prepare `kb_lookup` → Explore → finalize）。
-- **Delegated Task**：TG/CE/Primary **不得**再开完整 `/uo-query` lifecycle；直接 `Task(actor=uo-query)`，共用同一 Agent / Skill / METHOD / `kb-answer-v1`。
-- Parent **必须**传入显式 **UO Product Handle**（`op_name` / `architecture` / `path` / `schema` / fingerprint|digest）；禁止子代理自找 `.uo`。构造见 `ascendc_pilot.uo_product_handle.build_uo_product_handle`。
+- **短问**：不启动 workflow，不派子代理。
+- **Workflow `/uo-query`**：仅深问需要时；一次 `kb_lookup` 后 `pipeline_complete` → complete。
+- **Delegated Task**：TG/CE/Primary 不要再套一层 `/uo-query` lifecycle；直接 `Task(actor=uo-query)`，共用同一 Agent / Skill / METHOD / `kb-answer-v1`。
+- Parent **必须**传入显式 **UO Product Handle**（`op_name` / `architecture` / `path` / `schema` / fingerprint|digest）；禁止子代理自找 `.uo`。构造见 `ascendc_pilot.uo_product_handle.build_uo_product_handle`。子答 `UNKNOWN`/`PARTIAL` 不得抬成 high；禁止跨 architecture 证据闭合。
 
-### 复杂多 claim：Primary fan-out
-
-```text
-复杂多 claim 问
-  → Primary 拆 claim（如 Host / Kernel / Perf，≤4）
-  → 并行 Task(actor=uo-query) × N（各单 claim + 同一 UO Product Handle）
-  → Primary 合成确切答案：冲突取更严；子答 UNKNOWN/PARTIAL 不得抬成 high
-  → 不得用其他 arch 证据闭合当前 arch claim
-```
-
-简单单 claim：一个 Task 即可。禁止把 3+ 正交子问塞进同一个 Explorer。
 确定性 Action 跳过 Task：prepare 后由 Pilot 调度 Engine，再 finalize。
 
 ---

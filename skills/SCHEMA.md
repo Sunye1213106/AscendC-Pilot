@@ -4,7 +4,7 @@ Cognitive skills（五个，缺一不可）：
 
 | # | id | 用途 |
 | --- | --- | --- |
-| 1 | `operator-analysis` | UO CodeMap 查询 / 调查 |
+| 1 | `operator-analysis` | UO CodeMap 建库（`/uo-init` `/uo-update`）、查询与调查 |
 | 2 | `testcase-generation` | TG 覆盖规划与闭环 |
 | 3 | `source-proof` | 源码引理 / 不可达证明 |
 | 4 | `code-review` | `/ce-review` 只读检视 |

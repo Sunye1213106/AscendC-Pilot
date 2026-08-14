@@ -301,7 +301,15 @@ def build_kernel_ir(
 
     from uo_init.build_context import source_uses_dtype_variants
 
-    if any(source_uses_dtype_variants(e) for e in entries):
+    if any(
+        source_uses_dtype_variants(
+            e,
+            op_dir=getattr(ctx, "op_dir", ""),
+            ops_root=getattr(ctx, "ops_root", ""),
+            macros=ctx.kernel_defines() if hasattr(ctx, "kernel_defines") else None,
+        )
+        for e in entries
+    ):
         all_variants = list((ctx.dtype_variants() or {}).get("values") or []) or [None]
     else:
         all_variants = [None]
@@ -314,13 +322,33 @@ def build_kernel_ir(
     dims = _Dimensions(list(dimensions or ()))
 
     found: dict[tuple[str, int, str], KernelBranch] = {}
-    jobs = [(entry, variant) for entry in entries for variant in variants]
+    jobs: list[tuple[Path, str | None, dict[str, str] | None]] = [
+        (entry, variant, None) for entry in entries for variant in variants
+    ]
+    mixed_assignment: dict[str, str] | None = None
+    if variants and variants[0]:
+        from uo_init.kernel_gates import discover_kernel_gates
+
+        gates = discover_kernel_gates(
+            entries[0],
+            op_dir=getattr(ctx, "op_dir", ""),
+            ops_root=getattr(ctx, "ops_root", ""),
+            macros=ctx.kernel_defines() if hasattr(ctx, "kernel_defines") else None,
+        )
+        mixed_assignment = gates.pick_mixed_orig_assignment(str(variants[0]))
+        if mixed_assignment:
+            for entry in entries:
+                jobs.append((entry, variants[0], mixed_assignment))
+            ir.notes.append(
+                "mixed_orig_walk="
+                + ",".join(f"{k}={v}" for k, v in sorted(mixed_assignment.items()))
+            )
 
     import time as _time
     from uo_init.timing import log as _tlog
 
-    def _walk_one(job: tuple[Path, str | None]):
-        entry, variant = job
+    def _walk_one(job: tuple[Path, str | None, dict[str, str] | None]):
+        entry, variant, orig_assignment = job
         t0 = _time.perf_counter()
         res = walk_file(
             entry,
@@ -330,9 +358,12 @@ def build_kernel_ir(
             op_needle=getattr(spec, "op_needle", ""),
             scope=getattr(spec, "scope", None),
             collect_writes=False,
+            orig_assignment=orig_assignment,
         )
         dt = _time.perf_counter() - t0
         label = variant or "default"
+        if orig_assignment:
+            label = f"{label}+mixed_orig"
         _tlog(
             f"{dt:7.3f}s{' SLOW' if dt > 180 else ''}  kernel_ir.walk  "
             f"entry={Path(entry).name} variant={label} "

@@ -93,6 +93,17 @@ def _attach_todo(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.todo import attach_todo
 
     st = load_state(root) or {}
+    if not st:
+        # complete/abort already released the live slot; keep the snapshot so
+        # Host still todowrites the finished board instead of wiping Todo.
+        complete = payload.get("complete") if isinstance(payload.get("complete"), dict) else {}
+        snap = complete.get("state") if isinstance(complete.get("state"), dict) else {}
+        if not snap and isinstance(payload.get("state"), dict):
+            snap = payload["state"]
+        if snap:
+            st = snap
+    if not st:
+        return payload
     out = attach_todo(payload, root, state=st, sync_merge=True)
     todo = out.get("todo") or {}
     sync = dict(todo.get("todo_sync") or {})

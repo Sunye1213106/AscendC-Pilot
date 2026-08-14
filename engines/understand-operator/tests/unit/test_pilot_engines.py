@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from uo_init.pilot_engines import (
-    apply_gap_patch,
     prepare_layout,
     resolve_gaps,
     scope_validate,
@@ -67,6 +66,8 @@ def test_prepare_layout_scrubs_legacy_layers_without_stubs(tmp_path: Path, monke
     (uo / "flow" / "golden_model.yaml").write_text("status: not_extracted\n", encoding="utf-8")
     (uo / "tiling").mkdir(parents=True)
     (uo / "tiling" / "data_model.yaml").write_text("status: not_extracted\n", encoding="utf-8")
+    product = uo / "DummyOp.arch35.uo"
+    product.write_bytes(b"uo-keep")
 
     import uo_init.op_spec as op_spec_mod
 
@@ -107,20 +108,15 @@ def test_prepare_layout_scrubs_legacy_layers_without_stubs(tmp_path: Path, monke
     assert (uo / "summary").is_dir()
     assert (uo / "tiling").is_dir()
     assert (uo / "kernel").is_dir()
+    assert product.is_file()
+    assert product.read_bytes() == b"uo-keep"
 
 
-def test_resolve_gaps_autoskips_when_closed(tmp_path: Path):
-    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "ir"
-    uo.mkdir(parents=True)
-    (uo / "unresolved.yaml").write_text(
-        "version: 1\nstatus: closed\nblocker_count: 0\nblockers: []\n",
-        encoding="utf-8",
-    )
+def test_resolve_gaps_removed(tmp_path: Path):
     out = resolve_gaps(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
-    assert out["ok"] and out["skipped"]
-    assert (uo / "resolve_gaps_receipt.yaml").is_file()
-    patch = apply_gap_patch(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
-    assert patch["ok"] and patch.get("skipped")
+    assert out["ok"] is False
+    assert out["error"] == "RESOLVE_GAPS_REMOVED"
+    assert "uo-investigate" in str(out.get("message_zh") or "")
 
 
 def test_scope_validate_blocks_when_probe_unclean(tmp_path: Path):

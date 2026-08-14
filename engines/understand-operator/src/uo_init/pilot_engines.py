@@ -365,6 +365,10 @@ def _reset_uo_skeleton(uo: Path, *, run_id: str, keep_other_runs: bool = False) 
         "cache",
     }
     for child in list(uo.iterdir()):
+        # Durable CodeMap stays queryable until commit replaces it. Cross-workflow
+        # start ("不删正式产物") must not make `acp uo-query` see "found none".
+        if child.is_file() and child.suffix == ".uo":
+            continue
         if child.name in keep_top:
             if child.name == "quality.yaml" and child.is_file():
                 child.unlink()
@@ -575,6 +579,43 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
                     "error": str(exc)[:200],
                     "side": side,
                 }
+        from uo_init.include_heal import (
+            HealReport as _HealReport,
+            heal_missing_includes,
+            missing_includes_from_probes,
+            save_extras as _save_heal_extras,
+        )
+
+        extra_missing = missing_includes_from_probes(probes, [])
+        if extra_missing:
+            added = heal_missing_includes(
+                bctx, extra_missing, round_no=99, source="fallback_probe"
+            )
+            if added:
+                _progress(
+                    "prepare include-heal fallback "
+                    + ", ".join(f"{h.include} -> {h.include_dir}" for h in added[:4])
+                )
+                _save_heal_extras(bctx, _HealReport(enabled=True))
+                for i, row in enumerate(probes):
+                    if str(row.get("side") or "") != "kernel":
+                        continue
+                    if int(row.get("errors") or 0) <= 0 and not row.get("error"):
+                        continue
+                    path = Path(str(row.get("file") or ""))
+                    if not path.is_file():
+                        continue
+                    try:
+                        res = probe_diagnostics(
+                            str(path), bctx, side="kernel", dtype_variant="DT_FLOAT16"
+                        )
+                        probes[i], _ = _probe_entry(path, "kernel", res, "declarations_only")
+                    except Exception as exc:  # noqa: BLE001
+                        probes[i] = {
+                            "file": path.as_posix(),
+                            "error": str(exc)[:200],
+                            "side": "kernel",
+                        }
         host_errors = 0
         kernel_errors = 0
         for row in probes:
@@ -1508,106 +1549,13 @@ def normalize_predicates(project_root: Path, payload: dict[str, Any] | None = No
 
 
 def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Subagent trigger point: skip when unresolved is empty/closed.
-
-    Auto LLM / subagent gap resolve is **off by default**. Set
-    ``UO_RESOLVE_GAPS_LLM=1`` (or payload ``enable_llm=true``) to allow the
-    closed-vocabulary producer path. LLM patches are graded ``llm``, never sound.
-    """
-    import os
-
-    from uo_init.gap_patch import SCHEMA_HINT
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root, arch=_payload_arch(ctx))
-    run = _run_dir(uo, ctx)
-    unresolved = _load(uo / "ir" / "unresolved.yaml") or {}
-    count = int(unresolved.get("blocker_count") or len(unresolved.get("blockers") or []))
-    der_count = int(unresolved.get("derivation_blocker_count") or 0)
-    if count == 0 or unresolved.get("status") == "closed":
-        _dump(
-            uo / "ir" / "resolve_gaps_receipt.yaml",
-            {"ok": True, "skipped": True, "blocker_count": 0},
-        )
-        return {
-            "ok": True,
-            "engine": "resolve_gaps",
-            "skipped": True,
-            "blocker_count": 0,
-            "message_zh": "无残余 blocker，auto-skip",
-        }
-    llm_env = str(os.environ.get("UO_RESOLVE_GAPS_LLM") or "").strip().lower() in {
-        "1", "true", "yes", "on",
-    }
-    llm_enabled = llm_env or _flag(ctx.get("enable_llm"), default=False)
-    # Key-field derivation residuals need the closed-vocabulary subagent only
-    # when LLM resolve is explicitly enabled.
-    need_subagent = llm_enabled and (der_count > 0 or count >= 20)
-    staging = {
-        "version": 1,
-        "contract": "resolve-gaps-staging-v1",
-        "schema": SCHEMA_HINT,
-        "blocker_count": count,
-        "derivation_blocker_count": der_count,
-        "llm_enabled": llm_enabled,
-        "patch_grade": "llm",
-        "blockers": unresolved.get("blockers") or [],
-        "instruction_zh": (
-            "对每个 blocker 只从封闭词汇表选 classification；"
-            "input_derived 时 binding.var_id 必须已在 VariableModel 中，禁止发明符号或写自由表达式。"
-            "每条 patch 必须带 grade: llm（不得标 sound）。"
-        ),
-    }
-    staging_rel = f"runs/{run.name}/actions/resolve_gaps/staging.yaml"
-    _dump(run / "actions" / "resolve_gaps" / "staging.yaml", staging)
-    # Mirror under ir for humans / older readers (Host-only).
-    _dump(uo / "ir" / "resolve_gaps_staging.yaml", staging)
-    try:
-        from uo_init.blocker_review import write_review
-
-        static_review = write_review(
-            uo,
-            ops_root=_ops_root(ctx, root),
-            project_root=root,
-        )
-    except Exception as exc:  # noqa: BLE001
-        static_review = {"ok": False, "error": str(exc)[:200]}
-    _dump(
-        uo / "ir" / "resolve_gaps_receipt.yaml",
-        {
-            "ok": True,
-            "skipped": False,
-            "blocker_count": count,
-            "derivation_blocker_count": der_count,
-            "need_subagent": need_subagent,
-            "deferred": not need_subagent,
-            "llm_enabled": llm_enabled,
-            "staging": staging_rel,
-            "static_review": static_review,
-        },
-    )
+    """Removed from ``/uo-init``. Residual analysis is ``/uo-investigate``."""
+    del project_root, payload
     return {
-        "ok": True,
+        "ok": False,
+        "error": "RESOLVE_GAPS_REMOVED",
         "engine": "resolve_gaps",
-        "skipped": False,
-        "blocker_count": count,
-        "need_subagent": need_subagent,
-        "deferred": not need_subagent,
-        "llm_enabled": llm_enabled,
-        "static_review": static_review,
-        "message_zh": (
-            f"有 {count} 个 blocker（派生 {der_count}）"
-            + (
-                "，交 resolve_gaps subagent"
-                if need_subagent
-                else (
-                    "（LLM 默认关闭，设 UO_RESOLVE_GAPS_LLM=1 启用；确定性记录后继续）"
-                    if not llm_enabled
-                    else "（确定性记录后继续）"
-                )
-            )
-        ),
+        "message_zh": "uo-init 不再做 LLM 缺口补齐；未闭合项请用 /uo-investigate。",
     }
 
 
@@ -1968,7 +1916,8 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
 
     uo = _uo_root(project_root)
     graph = uo / "ir" / "operator_graph.yaml"
-    quality = uo / "quality.yaml"
+    quality = uo / "checks" / "quality.yaml"
+    quality_legacy = uo / "quality.yaml"
     unresolved = uo / "ir" / "unresolved.yaml"
     hashes = uo / "checks" / "artifact_hashes.yaml"
     sqlite = uo / "indexes" / "kb_graph.sqlite"
@@ -1978,8 +1927,10 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
     db_ready = sqlite.is_file() and db_authority_ok(sqlite)
     if not graph.is_file() and not db_ready:
         errors.append("missing ir/operator_graph.yaml (and no DB authority product)")
-    if not quality.is_file() and not (
-        db_ready and load_view_blob(sqlite, "quality.yaml") is not None
+    if (
+        not quality.is_file()
+        and not quality_legacy.is_file()
+        and not (db_ready and load_view_blob(sqlite, "quality.yaml") is not None)
     ):
         errors.append("missing quality.yaml")
     if not hashes.is_file() and not (
@@ -2047,7 +1998,7 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
     ur = _load(unresolved)
     if not ur and db_ready:
         ur = load_view_blob(sqlite, "ir/unresolved.yaml") or {}
-    q = _load(quality)
+    q = _load(quality) or _load(quality_legacy)
     if not q and db_ready:
         q = load_view_blob(sqlite, "quality.yaml") or {}
     blocker_count = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
@@ -2108,7 +2059,7 @@ def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root, arch=_payload_arch(ctx))
-    q = _load(uo / "quality.yaml")
+    q = _load(uo / "checks" / "quality.yaml") or _load(uo / "quality.yaml")
     ur = _load(uo / "ir" / "unresolved.yaml")
     host_meta = _load(uo / "ir" / "host_extract_receipt.yaml")
     product = find_uo_product(root, architecture=str(_payload_arch(ctx) or ""))
@@ -2160,8 +2111,8 @@ def _codemap_engine(name: str):
 
 # Stable names for ENGINE_REGISTRY adapters.
 # Public CodeMap surface: prepare / extract / analyze / commit / verify.
-# resolve / apply_gap_patch remain for optional investigate / debug only.
-# Fine-grained names remain for internal chaining and debug run-action.
+# Fine-grained names remain for internal chaining. LLM gap resolve is gone;
+# residuals go to /uo-investigate.
 ENGINES: dict[str, Any] = {
     "prepare": lambda project_root, payload=None: _codemap_engine("prepare")(
         project_root, payload
@@ -2182,10 +2133,7 @@ ENGINES: dict[str, Any] = {
     "review": lambda project_root, payload=None: _codemap_engine("review")(
         project_root, payload
     ),
-    "resolve": lambda project_root, payload=None: _codemap_engine("resolve")(
-        project_root, payload
-    ),
-    # Internal / merge helpers (also used by composites / optional investigate).
+    # Internal / merge helpers (also used by composites).
     "prepare_layout": prepare_layout,
     "scope_scan": scope_scan,
     "scope_validate": scope_validate,
@@ -2196,8 +2144,6 @@ ENGINES: dict[str, Any] = {
     "normalize_variables": normalize_variables,
     "derive_key_fields": derive_key_fields,
     "normalize_predicates": normalize_predicates,
-    "resolve_gaps": resolve_gaps,
-    "apply_gap_patch": apply_gap_patch,
     "compile": lambda project_root, payload=None: _codemap_engine("analyze")(
         project_root, payload
     ),

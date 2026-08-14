@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from ascendc_pilot.actions.runtime import _write_active_action
@@ -49,6 +50,60 @@ def test_task_authorize_recovers_via_last_project_cache(
     )
     assert denied.get("decision") == "allow", denied
     assert denied.get("reason_code") == "TASK_OK", denied
+
+
+def test_task_authorize_recovers_via_pending_dispatch(tmp_path: Path, monkeypatch) -> None:
+    """pilot_run writes pending-dispatch; Task must not require last-project or stub path."""
+    workspace = tmp_path / "workspace"
+    op = tmp_path / "ops" / "flash_attention_score_grad"
+    workspace.mkdir()
+    op.mkdir(parents=True)
+    (workspace / ".ascendc-pilot" / "state").mkdir(parents=True)
+
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
+    _write_active_action(
+        op,
+        {
+            "action_id": "kb_lookup",
+            "actor_id": "uo-query",
+            "role_id": "readonly_analyst",
+            "execution_mode": "subagent",
+            "status": "prepared",
+            "phase": "answer",
+            "workflow_id": "uo-query",
+        },
+    )
+
+    home = tmp_path / "home"
+    cfg = home / ".config" / "opencode"
+    cfg.mkdir(parents=True)
+    # Polluted last-project (workspace) must not beat the live dispatch handoff.
+    (cfg / "ascendc-last-project").write_text(str(workspace.resolve()), encoding="utf-8")
+    (cfg / "ascendc-pending-dispatch.json").write_text(
+        json.dumps(
+            {
+                "project": str(op.resolve()),
+                "ticket": "dxt_test",
+                "actor": "uo-query",
+                "action": "kb_lookup",
+                "ts": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    verdict = authorize(
+        workspace,
+        tool="task",
+        path="uo-query",
+        command="uo-query",
+        agent="ascendc-pilot",
+        action="kb_lookup",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK", verdict
+    assert verdict.get("workflow_id") == "uo-query", verdict
 
 
 def test_task_authorize_still_denies_without_cache_or_workflow(tmp_path: Path, monkeypatch) -> None:

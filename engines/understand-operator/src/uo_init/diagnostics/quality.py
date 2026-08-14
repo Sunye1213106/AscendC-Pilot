@@ -246,10 +246,17 @@ def codemap_quality(
         if grade in {"ready", "usable"}
         else "CodeMap is not a substitute for source; locate surface is incomplete"
     )
+    cm_summary = codemap.summary()
     return {
         "schema": "uo-product-quality/v1",
         "grade": grade,
         "locate_ready": locate_ready,
+        "graph": {
+            "entity_count": int(cm_summary.get("entity_count") or 0),
+            "relation_count": int(cm_summary.get("relation_count") or 0),
+            "entities_by_kind": dict(cm_summary.get("entities_by_kind") or {}),
+            "relations_by_kind": dict(cm_summary.get("relations_by_kind") or {}),
+        },
         "integrity": "pass" if integrity_ok else "fail",
         "surfaces": surfaces,
         "unresolved": {

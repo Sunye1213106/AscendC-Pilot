@@ -23,7 +23,7 @@ Operator + Architecture
 | `extract` | 源码范围 | 用 Clang 抽出编译期可见事实（声明、语法树、调用/写点等） | CompilerFacts（原始事实，尚无业务解释） |
 | `analyze` | CompilerFacts | 按固定规则串成跨层关系（TilingKey、TilingData、Kernel 等）；证不全的记下来 | 语义关系图 + unresolved（未闭合项） |
 | `commit` | 分析结果 | 写入正式产品文件 | `<op_name>.<arch>.uo` |
-| `verify` | `.uo` | 检查结构是否完整、约定视图能否读出；写入 `uo/checks/integrity.yaml` 收据 | 已验证的 CodeMap |
+| `verify` | `.uo` | 检查结构是否完整、约定视图能否读出；写入 `uo/checks/integrity.yaml` 与 `uo/checks/quality.yaml` | 已验证的 CodeMap |
 
 Host 把 TilingKey packing 实参分类时走已有的 C++ ExprIR（字面量、编译期符号、成员、cast），而不是扫 identifier token。TilingData 字段按已注册的类型身份补齐，不靠文件名猜测。
 
@@ -236,30 +236,29 @@ Source -> CodeMap -> {/uo-query 只读消费 | /uo-update 受控增量刷新 | /
 
 `/uo-update` 在源码或 build 指纹变化后执行 `detect -> plan -> apply -> export -> diff`。基于 fingerprint 的受控刷新，不是在 YAML 上随意打补丁；只需查看变化时可走 `diff_only`。
 
-`/uo-query` 经过 `route -> lookup -> answer` 回答已有 CodeMap 上的问题。可借助模型解释，但不得改写 canonical CodeMap。
+`/uo-query` 只读回答已有 CodeMap 上的问题。可借助模型解释，但不得改写 canonical CodeMap。
 
-### `/uo-query`（claim-driven Explore）
+### `/uo-query`（主控用 skill 路由）
 
-身份一律 `uo-query`（不新增 explorer 品牌）。推理入口：
+主控看一眼短地图，大体判断查什么。短问自己 `acp uo-query --mode`；内容多再 `Task(actor=uo-query)` 或启动 `/uo-query`（单阶段「查询」，一次 `kb_lookup` 后结束）。不要为空转「问题路由」开子代理。
 
-- 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)（progressive；域文档按需）
-- METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`（claim sufficiency + 预算停条件）
-- 交付：`kb-answer-v1`（`answer_zh` 必填；`findings`/`gaps`/`useful_locations` optional）
+身份一律 `uo-query`。推理入口：
 
-`readonly_analyst` 语义：**禁止改 domain 正式产物**（`.uo` / TG / CE）。Explorer 不写正式产物；Runtime 可物化 action-local `answer.yaml`（OpenCode 可无文件 finalize）。
+- 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)
+- METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`
+- 交付：`kb-answer-v1`（`answer_zh` 必填）
 
-**复杂度**：
+`readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物；深问走 workflow 时 Runtime 可物化 action-local `answer.yaml`。
 
-- 单 claim（一个侧面）→ 一个 `uo-query` Task / 一次 `kb_lookup`。
-- 多 claim（如 Host 分核 + Kernel sync + 性能代价）→ Primary 拆成 2–4 个窄 `Task(actor=uo-query)` 并行调查，再合成确切答案；不要嵌套第二个 `/uo-query` workflow，也不要把全部子问塞进一个 Explorer。
+高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `acp inspect evidence-window --project … --path … --lines A-B`。
 
-高置信源码窗：`acp inspect evidence-window --project … --path … --lines A-B`。
+结构化查询（`acp uo-query --mode`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图。除 tiling_key / tiling_data / kernel_branch / buffer / legal_key / gaps 外，还包括：
 
-结构化查询（`acp uo-query --mode`）除 tiling_key / tiling_data / kernel_branch / buffer / legal_key / gaps 外，还包括：
-
-- `locate`：按名字给出 `file:line`（含 packing / writer site）
+- `locate`：按名字给出 `file:line` 与 capped 源码窗（含 packing / writer site）
 - `kernel_api`：DataCopy / SetFlag / Cast / LoadAlign / SetGlobalBuffer 等 catalog 调用；Flag 带 `SIGNALS` / `AWAITS` 与 `flag_paired`；TQue EnQue/DeQue 带 QUEUE，不带 Flag 边；TPipe InitBuffer 为 `mechanism=tpipe`
+- `kernel_branch`：按 BRANCH 名精确搜 `if constexpr`；同名按 function 各一条样例并带 `functions` 目录；第二 ident 过滤函数；snippet 从命中行向后盖 body；不附 kernel overview
 - `impact`：源码位置 → 有向有用边邻居 + skill 分桶；`field` 模式只回 writers/readers/edges，不再给无向 neighbors
+- `search`：TYPE 按精确名字；命中带 snippet 与 1 跳关系
 
 与官方 cannbot 的适配（CodeMap 作为源码结构底座，含 FAG arch35 覆盖验证）见下文 [与官方 cannbot 的适配](#与官方-cannbot-的适配)。
 
@@ -279,11 +278,11 @@ UO 负责如实交付可证明关系及其未知部分；TG 决定哪些测试�
 
 ## 与官方 cannbot 的适配
 
-UO 不替代 cannbot。cannbot 的 code-review、runtime-debug、crash-debug、precision-debug、whitebox-design、issue-handler 在源码里反复要的是同一类**定位点**：`file:line`、字段写点 / 读点、Buffer / Queue、同步与搬运 API。`/uo-init` 把这些写进 CodeMap；`uo-query` 按名字或 API 名查出 **结构事实 + `file:line`**，再开最小源码窗。这和 TG、CE 一样：下游读图，不重新解析整份算子。
+UO 不替代 cannbot。cannbot 的 code-review、runtime-debug、crash-debug、precision-debug、whitebox-design、issue-handler 在源码里反复要的是同一类**定位点**：`file:line`、字段写点 / 读点、Buffer / Queue、同步与搬运 API。`/uo-init` 把这些写进 CodeMap；`uo-query` 按名字查出 **结构事实 + `file:line` + 源码窗**。这和 TG、CE 一样：下游读图，不重新解析整份算子。
 
 ```text
 以前：问题 → Grep / Read 大量源码 → 建立局部理解 → cannbot 判断
-现在：问题 → UO 查定位点 → 最小源码窗口确认 → cannbot 判断
+现在：问题 → UO 一次查询（定位点 + 源码窗）→ cannbot 判断
 ```
 
 下表把 cannbot skill 要的源码点对齐到 **UO 已实现的查询与投影**（`query/evidence.py` 的 facts 与有用边；mode 见 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)）。
@@ -298,12 +297,12 @@ UO 不替代 cannbot。cannbot 的 code-review、runtime-debug、crash-debug、p
 | Buffer / Queue / `tposition` | code-review Buffer 规划；crash-debug 卡死 | `buffer` | BUFFER/QUEUE：`tposition`（VECIN/VECOUT）、`memory_space` |
 | 同步 API：`EnQue`/`DeQue`、`SetFlag`/`WaitFlag`、`CrossCoreSetFlag`/`CrossCoreWaitFlag`、`PipeBarrier`、`AllocTensor`/`FreeTensor`、`InitBuffer` | crash-debug；code-review 同步契约 | `kernel_api` | OPERATION：`callee`、`function`、`args`、`file:line`；Flag 为 `facts.sync`（`SIGNALS`/`AWAITS`）+ `flag_paired`；TQue 为 `facts.queue` + `mechanism=tque`；TPipe InitBuffer 为 `mechanism=tpipe` |
 | 搬运 / 精度 API：`DataCopy`/`DataCopyPad`/`Cast` | precision-debug；code-review API 索引 | `kernel_api` | 同上；`impact` 分到 precision / memory |
-| TilingKey 声明与 packing 点 | runtime-debug 561002；whitebox | `tiling_key` | `value_domain`、`packing_value_sites`（lhs/rhs/guard/`file:line`） |
+| TilingKey 声明与 packing 点 | runtime-debug 561002；whitebox | `tiling_key` | `value_domain`、`packing_value_sites`（按写出式排序，`[0]` 为真实 packing；snippet 对着写出点） |
 | 接口 dtype | runtime-debug 561003；precision-debug 多 dtype | `search --kind INPUT,OUTPUT` | `facts.dtype`（REG_OP `TensorType`） |
-| Kernel 分支 / 合法 Key 组合 | whitebox-design 路径覆盖 | `kernel_branch` / `legal_key` | 分支 span、模板可接纳组合 |
+| Kernel 分支 / 合法 Key 组合 | whitebox-design 路径覆盖 | `kernel_branch` / `legal_key` | 第一页最多 3 条样例（条件体排序）+ `functions` 目录；模板可接纳组合 |
 | 改动碰到哪些路径 | issue-handler / PR 检视 | `impact` | 有向有用边邻居，分桶 dispatch / layout / memory / **sync** / precision / contract |
 
-`kernel_api` 的 catalog 与投影一致：Flag 同步（Set/WaitFlag、CrossCore*、IB*）、**TQue**（EnQue/DeQue、Alloc/Free，CANN 封装交接）、**TPipe**（InitBuffer、FetchEventID、GetTPipePtr）、barrier（PipeBarrier 等），精度/搬运侧 `_PRECISION_CALLEES`（Cast、DataCopy、DataCopyPad），以及 LoadAlign / SetGlobalBuffer。`field` 只回 writers / readers / edges，不回无向 neighbors。
+`kernel_api` 的 catalog 与投影一致：Flag 同步（Set/WaitFlag、CrossCore*、IB*）、**TQue**（EnQue/DeQue、Alloc/Free，CANN 封装交接）、**TPipe**（InitBuffer、FetchEventID、GetTPipePtr）、barrier（PipeBarrier 等），精度/搬运侧 `_PRECISION_CALLEES`（Cast、DataCopy、DataCopyPad），以及 LoadAlign / SetGlobalBuffer。`field` 回 `candidates`（最多 3 个写出点）/ writers / readers / edges，不回无向 neighbors。
 
 Flag 同步在 identity 已知时记录 `SIGNALS`/`AWAITS`，并检查成对出现（缺一侧 `UNPAIRED_FLAG_SYNC`）。这不是 happens-before。EnQue/DeQue 是 **TQue**：`TQueBind` 内部才 SetFlag/WaitFlag，UO 只给调用点与 QUEUE `tposition`，不抽 Flag 边、不进 Flag 配对。InitBuffer 是 **TPipe** 方法。条例、golden、精度是否过线仍由 cannbot 判断。
 
@@ -311,7 +310,7 @@ Flag 同步在 identity 已知时记录 `SIGNALS`/`AWAITS`，并检查成对出�
 
 ### FAG arch35：cannbot 常见查询覆盖验证
 
-下表数字来自同日**较早**已 commit 产品上的 `uo-query`（见 [benchmark.md](../benchmark.md)「查询」节：当时未抹 TU cache，profile 注释为全 dtype，实体约 10472；Flag `UNPAIRED_FLAG_SYNC=0`）。**不是**当前默认 `fast` 的 119s 冷启动产品（`artifacts/fag-arch35-rebuild/cold-start-120s`，1 dtype / keypath / fold 关；119s 产品 Flag 未配对为 1，图更大）。当前墙钟与实体规模以 benchmark 为准。
+查询走 SQLite 索引（见 [benchmark.md](../benchmark.md)「查询」节），不再 hydrate 全图。下表覆盖口径来自 FAG arch35 已 commit 产品；当前墙钟以现网 `.uo` 上的 `acp uo-query` 为准。
 
 产品路径：`<op>/.ascendc-pilot/arch35/uo/flash_attention_score_grad.arch35.uo`
 

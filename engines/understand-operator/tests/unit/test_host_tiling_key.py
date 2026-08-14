@@ -108,7 +108,7 @@ def test_host_key_argument_count_mismatch_does_not_bind_fields(tmp_path: Path) -
     host = op / "op_host" / "arch35"
     host.mkdir(parents=True)
     (host / "tiling.cpp").write_text(
-        "uint64_t BuildKey() { return GET_TPL_TILING_KEY(0); }\n",
+        "uint64_t BuildKey() { return GET_TPL_TILING_KEY(0, 1, 2); }\n",
         encoding="utf-8",
     )
     cm = CodeMap(op_name="toy", architecture="arch35")
@@ -124,3 +124,61 @@ def test_host_key_argument_count_mismatch_does_not_bind_fields(tmp_path: Path) -
         e for e in cm.by_kind(EntityKind.PREDICATE)
         if e.attrs.get("predicate_role") == "host_tiling_key_argument"
     ]
+
+
+def test_set_tiling_key_binds_without_tpl_provenance(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    host = op / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        "void DoTiling() { SetTilingKey(TILING_KEY_SPLIT); }\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(
+        EntityKind.TILING_KEY,
+        "TILING_KEY_SPLIT",
+        attrs={
+            "source_declared": True,
+            "provenance": "source_set_tiling_key",
+            "decl_order": 0,
+        },
+    )
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["calls"] >= 1
+    assert meta["fields_bound"] == 1
+    key = cm.by_name("TILING_KEY_SPLIT", kind=EntityKind.TILING_KEY)[0]
+    assert "TILING_KEY_SPLIT" in (key.attrs.get("host_packing_expressions") or [])
+
+
+def test_packing_uses_meta_declared_keys_when_sibling_schema_leaked(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    host = op / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        "uint64_t BuildKey() { return GET_TPL_TILING_KEY(a, b, c); }\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for order, name in enumerate(("K0", "K1", "K2")):
+        cm.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs={
+                "source_declared": True,
+                "decl_order": order,
+                "provenance": "source_tpl_args_decl",
+            },
+        )
+    cm.upsert(
+        EntityKind.TILING_KEY,
+        "DimA",
+        attrs={"source_declared": True, "decl_order": 0, "provenance": "source_tpl_args_decl"},
+    )
+    cm.meta["source_declared_tiling_keys"] = ["K0", "K1", "K2"]
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 3
+    assert meta["declared"] == 3
+    assert meta["argument_count_mismatches"] == []

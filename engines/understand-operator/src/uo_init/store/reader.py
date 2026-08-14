@@ -157,7 +157,11 @@ def load_view_blob_checked(
     projections return ``view=None`` so callers cannot accidentally consume an
     unverifiable shortcut.  ``stale_blob`` is retained only for diagnostics.
     """
-    from uo_init.projection_provenance import VIEW_STALE, validate_view_against_codemap
+    from uo_init.projection_provenance import (
+        LEGACY_VIEW_UNVERIFIED,
+        VIEW_STALE,
+        validate_view_against_codemap,
+    )
     from uo_init.tg_views import (
         finalize_tg_views,
         project_kernel_view,
@@ -167,9 +171,28 @@ def load_view_blob_checked(
     )
 
     blob = load_view_blob(path, name)
-    cm = codemap if codemap is not None else read_codemap(path)
     if blob is None:
         return {"ok": False, "reason_code": "VIEW_MISSING", "name": name, "view": None}
+    stored_digest = str(_maybe_json(read_meta(path).get("cm_canonical_graph_digest") or "") or "")
+    prov = blob.get("provenance") if isinstance(blob, dict) else None
+    actual_digest = str((prov or {}).get("canonical_graph_digest") or "") if isinstance(prov, dict) else ""
+    if stored_digest and actual_digest and stored_digest == actual_digest:
+        return {"ok": True, "reason_code": "", "name": name, "view": blob}
+    if codemap is None and not fallback_canonical:
+        return {
+            "ok": False,
+            "reason_code": VIEW_STALE if actual_digest else LEGACY_VIEW_UNVERIFIED,
+            "name": name,
+            "view": None,
+            "stale_blob": blob,
+            "check": {
+                "ok": False,
+                "reason_code": "DIGEST_META_MISMATCH",
+                "expected": {"canonical_graph_digest": stored_digest},
+                "actual": {"canonical_graph_digest": actual_digest},
+            },
+        }
+    cm = codemap if codemap is not None else read_codemap(path)
     check = validate_view_against_codemap(blob, cm)
     if check.get("ok"):
         return {"ok": True, "reason_code": "", "name": name, "view": blob}

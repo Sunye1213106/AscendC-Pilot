@@ -100,13 +100,32 @@ def _incoming(codemap: CodeMap) -> dict[str, list[Any]]:
     return incoming
 
 
+_PACKING_NODE_PROVS = {
+    "source_get_tpl_tiling_key",
+    "source_packing_helper",
+    "source_set_tiling_key",
+    "source_get_tiling_key",
+    "source_assign_tiling_key",
+}
+_PACKING_SOURCE_PROVS = {
+    "source_get_tpl_tiling_key_symbol",
+    "source_get_tpl_tiling_key_literal",
+    "source_set_tiling_key",
+    "source_get_tiling_key",
+    "source_assign_tiling_key",
+}
+
+
 def _packing_nodes(codemap: CodeMap, key: Entity, incoming: dict[str, list[Any]]) -> list[Entity]:
     out: list[Entity] = []
     for rel in incoming.get(key.id, ()):
-        if rel.kind_name() == RelationKind.DERIVES.value and str(rel.attrs.get("provenance") or "") == "source_get_tpl_tiling_key":
-            node = codemap.entities.get(rel.src)
-            if node is not None:
-                out.append(node)
+        if rel.kind_name() != RelationKind.DERIVES.value:
+            continue
+        if str(rel.attrs.get("provenance") or "") not in _PACKING_NODE_PROVS:
+            continue
+        node = codemap.entities.get(rel.src)
+        if node is not None:
+            out.append(node)
     return out
 
 
@@ -116,7 +135,7 @@ def _packing_sources(codemap: CodeMap, node: Entity, incoming: dict[str, list[An
         if rel.kind_name() != RelationKind.DERIVES.value:
             continue
         provenance = str(rel.attrs.get("provenance") or "")
-        if provenance not in {"source_get_tpl_tiling_key_symbol", "source_get_tpl_tiling_key_literal"}:
+        if provenance not in _PACKING_SOURCE_PROVS:
             continue
         source = codemap.entities.get(rel.src)
         if source is not None:
@@ -232,8 +251,15 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     packing_bound = int(host_packing.get("fields_bound") or 0)
     packing_mismatches = list(host_packing.get("argument_count_mismatches") or [])
     packing_missing = [e.name for e in declared_keys if not e.attrs.get("host_packing_expressions")]
-    if packing_calls and (packing_bound != len(declared_keys) or packing_missing or packing_mismatches):
+    packing_complete = packing_bound == len(declared_keys) and not packing_missing
+    if packing_calls and not packing_complete:
         block("INCOMPLETE_HOST_TILINGKEY_PACKING", f"Host packing covers {packing_bound}/{len(declared_keys)} source-declared TilingKeys", missing=packing_missing, argument_count_mismatches=packing_mismatches)
+    elif packing_mismatches and packing_complete:
+        warn(
+            "HOST_TILINGKEY_PACKING_EXTRA_ARITY",
+            "Additional GET_TPL_TILING_KEY sites with a different arity are ignored once every declared key is bound",
+            argument_count_mismatches=packing_mismatches,
+        )
 
     rooted_entities = _source_rooted_entities(codemap)
     incoming = _incoming(codemap)

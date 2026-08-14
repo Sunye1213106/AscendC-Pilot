@@ -133,8 +133,10 @@ kernel:
   # platform_ini.ARCH_KERNEL_MACROS, not this map.
   defines: {}
 
-  # CANN ge::DataType numeric lookup. ORIG_DTYPE_QUERY is injected only when
-  # the kernel TU text mentions that macro (discovered at parse time).
+  # CANN ge::DataType numeric lookup. Every ORIG_DTYPE_* in the kernel include
+  # closure is injected (not only ORIG_DTYPE_QUERY in the entry .cpp). When the
+  # closure has `#if TILING_KEY_VAR == IDENT`, one IDENT compatible with the
+  # dtype variant is also injected so a single packed-key path instantiates.
   dtype_variants:
     values: [DT_FLOAT16, DT_FLOAT, DT_BF16]
     dt_enum_defines:

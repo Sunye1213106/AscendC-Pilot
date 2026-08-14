@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Shard unresolved blockers for resolve_gaps Map workers.
+"""Shard unresolved blockers for Host map-reduce workers.
+
+Used when an Action is declared map-reduce. ``/uo-init`` no longer runs
+``resolve_gaps``; leftover comments below refer to the shard file layout only.
+"""
 
 Host prepare owns the split; prompts must not implement sharding.
 Hard limit mirrors ``bounded-semantic-batch``: ≤30 obligations per shard.

@@ -106,6 +106,27 @@ def reachable_function_names(codemap: CodeMap) -> tuple[set[str], bool]:
     return names, non_kernel >= 3
 
 
+_KERNEL_SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
+
+
+def architecture_kernel_files(source_root: Path, architecture: str) -> list[Path]:
+    """All kernel sources under ``op_kernel/<arch>/``, including unused headers.
+
+    Prepare's confirmed TU closure drops dtype-gated headers the preferred
+    ORIG_DTYPE walk did not include. TQue APIs in those headers still belong
+    in the CodeMap for this architecture.
+    """
+    arch = require_architecture(architecture)
+    arch_dir = Path(source_root) / "op_kernel" / arch
+    if not arch_dir.is_dir():
+        return []
+    out: list[Path] = []
+    for path in sorted(arch_dir.rglob("*")):
+        if path.suffix.lower() in _KERNEL_SOURCE_SUFFIXES and path.is_file():
+            out.append(path)
+    return out
+
+
 def selected_kernel_files(codemap: CodeMap, source_root: Path) -> list[Path]:
     meta = codemap.meta.get("kernel_tiling_closure") or {}
     listed = meta.get("selected_kernel_files") or []
@@ -249,6 +270,22 @@ def merge_lexical_sites(
     return out, added
 
 
+def _function_names_from_walk(wr: Any) -> set[str]:
+    """Callers the kernel walk already closed over (methods, not just KERNEL entities)."""
+    names: set[str] = set()
+    fns = getattr(wr, "functions", None) or {}
+    keys = fns.keys() if isinstance(fns, dict) else fns
+    for raw in keys:
+        text = str(raw or "")
+        if not text:
+            continue
+        names.add(text)
+        names.add(text.split("::")[-1])
+        if "<" in text:
+            names.add(text.split("<", 1)[0])
+    return names
+
+
 def collect_call_sites_from_walks(
     source_root: Path,
     *,
@@ -267,6 +304,10 @@ def collect_call_sites_from_walks(
     if not walks:
         return [], [], [], "no_walk_cache"
 
+    allowed = set(reachable)
+    for wr in walks:
+        allowed |= _function_names_from_walk(wr)
+
     calls: list[Any] = []
     decls: list[Any] = []
     controls: list[Any] = []
@@ -276,7 +317,7 @@ def collect_call_sites_from_walks(
         for site in getattr(wr, "call_sites", None) or []:
             caller = str(getattr(site, "caller", "") or "")
             callee = str(getattr(site, "callee", "") or "").split("::")[-1]
-            if not caller_allowed(caller, reachable, filter_strict=filter_strict):
+            if not caller_allowed(caller, allowed, filter_strict=filter_strict):
                 continue
             # Root Trace needs the full source call graph. Terminal AscendC/CANN
             # classification happens later; do not filter by registry primitives.

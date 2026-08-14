@@ -112,19 +112,44 @@ def recommend_next_action(
 ) -> dict[str, Any] | None:
     """Pick the first incomplete preferred action that is also currently allowed."""
     allowed = [a for a in (allowed_actions or []) if isinstance(a, dict) and a.get("id")]
-    if not allowed:
-        return None
     by_id = {str(a["id"]): a for a in allowed}
     pipe = preferred_pipeline(
         workflow_id, phase, project_root=project_root, mode=mode
     )
     if not pipe:
-        a0 = allowed[0]
+        next_phase = ""
+        try:
+            from ascendc_pilot.workflows import WORKFLOWS
+
+            meta = WORKFLOWS.get(workflow_id) or {}
+            for tr in meta.get("transitions") or []:
+                if not isinstance(tr, dict):
+                    continue
+                if str(tr.get("kind") or "forward") != "forward":
+                    continue
+                if str(tr.get("from") or "") == phase:
+                    next_phase = str(tr.get("to") or "").strip()
+                    if next_phase:
+                        break
+        except Exception:  # noqa: BLE001
+            next_phase = ""
+        if next_phase:
+            hint = (
+                f"本阶段首选流水线已齐；请执行 `acp advance {next_phase}`"
+                f"（禁止再 run-action 本阶段 Action）"
+            )
+        else:
+            hint = "本阶段首选流水线已齐；请 `acp advance <next_phase>` 或 `acp complete`"
         return {
-            "id": str(a0.get("id")),
-            "label_zh": str(a0.get("label_zh") or a0.get("id") or ""),
-            "reason": "first_allowed",
+            "id": None,
+            "label_zh": "",
+            "reason": "pipeline_complete",
+            "pipeline": pipe,
+            "next_phase": next_phase or None,
+            "hint_zh": hint,
         }
+    if not allowed:
+        return None
     # Single-pass completion index: never re-verify the whole pipeline twice.
     done_cache: dict[str, bool] = {}
     missing = missing_phase_actions(

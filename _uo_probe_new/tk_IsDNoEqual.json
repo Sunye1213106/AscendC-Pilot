@@ -1,0 +1,240 @@
+{
+  "ok": true,
+  "mode": "tiling_key",
+  "pattern": "IsDNoEqual",
+  "keys": [
+    {
+      "id": "E_TILING_KEY_0db296e54a46",
+      "kind": "TILING_KEY",
+      "name": "IsDNoEqual",
+      "status": "confirmed",
+      "file": "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+      "line_start": 105,
+      "line_end": 105,
+      "why": "",
+      "facts": {
+        "bit_lo": 47,
+        "bit_hi": 47,
+        "bit_width": 1,
+        "value_domain": [
+          "0",
+          "1"
+        ],
+        "packing_value_sites": [
+          {
+            "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 1439,
+            "lhs": "dNoEqual",
+            "rhs": "(fBaseParams.d1 != fBaseParams.d) || fBaseParams.hasRope",
+            "kind": "declaration",
+            "guards": [],
+            "unconditional": true,
+            "packing_symbol": "dNoEqual"
+          }
+        ]
+      },
+      "snippet": "93:     ASCENDC_TPL_UINT_DECL(DeterType, ASCENDC_TPL_4_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3, 4),\n94:     // bit: 45 is N1 N2 equal\n95:     // 0: DISABLE\n96:     // 1: ENABLE\n97:     ASCENDC_TPL_BOOL_DECL(IsNEqual, 0, 1),\n98:     // bit: 46 IsBn2MultiBlk\n99:     //      0: DISABLE\n100:     //      1: ENABLE\n101:     ASCENDC_TPL_BOOL_DECL(IsBn2MultiBlk, 0, 1),\n102:     // bit: 47 DNoEqual\n103:     //      0: DISABLE\n104:     //      1: ENABLE\n105:     ASCENDC_TPL_BOOL_DECL(IsDNoEqual, 0, 1),\n106:     // bit: 48 IsRope\n107:     //      0: DISABLE\n108:     //      1: ENABLE\n109:     ASCENDC_TPL_BOOL_DECL(IsRope, 0, 1),\n110:     // bit: 51-49 OutDType\n111:     //      1: FLOAT32\n112:     //      2: BFLOAT16\n113:     //      3: FLOAT16_PRECISION\n114:     ASCENDC_TPL_UINT_DECL(OutDType, ASCENDC_TPL_3_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3),\n115:     // bit: 52 IsNzOut\n116:     //      0: DISABLE\n117:     //      1: ENABLE\n118:     ASCENDC_TPL_BOOL_DECL(IsNzOut, 0, 1),\n119:     // bit: 53 IsTndSwizzle\n120:     // 0: NoSwizzle\n121:     // 1: Enable TND Swizzle\n122:     ASCENDC_TPL_BOOL_DECL(IsTndSwizzle, 0, 1),\n123:     // bit: 54 IsRegbasePlatformValue\n124:     ASCENDC_TPL_BOOL_DECL(IsRegbase, 0, 1),\n125: );\n126: \n127: ASCENDC_TPL_SEL(\n128: \n129:     #if (ORIG_DTYPE_QUERY == -1) || (ORIG_DTYPE_QUERY == DT_FLOAT16)\n130:         // FP16\n131:         ASCENDC_TPL_ARGS_SEL(\n132:             ASCENDC_TPL_BOOL_SEL(IsEmptyTensor, 0),",
+      "relationships": [
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_191928dac35c",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_191928dac35c",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_0",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_803c19b6cdf1",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_803c19b6cdf1",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_1",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_4d4afb214e73",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_4d4afb214e73",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_10",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_e5af77f5154e",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_e5af77f5154e",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_11",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_92e5f0e0fa31",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_92e5f0e0fa31",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_12",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_fe22abd3119a",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_fe22abd3119a",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_13",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_34a20478da34",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_34a20478da34",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_14",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        },
+        {
+          "kind": "BINDS",
+          "src": "E_TEMPLATE_b5661fdcc9ed",
+          "dst": "E_TILING_KEY_0db296e54a46",
+          "other_id": "E_TEMPLATE_b5661fdcc9ed",
+          "other_kind": "TEMPLATE",
+          "other_name": "ARGS_SEL_15",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 0
+        }
+      ]
+    }
+  ],
+  "count": 1,
+  "files": {
+    "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h": [
+      {
+        "id": "E_TILING_KEY_0db296e54a46",
+        "kind": "TILING_KEY",
+        "name": "IsDNoEqual",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+        "line_start": 105,
+        "line_end": 105,
+        "why": "",
+        "facts": {
+          "bit_lo": 47,
+          "bit_hi": 47,
+          "bit_width": 1,
+          "value_domain": [
+            "0",
+            "1"
+          ],
+          "packing_value_sites": [
+            {
+              "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+              "line": 1439,
+              "lhs": "dNoEqual",
+              "rhs": "(fBaseParams.d1 != fBaseParams.d) || fBaseParams.hasRope",
+              "kind": "declaration",
+              "guards": [],
+              "unconditional": true,
+              "packing_symbol": "dNoEqual"
+            }
+          ]
+        },
+        "snippet": "93:     ASCENDC_TPL_UINT_DECL(DeterType, ASCENDC_TPL_4_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3, 4),\n94:     // bit: 45 is N1 N2 equal\n95:     // 0: DISABLE\n96:     // 1: ENABLE\n97:     ASCENDC_TPL_BOOL_DECL(IsNEqual, 0, 1),\n98:     // bit: 46 IsBn2MultiBlk\n99:     //      0: DISABLE\n100:     //      1: ENABLE\n101:     ASCENDC_TPL_BOOL_DECL(IsBn2MultiBlk, 0, 1),\n102:     // bit: 47 DNoEqual\n103:     //      0: DISABLE\n104:     //      1: ENABLE\n105:     ASCENDC_TPL_BOOL_DECL(IsDNoEqual, 0, 1),\n106:     // bit: 48 IsRope\n107:     //      0: DISABLE\n108:     //      1: ENABLE\n109:     ASCENDC_TPL_BOOL_DECL(IsRope, 0, 1),\n110:     // bit: 51-49 OutDType\n111:     //      1: FLOAT32\n112:     //      2: BFLOAT16\n113:     //      3: FLOAT16_PRECISION\n114:     ASCENDC_TPL_UINT_DECL(OutDType, ASCENDC_TPL_3_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2, 3),\n115:     // bit: 52 IsNzOut\n116:     //      0: DISABLE\n117:     //      1: ENABLE\n118:     ASCENDC_TPL_BOOL_DECL(IsNzOut, 0, 1),\n119:     // bit: 53 IsTndSwizzle\n120:     // 0: NoSwizzle\n121:     // 1: Enable TND Swizzle\n122:     ASCENDC_TPL_BOOL_DECL(IsTndSwizzle, 0, 1),\n123:     // bit: 54 IsRegbasePlatformValue\n124:     ASCENDC_TPL_BOOL_DECL(IsRegbase, 0, 1),\n125: );\n126: \n127: ASCENDC_TPL_SEL(\n128: \n129:     #if (ORIG_DTYPE_QUERY == -1) || (ORIG_DTYPE_QUERY == DT_FLOAT16)\n130:         // FP16\n131:         ASCENDC_TPL_ARGS_SEL(\n132:             ASCENDC_TPL_BOOL_SEL(IsEmptyTensor, 0),",
+        "relationships": [
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_191928dac35c",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_191928dac35c",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_0",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_803c19b6cdf1",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_803c19b6cdf1",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_1",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_4d4afb214e73",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_4d4afb214e73",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_10",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_e5af77f5154e",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_e5af77f5154e",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_11",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_92e5f0e0fa31",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_92e5f0e0fa31",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_12",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_fe22abd3119a",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_fe22abd3119a",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_13",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_34a20478da34",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_34a20478da34",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_14",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          },
+          {
+            "kind": "BINDS",
+            "src": "E_TEMPLATE_b5661fdcc9ed",
+            "dst": "E_TILING_KEY_0db296e54a46",
+            "other_id": "E_TEMPLATE_b5661fdcc9ed",
+            "other_kind": "TEMPLATE",
+            "other_name": "ARGS_SEL_15",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 0
+          }
+        ]
+      }
+    ]
+  }
+}

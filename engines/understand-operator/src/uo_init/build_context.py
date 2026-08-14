@@ -14,28 +14,36 @@ from uo_init import paths
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 DEFAULT_CONTEXT = SPEC_DIR / "build_context.yaml"
 FUNCTION_LIKE_QUALIFIERS = {"__in_pipe__", "__out_pipe__", "__inout_pipe__"}
-_DTYPE_VARIANT_MACROS = ("ORIG_DTYPE_QUERY",)
 
 
-def dtype_macro_for_source(source_path: str | Path | None) -> str | None:
-    """Return a dtype-gate macro only when the TU text actually mentions it."""
-    if not source_path:
-        return None
-    path = Path(source_path)
-    if not path.is_file():
-        return None
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    for name in _DTYPE_VARIANT_MACROS:
-        if name in text:
-            return name
-    return None
+def dtype_macro_for_source(
+    source_path: str | Path | None,
+    *,
+    op_dir: str | Path | None = None,
+    ops_root: str | Path | None = None,
+    macros: dict[str, str] | None = None,
+) -> str | None:
+    """First ``ORIG_DTYPE_*`` in the kernel include closure, if any."""
+    from uo_init.kernel_gates import discover_kernel_gates
+
+    gates = discover_kernel_gates(
+        source_path, op_dir=op_dir, ops_root=ops_root, macros=macros
+    )
+    return gates.orig_dtypes[0] if gates.orig_dtypes else None
 
 
-def source_uses_dtype_variants(source_path: str | Path | None) -> bool:
-    return dtype_macro_for_source(source_path) is not None
+def source_uses_dtype_variants(
+    source_path: str | Path | None,
+    *,
+    op_dir: str | Path | None = None,
+    ops_root: str | Path | None = None,
+    macros: dict[str, str] | None = None,
+) -> bool:
+    from uo_init.kernel_gates import source_uses_kernel_gates
+
+    return source_uses_kernel_gates(
+        source_path, op_dir=op_dir, ops_root=ops_root, macros=macros
+    )
 
 
 
@@ -293,7 +301,11 @@ class BuildContext:
         )
 
     def kernel_args(
-        self, dtype_variant: str | None = None, *, source_path: str | Path | None = None
+        self,
+        dtype_variant: str | None = None,
+        *,
+        source_path: str | Path | None = None,
+        orig_assignment: dict[str, str] | None = None,
     ) -> list[str]:
         args = list(self.base_flags())
         for q in self.erase_qualifiers():
@@ -305,11 +317,21 @@ class BuildContext:
             args.append(f"-D{d}" if v == "" else f"-D{d}={v}")
         dv = self.dtype_variants()
         if dtype_variant:
-            macro = dtype_macro_for_source(source_path)
-            if macro:
-                args.append(f"-D{macro}={dtype_variant}")
-                for name, val in (dv.get("dt_enum_defines") or {}).items():
-                    args.append(f"-D{name}={val}")
+            from uo_init.kernel_gates import discover_kernel_gates
+
+            gates = discover_kernel_gates(
+                source_path,
+                op_dir=self.op_dir,
+                ops_root=self.ops_root,
+                macros=self.kernel_defines(),
+            )
+            args.extend(
+                gates.clang_defines(
+                    dtype_variant,
+                    dv.get("dt_enum_defines") or {},
+                    orig_assignment=orig_assignment,
+                )
+            )
         for fi in self.kernel_force_includes():
             args += ["-include", fi]
         for p in self.sysroot_includes():

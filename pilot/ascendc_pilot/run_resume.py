@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
 
-from ascendc_pilot.paths import agent_root, context_root, runs_root, state_root, uo_root
+from ascendc_pilot.paths import (
+    agent_root,
+    context_root,
+    runs_root,
+    state_root,
+    try_discover_arch,
+    uo_root,
+)
 from ascendc_pilot.state import RUNNING_LIKE, load_state, save_state
 
 _INCOMPLETE_SESSION_STATUSES = frozenset(
@@ -19,12 +27,15 @@ _DECISION_ALIASES = {
     "reuse": "continue",
     "继续": "continue",
     "继续上次": "continue",
+    "开始": "continue",
     "reinit": "reinit",
     "reset": "reinit",
     "force-new": "reinit",
     "force_new": "reinit",
     "删除重开": "reinit",
     "重开": "reinit",
+    "query": "query",
+    "去查询": "query",
 }
 
 _DEFAULT_RESET_POLICY: dict[str, Any] = {
@@ -87,6 +98,115 @@ def _workflow_label(workflow_id: str) -> str:
     return workflow_id
 
 
+def _pin_process_arch(architecture: str) -> str:
+    """Pin ``UO_ARCH`` so path helpers can resolve before ``active_run.yaml`` exists."""
+    arch = str(architecture or "").strip()
+    if arch:
+        os.environ["UO_ARCH"] = arch
+    return arch
+
+
+def _uo_present_any_arch(root: Path) -> bool:
+    """True only when a real ``*.uo`` CodeMap product exists (not ``uo/checks/``)."""
+    from ascendc_pilot.intake import discover_uo_products
+
+    return bool(discover_uo_products(root))
+
+
+def _resume_summary_without_arch_tree(root: Path, workflow_id: str) -> dict[str, Any]:
+    """Resume payload when no arch tree / active_run exists yet (virgin start)."""
+    wf_label = _workflow_label(workflow_id)
+    has_uo = _uo_present_any_arch(root)
+    ask_opts_src = ask_options_for(workflow_id)
+    ask_opts = [
+        {
+            "label": src["label"],
+            "description": src["description"],
+            "value": src["value"],
+        }
+        for src in ask_opts_src
+    ]
+    if has_uo:
+        ask_opts = leftover_uo_ask_options()
+        lines = [
+            "run_id: (无)",
+            f"workflow: {workflow_id}",
+            "phase/status: - / -",
+            "architecture: -",
+            "已有 CodeMap，无活动执行槽。删除后重建，或改走查询。",
+        ]
+    else:
+        ask_opts = [o for o in ask_opts if o.get("value") == "reinit"] or ask_opts
+        lines = [
+            "run_id: (无)",
+            f"workflow: {workflow_id}",
+            "phase/status: - / -",
+            "architecture: -",
+            "无活动 run。参数齐则可直接 start。",
+        ]
+    return {
+        "has_existing_run": False,
+        "has_uo_artifacts": has_uo,
+        "workflow_id": workflow_id,
+        "requested_workflow_id": workflow_id,
+        "cross_workflow": None,
+        "run_id": "",
+        "phase": "",
+        "status": "",
+        "architecture": "",
+        "passed_gates": [],
+        "failed_gates": [],
+        "finalized_actions": [],
+        "verified_receipts": [],
+        "invalid_receipts": [],
+        "missing_receipts": [],
+        "artifacts": [],
+        "action_owned_artifacts": action_owned_artifacts(workflow_id),
+        "last_complete": {
+            "phase": "",
+            "passed_gates": [],
+            "finalized_actions": [],
+            "present_artifacts": [],
+        },
+        "interrupted_at": {
+            "phase": "",
+            "status": "",
+            "active_action": None,
+            "failed_gates": [],
+            "missing_artifacts": [],
+        },
+        "resume_next_action": "",
+        "summary_text_zh": "\n".join(lines),
+        "ask_question": {
+            "header": f"启动 {wf_label}",
+            "question": "\n".join(lines),
+            "options": ask_opts,
+        },
+        "decision_values": {o["label"]: o["value"] for o in ask_opts},
+        "commands": {
+            "continue": f"acp start {workflow_id} --project . --decision continue",
+            "reinit": f"acp start {workflow_id} --project . --decision reinit",
+        },
+    }
+
+
+def leftover_uo_ask_options() -> list[dict[str, str]]:
+    """No live run + real ``*.uo``: never offer 继续上次."""
+    reinit = next(o for o in ask_options_for("uo-init") if o.get("value") == "reinit")
+    return [
+        {
+            "label": reinit["label"],
+            "description": reinit["description"],
+            "value": "reinit",
+        },
+        {
+            "label": "去查询",
+            "description": "不重建 CodeMap，改走 uo-query",
+            "value": "query",
+        },
+    ]
+
+
 def ask_options_for(workflow_id: str) -> list[dict[str, str]]:
     label = _workflow_label(workflow_id)
     policy = reset_policy_for(workflow_id)
@@ -119,8 +239,12 @@ def normalize_decision(raw: str) -> str | None:
     if not key:
         return None
     low = key.lower()
-    if low in {"continue", "reinit"}:
+    if low in {"continue", "reinit", "query"}:
         return low
+    if str(raw or "").strip().startswith("开始"):
+        return "continue"
+    if str(raw or "").strip().startswith("去查询"):
+        return "query"
     if low in _DECISION_ALIASES:
         return _DECISION_ALIASES[low]
     for opt in ask_options_for("uo-init"):
@@ -211,8 +335,6 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
         "verify": "结构校验",
         # Optional investigate / legacy labels
         "investigate": "调查 residual",
-        "resolve_gaps": "缺口补齐（debug）",
-        "apply_gap_patch": "缺口补丁应用（debug）",
         "export_adapter_pack": "适配包导出",
         "export_tg_host_view": "TG Host 视图",
         "export_integrity": "完整性检查",
@@ -579,19 +701,38 @@ def _cross_workflow_conflict(state: dict[str, Any] | None, workflow_id: str) -> 
             "requested_workflow_id": workflow_id,
             "message_zh": (
                 f"当前活动 run 属于 {active_wid}，与请求的 {workflow_id} 不一致；"
-                "禁止静默覆盖。请先 continue/abort 原 run，或显式 reinit。"
+                "禁止静默覆盖。点「开始」释放当前执行槽并 start 请求的工作流（不删正式产物），"
+                "或显式删除重开。"
             ),
         }
     return None
 
 
-def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init") -> dict[str, Any]:
-    """Human-facing summary of the last interrupted run."""
+def build_run_resume_summary(
+    project_root: Path,
+    *,
+    workflow_id: str = "uo-init",
+    architecture: str = "",
+) -> dict[str, Any]:
+    """Human-facing summary of the last interrupted run.
+
+    Safe before an architecture tree exists: pass ``architecture`` (or pin
+    ``UO_ARCH``) so path helpers do not raise ARCHITECTURE_MISSING_IN_RUN_STATE.
+    """
     root = Path(project_root).expanduser().resolve()
-    state = load_state(root)
-    agent = agent_root(root)
-    uo = uo_root(root)
-    has_uo = uo.is_dir() and any(uo.iterdir())
+    arch = _pin_process_arch(architecture) or try_discover_arch(root)
+    if arch:
+        _pin_process_arch(arch)
+    try:
+        state = load_state(root, arch=arch or None)
+        agent = agent_root(root, arch=arch or None)
+        uo = uo_root(root, arch=arch or None)
+    except ValueError:
+        return _resume_summary_without_arch_tree(root, workflow_id)
+    from ascendc_pilot.intake import discover_uo_products
+
+    has_uo = bool(discover_uo_products(root))
+    del uo
     artifacts = _artifact_checklist(agent, workflow_id) if has_uo or workflow_id != "uo-init" else []
     if not artifacts and agent.is_dir():
         artifacts = _artifact_checklist(agent, workflow_id)
@@ -700,17 +841,32 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
         )
         header = f"发现未完成的 {wf_label}"
     elif cross:
-        ask_opts = [_ask_opt(o) for o in ask_opts_src]
-        question_body = cross["message_zh"] + "\n\n" + "\n".join(lines)
+        active_label = _workflow_label(active_wid)
+        ask_opts = [
+            {
+                "label": f"开始 {wf_label} (Recommended)",
+                "description": (
+                    f"结束当前 {active_label} 执行槽（保留 uo / tg / ce），开始 {wf_label}"
+                ),
+                "value": "continue",
+            },
+            _ask_opt(ask_opts_src[1]),
+        ]
+        question_body = (
+            f"当前活动 run 属于 {active_wid}，与请求的 {workflow_id} 不一致。"
+            f"「开始 {wf_label}」会释放当前执行槽并 start {workflow_id}（不删正式产物）。"
+            f"「删除重开」会按 {wf_label} 策略清理后 start。\n\n"
+            + "\n".join(lines)
+        )
         header = f"工作流冲突（请求 {wf_label}）"
         has_existing_run = True
     elif workflow_id == "uo-init" and has_uo and (not state or state_wid in {"", "uo-init"}):
-        ask_opts = [_ask_opt(ask_opts_src[1])]
+        ask_opts = leftover_uo_ask_options()
         question_body = (
-            "检测到残留 UO 产物，但无活动 run。请确认是否删除后重新 init。\n\n"
+            "已有 CodeMap，无活动 run。删除后重建，或改去查询。\n\n"
             + "\n".join(lines)
         )
-        header = f"发现 UO 残留（{wf_label}）"
+        header = f"已有 CodeMap（{wf_label}）"
         has_existing_run = True
     else:
         ask_opts = [_ask_opt(ask_opts_src[1])]
@@ -747,7 +903,7 @@ def build_run_resume_summary(project_root: Path, *, workflow_id: str = "uo-init"
             "question": question_body,
             "options": ask_opts,
         },
-        "decision_values": {o["label"]: o["value"] for o in ask_opts_src},
+        "decision_values": {o["label"]: o["value"] for o in ask_opts},
         "commands": {
             "continue": f"acp start {workflow_id} --project . --decision continue",
             "reinit": f"acp start {workflow_id} --project . --decision reinit",
@@ -832,7 +988,7 @@ def resolve_start_architecture(
     - Explicit --architecture: validate against discovered dirs when any exist.
     - Unspecified + 2+ dirs: needs_human_decision (no silent arch35).
     - Unspecified + exactly 1 dir: auto-select that dir.
-    - Unspecified + 0 dirs: fall back to arch35 (ops without arch folders).
+    - Unspecified + 0 dirs: ARCHITECTURE_NOT_FOUND (never silent arch35).
     """
     root = Path(project_root).expanduser().resolve()
     available = discover_available_archs(root)
@@ -866,10 +1022,13 @@ def resolve_start_architecture(
             "selected_by": "sole_arch",
         }
     return {
-        "ok": True,
-        "architecture": "arch35",
+        "ok": False,
+        "error": "ARCHITECTURE_NOT_FOUND",
+        "architecture": "",
         "available_architectures": available,
-        "selected_by": "default_no_arch_dirs",
+        "workflow_id": workflow_id,
+        "message_zh": "算子目录没有可识别的 architecture；请指定 --architecture 或先 scan-architectures。",
+        "selected_by": "none",
     }
 
 
@@ -886,22 +1045,71 @@ def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
         return True
     if workflow_id != "uo-init":
         return False
-    # Any existing CodeMap / uo work under any arch (or legacy top-level) means
-    # uo-init should ask continue vs reinit — do not require a pinned arch yet.
+    # Real ``*.uo`` products only — leftover ``uo/checks/`` is not a CodeMap.
     from ascendc_pilot.intake import discover_uo_products
 
     if discover_uo_products(root):
         wid = str((state or {}).get("workflow_id") or "")
         if not state or wid in {"", "uo-init"}:
             return True
-    pilot = root / ".ascendc-pilot"
-    if pilot.is_dir():
-        for uo in [pilot / "uo", *[p / "uo" for p in pilot.iterdir() if p.is_dir()]]:
-            if uo.is_dir() and any(uo.iterdir()):
-                wid = str((state or {}).get("workflow_id") or "")
-                if not state or wid in {"", "uo-init"}:
-                    return True
     return False
+
+
+def _switch_to_requested_workflow(
+    root: Path,
+    workflow_id: str,
+    kwargs: dict[str, Any],
+    *,
+    switched_from: str,
+) -> dict[str, Any]:
+    """Release the occupying run and start the requested workflow. Do not wipe .uo."""
+    from ascendc_pilot.state import release_live_execution, start_workflow
+    from ascendc_pilot.todo import attach_todo
+    from ascendc_pilot.workflows import entry_state, phase_pipeline
+
+    old = load_state(root) or {}
+    arch = str(kwargs.get("architecture") or old.get("architecture") or "").strip()
+    try:
+        from ascendc_pilot.authorize.lease import revoke_active_lease
+
+        revoke_active_lease(root, reason=f"switch_to_{workflow_id}")
+    except Exception:  # noqa: BLE001
+        pass
+    release_live_execution(
+        root,
+        reason=f"switched_to_{workflow_id}",
+        state=old,
+    )
+    if not arch:
+        arch_res = resolve_start_architecture(root, "", workflow_id=workflow_id)
+        if arch_res.get("needs_human_decision"):
+            return arch_res
+        if not arch_res.get("ok"):
+            return arch_res
+        arch = str(arch_res.get("architecture") or "")
+    start_kwargs = dict(kwargs)
+    start_kwargs["architecture"] = arch
+    fresh = start_workflow(root, workflow_id, **start_kwargs)
+    entry = entry_state(workflow_id)
+    pipe = phase_pipeline(workflow_id, entry)
+    first_action = pipe[0] if pipe else ""
+    payload = attach_todo(
+        {
+            **fresh,
+            "ok": True,
+            "decision": "continue",
+            "switched_from": switched_from,
+            "fresh_start": True,
+            "message_zh": (
+                f"已结束 {switched_from or '当前'} 执行槽并 start {workflow_id}"
+                f"（保留正式产物；下一步：{first_action or entry}）"
+            ),
+        },
+        root,
+        state=fresh,
+        sync_merge=False,
+    )
+    return {"ok": True, **payload}
 
 
 def apply_resume_decision(
@@ -933,8 +1141,8 @@ def apply_resume_decision(
         return {
             "ok": False,
             "error": "invalid_decision",
-            "allowed": ["continue", "reinit"],
-            "message_zh": f"无效决策 {decision!r}；请用 AskQuestion 选项 continue|reinit",
+            "allowed": ["continue", "reinit", "query"],
+            "message_zh": f"无效决策 {decision!r}；请用 AskQuestion 选项 continue|reinit|query",
         }
 
     if require_receipt:
@@ -951,18 +1159,35 @@ def apply_resume_decision(
             if not receipt.get("ok"):
                 return receipt
 
-    summary = build_run_resume_summary(root, workflow_id=workflow_id)
+    if not require_receipt:
+        clear_pending(root)
+
     kwargs = dict(start_kwargs or {})
+    arch_hint = _pin_process_arch(str(kwargs.get("architecture") or ""))
+    summary = build_run_resume_summary(
+        root, workflow_id=workflow_id, architecture=arch_hint
+    )
     cross = _cross_workflow_conflict(load_state(root), workflow_id)
+
+    if choice == "query":
+        clear_pending(root)
+        return {
+            "ok": True,
+            "decision": "query",
+            "next_workflow_id": "uo-query",
+            "skipped_reinit": True,
+            "message_zh": "不重建 CodeMap；Host 应启动 uo-query",
+            "run_summary": summary,
+        }
 
     if choice == "continue":
         if cross:
-            return {
-                "ok": False,
-                "error": cross["error"],
-                "message_zh": cross["message_zh"],
-                "run_summary": summary,
-            }
+            return _switch_to_requested_workflow(
+                root,
+                workflow_id,
+                kwargs,
+                switched_from=str(cross.get("active_workflow_id") or ""),
+            )
         state = load_state(root)
         if not state or str(state.get("workflow_id") or "") != workflow_id:
             return {
@@ -1072,20 +1297,26 @@ def apply_resume_decision(
     }
 
 
-def existing_run_decision_payload(project_root: Path, workflow_id: str) -> dict[str, Any]:
+def existing_run_decision_payload(
+    project_root: Path,
+    workflow_id: str,
+    *,
+    architecture: str = "",
+) -> dict[str, Any]:
     from ascendc_pilot.human_interaction import KIND_RESUME, attach_interaction_request
 
-    summary = build_run_resume_summary(project_root, workflow_id=workflow_id)
+    summary = build_run_resume_summary(
+        project_root, workflow_id=workflow_id, architecture=architecture
+    )
     wf_label = _workflow_label(workflow_id)
     payload = {
         "ok": False,
         "needs_human_decision": True,
         "error": "EXISTING_RUN_NEEDS_DECISION",
         "message_zh": (
-            f"检测到未完成的 {wf_label} run 或工作流冲突。必须用 OpenCode `question`（AskQuestion）"
-            "弹出可点选框；Host 先 `acp answer`，再执行："
-            f"`{summary['commands']['continue']}` 或 `{summary['commands']['reinit']}`。"
-            "禁止静默复用或自动删除。"
+            f"检测到未完成的 {wf_label} run、CodeMap 残留或工作流冲突。"
+            "请等待 Host 弹出选项；选定后 Host 会继续执行。"
+            "不要自己 bash `acp answer` 或 `acp start`。"
         ),
         "ask_question": summary["ask_question"],
         "decision_values": summary["decision_values"],

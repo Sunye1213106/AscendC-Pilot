@@ -35,7 +35,12 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.symbol_identity import normalize_symbol
-from uo_init.source_layout import GLOBAL_KERNEL_RE, selected_host_files, selected_kernel_files
+from uo_init.source_layout import (
+    GLOBAL_KERNEL_RE,
+    is_other_arch_path,
+    selected_host_files,
+    selected_kernel_files,
+)
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CONTROL = {
@@ -62,11 +67,11 @@ _CALL_RE = re.compile(
     r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
     r"(?:<[^;{}()]{0,1200}>)?\s*\("
 )
-_BRANCH_RE = re.compile(r"\b(if\s+constexpr|if|while|for|switch)\s*\(")
+_BRANCH_RE = re.compile(r"\bif\s+constexpr\s*\(")
 _ALIAS_RE = re.compile(r"\busing\s+([A-Za-z_]\w*)\s*=\s*([^;]+);", re.S)
 _TILING_READ_RE = re.compile(
-    r"\b(?P<base>[A-Za-z_]\w*)\s*->\s*(?P<outer>[A-Za-z_]\w*)"
-    r"(?:\s*\.\s*(?P<inner>[A-Za-z_]\w*))?"
+    r"\b(?P<base>[A-Za-z_]\w*)\s*(?:->|\.)\s*(?P<outer>[A-Za-z_]\w*)"
+    r"(?:\s*(?:->|\.)\s*(?P<inner>[A-Za-z_]\w*))?"
 )
 _SETTER_HEAD_RE = re.compile(
     r"(?P<receiver>[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)*)\s*"
@@ -81,11 +86,23 @@ _DEFAULT_REG_RE = re.compile(r"\bREGISTER_TILING_DEFAULT\s*\(\s*([^\)]+?)\s*\)")
 _KEY_REG_RE = re.compile(
     r"\bREGISTER_TILING_FOR_TILINGKEY\s*\(\s*\"[^\"]+\"\s*,\s*([A-Za-z_:][A-Za-z0-9_:<>\s,]*)\s*\)"
 )
+_DATA_CLASS_REG_RE = re.compile(
+    r"\bREGISTER_TILING_DATA_CLASS\s*\(\s*[^,]+,\s*([A-Za-z_:][\w:]*)"
+)
+_GET_TILING_STRUCT_RE = re.compile(
+    r"GET_TILING_DATA_WITH_STRUCT\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
+    re.S,
+)
+_GET_TILING_MEMBER_RE = re.compile(
+    r"GET_TILING_DATA_MEMBER\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
+    re.S,
+)
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 
 _KEEP_REL_PROVENANCE = {
     "source_register_tiling_for_key",
     "source_tiling_registration_verified",
+    "source_get_tiling_data",
 }
 _PURGE_REL_PROVENANCE = {
     "source_call_site",
@@ -248,7 +265,8 @@ def _purge_broad_kernel_facts(codemap: CodeMap, allowed_kernel_files: set[str]) 
         if provenance in _KEEP_REL_PROVENANCE:
             continue
         foreign_source = file and "/op_kernel/" in file and file not in allowed_kernel_files and provenance.startswith("source_")
-        if broad or old_template or (foreign_source and ent.kind_name() != EntityKind.KERNEL.value):
+        foreign_arch = bool(file and codemap.architecture and is_other_arch_path(Path(file), codemap.architecture))
+        if broad or old_template or foreign_arch or (foreign_source and ent.kind_name() != EntityKind.KERNEL.value):
             remove_ent.add(eid)
 
     for rid, rel in codemap.relations.items():
@@ -672,10 +690,10 @@ def _rebuild_kernel_calls(codemap: CodeMap, scopes: list[_Scope], class_names: s
             line = _line(scope.text, absolute)
             node = codemap.upsert(
                 EntityKind.BRANCH,
-                f"{scope.entity.name}:{branch.group(1).replace(' ', '_')}@{line}",
+                f"{scope.entity.name}:if_constexpr@{line}",
                 eid=f"SRCKBRANCH::{scope.file}::{line}::{scope.entity.id}",
                 attrs={
-                    "branch_kind": branch.group(1).replace(" ", "_"),
+                    "branch_kind": "if_constexpr",
                     "owner": scope.entity.name,
                     "provenance": "source_kernel_frontier_bound",
                 },
@@ -808,7 +826,7 @@ def _rebuild_host_tiling_writes(
                 field = candidates[0]
                 _record_writer(codemap, field, file, line, receiver, expr, "setter")
                 written_fields.add(field.id)
-            else:
+            elif len(candidates) > 1:
                 ambiguous += 1
                 _record_unresolved_writer(codemap, file, line, receiver, field_name, expr, candidates)
 
@@ -831,7 +849,7 @@ def _rebuild_host_tiling_writes(
                 field = candidates[0]
                 _record_writer(codemap, field, file, line, receiver, expr, "assignment")
                 written_fields.add(field.id)
-            else:
+            elif len(candidates) > 1:
                 ambiguous += 1
                 _record_unresolved_writer(codemap, file, line, receiver, field_name, expr, candidates)
 
@@ -854,6 +872,16 @@ def _rebuild_tiling_selection(
             roots.update(_type_candidates(match.group(1), tdata_names, aliases))
         for match in _KEY_REG_RE.finditer(masked):
             roots.update(_type_candidates(match.group(1), tdata_names, aliases))
+        for match in _DATA_CLASS_REG_RE.finditer(masked):
+            roots.update(_type_candidates(match.group(1), tdata_names, aliases))
+        for name in _GET_TILING_STRUCT_RE.findall(raw):
+            simple = name.split("::")[-1]
+            if simple in tdata_names:
+                roots.add(simple)
+        for name in _GET_TILING_MEMBER_RE.findall(raw):
+            simple = name.split("::")[-1]
+            if simple in tdata_names:
+                roots.add(simple)
 
     # Existing explicit TilingKey registrations are also source-backed.
     for rel in codemap.relations.values():
@@ -1262,6 +1290,7 @@ def _declaration_types(text: str, known_types: set[str], aliases: dict[str, set[
         stripped = fragment.strip()
         if not stripped or stripped.startswith(("using ", "return ", "if ", "for ", "while ", "switch ")):
             continue
+        stripped = re.sub(r"\s*=\s*[^;]*$", "", stripped).rstrip()
         match = re.search(r"\b([A-Za-z_]\w*)\s*(?:\([^;]*\))?\s*$", stripped)
         if not match:
             continue

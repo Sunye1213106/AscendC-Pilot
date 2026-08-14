@@ -13,9 +13,12 @@
 
 ```text
 acp uo-query --mode kernel_branch --pattern <branch_or_key>
+acp uo-query --mode kernel_branch --pattern "<branch> <function>"
 acp uo-query --mode branches --pattern <key>
 acp uo-query --mode neighbors --pattern <kernel_or_branch_id>
 ```
+
+同名 `if constexpr` 返回 `functions` 计数目录，每个 function 一条样例（snippet 从命中行向后盖住 if 体）。第二 ident 当 function 过滤。不要把「文件里第一次出现」当唯一路径。
 
 ## Claim 提示
 

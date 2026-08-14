@@ -1,0 +1,40 @@
+{
+  "ok": true,
+  "mode": "kernel_branch",
+  "pattern": "IS_D_NO_EQUAL",
+  "branches": [
+    {
+      "id": "KBR_0AEA4DCD304D",
+      "kind": "BRANCH",
+      "name": "IS_D_NO_EQUAL",
+      "status": "confirmed",
+      "file": "op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+      "line_start": 523,
+      "line_end": 523,
+      "why": "kernel_branch",
+      "facts": {
+        "condition": "IS_D_NO_EQUAL",
+        "layer": "kernel",
+        "function": "SetConstInfo",
+        "dimensions": [
+          "IsDNoEqual"
+        ]
+      },
+      "snippet": "511:    constInfo.commonConstInfo.s2D = constInfo.commonConstInfo.s2Size * constInfo.commonConstInfo.dSize;\n512:    constInfo.commonConstInfo.n2S2D = constInfo.n2Size * constInfo.commonConstInfo.s2D;\n513:    constInfo.commonConstInfo.s1S2 = constInfo.commonConstInfo.s1Size * constInfo.commonConstInfo.s2Size;\n514:    constInfo.commonConstInfo.gS1 = constInfo.commonConstInfo.gSize * constInfo.commonConstInfo.s1Size;\n515:    constInfo.commonConstInfo.gD = constInfo.commonConstInfo.gSize * constInfo.commonConstInfo.dSize;\n516:    constInfo.commonConstInfo.n2D = constInfo.n2Size * constInfo.commonConstInfo.dSize;\n517:    constInfo.commonConstInfo.bN2D = constInfo.bSize * constInfo.commonConstInfo.n2D;\n518:    constInfo.commonConstInfo.n2G = constInfo.n2Size * constInfo.commonConstInfo.gSize;\n519:    constInfo.commonConstInfo.n2GD = constInfo.commonConstInfo.n2G * constInfo.commonConstInfo.dSize;\n520:    constInfo.commonConstInfo.bN2GD = constInfo.bSize * constInfo.commonConstInfo.n2GD;\n521:    constInfo.commonConstInfo.gS2 = constInfo.commonConstInfo.gSize * constInfo.commonConstInfo.s2Size;\n522:    // for D_V",
+      "relationships": [
+        {
+          "kind": "SELECTS",
+          "src": "E_TILING_KEY_0db296e54a46",
+          "dst": "KBR_0AEA4DCD304D",
+          "other_id": "E_TILING_KEY_0db296e54a46",
+          "other_kind": "TILING_KEY",
+          "other_name": "IsDNoEqual",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 105
+        }
+      ]
+    }
+  ],
+  "count": 8,
+  "truncated": true
+}

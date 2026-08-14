@@ -20,16 +20,16 @@ from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
+    follow_repo_includes,
+    quoted_include_basenames,
     selected_host_files,
     selected_kernel_files,
     selected_tiling_headers,
+    tpl_decl_files,
 )
+from uo_init.tpl_dsl import _uint_bit_width, expand_tpl_source, load_quoted_include_texts, parse_args_decl
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
-_DECL_RE = re.compile(
-    r"ASCENDC_TPL_(BOOL|UINT)_DECL\s*\(\s*([A-Za-z_]\w*)\s*,\s*([^,\)]+)(.*?)\)",
-    re.S,
-)
 _ENUM_RE = re.compile(r"enum\s+class\s+(InputIndex|AttrIndex)\s*:[^{]+\{(.*?)\};", re.S)
 _ALIAS_INPUT_RE = re.compile(
     r"\b(?:auto|const\s+auto|[A-Za-z_:<>\s\*&]+)\s+([A-Za-z_]\w*)\s*=.{0,320}?InputIndex::([A-Za-z_]\w*)",
@@ -44,9 +44,16 @@ _GET_TILING_RE = re.compile(
     r"GET_TILING_DATA_WITH_STRUCT\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
     re.S,
 )
-_GET_TILING_BARE_RE = re.compile(
-    r"\bGET_TILING_DATA(?:_MEMBER)?\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
+_GET_TILING_MEMBER_RE = re.compile(
+    r"GET_TILING_DATA_MEMBER\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
     re.S,
+)
+_GET_TILING_BARE_CALL_RE = re.compile(r"\bGET_TILING_DATA\s*\(")
+_API_HEAD_RE = re.compile(
+    r"\.(?P<op>INPUT|OPTIONAL_INPUT|DYNAMIC_INPUT|OUTPUT|DYNAMIC_OUTPUT|ATTR|REQUIRED_ATTR)\s*\("
+)
+_DEF_MEMBER_RE = re.compile(
+    r'this->(?P<kind>Input|Output|Attr|DynamicInput|DynamicOutput)\s*\(\s*"(?P<name>[^"]+)"\s*\)'
 )
 _REGISTER_TILING_KEY_RE = re.compile(
     r"REGISTER_TILING_FOR_TILINGKEY\s*\(\s*\"[^\"]+\"\s*,\s*([A-Za-z_:][A-Za-z0-9_:]*)\s*\)",
@@ -55,6 +62,36 @@ _REGISTER_TILING_KEY_RE = re.compile(
 _REGISTER_TILING_DEFAULT_RE = re.compile(
     r"REGISTER_TILING_DEFAULT\s*\(\s*([A-Za-z_:][A-Za-z0-9_:]*)\s*\)",
     re.S,
+)
+# Positional packed-key helpers (TPL or decimal packers). Not GetTilingKey().
+_PACKING_HELPER_CALL_RE = re.compile(
+    r"\b(?P<name>GET_TPL_TILING_KEY|[A-Z][A-Z0-9_]*GET_TILING_?KEY)\s*\("
+)
+_PACKING_CAST_WORDS = {
+    "static_cast",
+    "reinterpret_cast",
+    "const_cast",
+    "dynamic_cast",
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    "int",
+    "unsigned",
+    "long",
+    "bool",
+    "true",
+    "false",
+}
+_AICORE_FN_RE = re.compile(
+    r"(?:inline\s+)?__aicore__\s+(?:inline\s+)?(?:void|[A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\("
+)
+_MEMBER_PACK_ARG_RE = re.compile(
+    r"^[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)+$"
 )
 _PRIMITIVE_TYPES = {
     "bool", "char", "short", "int", "long", "float", "double", "void",
@@ -102,6 +139,7 @@ def enrich_codemap_from_operator_source(
 
     stats.update(_parse_kernel_contract(codemap, root, architecture, api))
     _link_tiling_data_reads(codemap, root, architecture)
+    _link_tiling_key_kernel_selects(codemap, root, architecture)
     _link_nested_tiling_data_types(codemap)
 
     codemap.meta["source_contract"] = "ascendc-source-contract/v2"
@@ -168,17 +206,251 @@ def _split_args(text: str) -> list[str]:
 
 
 def _tensor_dtypes(payload: str) -> list[str]:
-    """Parse ``TensorType({DT_FLOAT16, DT_BF16, ...})`` into declared dtype tokens."""
+    """Parse REG_OP ``TensorType({DT_...})`` or OpDef ``DataType({ge::DT_...})``."""
     text = str(payload or "")
     m = re.search(r"TensorType\s*\(\s*\{([^}]*)\}", text)
+    if not m:
+        m = re.search(r"DataType\s*\(\s*\{([^}]*)\}", text)
     if not m:
         return []
     out: list[str] = []
     for tok in m.group(1).split(","):
-        name = tok.strip()
+        name = tok.strip().split("::")[-1]
         if name.startswith("DT_"):
             out.append(name)
     return out
+
+
+def _matching_paren(text: str, open_pos: int) -> int:
+    depth = 0
+    quote = ""
+    escape = False
+    for i in range(max(0, open_pos), len(text)):
+        ch = text[i]
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in {'"', "'"}:
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _upsert_api_tensor(
+    codemap: CodeMap,
+    *,
+    kind: str,
+    name: str,
+    payload: str,
+    file: str,
+    line: int,
+    bucket: list[Entity],
+    required: bool,
+    dynamic: bool = False,
+) -> None:
+    dtypes = _tensor_dtypes(payload)
+    k = kind.replace("_", "").upper()
+    is_output = k in {"OUTPUT", "DYNAMICOUTPUT"}
+    ent = codemap.upsert(
+        EntityKind.OUTPUT if is_output else EntityKind.INPUT,
+        name,
+        attrs={
+            "api_kind": "tensor",
+            "required": required,
+            "declaration": payload.strip(),
+            "dtype": dtypes,
+            "api_index": len(bucket),
+            "dynamic": dynamic,
+            "provenance": "source_reg_op" if kind.isupper() else "source_op_def",
+        },
+        file=file,
+        line=line,
+        status="confirmed",
+    )
+    bucket.append(ent)
+
+
+def _upsert_api_attr(
+    codemap: CodeMap,
+    *,
+    name: str,
+    payload: str,
+    file: str,
+    line: int,
+    bucket: list[Entity],
+    required: bool,
+    provenance: str,
+) -> None:
+    parts = _split_args(payload)
+    ent = codemap.upsert(
+        EntityKind.INPUT,
+        name,
+        attrs={
+            "api_kind": "attribute",
+            "required": required,
+            "attr_type": parts[0] if parts else payload.strip(),
+            "default": parts[1] if len(parts) > 1 else None,
+            "api_attr_index": len(bucket),
+            "provenance": provenance,
+        },
+        file=file,
+        line=line,
+        status="confirmed",
+    )
+    bucket.append(ent)
+
+
+def _ingest_reg_op_text(
+    codemap: CodeMap,
+    root: Path,
+    path: Path,
+    text: str,
+    tensor_inputs: list[Entity],
+    attrs: list[Entity],
+    outputs: list[Entity],
+) -> None:
+    file = _rel(root, path)
+    seen: set[tuple[str, str]] = set()
+    for m in _API_HEAD_RE.finditer(text):
+        close = _matching_paren(text, m.end() - 1)
+        if close < 0:
+            continue
+        inner = text[m.end() : close]
+        args = _split_args(inner)
+        if not args:
+            continue
+        name = args[0].strip()
+        if not re.match(r"^[A-Za-z_]\w*$", name):
+            continue
+        payload = ", ".join(args[1:]) if len(args) > 1 else ""
+        op = m.group("op")
+        key = (op, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        line = _line_of(text, m.start())
+        if op in {"INPUT", "OPTIONAL_INPUT", "DYNAMIC_INPUT"}:
+            _upsert_api_tensor(
+                codemap,
+                kind=op,
+                name=name,
+                payload=payload,
+                file=file,
+                line=line,
+                bucket=tensor_inputs,
+                required=op == "INPUT",
+                dynamic=op == "DYNAMIC_INPUT",
+            )
+        elif op in {"OUTPUT", "DYNAMIC_OUTPUT"}:
+            _upsert_api_tensor(
+                codemap,
+                kind=op,
+                name=name,
+                payload=payload,
+                file=file,
+                line=line,
+                bucket=outputs,
+                required=True,
+                dynamic=op == "DYNAMIC_OUTPUT",
+            )
+        else:
+            _upsert_api_attr(
+                codemap,
+                name=name,
+                payload=payload,
+                file=file,
+                line=line,
+                bucket=attrs,
+                required=op == "REQUIRED_ATTR",
+                provenance="source_reg_op",
+            )
+
+
+def _def_cpp_files(root: Path) -> list[Path]:
+    host = root / "op_host"
+    if not host.is_dir():
+        return []
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for path in list(host.glob("*_def.cpp")) + list(host.glob("*_def.cc")) + list(
+        host.rglob("*_def.cpp")
+    ):
+        key = path.resolve()
+        if key in seen or not path.is_file():
+            continue
+        seen.add(key)
+        found.append(path)
+    return found
+
+
+def _ingest_def_cpp(
+    codemap: CodeMap,
+    root: Path,
+    path: Path,
+    tensor_inputs: list[Entity],
+    attrs: list[Entity],
+    outputs: list[Entity],
+) -> None:
+    text = _read(path)
+    if "this->" not in text:
+        return
+    file = _rel(root, path)
+    seen: set[tuple[str, str]] = {(e.kind_name(), e.name) for e in tensor_inputs + attrs + outputs}
+    for m in _DEF_MEMBER_RE.finditer(text):
+        kind = m.group("kind")
+        name = m.group("name")
+        key = (kind, name)
+        if key in seen:
+            continue
+        seen.add(key)
+        line = _line_of(text, m.start())
+        semi = text.find(";", m.end())
+        payload = text[m.end() : semi] if semi >= 0 else ""
+        if kind in {"Input", "DynamicInput"}:
+            _upsert_api_tensor(
+                codemap,
+                kind=kind,
+                name=name,
+                payload=payload,
+                file=file,
+                line=line,
+                bucket=tensor_inputs,
+                required=kind == "Input",
+                dynamic=kind == "DynamicInput",
+            )
+        elif kind in {"Output", "DynamicOutput"}:
+            _upsert_api_tensor(
+                codemap,
+                kind=kind,
+                name=name,
+                payload=payload,
+                file=file,
+                line=line,
+                bucket=outputs,
+                required=True,
+                dynamic=kind == "DynamicOutput",
+            )
+        else:
+            _upsert_api_attr(
+                codemap,
+                name=name,
+                payload="",
+                file=file,
+                line=line,
+                bucket=attrs,
+                required=False,
+                provenance="source_op_def",
+            )
 
 
 def _parse_api(codemap: CodeMap, root: Path) -> dict[str, Any]:
@@ -191,68 +463,11 @@ def _parse_api(codemap: CodeMap, root: Path) -> dict[str, Any]:
         if "REG_OP(" not in text:
             continue
         source_files += 1
-        for idx, line in enumerate(text.splitlines(), 1):
-            m = re.match(
-                r"\s*\.(INPUT|OPTIONAL_INPUT|OUTPUT|ATTR|REQUIRED_ATTR)\s*\(\s*([A-Za-z_]\w*)\s*,\s*(.*)\)\s*$",
-                line,
-            )
-            if not m:
-                continue
-            op, name, payload = m.groups()
-            file = _rel(root, path)
-            if op in {"INPUT", "OPTIONAL_INPUT"}:
-                dtypes = _tensor_dtypes(payload)
-                ent = codemap.upsert(
-                    EntityKind.INPUT,
-                    name,
-                    attrs={
-                        "api_kind": "tensor",
-                        "required": op == "INPUT",
-                        "declaration": payload.strip(),
-                        "dtype": dtypes,
-                        "api_index": len(tensor_inputs),
-                        "provenance": "source_reg_op",
-                    },
-                    file=file,
-                    line=idx,
-                    status="confirmed",
-                )
-                tensor_inputs.append(ent)
-            elif op == "OUTPUT":
-                dtypes = _tensor_dtypes(payload)
-                ent = codemap.upsert(
-                    EntityKind.OUTPUT,
-                    name,
-                    attrs={
-                        "api_kind": "tensor",
-                        "declaration": payload.strip(),
-                        "dtype": dtypes,
-                        "api_index": len(outputs),
-                        "provenance": "source_reg_op",
-                    },
-                    file=file,
-                    line=idx,
-                    status="confirmed",
-                )
-                outputs.append(ent)
-            else:
-                parts = _split_args(payload)
-                ent = codemap.upsert(
-                    EntityKind.INPUT,
-                    name,
-                    attrs={
-                        "api_kind": "attribute",
-                        "required": op == "REQUIRED_ATTR",
-                        "attr_type": parts[0] if parts else payload.strip(),
-                        "default": parts[1] if len(parts) > 1 else None,
-                        "api_attr_index": len(attrs),
-                        "provenance": "source_reg_op",
-                    },
-                    file=file,
-                    line=idx,
-                    status="confirmed",
-                )
-                attrs.append(ent)
+        _ingest_reg_op_text(codemap, root, path, text, tensor_inputs, attrs, outputs)
+    if not tensor_inputs and not outputs:
+        for path in _def_cpp_files(root):
+            source_files += 1
+            _ingest_def_cpp(codemap, root, path, tensor_inputs, attrs, outputs)
     return {
         "api_source_files": source_files,
         "api_tensor_inputs": len(tensor_inputs),
@@ -388,11 +603,17 @@ def _macro_ints(text: str) -> dict[str, int]:
     }
 
 
-def _parse_allowed_values(tail: str) -> list[int | str]:
-    if "ASCENDC_TPL_UI_LIST" not in tail:
+def _parse_allowed_values(tail: str, ints: dict[str, int] | None = None) -> list[int | str]:
+    marker = ""
+    if "ASCENDC_TPL_UI_LIST" in tail:
+        marker = "ASCENDC_TPL_UI_LIST"
+    elif "ASCENDC_TPL_UI_RANGE" in tail:
+        marker = "ASCENDC_TPL_UI_RANGE"
+    if not marker:
         return []
-    after = tail.split("ASCENDC_TPL_UI_LIST", 1)[1]
+    after = tail.split(marker, 1)[1]
     out: list[int | str] = []
+    table = ints or {}
     for token in _split_args(after.lstrip(", \n\t")):
         token = token.strip().rstrip(")")
         if not token:
@@ -400,37 +621,79 @@ def _parse_allowed_values(tail: str) -> list[int | str]:
         try:
             out.append(int(token, 0))
         except ValueError:
-            out.append(token)
+            if token in table:
+                out.append(table[token])
+            else:
+                out.append(token)
     return out
+
+
+def _decl_bit_width(decl_kind: str, width_token: str, ints: dict[str, int]) -> int:
+    if decl_kind == "BOOL":
+        return 1
+    token = (width_token or "").strip()
+    if token in ints:
+        return ints[token]
+    try:
+        return int(token, 0)
+    except ValueError:
+        return _uint_bit_width(token)
+
+
+def _dim_decl_line(text: str, decl_kind: str, name: str) -> int:
+    match = re.search(
+        rf"ASCENDC_TPL_{re.escape(decl_kind)}_DECL\s*\(\s*{re.escape(name)}\b",
+        text,
+    )
+    return _line_of(text, match.start()) if match else 1
 
 
 def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[str, Any]:
     declared: list[str] = []
-    for path in selected_kernel_files(root, architecture):
-        text = _read(path)
-        if "ASCENDC_TPL_ARGS_DECL" not in text:
+    bit_shift = 0
+    for path in tpl_decl_files(root, architecture):
+        raw = _read(path)
+        if "ASCENDC_TPL_ARGS_DECL" not in raw:
             continue
+        extras = load_quoted_include_texts(path)
+        text = expand_tpl_source(raw, extras)
         ints = _macro_ints(text)
-        for m in _DECL_RE.finditer(text):
-            decl_kind, name, width_token, tail = m.groups()
-            if name in declared:
+        for extra in extras:
+            ints.update(_macro_ints(extra))
+        schema = parse_args_decl(text)
+        for dim in schema.dims:
+            name = str(dim.name or "").strip()
+            if not name or name in declared:
                 continue
+            decl_kind = str(dim.kind or "UINT").upper()
             order = len(declared)
             declared.append(name)
+            tail = ",".join(str(v) for v in (dim.vals or []))
             if decl_kind == "BOOL":
-                width = 1
-                allowed = sorted({int(v) for v in re.findall(r"\b[01]\b", ",".join([width_token, tail]))})
+                allowed = sorted({int(v) for v in re.findall(r"\b[01]\b", tail)})
+                for tok in dim.vals or []:
+                    token = str(tok).strip()
+                    if token in ints and ints[token] in (0, 1):
+                        allowed = sorted(set(allowed) | {ints[token]})
+                if not allowed:
+                    allowed = [0, 1]
             else:
-                token = width_token.strip()
-                try:
-                    width = int(token, 0)
-                except ValueError:
-                    width = ints.get(token)
-                allowed = _parse_allowed_values(tail)
-            line = _line_of(text, m.start())
+                allowed = _parse_allowed_values(tail, ints)
+                if not allowed and decl_kind in {"DTYPE", "FORMAT"}:
+                    allowed = [str(v).strip() for v in (dim.vals or []) if str(v).strip()]
+            width = int(dim.bw) if dim.bw else _decl_bit_width(decl_kind, tail.split(",")[0] if tail else "", ints)
+            line = _dim_decl_line(text, decl_kind, name)
+            bit_lo = bit_shift
+            bit_hi = bit_lo + max(int(width), 1) - 1
+            bit_shift = bit_hi + 1
             attrs = {
                 "bit_width": width,
+                "bw": width,
+                "bit_lo": bit_lo,
+                "bit_hi": bit_hi,
+                "bit_offset": bit_lo,
                 "allowed_values": allowed,
+                "value_domain": [str(v) for v in allowed],
                 "decl_kind": decl_kind.lower(),
                 "source_declared": True,
                 "provenance": "source_tpl_args_decl",
@@ -439,7 +702,13 @@ def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[
             existing = codemap.by_name(name, kind=EntityKind.TILING_KEY)
             if existing:
                 ent = existing[0]
-                ent.attrs.update(attrs)
+                ent.attrs.update(
+                    {
+                        k: v
+                        for k, v in attrs.items()
+                        if v is not None and not (k in {"allowed_values", "value_domain"} and not v)
+                    }
+                )
                 ent.file = _rel(root, path)
                 ent.line_start = line
                 ent.line_end = line
@@ -456,62 +725,204 @@ def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[
                 )
     if not declared:
         declared = _parse_fallback_tiling_keys(codemap, root, architecture)
+    packed = _collect_packed_key_catalog(root, architecture)
+    if packed:
+        codemap.meta["source_packed_legal_keys"] = packed
+        codemap.meta["source_packed_legal_key_count"] = len(packed)
     codemap.meta["source_declared_tiling_keys"] = declared
     codemap.meta["source_declared_tiling_key_count"] = len(declared)
+    if declared:
+        allowed = set(declared)
+        for ent in codemap.by_kind(EntityKind.TILING_KEY):
+            if ent.name in allowed:
+                ent.attrs["source_declared"] = True
+            elif ent.attrs.get("source_declared"):
+                ent.attrs["source_declared"] = False
+                ent.attrs["unselected_tpl_schema"] = True
     return {"source_declared_tiling_keys": len(declared)}
 
 
-_TILING_KEY_IS_RE = re.compile(r"\bTILING_KEY_IS\s*\(\s*([A-Za-z_]\w*)\s*\)")
+_TILING_KEY_IS_RE = re.compile(r"\bTILING_KEY_IS\s*\(\s*([A-Za-z_]\w*|\d+)\s*\)")
 _DEFINE_TILING_KEY_RE = re.compile(
-    r"^\s*#\s*define\s+(TILING_KEY_[A-Za-z0-9_]+)\b", re.MULTILINE
+    r"^\s*#\s*define\s+((?:T(?:I)?LING_KEY_|[A-Z0-9_]*TILING_KEY)[A-Za-z0-9_]*)\b"
+    r"(?:\s+(-?\d+))?",
+    re.MULTILINE,
 )
 _CONSTEXPR_TILING_KEY_RE = re.compile(
-    r"\bconstexpr\s+(?:static\s+)?(?:const\s+)?"
-    r"(?:u?int(?:32|64)_t|uint64_t)\s+(TILING_KEY_[A-Za-z0-9_]+)\s*="
+    r"\b(?:const\s+static|static\s+const|static\s+constexpr|constexpr\s+static|constexpr)\s+"
+    r"(?:const\s+)?(?:u?int(?:32|64)_t|int)\s+"
+    r"((?:T(?:I)?LING_KEY_|[A-Z0-9_]*TILING_KEY)[A-Za-z0-9_]*)\s*"
+    r"(?:=\s*(-?\d+))?"
 )
 _SET_TILING_KEY_IDENT_RE = re.compile(
     r"\b(?:SetTilingKey|set_tiling_key)\s*\(\s*([A-Za-z_]\w*)"
 )
+_NOT_TILING_KEY_IDENTS = {
+    "GetTilingKey",
+    "get_tiling_key",
+    "SetTilingKey",
+    "set_tiling_key",
+}
 
 
-def _parse_fallback_tiling_keys(
-    codemap: CodeMap, root: Path, architecture: str
-) -> list[str]:
-    """Integer/macro TilingKeys used when there is no ASCENDC_TPL_*_DECL."""
-    found: list[tuple[str, Path, int, str]] = []
+def iter_packing_helper_calls(text: str) -> Iterable[tuple[int, int, list[str], str]]:
+    """Yield positional packed-key helper calls: GET_TPL_TILING_KEY / *_GET_TILINGKEY.
+
+    Definitions (parameter packs / typenames) are skipped. A helper must pack
+    at least two arguments — those arguments are TilingKey dimensions, not the
+    packed integer catalog ``TILING_KEY_IS`` enumerates.
+    """
+    for match in _PACKING_HELPER_CALL_RE.finditer(text):
+        name = match.group("name")
+        open_pos = match.end() - 1
+        close_pos = _matching_paren(text, open_pos)
+        if close_pos < 0:
+            continue
+        args_text = text[open_pos + 1 : close_pos]
+        if "..." in args_text or re.search(r"\btypename\b", args_text):
+            continue
+        args = [a.strip() for a in _split_args(args_text) if a.strip()]
+        if len(args) < 2:
+            continue
+        yield match.start(), close_pos + 1, args, name
+
+
+def _packing_dim_name(expr: str, index: int) -> str:
+    expr = expr.strip()
+    if _MEMBER_PACK_ARG_RE.match(expr):
+        return re.findall(r"[A-Za-z_]\w*", expr)[-1]
+    idents = [tok for tok in re.findall(r"[A-Za-z_]\w*", expr) if tok not in _PACKING_CAST_WORDS]
+    if len(idents) == 1:
+        return idents[0]
+    return f"pack_arg_{index}"
+
+
+def _collect_packed_key_catalog(root: Path, architecture: str) -> list[str]:
+    """``TILING_KEY_IS`` packed values are the legal-key set, not dimensions."""
+    names: list[str] = []
     seen: set[str] = set()
-    files = list(selected_kernel_files(root, architecture)) + list(
-        selected_host_files(root, architecture)
-    )
-    for path in files:
+    for path in selected_kernel_files(root, architecture):
         try:
             text = _read(path)
         except OSError:
             continue
-        for regex, prov in (
-            (_TILING_KEY_IS_RE, "source_tiling_key_is"),
-            (_DEFINE_TILING_KEY_RE, "source_tiling_key_define"),
-            (_CONSTEXPR_TILING_KEY_RE, "source_tiling_key_constexpr"),
-            (_SET_TILING_KEY_IDENT_RE, "source_set_tiling_key"),
-        ):
-            for m in regex.finditer(text):
-                name = m.group(1)
-                if name in seen:
-                    continue
-                seen.add(name)
-                found.append((name, path, _line_of(text, m.start()), prov))
+        for match in _TILING_KEY_IS_RE.finditer(text):
+            name = match.group(1)
+            if name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def _parse_packing_helper_keys(
+    codemap: CodeMap, root: Path, architecture: str
+) -> list[str]:
+    """Recover TilingKey dimensions from host packed-key helper call sites."""
+    schema: list[str] | None = None
+    site: tuple[Path, int] | None = None
+    for path in selected_host_files(root, architecture):
+        try:
+            text = _read(path)
+        except OSError:
+            continue
+        for start, _end, args, _name in iter_packing_helper_calls(text):
+            names: list[str] = []
+            used: set[str] = set()
+            for index, expr in enumerate(args):
+                name = _packing_dim_name(expr, index)
+                if name in used:
+                    name = f"{name}_{index}"
+                used.add(name)
+                names.append(name)
+            if schema is None or len(names) > len(schema):
+                schema = names
+                site = (path, _line_of(text, start))
+    if not schema or site is None:
+        return []
+    path, line = site
     declared: list[str] = []
-    for name, path, line, prov in found:
+    for order, name in enumerate(schema):
         declared.append(name)
         codemap.upsert(
             EntityKind.TILING_KEY,
             name,
             attrs={
                 "source_declared": True,
-                "provenance": prov,
-                "decl_order": len(declared) - 1,
+                "provenance": "source_packing_helper_arg",
+                "decl_order": order,
                 "decl_kind": "uint",
             },
+            file=_rel(root, path),
+            line=line,
+            status="confirmed",
+        )
+    return declared
+
+
+def _parse_fallback_tiling_keys(
+    codemap: CodeMap, root: Path, architecture: str
+) -> list[str]:
+    """Integer/macro TilingKeys used when there is no ASCENDC_TPL_*_DECL."""
+    helper_keys = _parse_packing_helper_keys(codemap, root, architecture)
+    if helper_keys:
+        return helper_keys
+    found: list[tuple[str, Path, int, str, int | None]] = []
+    seen: set[str] = set()
+    kernel_files = list(selected_kernel_files(root, architecture))
+    host_files = list(selected_host_files(root, architecture))
+
+    def _collect(files: list[Path], patterns: list[tuple[re.Pattern[str], str]]) -> None:
+        for path in files:
+            try:
+                text = _read(path)
+            except OSError:
+                continue
+            for regex, prov in patterns:
+                for m in regex.finditer(text):
+                    name = m.group(1)
+                    if name in seen or name in _NOT_TILING_KEY_IDENTS:
+                        continue
+                    seen.add(name)
+                    value = None
+                    if m.lastindex and m.lastindex >= 2 and m.group(2):
+                        raw = str(m.group(2))
+                        if raw.lstrip("-").isdigit():
+                            value = int(raw)
+                    found.append((name, path, _line_of(text, m.start()), prov, value))
+
+    _collect(kernel_files, [(_TILING_KEY_IS_RE, "source_tiling_key_is")])
+    # Kernel ``TILING_KEY_IS(10000)`` is the dispatch contract. Host
+    # ``TLING_KEY_*`` / ``FULL_LOAD_*TILING_KEY`` literals pack onto those
+    # values; they are not extra keys.
+    if not found:
+        _collect(
+            kernel_files + host_files,
+            [
+                (_DEFINE_TILING_KEY_RE, "source_tiling_key_define"),
+                (_CONSTEXPR_TILING_KEY_RE, "source_tiling_key_constexpr"),
+                (_SET_TILING_KEY_IDENT_RE, "source_set_tiling_key"),
+            ],
+        )
+    declared: list[str] = []
+    for name, path, line, prov, value in found:
+        declared.append(name)
+        attrs = {
+            "source_declared": True,
+            "provenance": prov,
+            "decl_order": len(declared) - 1,
+            "decl_kind": "uint",
+        }
+        if value is None and name.isdigit():
+            value = int(name)
+        if value is not None:
+            attrs["value"] = value
+            attrs["allowed_values"] = [value]
+            attrs["value_domain"] = [str(value)]
+        codemap.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs=attrs,
             file=_rel(root, path),
             line=line,
             status="confirmed",
@@ -573,7 +984,7 @@ def wanted_tiling_data_names(codemap: CodeMap, root: Path, architecture: str) ->
     for path in _kernel_candidates(root, architecture):
         text = _read(path)
         names.update(n.split("::")[-1] for n in _GET_TILING_RE.findall(text))
-        names.update(n.split("::")[-1] for n in _GET_TILING_BARE_RE.findall(text))
+        names.update(n.split("::")[-1] for n in _GET_TILING_MEMBER_RE.findall(text))
         names.update(n.split("::")[-1] for n in _REGISTER_TILING_KEY_RE.findall(text))
         names.update(n.split("::")[-1] for n in _REGISTER_TILING_DEFAULT_RE.findall(text))
     names.discard("")
@@ -644,6 +1055,20 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
             continue
         seen_files.add(key)
         files.append(path)
+    try:
+        from uo_init.paths import ops_root as _ops_root
+
+        repo = _ops_root()
+    except Exception:
+        repo = None
+    if repo is None:
+        repo = root.parent.parent
+    for extra in follow_repo_includes(files, repo_root=Path(repo), architecture=architecture):
+        key = extra.resolve()
+        if key in seen_files:
+            continue
+        seen_files.add(key)
+        files.append(extra)
     index = _class_index(files)
     known_classes = set(index)
     aliases: dict[str, str] = {}
@@ -963,6 +1388,13 @@ def _link_tiling_data_reads(codemap: CodeMap, root: Path, architecture: str) -> 
     for path in _kernel_candidates(root, architecture):
         text = _read(path)
         used = {name.split("::")[-1] for name in _GET_TILING_RE.findall(text)}
+        used.update(name.split("::")[-1] for name in _GET_TILING_MEMBER_RE.findall(text))
+        if _GET_TILING_BARE_CALL_RE.search(text):
+            used.update(
+                name.split("::")[-1] for name in _REGISTER_TILING_DEFAULT_RE.findall(text)
+            )
+            if not used and len(owners) == 1:
+                used.update(owners)
         if not used:
             continue
         entry_names = {m.group("name") for m in _GLOBAL_KERNEL_RE.finditer(text)}
@@ -971,6 +1403,8 @@ def _link_tiling_data_reads(codemap: CodeMap, root: Path, architecture: str) -> 
             if k.name in entry_names
             or str(k.file).replace("\\", "/") == _rel(root, path)
         ]
+        if not target_kernels:
+            target_kernels = list(codemap.by_kind(EntityKind.KERNEL))
         for type_name in used:
             tdata = owners.get(type_name)
             if tdata is None:
@@ -981,6 +1415,119 @@ def _link_tiling_data_reads(codemap: CodeMap, root: Path, architecture: str) -> 
                     tdata.id,
                     kernel.id,
                     attrs={"provenance": "source_get_tiling_data", "file": _rel(root, path)},
+                    status="confirmed",
+                )
+
+
+def _kernels_for_packed_key_file(
+    codemap: CodeMap, path: Path, text: str, root: Path
+) -> list[Entity]:
+    """Pick kernels that consume a packed-key catalog in this file.
+
+    Prefer a ``__global__`` entry defined here. If the catalog lives in a
+    header, pick kernels whose names are the longest prefix of an ``__aicore__``
+    function in that header so wrapper entries are not cartesian-linked.
+    """
+    kernels = list(codemap.by_kind(EntityKind.KERNEL))
+    if not kernels:
+        return []
+    entry_names = {m.group("name") for m in _GLOBAL_KERNEL_RE.finditer(text)}
+    file_rel = _rel(root, path).replace("\\", "/")
+    same_file = [
+        k
+        for k in kernels
+        if k.name in entry_names or str(k.file or "").replace("\\", "/") == file_rel
+    ]
+    if same_file:
+        return same_file
+    aicore_names = _AICORE_FN_RE.findall(text)
+    if not aicore_names:
+        return kernels
+    scored: list[tuple[int, Entity]] = []
+    for kernel in kernels:
+        score = 0
+        for fn in aicore_names:
+            if fn.startswith(kernel.name) or kernel.name.startswith(fn):
+                score = max(score, len(kernel.name))
+        if score:
+            scored.append((score, kernel))
+    if not scored:
+        return kernels
+    best = max(score for score, _k in scored)
+    picked = [k for score, k in scored if score == best]
+    return picked or kernels
+
+
+def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: str) -> None:
+    """``TILING_KEY_IS`` selects a kernel. Packed catalogs bind dimensions, not 1:1 names."""
+    keys = {e.name: e for e in codemap.by_kind(EntityKind.TILING_KEY)}
+    if not keys:
+        return
+    packing_dims = [
+        e
+        for e in keys.values()
+        if str(e.attrs.get("provenance") or "") == "source_packing_helper_arg"
+    ]
+    for path in _kernel_candidates(root, architecture):
+        text = _read(path)
+        names = [m.group(1) for m in _TILING_KEY_IS_RE.finditer(text)]
+        if not names:
+            continue
+        file_rel = _rel(root, path)
+        target_kernels = _kernels_for_packed_key_file(codemap, path, text, root)
+        if packing_dims:
+            for key in packing_dims:
+                for kernel in target_kernels:
+                    codemap.link(
+                        RelationKind.SELECTS,
+                        key.id,
+                        kernel.id,
+                        attrs={"provenance": "source_packing_helper_selects", "file": file_rel},
+                        status="confirmed",
+                    )
+            continue
+        for name in names:
+            key = keys.get(name)
+            if key is None:
+                continue
+            for kernel in target_kernels:
+                codemap.link(
+                    RelationKind.SELECTS,
+                    key.id,
+                    kernel.id,
+                    attrs={"provenance": "source_tiling_key_is", "file": file_rel},
+                    status="confirmed",
+                )
+
+    declared_tpl = [
+        e
+        for e in keys.values()
+        if e.attrs.get("source_declared")
+        and str(e.attrs.get("provenance") or "") == "source_tpl_args_decl"
+    ]
+    schema_headers = {
+        Path(str(e.file or "")).name.lower()
+        for e in declared_tpl
+        if e.file
+    }
+    if not declared_tpl or not schema_headers:
+        return
+    for path in _kernel_candidates(root, architecture):
+        text = _read(path)
+        if not GLOBAL_KERNEL_RE.search(text):
+            continue
+        included = {name.lower() for name in quoted_include_basenames(path)}
+        if not (included & schema_headers):
+            continue
+        file_rel = _rel(root, path)
+        target_kernels = _kernels_for_packed_key_file(codemap, path, text, root)
+        for key in declared_tpl:
+            for kernel in target_kernels:
+                codemap.link(
+                    RelationKind.SELECTS,
+                    key.id,
+                    kernel.id,
+                    attrs={"provenance": "source_tpl_header_selects", "file": file_rel},
                     status="confirmed",
                 )
 

@@ -85,7 +85,7 @@ def test_kb_lookup_stub_requires_answer_yaml_not_integrity() -> None:
     assert "uo/checks" in stub
     assert "Do NOT write uo/checks" in stub
     assert "Hard stop" in stub
-    assert "uo-query≤12" in stub
+    assert "do not stall on routing" in stub
     assert "evidence-window" in stub
     write_line = next((ln for ln in stub.splitlines() if ln.startswith("write:")), "")
     assert write_line.startswith("write: (none")

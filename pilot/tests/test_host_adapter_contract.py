@@ -184,6 +184,30 @@ def test_host_context_mjs_contract_executes() -> None:
     assert "host-context.mjs contract OK" in (proc.stdout or "")
 
 
+def test_pilot_progress_mjs_patches_tool_row_input() -> None:
+    """Mock OpenCode 1.18 part.update: clean progress body succeeds, spread+raw 400s."""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        import pytest
+
+        pytest.skip("node not available")
+    script = REPO / "opencode-plugin" / "pilot-progress.test.mjs"
+    assert script.is_file()
+    proc = subprocess.run(
+        [node, str(script)],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode == 0, f"stdout={proc.stdout}\nstderr={proc.stderr}"
+    assert "pilot-progress.mjs contract OK" in (proc.stdout or "")
+
+
 def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
     """OpenCode Truncate.output crashes if plugin execute returns a bare object."""
     driver = REPO / "opencode-plugin" / "pilot-driver.ts"
@@ -200,15 +224,28 @@ def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
     assert "isHumanDecision" in text
     assert "isAcpStartSuccess" in text
     assert "normalizeResumeDecision" in text
+    assert "answer_from_source" in text
+    assert 'decision === "uo-init"' in text
+    assert 'decision === "source"' in text
     assert "renderPilotProgressBar" in text
-    assert "invokeToolMetadata" in text
+    assert "invokeToolMetadata" not in text
+    assert "Do not call ctx.metadata" in text
+    assert "createToolRowProgressReporter" in text
     assert "publishVisibleProgress" in text
-    assert "publishToolRow" in text
     assert "withProgressArg" in text
-    assert "patchRunningToolPart" in text
-    assert "clientBaseUrl" in text
-    assert "/session/" in text
     assert "showToast" in text
+    assert "await reporter.flushAsync()" in text
+    progress = (REPO / "opencode-plugin" / "pilot-progress.mjs").read_text(encoding="utf-8")
+    assert "buildToolPartProgressPatch" in progress
+    assert "patchRunningToolPart" in progress
+    assert "validateOpencodeToolPartPatch" in progress
+    assert "raw not allowed on ToolStateRunning" in progress
+    assert "session.message.v1" in progress
+    assert "inner.patch.sessionID" in progress
+    assert "inner.patch.v1" in progress
+    assert "path: { id:" in progress
+    assert "Never write stderr/stdout" in progress
+    assert "console.error(" not in progress
     # EXISTING_RUN_NEEDS_DECISION includes run_id; must not treat run_id as start-ok.
     assert "!started.ok && !started.run_id" not in text
     # Successful start historically omitted ok:true — must not use !started.ok alone.

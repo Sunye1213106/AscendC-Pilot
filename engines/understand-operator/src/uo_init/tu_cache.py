@@ -22,7 +22,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-CACHE_VERSION = 2
+CACHE_VERSION = 4
 _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
@@ -85,6 +85,7 @@ def build_context_fingerprint(
     dtype_variant: str | None,
     parse_flags: Iterable[str] | None = None,
     source_path: str | Path | None = None,
+    orig_assignment: dict[str, str] | None = None,
 ) -> str:
     """Fingerprint include roots / CANN paths / parse args that affect the walk."""
     parts: list[str] = [
@@ -100,7 +101,11 @@ def build_context_fingerprint(
         args = list(parse_flags) if parse_flags is not None else (
             ctx.host_args()
             if side == "host"
-            else ctx.kernel_args(dtype_variant=dtype_variant, source_path=source_path)
+            else ctx.kernel_args(
+                dtype_variant=dtype_variant,
+                source_path=source_path,
+                orig_assignment=orig_assignment,
+            )
         )
     except Exception:  # noqa: BLE001
         args = []
@@ -134,10 +139,15 @@ def walk_cache_key(
     scope: Any = None,
     logs_rejections: bool = False,
     source_sha: str | None = None,
+    orig_assignment: dict[str, str] | None = None,
 ) -> str:
     src_sha = source_sha or sha256_file(path)
     ctx_fp = build_context_fingerprint(
-        ctx, side=side, dtype_variant=dtype_variant, source_path=path
+        ctx,
+        side=side,
+        dtype_variant=dtype_variant,
+        source_path=path,
+        orig_assignment=orig_assignment,
     )
     payload = "\0".join(
         [

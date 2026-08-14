@@ -10,21 +10,28 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 ARCH_DIR_RE = re.compile(r"^arch\d+$")
 _ARCH_IN_PATH_RE = re.compile(r"(?:^|/)(arch\d+)(?:/|$)")
+# Path segment `/arch22/` or filename token `_arch22.h` / `foo_arch35_bar.h`.
+_ARCH_TOKEN_RE = re.compile(r"(?:^|[/_.-])(arch\d+)(?:[/_.-]|$)")
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
+_ANY_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
 
 # template <...> __global__, extern "C" __global__, or a plain __global__.
+# Qualifier order is not operator-specific: both `__global__ __aicore__` and
+# `__aicore__ __global__` (and `__global__` alone) appear in ops-transformer.
+_KERNEL_QUALS = r"(?:__global__\s+(?:__aicore__\s+)?|__aicore__\s+__global__\s+)"
 GLOBAL_KERNEL_RE = re.compile(
     r"(?:template\s*<(?P<tpl>.*?)>\s*)?"
     r"(?:extern\s+\"C\"\s+)?"
-    r"__global__\s+__aicore__\s+void\s+"
+    rf"{_KERNEL_QUALS}void\s+"
     r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>.*?)\)\s*\{",
     re.S,
 )
+KERNEL_ENTRY_NAME_RE = re.compile(rf"{_KERNEL_QUALS}void\s+([A-Za-z_]\w*)")
 
 _TILING_HEADER_GLOBS = (
     "*tiling_data*.h",
@@ -51,18 +58,96 @@ def includes_architecture(text: str, architecture: str) -> bool:
     return f"{arch}/" in text.replace("\\", "/")
 
 
+def arch_tokens_in_include(include: str) -> set[str]:
+    """``archNN`` markers in an include path or filename (not ``architecture.h``)."""
+    text = "/" + (include or "").replace("\\", "/")
+    return {m.group(1).lower() for m in _ARCH_TOKEN_RE.finditer(text)}
+
+
+def arch_number(architecture: str) -> int:
+    m = re.fullmatch(r"arch(\d+)", str(architecture or "").strip().lower())
+    return int(m.group(1)) if m else 0
+
+
+def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
+    """Pick the kernel TU for this architecture.
+
+    ops-transformer keeps ``foo.cpp`` (typically arch22) beside ``foo_apt.cpp``
+    (regbase / arch35+). Include-derived architecture wins when it is unique;
+    otherwise apt vs plain follows the arch generation.
+    """
+    arch = str(architecture or "").strip().lower()
+    arch_n = arch_number(arch)
+    matching: list[Path] = []
+    unscoped: list[Path] = []
+    for raw in targets:
+        path = Path(raw)
+        if not path.is_file():
+            continue
+        try:
+            owns = entry_include_architecture(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            owns = ""
+        if owns and arch and owns != arch:
+            continue
+        if owns == arch:
+            matching.append(path)
+        else:
+            unscoped.append(path)
+    pool = matching or unscoped
+    if not pool:
+        return None
+    apt = [p for p in pool if p.name.endswith("_apt.cpp")]
+    plain = [p for p in pool if not p.name.endswith("_apt.cpp")]
+    chosen = (apt or plain) if arch_n >= 35 else (plain or apt)
+    return sorted(chosen, key=lambda p: p.as_posix())[0]
+
+
+def follow_repo_includes(
+    seeds: Iterable[Path],
+    *,
+    repo_root: Path,
+    architecture: str = "",
+) -> list[Path]:
+    """Quoted includes under the ops repo (sibling operators), not CANN."""
+    root = Path(repo_root).resolve()
+    out: list[Path] = []
+    seen: set[Path] = set()
+    pending = [Path(p) for p in seeds if Path(p).is_file()]
+    while pending:
+        path = pending.pop()
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        for included in resolve_quoted_includes(path):
+            try:
+                rel = included.resolve().relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if "/tests/" in f"/{rel}/" or rel.startswith("tests/"):
+                continue
+            if is_other_arch_path(included, architecture):
+                continue
+            pending.append(included)
+            if included.suffix.lower() in {".h", ".hpp", ".hh"}:
+                out.append(included)
+    return out
+
+
 def entry_include_architecture(text: str) -> str:
     """Which ``archNN`` a root-level kernel entry builds, from its includes.
 
     Entries sit above ``archNN/`` folders, so the path alone cannot tell.
     Matching ``scope_scan.entry_architecture``: one concrete arch wins; mixed
-    or absent markers yield empty.
+    or absent markers yield empty so a preprocessor-gated entry (arch22 header
+    plus an ``arch38/`` include behind ``#if``) is not rejected.
     """
     found: set[str] = set()
-    for inc in _QUOTED_INCLUDE_RE.findall(text or ""):
-        match = _ARCH_IN_PATH_RE.search(inc.replace("\\", "/"))
-        if match:
-            found.add(match.group(1).lower())
+    for inc in _ANY_INCLUDE_RE.findall(text or ""):
+        found |= arch_tokens_in_include(inc)
     if len(found) == 1:
         return next(iter(found))
     return ""
@@ -101,6 +186,39 @@ def iter_cpp(root: Path, *, recursive: bool = True) -> Iterator[Path]:
             yield path
 
 
+def _resolve_confirmed_path(op: Path, rel: str) -> Path | None:
+    """Resolve a prepare-confirmed path against the operator, family, or ops root.
+
+    Clang records sibling-operator includes (``moe_distribute_dispatch_v2/...``)
+    relative to the family folder, not ``op_dir``. ``op / rel`` then misses the
+    file and TilingData structs living next door drop out of analyze.
+    """
+    rel_path = Path(str(rel or "").replace("\\", "/"))
+    if not str(rel_path):
+        return None
+    candidates = [op / rel_path, op.parent / rel_path]
+    try:
+        from uo_init.paths import ops_root
+
+        repo = ops_root()
+        if repo is not None:
+            candidates.append(Path(repo) / rel_path)
+    except Exception:  # noqa: BLE001
+        pass
+    seen: set[Path] = set()
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            return resolved
+    return None
+
+
 def load_confirmed_source_files(root: Path, architecture: str) -> list[Path] | None:
     """Clang-confirmed files from prepare, or None when that list is not ready.
 
@@ -129,8 +247,8 @@ def load_confirmed_source_files(root: Path, architecture: str) -> list[Path] | N
         rel = str(item or "").replace("\\", "/").strip()
         if not rel:
             continue
-        cand = (op / rel).resolve()
-        if not cand.is_file():
+        cand = _resolve_confirmed_path(op, rel)
+        if cand is None:
             continue
         if cand in seen:
             continue
@@ -242,21 +360,31 @@ def selected_kernel_files(
         for path in sorted(iter_cpp(arch_dir)):
             add(path)
     arch = str(architecture or "").strip().lower()
+    arch_n = arch_number(arch)
     if kernel_root.is_dir():
+        root_tus: list[tuple[Path, str, str]] = []
         for path in sorted(iter_cpp(kernel_root, recursive=False)):
             try:
                 text = path.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            # Arch-neutral entry names (foo.cpp vs foo_apt.cpp) are disambiguated
-            # by what they include — never take a TU that builds another archNN.
             owns = entry_include_architecture(text)
             if owns and arch and owns != arch:
                 continue
+            root_tus.append((path, text, owns))
+        apt_here = any(p.name.endswith("_apt.cpp") for p, _t, _o in root_tus)
+        for path, text, owns in root_tus:
             if includes_architecture(text, architecture):
                 add(path)
                 continue
-            if not owns and ("__aicore__" in text or "GET_TILING_DATA" in text):
+            if path.name.endswith("_apt.cpp") and arch_n >= 35:
+                add(path)
+                continue
+            if arch_n and arch_n < 35 and not path.name.endswith("_apt.cpp"):
+                if "__aicore__" in text or "GET_TILING_DATA" in text:
+                    add(path)
+                continue
+            if not apt_here and not owns and ("__aicore__" in text or "GET_TILING_DATA" in text):
                 add(path)
     op_root = Path(root).resolve()
     pending = list(out)
@@ -330,3 +458,79 @@ def selected_tiling_headers(root: Path, architecture: str) -> list[Path]:
             seen.add(key)
             hits.append(path)
     return hits
+
+
+def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
+    """One TPL ARGS_DECL schema: the header the current-arch kernel entry includes.
+
+    Layout globs and Clang scope often also list sibling ``*_tiling_key.h``
+    files (apt vs non-apt, ifdef-gated variants). Merging those schemas
+    inflates TILING_KEY counts so GET_TPL_TILING_KEY packing never matches.
+    """
+    kernel_files = list(selected_kernel_files(root, architecture))
+    by_key = {p.resolve(): p for p in kernel_files}
+    entries: list[Path] = []
+    for path in kernel_files:
+        if path.suffix.lower() not in {".cpp", ".cc", ".cxx"}:
+            continue
+        if is_other_arch_path(path, architecture):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if GLOBAL_KERNEL_RE.search(text):
+            entries.append(path)
+    order: list[Path] = []
+    seen: set[Path] = set()
+    pending = list(entries)
+    while pending:
+        path = pending.pop(0)
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        order.append(path)
+        for inc in resolve_quoted_includes(path):
+            if is_other_arch_path(inc, architecture):
+                continue
+            resolved = inc.resolve()
+            if resolved in seen:
+                continue
+            pending.append(by_key.get(resolved, inc))
+    hits: list[Path] = []
+    for path in order:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_DECL" in text:
+            hits.append(path)
+            break
+    if hits:
+        return hits
+    for path in kernel_files:
+        if path.suffix.lower() not in {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_DECL" not in text:
+            continue
+        for inc in resolve_quoted_includes(path):
+            if is_other_arch_path(inc, architecture):
+                continue
+            try:
+                inc_text = inc.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            if "ASCENDC_TPL_ARGS_DECL" in inc_text:
+                return [inc]
+        return [path]
+    return []
+
+
+def select_tpl_decl_header(root: Path, architecture: str) -> Path | None:
+    hits = tpl_decl_files(root, architecture)
+    return hits[0] if hits else None

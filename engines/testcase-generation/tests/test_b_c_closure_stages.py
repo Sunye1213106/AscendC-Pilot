@@ -331,26 +331,12 @@ def test_adapter_pack_from_minimal_host_derivation(tmp_path: Path, monkeypatch: 
     assert features.get("source") == "export_adapter_pack"
 
 
-def test_resolve_gaps_llm_default_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.delenv("UO_RESOLVE_GAPS_LLM", raising=False)
-    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "ir"
-    uo.mkdir(parents=True)
-    (uo / "unresolved.yaml").write_text(
-        "version: 1\nstatus: open\nblocker_count: 25\n"
-        "derivation_blocker_count: 5\nblockers: [{id: BLK_1}]\n",
-        encoding="utf-8",
-    )
+def test_resolve_gaps_removed(tmp_path: Path):
     from uo_init.pilot_engines import resolve_gaps
 
     out = resolve_gaps(tmp_path, {"run_id": "r1"})
-    assert out["ok"] is True
-    assert out.get("need_subagent") is False
-    assert out.get("llm_enabled") is False
-
-    monkeypatch.setenv("UO_RESOLVE_GAPS_LLM", "1")
-    out2 = resolve_gaps(tmp_path, {"run_id": "r2"})
-    assert out2.get("llm_enabled") is True
-    assert out2.get("need_subagent") is True
+    assert out["ok"] is False
+    assert out["error"] == "RESOLVE_GAPS_REMOVED"
 
 
 def _wide(path: Path, header: list[str], rows: list[list[str]]) -> None:

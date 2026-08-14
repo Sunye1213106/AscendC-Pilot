@@ -16,7 +16,7 @@ if str(PILOT) not in sys.path:
 _DESCRIPTIONS = {
     "uo-init": "建立算子知识库 / Build and verify AscendC Operator CodeMap (.uo)",
     "uo-update": "刷新算子知识库 / Refresh existing AscendC Operator CodeMap",
-    "uo-query": "查询算子知识库 / Query existing AscendC Operator CodeMap",
+    "uo-query": "查询算子知识库：短问当前会话自查，深问原生 Task 可跳转 / Query CodeMap",
     "uo-investigate": "调查知识库 gap / Investigate unresolved CodeMap gaps",
     "tg-init": "Initialize the TG contract and TilingKey binding",
     "tg-plan": "Freeze the TG coverage target set",
@@ -29,12 +29,22 @@ _DESCRIPTIONS = {
 
 
 def _command_body(workflow_id: str) -> str:
+    if workflow_id == "uo-query":
+        return """查询已有 Operator CodeMap。路由由主控用 operator-analysis skill 完成，不要开「问题路由」阶段、不要为选 mode 空转子代理。
+
+User arguments: $ARGUMENTS
+
+1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`，大体选 mode（`locate` / `tiling_key` / `field` / `kernel_branch` / `impact` / …）。
+2. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子目录>`，带 path:line 作答。不要 `acp start`，不要开子代理。
+3. **深问（很多跳 / 图很大）**：`pilot_run`（workflow=uo-query）立刻返回 `dispatch_subagent`。用 OpenCode 原生 Task（agent=`uo-query`，prompt=`task_prompt_stub` 原样）。点 Task 卡片可跳进子会话看思考。不要空等隐藏 session。
+4. 把答案说给人听。不要卡在路由，不要只说完成。
+"""
     return f"""Run the AscendC-Pilot workflow `{workflow_id}` for the current operator project.
 
 User arguments: $ARGUMENTS
 
 Execution contract:
-1. Treat Workflow Spec / ACP as orchestration authority. Start `{workflow_id}` with `acp start` when it is not already the active workflow; do not call domain CLIs directly.
+1. Treat Workflow Spec / ACP as orchestration authority. Prefer Host `pilot_run` to start `{workflow_id}` when it is not already the active workflow; do not call domain CLIs directly.
 2. After start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Fallback: `acp run-action auto` to drain consecutive deterministic Actions. Do not dispatch deterministic engine identities as OpenCode Tasks. Run `acp` directly with `--project`; never pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
 3. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
 4. Finalize the interactive Action through ACP, then call `acp run-action auto` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.

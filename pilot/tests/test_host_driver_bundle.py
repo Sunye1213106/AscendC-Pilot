@@ -297,6 +297,55 @@ def test_attach_host_step_continue_goal(tmp_path: Path) -> None:
     assert "全量" in str(step.get("intent") or "") or bool(step.get("intent"))
 
 
+def test_done_read_hint_uses_arch_scoped_quality_path(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    quality = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "checks" / "quality.yaml"
+    quality.parent.mkdir(parents=True, exist_ok=True)
+    quality.write_text("graph: {}\n", encoding="utf-8")
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "workflow_complete",
+            "status": "passed",
+            "complete": {
+                "state": {"workflow_id": "uo-init", "architecture": "arch35"},
+            },
+        },
+    )
+    step = out.get("host_step") or {}
+    q = str(step.get("quality_path") or "").replace("\\", "/")
+    msg = str(step.get("message_zh") or "")
+    assert step.get("kind") == "done"
+    assert "/arch35/uo/checks/quality.yaml" in q
+    assert "/.ascendc-pilot/uo/" not in q
+    assert q in msg.replace("\\", "/")
+    assert "请 Read uo/checks/quality.yaml" not in msg
+    assert out.get("message_zh") == step.get("message_zh")
+
+
+def test_done_read_hint_globs_quality_when_arch_missing(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    quality = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "checks" / "quality.yaml"
+    quality.parent.mkdir(parents=True, exist_ok=True)
+    quality.write_text("graph: {}\n", encoding="utf-8")
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "workflow_complete",
+            "status": "passed",
+            "complete": {"state": {"workflow_id": "uo-init"}},
+        },
+    )
+    q = str((out.get("host_step") or {}).get("quality_path") or "").replace("\\", "/")
+    assert "/arch35/uo/checks/quality.yaml" in q
+    assert "请 Read uo/checks/quality.yaml" not in str((out.get("host_step") or {}).get("message_zh") or "")
+
+
 def test_method_bundle_fail_closed_without_placeholder(tmp_path: Path) -> None:
     sdir = tmp_path / "session"
     sdir.mkdir()

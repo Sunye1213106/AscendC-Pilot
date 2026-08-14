@@ -190,13 +190,67 @@ def test_start_intake_gate_tg_requires_uo_product(tmp_path: Path, monkeypatch):
     assert gate is not None
     assert gate["reason_code"] == "UO_PRODUCT_REQUIRED"
     assert "uo-init" in gate["suggested_command"]
+    values = [o.get("value") for o in (gate.get("ask_question") or {}).get("options") or []]
+    assert "uo-init" in values
+    assert "source" not in values
+
+
+def test_start_intake_gate_uo_query_offers_source_fallback(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    gate = intake.start_intake_gate(
+        project=tmp_path,
+        workflow_id="uo-query",
+        architecture="arch35",
+        project_explicit=True,
+    )
+    assert gate is not None
+    assert gate["reason_code"] == "UO_PRODUCT_REQUIRED"
+    expected = intake.expected_uo_product_path(
+        tmp_path, architecture="arch35", op_name=tmp_path.name
+    )
+    assert gate["expected_path"] == expected
+    assert "arch35" in expected
+    values = [o.get("value") for o in (gate.get("ask_question") or {}).get("options") or []]
+    assert values == ["uo-init", "source"]
+    assert "found none" not in str(gate.get("message_zh") or "")
+    assert "Glob" in str(gate.get("primary_instruction_zh") or "")
+
+
+def test_cli_uo_query_missing_product_asks_human(tmp_path: Path, capsys, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    code = main(
+        [
+            "uo-query",
+            "--project",
+            str(tmp_path),
+            "--architecture",
+            "arch35",
+            "--pattern",
+            "IsDNoEqual",
+        ]
+    )
+    assert code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["reason_code"] == "UO_PRODUCT_REQUIRED"
+    assert out["needs_human_decision"] is True
+    values = [o.get("value") for o in (out.get("ask_question") or {}).get("options") or []]
+    assert "uo-init" in values
+    assert "source" in values
+    assert "found none" not in str(out.get("error") or "")
+    assert "found none" not in str(out.get("message_zh") or "")
+    assert out.get("host_step", {}).get("kind") == "ask_human"
+    assert "human_interaction_request" in out
 
 
 def test_prepare_workflow_start_inherits_arch_from_uo(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("UO_ARCH", raising=False)
     monkeypatch.delenv("ASCENDC_ARCH", raising=False)
     (tmp_path / "op_host" / "arch35").mkdir(parents=True)
-    uo_dir = tmp_path / ".ascendc-pilot" / "uo"
+    uo_dir = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
     uo_dir.mkdir(parents=True)
     (uo_dir / "demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
     prep = intake.prepare_workflow_start(

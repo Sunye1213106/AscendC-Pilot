@@ -226,11 +226,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
 
 
 def resolve(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Optional / debug: stage gap blockers. Not part of default ``/uo-init``.
-
-    Prefer ``/uo-investigate``. When called, LLM auto-resolve remains off unless
-    ``UO_RESOLVE_GAPS_LLM=1`` / ``enable_llm=true``.
-    """
+    """Removed from ``/uo-init``. Use ``/uo-investigate`` for residuals."""
     return pe.resolve_gaps(project_root, payload)
 
 

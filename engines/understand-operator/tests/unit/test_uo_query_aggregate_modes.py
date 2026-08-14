@@ -193,3 +193,54 @@ def test_aggregate_modes(tmp_path: Path) -> None:
     assert q.aggregate_tiling_key("SplitAxis")["count"] >= 1
     assert q.aggregate_buffer("local")["count"] >= 1
     assert q.aggregate_gaps()["total"] >= 1
+
+
+def test_type_search_is_exact_and_skips_info_manager(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="SRCTYPE::mutex_buffer.h::MutexBuffer",
+            kind=EntityKind.TYPE,
+            name="MutexBuffer",
+            attrs={"cpp_kind": "class", "role": "storage_wrapper_type", "root": "AscendC::LocalTensor"},
+            file="mutex_buffer.h",
+            line_start=52,
+            line_end=52,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="TYPE_INFO",
+            kind=EntityKind.TYPE,
+            name="MutexBufferInfo",
+            attrs={"cpp_kind": "struct"},
+            file="mutex_buffer.h",
+            line_start=10,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="TYPE_MGR",
+            kind=EntityKind.TYPE,
+            name="MutexBufferManager",
+            attrs={"cpp_kind": "class"},
+            file="mutex_buffer.h",
+            line_start=80,
+            status="confirmed",
+        )
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    rows = q.search("MutexBuffer", kinds=["TYPE"])
+    names = [str(row.get("name") or "") for row in rows]
+    assert names == ["MutexBuffer"]
+    assert rows[0]["file"].endswith("mutex_buffer.h")
+    assert int(rows[0]["line_start"] or 0) == 52
+    assert (rows[0].get("facts") or {}).get("role") == "storage_wrapper_type"
+    buf = q.aggregate_buffer("MutexBuffer")
+    assert buf["count"] >= 1
+    assert any(row["name"] == "MutexBuffer" for row in buf["buffers"])

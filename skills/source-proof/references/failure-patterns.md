@@ -20,7 +20,7 @@
 ## derived 当 exact
 
 有表达式就做排除证明。  
-**对策**：`derivation-quality.md` — derived ≠ exact。
+**对策**：`evidence-quality.md` — derived ≠ exact。
 
 ## 复合赋值 / 容器写漏记
 

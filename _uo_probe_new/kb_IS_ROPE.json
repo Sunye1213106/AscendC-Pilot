@@ -1,0 +1,294 @@
+{
+  "ok": true,
+  "mode": "kernel_branch",
+  "pattern": "IS_ROPE",
+  "branches": [
+    {
+      "id": "KBR_8D15929891D9",
+      "kind": "BRANCH",
+      "name": "IS_ROPE",
+      "status": "confirmed",
+      "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+      "line_start": 414,
+      "line_end": 414,
+      "why": "kernel_branch",
+      "facts": {
+        "condition": "IS_ROPE",
+        "layer": "kernel",
+        "function": "InitCubeBuffer",
+        "dimensions": [
+          "IsRope"
+        ]
+      },
+      "snippet": "402:{\n403:    isDkvL0CResidentForD192Dv128 =\n404:        !IS_FP32_INPUT && ((SPLIT_AXIS == BN2GS1S2 || SPLIT_AXIS == BN2S2) &&\n405:                           (HEAD_DIM_ALIGN == static_cast<uint32_t>(DTemplateType::Aligned192) &&\n406:                            constInfo.commonConstInfo.dSizeV <= static_cast<uint32_t>(DTemplateType::Aligned128))) ||\n407:        IS_ROPE;\n408:    isDvL0CResidentForD192ToD256 =\n409:        IS_DV_RESIDENT_L0C && !isDkvL0CResidentForD192Dv128 &&\n410:        IsDqkvSplitNEnabled(constInfo.commonConstInfo.s1Size, constInfo.commonConstInfo.s2Size);\n411:\n412:    // init l1 buffer\n413:    if constexpr (IS_L1_REUSE || IS_L1_PRELOAD) {",
+      "relationships": [
+        {
+          "kind": "SELECTS",
+          "src": "E_TILING_KEY_b33ab9f46cd8",
+          "dst": "KBR_8D15929891D9",
+          "other_id": "E_TILING_KEY_b33ab9f46cd8",
+          "other_kind": "TILING_KEY",
+          "other_name": "IsRope",
+          "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+          "line_start": 109
+        }
+      ]
+    }
+  ],
+  "count": 1,
+  "files": {
+    "op_kernel/arch35/flash_attention_score_grad_block_cube.h": [
+      {
+        "id": "KBR_8D15929891D9",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 414,
+        "line_end": 414,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "InitCubeBuffer",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "402:{\n403:    isDkvL0CResidentForD192Dv128 =\n404:        !IS_FP32_INPUT && ((SPLIT_AXIS == BN2GS1S2 || SPLIT_AXIS == BN2S2) &&\n405:                           (HEAD_DIM_ALIGN == static_cast<uint32_t>(DTemplateType::Aligned192) &&\n406:                            constInfo.commonConstInfo.dSizeV <= static_cast<uint32_t>(DTemplateType::Aligned128))) ||\n407:        IS_ROPE;\n408:    isDvL0CResidentForD192ToD256 =\n409:        IS_DV_RESIDENT_L0C && !isDkvL0CResidentForD192Dv128 &&\n410:        IsDqkvSplitNEnabled(constInfo.commonConstInfo.s1Size, constInfo.commonConstInfo.s2Size);\n411:\n412:    // init l1 buffer\n413:    if constexpr (IS_L1_REUSE || IS_L1_PRELOAD) {",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_8D15929891D9",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      },
+      {
+        "id": "KBR_84C0F8BAAF4B",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 667,
+        "line_end": 667,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "IterateMmQK",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "655:    } else {\n656:        if constexpr (IS_FP32_D_EXCEED_256) {\n657:            qL1Buffer = fp32L1Buf1.Get();\n658:        } else {\n659:            qL1Buffer = commonL1Buf.Get();           \n660:        }\n661:    }\n662: \n663:    // copy current, when IS_L1_PRELOAD=true, only first loop copy current\n664:    if (!IS_L1_PRELOAD || preloadArgs.copyCurrent) {\n665:        qL1Buffer.LockProd();\n666:        LocalTensor<INPUT_TYPE> qL1Tensor = qL1Buffer.template GetTensor<INPUT_TYPE>();",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_84C0F8BAAF4B",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      },
+      {
+        "id": "KBR_8D0B8EB63384",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 734,
+        "line_end": 734,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "IterateMmQK",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "722:            }\n723:        } else {\n724:            if constexpr (IS_FP32_D_EXCEED_256) {\n725:                kL1Buffer = fp32L1Buf2.Get();\n726:            } else {\n727:                kL1Buffer = commonL1Buf.Get();           \n728:            }\n729:        }\n730:    \n731:        if (isCopyRight) {\n732:            kL1Buffer.LockProd();\n733:            LocalTensor<INPUT_TYPE> kL1Tensor = kL1Buffer.template GetTensor<INPUT_TYPE>();",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_8D0B8EB63384",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      },
+      {
+        "id": "KBR_829600FFF8A8",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 768,
+        "line_end": 768,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "IterateMmQK",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "756:                DataCopy(kL1Tensor, this->keyGm[runInfo.commonRunInfo.keyOffset + gmNOffset], nd2NzParams);\n757:            }\n758:            kL1Buffer.UnlockProd();\n759:        }\n760:    \n761:        // load next left matrix to L1\n762:        if constexpr(IS_L1_PRELOAD) {\n763:            if (preloadArgs.copyNext) {\n764:                qL1NextBuffer.LockProd();\n765:                LocalTensor<INPUT_TYPE> qL1Tensor = qL1NextBuffer.template GetTensor<INPUT_TYPE>();\n766:                nd2NzParams.ndNum = 1;\n767:                nd2NzParams.nValue = preloadArgs.nextMOrN;",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_829600FFF8A8",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      },
+      {
+        "id": "KBR_90211E959360",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 780,
+        "line_end": 780,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "IterateMmQK",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "768:                if constexpr (IS_ROPE) {\n769:                    nd2NzParams.dValue = ROPE_D_128;\n770:                } else {\n771:                    nd2NzParams.dValue = constInfo.commonConstInfo.dSize;\n772:                }\n773:                nd2NzParams.srcNdMatrixStride = 0;\n774:                nd2NzParams.srcDValue = constInfo.mm2Ka;\n775:                // L1->L0A，L1上的src stride为C0对齐后的SingleM\n776:                nd2NzParams.dstNzC0Stride = AlignTo16(preloadArgs.nextMOrN);\n777:                nd2NzParams.dstNzNStride = 1;\n778:                nd2NzParams.dstNzMatrixStride = 0;\n779:                DataCopy(qL1Tensor, this->queryGm[preloadArgs.nextQueryOffset], nd2NzParams);",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_90211E959360",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      },
+      {
+        "id": "KBR_0F7B79E3D04D",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 894,
+        "line_end": 894,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "IterateMmDsKFixpout",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "882:            fixpipeParams.srcStride = AlignTo16(fixpipeParams.mSize);\n883:            fixpipeParams.dstStride = SPLIT_AXIS == BN2 ? AlignTo16(constInfo.commonConstInfo.dSize) : constInfo.mm3Ka;\n884:            fixpipeParams.dualDstCtl = 0;\n885:            fixpipeParams.unitFlag = ENABLE_UNITFLAG ? UNITFLAG_EN_OUTER_LAST : UNITFLAG_DISABLE;\n886:            fixpipeParams.params.ndNum = 1;\n887:            fixpipeParams.params.srcNdStride = 0;\n888:            fixpipeParams.params.dstNdStride = 0;\n889:            constexpr static FixpipeConfig DQ_FIXPIPE_CONFIG = {CO2Layout::ROW_MAJOR, IS_WRITE_UB};\n890:            bool needAtomic = (SPLIT_AXIS != BN2) || (IS_BN2_MULTIBLK && !runInfo.isFirstS1Outer);\n891:            if (needAtomic) {\n892:                SetAtomicAdd<CALC_TYPE>();\n893:            }",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_0F7B79E3D04D",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      },
+      {
+        "id": "KBR_82120E217156",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+        "line_start": 1207,
+        "line_end": 1207,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "IterateMmDsQFixpout",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "1195:                fixpipeParams.mSize = runInfo.commonRunInfo.s2RealSize;\n1196:                fixpipeParams.srcStride = runInfo.commonRunInfo.s2AlignedSize;\n1197:                fixpipeParams.dstStride = SPLIT_AXIS != BN2GS1S2 ? AlignTo16(constInfo.commonConstInfo.dSize) : constInfo.mm4Kb;\n1198:                fixpipeParams.dualDstCtl = 0;\n1199:                fixpipeParams.unitFlag = ENABLE_UNITFLAG ? UNITFLAG_EN_OUTER_LAST : UNITFLAG_DISABLE;\n1200:                fixpipeParams.params.ndNum = 1;\n1201:                fixpipeParams.params.srcNdStride = 0;\n1202:                fixpipeParams.params.dstNdStride = 0;\n1203:                constexpr static FixpipeConfig DK_FIXPIPE_CONFIG = {CO2Layout::ROW_MAJOR, IS_WRITE_UB};\n1204:                if (needAtomic) {\n1205:                    SetAtomicAdd<CALC_TYPE>();\n1206:                }",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_82120E217156",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      }
+    ],
+    "op_kernel/arch35/flash_attention_score_grad_block_vec.h": [
+      {
+        "id": "KBR_E6243EB935F3",
+        "kind": "BRANCH",
+        "name": "IS_ROPE",
+        "status": "confirmed",
+        "file": "op_kernel/arch35/flash_attention_score_grad_block_vec.h",
+        "line_start": 265,
+        "line_end": 265,
+        "why": "kernel_branch",
+        "facts": {
+          "condition": "IS_ROPE",
+          "layer": "kernel",
+          "function": "InitGlobalBuffer",
+          "dimensions": [
+            "IsRope"
+          ]
+        },
+        "snippet": "253:    dyGm.SetGlobalBuffer((__gm__ OUTDTYPE *)dy);\n254:    yGm.SetGlobalBuffer((__gm__ OUTDTYPE *)y);\n255:    pseGm.SetGlobalBuffer((__gm__ OUTDTYPE *)pseShift);\n256:    pseFloatGm.SetGlobalBuffer((__gm__ float *)pseShift);\n257:    dropMaskGm.SetGlobalBuffer((GM_ADDR)dropMask);\n258:    attenMaskU8Gm.SetGlobalBuffer((GM_ADDR)attenMask);\n259:    softmaxMaxGm.SetGlobalBuffer((__gm__ float *)softmaxMax);\n260:    softmaxSumGm.SetGlobalBuffer((__gm__ float *)softmaxSum);\n261:    pseSlope = pseShift;\n262:    dqGm.SetGlobalBuffer((__gm__ OUTDTYPE *)dq);\n263:    dkGm.SetGlobalBuffer((__gm__ OUTDTYPE *)dk);\n264:    dvGm.SetGlobalBuffer((__gm__ OUTDTYPE *)dv);",
+        "relationships": [
+          {
+            "kind": "SELECTS",
+            "src": "E_TILING_KEY_b33ab9f46cd8",
+            "dst": "KBR_E6243EB935F3",
+            "other_id": "E_TILING_KEY_b33ab9f46cd8",
+            "other_kind": "TILING_KEY",
+            "other_name": "IsRope",
+            "file": "flash_attention_score_grad/op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h",
+            "line_start": 109
+          }
+        ]
+      }
+    ]
+  },
+  "truncated": true
+}

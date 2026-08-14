@@ -74,6 +74,8 @@ CANN_PACKAGE_RELS = (
     "x86_64-linux/ascendc/include",
     "x86_64-linux/ascendc/include/highlevel_api",
     "x86_64-linux/tikcpp/tikcfw",
+    "x86_64-linux/third_party/include",
+    "x86_64-linux/include/nlohmann",
 )
 STD_HEADERS = frozenset(
     {
@@ -426,7 +428,6 @@ def materialize_include_alias(
     except OSError:
         return None
     include_dir = _posix(root)
-    ctx.add_include(include_dir, side=side)
     return HealHit(
         include=rel,
         include_dir=include_dir,
@@ -502,6 +503,9 @@ def search_roots(ctx: Any) -> list[Path]:
         add(ops / "common")
         add(ops / "common" / "include")
         add(ops / "common" / "include" / "op_kernel")
+        add(ops / "3rd")
+        add(ops / "3rdparty")
+        add(ops / "3rdparty" / "include")
         # Sibling family commons (ffn includes headers that live under mc2/common).
         try:
             for fam in ops.iterdir():
@@ -511,6 +515,7 @@ def search_roots(ctx: Any) -> list[Path]:
                 add(fam / "common" / "utils")
                 add(fam / "common" / "inc")
                 add(fam / "3rd")
+                add(fam / "3rdparty")
         except OSError:
             pass
     op_dir = Path(getattr(ctx, "op_dir", "") or "")
@@ -523,6 +528,7 @@ def search_roots(ctx: Any) -> list[Path]:
         add(op_dir.parent / "common" / "utils")
         add(op_dir.parent / "common" / "inc")
         add(op_dir.parent / "3rd")
+        add(op_dir.parent / "3rdparty")
     return roots
 
 
