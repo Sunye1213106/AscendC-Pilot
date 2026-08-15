@@ -89,10 +89,13 @@ def test_ensure_agent_layout_without_arch_uses_active_run(
     _clear_arch_env(monkeypatch)
     start_workflow(tmp_path, "uo-query", architecture="arch35")
     _clear_arch_env(monkeypatch)
-
-    # Wipe pointer → known architectures remain, no active selection.
     from ascendc_pilot.active_run import clear_active_run
 
+    assert active_architecture(tmp_path) == "arch22"
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
+    _clear_arch_env(monkeypatch)
+
+    # Wipe pointer → two exclusive trees remain, no active selection.
     clear_active_run(tmp_path)
     try:
         discover_arch(tmp_path)

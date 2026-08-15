@@ -1,0 +1,3 @@
+Testcase_Name,enable,dtype,n
+default_fp16,enable,fp16,4
+illegal_combo,disable,bf16,8

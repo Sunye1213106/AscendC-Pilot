@@ -1,11 +1,12 @@
-"""Arch-neutral active-run pointer under ``.ascendc-pilot/control/active_run.yaml``.
+"""Last-exclusive pointer under ``.ascendc-pilot/control/active_run.yaml``.
 
-This is the durable cross-process source of truth for *which* architecture
-currently owns the live workflow, distinct from "known architectures" that may
-retain historical ``state/workflow.yaml`` trees.
+This is a discover_arch / host-context fallback for *which* architecture was
+last written by an exclusive product-family lock. It is **not** the mutex:
+parallel families use ``control/product_locks.yaml``; sessions bind a ``.uo``
+digest in ``control/session_bindings.yaml``.
 
-Resolution consumers (``discover_arch``, ``host-context``, ``load_state``) must
-prefer this pointer after explicit ``--architecture`` / env override.
+Resolution consumers (``discover_arch``, ``host-context``) still prefer this
+pointer after explicit ``--architecture`` / env override.
 """
 
 from __future__ import annotations

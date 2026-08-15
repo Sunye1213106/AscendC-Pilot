@@ -174,3 +174,45 @@ def test_write_read_roundtrip(tmp_path: Path):
     assert written["ok"]
     loaded = read_codemap(out)
     assert loaded.host_kernel_path_exists()
+
+
+def test_codemap_adjacency_index_survives_pop_and_pickle():
+    import pickle
+
+    cm = CodeMap(op_name="op", architecture="arch35")
+    a = cm.upsert(EntityKind.FUNCTION, "A")
+    b = cm.upsert(EntityKind.FUNCTION, "B")
+    k = cm.upsert(EntityKind.KERNEL, "K")
+    calls = cm.link(RelationKind.CALLS, a.id, b.id)
+    cm.link(RelationKind.SELECTS, a.id, k.id)
+    assert [other.id for _, other in cm.neighbors(a.id, kind=RelationKind.CALLS, direction="out")] == [b.id]
+    assert {e.name for e in cm.by_kind(EntityKind.FUNCTION)} == {"A", "B"}
+    assert cm.by_name("K", kind=EntityKind.KERNEL)[0].id == k.id
+    assert cm.has_incident(b.id)
+
+    cm.relations.pop(calls.id)
+    assert [other.id for _, other in cm.neighbors(a.id, kind=RelationKind.CALLS, direction="out")] == []
+    assert [other.id for _, other in cm.neighbors(a.id, kind=RelationKind.SELECTS, direction="out")] == [k.id]
+    cm.entities.pop(b.id)
+    assert {e.name for e in cm.by_kind(EntityKind.FUNCTION)} == {"A"}
+    assert not cm.has_incident(b.id)
+
+    restored = pickle.loads(pickle.dumps(cm))
+    assert {e.name for e in restored.by_kind(EntityKind.FUNCTION)} == {"A"}
+    assert restored.by_name("K", kind=EntityKind.KERNEL)
+    assert [other.name for _, other in restored.neighbors(a.id, direction="out")] == ["K"]
+
+
+def test_codemap_index_stays_cheap_under_interleaved_upsert_and_lookup():
+    """Dirty full-rebuild indexes regress here: each lookup rebuilds the whole graph."""
+    import time
+
+    cm = CodeMap(op_name="op", architecture="arch35")
+    t0 = time.perf_counter()
+    for i in range(800):
+        ent = cm.upsert(EntityKind.FUNCTION, f"F{i}")
+        cm.link(RelationKind.CALLS, ent.id, ent.id)
+        assert cm.by_name(f"F{i}", kind=EntityKind.FUNCTION)
+        assert cm.neighbors(ent.id, kind=RelationKind.CALLS, direction="out")
+    elapsed = time.perf_counter() - t0
+    assert elapsed < 1.0, f"interleaved upsert/lookup took {elapsed:.3f}s"

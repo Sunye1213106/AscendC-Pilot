@@ -157,7 +157,30 @@ def gate_kb_fingerprint_fresh(project_root: Path, *, op_name: str | None = None)
 
         return require_kb_fingerprint_fresh(project_root, name, out_root=out)
 
-    return _wrap_exc("kb_fingerprint_fresh", _run)
+    wrapped = _wrap_exc("kb_fingerprint_fresh", _run)
+    try:
+        from ascendc_pilot.occupancy import binding_is_stale
+        from ascendc_pilot.state import load_state
+
+        live = load_state(project_root) or {}
+        check = binding_is_stale(
+            project_root,
+            pinned_digest=str(live.get("pinned_digest") or ""),
+            architecture=str(live.get("architecture") or ""),
+            session_id=str(live.get("session_id") or ""),
+        )
+        if check.get("stale"):
+            return {
+                "ok": False,
+                "gate": "kb_fingerprint_fresh",
+                "reason_code": "UO_DIGEST_CHANGED",
+                "message": "CodeMap digest changed since this TG run was pinned",
+                "uo_freshness": check,
+                "product_check": wrapped,
+            }
+    except Exception:  # noqa: BLE001
+        pass
+    return wrapped
 
 
 def gate_kb_fingerprint_matches(project_root: Path) -> dict[str, Any]:
@@ -415,9 +438,7 @@ def gate_adapter_completeness(
                 issues.append(f"missing_section:{name}:{section}")
 
     # Anti-copy: must not match skill examples byte-for-byte (ignoring provenance comments).
-    examples = examples_dir or (
-        repo / "skills" / "domain" / "tg-closure" / "examples"
-    )
+    examples = examples_dir or (repo / "tests" / "fixtures" / "_synthetic_toy" / "arch0")
     for yaml_name, excerpt_name in (
         ("construction_hints.yaml", "construction_hints.excerpt.yaml"),
         ("feature_bindings.yaml", "feature_bindings.excerpt.yaml"),

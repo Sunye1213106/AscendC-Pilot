@@ -20,7 +20,14 @@ def normalize_symbol(value: str) -> str:
         text = text[5:]
     # Some frontend spellings retain an explicit parenthesized this receiver.
     text = re.sub(r"^\(\s*\*\s*this\s*\)\.", "", text)
-    return text
+    parts: list[str] = []
+    for part in text.split("."):
+        # Class members are often spelled ``foo_``; strip one trailing
+        # underscore so ``tilingKeyInfo_.x`` and ``tilingKeyInfo.x`` match.
+        if len(part) > 1 and part.endswith("_") and not part.endswith("__"):
+            part = part[:-1]
+        parts.append(part)
+    return ".".join(parts)
 
 
 def short_symbol(value: str) -> str:

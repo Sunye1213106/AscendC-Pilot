@@ -10,6 +10,7 @@ skill_ids: [code-review, operator-analysis, code-engineering]
 read_scopes:
 - pilot:uo/**
 - pilot:ce/**
+- pilot:tg/**
 - pilot:runs/**
 - pilot:context/**
 - method:skills/code-review/**

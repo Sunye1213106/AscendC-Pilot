@@ -31,10 +31,18 @@
 
 ## 启动（所有 workflow 共用）
 
-`/uo-query` 例外：短问主控直接 `acp uo-query --mode`，不走下面的 start 链；只有深问才 start。
+`/uo-query` **不是** Host Session Driver 工作流：主控在当前会话做可见 LLM 路由（自查或派几个 `uo-query` 子代理），**禁止** `pilot_run` / `acp start uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
 
 ```text
 用户意图（自然语言或 /slash）
+        │
+        ├── /uo-query 或只读提问
+        │         │
+        │         ▼
+        │   主控对人说出路由（短问自查 / 1 路 / N 路并行）
+        │         │
+        │         ├── 自查：当前会话 `acp uo-query --mode`
+        │         └── 深问：同一轮 Task(agent=uo-query) × N → 主控综合
         │
         ▼
   Host 工具 pilot_run(workflow, project, architecture?)
@@ -47,28 +55,31 @@
         │         ▼
         │   AskQuestion（选项原样）──► 再 start 一次
         │
-        ├── 已有未完成 run / 残留 .uo
+        ├── 同产物族已有未完成写 run / 残留 .uo
         │         │
         │         ▼
         │   AskQuestion：同工作流 → 继续上次 | 删除重开
-        │               跨工作流 → 开始 {请求} | 删除重开
+        │               同族换工作流（如 uo-init ↔ uo-update）→ 开始 {请求} | 删除重开
         │
-        └── 参数齐
+        └── 参数齐（含不同族并行：uo 写与 tg-* / ce-* 可同时跑）
                   │
                   ▼
             acp start  ──►  acp run-action auto
                   │
                   ├── host_step = dispatch_subagent  → Task(stub 原样) → dispatch-result
+                  │     （`host_step.tasks` ≥2：同一轮并行多个 Task，Primary 综合后再 dispatch-result）
                   ├── host_step = ask_human          → 可点选框 → answer
-                  ├── host_step = done               → 结束并释放执行槽（下一工作流可直接 start）
+                  ├── host_step = done               → 结束并释放本产物族锁
                   └── host_step = failed             → inspect-failure；不要翻 Pilot 源码
 ```
 
-`complete` / `host_step.done` 之后 **释放执行槽**：live `workflow.yaml` 与 `control/active_run.yaml` 清掉，run 快照落到 `runs/{run_id}/final_state.yaml`。正式产物（`.uo` / tg / ce）保留。下一工作流直接 `acp start`，不再占着 uo-init。跨工作流冲突时，「开始 {请求的工作流}」结束当前执行槽并 start 新工作流，不是继续旧的 uo-init。
+控制面围着 **同一份 `.uo`（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-impact` / `ce-intent` / `ce-verify`）互斥；不同族并行。
+
+`complete` / `host_step.done` 之后 **释放本族锁**：`state/slots/{family}/workflow.yaml`（或 shared 的 `runs/{run_id}/live_state.yaml`）清掉，run 快照落到 `runs/{run_id}/final_state.yaml`。`uo-init` / `uo-update` 还会发布新 `canonical_graph_digest`，把钉在旧 digest 上的 session 标 STALE。正式产物（`.uo` / tg / ce）保留。`control/active_run.yaml` 只是最近一次 exclusive 指针，不是互斥权威。
 
 第一次启动**不要**传 `force_new`。那是删除重开，会按 workflow 策略 wipe 产物。处女项目上 `--force-new` 是 no-op。
 
-跨工作流时（例如活动是 uo-init、请求 uo-query）：「开始 uo-query」= 释放当前槽并 start 请求的工作流（不删 `.uo`）；「删除重开」才按新工作流策略清理。
+同族换工作流时（例如活动是 uo-init、请求 uo-update）：「开始 uo-update」= 释放该族锁并 start 请求的工作流（不删 `.uo`）；「删除重开」才按新工作流策略清理。只读提问不与写工作流互抢。
 
 ---
 
@@ -122,18 +133,23 @@ done        Primary 读 quality.yaml，对人总结刷新后的节点/关系/未
 
 `intent=diff_only` 可 detect → diff，跳过中间更新链。
 
-### `/uo-query` — 只读提问
+### `/uo-query` — 只读提问（可见 LLM 路由）
 
-主控用 skill 判断查什么。短问自己 `acp uo-query`；深问再开子代理。工作流只有一阶段「查询」。
+查询**没有** Host 传输环。分类是主控的推理，必须写在对用户的消息里（不能只藏在思考里），再动手。不要为空转「问题路由」开子代理。
 
 ```text
-answer
-  └── 短问：主控直接 acp uo-query
-  └── 深问：kb_lookup [S uo-query]  → kb-answer-v1
-    │
-    ▼
-done        把答案说给人听
+用户问题
+  └── 主控可见路由（当前会话说出来）
+        ├── 短问：一名字 / 一 mode / 一两跳
+        │         → 主控自己 acp uo-query --mode，stdout 对人说
+        ├── 深问单域：METHOD 表一行、要沿图走
+        │         → 一个 Task(agent=uo-query)，点卡片看思考
+        └── 深问多域：互不相关的层 / 路径 / 症状
+                  → 同一轮并行 N 个 Task(agent=uo-query)
+                  → 主控按各子代全文综合，禁止发明没引用的事实
 ```
+
+切片由主控自己分类，不以 Host `host_step.tasks` 为准。不写 `answer.yaml`，不 `finalize` kb_lookup。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。子代没有 session `prompt.md`：直接 `acp uo-query --project`；Host 负责让子会话 PATH 上看见 `acp`。
 
 ### `/uo-investigate` — 查 unresolved
 

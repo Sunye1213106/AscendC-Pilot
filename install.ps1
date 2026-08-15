@@ -4,6 +4,7 @@
 #   .\install.ps1 opencode|cursor|codex
 #   .\install.ps1 uninstall-opencode
 #   $env:SKIP_PIP=1; .\install.ps1 cursor
+#   $env:ASCENDC_FAST_INSTALL=1; $env:SKIP_PIP=1; .\install.ps1 opencode
 param(
   [Parameter(Position = 0)]
   [string]$Platform = "opencode"
@@ -12,6 +13,7 @@ param(
 $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkipPip = $env:SKIP_PIP
+$FastInstall = $env:ASCENDC_FAST_INSTALL -eq "1"
 
 function Get-PythonScriptsDir {
   $dir = python -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>$null
@@ -214,9 +216,11 @@ if ($SkipPip -ne "1") {
   Invoke-PipRequirements
 }
 
-# Fail before Host composition if execution ownership is internally inconsistent.
-python "$BundleRoot\scripts\check_execution_contracts.py"
-if ($LASTEXITCODE -ne 0) { throw "execution contract audit failed" }
+if (-not $FastInstall) {
+  # Fail before Host composition if execution ownership is internally inconsistent.
+  python "$BundleRoot\scripts\check_execution_contracts.py"
+  if ($LASTEXITCODE -ne 0) { throw "execution contract audit failed" }
+}
 
 # Compose sources, then retain only model-reachable runtime context.
 python "$BundleRoot\scripts\compose_runtime.py" --repo "$BundleRoot" --host $Platform
@@ -232,25 +236,47 @@ $Dest = Get-PluginDest $Platform
 $Skills = Get-SkillsDest $Platform
 $Agents = Get-AgentsDest $Platform
 New-Item -ItemType Directory -Force -Path $Dest, $Skills, $Agents | Out-Null
-if (Test-Path $Dest) { Remove-Item -Recurse -Force $Dest }
-New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
-# Bundle runtime implementation only. Agent-facing skills/prompts/agents are
-# copied exclusively from generated/<host> below; docs/templates are not runtime context.
-foreach ($name in @("pilot","scripts","opencode-plugin")) {
-  $src = Join-Path $BundleRoot $name
-  if (Test-Path $src) {
-    Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
+$bundleReady = (
+  (Test-Path -LiteralPath (Join-Path $Dest "pilot")) -and
+  (Test-Path -LiteralPath (Join-Path $Dest "scripts")) -and
+  (Test-Path -LiteralPath (Join-Path $Dest "engines"))
+)
+
+function Copy-RuntimeBundle {
+  if (Test-Path -LiteralPath $Dest) { Remove-Item -Recurse -Force -LiteralPath $Dest }
+  New-Item -ItemType Directory -Force -Path $Dest | Out-Null
+  # Bundle runtime implementation only. Agent-facing skills/prompts/agents are
+  # copied exclusively from generated/<host> below; docs/templates are not runtime context.
+  foreach ($name in @("pilot","scripts","opencode-plugin")) {
+    $src = Join-Path $BundleRoot $name
+    if (Test-Path $src) {
+      Copy-Item -Recurse -Force $src (Join-Path $Dest $name)
+    }
+  }
+  $enginesDest = Join-Path $Dest "engines"
+  New-Item -ItemType Directory -Force -Path $enginesDest | Out-Null
+  foreach ($eng in @("common","understand-operator","testcase-generation","code-engineering")) {
+    $src = Join-Path $BundleRoot "engines\$eng"
+    if (Test-Path $src) {
+      Copy-Item -Recurse -Force $src (Join-Path $enginesDest $eng)
+    }
   }
 }
-# Engines bundled by the runtime installer.
-$enginesDest = Join-Path $Dest "engines"
-New-Item -ItemType Directory -Force -Path $enginesDest | Out-Null
-foreach ($eng in @("common","understand-operator","testcase-generation","code-engineering")) {
-  $src = Join-Path $BundleRoot "engines\$eng"
-  if (Test-Path $src) {
-    Copy-Item -Recurse -Force $src (Join-Path $enginesDest $eng)
+
+if ($FastInstall -and $bundleReady) {
+  Write-Host "fast install: reuse engines/pilot/scripts under $Dest"
+  $pluginSrc = Join-Path $BundleRoot "opencode-plugin"
+  if (Test-Path -LiteralPath $pluginSrc) {
+    $pluginDst = Join-Path $Dest "opencode-plugin"
+    if (Test-Path -LiteralPath $pluginDst) { Remove-Item -Recurse -Force -LiteralPath $pluginDst }
+    Copy-Item -Recurse -Force -LiteralPath $pluginSrc -Destination $pluginDst
   }
+} else {
+  if ($FastInstall) {
+    Write-Host "fast install: plugin dest incomplete, copying runtime bundle once"
+  }
+  Copy-RuntimeBundle
 }
 
 # Install ONLY generated runtime trees.
@@ -356,7 +382,7 @@ if ($Platform -eq "opencode") {
   # OpenCode autoloads every *.ts in this directory as a plugin factory.
   # Copy only real plugins. pilot-driver.ts is a library loaded from
   # ascendc-pilot-plugin/opencode-plugin/ (already copied into $Dest above).
-  foreach ($pluginName in @("ascendc-pilot.ts", "zz-uo-query-return-value.ts")) {
+  foreach ($pluginName in @("ascendc-pilot.ts")) {
     $src = Join-Path $BundleRoot "opencode-plugin\$pluginName"
     Copy-Item -Force -LiteralPath $src -Destination (Join-Path $plugins $pluginName)
     Write-Host "Installed plugin → $plugins\$pluginName"
@@ -365,6 +391,45 @@ if ($Platform -eq "opencode") {
   if (Test-Path -LiteralPath $legacyDriver) {
     Remove-Item -Force -LiteralPath $legacyDriver
     Write-Host "Removed autoloaded library → $legacyDriver"
+  }
+  foreach ($stalePlugin in @("zz-uo-query-return-value.ts", "uo-query-return-value.ts")) {
+    $stalePath = Join-Path $plugins $stalePlugin
+    if (Test-Path -LiteralPath $stalePath) {
+      Remove-Item -Force -LiteralPath $stalePath
+      Write-Host "Removed folded plugin leftover → $stalePath"
+    }
+  }
+  # OpenCode 1.18 RipgrepBinary uses xdgCache/opencode/bin (Windows:
+  # %LOCALAPPDATA%\opencode\bin), not ~/.local/share/opencode/bin.
+  # Seed every candidate so skill/grep do not wait on GitHub zip.
+  $exeName = "rg.exe"
+  $rgSources = @(
+    (Get-Command rg -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+    (Join-Path $HOME ".local\share\opencode\bin\$exeName"),
+    "$env:LOCALAPPDATA\Programs\cursor\resources\app\node_modules\@vscode\ripgrep\bin\rg.exe",
+    "$env:LOCALAPPDATA\Programs\Microsoft VS Code\resources\app\node_modules\@vscode\ripgrep\bin\rg.exe"
+  )
+  $rgSrc = $null
+  foreach ($cand in $rgSources) {
+    if ($cand -and (Test-Path -LiteralPath $cand)) { $rgSrc = $cand; break }
+  }
+  $ocBins = @(
+    (Join-Path $HOME ".local\share\opencode\bin"),
+    (Join-Path $HOME ".cache\opencode\bin"),
+    (Join-Path $env:LOCALAPPDATA "opencode\bin")
+  )
+  $seeded = $false
+  foreach ($ocBin in $ocBins) {
+    $ocRg = Join-Path $ocBin $exeName
+    if (Test-Path -LiteralPath $ocRg) { $seeded = $true; continue }
+    if (-not $rgSrc) { continue }
+    New-Item -ItemType Directory -Force -Path $ocBin | Out-Null
+    Copy-Item -Force -LiteralPath $rgSrc -Destination $ocRg
+    Write-Host "Seeded OpenCode rg → $ocRg"
+    $seeded = $true
+  }
+  if (-not $seeded) {
+    Write-Host "WARN: no rg.exe to seed; plugin skill tool still loads SKILL.md without rg"
   }
   $commandSrc = Join-Path $Dest "commands"
   if (Test-Path -LiteralPath $commandSrc) {
@@ -394,20 +459,22 @@ if ($acpCmd -and $acpCmd.Source) {
 Write-Host "Installed AscendC-Pilot → $Dest"
 Write-Host "Run: acp doctor"
 
-# optional native walker (best-effort)
-$uoWalkSrc = Join-Path $Dest "engines\understand-operator\native\uo_walk"
-$uoWalkBuild = Join-Path $uoWalkSrc "build"
-if (Get-Command cmake -ErrorAction SilentlyContinue) {
-  New-Item -ItemType Directory -Force -Path $uoWalkBuild | Out-Null
-  cmake -S $uoWalkSrc -B $uoWalkBuild
-  if ($LASTEXITCODE -eq 0) {
-    cmake --build $uoWalkBuild
+# optional native walker (best-effort). Skip on fast refresh; Python path is enough.
+if (-not $FastInstall) {
+  $uoWalkSrc = Join-Path $Dest "engines\understand-operator\native\uo_walk"
+  $uoWalkBuild = Join-Path $uoWalkSrc "build"
+  if (Get-Command cmake -ErrorAction SilentlyContinue) {
+    New-Item -ItemType Directory -Force -Path $uoWalkBuild | Out-Null
+    cmake -S $uoWalkSrc -B $uoWalkBuild
     if ($LASTEXITCODE -eq 0) {
-      Write-Host "Built optional uo_walk → $uoWalkBuild"
+      cmake --build $uoWalkBuild
+      if ($LASTEXITCODE -eq 0) {
+        Write-Host "Built optional uo_walk → $uoWalkBuild"
+      } else {
+        Write-Host "uo_walk optional build skipped"
+      }
     } else {
       Write-Host "uo_walk optional build skipped"
     }
-  } else {
-    Write-Host "uo_walk optional build skipped"
   }
 }

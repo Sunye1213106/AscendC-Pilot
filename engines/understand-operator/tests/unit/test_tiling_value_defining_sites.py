@@ -90,3 +90,85 @@ def test_value_defining_sites_trace_param_assigns(tmp_path: Path) -> None:
     rows = {f["name"]: f for s in view["structs"] for f in s["fields"]}
     assert rows["flag"].get("value_defining_sites")
     assert rows["optionalOn"].get("value_defining_sites")
+
+
+def test_fused_outer_candidates_on_block_outer(tmp_path: Path) -> None:
+    root = tmp_path / "split"
+    host = root / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (root / "op_kernel" / "arch35").mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        """
+void SetSplitCore() {
+  int64_t fusedOuter = b * n2 * g;
+  int64_t fusedOuterBn2 = b * n2;
+  td->blockOuter = fusedOuter;
+}
+""",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="split", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TF_blockOuter",
+            kind=EntityKind.TILING_FIELD,
+            name="blockOuter",
+            attrs={
+                "owner": "SplitParams",
+                "host_writer_sites": [{
+                    "file": "op_host/arch35/tiling.cpp",
+                    "line": 5,
+                    "receiver": "td",
+                    "expression": "fusedOuter",
+                    "mode": "direct",
+                }],
+            },
+        )
+    )
+    enrich_value_defining_sites(cm, root, architecture="arch35")
+    field = cm.entities["TF_blockOuter"]
+    fused = field.attrs.get("fused_outer_candidates") or []
+    rhs = " ".join(str(s.get("rhs") or "") for s in fused)
+    assert "b * n2 * g" in rhs or "b*n2*g" in rhs.replace(" ", "")
+    assert any(int(s.get("line") or 0) > 0 for s in fused)
+    assert any(str(s.get("name") or "") == "fusedOuter" for s in fused)
+    aliases = field.attrs.get("local_aliases") or []
+    assert any(str(s.get("name") or "") == "fusedOuter" for s in aliases)
+
+
+def test_field_query_exposes_fused_outer_on_candidates(tmp_path: Path) -> None:
+    from uo_init.store.writer import write_codemap
+    from uo_init.uo_query import open_query
+
+    cm = CodeMap(op_name="split", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TF_blockOuter",
+            kind=EntityKind.TILING_FIELD,
+            name="blockOuter",
+            attrs={
+                "owner": "SplitParams",
+                "fused_outer_candidates": [
+                    {
+                        "function": "SetSplitCore",
+                        "file": "op_host/arch35/tiling.cpp",
+                        "line": 12,
+                        "rhs": "b * n2 * g",
+                        "guard": [],
+                    }
+                ],
+            },
+            file="op_host/arch35/tiling.cpp",
+            line_start=20,
+            status="confirmed",
+        )
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "split.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    out = q.field_impact("blockOuter")
+    fused = (out["field"].get("facts") or {}).get("fused_outer_candidates") or []
+    assert any("b * n2 * g" in str(s.get("rhs") or "") for s in fused)
+    cand_fused = (out["candidates"][0].get("facts") or {}).get("fused_outer_candidates") or []
+    assert cand_fused

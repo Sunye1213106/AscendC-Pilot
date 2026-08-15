@@ -133,7 +133,11 @@ def discover_arch(project_root: Path | str) -> str:
     candidates = sorted(
         p.name
         for p in root.iterdir()
-        if p.is_dir() and (p / STATE_SUBDIR / "workflow.yaml").is_file()
+        if p.is_dir()
+        and (
+            (p / STATE_SUBDIR / "workflow.yaml").is_file()
+            or any((p / STATE_SUBDIR / "slots").glob("*/workflow.yaml"))
+        )
     )
     if len(candidates) == 1:
         return candidates[0]

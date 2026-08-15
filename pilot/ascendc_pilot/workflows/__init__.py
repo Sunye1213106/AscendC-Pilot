@@ -276,6 +276,17 @@ def action_by_id(workflow_id: str, action_id: str, *, project_root: Any | None =
     return None
 
 
+def workflow_uses_host_driver(workflow_id: str) -> bool:
+    """True when OpenCode ``pilot_run`` / ``acp start`` owns the session loop.
+
+    ``uo-query`` is a Primary LLM router (visible classify → DIY or Task) and
+    must not be started by the Host Session Driver. Default True.
+    """
+    wid = resolve_workflow_id(workflow_id)
+    meta = WORKFLOWS.get(wid) or {}
+    return meta.get("host_driver", True) is not False
+
+
 def workflow_requires_project(workflow_id: str) -> bool:
     """True when Spec declares ``requires_project`` for this workflow."""
     wid = resolve_workflow_id(workflow_id)
@@ -302,6 +313,20 @@ def workflow_requires_uo_product(workflow_id: str) -> bool:
     if "requires_uo_product" in meta:
         return bool(meta.get("requires_uo_product"))
     return False
+
+
+def workflow_occupancy(workflow_id: str) -> str:
+    """``exclusive`` (product-family lock) or ``shared`` (read, no lock)."""
+    from ascendc_pilot.occupancy import occupancy_of
+
+    return occupancy_of(workflow_id)
+
+
+def workflow_occupancy_group(workflow_id: str) -> str:
+    """Product-lock family id, or empty for shared workflows."""
+    from ascendc_pilot.occupancy import occupancy_group_of
+
+    return occupancy_group_of(workflow_id)
 
 
 def workflows_needing_project() -> frozenset[str]:

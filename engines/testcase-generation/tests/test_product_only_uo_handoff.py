@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -22,43 +20,15 @@ from testcase_agent.resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
 
 
 def _write_product_uo(path: Path, *, op_name: str = "DemoOp", arch: str = "arch35", views: dict | None = None) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.is_file():
-        path.unlink()
-    conn = sqlite3.connect(str(path))
-    try:
-        conn.execute("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        conn.execute("CREATE TABLE view_blob(name TEXT PRIMARY KEY, schema TEXT, data TEXT NOT NULL)")
-        conn.execute("INSERT INTO meta(key,value) VALUES('schema','uo-codemap/v1')")
-        conn.execute("INSERT INTO meta(key,value) VALUES('op_name',?)", (op_name,))
-        conn.execute("INSERT INTO meta(key,value) VALUES('architecture',?)", (arch,))
-        conn.execute("INSERT INTO meta(key,value) VALUES('revision','r-product')")
-        blobs = {
-            "ir/operator_graph.yaml": {
-                "schema": "uo-operator-graph/v1",
-                "fingerprint": "fp-demo",
-                "op_name": op_name,
-                "architecture": arch,
-            },
-            "views/kernel.yaml": {
-                "schema": "uo-kernel-view/v1",
-                "branches": [{"id": "KB_1", "condition": "X == 1", "dimensions": ["X"], "stage": "constexpr"}],
-            },
-            "views/tilingdata.yaml": {
-                "schema": "uo-tilingdata-view/v1",
-                "structs": [{"name": "TilingData", "fields": [{"name": "s1Tail", "writers": [{}], "readers": [{}]}]}],
-            },
-        }
-        if views:
-            blobs.update(views)
-        for name, doc in blobs.items():
-            conn.execute(
-                "INSERT INTO view_blob(name,schema,data) VALUES(?,?,?)",
-                (name, str(doc.get("schema") or ""), json.dumps(doc)),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    from uo_init.ir.codemap import CodeMap
+    from uo_init.ir.entity import Entity, EntityKind
+    from uo_init.store.writer import write_codemap
+
+    path = Path(path)
+    cm = CodeMap(op_name=op_name, architecture=arch)
+    cm.add_entity(Entity(id=f"ARCH_{arch}", kind=EntityKind.ARCH, name=arch))
+    extra = dict(views or {})
+    write_codemap(cm, path, views=extra or None)
 
 
 def _seed_audit(out_root: Path) -> None:
@@ -92,7 +62,7 @@ def test_mark_init_confirmed_fingerprints_product_without_yaml_worktree(tmp_path
     project = tmp_path / "op"
     product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
-    out = output_root(project, "DemoOp")
+    out = output_root(project, "DemoOp", arch="arch35")
     write_init_status(
         out,
         {
@@ -117,7 +87,7 @@ def test_product_mutation_invalidates_fingerprint(tmp_path: Path) -> None:
     project = tmp_path / "op"
     product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
-    out = output_root(project, "DemoOp")
+    out = output_root(project, "DemoOp", arch="arch35")
     write_init_status(
         out,
         {
@@ -142,7 +112,7 @@ def test_product_mutation_invalidates_fingerprint(tmp_path: Path) -> None:
 def test_confirm_fails_closed_without_any_uo_authority(tmp_path: Path) -> None:
     project = tmp_path / "op"
     project.mkdir()
-    out = output_root(project, "DemoOp")
+    out = output_root(project, "DemoOp", arch="arch35")
     write_init_status(
         out,
         {

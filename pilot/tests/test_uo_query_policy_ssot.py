@@ -29,6 +29,12 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     assert "MUST NOT Write `answer.yaml`" in invariant
     assert "源码作答" in method
     assert "禁止 Glob/dir/tree 找 `.uo`" in method
+    assert "template_match" in method
+    assert "dim_coverage" in method
+    assert "kernel_launch" in method
+    assert "findstr" in method
+    assert "--query" in _text("pilot/ascendc_pilot/cli.py")
+    assert "session `method.md`" in method
     assert "源码作答" in policy
 
     # Task prompt stays cognitive/task-only; transport plumbing belongs to
@@ -44,6 +50,38 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     )
     for phrase in stale_phrases:
         assert phrase not in all_text
+
+
+def test_uo_query_visible_router_ssot() -> None:
+    skill = _text("skills/operator-analysis/SKILL.md")
+    method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
+    policy = _text("pilot/policies/pilot-control/POLICY.md")
+    invariant = _text("pilot/policies/invariants/control-invariants.md")
+    command_src = _text("scripts/compose_opencode_commands.py")
+    driver = _text("opencode-plugin/pilot-driver.ts")
+    hook = _text("opencode-plugin/ascendc-pilot.ts")
+    docs = _text("docs/architecture/agent-runtime.md")
+    assert "可见 LLM 路由" in skill
+    assert "禁止 `pilot_run`" in skill
+    assert "先对人说出路由" in skill
+    assert "同一轮" in skill
+    assert "综合" in skill
+    assert "SLICE_ID" in method
+    assert "可见 LLM 路由" in policy
+    assert "禁止" in policy and "pilot_run" in policy
+    assert "except `uo-query`" in invariant
+    assert "Never" in invariant and "uo-query" in invariant
+    assert "不要 `pilot_run`" in command_src
+    assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
+    assert "primary_router" in driver
+    assert "perm.task = \"allow\"" in hook
+    assert "可见 LLM 路由" in docs or "可见分类" in docs
+    assert "host_step.tasks" in invariant  # still for TG/CE Host dispatch
+    assert '"tasks"' in driver
+    assert "native_tasks" in driver
+    assert "SLICE_ID=" in hook
+    assert "fanout_slice" in hook
+    assert "primary_synthesize" in hook
 
 
 def test_splitaxis_example_is_non_normative() -> None:

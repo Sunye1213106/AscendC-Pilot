@@ -12,12 +12,16 @@
 ## 推荐接口
 
 ```text
+acp uo-query --mode template_match --pattern Dim=V,Other=V
+acp uo-query --mode legal_key --pattern Dim=V,Other=V
 acp uo-query --mode search --kind TILING_KEY --pattern <DimName>
 acp uo-query --mode tiling_key --pattern <DimName|value>
 acp uo-query --mode constraints --pattern <entity_id>
 acp uo-query --mode branches --pattern <key_or_id>
 ```
 
+「某维有没有编进 SEL」先看 `template_match.dim_coverage`（O(组)），不要 grep 第一块 ARGS_SEL。
+「这组能不能编过」才用 `legal_key.total_matched`。
 禁止手搓整包 `legal_key_index` JSON 加载；用 indexed/cache 模式。
 
 ## Claim 提示

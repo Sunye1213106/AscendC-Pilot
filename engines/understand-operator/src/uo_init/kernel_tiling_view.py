@@ -25,6 +25,10 @@ _FIELD_HEAD_RE = re.compile(
     r"\bTILING_DATA_FIELD_DEF(?P<kind>_ARR|_STRUCT_ARR|_STRUCT)?\s*\("
 )
 _CLASS_RE = re.compile(r"\b(?:class|struct)\s+([A-Za-z_]\w*)\b")
+_USING_ALIAS_RE = re.compile(r"\busing\s+([A-Za-z_]\w*)\s*=")
+_TYPEDEF_ALIAS_RE = re.compile(
+    r"\btypedef\s+(?:struct\s+|class\s+|enum\s+(?:class\s+)?)?[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*\s+([A-Za-z_]\w*)\s*;"
+)
 _DEFAULT_REG_RE = re.compile(r"\bREGISTER_TILING_DEFAULT\s*\(\s*([A-Za-z_:][A-Za-z0-9_:]*)\s*\)")
 _WITH_STRUCT_RE = re.compile(
     r"GET_TILING_DATA_WITH_STRUCT\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,"
@@ -63,14 +67,18 @@ def install_kernel_tiling_view(spec: Any, ctx: Any) -> Path | None:
     if path is None:
         return None
     add = getattr(ctx, "add_force_include", None)
-    if callable(add):
-        add(str(path), side="kernel")
-    else:
+
+    def _add(item: str) -> None:
+        if callable(add):
+            add(item, side="kernel")
+            return
         extras = list(getattr(ctx, "extra_kernel_force_includes", None) or [])
-        posix = str(path).replace("\\", "/")
+        posix = str(item).replace("\\", "/")
         if posix not in extras:
             extras.append(posix)
         ctx.extra_kernel_force_includes = extras
+
+    _add(str(path))
     return path
 
 
@@ -236,6 +244,8 @@ def _kernel_defined_types(op_dir: Path, architecture: str) -> set[str]:
         except OSError:
             continue
         names.update(_CLASS_RE.findall(text))
+        names.update(_USING_ALIAS_RE.findall(text))
+        names.update(_TYPEDEF_ALIAS_RE.findall(text))
     return names
 
 

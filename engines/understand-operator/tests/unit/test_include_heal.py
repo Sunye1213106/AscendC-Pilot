@@ -17,6 +17,7 @@ from uo_init.include_heal import (
     missing_includes_from_probes,
     parse_missing_includes,
     reset_index_cache,
+    aliased_include_name,
     MissingInclude,
 )
 
@@ -257,6 +258,19 @@ def test_missing_from_probe_rows_keeps_side():
     assert rows == [MissingInclude(name="kernel_inc.h", side="kernel")]
 
 
+def test_missing_from_heal_hints_when_samples_are_unrelated():
+    rows = missing_includes_from_probes(
+        [
+            {
+                "side": "kernel",
+                "samples": ["unknown type name 'T'"] * 5,
+                "heal_hints": ["'op_kernel/platform_util.h' file not found"],
+            }
+        ]
+    )
+    assert rows == [MissingInclude(name="op_kernel/platform_util.h", side="kernel")]
+
+
 def test_find_cross_family_bare_header(tmp_path: Path):
     """ffn TUs include headers that live under a sibling family (mc2/common)."""
     reset_index_cache()
@@ -328,3 +342,140 @@ def test_find_nlohmann_json_under_3rdparty(tmp_path: Path):
     hit = find_include_dir(ctx, "nlohmann/json.hpp", side="host")
     assert hit is not None
     assert hit.include_dir.replace("\\", "/").endswith("3rdparty/include")
+
+
+def test_parse_unknown_type_from_clang_spelling():
+    from uo_init.include_heal import parse_unknown_types, SKIP_UNKNOWN_TYPES
+
+    assert parse_unknown_types("unknown type name 'TCubeTiling'") == ["TCubeTiling"]
+    assert parse_unknown_types("unknown type name 'SoftMaxTiling'") == ["SoftMaxTiling"]
+    assert parse_unknown_types("unknown type name 'Dim3'") == []
+    assert parse_unknown_types("unknown type name 'cce'") == []
+    assert "Dim3" in SKIP_UNKNOWN_TYPES
+
+
+def test_find_type_header_kernel_tiling(tmp_path: Path):
+    from uo_init.include_heal import find_type_header
+
+    reset_index_cache()
+    ctx = _ctx(tmp_path)
+    header = (
+        tmp_path
+        / "cann"
+        / "cann-asc-devkit"
+        / "x86_64-linux"
+        / "ascendc"
+        / "include"
+        / "highlevel_api"
+        / "kernel_tiling"
+        / "kernel_tiling.h"
+    )
+    header.parent.mkdir(parents=True)
+    header.write_text(
+        "namespace AscendC { namespace tiling { struct TCubeTiling { uint32_t M; }; } }\n"
+        "using AscendC::tiling::TCubeTiling;\n"
+        "using AscendC::tiling::SoftMaxTiling;\n"
+        "struct SoftMaxTiling { uint32_t srcM; };\n",
+        encoding="utf-8",
+    )
+    hit = find_type_header(ctx, "TCubeTiling", side="kernel")
+    assert hit is not None
+    assert hit.found.replace("\\", "/").endswith("kernel_tiling/kernel_tiling.h")
+    # yaml already force-includes this path when the file exists.
+    assert any(
+        hit.found.replace("\\", "/").lower() in p.replace("\\", "/").lower()
+        for p in ctx.kernel_force_includes()
+    ) or ctx.add_force_include(hit.found, side="kernel")
+
+
+def test_enrich_retries_unknown_cann_type(tmp_path: Path):
+    from uo_init.include_heal import find_type_header
+
+    reset_index_cache()
+    ctx = _ctx(tmp_path)
+    header = (
+        tmp_path
+        / "cann"
+        / "cann-extra-sdk"
+        / "x86_64-linux"
+        / "include"
+        / "extra_softmax_tiling.h"
+    )
+    header.parent.mkdir(parents=True)
+    header.write_text(
+        "struct SoftMaxTiling { uint32_t srcM = 0; };\n",
+        encoding="utf-8",
+    )
+    calls = {"n": 0}
+
+    class _Enr:
+        def __init__(self, probes):
+            self.probes = probes
+            self.errors = []
+            self.scope = None
+            self.status = "incomplete" if probes and probes[0].get("samples") else "complete"
+            self.tus_expected = 1
+            self.tus_parsed = 1
+
+    def _enrich():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _Enr(
+                [
+                    {
+                        "side": "kernel",
+                        "samples": ["unknown type name 'SoftMaxTiling'"],
+                        "fatal_count": 0,
+                    }
+                ]
+            )
+        return _Enr([{"side": "kernel", "samples": [], "fatal_count": 0}])
+
+    _enr, report = enrich_scope_with_heal(
+        ctx=ctx,
+        host_tus=[],
+        kernel_tu=None,
+        enrich_fn=_enrich,
+    )
+    assert calls["n"] >= 2
+    assert report.unresolved == []
+    extras = extras_summary_path(ctx.op_dir, ctx.arch_dir)
+    assert extras.is_file()
+    assert any(
+        str(header).replace("\\", "/") in str(p).replace("\\", "/")
+        for p in (ctx.extra_kernel_force_includes or [])
+    )
+    assert find_type_header(ctx, "SoftMaxTiling", side="kernel") is not None
+
+
+def test_type_header_prefers_operator_kernel_over_cann(tmp_path: Path):
+    from uo_init.include_heal import find_type_header
+
+    reset_index_cache()
+    ctx = _ctx(tmp_path, op_rel="attention/block_toy")
+    cann = (
+        tmp_path
+        / "cann"
+        / "cann-asc-devkit"
+        / "x86_64-linux"
+        / "asc"
+        / "impl"
+        / "basic_api"
+        / "utils"
+        / "kernel_utils_ceil_oom_que.h"
+    )
+    cann.parent.mkdir(parents=True)
+    cann.write_text("struct Tuple { int x; };\n", encoding="utf-8")
+    local = tmp_path / "ops" / "attention" / "block_toy" / "op_kernel" / "tla" / "tuple.hpp"
+    local.parent.mkdir(parents=True)
+    local.write_text("namespace tla { struct Tuple {}; }\n", encoding="utf-8")
+    hit = find_type_header(ctx, "Tuple", side="kernel")
+    assert hit is not None
+    assert "op_kernel/tla/tuple.hpp" in hit.found.replace("\\", "/")
+
+
+def test_hcom_header_aliases_to_hccl_h():
+    assert aliased_include_name("hccl/hcom.h") == "hccl/hccl.h"
+    assert aliased_include_name("lib/matrix/matmul/foo.h") == "lib/matmul/foo.h"
+
+

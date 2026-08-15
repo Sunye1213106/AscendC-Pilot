@@ -133,21 +133,14 @@ def test_doctor_without_architecture_does_not_raise(
     assert _doctor(tmp_path) in {0, 1}
 
 
-def test_field_provenance_evidence_only():
-    from testcase_agent.field_provenance import build_field_provenance
+def test_field_provenance_removed_with_csv_stack():
+    """CSV field_provenance lived on the removed consumer stack."""
+    import importlib
 
-    doc = build_field_provenance(
-        schema={"columns": ["B", "mystery_flag"]},
-        realization_map={},
-        uo_summary={"inputs": ["B"], "attrs": []},
-        lexicon={},
-    )
-    by_name = {field["csv_field"]: field for field in doc["fields"]}
-    assert by_name["B"]["role"] == "shape"
-    assert by_name["mystery_flag"]["closed"] is False
-    for field in doc["fields"]:
-        stages = {chain.get("stage") for chain in field["chain"]}
-        assert "invented_link" not in stages
+    import pytest
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("testcase_agent.field_provenance")
 
 
 def test_unresolved_not_auto_completed(tmp_path: Path):

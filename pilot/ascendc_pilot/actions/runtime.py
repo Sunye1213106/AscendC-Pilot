@@ -214,6 +214,11 @@ def _build_task_prompt_stub(
         f"  bundle: {bundle_path}",
         f"session_dir: {session_dir}",
     ]
+    if project_root:
+        lines.append(
+            f"acp --project {project_root}  "
+            "(Host cwd is the Pilot checkout; always pass this absolute operator path, not the op name alone)"
+        )
     dt = dispatch_targets or {}
     root = str(agent_root_path or "").rstrip("/\\")
 
@@ -249,6 +254,11 @@ def _build_task_prompt_stub(
     if q:
         lines.append("USER QUESTION (answer this against the CodeMap / minimal source windows):")
         lines.append(q)
+        if "SLICE_ID=" in q:
+            lines.append(
+                "Hard stop: this Task answers ONLY the FOCUS / SLICE_ID above. "
+                "Ignore other parts of prompt.md User question."
+            )
     # Public: any Action that lists *.summary.yaml in dispatch read gets MUST_READ_ORDER.
     from ascendc_pilot.ir_summary import large_ir_must_read_order_lines
 
@@ -262,10 +272,14 @@ def _build_task_prompt_stub(
     ]
     if action_id == "kb_lookup" or answer_rels:
         lines.append(
-            "MUST end with one fenced yaml block `schema: kb-answer-v1` "
-            "(return_value for Primary). Do NOT Write answer.yaml or scratch — "
-            "Runtime materializes from return_value (OpenCode plugin injects "
-            "ASCENDC_ACTION_RESULT; Primary should NOT hand-write a result file)."
+            "Final message is the native Task return (Cursor Explore style): "
+            "complete answer with file:line evidence in the body. "
+            "Do not compress the answer into YAML. "
+            "Optional trailing `schema: kb-answer-v1` fence is status-only "
+            "(status/adequacy/citations). "
+            "OpenCode Task delivers the full message to Primary; "
+            "do not Write answer.yaml or scratch — Runtime materializes a receipt "
+            "from this native return (plugin injects ASCENDC_ACTION_RESULT)."
         )
         lines.append(
             "Do NOT write uo/checks/* or modify the `.uo` product; those are not this Action's outputs."
@@ -282,10 +296,10 @@ def _build_task_prompt_stub(
     if action_id == "kb_lookup":
         lines.extend(
             [
-                "Return a short summary when done.",
+                "Final message is the complete native Task return to Primary.",
                 "Do NOT finalize; Primary runs "
                 "`acp run-action kb_lookup --finalize` "
-                "(plugin/env return_value preferred; "
+                "(plugin/env native Task text preferred; "
                 "`--result-file` only as manual fallback).",
             ]
         )
@@ -299,6 +313,58 @@ def _build_task_prompt_stub(
             ]
         )
     return "\n".join(lines) + "\n"
+
+
+def _kb_lookup_fanout_tasks(
+    *,
+    action_id: str,
+    actor_id: str,
+    user_question: str,
+    sdir: Path,
+    stub_kwargs: dict[str, Any],
+) -> list[dict[str, str]]:
+    """Cursor-style parallel Tasks: one focused stub per METHOD slice."""
+    if action_id != "kb_lookup":
+        return []
+    from ascendc_pilot.query_slices import (
+        compile_query,
+        focused_user_question,
+        plan_query_slices,
+    )
+
+    slices = plan_query_slices(user_question)
+    if len(slices) < 2:
+        return []
+    tasks: list[dict[str, str]] = []
+    for row in slices:
+        slice_stub = _build_task_prompt_stub(
+            **{**stub_kwargs, "user_question": focused_user_question(user_question, row)}
+        )
+        tasks.append(
+            {
+                "slice_id": row["slice_id"],
+                "focus": row["focus"],
+                "first_mode": row["first_mode"],
+                "actor_id": actor_id,
+                "action_id": action_id,
+                "task_prompt_stub": slice_stub,
+            }
+        )
+        (sdir / f"task_prompt_stub_{row['slice_id']}.md").write_text(
+            slice_stub, encoding="utf-8"
+        )
+    _dump(
+        sdir / "query_slices.yaml",
+        {
+            "question": user_question,
+            "slices": [
+                {k: t[k] for k in ("slice_id", "focus", "first_mode")} for t in tasks
+            ],
+            "original_question": user_question,
+            "plan": compile_query(user_question),
+        },
+    )
+    return tasks
 
 
 def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
@@ -713,7 +779,7 @@ def _materialize_kb_answer(
         if k not in {"artifact_identity", "produced_by"}
     }
     body.setdefault("schema", "kb-answer-v1")
-    body["_transport"] = "return_value"
+    body["_transport"] = str(payload.get("_transport") or "native_task")
     if yaml is None:
         return {"ok": False, "error": "yaml_unavailable"}
     path.write_text(
@@ -1381,26 +1447,36 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     bundle["staging_dir"] = staging_dir(sdir).as_posix()
 
     if execution_mode == EXECUTION_SUBAGENT and not dt.get("map_reduce"):
-        stub = _build_task_prompt_stub(
-            actor_id=actor_id,
-            action_id=action_id,
-            run_id=run_id,
-            session_dir=sdir.as_posix(),
-            prompt_path=prompt_path,
-            method_path=method_path,
-            bundle_path=bundle_path,
-            dispatch_targets=dt if isinstance(dt, dict) else None,
-            agent_root_path=agent_root_posix,
-            project_root=root_s,
-            architecture=architecture,
-            candidates_sha256=str(
+        stub_kwargs = {
+            "actor_id": actor_id,
+            "action_id": action_id,
+            "run_id": run_id,
+            "session_dir": sdir.as_posix(),
+            "prompt_path": prompt_path,
+            "method_path": method_path,
+            "bundle_path": bundle_path,
+            "dispatch_targets": dt if isinstance(dt, dict) else None,
+            "agent_root_path": agent_root_posix,
+            "project_root": root_s,
+            "architecture": architecture,
+            "candidates_sha256": str(
                 bundle.get("candidates_sha256") or ph_kwargs.get("candidates_sha256") or ""
             ),
-            environment_path=env_posix,
-            write_paths=write_paths,
-            user_question=user_question,
-        )
+            "environment_path": env_posix,
+            "write_paths": write_paths,
+            "user_question": user_question,
+        }
+        stub = _build_task_prompt_stub(**stub_kwargs)
         bundle["task_prompt_stub"] = stub
+        fanout = _kb_lookup_fanout_tasks(
+            action_id=action_id,
+            actor_id=actor_id,
+            user_question=user_question,
+            sdir=sdir,
+            stub_kwargs=stub_kwargs,
+        )
+        if fanout:
+            bundle["dispatch_tasks"] = fanout
 
     _dump(sdir / "session.yaml", bundle)
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
@@ -1630,21 +1706,47 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result["dispatch_task"] = False
         return result
 
-    result["message_zh"] = (
-        f"已准备 Action Runtime Bundle；派发 actor `{actor_id}` 时 "
-        f"Task 正文只用返回的 `task_prompt_stub`（或 session 下 task_prompt_stub.md）；"
-        f"禁止复述 METHOD / 禁止塞额外目标 / 禁止整包粘贴大文件。"
-        f"subagent_type/agent=`{actor_id}`，action_id={action_id}。"
-        f"Primary 禁止代写正式 IR。"
-    )
-    if str(action.get("output_mode") or "") == "return_value":
-        result["message_zh"] += (
-            f" 子代理最终消息返回 kb-answer-v1（禁止 Write answer.yaml/scratch）。"
-            f" Task 结束后若 metadata 含 `ascendc_uo_query_return_value.captured=true`，"
-            f" Primary 直接 `acp run-action {action_id} --finalize`（插件注入 return_value）；"
-            f" 禁止再手写 scratch yaml。仅无插件/环境时才用 "
-            f"`--result-file <kb-answer.yaml>` fallback。"
+    fanout_tasks = [
+        row
+        for row in (bundle.get("dispatch_tasks") or [])
+        if isinstance(row, dict) and str(row.get("task_prompt_stub") or "").strip()
+    ]
+    if len(fanout_tasks) >= 2:
+        result["dispatch_tasks"] = fanout_tasks
+        result["message_zh"] = (
+            f"已准备 {len(fanout_tasks)} 个并行 uo-query Task（同一 Action `{action_id}` / 一张 ticket）。"
+            "同一轮用 OpenCode 原生 Task 全部派发；每条 prompt 必须原样为 "
+            "`dispatch_tasks[i].task_prompt_stub`。"
+            "禁止用父 `task_prompt_stub` 再开一个。"
+            "全部返回后 Primary 按各 Task 原生全文综合，禁止只转述某一个，"
+            "禁止发明子代理没引用的事实。"
+            "切片子代理禁止自动 finalize；综合后再 "
+            f"`acp run-action {action_id} --finalize`。"
         )
+    else:
+        result["message_zh"] = (
+            f"已准备 Action Runtime Bundle；派发 actor `{actor_id}` 时 "
+            f"Task 正文只用返回的 `task_prompt_stub`（或 session 下 task_prompt_stub.md）；"
+            f"禁止复述 METHOD / 禁止塞额外目标 / 禁止整包粘贴大文件。"
+            f"subagent_type/agent=`{actor_id}`，action_id={action_id}。"
+            f"Primary 禁止代写正式 IR。"
+        )
+    if str(action.get("output_mode") or "") == "return_value":
+        if len(fanout_tasks) >= 2:
+            result["message_zh"] += (
+                " 每个子代理最终消息用完整自然语言交回（OpenCode 原生 Task，像 Cursor Explore）；"
+                " 不要把证据压进 yaml。切片 Task 不会注入 return_value；Primary 综合原生返回后再 finalize，"
+                f" 优先 `acp run-action {action_id} --finalize --result-file <综合.yaml>`。"
+            )
+        else:
+            result["message_zh"] += (
+                f" 子代理最终消息用完整自然语言交回（原生 Task / Explore）；"
+                f" 禁止 Write answer.yaml/scratch。"
+                f" Task 结束后若 metadata 含 `ascendc_uo_query_return_value.captured=true`，"
+                f" Primary 直接 `acp run-action {action_id} --finalize`（插件注入全文）；"
+                f" 禁止再手写 scratch yaml。仅无插件/环境时才用 "
+                f"`--result-file <kb-answer.yaml>` fallback。"
+            )
         result["finalize_hint"] = f"acp run-action {action_id} --finalize"
         result["finalize_hint_fallback"] = (
             f"acp run-action {action_id} --finalize --result-file <kb-answer.yaml>"
@@ -2434,6 +2536,65 @@ def finalize_action(
             source="finalize_action",
         )
         result["observation"] = recorded.get("observation")
+        if action_id == "kb_lookup" or wid == "uo-query":
+            try:
+                import os
+
+                from ascendc_pilot.occupancy import (
+                    WORKFLOW_ENV,
+                    apply_stale_confidence,
+                    cap_confidence_fields,
+                )
+                from ascendc_pilot.state import complete_workflow
+
+                if wid:
+                    os.environ[WORKFLOW_ENV] = wid
+                live = load_state(project_root, workflow_id=wid) or {}
+                result = apply_stale_confidence(
+                    result,
+                    project_root,
+                    architecture=str(live.get("architecture") or ""),
+                    pinned_digest=str(live.get("pinned_digest") or ""),
+                    session_id=str(live.get("session_id") or ""),
+                )
+                answer_path = (
+                    agent_root(project_root, _arch_for(project_root))
+                    / "runs"
+                    / run_id
+                    / "actions"
+                    / "kb_lookup"
+                    / "answer.yaml"
+                )
+                if answer_path.is_file() and (result.get("uo_freshness") or {}).get("stale"):
+                    try:
+                        import yaml as _yaml
+
+                        body = _yaml.safe_load(answer_path.read_text(encoding="utf-8")) or {}
+                        if isinstance(body, dict):
+                            cap_confidence_fields(body)
+                            body["reason_code"] = "UO_DIGEST_CHANGED"
+                            answer_path.write_text(
+                                _yaml.safe_dump(body, allow_unicode=True, sort_keys=False),
+                                encoding="utf-8",
+                            )
+                    except Exception:  # noqa: BLE001
+                        pass
+                meta = get_workflow(wid) if wid else {}
+                ready = set(meta.get("terminal_ready_states") or [])
+                phase = str(live.get("phase") or "")
+                if not ready or phase in ready:
+                    completed = complete_workflow(project_root)
+                    result["complete"] = {
+                        "ok": bool(completed.get("ok")),
+                        "status": completed.get("status"),
+                        "released_execution": completed.get("released_execution"),
+                    }
+                    if completed.get("ok"):
+                        result["message_zh"] = (
+                            "查询已 finalize 并释放 ephemeral run；把答案正文说给人听。"
+                        )
+            except Exception:  # noqa: BLE001
+                pass
         return result
 
     msgs = ["Finalize 失败：Checker/Output Contract 未通过"]

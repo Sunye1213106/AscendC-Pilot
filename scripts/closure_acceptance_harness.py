@@ -104,17 +104,79 @@ class ToyOracle:
         return out
 
 
+def _write_toy_domain_codemap(
+    product: Path,
+    *,
+    op_name: str,
+    arch: str,
+    kernel_doc: dict,
+    tiling_doc: dict,
+) -> None:
+    """Persist a tiny CodeMap whose TG projections match the toy kernel/tiling views."""
+    from uo_init.ir.codemap import CodeMap
+    from uo_init.ir.entity import Entity, EntityKind
+    from uo_init.ir.relation import RelationKind
+    from uo_init.store.writer import write_codemap
+
+    cm = CodeMap(op_name=op_name, architecture=arch)
+    cm.add_entity(Entity(id=f"ARCH_{arch}", kind=EntityKind.ARCH, name=arch))
+    for branch in kernel_doc.get("branches") or []:
+        if not isinstance(branch, dict) or not branch.get("id"):
+            continue
+        cm.add_entity(
+            Entity(
+                id=str(branch["id"]),
+                kind=EntityKind.BRANCH,
+                name=str(branch.get("name") or branch["id"]),
+                attrs={
+                    "condition": branch.get("condition") or "",
+                    "dimensions": list(branch.get("dimensions") or []),
+                    "finite_predicate": branch.get("finite_predicate"),
+                    "stage": branch.get("stage") or "constexpr",
+                },
+            )
+        )
+    for st in tiling_doc.get("structs") or []:
+        if not isinstance(st, dict):
+            continue
+        owner = str(st.get("name") or "TilingData")
+        for fld in st.get("fields") or []:
+            if not isinstance(fld, dict) or not fld.get("name"):
+                continue
+            name = str(fld["name"])
+            field_id = f"TDF_{owner}_{name}"
+            cm.add_entity(
+                Entity(
+                    id=field_id,
+                    kind=EntityKind.TILING_FIELD,
+                    name=name,
+                    attrs={
+                        "owner": owner,
+                        "struct": owner,
+                        "host_writer_sites": list(fld.get("writers") or []),
+                    },
+                )
+            )
+            for reader in fld.get("readers") or []:
+                if not isinstance(reader, dict):
+                    continue
+                fn = str(reader.get("function") or reader.get("name") or "")
+                if not fn:
+                    continue
+                fn_id = f"FN_{fn}"
+                if fn_id not in cm.entities:
+                    cm.add_entity(Entity(id=fn_id, kind=EntityKind.FUNCTION, name=fn))
+                cm.link(RelationKind.READS, fn_id, field_id, attrs={"function": fn})
+    write_codemap(cm, product)
+
+
 def _seed_domain_uo(root: Path, arch: str = "arch0") -> Path:
     """Write a tiny UO product so kernel / tilingdata domains join per key.
 
-    Prefer a real ``kb_graph.sqlite`` (DB authority). Also drop YAML views so
-    tools that still open files keep working in the same workspace.
+    Prefer a real ``.uo`` CodeMap product.
     """
-    import yaml
-
     uo = root / ".ascendc-pilot" / arch / "uo"
-    views = uo / "views"
-    views.mkdir(parents=True, exist_ok=True)
+    uo.mkdir(parents=True, exist_ok=True)
     kernel_doc = {
         "schema": "uo-view-kernel/v1",
         "branches": [
@@ -154,93 +216,14 @@ def _seed_domain_uo(root: Path, arch: str = "arch0") -> Path:
         ],
         "defects": {},
     }
-    (views / "kernel.yaml").write_text(
-        yaml.safe_dump(kernel_doc, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
+    product = uo / f"_synthetic_toy.{arch}.uo"
+    _write_toy_domain_codemap(
+        product,
+        op_name="_synthetic_toy",
+        arch=arch,
+        kernel_doc=kernel_doc,
+        tiling_doc=tiling_doc,
     )
-    (views / "tilingdata.yaml").write_text(
-        yaml.safe_dump(tiling_doc, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    # DB product: same views as blobs, authority=db.
-    try:
-        from uo_init.ids import named_id
-        from uo_init.kb_export import export_kb
-        from uo_init.kb_model import Domain, Evidence, KnowledgeBase, Node
-
-        kb = KnowledgeBase("_synthetic_toy", arch)
-        ev = Evidence.at(
-            "op_kernel/arch0/_synthetic_toy_template_tiling_key.h",
-            1,
-            snippet="ASCENDC_TPL_UINT_DECL(A",
-        )
-        dim = Node(
-            id=named_id("TilingKeyDim", "A"),
-            kind="TilingKeyDim",
-            name="A",
-            layer="tiling",
-            evidence=[ev],
-        )
-        var = Node(
-            id=named_id("Variable", "A"),
-            kind="Variable",
-            name="A",
-            layer="variables",
-            evidence=[ev],
-        )
-        kb.add_node(dim)
-        kb.add_node(var)
-        kb.add_domain(
-            Domain(
-                var_id=var.id,
-                value_type="enum",
-                values=list(_TOY_DIM_VALUES),
-                completeness="closed",
-                source="template_key",
-            )
-        )
-        kb.notes["tiling_data_view"] = tiling_doc
-        kb.notes["kernel_view"] = kernel_doc
-        kb.notes["tiling_materialize"] = {
-            "ok": True,
-            "dimensions": [{"id": dim.id, "name": "A", "input_derivable": True}],
-            "template_blocks": [{"id": "TB_TOY", "product_count": 5}],
-            "legal_keys": [
-                {"id": f"K{v}", "status": "reachable", "values": {"A": v}}
-                for v in _TOY_DIM_VALUES
-            ],
-            "field_order": ["A"],
-            "key_status_counts": {"reachable": 5},
-        }
-        # Prefer DB as the reviewable product; keep YAML above for grep tools.
-        os.environ.setdefault("UO_KB_YAML", "0")
-        receipt = export_kb(kb, uo)
-        db = Path(receipt.get("database") or (uo / "indexes" / "kb_graph.sqlite"))
-        if db.is_file():
-            import json
-            import sqlite3
-
-            conn = sqlite3.connect(db)
-            try:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS view_blob("
-                    "name TEXT PRIMARY KEY, schema_id TEXT, data TEXT NOT NULL)"
-                )
-                for name, doc in (
-                    ("views/kernel.yaml", kernel_doc),
-                    ("views/tilingdata.yaml", tiling_doc),
-                ):
-                    conn.execute(
-                        "INSERT OR REPLACE INTO view_blob(name, schema_id, data) "
-                        "VALUES(?,?,?)",
-                        (name, doc.get("schema") or "", json.dumps(doc)),
-                    )
-                conn.commit()
-            finally:
-                conn.close()
-    except Exception:
-        # Domain YAML alone is enough for the dry loop; DB is best-effort.
-        pass
     return uo
 
 

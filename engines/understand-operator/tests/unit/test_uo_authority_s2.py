@@ -23,15 +23,13 @@ def _write_product(tmp_path: Path, *, op="toy", arch="arch35") -> Path:
     return product
 
 
-def test_engines_update_chain_has_compile_commit_not_sqlite_export():
+def test_engines_update_chain_has_compile_commit_not_sqlite_export(tmp_path: Path):
     assert "compile" in ENGINES
     assert "commit" in ENGINES
     assert "export_kb" not in ENGINES
     assert "build_index" not in ENGINES
     assert "export_integrity" not in ENGINES
-
-
-def test_plan_emits_compile_commit_and_drops_cbm_compat(tmp_path: Path):
+    assert "extract_tiling_key" not in ENGINES
     change_set = {
         "op_name": "toy",
         "files": [{"path": "op_host/foo.cpp", "role": "host", "in_scope": True}],
@@ -66,6 +64,18 @@ def test_find_uo_product_arch_scoped_and_ignores_legacy_top_level(tmp_path: Path
     assert found2 != legacy.resolve()
 
 
+def test_find_uo_product_newest_when_op_name_spelling_differs(tmp_path: Path) -> None:
+    older = _write_product(tmp_path, op="toy_op")
+    newer = _write_product(tmp_path, op="ToyOp")
+    older.touch()
+    import time
+
+    time.sleep(0.05)
+    newer.touch()
+    found = find_uo_product(tmp_path, architecture="arch35")
+    assert found == newer.resolve()
+
+
 def test_find_uo_product_unique_arch_without_arg(tmp_path: Path):
     product = _write_product(tmp_path)
     found = find_uo_product(tmp_path)
@@ -78,15 +88,6 @@ def test_find_uo_product_ambiguous_arch_returns_none(tmp_path: Path):
     assert find_uo_product(tmp_path) is None
     found = find_uo_product(tmp_path, architecture="arch35")
     assert found == later.resolve()
-
-
-def test_sqlite_export_engines_removed():
-    from uo_init.pilot_engines import build_index, export_kb_action
-
-    assert export_kb_action(Path("."))["error"] == "legacy_engine_removed"
-    assert build_index(Path("."))["error"] == "legacy_engine_removed"
-    assert "export_kb" not in ENGINES
-    assert "build_index" not in ENGINES
 
 
 def test_find_uo_product_none_without_uo(tmp_path: Path):

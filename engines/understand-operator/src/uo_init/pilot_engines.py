@@ -1025,7 +1025,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     ``UO_INIT_PROFILE=full`` (or ``closure_mode=full``) for every PRODUCTION
     control.  Per-TU walks hit ``UO_TU_CACHE`` on warm runs.
     """
-    from uo_init.assemble_kb import extract_host_bundle
+    from uo_init.extract_bundle import extract_host_bundle
     from uo_init.controllability import ClosureMetrics
     from uo_init.extract_cache import (
         compute_extract_fingerprint,
@@ -1069,7 +1069,15 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             kernel_max_variants=kernel_max_variants,
         )
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "extract_host", "error": str(exc)[:400]}
+        import traceback
+
+        tb = traceback.format_exc()
+        return {
+            "ok": False,
+            "engine": "extract_host",
+            "error": str(exc)[:400],
+            "traceback": tb[-1200:],
+        }
 
     # Same-process follow-on actions (tiling_key / analyze / commit) must not
     # rebuild the bundle; cross-process callers fall back to the pickle below.
@@ -1125,6 +1133,17 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         uo / "ir" / "host_extract_receipt.yaml",
         {"ok": True, "engine": "extract_host", **meta},
     )
+    binding = bundle.get("binding")
+    n_bind = len(binding.bindings) if binding is not None else 0
+    _dump(
+        uo / "tiling" / "key_bind_receipt.yaml",
+        {
+            "ok": True,
+            "binding_count": n_bind,
+            "bind_error": bundle.get("bind_error") or "",
+            "status": "extracted" if binding is not None else "partial",
+        },
+    )
     # Keep analyses alive across process? Pilot engines are in-process; stash on module.
     _STORE["bundle"] = bundle
     return {
@@ -1138,6 +1157,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "kernel_branches": meta["kernel_branches"],
         "extract_fingerprint": meta["extract_fingerprint"],
         "sources_unchanged_at_start": meta["sources_unchanged_at_start"],
+        "binding_count": n_bind,
     }
 
 
@@ -1147,7 +1167,7 @@ _STORE: dict[str, Any] = {}
 def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     if "bundle" in _STORE:
         return _STORE["bundle"]
-    from uo_init.assemble_kb import extract_host_bundle
+    from uo_init.extract_bundle import extract_host_bundle
     from uo_init.kernel_ir import kernel_ir_from_dict
 
     root = Path(project_root).expanduser().resolve()
@@ -1229,28 +1249,6 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         _dump(uo / "ir" / "kernel_ir.yaml", bundle["kernel_ir"].to_persist_dict())
     _STORE["bundle"] = bundle
     return bundle
-
-
-def extract_tiling_key(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    ctx = _ctx(payload)
-    try:
-        local_ctx = dict(ctx)
-        local_ctx.setdefault("with_kernel", False)
-        bundle = _ensure_bundle(project_root, local_ctx)
-        binding = bundle.get("binding")
-        n = len(binding.bindings) if binding is not None else 0
-        _dump(
-            _uo_root(project_root) / "tiling" / "key_bind_receipt.yaml",
-            {
-                "ok": True,
-                "binding_count": n,
-                "bind_error": bundle.get("bind_error") or "",
-                "status": "extracted" if binding is not None else "partial",
-            },
-        )
-        return {"ok": True, "engine": "extract_tiling_key", "binding_count": n}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "extract_tiling_key", "error": str(exc)[:400]}
 
 
 def extract_registry(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1699,28 +1697,6 @@ def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -
     return receipt
 
 
-def export_kb_action(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Removed: sqlite export is not a product path. Use compile/commit .uo."""
-    del project_root, payload
-    return {
-        "ok": False,
-        "engine": "export_kb",
-        "error": "legacy_engine_removed",
-        "message_zh": "sqlite export_kb 已移除；请走 compile/commit 写入 .uo",
-    }
-
-
-def build_index(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Removed: sqlite rebuild_index is not a product path."""
-    del project_root, payload
-    return {
-        "ok": False,
-        "engine": "build_index",
-        "error": "legacy_engine_removed",
-        "message_zh": "sqlite build_index 已移除；请走 compile/commit 写入 .uo",
-    }
-
-
 def export_tg_host_view(
     project_root: Path, payload: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -1756,10 +1732,19 @@ def export_tg_host_view(
         if graph_path.is_file():
             fingerprint = _load_yaml_scalar(graph_path, "fingerprint")
         if not fingerprint:
-            from uo_init.kb_export import load_graph
+            from uo_init.store.reader import find_uo_product, load_production_view, read_meta
 
-            graph = load_graph(uo)
-            fingerprint = str(graph.get("fingerprint") or "")
+            product = find_uo_product(
+                root, architecture=str(_payload_arch(ctx) or "")
+            )
+            if product is not None:
+                graph = load_production_view(product, "ir/operator_graph.yaml") or {}
+                fingerprint = str(
+                    graph.get("fingerprint")
+                    or read_meta(product).get("graph_fingerprint")
+                    or read_meta(product).get("cm_graph_fingerprint")
+                    or ""
+                )
         manifest = _load(uo / "manifest.yaml")
         if not isinstance(manifest, dict):
             manifest = {}
@@ -1905,14 +1890,13 @@ def export_adapter_pack(
 
 def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     del payload
-    from uo_init.kb_export import knowledge_base_from_payload, load_graph
-    from uo_init.host_codemap import TG_HOST_VIEW_YAML, CODEMAP_YAML, load_tg_host_view
-    from uo_init.kb_index import (
-        db_authority_ok,
-        index_summary,
-        load_view_blob,
-        set_meta_values,
+    from uo_init.host_codemap import (
+        TG_HOST_VIEW_YAML,
+        CODEMAP_YAML,
+        load_tg_host_view,
+        migrate_load_host_view_from_yaml,
     )
+    from uo_init.store.reader import find_uo_product, load_production_view, read_meta
 
     uo = _uo_root(project_root)
     graph = uo / "ir" / "operator_graph.yaml"
@@ -1920,56 +1904,58 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
     quality_legacy = uo / "quality.yaml"
     unresolved = uo / "ir" / "unresolved.yaml"
     hashes = uo / "checks" / "artifact_hashes.yaml"
-    sqlite = uo / "indexes" / "kb_graph.sqlite"
     view_path = uo / TG_HOST_VIEW_YAML
     alias_path = uo / CODEMAP_YAML
     errors: list[str] = []
-    db_ready = sqlite.is_file() and db_authority_ok(sqlite)
-    if not graph.is_file() and not db_ready:
-        errors.append("missing ir/operator_graph.yaml (and no DB authority product)")
-    if (
-        not quality.is_file()
-        and not quality_legacy.is_file()
-        and not (db_ready and load_view_blob(sqlite, "quality.yaml") is not None)
-    ):
-        errors.append("missing quality.yaml")
-    if not hashes.is_file() and not (
-        db_ready and load_view_blob(sqlite, "checks/artifact_hashes.yaml") is not None
-    ):
+
+    product = find_uo_product(Path(project_root).expanduser().resolve())
+    if product is None:
+        product = find_uo_product(uo)
+    uo_ready = product is not None and product.suffix == ".uo" and product.is_file()
+    if not uo_ready and not graph.is_file():
+        errors.append("missing .uo product (and no working-tree ir/operator_graph.yaml)")
+
+    q = _load(quality) or _load(quality_legacy)
+    if not q and uo_ready:
+        blob = load_production_view(product, "checks/quality.yaml") or load_production_view(
+            product, "quality.yaml"
+        )
+        q = blob if isinstance(blob, dict) else {}
+    if not q:
+        errors.append("missing checks/quality.yaml")
+
+    if not hashes.is_file() and uo_ready:
+        blob = load_production_view(product, "checks/artifact_hashes.yaml")
+        if blob is None:
+            errors.append("missing checks/artifact_hashes.yaml")
+    elif not hashes.is_file() and not uo_ready:
         errors.append("missing checks/artifact_hashes.yaml")
-    if not sqlite.is_file():
-        errors.append("missing indexes/kb_graph.sqlite")
+
     graph_fp = ""
-    try:
-        payload_graph = load_graph(uo)
-        graph_fp = str(payload_graph.get("fingerprint") or "")
-        kb = knowledge_base_from_payload(payload_graph)
-        errors.extend(kb.check_invariants())
-    except Exception as exc:  # noqa: BLE001
-        if graph.is_file() or db_ready:
-            errors.append(f"graph_load_failed: {exc}")
-    if sqlite.is_file() and graph_fp:
-        try:
-            summary = index_summary(sqlite)
-            idx_fp = str(summary.get("graph_fingerprint") or "")
-            if idx_fp != graph_fp:
-                errors.append(
-                    f"kb_graph fingerprint drift: index={idx_fp!r} graph={graph_fp!r}"
-                )
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"kb_index_summary_failed: {exc}")
-    host_view_in_db = bool(
-        db_ready and load_view_blob(sqlite, "ir/tg_host_view.yaml") is not None
-    )
-    if not view_path.is_file() and not alias_path.is_file() and not host_view_in_db:
+    if graph.is_file():
+        graph_fp = _load_yaml_scalar(graph, "fingerprint")
+    if not graph_fp and uo_ready:
+        payload_graph = load_production_view(product, "ir/operator_graph.yaml") or {}
+        meta = read_meta(product)
+        graph_fp = str(
+            payload_graph.get("fingerprint")
+            or meta.get("graph_fingerprint")
+            or meta.get("cm_graph_fingerprint")
+            or ""
+        )
+
+    view = load_tg_host_view(uo)
+    if not view:
+        view = migrate_load_host_view_from_yaml(uo)
+    if not view and uo_ready:
+        blob = load_production_view(product, "ir/tg_host_view.yaml") or load_production_view(
+            product, "tg_host_view"
+        )
+        view = blob if isinstance(blob, dict) else {}
+    if not view_path.is_file() and not alias_path.is_file() and not view:
         errors.append(f"missing {TG_HOST_VIEW_YAML} (run export_tg_host_view)")
-    else:
-        view = load_tg_host_view(uo)
-        if not view and host_view_in_db:
-            view = load_view_blob(sqlite, "ir/tg_host_view.yaml") or {}
-        if not isinstance(view, dict):
-            view = {}
-        view_source = view.get("source")
+    elif view:
+        view_source = view.get("source") if isinstance(view, dict) else {}
         if not isinstance(view_source, dict):
             view_source = {}
         view_fp = str(view_source.get("graph_fingerprint") or "")
@@ -1979,75 +1965,21 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
             errors.append(
                 f"tg_host_view fingerprint drift: view={view_fp!r} graph={graph_fp!r}"
             )
-        if sqlite.is_file() and view_fp:
-            try:
-                import sqlite3
 
-                with sqlite3.connect(str(sqlite)) as conn:
-                    row = conn.execute(
-                        "SELECT value FROM meta WHERE key='host_view_fingerprint'"
-                    ).fetchone()
-                    hv_fp = row[0] if row else ""
-                    if hv_fp and hv_fp != view_fp:
-                        errors.append(
-                            "kb_graph host_view_fingerprint drift: "
-                            f"meta={hv_fp!r} view={view_fp!r}"
-                        )
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f"host_view_meta_failed: {exc}")
     ur = _load(unresolved)
-    if not ur and db_ready:
-        ur = load_view_blob(sqlite, "ir/unresolved.yaml") or {}
-    q = _load(quality) or _load(quality_legacy)
-    if not q and db_ready:
-        q = load_view_blob(sqlite, "quality.yaml") or {}
+    if not ur and uo_ready:
+        blob = load_production_view(product, "ir/unresolved.yaml")
+        ur = blob if isinstance(blob, dict) else {}
     blocker_count = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
     doc = {
         "version": 1,
         "status": "pass" if not errors else "fail",
         "ok": not errors,
         "blocker_count": blocker_count,
-        "source_closure": q.get("source_closure"),
+        "source_closure": q.get("source_closure") if isinstance(q, dict) else None,
         "graph_fingerprint": graph_fp,
         "errors": errors,
     }
-    if sqlite.is_file():
-        try:
-            import json as _json
-            import sqlite3
-
-            conn = sqlite3.connect(str(sqlite))
-            try:
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS view_blob("
-                    "name TEXT PRIMARY KEY, schema_id TEXT, data TEXT NOT NULL)"
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
-                    (
-                        "checks/integrity.yaml",
-                        "",
-                        _json.dumps(
-                            doc, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                        ),
-                    ),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-            set_meta_values(
-                sqlite,
-                {
-                    "integrity_status": doc["status"],
-                    "integrity_ok": doc["ok"],
-                    "authority": "db",
-                },
-            )
-        except Exception:  # noqa: BLE001
-            pass
-    # Always materialize the gate receipt on disk — the pilot integrity gate
-    # and integrity-v1 contract read this path. The heavy YAML layers stay
-    # opt-in via UO_KB_YAML; this file is a few hundred bytes.
     _dump(uo / "checks" / "integrity.yaml", doc)
     return {"ok": not errors, "engine": "export_integrity", **doc}
 
@@ -2138,7 +2070,6 @@ ENGINES: dict[str, Any] = {
     "scope_scan": scope_scan,
     "scope_validate": scope_validate,
     "extract_host": extract_host,
-    "extract_tiling_key": extract_tiling_key,
     "extract_registry": extract_registry,
     "extract_kernel": extract_kernel,
     "normalize_variables": normalize_variables,

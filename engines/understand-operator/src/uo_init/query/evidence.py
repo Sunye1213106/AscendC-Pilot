@@ -36,7 +36,13 @@ _BARRIER_CALLEES = frozenset({"PipeBarrier", "DataSyncBarrier", "SyncAll"})
 _SYNC_CALLEES = _FLAG_SYNC_CALLEES | _TQUE_CALLEES | _TPIPE_CALLEES | _BARRIER_CALLEES
 _PRECISION_CALLEES = frozenset({"Cast", "DataCopy", "DataCopyPad"})
 _KERNEL_API_CALLEES = _SYNC_CALLEES | _PRECISION_CALLEES | frozenset(
-    {"LoadData", "SetGlobalBuffer", "GetPhyAddr", "LoadAlign", "InitOutput"}
+    {
+        "LoadData",
+        "SetGlobalBuffer",
+        "GetPhyAddr",
+        "LoadAlign",
+        "InitOutput",
+    }
 )
 
 _KIND_FACTS: dict[str, tuple[str, ...]] = {
@@ -57,6 +63,8 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "value_defining_sites",
         "producer_sites",
         "check_sites",
+        "fused_outer_candidates",
+        "local_aliases",
     ),
     EntityKind.FIELD.value: (
         "layer",
@@ -67,7 +75,16 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "cpp_type",
         "default_initializer",
     ),
-    EntityKind.TYPE.value: ("cpp_kind", "role", "root", "root_kind", "type_name", "owner"),
+    EntityKind.TYPE.value: (
+        "cpp_kind",
+        "role",
+        "root",
+        "root_kind",
+        "type_name",
+        "owner",
+        "mutex_policy",
+        "conditional_flag",
+    ),
     EntityKind.BUFFER.value: (
         "memory_space",
         "tposition",
@@ -75,6 +92,8 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "scope",
         "type_name",
         "role",
+        "mutex_policy",
+        "conditional_flag",
     ),
     EntityKind.REGISTER.value: ("register_class", "scope", "type_name"),
     EntityKind.OPERATION.value: (
@@ -82,12 +101,16 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "receiver",
         "function",
         "args",
+        "argument",
         "template_args",
         "category",
         "mechanism",
         "flag_paired",
+        "kernel_phase",
+        "layer",
+        "catalog",
     ),
-    EntityKind.PIPE.value: ("identity", "scope", "type_name"),
+    EntityKind.PIPE.value: ("identity", "scope", "type_name", "kernel_phase"),
     EntityKind.EVENT.value: ("identity", "scope", "event_type", "mechanism", "cross_core"),
     EntityKind.QUEUE.value: ("identity", "scope", "type_name", "tposition", "memory_space"),
     EntityKind.BRANCH.value: ("predicate", "condition", "branch_kind", "layer", "function", "dimensions"),
@@ -103,6 +126,18 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "api_attr_index",
     ),
     EntityKind.OUTPUT.value: ("dtype", "shape", "declaration", "api_kind", "api_index"),
+    EntityKind.FUNCTION.value: ("definition_sites",),
+    EntityKind.METHOD.value: ("definition_sites",),
+    EntityKind.MACRO.value: ("value", "definition", "layer"),
+    EntityKind.COMPILE_VAR.value: ("value", "origin", "layer"),
+    EntityKind.PREDICATE.value: (
+        "predicate_role",
+        "class",
+        "priority",
+        "arch_expr",
+        "is_capable_file",
+        "is_capable_line",
+    ),
 }
 
 _DROP_ATTRS = frozenset({"type_text", "snippet"})
@@ -166,6 +201,9 @@ _FULL_FACT_KEYS = frozenset(
         "value_defining_sites",
         "producer_sites",
         "check_sites",
+        "definition_sites",
+        "fused_outer_candidates",
+        "local_aliases",
     }
 )
 _ARG_CUT_RE = re.compile(r";|\bif\b")

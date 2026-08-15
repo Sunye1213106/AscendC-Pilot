@@ -102,33 +102,39 @@ def test_host_replay_precision_is_harness_missing(tmp_path: Path) -> None:
     assert receipt["reason"] == "harness_missing"
 
 
-def test_load_adapter_defaults_to_host_replay(tmp_path: Path) -> None:
+def test_load_adapter_defaults_to_default_input(tmp_path: Path) -> None:
     adapter = load_adapter(tmp_path, architecture="arch20")
-    assert adapter.identity()["kind"] == "host_replay"
+    assert adapter.identity()["kind"] == "default_input"
 
 
-def test_fag_retrieve_emit_without_npu(tmp_path: Path) -> None:
-    from code_engineering.harness.fag import FagHarnessAdapter
+def test_script_repo_retrieve_emit_without_npu(tmp_path: Path) -> None:
+    from code_engineering.harness.script_repo import ScriptRepoAdapter
 
-    root = tmp_path / "fag_debug_tools"
+    root = tmp_path / "op_test_scripts"
     data = root / "data"
     data.mkdir(parents=True)
-    corpus = data / "fag_arch35_reachable_cases.csv"
+    corpus = data / "cases.csv"
     with corpus.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(
             handle,
-            fieldnames=["Testcase_Name", "enable", "Dtype", "B", "N1", "S1"],
+            fieldnames=["Testcase_Name", "enable", "dtype", "n"],
         )
         writer.writeheader()
         writer.writerow(
-            {"Testcase_Name": "cast_fp16", "enable": "enable", "Dtype": "fp16", "B": "1", "N1": "2", "S1": "128"}
+            {"Testcase_Name": "cast_fp16", "enable": "enable", "dtype": "fp16", "n": "4"}
         )
         writer.writerow(
-            {"Testcase_Name": "bad_pse", "enable": "disable", "Dtype": "bf16", "B": "1", "N1": "2", "S1": "128"}
+            {"Testcase_Name": "illegal", "enable": "disable", "dtype": "bf16", "n": "4"}
         )
-    adapter = FagHarnessAdapter(
+    adapter = ScriptRepoAdapter(
         tmp_path,
-        manifest={"kind": "fag", "root": str(root), "corpus": ["data/fag_arch35_reachable_cases.csv"]},
+        contract={
+            "kind": "script_repo",
+            "root": str(root),
+            "columns": ["Testcase_Name", "enable", "dtype", "n"],
+            "corpus": ["data/cases.csv"],
+            "defaults": {"enable": "enable", "n": "4"},
+        },
     )
     hits = adapter.retrieve({"id": "P-CAST", "budget": {"max_cases": 4}, "knobs": {"dtype": "fp16"}})
     assert len(hits) == 1

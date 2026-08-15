@@ -19,6 +19,7 @@ from typing import Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import includes_architecture
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -418,24 +419,18 @@ def _bind_tiling_reads(codemap: CodeMap, scopes: list[_Scope]) -> dict[str, int]
                 rel.attrs.setdefault("sites", []).append({"file": scope.file, "line": line, "expression": expression})
                 resolved += 1
             else:
-                ref = codemap.upsert(
-                    EntityKind.OTHER,
-                    expression,
-                    eid=f"TDREADV2::{scope.file}::{line}::{scope.entity.id}::{outer}::{inner or ''}",
-                    attrs={
-                        "role": "tilingdata_read_unresolved",
+                record_unresolved_tiling(
+                    codemap,
+                    scope.entity,
+                    role="tilingdata_read_unresolved",
+                    file=scope.file,
+                    line=line,
+                    expression=expression,
+                    extra={
                         "reason": "field_owner_ambiguous" if candidates else "field_owner_unknown",
                         "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
                         "provenance": "source_tilingdata_read_unresolved_v2",
                     },
-                    file=scope.file, line=line, status="partial", confidence=0.5,
-                )
-                codemap.link(
-                    RelationKind.REFERENCES,
-                    scope.entity.id,
-                    ref.id,
-                    attrs={"provenance": "source_tilingdata_read_unresolved_v2", "file": scope.file, "line": line},
-                    status="partial", confidence=0.5,
                 )
                 ambiguous += 1
     return {"sites": sites, "resolved": resolved, "ambiguous": ambiguous}

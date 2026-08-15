@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
 """Load TilingData ABI layout facts for the generic decoder.
 
-Authority order:
-1. ``.ascendc-pilot/<arch>/uo/generated/tilingdata_layout.yaml`` (projection)
-2. ``views/tilingdata.yaml`` fields that already carry offset+size
+Authority: ``views/tilingdata.yaml`` fields in the finalized ``.uo``.
 """
 
 from __future__ import annotations
@@ -12,8 +10,6 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-import yaml
-
 
 def _arch() -> str:
     for _name in ("UO_ARCH", "ASCENDC_ARCH"):
@@ -21,13 +17,6 @@ def _arch() -> str:
         if _raw:
             return _raw
     raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
-
-
-def _load_yaml(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {}
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return doc if isinstance(doc, dict) else {}
 
 
 def _normalize_fields(fields: list[Any]) -> list[dict[str, Any]] | None:
@@ -89,16 +78,6 @@ def load_tilingdata_layout(operator_root: Path | None = None) -> dict[str, Any] 
         if root in seen or not root.is_dir():
             continue
         seen.add(root)
-        generated = root / ".ascendc-pilot" / arch / "uo" / "generated" / "tilingdata_layout.yaml"
-        doc = _load_yaml(generated)
-        if doc:
-            fields = doc.get("fields")
-            if isinstance(fields, list):
-                normalized = _normalize_fields(fields)
-                if normalized:
-                    return {"schema": str(doc.get("schema") or "ascendc-pilot-tilingdata-layout/v1"), "fields": normalized}
-
-        # Product .uo view
         try:
             from testcase_agent import product_uo
 
@@ -108,12 +87,5 @@ def load_tilingdata_layout(operator_root: Path | None = None) -> dict[str, Any] 
                 if layout:
                     return layout
         except Exception:
-            pass
-
-        legacy = root / ".ascendc-pilot" / arch / "uo" / "views" / "tilingdata.yaml"
-        view = _load_yaml(legacy)
-        if view:
-            layout = _from_tilingdata_view(view)
-            if layout:
-                return layout
+            continue
     return None

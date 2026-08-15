@@ -206,11 +206,17 @@ class ControllabilityBuilder:
         input order (stable ids) without sharing mutable ordinal state across
         threads.
         """
+        from uo_init.cpp_expr import MAX_EXPR_CHARS
+
         inductions = tuple(sorted(str(v) for v in (node.induction_vars or ())))
         path_texts = tuple(
-            pc.pretty()
-            for pc in node.path_conditions
-            if not pc.is_opaque
+            text
+            for text in (
+                pc.pretty()
+                for pc in node.path_conditions
+                if not pc.is_opaque
+            )
+            if text and len(text) <= MAX_EXPR_CHARS
         )
         memo_key = (
             str(node.function or ""),
@@ -362,6 +368,10 @@ class ControllabilityBuilder:
         workers: int | None = None,
     ) -> tuple[list[NodeAnalysis], list[BranchRecord]]:
         node_list = list(nodes)
+        from uo_init.timing import log as _tlog
+        import time as _time
+
+        t_warm = _time.perf_counter()
         # Warm HostIR lazy indexes once on the main thread so workers do not
         # race the first materialization.
         host_ir = self.resolver.host_ir
@@ -371,20 +381,28 @@ class ControllabilityBuilder:
             host_ir.params_by_function()
             host_ir.param_bindings()
             host_ir.output_bindings_by_function()
-
         n_workers = _ctrl_workers() if workers is None else max(1, int(workers))
-        from uo_init.timing import log as _tlog
-        import time as _time
+        n = len(node_list)
+        _tlog(
+            f"{_time.perf_counter() - t_warm:7.3f}s  controllability.warm  "
+            f"nodes={n} workers={n_workers}"
+        )
 
         # Shared per-function resolver caches are not thread-safe (`_chasing`,
         # `_resolve_cache`). Parallel cores each get a private builder view.
-        if n_workers <= 1 or len(node_list) < 8:
+        if n_workers <= 1 or n < 8:
             analyses = []
-            n = len(node_list)
             step = max(32, n // 10) if n else 1
             t0 = _time.perf_counter()
             t_batch = t0
             for i, node in enumerate(node_list, 1):
+                if i <= 3:
+                    _tlog(
+                        f"  controllability.node  {i}/{n}  "
+                        f"fn={str(getattr(node, 'function', '') or '')[:48]}  "
+                        f"cond={len(str(getattr(node, 'condition', '') or ''))}  "
+                        f"paths={len(getattr(node, 'path_conditions', ()) or ())}"
+                    )
                 analyses.append(self.analyse(node))
                 if i % step == 0 or i == n:
                     now = _time.perf_counter()

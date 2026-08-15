@@ -33,7 +33,7 @@ reproducible change -> freshness -> forward/backward UO slices -> risk classes
                     -> ScenarioSet skeleton -> obligation ledger -> referee impact audit
 ```
 
-**有 diff**：切片 + 按 CodeMap `kind` 挂义务。Freshness 优先比较 change capture 的 Git `base_sha/head_sha` 与 UO 产品 meta 的 `source_revision`（`/uo-init` commit 写入）。不得把当前 UO 自己的 graph fingerprint 同自己比较来宣称 fresh。工作区变更而 UO 只覆盖 committed HEAD 时进入 `lexical` 降级；revision 缺失或不匹配时 fail-closed 为 `stale`。
+**有 diff**：切片 + 按 CodeMap `kind` 挂义务。Freshness 优先比较 change capture 的 Git `base_sha/head_sha` 与 UO 产品 meta 的 `source_revision`（`/uo-init` commit 写入），并比会话/run 钉住的 `canonical_graph_digest`（handle.digest）与当前 `.uo`。不得把当前 UO 自己的 graph fingerprint 同自己比较来宣称 fresh。digest 变化时 reason_code 为 `UO_DIGEST_CHANGED`。工作区变更而 UO 只覆盖 committed HEAD 时进入 `lexical` 降级；revision 缺失或不匹配时 fail-closed 为 `stale`。
 
 影响切片是有方向、有 edge filter、depth 和 budget 的确定性派生；必须保留 `truncated` 与 evidence-tier hints。未指定 `edge_kinds` 时默认走有用边（WRITES/READS/CALLS/CONTROLS/DERIVES/SELECTS/LAUNCHES/SIGNALS/AWAITS/FLOWS_TO/BINDS）。切片边界、stale UO 或未支持关系不能被解释为“没有影响”。
 

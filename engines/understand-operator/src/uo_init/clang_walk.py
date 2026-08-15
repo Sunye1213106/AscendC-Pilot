@@ -2416,7 +2416,7 @@ def probe_diagnostics(
     paying for the deep walk extract will do anyway.
 
     Residuals inside CANN AscendC headers (bisheng builtins, etc.) are expected
-    under libclang; ``operator_error_count`` / fatal diagnostics decide cleanliness.
+    under libclang; ``operator_error_count`` decides cleanliness.
     """
     import time as _time
 
@@ -2445,6 +2445,7 @@ def probe_diagnostics(
         except Exception:  # noqa: BLE001
             cache_key = ""
 
+    from uo_init.bisheng_attrs import parse_unsaved_kwargs
     from uo_init.diag_scope import score_tu_diagnostics
 
     args = (
@@ -2458,13 +2459,14 @@ def probe_diagnostics(
         path,
         args=args,
         options=cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
+        **parse_unsaved_kwargs(op_dir, side=side),
     )
     scored = score_tu_diagnostics(tu.diagnostics, path, op_dir)
     errors = int(scored["error_count"])
     fatals = int(scored["fatal_count"])
     op_errors = int(scored["operator_error_count"])
-    # Clean for scope: no fatals (missing includes etc.) and no errors in
-    # operator sources. CANN-header residuals under libclang are expected.
+    # Clean for scope: no errors in operator sources. CANN-header residuals
+    # under libclang (including fatals in unpacked headers) are expected.
     out = {
         **scored,
         "skipped_bodies": True,
@@ -2555,9 +2557,14 @@ def walk_file(
             orig_assignment=orig_assignment,
         )
     )
-    native = _try_native_walk(
-        path, args, side=side, op_needle=op_needle, op_root=op_root
-    )
+    from uo_init.bisheng_attrs import kernel_unsaved_files, parse_unsaved_kwargs
+
+    # Native walk cannot apply in-memory Bisheng-attribute rewrites.
+    native = None
+    if not (side == "kernel" and op_root and kernel_unsaved_files(op_root)):
+        native = _try_native_walk(
+            path, args, side=side, op_needle=op_needle, op_root=op_root
+        )
     if native is not None:
         if cache_key:
             try:
@@ -2577,7 +2584,12 @@ def walk_file(
     _require_clang()
     idx = cindex.Index.create()
     t0 = _time.perf_counter()
-    tu = idx.parse(path, args=args, options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD)
+    tu = idx.parse(
+        path,
+        args=args,
+        options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+        **parse_unsaved_kwargs(op_root, side=side),
+    )
     t_parse = _time.perf_counter() - t0
     diags = [
         (int(d.severity), _norm(d.location.file.name) if d.location.file else "?", d.spelling)

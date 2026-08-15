@@ -42,6 +42,17 @@ _DIRECT_ROOT_KINDS = {
 }
 _PACKING_SOURCE_KINDS = _RUNTIME_KINDS | _DIRECT_ROOT_KINDS
 _IF_COND_RE = re.compile(r"\bif\s*\((.+?)\)", re.S)
+# SetTilingKey(GetTilingKey()) / return tilingKey_ write the already-computed
+# packed value. They are launch/pass-through sites, not a new packing formula.
+_PASSTHROUGH_KEY_RE = re.compile(
+    r"^(?:(?:this->|context_->)?"
+    r"GetTilingKey\s*\(\s*\)"
+    r"|(?:this->)?(?:tilingKey_|tiling_key_))$"
+)
+
+
+def _is_passthrough_key_expr(expr: str) -> bool:
+    return bool(_PASSTHROUGH_KEY_RE.match((expr or "").strip()))
 
 
 def bind_host_tiling_key_expressions(
@@ -167,6 +178,15 @@ def bind_host_tiling_key_expressions(
                 key.attrs.setdefault("host_packing_expressions", [])
                 if expr not in key.attrs["host_packing_expressions"]:
                     key.attrs["host_packing_expressions"].append(expr)
+                site = {
+                    "file": file,
+                    "line": line,
+                    "expression": expr[:300],
+                    "function": function,
+                }
+                key.attrs.setdefault("packing_value_sites", [])
+                if site not in key.attrs["packing_value_sites"]:
+                    key.attrs["packing_value_sites"].append(site)
                 bound_names.add(key.name)
                 ambiguity = _link_expression_sources(
                     codemap,
@@ -214,6 +234,26 @@ _GET_TILING_KEY_NAME_RE = re.compile(r"GetTilingKey\s*$")
 _ASSIGN_TILING_KEY_RE = re.compile(
     r"\b(?P<lhs>tilingKey_|tiling_key_)\s*=\s*(?P<rhs>[^;]+);"
 )
+_CATALOG_KEY_PROVENANCE = {
+    "source_tiling_key_is",
+    "source_tiling_key_define",
+    "source_tiling_key_constexpr",
+    "source_set_tiling_key",
+}
+
+
+def _catalog_keys(keys: list[Entity]) -> list[Entity]:
+    """Integer / TILING_KEY_IS catalog — not TPL dimension fields."""
+    hits = [
+        key
+        for key in keys
+        if str(key.attrs.get("provenance") or "") in _CATALOG_KEY_PROVENANCE
+    ]
+    if hits:
+        return hits
+    if any(str(key.attrs.get("provenance") or "") == "source_tpl_args_decl" for key in keys):
+        return []
+    return list(keys)
 
 
 def _bind_non_tpl_packing(
@@ -301,6 +341,15 @@ def _bind_non_tpl_packing(
         if expr not in key.attrs["host_packing_expressions"]:
             key.attrs["host_packing_expressions"].append(expr)
         extra.add(key.name)
+        site = {
+            "file": file,
+            "line": line,
+            "expression": expr[:300],
+            "function": function,
+        }
+        key.attrs.setdefault("packing_value_sites", [])
+        if site not in key.attrs["packing_value_sites"]:
+            key.attrs["packing_value_sites"].append(site)
         _link_expression_sources(
             codemap,
             node,
@@ -326,13 +375,20 @@ def _bind_non_tpl_packing(
             if hits:
                 for key in hits:
                     bind(key, rhs, file, line, function, "source_assign_tiling_key")
-            elif len(keys) == 1:
-                bind(keys[0], rhs, file, line, function, "source_assign_tiling_key")
+            else:
+                catalog = _catalog_keys(keys)
+                if catalog:
+                    for key in catalog:
+                        bind(key, rhs, file, line, function, "source_assign_tiling_key")
+                elif len(keys) == 1:
+                    bind(keys[0], rhs, file, line, function, "source_assign_tiling_key")
         for start, _end, args_text in _calls(text, "SetTilingKey"):
             args = [a.strip() for a in _split_args(args_text) if a.strip()]
             if not args:
                 continue
             expr = args[0]
+            if _is_passthrough_key_expr(expr):
+                continue
             line = _line(text, start)
             function = _containing_function(text, start)
             calls += 1
@@ -341,11 +397,16 @@ def _bind_non_tpl_packing(
                 for key in hits:
                     bind(key, expr, file, line, function, "source_set_tiling_key")
             elif re.search(r"\bGetTilingKey\s*\(", expr):
-                for key in keys:
-                    if key.name in bound_names or key.attrs.get("host_packing_expressions"):
+                catalog = _catalog_keys(keys) or list(keys)
+                for key in catalog:
+                    bind(key, expr, file, line, function, "source_set_tiling_key")
+            else:
+                catalog = _catalog_keys(keys)
+                if catalog:
+                    for key in catalog:
                         bind(key, expr, file, line, function, "source_set_tiling_key")
-            elif len(keys) == 1:
-                bind(keys[0], expr, file, line, function, "source_set_tiling_key")
+                elif len(keys) == 1:
+                    bind(keys[0], expr, file, line, function, "source_set_tiling_key")
         for match in _FUNCTION_RE.finditer(text):
             name = match.group("name")
             if not _GET_TILING_KEY_NAME_RE.search(name.split("::")[-1] if "::" in name else name):
@@ -363,6 +424,8 @@ def _bind_non_tpl_packing(
             packed_nodes: list[tuple[Entity, Entity]] = []
             for ret in _RETURN_RE.finditer(body):
                 expr = ret.group(1).strip()
+                if _is_passthrough_key_expr(expr):
+                    continue
                 line = _line(text, open_brace + ret.start())
                 calls += 1
                 hits = keys_for_expr(expr)
@@ -372,15 +435,22 @@ def _bind_non_tpl_packing(
                         if node is not None:
                             packed_nodes.append((key, node))
                 elif re.fullmatch(r"tilingKey_|tiling_key_", expr.strip()):
-                    for key in keys:
-                        if key.name in bound_names or key.attrs.get("host_packing_expressions"):
+                    catalog = _catalog_keys(keys) or list(keys)
+                    for key in catalog:
+                        node = bind(key, expr, file, line, function, "source_get_tiling_key")
+                        if node is not None:
+                            packed_nodes.append((key, node))
+                else:
+                    catalog = _catalog_keys(keys)
+                    if catalog:
+                        for key in catalog:
                             node = bind(key, expr, file, line, function, "source_get_tiling_key")
                             if node is not None:
                                 packed_nodes.append((key, node))
-                elif len(keys) == 1:
-                    node = bind(keys[0], expr, file, line, function, "source_get_tiling_key")
-                    if node is not None:
-                        packed_nodes.append((keys[0], node))
+                    elif len(keys) == 1:
+                        node = bind(keys[0], expr, file, line, function, "source_get_tiling_key")
+                        if node is not None:
+                            packed_nodes.append((keys[0], node))
             for cond in conditions:
                 for key, node in packed_nodes:
                     _link_expression_sources(
@@ -465,6 +535,11 @@ def _source_matches(
             )
             return [preferred[0]], False
         return exact, False
+
+    # Member paths must not collapse to a unique short name (API attr
+    # ``inputLayout`` is not ``tilingKeyInfo_.inputLayout``).
+    if "." in normalized:
+        return [], False
 
     short = _dedupe_entities(list(short_index.get(short_symbol(normalized)) or []))
     # A short fallback is safe only when all hits describe one canonical symbol.

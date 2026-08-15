@@ -26,12 +26,64 @@ MISSING_RE = re.compile(
     r"""['"<]([^'"><\s]+?\.(?:h|hpp|hh|inc|cuh))['">]\s+file not found""",
     re.IGNORECASE,
 )
+UNKNOWN_TYPE_RE = re.compile(r"unknown type name '([A-Za-z_]\w*)'")
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*[<"]([^>"]+)[>"]', re.MULTILINE)
+_TYPE_DECL_RE = re.compile(
+    r"\b(?:struct|class|enum(?:\s+class)?|union)\s+([A-Za-z_]\w*)\b"
+    r"|\busing\s+([A-Za-z_]\w*)\s*="
+)
+# Headers that declare Cube/SoftMax tiling PODs and MatmulConfig. Not stubs.
+TYPE_HEADER_HINTS = (
+    "kernel_tiling/kernel_tiling.h",
+    "lib/matmul/matmul_config.h",
+    "tiling/matmul/matmul_config.h",
+    "adv_api/matmul/matmul_config.h",
+    "lib/matrix/matmul/matmul_config.h",
+)
+# Prelude / language names. Do not hunt CANN headers or stub them here.
+SKIP_UNKNOWN_TYPES = frozenset(
+    {
+        "int",
+        "char",
+        "void",
+        "bool",
+        "float",
+        "double",
+        "long",
+        "short",
+        "unsigned",
+        "signed",
+        "auto",
+        "size_t",
+        "ptrdiff_t",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "int8_t",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "Dim3",
+        "cce",
+        "half",
+        "half2",
+        "float2",
+        "__callee__",
+        "__simt_callee__",
+        "__simd_callee__",
+        "__simt_vf__",
+        "__simd_vf__",
+    }
+)
 HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".inc", ".cuh")
 # CANN layout moved highlevel_api matmul headers. Operators still include the
 # old path; forward to the file that exists in the current unpack.
 INCLUDE_PREFIX_ALIASES = (
     ("lib/matrix/matmul/", "lib/matmul/"),
+    # Current CANN unpack ships hccl/hccl.h; operators still include the
+    # older hccl/hcom.h spelling (file is not in the tree).
+    ("hccl/hcom.h", "hccl/hccl.h"),
 )
 SKIP_DIR_NAMES = {
     ".git",
@@ -162,10 +214,12 @@ STD_HEADERS = frozenset(
 _ENV_ENABLE = "UO_INCLUDE_HEAL"
 _ENV_ROUNDS = "UO_INCLUDE_HEAL_ROUNDS"
 _INDEX_CACHE: dict[tuple[str, ...], dict[str, list[str]]] = {}
+_TYPE_INDEX_CACHE: dict[tuple[str, ...], dict[str, list[str]]] = {}
 
 
 def reset_index_cache() -> None:
     _INDEX_CACHE.clear()
+    _TYPE_INDEX_CACHE.clear()
 
 
 @dataclass
@@ -280,7 +334,7 @@ def save_extras(
     *,
     run_id: str | None = None,
 ) -> Path | None:
-    """Persist extra -I so extract/assemble_kb reload the same BuildContext."""
+    """Persist extra -I so extract_host reloads the same BuildContext."""
     op_dir = getattr(ctx, "op_dir", "") or ""
     arch_dir = getattr(ctx, "arch_dir", "") or ""
     if not op_dir or not arch_dir:
@@ -362,6 +416,7 @@ def missing_includes_from_probes(
             continue
         side = str(row.get("side") or "host")
         chunks = [str(s) for s in (row.get("samples") or [])]
+        chunks.extend(str(s) for s in (row.get("heal_hints") or []))
         if row.get("error"):
             chunks.append(str(row.get("error")))
         for chunk in chunks:
@@ -371,6 +426,173 @@ def missing_includes_from_probes(
         for name in parse_missing_includes(str(err)):
             add(name, "host")
     return out
+
+
+def parse_unknown_types(text: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for match in UNKNOWN_TYPE_RE.finditer(str(text or "")):
+        name = match.group(1).strip()
+        if not name or name in SKIP_UNKNOWN_TYPES or len(name) < 3:
+            continue
+        key = name.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        names.append(name)
+    return names
+
+
+def unknown_types_from_probes(
+    probes: Iterable[dict[str, Any]] | None,
+    errors: Iterable[str] | None = None,
+) -> list[MissingInclude]:
+    out: list[MissingInclude] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add(name: str, side: str) -> None:
+        side_n = "kernel" if str(side).lower() == "kernel" else "host"
+        key = (name.lower(), side_n)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(MissingInclude(name=name, side=side_n))
+
+    for row in probes or []:
+        if not isinstance(row, dict):
+            continue
+        side = str(row.get("side") or "host")
+        chunks = [str(s) for s in (row.get("samples") or [])]
+        chunks.extend(str(s) for s in (row.get("heal_hints") or []))
+        if row.get("error"):
+            chunks.append(str(row.get("error")))
+        for chunk in chunks:
+            for name in parse_unknown_types(chunk):
+                add(name, side)
+    for err in errors or []:
+        for name in parse_unknown_types(str(err)):
+            add(name, "kernel")
+    return out
+
+
+def _header_declares_type(path: Path, type_name: str) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    pat = re.compile(
+        rf"\b(?:struct|class|enum(?:\s+class)?|union)\s+{re.escape(type_name)}\b"
+        rf"|\busing\s+(?:[A-Za-z_]\w*::)*{re.escape(type_name)}\s*;"
+        rf"|\busing\s+{re.escape(type_name)}\s*="
+    )
+    return bool(pat.search(text))
+
+
+def _type_index(roots: list[Path]) -> dict[str, list[str]]:
+    key = tuple(_norm_key(r) for r in roots)
+    cached = _TYPE_INDEX_CACHE.get(key)
+    if cached is not None:
+        return cached
+    idx: dict[str, list[str]] = {}
+    for root in roots:
+        try:
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not _skip_walk_dir(d)]
+                for fn in filenames:
+                    low = fn.lower()
+                    if not low.endswith(HEADER_SUFFIXES):
+                        continue
+                    path = Path(dirpath) / fn
+                    if is_forbidden_include_dir(path):
+                        continue
+                    try:
+                        text = path.read_text(encoding="utf-8", errors="replace")
+                    except OSError:
+                        continue
+                    found_path = str(path)
+                    for match in _TYPE_DECL_RE.finditer(text):
+                        name = match.group(1) or match.group(2)
+                        if not name or name in SKIP_UNKNOWN_TYPES or len(name) < 3:
+                            continue
+                        bucket = idx.setdefault(name, [])
+                        if found_path not in bucket:
+                            bucket.append(found_path)
+        except OSError:
+            continue
+    _TYPE_INDEX_CACHE[key] = idx
+    return idx
+
+
+def find_type_header(ctx: Any, type_name: str, *, side: str) -> HealHit | None:
+    """Locate the CANN (or kernel) header that declares ``type_name``."""
+    name = str(type_name or "").strip()
+    if not name or name in SKIP_UNKNOWN_TYPES:
+        return None
+    # Hinted CANN headers first — no full-tree walk for SoftMaxTiling / TCubeTiling.
+    for rel in TYPE_HEADER_HINTS:
+        hit = find_include_dir(ctx, rel, side=side)
+        if hit is None:
+            continue
+        found = Path(hit.found)
+        if not _header_declares_type(found, name):
+            continue
+        if is_forbidden_include_dir(found):
+            continue
+        return HealHit(
+            include=name,
+            include_dir=hit.include_dir,
+            found=hit.found,
+            side=side,
+        )
+    roots = search_roots(ctx)
+    ranked: list[Path] = []
+    for raw in _type_index(roots).get(name, []):
+        path = Path(raw)
+        posix = _posix(path).lower()
+        if side == "kernel" and "/op_host/" in posix:
+            continue
+        if is_forbidden_include_dir(path):
+            continue
+        ranked.append(path)
+    ranked.sort(
+        key=lambda p: _score_hit(p, p.name, side=side, roots=roots),
+        reverse=True,
+    )
+    for found in ranked:
+        if not _header_declares_type(found, name):
+            continue
+        return HealHit(
+            include=name,
+            include_dir=_posix(found.parent),
+            found=_posix(found),
+            side=side,
+        )
+    return None
+
+
+def heal_unknown_types(
+    ctx: Any,
+    missing: Iterable[MissingInclude],
+    *,
+    round_no: int = 0,
+    source: str = "probe",
+) -> list[HealHit]:
+    """Force-include the CANN header that declares an unknown type (not prelude stubs)."""
+    hits: list[HealHit] = []
+    add_fi = getattr(ctx, "add_force_include", None)
+    for item in missing:
+        hit = find_type_header(ctx, item.name, side=item.side)
+        if hit is None:
+            continue
+        hit.side = item.side
+        hit.round = round_no
+        hit.source = source
+        added = False
+        if callable(add_fi) and add_fi(hit.found, side=item.side):
+            added = True
+        if added:
+            hits.append(hit)
+    return hits
 
 
 def scan_source_includes(path: Path) -> list[str]:
@@ -597,6 +819,10 @@ def _score_hit(
         score += 100
     elif "/" in rel:
         return -1000
+    # Operator-tree headers beat CANN lookalikes (TLA ``Tuple`` vs a CANN
+    # utility that happens to mention the same identifier).
+    if "/op_kernel/" in posix or "/op_host/" in posix:
+        score += 40
     if "cann-" in posix:
         score += 10
     if side == "kernel" and "/asc/" in posix:
@@ -761,31 +987,35 @@ def enrich_scope_with_heal(
 
     enrichment = None
     last_missing: list[MissingInclude] = []
+    last_types: list[MissingInclude] = []
     rounds = max_rounds()
     for rnd in range(1, rounds + 1):
         enrichment = enrich_fn()
         probes = list(getattr(enrichment, "probes", None) or [])
         errors = list(getattr(enrichment, "errors", None) or [])
         last_missing = missing_includes_from_probes(probes, errors)
-        if not last_missing:
+        last_types = unknown_types_from_probes(probes, errors)
+        if not last_missing and not last_types:
             report.unresolved = []
             break
         added = heal_missing_includes(ctx, last_missing, round_no=rnd, source="probe")
+        added.extend(heal_unknown_types(ctx, last_types, round_no=rnd, source="unknown_type"))
         if not added:
-            report.unresolved = last_missing
+            report.unresolved = last_missing + last_types
             break
         report.healed.extend(added)
         report.rounds = max(report.rounds, rnd)
         for hit in added:
             bucket = report.added_kernel if hit.side == "kernel" else report.added_host
-            if hit.include_dir not in bucket:
-                bucket.append(hit.include_dir)
+            label = hit.found if hit.source == "unknown_type" else hit.include_dir
+            if label not in bucket:
+                bucket.append(label)
         emit(
             f"prepare include-heal round {rnd}: "
-            + ", ".join(f"{h.include} -> {h.include_dir}" for h in added[:4])
+            + ", ".join(f"{h.include} -> {h.found or h.include_dir}" for h in added[:4])
         )
     else:
-        report.unresolved = last_missing
+        report.unresolved = last_missing + last_types
 
     if enrichment is None:
         enrichment = enrich_fn()

@@ -132,8 +132,8 @@ def _actions_for_layers(layers: set[str]) -> list[str]:
     ordered: list[str] = []
     if "host" in layers:
         ordered.append("extract_host")
-    if "tilingkey" in layers:
-        ordered.append("extract_tiling_key")
+    if "tilingkey" in layers and "extract_host" not in ordered:
+        ordered.append("extract_host")
     if "registry" in layers:
         ordered.append("extract_registry")
     if "kernel" in layers:

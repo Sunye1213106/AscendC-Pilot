@@ -159,20 +159,19 @@ def operation_site_id(
     ordinal: int = 0,
     root: str = "",
 ) -> str:
-    """Occurrence id for one execution operation site.
+    """Source-location id for one execution operation site.
 
-    Distinct call sites with the same callee must not collapse. Location +
-    ordinal disambiguate; ``file:line:col`` is intentional for site identity
-    (semantic object ≠ operation occurrence).
+    Template instantiations of the same ``file:line:callee`` share one node.
+    ``column`` joins the id only when it is a real source column (``>0``), so
+    two different calls on one line stay distinct. ``ordinal`` is ignored —
+    kept in the signature so older call sites still type-check.
     """
-    return make_id(
-        "Operation",
-        rel_posix(file, root),
-        int(line),
-        int(column),
-        str(callee or ""),
-        int(ordinal),
-    )
+    del ordinal
+    parts: list[Any] = [rel_posix(file, root), int(line), str(callee or "")]
+    col = int(column or 0)
+    if col > 0:
+        parts.append(col)
+    return make_id("Operation", *parts)
 
 
 def buffer_site_id(

@@ -28,6 +28,7 @@ from uo_init.query.evidence import (
     project_entity,
     project_relation,
 )
+from uo_init.query.hints import attach_query_hints, search_needles
 from uo_init.query.legal_key_cache import _pattern_filters
 from uo_init.source_locator import locations_from_attr_sites
 
@@ -35,8 +36,23 @@ SNIPPET_LINES = 40
 SNIPPET_BEFORE = 3
 BRANCH_OUTER_BEFORE = 16
 PRIMARY_CANDIDATES = 3
-MAX_PAYLOAD_CHARS = 12_000
+MAX_PAYLOAD_CHARS = 24_000
 MAX_REL_HOPS = 4
+MIN_LIST_KEEP = 5
+_PROTECTED_PAYLOAD_KEYS = frozenset(
+    {
+        "coverage",
+        "files",
+        "dim_coverage",
+        "nearby",
+        "matching_block_count",
+        "phases",
+        "first_query",
+        "answer_contract",
+        "filters",
+        "occupancy_axis",
+    }
+)
 PACKING_RHS_TRIM = 400
 _GET_OFFSET_RE = re.compile(r"\bGet\w*Offset\b")
 _DATA_MOVE_RE = re.compile(r"\bDataCopy(?:Pad)?\b|\bLoadData\b")
@@ -214,7 +230,41 @@ def _definition_rank(kind: str, name: str, eid: str, facts: dict[str, Any] | Non
     return (src, use)
 
 
-def _agent_sort_key(hit: dict[str, Any], needle: str) -> tuple[Any, ...]:
+def _arch_file_rank(file: str, architecture: str) -> int:
+    """Prefer ``op_kernel/archNN/`` over unscoped warehouse-root cpp/apt."""
+    text = str(file or "").replace("\\", "/").lower()
+    arch = str(architecture or "").strip().lower()
+    if not text:
+        return 3
+    blob = f"/{text.strip('/')}/"
+    if arch and f"/{arch}/" in blob:
+        return 0
+    if arch and (blob.startswith("/op_kernel/") or "/op_kernel/" in blob):
+        return 2
+    if arch and (blob.startswith("/op_host/") or "/op_host/" in blob):
+        return 2
+    return 1
+
+
+def _alias_ident_names(facts: dict[str, Any] | None) -> list[str]:
+    names: list[str] = []
+    blob = facts if isinstance(facts, dict) else {}
+    for key in ("local_aliases", "fused_outer_candidates"):
+        raw = blob.get(key)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            ident = str(item.get("name") or "").strip()
+            if ident:
+                names.append(ident)
+    return names
+
+
+def _agent_sort_key(
+    hit: dict[str, Any], needle: str, *, architecture: str = ""
+) -> tuple[Any, ...]:
     kind = str(hit.get("kind") or "")
     name = str(hit.get("name") or "")
     eid = str(hit.get("id") or "")
@@ -223,7 +273,15 @@ def _agent_sort_key(hit: dict[str, Any], needle: str) -> tuple[Any, ...]:
     if match is None:
         match = 9
     src, use = _definition_rank(kind, name, eid, facts)
-    return (match, src, use, int(hit.get("line_start") or 0), eid)
+    return (
+        _arch_file_rank(str(hit.get("file") or ""), architecture),
+        match,
+        _entry_rank(hit),
+        src,
+        use,
+        int(hit.get("line_start") or 0),
+        eid,
+    )
 
 
 def _drop_redundant_type_hashes(hits: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -242,6 +300,42 @@ def _drop_redundant_type_hashes(hits: list[dict[str, Any]]) -> list[dict[str, An
             and str(hit.get("name") or "").lower() in src_names
         )
     ]
+
+
+def _diversify_by_file(
+    hits: list[dict[str, Any]], *, limit: int
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    counts: dict[str, int] = {}
+    exemplars: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for hit in hits:
+        file = str(hit.get("file") or "").replace("\\", "/") or "(unknown)"
+        counts[file] = counts.get(file, 0) + 1
+        if file in seen:
+            continue
+        seen.add(file)
+        if len(exemplars) < max(0, int(limit)):
+            exemplars.append(hit)
+    return exemplars, counts
+
+
+def _entry_rank(hit: dict[str, Any]) -> int:
+    kind = str(hit.get("kind") or "").upper()
+    name = str(hit.get("name") or "").lower()
+    file = str(hit.get("file") or "").replace("\\", "/").lower()
+    ident = _last_ident(name)
+    if kind == EntityKind.KERNEL.value:
+        return 0
+    fname = file.rsplit("/", 1)[-1]
+    if "entry" in fname:
+        return 1
+    if ident.startswith("invoke_"):
+        return 1
+    if file.endswith("_apt.cpp"):
+        return 3
+    if "processvec" in ident or ident in {"process", "processvec1", "processvec2"}:
+        return 4
+    return 2
 
 
 def _diversify_by_function(
@@ -536,6 +630,74 @@ def _template_block_matches(row: dict[str, Any], filters: dict[str, str]) -> boo
     return True
 
 
+def _compact_template_block(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id") or "",
+        "name": row.get("name") or "",
+        "sel_group_index": row.get("sel_group_index"),
+        "fixed_fields": row.get("fixed_fields") or {},
+        "field_domains": row.get("field_domains") or {},
+        "product_count": row.get("product_count"),
+    }
+
+
+def _collect_block_dim_values(row: dict[str, Any], dim_name: str) -> list[str]:
+    values: list[str] = []
+    fixed = row.get("fixed_fields") or {}
+    domains = row.get("field_domains") or {}
+    if isinstance(fixed, dict) and dim_name in fixed:
+        values.append(str(fixed[dim_name]))
+    domain = domains.get(dim_name) if isinstance(domains, dict) else None
+    if isinstance(domain, (list, tuple, set)):
+        values.extend(str(v) for v in domain)
+    elif domain is not None:
+        values.append(str(domain))
+    return values
+
+
+def _dim_coverage(blocks: list[dict[str, Any]]) -> dict[str, list[str]]:
+    coverage: dict[str, set[str]] = {}
+    for row in blocks:
+        fixed = row.get("fixed_fields") or {}
+        domains = row.get("field_domains") or {}
+        if isinstance(fixed, dict):
+            for name, value in fixed.items():
+                coverage.setdefault(str(name), set()).add(str(value))
+        if isinstance(domains, dict):
+            for name, domain in domains.items():
+                bucket = coverage.setdefault(str(name), set())
+                if isinstance(domain, (list, tuple, set)):
+                    bucket.update(str(v) for v in domain)
+                elif domain is not None:
+                    bucket.add(str(domain))
+    return {name: sorted(vals) for name, vals in coverage.items()}
+
+
+def _template_nearby(
+    all_blocks: list[dict[str, Any]], filters: dict[str, str]
+) -> list[dict[str, Any]]:
+    nearby: list[dict[str, Any]] = []
+    for dropped in filters:
+        remaining = {k: v for k, v in filters.items() if k != dropped}
+        matched = [
+            row
+            for row in all_blocks
+            if not remaining or _template_block_matches(row, remaining)
+        ]
+        values: set[str] = set()
+        for row in matched:
+            values.update(_collect_block_dim_values(row, dropped))
+        nearby.append(
+            {
+                "dropped": dropped,
+                "remaining_filters": remaining,
+                "matching_block_count": len(matched),
+                "values": sorted(values),
+            }
+        )
+    return nearby
+
+
 def _file_index_entry(hit: dict[str, Any]) -> dict[str, Any]:
     facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
     return {
@@ -582,6 +744,7 @@ def _clip_snippets(payload: dict[str, Any], *, max_lines: int) -> None:
         "writers",
         "readers",
         "fields",
+        "phases",
     ):
         rows = payload.get(key)
         if isinstance(rows, list):
@@ -618,6 +781,84 @@ def _payload_size(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))
 
 
+def _hits_coverage(
+    hits: list[dict[str, Any]],
+    *,
+    total: int | None = None,
+    dim_coverage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    sibling_files: list[str] = []
+    seen: set[str] = set()
+    mutex: list[str] = []
+    phases: list[str] = []
+    def_count = 0
+    fused_count = 0
+    for hit in hits:
+        file = str(hit.get("file") or "").replace("\\", "/")
+        if file and file not in seen:
+            seen.add(file)
+            sibling_files.append(file)
+        facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+        policy = str(facts.get("mutex_policy") or "").strip()
+        if policy and policy not in mutex:
+            mutex.append(policy)
+        phase = str(facts.get("kernel_phase") or "").strip()
+        if phase and phase not in phases:
+            phases.append(phase)
+        sites = facts.get("definition_sites")
+        if isinstance(sites, list):
+            def_count = max(def_count, len(sites))
+        elif isinstance(sites, int):
+            def_count = max(def_count, int(sites))
+        fused = facts.get("fused_outer_candidates")
+        if isinstance(fused, list):
+            fused_count = max(fused_count, len(fused))
+    total_matched = int(total if total is not None else len(hits))
+    if dim_coverage:
+        completeness = "coverage_checked"
+    elif def_count > 1 or len(sibling_files) > 1 or total_matched > 1:
+        completeness = "siblings_checked"
+    else:
+        completeness = "first_hit"
+    return {
+        "sibling_files": sibling_files,
+        "definition_sites_count": def_count or total_matched,
+        "total_matched": total_matched,
+        "fused_outer_candidates_count": fused_count,
+        "mutex_policies": mutex,
+        "kernel_phases": phases,
+        "completeness": completeness,
+        "answerable": completeness != "first_hit",
+        **({"dim_coverage": dim_coverage} if dim_coverage else {}),
+    }
+
+
+def _downgrade_coverage_after_clip(payload: dict[str, Any]) -> None:
+    cov = payload.get("coverage")
+    if not isinstance(cov, dict):
+        return
+    total = cov.get("total_matched")
+    shown = 0
+    for key in ("locations", "rows", "calls", "buffers", "branches", "hits", "phases"):
+        rows = payload.get(key)
+        if isinstance(rows, list) and rows:
+            shown = max(shown, len(rows))
+    if not isinstance(total, int) or shown >= total:
+        return
+    # Universe coverage (dim_coverage / coverage_checked) is not a clipped
+    # first page. Do not downgrade it to first_hit when template_blocks shrink.
+    if cov.get("dim_coverage") or cov.get("completeness") == "coverage_checked":
+        return
+    cov = dict(cov)
+    if shown <= 1:
+        cov["completeness"] = "first_hit"
+        cov["answerable"] = False
+    else:
+        cov["completeness"] = "siblings_checked"
+        cov["answerable"] = True
+    payload["coverage"] = cov
+
+
 def _fit_payload(payload: dict[str, Any], *, max_chars: int = MAX_PAYLOAD_CHARS) -> dict[str, Any]:
     if _payload_size(payload) <= max_chars:
         return payload
@@ -626,10 +867,8 @@ def _fit_payload(payload: dict[str, Any], *, max_chars: int = MAX_PAYLOAD_CHARS)
     _clip_relationships(out)
     if _payload_size(out) <= max_chars:
         return out
-    out.pop("edges", None)
-    if _payload_size(out) <= max_chars:
-        return out
-    out.pop("files", None)
+    if "edges" not in _PROTECTED_PAYLOAD_KEYS:
+        out.pop("edges", None)
     if _payload_size(out) <= max_chars:
         return out
     for key in ("readers", "writers", "neighbors"):
@@ -638,12 +877,12 @@ def _fit_payload(payload: dict[str, Any], *, max_chars: int = MAX_PAYLOAD_CHARS)
             continue
         out[key] = rows[:PRIMARY_CANDIDATES]
         if _payload_size(out) <= max_chars:
+            _downgrade_coverage_after_clip(out)
             return out
-    if _payload_size(out) <= max_chars:
-        return out
-    _clip_snippets(out, max_lines=12)
-    if _payload_size(out) <= max_chars:
-        return out
+    for max_lines in (12, 6, 3):
+        _clip_snippets(out, max_lines=max_lines)
+        if _payload_size(out) <= max_chars:
+            return out
     for key in (
         "rows",
         "branches",
@@ -662,16 +901,20 @@ def _fit_payload(payload: dict[str, Any], *, max_chars: int = MAX_PAYLOAD_CHARS)
         "writers",
         "readers",
     ):
-        rows = out.get(key)
-        if not isinstance(rows, list) or len(rows) <= 1:
+        if key in _PROTECTED_PAYLOAD_KEYS:
             continue
-        while len(rows) > 1:
+        rows = out.get(key)
+        if not isinstance(rows, list) or len(rows) <= MIN_LIST_KEEP:
+            continue
+        while len(rows) > MIN_LIST_KEEP:
             rows.pop()
             probe = dict(out)
             probe[key] = rows
             if _payload_size(probe) <= max_chars:
                 out[key] = rows
+                _downgrade_coverage_after_clip(out)
                 return out
+    _downgrade_coverage_after_clip(out)
     return out
 
 
@@ -932,6 +1175,30 @@ class UoSqlQuery:
     def search(
         self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50
     ) -> list[dict[str, Any]]:
+        needles = search_needles(pattern)
+        if len(needles) <= 1:
+            return self._search_one(
+                needles[0] if needles else str(pattern or ""),
+                kinds=kinds,
+                limit=limit,
+            )
+        merged: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for needle in needles:
+            for hit in self._search_one(needle, kinds=kinds, limit=limit):
+                eid = str(hit.get("id") or "")
+                key = eid or f"{hit.get('file')}:{hit.get('line_start')}:{hit.get('name')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(hit)
+                if len(merged) >= max(0, int(limit)):
+                    return merged
+        return merged[: max(0, int(limit))]
+
+    def _search_one(
+        self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50
+    ) -> list[dict[str, Any]]:
         needle = str(pattern or "").lower().strip()
         allowed = _kind_names(kinds)
         fetch = max(int(limit) * 8, 32)
@@ -1003,11 +1270,20 @@ class UoSqlQuery:
                 with_snippet=True,
                 with_rels=True,
             )
-            hits.sort(key=lambda hit: _agent_sort_key(hit, needle))
+            hits.sort(
+                key=lambda hit: _agent_sort_key(
+                    hit, needle, architecture=self._architecture
+                )
+            )
             if allowed == {EntityKind.BRANCH.value} or (
                 hits and all(str(hit.get("kind") or "") == EntityKind.BRANCH.value for hit in hits)
             ):
                 hits, _ = _diversify_by_function(hits, limit=int(limit))
+            elif hits and all(
+                str(hit.get("kind") or "") in {EntityKind.FUNCTION.value, EntityKind.METHOD.value}
+                for hit in hits
+            ):
+                hits, _ = _diversify_by_file(hits, limit=int(limit))
             return hits[: max(0, int(limit))]
 
     def neighbors(
@@ -1360,17 +1636,64 @@ class UoSqlQuery:
             )
             return hits
 
+    def _fields_by_local_alias(
+        self, ident: str, *, kinds: Iterable[str]
+    ) -> list[dict[str, Any]]:
+        """Resolve a host local name via facts already on tiling fields.
+
+        Extra query round is preferred over a hardcoded alias table.
+        """
+        needle = str(ident or "").strip().lower()
+        if not needle:
+            return []
+        kind_list = [k for k in kinds if k]
+        placeholders = ",".join("?" for _ in kind_list)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                       IFNULL(s.snippet, '') AS snippet
+                FROM entity e
+                LEFT JOIN source_span s ON s.entity_id = e.id
+                WHERE e.kind IN ({placeholders})
+                  AND (
+                    e.data LIKE '%local_aliases%'
+                    OR e.data LIKE '%fused_outer_candidates%'
+                  )
+                LIMIT 80
+                """,
+                tuple(kind_list),
+            ).fetchall()
+            hits = self._hits_from_rows(conn, rows, why="field_alias", with_snippet=True, with_rels=True)
+        matched: list[dict[str, Any]] = []
+        for hit in hits:
+            facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+            names = {n.lower() for n in _alias_ident_names(facts)}
+            if needle in names:
+                matched.append(hit)
+        return matched
+
     def field_impact(self, name_or_id: str) -> dict[str, Any]:
-        fields = self._named_fields(
-            name_or_id,
-            kinds=(
-                EntityKind.TILING_FIELD.value,
-                EntityKind.FIELD.value,
-                EntityKind.TILING_KEY.value,
-            ),
+        raw = str(name_or_id or "").strip()
+        field_kinds = (
+            EntityKind.TILING_FIELD.value,
+            EntityKind.FIELD.value,
+            EntityKind.TILING_KEY.value,
         )
+        fields = self._named_fields(raw, kinds=field_kinds)
+        alias_from = ""
         if not fields:
-            return {"ok": False, "error": "tiling_field_not_found", "query": name_or_id}
+            fields = self._fields_by_local_alias(raw, kinds=field_kinds)
+            if fields:
+                alias_from = raw
+        if not fields:
+            payload = {
+                "ok": False,
+                "error": "tiling_field_not_found",
+                "query": name_or_id,
+            }
+            attach_query_hints(payload, raw, count=0, mode="field")
+            return payload
         primary = fields[0]
         fid = str(primary["id"])
         allowed = field_edge_kinds()
@@ -1438,18 +1761,50 @@ class UoSqlQuery:
             if not keep_snip and best.get("snippet"):
                 primary["snippet"] = best["snippet"]
             primary["facts"] = facts
+        fused = list(facts.get("fused_outer_candidates") or [])
+        if fused:
+            facts["fused_outer_candidates"] = fused
+            primary["facts"] = facts
         candidates = writers[:cap] or fields[:cap]
-        return _fit_payload(
-            {
-                "ok": True,
-                "field": primary,
-                "fields_matched": len(fields),
-                "candidates": candidates,
-                "writers": writers[:12],
-                "readers": readers[:12],
-                "edges": edges[:8],
-            }
+        if fused:
+            patched: list[dict[str, Any]] = []
+            for hit in candidates:
+                item = dict(hit)
+                hf = dict(item.get("facts") or {}) if isinstance(item.get("facts"), dict) else {}
+                hf.setdefault("fused_outer_candidates", fused)
+                item["facts"] = hf
+                patched.append(item)
+            candidates = patched
+        occupancy = ""
+        queried = alias_from or raw
+        if fused or facts.get("local_aliases"):
+            occupancy = f"{queried} vs aicNum"
+            facts["occupancy_axis"] = occupancy
+            primary["facts"] = facts
+        coverage = _hits_coverage(candidates + fields, total=len(fields) or len(candidates))
+        coverage["fused_outer_candidates_count"] = max(
+            int(coverage.get("fused_outer_candidates_count") or 0), len(fused)
         )
+        if occupancy:
+            coverage["occupancy_axis"] = occupancy
+        if len(candidates) > 1 or fused:
+            coverage["completeness"] = "siblings_checked"
+            coverage["answerable"] = True
+        payload = {
+            "ok": True,
+            "field": primary,
+            "fields_matched": len(fields),
+            "candidates": candidates,
+            "writers": writers[:12],
+            "readers": readers[:12],
+            "edges": edges[:8],
+            "coverage": coverage,
+            "occupancy_axis": occupancy or None,
+        }
+        if alias_from:
+            payload["alias_from"] = alias_from
+            payload["canonical"] = str(primary.get("name") or "")
+        return _fit_payload(payload)
 
     def constant(self, name: str) -> list[dict[str, Any]]:
         needle = str(name or "").lower()
@@ -1472,7 +1827,7 @@ class UoSqlQuery:
         self, query: str, *, kinds: Iterable[str] | None = None, limit: int = 20
     ) -> list[dict[str, Any]]:
         rows = self.search(query, kinds=kinds or (), limit=limit)
-        return [self._location(row) for row in rows if row.get("file")]
+        return self._locations_with_sites(rows, limit=limit)
 
     def locate_dim(self, name: str, *, limit: int = 20) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -2043,9 +2398,22 @@ class UoSqlQuery:
                     OR lower(e.name) = lower(?)
                     OR lower(e.name) LIKE '%::' || lower(?)
                     OR lower(e.name) LIKE '%.' || lower(?)
+                    OR lower(IFNULL(json_extract(e.data, '$.condition'), '')) LIKE lower(?)
+                    OR lower(IFNULL(json_extract(e.data, '$.predicate'), '')) LIKE lower(?)
+                    OR lower(IFNULL(e.data, '')) LIKE lower(?)
                     )"""
                 )
-                params.extend([name_tok, name_tok, name_tok, name_tok])
+                params.extend(
+                    [
+                        name_tok,
+                        name_tok,
+                        name_tok,
+                        name_tok,
+                        f"%{name_tok}%",
+                        f"%{name_tok}%",
+                        f"%{name_tok}%",
+                    ]
+                )
             if func_tok:
                 where.append(
                     "(json_extract(e.data, '$.function') = ? OR lower(IFNULL(json_extract(e.data, '$.function'), '')) LIKE lower(?))"
@@ -2078,6 +2446,7 @@ class UoSqlQuery:
                         str(hit.get("name") or "").lower() == low
                         or low in str(hit.get("name") or "").lower()
                         or low in str(facts.get("condition") or "").lower()
+                        or low in str(facts.get("predicate") or "").lower()
                     )
                     fn = str(facts.get("function") or "")
                     fn_ok = (not func_tok) or func_tok.lower() in fn.lower()
@@ -2097,11 +2466,13 @@ class UoSqlQuery:
         else:
             exemplars, functions = _diversify_by_function(branches, limit=max(cap, int(limit)))
             exemplars = exemplars[:cap]
+        coverage = _hits_coverage(exemplars, total=total)
         return _fit_payload(
             {
                 "ok": True,
                 "mode": "kernel_branch",
                 "pattern": needle,
+                "coverage": coverage,
                 "branches": exemplars,
                 "count": total,
                 "functions": functions,
@@ -2145,43 +2516,72 @@ class UoSqlQuery:
                     with_snippet=False,
                 )
         block_matches: list[dict[str, Any]] = []
+        all_blocks: list[dict[str, Any]] = []
         block_status: dict[str, Any] = {"ok": True, "reason_code": "", "used": False}
-        if structured:
-            from uo_init.store.reader import load_view_blob_checked
+        dim_coverage: dict[str, list[str]] = {}
+        nearby: list[dict[str, Any]] = []
+        matching_block_count = 0
+        from uo_init.store.reader import load_view_blob_checked
 
-            checked = load_view_blob_checked(
-                self.product,
-                "tiling/template_blocks.yaml",
-                fallback_canonical=False,
-            )
-            block_status = {
-                "ok": bool(checked.get("ok")),
-                "reason_code": str(checked.get("reason_code") or ""),
-                "used": bool(checked.get("ok")),
-            }
-            if checked.get("ok"):
-                block_matches = [
-                    row
-                    for row in _template_block_rows(checked.get("view"))
-                    if _template_block_matches(row, structured)
-                ][: int(limit)]
-        return _fit_payload(
-            {
-                "ok": bool(block_status.get("ok")) if structured else True,
-                "mode": "template_match",
-                "pattern": needle,
-                "filters": structured,
-                "templates": templates[: int(limit)],
-                "macros_compile_vars": macros[: int(limit)],
-                "template_blocks": block_matches,
-                "template_projection": block_status,
-                "count": len(block_matches) if structured else len(templates),
-            }
+        checked = load_view_blob_checked(
+            self.product,
+            "tiling/template_blocks.yaml",
+            fallback_canonical=False,
         )
+        block_status = {
+            "ok": bool(checked.get("ok")),
+            "reason_code": str(checked.get("reason_code") or ""),
+            "used": bool(checked.get("ok")),
+        }
+        if checked.get("ok"):
+            all_blocks = _template_block_rows(checked.get("view"))
+            universe_coverage = _dim_coverage(all_blocks)
+            if structured:
+                block_matches = [
+                    row for row in all_blocks if _template_block_matches(row, structured)
+                ]
+                matching_block_count = len(block_matches)
+                dim_coverage = (
+                    _dim_coverage(block_matches) if block_matches else universe_coverage
+                )
+                if matching_block_count == 0:
+                    nearby = _template_nearby(all_blocks, structured)
+            else:
+                dim_coverage = universe_coverage
+                matching_block_count = len(all_blocks)
+                block_matches = all_blocks
+        compact_blocks = [_compact_template_block(row) for row in block_matches]
+        coverage = {
+            **_hits_coverage([], total=matching_block_count, dim_coverage=dim_coverage),
+            "dim_coverage": dim_coverage,
+            "completeness": "coverage_checked" if dim_coverage else "first_hit",
+            "answerable": bool(dim_coverage),
+        }
+        payload = {
+            "ok": bool(block_status.get("ok")) if structured else True,
+            "mode": "template_match",
+            "pattern": needle,
+            "filters": structured,
+            "coverage": coverage,
+            "dim_coverage": dim_coverage,
+            "matching_block_count": (
+                matching_block_count if structured else len(all_blocks or templates)
+            ),
+            "count": matching_block_count if structured else len(templates),
+            "templates": templates[: int(limit)],
+            "macros_compile_vars": macros[: int(limit)],
+            "template_blocks": compact_blocks[: int(limit)],
+            "template_projection": block_status,
+        }
+        if nearby:
+            payload["nearby"] = nearby
+        attach_query_hints(payload, needle, count=int(payload["count"]))
+        return _fit_payload(payload)
 
     def aggregate_buffer(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip()
         low = needle.lower()
+        like = f"%{low}%"
         with self._connect() as conn:
             buf_rows = conn.execute(
                 """
@@ -2190,10 +2590,16 @@ class UoSqlQuery:
                 FROM entity e
                 LEFT JOIN source_span s ON s.entity_id = e.id
                 WHERE e.kind = 'BUFFER'
-                  AND (? = '' OR lower(IFNULL(e.name, '')) LIKE ? OR lower(e.id) LIKE ?)
+                  AND (
+                    ? = ''
+                    OR lower(IFNULL(e.name, '')) LIKE ?
+                    OR lower(e.id) LIKE ?
+                    OR lower(IFNULL(json_extract(e.data, '$.mutex_policy'), '')) LIKE ?
+                    OR lower(IFNULL(e.data, '')) LIKE ?
+                  )
                 LIMIT ?
                 """,
-                (needle, f"%{low}%", f"%{low}%", max(int(limit) * 4, 16)),
+                (needle, like, like, like, like, max(int(limit) * 8, 32)),
             ).fetchall()
             wrap_rows = conn.execute(
                 """
@@ -2205,15 +2611,20 @@ class UoSqlQuery:
                   AND (
                     json_extract(e.data, '$.role') = 'storage_wrapper_type'
                     OR e.data LIKE '%"role":"storage_wrapper_type"%'
+                    OR lower(IFNULL(json_extract(e.data, '$.mutex_policy'), '')) != ''
+                    OR lower(IFNULL(e.name, '')) LIKE '%policy%'
                   )
                   AND (
                     ? = ''
                     OR lower(IFNULL(e.name, '')) = ?
+                    OR lower(IFNULL(e.name, '')) LIKE ?
                     OR lower(IFNULL(e.name, '')) LIKE '%::' || ?
+                    OR lower(IFNULL(json_extract(e.data, '$.mutex_policy'), '')) LIKE ?
+                    OR lower(IFNULL(e.data, '')) LIKE ?
                   )
                 LIMIT ?
                 """,
-                (needle, low, low, max(int(limit) * 4, 16)),
+                (needle, low, like, low, like, like, max(int(limit) * 8, 32)),
             ).fetchall()
             rows = self._hits_from_rows(
                 conn,
@@ -2222,37 +2633,74 @@ class UoSqlQuery:
                 with_snippet=True,
                 with_rels=True,
             )
+        def _buf_key(hit: dict[str, Any]) -> tuple[Any, ...]:
+            name = str(hit.get("name") or "").lower()
+            facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+            policy = str(facts.get("mutex_policy") or "").lower()
+            strong = 0 if low and (low in name or low in policy) else 1
+            return (strong, *_agent_sort_key(hit, low, architecture=self._architecture))
+
+        rows.sort(key=_buf_key)
+        total = len(rows)
         rows = rows[: max(0, int(limit))]
+        coverage = _hits_coverage(rows, total=total)
         return _fit_payload(
             {
                 "ok": True,
                 "mode": "buffer",
                 "pattern": needle,
+                "coverage": coverage,
                 "buffers": rows,
                 "count": len(rows),
-                "total": len(rows),
+                "total": total,
                 "files": _group_by_file(rows),
             }
         )
 
     def aggregate_locate(self, pattern: str = "", *, limit: int = 20) -> dict[str, Any]:
         needle = str(pattern or "").strip()
-        rows = self.locate_dim(needle, limit=limit) if needle else []
-        if not rows and needle:
-            rows = self.locate_field(needle, limit=limit)
-        if not rows and needle:
-            rows = self.locate(needle, limit=limit)
-        rows = rows[: int(limit)]
-        return _fit_payload(
-            {
-                "ok": True,
-                "mode": "locate",
-                "pattern": needle,
-                "locations": rows,
-                "count": len(rows),
-                "files": _group_by_file(rows),
-            }
+        tokens = search_needles(needle) or ([needle] if needle else [])
+        fetch_limit = max(int(limit) * 4, 24)
+        rows: list[dict[str, Any]] = []
+        seen: set[tuple[Any, Any, Any]] = set()
+        for token in tokens:
+            if not token:
+                continue
+            chunk = self.locate_dim(token, limit=fetch_limit) if token else []
+            if not chunk:
+                chunk = self.locate_field(token, limit=fetch_limit)
+            if not chunk:
+                chunk = self.locate(token, limit=fetch_limit)
+            for loc in chunk:
+                key = (loc.get("id"), loc.get("file"), loc.get("line_start"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append(loc)
+                if len(rows) >= fetch_limit:
+                    break
+            if len(rows) >= fetch_limit:
+                break
+        rows.sort(
+            key=lambda hit: _agent_sort_key(
+                hit, needle, architecture=self._architecture
+            )
         )
+        coverage = _hits_coverage(rows, total=len(rows))
+        shown = rows[: max(int(limit), MIN_LIST_KEEP if len(rows) > 1 else int(limit))]
+        payload = {
+            "ok": True,
+            "mode": "locate",
+            "pattern": needle,
+            "coverage": coverage,
+            "locations": shown,
+            "count": len(rows),
+            "files": _group_by_file(rows),
+        }
+        if len(tokens) > 1:
+            payload["pattern_tokens"] = tokens
+        attach_query_hints(payload, needle, count=len(rows))
+        return _fit_payload(payload)
 
     def aggregate_kernel_api(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip().lower()
@@ -2270,7 +2718,6 @@ class UoSqlQuery:
                         OR lower(IFNULL(json_extract(e.data, '$.callee'), '')) LIKE ?
                         OR lower(e.id) LIKE ?
                       )
-                    ORDER BY e.file, e.line_start, e.id
                     LIMIT 400
                     """,
                     (f"%{needle}%", f"%{needle}%", f"%{needle}%"),
@@ -2283,7 +2730,6 @@ class UoSqlQuery:
                     FROM entity e
                     LEFT JOIN source_span s ON s.entity_id = e.id
                     WHERE e.kind = 'OPERATION'
-                    ORDER BY e.file, e.line_start, e.id
                     LIMIT 400
                     """
                 ).fetchall()
@@ -2342,19 +2788,153 @@ class UoSqlQuery:
                 if facts:
                     hit["facts"] = facts
                 hits.append(hit)
-                if len(hits) >= int(limit):
-                    break
+        hits.sort(
+            key=lambda hit: _agent_sort_key(
+                hit, needle, architecture=self._architecture
+            )
+        )
+        total = len(hits)
+        shown = hits[: max(0, int(limit))]
+        coverage = _hits_coverage(hits, total=total)
         return _fit_payload(
             {
                 "ok": True,
                 "mode": "kernel_api",
                 "pattern": needle,
-                "calls": hits[: int(limit)],
-                "count": min(len(hits), int(limit)),
-                "total": len(hits),
-                "files": _group_by_file(hits[: int(limit)]),
+                "coverage": coverage,
+                "calls": shown,
+                "count": min(total, int(limit)),
+                "total": total,
+                "files": _group_by_file(hits),
             }
         )
+
+    def _kernel_launch_entry(self, pattern: str) -> list[dict[str, Any]]:
+        """KERNEL or a symbol in an *entry* file — not a per-op class name."""
+        needle = str(pattern or "").strip()
+        hits: list[dict[str, Any]] = []
+        if needle:
+            hits = list(self.locate(needle, limit=12) or [])
+        if hits:
+            hits.sort(
+                key=lambda hit: _agent_sort_key(
+                    hit, needle, architecture=self._architecture
+                )
+            )
+            return hits
+        kinds = (
+            EntityKind.KERNEL.value,
+            EntityKind.FUNCTION.value,
+            EntityKind.METHOD.value,
+        )
+        placeholders = ",".join("?" for _ in kinds)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                       IFNULL(s.snippet, '') AS snippet
+                FROM entity e
+                LEFT JOIN source_span s ON s.entity_id = e.id
+                WHERE e.kind IN ({placeholders})
+                  AND (
+                    e.kind = 'KERNEL'
+                    OR lower(IFNULL(e.file, '')) LIKE '%entry%'
+                    OR lower(IFNULL(e.name, '')) LIKE '%entry%'
+                  )
+                LIMIT 48
+                """,
+                kinds,
+            ).fetchall()
+            hits = self._hits_from_rows(
+                conn, rows, why="kernel_launch_entry", with_snippet=True, with_rels=False
+            )
+        hits.sort(
+            key=lambda hit: _agent_sort_key(
+                hit, "entry", architecture=self._architecture
+            )
+        )
+        return hits
+
+    def aggregate_kernel_launch(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
+        """One page: pipeIn(pre) → pipeBase(main) → pipePost(post) + arch entry."""
+        phase_names = (
+            ("pre", "pipeIn"),
+            ("main", "pipeBase"),
+            ("post", "pipePost"),
+        )
+        pipes = self.search("pipe", kinds=(EntityKind.PIPE.value,), limit=80)
+        by_name: dict[str, dict[str, Any]] = {}
+        for hit in pipes:
+            ident = _last_ident(str(hit.get("name") or "")).lower()
+            for _phase, want in phase_names:
+                if ident == want.lower() and want not in by_name:
+                    by_name[want] = hit
+                    break
+        for _phase, want in phase_names:
+            if want in by_name:
+                continue
+            extra = self.search(want, kinds=(EntityKind.PIPE.value,), limit=8)
+            if extra:
+                extra.sort(
+                    key=lambda hit: _agent_sort_key(
+                        hit, want, architecture=self._architecture
+                    )
+                )
+                by_name[want] = extra[0]
+        phases: list[dict[str, Any]] = []
+        for phase, want in phase_names:
+            hit = by_name.get(want)
+            if hit is None:
+                phases.append(
+                    {
+                        "phase": phase,
+                        "pipe": want,
+                        "ok": False,
+                    }
+                )
+                continue
+            item = dict(hit)
+            facts = dict(item.get("facts") or {}) if isinstance(item.get("facts"), dict) else {}
+            facts.setdefault("kernel_phase", phase)
+            item["facts"] = facts
+            item["phase"] = phase
+            item["pipe"] = want
+            item["ok"] = True
+            phases.append(item)
+        entry_hits = self._kernel_launch_entry(str(pattern or "").strip())
+        entry = entry_hits[0] if entry_hits else None
+        coverage = _hits_coverage(
+            [p for p in phases if p.get("ok")] + ([entry] if entry else []),
+            total=sum(1 for p in phases if p.get("ok")),
+        )
+        coverage["kernel_phases"] = [
+            str(p.get("facts", {}).get("kernel_phase") or p.get("phase") or "")
+            for p in phases
+            if p.get("ok")
+        ]
+        if sum(1 for p in phases if p.get("ok")) >= 2:
+            coverage["completeness"] = "siblings_checked"
+            coverage["answerable"] = True
+        payload = {
+            "ok": True,
+            "mode": "kernel_launch",
+            "pattern": str(pattern or "").strip(),
+            "coverage": coverage,
+            "phases": phases,
+            "entry": entry,
+            "count": sum(1 for p in phases if p.get("ok")),
+            "files": _group_by_file(
+                [p for p in phases if p.get("ok")] + ([entry] if entry else [])
+            ),
+        }
+        attach_query_hints(
+            payload,
+            pattern or "pipeIn",
+            count=int(payload["count"]),
+            kinds=("PIPE",),
+            mode="kernel_launch",
+        )
+        return _fit_payload(payload)
 
     def aggregate_gaps(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip().lower()

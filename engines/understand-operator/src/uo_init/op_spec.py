@@ -187,8 +187,6 @@ def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
     tiling_root = host_root / "op_tiling"
     if tiling_root.is_dir():
         for path in sorted(tiling_root.rglob("*.cpp")):
-            if "tiling" not in path.name.lower():
-                continue
             if is_other_arch_path(path, arch_dir):
                 continue
             out.append(path)

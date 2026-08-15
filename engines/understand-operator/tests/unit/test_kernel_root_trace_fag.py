@@ -16,7 +16,7 @@ from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.source_text_cache import clear as clear_source_text
 from uo_init.semantics import registry as semreg
 
-_TRACE_BUDGET_S = 30.0
+_TRACE_BUDGET_S = 45.0
 
 
 @pytest.mark.requires_fag

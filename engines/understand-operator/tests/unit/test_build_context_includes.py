@@ -55,6 +55,7 @@ def test_kernel_includes_still_prefer_asc_over_ascendc_basic_api():
     assert "asc/include/utils/std" in joined
     assert "asc/impl/utils/std/tuple" in joined
     assert "ascendc/include/highlevel_api" in joined
+    assert any(p.replace("\\", "/").endswith("include/op_common") for p in includes)
     # The ses_00c0 probe trap: -I …/ascendc/include/basic_api makes
     # ../../../../include/utils/std/tuple.h resolve under impl/include (missing).
     assert "ascendc/include/basic_api" not in joined
@@ -69,6 +70,41 @@ def test_kernel_args_do_not_pass_ascendc_basic_api():
         if a == "-I" and i + 1 < len(args) and "ascendc/include/basic_api" in args[i + 1]
     ]
     assert bad == []
+
+
+def test_kernel_yaml_does_not_globally_force_include_kernel_tiling():
+    import yaml
+
+    doc = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "spec" / "build_context.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    force = (doc.get("kernel") or {}).get("force_include") or []
+    joined = "\n".join(str(x) for x in force)
+    assert "bisheng_prelude.h" in joined
+    assert "struct SoftMaxTiling" not in joined
+    # Real CANN header is attached by include_heal on unknown-type, not globally.
+    assert "kernel_tiling/kernel_tiling.h" not in joined
+
+
+def test_kernel_force_include_skips_missing_cann_tiling(tmp_path: Path):
+    ctx = BuildContext.load(
+        cann_root=str(tmp_path / "cann"),
+        ops_root=str(tmp_path / "ops"),
+        op_dir=str(tmp_path / "op"),
+        arch_dir="arch35",
+        apply_saved_extras=False,
+    )
+    force = [p.replace("\\", "/") for p in ctx.kernel_force_includes()]
+    assert any(p.endswith("bisheng_prelude.h") for p in force)
+    assert not any("kernel_tiling.h" in p for p in force)
+
+
+def test_kernel_defines_not_dynamic_compile_like_ut():
+    ctx = BuildContext.load(cann_root="/cann", ops_root="/ops", op_dir="/op", arch_dir="arch35")
+    defs = ctx.kernel_defines()
+    assert "NOT_DYNAMIC_COMPILE" in defs
 
 
 def test_cann_layout_issues_reports_missing(tmp_path: Path):

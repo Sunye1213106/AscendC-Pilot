@@ -53,7 +53,12 @@ _FUNCTION_RE = re.compile(
 _IDENT_RE = re.compile(r"(?<![0-9A-Za-z_])[A-Za-z_]\w*(?:\s*(?:\.|->|::)\s*[A-Za-z_]\w*)*")
 _API_TOKEN_RE = re.compile(r"\b(InputIndex|AttrIndex)::([A-Za-z_]\w*)")
 _INPUT_ACCESS_RE = re.compile(
-    r"\bGet(?:Optional)?Input(?:Shape|Desc)\s*\(\s*(?P<arg>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?|[-+]?\d+)"
+    r"\bGet(?:Optional|Dynamic)?Input(?:Shape|Desc|Tensor|DataType)?\s*\(\s*"
+    r"(?P<arg>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?|[-+]?\d+)"
+)
+_TILING_PACK_TOKEN_RE = re.compile(
+    r"\b(?:GET_TPL_TILING_KEY|GET_TILINGKEY|[A-Z][A-Z0-9_]*GET_TILING_?KEY|"
+    r"SetTilingKey|GetTilingKey|DoOpTiling|GenTilingKey)\b"
 )
 _ATTR_ACCESS_RE = re.compile(
     r"\bGetAttrPointer(?:\s*<[^>]+>)?\s*\(\s*(?P<arg>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?|[-+]?\d+)"
@@ -181,6 +186,7 @@ def trace_host_key_roots(
         "assignment_records": len(records),
         "policy": "canonical-source-producer/v3",
     }
+    _link_tiling_host_inputs(codemap, root, texts, api_maps)
     return codemap
 
 
@@ -561,6 +567,77 @@ def _link_api_accesses(
         codemap.link(RelationKind.DERIVES, runtime.id, expression.id, attrs={"provenance": "source_host_runtime_context"}, status="confirmed")
         linked = True
     return linked
+
+
+def _link_tiling_host_inputs(
+    codemap: CodeMap,
+    root: Path,
+    texts: list[tuple[Path, str]],
+    api_maps: dict[str, Any],
+) -> None:
+    """Host tiling that reads INPUT and packs keys is the selection path.
+
+    Catalog / mixed-literal TPL formulas can be compile-rooted without an
+    INPUT→KEY edge. When the same tiling file both accesses GetInput* and
+    packs keys, that access is the source-backed path.
+    """
+    packed = [
+        key
+        for key in codemap.by_kind(EntityKind.TILING_KEY)
+        if key.attrs.get("source_declared")
+        and (key.attrs.get("host_packing_expressions") or key.attrs.get("packing_value_sites"))
+    ]
+    packing_sources = [
+        e
+        for e in list(codemap.by_kind(EntityKind.VARIABLE)) + list(codemap.by_kind(EntityKind.FIELD))
+        if e.attrs.get("host_key_argument")
+    ]
+    if not packed:
+        return
+    tensor_inputs = [
+        e for e in codemap.by_kind(EntityKind.INPUT) if e.attrs.get("api_kind") == "tensor"
+    ]
+    if not tensor_inputs:
+        tensor_inputs = list(codemap.by_kind(EntityKind.INPUT))
+    if not tensor_inputs:
+        return
+    linked = 0
+    for path, text in texts:
+        if not _TILING_PACK_TOKEN_RE.search(text):
+            continue
+        if not _INPUT_ACCESS_RE.search(text) and not _ATTR_ACCESS_RE.search(text):
+            continue
+        accessed: list[Entity] = []
+        seen: set[str] = set()
+        for match in _INPUT_ACCESS_RE.finditer(text):
+            api = _api_from_index(match.group("arg"), "input", api_maps)
+            if api is not None and api.id not in seen:
+                seen.add(api.id)
+                accessed.append(api)
+        for match in _ATTR_ACCESS_RE.finditer(text):
+            api = _api_from_index(match.group("arg"), "attr", api_maps)
+            if api is not None and api.id not in seen:
+                seen.add(api.id)
+                accessed.append(api)
+        if not accessed:
+            accessed = tensor_inputs
+        file = _rel(root, path)
+        for inp in accessed:
+            for dest in (*packed, *packing_sources):
+                codemap.link(
+                    RelationKind.DERIVES,
+                    inp.id,
+                    dest.id,
+                    attrs={
+                        "provenance": "source_host_tiling_input",
+                        "file": file,
+                    },
+                    status="confirmed",
+                )
+                linked += 1
+    trace = codemap.meta.setdefault("host_key_root_trace", {})
+    if isinstance(trace, dict):
+        trace["tiling_input_key_links"] = linked
 
 
 def _api_from_index(raw: str, kind: str, api_maps: dict[str, Any]) -> Entity | None:

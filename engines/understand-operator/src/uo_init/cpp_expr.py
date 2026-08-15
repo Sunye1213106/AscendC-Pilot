@@ -333,11 +333,18 @@ class Parser:
         return Unknown(f"unexpected_token:{t.text}")
 
 
+# Guards longer than this are not tiling predicates; parsing them can hang
+# the host closure (mis-extracted nodes / macro soup).
+MAX_EXPR_CHARS = 4096
+
+
 @lru_cache(maxsize=16384)
 def parse_expr(src: str) -> Expr:
     """Parse a C++-ish expression. Cached: controllability re-parses the same
     guard / path-condition strings hundreds of times per operator.
     """
+    if len(src) > MAX_EXPR_CHARS:
+        return Unknown("expr_too_long")
     return Parser(tokenize(src)).parse()
 
 

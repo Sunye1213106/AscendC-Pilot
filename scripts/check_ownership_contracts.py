@@ -56,19 +56,8 @@ def audit(repo: Path) -> list[str]:
     prompts_dir = repo / "prompts" / "tasks"
     skills_dir = repo / "skills"
 
-    # All product workflows must be traversed (including those without slash if listed).
-    workflow_ids = (
-        "uo-init",
-        "uo-update",
-        "uo-query",
-        "tg-init",
-        "tg-plan",
-        "tg-solve",
-        "ce-review",
-    )
-    for wid in workflow_ids:
-        meta = WORKFLOWS.get(wid) or {}
-        if not meta or meta.get("reserved"):
+    for wid, meta in WORKFLOWS.items():
+        if not isinstance(meta, dict) or meta.get("reserved") or meta.get("alias_of"):
             continue
         write_roots = list(meta.get("write_roots") or [])
         root_scopes = write_roots_as_scopes(write_roots)
@@ -157,7 +146,9 @@ def audit(repo: Path) -> list[str]:
                                     f"{wid}/{aid}: agent role {ag_role!r} != action role {role_id!r}"
                                 )
 
-            # Action write paths ⊆ Agent write_scopes ⊆ Workflow write_roots
+            # Action write paths ⊆ Agent write_scopes, and ⊆ this workflow's
+            # write_roots. Do not require the agent's global ceiling to fit one
+            # workflow: shared agents (CE reviewer/engine) declare the union.
             write_scopes = [str(x) for x in (ag.get("write_scopes") or [])] if ag else []
             if agent_id == PRIMARY_AGENT_ID:
                 primary = _load_yaml(agents_dir / f"{PRIMARY_AGENT_ID}.yaml")
@@ -170,14 +161,14 @@ def audit(repo: Path) -> list[str]:
                             f"ACTION_WRITE_SCOPE_EXCEEDS_AGENT {wid}/{aid}: "
                             f"path={wp!r} not ⊆ agent write_scopes={write_scopes}"
                         )
-            if write_scopes and root_scopes:
-                for scope in write_scopes:
-                    if str(scope).startswith("runs"):
+            if action_writes and root_scopes:
+                for wp in action_writes:
+                    if str(wp).replace("\\", "/").startswith("runs"):
                         continue
-                    if not path_within_scopes(scope, root_scopes):
+                    if not path_within_scopes(wp, root_scopes):
                         errors.append(
                             f"ACTION_WRITE_SCOPE_EXCEEDS_WORKFLOW {wid}/{aid}: "
-                            f"agent_scope={scope!r} not ⊆ write_roots={write_roots}"
+                            f"path={wp!r} not ⊆ write_roots={write_roots}"
                         )
 
             # Action read paths ⊆ Agent read_scopes (when Action declares reads)
@@ -212,15 +203,6 @@ def audit(repo: Path) -> list[str]:
             }:
                 if role_id not in {"controller", "primary_interactive"}:
                     errors.append(f"{wid}/{aid}: primary_interactive should use controller role")
-
-    # Also cover any other non-reserved slash workflows not in the fixed list.
-    for wid, meta in WORKFLOWS.items():
-        if wid in workflow_ids:
-            continue
-        if meta.get("reserved") or not meta.get("slash"):
-            continue
-        # Light check: skill markers already covered by check_skill_action_markers.
-        pass
 
     # generated/ is gitignored: recompose opencode and validate the fresh tree
     # instead of comparing against a committed golden copy.

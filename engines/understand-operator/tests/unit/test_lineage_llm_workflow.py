@@ -8,7 +8,7 @@ from uo_init.lineage import (
     tpl_vs_host_diff,
 )
 from uo_init.llm_harness import Ledger, LlmOutput
-from uo_init.workflow import run_operator_report
+from uo_init.operator_report import run_operator_report
 
 
 def test_lineage_terminates_in_legal_root():

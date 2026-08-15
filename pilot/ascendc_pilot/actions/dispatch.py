@@ -153,6 +153,43 @@ def consume_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any
     return claim_dispatch_ticket(project_root, ticket_id)
 
 
+def _compact_dispatch_tasks(raw: Any) -> list[dict[str, str]]:
+    """Keep 2+ focused Task stubs for Cursor-style fan-out."""
+    if not isinstance(raw, list) or len(raw) < 2:
+        return []
+    out: list[dict[str, str]] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        stub = str(row.get("task_prompt_stub") or "").strip()
+        if not stub:
+            continue
+        out.append(
+            {
+                "slice_id": str(row.get("slice_id") or ""),
+                "focus": str(row.get("focus") or ""),
+                "first_mode": str(row.get("first_mode") or ""),
+                "actor_id": str(row.get("actor_id") or ""),
+                "action_id": str(row.get("action_id") or ""),
+                "task_prompt_stub": stub,
+            }
+        )
+    return out if len(out) >= 2 else []
+
+
+def _fanout_dispatch_message_zh(actor_id: str, tasks: list[dict[str, str]]) -> str:
+    ids = ", ".join(t["slice_id"] for t in tasks if t.get("slice_id"))
+    n = len(tasks)
+    return (
+        f"请在同一轮并行派发 {n} 个 OpenCode 原生 Task（agent={actor_id}）。"
+        "每个 prompt 必须原样为 host_step.tasks[i].task_prompt_stub。"
+        "不要用父 task_prompt_stub 再开一个。"
+        "全部返回后按各 Task 原生全文综合再 finalize（一张 ticket）；"
+        "禁止只转述某一个，禁止发明子代理没引用的事实。"
+        + (f" 切片：{ids}。" if ids else "")
+    )
+
+
 def build_host_step(
     *,
     kind: str,
@@ -184,6 +221,9 @@ def build_host_step(
         step["lease_id"] = prep.get("lease_id") or ""
         step["run_id"] = prep.get("run_id") or ""
         step["finalize_hint"] = prep.get("finalize_hint") or ""
+        tasks = _compact_dispatch_tasks(prep.get("dispatch_tasks"))
+        if tasks:
+            step["tasks"] = tasks
     if ask_question:
         step["ask_question"] = ask_question
     if extra:
@@ -514,20 +554,28 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             session_dir=str(prep.get("session_dir") or ""),
             task_prompt_stub=str(prep.get("task_prompt_stub") or ""),
         )
+        actor = str(prep.get("actor_id") or actor_id)
+        tasks = _compact_dispatch_tasks(prep.get("dispatch_tasks"))
+        if tasks:
+            dispatch_msg = str(prep.get("message_zh") or "") or _fanout_dispatch_message_zh(
+                actor, tasks
+            )
+        else:
+            dispatch_msg = str(
+                prep.get("message_zh")
+                or (
+                    f"请用 OpenCode 原生 Task（agent={actor}）"
+                    "原样派发 task_prompt_stub；点 Task 卡片可跳进子会话看思考。不要改写 stub。"
+                )
+            )
         out["host_step"] = build_host_step(
             kind="dispatch_subagent",
             project_root=project_root,
             action_id=action_id,
-            actor_id=str(prep.get("actor_id") or actor_id),
+            actor_id=actor,
             ticket=ticket,
             prepare=prep,
-            message_zh=str(
-                prep.get("message_zh")
-                or (
-                    f"请用 OpenCode 原生 Task（agent={prep.get('actor_id') or actor_id}）"
-                    "原样派发 task_prompt_stub；点 Task 卡片可跳进子会话看思考。不要改写 stub。"
-                )
-            ),
+            message_zh=dispatch_msg,
         )
         out["prepare"] = prep
         out["dispatch_ticket"] = ticket.get("ticket_id")

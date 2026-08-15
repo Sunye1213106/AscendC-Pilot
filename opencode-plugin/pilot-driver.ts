@@ -108,14 +108,49 @@ const HOST_STEP_MODEL_KEYS = [
   "answer_status",
   "read_after_done",
   "task_prompt_stub",
+  "tasks",
   "session_dir",
 ] as const
+
+const HOST_STEP_TASK_KEYS = [
+  "slice_id",
+  "focus",
+  "first_mode",
+  "actor_id",
+  "action_id",
+  "task_prompt_stub",
+] as const
+
+function compactDispatchTasks(value: unknown): Array<Record<string, unknown>> | undefined {
+  if (!Array.isArray(value) || value.length < 2) return undefined
+  const out: Array<Record<string, unknown>> = []
+  for (const row of value) {
+    if (!row || typeof row !== "object") continue
+    const rec = row as Record<string, unknown>
+    const stub = String(rec.task_prompt_stub || "").trim()
+    if (!stub) continue
+    const compact: Record<string, unknown> = {}
+    for (const key of HOST_STEP_TASK_KEYS) {
+      const item = rec[key]
+      if (item == null || item === "") continue
+      compact[key] = item
+    }
+    compact.task_prompt_stub = stub
+    out.push(compact)
+  }
+  return out.length >= 2 ? out : undefined
+}
 
 function compactHostStep(step: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const key of HOST_STEP_MODEL_KEYS) {
     const value = step[key]
     if (value == null || value === "") continue
+    if (key === "tasks") {
+      const tasks = compactDispatchTasks(value)
+      if (tasks) out.tasks = tasks
+      continue
+    }
     out[key] = value
   }
   return out
@@ -146,6 +181,8 @@ export function compactPilotRunPayload(result: unknown): Record<string, unknown>
   if (err) out.error = err
   if (rec.answer_from_source === true) out.answer_from_source = true
   if (rec.reason_code) out.reason_code = rec.reason_code
+  if (rec.native_task === true) out.native_task = true
+  if (rec.native_tasks === true) out.native_tasks = true
   return out
 }
 
@@ -580,6 +617,18 @@ function createProgressReporter(
   }
 }
 
+function acpControlEnv(opts?: {
+  sessionId?: string
+  workflow?: string
+}): Record<string, string> {
+  const env: Record<string, string> = {}
+  const sid = String(opts?.sessionId || "").trim()
+  const wf = String(opts?.workflow || "").trim()
+  if (sid) env.ASCENDC_SESSION_ID = sid
+  if (wf) env.ASCENDC_WORKFLOW_ID = wf
+  return env
+}
+
 function runAcpJson(
   argv: string[],
   project: string,
@@ -692,6 +741,8 @@ export type PendingDispatch = {
   actor: string
   action: string
   ts: number
+  sessionId?: string
+  workflow?: string
 }
 
 export function pendingDispatchPath(): string {
@@ -737,7 +788,9 @@ export async function submitDispatchResult(
   project: string,
   ticket: string,
   resultText: string,
+  opts?: { sessionId?: string; workflow?: string },
 ): Promise<Record<string, unknown>> {
+  const pending = readLatestPendingDispatch()
   return runAcpJson(
     [
       "dispatch-result",
@@ -749,19 +802,25 @@ export async function submitDispatchResult(
       String(resultText || "").slice(0, 200_000),
     ],
     project,
-    { timeoutMs: 180_000 },
+    {
+      timeoutMs: 180_000,
+      env: acpControlEnv({
+        sessionId: opts?.sessionId || pending?.sessionId,
+        workflow: opts?.workflow || pending?.workflow,
+      }),
+    },
   )
 }
 
+/** Cap matches ``acp dispatch-result --result-text`` (keep Explore-length answers). */
+export const NATIVE_TASK_RESULT_CAP = 200_000
+
+/**
+ * Native Task handoff (Cursor Explore style): keep the full child message.
+ * Do not strip to the yaml fence — that discarded citations and source windows.
+ */
 export function extractKbAnswer(text: string): string {
-  const src = String(text || "")
-  const fence = src.match(/```(?:ya?ml)?\s*\n([\s\S]*?```)/i)
-  if (fence) {
-    const inner = fence[1].replace(/```\s*$/, "").trim()
-    if (/schema\s*:\s*kb-answer-v1/i.test(inner)) return inner
-  }
-  if (/schema\s*:\s*kb-answer-v1/i.test(src)) return src
-  return src.slice(0, 24000)
+  return String(text || "").slice(0, NATIVE_TASK_RESULT_CAP)
 }
 
 function authIpcDir(): string {
@@ -837,6 +896,7 @@ type HostStep = {
   cwd?: string
   dispatch_ticket?: string
   task_prompt_stub?: string
+  tasks?: Array<Record<string, unknown>>
   session_dir?: string
   lease_id?: string
   run_id?: string
@@ -1125,7 +1185,11 @@ async function handleAskHumanStep(args: {
       const recorded = await runAcpJson(
         ["answer", "--project", project, "--request-id", requestId, "--value", label],
         project,
-        { timeoutMs: 60_000, abort: toolCtx?.abort },
+        {
+          timeoutMs: 60_000,
+          abort: toolCtx?.abort,
+          env: acpControlEnv({ sessionId: parentSessionId }),
+        },
       )
       log.push({ event: "acp_answer", ok: recorded.ok !== false, value: label })
     }
@@ -1236,7 +1300,7 @@ async function dispatchSubagentOnce(args: {
   } else if (data?.info?.content) {
     finalText = String(data.info.content)
   } else {
-    finalText = JSON.stringify(data || {}).slice(0, 24000)
+    finalText = JSON.stringify(data || {}).slice(0, NATIVE_TASK_RESULT_CAP)
   }
   const resultText = extractKbAnswer(finalText)
 
@@ -1256,6 +1320,7 @@ async function dispatchSubagentOnce(args: {
       timeoutMs: 300_000,
       abort,
       onStderrLine: (line) => reporter?.applyStderrLine(line),
+      env: acpControlEnv({ workflow }),
     },
   )
   log.push({
@@ -1267,16 +1332,23 @@ async function dispatchSubagentOnce(args: {
   return { ok: Boolean(finished.ok), finished, host_step: step }
 }
 
+function hostStepTasks(step: HostStep): Array<Record<string, unknown>> {
+  return compactDispatchTasks(step.tasks) || []
+}
+
 function nativeTaskHandoff(args: {
   step: HostStep
   project: string
   log: Array<Record<string, unknown>>
   todo?: unknown
+  sessionId?: string
+  workflow?: string
 }): Record<string, unknown> {
   const actor = String(args.step.actor_id || "").trim()
   const stub = String(args.step.task_prompt_stub || "").trim()
   const ticket = String(args.step.dispatch_ticket || "").trim()
-  if (!actor || !stub || !ticket) {
+  const tasks = hostStepTasks(args.step)
+  if (!actor || !ticket || (!stub && tasks.length < 2)) {
     return {
       ok: false,
       error: "DISPATCH_INCOMPLETE",
@@ -1291,7 +1363,31 @@ function nativeTaskHandoff(args: {
     actor,
     action: String(args.step.action_id || ""),
     ts: Date.now(),
+    sessionId: args.sessionId,
+    workflow: args.workflow,
   })
+  if (tasks.length >= 2) {
+    const ids = tasks
+      .map((row) => String(row.slice_id || "").trim())
+      .filter(Boolean)
+      .join(", ")
+    const messageZh =
+      `请在同一轮并行派发 ${tasks.length} 个 OpenCode 原生 Task：agent=\`${actor}\`。` +
+      `每个 Task 的 prompt 必须原样为 host_step.tasks[i].task_prompt_stub（禁止改写）。` +
+      `不要再用 host_step.task_prompt_stub 开第 ${tasks.length + 1} 个子代理。` +
+      `点各 Task 卡片可跳进子会话看思考。全部返回后由 Primary 综合成一份 kb-answer-v1，` +
+      `禁止只转述某一个，禁止发明子代理没引用的事实。综合后再 finalize（一张 ticket）。` +
+      (ids ? `切片：${ids}。` : "")
+    return {
+      ok: true,
+      native_task: true,
+      native_tasks: true,
+      host_step: { ...args.step, tasks, message_zh: messageZh },
+      log: args.log,
+      todo: args.todo,
+      message_zh: messageZh,
+    }
+  }
   const messageZh =
     `请用 OpenCode 原生 Task：agent=\`${actor}\`，prompt 必须原样为 host_step.task_prompt_stub（禁止改写）。` +
     `点 Task 卡片可跳进子会话看思考过程。子代理答完后把答案说给人听。`
@@ -1319,6 +1415,19 @@ export async function runPilotDriver(
   if (!project || !workflow) {
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
   }
+  if (workflow === "uo-query") {
+    reporter?.setStatus("done")
+    const messageZh =
+      "查询不是 Host 工作流，不要再用 pilot_run。先对人说出路由（短问自查 / 几个 uo-query 子代理），" +
+      "再自己跑 `acp uo-query --project <算子绝对路径> --mode`，或同一轮原生 Task(agent=`uo-query`)。" +
+      "禁止为空转「问题路由」开子代理。"
+    return {
+      ok: true,
+      reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
+      host_step: { kind: "primary_router", message_zh: messageZh },
+      message_zh: messageZh,
+    }
+  }
 
   const parentSessionId = String(
     toolCtx?.sessionID || toolCtx?.sessionId || "",
@@ -1333,6 +1442,7 @@ export async function runPilotDriver(
     timeoutMs,
     abort: toolCtx?.abort,
     onStderrLine: (line: string) => reporter?.applyStderrLine(line),
+    env: acpControlEnv({ sessionId: parentSessionId, workflow }),
   })
 
   // force_new / 删除重开 applies only to this start, not continue_goal's next workflow.
@@ -1402,11 +1512,17 @@ export async function runPilotDriver(
       const decision = String(asked.resume_decision || asked.choice || "")
       const archChoice = String(asked.architecture_choice || "")
       if (decision === "query") {
-        workflow = "uo-query"
-        applyForceNew = false
-        lastResumeDecision = ""
-        payload = await startOnce()
-        continue
+        const messageZh =
+          "查询不是 Host 工作流。先对人说出路由（短问自查 / 几个 uo-query 子代理），" +
+          "再自己跑 `acp uo-query` 或原生 Task(agent=`uo-query`)。不要 pilot_run uo-query。"
+        return {
+          ok: true,
+          reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
+          host_step: { kind: "primary_router", message_zh: messageZh },
+          message_zh: messageZh,
+          log: logAcc,
+          todo: payload.todo,
+        }
       }
       if (decision === "uo-init") {
         workflow = "uo-init"
@@ -1696,7 +1812,14 @@ export async function runPilotDriver(
 
     lastStep = step
     reporter?.note(`Task ${String(step.actor_id || "")}`, String(step.action_id || ""))
-    const handed = nativeTaskHandoff({ step, project, log, todo: todoPayload })
+    const handed = nativeTaskHandoff({
+      step,
+      project,
+      log,
+      todo: todoPayload,
+      sessionId: parentSessionId,
+      workflow,
+    })
     if (handed.ok === false) reporter?.setStatus("fail")
     else reporter?.setStatus("ok")
     return handed
@@ -1724,6 +1847,8 @@ export function createPilotRunTool(
         "Prefer this over manually chaining acp start / run-action. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
         "(agent=actor_id, prompt=task_prompt_stub verbatim) so the user can jump into the child and see thinking. " +
+        "If host_step.tasks has two or more entries, launch ALL of them in the same turn " +
+        "(each prompt=tasks[i].task_prompt_stub verbatim), wait, then synthesize one kb-answer-v1. " +
         "Host Driver syncs Todo and owns AskQuestion when the UI is available. " +
         "Args: workflow (e.g. uo-init), project (operator dir), optional architecture.",
       args: {
@@ -1823,7 +1948,7 @@ export function createPilotRunTool(
  */
 export default async function PilotDriverLibraryPlugin(_ctx?: unknown) {
   return {
-    config: async () => {},
+    config: async () => ({}),
     dispose: async () => {},
   }
 }

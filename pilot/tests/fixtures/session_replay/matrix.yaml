@@ -33,7 +33,7 @@ scenarios:
   - id: human_required
     description: Human-interaction actions reject finalize-shaped paths without a decision receipt.
   - id: resume
-    description: Restarting an active run requires an explicit continue/reinit decision.
+    description: Exclusive family restart requires continue/reinit; shared (query/review) never asks.
   - id: gate_fail
     description: rework_required only exposes the failed action retry target.
   - id: stale_kb_or_receipt

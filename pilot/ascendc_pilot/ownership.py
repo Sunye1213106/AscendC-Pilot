@@ -171,7 +171,11 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/run.yaml",
             "context/pilot_params.yaml",
         ],
-        "semantic_bind": ["tg/realization/binding_inventory.yaml"],
+        "semantic_bind": [
+            "tg/realization/binding_inventory.yaml",
+            "tg/init/test_repo_inventory.yaml",
+            "tg/init/test_repo_contract.yaml",
+        ],
         "integrity_gate": ["tg/contract/integrity_gate.yaml"],
         "init_audit": ["tg/init/audit_report.yaml"],
         "human_confirm": [

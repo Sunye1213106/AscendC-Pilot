@@ -200,7 +200,10 @@ def adapter_pack_dir(root: Path | None = None) -> Path | None:
         if raw:
             bases.append(Path(raw).expanduser().resolve())
     seen: set[Path] = set()
-    arch = _arch_name()
+    try:
+        arch = _arch_name()
+    except ValueError:
+        return None
     for base in bases:
         if base in seen:
             continue

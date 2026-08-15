@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Source locator over a unified ``.uo`` CodeMap.
 
-Production resolution is ``.uo`` only. sqlite is accepted when the caller
-passes an explicit database file (tests / one-shot migrate).
+Production resolution is ``.uo`` only.
 """
 from __future__ import annotations
 
@@ -31,6 +30,8 @@ _SITE_KEYS = (
     "value_defining_sites",
     "producer_sites",
     "check_sites",
+    "definition_sites",
+    "fused_outer_candidates",
 )
 
 
@@ -135,19 +136,8 @@ def resolve_locator_database(uo_root: str | Path) -> Path:
     )
 
 
-def migrate_resolve_legacy_sqlite(uo_root: str | Path) -> Path:
-    """One-shot migrate/test helper: locate ``indexes/kb_graph.sqlite``."""
-    root = Path(uo_root).expanduser().resolve()
-    if root.is_file() and root.name == "kb_graph.sqlite":
-        return root
-    legacy = root / "indexes" / "kb_graph.sqlite"
-    if legacy.is_file():
-        return legacy
-    raise FileNotFoundError(f"no indexes/kb_graph.sqlite under {root}")
-
-
 class SourceLocator:
-    """Locate entities and Host write sites inside ``.uo`` or legacy sqlite."""
+    """Locate entities and Host write sites inside ``.uo``."""
 
     def __init__(self, database: str | Path):
         self.database = Path(database).expanduser().resolve()
@@ -191,7 +181,7 @@ class SourceLocator:
             return self._locate_codemap(
                 needle, kinds=kinds, limit=limit, include_sites=include_sites
             )
-        return self._locate_legacy(needle, kinds=kinds, limit=limit)
+        return []
 
     def locate_dim(self, name: str, *, limit: int = 20) -> list[Location]:
         return self.locate(
@@ -220,7 +210,7 @@ class SourceLocator:
         )
         if hits or self._is_codemap():
             return hits
-        return self._locate_legacy_field_writer(needle, limit=limit)
+        return []
 
     def _locate_codemap(
         self,
@@ -302,90 +292,6 @@ class SourceLocator:
             if len(out) >= int(limit):
                 break
         return out[: int(limit)]
-
-    def _locate_legacy(
-        self,
-        needle: str,
-        *,
-        kinds: Iterable[str] | None,
-        limit: int,
-    ) -> list[Location]:
-        kinds_list = [str(k) for k in (kinds or ()) if str(k)]
-        like = f"%{needle}%"
-        params: list[Any] = [needle, needle, like, like, like]
-        kind_filter = ""
-        if kinds_list:
-            placeholders = ",".join("?" for _ in kinds_list)
-            kind_filter = f" AND n.kind IN ({placeholders})"
-            params.extend(kinds_list)
-        params.extend([needle, needle, int(limit)])
-        sql = f"""
-            SELECT DISTINCT
-              n.id AS entity_id,
-              n.kind AS kind,
-              IFNULL(ev.file, '') AS file,
-              IFNULL(ev.line_start, 0) AS line_start,
-              IFNULL(ev.line_end, 0) AS line_end,
-              IFNULL(ev.snippet, '') AS snippet
-            FROM node n
-            LEFT JOIN node_evidence ne ON ne.node_id = n.id
-            LEFT JOIN evidence ev ON ev.id = ne.evidence_id
-            WHERE n.id = ?
-               OR IFNULL(n.name, '') = ?
-               OR n.id LIKE ?
-               OR IFNULL(n.name, '') LIKE ?
-               OR n.data LIKE ?
-               {kind_filter}
-            ORDER BY
-              CASE WHEN n.id = ? OR IFNULL(n.name, '') = ? THEN 0 ELSE 1 END,
-              n.kind, n.id, ev.line_start
-            LIMIT ?
-        """
-        with self._connect() as connection:
-            rows = connection.execute(sql, tuple(params)).fetchall()
-        return [
-            Location(
-                entity_id=str(row["entity_id"]),
-                kind=str(row["kind"] or ""),
-                file=str(row["file"] or ""),
-                line_start=int(row["line_start"] or 0),
-                line_end=int(row["line_end"] or row["line_start"] or 0),
-                snippet=str(row["snippet"] or ""),
-                window_sha256=_window_sha(str(row["snippet"] or "")),
-            )
-            for row in rows
-        ]
-
-    def _locate_legacy_field_writer(self, needle: str, *, limit: int) -> list[Location]:
-        with self._connect() as connection:
-            try:
-                rows = connection.execute(
-                    """
-                    SELECT field, file, line, function, rhs
-                    FROM field_writer
-                    WHERE field = ? OR field LIKE ?
-                    ORDER BY field, file, line
-                    LIMIT ?
-                    """,
-                    (needle, f"%{needle}%", int(limit)),
-                ).fetchall()
-            except sqlite3.Error:
-                return []
-        out: list[Location] = []
-        for row in rows:
-            snippet = str(row["rhs"] or row["function"] or "")
-            out.append(
-                Location(
-                    entity_id=str(row["field"] or needle),
-                    kind="TilingDataField",
-                    file=str(row["file"] or ""),
-                    line_start=int(row["line"] or 0),
-                    line_end=int(row["line"] or 0),
-                    snippet=snippet,
-                    window_sha256=_window_sha(snippet),
-                )
-            )
-        return out
 
 
 def open_locator(uo_root: str | Path) -> SourceLocator:

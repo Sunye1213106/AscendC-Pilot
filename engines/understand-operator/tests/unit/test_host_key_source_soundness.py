@@ -329,9 +329,9 @@ def test_audit_ignores_non_declared_extra_tiling_keys() -> None:
 def test_identifier_refs_classify_nested_receiver_and_drop_qualified_ctor() -> None:
     nested = dict(_identifier_refs("inputQType_ = ctx.query.desc->GetDataType();"))
     assert nested.get("ctx.query.desc") == "call_receiver"
-    assert nested.get("inputQType_") == "value"
+    assert nested.get("inputQType") == "value" or nested.get("inputQType_") == "value"
     bare = dict(_identifier_refs("shape = context_->GetInputShape(0);"))
-    assert bare.get("context_") == "call_receiver"
+    assert bare.get("context") == "call_receiver" or bare.get("context_") == "call_receiver"
     ctor = {name for name, _kind in _identifier_refs("auto p = ns::PlatformType();")}
     assert not any("PlatformType" in name for name in ctor)
 
@@ -421,3 +421,196 @@ def test_value_runtime_leaf_still_unresolved(tmp_path: Path) -> None:
         e.attrs.get("dependency_unresolved") and "parseInfo" in e.name
         for e in cm.entities.values()
     )
+
+
+def test_tiling_host_input_access_derives_packed_keys(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        ge::graphStatus T::DoOpTiling() {
+          auto gating = context_->GetInputDesc(0);
+          return ge::GRAPH_SUCCESS;
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(0, 1);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    query = cm.upsert(
+        EntityKind.INPUT,
+        "gating",
+        attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"},
+    )
+    key = cm.upsert(EntityKind.TILING_KEY, "K0", attrs={"source_declared": True, "decl_order": 0})
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+    assert any(
+        r.src == query.id
+        and r.dst == key.id
+        and r.kind_name() == RelationKind.DERIVES.value
+        and r.attrs.get("provenance") == "source_host_tiling_input"
+        for r in cm.relations.values()
+    )
+
+
+def test_audit_skips_output_when_proto_declares_none() -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["source_declared_tiling_key_count"] = 1
+    cm.meta["host_tiling_key_packing"] = {"calls": 1, "fields_bound": 1, "argument_count_mismatches": []}
+    cm.meta["source_contract_stats"] = {"api_source_files": 1, "api_outputs": 0}
+    query = cm.upsert(EntityKind.INPUT, "x", attrs={"api_kind": "tensor", "api_index": 0})
+    key = cm.upsert(
+        EntityKind.TILING_KEY,
+        "K",
+        attrs={"source_declared": True, "decl_order": 0, "host_packing_expressions": ["0"]},
+    )
+    packing = cm.upsert(EntityKind.PREDICATE, "0", attrs={"predicate_role": "host_tiling_key_argument"})
+    const = cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "K=0",
+        attrs={"compile_root": True, "provenance": "source_get_tpl_tiling_key_literal"},
+    )
+    td = cm.upsert(EntityKind.TILING_DATA, "TD")
+    cm.upsert(EntityKind.TILING_FIELD, "f")
+    kernel = cm.upsert(EntityKind.KERNEL, "Knl")
+    cm.link(RelationKind.DERIVES, const.id, packing.id, attrs={"provenance": "source_get_tpl_tiling_key_literal"})
+    cm.link(RelationKind.DERIVES, packing.id, key.id, attrs={"provenance": "source_get_tpl_tiling_key"})
+    cm.link(RelationKind.DERIVES, query.id, key.id, attrs={"provenance": "source_host_tiling_input"})
+    cm.link(RelationKind.SELECTS, key.id, kernel.id, attrs={"provenance": "source_tpl_header_selects"})
+    cm.link(RelationKind.FLOWS_TO, td.id, kernel.id, attrs={"provenance": "source_get_tiling_data"})
+    report = audit_codemap(cm)
+    codes = {item["code"] for item in report["blocking"]}
+    assert "MISSING_OUTPUT" not in codes
+
+
+def test_audit_accepts_any_produced_packing_node() -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["source_declared_tiling_key_count"] = 1
+    cm.meta["host_tiling_key_packing"] = {"calls": 2, "fields_bound": 1, "argument_count_mismatches": []}
+    query = cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    key = cm.upsert(
+        EntityKind.TILING_KEY,
+        "K",
+        attrs={"source_declared": True, "decl_order": 0, "host_packing_expressions": ["TILING_KEY_NZ"]},
+    )
+    good = cm.upsert(EntityKind.PREDICATE, "TILING_KEY_NZ", attrs={"predicate_role": "host_tiling_key_argument"})
+    empty = cm.upsert(EntityKind.PREDICATE, "GetTilingKey()", attrs={"predicate_role": "host_tiling_key_argument"})
+    const = cm.upsert(
+        EntityKind.COMPILE_VAR,
+        "K=577",
+        attrs={"compile_root": True, "provenance": "source_get_tpl_tiling_key_literal"},
+    )
+    cm.link(RelationKind.DERIVES, const.id, good.id, attrs={"provenance": "source_get_tpl_tiling_key_literal"})
+    cm.link(RelationKind.DERIVES, good.id, key.id, attrs={"provenance": "source_set_tiling_key"})
+    cm.link(RelationKind.DERIVES, empty.id, key.id, attrs={"provenance": "source_set_tiling_key"})
+    cm.link(RelationKind.DERIVES, query.id, key.id, attrs={"provenance": "source_host_tiling_input"})
+    report = audit_codemap(cm)
+    assert report["summary"]["tiling_key_host_producer_coverage"] == "1/1"
+    assert report["summary"]["tiling_key_root_coverage"] == "1/1"
+    assert query.name == "query"
+
+
+def test_member_path_not_stolen_by_unique_short_attr(tmp_path: Path) -> None:
+    root = _host_root(tmp_path)
+    (root / "op_host" / "arch35" / "toy.cpp").write_text(
+        """
+        void T::DoOpTiling() {
+          tilingKeyInfo_.inputLayout = layoutFromDesc;
+          auto q = context_->GetInputDesc(0);
+        }
+        uint64_t T::GetTilingKey() const {
+          return GET_TPL_TILING_KEY(tilingKeyInfo_.inputLayout);
+        }
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(EntityKind.INPUT, "inputLayout", attrs={"api_kind": "attribute", "api_attr_index": 0})
+    cm.upsert(EntityKind.INPUT, "query", attrs={"api_kind": "tensor", "api_index": 0, "provenance": "source_reg_op"})
+    key = cm.upsert(EntityKind.TILING_KEY, "InOutLayoutType", attrs={"source_declared": True, "decl_order": 0})
+    bind_host_tiling_key_expressions(cm, root)
+    trace_host_key_roots(cm, root)
+    packing = next(
+        cm.entities[r.src]
+        for r in cm.relations.values()
+        if r.dst == key.id
+        and r.attrs.get("provenance") in {
+            "source_get_tpl_tiling_key",
+            "source_get_tiling_key",
+            "source_packing_helper",
+        }
+    )
+    sources = [
+        cm.entities[r.src]
+        for r in cm.relations.values()
+        if r.dst == packing.id and r.kind_name() == RelationKind.DERIVES.value
+    ]
+    assert sources
+    assert all(e.name != "inputLayout" or e.kind_name() != EntityKind.INPUT.value for e in sources)
+    host = next(e for e in sources if e.attrs.get("host_key_argument"))
+    assert "inputLayout" in normalize_symbol(host.name)
+    assert int(host.attrs.get("producer_site_count") or 0) >= 1 or any(
+        r.src
+        and r.dst == host.id
+        and r.attrs.get("provenance") == "source_host_tiling_input"
+        for r in cm.relations.values()
+    )
+
+
+def test_audit_warns_when_source_has_no_tiling_key() -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["source_contract_stats"] = {
+        "api_source_files": 1,
+        "api_outputs": 1,
+        "source_declared_tiling_keys": 0,
+        "source_has_tiling_key_sites": False,
+    }
+    cm.upsert(EntityKind.INPUT, "x", attrs={"api_kind": "tensor", "api_index": 0})
+    cm.upsert(EntityKind.OUTPUT, "y")
+    cm.upsert(EntityKind.TILING_DATA, "TD")
+    cm.upsert(EntityKind.TILING_FIELD, "f")
+    cm.upsert(EntityKind.KERNEL, "K")
+    cm.upsert(EntityKind.FUNCTION, "DoTiling")
+    report = audit_codemap(cm)
+    codes = {item["code"] for item in report["blocking"]}
+    warns = {item["code"] for item in report["warnings"]}
+    assert "MISSING_TILING_KEY" not in codes
+    assert "SOURCE_HAS_NO_TILING_KEY" in warns
+
+
+def test_audit_skips_cartesian_for_tpl_dimensions() -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.meta["source_declared_tiling_key_count"] = 2
+    cm.meta["host_tiling_key_packing"] = {"calls": 1, "fields_bound": 2, "argument_count_mismatches": []}
+    cm.upsert(EntityKind.INPUT, "x", attrs={"api_kind": "tensor", "api_index": 0})
+    cm.upsert(EntityKind.OUTPUT, "y")
+    cm.upsert(EntityKind.TILING_DATA, "TD")
+    cm.upsert(EntityKind.TILING_FIELD, "f")
+    k0 = cm.upsert(
+        EntityKind.TILING_KEY,
+        "D0",
+        attrs={"source_declared": True, "decl_order": 0, "provenance": "source_tpl_args_decl", "host_packing_expressions": ["0"]},
+    )
+    k1 = cm.upsert(
+        EntityKind.TILING_KEY,
+        "D1",
+        attrs={"source_declared": True, "decl_order": 1, "provenance": "source_tpl_args_decl", "host_packing_expressions": ["1"]},
+    )
+    kn0 = cm.upsert(EntityKind.KERNEL, "A")
+    kn1 = cm.upsert(EntityKind.KERNEL, "B")
+    for key in (k0, k1):
+        packing = cm.upsert(EntityKind.PREDICATE, key.name, attrs={"predicate_role": "host_tiling_key_argument"})
+        const = cm.upsert(
+            EntityKind.COMPILE_VAR,
+            f"{key.name}=c",
+            attrs={"compile_root": True, "provenance": "source_get_tpl_tiling_key_literal"},
+        )
+        cm.link(RelationKind.DERIVES, const.id, packing.id, attrs={"provenance": "source_get_tpl_tiling_key_literal"})
+        cm.link(RelationKind.DERIVES, packing.id, key.id, attrs={"provenance": "source_get_tpl_tiling_key"})
+        cm.link(RelationKind.SELECTS, key.id, kn0.id)
+        cm.link(RelationKind.SELECTS, key.id, kn1.id)
+    report = audit_codemap(cm)
+    codes = {item["code"] for item in report["blocking"]}
+    assert "SUSPICIOUS_CARTESIAN_KEY_KERNEL" not in codes

@@ -33,8 +33,10 @@ from uo_init.passes.tiling_field_complete import complete_tiling_fields
 from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
 from uo_init.passes.value_defining_sites import enrich_value_defining_sites
 from uo_init.passes.host_checks import enrich_host_checks
+from uo_init.passes.tiling_context_apis import enrich_tiling_context_apis
 from uo_init.passes.tiling_kernel_reads import rebuild_verified_tiling_reads
 from uo_init.passes.tiling_registration import enrich_tiling_registrations
+from uo_init.passes.tiling_template_registry import enrich_tiling_template_registry
 from uo_init.resolve.semantic_gap import list_gaps
 from uo_init.store.writer import uo_product_path, write_codemap
 from uo_init.timing import log as _tlog, timing_enabled
@@ -195,6 +197,7 @@ def compile_codemap(
         for name, fn, kwargs in (
             ("inventory", inventory_source_files, {}),
             ("source_contract", enrich_codemap_from_operator_source, {}),
+            ("tiling_template_registry", enrich_tiling_template_registry, {}),
             ("tiling_fields", complete_tiling_fields, {}),
             ("host_tiling_key", bind_host_tiling_key_expressions, {}),
             ("host_defuse", trace_host_key_roots, {}),
@@ -215,10 +218,14 @@ def compile_codemap(
             ("kernel_tiling_metrics", finalize_kernel_tiling_metrics, {"skip_arch": True}),
             # Kernel Root Trace (UO canonical): wrappers / calls → AscendC root.
             ("kernel_root_trace", finalize_kernel_root_trace, {}),
+            # After root-trace purge: host TilingContext APIs are not kernel ops.
+            ("tiling_context_apis", enrich_tiling_context_apis, {"needs_host_ir": True}),
         ):
             t0 = time.perf_counter()
             if kwargs.get("skip_arch"):
                 fn(cm)  # type: ignore[misc]
+            elif kwargs.get("needs_host_ir"):
+                fn(cm, source_root, architecture=arch, host_ir=host_ir)  # type: ignore[misc]
             else:
                 fn(cm, source_root, architecture=arch)  # type: ignore[misc]
             _span(name, t0)
@@ -230,14 +237,14 @@ def compile_codemap(
     from uo_init.passes import tpl_schema as tpl_schema_pass
     from uo_init.tg_views import finalize_tg_views
 
-    # Ensure TPL/D blobs exist even when header was only discoverable after
-    # source inventory; then stamp host/graph projections with packing facts.
+    # Refresh TPL/D after source inventory. An early analyze pass may have
+    # parsed a DECL-only header and stamped views that commit cannot rebuild;
+    # the include walk here also sees ARGS_SEL siblings.
     t0 = time.perf_counter()
-    if "tiling/exhaustive_key_space.yaml" not in (context.get("tg_views") or {}):
-        if source_root is not None:
-            context["op_root"] = str(source_root)
-            context["architecture"] = arch
-        cm = tpl_schema_pass.run(cm, context=context)
+    if source_root is not None:
+        context["op_root"] = str(source_root)
+        context["architecture"] = arch
+    cm = tpl_schema_pass.run(cm, context=context)
     _span("tpl_schema", t0)
     t0 = time.perf_counter()
     merged_views = dict(views or {})
@@ -269,7 +276,7 @@ def compile_codemap(
         "ok": True,
         "summary": dict(audit["summary"]),
         "audit": audit,
-        "gaps": list_gaps(cm),
+        "gaps": list_gaps(cm, audit=audit),
         "codemap": cm,
         "_merged_views": merged_views,
         "tg_views": {

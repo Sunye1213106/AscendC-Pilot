@@ -277,6 +277,47 @@ def test_multiline_reg_op_and_def_cpp_inputs(tmp_path: Path) -> None:
     )
 
 
+def test_macro_tiling_data_fields_survive_get_tiling_data_identity(tmp_path: Path) -> None:
+    """GET_TILING_DATA_WITH_STRUCT names a type that only exists as BEGIN_TILING_DATA_DEF."""
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n"
+        "  .INPUT(query, TensorType({DT_FLOAT16}))\n"
+        "  .OUTPUT(out, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.h").write_text(
+        "BEGIN_TILING_DATA_DEF(QLIV2TilingData)\n"
+        "TILING_DATA_FIELD_DEF(uint32_t, bSize)\n"
+        "TILING_DATA_FIELD_DEF(uint32_t, n2Size)\n"
+        "END_TILING_DATA_DEF\n"
+        "REGISTER_TILING_DATA_CLASS(Toy, QLIV2TilingData)\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *query, __gm__ uint8_t *out, "
+        "__gm__ uint8_t *workspace, __gm__ uint8_t *tiling) {\n"
+        "  GET_TILING_DATA_WITH_STRUCT(QLIV2TilingData, tiling_data_in, tiling);\n"
+        "  (void)tiling_data_in.bSize;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    assert cm.by_name("QLIV2TilingData", kind=EntityKind.TILING_DATA)
+    fields = {
+        e.name
+        for e in cm.by_kind(EntityKind.TILING_FIELD)
+        if e.attrs.get("owner") == "QLIV2TilingData"
+    }
+    assert {"bSize", "n2Size"} <= fields
+
+
+
 def test_def_cpp_used_when_op_graph_missing(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     (op / "op_host").mkdir(parents=True)
@@ -439,8 +480,110 @@ def test_op_def_datatype_chain_fills_input_dtype(tmp_path: Path) -> None:
     enrich_codemap_from_operator_source(cm, op, architecture="arch35")
     inp = cm.by_name("x", kind=EntityKind.INPUT)[0]
     assert inp.attrs.get("dtype") == ["DT_FLOAT16", "DT_BF16", "DT_INT8"]
+    assert (inp.attrs.get("facts") or {}).get("dtype") == ["DT_FLOAT16", "DT_BF16", "DT_INT8"]
     out = cm.by_name("y", kind=EntityKind.OUTPUT)[0]
     assert out.attrs.get("dtype") == ["DT_FLOAT16"]
+    assert (out.attrs.get("facts") or {}).get("dtype") == ["DT_FLOAT16"]
+
+
+def test_reg_op_datatype_alias_fills_quoted_type_param(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n"
+        '  .INPUT(key, "T")\n'
+        "  .INPUT(slot, TensorType({DT_INT32, DT_INT64}))\n"
+        '  .OUTPUT(key_cache, "T")\n'
+        "  .DATATYPE(T, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    key = cm.by_name("key", kind=EntityKind.INPUT)[0]
+    assert key.attrs.get("dtype") == ["DT_FLOAT16", "DT_BF16", "DT_INT8"]
+    assert (key.attrs.get("facts") or {}).get("dtype") == ["DT_FLOAT16", "DT_BF16", "DT_INT8"]
+    out = cm.by_name("key_cache", kind=EntityKind.OUTPUT)[0]
+    assert out.attrs.get("dtype") == ["DT_FLOAT16", "DT_BF16", "DT_INT8"]
+
+
+def test_op_def_named_datatype_vector_fills_input_dtype(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        'REG_OP(Toy)\n  .INPUT(x, "T")\n  .OUTPUT(y, "T")\n  .OP_END_FACTORY_REG(Toy)\n',
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_def.cpp").write_text(
+        "static const std::vector<ge::DataType> keyDataType = {\n"
+        "    ge::DT_INT8, ge::DT_FLOAT16, ge::DT_INT8, ge::DT_BF16,\n"
+        "};\n"
+        "class Toy : public OpDef {\n"
+        "  explicit Toy(const char *name) : OpDef(name) {\n"
+        '    this->Input("x").ParamType(REQUIRED).DataType(keyDataType);\n'
+        '    this->Output("y").DataType(keyDataType);\n'
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    inp = cm.by_name("x", kind=EntityKind.INPUT)[0]
+    assert inp.attrs.get("dtype") == ["DT_INT8", "DT_FLOAT16", "DT_BF16"]
+    assert (inp.attrs.get("facts") or {}).get("dtype") == ["DT_INT8", "DT_FLOAT16", "DT_BF16"]
+    out = cm.by_name("y", kind=EntityKind.OUTPUT)[0]
+    assert out.attrs.get("dtype") == ["DT_INT8", "DT_FLOAT16", "DT_BF16"]
+
+
+def test_op_def_datatypelist_fills_input_dtype(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_host" / "toy_def.cpp").write_text(
+        "class Toy : public OpDef {\n"
+        "  explicit Toy(const char *name) : OpDef(name) {\n"
+        '    this->Input("indices").ParamType(REQUIRED).DataTypeList({ge::DT_INT32});\n'
+        '    this->Output("fetched").DataTypeList({ge::DT_BF16, ge::DT_FLOAT16, ge::DT_FLOAT});\n'
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    inp = cm.by_name("indices", kind=EntityKind.INPUT)[0]
+    assert inp.attrs.get("dtype") == ["DT_INT32"]
+    assert (inp.attrs.get("facts") or {}).get("dtype") == ["DT_INT32"]
+    out = cm.by_name("fetched", kind=EntityKind.OUTPUT)[0]
+    assert out.attrs.get("dtype") == ["DT_BF16", "DT_FLOAT16", "DT_FLOAT"]
+
+
+def test_reg_op_input_gets_dtype_from_def_cpp(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({}))\n  .OUTPUT(y, TensorType({}))\n  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_def.cpp").write_text(
+        "class Toy : public OpDef {\n"
+        "  explicit Toy(const char *name) : OpDef(name) {\n"
+        '    this->Input("x").DataType({ge::DT_FLOAT16, ge::DT_BF16});\n'
+        '    this->Output("y").DataType({ge::DT_FLOAT16});\n'
+        "  }\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    inp = cm.by_name("x", kind=EntityKind.INPUT)[0]
+    assert inp.attrs.get("dtype") == ["DT_FLOAT16", "DT_BF16"]
+    assert (inp.attrs.get("facts") or {}).get("dtype") == ["DT_FLOAT16", "DT_BF16"]
 
 
 def test_kernel_including_tpl_header_selects_declared_keys(tmp_path: Path) -> None:
@@ -483,3 +626,189 @@ def test_kernel_including_tpl_header_selects_declared_keys(tmp_path: Path) -> No
         if r.kind_name() == "SELECTS" and r.dst == kernel.id
     }
     assert selected >= {"K0", "K1"}
+
+
+def test_include_guard_is_not_a_tiling_key(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT}))\n  .OUTPUT(y, TensorType({DT_FLOAT}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "#ifndef __OP_HOST_MATMUL_V3_TILING_KEY_H__\n"
+        "#define __OP_HOST_MATMUL_V3_TILING_KEY_H__\n"
+        "void DoTiling() { SetTilingKey(tiling); }\n"
+        "#endif\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "class ToyTilingData { public: uint32_t worldSize; };\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  GET_TILING_DATA_WITH_STRUCT(ToyTilingData, td, tiling);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")}
+    assert "__OP_HOST_MATMUL_V3_TILING_KEY_H__" not in names
+    assert "tiling" not in names
+    kernel = cm.by_name("toy", kind=EntityKind.KERNEL)[0]
+    td = cm.by_name("ToyTilingData", kind=EntityKind.TILING_DATA)[0]
+    assert any(
+        r.src == td.id and r.dst == kernel.id and r.kind_name() == "FLOWS_TO"
+        for r in cm.relations.values()
+    )
+
+
+def test_single_kernel_selects_declared_keys_without_tiling_key_is(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT}))\n  .OUTPUT(y, TensorType({DT_FLOAT}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "constexpr uint64_t TILING_KEY_INIT = 10000UL;\n"
+        "void DoTiling() { (void)TILING_KEY_INIT; }\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "class ToyTilingData { public: uint32_t worldSize; };\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  GET_TILING_DATA_WITH_STRUCT(ToyTilingData, td, tiling);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    keys = [e for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")]
+    assert any(e.name == "TILING_KEY_INIT" for e in keys)
+    kernel = cm.by_name("toy", kind=EntityKind.KERNEL)[0]
+    assert any(
+        r.src in {e.id for e in keys}
+        and r.dst == kernel.id
+        and r.kind_name() == "SELECTS"
+        for r in cm.relations.values()
+    )
+
+
+def test_class_tiling_data_reads_brace_initializers(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT}))\n  .OUTPUT(y, TensorType({DT_FLOAT}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch35" / "toy_tiling_data.h").write_text(
+        "class ToyTilingData {\n"
+        "public:\n"
+        "    int64_t totalLength{0};\n"
+        "    int64_t needCoreNum{0};\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy_apt.cpp").write_text(
+        "REGISTER_TILING_DEFAULT(ToyTilingData);\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  GET_TILING_DATA(td, tiling);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    assert cm.by_name("ToyTilingData", kind=EntityKind.TILING_DATA)
+    fields = {
+        e.name
+        for e in cm.by_kind(EntityKind.TILING_FIELD)
+        if e.attrs.get("owner") == "ToyTilingData"
+    }
+    assert fields == {"totalLength", "needCoreNum"}
+
+
+def test_reinterpret_cast_tiling_data_flows_to_kernel(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.h").write_text(
+        "BEGIN_TILING_DATA_DEF(ToyTilingData)\n"
+        "TILING_DATA_FIELD_DEF(uint64_t, tilingKey);\n"
+        "END_TILING_DATA_DEF\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "REGISTER_TILING_DEFAULT(ToyTilingData);\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  __gm__ ToyTilingData *td = "
+        "reinterpret_cast<__gm__ ToyTilingData *>(tiling);\n"
+        "  uint64_t k = td->tilingKey;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    td = cm.by_name("ToyTilingData", kind=EntityKind.TILING_DATA)
+    assert td
+    kernel = cm.by_name("toy", kind=EntityKind.KERNEL)[0]
+    assert any(
+        r.src == td[0].id and r.dst == kernel.id and r.kind_name() == "FLOWS_TO"
+        for r in cm.relations.values()
+    )
+
+
+def test_packed_tiling_key_is_selects_host_produced_key(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void DoTiling(auto *ctx) {\n"
+        "  uint64_t tilingKey = 1;\n"
+        "  ctx->SetTilingKey(tilingKey);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  TILING_KEY_IS(QF16_NOCACHE_BSA_TILING);\n"
+        "  TILING_KEY_IS(QBF16_NOCACHE_BSA_TILING);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    keys = [e for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")]
+    assert any(e.name == "tilingKey" for e in keys)
+    kernel = cm.by_name("toy", kind=EntityKind.KERNEL)[0]
+    assert any(
+        r.src in {e.id for e in keys}
+        and r.dst == kernel.id
+        and r.kind_name() == "SELECTS"
+        for r in cm.relations.values()
+    )

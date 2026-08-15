@@ -161,6 +161,71 @@ def _rid(kind: str, src: str, dst: str) -> str:
     return f"R_{kind}_{digest}"
 
 
+class _NotifyMap(dict):
+    """Dict that incrementally maintains CodeMap adjacency indexes.
+
+    Passes ``pop`` / ``update`` / ``clear`` these maps directly. ``clear`` wipes
+    the whole side of the index so in-place ``rel.src`` rewrites followed by
+    ``clear``+``update`` stay consistent.
+    """
+
+    def __init__(self, owner: "CodeMap", role: str) -> None:
+        super().__init__()
+        self._owner = owner
+        self._role = role
+
+    def __setitem__(self, key, value) -> None:  # type: ignore[no-untyped-def]
+        old = dict.get(self, key)
+        if old is value:
+            super().__setitem__(key, value)
+            return
+        owner = getattr(self, "_owner", None)
+        if owner is not None and old is not None:
+            owner._index_drop(self._role, old)
+        super().__setitem__(key, value)
+        if owner is not None:
+            owner._index_add(self._role, value)
+
+    def __delitem__(self, key) -> None:  # type: ignore[no-untyped-def]
+        old = dict.get(self, key)
+        super().__delitem__(key)
+        owner = getattr(self, "_owner", None)
+        if owner is not None and old is not None:
+            owner._index_drop(self._role, old)
+
+    def pop(self, key, *args):  # type: ignore[no-untyped-def]
+        present = key in self
+        old = dict.get(self, key) if present else None
+        result = super().pop(key, *args) if args else super().pop(key)
+        owner = getattr(self, "_owner", None)
+        if owner is not None and present and old is not None:
+            owner._index_drop(self._role, old)
+        return result
+
+    def popitem(self):  # type: ignore[no-untyped-def]
+        key, old = super().popitem()
+        owner = getattr(self, "_owner", None)
+        if owner is not None:
+            owner._index_drop(self._role, old)
+        return key, old
+
+    def clear(self) -> None:
+        super().clear()
+        owner = getattr(self, "_owner", None)
+        if owner is not None:
+            owner._index_clear(self._role)
+
+    def update(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        incoming = dict(*args, **kwargs)
+        for key, value in incoming.items():
+            self[key] = value
+
+    def setdefault(self, key, default=None):  # type: ignore[no-untyped-def]
+        if key not in self:
+            self[key] = default
+        return self[key]
+
+
 @dataclass
 class CodeMap:
     """Unified operator CodeMap (Host + Kernel + compile-time overlay)."""
@@ -171,15 +236,99 @@ class CodeMap:
     relations: dict[str, Relation] = field(default_factory=dict)
     meta: dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        self._install_index_maps(dict(self.entities), dict(self.relations))
+
+    def _install_index_maps(
+        self,
+        entities: dict[str, Entity] | None = None,
+        relations: dict[str, Relation] | None = None,
+    ) -> None:
+        self._by_kind: dict[str, dict[str, Entity]] = defaultdict(dict)
+        self._by_name: dict[tuple[str, str], dict[str, Entity]] = defaultdict(dict)
+        self._out: dict[str, dict[str, Relation]] = defaultdict(dict)
+        self._in: dict[str, dict[str, Relation]] = defaultdict(dict)
+        ents = dict(self.entities if entities is None else entities)
+        rels = dict(self.relations if relations is None else relations)
+        self.entities = _NotifyMap(self, "entity")
+        self.relations = _NotifyMap(self, "rel")
+        for key, value in ents.items():
+            self.entities[key] = value
+        for key, value in rels.items():
+            self.relations[key] = value
+
+    def _index_add(self, role: str, value: Any) -> None:
+        if role == "entity":
+            kind = value.kind_name()
+            self._by_kind[kind][value.id] = value
+            self._by_name[(kind, value.name)][value.id] = value
+            return
+        self._out[value.src][value.id] = value
+        self._in[value.dst][value.id] = value
+
+    def _index_drop(self, role: str, value: Any) -> None:
+        if role == "entity":
+            kind = value.kind_name()
+            bucket = self._by_kind.get(kind)
+            if bucket is not None:
+                bucket.pop(value.id, None)
+            named = self._by_name.get((kind, value.name))
+            if named is not None:
+                named.pop(value.id, None)
+            return
+        outgoing = self._out.get(value.src)
+        if outgoing is not None:
+            outgoing.pop(value.id, None)
+        incoming = self._in.get(value.dst)
+        if incoming is not None:
+            incoming.pop(value.id, None)
+
+    def _index_clear(self, role: str) -> None:
+        if role == "entity":
+            self._by_kind.clear()
+            self._by_name.clear()
+            return
+        self._out.clear()
+        self._in.clear()
+
+    def _index_rekey_entity(self, entity: Entity, old_name: str) -> None:
+        kind = entity.kind_name()
+        named = self._by_name.get((kind, old_name))
+        if named is not None:
+            named.pop(entity.id, None)
+        self._by_name[(kind, entity.name)][entity.id] = entity
+
+    def __getstate__(self) -> dict[str, Any]:
+        return {
+            "op_name": self.op_name,
+            "architecture": self.architecture,
+            "entities": dict(self.entities),
+            "relations": dict(self.relations),
+            "meta": dict(self.meta),
+        }
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        self.op_name = str(state.get("op_name") or "")
+        self.architecture = str(state.get("architecture") or "")
+        self.meta = dict(state.get("meta") or {})
+        self.entities = {}
+        self.relations = {}
+        self._install_index_maps(state.get("entities") or {}, state.get("relations") or {})
+
     # -- mutation ----------------------------------------------------------
     def add_entity(self, entity: Entity) -> Entity:
         existing = self.entities.get(entity.id)
         if existing is None:
             self.entities[entity.id] = entity
             return entity
+        old_name = existing.name
+        old_sites = list(existing.attrs.get("definition_sites") or []) if isinstance(existing.attrs.get("definition_sites"), list) else []
         existing.attrs.update(entity.attrs)
+        if old_sites:
+            existing.attrs["definition_sites"] = old_sites
         if entity.name and not existing.name:
             existing.name = entity.name
+        self._merge_definition_sites(existing, entity)
         if entity.file and not existing.file:
             existing.file = entity.file
             existing.line_start = entity.line_start
@@ -197,7 +346,39 @@ class CodeMap:
         }:
             existing.status = "extracted"
             existing.confidence = max(float(existing.confidence or 0.0), float(entity.confidence or 0.0))
+        if existing.name != old_name:
+            self._index_rekey_entity(existing, old_name)
         return existing
+
+    @staticmethod
+    def _merge_definition_sites(existing: Entity, incoming: Entity) -> None:
+        kind = existing.kind.value if isinstance(existing.kind, EntityKind) else str(existing.kind)
+        if kind not in {EntityKind.FUNCTION.value, EntityKind.METHOD.value}:
+            return
+        sites: list[dict[str, Any]] = []
+        seen: set[tuple[str, int]] = set()
+
+        def _add(file: str, line: int) -> None:
+            path = str(file or "").replace("\\", "/")
+            loc = int(line or 0)
+            if not path or loc <= 0 or (path, loc) in seen:
+                return
+            seen.add((path, loc))
+            sites.append({"file": path, "line": loc, "line_start": loc})
+
+        _add(existing.file, existing.line_start)
+        _add(incoming.file, incoming.line_start)
+        for blob in (
+            existing.attrs.get("definition_sites"),
+            incoming.attrs.get("definition_sites"),
+        ):
+            if not isinstance(blob, list):
+                continue
+            for site in blob:
+                if isinstance(site, dict):
+                    _add(str(site.get("file") or ""), int(site.get("line") or site.get("line_start") or 0))
+        if len(sites) > 1:
+            existing.attrs["definition_sites"] = sites
 
     def upsert(
         self,
@@ -284,19 +465,16 @@ class CodeMap:
     # -- query helpers -----------------------------------------------------
     def by_kind(self, kind: EntityKind | str) -> list[Entity]:
         name = kind.value if isinstance(kind, EntityKind) else str(kind)
-        return [e for e in self.entities.values() if e.kind_name() == name]
+        return list((self._by_kind.get(name) or {}).values())
 
     def by_name(self, name: str, *, kind: EntityKind | str | None = None) -> list[Entity]:
-        kn = None
         if kind is not None:
             kn = kind.value if isinstance(kind, EntityKind) else str(kind)
+            return list((self._by_name.get((kn, name)) or {}).values())
         out: list[Entity] = []
-        for e in self.entities.values():
-            if e.name != name:
-                continue
-            if kn is not None and e.kind_name() != kn:
-                continue
-            out.append(e)
+        for (kind_name, ent_name), ents in self._by_name.items():
+            if ent_name == name:
+                out.extend(ents.values())
         return out
 
     def neighbors(
@@ -310,18 +488,25 @@ class CodeMap:
         if kind is not None:
             kn = kind.value if isinstance(kind, RelationKind) else str(kind)
         hits: list[tuple[Relation, Entity]] = []
-        for rel in self.relations.values():
-            if kn is not None and rel.kind_name() != kn:
-                continue
-            if direction in ("out", "both") and rel.src == entity_id:
+        if direction in ("out", "both"):
+            for rel in (self._out.get(entity_id) or {}).values():
+                if kn is not None and rel.kind_name() != kn:
+                    continue
                 dst = self.entities.get(rel.dst)
                 if dst is not None:
                     hits.append((rel, dst))
-            if direction in ("in", "both") and rel.dst == entity_id:
+        if direction in ("in", "both"):
+            for rel in (self._in.get(entity_id) or {}).values():
+                if kn is not None and rel.kind_name() != kn:
+                    continue
                 src = self.entities.get(rel.src)
                 if src is not None:
                     hits.append((rel, src))
         return hits
+
+    def has_incident(self, entity_id: str) -> bool:
+        """True if any live relation mentions ``entity_id``."""
+        return bool(self._out.get(entity_id) or self._in.get(entity_id))
 
     def find_path(
         self,
@@ -333,10 +518,6 @@ class CodeMap:
     ) -> list[str]:
         """BFS path of entity ids from start to end_id or first end_kind."""
         ends = {str(k) for k in (end_kinds or ())}
-        adj: dict[str, list[str]] = defaultdict(list)
-        for rel in self.relations.values():
-            adj[rel.src].append(rel.dst)
-
         prev: dict[str, str | None] = {start_id: None}
         q: deque[str] = deque([start_id])
         found: str | None = None
@@ -360,7 +541,8 @@ class CodeMap:
                     break
             if depth > max_depth:
                 continue
-            for nxt in adj.get(cur, ()):
+            for rel in (self._out.get(cur) or {}).values():
+                nxt = rel.dst
                 if nxt in prev:
                     continue
                 prev[nxt] = cur

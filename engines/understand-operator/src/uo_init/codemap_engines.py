@@ -101,7 +101,6 @@ def extract(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         payload,
         [
             ("extract_host", pe.extract_host),
-            ("extract_tiling_key", pe.extract_tiling_key),
             ("extract_registry", pe.extract_registry),
             ("extract_kernel", pe.extract_kernel),
         ],
@@ -307,6 +306,7 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
                 integrity_ok=ok,
                 audit=report,
                 gaps=list_gaps(cm),
+                source_root=root,
             )
             quality["uo_product"] = str(product)
             quality["architecture"] = arch

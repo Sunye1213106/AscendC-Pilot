@@ -603,6 +603,7 @@ def run_round(
     before = sum(1 for _k, _kind, row in _iter_obligations(inv) if str(row.get("status")) in _TERMINAL)
     on_key = 0
     decoded_n = 0
+    decoder_status = "td_missing"
     evidence_rows: list[dict[str, Any]] = []
     for cid, result in results.items():
         target = target_of.get(cid)
@@ -624,6 +625,9 @@ def run_round(
         dims = W.decode(target)
         raw_info = raw_by_id.get(cid) or {}
         decoded, meta = _decode_fields(raw_info.get("td"), dims, ws=ws)
+        decoder_status = str(
+            meta.get("decoder") or meta.get("layout") or meta.get("reason") or decoder_status
+        )
         if meta.get("ok"):
             decoded_n += 1
         fields = dict(decoded)

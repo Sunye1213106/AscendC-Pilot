@@ -16,6 +16,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.symbol_identity import normalize_symbol
+from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import selected_host_files as _layout_host_files
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -72,7 +73,7 @@ def enrich_tiling_host_writes(
         local: dict[str, set[str]] = defaultdict(set)
         if decl_re is not None:
             for match in decl_re.finditer(masked):
-                name = match.group("name")
+                name = normalize_symbol(match.group("name"))
                 if name in {
                     "const", "volatile", "mutable", "restrict", "__restrict", "__restrict__",
                 }:
@@ -187,7 +188,7 @@ def _class_members(text: str, known: set[str]) -> dict[str, dict[str, set[str]]]
             continue
         members: dict[str, set[str]] = defaultdict(set)
         for mm in member_re.finditer(text[open_b + 1 : close_b]):
-            name = mm.group("name")
+            name = normalize_symbol(mm.group("name"))
             if name in {
                 "const", "volatile", "mutable", "restrict", "__restrict", "__restrict__",
             }:
@@ -304,12 +305,21 @@ def _write(codemap, field, file, line, receiver, expr, mode) -> None:
 
 
 def _unresolved(codemap,file,line,receiver,field_name,expr,candidates) -> None:
-    codemap.upsert(EntityKind.OTHER,f"{receiver}.set_{field_name}",eid=f"TDWRITEUNRES::{file}::{line}::{field_name}",
-        attrs={"role":"tilingdata_writer_unresolved","reason":"field_owner_ambiguous" if candidates else "field_owner_unknown",
-               "receiver":receiver,"field":field_name,"expression":expr[:600],
-               "candidate_fields":[f.attrs.get("qualified_name") for f in candidates],
-               "provenance":"source_tilingdata_host_write_unresolved"},
-        file=file,line=line,status="partial",confidence=0.5)
+    record_unresolved_tiling(
+        codemap,
+        None,
+        role="tilingdata_writer_unresolved",
+        file=file,
+        line=line,
+        expression=expr,
+        extra={
+            "reason": "field_owner_ambiguous" if candidates else "field_owner_unknown",
+            "receiver": receiver,
+            "field": field_name,
+            "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
+            "provenance": "source_tilingdata_host_write_unresolved",
+        },
+    )
 
 
 def _attach_defaults(codemap, root, fields) -> None:

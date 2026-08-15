@@ -133,7 +133,7 @@ def _resume_summary_without_arch_tree(root: Path, workflow_id: str) -> dict[str,
             f"workflow: {workflow_id}",
             "phase/status: - / -",
             "architecture: -",
-            "已有 CodeMap，无活动执行槽。删除后重建，或改走查询。",
+            "已有 CodeMap，无活动写锁。删除后重建，或改走查询。",
         ]
     else:
         ask_opts = [o for o in ask_opts if o.get("value") == "reinit"] or ask_opts
@@ -690,22 +690,38 @@ def wipe_uo_for_reinit(project_root: Path) -> dict[str, Any]:
 
 
 def _cross_workflow_conflict(state: dict[str, Any] | None, workflow_id: str) -> dict[str, Any] | None:
+    """Conflict only inside the same exclusive product-family lock.
+
+    Shared (query/review) never occupies. Different families (uo vs tg vs ce-*)
+    run in parallel against the same ``.uo``.
+    """
+    from ascendc_pilot.occupancy import is_shared, occupancy_group_of
+
     if not state:
         return None
+    if is_shared(workflow_id):
+        return None
     active_wid = str(state.get("workflow_id") or "")
+    if not active_wid or is_shared(active_wid):
+        return None
     status = str(state.get("status") or "")
-    if active_wid and active_wid != workflow_id and status in RUNNING_LIKE:
-        return {
-            "error": "cross_workflow_active_run",
-            "active_workflow_id": active_wid,
-            "requested_workflow_id": workflow_id,
-            "message_zh": (
-                f"当前活动 run 属于 {active_wid}，与请求的 {workflow_id} 不一致；"
-                "禁止静默覆盖。点「开始」释放当前执行槽并 start 请求的工作流（不删正式产物），"
-                "或显式删除重开。"
-            ),
-        }
-    return None
+    if active_wid == workflow_id or status not in RUNNING_LIKE:
+        return None
+    req_group = occupancy_group_of(workflow_id)
+    active_group = occupancy_group_of(active_wid)
+    if not req_group or not active_group or req_group != active_group:
+        return None
+    return {
+        "error": "cross_workflow_active_run",
+        "active_workflow_id": active_wid,
+        "requested_workflow_id": workflow_id,
+        "occupancy_group": req_group,
+        "message_zh": (
+            f"当前 {active_group} 产物锁由 {active_wid} 持有，与请求的 {workflow_id} 同族；"
+            "禁止静默覆盖。点「开始」释放该族锁并 start 请求的工作流（不删正式产物），"
+            "或显式删除重开。"
+        ),
+    }
 
 
 def build_run_resume_summary(
@@ -724,7 +740,7 @@ def build_run_resume_summary(
     if arch:
         _pin_process_arch(arch)
     try:
-        state = load_state(root, arch=arch or None)
+        state = load_state(root, arch=arch or None, workflow_id=workflow_id)
         agent = agent_root(root, arch=arch or None)
         uo = uo_root(root, arch=arch or None)
     except ValueError:
@@ -846,7 +862,7 @@ def build_run_resume_summary(
             {
                 "label": f"开始 {wf_label} (Recommended)",
                 "description": (
-                    f"结束当前 {active_label} 执行槽（保留 uo / tg / ce），开始 {wf_label}"
+                    f"结束当前 {active_label} 产物族锁（保留 uo / tg / ce），开始 {wf_label}"
                 ),
                 "value": "continue",
             },
@@ -854,7 +870,7 @@ def build_run_resume_summary(
         ]
         question_body = (
             f"当前活动 run 属于 {active_wid}，与请求的 {workflow_id} 不一致。"
-            f"「开始 {wf_label}」会释放当前执行槽并 start {workflow_id}（不删正式产物）。"
+            f"「开始 {wf_label}」会释放该产物族锁并 start {workflow_id}（不删正式产物）。"
             f"「删除重开」会按 {wf_label} 策略清理后 start。\n\n"
             + "\n".join(lines)
         )
@@ -1033,8 +1049,12 @@ def resolve_start_architecture(
 
 
 def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
+    from ascendc_pilot.occupancy import is_shared
+
     root = Path(project_root).expanduser().resolve()
-    state = load_state(root)
+    if is_shared(workflow_id):
+        return False
+    state = load_state(root, workflow_id=workflow_id)
     if _cross_workflow_conflict(state, workflow_id):
         return True
     if (
@@ -1067,7 +1087,7 @@ def _switch_to_requested_workflow(
     from ascendc_pilot.todo import attach_todo
     from ascendc_pilot.workflows import entry_state, phase_pipeline
 
-    old = load_state(root) or {}
+    old = load_state(root, workflow_id=workflow_id) or {}
     arch = str(kwargs.get("architecture") or old.get("architecture") or "").strip()
     try:
         from ascendc_pilot.authorize.lease import revoke_active_lease
@@ -1101,7 +1121,7 @@ def _switch_to_requested_workflow(
             "switched_from": switched_from,
             "fresh_start": True,
             "message_zh": (
-                f"已结束 {switched_from or '当前'} 执行槽并 start {workflow_id}"
+                f"已结束 {switched_from or '当前'} 产物族锁并 start {workflow_id}"
                 f"（保留正式产物；下一步：{first_action or entry}）"
             ),
         },
@@ -1167,7 +1187,9 @@ def apply_resume_decision(
     summary = build_run_resume_summary(
         root, workflow_id=workflow_id, architecture=arch_hint
     )
-    cross = _cross_workflow_conflict(load_state(root), workflow_id)
+    cross = _cross_workflow_conflict(
+        load_state(root, workflow_id=workflow_id), workflow_id
+    )
 
     if choice == "query":
         clear_pending(root)
@@ -1188,7 +1210,7 @@ def apply_resume_decision(
                 kwargs,
                 switched_from=str(cross.get("active_workflow_id") or ""),
             )
-        state = load_state(root)
+        state = load_state(root, workflow_id=workflow_id)
         if not state or str(state.get("workflow_id") or "") != workflow_id:
             return {
                 "ok": False,
@@ -1205,7 +1227,7 @@ def apply_resume_decision(
                 "run_summary": summary,
             }
         scrub = scrub_incomplete_on_continue(root)
-        state = load_state(root) or state
+        state = load_state(root, workflow_id=workflow_id) or state
         try:
             from ascendc_pilot.active_run import write_active_run
 
@@ -1256,7 +1278,7 @@ def apply_resume_decision(
         return arch_res
     kwargs["architecture"] = arch_res["architecture"]
 
-    state = load_state(root)
+    state = load_state(root, workflow_id=workflow_id)
     if cross and choice == "reinit":
         if state and str(state.get("workflow_id") or "") != workflow_id:
             if str(state.get("status") or "") in RUNNING_LIKE:
@@ -1314,7 +1336,7 @@ def existing_run_decision_payload(
         "needs_human_decision": True,
         "error": "EXISTING_RUN_NEEDS_DECISION",
         "message_zh": (
-            f"检测到未完成的 {wf_label} run、CodeMap 残留或工作流冲突。"
+            f"检测到未完成的 {wf_label} run、CodeMap 残留或同族写锁冲突。"
             "请等待 Host 弹出选项；选定后 Host 会继续执行。"
             "不要自己 bash `acp answer` 或 `acp start`。"
         ),

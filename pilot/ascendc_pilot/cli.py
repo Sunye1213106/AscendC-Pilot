@@ -306,8 +306,17 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_uq.add_argument("--project", type=Path, default=None)
     p_uq.add_argument("--op-name", default="")
-    p_uq.add_argument("--pattern", default="")
-    p_uq.add_argument("--target", default="")
+    p_uq.add_argument(
+        "--pattern",
+        default="",
+        help="Search/locate/filter string. legal_key/template_match: Dim=V,Other=V",
+    )
+    p_uq.add_argument(
+        "--query",
+        default="",
+        help="Alias of --pattern (Dim=V,Other=V for legal_key/template_match)",
+    )
+    p_uq.add_argument("--target", default="", help="Alias of --pattern")
     p_uq.add_argument(
         "--mode",
         default="search",
@@ -328,9 +337,12 @@ def main(argv: list[str] | None = None) -> int:
             "legal_key",
             "locate",
             "kernel_api",
+            "kernel_launch",
+            "compile",
         ),
         help="search|constraints|neighbors|impact|field|branches|templates|"
-        "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|legal_key|locate|kernel_api",
+        "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|"
+        "legal_key|locate|kernel_api|kernel_launch|compile",
     )
     p_uq.add_argument("--file", default="", help="impact 模式：源码相对路径")
     p_uq.add_argument("--line", type=int, default=0, help="impact 模式：起始行")
@@ -557,7 +569,14 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.todo import attach_todo
 
         st = load_state(args.project)
-        print_json(attach_todo(st or {}, args.project, state=st or None))
+        out = attach_todo(st or {}, args.project, state=st or None)
+        try:
+            from ascendc_pilot.occupancy import occupancy_status_payload
+
+            out["occupancy"] = occupancy_status_payload(args.project)
+        except Exception:  # noqa: BLE001
+            pass
+        print_json(out)
         return 0
     if args.cmd == "next":
         from ascendc_pilot.state import describe_next
@@ -1001,7 +1020,7 @@ def main(argv: list[str] | None = None) -> int:
                 "status": "failed",
                 "released_execution": released,
                 "state": st,
-                "message_zh": "已 abort 并释放执行槽；可直接 acp start 开启下一工作流",
+                "message_zh": "已 abort 并释放本产物族锁；可直接 acp start 开启下一工作流",
             }
         )
         return 0
@@ -1065,6 +1084,17 @@ def main(argv: list[str] | None = None) -> int:
         project = Path(args.project).resolve()
         op_name = str(getattr(args, "op_name", "") or "")
         architecture = str(getattr(args, "architecture", "") or "")
+        pattern = str(
+            args.pattern or args.target or getattr(args, "query", "") or ""
+        ).strip()
+        mode = str(getattr(args, "mode", "search") or "search")
+        if mode == "compile":
+            from uo_init.query.plan import compile_query
+
+            payload = compile_query(pattern, architecture=architecture)
+            payload["engine"] = "uo_init.uo_query"
+            print_json(payload)
+            return 0
         product = find_uo_product(project, op_name=op_name, architecture=architecture)
         if product is None or product.suffix != ".uo":
             from ascendc_pilot.intake import missing_uo_product_payload
@@ -1089,8 +1119,6 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 0
-        pattern = str(args.pattern or args.target or "").strip()
-        mode = str(getattr(args, "mode", "search") or "search")
         allow_empty = mode in {
             "impact",
             "gaps",
@@ -1102,6 +1130,8 @@ def main(argv: list[str] | None = None) -> int:
             "legal_key",
             "locate",
             "kernel_api",
+            "kernel_launch",
+            "compile",
         }
         if mode != "impact" and not pattern and not allow_empty:
             print_json(
@@ -1175,6 +1205,8 @@ def main(argv: list[str] | None = None) -> int:
                 payload = q.aggregate_locate(pattern, limit=limit)
             elif mode == "kernel_api":
                 payload = q.aggregate_kernel_api(pattern, limit=limit)
+            elif mode == "kernel_launch":
+                payload = q.aggregate_kernel_launch(pattern, limit=limit)
             else:
                 kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
                 rows = q.search(pattern, kinds=kinds, limit=limit)
@@ -1187,11 +1219,58 @@ def main(argv: list[str] | None = None) -> int:
                     "rows": rows,
                     "files": {},
                 }
+                from uo_init.query.hints import attach_query_hints, search_needles
+
+                tokens = search_needles(pattern)
+                if len(tokens) > 1:
+                    payload["pattern_tokens"] = tokens
+                attach_query_hints(payload, pattern, count=len(rows), kinds=kinds, mode="search")
+                coverage = {}
+                try:
+                    from uo_init.query.sql import _hits_coverage
+
+                    coverage = _hits_coverage(rows, total=len(rows))
+                except Exception:
+                    coverage = {}
+                if coverage:
+                    payload["coverage"] = coverage
                 for row in rows:
                     file = str(row.get("file") or "")
                     if file:
                         payload["files"].setdefault(file, []).append(row)
             payload["engine"] = "uo_init.uo_query"
+            try:
+                from ascendc_pilot.occupancy import (
+                    apply_stale_confidence,
+                    bind_session,
+                    current_session_id,
+                    get_session_binding,
+                    pin_digest_from_product,
+                )
+
+                sid = current_session_id()
+                pin = pin_digest_from_product(
+                    project, architecture=architecture, op_name=op_name
+                )
+                if sid and not get_session_binding(project, sid):
+                    bind_session(
+                        project,
+                        session_id=sid,
+                        architecture=str(pin.get("architecture") or architecture),
+                        uo_path=str(pin.get("path") or ""),
+                        digest=str(pin.get("digest") or ""),
+                        workflow_id="uo-query",
+                        run_id="",
+                        stale=False,
+                    )
+                payload = apply_stale_confidence(
+                    payload,
+                    project,
+                    architecture=str(pin.get("architecture") or architecture),
+                    session_id=sid,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             print_json(payload, default=str, compact=True)
             return 0 if payload.get("ok") else 1
         except Exception as exc:  # noqa: BLE001
@@ -1725,8 +1804,8 @@ def _doctor(project: Path | None) -> int:
 
     if not os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"):
         warnings.append(
-            "ASCENDC_TEST_SCRIPT_ROOT unset — "
-            "/tg-init contract_build requires --test-script-root"
+            "ASCENDC_TEST_SCRIPT_ROOT unset — generated cases use default input; "
+            "pass --test-script-root to bind an existing runner (scripts + CSV)"
         )
 
     # UO clang parse needs extracted CANN packages (not just ASCEND_HOME_PATH).

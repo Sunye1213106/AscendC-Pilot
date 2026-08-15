@@ -14,6 +14,8 @@ read_scopes:
 - pilot:tg/**
 - pilot:runs/**
 - pilot:context/**
+- source/**
+- local/**
 - method:skills/code-review/**
 - method:skills/operator-analysis/**
 - method:skills/code-engineering/**

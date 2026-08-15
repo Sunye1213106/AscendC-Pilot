@@ -68,7 +68,7 @@ def main() -> int:
 
     # Plugin files present in repo
     plug = repo / "opencode-plugin"
-    for name in ("ascendc-pilot.ts", "pilot-driver.ts", "zz-uo-query-return-value.ts", "pilot-progress.mjs"):
+    for name in ("ascendc-pilot.ts", "pilot-driver.ts", "pilot-progress.mjs"):
         if not (plug / name).is_file():
             errors.append(f"missing opencode-plugin/{name}")
 
@@ -146,9 +146,56 @@ def main() -> int:
         "isAcpResumeStartCommand",
         'status !== "pending"',
         "isPilotDriver",
+        "resolveInstalledSkillMd",
+        "Do NOT overwrite OpenCode Task",
+        "rgMissingRewrite",
+        "patchPilotReadPermissions",
+        'perm.external_directory = "allow"',
+        'perm.task = "allow"',
+        "extractKbAnswer",
+        "nativeTaskResultCap",
+        "captureUoQueryTaskReturn",
+        "ASCENDC_ACTION_RESULT",
+        "isKbLookupFinalize",
+        "must not finalize itself",
+        "isHarnessCheckout",
+        "rewriteAcpProjectFlag",
+        "pinOperatorBashContext",
+        "boundOperatorRoot",
+        "recoverSkillToolOutput",
+        "lastSkillName",
+        "createPilotSkillTool",
+        "ensureOpenCodeRipgrep",
+        "ensureAcpOnPath",
+        "prependPilotToolPath",
+        "openCodeRgBinDirs",
+        "resolveInstalledSkillPath",
     ):
         if marker not in plugin_src:
             errors.append(f"ascendc-pilot.ts missing {marker}")
+    if "args.location = { directory: projectRoot }" in plugin_src:
+        errors.append("ascendc-pilot.ts must not pin Task location.directory to operator package")
+    if "createPilotSkillTool" not in plugin_src:
+        errors.append("ascendc-pilot.ts must override OpenCode skill tool (no rg)")
+    if "ensureOpenCodeRipgrep" not in plugin_src:
+        errors.append("ascendc-pilot.ts must seed OpenCode cache rg.bin")
+    auth_src = (repo / "pilot" / "ascendc_pilot" / "authorize" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
+    if "workflow_uses_host_driver" not in auth_src:
+        errors.append("authorize must allow Task of host_driver=False actors (uo-query)")
+    driver_src = (plug / "pilot-driver.ts").read_text(encoding="utf-8")
+    if "Do not strip to the yaml fence" not in driver_src:
+        errors.append("pilot-driver.ts must keep native Task text (not yaml-fence-only)")
+    if "NATIVE_TASK_RESULT_CAP" not in driver_src:
+        errors.append("pilot-driver.ts missing NATIVE_TASK_RESULT_CAP")
+    if "UO_QUERY_NOT_HOST_DRIVEN" not in driver_src:
+        errors.append("pilot-driver.ts must reject pilot_run for uo-query")
+    compose_src = (repo / "scripts" / "compose_runtime.py").read_text(encoding="utf-8")
+    if '"external_directory": "allow"' not in compose_src:
+        errors.append("compose_runtime.py must allow OpenCode external_directory for Pilot agents")
+    if '"read": "allow"' not in compose_src:
+        errors.append("compose_runtime.py must allow OpenCode read for Pilot agents")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

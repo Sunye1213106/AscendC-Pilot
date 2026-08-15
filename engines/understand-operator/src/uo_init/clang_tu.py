@@ -43,13 +43,22 @@ def _require_clang():
         raise RuntimeError("libclang not installed")
 
 
-def parse_path(path: str, args: list[str]) -> ParseResult:
+def parse_path(
+    path: str,
+    args: list[str],
+    *,
+    op_dir: str = "",
+    side: str = "host",
+) -> ParseResult:
     _require_clang()
+    from uo_init.bisheng_attrs import parse_unsaved_kwargs
+
     idx = cindex.Index.create()
     tu = idx.parse(
         path,
         args=args,
         options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+        **parse_unsaved_kwargs(op_dir, side=side),
     )
     diags = []
     for d in tu.diagnostics:
@@ -175,7 +184,10 @@ def analyze_kernel(
     scope=None,
 ) -> ParseResult:
     res = parse_path(
-        path, ctx.kernel_args(dtype_variant=dtype_variant, source_path=path)
+        path,
+        ctx.kernel_args(dtype_variant=dtype_variant, source_path=path),
+        op_dir=getattr(ctx, "op_dir", "") or "",
+        side="kernel",
     )
     if res.tu is None:
         return res

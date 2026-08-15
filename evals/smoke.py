@@ -7,6 +7,7 @@ L0 entry:
 3. skill dry eval (all five cognitive skills)
 4. closure acceptance harness (1 dry run)
 5. skill architecture + operator independence lints
+   (repo must not contain operators/; fixtures live under tests/fixtures/)
 6. worked-example layout check
 7. harness E2E authorize scenarios (no LLM)
 8. live eval skip contract (no model → skip, never fake pass@k)

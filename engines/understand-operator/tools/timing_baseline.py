@@ -43,12 +43,10 @@ ACTIONS = (
     "prepare_layout",
     "scope_validate",
     "extract_host",
-    "extract_tiling_key",
     "extract_kernel",
     "normalize_variables",
     "derive_key_fields",
     "normalize_predicates",
-    "export_kb",
     "export_tg_host_view",
     "quality_gate",
 )
@@ -56,7 +54,7 @@ ACTIONS = (
 # Anecdotal numbers from code comments / FAG execution notes when a full
 # measurement pass is unavailable in this environment.
 ANECDOTAL = {
-    "extract_host": "minutes on FAG (full closure); see assemble_kb closure_mode notes",
+    "extract_host": "minutes on FAG (full closure); see extract_bundle closure_mode notes",
     "derive_key_fields": "fields wall can sum to minutes; isolate workers add more (host_derivation)",
     "extract_kernel": "pairwise fold expensive; fold_kernel=false skips harness",
     "export_tg_host_view": "FAG cached export 31.7s → 2.0s (fingerprint reuse)",
@@ -167,7 +165,7 @@ def measure_extract_host(
             "cannot measure without " + ", ".join(missing) + f"\n{uo_paths.explain()}"
         )
 
-    from uo_init.assemble_kb import extract_host_bundle
+    from uo_init.extract_bundle import extract_host_bundle
 
     os.environ["UO_TIMING"] = "1"
     previous_root = os.environ.get("UO_CACHE_ROOT")

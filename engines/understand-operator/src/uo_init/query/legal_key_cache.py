@@ -202,6 +202,66 @@ def _indexed_row_ids(
     return sorted(hits)
 
 
+def _sel_group_ids(rows: list[dict[str, Any]]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        gid = str(row.get("sel_group_id") or "").strip()
+        if not gid or gid in seen:
+            continue
+        seen.add(gid)
+        out.append(gid)
+    return out
+
+
+def _dim_values_from_index(by_dim: dict[str, list[int]], dim_name: str) -> list[str]:
+    prefix = f"{dim_name}="
+    values: list[str] = []
+    seen: set[str] = set()
+    for key in by_dim:
+        if not str(key).startswith(prefix):
+            continue
+        val = str(key)[len(prefix) :]
+        if val in seen:
+            continue
+        seen.add(val)
+        values.append(val)
+    return sorted(values)
+
+
+def _legal_key_nearby(
+    by_dim: dict[str, list[int]],
+    filters: dict[str, str],
+) -> list[dict[str, Any]]:
+    """When a combo misses, drop one dim at a time using the inverted index."""
+    nearby: list[dict[str, Any]] = []
+    for dropped in filters:
+        remaining = {k: v for k, v in filters.items() if k != dropped}
+        if remaining:
+            remaining_ids = set(_indexed_row_ids(by_dim, remaining))
+            total = len(remaining_ids)
+            prefix = f"{dropped}="
+            values: list[str] = []
+            for key, posting in by_dim.items():
+                if not str(key).startswith(prefix):
+                    continue
+                if remaining_ids & set(posting):
+                    values.append(str(key)[len(prefix) :])
+            values = sorted(set(values))
+        else:
+            total = 0
+            values = _dim_values_from_index(by_dim, dropped)
+        nearby.append(
+            {
+                "dropped": dropped,
+                "remaining_filters": remaining,
+                "total_matched": total,
+                "values": values,
+            }
+        )
+    return nearby
+
+
 def query_legal_keys(
     product: str | Path,
     *,
@@ -255,11 +315,17 @@ def query_legal_keys(
         rows = filtered
 
     total = len(rows)
+    sel_group_ids = _sel_group_ids(rows) if structured else []
+    nearby: list[dict[str, Any]] = []
+    if structured and total == 0:
+        nearby = _legal_key_nearby(dict(cache.get("by_dim") or {}), structured)
     if offset:
         rows = rows[offset:]
     if limit and limit > 0:
         rows = rows[: int(limit)]
-    return {
+    from uo_init.query.hints import attach_query_hints
+
+    payload = {
         "ok": True,
         "mode": "legal_key",
         "pattern": needle,
@@ -269,6 +335,11 @@ def query_legal_keys(
         "offset": int(offset or 0),
         "limit": int(limit or 0),
         "rows": rows,
+        "sel_group_ids": sel_group_ids,
         "cached": True,
         "indexed": bool(structured),
     }
+    if nearby:
+        payload["nearby"] = nearby
+    attach_query_hints(payload, needle, count=total, indexed=bool(structured) if needle else None)
+    return payload

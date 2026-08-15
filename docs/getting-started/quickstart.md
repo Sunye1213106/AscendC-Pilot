@@ -83,7 +83,7 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-查询由主控用 skill 路由：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md) 选 mode，短问自己 `acp uo-query --mode`，内容多再开子代理。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`。
+查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，对人说出「自查 / 几个子代理」，短问自己 `acp uo-query --mode`，深问同一轮 `Task(agent=uo-query)`。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
 
 默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 
@@ -164,7 +164,7 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三�
 | --- | --- |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
-| `/uo-query` | 查询 Host / Tiling / Kernel 关系（需已有 `.uo`） |
+| `/uo-query` | 只读提问：主控可见路由后自查或派 `uo-query` 子代理（需已有 `.uo`；不走 `pilot_run`） |
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
 | `/ce-review` | 只读检视（快速 / 文件 / PR；需已有 `.uo`） |

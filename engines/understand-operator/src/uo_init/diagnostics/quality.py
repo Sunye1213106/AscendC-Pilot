@@ -3,24 +3,20 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+from uo_init.diagnostics.source_api import (
+    GRAPH_API_NEEDLES,
+    count_graph_kernel_api,
+    precision_gaps,
+    source_api_from_codemap,
+)
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.resolve.semantic_gap import list_gaps, summarize_gaps
 
-_KERNEL_API_NEEDLES = (
-    "EnQue",
-    "DeQue",
-    "InitBuffer",
-    "DataCopy",
-    "Cast",
-    "SetFlag",
-    "WaitFlag",
-    "DataCopyPad",
-    "SetGlobalBuffer",
-    "LoadAlign",
-)
+_KERNEL_API_NEEDLES = GRAPH_API_NEEDLES
 
 
 def _has_span(entity: Entity) -> bool:
@@ -51,6 +47,7 @@ def codemap_quality(
     integrity_ok: bool = True,
     audit: dict[str, Any] | None = None,
     gaps: list[dict[str, Any]] | None = None,
+    source_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Scorecard aligned with cannbot locate / field / buffer / kernel_api.
 
@@ -127,35 +124,50 @@ def codemap_quality(
         if attrs.get("dtype") or facts.get("dtype"):
             dtype_n += 1
 
-    kernel_api: dict[str, dict[str, int]] = {}
+    kernel_api = count_graph_kernel_api(ops)
     api_ok = True
     any_api = False
     for needle in _KERNEL_API_NEEDLES:
-        n = 0
-        spanned = 0
-        reached = 0
-        for e in ops:
-            attrs = e.attrs or {}
-            blob = " ".join(str(x or "") for x in (e.name, attrs.get("callee"), attrs.get("api")))
-            if needle.lower() not in blob.lower():
-                continue
-            n += 1
-            if _has_span(e):
-                spanned += 1
-            if str(attrs.get("root_status") or "") == "REACHED":
-                reached += 1
-        kernel_api[needle] = {"n": n, "with_span": spanned, "reached": reached}
+        row = kernel_api.get(needle) or {}
+        n = int(row.get("n") or 0)
+        spanned = int(row.get("with_span") or 0)
+        reached = int(row.get("reached") or 0)
         if n:
             any_api = True
             if spanned < n and reached < n:
                 api_ok = False
+    source_counts: dict[str, int] | None = None
+    try:
+        source_counts = source_api_from_codemap(
+            codemap, source_root, str(codemap.architecture or "")
+        )
+    except Exception:  # noqa: BLE001
+        source_counts = None
+    src_gaps = precision_gaps(source_counts, kernel_api) if source_counts is not None else []
+    if src_gaps:
+        api_ok = False
+    kt_meta = {}
+    if isinstance(codemap.meta, dict):
+        kt_meta = dict(codemap.meta.get("kernel_root_trace") or {})
+    if kt_meta.get("gated_fill_complete") is False:
+        api_ok = False
     if not any_api:
-        api_ok = True
+        any_source = bool(source_counts) and any(
+            int(source_counts.get(name) or 0) > 0 for name in _KERNEL_API_NEEDLES
+        )
+        # Empty graph is honest only when the same include closure has no needles.
+        # Without a source root the emptiness cannot be proven.
+        api_ok = bool(source_counts is not None and not any_source)
 
+    outputs = by_kind.get(EntityKind.OUTPUT.value) or []
+    # Fusion send-style proto may declare no .OUTPUT. Verify already treats that
+    # as SOURCE_HAS_NO_OUTPUT (warning, not block). Requiring a path to a node
+    # that does not exist would keep grade at usable after an honest verify pass.
+    io_ok = (not outputs) or bool(summary.get("has_input_output_path"))
     paths_ok = bool(
         summary.get("has_host_kernel_path")
         and summary.get("has_tilingdata_kernel_path")
-        and summary.get("has_input_output_path")
+        and io_ok
     )
     if not kernels:
         paths_ok = False
@@ -194,13 +206,14 @@ def codemap_quality(
             buffer_ok,
             placed=f"{placed_buf}/{len(buffers)}",
         ),
-        "kernel_api": _surface(api_ok, apis=kernel_api),
+        "kernel_api": _surface(api_ok, apis=kernel_api, source_gaps=src_gaps),
         "dtype": _surface(dtype_ok, count=f"{dtype_n}/{len(inputs)}"),
         "paths": _surface(
             paths_ok,
             host_kernel=bool(summary.get("has_host_kernel_path")),
             tilingdata_kernel=bool(summary.get("has_tilingdata_kernel_path")),
             input_output=bool(summary.get("has_input_output_path")),
+            output_n=len(outputs),
         ),
     }
     surfaces_ok = all(bool(v.get("ok")) for v in surfaces.values())
@@ -215,6 +228,10 @@ def codemap_quality(
         not_ready_reasons.append("no_tiling_key_packing_site")
     if field_owner_unknown > 0:
         not_ready_reasons.append("field_owner_unknown")
+    if not api_ok:
+        not_ready_reasons.append("kernel_api_gap")
+    if kt_meta.get("gated_fill_complete") is False:
+        not_ready_reasons.append("gated_fill_truncated")
     if kernels and not bool(summary.get("has_host_kernel_path")):
         not_ready_reasons.append("missing_host_kernel_path")
     if (by_kind.get(EntityKind.TILING_DATA.value)) and not bool(

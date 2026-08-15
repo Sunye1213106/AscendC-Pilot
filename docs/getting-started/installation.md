@@ -73,7 +73,9 @@ AscendC-Pilot
 acp doctor --host opencode
 ```
 
-安装程序不会修改现有的 `opencode.json`。
+安装程序不会修改现有的 `opencode.json`。MCP 保持放行。
+
+OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序与插件会把 `rg.exe` 种到 cache/data 两套目录。主控 `skill` 由插件**覆盖**原生工具：直接读 `~/.config/opencode/skills/<name>/SKILL.md`，不 spawn rg。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。安装后请 **完全退出再打开 OpenCode** 再测。
 
 ### Cursor
 

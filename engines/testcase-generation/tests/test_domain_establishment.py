@@ -26,10 +26,10 @@ def test_missing_view_fails_the_establishment_check():
 
 def test_present_view_passes_and_records_where_it_came_from():
     chk = REP._domain_established(
-        "tilingdata", {"source": {"kind": "yaml", "path": "/uo/views/tilingdata.yaml"}}
+        "tilingdata", {"source": {"kind": "uo", "path": "/op.arch.uo", "view": "views/tilingdata.yaml"}}
     )
     assert chk["ok"] is True
-    assert "/uo/views/tilingdata.yaml" in chk["detail"]
+    assert "uo:" in chk["detail"]
 
 
 def test_a_domain_that_reports_no_source_is_not_established():
@@ -64,10 +64,11 @@ def test_view_source_distinguishes_absent_from_present(tmp_path: Path):
     assert got["path"].endswith("kernel.yaml")
 
 
-def test_db_projection_counts_as_a_source(tmp_path: Path):
-    """The graph DB is the product authority; a view served from it is real."""
+def test_yaml_projection_is_not_a_product(tmp_path: Path):
+    """Working-tree YAML may exist; production loaders still require ``.uo``."""
     from testcase_agent.closure.kernel_domain import view_source
 
-    (tmp_path / "indexes").mkdir()
-    (tmp_path / "indexes" / "kb_graph.sqlite").write_bytes(b"")
-    assert view_source(tmp_path, "views/kernel.yaml")["kind"] == "db"
+    (tmp_path / "views").mkdir()
+    (tmp_path / "views" / "kernel.yaml").write_text("branches: []\n", encoding="utf-8")
+    got = view_source(tmp_path, "views/kernel.yaml")
+    assert got["kind"] == "yaml"

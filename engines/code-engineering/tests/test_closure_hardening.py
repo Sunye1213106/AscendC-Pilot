@@ -187,7 +187,7 @@ def test_slice_projects_nodes_and_defaults_useful_edges(tmp_path: Path) -> None:
     )
     noise = cm.upsert(EntityKind.FUNCTION, "helper", eid="FN")
     cm.link(RelationKind.SELECTS, src.id, dst.id)
-    cm.link(RelationKind.WRAPS, src.id, noise.id)
+    cm.link(RelationKind.CONTAINS, src.id, noise.id)
     product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
     product.parent.mkdir(parents=True, exist_ok=True)
     write_codemap(cm, product)
@@ -199,7 +199,7 @@ def test_slice_projects_nodes_and_defaults_useful_edges(tmp_path: Path) -> None:
     assert "FN" not in ids
     kinds = {row["kind"] for row in out["relations"]}
     assert "SELECTS" in kinds
-    assert "WRAPS" not in kinds
+    assert "CONTAINS" not in kinds
     assert "facts" in out["nodes"][0]
 
 

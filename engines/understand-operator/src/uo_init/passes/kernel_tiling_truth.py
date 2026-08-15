@@ -41,7 +41,7 @@ def finalize_kernel_tiling_truth(codemap: CodeMap) -> CodeMap:
     for eid in outside_domain:
         # These nodes have no semantic field edge by construction. Fail closed
         # if a future change adds one rather than silently removing the target.
-        if any(r.src == eid or r.dst == eid for r in codemap.relations.values()):
+        if codemap.has_incident(eid):
             true_ambiguous.append(eid)
             continue
         codemap.entities.pop(eid, None)
@@ -55,10 +55,9 @@ def finalize_kernel_tiling_truth(codemap: CodeMap) -> CodeMap:
         owner_ent = types.get(owner)
         if owner_ent is None:
             continue
-        for rel in codemap.relations.values():
-            if rel.src != owner_ent.id or rel.kind_name() != RelationKind.DECLARES.value:
-                continue
-            field = codemap.entities.get(rel.dst)
+        for rel, field in codemap.neighbors(
+            owner_ent.id, kind=RelationKind.DECLARES, direction="out"
+        ):
             if field is None or field.kind_name() != EntityKind.TILING_FIELD.value:
                 continue
             referenced = set(_WORD_RE.findall(str(field.attrs.get("cpp_type") or ""))) & type_names

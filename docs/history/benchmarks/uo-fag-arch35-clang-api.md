@@ -7,7 +7,7 @@
 ```text
 $env:UO_TIMING = "1"
 $env:UO_WITH_API = "1"
-python engines/understand-operator/tools/fag_arch35_rebuild_check.py --with-api
+python engines/understand-operator/tools/experiments/fag_arch35_rebuild_check.py --with-api
 ```
 
 收据：`ir/_host_bundle_meta.yaml` 中 `with_api: true`。产物路径仍是 `<op>/.ascendc-pilot/arch35/uo/flash_attention_score_grad.arch35.uo`。原始 timing / premises：`artifacts/fag-arch35-rebuild/with-api/`。

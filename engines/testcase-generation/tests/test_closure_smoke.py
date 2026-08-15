@@ -9,6 +9,7 @@ import pytest
 
 # Replay needs a distro name even when we only decode keys.
 os.environ.setdefault("UO_REPLAY_DISTRO", "Ubuntu-2204")
+os.environ.setdefault("TG_CLOSURE_CI", "1")
 
 
 @pytest.fixture(scope="module")
@@ -49,8 +50,9 @@ def test_features_cover_known_hints():
     from replay.package_data import load_yaml
     from testcase_agent.closure import features as F
 
-    if not load_yaml("feature_bindings.yaml", refresh=True):
-        pytest.skip("feature_bindings.yaml missing (run export_adapter_pack)")
+    hints = load_yaml("feature_bindings.yaml", refresh=True)
+    if not hints or "bn1s1s2" not in str(hints):
+        pytest.skip("operator feature_bindings does not include known floor terms")
     cov = F.coverage_of(["bn1s1s2", "qkv_bytes", "s1_mod128", "band"])
     assert cov["missing"] == []
     assert set(cov["built"]) == {"bn1s1s2", "qkv_bytes", "s1_mod128", "band"}
@@ -61,13 +63,14 @@ def test_coverage_from_codemap_includes_floor(tmp_path):
     from testcase_agent.closure import features as F
     from ascendc_pilot.paths import uo_root
 
-    if not load_yaml("feature_bindings.yaml", refresh=True):
-        pytest.skip("feature_bindings.yaml missing (run export_adapter_pack)")
+    hints = load_yaml("feature_bindings.yaml", refresh=True)
+    if not hints or "bn1s1s2" not in str(hints):
+        pytest.skip("operator feature_bindings does not include known floor terms")
     operator_root = os.environ.get("ASCENDC_PROJECT_ROOT") or os.environ.get("UO_OP_DIR")
     if operator_root:
         root = uo_root(operator_root)
     else:
-        root = uo_root(tmp_path)
+        root = uo_root(tmp_path, arch="arch0")
         (root / "ir").mkdir(parents=True)
         (root / "manifest.yaml").write_text("op_name: closure-smoke\n", encoding="utf-8")
         (root / "ir" / "host_codemap.yaml").write_text(

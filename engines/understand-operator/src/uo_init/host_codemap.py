@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -24,8 +23,7 @@ TG_HOST_VIEW_YAML = "ir/tg_host_view.yaml"
 # create these; load_tg_host_view still accepts them when the preferred file
 # is missing.
 CODEMAP_YAML = "ir/host_codemap.yaml"  # legacy alias (read-only)
-CODEMAP_SQLITE = "indexes/host_codemap.sqlite"  # legacy; unlinked when present
-KB_GRAPH_SQLITE = "indexes/kb_graph.sqlite"
+CODEMAP_SQLITE = "indexes/host_codemap.sqlite"  # leftover; unlinked when present
 SCHEMA = "tg-host-view/v1"
 COMPAT_SCHEMA = "codemap/v2"
 
@@ -102,13 +100,6 @@ def export_tg_host_view(
     view_path.write_text(text, encoding="utf-8")
     # Working-tree YAML is extract scratch. Production loaders read the .uo blob.
     summary = rebuild_codemap_index(root)
-    kb_upsert: dict[str, Any] = {}
-    try:
-        from uo_init.kb_index import upsert_host_view_tables
-
-        kb_upsert = upsert_host_view_tables(root, payload)
-    except Exception as exc:  # noqa: BLE001
-        kb_upsert = {"ok": False, "error": str(exc)[:200]}
     return {
         "ok": True,
         "schema": SCHEMA,
@@ -122,7 +113,6 @@ def export_tg_host_view(
         "graph_fingerprint": str(
             (payload.get("source") or {}).get("graph_fingerprint") or ""
         ),
-        "kb_upsert": kb_upsert,
         **summary,
     }
 
@@ -340,51 +330,18 @@ def migrate_load_host_view_from_yaml(uo_root: str | Path) -> dict[str, Any]:
     return {}
 
 
-def migrate_load_host_view_from_sqlite(uo_root: str | Path) -> dict[str, Any]:
-    """Test/migrate helper: read ``kb_graph.sqlite`` view_blob."""
-    root = Path(uo_root)
-    db = root if root.is_file() else root / KB_GRAPH_SQLITE
-    if not db.is_file():
-        return {}
-    try:
-        from uo_init.kb_index import load_view_blob as _kb_blob
-
-        for key in ("ir/tg_host_view.yaml", "tg_host_view"):
-            blob = _kb_blob(db, key)
-            if isinstance(blob, dict) and blob:
-                return blob
-    except Exception:
-        return {}
-    return {}
-
-
 def load_tg_host_view(uo_root: str | Path) -> dict[str, Any]:
     """TG shim: materialize host view from ``.uo`` (no YAML/sqlite fallback)."""
     return load_host_codemap(uo_root)
 
 
 def rebuild_codemap_index(uo_root: str | Path) -> dict[str, Any]:
-    """Optional sqlite upsert for migrate/tests. Production authority is ``.uo``.
-
-    During extract (no ``.uo`` yet) this may upsert from working-tree YAML into
-    ``kb_graph.sqlite`` if that file already exists. Missing sqlite is not an error.
-    """
+    """Unlink leftover host_codemap.sqlite. Production authority is ``.uo``."""
     root = Path(uo_root)
     doc = load_host_codemap(root)
     if not doc:
         doc = migrate_load_host_view_from_yaml(root)
     fp = str((doc.get("source") or {}).get("graph_fingerprint") or "")
-    kb_upsert: dict[str, Any] = {}
-    db = root / KB_GRAPH_SQLITE
-    if db.is_file() and doc:
-        try:
-            from uo_init.kb_index import upsert_host_view_tables
-
-            kb_upsert = upsert_host_view_tables(root, doc)
-        except Exception as exc:  # noqa: BLE001
-            kb_upsert = {"ok": False, "error": str(exc)[:200]}
-    else:
-        kb_upsert = {"ok": True, "skipped": "no_legacy_sqlite"}
     legacy = root / CODEMAP_SQLITE
     if legacy.is_file():
         try:
@@ -397,21 +354,7 @@ def rebuild_codemap_index(uo_root: str | Path) -> dict[str, Any]:
         "field_rows": len(doc.get("fields") or []),
         "predicate_rows": len(doc.get("predicates") or []),
         "graph_fingerprint": fp,
-        "kb_upsert": kb_upsert,
     }
-
-
-def _kb_has_host_view_tables(db: Path) -> bool:
-    if not db.is_file():
-        return False
-    try:
-        with sqlite3.connect(str(db)) as conn:
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='field_writer'"
-            ).fetchone()
-            return bool(row)
-    except sqlite3.Error:
-        return False
 
 
 @dataclass

@@ -17,7 +17,8 @@ from uo_init.materialize_tiling import (
     build_template_blocks,
     expand_legal_with_groups,
 )
-from uo_init.tpl_dsl import TplSchema, parse_file
+from uo_init.canonical_tpl_projection import TPL_VIEW_NAMES
+from uo_init.tpl_dsl import TplSchema, parse_file, parse_tpl_corpus
 
 
 def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
@@ -30,10 +31,26 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     header_ref = _portable_header_ref(header, ctx)
     _upsert_dims(codemap, schema, header_ref)
     _upsert_sel_groups(codemap, schema, header_ref)
-    views = _build_tpl_views(schema, header_ref)
     existing = ctx.get("tg_views")
     if not isinstance(existing, dict):
         existing = {}
+    # Views require ARGS_SEL TEMPLATE facts so commit can rebuild them.
+    # Dims-only schemas must not stamp a D that project_tpl_views_from_codemap
+    # returns as {}.
+    if not schema.selections or not any(schema.selections):
+        for name in TPL_VIEW_NAMES:
+            existing.pop(name, None)
+        ctx["tg_views"] = existing
+        codemap.meta["tpl_schema_pass"] = "v1-decl-only"
+        codemap.meta["tpl_schema"] = {
+            "op_tag": schema.op_tag,
+            "dim_count": len(schema.dims),
+            "args_sel_group_count": 0,
+            "legal_key_count": 0,
+            "header": header_ref,
+        }
+        return codemap
+    views = _build_tpl_views(schema, header_ref)
     existing.update(views)
     ctx["tg_views"] = existing
     ctx["tpl_schema"] = schema
@@ -57,10 +74,29 @@ def _resolve_schema(
     codemap: CodeMap, ctx: dict[str, Any]
 ) -> tuple[TplSchema | None, Path | None]:
     header = _find_header(codemap, ctx)
+    paths: list[Path] = []
     if header is not None and header.is_file():
+        paths.append(header)
+    op_root = str(ctx.get("op_root") or "").strip()
+    arch = str(ctx.get("architecture") or codemap.architecture or "")
+    if op_root:
         try:
-            return parse_file(header), header
+            from uo_init.source_layout import tpl_sel_files
+
+            for sel in tpl_sel_files(Path(op_root), arch):
+                if sel.is_file() and sel.resolve() not in {p.resolve() for p in paths}:
+                    paths.append(sel)
+        except Exception:
+            pass
+    if paths:
+        try:
+            return parse_tpl_corpus(paths), paths[0]
         except Exception as exc:  # noqa: BLE001
+            if header is not None and header.is_file():
+                try:
+                    return parse_file(header), header
+                except Exception:
+                    pass
             codemap.meta["tpl_schema_parse_error"] = str(exc)[:240]
             return None, header
 
@@ -101,12 +137,19 @@ def _portable_header_ref(header: Path | None, ctx: dict[str, Any]) -> str:
 
 def _find_header(codemap: CodeMap, ctx: dict[str, Any]) -> Path | None:
     explicit = ctx.get("tiling_key_header") or ctx.get("tpl_header")
+    op_root = str(ctx.get("op_root") or "").strip()
     if explicit:
         p = Path(str(explicit)).expanduser()
         if p.is_file():
-            return p.resolve()
+            if op_root:
+                try:
+                    p.resolve().relative_to(Path(op_root).expanduser().resolve())
+                    return p.resolve()
+                except ValueError:
+                    pass
+            else:
+                return p.resolve()
 
-    op_root = str(ctx.get("op_root") or "").strip()
     if op_root:
         root = Path(op_root).expanduser().resolve()
         arch = str(ctx.get("architecture") or codemap.architecture or "")
@@ -122,8 +165,14 @@ def _find_header(codemap: CodeMap, ctx: dict[str, Any]) -> Path | None:
             from uo_init.op_spec import discover
 
             spec = discover(root, arch_dir=arch or None)
-            if spec.tiling_key_header and Path(spec.tiling_key_header).is_file():
-                return Path(spec.tiling_key_header).resolve()
+            header = spec.tiling_key_header
+            if header and Path(header).is_file():
+                resolved = Path(header).resolve()
+                try:
+                    resolved.relative_to(root)
+                    return resolved
+                except ValueError:
+                    pass
         except Exception:
             pass
         # Fallback glob under op_kernel

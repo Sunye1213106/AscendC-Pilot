@@ -16,6 +16,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.tiling_gaps import record_unresolved_tiling
 
 _ACCESS_RE = re.compile(
     r"(?:(?:this\s*(?:->|\.)\s*)?(?P<base>[A-Za-z_]\w*))\s*(?:->|\.)\s*"
@@ -155,27 +156,18 @@ def rebuild_verified_tiling_reads(
                     rel.attrs["sites"].append(site)
                 resolved += 1
             elif len(candidates) > 1:
-                ref = codemap.upsert(
-                    EntityKind.OTHER,
-                    expression,
-                    eid=f"TDREADVER::{file}::{line}::{scope.id}::{outer}::{inner or ''}",
-                    attrs={
-                        "role": "tilingdata_read_unresolved",
+                record_unresolved_tiling(
+                    codemap,
+                    scope,
+                    role="tilingdata_read_unresolved",
+                    file=file,
+                    line=line,
+                    expression=expression,
+                    extra={
                         "reason": "field_owner_ambiguous",
                         "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
                         "provenance": "source_tilingdata_read_unresolved_verified",
                     },
-                    file=file, line=line, status="partial", confidence=0.5,
-                )
-                codemap.link(
-                    RelationKind.REFERENCES,
-                    scope.id,
-                    ref.id,
-                    attrs={
-                        "provenance": "source_tilingdata_read_unresolved_verified",
-                        "file": file, "line": line,
-                    },
-                    status="partial", confidence=0.5,
                 )
                 unresolved += 1
 

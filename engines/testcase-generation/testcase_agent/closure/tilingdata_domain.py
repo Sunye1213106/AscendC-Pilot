@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """TilingData field domain probe + static over-approx coverage.
 
-Production consumes ``views/tilingdata.yaml`` from the finalized ``.uo``. The
-legacy YAML/DB tree is a compatibility fallback only.
+Production consumes ``views/tilingdata.yaml`` from the finalized ``.uo``.
 """
 from __future__ import annotations
 
@@ -53,25 +52,6 @@ def load_tilingdata_view(ws: W.Workspace | None = None) -> tuple[dict[str, Any],
         product_error = f"uo_product:{type(exc).__name__}:{exc}"[:180]
     else:
         product_error = "views/tilingdata.yaml missing from .uo"
-
-    try:
-        from ascendc_pilot.paths import uo_root
-        uo = uo_root(ws.root, arch=_arch())
-    except Exception:
-        uo = ws.root / ".ascendc-pilot" / _arch() / "uo"
-    path = uo / "views" / "tilingdata.yaml"
-    doc = _load_yaml(path)
-    if doc:
-        return doc, {"kind": "legacy_yaml", "path": str(path)}
-    db = uo / "indexes" / "kb_graph.sqlite"
-    if db.is_file():
-        try:
-            from uo_init.kb_index import load_view_blob
-            blob = load_view_blob(db, "views/tilingdata.yaml")
-            if isinstance(blob, dict) and blob:
-                return blob, {"kind": "legacy_db", "path": str(db), "view": "views/tilingdata.yaml"}
-        except Exception:
-            pass
     return {}, {"kind": "missing", "path": "", "reason": product_error}
 
 

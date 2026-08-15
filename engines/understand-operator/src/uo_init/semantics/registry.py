@@ -64,6 +64,22 @@ def load_registry() -> dict[str, dict[str, Any]]:
                 out.setdefault(spell, alias)
     except Exception:  # noqa: BLE001
         pass
+    try:
+        from uo_init.semantics.ascendc_util import cann_util_api_names
+
+        for spell in cann_util_api_names():
+            if spell in out:
+                continue
+            out[spell] = {
+                "category": "util",
+                "engine": "SCALAR",
+                "confidence": "confirmed",
+                "callee": spell,
+                "registry_version": REGISTRY_VERSION,
+                "source_file": "cann_util",
+            }
+    except Exception:  # noqa: BLE001
+        pass
     return out
 
 

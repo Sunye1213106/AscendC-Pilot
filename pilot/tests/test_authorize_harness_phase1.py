@@ -189,3 +189,69 @@ def test_declare_workflow_passed_bash_forbidden(tmp_path: Path) -> None:
         agent="uo-query",
     )
     assert verdict.get("decision") == "deny"
+
+
+def test_uo_query_denies_repo_grep_escape(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
+    for cmd in (
+        'findstr /S "ARGS_SEL" *.h',
+        'grep -r "fusedOuter" .',
+        'rg "DTemplateNum" op_kernel',
+    ):
+        verdict = authorize(op, tool="bash", command=cmd, agent="uo-query", action="kb_lookup")
+        assert verdict.get("decision") == "deny", (cmd, verdict)
+        assert verdict.get("reason_code") == "REPO_GREP_ESCAPE", (cmd, verdict)
+    grep_tool = authorize(op, tool="grep", command="", agent="uo-query", action="kb_lookup")
+    assert grep_tool.get("decision") == "deny"
+    assert grep_tool.get("reason_code") == "REPO_GREP_ESCAPE"
+    listing = authorize(
+        op, tool="bash", command="pwd", agent="uo-query", action="kb_lookup"
+    )
+    assert listing.get("decision") == "allow"
+
+
+def test_skill_allowed_for_primary_denied_for_uo_query(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-query", phase="answer", force_phase=True, architecture="arch35")
+    primary = authorize(op, tool="skill", command="uo-init", agent="ascendc-pilot")
+    assert primary.get("decision") == "allow", primary
+    assert primary.get("reason_code") == "SKILL_PRIMARY"
+    child = authorize(op, tool="skill", command="operator-analysis", agent="uo-query", action="kb_lookup")
+    assert child.get("decision") == "deny", child
+    assert child.get("reason_code") == "SKILL_SUBAGENT_ESCAPE"
+
+
+def test_acp_stdout_pipe_denied_findstr_pipe_allowed_for_primary(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
+    piped = authorize(
+        op,
+        tool="bash",
+        command="acp uo-query --mode locate --pattern foo | Select-Object -Last 20",
+        agent="ascendc-pilot",
+    )
+    assert piped.get("decision") == "deny", piped
+    assert piped.get("reason_code") == "ACP_PIPE_BUFFER"
+    locate = authorize(
+        op,
+        tool="bash",
+        command='findstr /I /N "IS_FP32_INPUT" op_kernel\\x.h | Select-Object -First 15',
+        agent="ascendc-pilot",
+    )
+    assert locate.get("decision") == "allow", locate
+    assert locate.get("reason_code") == "BASH_READONLY_INSPECT"
+    chained = authorize(
+        op,
+        tool="bash",
+        command="cd D:\\op && acp status --project D:\\op",
+        agent="ascendc-pilot",
+    )
+    assert chained.get("decision") == "allow", chained
+    assert chained.get("reason_code") in {"HARNESS_CLI", "HARNESS_START"}

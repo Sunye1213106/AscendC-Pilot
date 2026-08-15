@@ -125,13 +125,20 @@ kernel:
     - __simt_callee__
     - __simd__
     - __simd_vf__
+    - __simt_vf__
+    - LAUNCH_BOUND
+    - __launch_bounds__
     - __no_simd_vf_fusion__
     - __vec_callee__
     - __ssbuf__
     - __sync_noalias__
   # Arch-specific -D (__NPU_ARCH__, __DAV_*, __CCE_AICORE__) come from
   # platform_ini.ARCH_KERNEL_MACROS, not this map.
-  defines: {}
+  # NOT_DYNAMIC_COMPILE matches ops-transformer UT cmake (`add_definitions`).
+  # Without it, fused kernels take the copied-tree `#include "../sibling/op.cpp"`
+  # branch; with it they `__has_include` the in-repo `../../sibling/op_kernel/...`.
+  defines:
+    NOT_DYNAMIC_COMPILE: ""
 
   # CANN ge::DataType numeric lookup. Every ORIG_DTYPE_* in the kernel include
   # closure is injected (not only ORIG_DTYPE_QUERY in the entry .cpp). When the
@@ -146,6 +153,10 @@ kernel:
   force_include:
     # Bisheng builtins absent from CANN headers under vanilla clang.
     # Residual errors (if any) stay in CANN impl headers / bisheng asm.
+    # Cube/softmax tiling PODs (TCubeTiling / SoftMaxTiling) stay in CANN
+    # ``kernel_tiling.h``; include_heal force-includes that header when a
+    # probe reports them as unknown types. Do not -include it on every TU:
+    # quoted lookup then collides with kernel_operator atomics / fp8 aliases.
     - "{compat_root}/bisheng_prelude.h"
   # Kernel -I order mirrors ops-transformer UT CMake (asc/ first):
   #   asc/include, asc/impl/*, asc/ — NOT ascendc/include/basic_api.
@@ -169,6 +180,9 @@ kernel:
     - "{cann_root}/cann-asc-devkit/x86_64-linux/asc/include/adv_api/hccl/internal/hcomm"
     - "{cann_root}/cann-asc-devkit/x86_64-linux/tikcpp/tikcfw"
     - "{cann_root}/cann-metadef/x86_64-linux/include"
+    # Kernel sources include "op_kernel/platform_util.h"; that file lives under
+    # opbase op_common (host -I already has this root).
+    - "{cann_root}/cann-opbase/x86_64-linux/include/op_common"
     - "{ops_root}"
     - "{ops_root}/common/include"
     - "{ops_root}/common/include/op_kernel"

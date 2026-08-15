@@ -31,6 +31,13 @@ def _type(cm: CodeMap, name: str):
     return next((e for e in cm.by_kind(EntityKind.TYPE) if e.name == name), None)
 
 
+def _methods(cm: CodeMap, name: str, *, receiver: str = ""):
+    rows = [e for e in cm.by_kind(EntityKind.METHOD) if e.name == name]
+    if not receiver:
+        return rows
+    return [e for e in rows if receiver in (e.attrs.get("receivers") or [])]
+
+
 def _wraps_path(cm: CodeMap, start_name: str, end_name: str) -> bool:
     """True if start can reach end along WRAPS edges."""
     start = _type(cm, start_name)
@@ -496,25 +503,14 @@ def test_mutexbuffer_get_bridges_without_policy_catalog(tmp_path: Path) -> None:
     lps = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LockProd"]
     assert lps and all(e.attrs.get("root") == "AscendC::Lock" for e in lps)
 
-    # Project WidgetHolder::Get must NOT be proven as AscendC::Get,
-    # but the call site must bind to the unique project declaration.
-    project_gets = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf"
-    ]
-    assert project_gets, "expected call site for commonL1Buf.Get()"
+    # Project WidgetHolder::Get is a METHOD, not an OPERATION.
+    project_gets = _methods(cm, "Get", receiver="commonL1Buf")
+    assert project_gets, "expected METHOD for commonL1Buf.Get()"
     assert all(e.attrs.get("root_status") != "REACHED" for e in project_gets)
     assert all("AscendC::Get" not in str(e.attrs.get("root") or "") for e in project_gets)
     assert all(e.status == "extracted" for e in project_gets)
-    assert all(str(e.attrs.get("callee_qualified") or "").endswith("WidgetHolder::Get") for e in project_gets)
-    assert all(str(e.attrs.get("root_proof") or "").startswith("project_") for e in project_gets)
-    binds = [
-        r
-        for r in cm.relations.values()
-        if r.kind_name() == RelationKind.BINDS.value and r.src in {e.id for e in project_gets}
-    ]
-    assert binds, "expected BINDS from call site to WidgetHolder::Get"
+    assert all(str(e.attrs.get("qualified_name") or "").endswith("WidgetHolder::Get") for e in project_gets)
+    assert not any(e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf" for e in cm.by_kind(EntityKind.OPERATION))
 
 
 def test_project_get_lock_not_ascendc_root(tmp_path: Path) -> None:
@@ -552,15 +548,14 @@ def test_project_get_lock_not_ascendc_root(tmp_path: Path) -> None:
     finalize_kernel_root_trace(cm, root, architecture="arch35")
 
     for name in ("Get", "Lock", "DataCopy"):
-        member_ops = [
-            e
-            for e in cm.by_kind(EntityKind.OPERATION)
-            if e.name == name and e.attrs.get("receiver") == "foo"
-        ]
-        assert member_ops, f"missing member call {name}"
+        member_ops = _methods(cm, name, receiver="foo")
+        assert member_ops, f"missing member METHOD {name}"
         assert all(e.attrs.get("root_status") != "REACHED" for e in member_ops), name
         assert all(e.status == "extracted" for e in member_ops), name
-        assert all(str(e.attrs.get("callee_qualified") or "") == f"Foo::{name}" for e in member_ops), name
+        assert all(str(e.attrs.get("qualified_name") or "") == f"Foo::{name}" for e in member_ops), name
+        assert not any(
+            e.name == name and e.attrs.get("receiver") == "foo" for e in cm.by_kind(EntityKind.OPERATION)
+        ), name
 
     free_dc = [
         e
@@ -939,6 +934,100 @@ def test_arch_header_enque_outside_confirmed_tu(tmp_path: Path) -> None:
     assert enque.file and "quant.h" in str(enque.file).replace("\\\\", "/")
 
 
+def test_arch_neutral_kernel_enque_deque_template(tmp_path: Path) -> None:
+    """TQue beside the entry TU (not under op_kernel/<arch>/) still maps."""
+    root = tmp_path / "apt_style"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "tiling.h").write_text("struct Tiling {};\n", encoding="utf-8")
+    entry = root / "op_kernel" / "entry.cpp"
+    entry.write_text("void KernelEntry() { DoFp16(); }\n", encoding="utf-8")
+    (root / "op_kernel" / "quant.h").write_text(
+        """
+        class Preprocess {
+         public:
+          __aicore__ inline void ConvertLinearTile()
+          {
+            TQue<QuePosition::VECIN, 1> weightQueue_;
+            LocalTensor<int8_t> weightLocal;
+            weightQueue_.EnQue(weightLocal);
+            weightLocal = weightQueue_.DeQue<int8_t>();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    (root / "op_kernel" / "arch22" / "old.h").parent.mkdir(parents=True, exist_ok=True)
+    (root / "op_kernel" / "arch22" / "old.h").write_text(
+        """
+        class OldPath {
+         public:
+          __aicore__ inline void Convert()
+          {
+            TQue<QuePosition::VECIN, 1> q;
+            LocalTensor<float> t;
+            q.EnQue(t);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="apt_style", architecture="arch35")
+    _seed(cm, root, files=[str(entry)])
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    enques = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue"]
+    deques = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "DeQue"]
+    assert len(enques) == 1
+    assert enques[0].attrs.get("mechanism") == "tque"
+    assert "quant.h" in str(enques[0].file or "").replace("\\\\", "/")
+    assert "arch22" not in str(enques[0].file or "").replace("\\\\", "/")
+    assert len(deques) == 1
+    assert deques[0].attrs.get("mechanism") == "tque"
+    assert deques[0].attrs.get("root_status") == "REACHED"
+
+
+def test_selected_tu_primitives_survive_strict_reachability(tmp_path: Path) -> None:
+    """Confirmed-TU catalog APIs still map when the walk did not reach the method."""
+    root = tmp_path / "strict_tu"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {}
+          __aicore__ inline void CopyIn() {
+            LocalTensor<float> ub;
+            TQue<QuePosition::VECIN, 1> inQue;
+            inQue.EnQue(ub);
+            Cast(dst, src, preg);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="strict_tu", architecture="arch35")
+    _seed(cm, root)
+    kernel = next(iter(cm.by_kind(EntityKind.KERNEL)))
+    for name in ("HelperA", "HelperB", "HelperC"):
+        fn = cm.upsert(EntityKind.FUNCTION, name, file="op_kernel/arch35/process.h", line=1)
+        cm.link(
+            RelationKind.CALLS,
+            kernel.id,
+            fn.id,
+            attrs={"provenance": "source_kernel_call_bound"},
+        )
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    enque = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue")
+    cast = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Cast")
+    assert enque.attrs.get("root_status") == "REACHED"
+    assert cast.attrs.get("root_status") == "REACHED"
+
+
 def test_unpaired_flag_is_gap_but_enque_is_not(tmp_path: Path) -> None:
     """Missing WaitFlag is UNPAIRED_FLAG_SYNC; EnQue without DeQue is not."""
     root = tmp_path / "unpaired"
@@ -1146,14 +1235,13 @@ def test_min_scalar_unresolved_vector_min_reached(tmp_path: Path) -> None:
     finalize_kernel_root_trace(cm, root, architecture="arch35")
 
     mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
-    assert len(mins) == 2
-    statuses = sorted(str(e.attrs.get("root_status")) for e in mins)
-    assert statuses == ["PROJECT", "REACHED"]
-    two_arg = next(e for e in mins if len(e.attrs.get("args") or []) <= 2)
-    four_arg = next(e for e in mins if len(e.attrs.get("args") or []) >= 3)
-    assert two_arg.attrs.get("root_status") == "PROJECT"
-    assert two_arg.status == "extracted"
-    assert four_arg.attrs.get("root_status") == "REACHED"
+    assert len(mins) == 1
+    assert mins[0].attrs.get("root_status") == "REACHED"
+    four_arg = mins[0]
+    assert len(four_arg.attrs.get("args") or []) >= 3
+    scalar = [e for e in cm.by_kind(EntityKind.METHOD) if e.name == "Min"]
+    assert scalar
+    assert all(e.attrs.get("root_status") != "REACHED" for e in scalar)
 
 
 def test_policy_get_binds_declaration_not_catalog(tmp_path: Path) -> None:
@@ -1203,34 +1291,33 @@ def test_policy_get_binds_declaration_not_catalog(tmp_path: Path) -> None:
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
 
-    gets = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "aL0BuffsDb"
-    ]
+    gets = _methods(cm, "Get", receiver="aL0BuffsDb")
+    if not gets:
+        gets = [
+            e
+            for e in cm.by_kind(EntityKind.METHOD)
+            if e.name == "Get" and "MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "")
+        ]
     assert gets
     assert all(e.status == "extracted" for e in gets)
     assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
-    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
-    assert all("policy.h" in str(e.attrs.get("callee_decl_file") or "") for e in gets)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "") for e in gets)
 
     inits = [
         e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Init" and e.attrs.get("receiver") == "aL0BuffsDb"
+        for e in cm.by_kind(EntityKind.METHOD)
+        if e.name == "Init" and "MutexBuffersPolicyDB::Init" in str(e.attrs.get("qualified_name") or "")
     ]
     assert inits
     assert all(e.status == "extracted" for e in inits)
     assert all(e.attrs.get("root_status") != "REACHED" for e in inits)
-    assert all("MutexBuffersPolicyDB::Init" in str(e.attrs.get("callee_qualified") or "") for e in inits)
 
     ping_inits = [
         e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Init" and e.attrs.get("receiver") == "ping_"
+        for e in cm.by_kind(EntityKind.METHOD)
+        if e.name == "Init" and "MutexBuffer::Init" in str(e.attrs.get("qualified_name") or "")
     ]
     assert ping_inits
-    assert all("MutexBuffer::Init" in str(e.attrs.get("callee_qualified") or "") for e in ping_inits)
     assert all(e.attrs.get("root_status") != "REACHED" for e in ping_inits)
 
     gts = [
@@ -1265,12 +1352,12 @@ def test_unique_project_min_is_not_ascendc(tmp_path: Path) -> None:
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
 
-    mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
+    mins = _methods(cm, "Min")
     assert mins
     assert all(e.status == "extracted" for e in mins)
     assert all(e.attrs.get("root_status") != "REACHED" for e in mins)
-    assert all(e.attrs.get("root_proof") == "project_free" for e in mins)
-    assert all("Min" in str(e.attrs.get("callee_qualified") or "") for e in mins)
+    assert all("Min" in str(e.attrs.get("qualified_name") or e.name) for e in mins)
+    assert not any(e.name == "Min" for e in cm.by_kind(EntityKind.OPERATION))
 
 
 def test_ambiguous_free_min_stays_unbound(tmp_path: Path) -> None:
@@ -1308,12 +1395,12 @@ def test_ambiguous_free_min_stays_unbound(tmp_path: Path) -> None:
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
 
-    mins = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "Min"]
+    mins = _methods(cm, "Min")
     assert mins
-    assert all(not e.attrs.get("callee_qualified") for e in mins)
+    assert all(not e.attrs.get("qualified_name") or "Min" in str(e.attrs.get("qualified_name") or "") for e in mins)
     assert all(e.attrs.get("root_status") != "REACHED" for e in mins)
     assert all(e.status == "extracted" for e in mins)
-    assert all(e.attrs.get("root_status") == "PROJECT" for e in mins)
+    assert not any(e.name == "Min" for e in cm.by_kind(EntityKind.OPERATION))
 
 
 def test_align_to16_unique_free_not_confused_by_calls(tmp_path: Path) -> None:
@@ -1344,11 +1431,12 @@ def test_align_to16_unique_free_not_confused_by_calls(tmp_path: Path) -> None:
     _seed(cm, root, files=[str(arch / "process.h"), str(arch / "common.h")])
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
-    rows = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "AlignTo16"]
+    rows = _methods(cm, "AlignTo16")
     assert rows
     assert all(e.status == "extracted" for e in rows)
     assert all(e.attrs.get("root_status") != "REACHED" for e in rows)
-    assert all("AlignTo16" in str(e.attrs.get("callee_qualified") or "") for e in rows)
+    assert all("AlignTo16" in str(e.attrs.get("qualified_name") or e.name) for e in rows)
+    assert not any(e.name == "AlignTo16" for e in cm.by_kind(EntityKind.OPERATION))
 
 
 def test_conditional_member_type_binds_unique_method(tmp_path: Path) -> None:
@@ -1379,13 +1467,12 @@ def test_conditional_member_type_binds_unique_method(tmp_path: Path) -> None:
     finalize_kernel_root_trace(cm, root, architecture="arch35")
     gets = [
         e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf"
+        for e in cm.by_kind(EntityKind.METHOD)
+        if e.name == "Get" and "MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "")
     ]
     assert gets
     assert all(e.status == "extracted" for e in gets)
     assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
-    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
 
 
 def test_outofline_method_binds_class_member(tmp_path: Path) -> None:
@@ -1424,32 +1511,38 @@ def test_outofline_method_binds_class_member(tmp_path: Path) -> None:
     _seed(cm, root)
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
-    gets = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "commonL1Buf"
-    ]
+    gets = _methods(cm, "Get", receiver="commonL1Buf")
+    if not gets:
+        gets = [
+            e
+            for e in cm.by_kind(EntityKind.METHOD)
+            if e.name == "Get" and "MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "")
+        ]
     assert gets
     assert all(e.status == "extracted" for e in gets)
     assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
-    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
-    inits = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Init" and e.attrs.get("receiver") == "l0aBuf"
-    ]
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "") for e in gets)
+    inits = _methods(cm, "Init", receiver="l0aBuf")
+    if not inits:
+        inits = [
+            e
+            for e in cm.by_kind(EntityKind.METHOD)
+            if e.name == "Init" and "MutexBuffersPolicyDB::Init" in str(e.attrs.get("qualified_name") or "")
+        ]
     assert inits
     assert all(e.status == "extracted" for e in inits)
     assert all(e.attrs.get("root_status") != "REACHED" for e in inits)
-    assert all("MutexBuffersPolicyDB::Init" in str(e.attrs.get("callee_qualified") or "") for e in inits)
-    takes = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "l0aBuf"
-    ]
+    assert all("MutexBuffersPolicyDB::Init" in str(e.attrs.get("qualified_name") or "") for e in inits)
+    takes = _methods(cm, "Get", receiver="l0aBuf")
+    if not takes:
+        takes = [
+            e
+            for e in cm.by_kind(EntityKind.METHOD)
+            if e.name == "Get" and "MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "")
+        ]
     assert takes
     assert all(e.status == "extracted" for e in takes)
-    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in takes)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "") for e in takes)
 
 
 def test_multiline_conditional_member_binds_unique_method(tmp_path: Path) -> None:
@@ -1480,15 +1573,17 @@ def test_multiline_conditional_member_binds_unique_method(tmp_path: Path) -> Non
     _seed(cm, root)
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
-    gets = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "dYL1Buf"
-    ]
+    gets = _methods(cm, "Get", receiver="dYL1Buf")
+    if not gets:
+        gets = [
+            e
+            for e in cm.by_kind(EntityKind.METHOD)
+            if e.name == "Get" and "MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "")
+        ]
     assert gets
     assert all(e.status == "extracted" for e in gets)
     assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
-    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("callee_qualified") or "") for e in gets)
+    assert all("MutexBuffersPolicyDB::Get" in str(e.attrs.get("qualified_name") or "") for e in gets)
 
 
 def test_selector_alias_with_two_gets_stays_unbound(tmp_path: Path) -> None:
@@ -1528,24 +1623,14 @@ def test_selector_alias_with_two_gets_stays_unbound(tmp_path: Path) -> None:
     _seed(cm, root)
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
-    gets = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "mmBuf"
-    ]
+    gets = _methods(cm, "Get", receiver="mmBuf")
     assert gets
-    assert all(not e.attrs.get("callee_qualified") for e in gets)
-    assert all(e.attrs.get("root_status") == "PROJECT" for e in gets)
+    assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
     assert all(e.status == "extracted" for e in gets)
-    assert all(e.attrs.get("receiver") == "mmBuf" for e in gets)
-    assert all("Policy" not in str(e.attrs.get("callee_qualified") or "") for e in gets)
-    binds = [
-        r
-        for r in cm.relations.values()
-        if r.kind_name() == RelationKind.BINDS.value and r.src in {e.id for e in gets}
-    ]
-    assert binds
-    assert all(str(r.attrs.get("receiver") or "") == "mmBuf" for r in binds)
+    assert all("Policy" not in str(e.attrs.get("qualified_name") or "") for e in gets)
+    assert not any(
+        e.name == "Get" and e.attrs.get("receiver") == "mmBuf" for e in cm.by_kind(EntityKind.OPERATION)
+    )
 
 
 def test_cited_files_from_walk_covers_included_headers() -> None:
@@ -1688,12 +1773,9 @@ def test_tbuf_indexed_template_get_bridges_localtensor(tmp_path: Path) -> None:
     recvs = {e.attrs.get("receiver") for e in typed}
     assert "mm1ResBuf" in recvs
     assert "mm2ResBuf" in recvs
-    policy = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "Get" and e.attrs.get("receiver") == "dYL1Buf"
-    ]
-    assert policy and all(e.attrs.get("root_status") == "PROJECT" for e in policy)
+    policy = _methods(cm, "Get", receiver="dYL1Buf")
+    assert policy
+    assert all(e.attrs.get("root_status") != "REACHED" for e in policy)
 
 
 def test_multiline_or_reg_call_reached(tmp_path: Path) -> None:
@@ -1766,12 +1848,9 @@ def test_lexical_vf_reg_apis_reached(tmp_path: Path) -> None:
     assert all(e.attrs.get("root") == "AscendC::MulDstAdd" for e in fused_mul)
 
     ors = _ops("Or")
-    assert len(ors) >= 2
-    vec_or = [e for e in ors if _reg_shaped(e)]
-    scalar_or = [e for e in ors if not _reg_shaped(e)]
-    assert vec_or and all(e.attrs.get("root_status") == "REACHED" for e in vec_or)
-    assert all(e.attrs.get("root") == "AscendC::Or" for e in vec_or)
-    assert scalar_or and all(e.attrs.get("root_status") != "REACHED" for e in scalar_or)
+    assert ors and all(e.attrs.get("root_status") == "REACHED" for e in ors)
+    assert all(e.attrs.get("root") == "AscendC::Or" for e in ors)
+    assert not any(e.attrs.get("root_status") == "PROJECT" for e in ors)
 
 
 def _reg_shaped(ent) -> bool:
@@ -1807,24 +1886,302 @@ def test_lexical_selector_get_binds_receiver_not_policy(tmp_path: Path) -> None:
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
     for recv in ("dYL1Buf", "pL1Buf"):
-        gets = [
-            e
-            for e in cm.by_kind(EntityKind.OPERATION)
-            if e.name == "Get" and e.attrs.get("receiver") == recv
-        ]
+        gets = _methods(cm, "Get", receiver=recv)
         assert gets, recv
-        assert all(e.attrs.get("root_status") == "PROJECT" for e in gets), recv
-        assert all(e.status == "extracted" for e in gets), recv
         assert all(e.attrs.get("root_status") != "REACHED" for e in gets), recv
+        assert all(e.status == "extracted" for e in gets), recv
         assert all("AscendC::Get" not in str(e.attrs.get("root") or "") for e in gets), recv
-        assert all("Policy" not in str(e.attrs.get("callee_qualified") or "") for e in gets), recv
-        binds = [
-            r
-            for r in cm.relations.values()
-            if r.kind_name() == RelationKind.BINDS.value and r.src in {e.id for e in gets}
-        ]
-        assert binds, recv
-        assert all(str(r.attrs.get("receiver") or "") == recv for r in binds), recv
+        assert all("Policy" not in str(e.attrs.get("qualified_name") or "") for e in gets), recv
+        assert not any(
+            e.name == "Get" and e.attrs.get("receiver") == recv for e in cm.by_kind(EntityKind.OPERATION)
+        ), recv
+    dyl1 = next(e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "dYL1Buf")
+    assert dyl1.attrs.get("mutex_policy") == "PolicyDB"
+    assert dyl1.attrs.get("conditional_flag")
+    assert dyl1.attrs.get("role") == "mutex_policy"
+
+
+def test_pipe_kernel_phase_and_sync_ops(tmp_path: Path) -> None:
+    root = tmp_path / "phase"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          TPipe pipeIn;
+          TPipe pipeBase;
+          TPipe pipePost;
+          __aicore__ inline void OpPre() {
+            SyncALLCores();
+            Destroy();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="phase", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    phases = {e.name: e.attrs.get("kernel_phase") for e in cm.by_kind(EntityKind.PIPE)}
+    assert phases.get("pipeIn") == "pre"
+    assert phases.get("pipeBase") == "main"
+    assert phases.get("pipePost") == "post"
+    syncs = [e for e in cm.by_kind(EntityKind.METHOD) if e.name in {"SyncALLCores", "Destroy"}]
+    assert syncs
+    assert "kernel_execution_pipeline" not in cm.meta
+
+
+def test_mutex_policy_on_conditional_buffer(tmp_path: Path) -> None:
+    root = tmp_path / "mutex"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          typename std::conditional<IS_PRELOAD_TWO_TIMES, MutexBuffersPolicyDB<BufferType::L1, SyncType::NO_SYNC>,
+                                    MutexBuffersPolicySingleBuffer<BufferType::L1, SyncType::NO_SYNC>>::type pL1Buf;
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="mutex", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    buf = next(e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "pL1Buf")
+    assert buf.attrs.get("mutex_policy") == "PolicyDB"
+    assert buf.attrs.get("conditional_flag") == "IS_PRELOAD_TWO_TIMES"
+    assert "kernel_execution_pipeline" not in cm.meta
+
+
+def test_unclassified_call_is_project_operation(tmp_path: Path) -> None:
+    root = tmp_path / "proj"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            Helper(1);
+            DataCopy(dst, src, n);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="proj", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    helpers = _methods(cm, "Helper")
+    assert helpers
+    assert all(e.attrs.get("root_status") != "REACHED" for e in helpers)
+    assert all(e.status == "extracted" for e in helpers)
+    assert not any(e.name == "Helper" for e in cm.by_kind(EntityKind.OPERATION))
+    copies = [e.name for e in cm.by_kind(EntityKind.OPERATION)]
+    assert "DataCopy" in copies
+
+
+def test_quoted_include_copy_enters_graph(tmp_path: Path) -> None:
+    root = tmp_path / "glue"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (root / "inc").mkdir()
+    (root / "inc" / "copy.h").write_text(
+        "void Impl() { DataCopy(dst, src, n); Copy(a, b); }\n",
+        encoding="utf-8",
+    )
+    (arch / "process.h").write_text(
+        '#include "../../inc/copy.h"\n'
+        "class Process {\n"
+        " public:\n"
+        "  __aicore__ inline void Process() {}\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="glue", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    copies = [e.name for e in cm.by_kind(EntityKind.OPERATION)]
+    assert "DataCopy" in copies
+    assert "Copy" in copies
+
+
+def test_template_instantiations_share_one_operation(monkeypatch, tmp_path: Path) -> None:
+    from uo_init.passes import kernel_scan as kscan
+
+    root = tmp_path / "dup"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    src = arch / "process.h"
+    src.write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() { DataCopy(dst, src, n); }
+        };
+        """,
+        encoding="utf-8",
+    )
+    fake = [
+        {
+            "caller": "Process",
+            "callee": "DataCopy",
+            "file": str(src),
+            "line": 5,
+            "column": 0,
+            "args": ["dst", "src", "n"],
+            "template_args": ["float"],
+            "provenance": "test_inject",
+        },
+        {
+            "caller": "Process",
+            "callee": "DataCopy",
+            "file": str(src),
+            "line": 5,
+            "column": 0,
+            "args": ["dst", "src", "n"],
+            "template_args": ["half"],
+            "provenance": "test_inject",
+        },
+    ]
+
+    monkeypatch.setattr(kscan, "collect_call_sites_from_walks", lambda *a, **k: (fake, [], [], "test_inject"))
+    monkeypatch.setattr(kscan, "lexical_source_call_sites", lambda *a, **k: [])
+    monkeypatch.setattr(
+        kscan,
+        "collect_type_graph_from_walks",
+        lambda *a, **k: {"members": [], "aliases": [], "types": [], "bases": []},
+    )
+    cm = CodeMap(op_name="dup", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    ops = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "DataCopy"]
+    assert len(ops) == 1
+    assert int(ops[0].attrs.get("instantiation_n") or 0) >= 2
+    sets = ops[0].attrs.get("template_arg_sets") or []
+    assert ["float"] in sets and ["half"] in sets
+
+
+def test_builtin_and_helper_are_not_operations(tmp_path: Path) -> None:
+    root = tmp_path / "prim"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            if (__builtin_expect(1, 1)) {
+              Helper(1);
+              DataCopy(dst, src, n);
+              q.EnQue(x);
+              LoadAlign(vreg, ptr);
+              LoadData(a, b, p);
+            }
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="prim", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.OPERATION)}
+    assert "__builtin_expect" not in names
+    assert "Helper" not in names
+    assert "DataCopy" in names
+    assert "EnQue" in names
+    assert "LoadAlign" in names
+    assert "LoadData" in names
+    snap = (cm.meta.get("kernel_root_trace") or {}).get("source_api_gated") or {}
+    assert int(snap.get("LoadData") or 0) >= 1
+    assert int(snap.get("EnQue") or 0) >= 1
+    assert (cm.meta.get("kernel_root_trace") or {}).get("gated_fill_complete") is True
+    assert not any(e.attrs.get("root_status") == "BUILTIN" for e in cm.by_kind(EntityKind.OPERATION))
+    assert _methods(cm, "Helper")
+
+
+def test_sibling_cpp_primitive_keeps_owner(tmp_path: Path) -> None:
+    family = tmp_path / "family"
+    wrap = family / "wrap"
+    sib = family / "sib"
+    arch = wrap / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (wrap / "op_host" / "arch35").mkdir(parents=True)
+    (sib / "op_kernel").mkdir(parents=True)
+    (sib / "op_kernel" / "k.cpp").write_text(
+        "void Impl() { q.EnQue(x); DataCopy(dst, src, n); }\n",
+        encoding="utf-8",
+    )
+    (arch / "process.h").write_text(
+        '#include "../../sib/op_kernel/k.cpp"\n'
+        "class Process {\n"
+        " public:\n"
+        "  __aicore__ inline void Process() {}\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="wrap", architecture="arch35")
+    _seed(cm, wrap)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, wrap, architecture="arch35")
+    enques = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue"]
+    assert enques
+    assert all(e.attrs.get("owner") == "sibling_op" for e in enques)
+
+
+def test_sibling_cpp_enque_is_operation_with_sibling_owner(tmp_path: Path) -> None:
+    family = tmp_path / "family"
+    wrap = family / "wrap"
+    sib = family / "sib"
+    arch = wrap / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (wrap / "op_host" / "arch35").mkdir(parents=True)
+    (sib / "op_kernel").mkdir(parents=True)
+    (sib / "op_kernel" / "k.cpp").write_text(
+        "void Impl() { q.EnQue(x); }\n",
+        encoding="utf-8",
+    )
+    (wrap / "op_kernel" / "entry.cpp").write_text(
+        '#include "../../sib/op_kernel/k.cpp"\n'
+        "class Process {\n"
+        " public:\n"
+        "  __aicore__ inline void Process() {}\n"
+        "};\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="wrap", architecture="arch35")
+    cm.upsert(
+        EntityKind.KERNEL,
+        "Process",
+        attrs={"source_signature": True, "source_definition": True},
+        file="op_kernel/entry.cpp",
+        line=4,
+    )
+    cm.meta["kernel_tiling_closure"] = {
+        "selected_kernel_files": [str(wrap / "op_kernel" / "entry.cpp")],
+        "kernel_reachable_scopes": 1,
+    }
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, wrap, architecture="arch35")
+    enques = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue"]
+    assert enques
+    assert any(e.attrs.get("owner") == "sibling_op" for e in enques)
+
 
 
 

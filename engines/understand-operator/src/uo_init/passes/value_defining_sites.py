@@ -66,6 +66,7 @@ def enrich_value_defining_sites(
     call_re = re.compile(r"\b(?P<fn>[A-Z][A-Za-z_]\w*)\s*\(")
     for file, raw, masked in texts:
         regions = _guard_regions(masked)
+        functions = _function_spans(masked)
         for match in decl_re.finditer(masked):
             guards = _guards_at(regions, match.start(), raw)
             locals_.setdefault(_norm_path(match.group("name")), []).append({
@@ -76,6 +77,7 @@ def enrich_value_defining_sites(
                 "kind": "declaration",
                 "guards": guards,
                 "unconditional": not guards,
+                "function": _enclosing_function(functions, match.start()),
             })
         for match in call_re.finditer(masked):
             guards = _guards_at(regions, match.start(), raw)
@@ -86,7 +88,6 @@ def enrich_value_defining_sites(
                 "line": _line(raw, match.start()),
                 "guards": guards,
             })
-        functions = _function_spans(masked)
         for match in assign_re.finditer(masked):
             lhs = _norm_path(match.group("lhs"))
             rhs = raw[match.start("rhs"):match.end("rhs")].strip()
@@ -138,6 +139,10 @@ def enrich_value_defining_sites(
         field.attrs["value_defining_sites"] = found
         if found:
             annotated += 1
+        aliases = _local_aliases_for_field(field, assigns, locals_)
+        if aliases:
+            field.attrs["local_aliases"] = aliases
+            field.attrs["fused_outer_candidates"] = aliases
 
     keyed = _annotate_key_packing_roots(codemap, assigns, locals_)
 
@@ -179,6 +184,51 @@ def _annotate_key_packing_roots(
             ent.attrs["packing_value_sites"] = sites[:12]
             count += 1
     return count
+
+
+def _local_aliases_for_field(
+    field,
+    assigns: dict[str, list[dict]],
+    locals_: dict[str, list[dict]],
+) -> list[dict]:
+    """Locals that are copied into this tiling field (any op, any name)."""
+    leaf = str(field.name or "").rsplit(".", 1)[-1]
+    if not leaf:
+        return []
+    sites = list(assigns.get(leaf) or [])
+    name = str(field.name or "")
+    if name and name != leaf:
+        sites.extend(assigns.get(_norm_path(name)) or [])
+    out: list[dict] = []
+    seen: set[tuple] = set()
+    for site in sites:
+        rhs = str(site.get("rhs") or "")
+        for ident in _identifiers(rhs):
+            if len(ident) < 3 or ident.lower() == leaf.lower():
+                continue
+            defs = list(locals_.get(ident) or []) + [
+                s for s in (assigns.get(ident) or []) if "." not in str(s.get("lhs") or "")
+            ]
+            if not defs:
+                continue
+            for item in defs:
+                marker = (ident, item.get("file"), item.get("line"), item.get("rhs"))
+                if marker in seen:
+                    continue
+                seen.add(marker)
+                out.append(
+                    {
+                        "name": ident,
+                        "function": item.get("function") or "",
+                        "file": item.get("file") or "",
+                        "line": item.get("line"),
+                        "rhs": item.get("rhs") or "",
+                        "guard": item.get("guards") or [],
+                    }
+                )
+                if len(out) >= 12:
+                    return out
+    return out
 
 
 _CPP_NOISE = frozenset({

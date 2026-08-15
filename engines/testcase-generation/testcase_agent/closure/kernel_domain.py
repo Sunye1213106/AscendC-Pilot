@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """Kernel-branch domain coverage over witness keys.
 
-The finalized ``.uo`` is the primary and production authority. Legacy YAML is
-accepted only as a compatibility fallback for pre-CodeMap fixtures.
+The finalized ``.uo`` is the only production authority.
 """
 from __future__ import annotations
 
@@ -10,8 +9,6 @@ import csv
 import os
 from pathlib import Path
 from typing import Any
-
-import yaml
 
 from testcase_agent.closure import finite_predicate as FP
 from testcase_agent.closure import ledger
@@ -38,62 +35,20 @@ def _product_doc(ws: W.Workspace) -> tuple[dict[str, Any], dict[str, Any]]:
     return {}, {"kind": "missing", "path": "", "reason": "views/kernel.yaml missing from .uo"}
 
 
-def _legacy_root(ws: W.Workspace) -> Path:
-    try:
-        from ascendc_pilot.paths import uo_root
-        return uo_root(ws.root, arch=_arch())
-    except Exception:
-        return ws.root / ".ascendc-pilot" / _arch() / "uo"
-
-
 def view_source(uo: Path | None, rel: str = "views/kernel.yaml") -> dict[str, Any]:
-    """Describe a legacy projection source without selecting it as authority.
-
-    Kept as a small compatibility/introspection API for tests and diagnostics.
-    Production ``load_kernel_view`` still resolves the formal ``.uo`` product
-    first; this helper merely distinguishes an absent export from YAML/DB-backed
-    legacy fixtures.
-    """
+    """Describe whether a path exists. Production loaders do not use this."""
     if uo is None:
         return {"kind": "missing", "path": "", "reason": "uo_root_missing"}
     root = Path(uo).expanduser().resolve()
     path = root / rel
     if path.is_file():
         return {"kind": "yaml", "path": str(path)}
-    db = root / "indexes" / "kb_graph.sqlite"
-    if db.is_file():
-        return {"kind": "db", "path": str(db), "view": rel}
     return {"kind": "missing", "path": "", "reason": f"{rel} missing"}
-
-
-def _legacy_doc(ws: W.Workspace) -> tuple[dict[str, Any], dict[str, Any]]:
-    uo = _legacy_root(ws)
-    for rel in ("views/kernel.yaml", "kernel/branches.yaml"):
-        path = uo / rel
-        if path.is_file():
-            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            if isinstance(doc, dict):
-                return doc, {"kind": "legacy_yaml", "path": str(path)}
-    db = uo / "indexes" / "kb_graph.sqlite"
-    if db.is_file():
-        try:
-            from uo_init.kb_index import load_view_blob
-            for rel in ("views/kernel.yaml", "kernel/branches.yaml"):
-                blob = load_view_blob(db, rel)
-                if isinstance(blob, dict) and blob:
-                    return blob, {"kind": "legacy_db", "path": str(db), "view": rel}
-        except Exception:
-            pass
-    return {}, {"kind": "missing", "path": "", "reason": "no kernel view in .uo or legacy UO export"}
 
 
 def load_kernel_view(ws: W.Workspace | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
     ws = (ws or W.default_workspace()).ensure()
-    doc, source = _product_doc(ws)
-    if doc:
-        return doc, source
-    legacy, legacy_source = _legacy_doc(ws)
-    return (legacy, legacy_source) if legacy else (doc, source)
+    return _product_doc(ws)
 
 
 def load_kernel_branches(uo: Path | None = None, *, ws: W.Workspace | None = None) -> list[dict[str, Any]]:

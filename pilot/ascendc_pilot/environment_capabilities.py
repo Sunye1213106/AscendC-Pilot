@@ -172,7 +172,9 @@ def build_environment_capabilities(
         },
         "note": (
             "Deterministic prepare snapshot. UO parse requires cann.ready=true. "
-            "Use UO KB queries or a bounded source read within source_scope."
+            "Use UO KB queries or a bounded source read within source_scope. "
+            "OpenCode native grep/skill need rg on PATH; Host plugin recovers "
+            "workflow SKILL.md without rg."
         ),
     }
 

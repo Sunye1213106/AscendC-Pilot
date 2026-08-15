@@ -22,7 +22,7 @@ FORBIDDEN_PROD_MARKERS = re.compile(
 CBM_ALLOW = ("docs/history/",)
 # Active-product vocabulary bans (deny-lists / history docs exempt via path rules).
 BANNED_TOKEN_RE = re.compile(
-    r"(?i)\b(csv_consumer(?:_root)?|scope_confirm\w*|stage_cbm|"
+    r"(?i)\b(csv_consumer(?:_root)?|scope_confirm(?:_\w+)?|stage_cbm|"
     r"cbm_queries|needs_cbm_reindex|ASCENDC_CSV_CONSUMER_ROOT)\b"
 )
 # Exact legacy TG Z3 product identifiers (not the Z3 library name itself).

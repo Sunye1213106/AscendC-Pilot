@@ -58,6 +58,7 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 # Editorial discovery prose only. cognitive_skill_id / requires_* live on Workflow Spec.
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "uo-init": {
+        "command_description": '建立算子知识库 / Build and verify AscendC Operator CodeMap (.uo)',
         "description": (
             "首次构建 AscendC 算子知识库 / Operator CodeMap（`.uo`）：机器解析源码范围与构建变体、"
             "抽取 CompilerFacts、运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
@@ -70,6 +71,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-update": {
+        "command_description": '刷新算子知识库 / Refresh existing AscendC Operator CodeMap',
         "description": (
             "在已有算子知识库 / `.uo` CodeMap 上根据源码变更执行确定性增量刷新、重建受影响 "
             "CodeMap 关系、校验完整性并输出差异摘要。用户要求刷新知识库、更新已有 UO/CodeMap "
@@ -77,14 +79,16 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-query": {
+        "command_description": '查询算子知识库：可见路由后自查或派子代理 / Query CodeMap',
         "description": (
             "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
-            "TilingData、Kernel、字段、路径）。短问由主控自己 `acp uo-query --mode` 作答（当前会话可见）；"
-            "深问 `pilot_run` 立刻返回 `dispatch_subagent`，用原生 Task 打开子代理（可跳转看思考）。"
-            "不要为空转「问题路由」开子代理。"
+            "TilingData、Kernel、字段、路径）。主控先对人说出路由（短问自查 / 几个 uo-query 子代理），"
+            "再自己 `acp uo-query --mode` 或同一轮原生 Task(agent=`uo-query`)。"
+            "**禁止** `pilot_run` / `acp start uo-query`。不要为空转「问题路由」开子代理。"
         ),
     },
     "uo-investigate": {
+        "command_description": '调查知识库 gap / Investigate unresolved CodeMap gaps',
         "description": (
             "调查算子知识库 / `.uo` 中保留的 unresolved semantic residual：分类根因、指出 "
             "deterministic engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
@@ -92,18 +96,21 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-review": {
+        "command_description": 'CodeMap-backed review: quick / file / PR',
         "description": (
             "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
             "假设检验；证据先 CodeMap。Pilot 管 scope→review→summary；用 `pilot_run`。"
         ),
     },
     "ce-impact": {
+        "command_description": 'Change impact: slice + verification obligations / 变更影响面与验证义务',
         "description": (
             "有 diff 时做变更影响面：切片并按 kind 挂验证义务。"
             "用户要评估改动影响、回归面时使用；用 `pilot_run`。"
         ),
     },
     "ce-verify": {
+        "command_description": 'Close CE obligations from measurement receipts / 用测量收据关闭验证义务',
         "description": (
             "验证闭环：gate / residual / 测量收据 / certificate。"
             "V 只收 UT/ST/精度/profiling/复测通过的 ce-external-evidence/v1。"
@@ -111,12 +118,14 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-intent": {
+        "command_description": 'Locate change targets without a diff / 无 diff 时定位改哪里',
         "description": (
             "无 diff 时定位改哪里：先查 CodeMap 再下结论，冻结变更目标。"
             "用户要明确改什么/测什么时使用；用 `pilot_run`。"
         ),
     },
     "tg-init": {
+        "command_description": 'Initialize the TG contract and TilingKey binding',
         "description": (
             "建立覆盖合同（测例契约与绑定）。用户说 tg-init、建测例契约、tilingkey 绑定、"
             "全量/全覆盖/tilingkey case/建立 TilingKey 全覆盖测试时加载。"
@@ -127,6 +136,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "tg-plan": {
+        "command_description": 'Freeze the TG coverage target set',
         "description": (
             "规划测试义务并冻结目标集（全覆盖 Goal 的第二步）。"
             "用户未指定目标时默认计划全部合法 TilingKey（覆盖全部合法 Key）；"
@@ -135,6 +145,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "tg-solve": {
+        "command_description": 'Close T via per-round replay analysis: lemma rejects or directed construct',
         "description": (
             "求解并生成用例（全覆盖 Goal 的第三步）：按轮构造→Replay→Round Analysis。"
             "增长符合预期则轮内对 reject 证源码引理扩 E；不符合则基于已发现 key+源码定向再构造；"
@@ -143,6 +154,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "operator": {
+        "command_description": 'AscendC-Pilot operator skill entry',
         "description": (
             "可选助手：列出可用 Pilot workflow entry，或把 /uo-init 等 slash 转给 acp route。"
             "自然语言意图请直接加载对应 entry，不要依赖本入口做口语路由。"
@@ -290,7 +302,8 @@ def _start_requirements_line(repo: Path) -> str:
         f"查询类 AskQuestion：`/uo-init` 或回退源码作答；TG/CE 仍须先 `/uo-init`。"
         f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
         f"需要算子目录的 workflow：`{proj}`。"
-        f"后续动作由 Host `pilot_run` 驱动；`.ascendc-pilot/` 只允许在该算子目录下。"
+        f"`uo-query` 禁止 `pilot_run`：主控可见路由后自查或 Task。"
+        f"其余后续动作由 Host `pilot_run` 驱动；`.ascendc-pilot/` 只允许在该算子目录下。"
     )
 
 
@@ -405,10 +418,9 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
         lines.append("")
     if wid == "uo-query":
         run_via = (
-            "Short questions: follow Domain method query section; "
-            "run `acp uo-query --mode` yourself; speak the answer. Do not start a workflow. "
-            "Deep questions: `pilot_run` returns `dispatch_subagent` immediately — "
-            "use native OpenCode Task (exact `task_prompt_stub`) so the user can jump into the child and see thinking."
+            "Visible LLM router (not a Host workflow). First speak the route to the user "
+            "(self `acp uo-query` vs N native Tasks agent=`uo-query`), then act. "
+            "Never `pilot_run` / `acp start` for uo-query. Do not spawn a routing-only subagent."
         )
     else:
         run_via = (
@@ -824,13 +836,25 @@ _OPENCODE_AGENT_ALLOWED_KEYS = frozenset(
 )
 
 
-def _opencode_bash_permission() -> dict[str, str]:
+_REPO_SEARCH_BASH_ALLOWS: dict[str, str] = {
+    "grep *": "allow",
+    "Grep *": "allow",
+    "rg *": "allow",
+    "ripgrep *": "allow",
+    "findstr *": "allow",
+    "Select-String *": "allow",
+    "sls *": "allow",
+}
+
+
+def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, str]:
     """OpenCode frontmatter bash rules (last match wins: deny-all first, then allows).
 
     Aligns with ``authorize`` ``BASH_READONLY_INSPECT`` + ``acp *``.
-    Without these, primary ``bash: *: deny`` blocks ``grep``/``rg`` before Pilot authorize runs.
+    Without these, primary ``bash: *: deny`` blocks `grep`/`rg` before Pilot authorize runs.
+    ``uo-query`` omits repo-wide search so agents must use ``acp uo-query`` / ``acp ro-search``.
     """
-    return {
+    perm = {
         "*": "deny",
         # Exact + prefixed; agent must invoke bare `acp` (not absolute acp.exe path).
         "acp": "allow",
@@ -840,14 +864,6 @@ def _opencode_bash_permission() -> dict[str, str]:
         "*\\Scripts\\acp.exe *": "allow",
         "*/bin/acp": "allow",
         "*/bin/acp *": "allow",
-        # Locate-only search (bash tool; OpenCode Grep tool is separate → permission.grep)
-        "grep *": "allow",
-        "Grep *": "allow",
-        "rg *": "allow",
-        "ripgrep *": "allow",
-        "findstr *": "allow",
-        "Select-String *": "allow",
-        "sls *": "allow",
         # Path / listing probes
         "ls": "allow",
         "ls *": "allow",
@@ -880,7 +896,24 @@ def _opencode_bash_permission() -> dict[str, str]:
         "Push-Location *": "allow",
         "Pop-Location": "allow",
         "Pop-Location *": "allow",
+        # OpenCode matches each pipeline stage. Authorize already allows these
+        # as readonly pipe tails; without them `findstr | Select-Object` is
+        # denied by frontmatter before Pilot authorize runs.
+        "Select-Object *": "allow",
+        "select *": "allow",
+        "Format-Table *": "allow",
+        "ft *": "allow",
+        "Format-List *": "allow",
+        "fl *": "allow",
+        "Where-Object *": "allow",
+        "Sort-Object *": "allow",
+        "Measure-Object *": "allow",
+        "Group-Object *": "allow",
+        "ForEach-Object *": "allow",
     }
+    if allow_repo_search:
+        perm.update(_REPO_SEARCH_BASH_ALLOWS)
+    return perm
 
 
 def _host_remap_skill_paths(text: str, *, host: str) -> str:
@@ -939,13 +972,27 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         "name": aid,
         "description": desc,
     }
-    bash_perm = _opencode_bash_permission()
+    allow_repo_search = aid != "uo-query"
+    bash_perm = _opencode_bash_permission(allow_repo_search=allow_repo_search)
+    grep_perm = "allow" if allow_repo_search else "deny"
+    # AscendC-Pilot mode: Host-level Read of any directory is allow, no ask.
+    # OpenCode cwd is the Pilot repo; operator package / session files live
+    # outside it. `external_directory` default `ask` was the child's opening
+    # red tool error. Write/edit stay ask. Pilot authorize still fences writes.
+    host_read_perm = {
+        "read": "allow",
+        "external_directory": "allow",
+    }
     if agent_meta.get("mode") == "primary":
         front["mode"] = "primary"
         front["permission"] = {
             "bash": bash_perm,
             # Native OpenCode Grep tool (not bash); default allow, set explicitly.
-            "grep": "allow",
+            "grep": grep_perm,
+            **host_read_perm,
+            # Query + TG/CE subagent dispatch. Unspecified task was omitted from
+            # the schema / treated as deny on some OpenCode builds.
+            "task": "allow",
             "edit": {"*": "ask"},
             "write": {"*": "ask"},
         }
@@ -954,12 +1001,45 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         front["mode"] = "subagent"
         # Same bash fence as primary so Task does not inherit a silent deny-all
         # while still allowing locate-only search + acp (Pilot authorize remains).
+        # uo-query drops grep/findstr so CodeMap / ro-search stay the search path.
         front["permission"] = {
             "bash": bash_perm,
-            "grep": "allow",
+            "grep": grep_perm,
+            **host_read_perm,
         }
+        # Hide tools that would red-error: skill is denied by authorize
+        # (SKILL_SUBAGENT_ESCAPE); native grep/glob need rg on OpenCode PATH.
+        # `tools: false` omits them from the schema so the child never calls them.
+        tools: dict[str, Any] = {"skill": False}
+        if aid == "uo-query":
+            tools["grep"] = False
+            tools["glob"] = False
+        front["tools"] = tools
 
     # Role stays thin: controller brief only; start rules live in composed invariants.
+    if aid == "uo-query":
+        runtime = """## Runtime Contract
+
+Query is **not** a Host-prepared Action. There is no session `prompt.md` / `method.md` bundle.
+
+1. **First**: bash `acp uo-query --project <operator-abs> --mode <mode> --pattern …` (bare `acp` on PATH). The Task prompt is the sole task body.
+2. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
+3. Answer in the final message (prose + file:line). Do not Write. Do not finalize.
+"""
+    else:
+        runtime = """## Runtime Contract
+
+At runtime, follow:
+
+1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
+2. Then the current Pilot Action / METHOD only as referenced by that prompt;
+3. the composed Policy invariants;
+4. the composed Capabilities (`source-navigation`, `source-reading` when declared on the Action);
+5. the declared Output Contract.
+
+When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
+Do **not** invent extra goals beyond the session prompt. Do **not** finalize the Action (primary runs `--finalize`).
+"""
     body = f"""# Agent: {aid}
 
 ## Role
@@ -985,19 +1065,7 @@ You must not:
 
 {forbidden}
 
-## Runtime Contract
-
-At runtime, follow:
-
-1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
-2. Then the current Pilot Action / METHOD only as referenced by that prompt;
-3. the composed Policy invariants;
-4. the composed Capabilities (`source-navigation`, `source-reading` when declared on the Action);
-5. the declared Output Contract.
-
-When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
-Do **not** invent extra goals beyond the session prompt. Do **not** finalize the Action (primary runs `--finalize`).
-
+{runtime}
 ## Composed: policy-invariants
 
 {inv_pack}

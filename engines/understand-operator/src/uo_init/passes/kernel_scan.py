@@ -8,7 +8,7 @@ import re
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from uo_init.ids import rel_posix
 from uo_init.ir.codemap import CodeMap
@@ -110,21 +110,348 @@ _KERNEL_SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 
 
 def architecture_kernel_files(source_root: Path, architecture: str) -> list[Path]:
-    """All kernel sources under ``op_kernel/<arch>/``, including unused headers.
+    """Kernel sources for this architecture, including unused headers.
 
-    Prepare's confirmed TU closure drops dtype-gated headers the preferred
-    ORIG_DTYPE walk did not include. TQue APIs in those headers still belong
-    in the CodeMap for this architecture.
+    Covers ``op_kernel/<arch>/`` and arch-neutral files under ``op_kernel/``
+    (helpers, 220-gated headers beside an ``_apt.cpp`` entry, infra). A
+    different ``arch*`` directory is never mixed in. Prepare's confirmed TU
+    is one ORIG_DTYPE walk; TQue / DataCopy / Cast in the rest of this
+    architecture's kernel tree still belong in the CodeMap.
     """
+    from uo_init.source_layout import is_other_arch_path
+
     arch = require_architecture(architecture)
-    arch_dir = Path(source_root) / "op_kernel" / arch
-    if not arch_dir.is_dir():
+    kernel_root = Path(source_root) / "op_kernel"
+    if not kernel_root.is_dir():
         return []
     out: list[Path] = []
-    for path in sorted(arch_dir.rglob("*")):
-        if path.suffix.lower() in _KERNEL_SOURCE_SUFFIXES and path.is_file():
-            out.append(path)
+    for path in sorted(kernel_root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _KERNEL_SOURCE_SUFFIXES:
+            continue
+        if is_other_arch_path(path, arch):
+            continue
+        out.append(path)
     return out
+
+
+# Cube glue headers (family ``common/cgmct``, CANN ``lib/matmul``). Not every
+# ascendc/ header — that would inflate lexical source n far past the graph.
+_KERNEL_API_INCLUDE_HINTS = (
+    "cgmct/",
+    "/cgmct/",
+    "lib/matmul",
+    "/lib/matmul/",
+    "/matmul/",
+)
+_QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
+_CORPUS_FILE_CAP = 8192
+# Family ``common/`` / cube-template includes stay one hop. Recursing that
+# forest (cgmct / matmul) inflates lexical Cast/DataCopy far past Clang sites.
+_CORPUS_ONE_HOP_OWNERS = frozenset({"sibling_op", "family_common"})
+
+
+def _kernel_api_include_roots(source_root: Path) -> list[Path]:
+    """Quoted-include search roots: file parent is tried first, then these.
+
+    Cube templates live under the family ``common/`` tree (``*/common/cgmct``)
+    as well as CANN package includes. No operator-name branches.
+    """
+    from uo_init.tpl_dsl import cann_include_search_roots
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+
+    def add(path: Path) -> None:
+        try:
+            key = path.resolve()
+        except OSError:
+            return
+        if not key.is_dir() or key in seen:
+            return
+        seen.add(key)
+        roots.append(key)
+
+    for path in cann_include_search_roots():
+        add(path)
+    root = Path(source_root)
+    add(root)
+    add(root / "common")
+    add(root / "op_kernel")
+    add(root.parent)
+    add(root.parent / "common")
+    add(root.parent / "common" / "utils")
+    add(root.parent / "common" / "inc")
+    add(root.parent.parent / "common")
+    return roots
+
+
+def _resolved(path: Path) -> Path:
+    try:
+        return path.expanduser().resolve()
+    except OSError:
+        return path
+
+
+def _under(path: Path, root: Path) -> bool:
+    try:
+        _resolved(path).relative_to(_resolved(root))
+        return True
+    except ValueError:
+        return False
+
+
+def kernel_file_owner(path: Path | str, source_root: Path) -> str:
+    """Classify a kernel file: this_op | family_common | sibling_op | cann.
+
+    Fusion wrappers ``#include`` a sibling operator's ``.cpp``; those files stay
+    in the corpus (locate must still find EnQue) but they are not this op's tree.
+    No operator-name branches.
+    """
+    resolved = Path(path)
+    if not resolved.is_absolute():
+        resolved = Path(source_root) / resolved
+    resolved = _resolved(resolved)
+    root = _resolved(Path(source_root))
+    if _under(resolved, root):
+        return "this_op"
+    parent = root.parent
+    if _under(resolved, parent / "common"):
+        return "family_common"
+    if _under(resolved, parent):
+        posix = f"/{str(resolved).replace(chr(92), '/').lower()}/"
+        if "/common/" in posix:
+            return "family_common"
+        return "sibling_op"
+    posix = str(resolved).replace("\\", "/").lower()
+    if any(h in posix for h in _KERNEL_API_INCLUDE_HINTS):
+        return "family_common"
+    return "cann"
+
+
+def _corpus_should_follow(resolved: Path, source_root: Path) -> str:
+    """Return owner if this include should enter the corpus, else empty.
+
+    Sibling-operator files are included one hop (the ``#include "*.cpp"`` itself)
+    so fusion TUs stay locate-able. Recursing the sibling tree inflates lexical
+    source n far past Clang call sites; walk-cited files fill the rest.
+    """
+    owner = kernel_file_owner(resolved, source_root)
+    if owner in {"this_op", "family_common"}:
+        return owner
+    if owner == "sibling_op":
+        return owner
+    rel = str(resolved).replace("\\", "/").lower()
+    if any(h in rel for h in _KERNEL_API_INCLUDE_HINTS):
+        return "family_common"
+    return ""
+
+
+def _add_corpus_file(
+    path: Path,
+    *,
+    seen: set[Path],
+    out: list[Path],
+    pending: list[Path],
+) -> bool:
+    try:
+        key = path.resolve()
+    except OSError:
+        key = path
+    if key in seen or not path.is_file():
+        return False
+    seen.add(key)
+    out.append(path)
+    pending.append(path)
+    return True
+
+
+def _quoted_include_targets(path: Path, search_roots: list[Path]) -> list[Path]:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    parent = path.parent
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for inc in _QUOTED_INCLUDE_RE.findall(text):
+        posix = inc.replace("\\", "/")
+        for cand in [parent / posix, *(root / posix for root in search_roots)]:
+            try:
+                resolved = cand.resolve()
+            except OSError:
+                continue
+            if not resolved.is_file() or resolved in seen:
+                continue
+            if resolved.suffix.lower() not in _KERNEL_SOURCE_SUFFIXES:
+                continue
+            seen.add(resolved)
+            found.append(resolved)
+            break
+    return found
+
+
+def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
+    """Files named by cached Clang walks (the TU Clang actually saw)."""
+    from uo_init.source_layout import is_other_arch_path
+
+    try:
+        from uo_init import tu_cache
+    except Exception:  # noqa: BLE001
+        return []
+    arch = require_architecture(architecture)
+    try:
+        walks = tu_cache.iter_cached_walks(
+            source_root, arch, path_substr="op_kernel", limit=_WALK_CACHE_LIMIT
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    raw: list[str] = []
+    for wr in walks or []:
+        raw.extend(_walk_cited_raw_paths(wr))
+    out: list[Path] = []
+    seen: set[Path] = set()
+    root = Path(source_root)
+    for text in raw:
+        path = _resolve_cited_file(text, root)
+        if path is None:
+            continue
+        if is_other_arch_path(path, arch):
+            continue
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def _walk_cited_raw_paths(wr: Any) -> list[str]:
+    rows: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip()
+        if text:
+            rows.append(text)
+
+    add(getattr(wr, "path", "") or "")
+    for site in getattr(wr, "call_sites", None) or []:
+        add(getattr(site, "file", "") or "")
+        add(getattr(site, "callee_decl_file", "") or "")
+        if isinstance(site, dict):
+            add(site.get("file") or "")
+            add(site.get("callee_decl_file") or "")
+    for decl in getattr(wr, "local_decls", None) or []:
+        add(getattr(decl, "file", "") or (decl.get("file") if isinstance(decl, dict) else ""))
+    for decl in getattr(wr, "type_decls", None) or []:
+        add(getattr(decl, "file", "") or (decl.get("file") if isinstance(decl, dict) else ""))
+    for decl in getattr(wr, "alias_decls", None) or []:
+        add(getattr(decl, "file", "") or (decl.get("file") if isinstance(decl, dict) else ""))
+    fds = getattr(wr, "field_decls", None) or {}
+    if isinstance(fds, dict):
+        fds = fds.values()
+    for fd in fds:
+        add(getattr(fd, "file", "") or (fd.get("file") if isinstance(fd, dict) else ""))
+    for ctrl in getattr(wr, "controls", None) or []:
+        add(getattr(ctrl, "file", "") or (ctrl.get("file") if isinstance(ctrl, dict) else ""))
+    fns = getattr(wr, "functions", None) or {}
+    if isinstance(fns, dict):
+        fns = fns.values()
+    for rec in fns:
+        add(getattr(rec, "file", "") or (rec.get("file") if isinstance(rec, dict) else ""))
+    return rows
+
+
+def _resolve_cited_file(raw: str, source_root: Path) -> Path | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    path = Path(text)
+    if path.is_file():
+        return path
+    cand = source_root / text
+    if cand.is_file():
+        return cand
+    return None
+
+
+def kernel_corpus(
+    source_root: Path,
+    architecture: str,
+    extra_files: Iterable[Path] | None = None,
+    *,
+    include_walks: bool = True,
+    deadline: float | None = None,
+) -> list[Path]:
+    """One file set for lexical ``source_api`` and OPERATION minting.
+
+    Starts at this-arch kernel files and follows quoted includes: this operator
+    is a full BFS; sibling ``.cpp`` and family ``common/`` / cube templates are
+    one hop. Walk-cited this-op / sibling files are unioned so fusion wrappers
+    still see IFA/PFA call sites. CANN headers stay out of the lexical corpus.
+    """
+    from uo_init.source_layout import is_other_arch_path
+
+    arch = require_architecture(architecture)
+    root = Path(source_root)
+    seen: set[Path] = set()
+    out: list[Path] = []
+    pending: list[Path] = []
+    for path in architecture_kernel_files(root, arch):
+        _add_corpus_file(path, seen=seen, out=out, pending=pending)
+    extras: list[Path] = [Path(p) for p in (extra_files or [])]
+    if include_walks:
+        extras.extend(walk_cited_kernel_files(root, arch))
+    for path in extras:
+        if not path.is_file():
+            continue
+        if is_other_arch_path(path, arch):
+            continue
+        # Walk-cited CANN / cube-template headers are already Clang CallExprs.
+        # Union only this-op and sibling files so FIA locate still sees IFA.
+        owner = kernel_file_owner(path, root)
+        if owner not in {"this_op", "sibling_op"}:
+            continue
+        # Walk-cited / extra files enter the scan set without re-expanding
+        # their include trees (Clang already named what it used).
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    search_roots = _kernel_api_include_roots(root)
+    while pending and len(out) < _CORPUS_FILE_CAP:
+        if deadline is not None and time.perf_counter() >= deadline:
+            break
+        path = pending.pop(0)
+        for resolved in _quoted_include_targets(path, search_roots):
+            if is_other_arch_path(resolved, arch):
+                continue
+            owner = _corpus_should_follow(resolved, root)
+            if not owner:
+                continue
+            if owner in _CORPUS_ONE_HOP_OWNERS:
+                try:
+                    key = resolved.resolve()
+                except OSError:
+                    key = resolved
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(resolved)
+                continue
+            _add_corpus_file(resolved, seen=seen, out=out, pending=pending)
+    return out
+
+
+def kernel_api_scan_files(source_root: Path, architecture: str) -> list[Path]:
+    """Architecture kernel tree plus quoted-include closure (cgmct / matmul / sibling .cpp)."""
+    return kernel_corpus(source_root, architecture)
 
 
 def selected_kernel_files(codemap: CodeMap, source_root: Path) -> list[Path]:
@@ -147,13 +474,7 @@ def selected_kernel_files(codemap: CodeMap, source_root: Path) -> list[Path]:
         out.append(p)
     if out:
         return out
-    arch = require_architecture(codemap.architecture)
-    arch_dir = source_root / "op_kernel" / arch
-    if arch_dir.is_dir():
-        for p in sorted(arch_dir.rglob("*")):
-            if p.suffix.lower() in {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"} and p.is_file():
-                out.append(p)
-    return out
+    return architecture_kernel_files(source_root, require_architecture(codemap.architecture))
 
 
 def site_dedupe_key(site: Any, *, root: str = "") -> tuple[str, int, str]:
@@ -309,8 +630,10 @@ def collect_call_sites_from_walks(
         allowed |= _function_names_from_walk(wr)
 
     calls: list[Any] = []
+    index: dict[tuple[str, int, str], int] = {}
     decls: list[Any] = []
     controls: list[Any] = []
+    root = str(source_root)
     for wr in walks:
         if time.perf_counter() > deadline:
             break
@@ -323,7 +646,20 @@ def collect_call_sites_from_walks(
             # classification happens later; do not filter by registry primitives.
             if not callee or not callee.isidentifier():
                 continue
-            calls.append(site)
+            key = site_dedupe_key(site, root=root)
+            if key in index:
+                i = index[key]
+                merged = _enrich_site_templates(calls[i], site_as_dict(site))
+                if isinstance(merged, dict):
+                    merged["instantiation_n"] = int(merged.get("instantiation_n") or 1) + 1
+                    calls[i] = merged
+                else:
+                    calls[i] = merged
+                continue
+            row = site_as_dict(site)
+            row["instantiation_n"] = int(row.get("instantiation_n") or 1)
+            index[key] = len(calls)
+            calls.append(row)
         decls.extend(getattr(wr, "local_decls", None) or [])
         controls.extend(getattr(wr, "controls", None) or [])
     provenance = "clang_walk_cache"

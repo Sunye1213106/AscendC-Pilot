@@ -90,7 +90,7 @@ def _patch_runtime(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(BR, "build_candidates", lambda *a, **k: [_Case(1)])
     monkeypatch.setattr(BR.W, "decode", lambda key: {"K": str(key)})
     monkeypatch.setattr(BR.W, "replay_runner", lambda: runner)
-    monkeypatch.setattr(BR, "_load_decoder", lambda: (None, "decoder_missing"))
+    monkeypatch.setattr(BR, "_load_decoder", lambda: (None, "decoder_missing"), raising=False)
     monkeypatch.setattr(
         BR.KD,
         "load_kernel_branches",

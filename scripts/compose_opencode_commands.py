@@ -13,31 +13,17 @@ if str(PILOT) not in sys.path:
     sys.path.insert(0, str(PILOT))
 
 
-_DESCRIPTIONS = {
-    "uo-init": "建立算子知识库 / Build and verify AscendC Operator CodeMap (.uo)",
-    "uo-update": "刷新算子知识库 / Refresh existing AscendC Operator CodeMap",
-    "uo-query": "查询算子知识库：短问当前会话自查，深问原生 Task 可跳转 / Query CodeMap",
-    "uo-investigate": "调查知识库 gap / Investigate unresolved CodeMap gaps",
-    "tg-init": "Initialize the TG contract and TilingKey binding",
-    "tg-plan": "Freeze the TG coverage target set",
-    "tg-solve": "Close T via per-round replay analysis: lemma rejects or directed construct",
-    "ce-review": "CodeMap-backed review: quick / file / PR",
-    "ce-impact": "Change impact: slice + verification obligations / 变更影响面与验证义务",
-    "ce-intent": "Locate change targets without a diff / 无 diff 时定位改哪里",
-    "ce-verify": "Close CE obligations from measurement receipts / 用测量收据关闭验证义务",
-}
-
-
 def _command_body(workflow_id: str) -> str:
     if workflow_id == "uo-query":
-        return """查询已有 Operator CodeMap。路由由主控用 operator-analysis skill 完成，不要开「问题路由」阶段、不要为选 mode 空转子代理。
+        return """查询已有 Operator CodeMap。主控做可见 LLM 路由，不要 `pilot_run`，不要为空转「问题路由」开子代理。
 
 User arguments: $ARGUMENTS
 
-1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`，大体选 mode（`locate` / `tiling_key` / `field` / `kernel_branch` / `impact` / …）。
-2. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子目录>`，带 path:line 作答。不要 `acp start`，不要开子代理。
-3. **深问（很多跳 / 图很大）**：`pilot_run`（workflow=uo-query）立刻返回 `dispatch_subagent`。用 OpenCode 原生 Task（agent=`uo-query`，prompt=`task_prompt_stub` 原样）。点 Task 卡片可跳进子会话看思考。不要空等隐藏 session。
-4. 把答案说给人听。不要卡在路由，不要只说完成。
+1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
+2. **先对人说出路由**（短问自查 / 1 个 Task / N 路并行，以及为什么），再动手。
+3. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子绝对路径>`，把 stdout 说给人听。
+4. **深问**：同一轮原生 Task（agent=`uo-query`）。每个 prompt 写清 FOCUS + 用户原问 + 绝对 `--project`。N≥2 时并行全部返回后 Primary 综合。点卡片可看子代思考。
+5. 不要 `pilot_run`。
 """
     return f"""Run the AscendC-Pilot workflow `{workflow_id}` for the current operator project.
 
@@ -64,7 +50,11 @@ def compose(repo: Path = REPO, *, out_root: Path | None = None) -> dict[str, obj
     pilot = repo / "pilot"
     if str(pilot) not in sys.path:
         sys.path.insert(0, str(pilot))
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
     from ascendc_pilot.workflows import WORKFLOWS
+    from compose_runtime import WORKFLOW_ENTRIES
 
     runtime_root = (
         Path(out_root).expanduser().resolve()
@@ -84,9 +74,10 @@ def compose(repo: Path = REPO, *, out_root: Path | None = None) -> dict[str, obj
         if not slash:
             continue
         command_name = slash.lstrip("/") or workflow_id
-        description = _DESCRIPTIONS.get(
-            workflow_id,
-            f"Run AscendC-Pilot workflow {workflow_id}",
+        entry = WORKFLOW_ENTRIES.get(workflow_id) or {}
+        description = str(
+            entry.get("command_description")
+            or f"Run AscendC-Pilot workflow {workflow_id}"
         )
         text = (
             "---\n"

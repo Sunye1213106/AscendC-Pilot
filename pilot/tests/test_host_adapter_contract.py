@@ -84,9 +84,16 @@ def test_host_context_multi_arch_uses_active_run(tmp_path: Path, monkeypatch) ->
         monkeypatch.delenv(key, raising=False)
     ctx = build_host_context(tmp_path, architecture="")
     assert ctx.get("ok") is True
-    assert ctx.get("architecture") == "arch35"
-    assert ctx.get("workflow_id") == "uo-query"
+    assert ctx.get("architecture") == "arch22"
+    assert ctx.get("workflow_id") == "uo-init"
     assert "active_run" in str(ctx.get("active_run_path") or "")
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        monkeypatch.delenv(key, raising=False)
+    ctx = build_host_context(tmp_path, architecture="")
+    assert ctx.get("ok") is True
+    assert ctx.get("architecture") == "arch35"
+    assert ctx.get("workflow_id") == "tg-init"
 
 
 def test_host_context_multi_arch_ambiguous_without_pointer(
@@ -102,6 +109,9 @@ def test_host_context_multi_arch_ambiguous_without_pointer(
     for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
         monkeypatch.delenv(key, raising=False)
     start_workflow(tmp_path, "uo-query", architecture="arch35")
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        monkeypatch.delenv(key, raising=False)
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
     for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
         monkeypatch.delenv(key, raising=False)
     clear_active_run(tmp_path)
@@ -250,6 +260,9 @@ def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
     assert "!started.ok && !started.run_id" not in text
     # Successful start historically omitted ok:true — must not use !started.ok alone.
     assert "isAcpStartSuccess(started)" in text
+    assert "ASCENDC_SESSION_ID" in text
+    assert "ASCENDC_WORKFLOW_ID" in text
+    assert "function acpControlEnv" in text
 
 
 def test_plugin_pending_lock_does_not_block_resume_start() -> None:

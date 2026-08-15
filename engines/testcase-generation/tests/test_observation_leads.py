@@ -40,6 +40,8 @@ def closure_ws(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     ws = _WS().ensure()
     monkeypatch.setattr(W, "default_workspace", lambda *a, **k: ws)
+    monkeypatch.setenv("UO_ARCH", "arch0")
+    monkeypatch.setenv("UO_OPERATOR", "_synthetic_toy")
     monkeypatch.setattr(W, "dim_names", lambda: ["SplitAxis", "IsTndSwizzle"])
     monkeypatch.setattr(
         W,

@@ -38,7 +38,7 @@ pytestmark = [pytest.mark.requires_cann, pytest.mark.requires_fag]
 @pytest.fixture(scope="module")
 def perception(fag_dir, cann_root, ops_root, arch_dir):
     """Everything the analysis can see, built once, timed."""
-    from uo_init.assemble_kb import extract_host_bundle
+    from uo_init.extract_bundle import extract_host_bundle
 
     started = time.perf_counter()
     bundle = extract_host_bundle(
@@ -133,7 +133,7 @@ def test_the_closure_is_not_paid_for_unless_asked(perception):
     """It is five sixths of the run and key derivation reads none of it.
 
     The skipped path still hands back empty ``ClosureMetrics`` / ``GapReport``
-    rather than ``None``, because ``assemble_kb`` reads their fields
+    rather than ``None``, because ``extract_host_bundle`` reads their fields
     unconditionally. Emptiness is the evidence that nothing was computed.
     """
     metrics = perception["metrics"]

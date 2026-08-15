@@ -94,11 +94,7 @@ def new_run_id(prefix: str = "RUN") -> str:
     return f"{prefix}_{datetime.now(tz=timezone.utc).strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
 
 
-def load_state(project_root: Path, *, arch: str | None = None) -> dict[str, Any]:
-    try:
-        path = workflow_state_path(project_root, arch=arch)
-    except ValueError:
-        return {}
+def _read_state_file(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
@@ -114,14 +110,7 @@ def load_state(project_root: Path, *, arch: str | None = None) -> dict[str, Any]
         return _load(path)
 
 
-def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    state = _compact_state_for_persist(dict(state))
-    state["updated_at"] = _now()
-    arch = str(state.get("architecture") or "").strip() or None
-    try:
-        path = workflow_state_path(project_root, arch=arch)
-    except ValueError as exc:
-        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE") from exc
+def _write_state_file(path: Path, state: dict[str, Any]) -> None:
     _dump(path, state)
     try:
         st = path.stat()
@@ -132,6 +121,67 @@ def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
         )
     except OSError:
         pass
+
+
+def load_state(
+    project_root: Path,
+    *,
+    arch: str | None = None,
+    workflow_id: str = "",
+    session_id: str = "",
+) -> dict[str, Any]:
+    from ascendc_pilot.occupancy import resolve_load_state_path
+
+    path = resolve_load_state_path(
+        project_root,
+        arch=arch,
+        workflow_id=workflow_id,
+        session_id=session_id,
+    )
+    if path is None:
+        try:
+            path = workflow_state_path(project_root, arch=arch)
+        except ValueError:
+            return {}
+    return _read_state_file(path)
+
+
+def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.occupancy import (
+        is_shared,
+        live_exclusive_lock,
+        occupancy_group_of,
+        persist_path_for_state,
+    )
+
+    state = _compact_state_for_persist(dict(state))
+    state["updated_at"] = _now()
+    arch = str(state.get("architecture") or "").strip() or None
+    try:
+        path = persist_path_for_state(project_root, state)
+    except ValueError as exc:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE") from exc
+    _write_state_file(path, state)
+    wid = str(state.get("workflow_id") or "").strip()
+    # Keep a legacy pointer for discover_arch / older helpers: last exclusive,
+    # or a shared run only when no exclusive family is live.
+    mirror_legacy = False
+    if wid and not is_shared(wid):
+        mirror_legacy = True
+    elif wid and is_shared(wid):
+        group_locks = False
+        for group in ("uo", "tg", "ce-impact", "ce-intent", "ce-verify"):
+            if live_exclusive_lock(project_root, group):
+                group_locks = True
+                break
+        mirror_legacy = not group_locks
+    if mirror_legacy:
+        try:
+            _write_state_file(workflow_state_path(project_root, arch=arch), state)
+        except ValueError:
+            pass
+    if wid and not is_shared(wid):
+        occupancy_group_of(wid)  # validate spec; slot already written
     return state
 
 
@@ -266,12 +316,31 @@ def start_workflow(
 
     import os
 
+    from ascendc_pilot.occupancy import (
+        SESSION_ENV,
+        WORKFLOW_ENV,
+        acquire_exclusive_lock,
+        bind_session,
+        current_session_id,
+        is_shared,
+        live_exclusive_lock,
+        migrate_legacy_slot,
+        occupancy_group_of,
+        pin_digest_from_product,
+        register_shared_run,
+    )
+
     clear_pending(project_root)
     arch = require_architecture(architecture)
     # Pin process env so path helpers (uo_root/agent_root) resolve without
     # inventing a default architecture for the rest of this process.
     os.environ["UO_ARCH"] = arch
+    os.environ[WORKFLOW_ENV] = str(workflow_id or "")
     meta = get_workflow(workflow_id, project_root=project_root)
+    try:
+        migrate_legacy_slot(project_root, arch=arch)
+    except Exception:  # noqa: BLE001
+        pass
     ensure_control_layout(project_root, arch=arch)
     engine = str(meta.get("engine") or "")
     if engine == "uo" or workflow_id.startswith("uo-"):
@@ -304,6 +373,12 @@ def start_workflow(
         hashes = {}
     all_obl = collect_obligations(project_root, workflow_id)
     consumer = (test_script_root or "").strip()
+    session_id = current_session_id()
+    pin = pin_digest_from_product(
+        project_root, architecture=arch, op_name=(op_name or "").strip()
+    )
+    occ_group = occupancy_group_of(workflow_id)
+    shared = is_shared(workflow_id)
     state: dict[str, Any] = {
         "workflow_id": workflow_id,
         "run_id": run_id,
@@ -324,19 +399,70 @@ def start_workflow(
         "last_failure": None,
         "created_at": _now(),
         "meta": {},
+        "occupancy": "shared" if shared else "exclusive",
+        "occupancy_group": occ_group,
+        "session_id": session_id,
+        "pinned_digest": str(pin.get("digest") or ""),
+        "uo_path": str(pin.get("path") or ""),
+        "uo_stale": False,
         **{k: v for k, v in hashes.items()},
     }
     state = _apply_progress(project_root, state)
     save_state(project_root, state)
     from ascendc_pilot.active_run import write_active_run
 
-    write_active_run(
-        project_root,
-        architecture=arch,
-        run_id=run_id,
-        workflow_id=workflow_id,
-        status=str(state.get("status") or "running"),
-    )
+    if shared:
+        register_shared_run(
+            project_root,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            architecture=arch,
+            session_id=session_id,
+            pinned_digest=str(pin.get("digest") or ""),
+        )
+        exclusive_live = any(
+            live_exclusive_lock(project_root, group)
+            for group in ("uo", "tg", "ce-impact", "ce-intent", "ce-verify")
+        )
+        if not exclusive_live:
+            write_active_run(
+                project_root,
+                architecture=arch,
+                run_id=run_id,
+                workflow_id=workflow_id,
+                status=str(state.get("status") or "running"),
+            )
+    else:
+        acquire_exclusive_lock(
+            project_root,
+            occupancy_group=occ_group,
+            workflow_id=workflow_id,
+            run_id=run_id,
+            architecture=arch,
+            session_id=session_id,
+            pinned_digest=str(pin.get("digest") or ""),
+        )
+        write_active_run(
+            project_root,
+            architecture=arch,
+            run_id=run_id,
+            workflow_id=workflow_id,
+            status=str(state.get("status") or "running"),
+        )
+    if session_id:
+        bind_session(
+            project_root,
+            session_id=session_id,
+            architecture=arch,
+            uo_path=str(pin.get("path") or ""),
+            digest=str(pin.get("digest") or ""),
+            workflow_id=workflow_id,
+            occupancy_group=occ_group,
+            run_id=run_id,
+            stale=False,
+        )
+    if session_id:
+        os.environ[SESSION_ENV] = session_id
     (runs_root(project_root, arch=arch) / run_id).mkdir(parents=True, exist_ok=True)
     # Run-level source scope: resolve once; subsequent action leases inherit.
     try:
@@ -390,7 +516,7 @@ def start_workflow(
         raise
     except Exception:  # noqa: BLE001
         pass
-    fresh = load_state(project_root)
+    fresh = load_state(project_root, workflow_id=workflow_id, session_id=session_id)
     from ascendc_pilot.todo import attach_todo
 
     return attach_todo(
@@ -415,17 +541,27 @@ def release_live_execution(
     reason: str = "",
     state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Archive the live run and free the execution slot.
+    """Archive this run and free its product-family lock (not other families).
 
-    Formal products (``.uo`` / tg / ce) stay. The next ``acp start`` must not
-    still see this workflow as the occupying run — including after ``passed``.
+    Formal products (``.uo`` / tg / ce) stay. Shared query runs never hold an
+    exclusive lock. After ``passed``, this family must not still occupy.
     """
-    from ascendc_pilot.active_run import clear_active_run
+    from ascendc_pilot.active_run import clear_active_run, read_active_run, write_active_run
+    from ascendc_pilot.occupancy import (
+        is_shared,
+        occupancy_group_of,
+        persist_path_for_state,
+        read_product_locks,
+        release_exclusive_lock,
+        slot_state_path,
+        unregister_shared_run,
+    )
 
     root = Path(project_root).expanduser().resolve()
     st = dict(state) if isinstance(state, dict) and state else (load_state(root) or {})
     arch = str(st.get("architecture") or "").strip()
     run_id = str(st.get("run_id") or "").strip()
+    wid = str(st.get("workflow_id") or "").strip()
     archived_to = ""
     if st and run_id:
         try:
@@ -439,20 +575,104 @@ def release_live_execution(
             archived_to = dest.as_posix()
         except Exception:  # noqa: BLE001
             archived_to = ""
+    if st:
+        try:
+            live_path = persist_path_for_state(root, st)
+            if live_path.is_file():
+                live_path.unlink()
+                _STATE_LOAD_CACHE.pop(str(live_path.resolve()), None)
+        except Exception:  # noqa: BLE001
+            pass
+    if wid and is_shared(wid):
+        unregister_shared_run(root, run_id)
+    elif wid:
+        group = occupancy_group_of(wid)
+        if group:
+            release_exclusive_lock(root, group, run_id=run_id)
+            try:
+                slot = slot_state_path(root, group, arch=arch or None)
+                if slot.is_file():
+                    slot.unlink()
+                    _STATE_LOAD_CACHE.pop(str(slot.resolve()), None)
+            except Exception:  # noqa: BLE001
+                pass
+    # Drop legacy pointer only when it still names this run.
+    try:
+        legacy = workflow_state_path(root, arch=arch or None)
+        if legacy.is_file():
+            legacy_st = _load(legacy)
+            if str(legacy_st.get("run_id") or "") in {"", run_id}:
+                leftover = None
+                locks = read_product_locks(root)
+                for lock in (locks.get("locks") or {}).values():
+                    if not isinstance(lock, dict):
+                        continue
+                    if str(lock.get("run_id") or "") in {"", run_id}:
+                        continue
+                    leftover = lock
+                    break
+                if leftover:
+                    try:
+                        other_group = occupancy_group_of(
+                            str(leftover.get("workflow_id") or "")
+                        )
+                        other_path = slot_state_path(
+                            root,
+                            other_group,
+                            arch=str(leftover.get("architecture") or arch or "") or None,
+                        )
+                        if other_group and other_path.is_file():
+                            _write_state_file(legacy, _load(other_path))
+                        else:
+                            legacy.unlink()
+                            _STATE_LOAD_CACHE.pop(str(legacy.resolve()), None)
+                    except Exception:  # noqa: BLE001
+                        try:
+                            legacy.unlink()
+                        except OSError:
+                            pass
+                else:
+                    legacy.unlink()
+                    _STATE_LOAD_CACHE.pop(str(legacy.resolve()), None)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         st_dir = state_root(root, arch=arch or None)
     except ValueError:
         st_dir = None
     if st_dir and st_dir.is_dir():
-        for name in _LIVE_STATE_FILES:
+        for name in ("active_action.yaml", "action_lease.yaml", "resume.yaml"):
             path = st_dir / name
-            if path.is_file():
-                try:
-                    path.unlink()
-                except OSError:
-                    pass
-                _STATE_LOAD_CACHE.pop(str(path.resolve()), None)
-    clear_active_run(root)
+            if not path.is_file():
+                continue
+            body = _load(path)
+            if body and str(body.get("run_id") or "") not in {"", run_id}:
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                pass
+            _STATE_LOAD_CACHE.pop(str(path.resolve()), None)
+    pointer = read_active_run(root)
+    if pointer and str(pointer.get("run_id") or "") in {"", run_id}:
+        leftover_lock = None
+        for lock in (read_product_locks(root).get("locks") or {}).values():
+            if isinstance(lock, dict) and str(lock.get("run_id") or "") not in {"", run_id}:
+                leftover_lock = lock
+                break
+        if leftover_lock:
+            try:
+                write_active_run(
+                    root,
+                    architecture=str(leftover_lock.get("architecture") or arch or ""),
+                    run_id=str(leftover_lock.get("run_id") or ""),
+                    workflow_id=str(leftover_lock.get("workflow_id") or ""),
+                    status=str(leftover_lock.get("status") or ""),
+                )
+            except ValueError:
+                clear_active_run(root)
+        else:
+            clear_active_run(root)
     try:
         from ascendc_pilot.human_interaction import clear_pending
 
@@ -463,7 +683,7 @@ def release_live_execution(
         "ok": True,
         "released": bool(st),
         "run_id": run_id,
-        "workflow_id": str(st.get("workflow_id") or ""),
+        "workflow_id": wid,
         "archived_to": archived_to,
         "reason": reason,
     }

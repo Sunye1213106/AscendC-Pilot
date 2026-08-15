@@ -18,7 +18,7 @@ UO 不替代 cannbot。条例是否违规、golden 是否过线、卡死是不�
 
 一份高质量信息库同时满足三件事：
 
-1. **合法**：`integrity: pass`（verify 过线）。packing / producer / root、Host→Kernel、TilingData→Kernel、INPUT→OUTPUT 缺一则图不能当底座。
+1. **合法**：`integrity: pass`（verify 过线）。packing / producer / root、Host→Kernel、TilingData→Kernel 缺一则图不能当底座。有 OUTPUT 时 INPUT→OUTPUT 必须通；proto 无 `.OUTPUT` 的 fusion send 是诚实，不挡。
 2. **可定位**：`quality.grade: ready` 且 `locate_ready: true`。Key / Field / Kernel / Input / `OP_CHECK` 都能按名字落到 `file:line`；Kernel 目录里真有 EnQue / DataCopy / SetFlag 这类调用点，而不是只抽出 `__global__` 壳。
 3. **诚实**：未闭合项分类清楚。`host_runtime_leaf` 可以留着；`locate_blocking` 必须是 0。禁止用 LLM 把缺口补进 `.uo`。
 
@@ -55,11 +55,11 @@ Flag 成对、TQue/TPipe 机制标注是加分项。EnQue 在 `InitAllZeroOutput
 - Kernel 至少一个带 span
 - 有 TilingKey 时，packing site 不能是 0
 - TilingField 无 `field_owner_unknown` / `field_owner_ambiguous`
-- 有 KERNEL 则 Host→Kernel 通；有 TILING_DATA 则 TilingData→Kernel 通
+- 有 KERNEL 则 Host→Kernel 通；有 TILING_DATA 则 TilingData→Kernel 通；有 OUTPUT 则 INPUT→OUTPUT 通（无 OUTPUT 不算缺路径）
 - `locate_blocking == 0`
 - 八个定位面全部 `ok`：`symbol_span`、`tiling_key`、`field_rw`、`host_check`、`buffer`、`kernel_api`、`dtype`、`paths`
 
-`paths` 三条：Host→Kernel、TilingData→Kernel、INPUT→OUTPUT。cannbot 还依赖 **INPUT→TilingKey→Kernel**（audit 的 `MISSING_INPUT_TILINGKEY_KERNEL_PATH`）；这条挂了 integrity 也会失败。
+`paths`：Host→Kernel、TilingData→Kernel；有 OUTPUT 时再加 INPUT→OUTPUT。cannbot 还依赖 **INPUT→TilingKey→Kernel**（audit 的 `MISSING_INPUT_TILINGKEY_KERNEL_PATH`）；这条挂了 integrity 也会失败。
 
 ### 应当（ready 允许缺，但「能当 cannbot 底座」要看这些）
 
@@ -124,7 +124,7 @@ FAG 当前 13 条 host leaf + 3 条 catalog，与 8e 那版「未闭合 14」同
 读 `<op>/.ascendc-pilot/<arch>/uo/checks/quality.yaml`，按这个顺序：
 
 1. `integrity: pass`、`grade: ready`、`locate_ready: true`、`not_ready_reasons: []`
-2. `surfaces.tiling_key.packing` 全覆盖；`surfaces.paths` 三条 true
+2. `surfaces.tiling_key.packing` 全覆盖；`surfaces.paths` 的 Host→Kernel / TilingData→Kernel 为 true；有 OUTPUT 时 INPUT→OUTPUT 为 true
 3. `unresolved.locate_blocking: 0`；`OTHER` 用 generalization inspect 的 `other_count`
 4. `surfaces.kernel_api`：源码里有的 EnQue/DataCopy/SetFlag 在图里 `n>0` 且 `with_span=n`（源码没有的 API 为 0 是正常）
 5. `aux.tiling_key_dependency_coverage`：只作精度对照，不替代 packing
@@ -139,4 +139,4 @@ acp uo-query --project <op> --mode kernel_api --pattern DataCopy
 acp uo-query --project <op> --mode buffer --pattern <QUEUE>
 ```
 
-泛化抽检过线仍是：**抽到的每个算子 verify pass，且能 locate Key / Field / Kernel / Input / `OP_CHECK`。** 家族进度见 [uo-init-generalization.md](uo-init-generalization.md)。
+泛化抽检过线仍是：**抽到的每个算子 verify pass，且能 locate Key / Field / Kernel / Input / `OP_CHECK`。** 当前并集 **49** 个不重复算子，见 [uo-init-generalization.md](uo-init-generalization.md)。

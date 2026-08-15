@@ -48,6 +48,13 @@ REASON_UNMAPPED_SYMBOL = "UNMAPPED_SYMBOL"
 REASON_PARSE_FAILED = "PARSE_FAILED"
 REASON_NO_CONDITION = "NO_CONDITION_TEXT"
 REASON_DEPTH_EXCEEDED = "DERIVATION_DEPTH_EXCEEDED"
+REASON_RESOLVE_BUDGET = "RESOLVE_BUDGET"
+
+# Per top-level resolve(): walk / helper-chase steps. Large merged helpers
+# (same unqualified name across TUs) can otherwise loop for minutes.
+RESOLVE_STEP_BUDGET = 2048
+# Helpers bigger than this are performance/tiling methods, not one-hop wrappers.
+HELPER_BODY_WEIGHT_LIMIT = 24
 
 # Default chase depth — enough for deep helper/field chains without false DEPTH.
 DEFAULT_MAX_DEPTH = 24
@@ -764,6 +771,17 @@ class SourceResolver:
         self.local_roots = dict(local_roots or {})
         # names currently being chased, so `a = b; b = a` terminates
         self._chasing: set[str] = set()
+        # Mutable cell so scoped() children share one top-level budget.
+        self._budget = [0]
+
+    def _charge(self) -> bool:
+        """True while this top-level resolve still has walk budget."""
+        cell = getattr(self, "_budget", None)
+        if not isinstance(cell, list) or not cell:
+            self._budget = [0]
+            cell = self._budget
+        cell[0] = int(cell[0] or 0) + 1
+        return cell[0] <= RESOLVE_STEP_BUDGET
 
     def adopt(self, var_model: Any) -> None:
         """Take the constant table and operand order from the variable model.
@@ -799,6 +817,7 @@ class SourceResolver:
         child.param_actuals = {**self.param_actuals, **(param_actuals or {})}
         child.def_lists = {**self.def_lists, **(def_lists or {})}
         child._chasing = set(self._chasing)
+        child._budget = self._budget
         return child
 
     # -- atoms -------------------------------------------------------------
@@ -1261,6 +1280,14 @@ class SourceResolver:
         summary = self.host_ir.summaries.get(short)
         if summary is None:
             return None
+        helper_weight = (
+            len(summary.calls)
+            + len(summary.locals)
+            + len(summary.guards)
+            + len(summary.returns)
+        )
+        if helper_weight > HELPER_BODY_WEIGHT_LIMIT:
+            return None
         # Skip huge / non-helper bodies: chasing DoOpTiling-scale functions
         # through every call site explodes. Prefer small helpers with returns
         # or explicit out-params.
@@ -1482,7 +1509,9 @@ class SourceResolver:
         """
         fallback: Atom | None = None
         closed: list[Atom] = []
-        for w in writes:
+        for i, w in enumerate(writes):
+            if i >= 8 or not self._charge():
+                break
             sub = self._in_function(w.function).resolve_value(w.rhs, depth + 1)
             if not sub.atoms:
                 continue
@@ -1532,6 +1561,9 @@ class SourceResolver:
 
     # -- expression tree ---------------------------------------------------
     def _walk(self, e: Expr, out: list[Atom], depth: int, *, as_value: bool = False) -> None:
+        if not self._charge():
+            out.append(Atom(text="?", reason=REASON_RESOLVE_BUDGET))
+            return
         if isinstance(e, Const):
             out.append(Atom(text=repr(e.value), root="CONSTANT", symbol=repr(e.value)))
             return
@@ -1647,6 +1679,10 @@ class SourceResolver:
                 atoms=[Atom(text="", reason=REASON_NO_CONDITION)],
             )
         condition = _norm_expr(condition)
+        if depth == 0:
+            if not isinstance(getattr(self, "_budget", None), list):
+                self._budget = [0]
+            self._budget[0] = 0
         cache = getattr(self, "_resolve_cache", None)
         if cache is None:
             self._resolve_cache = {}

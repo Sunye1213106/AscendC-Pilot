@@ -155,7 +155,7 @@ def resolve_kernel_call_frontiers(
     for rid in remove_rel:
         codemap.relations.pop(rid, None)
     for eid in remove_ent:
-        if not any(r.src == eid or r.dst == eid for r in codemap.relations.values()):
+        if not codemap.has_incident(eid):
             codemap.entities.pop(eid, None)
 
     reachable = _reachable(codemap)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
@@ -91,131 +89,18 @@ def _product_fingerprint(uo_hint: Path) -> dict[str, Any] | None:
     }
 
 
-def _meta_from_sqlite(sqlite_path: Path) -> dict[str, str]:
-    try:
-        import sqlite3
-
-        conn = sqlite3.connect(str(sqlite_path))
-        try:
-            rows = conn.execute("SELECT key, value FROM meta").fetchall()
-            return {str(k): str(v) for k, v in rows}
-        finally:
-            conn.close()
-    except Exception:
-        return {}
-
-
-def _view_blob_from_sqlite(sqlite_path: Path, name: str) -> dict[str, Any] | None:
-    try:
-        import sqlite3
-
-        conn = sqlite3.connect(str(sqlite_path))
-        try:
-            row = conn.execute("SELECT data FROM view_blob WHERE name=?", (name,)).fetchone()
-        finally:
-            conn.close()
-        if not row:
-            return None
-        payload = json.loads(row[0])
-        return payload if isinstance(payload, dict) else None
-    except Exception:
-        return None
-
-
-def _legacy_fingerprint(uo_root: Path) -> dict[str, Any]:
-    """Compatibility fingerprint for old fixtures that predate ``.uo``."""
-    root = Path(uo_root).expanduser().resolve()
-    hashes: dict[str, str] = {}
-    artifact_path = root / "checks" / "artifact_hashes.yaml"
-    if artifact_path.is_file():
-        doc = read_yaml(artifact_path)
-        if isinstance(doc, dict):
-            raw = doc.get("hashes") or doc.get("files") or {}
-            if isinstance(raw, dict):
-                hashes = {str(k): str(v) for k, v in raw.items()}
-
-    revision = authority = graph_fingerprint = integrity_status = confidence_status = ""
-    manifest_path = root / "manifest.yaml"
-    if manifest_path.is_file():
-        manifest = read_yaml(manifest_path)
-        if isinstance(manifest, dict):
-            source = manifest.get("source") if isinstance(manifest.get("source"), dict) else {}
-            revision = str(source.get("revision") or manifest.get("revision") or "")
-            authority = str(manifest.get("authority") or "")
-            graph_fingerprint = str(manifest.get("graph_fingerprint") or "")
-    for rel, key in (("checks/integrity.yaml", "integrity"), ("checks/confidence_gate.yaml", "confidence")):
-        doc = read_yaml(root / rel) if (root / rel).is_file() else {}
-        if isinstance(doc, dict):
-            if key == "integrity":
-                integrity_status = str(doc.get("status") or "")
-            else:
-                confidence_status = str(doc.get("status") or "")
-
-    sqlite_sha = ""
-    sqlite_path = root / "indexes" / "kb_graph.sqlite"
-    if sqlite_path.is_file():
-        sqlite_sha = hashlib.sha256(sqlite_path.read_bytes()).hexdigest()
-        meta = _meta_from_sqlite(sqlite_path)
-        authority = authority or str(meta.get("authority") or "")
-        graph_fingerprint = graph_fingerprint or str(meta.get("graph_fingerprint") or "")
-        integrity_status = integrity_status or str(meta.get("integrity_status") or "")
-        if not hashes:
-            blob = _view_blob_from_sqlite(sqlite_path, "checks/artifact_hashes.yaml")
-            if isinstance(blob, dict):
-                raw = blob.get("hashes") or blob.get("files") or {}
-                if isinstance(raw, dict):
-                    hashes = {str(k): str(v) for k, v in raw.items()}
-        revision = revision or str(meta.get("revision") or "")
-
-    payload = {
-        "artifact_hashes": dict(sorted(hashes.items())),
-        "revision": revision,
-        "integrity_status": integrity_status,
-        "confidence_status": confidence_status,
-        "kb_graph_sha256": sqlite_sha,
-        "authority": authority,
-        "graph_fingerprint": graph_fingerprint,
-    }
-    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-    return {
-        "version": 1,
-        "authority": authority or "legacy_uo_export",
-        "uo_root": root.as_posix(),
-        "digest": digest,
-        "revision": revision,
-        "integrity_status": integrity_status,
-        "confidence_status": confidence_status,
-        "kb_graph_sha256": sqlite_sha,
-        "graph_fingerprint": graph_fingerprint,
-        "artifact_hash_count": len(hashes),
-    }
-
-
 def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
-    """Fingerprint the formal ``.uo`` whenever one exists.
-
-    ``uo_root`` remains an argument only for compatibility with the old TG API;
-    it is treated as a project/arch hint, not as the production authority.
-    An empty or absent tree yields ``digest=""`` so confirm can fail closed.
-    """
+    """Fingerprint the formal ``.uo`` product. Missing product fail-closes."""
     product = _product_fingerprint(Path(uo_root))
     if product is not None:
         return product
     root = Path(uo_root).expanduser().resolve()
-    legacy = _legacy_fingerprint(root)
-    has_authority = bool(
-        legacy.get("kb_graph_sha256")
-        or int(legacy.get("artifact_hash_count") or 0) > 0
-        or (root / "manifest.yaml").is_file()
-    )
-    if has_authority:
-        return legacy
     return {
         "version": 2,
         "authority": "missing",
         "digest": "",
         "uo_root": root.as_posix(),
-        "reason": "no_uo_product_or_legacy_export",
+        "reason": "no_uo_product",
     }
 
 

@@ -74,6 +74,7 @@ Plan `level=L3` / `branch_outcome_coverage`：TD dump + `branch_eval` 增长 R�
 | 失败模式 | `references/failure-patterns.md` |
 | Init 契约 | `references/construction-contract.md` |
 | Init 绑定 | `references/construction-binding.md` |
+| 测试脚本仓（精度/性能 CSV） | `references/test-script-repo.md` |
 | 踩坑 | `references/gotchas.md` |
 | 场景 overlay（日常精度/性能） | `references/targeted-construct.md`、`references/harness-oracle.md` |
 | 场景 id（权威在 CE） | `skills/code-engineering/references/scenario-catalog.md` |

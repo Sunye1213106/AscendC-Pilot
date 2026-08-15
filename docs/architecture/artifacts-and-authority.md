@@ -15,6 +15,9 @@ Source → UO CodeMap → TG / CE
 ```text
 <operator-repo>/.ascendc-pilot/
 ├── control/                       # arch-neutral control plane
+│   ├── active_run.yaml            # last exclusive pointer (not the mutex)
+│   ├── product_locks.yaml         # family → holder run
+│   └── session_bindings.yaml      # session_id → .uo path + digest
 └── <arch>/                        # e.g. arch35 / arch22 (multi-arch siblings)
     ├── uo/
     │   ├── <op_name>.<arch>.uo    # Canonical Operator CodeMap (durable)
@@ -22,8 +25,12 @@ Source → UO CodeMap → TG / CE
     │   └── ir/ …                  # transient UO work (compacted after review)
     ├── tg/                        # contract / plan / closure / replay
     ├── ce/                        # review / impact
-    ├── state/                     # workflow state / lease
-    ├── runs/                      # bundle / staging / receipt
+    ├── state/
+    │   ├── slots/<family>/workflow.yaml   # exclusive live state (uo / tg / ce-*)
+    │   ├── workflow.yaml          # legacy / last-exclusive mirror
+    │   └── action_lease.yaml      # one lease per arch
+    ├── runs/
+    │   └── {run_id}/live_state.yaml       # shared / query ephemeral
     ├── context/                   # rebuildable context packs
     ├── memory/                    # reusable runtime memory
     ├── local/                     # operator-local extensions
@@ -32,7 +39,7 @@ Source → UO CodeMap → TG / CE
 
 `<arch>/uo/<op_name>.<arch>.uo` 是对外 CodeMap 产品，与同目录工作树共存（多架构时各占一个 `<arch>/`）。`control/` 与 `state/` / `runs/` 属 Pilot；`context/` / `cache/` 可重建；`local/` 属于算子仓扩展，不进入 Pilot 通用实现。
 
-`<arch>/state/` 只放 **live** 执行槽（`workflow.yaml` / lease）。`complete` 或 `abort` 后把当时状态归档到 `runs/{run_id}/final_state.yaml` 并清掉 live 指针（含 `control/active_run.yaml`），否则下一工作流仍会占在旧 run 上。正式产物仍在 `<arch>/uo/` 等目录。
+对话绑定一份 `.uo`（算子 + arch + `canonical_graph_digest`）。同一产物上多 session 可并行读；写按产物族互斥（`uo-init/update` 与 `tg-*` / `ce-*` 可同时跑）。`complete` 或 `abort` 后把当时状态归档到 `runs/{run_id}/final_state.yaml` 并释放**本族**锁（或 ephemeral query 的 `live_state.yaml`）。`uo-init` / `uo-update` commit 后 digest 变了，已绑定旧 digest 的 session 与下游 TG/CE 标 STALE，答案置信度不得再标 high。正式产物仍在 `<arch>/uo/` 等目录。
 
 ## 产物分层
 
@@ -95,7 +102,7 @@ semantic change → canonical finalize → digest → build projections
 
 **仅 fingerprint 不够**：kind 直方图相同但边被 drop 后，summary 与 `ir/operator_graph` 的 edge 计数仍可能漂移。Query 路径在 mismatch 时返回 `VIEW_STALE`，由 engine fallback 到 canonical 重投影（不进 LLM）。
 
-TG / CE 不应在 UO 过期时自行从源码推导正式语义。上游变化后，旧 coverage / review 结论不能无条件沿用。
+TG / CE 不应在 UO 过期时自行从源码推导正式语义。上游变化后，旧 coverage / review 结论不能无条件沿用。新鲜度比的是会话/run **钉住的** `canonical_graph_digest`（handle.digest）与当前 `.uo`，禁止用当前图和自己比来宣称 fresh。digest 变化时 reason_code 为 `UO_DIGEST_CHANGED`。
 
 ## 失败与恢复
 

@@ -328,7 +328,11 @@ def find_uo_product(
                 for c in narrowed:
                     if c.name.startswith(f"{op_name}."):
                         return c
-            return narrowed[0]
+            if len(narrowed) == 1:
+                return narrowed[0]
+            # Same arch can leave both snake_case and CamelCase products after
+            # discover() spelling changes. The newest commit is the authority.
+            return max(narrowed, key=lambda p: p.stat().st_mtime)
         return None
     by_arch: dict[str, list[Path]] = {}
     for c in candidates:

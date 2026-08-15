@@ -138,6 +138,14 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
             f"{wid}: requires_architecture and requires_uo_product are mutually exclusive "
             "(build UO chooses arch*; consumers inherit arch from .uo)"
         )
+    occ = str(meta.get("occupancy") or "").strip().lower()
+    group = str(meta.get("occupancy_group") or "").strip()
+    if occ not in {"exclusive", "shared"}:
+        errors.append(f"{wid}: occupancy must be exclusive|shared (got {occ!r})")
+    elif occ == "exclusive" and not group:
+        errors.append(f"{wid}: exclusive occupancy requires occupancy_group")
+    elif occ == "shared" and group:
+        errors.append(f"{wid}: shared occupancy must have empty occupancy_group")
     if not str(meta.get("cognitive_skill_id") or "").strip():
         errors.append(f"{wid}: missing cognitive_skill_id")
 

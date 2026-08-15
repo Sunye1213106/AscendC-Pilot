@@ -57,6 +57,7 @@ from uo_init.semantics.ascendc_vf import (
     is_cann_vf_api,
     vf_root_spelling,
 )
+from uo_init.semantics.ascendc_util import is_cann_util_api
 from uo_init.semantics.ascendc_sync import (
     FLAG_PAIR_MATE,
     SYNC_MECHANISM,
@@ -86,6 +87,7 @@ _ROOT_KIND_BY_CATEGORY: dict[str, str] = {
     "buffer_view": "MEMORY_API",
     "queue_enqueue": "MEMORY_API",
     "queue_dequeue": "MEMORY_API",
+    "util": "UTIL_API",
     "sync_signal": "SYNC",
     "sync_wait": "SYNC",
     "sync_barrier": "SYNC",
@@ -209,6 +211,9 @@ _CXX_SKIP_BASE = frozenset(
 )
 
 
+_GATED_FILL_S = 120.0
+
+
 def _budget_s() -> float:
     raw = str(os.environ.get("UO_KERNEL_ROOT_TRACE_BUDGET_S") or "25").strip()
     try:
@@ -286,6 +291,7 @@ def _is_ascendc_root_spelling(name: str) -> bool:
         or name in ASCENDC_BUFFER_TYPES
         or name in ASCENDC_REGISTER_TYPES
         or is_cann_vf_api(name)
+        or is_cann_util_api(name)
     )
 
 
@@ -383,6 +389,39 @@ def _is_compiler_builtin(
     if "c:@F@__builtin" in u or u.startswith("c:@S@vector_") or u.startswith("c:@S@__bs_"):
         return True
     return False
+
+
+def _is_type_like_root(callee: str) -> bool:
+    """RegTensor / LocalTensor / *Params are types, not execution operations."""
+    short = str(callee or "").split("::")[-1]
+    if short in ASCENDC_REGISTER_TYPES or short in ASCENDC_BUFFER_TYPES:
+        return True
+    if short in {"TPipe"}:
+        return True
+    if short.endswith(("Params", "Config", "ExtParams", "PadParams")) or "Params" in short:
+        return True
+    return False
+
+
+def _should_mint_operation(
+    *,
+    callee: str,
+    is_root: bool,
+    is_builtin: bool,
+    is_project: bool,
+) -> bool:
+    """OPERATION nodes are source call sites of execution primitives, not every CallExpr."""
+    if is_builtin:
+        return False
+    if _is_type_like_root(callee):
+        return False
+    if is_project and not is_root:
+        return False
+    # Or/Min/Max/And live in the VF catalog and as project scalars. Only mint
+    # when this site was already proven as an AscendC root.
+    if callee in _VECTOR_AMBIGUOUS_ROOTS or is_ambiguous_vf_name(callee):
+        return bool(is_root)
+    return bool(is_root or semreg.is_execution_primitive(callee))
 
 
 def _receiver_looks_tensor(*texts: str) -> bool:
@@ -562,6 +601,47 @@ def _sync_object_kind(type_text: str) -> EntityKind | None:
     if re.search(r"(?:^|::)HardEvent(?:Aic|Aiv)?(?:<|$)", text):
         return EntityKind.EVENT
     return None
+
+
+def infer_kernel_phase(name: str, *, file: str = "", scope: str = "") -> str:
+    """Cheap pre/main/post label from TPipe / op names. Not happens-before."""
+    blob = f"{name} {scope} {file}".lower().replace("\\", "/")
+    if any(tok in blob for tok in ("pipein", "pipepre", "oppre")):
+        return "pre"
+    if any(tok in blob for tok in ("pipepost", "oppost")):
+        return "post"
+    if any(tok in blob for tok in ("pipebase", "pipemain")):
+        return "main"
+    return ""
+
+
+def _mutex_policy_attrs(type_text: str) -> dict[str, str]:
+    """Policy token on a wrapper/selector type — not a project class catalog.
+
+    Matches ``*Policy<Suffix>`` (PolicyDB, Policy3buff, L1PolicySingleBuffer, …)
+    and ``std::conditional`` flags. Does not require MutexBuffer in the spelling.
+    """
+    text = str(type_text or "")
+    out: dict[str, str] = {}
+    m = re.search(
+        r"\b(?:[A-Za-z_]\w*?)?Policy([A-Za-z][A-Za-z0-9]*|\d+[Bb]uff)\b",
+        text,
+    )
+    if m:
+        raw = m.group(1)
+        low = raw.lower()
+        if low in {"3buff", "4buff"}:
+            out["mutex_policy"] = low
+        elif raw in {"DB", "PolicyDB"}:
+            out["mutex_policy"] = "PolicyDB"
+        elif "SingleBuffer" in raw:
+            out["mutex_policy"] = "PolicySingleBuffer"
+        else:
+            out["mutex_policy"] = raw
+    cm = re.search(r"std::conditional(?:_t)?\s*<\s*([^,>]+)", text)
+    if cm:
+        out["conditional_flag"] = cm.group(1).strip()
+    return out
 
 
 def _receiver_is_tque(
@@ -1336,25 +1416,6 @@ def finalize_kernel_root_trace(
         calls, added = kscan.merge_lexical_sites(calls, lexical, root=root)
         if added:
             provenance = f"{provenance}+lexical_source_calls"
-        # Confirmed TU closure is one ORIG_DTYPE instantiation. Mixed-dtype
-        # headers in op_kernel/<arch>/ still hold TQue/DataCopy/SetFlag sites.
-        extra_arch = [
-            f
-            for f in kscan.architecture_kernel_files(Path(root), arch)
-            if f.resolve() not in {p.resolve() for p in files}
-        ]
-        if extra_arch and time.perf_counter() < deadline:
-            extra_sites = kscan.lexical_source_call_sites(
-                extra_arch,
-                reachable=reachable,
-                filter_strict=False,
-                root=root,
-                deadline=deadline,
-                primitives_only=True,
-            )
-            calls, extra_added = kscan.merge_lexical_sites(calls, extra_sites, root=root)
-            if extra_added:
-                provenance = f"{provenance}+arch_kernel_primitives"
         identity_filled = 0
         if files and time.perf_counter() < deadline:
             from uo_init.passes.kernel_call_identity import (
@@ -1372,6 +1433,44 @@ def finalize_kernel_root_trace(
             deadline=deadline,
         )
         decls = list(decls or []) + list(lex_decls or [])
+
+    # Gated source n is this_op + sibling_op. Fill those primitives even if the
+    # 25s compile budget is gone; family_common cube templates stay clang-only.
+    extra_arch = kscan.kernel_corpus(
+        Path(root),
+        arch,
+        deadline=time.perf_counter() + _GATED_FILL_S,
+    )
+    extra_added = 0
+    gated_fill_complete = True
+    priority: list[Path] = []
+    for path in extra_arch:
+        owner = kscan.kernel_file_owner(path, Path(root))
+        if owner in {"this_op", "sibling_op"}:
+            priority.append(path)
+    if priority:
+        prim_deadline = time.perf_counter() + _GATED_FILL_S
+        extra_sites = kscan.lexical_source_call_sites(
+            priority,
+            reachable=reachable,
+            filter_strict=False,
+            root=root,
+            deadline=prim_deadline,
+            primitives_only=True,
+        )
+        calls, extra_added = kscan.merge_lexical_sites(calls, extra_sites, root=root)
+        if extra_added:
+            provenance = f"{provenance}+arch_kernel_primitives"
+        if time.perf_counter() >= prim_deadline:
+            gated_fill_complete = False
+    try:
+        from uo_init.diagnostics.source_api import count_source_kernel_apis
+
+        source_api_gated = count_source_kernel_apis(
+            Path(root), arch, files=priority or extra_arch
+        )
+    except Exception:  # noqa: BLE001
+        source_api_gated = {}
 
     kernel_backend = (
         "clang"
@@ -1833,11 +1932,7 @@ def finalize_kernel_root_trace(
                 else ("TQue" if sync_kind == EntityKind.QUEUE else "HardEvent")
             )
             root_id = _ensure_ascendc_root(codemap, root_spell, root_kind="SYNC")
-            ent = codemap.upsert(
-                sync_kind,
-                name,
-                eid=sid,
-                attrs={
+            pipe_attrs = {
                     "scope": owner,
                     "type_name": _persist_type_name(type_text),
                     "tposition": tposition_from_type_text(expanded)
@@ -1850,7 +1945,15 @@ def finalize_kernel_root_trace(
                     "root_kind": "SYNC",
                     "root": f"AscendC::{root_spell}",
                     "provenance": str(row.get("provenance") or "kernel_root_trace"),
-                },
+            }
+            phase = infer_kernel_phase(name, file=nfile, scope=owner)
+            if phase:
+                pipe_attrs["kernel_phase"] = phase
+            ent = codemap.upsert(
+                sync_kind,
+                name,
+                eid=sid,
+                attrs=pipe_attrs,
                 file=nfile,
                 line=line,
                 status="extracted",
@@ -1863,6 +1966,7 @@ def finalize_kernel_root_trace(
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
+        mutex_attrs = _mutex_policy_attrs(type_text + " " + expanded)
         known = (
             is_storage_type_text(expanded)
             or is_storage_wrapper_type(expanded)
@@ -1872,6 +1976,7 @@ def finalize_kernel_root_trace(
                 and str(codemap.entities[type_ents[base]].attrs.get("root_status") or "") == "REACHED"
             )
             or is_storage_wrapper_type(type_text)
+            or bool(mutex_attrs.get("mutex_policy"))
         )
         if not known:
             continue
@@ -1896,7 +2001,11 @@ def finalize_kernel_root_trace(
             or "",
             "scope": owner,
             "type_name": _persist_type_name(type_text),
-            "role": "storage_wrapper" if is_wrapper else "project_wrapper",
+            "role": (
+                "storage_wrapper"
+                if is_wrapper
+                else ("mutex_policy" if mutex_attrs.get("mutex_policy") else "project_wrapper")
+            ),
             "wrapper": "MutexBuffer" if is_wrapper and "MutexBuffer" in (expanded + type_text) else (
                 _base_type_name(expanded) if is_wrapper else ""
             ),
@@ -1905,6 +2014,7 @@ def finalize_kernel_root_trace(
             "root": f"AscendC::{root_spell}" if root_spell else "",
             "trace": [name] + ([base] if base else []) + ([root_spell] if root_spell else []),
         }
+        attrs.update(mutex_attrs)
         ent = codemap.upsert(
             EntityKind.BUFFER,
             name,
@@ -1941,11 +2051,7 @@ def finalize_kernel_root_trace(
                 else ("TQue" if sync_kind == EntityKind.QUEUE else "HardEvent")
             )
             root_id = _ensure_ascendc_root(codemap, root_spell, root_kind="SYNC")
-            ent = codemap.upsert(
-                sync_kind,
-                name,
-                eid=sid,
-                attrs={
+            pipe_attrs = {
                     "scope": function,
                     "type_name": _persist_type_name(type_text),
                     "tposition": tposition_from_type_text(expanded)
@@ -1958,7 +2064,15 @@ def finalize_kernel_root_trace(
                     "root_kind": "SYNC",
                     "root": f"AscendC::{root_spell}",
                     "provenance": "kernel_root_trace",
-                },
+            }
+            phase = infer_kernel_phase(name, file=nfile, scope=function)
+            if phase:
+                pipe_attrs["kernel_phase"] = phase
+            ent = codemap.upsert(
+                sync_kind,
+                name,
+                eid=sid,
+                attrs=pipe_attrs,
                 file=nfile,
                 line=line,
                 status="extracted",
@@ -1971,6 +2085,7 @@ def finalize_kernel_root_trace(
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
+        mutex_attrs = _mutex_policy_attrs(type_text + " " + expanded)
         known = (
             is_storage_type_text(expanded)
             or is_storage_type_text(type_text)
@@ -1979,6 +2094,7 @@ def finalize_kernel_root_trace(
                 base in type_ents
                 and str(codemap.entities[type_ents[base]].attrs.get("root_status") or "") == "REACHED"
             )
+            or bool(mutex_attrs.get("mutex_policy"))
         )
         if not known:
             continue
@@ -2054,7 +2170,11 @@ def finalize_kernel_root_trace(
             "role": (
                 "storage_wrapper"
                 if is_wrapper
-                else ("project_wrapper" if project_reached else "cann_storage")
+                else (
+                    "mutex_policy"
+                    if mutex_attrs.get("mutex_policy")
+                    else ("project_wrapper" if project_reached else "cann_storage")
+                )
             ),
             "wrapper": wrapper_spell,
             "root_status": root_status,
@@ -2064,6 +2184,7 @@ def finalize_kernel_root_trace(
             + ([wrapper_spell] if wrapper_spell else [])
             + ([root_spell] if root_spell else []),
         }
+        attrs.update(mutex_attrs)
         if root_status == "UNRESOLVED":
             attrs["gap_code"] = REASON_NO_ASCENDC_ROOT
             gaps.append(
@@ -2156,7 +2277,7 @@ def finalize_kernel_root_trace(
         return ent.id
 
     op_count = 0
-    ordinals: dict[tuple[str, int, int, str], int] = {}
+    seen_op_ids: set[str] = set()
     for site in calls or []:
         d = site if isinstance(site, dict) else kscan.site_as_dict(site)
         callee = str(d.get("callee") or "").split("::")[-1]
@@ -2165,9 +2286,6 @@ def finalize_kernel_root_trace(
         file = str(d.get("file") or "")
         line = int(d.get("line") or 0)
         column = int(d.get("column") or 0)
-        okey = (_norm_file(file, root), line, column, callee)
-        ordinal = ordinals.get(okey, 0)
-        ordinals[okey] = ordinal + 1
         category, _engine, conf = semreg.classify(callee)
         receiver = str(d.get("receiver") or "")
         function = str(d.get("caller") or "")
@@ -2300,8 +2418,20 @@ def finalize_kernel_root_trace(
         ):
             continue
 
-        oid = operation_site_id(
-            file=file, line=line, column=column, callee=callee, ordinal=ordinal, root=root
+        mint_op = _should_mint_operation(
+            callee=callee,
+            is_root=is_root,
+            is_builtin=is_builtin,
+            is_project=is_project,
+        )
+        if not mint_op and (is_builtin or _is_type_like_root(callee)):
+            continue
+        oid = (
+            operation_site_id(
+                file=file, line=line, column=column, callee=callee, root=root
+            )
+            if mint_op
+            else ""
         )
         trace = [callee_qualified or callee]
         if bridge or proven:
@@ -2327,6 +2457,9 @@ def finalize_kernel_root_trace(
         elif is_project:
             op_root_status, op_root_kind, op_root = "PROJECT", "PROJECT", ""
             op_proof = project_proof or "project_free"
+        elif category == "UNKNOWN" and nfile and line > 0:
+            op_root_status, op_root_kind, op_root = "PROJECT", "PROJECT", ""
+            op_proof = "project_unclassified"
         else:
             op_root_status, op_root_kind, op_root = "UNRESOLVED", "", ""
             op_proof = project_proof
@@ -2346,7 +2479,7 @@ def finalize_kernel_root_trace(
                     else (
                         "compiler_builtin"
                         if is_builtin
-                        else ("project_symbol" if is_project else "UNKNOWN")
+                        else ("project_symbol" if (is_project or op_root_status == "PROJECT") else "UNKNOWN")
                     )
                 )
             ),
@@ -2364,7 +2497,11 @@ def finalize_kernel_root_trace(
             "provenance": str(d.get("provenance") or provenance),
             "column": column,
             "root_proof": op_proof,
+            "owner": kscan.kernel_file_owner(nfile or file, Path(root)),
+            "instantiation_n": int(d.get("instantiation_n") or 1),
         }
+        if targs:
+            attrs["template_arg_sets"] = [list(targs)]
         if is_tque_callee(callee):
             attrs["mechanism"] = "tque"
         elif is_tpipe_callee(callee):
@@ -2375,7 +2512,8 @@ def finalize_kernel_root_trace(
             if not nfile or line <= 0 or not callee.isidentifier():
                 continue
         if (
-            not is_root
+            mint_op
+            and not is_root
             and not is_project
             and not is_builtin
             and (category != "UNKNOWN" or conf not in {"", "unresolved"})
@@ -2391,29 +2529,42 @@ def finalize_kernel_root_trace(
                     "line": line,
                 }
             )
-        ent = codemap.upsert(
-            EntityKind.OPERATION,
-            callee,
-            eid=oid,
-            attrs=attrs,
-            file=nfile,
-            line=line,
-            status="extracted" if (is_root or is_project or is_builtin) else "partial",
-            confidence=(
-                1.0
-                if is_root and conf == "confirmed"
-                else (
-                    0.85
-                    if bridge
-                    else (0.9 if is_project or is_builtin else 0.5)
+        ent = None
+        if mint_op and oid:
+            existing = codemap.entities.get(oid)
+            if existing is not None:
+                existing.attrs["instantiation_n"] = int(
+                    existing.attrs.get("instantiation_n") or 1
+                ) + int(attrs.get("instantiation_n") or 1)
+                if targs:
+                    sets = existing.attrs.setdefault("template_arg_sets", [])
+                    if isinstance(sets, list) and list(targs) not in sets:
+                        sets.append(list(targs))
+                ent = existing
+            else:
+                ent = codemap.upsert(
+                    EntityKind.OPERATION,
+                    callee,
+                    eid=oid,
+                    attrs=attrs,
+                    file=nfile,
+                    line=line,
+                    status="extracted" if is_root else "partial",
+                    confidence=(
+                        1.0
+                        if is_root and conf == "confirmed"
+                        else (0.85 if bridge else 0.5)
+                    ),
                 )
-            ),
-        )
-        op_count += 1
+                seen_op_ids.add(oid)
+                op_count += 1
+            phase = infer_kernel_phase(callee, file=nfile, scope=function)
+            if phase:
+                ent.attrs["kernel_phase"] = phase
 
         # Flag identity only. TQue EnQue/DeQue have no user event; CANN owns that
         # handshake, so they never get SIGNALS/AWAITS.
-        if is_flag_sync(callee) and not is_tque_callee(callee):
+        if ent is not None and is_flag_sync(callee) and not is_tque_callee(callee):
             sync = resolve_sync_site(callee, args, targs)
             identity = str(sync.get("flag") or (args[0] if args else "")).strip()
             if re.fullmatch(r"[A-Za-z_]\w*", identity):
@@ -2529,21 +2680,22 @@ def finalize_kernel_root_trace(
                     if callee_decl_file
                     else ("method_receiver" if receiver else "project_free")
                 )
-                _link(
-                    codemap,
-                    RelationKind.BINDS,
-                    ent.id,
-                    callee_mid,
-                    attrs={
-                        "via": bind_via,
-                        "file": nfile,
-                        "line": line,
-                        "column": column,
-                        "decl_file": _norm_file(callee_decl_file, root),
-                        "decl_line": callee_decl_line,
-                        "receiver": receiver,
-                    },
-                )
+                if ent is not None:
+                    _link(
+                        codemap,
+                        RelationKind.BINDS,
+                        ent.id,
+                        callee_mid,
+                        attrs={
+                            "via": bind_via,
+                            "file": nfile,
+                            "line": line,
+                            "column": column,
+                            "decl_file": _norm_file(callee_decl_file, root),
+                            "decl_line": callee_decl_line,
+                            "receiver": receiver,
+                        },
+                    )
         if caller_mid and callee_mid and caller_mid != callee_mid:
             _link(
                 codemap,
@@ -2558,7 +2710,7 @@ def finalize_kernel_root_trace(
                     "receiver": receiver,
                 },
             )
-        if caller_mid:
+        if caller_mid and ent is not None:
             _link(
                 codemap,
                 RelationKind.CALLS,
@@ -2572,7 +2724,7 @@ def finalize_kernel_root_trace(
                     "receiver": receiver,
                 },
             )
-        if is_root and root_spell:
+        if ent is not None and is_root and root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind=root_kind or "COMPUTE_API")
             if bridge and "MutexBuffer" in type_ents:
                 _link(
@@ -2604,7 +2756,7 @@ def finalize_kernel_root_trace(
                     },
                     status="partial",
                 )
-        if bid_recv:
+        if ent is not None and bid_recv:
             _link(
                 codemap,
                 RelationKind.REFERENCES,
@@ -2716,10 +2868,8 @@ def finalize_kernel_root_trace(
         if e.attrs.get("root_status") != "UNRESOLVED":
             continue
         # Only gap types that appear in a WRAPS edge (participated in composition).
-        participates = any(
-            (r.src == e.id or r.dst == e.id)
-            and r.kind_name() == RelationKind.WRAPS.value
-            for r in codemap.relations.values()
+        participates = bool(
+            codemap.neighbors(e.id, kind=RelationKind.WRAPS, direction="both")
         )
         if not participates:
             continue
@@ -2736,16 +2886,39 @@ def finalize_kernel_root_trace(
 
     elapsed = time.perf_counter() - t0
     gap_counts = Counter(str(g.get("code") or "") for g in gaps)
-    reached_bufs = sum(
-        1
-        for e in codemap.by_kind(EntityKind.BUFFER)
-        if e.attrs.get("root_status") == "REACHED"
-    )
-    reached_ops = sum(
-        1
-        for e in codemap.by_kind(EntityKind.OPERATION)
-        if e.attrs.get("root_status") == "REACHED"
-    )
+    reached_bufs = 0
+    reached_ops = 0
+    tque_ops = 0
+    tpipe_ops = 0
+    project_resolved_ops = 0
+    for e in codemap.by_kind(EntityKind.BUFFER):
+        if e.attrs.get("root_status") == "REACHED":
+            reached_bufs += 1
+    for e in codemap.by_kind(EntityKind.OPERATION):
+        if e.attrs.get("root_status") == "REACHED":
+            reached_ops += 1
+        callee = str(e.attrs.get("callee") or e.name or "")
+        if is_tque_callee(callee):
+            tque_ops += 1
+        if is_tpipe_callee(callee):
+            tpipe_ops += 1
+        if str(e.attrs.get("root_proof") or "").startswith("project_"):
+            project_resolved_ops += 1
+    signals = awaits = wraps = rooted_at = alias_rels = binds = 0
+    for r in codemap.relations.values():
+        kind = r.kind_name()
+        if kind == RelationKind.SIGNALS.value:
+            signals += 1
+        elif kind == RelationKind.AWAITS.value:
+            awaits += 1
+        elif kind == RelationKind.WRAPS.value:
+            wraps += 1
+        elif kind == RelationKind.ROOTED_AT.value:
+            rooted_at += 1
+        elif kind == RelationKind.ALIASES.value:
+            alias_rels += 1
+        elif kind == RelationKind.BINDS.value:
+            binds += 1
     quality = {
         "operations": op_count,
         "buffers": buf_count,
@@ -2754,42 +2927,20 @@ def finalize_kernel_root_trace(
         "events": len(codemap.by_kind(EntityKind.EVENT)),
         "queues": len(codemap.by_kind(EntityKind.QUEUE)),
         "precedes": precedes_count,
-        "signals": sum(
-            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.SIGNALS.value
-        ),
-        "awaits": sum(
-            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.AWAITS.value
-        ),
-        "tque_ops": sum(
-            1
-            for e in codemap.by_kind(EntityKind.OPERATION)
-            if is_tque_callee(str(e.attrs.get("callee") or e.name or ""))
-        ),
-        "tpipe_ops": sum(
-            1
-            for e in codemap.by_kind(EntityKind.OPERATION)
-            if is_tpipe_callee(str(e.attrs.get("callee") or e.name or ""))
-        ),
+        "signals": signals,
+        "awaits": awaits,
+        "tque_ops": tque_ops,
+        "tpipe_ops": tpipe_ops,
         "flag_pairs": int(pair_stats.get("flag_pairs") or 0),
         "unpaired_flag_sync": int(pair_stats.get("unpaired_flag_sync") or 0),
         "reached_operations": reached_ops,
         "reached_buffers": reached_bufs,
-        "wraps": sum(1 for r in codemap.relations.values() if r.kind_name() == RelationKind.WRAPS.value),
-        "rooted_at": sum(
-            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.ROOTED_AT.value
-        ),
-        "aliases": sum(
-            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.ALIASES.value
-        ),
-        "project_resolved_ops": sum(
-            1
-            for e in codemap.by_kind(EntityKind.OPERATION)
-            if str(e.attrs.get("root_proof") or "").startswith("project_")
-        ),
+        "wraps": wraps,
+        "rooted_at": rooted_at,
+        "aliases": alias_rels,
+        "project_resolved_ops": project_resolved_ops,
         "identity_filled": identity_filled,
-        "binds": sum(
-            1 for r in codemap.relations.values() if r.kind_name() == RelationKind.BINDS.value
-        ),
+        "binds": binds,
     }
     meta = {
         "architecture": arch,
@@ -2819,6 +2970,11 @@ def finalize_kernel_root_trace(
         "gap_counts": dict(gap_counts),
         "gaps": gaps[:200],
         "identity_filled": identity_filled,
+        "corpus_n": len(extra_arch),
+        "gated_corpus_n": len(priority),
+        "arch_kernel_primitives_added": extra_added,
+        "gated_fill_complete": gated_fill_complete,
+        "source_api_gated": source_api_gated,
         "quality": quality,
     }
     codemap.meta["kernel_root_trace"] = meta

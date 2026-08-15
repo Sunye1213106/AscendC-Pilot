@@ -4,8 +4,8 @@
  * Install: copy this file to ~/.config/opencode/plugins/ascendc-pilot.ts
  * Does NOT merge or rewrite the user's opencode.json.
  *
- * Intercepts bash/write/edit/apply_patch/task/read/glob/grep before execution and asks
- * `acp authorize` with project, real agent, and action.
+ * Intercepts bash/write/edit/apply_patch/task/read/glob/grep/skill before
+ * execution and asks `acp authorize`. MCP tools are not intercepted.
  * Soft control plane only — not OS-level security.
  *
  * Platform limits: OpenCode may not expose subagent identity on every hook;
@@ -19,9 +19,18 @@
  */
 
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process"
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs"
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { homedir } from "node:os"
-import { resolve } from "node:path"
+import { delimiter, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 /** Host-side pending human interaction (mirrors ACP pending_interaction.yaml). */
@@ -346,14 +355,43 @@ function isPilotProjectRoot(root: string): boolean {
   return Boolean(findPilotStateFile(r))
 }
 
-function looksLikeOperatorDir(root: string): boolean {
+function isHarnessCheckout(root: string): boolean {
   const r = String(root || "").trim()
   if (!r) return false
-  return (
-    existsSync(resolve(r, ".ascendc-pilot")) ||
-    existsSync(resolve(r, "op_kernel")) ||
-    existsSync(resolve(r, "op_host"))
-  )
+  try {
+    return existsSync(resolve(r, "pilot", "ascendc_pilot")) && existsSync(resolve(r, "engines"))
+  } catch {
+    return false
+  }
+}
+
+function isUnderHarnessCheckout(root: string): boolean {
+  const r = String(root || "").trim()
+  if (!r) return false
+  try {
+    let cur = resolve(r)
+    for (let i = 0; i < 12; i++) {
+      if (isHarnessCheckout(cur)) return true
+      const parent = resolve(cur, "..")
+      if (parent === cur) break
+      cur = parent
+    }
+  } catch {
+    return false
+  }
+  return false
+}
+
+function looksLikeOperatorDir(root: string): boolean {
+  const r = String(root || "").trim()
+  if (!r || isHarnessCheckout(r) || isUnderHarnessCheckout(r)) return false
+  return existsSync(resolve(r, "op_kernel")) || existsSync(resolve(r, "op_host"))
+}
+
+function operatorName(root: string): string {
+  const norm = String(root || "").replace(/\\/g, "/").replace(/\/+$/, "")
+  const parts = norm.split("/").filter(Boolean)
+  return parts.length ? parts[parts.length - 1] : ""
 }
 
 function lastProjectCachePath(): string {
@@ -370,7 +408,8 @@ function readPendingDispatchProject(): string {
     if (!existsSync(cache)) return ""
     const rec = JSON.parse(readFileSync(cache, "utf-8")) as { project?: string }
     const root = String(rec?.project || "").trim()
-    if (root && isPilotProjectRoot(root)) return root
+    if (root && looksLikeOperatorDir(root)) return root
+    if (root && isPilotProjectRoot(root) && !isHarnessCheckout(root)) return root
   } catch {
     // ignore
   }
@@ -380,7 +419,7 @@ function readPendingDispatchProject(): string {
 function rememberProjectRoot(project: string): void {
   const root = String(project || "").trim()
   // Cache operator dirs even before a live workflow.yaml exists.
-  if (!root || (!isPilotProjectRoot(root) && !looksLikeOperatorDir(root))) return
+  if (!root || !looksLikeOperatorDir(root) || isHarnessCheckout(root)) return
   try {
     const cache = lastProjectCachePath()
     mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
@@ -395,7 +434,7 @@ function readRememberedProjectRoot(): string {
     const cache = lastProjectCachePath()
     if (!existsSync(cache)) return ""
     const root = readFileSync(cache, "utf-8").trim()
-    if (root && (isPilotProjectRoot(root) || looksLikeOperatorDir(root))) {
+    if (root && looksLikeOperatorDir(root) && !isHarnessCheckout(root)) {
       return root
     }
   } catch {
@@ -404,42 +443,71 @@ function readRememberedProjectRoot(): string {
   return ""
 }
 
-function detectProjectRoot(pathHint?: string): string {
-  const fromPath = projectRootFromPath(String(pathHint || ""))
-  if (fromPath && isPilotProjectRoot(fromPath)) return fromPath
-  // Operator package path before acp start (has op_kernel etc., no workflow yet).
-  if (fromPath && existsSync(fromPath)) return fromPath
-
-  const fromEnv =
-    process.env.ASCENDC_PROJECT_ROOT ||
-    process.env.OPENCODE_PROJECT_ROOT ||
-    process.env.PROJECT_ROOT ||
-    ""
-  if (fromEnv && existsSync(fromEnv)) {
-    if (isPilotProjectRoot(fromEnv)) return fromEnv
+function envOperatorRoot(): string {
+  for (const key of [
+    "ASCENDC_PROJECT_ROOT",
+    "UO_OP_DIR",
+    "OPENCODE_PROJECT_ROOT",
+    "PROJECT_ROOT",
+  ]) {
+    const raw = String(process.env[key] || "").trim()
+    if (!raw) continue
+    try {
+      const resolved = resolve(raw)
+      if (looksLikeOperatorDir(resolved) && !isHarnessCheckout(resolved)) return resolved
+    } catch {
+      /* ignore */
+    }
   }
+  return ""
+}
 
-  // Prefer cwd when it looks like an operator package, even before acp start
-  // creates `.ascendc-pilot`. Walking up to a parent `.ascendc-pilot` would otherwise
-  // authorize against the wrong leftover run (e.g. ops-transformer vs op dir).
+/** Conversation-pinned operator. Never the Pilot checkout or a path under it. */
+function boundOperatorRoot(pathHint?: string): string {
+  const hint = String(pathHint || "").trim()
+  const fromPath = projectRootFromPath(hint)
+  if (fromPath && looksLikeOperatorDir(fromPath)) return fromPath
+  if (hint) {
+    try {
+      const resolved = resolve(hint)
+      if (looksLikeOperatorDir(resolved) && !isUnderHarnessCheckout(resolved)) return resolved
+    } catch {
+      /* ignore */
+    }
+  }
+  const pending = readPendingDispatchProject()
+  if (pending && looksLikeOperatorDir(pending)) return pending
+  const fromEnv = envOperatorRoot()
+  if (fromEnv) return fromEnv
   const cwd = process.cwd()
-  if (isPilotProjectRoot(cwd)) {
-    return cwd
+  if (looksLikeOperatorDir(cwd) && !isHarnessCheckout(cwd)) return cwd
+  const remembered = readRememberedProjectRoot()
+  if (remembered && looksLikeOperatorDir(remembered)) {
+    if (hint) {
+      const want = operatorName(hint)
+      const have = operatorName(remembered)
+      if (want && want.toLowerCase() === have.toLowerCase()) return remembered
+    }
+    return remembered
   }
-  if (
-    existsSync(resolve(cwd, "CMakeLists.txt")) ||
-    existsSync(resolve(cwd, "op_kernel")) ||
-    existsSync(resolve(cwd, "op_host"))
-  ) {
-    return cwd
-  }
+  return ""
+}
 
-  // Walk up: prefer active Pilot workflow over bare .git / pilot repo root.
+function detectProjectRoot(pathHint?: string): string {
+  const bound = boundOperatorRoot(pathHint)
+  if (bound) return bound
+  const fromPath = projectRootFromPath(String(pathHint || ""))
+  if (fromPath && isPilotProjectRoot(fromPath) && !isHarnessCheckout(fromPath)) return fromPath
+
+  const cwd = process.cwd()
+  if (looksLikeOperatorDir(cwd) && !isHarnessCheckout(cwd)) return cwd
+  if (isPilotProjectRoot(cwd) && !isHarnessCheckout(cwd)) return cwd
+
+  // Walk up: prefer an operator package over the Pilot checkout.
   let cur = cwd
   for (let i = 0; i < 8; i++) {
-    if (isPilotProjectRoot(cur)) {
-      return cur
-    }
+    if (isHarnessCheckout(cur)) break
+    if (looksLikeOperatorDir(cur) || isPilotProjectRoot(cur)) return cur
     const parent = resolve(cur, "..")
     if (parent === cur) break
     cur = parent
@@ -450,14 +518,15 @@ function detectProjectRoot(pathHint?: string): string {
 
   // Do NOT fall back to bare .git / AscendC-Pilot repo — those authorize as a
   // fake project with empty phase actors and block Task (ses_062d).
-  return fromEnv && existsSync(fromEnv) ? fromEnv : process.cwd()
+  const fromEnv = envOperatorRoot()
+  return fromEnv || process.cwd()
 }
 
 function detectProjectRootForTask(promptHint?: string): string {
   // Task args carry subagent names, not file paths. Prefer paths embedded in the
   // prepare stub (…/<op>/.ascendc-pilot/runs/.../actions/<action_id>/...).
   const fromPrompt = projectRootFromPath(String(promptHint || ""))
-  if (fromPrompt && isPilotProjectRoot(fromPrompt)) {
+  if (fromPrompt && looksLikeOperatorDir(fromPrompt)) {
     return fromPrompt
   }
 
@@ -466,22 +535,11 @@ function detectProjectRootForTask(promptHint?: string): string {
   const pending = readPendingDispatchProject()
   if (pending) return pending
 
-  const fromEnv =
-    process.env.ASCENDC_PROJECT_ROOT ||
-    process.env.OPENCODE_PROJECT_ROOT ||
-    process.env.PROJECT_ROOT ||
-    ""
-  if (fromEnv && isPilotProjectRoot(fromEnv)) {
-    return fromEnv
+  const bound = boundOperatorRoot(promptHint)
+  if (bound) return bound
+  if (fromPrompt && isPilotProjectRoot(fromPrompt) && !isHarnessCheckout(fromPrompt)) {
+    return fromPrompt
   }
-  const cwd = process.cwd()
-  if (isPilotProjectRoot(cwd)) {
-    return cwd
-  }
-  const remembered = readRememberedProjectRoot()
-  if (remembered) return remembered
-  // Last resort: still try prompt even without workflow (pre-start edge).
-  if (fromPrompt && existsSync(fromPrompt)) return fromPrompt
   return detectProjectRoot()
 }
 
@@ -545,6 +603,62 @@ function isPilotFamilyAgent(agent: string): boolean {
 /** Enforce harness only for Pilot-family agents (global plugin stays loaded). */
 function shouldEnforceHarness(agent: string): boolean {
   return isPilotFamilyAgent(agent)
+}
+
+/** Installed Pilot agent ids (markdown names under ~/.config/opencode/agents). */
+function listInstalledPilotAgentNames(): string[] {
+  const names = new Set<string>([
+    "ascendc-pilot",
+    "uo-query",
+    "uo-gap-investigator",
+    "ce-analyst",
+    "ce-change-referee",
+    "ce-reviewer",
+    "tg-closure-referee",
+    "tg-init-audit",
+    "tg-lemma-producer",
+  ])
+  try {
+    const dir = resolve(homedir(), ".config", "opencode", "agents")
+    for (const f of readdirSync(dir)) {
+      if (f.endsWith(".md")) names.add(f.slice(0, -3))
+    }
+  } catch {
+    /* ignore */
+  }
+  return [...names].filter((n) => isPilotFamilyAgent(n) && !PASS_THROUGH_AGENTS.has(n))
+}
+
+/**
+ * AscendC-Pilot mode: Host Read of any directory is allow (no OpenCode ask).
+ * Does not change Build/Plan. Does not relax write/edit. Mutates and returns cfg.
+ */
+function patchPilotReadPermissions(
+  cfg: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const out = cfg && typeof cfg === "object" ? cfg : {}
+  const agentBag =
+    out.agent && typeof out.agent === "object"
+      ? (out.agent as Record<string, unknown>)
+      : {}
+  for (const name of listInstalledPilotAgentNames()) {
+    const cur =
+      agentBag[name] && typeof agentBag[name] === "object"
+        ? { ...(agentBag[name] as Record<string, unknown>) }
+        : {}
+    const perm =
+      cur.permission && typeof cur.permission === "object"
+        ? { ...(cur.permission as Record<string, unknown>) }
+        : {}
+    perm.read = "allow"
+    perm.external_directory = "allow"
+    if (name === "ascendc-pilot") {
+      perm.task = "allow"
+    }
+    agentBag[name] = { ...cur, permission: perm }
+  }
+  out.agent = agentBag
+  return out
 }
 
 type HostContext = {
@@ -882,6 +996,317 @@ function denyMessage(verdict: AuthorizeResult, kind: string, detail: string): st
   return allowed ? `${base} (allowed: ${allowed})` : base
 }
 
+function isRipgrepHostFailure(text: string): boolean {
+  return /ripgrep execution failed|rg:\s*missing|cannot find.*\brg\b/i.test(text || "")
+}
+
+function resolveInstalledSkillPath(name: string): string {
+  const n =
+    String(name || "")
+      .trim()
+      .replace(/\\/g, "/")
+      .split("/")
+      .filter(Boolean)
+      .pop() || ""
+  if (!n || n.includes("..")) return ""
+  const home = resolve(homedir(), ".config", "opencode")
+  const candidates = [
+    resolve(home, "skills", n, "SKILL.md"),
+    resolve(home, "ascendc-pilot-plugin", "skills", n, "SKILL.md"),
+    resolve(home, "ascendc-pilot-plugin", "cognitive-skills", n, "SKILL.md"),
+  ]
+  for (const p of candidates) {
+    try {
+      if (existsSync(p)) return p
+    } catch {
+      /* ignore */
+    }
+  }
+  return ""
+}
+
+function resolveInstalledSkillMd(name: string): string {
+  const p = resolveInstalledSkillPath(name)
+  if (!p) return ""
+  try {
+    return readFileSync(p, "utf8")
+  } catch {
+    return ""
+  }
+}
+
+function listSkillSampleFiles(dir: string, limit = 10): string[] {
+  if (!dir || !existsSync(dir)) return []
+  const out: string[] = []
+  const walk = (d: string) => {
+    if (out.length >= limit) return
+    let ents: string[] = []
+    try {
+      ents = readdirSync(d)
+    } catch {
+      return
+    }
+    for (const name of ents) {
+      if (out.length >= limit) return
+      const p = join(d, name)
+      try {
+        const st = statSync(p)
+        if (st.isDirectory()) walk(p)
+        else out.push(p)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  walk(dir)
+  return out
+}
+
+function formatSkillToolOutput(name: string, body: string, skillMdPath: string): string {
+  const dir = skillMdPath ? dirname(skillMdPath) : ""
+  const files = listSkillSampleFiles(dir)
+  return [
+    `<skill_content name="${name}">`,
+    `# Skill: ${name}`,
+    "",
+    body.trim(),
+    "",
+    `Base directory for this skill: ${dir}`,
+    "Relative paths in this skill (e.g., scripts/, reference/) are relative to this base directory.",
+    "Note: file list is sampled.",
+    "",
+    "<skill_files>",
+    files.map((file) => ` ${file} `).join("\n"),
+    "</skill_files>",
+    "</skill_content>",
+  ].join("\n")
+}
+
+function createPilotSkillTool(): {
+  description: string
+  args: Record<string, { type: string; description: string }>
+  execute: (args: Record<string, unknown>) => Promise<{ title: string; output: string; metadata: Record<string, unknown> }>
+} {
+  return {
+    description:
+      "Load an installed OpenCode / AscendC-Pilot skill by name. Reads SKILL.md from disk; does not spawn rg.",
+    args: {
+      name: {
+        type: "string",
+        description: "The name of the skill from available_skills",
+      },
+    },
+    async execute(args: Record<string, unknown>) {
+      const name = String(args.name || args.skill || args.skill_name || "").trim()
+      const skillMdPath = resolveInstalledSkillPath(name)
+      const body = skillMdPath ? resolveInstalledSkillMd(name) : ""
+      if (!body) {
+        return {
+          title: name ? `skill ${name}` : "skill",
+          output:
+            `[ascendc-pilot] skill ${name || "(missing name)"} 未找到 SKILL.md。` +
+            `请 Read ~/.config/opencode/skills/<name>/SKILL.md 或 ~/.config/opencode/ascendc-pilot-plugin/skills/<name>/SKILL.md。`,
+          metadata: { name, ok: false },
+        }
+      }
+      return {
+        title: `Loaded skill: ${name}`,
+        output: formatSkillToolOutput(name, body, skillMdPath),
+        metadata: { name, dir: dirname(skillMdPath), ok: true },
+      }
+    },
+  }
+}
+
+function rgBinaryName(): string {
+  return process.platform === "win32" ? "rg.exe" : "rg"
+}
+
+function openCodeRgBinDirs(): string[] {
+  const home = homedir()
+  const localApp = process.env.LOCALAPPDATA || resolve(home, "AppData", "Local")
+  const xdgCache = process.env.XDG_CACHE_HOME || ""
+  const dirs = [
+    resolve(home, ".local", "share", "opencode", "bin"),
+    resolve(home, ".cache", "opencode", "bin"),
+    resolve(localApp, "opencode", "bin"),
+  ]
+  if (xdgCache) dirs.push(resolve(xdgCache, "opencode", "bin"))
+  return [...new Set(dirs)]
+}
+
+function whichRg(): string {
+  const exe = rgBinaryName()
+  for (const dir of String(process.env.PATH || "").split(delimiter)) {
+    if (!dir) continue
+    const p = resolve(dir, exe)
+    if (existsSync(p)) return p
+  }
+  return ""
+}
+
+function rgSeedSources(): string[] {
+  const home = homedir()
+  const localApp = process.env.LOCALAPPDATA || resolve(home, "AppData", "Local")
+  const exe = rgBinaryName()
+  return [
+    whichRg(),
+    resolve(home, ".local", "share", "opencode", "bin", exe),
+    resolve(localApp, "Programs", "cursor", "resources", "app", "node_modules", "@vscode", "ripgrep", "bin", exe),
+    resolve(
+      localApp,
+      "Programs",
+      "Microsoft VS Code",
+      "resources",
+      "app",
+      "node_modules",
+      "@vscode",
+      "ripgrep",
+      "bin",
+      exe,
+    ),
+  ].filter((p) => p && existsSync(p))
+}
+
+/** OpenCode 1.18 RipgrepBinary looks in xdgCache/opencode/bin, not data/bin. */
+function ensureOpenCodeRipgrep(): void {
+  const exe = rgBinaryName()
+  const sources = rgSeedSources()
+  const src = sources[0] || ""
+  for (const dir of openCodeRgBinDirs()) {
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch {
+      continue
+    }
+    const dest = join(dir, exe)
+    if (existsSync(dest) || !src) continue
+    try {
+      copyFileSync(src, dest)
+    } catch {
+      /* ignore */
+    }
+  }
+  const prefix = openCodeRgBinDirs().join(delimiter)
+  const cur = String(process.env.PATH || "")
+  if (prefix && !cur.toLowerCase().startsWith(prefix.toLowerCase())) {
+    process.env.PATH = prefix + delimiter + cur
+  }
+}
+
+function prependOpenCodeRgPath(env: Record<string, string>): Record<string, string> {
+  const prefix = openCodeRgBinDirs().join(delimiter)
+  const cur = String(env.PATH || env.Path || process.env.PATH || "")
+  if (!prefix) return env
+  const next = { ...env }
+  next.PATH = prefix + delimiter + cur
+  if (process.platform === "win32") next.Path = next.PATH
+  return next
+}
+
+function acpBinDir(): string {
+  const bin = resolveAcpBin()
+  if (!bin || bin === "acp") return ""
+  try {
+    if (existsSync(bin)) return dirname(bin)
+  } catch {
+    return ""
+  }
+  return ""
+}
+
+/** Task children inherit a thin PATH; bare `acp` becomes NotFound (ses_ff9e follow-up). */
+function prependAcpPath(env: Record<string, string>): Record<string, string> {
+  const dir = acpBinDir()
+  const bin = resolveAcpBin()
+  const next = { ...env }
+  if (bin && bin !== "acp") next.ASCENDC_HARNESS_BIN = bin
+  if (!dir) return next
+  const cur = String(next.PATH || next.Path || process.env.PATH || "")
+  if (cur.toLowerCase().split(delimiter.toLowerCase()).includes(dir.toLowerCase())) return next
+  next.PATH = dir + delimiter + cur
+  if (process.platform === "win32") next.Path = next.PATH
+  return next
+}
+
+function ensureAcpOnPath(): void {
+  const patched = prependAcpPath({
+    PATH: String(process.env.PATH || ""),
+    ...(process.env.Path ? { Path: String(process.env.Path) } : {}),
+  })
+  process.env.PATH = patched.PATH
+  if (patched.Path) process.env.Path = patched.Path
+  if (patched.ASCENDC_HARNESS_BIN) process.env.ASCENDC_HARNESS_BIN = patched.ASCENDC_HARNESS_BIN
+}
+
+function prependPilotToolPath(env: Record<string, string>): Record<string, string> {
+  ensureOpenCodeRipgrep()
+  ensureAcpOnPath()
+  return prependAcpPath(prependOpenCodeRgPath(env || {}))
+}
+
+function rgMissingRewrite(tool: string, skillName?: string): string {
+  if (tool === "skill") {
+    const hint = skillName ? `（${skillName}）` : ""
+    return (
+      `[ascendc-pilot] OpenCode skill 工具依赖 rg，本机 OpenCode PATH 没有 rg${hint}。` +
+      `主控请 Read ~/.config/opencode/skills/<name>/SKILL.md；` +
+      `子代理请读 session method.md，不要用 skill。`
+    )
+  }
+  return (
+    `[ascendc-pilot] OpenCode 原生 ${tool} 需要 PATH 上的 rg（OpenCode 不使用 Cursor 自带的 rg）。` +
+    `请用 acp uo-query，空了按 hint 再查，或 acp ro-search --paths <已 citation 文件>，或 Read 已定位窗口。`
+  )
+}
+
+/** Last skill name from tool.execute.before — after payload often has no args. */
+let lastSkillName = ""
+
+function recoverSkillToolOutput(
+  input: Record<string, unknown> | undefined,
+  output: Record<string, unknown> | undefined,
+  tool: string,
+): boolean {
+  if (!output) return false
+  if (tool !== "skill" && !tool.endsWith("skill")) return false
+  const outArgs =
+    output.args && typeof output.args === "object"
+      ? (output.args as Record<string, unknown>)
+      : {}
+  const inArgs =
+    input && typeof input.args === "object" ? (input.args as Record<string, unknown>) : {}
+  const name = String(
+    outArgs.name ||
+      outArgs.skill ||
+      outArgs.skill_name ||
+      inArgs.name ||
+      inArgs.skill ||
+      lastSkillName ||
+      "",
+  ).trim()
+  const body = resolveInstalledSkillMd(name)
+  const failed = isRipgrepHostFailure(
+    `${extractToolError(output, tool)}\n${toolOutputText(output)}`,
+  )
+  if (!body && !failed) return false
+  const text = body || rgMissingRewrite("skill", name)
+  // OpenCode after-hook schema is { title, output, metadata }. Extra keys
+  // (content) can reject the whole return and keep the original rg error.
+  output.output = text
+  output.title = name ? `Loaded skill: ${name}` : "skill"
+  if ("error" in output) delete output.error
+  if ("stderr" in output) delete output.stderr
+  const meta =
+    output.metadata && typeof output.metadata === "object"
+      ? (output.metadata as Record<string, unknown>)
+      : {}
+  delete meta.error
+  meta.recovered_skill = true
+  output.metadata = meta
+  return true
+}
+
 /** Pending Task registrations keyed by stable invocation id or dispatch_nonce. */
 const pendingTaskRegs = new Map<
   string,
@@ -1207,6 +1632,9 @@ function extractToolError(
   ) {
     return text.slice(0, 2000)
   }
+  if (/ripgrep execution failed|rg:\s*missing/i.test(text)) {
+    return text.slice(0, 2000)
+  }
 
   // Structured acp failure: first ok:false before any ok:true
   const falseIdx = (() => {
@@ -1248,6 +1676,58 @@ function ensureTodowritePriority(args: Record<string, unknown>): void {
   }
 }
 
+function quoteProjectArg(root: string): string {
+  return `"${String(root || "").replace(/"/g, '\\"')}"`
+}
+
+function rewriteAcpProjectFlag(command: string, operatorRoot: string): string {
+  const cmd = String(command || "")
+  const root = String(operatorRoot || "").trim()
+  if (!cmd || !root || !looksLikeOperatorDir(root)) return cmd
+  if (!/\bacp(\.cmd|\.exe)?(\s|$)/i.test(cmd)) return cmd
+  if (isAcpHelpCommand(cmd)) return cmd
+  const quoted = `--project ${quoteProjectArg(root)}`
+  const flag = /--project(?:\s+|=)(?:"[^"]*"|'[^']*'|\S+)/i
+  if (flag.test(cmd)) {
+    const current = extractProjectFromAcpCommand(cmd)
+    if (current && looksLikeOperatorDir(current) && !isUnderHarnessCheckout(current)) {
+      return cmd
+    }
+    return cmd.replace(flag, quoted)
+  }
+  return `${cmd} ${quoted}`
+}
+
+function pinOperatorBashContext(args: Record<string, unknown>, operatorRoot: string): void {
+  const root = String(operatorRoot || "").trim()
+  if (!root || !looksLikeOperatorDir(root) || isHarnessCheckout(root)) return
+  const cwdNow = String(args.cwd || args.workdir || args.working_directory || "").trim()
+  if (!cwdNow || isHarnessCheckout(cwdNow) || !looksLikeOperatorDir(cwdNow)) {
+    args.cwd = root
+    args.workdir = root
+  }
+  const command = String(args.command || args.cmd || "")
+  if (command) {
+    const rewritten = rewriteAcpProjectFlag(command, root)
+    if (rewritten !== command) {
+      if ("command" in args) args.command = rewritten
+      if ("cmd" in args) args.cmd = rewritten
+      if (!("command" in args) && !("cmd" in args)) args.command = rewritten
+    }
+  }
+  const envBag = (args.env || args.environment || args.envVars) as Record<string, string> | undefined
+  const existingPath = String(
+    (envBag && (envBag.PATH || envBag.Path)) || process.env.PATH || "",
+  )
+  const acpEnv = prependAcpPath({ PATH: existingPath })
+  const envPatch: Record<string, string> = { ASCENDC_PROJECT_ROOT: root, ...acpEnv }
+  if (envBag && typeof envBag === "object") {
+    Object.assign(envBag, envPatch)
+  } else {
+    args.env = { ...envPatch }
+  }
+}
+
 function injectActionContext(
   args: Record<string, unknown>,
   action: string,
@@ -1260,35 +1740,163 @@ function injectActionContext(
     args.action = action
     args.action_id = action
   }
-  // Pin child working directory to the operator package when Host supports it.
-  // Overwrite workspace / Pilot-checkout cwd the model sometimes invents.
-  if (projectRoot) {
-    const cwdNow = String(args.cwd || args.workdir || args.working_directory || args.directory || "").trim()
-    if (!cwdNow || !isPilotProjectRoot(cwdNow)) {
-      args.cwd = projectRoot
-      args.workdir = projectRoot
-      args.directory = projectRoot
-    }
-    // OpenCode session.create location (Host Driver / Task bridges).
-    if (!args.location || typeof args.location !== "object") {
-      args.location = { directory: projectRoot }
-    } else {
-      const loc = args.location as Record<string, unknown>
-      const locDir = String(loc.directory || "").trim()
-      if (!locDir || !isPilotProjectRoot(locDir)) loc.directory = projectRoot
-    }
-  }
+  // Pin bash cwd / env to the operator package when Host supports it.
+  // Do NOT overwrite OpenCode Task `location.directory` — that is the Host
+  // session project used for skill/agent discovery. Overwriting it to the
+  // operator package made children unable to load workflow skills (ses_ffba).
+  // Do NOT set Task cwd/workdir either: OpenCode may treat that as the child
+  // session directory. Bash cwd is pinned in pinOperatorBashContext instead.
+  // Consequence: operator-package Reads are OpenCode `external_directory`.
+  // Compose sets permission.external_directory=allow on Pilot agents so the
+  // child's first Read of session prompt.md is not an ask/red error.
+  // acp still binds the operator via --project / ASCENDC_PROJECT_ROOT.
   // Identity travels via env/metadata only — do NOT mutate Task prompt body
   // (ses_0622: prefix + FIX ONLY identity churn). Finalize trusts artifact_identity.
   const envBag = (args.env || args.environment || args.envVars) as Record<string, string> | undefined
   const envPatch: Record<string, string> = {}
   if (action) envPatch.ASCENDC_ACTION = action
   if (actor) envPatch.ASCENDC_AGENT = actor
-  if (projectRoot) envPatch.ASCENDC_PROJECT_ROOT = projectRoot
+  if (projectRoot && !isHarnessCheckout(projectRoot)) envPatch.ASCENDC_PROJECT_ROOT = projectRoot
   if (envBag && typeof envBag === "object") {
     Object.assign(envBag, envPatch)
   } else {
     args.env = { ...envPatch }
+  }
+}
+
+
+const uoQueryPendingByProject = new Map<string, string>()
+const UO_QUERY_NATIVE_TASK_RESULT_CAP = 200_000
+
+function uoQueryTaskText(output: Record<string, unknown> | undefined): string {
+  if (!output) return ""
+  const chunks: string[] = []
+  for (const key of ["output", "content", "message", "text", "result"] as const) {
+    const value = output[key]
+    if (typeof value === "string" && value.trim()) chunks.push(value)
+  }
+  return chunks.join("\n").slice(0, UO_QUERY_NATIVE_TASK_RESULT_CAP)
+}
+
+function uoQueryPickProject(args: Record<string, unknown>, command = ""): string {
+  const env =
+    args.env && typeof args.env === "object"
+      ? (args.env as Record<string, unknown>)
+      : args.environment && typeof args.environment === "object"
+        ? (args.environment as Record<string, unknown>)
+        : {}
+  const explicit = String(
+    env.ASCENDC_PROJECT_ROOT ||
+      args.project ||
+      args.project_root ||
+      args.cwd ||
+      args.workdir ||
+      "",
+  ).trim()
+  if (explicit) {
+    try {
+      const resolved = resolve(explicit)
+      if (looksLikeOperatorDir(resolved) && !isHarnessCheckout(resolved)) return resolved
+    } catch {
+      /* fall through */
+    }
+  }
+  const blob = `${command}\n${String(args.prompt || args.description || args.task || "")}`
+  const bound = boundOperatorRoot(explicit || blob)
+  if (bound) return bound
+  const cached = readRememberedProjectRoot()
+  return cached ? resolve(cached) : ""
+}
+
+function isUoQueryTask(args: Record<string, unknown>): boolean {
+  const actor = String(
+    args.agent || args.subagent || args.subagent_type || args.subagentType || args.name || "",
+  ).toLowerCase()
+  const action = String(args.action || args.action_id || args.actionId || "").toLowerCase()
+  return actor === "uo-query" || action === "kb_lookup"
+}
+
+function isKbLookupFinalize(command: string): boolean {
+  const text = String(command || "")
+  return /\bacp\s+run-action\s+kb_lookup\b/i.test(text) && /--finalize\b/i.test(text)
+}
+
+function injectUoQueryResult(args: Record<string, unknown>, project: string, resultText: string): void {
+  const existing =
+    args.env && typeof args.env === "object"
+      ? ({ ...(args.env as Record<string, unknown>) } as Record<string, unknown>)
+      : args.environment && typeof args.environment === "object"
+        ? ({ ...(args.environment as Record<string, unknown>) } as Record<string, unknown>)
+        : ({} as Record<string, unknown>)
+  existing.ASCENDC_ACTION_RESULT = resultText
+  existing.ASCENDC_ACTION_RESULT_PROJECT = project
+  existing.ASCENDC_ACTION_RESULT_ACTION = "kb_lookup"
+  args.env = existing
+  process.env.ASCENDC_ACTION_RESULT = resultText
+  process.env.ASCENDC_ACTION_RESULT_PROJECT = project
+  process.env.ASCENDC_ACTION_RESULT_ACTION = "kb_lookup"
+}
+
+function clearUoQueryResult(project: string): void {
+  if (project) uoQueryPendingByProject.delete(resolve(project))
+  delete process.env.ASCENDC_ACTION_RESULT
+  delete process.env.ASCENDC_ACTION_RESULT_PROJECT
+  delete process.env.ASCENDC_ACTION_RESULT_ACTION
+}
+
+/** Capture uo-query Task text for the Primary's next kb_lookup --finalize.
+ * This hook must not finalize itself (avoids a double-finalize race). */
+function captureUoQueryTaskReturn(
+  tool: string,
+  args: Record<string, unknown>,
+  output: Record<string, unknown> | undefined,
+): void {
+  if (tool === "task" || tool === "subagent" || tool === "task_tool") {
+    if (!isUoQueryTask(args)) return
+    const text = uoQueryTaskText(output)
+    if (!String(text || "").trim()) return
+    const project = uoQueryPickProject(args)
+    if (!project) return
+    const blob = `${args.prompt || ""}\n${args.description || ""}\n${args.task || ""}`
+    if (/\bSLICE_ID=/.test(blob)) {
+      if (output) {
+        const oldMeta =
+          output.metadata && typeof output.metadata === "object"
+            ? (output.metadata as Record<string, unknown>)
+            : {}
+        output.metadata = {
+          ...oldMeta,
+          ascendc_uo_query_return_value: {
+            captured: false,
+            skipped: "fanout_slice",
+            transport: "primary_synthesize",
+            project,
+          },
+        }
+      }
+      return
+    }
+    uoQueryPendingByProject.set(project, text)
+    if (output) {
+      const oldMeta =
+        output.metadata && typeof output.metadata === "object"
+          ? (output.metadata as Record<string, unknown>)
+          : {}
+      output.metadata = {
+        ...oldMeta,
+        ascendc_uo_query_return_value: {
+          captured: true,
+          transport: "next_primary_finalize",
+          project,
+        },
+      }
+    }
+    return
+  }
+  if (tool === "bash" || tool === "shell" || tool === "terminal") {
+    const command = String(args.command || args.cmd || "")
+    if (!isKbLookupFinalize(command)) return
+    clearUoQueryResult(uoQueryPickProject(args, command))
   }
 }
 
@@ -1298,6 +1906,8 @@ export const AscendCHarnessPlugin = async (ctx?: {
   project?: unknown
   $?: unknown
 }) => {
+  ensureOpenCodeRipgrep()
+  ensureAcpOnPath()
   const client = ctx && typeof ctx === "object" ? (ctx as any).client : undefined
   let pilotTools: Record<string, unknown> = {}
   let capturePilotToolSession:
@@ -1307,6 +1917,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
     | ((project: string, ticket: string, resultText: string) => Promise<Record<string, unknown>>)
     | undefined
   let extractKbAnswer: ((text: string) => string) | undefined
+  let nativeTaskResultCap = 200_000
   let readPendingDispatch: ((project: string) => Record<string, unknown> | null) | undefined
   let clearPendingDispatch: ((project: string) => void) | undefined
   let rememberPendingDispatch:
@@ -1336,6 +1947,9 @@ export const AscendCHarnessPlugin = async (ctx?: {
     capturePilotToolSession = mod.capturePilotToolSession
     submitDispatchResult = mod.submitDispatchResult
     extractKbAnswer = mod.extractKbAnswer
+    if (typeof mod.NATIVE_TASK_RESULT_CAP === "number") {
+      nativeTaskResultCap = mod.NATIVE_TASK_RESULT_CAP
+    }
     readPendingDispatch = mod.readPendingDispatch
     clearPendingDispatch = mod.clearPendingDispatch
     rememberPendingDispatch = mod.rememberPendingDispatch
@@ -1344,12 +1958,25 @@ export const AscendCHarnessPlugin = async (ctx?: {
     console.error("[ascendc-pilot] failed to load pilot-driver", err)
     pilotTools = {}
   }
+  // Last-write-wins: plugin `skill` replaces OpenCode's native SkillTool,
+  // which dies on ripgrep.find even after Skill.require succeeded (ses_ff9e).
+  if (pilotTools && typeof pilotTools === "object") {
+    ;(pilotTools as Record<string, unknown>).skill = createPilotSkillTool()
+  }
 
   return {
     // OpenCode 1.18 calls N.config / N.dispose on every loaded plugin.
-    config: async () => {},
-    dispose: async () => {},
+    // Must return an object (undefined → schema rejection). Patches Pilot
+    // agents so operator-package Reads are not `external_directory` ask.
+    config: async (cfg?: Record<string, unknown>) => patchPilotReadPermissions(cfg),
+    dispose: async () => ({}),
     tool: pilotTools,
+    "shell.env": async (
+      _input: { cwd?: string; sessionID?: string; callID?: string },
+      output: { env: Record<string, string> },
+    ) => {
+      output.env = prependPilotToolPath(output.env || {})
+    },
     "tool.execute.before": async (
       input: { tool?: string; agent?: string; sessionAgent?: string },
       output: { args?: Record<string, unknown> },
@@ -1358,6 +1985,15 @@ export const AscendCHarnessPlugin = async (ctx?: {
       const tool = String(input.tool || "").toLowerCase()
       const args = output.args || {}
       const command = String(args.command || args.cmd || "")
+      const isSkillToolEarly = tool === "skill" || tool.endsWith("skill")
+      if (isSkillToolEarly) {
+        lastSkillName = String(args.name || args.skill || args.skill_name || "").trim()
+      }
+      if ((tool === "bash" || tool === "shell" || tool === "terminal") && isKbLookupFinalize(command)) {
+        const project = uoQueryPickProject(args, command)
+        const resultText = project ? uoQueryPendingByProject.get(project) : ""
+        if (project && resultText) injectUoQueryResult(args, project, resultText)
+      }
       const path = String(
         args.filePath ||
           args.path ||
@@ -1388,10 +2024,11 @@ export const AscendCHarnessPlugin = async (ctx?: {
 
       // Build / Plan / other non-Pilot tabs: behave like stock OpenCode.
       if (!shouldEnforceHarness(agent)) {
-        return
+        return output
       }
 
       const action = resolveAction(args, project)
+      const sessionId = extractHostSessionId(input as Record<string, unknown>)
       const taskAgent = String(
         args.agent ||
           args.subagent ||
@@ -1454,15 +2091,18 @@ export const AscendCHarnessPlugin = async (ctx?: {
         // OpenCode frontmatter only allows `acp *`; rewriting to
         // `C:\...\Scripts\acp.exe --help` turns green allow into red deny (ses_00c4 follow-up).
         // resolveAcpBin() is only for this plugin's internal spawnSync(authorize).
+        pinOperatorBashContext(args, project)
+        const commandNow = String(args.command || args.cmd || command)
         const verdict = runAuthorize({
           tool: "bash",
-          command,
+          command: commandNow,
           agent,
           action,
           project,
+          sessionId,
         })
         if (verdict.decision === "deny" || (verdict.ok === false && verdict.decision !== "ask")) {
-          throw new Error(denyMessage(verdict, "bash", command))
+          throw new Error(denyMessage(verdict, "bash", commandNow))
         }
         if (verdict.decision === "ask") {
           throw new Error(
@@ -1489,6 +2129,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           agent,
           action,
           project,
+          sessionId,
         })
         if (verdict.decision === "deny" || verdict.ok === false) {
           throw new Error(denyMessage(verdict, "write", path))
@@ -1503,6 +2144,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           agent,
           action,
           project,
+          sessionId,
         })
         if (verdict.decision === "deny" || verdict.ok === false) {
           throw new Error(denyMessage(verdict, tool, path))
@@ -1616,6 +2258,24 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(denyMessage(verdict, "task", taskAgent || "denied"))
         }
       }
+
+      const isSkillToolNow = tool === "skill" || tool.endsWith("skill")
+      if (isSkillToolNow) {
+        const skillName = String(args.name || args.skill || args.skill_name || "").trim()
+        const verdict = runAuthorize({
+          tool: "skill",
+          command: skillName,
+          path: skillName,
+          agent,
+          action,
+          project,
+          sessionId,
+        })
+        if (verdict.decision === "deny" || (verdict.ok === false && verdict.decision !== "ask")) {
+          throw new Error(denyMessage(verdict, "skill", skillName || "denied"))
+        }
+      }
+      return output
     },
     "tool.execute.after": async (
       input: { tool?: string; agent?: string; sessionAgent?: string; sessionID?: string; sessionId?: string },
@@ -1623,6 +2283,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
     ) => {
       try {
         const tool = String(input.tool || "").toLowerCase()
+        recoverSkillToolOutput(input as Record<string, unknown>, output, tool)
         const args = (output && typeof output.args === "object" ? output.args : {}) as Record<
           string,
           unknown
@@ -1631,6 +2292,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           args.filePath || args.path || args.file || args.filepath || args.target || "",
         )
         const command = String(args.command || args.cmd || "")
+        captureUoQueryTaskReturn(tool, args, output)
         const isTaskTool = tool === "task" || tool === "subagent" || tool === "task_tool"
         const taskPromptHint = String(args.prompt || args.description || args.task || "")
         const fromCmd = extractProjectFromAcpCommand(command)
@@ -1655,7 +2317,16 @@ export const AscendCHarnessPlugin = async (ctx?: {
         if (project) rememberProjectRoot(project)
 
         const err = extractToolError(output, tool)
-        if (err) {
+        const outText = `${err}\n${toolOutputText(output)}`
+        let recoveredRg = recoverSkillToolOutput(input as Record<string, unknown>, output, tool)
+        if (output && isRipgrepHostFailure(outText) && !recoveredRg) {
+          if (tool === "grep" || tool === "glob") {
+            output.output = rgMissingRewrite(tool)
+            if ("error" in output) delete output.error
+            recoveredRg = true
+          }
+        }
+        if (err && !recoveredRg) {
           runDebug(
             [
               "record-tool-failure",
@@ -1768,7 +2439,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
               const v = output[k]
               if (typeof v === "string" && v.trim()) chunks.push(v)
             }
-            return chunks.join("\n").slice(0, 24000)
+            return chunks.join("\n").slice(0, nativeTaskResultCap)
           })()
 
           if (!hit) {
@@ -1900,6 +2571,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
       } catch {
         // fail-open
       }
+      return output || {}
     },
   }
 }

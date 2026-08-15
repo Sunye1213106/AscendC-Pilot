@@ -104,13 +104,16 @@ def test_lemma_evidence_smoke(closure_ws, tmp_path: Path):
 
 
 def test_kernel_domain_tiny_fixture(closure_ws, monkeypatch: pytest.MonkeyPatch):
+    from closure_acceptance_harness import _write_toy_domain_codemap
     from testcase_agent.closure import kernel_domain as KD
     from testcase_agent.closure import workspace as W
 
-    uo = closure_ws.root / ".ascendc-pilot" / "arch0" / "uo"
-    (uo / "views").mkdir(parents=True)
-    (uo / "views" / "kernel.yaml").write_text(
-        yaml.safe_dump({
+    product = closure_ws.root / ".ascendc-pilot" / "arch0" / "uo" / "_synthetic_toy.arch0.uo"
+    _write_toy_domain_codemap(
+        product,
+        op_name="_synthetic_toy",
+        arch="arch0",
+        kernel_doc={
             "schema": "uo-view-kernel/v1",
             "branches": [
                 {
@@ -128,8 +131,8 @@ def test_kernel_domain_tiny_fixture(closure_ws, monkeypatch: pytest.MonkeyPatch)
                     "finite_predicate": {"op": "eq", "field": "Layout", "value": 0},
                 },
             ],
-        }),
-        encoding="utf-8",
+        },
+        tiling_doc={"schema": "uo-view-tilingdata/v1", "structs": []},
     )
     monkeypatch.setattr(W, "decode", lambda k: {"Layout": 1 if int(k) == 1 else 0})
     monkeypatch.setattr(
@@ -161,10 +164,14 @@ def _seed_toy_tpl_header(ws) -> None:
 
 
 def _seed_kernel_and_tilingdata_views(ws) -> Path:
-    uo = ws.root / ".ascendc-pilot" / "arch0" / "uo" / "views"
-    uo.mkdir(parents=True, exist_ok=True)
-    (uo / "kernel.yaml").write_text(
-        yaml.safe_dump({
+    from closure_acceptance_harness import _write_toy_domain_codemap
+
+    product = ws.root / ".ascendc-pilot" / "arch0" / "uo" / "_synthetic_toy.arch0.uo"
+    _write_toy_domain_codemap(
+        product,
+        op_name="_synthetic_toy",
+        arch="arch0",
+        kernel_doc={
             "branches": [
                 {
                     "id": "KB_A1",
@@ -174,11 +181,8 @@ def _seed_kernel_and_tilingdata_views(ws) -> Path:
                     "finite_predicate": {"op": "eq", "field": "A", "value": 1},
                 }
             ]
-        }),
-        encoding="utf-8",
-    )
-    (uo / "tilingdata.yaml").write_text(
-        yaml.safe_dump({
+        },
+        tiling_doc={
             "structs": [
                 {
                     "name": "ToyTiling",
@@ -197,10 +201,9 @@ def _seed_kernel_and_tilingdata_views(ws) -> Path:
                     ],
                 }
             ]
-        }),
-        encoding="utf-8",
+        },
     )
-    return uo
+    return product.parent
 
 
 def test_closure_rows_name_the_kernel_branches_and_fields(closure_ws, monkeypatch: pytest.MonkeyPatch):
@@ -377,17 +380,14 @@ def test_key_zero_is_a_witness_not_a_missing_key(closure_ws):
     assert -1 not in found
 
 
-def test_kernel_and_tilingdata_load_from_db_without_yaml(closure_ws):
-    """D3/C1/C2: domain loaders must prefer the DB product when YAML is gone."""
-    import json
-    import sqlite3
-
+def test_kernel_and_tilingdata_load_from_uo_without_yaml(closure_ws):
+    """Domain loaders must prefer the ``.uo`` product when YAML is gone."""
+    from closure_acceptance_harness import _write_toy_domain_codemap
     from testcase_agent.closure import kernel_domain as KD
     from testcase_agent.closure import tilingdata_domain as TD
 
     uo = closure_ws.root / ".ascendc-pilot" / "arch0" / "uo"
-    db = uo / "indexes" / "kb_graph.sqlite"
-    db.parent.mkdir(parents=True, exist_ok=True)
+    product = uo / "_synthetic_toy.arch0.uo"
     kernel_doc = {
         "schema": "uo-view-kernel/v1",
         "branches": [
@@ -404,22 +404,13 @@ def test_kernel_and_tilingdata_load_from_db_without_yaml(closure_ws):
         "schema": "uo-view-tilingdata/v1",
         "structs": [{"name": "Tile", "fields": [{"name": "M", "writers": [], "readers": []}]}],
     }
-    conn = sqlite3.connect(db)
-    try:
-        conn.execute(
-            "CREATE TABLE view_blob(name TEXT PRIMARY KEY, schema_id TEXT, data TEXT NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
-            ("views/kernel.yaml", "uo-view-kernel/v1", json.dumps(kernel_doc)),
-        )
-        conn.execute(
-            "INSERT INTO view_blob(name, schema_id, data) VALUES(?,?,?)",
-            ("views/tilingdata.yaml", "uo-view-tilingdata/v1", json.dumps(tiling_doc)),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    _write_toy_domain_codemap(
+        product,
+        op_name="_synthetic_toy",
+        arch="arch0",
+        kernel_doc=kernel_doc,
+        tiling_doc=tiling_doc,
+    )
 
     branches = KD.load_kernel_branches(uo)
     assert [b["id"] for b in branches] == ["KB_DB"]

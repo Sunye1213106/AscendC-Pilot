@@ -61,9 +61,14 @@ env/
 .DS_Store
 Thumbs.db
 
-# Agent/session transcripts (never commit)
+# Agent/session transcripts (never commit; keep local test records)
 session-ses_*.md
 session-*.md
+
+# One-off probe dumps / local operator copies (never commit)
+_uo_probe_new/
+operators/
+/flash_attention_score_grad/
 
 
 # Local pytest scratch (never commit)

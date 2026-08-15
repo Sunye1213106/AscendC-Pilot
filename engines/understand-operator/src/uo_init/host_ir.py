@@ -706,13 +706,23 @@ class HostIR:
                     if resolved not in seen:
                         seen.append(resolved)
 
+        _IN_PROGRESS = object()
+        memo: dict[tuple[str, str, str], Any] = {}
+
         def expand(callee: str, pname: str, actual: str, stack: frozenset[str]) -> list[str]:
-            key = f"{callee}::{pname}::{actual}"
-            if key in stack:
-                return []
             actual = actual.lstrip("&").strip()
             if not actual:
                 return []
+            cache_key = (callee, pname, actual)
+            hit = memo.get(cache_key)
+            if hit is _IN_PROGRESS:
+                return []
+            if hit is not None:
+                return hit
+            key = f"{callee}::{pname}::{actual}"
+            if key in stack:
+                return []
+            memo[cache_key] = _IN_PROGRESS
             if actual != pname:
                 # expression or other name — still try one hop through a
                 # caller's local of that name when it is a bare identifier
@@ -727,7 +737,10 @@ class HostIR:
                             for a2 in raw.get(cname, {}).get(actual, []):
                                 out.extend(expand(cname, actual, a2, stack | {key}))
                     if out:
-                        return list(dict.fromkeys(out))
+                        result = list(dict.fromkeys(out))
+                        memo[cache_key] = result
+                        return result
+                memo[cache_key] = [actual]
                 return [actual]
             # actual == formal name: must climb to callers
             out = []
@@ -737,7 +750,9 @@ class HostIR:
                     out.extend(expand(cname, pname, loc, stack | {key}))
                 for a2 in raw.get(cname, {}).get(pname, []):
                     out.extend(expand(cname, pname, a2, stack | {key}))
-            return list(dict.fromkeys(out))
+            result = list(dict.fromkeys(out))
+            memo[cache_key] = result
+            return result
 
         out: dict[str, dict[str, list[str]]] = {}
         for callee, slots in raw.items():

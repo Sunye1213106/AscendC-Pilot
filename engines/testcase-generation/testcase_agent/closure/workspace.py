@@ -203,24 +203,43 @@ def rule_book(*, refresh: bool = False):
     return rule_engine.default_book(refresh=refresh)
 
 
-@lru_cache(maxsize=1)
 def declared() -> frozenset[int]:
     """D from ``.uo`` without requiring WSL, CANN, replay or a local TPL parse."""
+    try:
+        root = str(_operator_root())
+    except ValueError:
+        root = ""
+    try:
+        arch = _arch_name()
+    except ValueError:
+        arch = ""
+    return _declared_for(
+        root,
+        arch,
+        os.environ.get("TG_CLOSURE_CI") or "",
+        os.environ.get("UO_OPERATOR") or "",
+    )
+
+
+@lru_cache(maxsize=16)
+def _declared_for(root: str, arch: str, ci: str, op: str) -> frozenset[int]:
+    del op
     uo_keys = _declared_from_uo()
     if uo_keys is not None:
         return frozenset(uo_keys)
-
-    from uo_init.tpl_dsl import expand_legal_instances
-    sch = schema()
-    fallback = {d.name: (list(d.value_domain) or ["0"])[0] for d in sch.dims}
-    keys: set[int] = set()
-    for inst in expand_legal_instances(sch):
-        full = {name: str(inst.get(name, fallback[name])) for name in fallback}
-        try:
-            keys.add(int(sch.encode_tiling_key(full)))
-        except (ValueError, KeyError):
-            continue
-    return frozenset(keys)
+    if ci == "1":
+        from uo_init.tpl_dsl import expand_legal_instances
+        sch = schema()
+        fallback = {d.name: (list(d.value_domain) or ["0"])[0] for d in sch.dims}
+        keys: set[int] = set()
+        for inst in expand_legal_instances(sch):
+            full = {name: str(inst.get(name, fallback[name])) for name in fallback}
+            try:
+                keys.add(int(sch.encode_tiling_key(full)))
+            except (ValueError, KeyError):
+                continue
+        return frozenset(keys)
+    return frozenset()
 
 
 def _declared_from_uo() -> set[int] | None:

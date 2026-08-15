@@ -5,11 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from uo_init.kb_model import KnowledgeBase
 from uo_init.materialize_tiling import (
     build_legal_key_rows,
     build_template_blocks,
-    materialize_into_kb,
 )
 from uo_init.tpl_dsl import parse_file
 
@@ -45,16 +43,3 @@ def test_the_template_product_alone_never_claims_a_key_is_reachable(header):
     schema = parse_file(header)
     rows = build_legal_key_rows(schema, binding=None, blocker_ids=[])
     assert {r.status for r in rows} == {"underivable"}
-
-
-def test_materialize_into_kb_writes_notes(header):
-    schema = parse_file(header)
-    kb = KnowledgeBase(op_name="FlashAttentionScoreGrad", architecture="arch35")
-    kb.notes["quality"] = {"source_closure": 0.9, "input_controllability": 0.2}
-    out = materialize_into_kb(kb, schema=schema, header_path=str(header))
-    assert out["ok"] is True
-    assert out["legal_key_count"] == 8705
-    mat = kb.notes["tiling_materialize"]
-    assert len(mat["template_blocks"]) == 65
-    assert mat["key_field_obligations"]
-    assert sum(1 for n in kb.iter_nodes() if n.kind == "TilingKeyDim") == 19

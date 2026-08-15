@@ -35,6 +35,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.symbol_identity import normalize_symbol
+from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
     is_other_arch_path,
@@ -96,6 +97,10 @@ _GET_TILING_STRUCT_RE = re.compile(
 _GET_TILING_MEMBER_RE = re.compile(
     r"GET_TILING_DATA_MEMBER\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
     re.S,
+)
+_CAST_TILING_DATA_RE = re.compile(
+    r"(?:reinterpret_cast|static_cast)\s*<\s*[^>]*?\b([A-Za-z_]\w*TilingData)\b[^>]*>"
+    r"|\(\s*(?:const\s+)?(?:__\w+__\s+)*([A-Za-z_]\w*TilingData)\s*\*",
 )
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 
@@ -767,30 +772,20 @@ def _rebuild_tiling_reads(codemap: CodeMap, scopes: list[_Scope], index: dict[st
                 resolved += 1
             else:
                 ambiguous += 1
-                ref = codemap.upsert(
-                    EntityKind.OTHER,
-                    expression,
-                    eid=f"TDREADREF::{scope.file}::{line}::{scope.entity.id}::{outer}::{inner or ''}",
-                    attrs={
-                        "role": "tilingdata_read_unresolved",
+                record_unresolved_tiling(
+                    codemap,
+                    scope.entity,
+                    role="tilingdata_read_unresolved",
+                    file=scope.file,
+                    line=line,
+                    expression=expression,
+                    extra={
                         "reason": "field_owner_ambiguous" if candidates else "field_owner_unknown",
                         "outer": outer,
                         "inner": inner or "",
                         "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
                         "provenance": "source_tilingdata_read_unresolved",
                     },
-                    file=scope.file,
-                    line=line,
-                    status="partial",
-                    confidence=0.5,
-                )
-                codemap.link(
-                    RelationKind.REFERENCES,
-                    scope.entity.id,
-                    ref.id,
-                    attrs={"provenance": "source_tilingdata_read_unresolved", "file": scope.file, "line": line},
-                    status="partial",
-                    confidence=0.5,
                 )
     return {"sites": sites, "resolved": resolved, "ambiguous": ambiguous}
 
@@ -882,6 +877,10 @@ def _rebuild_tiling_selection(
             simple = name.split("::")[-1]
             if simple in tdata_names:
                 roots.add(simple)
+        for match in _CAST_TILING_DATA_RE.finditer(raw):
+            simple = (match.group(1) or match.group(2) or "").split("::")[-1]
+            if simple in tdata_names:
+                roots.add(simple)
 
     # Existing explicit TilingKey registrations are also source-backed.
     for rel in codemap.relations.values():
@@ -900,12 +899,9 @@ def _rebuild_tiling_selection(
         owner_ent = index["types"].get(owner)
         if owner_ent is None:
             continue
-        declared_fields = [
-            codemap.entities.get(rel.dst)
-            for rel in codemap.relations.values()
-            if rel.src == owner_ent.id and rel.kind_name() == RelationKind.DECLARES.value
-        ]
-        for field in declared_fields:
+        for rel, field in codemap.neighbors(
+            owner_ent.id, kind=RelationKind.DECLARES, direction="out"
+        ):
             if field is None or field.kind_name() != EntityKind.TILING_FIELD.value:
                 continue
             nested = _base_type(str(field.attrs.get("cpp_type") or ""))
@@ -1142,23 +1138,20 @@ def _record_unresolved_writer(
     expr: str,
     candidates: list[Entity],
 ) -> None:
-    codemap.upsert(
-        EntityKind.OTHER,
-        f"{receiver}.set_{field_name}",
-        eid=f"TDWRITEREF::{file}::{line}::{field_name}",
-        attrs={
-            "role": "tilingdata_writer_unresolved",
+    record_unresolved_tiling(
+        codemap,
+        None,
+        role="tilingdata_writer_unresolved",
+        file=file,
+        line=line,
+        expression=expr,
+        extra={
             "reason": "field_owner_ambiguous" if candidates else "field_owner_unknown",
             "receiver": receiver,
             "field": field_name,
-            "expression": expr[:600],
             "candidate_fields": [f.attrs.get("qualified_name") for f in candidates],
             "provenance": "source_tilingdata_writer_unresolved",
         },
-        file=file,
-        line=line,
-        status="partial",
-        confidence=0.5,
     )
 
 

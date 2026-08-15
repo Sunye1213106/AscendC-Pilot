@@ -124,3 +124,58 @@ def test_task_authorize_still_denies_without_cache_or_workflow(tmp_path: Path, m
     )
     assert verdict.get("decision") == "deny", verdict
     assert verdict.get("reason_code") == "TASK_AGENT_UNKNOWN", verdict
+
+
+def test_primary_may_task_uo_query_after_uo_init(tmp_path: Path) -> None:
+    """ses_ff9e: leftover uo-init phase must not block delegated uo-query Task."""
+    op = tmp_path / "ops" / "flash_attention_score_grad"
+    op.mkdir(parents=True)
+    start_workflow(op, "uo-init", phase="verify", force_phase=True, architecture="arch35")
+
+    verdict = authorize(
+        op,
+        tool="task",
+        path="uo-query",
+        command="uo-query",
+        agent="ascendc-pilot",
+        action="",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK", verdict
+
+
+def test_primary_may_task_uo_query_without_host_workflow(tmp_path: Path, monkeypatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / ".ascendc-pilot" / "state").mkdir(parents=True)
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+
+    verdict = authorize(
+        workspace,
+        tool="task",
+        path="uo-query",
+        command="uo-query",
+        agent="ascendc-pilot",
+        action="",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK", verdict
+
+
+def test_primary_still_cannot_task_undeclared_producer_during_uo_init(tmp_path: Path) -> None:
+    op = tmp_path / "ops" / "flash_attention_score_grad"
+    op.mkdir(parents=True)
+    start_workflow(op, "uo-init", phase="verify", force_phase=True, architecture="arch35")
+
+    verdict = authorize(
+        op,
+        tool="task",
+        path="uo-semantic-resolve",
+        command="uo-semantic-resolve",
+        agent="ascendc-pilot",
+        action="",
+    )
+    assert verdict.get("decision") == "deny", verdict
+    assert verdict.get("reason_code") == "TASK_AGENT_UNKNOWN", verdict

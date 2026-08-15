@@ -460,13 +460,8 @@ def selected_tiling_headers(root: Path, architecture: str) -> list[Path]:
     return hits
 
 
-def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
-    """One TPL ARGS_DECL schema: the header the current-arch kernel entry includes.
-
-    Layout globs and Clang scope often also list sibling ``*_tiling_key.h``
-    files (apt vs non-apt, ifdef-gated variants). Merging those schemas
-    inflates TILING_KEY counts so GET_TPL_TILING_KEY packing never matches.
-    """
+def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
+    """Quoted-include walk from current-arch kernel entries (no other-arch)."""
     kernel_files = list(selected_kernel_files(root, architecture))
     by_key = {p.resolve(): p for p in kernel_files}
     entries: list[Path] = []
@@ -498,17 +493,22 @@ def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
             if resolved in seen:
                 continue
             pending.append(by_key.get(resolved, inc))
-    hits: list[Path] = []
-    for path in order:
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if "ASCENDC_TPL_ARGS_DECL" in text:
-            hits.append(path)
-            break
-    if hits:
-        return hits
+    return order
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    """True when ``path`` lives in this operator tree, not a sibling op include."""
+    try:
+        path.expanduser().resolve().relative_to(root.expanduser().resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _first_tpl_marker_file(
+    root: Path, architecture: str, marker: str
+) -> list[Path]:
+    kernel_files = list(selected_kernel_files(root, architecture))
     for path in kernel_files:
         if path.suffix.lower() not in {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}:
             continue
@@ -516,19 +516,71 @@ def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if "ASCENDC_TPL_ARGS_DECL" not in text:
+        if marker not in text:
             continue
         for inc in resolve_quoted_includes(path):
             if is_other_arch_path(inc, architecture):
+                continue
+            if not _path_is_under(inc, root):
                 continue
             try:
                 inc_text = inc.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            if "ASCENDC_TPL_ARGS_DECL" in inc_text:
+            if marker in inc_text:
                 return [inc]
-        return [path]
+        if _path_is_under(path, root):
+            return [path]
     return []
+
+
+def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
+    """One TPL ARGS_DECL schema: the header the current-arch kernel entry includes.
+
+    Layout globs and Clang scope often also list sibling ``*_tiling_key.h``
+    files (apt vs non-apt, ifdef-gated variants). Merging those schemas
+    inflates TILING_KEY counts so GET_TPL_TILING_KEY packing never matches.
+    Fusion wrappers that ``#include "../../../other_op/...tiling_key.h"`` must
+    not inherit that sibling's ARGS_DECL as this operator's source-declared keys.
+    """
+    for path in _kernel_include_closure(root, architecture):
+        if not _path_is_under(path, root):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_DECL" in text:
+            return [path]
+    return _first_tpl_marker_file(root, architecture, "ASCENDC_TPL_ARGS_DECL")
+
+
+def tpl_sel_files(root: Path, architecture: str) -> list[Path]:
+    """ARGS_SEL headers reachable from the current-arch kernel entry.
+
+    DECL and SEL are often split: the entry includes ``archNN/*_tiling_key.h``
+    (SEL) which includes ``*_tiling_key_decl.h`` (DECL). Stopping at the first
+    ARGS_DECL file drops the selections, so commit cannot rebuild TPL views.
+    """
+    hits: list[Path] = []
+    seen: set[Path] = set()
+    for path in _kernel_include_closure(root, architecture):
+        if not _path_is_under(path, root):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_SEL" not in text:
+            continue
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        hits.append(path)
+    if hits:
+        return hits
+    return _first_tpl_marker_file(root, architecture, "ASCENDC_TPL_ARGS_SEL")
 
 
 def select_tpl_decl_header(root: Path, architecture: str) -> Path | None:

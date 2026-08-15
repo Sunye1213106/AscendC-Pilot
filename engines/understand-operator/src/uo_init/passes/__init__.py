@@ -3,7 +3,7 @@
 
 Pass order (canonical):
   BuildVariant → Clang → Reachability → CoreCodeMap → CompileTime →
-  Template → Dataflow → InputRoot → Tiling → Kernel → HostKernelBind
+  Template → Dataflow → Tiling → Kernel → HostKernelBind
 """
 
 from uo_init.passes.manager import PassManager, run_analyze_passes

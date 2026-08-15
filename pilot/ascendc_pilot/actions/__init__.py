@@ -86,8 +86,26 @@ def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str
         _runtime.invoke_engine = original
 
 
+_NATIVE_TASK_RESULT_CAP = 200_000
+
+
+def _strip_kb_answer_fences(text: str) -> str:
+    """Keep the Explore-style prose; drop trailing kb-answer-v1 fences."""
+    raw = str(text or "")
+    return re.sub(
+        r"```(?:ya?ml)?\s*\n[\s\S]*?schema\s*:\s*kb-answer-v1[\s\S]*?```",
+        "",
+        raw,
+        flags=re.I,
+    ).strip()
+
+
 def _parse_host_action_result(text: str) -> dict[str, Any] | None:
-    """Parse Host-only return-value transport from a Task final message."""
+    """Parse a native Task final message (Cursor Explore style).
+
+    The full child message is the payload. A trailing ``kb-answer-v1`` fence
+    is only a status/adequacy trailer — never a replacement for the prose.
+    """
     raw = str(text or "").strip()
     if not raw:
         return None
@@ -99,6 +117,7 @@ def _parse_host_action_result(text: str) -> dict[str, Any] | None:
         import yaml
     except ImportError:  # pragma: no cover
         yaml = None  # type: ignore[assignment]
+    structured: dict[str, Any] | None = None
     for candidate in candidates:
         if not candidate:
             continue
@@ -107,8 +126,23 @@ def _parse_host_action_result(text: str) -> dict[str, Any] | None:
         except Exception:  # noqa: BLE001
             data = None
         if isinstance(data, dict):
-            return data
-    return None
+            structured = data
+            break
+    prose = _strip_kb_answer_fences(raw)[:_NATIVE_TASK_RESULT_CAP]
+    if structured is None:
+        return {
+            "schema": "kb-answer-v1",
+            "status": "ANSWERED",
+            "answer_zh": raw[:_NATIVE_TASK_RESULT_CAP],
+            "adequacy": "ANSWERED",
+            "_transport": "native_task",
+        }
+    yaml_zh = str(structured.get("answer_zh") or structured.get("answer") or "").strip()
+    if len(prose) > len(yaml_zh):
+        structured["answer_zh"] = prose
+    structured.setdefault("schema", "kb-answer-v1")
+    structured["_transport"] = "native_task"
+    return structured
 
 
 def _host_action_result_from_env(

@@ -155,7 +155,7 @@ def project_tpl_views_from_codemap(codemap: CodeMap) -> dict[str, Any]:
     for template in templates:
         block = _template_block(template, dims)
         if block is None:
-            return {}
+            continue
         blocks.append(block)
         fixed = dict(block["fixed_fields"])
         domains = dict(block["field_domains"])

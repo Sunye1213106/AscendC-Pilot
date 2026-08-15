@@ -168,6 +168,8 @@ def test_template_match_filters_fixed_fields_and_domains(tmp_path: Path) -> None
     assert out["count"] == 1
     assert out["template_blocks"][0]["name"] == "ARGS_SEL_21"
     assert out["template_blocks"][0]["id"] == named_id("TemplateBinding", "sel21")
+    assert out["matching_block_count"] == 1
+    assert "128" in (out.get("dim_coverage") or {}).get("DTemplate", [])
 
 
 def test_aggregate_modes(tmp_path: Path) -> None:
@@ -244,3 +246,136 @@ def test_type_search_is_exact_and_skips_info_manager(tmp_path: Path) -> None:
     buf = q.aggregate_buffer("MutexBuffer")
     assert buf["count"] >= 1
     assert any(row["name"] == "MutexBuffer" for row in buf["buffers"])
+
+
+def test_template_match_dim_coverage_is_global_not_first_block(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    _add_tpl_key(cm, name="DeterType", order=0, bw=2, domain=[0, 1])
+    _add_tpl_key(cm, name="InputDType", order=1, bw=3, domain=[1, 2, 3])
+    _add_tpl_key(cm, name="DTemplateNum", order=2, bw=4, domain=[64, 128, 192, 256, 768])
+    _add_tpl_group(
+        cm,
+        index=0,
+        fixed={"DeterType": 0, "InputDType": 3},
+        domains={"DTemplateNum": [64, 192, 256, 768]},
+    )
+    _add_tpl_group(
+        cm,
+        index=1,
+        fixed={"DeterType": 0, "InputDType": 3},
+        domains={"DTemplateNum": [128]},
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+
+    all_d = q.aggregate_template_match("DeterType=0,InputDType=3")
+    assert all_d["matching_block_count"] == 2
+    assert all_d["count"] == 2
+    assert set(all_d["dim_coverage"]["DTemplateNum"]) == {"64", "128", "192", "256", "768"}
+
+    hit = q.aggregate_template_match("DTemplateNum=128,DeterType=0,InputDType=3")
+    assert hit["matching_block_count"] == 1
+    assert "128" in hit["dim_coverage"]["DTemplateNum"]
+    assert hit["template_blocks"][0]["name"] == "ARGS_SEL_1"
+
+    miss = q.aggregate_template_match("DTemplateNum=80,DeterType=0,InputDType=3")
+    assert miss["matching_block_count"] == 0
+    nearby = {row["dropped"]: row for row in miss["nearby"]}
+    assert "128" in nearby["DTemplateNum"]["values"]
+    assert "64" in nearby["DTemplateNum"]["values"]
+
+    keys = query_legal_keys(
+        product, pattern="DTemplateNum=128,DeterType=0,InputDType=3", limit=8
+    )
+    assert keys["indexed"] is True
+    assert keys["total_matched"] >= 1
+    assert keys["sel_group_ids"]
+    zero = query_legal_keys(
+        product, pattern="DTemplateNum=80,DeterType=0,InputDType=3", limit=8
+    )
+    assert zero["total_matched"] == 0
+    dropped = {row["dropped"]: row for row in zero["nearby"]}
+    assert "128" in dropped["DTemplateNum"]["values"]
+
+
+def test_locate_ors_tokens_and_regex_gets_hint(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="FN_A",
+            kind=EntityKind.FUNCTION,
+            name="RegbaseFAG",
+            file="op_kernel/flash_attention_score_grad_apt.cpp",
+            line_start=40,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="FN_B",
+            kind=EntityKind.FUNCTION,
+            name="CalcleTNDDeterParam",
+            file="op_host/arch35/varlen.cpp",
+            line_start=42,
+            status="confirmed",
+        )
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    both = q.aggregate_locate("REGISTER_TILING_DEFAULT RegbaseFAG")
+    names = {str(row.get("name") or "") for row in both["locations"]}
+    assert "RegbaseFAG" in names
+    assert both["count"] >= 1
+    assert "pattern_tokens" in both
+
+    regex = q.aggregate_locate(r"DeterComputeDq\|DeterComputeDkv")
+    assert regex["empty_reason"] == "pattern_looks_like_regex"
+    assert regex["hint"]
+    assert "DeterComputeDq" in regex["suggested_retries"]
+
+    missing = q.aggregate_locate("NoSuchSymbolAtAll")
+    assert missing["count"] == 0
+    assert missing["empty_reason"] == "no_substring_match"
+
+
+def test_locate_function_returns_all_definition_sites(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(
+        EntityKind.FUNCTION,
+        "CalcleTNDDeterParam",
+        file="op_host/flash_attention_score_grad_tiling.h",
+        line=80,
+        status="extracted",
+    )
+    cm.upsert(
+        EntityKind.FUNCTION,
+        "CalcleTNDDeterParam",
+        file="op_host/arch35/flash_attention_score_grad_tiling_varlen.cpp",
+        line=412,
+        status="extracted",
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    out = q.aggregate_locate("CalcleTNDDeterParam")
+    files = {str(row.get("file") or "").replace("\\", "/") for row in out["locations"]}
+    assert any(p.endswith("flash_attention_score_grad_tiling.h") for p in files)
+    assert any("varlen.cpp" in p for p in files)
+    assert out["count"] >= 2
+
+
+def test_legal_key_unindexed_freetext_hint(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    _add_tpl_key(cm, name="SplitAxis", order=0, bw=2, domain=[0, 1])
+    _add_tpl_group(cm, index=0, fixed={"SplitAxis": 1})
+    product = tmp_path / "toy.arch35.uo"
+    write_codemap(cm, product)
+    clear_legal_key_cache()
+    out = query_legal_keys(product, pattern="not-a-dim-filter", limit=8)
+    assert out["indexed"] is False
+    assert "Dim=V" in (out.get("hint") or "")

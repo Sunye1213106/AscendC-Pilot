@@ -8,6 +8,7 @@
 ## 必读产物（相对 TG root）
 
 - `init/` 与 `realization/` 下合同、绑定、完整性相关 yaml
+- 若存在 `init/test_repo_contract.yaml`：核对 `kind`、schema、findings；测试仓缺口记 `warnings`，不要因此把 tilingkey 全覆盖 audit 写成 fail
 - UO 就绪指纹（若 context 给出路径）
 - **禁止**臆造 checklist id；必须覆盖 `TILINGKEY_AUDIT_CHECKLIST_IDS` 全量：
   - `tilingkey_contract`

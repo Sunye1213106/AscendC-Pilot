@@ -4,8 +4,8 @@ description: >
   构建、刷新与查询 AscendC 算子知识库（`.uo` Operator CodeMap）：API、Host、
   TilingKey、TilingData、Kernel、模板、宏、编译期变量与跨层证据。用户说建立知识库、
   建库、建 CodeMap、索引/分析算子、刷新知识库或只读查询时使用。建库走 uo-init /
-  uo-update；只读查询由本 skill 自己路由（短问 `acp uo-query`，深问再开子代理），
-  禁止外部 MCP 通用索引。
+  uo-update；只读查询由本 skill 做**可见 LLM 路由**（先对人说出自查或几个子代理，
+  禁止 `pilot_run`），禁止外部 MCP 通用索引。
 ---
 
 # Operator Analysis（UO CodeMap）
@@ -32,16 +32,19 @@ prepare → extract → analyze → commit → verify
 
 不回答：完整 TilingKey 可达性证明、全量 Key 的 SAT/UNSAT、程序引理证明（见 `source-proof` / `testcase-generation`）。
 
-## 查询
+## 查询（可见 LLM 路由，禁止 Host 润）
 
-主控用 skill **自己路由**，不要空转「问题路由」、也不要一上来就开子代理。
+查询**不是** workflow。禁止 `pilot_run`、禁止空转「问题路由」子代理。切片由你分类，不以 Host 派发清单为准。
 
-1. 看一眼 **`references/uo-product-map.md`**，大体判断查什么（`tiling_key` / `field` / `kernel_branch` / `locate` / `impact` / …）。
-2. **缺 `.uo` 时不要找**：产物路径是确定的（`<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`）。`acp uo-query` / `pilot_run` 会返回 `UO_PRODUCT_REQUIRED` + `ask_question`。立刻 AskQuestion，选项原样使用：先 `/uo-init`，或回退到源码作答。禁止 Glob/dir/tree 找 `.uo`，禁止猜 `--op-name`。选 source 后只读算子源码作答，不要再调 `acp uo-query`。
-3. **问得短、一两跳能答**：自己跑 `acp uo-query --mode`，**stdout JSON 就是答案**，直接对人说。禁止再 Glob/Read `answer.yaml`。
-4. **问得深、要沿图走很多跳**：`pilot_run`（workflow=uo-query）会**立刻**返回 `dispatch_subagent`。马上用 OpenCode **原生 Task**（agent=`uo-query`，prompt=`task_prompt_stub` 原样）。用户可点 Task 卡片跳进子会话看思考。不要空等隐藏的内部 session。METHOD 见 `capabilities/uo-query/METHOD.md`。
-5. 图证据不够再开最小源码窗。高置信才 `acp inspect evidence-window`。
-6. 未找到用 `UNKNOWN`。查询结束把 `host_step.answer_zh` 或 CLI stdout 说给人听，不要只说「完成」，不要去翻 yaml。`host_step.kind=answer_from_source` 时按源码作答。
+1. 看一眼 **`references/uo-product-map.md`**，判断查什么（`tiling_key` / `field` / `kernel_launch` / `kernel_branch` / `locate` / `impact` / …）。
+2. **缺 `.uo` 时不要找**：产物路径是确定的（`<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`）。`acp uo-query` 会返回 `UO_PRODUCT_REQUIRED` + `ask_question`。立刻 AskQuestion，选项原样：先 `/uo-init`，或回退到源码作答。禁止 Glob/dir/tree 找 `.uo`。选 source 后只读算子源码作答。
+3. **先对人说出路由**（必须出现在对用户的消息里，不能只藏在思考里），再动手：
+   - 水平：短问（一名字、一 mode、一两跳）| 深问单域 | 深问多域（互不相关的层/路径/症状）
+   - 谁查：主控自查 | 1 个 Task | N 个并行 Task
+   - 为什么：一句话
+4. **短问**：当前会话 `acp uo-query --project <算子绝对路径> --mode`，**stdout 就是答案**，对人说。禁止 Glob/Read `answer.yaml`。
+5. **深问**：同一轮原生 Task（`agent=uo-query`）。每个 prompt 写清 FOCUS + 用户原问 + 绝对 `--project`。点 Task 卡片可看子代思考。N≥2 时全部返回后 **按各 Task 全文综合**：禁止只转述某一个，禁止发明子代理没引用的事实。METHOD 见 `capabilities/uo-query/METHOD.md`。
+6. 图证据不够再开最小源码窗。高置信才 `acp inspect evidence-window`。未找到用 `UNKNOWN`。把 CLI stdout 或子代全文说给人听，不要只说「完成」。
 
 ## 构建
 

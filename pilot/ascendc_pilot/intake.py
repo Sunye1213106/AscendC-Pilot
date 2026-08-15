@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ascendc_pilot.paths import pilot_checkout_root
+from ascendc_pilot.paths import is_under_pilot_checkout, pilot_checkout_root
 
 LAST_PROJECT_CACHE = Path.home() / ".config" / "opencode" / "ascendc-last-project"
 HARNESS_BIN_CACHE = Path.home() / ".config" / "opencode" / "ascendc-harness-bin"
@@ -62,6 +62,88 @@ def is_pilot_harness_root(root: Path | str | None) -> bool:
     except Exception:
         pass
     return (path / "pilot" / "ascendc_pilot").is_dir() and (path / "engines").is_dir()
+
+
+def _is_usable_operator(root: Path | str | None) -> bool:
+    """Operator package that is not the Pilot checkout (or a path under it)."""
+    if root is None or not str(root).strip():
+        return False
+    path = Path(root).expanduser()
+    try:
+        path = path.resolve()
+    except OSError:
+        return False
+    if is_pilot_harness_root(path):
+        return False
+    try:
+        if is_under_pilot_checkout(path):
+            return False
+    except Exception:
+        pass
+    return looks_like_operator_package(path)
+
+
+def _env_operator() -> Path | None:
+    for name in ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR"):
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        try:
+            path = path.resolve()
+        except OSError:
+            continue
+        if _is_usable_operator(path):
+            return path
+    return None
+
+
+def _explicit_basename(explicit: Path | str | None) -> str:
+    text = str(explicit or "").strip().replace("\\", "/").rstrip("/")
+    if not text:
+        return ""
+    return Path(text).name
+
+
+def _explicit_is_weak(explicit: Path | str | None, resolved: Path) -> bool:
+    """True when --project is a Host-cwd artifact, not a chosen operator dir.
+
+    Bare names and paths under the Pilot checkout are the lethal OpenCode case:
+    ``acp uo-query --project flash_attention_score_grad`` from the Host checkout
+    resolves to ``<Pilot>/flash_attention_score_grad`` (missing / not an operator).
+    Existing non-operator dirs outside the checkout stay explicit so intake can
+    AskQuestion instead of silently swapping in last-project cache.
+    """
+    raw = Path(str(explicit or "").strip())
+    try:
+        if not raw.expanduser().is_absolute():
+            return True
+    except OSError:
+        return True
+    if is_pilot_harness_root(resolved):
+        return True
+    try:
+        if is_under_pilot_checkout(resolved):
+            return True
+    except Exception:
+        pass
+    return not resolved.exists()
+
+
+def _fallback_operator(*, explicit: Path | str | None = None) -> Path | None:
+    cached = read_last_project_cache()
+    name = _explicit_basename(explicit)
+    if cached is not None and name and name.lower() == cached.name.lower():
+        return cached
+    env_path = _env_operator()
+    if env_path is not None:
+        return env_path
+    cwd = Path.cwd().resolve()
+    if _is_usable_operator(cwd):
+        return cwd
+    if cached is not None:
+        return cached
+    return None
 
 
 def _count_sources(dir_path: Path) -> int:
@@ -286,7 +368,7 @@ def read_last_project_cache() -> Path | None:
         if not LAST_PROJECT_CACHE.is_file():
             return None
         root = Path(LAST_PROJECT_CACHE.read_text(encoding="utf-8").strip())
-        if looks_like_operator_package(root):
+        if _is_usable_operator(root):
             return root.resolve()
     except Exception:
         return None
@@ -295,7 +377,7 @@ def read_last_project_cache() -> Path | None:
 
 def write_last_project_cache(root: Path | str) -> None:
     path = Path(root).expanduser().resolve()
-    if not looks_like_operator_package(path):
+    if not _is_usable_operator(path):
         return
     try:
         LAST_PROJECT_CACHE.parent.mkdir(parents=True, exist_ok=True)
@@ -327,34 +409,42 @@ def default_cli_project(explicit: Path | str | None = None) -> Path:
     """Resolve --project so OpenCode cwd ≠ artifact root.
 
     Order:
-    1. explicit ``--project``
-    2. ``ASCENDC_PROJECT_ROOT`` / ``UO_OP_DIR``
-    3. cwd if it is already an operator package
-    4. last-project cache (conversation-pinned operator) when cwd is anything else
+    1. explicit ``--project`` when it is a real operator (not Pilot checkout)
+    2. invalid explicit (bare name, missing path, path under Pilot, non-operator)
+       falls through: basename match vs last-project cache → env → cwd → cache
+    3. ``ASCENDC_PROJECT_ROOT`` / ``UO_OP_DIR``
+    4. cwd if it is already an operator package
+    5. last-project cache (conversation-pinned operator) when cwd is anything else
        (monorepo parent, Pilot checkout, random folder)
-    5. cwd (will fail intake if not an operator)
+    6. cwd (will fail intake if not an operator)
+
+    Never returns the Pilot checkout as a successful operator root. A bare
+    ``--project flash_attention_score_grad`` issued from the Host checkout must
+    not resolve to ``<Pilot>/flash_attention_score_grad``.
     """
     if explicit is not None and str(explicit).strip():
-        return Path(explicit).expanduser().resolve()
-    for name in ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR"):
-        raw = (os.environ.get(name) or "").strip()
-        if raw:
-            return Path(raw).expanduser().resolve()
-    cwd = Path.cwd().resolve()
-    if looks_like_operator_package(cwd):
-        return cwd
-    cached = read_last_project_cache()
-    if cached is not None:
-        return cached
-    return cwd
+        path = Path(explicit).expanduser().resolve()
+        if _is_usable_operator(path):
+            return path
+        if _explicit_is_weak(explicit, path):
+            fallback = _fallback_operator(explicit=explicit)
+            if fallback is not None:
+                return fallback
+        else:
+            env_path = _env_operator()
+            if env_path is not None:
+                return env_path
+        return path
+    fallback = _fallback_operator()
+    if fallback is not None:
+        return fallback
+    return Path.cwd().resolve()
 
 
 def assert_operator_project(root: Path | str, *, action: str = "") -> dict[str, Any] | None:
     """Refuse creating/using ``.ascendc-pilot`` outside an operator package."""
     path = Path(root).expanduser().resolve()
-    if looks_like_operator_package(path) and not is_pilot_harness_root(path):
-        return None
-    if looks_like_operator_package(path) and is_pilot_harness_root(path):
+    if _is_usable_operator(path):
         return None
     label = f" Action={action}" if action else ""
     return {

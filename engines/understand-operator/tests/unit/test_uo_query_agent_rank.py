@@ -512,3 +512,73 @@ def test_collapse_duplicate_type_hashes_rewrites_wraps() -> None:
     assert buf.id in cm.entities
     wraps = [r for r in cm.relations.values() if r.kind_name() == RelationKind.WRAPS.value]
     assert any(r.src == owner.id and r.dst == src.id for r in wraps)
+
+
+def test_search_ranks_kernel_entry_ahead_of_processvec(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="FN_vec",
+            kind=EntityKind.FUNCTION,
+            name="ProcessVec",
+            file="op_kernel/arch35/process_vec.h",
+            line_start=10,
+            status="extracted",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="K_entry",
+            kind=EntityKind.KERNEL,
+            name="Process",
+            file="op_kernel/arch35/flash_attention_score_grad_apt.cpp",
+            line_start=40,
+            status="extracted",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    rows = q.search("Process", kinds=(), limit=8)
+    assert rows
+    assert rows[0]["kind"] == EntityKind.KERNEL.value
+    assert str(rows[0]["file"]).endswith("_apt.cpp")
+
+
+def test_search_diversifies_functions_by_file(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="FN_a",
+            kind=EntityKind.FUNCTION,
+            name="HelperA",
+            file="op_host/a.cpp",
+            line_start=1,
+            status="extracted",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="FN_b",
+            kind=EntityKind.FUNCTION,
+            name="HelperB",
+            file="op_host/a.cpp",
+            line_start=2,
+            status="extracted",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="FN_c",
+            kind=EntityKind.FUNCTION,
+            name="HelperC",
+            file="op_host/b.cpp",
+            line_start=3,
+            status="extracted",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    rows = q.search("Helper", kinds=("FUNCTION",), limit=2)
+    files = {str(row.get("file") or "").replace("\\", "/") for row in rows}
+    assert "op_host/a.cpp" in files
+    assert "op_host/b.cpp" in files

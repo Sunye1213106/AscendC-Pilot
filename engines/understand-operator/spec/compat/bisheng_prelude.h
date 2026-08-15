@@ -10,6 +10,9 @@
 // `__forceinline__[aicore]`. Vanilla clang cannot parse that. Map to the
 // same qualifiers erase_qualifiers already empties. Close the include guard
 // so operator 3rd copies of macros.hpp do not reintroduce `[aicore]`.
+// Operators that `#define HOST_DEVICE __forceinline__ [host, aicore]` in
+// their own headers after this prelude still win; those are rewritten via
+// ``uo_init.bisheng_attrs`` unsaved_files before libclang parse.
 #ifndef CATLASS_DETAIL_MACROS_HPP
 #define CATLASS_DETAIL_MACROS_HPP
 #ifndef __forceinline__
@@ -18,6 +21,30 @@
 #define CATLASS_DEVICE __forceinline__ __aicore__
 #define CATLASS_HOST_DEVICE __forceinline__ __host_aicore__
 #define CATLASS_GLOBAL __global__ __aicore__
+#endif
+
+// From bisheng ``__clang_cce_defines.h``. Vanilla clang has no cce_callee /
+// simt attributes; empty the qualifiers so CANN SIMT headers parse.
+#ifndef __callee__
+#define __callee__
+#endif
+#ifndef __simt_callee__
+#define __simt_callee__
+#endif
+#ifndef __simd_callee__
+#define __simd_callee__
+#endif
+#ifndef __simt_vf__
+#define __simt_vf__
+#endif
+#ifndef __simd_vf__
+#define __simd_vf__
+#endif
+#ifndef LAUNCH_BOUND
+#define LAUNCH_BOUND(...)
+#endif
+#ifndef __launch_bounds__
+#define __launch_bounds__(...)
 #endif
 
 // ---- scalar builtin types -------------------------------------------------
@@ -29,7 +56,12 @@ struct __bs_f16 {
     constexpr __bs_f16() : v(0) {}
     explicit constexpr __bs_f16(int x) : v(static_cast<uint16_t>(x)) {}
     explicit constexpr __bs_f16(unsigned x) : v(static_cast<uint16_t>(x)) {}
-    explicit constexpr __bs_f16(double x) : v(static_cast<uint16_t>(x)) {}
+    // Bisheng half converts from float. Do not cast the magnitude to
+    // uint16_t: ``static constexpr half MIN_VALUE = -65504.0f`` is a
+    // constexpr init and the out-of-range conversion is not a constant
+    // expression under vanilla clang.
+    constexpr __bs_f16(float) : v(0) {}
+    explicit constexpr __bs_f16(double) : v(0) {}
     explicit constexpr operator float() const { return float(v); }
 };
 struct __bs_b16 { uint16_t v; };
@@ -81,17 +113,44 @@ enum QuantMode_t {
     F322F16 = 1,
     VQF322HIF8_PRE = 2,
     QF322HIF8_PRE = 3,
+    VQF322HIF8_PRE_HYBRID = 4,
+    QF322HIF8_PRE_HYBRID = 5,
+    AttachF16Mul = 6,
+    VDEQS32_INT = 7,
+    VREQ8 = 8,
+    REQ8 = 9,
     VDEQF16 = 10,
     DEQF16 = 11,
+    VQF322FP8_PRE = 12,
+    QF322FP8_PRE = 13,
+    VQF322F32_PRE = 14,
+    QF322F32_PRE = 15,
     F322BF16 = 16,
     VQF162B8_PRE = 17,
     QF162B8_PRE = 18,
+    VQF162S4_PRE = 19,
+    QF162S4_PRE = 20,
+    VREQ4 = 21,
+    REQ4 = 22,
     VQF322B8_PRE = 23,
     QF322B8_PRE = 24,
+    VQF322S4_PRE = 25,
+    QF322S4_PRE = 26,
+    VDEQS16 = 27,
+    DEQS16 = 28,
+    VQF162S16_PRE = 29,
+    QF162S16_PRE = 30,
     VQF322F16_PRE = 31,
     QF322F16_PRE = 32,
     VQF322BF16_PRE = 33,
     QF322BF16_PRE = 34,
+    VQS322BF16_PRE = 35,
+    QS322BF16_PRE = 36,
+    DEQS32_INT = 37,
+    VSHIFTS322S16 = 38,
+    SHIFTS322S16 = 39,
+    VREQ16 = 40,
+    REQ16 = 41,
 };
 enum pad_t { PAD_NONE = 0 };
 enum cache_line_t { SINGLE_CACHE_LINE = 0, ENTIRE_DATA_CACHE = 1 };

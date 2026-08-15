@@ -37,27 +37,21 @@ def test_write_yaml_allows_out_root(tmp_path: Path) -> None:
     assert out.is_file()
 
 
-def _seed_uo_kb(uo: Path, *, revision: str = "rev1", extra_hash: str = "abc") -> None:
-    uo.mkdir(parents=True, exist_ok=True)
-    (uo / "checks").mkdir(parents=True, exist_ok=True)
-    (uo / "indexes").mkdir(parents=True, exist_ok=True)
-    write_yaml = __import__("testcase_agent.io", fromlist=["write_yaml"]).write_yaml
-    # write_yaml refuses .understand-operator — seed with raw write_text
-    (uo / "manifest.yaml").write_text(f"source:\n  revision: {revision}\n", encoding="utf-8")
-    (uo / "checks" / "artifact_hashes.yaml").write_text(
-        f"hashes:\n  tiling/key_space.yaml: {extra_hash}\n",
-        encoding="utf-8",
-    )
-    (uo / "checks" / "integrity.yaml").write_text("status: pass\n", encoding="utf-8")
-    (uo / "checks" / "confidence_gate.yaml").write_text("status: pass\n", encoding="utf-8")
-    (uo / "indexes" / "kb_graph.sqlite").write_bytes(b"sqlite-fake-" + revision.encode())
+def _write_product_uo(path: Path, *, op_name: str = "DemoOp", arch: str = "arch35", stamp: str = "a") -> None:
+    from uo_init.ir.codemap import CodeMap
+    from uo_init.ir.entity import Entity, EntityKind
+    from uo_init.store.writer import write_codemap
+
+    path = Path(path)
+    cm = CodeMap(op_name=op_name, architecture=arch)
+    cm.add_entity(Entity(id=f"ARCH_{arch}", kind=EntityKind.ARCH, name=arch))
+    cm.add_entity(Entity(id=f"STAMP_{stamp}", kind=EntityKind.ARCH, name=stamp))
+    write_codemap(cm, path)
 
 
-def _seed_audit_report(out_root: Path, *, checklist: str = "tilingkey") -> None:
-    """Stand in for the tg-init-audit subagent that gates --confirm."""
-    from testcase_agent.resolve_policy import AUDIT_CHECKLIST_IDS, TILINGKEY_AUDIT_CHECKLIST_IDS
+def _seed_audit_report(out_root: Path) -> None:
+    from testcase_agent.resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
 
-    ids = TILINGKEY_AUDIT_CHECKLIST_IDS if checklist == "tilingkey" else AUDIT_CHECKLIST_IDS
     path = out_root / "init" / "audit_report.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     write_yaml(
@@ -65,36 +59,36 @@ def _seed_audit_report(out_root: Path, *, checklist: str = "tilingkey") -> None:
         {
             "version": 1,
             "status": "pass",
-            "checklist": checklist,
-            "checks": [{"id": cid, "status": "pass"} for cid in ids],
+            "checklist": "tilingkey",
+            "checks": [{"id": cid, "status": "pass"} for cid in TILINGKEY_AUDIT_CHECKLIST_IDS],
             "blockers": [],
         },
     )
 
 
-def test_fingerprint_stable_then_changes(tmp_path: Path) -> None:
+def test_fingerprint_stable_then_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UO_ARCH", "arch35")
     project = tmp_path / "op"
-    project.mkdir()
-    uo = project / ".ascendc-pilot" / "uo"
-    _seed_uo_kb(uo, revision="r1", extra_hash="h1")
-    out = output_root(project, "DemoOp")
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
+    _write_product_uo(product, stamp="h1")
+    out = output_root(project, "DemoOp", arch="arch35")
     (out / "init").mkdir(parents=True)
-    fp1 = write_kb_fingerprint(out, uo)
-    ok, _ = kb_fingerprint_matches(out, uo)
+    fp1 = write_kb_fingerprint(out, product.parent)
+    ok, _ = kb_fingerprint_matches(out, product.parent)
     assert ok
     assert fp1["digest"]
-    _seed_uo_kb(uo, revision="r2", extra_hash="h2")
-    ok2, detail = kb_fingerprint_matches(out, uo)
+    _write_product_uo(product, stamp="h2")
+    ok2, detail = kb_fingerprint_matches(out, product.parent)
     assert not ok2
     assert detail["reason"] == "digest_mismatch"
 
 
-def test_require_init_confirmed_asks_kb_stale_reinit(tmp_path: Path) -> None:
+def test_require_init_confirmed_asks_kb_stale_reinit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UO_ARCH", "arch35")
     project = tmp_path / "op"
-    project.mkdir()
-    uo = project / ".ascendc-pilot" / "uo"
-    _seed_uo_kb(uo, revision="r1")
-    out = output_root(project, "DemoOp")
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
+    _write_product_uo(product, stamp="r1")
+    out = output_root(project, "DemoOp", arch="arch35")
     (out / "init").mkdir(parents=True)
     write_init_status(
         out,
@@ -103,23 +97,23 @@ def test_require_init_confirmed_asks_kb_stale_reinit(tmp_path: Path) -> None:
             "op_name": "DemoOp",
             "status": "confirmed",
             "project_root": project.as_posix(),
-            "understand_root": uo.as_posix(),
+            "understand_root": product.parent.as_posix(),
         },
     )
-    write_kb_fingerprint(out, uo)
-    require_init_confirmed(project, "DemoOp")  # fresh — ok
-    _seed_uo_kb(uo, revision="r9", extra_hash="changed")
+    write_kb_fingerprint(out, product.parent)
+    require_init_confirmed(project, "DemoOp")
+    _write_product_uo(product, stamp="changed")
     with pytest.raises(InitGateError) as exc:
         require_init_confirmed(project, "DemoOp")
     assert exc.value.ask == "kb_stale_reinit"
 
 
-def test_mark_init_confirmed_writes_fingerprint(tmp_path: Path) -> None:
+def test_mark_init_confirmed_writes_fingerprint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UO_ARCH", "arch35")
     project = tmp_path / "op"
-    project.mkdir()
-    uo = project / ".ascendc-pilot" / "uo"
-    _seed_uo_kb(uo)
-    out = output_root(project, "DemoOp")
+    product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
+    _write_product_uo(product)
+    out = output_root(project, "DemoOp", arch="arch35")
     (out / "init").mkdir(parents=True)
     write_init_status(
         out,
@@ -128,11 +122,11 @@ def test_mark_init_confirmed_writes_fingerprint(tmp_path: Path) -> None:
             "op_name": "DemoOp",
             "status": "pending_confirm",
             "project_root": project.as_posix(),
-            "understand_root": uo.as_posix(),
+            "understand_root": product.parent.as_posix(),
         },
     )
     _seed_audit_report(out)
     doc = mark_init_confirmed(out, notes="test", require_merge=False)
     assert doc["status"] == "confirmed"
     assert (out / "init" / "kb_fingerprint.yaml").is_file()
-    assert doc.get("kb_fingerprint_digest") == compute_kb_fingerprint(uo)["digest"]
+    assert doc.get("kb_fingerprint_digest") == compute_kb_fingerprint(product.parent)["digest"]

@@ -102,6 +102,39 @@ def test_build_host_step_kinds() -> None:
     assert ask["ask_question"]["header"] == "h"
 
 
+def test_build_host_step_attaches_fanout_tasks() -> None:
+    prep = {
+        "action_id": "kb_lookup",
+        "actor_id": "uo-query",
+        "task_prompt_stub": "parent stub",
+        "session_dir": "/s",
+        "dispatch_tasks": [
+            {
+                "slice_id": "sel",
+                "focus": "SEL",
+                "first_mode": "template_match",
+                "actor_id": "uo-query",
+                "action_id": "kb_lookup",
+                "task_prompt_stub": "SLICE_ID=sel\nA",
+            },
+            {
+                "slice_id": "locate",
+                "focus": "locate",
+                "first_mode": "locate",
+                "actor_id": "uo-query",
+                "action_id": "kb_lookup",
+                "task_prompt_stub": "SLICE_ID=locate\nB",
+            },
+        ],
+    }
+    step = build_host_step(kind="dispatch_subagent", prepare=prep, actor_id="uo-query")
+    assert step["kind"] == "dispatch_subagent"
+    assert len(step["tasks"]) == 2
+    assert step["tasks"][0]["slice_id"] == "sel"
+    assert "SLICE_ID=sel" in step["tasks"][0]["task_prompt_stub"]
+    assert step["task_prompt_stub"] == "parent stub"
+
+
 def test_bundle_readable_requires_session_pack(tmp_path: Path) -> None:
     sdir = tmp_path / "session"
     sdir.mkdir()

@@ -7,7 +7,19 @@ from pathlib import Path
 from typing import Any
 
 from .io import output_root, read_yaml, write_yaml
-from .understand import understand_root
+
+
+def _uo_root(project_root: Path, op_name: str, *, arch: str | None = None) -> Path:
+    del op_name
+    try:
+        from ascendc_pilot.paths import uo_root
+
+        return uo_root(project_root, arch=arch)
+    except Exception:
+        arch_name = (arch or "").strip()
+        if not arch_name:
+            raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
+        return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / arch_name / "uo"
 
 
 class InitGateError(RuntimeError):
@@ -88,7 +100,7 @@ def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> 
     product_dir = _product_uo_root(project_root, op_name=op_name)
     if product_dir is not None:
         return product_dir
-    uo = understand_root(project_root, op_name)
+    uo = _uo_root(project_root, op_name)
     return uo if uo.is_dir() else None
 
 
@@ -299,13 +311,6 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
                 review["status"] = "confirmed"
                 review["confirmed_at"] = doc["confirmed_at"]
                 write_yaml(review_path, review)
-    lexicon_path = out_root / "realization" / "binding_lexicon.yaml"
-    if lexicon_path.is_file():
-        lexicon = read_yaml(lexicon_path)
-        if isinstance(lexicon, dict):
-            # Document-level lock only after item-level binds exist; do not fake item locks.
-            lexicon["locked"] = True
-            write_yaml(lexicon_path, lexicon)
     return doc
 
 

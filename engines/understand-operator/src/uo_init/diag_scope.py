@@ -12,6 +12,21 @@ from typing import Any, Iterable
 _CANN_ATOMIC_REDEF_RE = re.compile(
     r"redefinition of 'Atomic\w+'"
 )
+_CANN_DUMP_REDEF_RE = re.compile(
+    r"redefinition of 'asc_(?:dump|atomic_\w+)'"
+)
+# Same dual-include: simt_api/math_functions.h (tikcfw + ascendc) redeclares
+# libc float math. Clang may point the second declaration at the operator TU.
+_CANN_MATH_REDEF_RE = re.compile(
+    r"redefinition of '"
+    r"(?:sincospi|sincos|remquo|modf|frexp|ldexp|lround|llround|lrint|llrint|"
+    r"trunc|round|rint|floor|ceil|sqrt|rsqrt|log2|log10|log1p|log|exp10|exp2|"
+    r"expm1|exp|fma|fabs|normcdfinv|rnorm|norm|isfinite|isnan|isinf|fdim|fmod|remainder|"
+    r"copysign|nearbyint|nextafter|scalbn|scalbln|fmax|fmin|tanpi|tanh|tan|"
+    r"atan2|atanh|atan|cospi|cosh|cos|asinh|asin|acosh|acos|sinpi|sinh|sin|"
+    r"pow|hypot|cbrt|erf|erfc|tgamma|lgamma"
+    r")[fl]?'"
+)
 _CANN_VECTOR_TYPE_RE = re.compile(
     r"unknown type name '(?:u?int|u?long|float|half|bfloat)\d+'"
 )
@@ -25,6 +40,8 @@ def is_libclang_cann_residual(spelling: str) -> bool:
     text = str(spelling or "")
     return bool(
         _CANN_ATOMIC_REDEF_RE.search(text)
+        or _CANN_DUMP_REDEF_RE.search(text)
+        or _CANN_MATH_REDEF_RE.search(text)
         or _CANN_VECTOR_TYPE_RE.search(text)
         or _CANN_SIMT_BUILTIN_RE.search(text)
     )
@@ -41,6 +58,8 @@ def score_tu_diagnostics(
     op_errors = 0
     op_fatals = 0
     samples: list[str] = []
+    heal_hints: list[str] = []
+    heal_seen: set[str] = set()
     for d in diagnostics:
         try:
             sev = int(d.severity)
@@ -67,9 +86,21 @@ def score_tu_diagnostics(
             op_errors += 1
             if sev >= 4:
                 op_fatals += 1
+        clip = spelling[:200]
         if len(samples) < 5:
-            samples.append(spelling[:200])
-    relevant = op_errors if fatals == 0 else op_errors + fatals
+            samples.append(clip)
+        # include_heal must see missing headers / unknown types even when
+        # samples are filled by repeated template-parameter noise.
+        low = clip.lower()
+        if ("file not found" in low or "unknown type name" in low) and clip not in heal_seen:
+            heal_seen.add(clip)
+            if len(heal_hints) < 32:
+                heal_hints.append(clip)
+    # Operator-source errors (including operator fatals such as a missing
+    # local header). Fatals that live only in CANN / family-common headers
+    # are libclang residuals — include-heal still searches them, but they
+    # must not block prepare when the operator TU itself is clean.
+    relevant = op_errors
     return {
         "error_count": errors,
         "fatal_count": fatals,
@@ -77,6 +108,7 @@ def score_tu_diagnostics(
         "operator_fatal_count": op_fatals,
         "probe_relevant_errors": relevant,
         "samples": samples,
+        "heal_hints": heal_hints,
     }
 
 

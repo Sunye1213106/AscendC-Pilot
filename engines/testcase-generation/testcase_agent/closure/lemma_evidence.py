@@ -49,7 +49,7 @@ def _uo_root(ws: W.Workspace) -> Path | None:
             arch = _raw
             break
     if not arch:
-        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE: architecture required")
+        return None
     try:
         from ascendc_pilot.paths import uo_root
 

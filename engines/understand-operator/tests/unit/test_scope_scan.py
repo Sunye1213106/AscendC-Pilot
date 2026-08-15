@@ -188,6 +188,17 @@ def test_selection_narrows_to_what_a_stage_parses(domain: Path) -> None:
     }
 
 
+def test_op_tiling_directory_is_host_tiling_even_without_tiling_in_name(tmp_path: Path) -> None:
+    root = tmp_path / "mc2"
+    _write(root, "widget/op_host/op_tiling/widget_tilling.cpp")
+    _write(root, "widget/op_kernel/arch22/widget.cpp")
+    scope = ss.scan(root / "widget", arch_dir="arch22")
+    by_role = {f.path.name: f.role for f in scope.files}
+    assert by_role["widget_tilling.cpp"] == ss.ROLE_HOST_TILING
+    tiling = scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True)
+    assert {p.name for p in tiling} == {"widget_tilling.cpp"}
+
+
 def test_membership_ignores_how_a_path_is_spelt(domain: Path) -> None:
     """Clang reports the path it opened, which need not match how we walked to
     it: separators and case both differ on Windows."""

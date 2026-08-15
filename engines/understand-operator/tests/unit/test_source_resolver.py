@@ -580,3 +580,29 @@ def test_a_params_shaped_name_with_no_writes_is_not_assumed_to_be_tiling_data():
         "fBaseParams"
     )
     assert not res.closed
+
+
+def test_large_helper_body_is_not_chased():
+    """Performance/tiling methods with many calls are not one-hop wrappers."""
+    ir = HostIR(
+        summaries={
+            "MatmulTime": FuncSummary(
+                name="MatmulTime",
+                params=["m"],
+                returns=["acc"],
+                locals={"acc": "0"},
+                calls=tuple((f"step{i}", ("m",)) for i in range(40)),
+            )
+        }
+    )
+    res = SourceResolver(host_ir=ir).resolve("MatmulTime(m)")
+    assert not res.closed
+    assert res.reasons == ["UNMAPPED_CALL"]
+
+
+def test_resolve_step_budget_is_honored(monkeypatch):
+    import uo_init.source_resolver as mod
+
+    monkeypatch.setattr(mod, "RESOLVE_STEP_BUDGET", 0)
+    res = SourceResolver().resolve("foo > 1")
+    assert any(a.reason == mod.REASON_RESOLVE_BUDGET for a in res.atoms)

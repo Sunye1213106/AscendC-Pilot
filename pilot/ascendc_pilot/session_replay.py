@@ -61,7 +61,8 @@ def scenario_happy_path_phases(workflow_id: str, _project: Path) -> dict[str, An
     missing = sorted(
         p
         for p in phases
-        if not any(
+        if p not in terminals
+        and not any(
             p in set(a.get("phases") or [])
             for a in (meta.get("actions") or [])
             if isinstance(a, dict)
@@ -260,10 +261,16 @@ def scenario_human_required(workflow_id: str, project: Path) -> dict[str, Any]:
 
 
 def scenario_resume(workflow_id: str, project: Path) -> dict[str, Any]:
+    from ascendc_pilot.occupancy import is_shared
     from ascendc_pilot.run_resume import needs_resume_decision
 
     _start(project, workflow_id)
-    if not needs_resume_decision(project, workflow_id):
+    needed = needs_resume_decision(project, workflow_id)
+    if is_shared(workflow_id):
+        if needed:
+            return {"ok": False, "error": "shared_must_not_ask_resume"}
+        return {"ok": True, "shared": True, "needs_resume": False}
+    if not needed:
         return {"ok": False, "error": "expected_resume_decision"}
     return {"ok": True}
 

@@ -13,7 +13,13 @@ from uo_init import paths
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 DEFAULT_CONTEXT = SPEC_DIR / "build_context.yaml"
-FUNCTION_LIKE_QUALIFIERS = {"__in_pipe__", "__out_pipe__", "__inout_pipe__"}
+FUNCTION_LIKE_QUALIFIERS = {
+    "__in_pipe__",
+    "__out_pipe__",
+    "__inout_pipe__",
+    "LAUNCH_BOUND",
+    "__launch_bounds__",
+}
 
 
 def dtype_macro_for_source(
@@ -236,7 +242,15 @@ class BuildContext:
         return self.kernel_force_includes()
 
     def kernel_force_includes(self) -> list[str]:
-        out = [self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("force_include") or []]
+        out: list[str] = []
+        for p in (self.raw.get("kernel") or {}).get("force_include") or []:
+            resolved = self.resolve_path(p)
+            try:
+                if not Path(resolved).is_file():
+                    continue
+            except OSError:
+                continue
+            out.append(resolved)
         out.extend(self.extra_kernel_force_includes)
         return _dedupe_includes(out)
 

@@ -24,6 +24,13 @@ sys.path[:0] = [
     str(REPO / "engines" / "common"),
     str(REPO / "pilot"),
 ]
+from uo_init.diagnostics.source_api import (
+    count_graph_kernel_api,
+    count_source_kernel_apis,
+    precision_gaps,
+    rank_blockers,
+    source_api_from_codemap,
+)
 from uo_init.paths import ops_root as _resolve_ops_root
 
 OPS_ROOT = Path(
@@ -53,7 +60,7 @@ _SKIP_OP_NAMES = frozenset({"common", "include", "src"})
 # FAG arch22 is audit-only (no wipe).
 CASES: list[dict[str, Any]] = [
     # attention
-    {"rel": "attention/flash_attention_score_grad", "arch": "arch35", "wipe": True},
+    {"rel": "attention/flash_attention_score_grad", "arch": "arch35", "wipe": False},
     {"rel": "attention/flash_attention_score", "arch": "arch35", "wipe": True},
     {"rel": "attention/incre_flash_attention", "arch": "arch22", "wipe": True},
     {"rel": "attention/prompt_flash_attention", "arch": "arch22", "wipe": True},
@@ -134,9 +141,61 @@ def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:
     return cases
 
 
+def _rel_items(env_name: str) -> list[str]:
+    """Comma list in ``env_name``, plus optional ``{env_name}_FILE`` (one rel per line)."""
+    items: list[str] = []
+    raw = str(os.environ.get(env_name) or "").strip()
+    if raw:
+        items.extend(part.strip() for part in raw.split(",") if part.strip())
+    file_raw = str(os.environ.get(f"{env_name}_FILE") or "").strip()
+    if file_raw:
+        path = Path(file_raw)
+        if path.is_file():
+            items.extend(
+                line.strip()
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _largest_remainder(n: int, weights: list[int]) -> list[int]:
+    """Hamilton quotas: seats follow ``weights``, leftover by largest remainder."""
+    if n <= 0 or not weights:
+        return [0] * len(weights)
+    total = sum(weights) or 1
+    raw = [n * w / total for w in weights]
+    floors = [int(x) for x in raw]
+    leftover = n - sum(floors)
+    order = sorted(
+        range(len(weights)),
+        key=lambda i: (raw[i] - floors[i], -i),
+        reverse=True,
+    )
+    out = list(floors)
+    for i in order[:leftover]:
+        out[i] += 1
+    return out
+
+
 def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dict[str, Any]]:
-    """Stratified uniform sample across families; always keep FAG arch35 as the bar."""
-    pool = discover_ops(ops_root)
+    """Sample ``n`` ops. Default quotas follow catalog family sizes (Hamilton).
+
+    ``UO_GEN_ALLOC=equal`` restores the old one-slot-per-family split (seeds
+    20260814/15/16). FAG arch35 is pinned unless excluded.
+    """
+    exclude = set(_rel_items("UO_GEN_EXCLUDE"))
+    pool = [
+        case
+        for case in discover_ops(ops_root)
+        if case["rel"] not in exclude and f"{case['rel']}:{case['arch']}" not in exclude
+    ]
     by_fam: dict[str, list[dict[str, Any]]] = {}
     for case in pool:
         by_fam.setdefault(str(case.get("family") or ""), []).append(case)
@@ -162,11 +221,15 @@ def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dic
 
     families = [f for f in _FAMILIES if by_fam.get(f)]
     remain = max(0, int(n) - len(picked))
+    alloc = str(os.environ.get("UO_GEN_ALLOC") or "proportional").strip().lower()
     if families and remain:
-        base = remain // len(families)
-        extra = remain % len(families)
-        for i, fam in enumerate(families):
-            want = base + (1 if i < extra else 0)
+        if alloc in {"equal", "uniform", "even"}:
+            base = remain // len(families)
+            extra = remain % len(families)
+            quotas = [base + (1 if i < extra else 0) for i in range(len(families))]
+        else:
+            quotas = _largest_remainder(remain, [len(by_fam[f]) for f in families])
+        for fam, want in zip(families, quotas):
             cand = [c for c in by_fam[fam] if f"{c['rel']}:{c['arch']}" not in seen]
             rng.shuffle(cand)
             for case in cand[:want]:
@@ -274,7 +337,11 @@ def inspect_product(op: Path, arch: str, op_name: str) -> dict[str, Any]:
     )
     other_n = sum(1 for e in cm.entities.values() if e.kind_name() == "OTHER")
 
-    locate = _locate_quality(cm, product)
+    locate = _locate_quality(cm, product, op, arch)
+    source_api = source_api_from_codemap(cm, op, arch) or count_source_kernel_apis(op, arch)
+    gaps = precision_gaps(source_api, locate.get("kernel_api") or {})
+    locate["source_api"] = source_api
+    locate["precision_gaps"] = gaps
 
     unresolved_path = op / ".ascendc-pilot" / arch / "uo" / "ir" / "unresolved.yaml"
     gap_codes: Counter[str] = Counter()
@@ -382,6 +449,8 @@ def inspect_product(op: Path, arch: str, op_name: str) -> dict[str, Any]:
         },
         "counts": audit.get("counts") or {},
         "locate": locate,
+        "source_api": source_api,
+        "precision_gaps": gaps,
         "quality": quality,
         "catalog_unproven_names": dict(unresolved_names.most_common(16)),
     }
@@ -421,7 +490,7 @@ def _sites_with_span(attrs: dict[str, Any], *keys: str) -> int:
     return n
 
 
-def _locate_quality(cm: Any, product: Path) -> dict[str, Any]:
+def _locate_quality(cm: Any, product: Path, op: Path, arch: str) -> dict[str, Any]:
     """Can cannbot pin Issue anchors (locate / tiling_key / field) without grep?"""
     span: dict[str, Any] = {}
     by_kind: dict[str, list[Any]] = {k: [] for k in _LOCATE_KINDS}
@@ -441,8 +510,10 @@ def _locate_quality(cm: Any, product: Path) -> dict[str, Any]:
     keys = by_kind["TILING_KEY"]
     fields = by_kind["TILING_FIELD"]
     pack_n = sum(
-        _sites_with_span(e.attrs or {}, "packing_value_sites", "producer_sites")
+        1
         for e in keys
+        if _sites_with_span(e.attrs or {}, "packing_value_sites", "producer_sites")
+        or (e.attrs or {}).get("host_packing_expressions")
     )
     writer_n = sum(
         _sites_with_span(
@@ -461,22 +532,7 @@ def _locate_quality(cm: Any, product: Path) -> dict[str, Any]:
         if attrs.get("dtype") or facts.get("dtype"):
             dtype_n += 1
     input_n = span["INPUT"]["n"]
-    kernel_api: dict[str, dict[str, int]] = {}
-    for needle in ("EnQue", "InitBuffer", "DataCopy", "SetFlag", "WaitFlag"):
-        n = 0
-        spanned = 0
-        for entity in by_kind["OPERATION"]:
-            attrs = entity.attrs or {}
-            blob = " ".join(
-                str(x or "")
-                for x in (entity.name, attrs.get("callee"), attrs.get("api"))
-            )
-            if needle.lower() not in blob.lower():
-                continue
-            n += 1
-            if _has_span(entity):
-                spanned += 1
-        kernel_api[needle] = {"n": n, "with_span": spanned}
+    kernel_api = count_graph_kernel_api(by_kind["OPERATION"])
 
     probes: list[dict[str, Any]] = []
     samples: list[tuple[str, str]] = []
@@ -563,15 +619,19 @@ def _locate_quality(cm: Any, product: Path) -> dict[str, Any]:
     ]
     host_check_n = len(host_checks)
     host_check_span_n = sum(1 for e in host_checks if _has_span(e))
-    keys_ok = key_span["n"] == 0 or (key_span["ratio"] or 0) >= 0.5
+    keys_ok = key_span["n"] == 0 or (pack_n == len(keys) and key_span["with_span"] >= 1)
     kernel_ok = kernel_span["with_span"] >= 1
     input_ok = input_span["with_span"] >= 1
     locate_ok = (not tried) or hit_n >= max(1, len(tried) // 2)
     buffer_ok = buffer_span["n"] == 0 or buffer_span["with_span"] >= 1
-    api_ok = any(int(v.get("with_span") or 0) > 0 for v in kernel_api.values()) or not any(
-        int(v.get("n") or 0) > 0 for v in kernel_api.values()
+    source_api = source_api_from_codemap(cm, op, arch) or (
+        count_source_kernel_apis(op, arch) if op.is_dir() else {}
     )
-    host_check_ok = host_check_n == 0 or host_check_span_n >= 1
+    gaps_api = precision_gaps(source_api, kernel_api)
+    any_graph_api = any(int(v.get("n") or 0) > 0 for v in kernel_api.values())
+    any_source_api = any(int(source_api.get(name) or 0) > 0 for name in source_api)
+    api_ok = not gaps_api and (any_graph_api or not any_source_api)
+    host_check_ok = host_check_n == 0 or host_check_span_n == host_check_n
     ready = bool(
         kernel_ok and input_ok and keys_ok and locate_ok and buffer_ok and api_ok and host_check_ok
     )
@@ -590,6 +650,8 @@ def _locate_quality(cm: Any, product: Path) -> dict[str, Any]:
         gaps.append("no_buffer_span")
     if not api_ok:
         gaps.append("no_kernel_api_span")
+    if gaps_api:
+        gaps.append("precision_gap")
     if not host_check_ok:
         gaps.append("no_host_check_span")
     if not locate_ok:
@@ -703,6 +765,8 @@ def _write_summary(doc: dict[str, Any]) -> None:
             "function_locate_hit_rate": locate.get("function_locate_hit_rate"),
             "input_dtype": locate.get("input_dtype"),
             "kernel_api": locate.get("kernel_api"),
+            "source_api": noise.get("source_api") or locate.get("source_api"),
+            "precision_gaps": noise.get("precision_gaps") or locate.get("precision_gaps") or [],
             "quality_grade": (noise.get("quality") or {}).get("grade"),
             "locate_blocking": ((noise.get("quality") or {}).get("unresolved") or {}).get(
                 "locate_blocking"
@@ -727,12 +791,14 @@ def _write_summary(doc: dict[str, Any]) -> None:
             bucket["locate_ready"] += 1
         if int(noise.get("unknown_entities") or 0) > 0:
             bucket["unknown_nonzero"] += 1
+    blockers = rank_blockers(doc.get("cases") or [])
     payload = {
-        "schema": "uo-init-generalization-summary/v2",
+        "schema": "uo-init-generalization-summary/v3",
         "date": doc.get("date"),
         "elapsed_s": doc.get("elapsed_s"),
         "n_cases": len(rows),
         "families": families,
+        "blockers": blockers,
         "rows": rows,
     }
     OUT.mkdir(parents=True, exist_ok=True)
@@ -767,7 +833,13 @@ def run_one(case: dict[str, Any]) -> dict[str, Any]:
         t0 = time.perf_counter()
         try:
             row["noise"] = inspect_product(op, arch, op_name)
-            row["ok"] = bool(row["noise"].get("ok"))
+            noise = row["noise"] if isinstance(row.get("noise"), dict) else {}
+            grade = str((noise.get("quality") or {}).get("grade") or "")
+            gaps = noise.get("precision_gaps") or []
+            other_n = int(noise.get("other_count") or 0)
+            row["ok"] = bool(noise.get("ok")) and grade == "ready" and not gaps and other_n == 0
+            if not row["ok"]:
+                row["failed_step"] = "quality"
         except Exception as exc:  # noqa: BLE001
             row["ok"] = False
             row["error"] = f"{type(exc).__name__}: {exc}"[:800]
@@ -858,6 +930,16 @@ def run_one(case: dict[str, Any]) -> dict[str, Any]:
         row["noise"] = inspect_product(op, arch, str(ctx.get("op_name") or op_name))
     except Exception as exc:  # noqa: BLE001
         row["noise"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"[:800]}
+        row["ok"] = False
+        row["failed_step"] = "quality"
+        return row
+    noise = row["noise"] if isinstance(row.get("noise"), dict) else {}
+    grade = str((noise.get("quality") or {}).get("grade") or "")
+    gaps = noise.get("precision_gaps") or []
+    other_n = int(noise.get("other_count") or 0)
+    if grade != "ready" or gaps or other_n > 0:
+        row["ok"] = False
+        row["failed_step"] = "quality"
     return row
 
 
@@ -874,11 +956,27 @@ def main() -> int:
 
     sample_n = str(os.environ.get("UO_GEN_SAMPLE") or "").strip()
     sample_seed = int(str(os.environ.get("UO_GEN_SEED") or "20260814").strip() or "20260814")
+    only_list = _rel_items("UO_GEN_ONLY")
     cases = list(CASES)
-    if sample_n.isdigit() and int(sample_n) > 0:
+    if only_list:
+        by_rel = {c["rel"]: c for c in discover_ops(OPS_ROOT)}
+        cases = [by_rel[rel] for rel in only_list if rel in by_rel]
+        for c in cases:
+            if str(c.get("rel") or "").endswith("flash_attention_score_grad") and c.get("arch") == "arch35":
+                c["wipe"] = False
+        missing = [rel for rel in only_list if rel not in by_rel]
+        print(
+            f"ONLY n={len(cases)} missing={missing} families="
+            f"{Counter(c.get('family') for c in cases)}",
+            flush=True,
+        )
+        for c in cases:
+            print(f"  {c['rel']} {c['arch']}", flush=True)
+    elif sample_n.isdigit() and int(sample_n) > 0:
         cases = sample_cases(int(sample_n), seed=sample_seed, ops_root=OPS_ROOT)
         print(
-            f"SAMPLE n={len(cases)} seed={sample_seed} families="
+            f"SAMPLE n={len(cases)} seed={sample_seed} alloc="
+            f"{os.environ.get('UO_GEN_ALLOC') or 'proportional'} families="
             f"{Counter(c.get('family') for c in cases)}",
             flush=True,
         )
@@ -896,6 +994,8 @@ def main() -> int:
             "out": str(OUT),
             "sample_n": sample_n,
             "sample_seed": sample_seed if sample_n.isdigit() else None,
+            "exclude_n": len(_rel_items("UO_GEN_EXCLUDE")),
+            "exclude_file": os.environ.get("UO_GEN_EXCLUDE_FILE", ""),
         },
         "cases": [],
     }
@@ -957,6 +1057,9 @@ def main() -> int:
                     "cannbot_locate_ready": locate.get("cannbot_locate_ready"),
                     "locate_hit_rate": locate.get("locate_hit_rate"),
                     "locate_gaps": locate.get("gaps"),
+                    "source_api": noise.get("source_api"),
+                    "precision_gaps": noise.get("precision_gaps"),
+                    "kernel_api": locate.get("kernel_api"),
                 },
                 ensure_ascii=False,
             ),
@@ -966,8 +1069,10 @@ def main() -> int:
 
     doc["elapsed_s"] = round(time.perf_counter() - t_all, 3)
     doc["ok"] = all(bool(c.get("ok")) for c in doc["cases"] if not c.get("audit_only"))
+    doc["blockers"] = rank_blockers(doc.get("cases") or [])
     _save(doc)
     _write_summary(doc)
+    print("BLOCKERS", json.dumps(doc["blockers"], ensure_ascii=False), flush=True)
     print("ALL_DONE", json.dumps({"ok": doc["ok"], "elapsed_s": doc["elapsed_s"]}), flush=True)
     return 0 if doc["ok"] else 1
 

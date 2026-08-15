@@ -55,13 +55,37 @@ def load_manifest(project_root: Path | str, architecture: str = "") -> dict[str,
     return doc if isinstance(doc, dict) else {}
 
 
+def load_test_repo_contract(project_root: Path | str, architecture: str = "") -> dict[str, Any]:
+    root = Path(project_root).expanduser().resolve()
+    candidates: list[Path] = []
+    if architecture:
+        candidates.append(root / ".ascendc-pilot" / architecture / "tg" / "init" / "test_repo_contract.yaml")
+    agent = root / ".ascendc-pilot"
+    if agent.is_dir():
+        candidates.extend(sorted(agent.glob("*/tg/init/test_repo_contract.yaml")))
+    for path in candidates:
+        if not path.is_file():
+            continue
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(doc, dict) and doc:
+            return doc
+    return {}
+
+
 def load_adapter(project_root: Path | str, architecture: str = "") -> TestHarnessAdapter:
     manifest = load_manifest(project_root, architecture)
-    kind = str(manifest.get("kind") or "").strip().lower()
-    if kind == "fag":
-        from code_engineering.harness.fag import FagHarnessAdapter
+    contract = load_test_repo_contract(project_root, architecture)
+    kind = str((contract.get("kind") or manifest.get("kind") or "")).strip().lower()
+    has_repo = bool(contract.get("root") or manifest.get("root") or kind == "script_repo")
+    if has_repo and kind != "default_input":
+        from code_engineering.harness.script_repo import ScriptRepoAdapter
 
-        return FagHarnessAdapter(Path(project_root), architecture=architecture, manifest=manifest)
+        return ScriptRepoAdapter(
+            Path(project_root),
+            architecture=architecture,
+            manifest=manifest,
+            contract=contract,
+        )
     from code_engineering.harness.host_replay import HostReplayAdapter
 
     return HostReplayAdapter(Path(project_root), architecture=architecture, manifest=manifest)

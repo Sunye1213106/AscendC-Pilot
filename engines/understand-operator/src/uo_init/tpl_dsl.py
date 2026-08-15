@@ -110,6 +110,53 @@ def _join_continuations(src: str) -> str:
     return re.sub(r"\\\r?\n", " ", src)
 
 
+def strip_cpp_comments(src: str) -> str:
+    """Drop ``//`` and ``/* */`` so TPL macro args are not swallowed by comments.
+
+    Clustered DECL/SEL headers put a ``//`` note immediately after ``(``.
+    Without this, the first argument becomes the comment plus the dim name
+    and canonical TPL rebuild cannot match ARGS_SEL fields to TILING_KEY
+    entities.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(src or "")
+    text = src or ""
+    while i < n:
+        ch = text[i]
+        if ch in {'"', "'"}:
+            quote = ch
+            out.append(ch)
+            i += 1
+            while i < n:
+                cur = text[i]
+                out.append(cur)
+                if cur == "\\" and i + 1 < n:
+                    out.append(text[i + 1])
+                    i += 2
+                    continue
+                if cur == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if text.startswith("//", i):
+            i += 2
+            while i < n and text[i] != "\n":
+                i += 1
+            continue
+        if text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            if end < 0:
+                break
+            i = end + 2
+            out.append(" ")
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _balanced_paren_body(src: str, open_paren_idx: int) -> str:
     """open_paren_idx points at '('; return inside excluding outer parens."""
     depth = 0
@@ -213,6 +260,8 @@ def _subst_macro(body: str, params: list[str], args: list[str]) -> str:
         va = args[len(named) :]
         body = body.replace("__VA_ARGS__", ", ".join(va))
     for param, value in zip(named, args):
+        body = re.sub(rf"##\s*{re.escape(param)}\b", value, body)
+        body = re.sub(rf"\b{re.escape(param)}\s*##", value, body)
         body = re.sub(rf"\b{re.escape(param)}\b", value, body)
     return body
 
@@ -228,7 +277,7 @@ def expand_interesting_macros(text: str, defines: dict[str, tuple[list[str] | No
     if not interesting:
         return text
     src = _join_continuations(text or "")
-    for _ in range(24):
+    for _ in range(64):
         changed = False
         for name, (params, body) in interesting.items():
             if params is None:
@@ -243,20 +292,24 @@ def expand_interesting_macros(text: str, defines: dict[str, tuple[list[str] | No
                     src = nxt
                     changed = True
                 continue
-            match = re.search(rf"\b{re.escape(name)}\s*\(", src)
-            if not match:
-                continue
-            open_pos = src.find("(", match.start())
-            try:
-                inner = _balanced_paren_body(src, open_pos)
-            except ValueError:
-                continue
-            close = open_pos + 1 + len(inner)
-            args = _split_args(inner)
-            repl = _subst_macro(body, params, args)
-            src = src[: match.start()] + repl + src[close + 1 :]
-            changed = True
-            break
+            # Drain every call this pass. One-at-a-time with a 24-step cap
+            # left ARGS_SEL(helper(...)) wrappers unexpanded on large schemas.
+            expansions = 0
+            while expansions < 512:
+                match = re.search(rf"\b{re.escape(name)}\s*\(", src)
+                if not match:
+                    break
+                open_pos = src.find("(", match.start())
+                try:
+                    inner = _balanced_paren_body(src, open_pos)
+                except ValueError:
+                    break
+                close = open_pos + 1 + len(inner)
+                args = _split_args(inner)
+                repl = _subst_macro(body, params, args)
+                src = src[: match.start()] + repl + src[close + 1 :]
+                changed = True
+                expansions += 1
         if not changed:
             break
     return src
@@ -269,7 +322,26 @@ def load_quoted_include_texts(path: Path, *, extra_roots: list[Path] | None = No
         src = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    roots = [parent, *(extra_roots or []), *cann_include_search_roots()]
+    walk: list[Path] = []
+    cur = parent.resolve()
+    for _ in range(8):
+        walk.append(cur)
+        if (cur / "op_host").is_dir() or (cur / "op_kernel").is_dir():
+            walk.append(cur.parent)
+            walk.append(cur.parent.parent)
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+    try:
+        from uo_init.paths import ops_root
+
+        repo = ops_root()
+        if repo is not None:
+            walk.append(Path(repo))
+    except Exception:
+        pass
+    roots = [parent, *walk, *(extra_roots or []), *cann_include_search_roots()]
     texts: list[str] = []
     seen: set[Path] = set()
     pending: list[tuple[str, Path]] = [(src, parent)]
@@ -299,15 +371,58 @@ def load_quoted_include_texts(path: Path, *, extra_roots: list[Path] | None = No
     return texts
 
 
+def expand_get_tpl_arg_macros(text: str, defines: dict[str, tuple[list[str] | None, str]]) -> str:
+    """Expand object-like macros used as ``GET_TPL_TILING_KEY`` arguments.
+
+    Clustered TPL schemas pass unused-dimension placeholders such as
+    ``SET_NOT_USE_QUANT_MM_TILING`` → ``0UL, 0UL, 0``. Those bodies have no
+    ``ASCENDC_TPL_`` / ``GET_TPL`` hint, so ``expand_interesting_macros``
+    leaves them intact and arity never matches the ARGS_DECL.
+    """
+    src = _join_continuations(text or "")
+    object_macros = {
+        name: body
+        for name, (params, body) in defines.items()
+        if params is None and name != "GET_TPL_TILING_KEY" and body
+    }
+    if not object_macros:
+        return src
+    ident_re = re.compile(r"\b[A-Za-z_]\w*\b")
+    for _ in range(16):
+        changed = False
+        for match in re.finditer(r"\bGET_TPL_TILING_KEY\s*\(", src):
+            open_pos = src.find("(", match.start())
+            try:
+                inner = _balanced_paren_body(src, open_pos)
+            except ValueError:
+                continue
+
+            def _repl(token: re.Match[str]) -> str:
+                name = token.group(0)
+                return object_macros.get(name, name)
+
+            nxt = ident_re.sub(_repl, inner)
+            if nxt == inner:
+                continue
+            close = open_pos + 1 + len(inner)
+            src = src[: open_pos + 1] + nxt + src[close:]
+            changed = True
+            break
+        if not changed:
+            break
+    return src
+
+
 def expand_tpl_source(text: str, extra_texts: Iterable[str] | None = None) -> str:
     defines = collect_defines(text)
     for extra in extra_texts or ():
         defines.update(collect_defines(extra))
-    return expand_interesting_macros(text, defines)
+    expanded = expand_interesting_macros(text, defines)
+    return expand_get_tpl_arg_macros(expanded, defines)
 
 
 def parse_args_decl(src: str) -> TplSchema:
-    src = _join_continuations(src)
+    src = _join_continuations(strip_cpp_comments(src))
     m = re.search(r"ASCENDC_TPL_ARGS_DECL\s*\(", src)
     if not m:
         return TplSchema(op_tag="")
@@ -343,7 +458,7 @@ def parse_args_decl(src: str) -> TplSchema:
 
 def parse_args_sel(src: str) -> list[list[dict]]:
     """Return list of ARGS_SEL groups; each group is list of {name,kind,vals}."""
-    src = _join_continuations(src)
+    src = _join_continuations(strip_cpp_comments(src))
     groups: list[list[dict]] = []
     for m in re.finditer(r"ASCENDC_TPL_ARGS_SEL\s*\(", src):
         body = _balanced_paren_body(src, m.end() - 1)
@@ -355,18 +470,50 @@ def parse_args_sel(src: str) -> list[list[dict]]:
             inner = _balanced_paren_body(body, sm.end() - 1)
             parts = _split_args(inner)
             sels.append({"name": parts[0], "kind": kind, "vals": parts[1:]})
-        groups.append(sels)
+        if sels:
+            groups.append(sels)
     return groups
 
 
-def parse_file(path: str | Path) -> TplSchema:
-    header = Path(path)
-    text = header.read_text(encoding="utf-8", errors="replace")
-    extras = load_quoted_include_texts(header)
-    text = expand_tpl_source(text, extras)
-    schema = parse_args_decl(text)
-    schema.selections = parse_args_sel(text)
+def parse_tpl_corpus(paths: Iterable[str | Path]) -> TplSchema:
+    """Parse ARGS_DECL + ARGS_SEL from one or more TPL headers.
+
+    DECL and SEL often live in different files (``*_tiling_key_decl.h`` vs
+    ``archNN/*_tiling_key.h``). Quoted includes that themselves contain TPL
+    usages are merged; CANN ``template_argument.h`` is used only for macro
+    expansion so its ``#define ASCENDC_TPL_ARGS_DECL`` is not parsed as a
+    schema.
+    """
+    chunks: list[str] = []
+    extras: list[str] = []
+    seen: set[Path] = set()
+    for raw in paths:
+        header = Path(raw)
+        try:
+            key = header.resolve()
+        except OSError:
+            continue
+        if key in seen or not header.is_file():
+            continue
+        seen.add(key)
+        try:
+            chunks.append(header.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        extras.extend(load_quoted_include_texts(header))
+    tpl_extras = [
+        body
+        for body in extras
+        if "ASCENDC_TPL_ARGS_DECL" in body or "ASCENDC_TPL_ARGS_SEL" in body
+    ]
+    corpus = expand_tpl_source("\n".join(chunks + tpl_extras), extras)
+    schema = parse_args_decl(corpus)
+    schema.selections = parse_args_sel(corpus)
     return schema
+
+
+def parse_file(path: str | Path) -> TplSchema:
+    return parse_tpl_corpus([path])
 
 
 def expand_legal_instances(schema: TplSchema) -> list[dict[str, str]]:

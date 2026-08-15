@@ -10,7 +10,7 @@ import yaml
 
 
 def _write_synthetic_uo(project_root: Path) -> Path:
-    """Minimal CodeMap ``.uo`` with TG view_blobs (authority for D / host / graph)."""
+    """Minimal CodeMap ``.uo`` whose canonical TPL facts rebuild a 4-key D."""
     import sys
 
     uo_src = Path(__file__).resolve().parents[2] / "engines" / "understand-operator" / "src"
@@ -18,51 +18,60 @@ def _write_synthetic_uo(project_root: Path) -> Path:
         sys.path.insert(0, str(uo_src))
 
     from uo_init.ir.codemap import CodeMap
+    from uo_init.ir.entity import Entity, EntityKind
     from uo_init.store.writer import write_codemap
 
     cm = CodeMap(op_name="_synthetic_toy", architecture="arch0")
-    product = project_root / ".ascendc-pilot" / "uo" / "_synthetic_toy.arch0.uo"
-    views = {
-        "tiling/exhaustive_key_space.yaml": {
-            "schema": "uo-exhaustive-key-space/v1",
-            "legal_key_count": 4,
-            "legal_key_index": "tiling/legal_key_index.jsonl",
-            "fingerprint": "fp-toy",
-            "template_blocks": [],
-            "status": "template_admissible",
-        },
-        "tiling/legal_key_index.jsonl": {
-            "schema": "uo-legal-key-index/v1",
-            "count": 4,
-            "rows": [
-                {"tiling_key": 1, "dims": {"DimA": "0", "DimB": "0"}},
-                {"tiling_key": 2, "dims": {"DimA": "0", "DimB": "1"}},
-                {"tiling_key": 3, "dims": {"DimA": "1", "DimB": "0"}},
-                {"tiling_key": 4, "dims": {"DimA": "1", "DimB": "1"}},
-            ],
-        },
-        "ir/tg_host_view.yaml": {
-            "schema": "tg-host-view/v1",
-            "source": {"graph_fingerprint": "fp-toy"},
-            "fields": [
-                {"name": "DimA", "kind": "key_dim"},
-                {"name": "DimB", "kind": "key_dim"},
-            ],
-            "predicates": [],
-            "declared_keys": {
-                "DimA": {"packing": []},
-                "DimB": {"packing": []},
+    cm.add_entity(Entity(id="ARCH_arch0", kind=EntityKind.ARCH, name="arch0"))
+    shift = 0
+    dims = (("DimA", ["0", "1"]), ("DimB", ["0", "1"]))
+    for order, (name, domain) in enumerate(dims):
+        bw = 1
+        cm.add_entity(
+            Entity(
+                id=f"TK_{name}",
+                kind=EntityKind.TILING_KEY,
+                name=name,
+                attrs={
+                    "source_declared": True,
+                    "decl_kind": "UINT",
+                    "kind_tpl": "UINT",
+                    "bit_width": bw,
+                    "bw": bw,
+                    "bit_offset": shift,
+                    "bit_lo": shift,
+                    "bit_hi": shift + bw - 1,
+                    "decl_order": order,
+                    "allowed_values": list(domain),
+                    "value_domain": list(domain),
+                    "provenance": "source_tpl_args_decl",
+                },
+                file="op_kernel/arch0/_synthetic_toy_template_tiling_key.h",
+                status="confirmed",
+            )
+        )
+        shift += bw
+    cm.add_entity(
+        Entity(
+            id="TPL_SEL_0",
+            kind=EntityKind.TEMPLATE,
+            name="ARGS_SEL_0",
+            attrs={
+                "tpl_role": "args_sel_group",
+                "sel_group_index": 0,
+                "fixed_fields": {},
+                "field_domains": {name: list(domain) for name, domain in dims},
+                "product_count": 4,
+                "provenance": "source_tpl_args_sel",
             },
-            "platform_gates": [],
-        },
-        "ir/operator_graph.yaml": {
-            "schema": "operator-graph/v1",
-            "fingerprint": "fp-toy",
-            "nodes": [],
-            "edges": [],
-        },
-    }
-    write_codemap(cm, product, views=views, meta={"fingerprint": "fp-toy"})
+            file="op_kernel/arch0/_synthetic_toy_template_tiling_key.h",
+            status="confirmed",
+        )
+    )
+    product = (
+        project_root / ".ascendc-pilot" / "arch0" / "uo" / "_synthetic_toy.arch0.uo"
+    )
+    write_codemap(cm, product, meta={"fingerprint": "fp-toy"})
     return product
 
 

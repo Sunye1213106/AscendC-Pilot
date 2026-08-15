@@ -51,3 +51,27 @@ def test_selection_precondition_threaded(fag_dir):
     )
     writes = extract_writes_text(p, template_precondition="Normal")
     assert all(w.template_precondition == "Normal" for w in writes)
+
+
+def test_param_bindings_fibonacci_callers_finish_quickly():
+    """Same-named formals through a DAG of callers must not re-expand exponentially."""
+    import time
+
+    from uo_init.host_ir import FuncSummary, HostIR
+
+    summaries = {
+        "f0": FuncSummary(name="f0", params=["x"], locals={"y": "1"}),
+        "f1": FuncSummary(name="f1", params=["x"], locals={"y": "1"}),
+    }
+    for i in range(2, 36):
+        summaries[f"f{i}"] = FuncSummary(
+            name=f"f{i}",
+            params=["x"],
+            calls=[(f"f{i - 1}", ("x",)), (f"f{i - 2}", ("x",))],
+        )
+    ir = HostIR(summaries=summaries)
+    t0 = time.perf_counter()
+    got = ir.param_bindings()
+    assert time.perf_counter() - t0 < 1.0
+    assert "f0" in got
+    assert "f1" in got

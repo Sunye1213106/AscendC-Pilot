@@ -14,7 +14,7 @@ UO 能够说明 TilingKey 如何定义、Host 中哪些状态参与构造、Tili
 
 ### 场景 overlay 与 harness
 
-日常精度/性能走 `scenario_targeted`：规划目标 `T` 是已确认的 ScenarioSet，而不是全部声明 Key。构造从测试仓语料检索并变异少量 CSV，由 `TestHarnessAdapter` 跑 golden 或 profiling，收据回写 CE。`tilingkey_full_coverage` 证书与场景证书分 schema，默认全覆盖路径不变。
+日常精度/性能走 `scenario_targeted`：规划目标 `T` 是已确认的 ScenarioSet，而不是全部声明 Key。构造从测试仓语料检索并变异少量 CSV；没有测试仓时用 InputSemantics 默认 input。测试仓适配器把跑测译成 `ce-external-evidence/v1`。`tilingkey_full_coverage` 证书与场景证书分 schema，默认全覆盖路径不变。产品入口只有 `acp start tg-init|tg-plan|tg-solve` 加 `.uo` 加 `testcase_agent.closure`。`tg-closure` 是同一套 closure 库的 CI 入口，不是平行产品 CLI。CSV contract / YAML view 回退已删除。
 
 整体过程为**构造—回放—分析**的轮次循环：
 
@@ -57,6 +57,14 @@ D = 当前算子和架构下声明的合法 TilingKey 集合
 
 D 来自 UO 对 TilingKey 定义的展开，而不是 TG 自己从已有 testcase 中反推。
 
+### 测试脚本仓（可选）
+
+`--test-script-root` 指向算子自己的测试脚本仓（入口脚本 + CSV/表格）。TG 不把某个算子的列名或 runner 写进引擎：
+
+- 未指定：生成的 case 走默认 input（InputSemantics / CodeMap construct 的 knob 缺省）。
+- 已指定：engine 扫描入口、argparse、表头，写出 `tg/init/test_repo_inventory.yaml` 与 `test_repo_contract.yaml`。Agent 必须读测试仓代码，弄清如何传数、哪条命令是精度、哪条是性能，并把列映射到 UO。生成行必须填满该仓 schema，现有 runner 能直接跑。
+- 测试脚本与 CodeMap 不一致时记入 `findings`，供后续改测试脚本的 PR 使用。
+
 例如一个 TilingKey 由多个离散维度组成：
 
 ```text
@@ -89,7 +97,7 @@ R - D
 
 ### 委托只读查询（非嵌套 `/uo-query`）
 
-TG 需要解释 Host packing / guard / 字段写读时，应 `Task(actor=uo-query)` 并传入显式 **UO Product Handle**（op / arch / `.uo` path / fingerprint），**不要**再 `acp start /uo-query`。共用 `uo-query` Agent、METHOD 与 `kb-answer-v1` return contract。详见 [Agent Runtime](../architecture/agent-runtime.md)。
+TG 需要解释 Host packing / guard / 字段写读时，应 `Task(actor=uo-query)` 并传入算子绝对路径与 architecture，**不要** `pilot_run` / `acp start uo-query`。共用 `uo-query` Agent 与 METHOD。详见 [Agent Runtime](../architecture/agent-runtime.md)。
 
 ---
 

@@ -19,7 +19,11 @@ def _list_arch_candidates(project_root: Path) -> list[str]:
     return sorted(
         p.name
         for p in root.iterdir()
-        if p.is_dir() and (p / STATE_SUBDIR / "workflow.yaml").is_file()
+        if p.is_dir()
+        and (
+            (p / STATE_SUBDIR / "workflow.yaml").is_file()
+            or any((p / STATE_SUBDIR / "slots").glob("*/workflow.yaml"))
+        )
     )
 
 
@@ -115,7 +119,16 @@ def build_host_context(
     base["actor_id"] = str(aa.get("actor_id") or "")
     base["active_action_status"] = str(aa.get("status") or "")
 
-    state = load_state(root, arch=arch) or {}
+    pointer_wid = ""
+    try:
+        from ascendc_pilot.active_run import read_active_run
+
+        pointer = read_active_run(root) or {}
+        if str(pointer.get("architecture") or "") in {"", arch}:
+            pointer_wid = str(pointer.get("workflow_id") or "")
+    except Exception:  # noqa: BLE001
+        pointer_wid = ""
+    state = load_state(root, arch=arch, workflow_id=pointer_wid) or {}
     if not state:
         base["error"] = "NO_ACTIVE_WORKFLOW"
         base["message_zh"] = f"no workflow.yaml under .ascendc-pilot/{arch}/state"

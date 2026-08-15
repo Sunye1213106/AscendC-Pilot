@@ -1,19 +1,25 @@
-# Refresh AscendC-Pilot for OpenCode — uninstall → reinstall → verify.
+# Refresh AscendC-Pilot for OpenCode.
 #
-# Use after agent code changes, before re-testing in OpenCode:
+# Default (testing): skip pip, skip uninstall, skip engines/pilot copy.
+# Recompose generated skills/agents/commands and copy plugin + Host links.
+# Python engines already live via editable install.
+#
+# Use after plugin / skill / agent changes, before re-testing in OpenCode:
 #   1. Fully quit OpenCode (not just close a chat tab)
 #   2. From this repo root:
 #        .\refresh-opencode.ps1
 #   3. Start OpenCode again
 #
 # Options:
-#   -SkipPip     Skip pip reinstall (editable acp usually already live)
-#   -ForcePip    Force pip reinstall even if SKIP_PIP=1 is set in env
+#   -SkipPip     (default) Skip pip reinstall
+#   -ForcePip    Reinstall editable acp / uo / tg
+#   -Full        Uninstall + recopy engines/pilot/scripts
 #   -WhatIf      Show plan only
 #
 param(
   [switch]$SkipPip,
   [switch]$ForcePip,
+  [switch]$Full,
   [switch]$WhatIf
 )
 
@@ -21,6 +27,10 @@ $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $BundleRoot
 $InstallPs1 = Join-Path $BundleRoot "install.ps1"
+$sw = [Diagnostics.Stopwatch]::StartNew()
+# -SkipPip is the default; -ForcePip is the only way to reinstall packages.
+$doPip = [bool]$ForcePip -and -not $SkipPip
+$fast = -not $Full
 
 function Invoke-InstallPs1 {
   param(
@@ -70,11 +80,10 @@ Write-Host ""
 Write-Host "=== AscendC OpenCode refresh ==="
 Write-Host "Repo: $BundleRoot"
 Write-Host "Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+Write-Host ("Mode: " + $(if ($fast) { "fast (testing)" } else { "full" }))
 Write-Host ""
 Write-Host "Prerequisite: OpenCode must be fully exited (plugin is loaded at process start)."
-$oc = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-  $_.Name -match '^opencode\.exe$' -or ($_.ExecutablePath -and $_.ExecutablePath -match '[\\/]opencode\.exe$')
-})
+$oc = @(Get-CimInstance Win32_Process -Filter "Name = 'opencode.exe'" -ErrorAction SilentlyContinue)
 if ($oc.Count -gt 0) {
   Write-Host ("NOTE: {0} opencode.exe still running; stopping leftover serve processes so the TUI can bind." -f $oc.Count)
   foreach ($p in $oc) {
@@ -84,21 +93,29 @@ if ($oc.Count -gt 0) {
       Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
     }
   }
-  Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -match '^cmd\.exe$' -and $_.CommandLine -match 'opencode\s+serve' } |
-    ForEach-Object {
-      Write-Host ("  stopping PID {0} leftover opencode serve wrapper" -f $_.ProcessId)
-      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-    }
+  if (-not $fast) {
+    Get-CimInstance Win32_Process -Filter "Name = 'cmd.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -match 'opencode\s+serve' } |
+      ForEach-Object {
+        Write-Host ("  stopping PID {0} leftover opencode serve wrapper" -f $_.ProcessId)
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+  }
   Start-Sleep -Milliseconds 400
 }
 Write-Host ""
 
 if ($WhatIf) {
   Write-Host "[WhatIf] Would run:"
-  Write-Host "  1. install.ps1 uninstall-opencode"
-  Write-Host "  2. install.ps1 opencode   (contract audit + compose + plugin/skills/agents/commands)"
-  Write-Host "  3. Verify plugin, native commands, acp import, and deterministic drive"
+  if ($fast) {
+    Write-Host "  1. skip uninstall"
+    Write-Host "  2. install.ps1 opencode  (SKIP_PIP + FAST: compose + plugin/skills/agents/commands)"
+  } else {
+    Write-Host "  1. install.ps1 uninstall-opencode"
+    Write-Host "  2. install.ps1 opencode   (contract audit + compose + full runtime copy)"
+  }
+  Write-Host ("  pip: " + $(if ($doPip) { "reinstall" } else { "skip" }))
+  Write-Host "  3. Verify plugin, native commands, acp import"
   exit 0
 }
 
@@ -106,21 +123,30 @@ if (-not (Test-Path -LiteralPath $InstallPs1)) {
   throw "Missing install.ps1 at $InstallPs1"
 }
 
-# --- 1) Uninstall ---
-Write-Host "[1/3] Uninstall OpenCode AscendC bits..."
-Invoke-InstallPs1 -Arg "uninstall-opencode"
+$envExtra = @{}
+if (-not $doPip) {
+  $envExtra["SKIP_PIP"] = "1"
+}
+
+# --- 1) Uninstall (full only) ---
+if ($fast) {
+  Write-Host "[1/3] Skip uninstall (fast refresh keeps engines/pilot/scripts)"
+} else {
+  Write-Host "[1/3] Uninstall OpenCode AscendC bits..."
+  Invoke-InstallPs1 -Arg "uninstall-opencode"
+}
 
 # --- 2) Reinstall ---
 Write-Host ""
 Write-Host "[2/3] Reinstall OpenCode AscendC bits..."
-$envExtra = @{}
-if ($ForcePip) {
+if ($doPip) {
   Write-Host "  pip: FORCED reinstall"
-} elseif ($SkipPip -or $env:SKIP_PIP -eq "1") {
-  $envExtra["SKIP_PIP"] = "1"
-  Write-Host "  pip: SKIPPED (editable packages assumed current)"
 } else {
-  Write-Host "  pip: reinstall editable acp / uo / tg"
+  Write-Host "  pip: SKIPPED (editable packages assumed current)"
+}
+if ($fast) {
+  $envExtra["ASCENDC_FAST_INSTALL"] = "1"
+  Write-Host "  copy: plugin + generated runtime only"
 }
 
 Invoke-InstallPs1 -Arg "opencode" -EnvExtra $envExtra
@@ -165,6 +191,17 @@ foreach ($name in @("uo-init", "tg-init", "tg-plan", "tg-solve", "ce-review")) {
 }
 
 # Pilot Python must be THIS repo (editable) and include new modules
+$auditSnippet = if ($fast) {
+  "print('HARNESS_OK')"
+} else {
+@"
+sys.path.insert(0, str(root / 'scripts'))
+from check_execution_contracts import audit
+errs = audit(root)
+assert not errs, errs
+print('HARNESS_OK')
+"@
+}
 $pyCheck = @"
 import ascendc_pilot, pathlib, sys
 p = pathlib.Path(ascendc_pilot.__file__).resolve()
@@ -179,26 +216,25 @@ assert hasattr(obs, 'apply_observation')
 assert hasattr(lease, 'issue_containment_lease')
 assert callable(drive_until_interaction)
 assert all(a.get('agent_id') == 'deterministic-uo-engine' for a in WORKFLOWS['uo-init']['actions'] if a.get('execution_mode') == 'deterministic')
-sys.path.insert(0, str(root / 'scripts'))
-from check_execution_contracts import audit
-errs = audit(root)
-assert not errs, errs
-print('HARNESS_OK')
+$auditSnippet
 "@
 $pyOut = & python -c $pyCheck 2>&1
 if ($LASTEXITCODE -ne 0) {
   Write-Host $pyOut
   throw "VERIFY FAIL: acp python import / execution-contract check failed"
 }
-Assert-True ("$pyOut" -match "HARNESS_OK") "acp imports from this repo + execution contracts pass"
+$verifyMsg = if ($fast) { "acp imports from this repo" } else { "acp imports from this repo + execution contracts pass" }
+Assert-True ("$pyOut" -match "HARNESS_OK") $verifyMsg
 
 # acp CLI on PATH
 $harnessCmd = Get-Command acp -ErrorAction SilentlyContinue
 Assert-True ($null -ne $harnessCmd) "acp CLI is on PATH ($($harnessCmd.Source))"
 
+$sw.Stop()
 Write-Host ""
 Write-Host "=== Refresh complete ==="
 Write-Host "Plugin hash : $dstHash"
+Write-Host ("Elapsed     : {0:N1}s" -f $sw.Elapsed.TotalSeconds)
 Write-Host "Next steps  :"
 Write-Host "  1. Start OpenCode"
 Write-Host "  2. Tab → ascendc-pilot (primary)"

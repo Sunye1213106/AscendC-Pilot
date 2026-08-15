@@ -309,7 +309,9 @@ _READ_TOOLS = frozenset({"read", "glob", "grep", "list", "search", "find"})
 _WRITE_TOOLS = frozenset({"write", "edit", "apply_patch", "strreplace", "patch"})
 _BASH_TOOLS = frozenset({"bash", "shell", "terminal"})
 _TASK_TOOLS = frozenset({"task", "subagent", "task_tool"})
-_QUESTION_TOOLS = frozenset({"question", "ask_user", "ask"})
+_QUESTION_TOOLS = frozenset({"question", "ask_user", "ask", "askquestion", "ask_question"})
+_SKILL_TOOLS = frozenset({"skill"})
+_HOST_DRIVER_TOOLS = frozenset({"pilot_run", "pilotrun", "todowrite", "todo_write"})
 
 
 def _ok(decision: str, reason_code: str, reason_zh: str, **extra: Any) -> dict[str, Any]:
@@ -607,6 +609,73 @@ def _split_shell_segments(command: str) -> list[str]:
     return segments
 
 
+def _split_unquoted_pipes(command: str) -> list[str]:
+    """Split on ``|`` outside quotes only (not ``&&`` / ``;``)."""
+    cmd = command or ""
+    segments: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if quote:
+            buf.append(ch)
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and i + 1 < n:
+                buf.append(cmd[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == "|":
+            seg = "".join(buf).strip()
+            if seg:
+                segments.append(seg)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    seg = "".join(buf).strip()
+    if seg:
+        segments.append(seg)
+    return segments
+
+
+def _has_acp_stdout_pipe(command: str) -> bool:
+    """Policy 8: never buffer ``acp`` through Select-Object / tail / Out-String."""
+    segs = _split_unquoted_pipes(command)
+    if len(segs) < 2:
+        return False
+    return any(_is_acp_cli(s) for s in segs)
+
+
+_REPO_SEARCH_HEAD = re.compile(
+    r"^\s*(grep|rg|ripgrep|findstr|Select-String|sls)\b", re.I
+)
+
+
+def _is_uo_query_actor(agent_l: str, action_id: str, workflow_id: str) -> bool:
+    return workflow_id == "uo-query" or agent_l == "uo-query" or action_id == "kb_lookup"
+
+
+def _is_repo_search_bash(command: str) -> bool:
+    cmd = (command or "").strip()
+    if not cmd:
+        return False
+    segments = _split_shell_segments(cmd)
+    if not segments:
+        return False
+    return bool(_REPO_SEARCH_HEAD.search(segments[0]))
+
+
 def _is_readonly_inspect_bash(command: str) -> bool:
     """Allow ls / Get-ChildItem / pwd / cd … for structure probing (no writes)."""
     cmd = (command or "").strip()
@@ -630,6 +699,31 @@ def _is_readonly_inspect_bash(command: str) -> bool:
             continue
         return False
     return True
+
+
+def _maybe_deny_uo_query_repo_search(
+    *,
+    command: str,
+    agent_l: str,
+    action_id: str,
+    workflow_id: str,
+    status: str | None = None,
+    phase: Any = None,
+) -> dict[str, Any] | None:
+    if not _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
+        return None
+    if not _is_repo_search_bash(command):
+        return None
+    return _ok(
+        "deny",
+        "REPO_GREP_ESCAPE",
+        "uo-query 禁止仓级 findstr/grep/rg；用 acp uo-query 或 acp ro-search --paths <已 citation 文件>",
+        error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+        status=status,
+        workflow_id=workflow_id or None,
+        phase=phase,
+        command=(command or "")[:200],
+    )
 
 
 def _uses_exploration_budget(tool_l: str, agent_l: str, action_id: str, workflow_id: str) -> bool:
@@ -827,6 +921,35 @@ def _authorize_impl(
     if tool_l in _QUESTION_TOOLS:
         return _ok("allow", "QUESTION_OK", "允许向用户提问或报告", status=status or None)
 
+    # Host Session Driver tools (pilot_run / native todo) — not domain search.
+    if tool_l in _HOST_DRIVER_TOOLS:
+        return _ok(
+            "allow",
+            "HOST_DRIVER_OK",
+            "允许 Host Session Driver / 原生 Todo",
+            status=status or None,
+            tool=tool_l,
+        )
+
+    # OpenCode skill tool: primary loads workflow skills; subagents read session method.md.
+    if tool_l in _SKILL_TOOLS:
+        if agent_l in _PRIMARY_AGENTS:
+            return _ok(
+                "allow",
+                "SKILL_PRIMARY",
+                "主控允许加载 workflow skill（子代理读 session method.md）",
+                status=status or None,
+                agent=agent_l or None,
+            )
+        return _ok(
+            "deny",
+            "SKILL_SUBAGENT_ESCAPE",
+            "子代理禁止 OpenCode skill 工具；方法已物化到 session method.md / refs/。",
+            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            tool=tool_l,
+            agent=agent_l or None,
+        )
+
     # --- uo-query exploration budget (claim-driven Explore) ---
     wid_state = str(state.get("workflow_id") or "")
     if (
@@ -1007,6 +1130,15 @@ def _authorize_impl(
                         command=cmd[:200],
                     )
             if _is_readonly_inspect_bash(cmd_raw if cmd_raw else cmd):
+                denied = _maybe_deny_uo_query_repo_search(
+                    command=cmd_raw if cmd_raw else cmd,
+                    agent_l=agent_l,
+                    action_id=action_id,
+                    workflow_id=str(ctx.get("workflow_id") or wid_state or ""),
+                    status=status,
+                )
+                if denied:
+                    return denied
                 return _ok(
                     "allow",
                     "BASH_READONLY_INSPECT",
@@ -1063,6 +1195,14 @@ def _authorize_impl(
 
     # --- bash / shell ---
     if tool_l in _BASH_TOOLS:
+        if _has_acp_stdout_pipe(cmd_raw if cmd_raw else cmd):
+            return _ok(
+                "deny",
+                "ACP_PIPE_BUFFER",
+                "禁止把 acp 管道给 Select-Object / Out-String / tail；直接跑 acp，不要缓冲 stdout",
+                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                command=(cmd_raw or cmd)[:200],
+            )
         if agent_l and agent_l not in _PRIMARY_AGENTS:
             from ascendc_pilot.agents_registry import forbidden_blocks_bash
 
@@ -1109,6 +1249,16 @@ def _authorize_impl(
                 )
         # Structure probes: ls / Get-ChildItem / pwd / cd … (no writes / no domain CLI).
         if _is_readonly_inspect_bash(cmd_raw if cmd_raw else cmd):
+            denied = _maybe_deny_uo_query_repo_search(
+                command=cmd_raw if cmd_raw else cmd,
+                agent_l=agent_l,
+                action_id=action_id,
+                workflow_id=str(ctx.get("workflow_id") or ""),
+                status=status,
+                phase=ctx.get("phase"),
+            )
+            if denied:
+                return denied
             return _ok(
                 "allow",
                 "BASH_READONLY_INSPECT",
@@ -1133,6 +1283,16 @@ def _authorize_impl(
 
     # --- read / glob / grep ---
     if tool_l in _READ_TOOLS:
+        if tool_l == "grep" and _is_uo_query_actor(
+            agent_l, action_id, str(ctx.get("workflow_id") or "")
+        ):
+            return _ok(
+                "deny",
+                "REPO_GREP_ESCAPE",
+                "uo-query 禁止 Grep 工具；用 acp uo-query 或 acp ro-search --paths <已 citation 文件>",
+                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                tool=tool_l,
+            )
         norm = path_s.replace("\\", "/")
         if state and status == "running" and _is_engine_source(norm) and "engines/" in norm.lower():
             base = norm.rsplit("/", 1)[-1].lower()
@@ -1298,8 +1458,23 @@ def _authorize_impl(
                     tool=tool_l,
                 )
             target = path_s or cmd
-            declared_actors = _declared_phase_actors(allowed, meta, project_root)
             target_l = target.strip().lower()
+            # uo-query is not a Host Session Driver workflow (host_driver: False).
+            # Primary may Task it after uo-init (or any leftover Host phase).
+            # declared_actors always includes ascendc-pilot/human, so the
+            # emptiness check never skipped this gate — ses_ff9e.
+            from ascendc_pilot.workflows import workflow_uses_host_driver
+
+            if target_l and not workflow_uses_host_driver(target_l):
+                return _ok(
+                    "allow",
+                    "TASK_OK",
+                    "允许派发非 Host 驱动的只读查询子代理",
+                    agent=target,
+                    phase=ctx.get("phase"),
+                    workflow_id=ctx.get("workflow_id"),
+                )
+            declared_actors = _declared_phase_actors(allowed, meta, project_root)
             if target_l and declared_actors and target_l not in declared_actors:
                 return _ok(
                     "deny",

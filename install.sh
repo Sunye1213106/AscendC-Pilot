@@ -208,13 +208,41 @@ if [[ "$PLATFORM" == "opencode" ]]; then
   mkdir -p "$PLUGINS" "$COMMANDS"
   # OpenCode autoloads every *.ts in this directory as a plugin factory.
   # Copy only real plugins. pilot-driver.ts is a library loaded from $DEST.
-  for f in "$BUNDLE_ROOT"/opencode-plugin/ascendc-pilot.ts "$BUNDLE_ROOT"/opencode-plugin/zz-uo-query-return-value.ts; do
+  for f in "$BUNDLE_ROOT"/opencode-plugin/ascendc-pilot.ts; do
     [[ -f "$f" ]] || continue
     base="$(basename "$f")"
     cp "$f" "$PLUGINS/$base"
     echo "Installed plugin → $PLUGINS/$base"
   done
-  rm -f "$PLUGINS/pilot-driver.ts"
+  rm -f "$PLUGINS/pilot-driver.ts" "$PLUGINS/zz-uo-query-return-value.ts" "$PLUGINS/uo-query-return-value.ts"
+  # OpenCode 1.18 RipgrepBinary uses $XDG_CACHE_HOME/opencode/bin (default
+  # ~/.cache/opencode/bin), not only ~/.local/share/opencode/bin.
+  RG_SRC=""
+  if command -v rg >/dev/null 2>&1; then
+    RG_SRC="$(command -v rg)"
+  fi
+  OC_BINS=(
+    "$HOME/.local/share/opencode/bin"
+    "${XDG_CACHE_HOME:-$HOME/.cache}/opencode/bin"
+    "$HOME/.cache/opencode/bin"
+  )
+  SEEDED=0
+  for OC_BIN in "${OC_BINS[@]}"; do
+    mkdir -p "$OC_BIN"
+    if [[ -x "$OC_BIN/rg" ]]; then
+      SEEDED=1
+      continue
+    fi
+    if [[ -n "$RG_SRC" ]]; then
+      cp "$RG_SRC" "$OC_BIN/rg"
+      chmod +x "$OC_BIN/rg"
+      echo "Seeded OpenCode rg → $OC_BIN/rg"
+      SEEDED=1
+    fi
+  done
+  if [[ "$SEEDED" -eq 0 ]]; then
+    echo "WARN: no rg to seed; plugin skill tool still loads SKILL.md without rg"
+  fi
   if [[ -d "$DEST/commands" ]]; then
     for f in "$DEST/commands"/*.md; do
       [[ -f "$f" ]] || continue

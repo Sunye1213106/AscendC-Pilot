@@ -82,3 +82,16 @@ def test_call_hook_receives_the_call_node():
 
 def test_free_symbols():
     assert free_symbols(parse_expr("a == b && f(c)")) == {"a", "b", "c"}
+
+
+def test_parse_expr_rejects_pathological_length_quickly():
+    import time
+
+    from uo_init.expr_ir import Unknown
+
+    blob = ("a && " * 5000) + "b"
+    t0 = time.perf_counter()
+    got = parse_expr(blob)
+    assert time.perf_counter() - t0 < 0.2
+    assert isinstance(got, Unknown)
+    assert got.reason == "expr_too_long"

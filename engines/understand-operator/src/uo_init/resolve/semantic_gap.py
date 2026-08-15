@@ -30,6 +30,8 @@ _KERNEL_API_NEEDLES = frozenset(
         "CrossCoreSetFlag",
         "CrossCoreWaitFlag",
         "PipeBarrier",
+        "Copy",
+        "LoadData",
         "LoadAlign",
         "SetGlobalBuffer",
         "AllocTensor",
@@ -102,15 +104,18 @@ def summarize_gaps(gaps: list[dict[str, Any]]) -> dict[str, int]:
     }
 
 
-def list_gaps(codemap: CodeMap) -> list[dict[str, Any]]:
+def list_gaps(codemap: CodeMap, audit: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Return locate-relevant gaps. Settled PROJECT/BUILTIN/REACHED are omitted.
 
     Audit blocking codes stay. Partial entities are classified; host runtime
     leaves are kept but bucketed so they do not look like locate failure.
+    Pass ``audit`` when the caller already ran ``audit_codemap`` — same rows,
+    no second full-graph walk.
     """
-    from uo_init.diagnostics.audit import audit_codemap
+    if audit is None:
+        from uo_init.diagnostics.audit import audit_codemap
 
-    audit = audit_codemap(codemap)
+        audit = audit_codemap(codemap)
     gaps: list[dict[str, Any]] = []
     code_map = {
         "MISSING_KERNEL": "missing_kernel",

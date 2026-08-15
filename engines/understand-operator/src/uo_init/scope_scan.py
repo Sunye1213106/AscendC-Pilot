@@ -415,6 +415,8 @@ def _role_of(path: Path) -> str:
     if "op_kernel" in segments:
         return ROLE_KERNEL_ENTRY
     if "op_host" in segments:
+        if "op_tiling" in segments:
+            return ROLE_HOST_TILING
         if stem.endswith("_def"):
             return ROLE_HOST_DEF
         if "infershape" in stem or stem.endswith("_proto"):
@@ -639,6 +641,7 @@ def clang_include_paths(
     args: list[str],
     *,
     op_dir: str | Path = "",
+    side: str = "kernel",
 ) -> ClangIncludeResult:
     """Files Clang actually included while parsing ``tu_path``.
 
@@ -652,11 +655,14 @@ def clang_include_paths(
         return ClangIncludeResult(ok=False, error="libclang_not_installed")
     path_s = str(tu_path)
     try:
+        from uo_init.bisheng_attrs import parse_unsaved_kwargs
+
         idx = cindex.Index.create()
         tu = idx.parse(
             path_s,
             args=list(args),
             options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+            **parse_unsaved_kwargs(op_dir, side=side),
         )
     except Exception as exc:  # noqa: BLE001
         return ClangIncludeResult(
@@ -769,7 +775,7 @@ def enrich_with_clang(
 
     def _parse_one(job: tuple[Path, list[str], str]) -> tuple[Path, str, ClangIncludeResult]:
         tu_path, args, side = job
-        return tu_path, side, clang_include_paths(tu_path, args, op_dir=op_dir_s)
+        return tu_path, side, clang_include_paths(tu_path, args, op_dir=op_dir_s, side=side)
 
     parsed_jobs: list[tuple[Path, str, ClangIncludeResult]]
     if len(jobs) <= 1:

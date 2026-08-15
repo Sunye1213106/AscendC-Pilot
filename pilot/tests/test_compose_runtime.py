@@ -58,6 +58,7 @@ def test_uo_actions_match_engine_and_prompt_boundary():
 
     query = next(a for a in WORKFLOWS["uo-query"]["actions"] if a["id"] == "kb_lookup")
     assert query["task_prompt_id"] == "uo/codemap-query"
+    assert WORKFLOWS["uo-query"].get("host_driver") is False
 
     investigate = {a["id"]: a for a in WORKFLOWS["uo-investigate"]["actions"]}
     inv = investigate["investigate"]
@@ -143,6 +144,20 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         tg_skill = (generated / "skills" / "tg-solve" / "SKILL.md").read_text(encoding="utf-8")
         assert "| `solve_precheck` | `deterministic` | `engine` |" in tg_skill
         assert "deterministic-tg-engine" not in tg_skill
+        pilot_agent = (generated / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
+        uo_query_agent = (generated / "agents" / "uo-query.md").read_text(encoding="utf-8")
+        assert "Select-Object *" in pilot_agent
+        assert "grep: deny" in uo_query_agent
+        assert "external_directory: allow" in pilot_agent
+        assert "external_directory: allow" in uo_query_agent
+        assert "read: allow" in pilot_agent
+        assert "read: allow" in uo_query_agent
+        assert "task: allow" in pilot_agent
+        assert "skill: false" in uo_query_agent
+        assert "grep: false" in uo_query_agent
+        assert "There is no session `prompt.md`" in uo_query_agent
+        assert "acp uo-query --project" in uo_query_agent
+        assert "Do not switch to MCP" in uo_query_agent
     finally:
         shutil.rmtree(generated, ignore_errors=True)
 
@@ -171,7 +186,13 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
         text = path.read_text(encoding="utf-8")
         assert "agent: ascendc-pilot" in text
         assert "subtask: false" in text
-        assert "acp run-action auto" in text
+        if name == "uo-query":
+            assert "pilot_run" in text
+            assert "不要 `pilot_run`" in text
+            assert "先对人说出路由" in text
+            assert "acp run-action auto" not in text
+        else:
+            assert "acp run-action auto" in text
 
 
 def test_cognitive_skill_ids_include_code_engineering():

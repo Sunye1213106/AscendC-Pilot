@@ -476,7 +476,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
         return {
             "ok": True,
             "status": "idle",
-            "message_zh": "没有活动执行槽",
+            "message_zh": "没有活动工作流",
         }
     if state.get("status") in TERMINAL:
         if str(state.get("status") or "") == "passed":
@@ -489,7 +489,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
                     "status": "passed",
                     "already_complete": True,
                     "state": snap,
-                    "message_zh": "工作流已完成；已释放执行槽。",
+                    "message_zh": "工作流已完成；已释放本产物族锁。",
                 },
                 project_root,
                 state=snap,
@@ -610,10 +610,23 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
     from ascendc_pilot.todo import attach_todo
 
     payload = attach_todo(payload, project_root, state=fresh)
+    if wid in {"uo-init", "uo-update"}:
+        try:
+            from ascendc_pilot.occupancy import publish_uo_digest
+
+            published = publish_uo_digest(
+                project_root,
+                architecture=str((fresh or {}).get("architecture") or ""),
+                op_name=str((fresh or {}).get("op_name") or ""),
+            )
+            payload["uo_digest"] = published.get("digest") or ""
+            payload["stale_sessions"] = published.get("stale_sessions") or []
+        except Exception:  # noqa: BLE001
+            pass
     released = release_live_execution(
         project_root, reason="workflow_passed", state=fresh
     )
     payload["released_execution"] = released
     if not payload.get("message_zh"):
-        payload["message_zh"] = "工作流已完成；已释放执行槽。"
+        payload["message_zh"] = "工作流已完成；已释放本产物族锁。"
     return payload

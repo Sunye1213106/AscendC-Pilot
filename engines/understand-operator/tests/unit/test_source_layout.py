@@ -13,6 +13,8 @@ from uo_init.source_layout import (
     selected_host_files,
     selected_kernel_files,
     selected_tiling_headers,
+    tpl_decl_files,
+    tpl_sel_files,
 )
 
 
@@ -134,6 +136,66 @@ def test_stub_emits_nested_macro_struct_referenced_by_parent(tmp_path: Path) -> 
     assert "struct TCubeTiling" not in stub
 
 
+def test_stub_skips_kernel_using_alias_for_host_macro_struct(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _write(
+        op / "op_host" / "tiling.h",
+        "BEGIN_TILING_DATA_DEF(ToyTilingData)\n"
+        "TILING_DATA_FIELD_DEF(uint32_t, n)\n"
+        "END_TILING_DATA_DEF\n",
+    )
+    _write(
+        op / "op_kernel" / "toy_apt.cpp",
+        "struct ToyArch35TilingData { uint32_t n; };\n"
+        "using ToyTilingData = ToyArch35TilingData;\n",
+    )
+    stub = render_stub(op, "arch35")
+    assert "struct ToyTilingData" not in stub
+    assert "GET_TILING_DATA_WITH_STRUCT" in stub
+
+
+
+def test_install_force_includes_real_cann_kernel_tiling(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from uo_init.kernel_tiling_view import install_kernel_tiling_view
+
+    op = tmp_path / "toy"
+    _write(
+        op / "op_host" / "tiling.h",
+        "BEGIN_TILING_DATA_DEF(OuterTiling)\n"
+        "TILING_DATA_FIELD_DEF(uint32_t, n)\n"
+        "END_TILING_DATA_DEF\n",
+    )
+    _write(op / "op_kernel" / "entry.cpp", "REGISTER_TILING_DEFAULT(OuterTiling);\n")
+    cann_h = (
+        tmp_path
+        / "cann"
+        / "cann-asc-devkit"
+        / "x86_64-linux"
+        / "ascendc"
+        / "include"
+        / "highlevel_api"
+        / "kernel_tiling"
+        / "kernel_tiling.h"
+    )
+    _write(cann_h, "struct TCubeTiling { uint32_t M; };\n")
+    ctx = SimpleNamespace(
+        op_dir=str(op),
+        arch_dir="arch35",
+        cann_root=str(tmp_path / "cann"),
+        extra_kernel_force_includes=[],
+        kernel_includes=lambda: [str(cann_h.parent.parent)],
+        add_force_include=None,
+    )
+    spec = SimpleNamespace(op_dir=op, arch_dir="arch35", op_snake="toy")
+    path = install_kernel_tiling_view(spec, ctx)
+    assert path is not None
+    force = [p.replace("\\", "/") for p in ctx.extra_kernel_force_includes]
+    assert any(p.endswith("toy_tiling_stub.h") for p in force)
+    assert not any(p.endswith("kernel_tiling/kernel_tiling.h") for p in force)
+
+
 def test_kernel_entry_regex_accepts_qualifier_orders() -> None:
     text = (
         "extern \"C\" __global__ void plain(int x) { }\n"
@@ -144,6 +206,45 @@ def test_kernel_entry_regex_accepts_qualifier_orders() -> None:
     names = {m.group("name") for m in GLOBAL_KERNEL_RE.finditer(text)}
     assert names == {"plain", "reversed", "classic"}
     assert KERNEL_ENTRY_NAME_RE.findall(text) == ["plain", "reversed", "classic"]
+
+
+def test_tpl_sel_files_follow_entry_include_to_split_header(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _write(
+        op / "op_kernel" / "toy_tiling_key_decl.h",
+        "ASCENDC_TPL_ARGS_DECL(Toy, ASCENDC_TPL_BOOL_DECL(Flag, 0, 1));\n",
+    )
+    _write(
+        op / "op_kernel" / "arch35" / "toy_apt_tiling_key.h",
+        '#include "../toy_tiling_key_decl.h"\n'
+        "ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(Flag, 0, 1));\n",
+    )
+    _write(
+        op / "op_kernel" / "toy_apt.cpp",
+        '#include "arch35/toy_apt_tiling_key.h"\n'
+        "__global__ __aicore__ void toy() {}\n",
+    )
+    decls = tpl_decl_files(op, "arch35")
+    sels = tpl_sel_files(op, "arch35")
+    assert [p.name for p in decls] == ["toy_tiling_key_decl.h"]
+    assert [p.name for p in sels] == ["toy_apt_tiling_key.h"]
+
+
+def test_tpl_decl_ignores_sibling_operator_include(tmp_path: Path) -> None:
+    """Fusion wrappers include another op's TPL header; that is not this schema."""
+    sib = tmp_path / "other_op"
+    _write(
+        sib / "op_kernel" / "other_tiling_key_decl.h",
+        "ASCENDC_TPL_ARGS_DECL(Other, ASCENDC_TPL_BOOL_DECL(Flag, 0, 1));\n",
+    )
+    op = tmp_path / "fusion_op"
+    _write(
+        op / "op_kernel" / "fusion_apt.cpp",
+        '#include "../../other_op/op_kernel/other_tiling_key_decl.h"\n'
+        "__global__ __aicore__ void fusion_op() {}\n",
+    )
+    assert tpl_decl_files(op, "arch35") == []
+    assert tpl_sel_files(op, "arch35") == []
 
 
 def test_mixed_arch_includes_do_not_pin_a_foreign_entry() -> None:

@@ -36,12 +36,6 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
         str(plugins / "ascendc-pilot.ts"),
     )
     add(
-        "plugin_return_value_ts",
-        (plugins / "zz-uo-query-return-value.ts").is_file()
-        or (plugins / "uo-query-return-value.ts").is_file(),
-        "zz-uo-query-return-value.ts",
-    )
-    add(
         "plugin_pilot_driver_ts",
         (plugins / "pilot-driver.ts").is_file()
         or (home / "ascendc-pilot-plugin" / "opencode-plugin" / "pilot-driver.ts").is_file()
@@ -75,6 +69,46 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
     cog = home / "ascendc-pilot-plugin" / "cognitive-skills"
     cog_ids = [p.name for p in cog.iterdir()] if cog.is_dir() else []
     add("cognitive_skills_present", bool(cog_ids), ",".join(cog_ids[:8]))
+
+    plug_ts = plugins / "ascendc-pilot.ts"
+    plug_text = plug_ts.read_text(encoding="utf-8") if plug_ts.is_file() else ""
+    add(
+        "plugin_uo_query_return_capture",
+        "captureUoQueryTaskReturn" in plug_text and "ASCENDC_ACTION_RESULT" in plug_text,
+        "uo-query Task return captured in ascendc-pilot.ts",
+    )
+    add(
+        "plugin_skill_rg_recovery",
+        "resolveInstalledSkillMd" in plug_text and "Do NOT overwrite OpenCode Task" in plug_text,
+        "skill rg recovery + Host session location",
+    )
+    add(
+        "plugin_keeps_host_session_location",
+        "Do NOT overwrite OpenCode Task" in plug_text
+        and "args.location = { directory: projectRoot }" not in plug_text,
+        "Task location stays Host workspace",
+    )
+
+    import shutil
+    import subprocess
+
+    acp_bin = shutil.which("acp")
+    if acp_bin:
+        query_alias = False
+        query_detail = "uo-query --help"
+        try:
+            proc = subprocess.run(
+                [acp_bin, "uo-query", "--help"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+            help_text = f"{proc.stdout or ''}{proc.stderr or ''}"
+            query_alias = "--query" in help_text
+        except Exception as exc:  # noqa: BLE001
+            query_detail = str(exc)[:160]
+        add("acp_uo_query_query_alias", query_alias, query_detail)
 
     harness_bin = home / "ascendc-harness-bin"
     add("harness_bin_cache", harness_bin.is_file(), str(harness_bin))

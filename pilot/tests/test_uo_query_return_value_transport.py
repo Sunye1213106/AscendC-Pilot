@@ -21,6 +21,35 @@ def test_parse_host_action_result_from_fenced_yaml() -> None:
     assert payload is not None
     assert payload["schema"] == "kb-answer-v1"
     assert payload["answer_zh"] == "partial"
+    assert payload["_transport"] == "native_task"
+
+
+def test_parse_host_action_result_keeps_native_prose() -> None:
+    text = """三相是 PRE → CORE → POST。
+证据：op_kernel/arch35/entry.h:12-40 的 pipeIn / pipeBase / pipePost。
+
+```yaml
+schema: kb-answer-v1
+status: ANSWERED
+question: q
+answer_zh: 短摘要
+adequacy: ANSWERED
+```
+"""
+    payload = actions._parse_host_action_result(text)
+    assert payload is not None
+    assert "pipeIn" in payload["answer_zh"]
+    assert "短摘要" not in payload["answer_zh"] or "三相" in payload["answer_zh"]
+    assert payload["_transport"] == "native_task"
+    assert payload["status"] == "ANSWERED"
+
+
+def test_parse_host_action_result_plain_explore_message() -> None:
+    payload = actions._parse_host_action_result("BN2 走 IS_BN2_MULTIBLK，见 kernel.h:88。")
+    assert payload is not None
+    assert payload["schema"] == "kb-answer-v1"
+    assert "IS_BN2_MULTIBLK" in payload["answer_zh"]
+    assert payload["_transport"] == "native_task"
 
 
 def test_run_action_passes_result_file_through_facade(monkeypatch, tmp_path: Path) -> None:

@@ -220,16 +220,16 @@ meta + BuildVariant
 
 **Unresolved 是正式结果**：静态证据不足、关系含糊、依赖外部系统或不受支持时，应记录为 unresolved，而不是由 LLM 补写 canonical `.uo`。调查 Agent 可以分类并产出 bounded report；确定性引擎仍是规范 CodeMap 的唯一写入者。
 
-实现层：`store/schema.py`、`store/writer.py`、`ir/`、`workflow.py`（commit / verify）；query/update 见下文。
+实现层：`store/schema.py`、`store/writer.py`、`ir/`、`codemap_engines.py` / `build.py`（commit / verify）；query/update 见下文。
 
 ---
 
 
 
-## 四条 UO 工作流
+## 四条 UO 入口
 
 ```text
-Source -> CodeMap -> {/uo-query 只读消费 | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
+Source -> CodeMap -> {/uo-query 只读提问（主控可见路由） | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
 ```
 
 `/uo-init` 从源码建立新的 CodeMap：`prepare -> extract -> analyze -> commit -> verify`。
@@ -238,17 +238,17 @@ Source -> CodeMap -> {/uo-query 只读消费 | /uo-update 受控增量刷新 | /
 
 `/uo-query` 只读回答已有 CodeMap 上的问题。可借助模型解释，但不得改写 canonical CodeMap。
 
-### `/uo-query`（主控用 skill 路由）
+### `/uo-query`（可见 LLM 路由，禁止 Host 润）
 
-主控看一眼短地图，大体判断查什么。短问自己 `acp uo-query --mode`；内容多再 `Task(actor=uo-query)` 或启动 `/uo-query`（单阶段「查询」，一次 `kb_lookup` 后结束）。不要为空转「问题路由」开子代理。
+查询不是 ACP 工作流：不要 `pilot_run` / `acp start uo-query`。主控看一眼短地图，**先对人说出分类**（短问自查 / 1 个子代理 / N 路并行），再动手。不要为空转「问题路由」开子代理。切片由主控判断，不靠 Host `host_step.tasks`。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 
 - 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)
 - METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`
-- 交付：`kb-answer-v1`（`answer_zh` 必填）
+- 交付：当前会话口语答案，或子代 Task 全文（主控综合）。不要 Write `answer.yaml`。
 
-`readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物；深问走 workflow 时 Runtime 可物化 action-local `answer.yaml`。
+`readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物。
 
 高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `acp inspect evidence-window --project … --path … --lines A-B`。
 
@@ -346,4 +346,4 @@ acp uo-query --project <op> --mode tiling_key --pattern SplitAxis
 
 源码范围问题回到 `prepare`；抽取问题回到 `extract`；完整性或 gap 问题回到 `analyze` 或 `commit`；验证失败按原因重跑对应阶段。恢复边由 workflow spec 声明。
 
-实现入口：`engines/understand-operator/src/uo_init/workflow.py`、`frontend/`、`passes/`、`ir/`、`update/`、`query/`；运行时合同位于 `pilot/ascendc_pilot/workflows/specs.py`。精确阶段见 [Workflow Reference](../reference/workflows.generated.md)。当前版本 FAG arch35 提取/查询耗时与未闭合项见 [benchmark.md](../benchmark.md)。
+实现入口：`engines/understand-operator/src/uo_init/codemap_engines.py`、`pilot_engines.py`、`build.py`、`frontend/`、`passes/`、`ir/`、`update/`、`query/`；运行时合同位于 `pilot/ascendc_pilot/workflows/specs.py`。精确阶段见 [Workflow Reference](../reference/workflows.generated.md)。当前版本 FAG arch35 提取/查询耗时与未闭合项见 [benchmark.md](../benchmark.md)。禁止把 `operator_report.py` 或 sqlite `kb_graph` 当作 `/uo-init` 产品路径。

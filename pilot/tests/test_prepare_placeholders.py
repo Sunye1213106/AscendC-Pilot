@@ -77,16 +77,19 @@ def test_kb_lookup_stub_requires_answer_yaml_not_integrity() -> None:
             "runs/RUN_Q/actions/kb_lookup/scratch/**",
         ],
         user_question="TND 下 SplitAxis=1 是否合法？",
+        project_root="D:/ops/flash_attention_score_grad",
     )
     assert "USER QUESTION" in stub
     assert "SplitAxis=1" in stub
     assert "kb-answer-v1" in stub
-    assert "return_value" in stub
+    assert "Explore" in stub
+    assert "native Task" in stub
     assert "uo/checks" in stub
     assert "Do NOT write uo/checks" in stub
     assert "Hard stop" in stub
     assert "do not stall on routing" in stub
     assert "evidence-window" in stub
+    assert "--project D:/ops/flash_attention_score_grad" in stub
     write_line = next((ln for ln in stub.splitlines() if ln.startswith("write:")), "")
     assert write_line.startswith("write: (none")
     assert "runs/" not in write_line
@@ -206,7 +209,7 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
-    uo_prod = op / ".ascendc-pilot" / "uo"
+    uo_prod = op / ".ascendc-pilot" / "arch35" / "uo"
     uo_prod.mkdir(parents=True, exist_ok=True)
     (uo_prod / "Demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
     start_workflow(
@@ -219,7 +222,8 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     assert result.get("ok") is True, result
     stub = str(result.get("task_prompt_stub") or "")
     assert "kb-answer-v1" in stub
-    assert "return_value" in stub
+    assert "Explore" in stub
+    assert "native Task" in stub
     assert "SplitAxis=1" in stub
     assert "Do NOT write uo/checks" in stub
     assert "write: (none" in stub
@@ -229,9 +233,9 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     assert "result-file" in str(result.get("finalize_hint_fallback") or "")
     session = Path(str(result["session_dir"]))
     method = (session / "method.md").read_text(encoding="utf-8")
-    assert "claim" in method.lower() or "Claim" in method
-    assert "12" in method
-    assert "22" in method
+    assert "Explore" in method or "file:line" in method
+    assert "dim_coverage" in method
+    assert "template_match" in method
     bundle = yaml.safe_load((session / "bundle.yaml").read_text(encoding="utf-8"))
     assert bundle.get("output_mode") == "return_value"
     writes = [str(p).replace("\\", "/") for p in (bundle.get("allowed_write_paths") or [])]
@@ -239,6 +243,43 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     prompt = Path(str(result["prompt_path"])).read_text(encoding="utf-8")
     assert "## User question" in prompt
     assert "SplitAxis=1" in prompt
+    assert not result.get("dispatch_tasks")
+
+
+def test_prepare_kb_lookup_fanout_emits_slice_stubs(tmp_path: Path) -> None:
+    """Deep multi-domain question → N focused stubs, one Action."""
+    op = tmp_path / "demo_op"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    uo_prod = op / ".ascendc-pilot" / "arch35" / "uo"
+    uo_prod.mkdir(parents=True, exist_ok=True)
+    (uo_prod / "Demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
+    question = (
+        "950 上一个 FP16 dropout 的 case，D=80，B=1 N=4 S=2048。"
+        "host 算出 TilingKey 了，板上却报找不到 kernel。"
+        "同一份 shape 打开确定性 TND 之后能编过、tiling 也成功，可是一进核 "
+        "coreNum/s1/s2 就是垃圾。"
+        "把确定性关掉又能跑完，但核占不满，只有四个 AIC 在动，"
+        "msprof 里 AIC 堵着等 AIV 的 L1。"
+    )
+    start_workflow(op, "uo-query", architecture="arch35", intent=question)
+    result = prepare_action(op, "kb_lookup")
+    assert result.get("ok") is True, result
+    tasks = result.get("dispatch_tasks") or []
+    assert len(tasks) >= 2, result.get("message_zh")
+    ids = [str(t.get("slice_id") or "") for t in tasks]
+    assert "sel" in ids
+    for row in tasks:
+        stub = str(row.get("task_prompt_stub") or "")
+        assert "SLICE_ID=" in stub
+        assert "FOCUS (this child only)" in stub
+        assert "Hard stop: this Task answers ONLY the FOCUS" in stub
+    session = Path(str(result["session_dir"]))
+    assert (session / "query_slices.yaml").is_file()
+    assert (session / f"task_prompt_stub_{ids[0]}.md").is_file()
+    msg = str(result.get("message_zh") or "")
+    assert "同一轮" in msg
+    assert "综合" in msg
 
 
 def test_uo_query_agent_has_empty_write_scopes() -> None:
@@ -260,7 +301,7 @@ def test_finalize_kb_lookup_from_result_file(tmp_path: Path) -> None:
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
-    uo_prod = op / ".ascendc-pilot" / "uo"
+    uo_prod = op / ".ascendc-pilot" / "arch35" / "uo"
     uo_prod.mkdir(parents=True, exist_ok=True)
     (uo_prod / "Demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
     start_workflow(op, "uo-query", architecture="arch35", intent="q?")
@@ -291,6 +332,6 @@ def test_finalize_kb_lookup_from_result_file(tmp_path: Path) -> None:
     body = yaml.safe_load(answer.read_text(encoding="utf-8"))
     assert body.get("schema") == "kb-answer-v1"
     assert "合法" in str(body.get("answer_zh") or "")
-    assert body.get("_transport") == "return_value"
+    assert body.get("_transport") == "native_task"
     # Trusted stamp is injected by finalize after contract check.
     assert (body.get("artifact_identity") or {}).get("produced_by") == "pilot-finalizer"

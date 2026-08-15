@@ -49,12 +49,24 @@ _GET_TILING_MEMBER_RE = re.compile(
     re.S,
 )
 _GET_TILING_BARE_CALL_RE = re.compile(r"\bGET_TILING_DATA\s*\(")
+# Kernel TUs that skip GET_TILING_DATA* still consume the registered POD via
+# ``reinterpret_cast<TilingData*>(tiling)`` / C-style cast.
+_CAST_TILING_DATA_RE = re.compile(
+    r"(?:reinterpret_cast|static_cast)\s*<\s*[^>]*?\b([A-Za-z_]\w*TilingData)\b[^>]*>"
+    r"|\(\s*(?:const\s+)?(?:__\w+__\s+)*([A-Za-z_]\w*TilingData)\s*\*",
+)
 _API_HEAD_RE = re.compile(
     r"\.(?P<op>INPUT|OPTIONAL_INPUT|DYNAMIC_INPUT|OUTPUT|DYNAMIC_OUTPUT|ATTR|REQUIRED_ATTR)\s*\("
 )
 _DEF_MEMBER_RE = re.compile(
     r'this->(?P<kind>Input|Output|Attr|DynamicInput|DynamicOutput)\s*\(\s*"(?P<name>[^"]+)"\s*\)'
 )
+_DATATYPE_ALIAS_RE = re.compile(r"\.DATATYPE\s*\(")
+_NAMED_DTYPE_VEC_RE = re.compile(
+    r"std::vector\s*<\s*(?:ge::)?DataType\s*>\s+([A-Za-z_]\w*)\s*=\s*\{",
+)
+_DATA_TYPE_NAME_RE = re.compile(r"\.DataType\s*\(\s*([A-Za-z_]\w*)\s*\)")
+_TENSOR_TYPE_NAMED_RE = re.compile(r"TensorType\s*::\s*([A-Za-z_]\w*)\s*\(\s*\)")
 _REGISTER_TILING_KEY_RE = re.compile(
     r"REGISTER_TILING_FOR_TILINGKEY\s*\(\s*\"[^\"]+\"\s*,\s*([A-Za-z_:][A-Za-z0-9_:]*)\s*\)",
     re.S,
@@ -112,7 +124,8 @@ _MEMBER_RE = re.compile(
     r"^\s*(?P<type>[A-Za-z_][\w:\s<>,*&]*?)\s+"
     r"(?P<name>[A-Za-z_]\w*)\s*"
     r"(?P<arrays>(?:\[[^\]]+\]\s*)*)"
-    r"(?:=\s*(?P<init>[^;]+))?;\s*$"
+    r"(?:(?:=\s*(?P<init>[^;]+))|(?P<brace>\{[^;]*\}))?"
+    r";\s*$"
 )
 _NON_TILING_TYPE_SUFFIXES = ("Helper", "Utils", "Util", "Traits", "Policy")
 
@@ -205,20 +218,136 @@ def _split_args(text: str) -> list[str]:
     return out
 
 
-def _tensor_dtypes(payload: str) -> list[str]:
-    """Parse REG_OP ``TensorType({DT_...})`` or OpDef ``DataType({ge::DT_...})``."""
+def _apply_tensor_dtype(ent: Entity, dtypes: list[str] | str | None) -> None:
+    if not dtypes:
+        return
+    if not ent.attrs.get("dtype"):
+        ent.attrs["dtype"] = dtypes
+    facts = ent.attrs.get("facts")
+    if not isinstance(facts, dict):
+        facts = {}
+        ent.attrs["facts"] = facts
+    if not facts.get("dtype"):
+        facts["dtype"] = ent.attrs.get("dtype") or dtypes
+
+
+def _unique_dt(tokens: Iterable[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in tokens:
+        name = str(raw or "").strip().split("::")[-1]
+        if not name.startswith("DT_") or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _dt_list_from_braces(inner: str) -> list[str]:
+    return _unique_dt(tok.strip() for tok in str(inner or "").split(","))
+
+
+def _parse_datatype_aliases(text: str) -> dict[str, list[str]]:
+    """REG_OP ``.DATATYPE(T, TensorType({DT_...}))`` type parameters."""
+    aliases: dict[str, list[str]] = {}
+    for m in _DATATYPE_ALIAS_RE.finditer(text):
+        close = _matching_paren(text, m.end() - 1)
+        if close < 0:
+            continue
+        args = _split_args(text[m.end() : close])
+        if len(args) < 2:
+            continue
+        name = args[0].strip()
+        if not re.match(r"^[A-Za-z_]\w*$", name):
+            continue
+        dts = _tensor_dtypes(args[1])
+        if dts:
+            aliases[name] = dts
+    return aliases
+
+
+def _parse_named_dtype_vectors(text: str) -> dict[str, list[str]]:
+    """``std::vector<ge::DataType> foo = { ge::DT_... }`` tables used by OpDef."""
+    named: dict[str, list[str]] = {}
+    for m in _NAMED_DTYPE_VEC_RE.finditer(text):
+        close = text.find("}", m.end())
+        if close < 0:
+            continue
+        dts = _dt_list_from_braces(text[m.end() : close])
+        if dts:
+            named[m.group(1)] = dts
+    return named
+
+
+def _fill_tensor_dtype_facts(codemap: CodeMap, root: Path) -> None:
+    """Copy dtype onto facts and fill INPUT/OUTPUT that REG_OP created without DataType."""
+    aliases: dict[str, list[str]] = {}
+    named: dict[str, list[str]] = {}
+    for path in _cpp_files(root / "op_graph"):
+        text = _read(path)
+        if "REG_OP(" in text:
+            aliases.update(_parse_datatype_aliases(text))
+    for path in _def_cpp_files(root):
+        named.update(_parse_named_dtype_vectors(_read(path)))
+    by_name: dict[str, list[Entity]] = {}
+    for kind in (EntityKind.INPUT, EntityKind.OUTPUT):
+        for ent in codemap.by_kind(kind):
+            by_name.setdefault(ent.name, []).append(ent)
+            cur = ent.attrs.get("dtype")
+            if cur:
+                _apply_tensor_dtype(ent, cur)
+            else:
+                decl = str(ent.attrs.get("declaration") or "")
+                parsed = _tensor_dtypes(decl, aliases=aliases, named=named)
+                if parsed:
+                    _apply_tensor_dtype(ent, parsed)
+    for path in _def_cpp_files(root):
+        text = _read(path)
+        if "this->" not in text:
+            continue
+        file_named = _parse_named_dtype_vectors(text)
+        file_named.update(named)
+        for m in _DEF_MEMBER_RE.finditer(text):
+            name = m.group("name")
+            semi = text.find(";", m.end())
+            payload = text[m.end() : semi] if semi >= 0 else ""
+            dtypes = _tensor_dtypes(payload, aliases=aliases, named=file_named)
+            if not dtypes:
+                continue
+            for ent in by_name.get(name) or []:
+                _apply_tensor_dtype(ent, dtypes)
+
+
+def _tensor_dtypes(
+    payload: str,
+    *,
+    aliases: dict[str, list[str]] | None = None,
+    named: dict[str, list[str]] | None = None,
+) -> list[str]:
+    """Parse REG_OP TensorType / DATATYPE aliases / OpDef DataType lists or named vectors."""
     text = str(payload or "")
     m = re.search(r"TensorType\s*\(\s*\{([^}]*)\}", text)
-    if not m:
-        m = re.search(r"DataType\s*\(\s*\{([^}]*)\}", text)
-    if not m:
-        return []
-    out: list[str] = []
-    for tok in m.group(1).split(","):
-        name = tok.strip().split("::")[-1]
-        if name.startswith("DT_"):
-            out.append(name)
-    return out
+    if m:
+        return _dt_list_from_braces(m.group(1))
+    m = re.search(r"DataType(?:List)?\s*\(\s*\{([^}]*)\}", text)
+    if m:
+        return _dt_list_from_braces(m.group(1))
+    call = _DATA_TYPE_NAME_RE.search(text)
+    if call and named:
+        got = named.get(call.group(1))
+        if got:
+            return list(got)
+    named_tt = _TENSOR_TYPE_NAMED_RE.search(text)
+    if named_tt and aliases:
+        got = aliases.get(named_tt.group(1))
+        if got:
+            return list(got)
+    ident = text.strip().strip("\"'")
+    if aliases and re.fullmatch(r"[A-Za-z_]\w*", ident):
+        got = aliases.get(ident)
+        if got:
+            return list(got)
+    return []
 
 
 def _matching_paren(text: str, open_pos: int) -> int:
@@ -257,10 +386,15 @@ def _upsert_api_tensor(
     bucket: list[Entity],
     required: bool,
     dynamic: bool = False,
+    aliases: dict[str, list[str]] | None = None,
+    named: dict[str, list[str]] | None = None,
 ) -> None:
-    dtypes = _tensor_dtypes(payload)
+    dtypes = _tensor_dtypes(payload, aliases=aliases, named=named)
     k = kind.replace("_", "").upper()
     is_output = k in {"OUTPUT", "DYNAMICOUTPUT"}
+    facts: dict[str, Any] = {}
+    if dtypes:
+        facts["dtype"] = dtypes
     ent = codemap.upsert(
         EntityKind.OUTPUT if is_output else EntityKind.INPUT,
         name,
@@ -269,6 +403,7 @@ def _upsert_api_tensor(
             "required": required,
             "declaration": payload.strip(),
             "dtype": dtypes,
+            "facts": facts,
             "api_index": len(bucket),
             "dynamic": dynamic,
             "provenance": "source_reg_op" if kind.isupper() else "source_op_def",
@@ -277,6 +412,7 @@ def _upsert_api_tensor(
         line=line,
         status="confirmed",
     )
+    _apply_tensor_dtype(ent, dtypes)
     bucket.append(ent)
 
 
@@ -320,6 +456,7 @@ def _ingest_reg_op_text(
     outputs: list[Entity],
 ) -> None:
     file = _rel(root, path)
+    aliases = _parse_datatype_aliases(text)
     seen: set[tuple[str, str]] = set()
     for m in _API_HEAD_RE.finditer(text):
         close = _matching_paren(text, m.end() - 1)
@@ -350,6 +487,7 @@ def _ingest_reg_op_text(
                 bucket=tensor_inputs,
                 required=op == "INPUT",
                 dynamic=op == "DYNAMIC_INPUT",
+                aliases=aliases,
             )
         elif op in {"OUTPUT", "DYNAMIC_OUTPUT"}:
             _upsert_api_tensor(
@@ -362,6 +500,7 @@ def _ingest_reg_op_text(
                 bucket=outputs,
                 required=True,
                 dynamic=op == "DYNAMIC_OUTPUT",
+                aliases=aliases,
             )
         else:
             _upsert_api_attr(
@@ -405,17 +544,26 @@ def _ingest_def_cpp(
     if "this->" not in text:
         return
     file = _rel(root, path)
+    named = _parse_named_dtype_vectors(text)
     seen: set[tuple[str, str]] = {(e.kind_name(), e.name) for e in tensor_inputs + attrs + outputs}
     for m in _DEF_MEMBER_RE.finditer(text):
         kind = m.group("kind")
         name = m.group("name")
         key = (kind, name)
-        if key in seen:
-            continue
-        seen.add(key)
         line = _line_of(text, m.start())
         semi = text.find(";", m.end())
         payload = text[m.end() : semi] if semi >= 0 else ""
+        dtypes = _tensor_dtypes(payload, named=named)
+        if kind in {"Input", "DynamicInput", "Output", "DynamicOutput"}:
+            ek = EntityKind.OUTPUT if kind in {"Output", "DynamicOutput"} else EntityKind.INPUT
+            hits = list(codemap.by_name(name, kind=ek))
+            if hits:
+                for ent in hits:
+                    _apply_tensor_dtype(ent, dtypes)
+                continue
+        if key in seen:
+            continue
+        seen.add(key)
         if kind in {"Input", "DynamicInput"}:
             _upsert_api_tensor(
                 codemap,
@@ -427,6 +575,7 @@ def _ingest_def_cpp(
                 bucket=tensor_inputs,
                 required=kind == "Input",
                 dynamic=kind == "DynamicInput",
+                named=named,
             )
         elif kind in {"Output", "DynamicOutput"}:
             _upsert_api_tensor(
@@ -439,6 +588,7 @@ def _ingest_def_cpp(
                 bucket=outputs,
                 required=True,
                 dynamic=kind == "DynamicOutput",
+                named=named,
             )
         else:
             _upsert_api_attr(
@@ -468,6 +618,10 @@ def _parse_api(codemap: CodeMap, root: Path) -> dict[str, Any]:
         for path in _def_cpp_files(root):
             source_files += 1
             _ingest_def_cpp(codemap, root, path, tensor_inputs, attrs, outputs)
+    else:
+        for path in _def_cpp_files(root):
+            _ingest_def_cpp(codemap, root, path, tensor_inputs, attrs, outputs)
+    _fill_tensor_dtype_facts(codemap, root)
     return {
         "api_source_files": source_files,
         "api_tensor_inputs": len(tensor_inputs),
@@ -739,7 +893,10 @@ def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[
             elif ent.attrs.get("source_declared"):
                 ent.attrs["source_declared"] = False
                 ent.attrs["unselected_tpl_schema"] = True
-    return {"source_declared_tiling_keys": len(declared)}
+    return {
+        "source_declared_tiling_keys": len(declared),
+        "source_has_tiling_key_sites": bool(declared),
+    }
 
 
 _TILING_KEY_IS_RE = re.compile(r"\bTILING_KEY_IS\s*\(\s*([A-Za-z_]\w*|\d+)\s*\)")
@@ -763,6 +920,22 @@ _NOT_TILING_KEY_IDENTS = {
     "SetTilingKey",
     "set_tiling_key",
 }
+
+
+def _is_include_guard_ident(name: str) -> bool:
+    token = str(name or "")
+    return token.startswith("__") and token.endswith("__") or bool(re.search(r"_H__?$", token))
+
+
+def _looks_like_tiling_key_ident(name: str) -> bool:
+    """Reject include guards and generic ``tiling`` objects leaked from 3rd-party headers."""
+    token = str(name or "")
+    if not token or token in _NOT_TILING_KEY_IDENTS or _is_include_guard_ident(token):
+        return False
+    if token.isdigit():
+        return True
+    upper = token.upper()
+    return "TILING_KEY" in upper or upper.endswith("TILINGKEY")
 
 
 def iter_packing_helper_calls(text: str) -> Iterable[tuple[int, int, list[str], str]]:
@@ -881,7 +1054,7 @@ def _parse_fallback_tiling_keys(
             for regex, prov in patterns:
                 for m in regex.finditer(text):
                     name = m.group(1)
-                    if name in seen or name in _NOT_TILING_KEY_IDENTS:
+                    if name in seen or not _looks_like_tiling_key_ident(name):
                         continue
                     seen.add(name)
                     value = None
@@ -987,8 +1160,18 @@ def wanted_tiling_data_names(codemap: CodeMap, root: Path, architecture: str) ->
         names.update(n.split("::")[-1] for n in _GET_TILING_MEMBER_RE.findall(text))
         names.update(n.split("::")[-1] for n in _REGISTER_TILING_KEY_RE.findall(text))
         names.update(n.split("::")[-1] for n in _REGISTER_TILING_DEFAULT_RE.findall(text))
+        names.update(_cast_tiling_data_names(text))
     names.discard("")
     return names
+
+
+def _cast_tiling_data_names(text: str) -> set[str]:
+    out: set[str] = set()
+    for match in _CAST_TILING_DATA_RE.finditer(text or ""):
+        name = match.group(1) or match.group(2)
+        if name:
+            out.add(name.split("::")[-1])
+    return out
 
 
 def _class_index(files: list[Path]) -> dict[str, tuple[Path, str, int, int, int]]:
@@ -1108,7 +1291,6 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
         owner = aliases.get(owner, owner)
         if owner in seen:
             continue
-        seen.add(owner)
         loc = index.get(owner)
         if loc is None:
             if owner in wanted:
@@ -1120,7 +1302,9 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
                         attrs={"provenance": "source_tiling_data_type_identity", "architecture": architecture},
                         status="partial",
                     )
+            # Leave ``seen`` unset so BEGIN_TILING_DATA_DEF can still emit fields.
             continue
+        seen.add(owner)
         path, text, start, open_pos, close_pos = loc
         line = _line_of(text, start)
         owner_ent = codemap.upsert(
@@ -1389,11 +1573,13 @@ def _link_tiling_data_reads(codemap: CodeMap, root: Path, architecture: str) -> 
         text = _read(path)
         used = {name.split("::")[-1] for name in _GET_TILING_RE.findall(text)}
         used.update(name.split("::")[-1] for name in _GET_TILING_MEMBER_RE.findall(text))
+        used.update(_cast_tiling_data_names(text))
         if _GET_TILING_BARE_CALL_RE.search(text):
             used.update(
                 name.split("::")[-1] for name in _REGISTER_TILING_DEFAULT_RE.findall(text)
             )
-            if not used and len(owners) == 1:
+            used.update(name for name in owners if re.search(rf"\b{re.escape(name)}\b", text))
+            if not used:
                 used.update(owners)
         if not used:
             continue
@@ -1486,16 +1672,38 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
                         status="confirmed",
                     )
             continue
+        matched = False
         for name in names:
             key = keys.get(name)
             if key is None:
                 continue
+            matched = True
             for kernel in target_kernels:
                 codemap.link(
                     RelationKind.SELECTS,
                     key.id,
                     kernel.id,
                     attrs={"provenance": "source_tiling_key_is", "file": file_rel},
+                    status="confirmed",
+                )
+        if matched:
+            continue
+        # Packed integer catalog: host produces one key (``tilingKey`` /
+        # SetTilingKey) and the kernel enumerates legal values with
+        # TILING_KEY_IS(QF16_..._TILING). Those spellings are not dimensions.
+        packed = [
+            e
+            for e in keys.values()
+            if e.attrs.get("source_declared")
+            and str(e.attrs.get("provenance") or "") != "source_tpl_args_decl"
+        ]
+        for key in packed:
+            for kernel in target_kernels:
+                codemap.link(
+                    RelationKind.SELECTS,
+                    key.id,
+                    kernel.id,
+                    attrs={"provenance": "source_packed_key_is_selects", "file": file_rel},
                     status="confirmed",
                 )
 
@@ -1510,24 +1718,43 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
         for e in declared_tpl
         if e.file
     }
-    if not declared_tpl or not schema_headers:
-        return
-    for path in _kernel_candidates(root, architecture):
-        text = _read(path)
-        if not GLOBAL_KERNEL_RE.search(text):
-            continue
-        included = {name.lower() for name in quoted_include_basenames(path)}
-        if not (included & schema_headers):
-            continue
-        file_rel = _rel(root, path)
-        target_kernels = _kernels_for_packed_key_file(codemap, path, text, root)
-        for key in declared_tpl:
-            for kernel in target_kernels:
+    if declared_tpl and schema_headers:
+        for path in _kernel_candidates(root, architecture):
+            text = _read(path)
+            if not GLOBAL_KERNEL_RE.search(text):
+                continue
+            included = {name.lower() for name in quoted_include_basenames(path)}
+            if not (included & schema_headers):
+                continue
+            file_rel = _rel(root, path)
+            target_kernels = _kernels_for_packed_key_file(codemap, path, text, root)
+            for key in declared_tpl:
+                for kernel in target_kernels:
+                    codemap.link(
+                        RelationKind.SELECTS,
+                        key.id,
+                        kernel.id,
+                        attrs={"provenance": "source_tpl_header_selects", "file": file_rel},
+                        status="confirmed",
+                    )
+
+    kernels = list(codemap.by_kind(EntityKind.KERNEL))
+    declared = [e for e in keys.values() if e.attrs.get("source_declared")]
+    if len(kernels) == 1 and declared:
+        kernel = kernels[0]
+        has_select = any(
+            rel.kind_name() == RelationKind.SELECTS.value
+            and rel.src in {e.id for e in declared}
+            and rel.dst == kernel.id
+            for rel in codemap.relations.values()
+        )
+        if not has_select:
+            for key in declared:
                 codemap.link(
                     RelationKind.SELECTS,
                     key.id,
                     kernel.id,
-                    attrs={"provenance": "source_tpl_header_selects", "file": file_rel},
+                    attrs={"provenance": "source_single_kernel_selects"},
                     status="confirmed",
                 )
 

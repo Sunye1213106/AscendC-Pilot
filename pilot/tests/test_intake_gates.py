@@ -119,6 +119,7 @@ def test_default_cli_project_prefers_cache_over_monorepo_cwd(tmp_path: Path, mon
     op.mkdir()
     (op / "op_host").mkdir()
     parent.mkdir()
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
     intake.write_last_project_cache(op)
     monkeypatch.chdir(parent)
     monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
@@ -126,8 +127,87 @@ def test_default_cli_project_prefers_cache_over_monorepo_cwd(tmp_path: Path, mon
     assert intake.default_cli_project() == op.resolve()
 
 
+def test_default_cli_project_falls_through_non_operator_explicit(
+    tmp_path: Path, monkeypatch
+):
+    shell = tmp_path / "flash_attention_score_grad"
+    shell.mkdir()
+    (shell / ".ascendc-pilot").mkdir()
+    real = tmp_path / "real_op"
+    real.mkdir()
+    (real / "op_kernel").mkdir()
+    monkeypatch.setenv("ASCENDC_PROJECT_ROOT", str(real))
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
+    assert intake.default_cli_project(shell) == real.resolve()
+    assert intake.default_cli_project(real) == real.resolve()
+
+
+def test_default_cli_project_bare_name_uses_cache_not_missing_relative(
+    tmp_path: Path, monkeypatch
+):
+    op = tmp_path / "flash_attention_score_grad"
+    op.mkdir()
+    (op / "op_kernel").mkdir()
+    cwd = tmp_path / "not_an_op"
+    cwd.mkdir()
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
+    intake.write_last_project_cache(op)
+    monkeypatch.chdir(cwd)
+    monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
+    assert intake.default_cli_project("flash_attention_score_grad") == op.resolve()
+    assert intake.default_cli_project() == op.resolve()
+
+
+def test_default_cli_project_ignores_path_under_pilot_checkout(
+    tmp_path: Path, monkeypatch
+):
+    op = tmp_path / "flash_attention_score_grad"
+    op.mkdir()
+    (op / "op_host").mkdir()
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
+    intake.write_last_project_cache(op)
+    harness = pilot_checkout_root()
+    monkeypatch.chdir(harness)
+    monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
+    ghost = harness / "flash_attention_score_grad"
+    assert intake.default_cli_project("flash_attention_score_grad") == op.resolve()
+    assert intake.default_cli_project(ghost) == op.resolve()
+    assert intake.default_cli_project(harness) == op.resolve()
+
+
+def test_default_cli_project_keeps_explicit_operator(tmp_path: Path, monkeypatch):
+    a = tmp_path / "op_a"
+    b = tmp_path / "op_b"
+    for p in (a, b):
+        p.mkdir()
+        (p / "op_host").mkdir()
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
+    intake.write_last_project_cache(a)
+    monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
+    assert intake.default_cli_project(b) == b.resolve()
+
+
+def test_default_cli_project_keeps_existing_non_operator_without_env(
+    tmp_path: Path, monkeypatch
+):
+    other = tmp_path / "not_op"
+    other.mkdir()
+    op = tmp_path / "real"
+    op.mkdir()
+    (op / "op_host").mkdir()
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
+    intake.write_last_project_cache(op)
+    monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
+    assert intake.default_cli_project(other) == other.resolve()
+
+
 def test_cli_start_asks_for_architecture(tmp_path: Path, monkeypatch, capsys):
     (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("UO_ARCH", raising=False)
     monkeypatch.delenv("ASCENDC_ARCH", raising=False)
@@ -143,6 +223,7 @@ def test_cli_start_asks_for_architecture(tmp_path: Path, monkeypatch, capsys):
 
 def test_cli_start_with_project_and_arch(tmp_path: Path, monkeypatch, capsys):
     (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("UO_ARCH", raising=False)
     monkeypatch.delenv("ASCENDC_ARCH", raising=False)
@@ -169,7 +250,10 @@ def test_cli_prepare_rejects_non_operator(tmp_path: Path, capsys):
     assert out["reason_code"] == "OPERATOR_PROJECT_REQUIRED"
 
 
-def test_cli_prepare_rejects_pilot_checkout(capsys):
+def test_cli_prepare_rejects_pilot_checkout(capsys, tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
+    monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
     harness = pilot_checkout_root()
     code = main(["run-action", "prepare", "--project", str(harness)])
     assert code == 2

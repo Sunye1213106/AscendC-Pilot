@@ -36,6 +36,7 @@ def _write_complete(tmp_path: Path, *, op="toy", arch="arch35") -> Path:
                 "allowed_values": ["0", "1"],
                 "decl_kind": "UINT",
                 "kind_tpl": "UINT",
+                "provenance": "source_tpl_args_decl",
             },
             file="op_kernel/template_tiling_key.h",
             status="confirmed",

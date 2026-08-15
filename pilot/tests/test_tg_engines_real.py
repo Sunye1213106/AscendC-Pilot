@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from ascendc_pilot.actions.engines import (
@@ -16,10 +17,12 @@ from ascendc_pilot.paths import ensure_agent_layout, tg_root, uo_root
 from ascendc_pilot.state import start_workflow
 from ascendc_pilot.workflows.specs import WORKFLOWS
 
+_ARCH = "arch35"
+
 
 def _seed_manifest(root: Path) -> None:
     """Durable products live under ``.ascendc-pilot/<arch>/``, never flat."""
-    path = uo_root(root) / "manifest.yaml"
+    path = uo_root(root, arch=_ARCH) / "manifest.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("op_name: synth_tg\n", encoding="utf-8")
 
@@ -31,7 +34,7 @@ def _select_legacy_csv_mode(root: Path) -> None:
     (now sole) full-TK engine implementations instead of falling back to a
     dead CSV code path.
     """
-    path = tg_root(root) / "init" / "init_intent.yaml"
+    path = tg_root(root, arch=_ARCH) / "init" / "init_intent.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "schema: tg-init-intent/v1\nmode: csv_consumer\n", encoding="utf-8"
@@ -41,10 +44,15 @@ def _select_legacy_csv_mode(root: Path) -> None:
 def test_tg_contract_build_rejects_removed_csv_consumer_mode(tmp_path: Path) -> None:
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root, arch="arch35")
+    ensure_agent_layout(root, arch=_ARCH)
     _seed_manifest(root)
     _select_legacy_csv_mode(root)
-    result = invoke_engine(root, "tg-init", "contract_build", ctx={"op_name": "synth_tg"})
+    result = invoke_engine(
+        root,
+        "tg-init",
+        "contract_build",
+        ctx={"op_name": "synth_tg", "architecture": _ARCH},
+    )
     assert result.get("ok") is False
     assert "legacy CSV" in str(result.get("error") or "") or "tilingkey_full_coverage" in str(
         result.get("error") or ""
@@ -55,16 +63,16 @@ def test_tg_plan_build_not_marker_only(tmp_path: Path) -> None:
     """plan_build must fail without consumer/KB rather than write pilot_plan_build.yaml."""
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root, arch="arch35")
+    ensure_agent_layout(root, arch=_ARCH)
     _seed_manifest(root)
     result = invoke_engine(
         root,
         "tg-plan",
         "plan_build",
-        ctx={"op_name": "synth_tg", "level": "L0"},
+        ctx={"op_name": "synth_tg", "level": "L0", "architecture": _ARCH},
     )
     assert result.get("ok") is False
-    marker = tg_root(root) / "realization" / "pilot_plan_build.yaml"
+    marker = tg_root(root, arch=_ARCH) / "realization" / "pilot_plan_build.yaml"
     assert not marker.is_file()
 
 
@@ -72,13 +80,18 @@ def test_tg_removed_solve_action_removed(tmp_path: Path) -> None:
     """Legacy solve / cover_confirm / bind_merge / mid_nest were deleted with csv_consumer."""
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root, arch="arch35")
+    ensure_agent_layout(root, arch=_ARCH)
     _seed_manifest(root)
     legacy_action = "z" + "3_solve"
-    result = invoke_engine(root, "tg-solve", legacy_action, ctx={"op_name": "synth_tg"})
+    result = invoke_engine(
+        root,
+        "tg-solve",
+        legacy_action,
+        ctx={"op_name": "synth_tg", "architecture": _ARCH},
+    )
     assert result.get("ok") is False
     assert "no deterministic engine" in str(result.get("error") or "")
-    marker = tg_root(root) / "realization" / f"pilot_{legacy_action}.yaml"
+    marker = tg_root(root, arch=_ARCH) / "realization" / f"pilot_{legacy_action}.yaml"
     assert not marker.is_file()
 
 
@@ -105,11 +118,12 @@ def test_tg_init_agents_omit_dead_csv_contract_producer() -> None:
     assert "deterministic-tg-engine" in agents
 
 
-def test_plan_build_contract_rejects_empty_dir(tmp_path: Path) -> None:
+def test_plan_build_contract_rejects_empty_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UO_ARCH", _ARCH)
     root = tmp_path / "op"
     root.mkdir()
-    ensure_agent_layout(root, arch="arch35")
-    (tg_root(root) / "plan").mkdir(parents=True, exist_ok=True)
+    ensure_agent_layout(root, arch=_ARCH)
+    (tg_root(root, arch=_ARCH) / "plan").mkdir(parents=True, exist_ok=True)
     checked = _check_output_contract(root, "plan-build-v1")
     assert checked.get("ok") is False
 

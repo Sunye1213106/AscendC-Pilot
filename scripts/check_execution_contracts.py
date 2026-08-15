@@ -22,6 +22,9 @@ PHYSICAL_COGNITIVE_PATH = re.compile(
     re.I,
 )
 TEMPLATE_TOKEN = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
+_CAP_LIST_RE = re.compile(
+    r"\((?:\s*`([a-z][a-z0-9-]*)`\s*,\s*)+`([a-z][a-z0-9-]*)`\s*\)"
+)
 RUNTIME_PROMPT_TOKENS = {
     "RUN_ID",
     "ACTION_ID",
@@ -58,6 +61,64 @@ def _prompt_path(repo: Path, prompt_id: str) -> Path:
         return root / domain / f"{name}.md"
     return root / f"{prompt_id}.md"
 
+
+def check_prompt_capability_drift(repo: Path) -> list[str]:
+    """Fail when a task prompt hardcodes a capability list that ≠ Action Spec."""
+    sys.path.insert(0, str(repo / "pilot"))
+    sys.path.insert(0, str(repo / "scripts"))
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
+
+    import compose_runtime as compose
+
+    known_caps = set(compose.CAPABILITY_DIRS)
+    # task_prompt_id -> expected capability_ids (first writer wins; warn on conflict)
+    expected: dict[str, list[str]] = {}
+    owners: dict[str, str] = {}
+    errors: list[str] = []
+    for wid, wf in WORKFLOWS.items():
+        if wf.get("reserved") or wf.get("alias_of"):
+            continue
+        for action in wf.get("actions") or []:
+            tpid = action.get("task_prompt_id")
+            if not tpid:
+                continue
+            caps = list(action.get("capability_ids") or [])
+            key = str(tpid)
+            if key in expected and expected[key] != caps:
+                errors.append(
+                    f"prompt-cap-drift: task_prompt_id {key!r} used by "
+                    f"{owners[key]} and {wid}/{action.get('id')} with different capability_ids"
+                )
+                continue
+            expected[key] = caps
+            owners[key] = f"{wid}/{action.get('id')}"
+
+    tasks_root = repo / "prompts" / "tasks"
+    if not tasks_root.is_dir():
+        return errors
+
+    for path in sorted(tasks_root.rglob("*.md")):
+        rel = path.relative_to(tasks_root).as_posix()
+        tpid = rel[:-3] if rel.endswith(".md") else rel
+        text = path.read_text(encoding="utf-8")
+        for match in _CAP_LIST_RE.finditer(text):
+            # Re-parse span: repeating groups only keep the last capture.
+            listed = re.findall(r"`([a-z][a-z0-9-]*)`", match.group(0))
+            if not listed or not all(cid in known_caps for cid in listed):
+                continue
+            want = expected.get(tpid)
+            if want is None:
+                errors.append(
+                    f"prompt-cap-drift: {path.as_posix()} hardcodes capabilities "
+                    f"{listed} but no Action owns task_prompt_id={tpid!r}"
+                )
+                continue
+            if set(listed) != set(want):
+                errors.append(
+                    f"prompt-cap-drift: {path.as_posix()} hardcodes {listed} "
+                    f"but Action {owners.get(tpid)} expects {want}"
+                )
+    return errors
 
 def audit(repo: Path = REPO) -> list[str]:
     repo = Path(repo).resolve()
@@ -215,6 +276,7 @@ def audit(repo: Path = REPO) -> list[str]:
     ):
         errors.append("CE_EXECUTION_BINDING: ce-review/code_review must dispatch ce-reviewer")
 
+    errors.extend(check_prompt_capability_drift(repo))
     return errors
 
 

@@ -10,8 +10,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] in {"-h", "--help"}:
         print(
             "usage: python -m uo_init <dump|locate> ...\n"
-            "  dump     dump CodeMap views from .uo (or legacy kb_graph.sqlite)\n"
-            "  locate   source locator over the KB database\n"
+            "  dump     dump CodeMap views from .uo\n"
+            "  locate   source locator over the .uo product\n"
             "Also: python -m uo_init.dump <file.uo> --summary|--host|--path A B"
         )
         return 0 if args else 2

@@ -33,7 +33,9 @@ def _write(path: Path, data: object) -> None:
         path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
 
 
-def test_start_requires_askquestion_when_multiple_archs(tmp_path: Path, capsys) -> None:
+def test_start_requires_askquestion_when_multiple_archs(tmp_path: Path, capsys, monkeypatch) -> None:
+    for key in ("UO_ARCH", "ASCENDC_ARCH", "ASCENDC_ARCHITECTURE"):
+        monkeypatch.delenv(key, raising=False)
     _make_multi_arch_op(tmp_path)
     code = acp_main(["start", "uo-init", "--project", str(tmp_path)])
     assert code == 2
@@ -357,26 +359,38 @@ def test_owned_artifact_map_uses_public_uo_actions() -> None:
     assert owned["verify"] == ("uo/checks/integrity.yaml", "uo/checks/quality.yaml")
 
 
-def test_different_workflow_resume_switches_to_requested(tmp_path: Path) -> None:
+def test_different_family_starts_in_parallel(tmp_path: Path) -> None:
     state = start_workflow(tmp_path, "uo-init", architecture="arch35")
     continue_result = apply_resume_decision(
         tmp_path, "uo-init", "continue", require_receipt=False
     )
     assert continue_result["ok"] is True
-    assert needs_resume_decision(tmp_path, "tg-init") is True
+    assert needs_resume_decision(tmp_path, "tg-init") is False
+    tg = start_workflow(tmp_path, "tg-init", architecture="arch35")
+    assert tg.get("ok") is True
+    assert tg.get("fresh_start") is True
+    uo_live = load_state(tmp_path, workflow_id="uo-init")
+    tg_live = load_state(tmp_path, workflow_id="tg-init")
+    assert uo_live["workflow_id"] == "uo-init"
+    assert uo_live["run_id"] == state["run_id"]
+    assert tg_live["workflow_id"] == "tg-init"
+    assert tg_live["run_id"] != state["run_id"]
+
+
+def test_same_family_cross_workflow_still_asks(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
+    assert needs_resume_decision(tmp_path, "uo-update") is True
     cross = apply_resume_decision(
         tmp_path,
-        "tg-init",
+        "uo-update",
         "continue",
         require_receipt=False,
         start_kwargs={"architecture": "arch35"},
     )
     assert cross["ok"] is True
     assert cross.get("switched_from") == "uo-init"
-    assert cross.get("fresh_start") is True
-    live = load_state(tmp_path)
-    assert live["workflow_id"] == "tg-init"
-    assert live["run_id"] != state["run_id"]
+    live = load_state(tmp_path, workflow_id="uo-update")
+    assert live["workflow_id"] == "uo-update"
 
 
 def test_continue_scrubs_failed_analyze_owned_products(tmp_path: Path) -> None:

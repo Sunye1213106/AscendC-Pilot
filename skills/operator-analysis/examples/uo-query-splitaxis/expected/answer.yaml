@@ -4,6 +4,9 @@ question: "TND 布局下，SplitAxis=1 是否合法？"
 answer_zh: |
   示例期望形态（non-normative）：先给 verdict，再列 Host guard / overwrite，每条附 path:line。
   边角（RoPE×DTemplate）可注明未闭合，不得拖住主答案。
+claim_layer: template_admissible
+completeness: coverage_checked
+assumptions: []
 citations: []
 adequacy: ANSWERED
 reason_code: ""

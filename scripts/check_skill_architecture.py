@@ -6,6 +6,8 @@ import re
 import sys
 from pathlib import Path
 
+from check_execution_contracts import RUNTIME_PROMPT_TOKENS
+
 REPO = Path(__file__).resolve().parents[1]
 SKILLS = REPO / "skills"
 SHARED = SKILLS / "_shared"
@@ -18,28 +20,6 @@ COGNITIVE_SKILLS = (
     "code-review",
     "code-engineering",
 )
-
-# Keep in sync with scripts/check_execution_contracts.py RUNTIME_PROMPT_TOKENS.
-RUNTIME_PROMPT_TOKENS = {
-    "RUN_ID",
-    "ACTION_ID",
-    "WORKFLOW_ID",
-    "ACTOR_ID",
-    "TARGET_IDS_OR_FILES",
-    "TARGET",
-    "SHARD_ID",
-    "OP_NAME",
-    "PROJECT_ROOT",
-    "UO_ROOT",
-    "TG_ROOT",
-    "TOPIC",
-    "CONTEXT_PACK_PATH",
-    "ARCHITECTURE",
-    "ROLE_ID",
-    "LEASE_ID",
-    "ACTION_SESSION_ID",
-    "CANDIDATES_SHA256",
-}
 
 DELETED_CAPS = ("tilingkey-closure", "structured-review", "obligation-analysis")
 

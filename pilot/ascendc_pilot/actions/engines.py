@@ -76,8 +76,35 @@ def _run_ce_uo_freshness(project_root: Path, ctx: dict[str, Any]) -> dict[str, A
         product_identity = identity(project_root, architecture=arch)
     except (FileNotFoundError, RuntimeError) as exc:
         return {"ok": False, "engine": "uo_freshness", "error": str(exc)[:400]}
-    expected = str(ctx.get("expected_fingerprint") or product_identity.get("graph_fingerprint") or "")
-    result = check_freshness(project_root, expected, architecture=arch)
+    pinned = str(ctx.get("expected_fingerprint") or ctx.get("pinned_digest") or "").strip()
+    if not pinned:
+        try:
+            from ascendc_pilot.state import load_state
+
+            live = load_state(project_root, workflow_id="ce-impact") or {}
+            pinned = str(live.get("pinned_digest") or "").strip()
+        except Exception:  # noqa: BLE001
+            pinned = ""
+    # Never copy the live product fingerprint as "expected" — that compares
+    # the current graph to itself and cannot prove freshness.
+    result = check_freshness(project_root, pinned, architecture=arch)
+    try:
+        from ascendc_pilot.occupancy import binding_is_stale
+
+        digest_check = binding_is_stale(
+            project_root,
+            pinned_digest=pinned,
+            architecture=arch,
+        )
+        if digest_check.get("stale"):
+            result["mode"] = "stale"
+            result["fresh"] = False
+            result["reason"] = "UO_DIGEST_CHANGED"
+            result["reason_code"] = "UO_DIGEST_CHANGED"
+            result["pinned_digest"] = digest_check.get("pinned_digest")
+            result["live_digest"] = digest_check.get("live_digest")
+    except Exception:  # noqa: BLE001
+        pass
     doc = {"schema": "ce-uo-freshness/v1", "product": product_identity, **result}
     out = _dump_ce_yaml(_ce(project_root, arch=arch) / "impact" / "freshness.yaml", doc)
     return {
@@ -633,19 +660,14 @@ def _ensure_uo_tg_views(project_root: Path, tg_ctx: dict[str, Any]) -> dict[str,
 def _load_uo_tg_doc(project_root: Path, tg_ctx: dict[str, Any], name: str) -> dict[str, Any]:
     """Load a TG view exclusively from the CodeMap ``.uo`` view_blob."""
     try:
-        from uo_init.store.reader import find_uo_product, load_view_blob_checked
+        from testcase_agent import product_uo
 
-        product = find_uo_product(
+        blob = product_uo.view(
             project_root,
+            name,
             op_name=str(tg_ctx.get("op_name") or ""),
             architecture=str(tg_ctx.get("architecture") or ""),
         )
-        if product is None or product.suffix != ".uo":
-            return {}
-        checked = load_view_blob_checked(product, name)
-        if not checked.get("ok"):
-            return {}
-        blob = checked.get("view")
         return blob if isinstance(blob, dict) else {}
     except Exception:
         return {}
@@ -794,6 +816,14 @@ def _run_tg_init_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
             ctx.get("consumer_root")
             or existing.get("consumer_root")
             or tg_ctx.get("test_script_root")
+            or ""
+        ),
+        "test_script_root": str(
+            ctx.get("test_script_root")
+            or existing.get("test_script_root")
+            or tg_ctx.get("test_script_root")
+            or ctx.get("consumer_root")
+            or existing.get("consumer_root")
             or ""
         ),
         "op_name": tg_ctx["op_name"],
@@ -954,6 +984,48 @@ def _run_tg_contract_build(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         return {"ok": False, "engine": "contract_build", "error": str(exc)[:400]}
 
 
+def _write_test_repo_bind(
+    project_root: Path,
+    tg_ctx: dict[str, Any],
+    view_doc: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Scan optional test-script repo and write a generic consume contract."""
+    import yaml
+    from testcase_agent.test_repo import contract_from_inventory, scan
+
+    inventory = scan(str(tg_ctx.get("test_script_root") or "") or None)
+    view_doc = view_doc if isinstance(view_doc, dict) else {}
+    host_fields = [str(f.get("name") or "") for f in (view_doc.get("fields") or []) if isinstance(f, dict)]
+    host_fields = [name for name in host_fields if name]
+    key_dims = [str(name) for name in (view_doc.get("declared_keys") or {}) if name]
+    knob_defaults: dict[str, Any] = {}
+    try:
+        from replay import inputs as I
+
+        sem = getattr(I, "SEMANTICS", None)
+        schema = sem.knob_schema() if sem is not None and hasattr(sem, "knob_schema") else {}
+        for name, meta in (schema or {}).items():
+            if isinstance(meta, dict) and "default" in meta:
+                knob_defaults[str(name)] = meta["default"]
+    except Exception:
+        knob_defaults = {}
+    contract = contract_from_inventory(
+        inventory,
+        host_fields=host_fields,
+        key_dims=key_dims,
+        knob_defaults=knob_defaults,
+    )
+    init = _tg(project_root) / "init"
+    init.mkdir(parents=True, exist_ok=True)
+    (init / "test_repo_inventory.yaml").write_text(
+        yaml.safe_dump(inventory, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    (init / "test_repo_contract.yaml").write_text(
+        yaml.safe_dump(contract, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    return contract
+
+
 def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     tg = _tg(project_root)
@@ -964,11 +1036,13 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
             _ensure_uo_tg_views(project_root, tg_ctx)
             view = _load_uo_tg_doc(project_root, tg_ctx, "ir/tg_host_view.yaml")
             graph_doc = _load_uo_tg_doc(project_root, tg_ctx, "ir/operator_graph.yaml")
+            repo_contract = _write_test_repo_bind(project_root, tg_ctx, view)
             if not view:
                 return {
                     "ok": False,
                     "engine": "semantic_bind",
                     "error": "missing view_blob ir/tg_host_view.yaml in .uo",
+                    "test_repo": repo_contract.get("kind"),
                 }
             rows = []
             for f in view.get("fields") or []:
@@ -1020,6 +1094,7 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
                 "artifacts": {},
                 "inventory_path": inv_path.as_posix(),
                 "field_count": len(rows),
+                "test_repo": repo_contract.get("kind"),
             }
 
         return {
@@ -3022,6 +3097,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "tilingkey-binding-v1": [
         "tg/realization/binding_inventory.yaml",
+        "tg/init/test_repo_inventory.yaml",
+        "tg/init/test_repo_contract.yaml",
     ],
     "tilingkey-integrity-v1": [
         "tg/contract/integrity_gate.yaml",
@@ -3114,9 +3191,12 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     ],
     "tilingkey-contract-v1": [
         "tg/contract/tilingkey_contract.yaml",
+        "tg/snapshot/understand_contract.json",
     ],
     "tilingkey-binding-v1": [
         "tg/realization/binding_inventory.yaml",
+        "tg/init/test_repo_inventory.yaml",
+        "tg/init/test_repo_contract.yaml",
     ],
     "tilingkey-integrity-v1": [
         "tg/contract/integrity_gate.yaml",

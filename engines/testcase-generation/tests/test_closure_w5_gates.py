@@ -33,11 +33,15 @@ def toy_env(monkeypatch):
     R._default = None
     I.reload()
     yield
-    monkeypatch.delenv("UO_OPERATOR", raising=False)
-    monkeypatch.delenv("UO_ARCH", raising=False)
     package_data.clear_caches()
     R._default = None
-    I.reload()
+    try:
+        I.reload()
+    except Exception:
+        pass
+    monkeypatch.delenv("UO_OPERATOR", raising=False)
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("UO_REPLAY_DISTRO", raising=False)
 
 
 def _ws(tmp_path: Path):
@@ -173,8 +177,9 @@ def test_declared_set_hash_mismatch_fails(tmp_path, monkeypatch):
     from ascendc_pilot.gates import tg_adapters
     from ascendc_pilot.paths import ensure_agent_layout, tg_root, uo_root
 
+    monkeypatch.setenv("UO_ARCH", "arch35")
     ensure_agent_layout(tmp_path, arch="arch35")
-    tg = tg_root(tmp_path)
+    tg = tg_root(tmp_path, arch="arch35")
     uo = uo_root(tmp_path)
     (tg / "init").mkdir(parents=True, exist_ok=True)
     (uo / "ir").mkdir(parents=True, exist_ok=True)
@@ -277,9 +282,13 @@ def test_adapter_completeness_rejects_copied_example(tmp_path, toy_env):
 
     pkg = tmp_path / "bad_op" / "arch0"
     pkg.mkdir(parents=True)
-    examples = REPO / "skills" / "domain" / "tg-closure" / "examples"
+    examples = tmp_path / "excerpts"
+    examples.mkdir()
+    (examples / "construction_hints.excerpt.yaml").write_text(
+        "defaults: {copied: true}\n", encoding="utf-8"
+    )
     # Copy required files from toy, then overwrite construction with example body.
-    toy = REPO / "operators" / "_synthetic_toy" / "arch0"
+    toy = REPO / "tests" / "fixtures" / "_synthetic_toy" / "arch0"
     for name in (
         "operator.yaml",
         "log_protocol.yaml",
@@ -305,7 +314,7 @@ def test_adapter_completeness_toy_passes(toy_env):
 
     result = tg_adapters.gate_adapter_completeness(
         REPO,
-        package_dir=REPO / "operators" / "_synthetic_toy" / "arch0",
-        examples_dir=REPO / "skills" / "domain" / "tg-closure" / "examples",
+        package_dir=REPO / "tests" / "fixtures" / "_synthetic_toy" / "arch0",
+        examples_dir=REPO / "tests" / "fixtures" / "_synthetic_toy" / "arch0",
     )
     assert result["ok"] is True, result

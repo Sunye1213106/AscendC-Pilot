@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """Soundness/completeness audit for a committed ``.uo`` CodeMap.
 
-A TilingKey is structurally closed only when current source provides its
-packing argument *and* a concrete producer/root chain. Arbitrary branch
-``CONTROLS`` paths are intentionally excluded from Key rooting so a constant in
-an unrelated condition cannot make a missing Host producer look complete.
+A TilingKey is structurally closed when current source provides at least one
+packing formula with a concrete producer/root chain. Leftover pass-through
+``SetTilingKey`` sites without sources must not veto a real formula. Arbitrary
+branch ``CONTROLS`` paths are excluded from Key rooting so a constant in an
+unrelated condition cannot make a missing Host producer look complete.
 """
 from __future__ import annotations
 
@@ -143,12 +144,31 @@ def _packing_sources(codemap: CodeMap, node: Entity, incoming: dict[str, list[An
     return out
 
 
+_SOURCE_PRODUCER_PROVS = {
+    "source_host_defuse",
+    "source_host_tiling_input",
+    "source_host_api_accessor",
+}
+
+
 def _source_has_producer(source: Entity, incoming: dict[str, list[Any]]) -> bool:
     if _trusted_root(source):
         return True
-    if source.kind_name() not in _RUNTIME_KINDS or int(source.attrs.get("producer_site_count") or 0) <= 0:
+    if source.kind_name() not in _RUNTIME_KINDS:
         return False
-    return any(rel.kind_name() == RelationKind.DERIVES.value and str(rel.attrs.get("provenance") or "") == "source_host_defuse" for rel in incoming.get(source.id, ()))
+    if any(
+        rel.kind_name() == RelationKind.DERIVES.value
+        and str(rel.attrs.get("provenance") or "") in _SOURCE_PRODUCER_PROVS
+        for rel in incoming.get(source.id, ())
+    ):
+        return True
+    if int(source.attrs.get("producer_site_count") or 0) <= 0:
+        return False
+    return any(
+        rel.kind_name() == RelationKind.DERIVES.value
+        and str(rel.attrs.get("provenance") or "") == "source_host_defuse"
+        for rel in incoming.get(source.id, ())
+    )
 
 
 def _upstream_unresolved(codemap: CodeMap, start_id: str, incoming: dict[str, list[Any]]) -> list[str]:
@@ -172,8 +192,8 @@ def _upstream_unresolved(codemap: CodeMap, start_id: str, incoming: dict[str, li
 def _key_evidence(codemap: CodeMap, key: Entity, *, rooted: set[str], incoming: dict[str, list[Any]]) -> dict[str, Any]:
     packing = _packing_nodes(codemap, key, incoming)
     per_call: list[dict[str, Any]] = []
-    all_have_producer = bool(packing)
-    all_rooted = bool(packing)
+    any_producer = False
+    any_rooted = False
     unresolved: set[str] = set()
     producer_sites: list[dict[str, Any]] = []
     for node in packing:
@@ -188,15 +208,17 @@ def _key_evidence(codemap: CodeMap, key: Entity, *, rooted: set[str], incoming: 
                 if isinstance(site, dict) and site not in producer_sites:
                     producer_sites.append(site)
             source_rows.append({"id": source.id, "name": source.name, "kind": source.kind_name(), "producer": producer, "rooted": source.id in rooted})
-        all_have_producer = all_have_producer and has_producer
-        all_rooted = all_rooted and has_producer and has_root
+        any_producer = any_producer or has_producer
+        any_rooted = any_rooted or (has_producer and has_root)
         unresolved.update(_upstream_unresolved(codemap, node.id, incoming))
         per_call.append({"packing_node": node.id, "expression": node.attrs.get("expression") or node.name, "has_source_producer": has_producer, "has_trusted_root": has_root, "sources": source_rows})
+    if any_producer and key.id in rooted:
+        any_rooted = True
     return {
         "key": key.name,
         "packed": bool(packing),
-        "producer": all_have_producer,
-        "rooted": all_rooted,
+        "producer": any_producer,
+        "rooted": any_rooted,
         "dependency_complete": not unresolved,
         "unresolved_dependencies": sorted(unresolved),
         "producer_sites": producer_sites,
@@ -230,9 +252,25 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     if not inputs:
         block("MISSING_INPUT", "no API input/attribute entities")
     if not outputs:
-        block("MISSING_OUTPUT", "no API output entities")
+        stats = codemap.meta.get("source_contract_stats") or {}
+        proto_seen = int(stats.get("api_source_files") or 0) > 0
+        proto_outputs = int(stats.get("api_outputs") or 0)
+        if proto_seen and proto_outputs == 0:
+            warn("SOURCE_HAS_NO_OUTPUT", "REG_OP / OpDef declares no OUTPUT; fusion send-style ops are honest")
+        else:
+            block("MISSING_OUTPUT", "no API output entities")
     if not keys:
-        block("MISSING_TILING_KEY", "no TilingKey entities")
+        stats = codemap.meta.get("source_contract_stats") or {}
+        declared_n = int(
+            stats.get("source_declared_tiling_keys")
+            or codemap.meta.get("source_declared_tiling_key_count")
+            or 0
+        )
+        has_sites = bool(stats.get("source_has_tiling_key_sites"))
+        if declared_n == 0 and not has_sites:
+            warn("SOURCE_HAS_NO_TILING_KEY", "current source has no TPL / TILING_KEY_IS / packing helper; barrier-style ops are honest")
+        else:
+            block("MISSING_TILING_KEY", "no TilingKey entities")
     if not tiling_data or not tiling_fields:
         block("MISSING_TILING_DATA", "no structured TilingData class/field model")
     if not kernels:
@@ -307,7 +345,12 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     strict_summary["tiling_key_dependency_coverage"] = f"{len(dependency_complete_keys)}/{len(declared_keys)}"
 
     select_pairs = {(rel.src, rel.dst) for rel in codemap.relations.values() if rel.kind_name() in {RelationKind.SELECTS.value, RelationKind.LAUNCHES.value}}
-    if len(keys) > 1 and len(kernels) > 1:
+    tpl_dims = [
+        key
+        for key in keys
+        if str(key.attrs.get("provenance") or "") == "source_tpl_args_decl"
+    ]
+    if len(keys) > 1 and len(kernels) > 1 and len(tpl_dims) != len(keys):
         universal = all((key.id, kernel.id) in select_pairs for key in keys for kernel in kernels)
         if universal:
             block("SUSPICIOUS_CARTESIAN_KEY_KERNEL", f"all {len(keys)} TilingKeys select/launch all {len(kernels)} Kernels")

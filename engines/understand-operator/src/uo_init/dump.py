@@ -11,16 +11,6 @@ from typing import Any
 
 import yaml
 
-from uo_init.kb_index import (
-    get_meta,
-    list_view_blobs,
-    load_all_view_blobs,
-    load_host_derivation_from_db,
-    load_legal_keys_from_db,
-    load_view_blob,
-    materialize_lazy_view,
-)
-
 # Short aliases → view_blob names stored in the ``.uo`` product.
 VIEW_ALIASES: dict[str, str] = {
     "manifest": "manifest.yaml",
@@ -66,11 +56,9 @@ def resolve_view_name(view: str) -> str:
 
 
 def _resolve_db_or_uo(uo_root: Path, *, architecture: str = "") -> tuple[str, Path]:
-    """Return ('uo'|'db', path). Production path is ``.uo``; sqlite must be explicit."""
+    """Return ('uo', path). Production path is ``.uo`` only."""
     if uo_root.is_file() and uo_root.suffix == ".uo":
         return "uo", uo_root
-    if uo_root.is_file() and uo_root.suffix in {".sqlite", ".db"}:
-        return "db", uo_root
     from uo_init.store.reader import find_uo_product
 
     found = find_uo_product(
@@ -91,83 +79,11 @@ def dump_view(
     *,
     out: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Load one view from ``.uo`` (or an explicit sqlite dump path) and optionally write ``out``."""
+    """Load one view from ``.uo`` and optionally write ``out``."""
     root = Path(uo_root).expanduser().resolve()
-    kind, product = _resolve_db_or_uo(root)
+    _kind, product = _resolve_db_or_uo(root)
     name = resolve_view_name(view)
-
-    if kind == "uo":
-        return _dump_from_uo(product, name, out=out)
-
-    db = product
-    if name == "tiling/legal_key_index.jsonl":
-        rows = load_legal_keys_from_db(db)
-        text = "".join(
-            json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
-            for row in rows
-        )
-        payload: Any = rows
-        if out is not None:
-            path = Path(out)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text, encoding="utf-8")
-        return {
-            "ok": True,
-            "view": name,
-            "count": len(rows),
-            "out": str(out) if out else "",
-            "payload": payload,
-        }
-
-    if name in {"ir/host_derivation.yaml", "host_derivation"}:
-        payload = load_view_blob(db, "ir/host_derivation.yaml")
-        if payload is None:
-            payload = load_host_derivation_from_db(db)
-    else:
-        payload = load_view_blob(db, name)
-
-    if payload is None and name == "manifest.yaml":
-        meta = get_meta(db)
-        payload = {
-            "version": int(meta.get("version") or 1),
-            "status": meta.get("manifest_status") or "extracted",
-            "authority": meta.get("authority") or "db",
-            "product": "indexes/kb_graph.sqlite",
-            "derived_index": "indexes/kb_graph.sqlite",
-            "op_name": meta.get("op_name") or "",
-            "architecture": meta.get("architecture") or "",
-            "graph_fingerprint": meta.get("graph_fingerprint") or "",
-            "schema": meta.get("schema") or "kb_schema-v1",
-            "legal_key_count": int(meta.get("legal_key_count") or 0),
-            "integrity_status": meta.get("integrity_status") or "",
-        }
-
-    if payload is None:
-        available = list_view_blobs(db)
-        raise KeyError(
-            f"view not found in DB: {name}; available={available[:40]}"
-        )
-
-    payload = materialize_lazy_view(db, name, payload)
-
-    if out is not None:
-        path = Path(out)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(
-                payload,
-                allow_unicode=True,
-                sort_keys=True,
-                default_flow_style=False,
-            ),
-            encoding="utf-8",
-        )
-    return {
-        "ok": True,
-        "view": name,
-        "out": str(out) if out else "",
-        "payload": payload,
-    }
+    return _dump_from_uo(product, name, out=out)
 
 
 def _dump_from_uo(
@@ -250,59 +166,30 @@ def dump_all_views(
 ) -> dict[str, Any]:
     """Materialize every stored view under out_dir."""
     root = Path(uo_root).expanduser().resolve()
-    kind, product = _resolve_db_or_uo(root)
+    _kind, product = _resolve_db_or_uo(root)
     target = Path(out_dir).expanduser().resolve() if out_dir else root
     written: list[str] = []
-    if kind == "uo":
-        from uo_init.store.reader import list_views, load_production_view, read_codemap
+    from uo_init.store.reader import list_views, load_production_view, read_codemap
 
-        for name in list_views(product):
-            payload = load_production_view(product, name)
-            if payload is None:
-                continue
-            path = target / (name if "/" in name or name.endswith(".yaml") else f"{name}.yaml")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False),
-                encoding="utf-8",
-            )
-            written.append(name)
-        cm = read_codemap(product)
-        summary_path = target / "summary.yaml"
-        summary_path.write_text(
-            yaml.safe_dump(cm.summary(), allow_unicode=True, sort_keys=True),
-            encoding="utf-8",
-        )
-        written.append("summary.yaml")
-        return {"ok": True, "out_dir": target.as_posix(), "written": written, "product": str(product)}
-
-    db = product
-    for name, payload in load_all_view_blobs(db).items():
-        path = target / name
+    for name in list_views(product):
+        payload = load_production_view(product, name)
+        if payload is None:
+            continue
+        path = target / (name if "/" in name or name.endswith(".yaml") else f"{name}.yaml")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
-            yaml.safe_dump(
-                payload,
-                allow_unicode=True,
-                sort_keys=True,
-                default_flow_style=False,
-            ),
+            yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False),
             encoding="utf-8",
         )
         written.append(name)
-    keys = load_legal_keys_from_db(db)
-    if keys:
-        path = target / "tiling" / "legal_key_index.jsonl"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            "".join(
-                json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n"
-                for row in keys
-            ),
-            encoding="utf-8",
-        )
-        written.append("tiling/legal_key_index.jsonl")
-    return {"ok": True, "out_dir": target.as_posix(), "written": written}
+    cm = read_codemap(product)
+    summary_path = target / "summary.yaml"
+    summary_path.write_text(
+        yaml.safe_dump(cm.summary(), allow_unicode=True, sort_keys=True),
+        encoding="utf-8",
+    )
+    written.append("summary.yaml")
+    return {"ok": True, "out_dir": target.as_posix(), "written": written, "product": str(product)}
 
 
 def dump_path_query(uo_file: Path, start: str, end: str) -> dict[str, Any]:
@@ -425,8 +312,6 @@ def main(argv: list[str] | None = None) -> int:
                 from uo_init.store.reader import list_views
 
                 print(json.dumps({"ok": True, "views": list_views(product)}, ensure_ascii=False))
-            else:
-                print(json.dumps({"ok": True, "views": list_view_blobs(product)}, ensure_ascii=False))
             return 0
         except Exception as exc:  # noqa: BLE001
             print(json.dumps({"ok": False, "error": str(exc)[:400]}, ensure_ascii=False))
