@@ -3,6 +3,8 @@ name: code-engineering
 description: >
   Plan, scope, and verify AscendC code changes with UO slices, evidence tiers,
   risk classes, and a persistent verification-obligation ledger.
+  Use when locating a change, slicing a diff, or closing obligations with
+  measurement receipts. Boundary: not readonly code review; not TilingKey search.
 ---
 
 # Code Engineering
@@ -72,7 +74,7 @@ Git 写操作、fork、PR 文案走维护者流程，不在本 skill。只读审
 - Scenario ids (catalog is the source of truth):
   `references/scenario-catalog.md`
 - Scenario infer (engine writes skeleton):
-  `references/scenario-infer.md`, `capabilities/ce-scenario-infer/METHOD.md`
+  `references/scenario-infer.md`
 - Scenario knobs (agent overlay, Host merges before confirm):
   `capabilities/ce-scenario-knobs/METHOD.md`
 - Feature decompose / plan review:

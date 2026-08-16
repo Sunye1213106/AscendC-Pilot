@@ -11,6 +11,7 @@ not claim completeness for template/macro call resolution merely from regex.
 """
 from __future__ import annotations
 
+import bisect
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,13 +34,6 @@ _MEMBER_RE = re.compile(
     r"^\s*([A-Za-z_][\w:\s<>,*&]*?)\s+([A-Za-z_]\w*)(?:\[[^\]]+\])?\s*(?:=[^;]+)?;\s*$"
 )
 _TILING_READ_RE = re.compile(r"\btilingData\s*->\s*([A-Za-z_]\w*)(?:\s*\.\s*([A-Za-z_]\w*))?")
-_FUNCTION_RE = re.compile(
-    r"(?:(?:template\s*<[^;{}]{0,1500}>\s*){0,4})"
-    r"(?:(?:inline|static|constexpr|__aicore__|__global__)\s+){0,8}"
-    r"[A-Za-z_][\w:<>,\s*&]{0,200}?\s+"
-    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*){0,6})\s*"
-    r"\((?P<params>[^;{}]{0,4000})\)\s*(?:const\s*)?\{",
-)
 _CALL_RE = re.compile(
     r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
     r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
@@ -77,6 +71,15 @@ class _Scope:
     kind: str
 
 
+@dataclass(frozen=True)
+class _KernelSource:
+    path: Path
+    text: str
+    file: str
+    newlines: list[int]
+    functions: list[_Scope]
+
+
 def resolve_source_gaps(
     codemap: CodeMap,
     operator_root: str | Path,
@@ -87,11 +90,12 @@ def resolve_source_gaps(
     if not root.is_dir():
         raise FileNotFoundError(root)
 
+    sources = _load_kernel_sources(root, architecture)
     stats: dict[str, Any] = {}
-    stats.update(_extract_calls_macros_and_frontiers(codemap, root, architecture))
-    stats.update(_resolve_tiling_reads(codemap, root, architecture))
-    stats.update(_extract_compile_facts(codemap, root, architecture))
-    stats.update(_extract_runtime_structs_and_resources(codemap, root, architecture))
+    stats.update(_extract_calls_macros_and_frontiers(codemap, sources))
+    stats.update(_resolve_tiling_reads(codemap, sources))
+    stats.update(_extract_compile_facts(codemap, sources, architecture))
+    stats.update(_extract_runtime_structs_and_resources(codemap, sources, architecture))
     stats.update(_resolve_gap_records(codemap, stats))
     codemap.meta["source_resolution"] = "ascendc-source-resolution/v2"
     codemap.meta["source_resolution_stats"] = stats
@@ -132,9 +136,25 @@ def _line_index(text: str) -> list[int]:
 
 
 def _line_at(newlines: list[int], offset: int) -> int:
-    import bisect
-
     return bisect.bisect_right(newlines, max(0, offset)) + 1
+
+
+def _load_kernel_sources(root: Path, architecture: str) -> list[_KernelSource]:
+    out: list[_KernelSource] = []
+    for path in _kernel_files(root, architecture):
+        text = _read(path)
+        file = _rel(root, path)
+        newlines = _line_index(text)
+        out.append(
+            _KernelSource(
+                path=path,
+                text=text,
+                file=file,
+                newlines=newlines,
+                functions=_function_scopes(text, file, newlines=newlines),
+            )
+        )
+    return out
 
 
 def _matching_brace(text: str, open_pos: int) -> int:
@@ -189,26 +209,26 @@ def _find_kernel(
 def _function_scopes(
     text: str, file: str, *, newlines: list[int] | None = None
 ) -> list[_Scope]:
+    from uo_init.cpp_lex import iter_function_defs
+    from uo_init.passes.source_text_cache import mask_cached
+
     out: list[_Scope] = []
     line_of = (lambda off: _line_at(newlines, off)) if newlines is not None else (
         lambda off: _line(text, off)
     )
-    for match in _FUNCTION_RE.finditer(text):
-        name = match.group("name")
-        if name in _CALL_SKIP:
-            continue
-        open_pos = text.find("{", match.start(), match.end())
-        close_pos = _matching_brace(text, open_pos)
-        if close_pos < 0:
+    for hit in iter_function_defs(mask_cached(text)):
+        name = hit.name
+        short = name.split("::")[-1].split("<", 1)[0].strip()
+        if short in _CALL_SKIP:
             continue
         out.append(
             _Scope(
                 name=name,
                 file=file,
-                start=line_of(match.start()),
-                end=line_of(close_pos),
-                body_start=open_pos + 1,
-                body_end=close_pos,
+                start=line_of(hit.start),
+                end=line_of(hit.close_brace),
+                body_start=hit.open_brace + 1,
+                body_end=hit.close_brace,
                 kind="function",
             )
         )
@@ -278,7 +298,9 @@ def _containing_scope(scopes: Iterable[_Scope], offset: int) -> _Scope | None:
     return min(matches, key=lambda s: s.body_end - s.body_start)
 
 
-def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architecture: str) -> dict[str, int]:
+def _extract_calls_macros_and_frontiers(
+    codemap: CodeMap, sources: list[_KernelSource]
+) -> dict[str, int]:
     direct_kernel_calls = 0
     call_edges = 0
     type_dispatch_edges = 0
@@ -297,11 +319,11 @@ def _extract_calls_macros_and_frontiers(codemap: CodeMap, root: Path, architectu
             r"\b(" + "|".join(re.escape(s) for s in shorts) + r")\s*<"
         )
 
-    for path in _kernel_files(root, architecture):
-        text = _read(path)
-        file = _rel(root, path)
-        newlines = _line_index(text)
-        functions = _function_scopes(text, file, newlines=newlines)
+    for src in sources:
+        text = src.text
+        file = src.file
+        newlines = src.newlines
+        functions = src.functions
         macros = _macro_scopes(text, file)
         macro_scopes_count += len(macros)
         all_scopes = functions + macros
@@ -468,13 +490,13 @@ def _field_index(codemap: CodeMap) -> dict[str, list[Entity]]:
     return out
 
 
-def _resolve_tiling_reads(codemap: CodeMap, root: Path, architecture: str) -> dict[str, int]:
+def _resolve_tiling_reads(codemap: CodeMap, sources: list[_KernelSource]) -> dict[str, int]:
     fields = _field_index(codemap)
     reads = 0
-    for path in _kernel_files(root, architecture):
-        text = _read(path)
-        file = _rel(root, path)
-        scopes = _function_scopes(text, file)
+    for src in sources:
+        text = src.text
+        file = src.file
+        scopes = src.functions
         for match in _TILING_READ_RE.finditer(text):
             outer, inner = match.groups()
             name = inner or outer
@@ -487,11 +509,11 @@ def _resolve_tiling_reads(codemap: CodeMap, root: Path, architecture: str) -> di
             else:
                 owner = codemap.upsert(
                     EntityKind.METHOD,
-                    f"{path.stem}:source_scope",
+                    f"{src.path.stem}:source_scope",
                     eid=f"SRCMETHOD::{file}::source_scope",
                     attrs={"layer": "kernel", "provenance": "source_tilingdata_read"},
                     file=file,
-                    line=_line(text, match.start()),
+                    line=_line_at(src.newlines, match.start()),
                     status="confirmed",
                 )
             for field in candidates:
@@ -504,7 +526,7 @@ def _resolve_tiling_reads(codemap: CodeMap, root: Path, architecture: str) -> di
                     attrs={
                         "provenance": "source_tilingdata_read",
                         "file": file,
-                        "line": _line(text, match.start()),
+                        "line": _line_at(src.newlines, match.start()),
                         "container": outer,
                     },
                     status="confirmed",
@@ -513,14 +535,17 @@ def _resolve_tiling_reads(codemap: CodeMap, root: Path, architecture: str) -> di
     return {"tilingdata_read_edges": reads}
 
 
-def _extract_compile_facts(codemap: CodeMap, root: Path, architecture: str) -> dict[str, int]:
+def _extract_compile_facts(
+    codemap: CodeMap, sources: list[_KernelSource], architecture: str
+) -> dict[str, int]:
     macros = 0
     compile_vars = 0
     archs = codemap.by_name(architecture, kind=EntityKind.ARCH)
     arch_ent = archs[0] if archs else None
-    for path in _kernel_files(root, architecture):
-        text = _read(path)
-        file = _rel(root, path)
+    for src in sources:
+        text = src.text
+        file = src.file
+        newlines = src.newlines
         for m in _DEFINE_OBJECT_RE.finditer(text):
             name, value = m.groups()
             ent = codemap.upsert(
@@ -529,7 +554,7 @@ def _extract_compile_facts(codemap: CodeMap, root: Path, architecture: str) -> d
                 eid=f"SRCMACRO::{file}::{name}",
                 attrs={"value": value.strip(), "provenance": "source_define", "architecture": architecture},
                 file=file,
-                line=_line(text, m.start()),
+                line=_line_at(newlines, m.start()),
                 status="confirmed",
             )
             if arch_ent:
@@ -543,7 +568,7 @@ def _extract_compile_facts(codemap: CodeMap, root: Path, architecture: str) -> d
                 eid=f"SRCCONST::{file}::{name}",
                 attrs={"value_expr": value.strip(), "provenance": "source_constexpr", "architecture": architecture},
                 file=file,
-                line=_line(text, m.start()),
+                line=_line_at(newlines, m.start()),
                 status="confirmed",
             )
             if arch_ent:
@@ -573,19 +598,22 @@ def _extract_compile_facts(codemap: CodeMap, root: Path, architecture: str) -> d
                     eid=f"SRCENUM::{file}::{enum_name}::{member}",
                     attrs={"value": value if value >= 0 else None, "enum": enum_name, "provenance": "source_enum"},
                     file=file,
-                    line=_line(text, em.start()),
+                    line=_line_at(newlines, em.start()),
                     status="confirmed",
                 )
                 compile_vars += 1
     return {"source_macros": macros, "source_compile_vars": compile_vars}
 
 
-def _extract_runtime_structs_and_resources(codemap: CodeMap, root: Path, architecture: str) -> dict[str, int]:
+def _extract_runtime_structs_and_resources(
+    codemap: CodeMap, sources: list[_KernelSource], architecture: str
+) -> dict[str, int]:
     structs = 0
     resources = 0
-    for path in _kernel_files(root, architecture):
-        text = _read(path)
-        file = _rel(root, path)
+    for src in sources:
+        text = src.text
+        file = src.file
+        newlines = src.newlines
         for kind_re, kind_name in ((_STRUCT_RE, "struct"), (_CLASS_RE, "class")):
             for m in kind_re.finditer(text):
                 owner = m.group(1)
@@ -599,7 +627,7 @@ def _extract_runtime_structs_and_resources(codemap: CodeMap, root: Path, archite
                     eid=f"SRCTYPE::{file}::{owner}",
                     attrs={"cpp_kind": kind_name, "architecture": architecture, "provenance": "source_runtime_type"},
                     file=file,
-                    line=_line(text, m.start()),
+                    line=_line_at(newlines, m.start()),
                     status="confirmed",
                 )
                 structs += 1
@@ -617,7 +645,7 @@ def _extract_runtime_structs_and_resources(codemap: CodeMap, root: Path, archite
                                 eid=f"SRCFIELD::{file}::{owner}::{name}",
                                 attrs={"owner": owner, "cpp_type": ctype, "provenance": "source_runtime_member"},
                                 file=file,
-                                line=_line(text, open_pos + 1) + off,
+                                line=_line_at(newlines, open_pos + 1) + off,
                                 status="confirmed",
                             )
                             codemap.link(RelationKind.DECLARES, owner_ent.id, field.id, attrs={"provenance": "source_runtime_type"}, status="confirmed")

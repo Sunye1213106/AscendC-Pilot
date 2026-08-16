@@ -56,7 +56,15 @@ def canonical_graph_digest(codemap: CodeMap) -> str:
     cannot preserve identity merely by keeping the same counts/kind histogram.
     Projection-driving canonical meta is included as well; only identity fields
     derived from this digest are excluded to avoid recursion.
+
+    When ``codemap.meta['canonical_graph_digest']`` is already set (finalize /
+    commit after a mutation pop), reuse it. Callers that mutate the graph must
+    pop identity keys first — this function never writes the cache itself, so
+    a stamp-then-rewire-then-validate sequence still sees a fresh digest.
     """
+    cached = codemap.meta.get("canonical_graph_digest")
+    if isinstance(cached, str) and cached:
+        return cached
     payload = {
         "schema": CANONICAL_DIGEST_SCHEMA,
         "op": codemap.op_name,

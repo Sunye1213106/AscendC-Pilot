@@ -26,7 +26,6 @@ DEFAULT_IFA = Path(
     os.environ.get("UO_IFA_DIR")
     or r"d:\TEST\ops-transformer\attention\incre_flash_attention"
 )
-DEFAULT_ARCH = os.environ.get("UO_ARCH") or "arch35"
 GOLD = REPO / "artifacts" / "uo-init-perf" / "gold" / "fag-arch35.yaml"
 _CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
 
@@ -330,7 +329,11 @@ def _write_run(out_dir: Path, stages: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="uo-init FAG arch35 perf gate")
     parser.add_argument("--op", type=Path, default=DEFAULT_OP)
-    parser.add_argument("--arch", default=DEFAULT_ARCH)
+    parser.add_argument(
+        "--arch",
+        default=os.environ.get("UO_ARCH") or "",
+        help="Required architecture id (or set UO_ARCH). No silent default.",
+    )
     parser.add_argument(
         "--mode",
         default="true-cold",
@@ -346,6 +349,12 @@ def main(argv: list[str] | None = None) -> int:
         default=REPO / "artifacts" / "uo-init-perf" / "runs" / "latest",
     )
     args = parser.parse_args(argv)
+
+    arch = str(args.arch or "").strip()
+    if not arch:
+        print("architecture required: pass --arch or set UO_ARCH", flush=True)
+        return 2
+    args.arch = arch
 
     if not args.op.is_dir():
         print(f"operator not found: {args.op}", flush=True)

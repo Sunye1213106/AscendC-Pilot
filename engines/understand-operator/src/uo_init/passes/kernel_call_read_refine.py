@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from uo_init.cpp_lex import iter_function_defs, line_at, line_index
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
@@ -36,6 +37,7 @@ _TILING_ACCESS_RE = re.compile(
 )
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 _CALL_PROV = {"source_kernel_call_bound_v2", "source_kernel_macro_call_bound_v2"}
+_LINE_CACHE: dict[int, list[int]] = {}
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,7 @@ def refine_kernel_calls_and_tiling_reads(
     root = Path(operator_root).expanduser().resolve()
     selected = list((codemap.meta.get("kernel_tiling_closure") or {}).get("selected_kernel_files") or [])
     texts = _load_selected(root, selected, architecture)
+    _LINE_CACHE.clear()
     _purge_previous_refinement(codemap)
 
     scopes, class_names = _discover_scopes(codemap, root, architecture, texts)
@@ -133,7 +136,7 @@ def refine_kernel_calls_and_tiling_reads(
 def _load_selected(
     root: Path, selected: list[str], architecture: str
 ) -> dict[Path, tuple[str, str]]:
-    from uo_init.passes.source_text_cache import read_text
+    from uo_init.passes.source_text_cache import masked_text, read_text
 
     paths: set[Path] = set()
     for raw in selected:
@@ -158,7 +161,7 @@ def _load_selected(
     out: dict[Path, tuple[str, str]] = {}
     for path in sorted(paths):
         raw = read_text(path)
-        out[path] = (raw, _mask_non_code(raw))
+        out[path] = (raw, masked_text(path))
     return out
 
 
@@ -218,24 +221,25 @@ def _discover_scopes(
             )
             scopes.append(_Scope(ent, macro.name, "", file, raw, masked, macro.start, macro.end, "", "macro"))
 
-        for brace in (m.start() for m in re.finditer(r"\{", masked)):
-            if any(m.start <= brace < m.end for m in macros):
+        newlines = line_index(raw)
+        for hit in iter_function_defs(masked):
+            if any(m.start <= hit.open_brace < m.end for m in macros):
                 continue
-            header = _function_before_brace(masked, brace)
-            if header is None:
-                continue
-            qualified, params, open_paren = header
-            short = qualified.split("::")[-1]
+            qualified = hit.name
+            params = hit.params
+            open_paren = hit.open_paren
+            short = qualified.split("::")[-1].split("<", 1)[0].strip()
             if short in _CONTROL:
                 continue
-            close = _matching_forward(masked, brace, "{", "}")
+            brace = hit.open_brace
+            close = hit.close_brace
             if close < 0:
                 continue
             containing = [c for c in classes if c.start <= brace <= c.end]
             owner = qualified.split("::")[-2] if "::" in qualified else (
                 min(containing, key=lambda c: c.end - c.start).name if containing else ""
             )
-            line = _line(raw, max(0, open_paren - len(qualified) - 8))
+            line = line_at(newlines, max(0, open_paren - len(qualified) - 8))
             kernel_hits = codemap.by_name(short, kind=EntityKind.KERNEL)
             if kernel_hits and "__global__" in masked[max(0, open_paren - 400):brace]:
                 ent = kernel_hits[0]
@@ -753,4 +757,9 @@ def _rel(root: Path, path: Path) -> str:
 
 
 def _line(text: str, offset: int) -> int:
-    return text.count("\n", 0, max(0, offset)) + 1
+    key = id(text)
+    idx = _LINE_CACHE.get(key)
+    if idx is None:
+        idx = line_index(text)
+        _LINE_CACHE[key] = idx
+    return line_at(idx, offset)

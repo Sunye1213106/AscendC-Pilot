@@ -10,10 +10,20 @@ from __future__ import annotations
 from pathlib import Path
 
 _TEXT: dict[str, str] = {}
+_BY_BASENAME: dict[str, list[str]] = {}
+_MASKED: dict[str, str] = {}
+_MASKED_BY_ID: dict[int, str] = {}
 
 
 def _key(path: str | Path) -> str:
     return str(Path(path).expanduser().resolve())
+
+
+def _remember(key: str) -> None:
+    base = Path(key).name
+    bucket = _BY_BASENAME.setdefault(base, [])
+    if key not in bucket:
+        bucket.append(key)
 
 
 def read_text(path: str | Path) -> str:
@@ -29,6 +39,7 @@ def read_text(path: str | Path) -> str:
         return hit
     text = Path(key).read_text(encoding="utf-8", errors="replace")
     _TEXT[key] = text
+    _remember(key)
     try:
         from uo_init.perf import record_read
 
@@ -47,7 +58,12 @@ def cached_snippet(path: str | Path, line: int) -> str:
         return ""
     text = None
     needle = raw.lstrip("./")
-    for key, val in _TEXT.items():
+    base = needle.rsplit("/", 1)[-1]
+    keys = _BY_BASENAME.get(base) or _TEXT.keys()
+    for key in keys:
+        val = _TEXT.get(key)
+        if val is None:
+            continue
         norm = key.replace("\\", "/")
         if norm == raw or norm.endswith("/" + needle) or needle.endswith(norm.split("/")[-1]) and needle in norm:
             text = val
@@ -60,9 +76,37 @@ def cached_snippet(path: str | Path, line: int) -> str:
     return lines[int(line) - 1].strip()[:400]
 
 
+def mask_cached(text: str) -> str:
+    """Mask comments/strings; cache by object identity of ``read_text`` hits."""
+    key = id(text)
+    hit = _MASKED_BY_ID.get(key)
+    if hit is not None:
+        return hit
+    from uo_init.cpp_lex import mask_non_code
+
+    masked = mask_non_code(text)
+    _MASKED_BY_ID[key] = masked
+    return masked
+
+
+def masked_text(path: str | Path) -> str:
+    """Comment/string-masked source with the same line breaks as ``read_text``."""
+    raw = read_text(path)
+    key = _key(path)
+    hit = _MASKED.get(key)
+    if hit is not None:
+        return hit
+    masked = mask_cached(raw)
+    _MASKED[key] = masked
+    return masked
+
+
 def stats() -> dict[str, int]:
     return {"cached_files": len(_TEXT)}
 
 
 def clear() -> None:
     _TEXT.clear()
+    _BY_BASENAME.clear()
+    _MASKED.clear()
+    _MASKED_BY_ID.clear()

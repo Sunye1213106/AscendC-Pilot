@@ -494,6 +494,8 @@ def build_source_symbol_index(
             pending_paren = 0
 
         for i, raw in enumerate(lines, start=1):
+            if i % 400 == 0 and time.perf_counter() > deadline:
+                break
             line = kscan._strip_line_noise(raw)
             stripped = line.strip()
             opened_func = False

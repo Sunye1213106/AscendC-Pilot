@@ -620,7 +620,9 @@ def collect_call_sites_from_walks(
     for wr in walks:
         if time.perf_counter() > deadline:
             break
-        for site in getattr(wr, "call_sites", None) or []:
+        for n, site in enumerate(getattr(wr, "call_sites", None) or []):
+            if n % 400 == 0 and time.perf_counter() > deadline:
+                break
             caller = str(getattr(site, "caller", "") or "")
             callee = str(getattr(site, "callee", "") or "").split("::")[-1]
             if not caller_allowed(caller, allowed, filter_strict=filter_strict):

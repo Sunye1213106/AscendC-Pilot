@@ -225,19 +225,20 @@ def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFac
         bump("regex_scan")
     except Exception:  # noqa: BLE001
         pass
-    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    lines = text.splitlines()
-    func = ""
+    # Members/aliases must see raw lines (same as the historical scanner).
+    # Stripping block comments joins lines and mints extra BUFFER fields.
+    raw_lines = text.splitlines()
+    call_text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    call_lines = call_text.splitlines()
     current: str | None = None
     depth = 0
     pending_type: str | None = None
     pending_line = 0
     skip_calls = _is_tpl_dsl_file(path)
 
-    for i, line in enumerate(lines, start=1):
+    for i, line in enumerate(raw_lines, start=1):
         for inc in _QUOTED_INCLUDE_RE.findall(line):
             facts.includes.append(inc.replace("\\", "/"))
-
         for m in _USING_RE.finditer(line):
             facts.type_aliases.append(
                 {
@@ -256,7 +257,6 @@ def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFac
                     "line": i,
                 }
             )
-
         cm = _CLASS_RE.search(line)
         if cm and ";" not in line:
             current = cm.group("name")
@@ -264,38 +264,32 @@ def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFac
             if depth < 0:
                 depth = 0
             pending_type = None
-        elif current is not None:
-            depth += line.count("{") - line.count("}")
-            if depth <= 0:
-                current = None
-                depth = 0
-                pending_type = None
-            else:
-                pending_type, pending_line = _advance_members(
-                    facts,
-                    path=path,
-                    root=root,
-                    current=current,
-                    line=line,
-                    i=i,
-                    pending_type=pending_type,
-                    pending_line=pending_line,
-                )
+            continue
+        if current is None:
+            continue
+        depth += line.count("{") - line.count("}")
+        if depth <= 0:
+            current = None
+            depth = 0
+            pending_type = None
+            continue
+        pending_type, pending_line = _advance_members(
+            facts,
+            path=path,
+            root=root,
+            current=current,
+            line=line,
+            i=i,
+            pending_type=pending_type,
+            pending_line=pending_line,
+        )
 
-        cleaned = _strip_line_noise(line)
-        func = _update_enclosing_func(cleaned, func)
-
-        if not skip_calls:
-            _collect_calls(
-                facts,
-                path=path,
-                lines=lines,
-                i=i,
-                cleaned=cleaned,
-                func=func,
-                registry=registry,
-            )
-
+    # Buffer decls use raw line numbers so they align with Clang sites and
+    # ``buffer_site_id(file, line, scope, name)`` can actually de-dupe.
+    # Collapsing ``/* ... */`` onto one line shifts every later decl.
+    func = ""
+    for i, line in enumerate(raw_lines, start=1):
+        func = _update_enclosing_func(line, func)
         if _STORAGE_TYPE_RE.search(line):
             for m in _DECL_RE.finditer(line):
                 type_text = m.group("type")
@@ -313,6 +307,20 @@ def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFac
                         "column": m.start() + 1,
                     }
                 )
+    func = ""
+    for i, line in enumerate(call_lines, start=1):
+        cleaned = _strip_line_noise(line)
+        func = _update_enclosing_func(cleaned, func)
+        if not skip_calls:
+            _collect_calls(
+                facts,
+                path=path,
+                lines=call_lines,
+                i=i,
+                cleaned=cleaned,
+                func=func,
+                registry=registry,
+            )
     return facts
 
 

@@ -106,6 +106,43 @@ def _canonicalize_views(codemap: CodeMap, views: dict[str, Any] | None) -> dict[
     return finalize_tg_views(codemap, existing=seed)
 
 
+_CORE_VIEW_NAMES = (
+    "ir/operator_graph.yaml",
+    "ir/tg_host_view.yaml",
+    "views/kernel.yaml",
+    "views/tilingdata.yaml",
+)
+
+
+def _ensure_graph_identities(codemap: CodeMap) -> None:
+    """Compute fingerprint/digest once after a canonical mutation (or pop)."""
+    from uo_init.projection_provenance import canonical_graph_digest
+    from uo_init.tg_views import graph_fingerprint
+
+    if not str(codemap.meta.get("graph_fingerprint") or ""):
+        codemap.meta["graph_fingerprint"] = graph_fingerprint(codemap)
+    if not str(codemap.meta.get("canonical_graph_digest") or ""):
+        codemap.meta["canonical_graph_digest"] = canonical_graph_digest(codemap)
+    if not str(codemap.meta.get("canonical_revision") or ""):
+        codemap.meta["canonical_revision"] = str(codemap.meta["canonical_graph_digest"])[:16]
+
+
+def _views_match_current_identity(views: dict[str, Any] | None, codemap: CodeMap) -> bool:
+    if not isinstance(views, dict):
+        return False
+    digest = str(codemap.meta.get("canonical_graph_digest") or "")
+    if not digest:
+        return False
+    for name in _CORE_VIEW_NAMES:
+        payload = views.get(name)
+        if not isinstance(payload, dict):
+            return False
+        prov = payload.get("provenance")
+        if not isinstance(prov, dict) or str(prov.get("canonical_graph_digest") or "") != digest:
+            return False
+    return True
+
+
 _JSON_DUMP = {"ensure_ascii": False, "separators": (",", ":")}
 
 
@@ -213,24 +250,32 @@ def write_codemap(
     if tmp.exists():
         tmp.unlink()
 
-    _drop_unproven_direct_selection_edges(codemap)
+    removed = _drop_unproven_direct_selection_edges(codemap)
     # A CodeMap read from a previous product may carry its former identities.
     # Any canonical mutation invalidates those values; projection finalization
     # below recomputes all three from the post-mutation graph.
-    for identity_key in ("graph_fingerprint", "canonical_graph_digest", "canonical_revision"):
-        codemap.meta.pop(identity_key, None)
+    if removed:
+        for identity_key in ("graph_fingerprint", "canonical_graph_digest", "canonical_revision"):
+            codemap.meta.pop(identity_key, None)
 
     from uo_init.projection_provenance import (
         stamp_provenance,
         validate_view_against_codemap,
     )
 
-    finalized = _canonicalize_views(codemap, views)
+    _ensure_graph_identities(codemap)
+    if removed == 0 and _views_match_current_identity(views, codemap):
+        finalized = dict(views or {})
+    else:
+        finalized = _canonicalize_views(codemap, views)
 
     from uo_init.diagnostics.audit import audit_codemap
 
-    strict_summary = dict(summary or {})
-    strict_summary.update(dict(audit_codemap(codemap)["summary"]))
+    if removed == 0 and summary:
+        strict_summary = dict(summary)
+    else:
+        strict_summary = dict(summary or {})
+        strict_summary.update(dict(audit_codemap(codemap)["summary"]))
     strict_summary = stamp_provenance(strict_summary, codemap)
 
     stale: list[dict[str, Any]] = []

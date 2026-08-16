@@ -77,7 +77,8 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 | Action | 定义一次可执行任务，包括输入输出 contract | Workflow specification |
 | Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
 | Skill | 定义领域能力地图与公共认知原则 | `skills/*/SKILL.md` |
-| METHOD | 一个 Action 的推理方法 | `skills/*/capabilities/*/METHOD.md` |
+| METHOD | 一次 LLM Action 的推理 playbook | `skills/*/capabilities/*/METHOD.md` |
+| Router | 主控可见路由（不是 Action METHOD） | `skills/*/routing/*.md` |
 | Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |
 | Policy | 定义运行约束和行为规则 | `pilot/policies/` |
 | Capability | 定义 Agent 或 Engine 可以调用的能力 | runtime capability registry |
@@ -93,7 +94,8 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 
 ```text
 确定性计算                    -> Engine
-领域推理方法                  -> METHOD.md（Skill 是领域地图）
+领域推理方法                  -> METHOD.md（一次 LLM Action；Skill 是领域地图）
+主控可见路由                  -> routing/*.md（不是 METHOD）
 一次任务目标                  -> Prompt
 状态迁移                      -> Workflow
 需要独立身份、权限或隔离上下文 -> Agent
@@ -266,7 +268,7 @@ acp start
 
 **人话与 Goal**：Primary 对用户的总结 / AskQuestion / 进度必须带意图与动作（见 `human-voice-invariants.md`）；禁止把 referee 黑话贴给用户。全量 tilingkey case 产品目标串联 init→plan→solve，不把 NL 塞进 `acp route`。Todo 同步与 `return_value` finalize 由 Driver 持有，不要求模型再实现一遍。
 
-Host 侧（以 OpenCode 为例）在工具真正执行前走 `serve-authorize`（或 `authorize`）。常见拒绝：直调领域脚本、用 bash 乱写 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了**当前 Host 阶段未声明**的子代理（`uo-query` 除外：它不是 Host 工作流，主控可见路由后随时可 Task）、子代理调用 OpenCode `skill`。默认 bash 优先走 `acp *` 与只读探查；其他 shell 对主控多为 `ask`。MCP 不拦截。子会话身份靠 session ticket（childSessionID↔actor↔action↔lease），不靠猜环境变量。OpenCode 原生 `skill` 依赖 rg 抽样 skill 目录，缺 rg 或 spawn 失败会把已找到的 skill 变成 `ripgrep execution failed`。插件 **覆盖** `skill` 工具：直接 Read 已安装 `SKILL.md`，不 spawn rg；同时把 `rg.exe` 种到 OpenCode 的 **cache** bin（`%LOCALAPPDATA%/opencode/bin` 与 `~/.cache/opencode/bin`，不只是 `~/.local/share/opencode/bin`），并把该目录 prepend 到 PATH，让 Grep/Glob 也能用。OpenCode 1.18 Windows bash 会选裸 `cmd.exe`，Effect spawn 把整行 `acp …` 当成可执行文件 → `NotFound: ChildProcess.spawn`。子代不要走 bash：插件暴露 `acp` 工具，内部 `spawnSync(绝对路径 acp.exe, shell:false)`，与 `pilot_run` 同一条路。`uo-query` 子代**没有** Host 物化的 session `prompt.md`：Task prompt 就是任务正文，直接 `acp` 工具 `command=uo-query --project …`。**AscendC-Pilot 模式（主控与子代）对任意目录 Read 不弹 OpenCode 确认**：`permission.read` / `external_directory` 均为 `allow`。Host 工作区是 Pilot 仓、算子包在仓外。Write/edit 仍 ask。Build/Plan Tab 不改。
+Host 侧（以 OpenCode 为例）在工具真正执行前走 `serve-authorize`（或 `authorize`）。常见拒绝：直调领域脚本、用 bash 乱写 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了**当前 Host 阶段未声明**的子代理（`uo-query` 除外：它不是 Host 工作流，主控可见路由后随时可 Task）、子代理调用 OpenCode `skill`。默认 bash 优先走 `acp *` 与只读探查；其他 shell 对主控多为 `ask`。MCP 不拦截。子会话身份靠 session ticket（childSessionID↔actor↔action↔lease），不靠猜环境变量。OpenCode 原生 `skill` 依赖 rg 抽样 skill 目录，缺 rg 或 spawn 失败会把已找到的 skill 变成 `ripgrep execution failed`。插件 **覆盖** `skill` 工具：直接 Read 已安装 `SKILL.md`，不 spawn rg；同时把 `rg.exe` 种到 OpenCode 的 **cache** bin（`%LOCALAPPDATA%/opencode/bin` 与 `~/.cache/opencode/bin`，不只是 `~/.local/share/opencode/bin`），并把该目录 prepend 到 PATH，让 Grep/Glob 也能用。OpenCode 1.18 Windows bash 会选裸 `cmd.exe`，Effect spawn 把整行 `acp …` 当成可执行文件 → `NotFound: ChildProcess.spawn`。子代不要走 bash：插件暴露 `acp` 工具，内部 `spawnSync(绝对路径 acp.exe, shell:false)`，与 `pilot_run` 同一条路。`host_driver=False` 只表示 Driver **不** auto start/drain，**不等于**没有 method bundle。深问 prepare 会物化 session `method.md`；Delegated Task（TG/CE 临时问图）的 Task 正文即全部，不要 hunt `prompt.md`。直接用插件 `acp` 工具 `command=uo-query --project …`。**AscendC-Pilot 模式（主控与子代）对任意目录 Read 不弹 OpenCode 确认**：`permission.read` / `external_directory` 均为 `allow`。Host 工作区是 Pilot 仓、算子包在仓外。Write/edit 仍 ask。Build/Plan Tab 不改。
 
 LLM Action 端到端：
 
@@ -277,22 +279,22 @@ prepare（物化 method.md / refs + Bundle 读闭合）
   -> dispatch-result / finalize -> Gate -> advance
 ```
 
-查询路由在主控，且**必须对人可见**。算法正文在 `skills/operator-analysis/capabilities/uo-query-router/METHOD.md`。`host_step.tasks` ≥2 时编译器为权威，必须原样并行派发。不要 `pilot_run workflow=uo-query`，不要为空转「问题路由」开子代理。
+查询路由在主控，且**必须对人可见**。算法正文在 `skills/operator-analysis/routing/uo-query.md`。`host_step.tasks` ≥2 时编译器为权威，必须原样并行派发。不要 `pilot_run workflow=uo-query`，不要为空转「问题路由」开子代理。
 
-子代理（若派了）最终消息用完整自然语言作答（Cursor Explore：结论 + file:line + snippet）。OpenCode Task 把全文交回主控；主控综合后对人说。**不要 Write `answer.yaml`**，不要 `kb_lookup --finalize`。YAML 不是 primary↔subagent 的传话通道。Domain 正式产物仍禁止 LLM 直写。
+子代理（若派了）最终消息用完整自然语言作答（Cursor Explore：结论 + file:line + snippet）。OpenCode Task 把全文交回主控；主控综合后对人说。**子代不要 Write `answer.yaml`**，不要自己 finalize。深问由 Primary 跑 `kb_lookup --finalize`，Runtime 物化 `answer.yaml`。YAML 不是 primary↔subagent 的传话通道。Domain 正式产物仍禁止 LLM 直写。
 
 ### 查询：可见 LLM 路由（不是 Host workflow）
 
 ```text
-主控 ——先对人说出路由（见 uo-query-router METHOD）
-├── 短问：当前会话 acp uo-query --mode，把 stdout 说给人听
-├── host_step.tasks ≥2：原样并行 Task(agent=uo-query)，返回后主控综合
+主控 ——先对人说出路由（见 routing/uo-query.md）
+├── 短问：当前会话 acp uo-query --mode，把 stdout 说给人听（无 prepare / Task / finalize）
+├── 深问：prepare kb_lookup → Task(agent=uo-query) → Primary 综合 → kb_lookup --finalize
 └── 编译器 0/1 片：按独立证据空间决定自查 / 1 Task / N Task
 ```
 
 - **短问**：一名字、一 mode、一两跳。不派子代理。一次 `acp` stdout 答完。
-- **深问**：独立证据空间才拆；每个 Task 只带本片 FOCUS + `FIRST_QUERY` + 本片那一句 + 绝对 `--project`。禁止把整题丢给一个子代理再转述。
-- **Delegated Task**（TG/CE 需要读图时）：直接 `Task(actor=uo-query)`，不要再套 `/uo-query` lifecycle。共用同一 Agent / 子代 METHOD。
+- **深问**：独立证据空间才拆；每个 Task 只带本片 FOCUS + `FIRST_QUERY` + 本片那一句 + 绝对 `--project`。禁止把整题丢给一个子代理再转述。stub 指向 session `method.md`。
+- **Delegated Task**（TG/CE 需要读图时）：直接 `Task(actor=uo-query)`，不要再套 `/uo-query` lifecycle。Task 正文即全部，不要 hunt session `prompt.md`。共用同一 Agent / 子代 METHOD。
 - Parent **必须**传入算子绝对路径（`--project`）与 architecture（已有 `.uo`）；禁止子代理 Glob 找 `.uo`。子答 `UNKNOWN`/`PARTIAL` 不得抬成 high；禁止跨 architecture 证据闭合。
 - **综合未闭合不得收工**：任一子代 PARTIAL / 未闭合 / 互相矛盾 / 跳过 CodeMap 时，主控必须再派一轮 Task（FOCUS=缺口）。禁止问「要不要继续」。
 

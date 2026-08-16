@@ -92,7 +92,7 @@ def _act(
     hi = str(human_interaction or "none").strip().lower()
     if hi not in {"none", "confirm", "approve"}:
         raise ValueError(f"{workflow_id}/{action_id}: invalid human_interaction={human_interaction!r}")
-    method_id = action_method_id or f"{workflow_id}/{action_id.replace('_', '-')}"
+    method_id = str(action_method_id or "").strip() or None
     actors = [agent_id] if agent_id else []
     mode = infer_execution_mode(
         agent_id=agent_id,
@@ -793,7 +793,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="deterministic-ce-engine",
                 role_id="deterministic_engine",
                 capability_ids=["kb-query"],
-                action_method_id="code-engineering/ce-scenario-infer",
                 output_contract_id="ce-scenario-set-v1",
             ),
             _act(
@@ -1160,7 +1159,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="deterministic-ce-engine",
                 role_id="deterministic_engine",
                 capability_ids=["kb-query"],
-                action_method_id="code-engineering/ce-scenario-infer",
                 output_contract_id="ce-scenario-set-v1",
             ),
             _act(

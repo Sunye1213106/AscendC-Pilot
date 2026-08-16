@@ -20,19 +20,15 @@ from uo_init.ir.relation import RelationKind
 from uo_init.passes.source_contract import iter_bitpack_dims, iter_packing_helper_calls
 from uo_init.passes.host_defuse import _compile_symbols, _is_compile_reference
 from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
-from uo_init.passes.source_text_cache import read_text
+from uo_init.passes.source_text_cache import mask_cached, read_text
 from uo_init.source_layout import quoted_include_basenames, selected_host_files
 from uo_init.tpl_dsl import expand_tpl_source, load_quoted_include_texts
+from uo_init.cpp_lex import containing_function, iter_function_defs, line_at, line_index
 
 _CALL_TOKEN = "GET_TPL_TILING_KEY"
 _SOURCE_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
-_FUNCTION_RE = re.compile(
-    r"(?:inline\s+|static\s+|virtual\s+|constexpr\s+)*"
-    r"[A-Za-z_][\w:<>,\s*&~]*?\s+"
-    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
-    r"\([^;{}]*\)\s*(?:const\s*)?(?:override\s*)?\{",
-    re.S,
-)
+_FUNC_CACHE: dict[int, list] = {}
+_LINE_CACHE: dict[int, list[int]] = {}
 _RUNTIME_KINDS = {EntityKind.VARIABLE.value, EntityKind.FIELD.value}
 _DIRECT_ROOT_KINDS = {
     EntityKind.INPUT.value,
@@ -94,6 +90,8 @@ def bind_host_tiling_key_expressions(
     bound_names: set[str] = set()
     mismatches: list[dict[str, Any]] = []
     ambiguous_sources: list[dict[str, Any]] = []
+    _FUNC_CACHE.clear()
+    _LINE_CACHE.clear()
 
     host_files: list[tuple[Path, str]] = []
     for path in selected_host_files(root, architecture):
@@ -429,15 +427,13 @@ def _bind_non_tpl_packing(
                         bind(key, expr, file, line, function, "source_set_tiling_key")
                 elif len(keys) == 1:
                     bind(keys[0], expr, file, line, function, "source_set_tiling_key")
-        for match in _FUNCTION_RE.finditer(text):
-            name = match.group("name")
+        for hit in _funcs(text):
+            name = hit.name
             if not _GET_TILING_KEY_NAME_RE.search(name.split("::")[-1] if "::" in name else name):
                 if not name.endswith("GetTilingKey"):
                     continue
-            open_brace = text.find("{", match.end() - 1)
-            if open_brace < 0:
-                continue
-            close = _matching_brace(text, open_brace)
+            open_brace = hit.open_brace
+            close = hit.close_brace
             if close < 0:
                 continue
             body = text[open_brace : close + 1]
@@ -833,14 +829,17 @@ def _matching_brace(text: str, open_pos: int) -> int:
     return -1
 
 
+def _funcs(text: str):
+    key = id(text)
+    hits = _FUNC_CACHE.get(key)
+    if hits is None:
+        hits = iter_function_defs(mask_cached(text))
+        _FUNC_CACHE[key] = hits
+    return hits
+
+
 def _containing_function(text: str, offset: int) -> str:
-    hits: list[tuple[int, str]] = []
-    for match in _FUNCTION_RE.finditer(text):
-        open_pos = text.find("{", match.start(), match.end())
-        close_pos = _matching_brace(text, open_pos)
-        if open_pos <= offset <= close_pos:
-            hits.append((close_pos - open_pos, match.group("name")))
-    return min(hits, default=(0, ""))[1]
+    return containing_function(_funcs(text), offset)
 
 
 def _split_args(text: str) -> list[str]:
@@ -909,7 +908,12 @@ def _int_literals(text: str) -> dict[str, int]:
 
 
 def _line(text: str, offset: int) -> int:
-    return text.count("\n", 0, max(0, offset)) + 1
+    key = id(text)
+    idx = _LINE_CACHE.get(key)
+    if idx is None:
+        idx = line_index(text)
+        _LINE_CACHE[key] = idx
+    return line_at(idx, offset)
 
 
 def _rel(root: Path, path: Path) -> str:

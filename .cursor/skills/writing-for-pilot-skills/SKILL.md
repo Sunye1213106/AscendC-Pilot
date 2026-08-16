@@ -46,4 +46,4 @@ description: >
 - 不要复活 `skills/_shared/`。
 - 每个认知 skill ≥2 个 `examples/<case>/`。
 - 路由 eval 吃的是 `description` 关键词：改指针后跑 `python evals/skills/run_skill_eval.py` 与 `python evals/routing/run_routing_eval.py`。
-- 查询路由启发式留在 `capabilities/uo-query-router/METHOD.md`：可见 LLM 路由指针可留在 `operator-analysis` SKILL，算法正文不进 Policy。
+- 查询路由启发式留在 `routing/uo-query.md`：可见 LLM 路由指针可留在 `operator-analysis` SKILL，算法正文不进 Policy。METHOD.md 只给一次 LLM Action。

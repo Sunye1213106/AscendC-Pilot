@@ -153,6 +153,10 @@ def test_confirm_prepare_skips_cognitive_skills(tmp_path: Path) -> None:
     bundle = yaml.safe_load((session / "bundle.yaml").read_text(encoding="utf-8"))
     assert bundle.get("method_materialized", {}).get("host_owned_confirm") is True
     assert "Host-owned confirmation" in method
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    confirm = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "human_confirm")
+    assert not confirm.get("action_method_id")
     for phrase in _SKILL_BODIES:
         assert phrase not in method
     assert "CALLS / READS / WRITES" not in method
@@ -185,6 +189,7 @@ def test_compiler_fanout_matches_dispatch_tasks(tmp_path: Path) -> None:
         assert "FIRST_QUERY:" in stub
         assert "--project" in stub
         assert "SLICE_ID=" in stub
+        assert "method.md" in stub
 
 
 def test_short_question_does_not_fanout(tmp_path: Path) -> None:
@@ -212,6 +217,14 @@ def test_shared_reference_projections_match_ssot() -> None:
         assert dest.read_bytes() == src
     ce = REPO / "skills" / "code-engineering" / "references" / "finding-format.md"
     assert not ce.is_file()
+    oracle_ssot = (REPO / "knowledge" / "shared-references" / "harness-oracle.md").read_bytes()
+    for skill in ("testcase-generation", "code-engineering"):
+        dest = REPO / "skills" / skill / "references" / "harness-oracle.md"
+        assert dest.is_file()
+        assert dest.read_bytes() == oracle_ssot
+    for skill in ("operator-analysis", "source-proof", "code-review"):
+        leaked = REPO / "skills" / skill / "references" / "harness-oracle.md"
+        assert not leaked.is_file()
 
 
 def test_instruction_ownership_lint_clean() -> None:
@@ -247,3 +260,125 @@ def test_scenario_targeted_empty_set_fail_closed(tmp_path: Path) -> None:
     result = plan_intent(tmp_path, {"mode": "scenario_targeted"})
     assert result.get("ok") is False
     assert result.get("reason_code") == "SCENARIO_SET_EMPTY"
+
+
+def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> None:
+    from ascendc_pilot.context.profiles import get_profile
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    failures: list[str] = []
+    for wid, meta in WORKFLOWS.items():
+        if not isinstance(meta, dict) or meta.get("reserved"):
+            continue
+        for action in meta.get("actions") or []:
+            if str(action.get("execution_mode") or "") != "subagent":
+                continue
+            if not str(action.get("task_prompt_id") or "").strip():
+                continue
+            method, prompt = _load_method_and_prompt(REPO, action)
+            actor = str(action.get("agent_id") or "")
+            skill_ids = list(load_agent_meta(actor, str(REPO)).get("skill_ids") or [])
+            profile = get_profile(action.get("context_profile_id"))
+            extra = list(profile.references) if profile is not None else []
+            sdir = tmp_path / wid / str(action.get("id"))
+            mat = materialize_method_bundle(
+                sdir,
+                skill_ids=skill_ids,
+                existing_method=method,
+                project_root=REPO,
+                prompt=prompt,
+                extra_ref_paths=extra,
+            )
+            if not mat.get("ok") or mat.get("unauthorized") or mat.get("missing"):
+                failures.append(
+                    f"{wid}/{action.get('id')}: ok={mat.get('ok')} "
+                    f"missing={mat.get('missing')} unauthorized={mat.get('unauthorized')}"
+                )
+    assert failures == []
+
+
+def test_cross_tree_harness_oracle_is_unauthorized(tmp_path: Path) -> None:
+    mat = materialize_method_bundle(
+        tmp_path / "x",
+        skill_ids=["code-engineering"],
+        existing_method="see `skills/testcase-generation/references/harness-oracle.md`",
+        project_root=REPO,
+    )
+    assert mat.get("ok") is False
+    unauthorized = [str(x) for x in (mat.get("unauthorized") or [])]
+    assert any("testcase-generation" in x and "harness-oracle" in x for x in unauthorized)
+
+
+def test_confirm_and_deterministic_omit_action_method_id() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    bad: list[str] = []
+    for wid, meta in WORKFLOWS.items():
+        if not isinstance(meta, dict) or meta.get("reserved"):
+            continue
+        for action in meta.get("actions") or []:
+            mode = str(action.get("execution_mode") or "")
+            mid = str(action.get("action_method_id") or "").strip()
+            if mode in {"deterministic", "primary_interactive"} and mid:
+                bad.append(f"{wid}/{action.get('id')}: {mode} has {mid}")
+            if mode == "subagent" and str(action.get("task_prompt_id") or "").strip() and not mid:
+                bad.append(f"{wid}/{action.get('id')}: LLM Action missing method_id")
+    assert bad == []
+
+
+def test_docs_do_not_claim_query_has_no_method_bundle() -> None:
+    stale = (
+        "query is not Host-prepared",
+        "子代没有 session `prompt.md`",
+        "uo-query 子代**没有** Host 物化的 session `prompt.md`",
+        "不要 `kb_lookup --finalize`",
+        "不 `finalize` kb_lookup",
+    )
+    rels = (
+        "agents/uo-query.yaml",
+        "docs/architecture/agent-runtime.md",
+        "docs/architecture/workflows.md",
+        "docs/modules/uo.md",
+        "pilot/policies/pilot-control/POLICY.md",
+        "pilot/policies/invariants/control-invariants.md",
+        "pilot/policies/invariants/host-runtime-contract.md",
+    )
+    hits: list[str] = []
+    for rel in rels:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        for phrase in stale:
+            if phrase in text:
+                hits.append(f"{rel}: {phrase}")
+    assert hits == []
+
+
+def test_producer_referee_write_scopes_do_not_overlap() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    agents = REPO / "agents"
+    overlap: list[str] = []
+    for wid, meta in WORKFLOWS.items():
+        if not isinstance(meta, dict) or meta.get("reserved"):
+            continue
+        producer: set[str] = set()
+        referee: set[str] = set()
+        seen: set[str] = set()
+        for action in meta.get("actions") or []:
+            actor = str(action.get("agent_id") or "")
+            role = str(action.get("role_id") or "")
+            if not actor or actor in seen or role not in {"producer", "referee"}:
+                continue
+            seen.add(actor)
+            path = agents / f"{actor}.yaml"
+            if not path.is_file():
+                continue
+            meta_a = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            scopes = {str(s) for s in (meta_a.get("write_scopes") or [])}
+            if role == "producer":
+                producer |= scopes
+            else:
+                referee |= scopes
+        both = producer & referee
+        if both:
+            overlap.append(f"{wid}: {sorted(both)}")
+    assert overlap == []

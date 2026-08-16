@@ -121,6 +121,8 @@ def audit(repo: Path) -> list[str]:
                         errors.append(
                             f"{wid}/{aid}: action_method_id skill {skill!r} not a cognitive skill"
                         )
+            elif mode in {EXECUTION_DETERMINISTIC, EXECUTION_PRIMARY_INTERACTIVE} and mid:
+                errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
 
             if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
                 if mid and "/" not in mid:

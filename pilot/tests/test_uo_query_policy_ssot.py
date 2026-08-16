@@ -47,7 +47,7 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
 
 
 def test_uo_query_router_owned_by_method() -> None:
-    router = _text("skills/operator-analysis/capabilities/uo-query-router/METHOD.md")
+    router = _text("skills/operator-analysis/routing/uo-query.md")
     method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
     skill = _text("skills/operator-analysis/SKILL.md")
     assert "相关 ≠ 单域" in router
@@ -57,7 +57,8 @@ def test_uo_query_router_owned_by_method() -> None:
     assert "SLICE_ID" in method
     assert "kernel_launch" in method
     assert "search" in method and "ProcessVec" in method
-    assert "uo-query-router/METHOD.md" in skill
+    assert "routing/uo-query.md" in skill
+    assert "uo-query-router/METHOD.md" not in skill
     assert "相关 ≠ 单域" not in skill
     assert "Q6" not in skill
     assert "Q7" not in skill
@@ -75,7 +76,7 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     assert "Never" in invariant and "uo-query" in invariant
     assert "host_step.tasks" in invariant
     assert "不要 `pilot_run`" in command_src
-    assert "uo-query-router/METHOD.md" in command_src or "uo-query-router" in command_src
+    assert "routing/uo-query.md" in command_src
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "primary_router" in driver
     assert 'startedKind === "primary_router"' in driver

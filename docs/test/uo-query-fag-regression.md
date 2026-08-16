@@ -21,7 +21,7 @@ uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，�
 | 深、一个独立证据空间 | **一个** `Task(agent=uo-query)`（主控写 FOCUS；点卡片看思考） |
 | 深、多个独立证据空间 | 主控 **同一轮并行** 多个 `Task(agent=uo-query)`；全部返回后综合，禁止只转述某一个 |
 
-不是「一个子代理串 15 个 mode」。`host_step.tasks` ≥2 时按编译器 fanout；0/1 片才用启发式。算法见 `skills/operator-analysis/capabilities/uo-query-router/METHOD.md`。
+不是「一个子代理串 15 个 mode」。`host_step.tasks` ≥2 时按编译器 fanout；0/1 片才用启发式。算法见 `skills/operator-analysis/routing/uo-query.md`。
 
 ## 怎么判
 

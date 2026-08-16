@@ -3,17 +3,17 @@ name: operator-analysis
 description: >
   构建、刷新与查询 AscendC 算子知识库（`.uo` Operator CodeMap）：API、Host、
   TilingKey 维度、TilingData 字段、Kernel、模板、宏、编译期变量与跨层关系。用户说建立知识库、
-  建库、建 CodeMap、索引/分析算子、刷新知识库或只读查询时使用。建库走 uo-init /
-  uo-update；只读查询做可见 LLM 路由（禁止 `pilot_run`），禁止外部 MCP 通用索引。
+  建库、建 CodeMap、索引/分析算子、刷新知识库或只读查询时使用。边界：只回答图上有什么；
+  覆盖证明走 testcase-generation / source-proof。
 ---
 
 # Operator Analysis（UO CodeMap）
 
-薄入口：按任务读对应 METHOD / reference，不要一次装载全部。
+薄入口：按任务读对应 METHOD / router / reference，不要一次装载全部。
 
 ```text
 query  (child)  → capabilities/uo-query/METHOD.md
-route  (primary)→ capabilities/uo-query-router/METHOD.md
+route  (primary)→ routing/uo-query.md
 build           → 下方「构建」+ references/codemap-build-gotchas.md
 investigate     → capabilities/uo-investigate/METHOD.md
 ```
@@ -42,9 +42,9 @@ prepare → extract → analyze → commit → verify
 
 ## 构建
 
-Clang / include / 写入由 engine 执行。完成条件：`host_step.done` 后 Read `host_step.quality_path`，对人总结 graph 计数与 unresolved 桶。
+Clang / include / 写入由 engine 执行。完成条件：读 `uo/checks/quality.yaml`，对人总结 graph 计数与 unresolved 桶。
 
-1. 缺 architecture：`acp scan-architectures`，选项原样 AskQuestion，再用 `pilot_run` 启动。
+1. 缺 architecture：必须先得到合法 architecture，再启动建库。
 2. operator + arch 给定后，Source Scope 以 Clang include closure 为准。
 3. 探针失败见 `references/codemap-build-gotchas.md`。
 4. 建库结束读 `uo/checks/quality.yaml`（`grade` / `locate_blocking`）。桶含义见 `references/uo-gaps.md`。
@@ -55,7 +55,7 @@ Clang / include / 写入由 engine 执行。完成条件：`host_step.done` 后 
 |---|---|
 | UO 产品短地图 | `references/uo-product-map.md` |
 | 查询 METHOD | `capabilities/uo-query/METHOD.md` |
-| 主控路由 METHOD | `capabilities/uo-query-router/METHOD.md` |
+| 主控路由 | `routing/uo-query.md` |
 | 调查 METHOD | `capabilities/uo-investigate/METHOD.md` |
 | 查询踩坑 | `references/codemap-query-gotchas.md` |
 | 场景 hooks | `references/uo-scenario-hooks.md` |

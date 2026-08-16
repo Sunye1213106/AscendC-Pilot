@@ -28,6 +28,7 @@ _BOUND = {
     "source_kernel_call_bound_v3",
     "source_kernel_call_dispatch_set_v3",
 }
+_MEMBER_RE_CACHE: dict[str, re.Pattern[str]] = {}
 
 
 def resolve_kernel_call_frontiers(
@@ -39,6 +40,7 @@ def resolve_kernel_call_frontiers(
     root = Path(operator_root).expanduser().resolve()
     selected = list((codemap.meta.get("kernel_tiling_closure") or {}).get("selected_kernel_files") or [])
     texts = _load(root, selected)
+    _MEMBER_RE_CACHE.clear()
 
     definitions = [
         e for e in codemap.entities.values()
@@ -88,10 +90,13 @@ def resolve_kernel_call_frontiers(
         if receiver in {"", "this"} and caller_owner:
             owners.update(_owner_closure(caller_owner, inheritance))
         if not receiver:
-            member_match = re.search(
-                rf"(?:this\s*->\s*)?([A-Za-z_]\w*)\s*(?:\.|->)\s*(?:template\s+)?{re.escape(call)}\b",
-                line_text,
-            )
+            pat = _MEMBER_RE_CACHE.get(call)
+            if pat is None:
+                pat = re.compile(
+                    rf"(?:this\s*->\s*)?([A-Za-z_]\w*)\s*(?:\.|->)\s*(?:template\s+)?{re.escape(call)}\b"
+                )
+                _MEMBER_RE_CACHE[call] = pat
+            member_match = pat.search(line_text)
             if member_match:
                 member_name = member_match.group(1)
         if member_name and caller_owner:
@@ -199,8 +204,10 @@ def _type_model(
 
     inheritance: dict[str, set[str]] = defaultdict(set)
     members: dict[tuple[str, str], set[str]] = defaultdict(set)
+    from uo_init.passes.source_text_cache import mask_cached
+
     for raw in texts.values():
-        masked = _mask_non_code(raw)
+        masked = mask_cached(raw)
         for match in _CLASS_RE.finditer(masked):
             owner = match.group(1)
             open_pos = masked.find("{", match.start(), match.end())
@@ -234,20 +241,37 @@ def _type_model(
 def _receiver_types_from_context(
     lines: list[str], line: int, receiver: str, known: set[str], aliases: dict[str, set[str]]
 ) -> set[str]:
-    if not lines or line <= 0:
+    if not lines or line <= 0 or not receiver:
         return set()
     start = max(0, line - 120)
     snippet = "\n".join(lines[start:line])
+    prefix = ""
+    pos = len(snippet)
+    token = receiver
+    while pos > 0:
+        found = snippet.rfind(token, 0, pos)
+        if found < 0:
+            break
+        before = snippet[found - 1] if found else ""
+        after_i = found + len(token)
+        rest = snippet[after_i:].lstrip()
+        ident_before = bool(before) and (before.isalnum() or before == "_")
+        if not ident_before and rest[:1] in ";=":
+            stmt = snippet.rfind(";", 0, found)
+            brace = max(snippet.rfind("{", 0, found), snippet.rfind("}", 0, found))
+            prefix = snippet[max(stmt, brace) + 1 : found]
+            break
+        pos = found
+        if pos == 0:
+            break
+        pos -= 1
+    if not prefix:
+        return set()
     candidates: set[str] = set()
-    # Keep the closest declaration/alias-like statement ending in receiver.
-    pattern = re.compile(rf"([^;{{}}]{{0,1600}}?)\b{re.escape(receiver)}\s*(?:;|=)", re.S)
-    matches = list(pattern.finditer(snippet))
-    if matches:
-        prefix = matches[-1].group(1)
-        tokens = set(_WORD_RE.findall(prefix))
-        candidates.update(tokens & known)
-        for token in tokens:
-            candidates.update(aliases.get(token) or ())
+    tokens = set(_WORD_RE.findall(prefix))
+    candidates.update(tokens & known)
+    for token_name in tokens:
+        candidates.update(aliases.get(token_name) or ())
     return candidates
 
 

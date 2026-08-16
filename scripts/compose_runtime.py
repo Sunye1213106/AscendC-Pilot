@@ -39,6 +39,7 @@ COMPOSE_POLICY_IDS: tuple[str, ...] = (
 # agents/CONTEXT.md is appended separately: ubiquitous language, not a policy.
 COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("control", "control-invariants.md"),
+    ("host-runtime", "host-runtime-contract.md"),
     ("evidence", "evidence-invariants.md"),
     ("code-access", "code-access-invariants.md"),
     ("authority", "authority.md"),
@@ -612,20 +613,18 @@ def validate(repo: Path) -> list[str]:
             for cid in action.get("capability_ids") or []:
                 if not (_capability_dir(repo, str(cid)) / "capability.yaml").is_file():
                     errors.append(f"{wid}/{aid}: missing capability {cid}")
-            mid = action.get("action_method_id")
-            if not mid:
-                errors.append(f"{wid}/{aid}: missing action_method_id")
+            mid = str(action.get("action_method_id") or "").strip()
             tpid = action.get("task_prompt_id")
             mode = str(action.get("execution_mode") or "")
             if mode == "subagent" and tpid:
                 default_mid = f"{wid}/{str(aid).replace('_', '-')}"
-                if not mid or "/" not in str(mid) or str(mid) == default_mid:
+                if not mid or "/" not in mid or mid == default_mid:
                     errors.append(
                         f"{wid}/{aid}: subagent LLM Action missing explicit "
                         f"skill/capability action_method_id (not {default_mid!r})"
                     )
                 else:
-                    skill, cap = str(mid).split("/", 1)
+                    skill, cap = mid.split("/", 1)
                     mp = skills / skill / "capabilities" / cap / "METHOD.md"
                     if not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
                         errors.append(f"{wid}/{aid}: missing METHOD.md for {mid}")
@@ -633,6 +632,8 @@ def validate(repo: Path) -> list[str]:
                         errors.append(
                             f"{wid}/{aid}: action_method_id skill {skill!r} not in COGNITIVE_SKILL_IDS"
                         )
+            elif mode in {"deterministic", "primary_interactive"} and mid:
+                errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
             if tpid:
                 p = prompts / "tasks" / f"{tpid}.md"
                 # tpid is domain/name

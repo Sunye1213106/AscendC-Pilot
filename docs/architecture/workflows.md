@@ -135,7 +135,7 @@ done        Primary 读 quality.yaml，对人总结刷新后的节点/关系/未
 
 ### `/uo-query` — 只读提问（可见 LLM 路由）
 
-查询**没有** Host 传输环。分类是主控的推理，必须写在对用户的消息里（不能只藏在思考里），再动手。不要为空转「问题路由」开子代理。
+查询**没有** Host Session Driver 传输环（`host_driver=False` ≠ 没有 method bundle）。分类是主控的推理，必须写在对用户的消息里（不能只藏在思考里），再动手。不要为空转「问题路由」开子代理。
 
 ```text
 用户问题
@@ -152,7 +152,7 @@ done        Primary 读 quality.yaml，对人总结刷新后的节点/关系/未
                   → 未闭合再开一轮 Task；禁止把深问改成主控自查
 ```
 
-`host_step.tasks` ≥2 时 Host fanout 为权威。不写 `answer.yaml`，不 `finalize` kb_lookup。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。子代没有 session `prompt.md`：直接用插件 `acp` 工具（`command=uo-query --project …`），不要 bash。
+`host_step.tasks` ≥2 时 Host fanout 为权威。子代不写 `answer.yaml`、不自己 finalize。深问走 prepare `kb_lookup` → Task → Primary 综合 → Runtime `kb_lookup --finalize`。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。Delegated Task 的正文即全部，不要 hunt session `prompt.md`；直接用插件 `acp` 工具（`command=uo-query --project …`），不要 bash。
 
 ### `/uo-investigate` — 查 unresolved
 

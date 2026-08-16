@@ -29,13 +29,14 @@ _ANY_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE
 # template <...> __global__, extern "C" __global__, or a plain __global__.
 # Qualifier order is not operator-specific: both `__global__ __aicore__` and
 # `__aicore__ __global__` (and `__global__` alone) appear in ops-transformer.
+# Do not use DOTALL ``.*?`` here: IFA kernel TUs are multi-MB and that form
+# spends tens of seconds backtracking.
 _KERNEL_QUALS = r"(?:__global__\s+(?:__aicore__\s+)?|__aicore__\s+__global__\s+)"
 GLOBAL_KERNEL_RE = re.compile(
-    r"(?:template\s*<(?P<tpl>.*?)>\s*)?"
+    r"(?:template\s*<(?P<tpl>[^>]{0,800})>\s*)?"
     r"(?:extern\s+\"C\"\s+)?"
     rf"{_KERNEL_QUALS}void\s+"
-    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>.*?)\)\s*\{",
-    re.S,
+    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^;{}]{0,4000})\)\s*\{",
 )
 KERNEL_ENTRY_NAME_RE = re.compile(rf"{_KERNEL_QUALS}void\s+([A-Za-z_]\w*)")
 

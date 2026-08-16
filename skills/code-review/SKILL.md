@@ -2,8 +2,8 @@
 name: code-review
 description: >
   基于 CodeMap、源码和变更信息做 AscendC 代码审查。三种入口：快速看风险、文件检视、PR 检视。
-  假设检验驱动；证据先 CodeMap 再最小源码窗。不签发 CE 证书。
-  检视 Cast/DataCopy/切分改动时认出精度或性能场景线索，仍不关闭验证义务。
+  用户要审查算子代码改动、找潜在 bug 时使用。假设检验驱动；证据先 CodeMap 再最小源码窗。
+  边界：不签发 CE 证书；检视 Cast/DataCopy/切分改动时认出精度或性能场景线索，仍不关闭验证义务。
 ---
 
 # 代码审查

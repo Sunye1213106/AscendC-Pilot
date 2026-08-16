@@ -2165,7 +2165,10 @@ def finalize_kernel_root_trace(
 
     op_count = 0
     seen_op_ids: set[str] = set()
-    for site in calls or []:
+    for i, site in enumerate(calls or []):
+        if i % 200 == 0 and time.perf_counter() > deadline:
+            gated_fill_complete = False
+            break
         d = site if isinstance(site, dict) else kscan.site_as_dict(site)
         callee = str(d.get("callee") or "").split("::")[-1]
         if not callee or not callee.isidentifier():

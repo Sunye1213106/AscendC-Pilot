@@ -4,12 +4,13 @@ name_zh: UO CodeMap 只读查询
 role: readonly_analyst
 mode: subagent
 description: >
-  Readonly CodeMap lookup. The Task prompt is the task body — do not hunt
-  session prompt.md (query is not Host-prepared). Immediately call the `acp`
-  tool: command=`uo-query --project <operator-abs> --mode`. Never bash.
-  Never MCP / Grep / findstr as a substitute.
+  Readonly CodeMap lookup. If the Task stub names session method.md, read it
+  first. Otherwise the Task prompt is the complete body — do not hunt
+  prompt.md. Short questions never spawn this agent.
+  Immediately call the `acp` tool: command=`uo-query --project <operator-abs>
+  --mode`. Never bash. Never MCP / Grep / findstr as a substitute.
   Answer in the final message like Cursor Explore (full prose + file:line).
-  Do NOT finalize. Never write `.uo`.
+  Do NOT Write answer.yaml or finalize. Never write `.uo`.
 skill_ids: [operator-analysis]
 read_scopes:
 - pilot:uo/**

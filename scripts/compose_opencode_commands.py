@@ -20,7 +20,7 @@ def _command_body(workflow_id: str) -> str:
 User arguments: $ARGUMENTS
 
 1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
-2. **先对人说出路由**，再动手。怎么拆见 `cognitive-skills/operator-analysis/capabilities/uo-query-router/METHOD.md`。
+2. **先对人说出路由**，再动手。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。
 3. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子绝对路径>`，把 stdout 说给人听。
 4. 若 `host_step.tasks` ≥2：同一轮原样并行派发每条 stub，全部返回后综合。不要 `pilot_run`。
 5. 子代未闭合再开一轮 Task（FOCUS=缺口），不要改自查、不要问「要不要继续」。

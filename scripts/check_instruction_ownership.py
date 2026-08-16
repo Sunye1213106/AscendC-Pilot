@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Instruction-ownership lint: routing heuristics live in METHOD, not Policy."""
+"""Instruction-ownership lint: routing heuristics live in the router, not Policy."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Cognitive routing heuristics — METHOD (and engine compiler) own these.
+# Cognitive routing heuristics — router (and engine compiler) own these.
 HEURISTIC_PHRASES = (
     "相关 ≠ 单域",
     "related ≠ 单域",
@@ -21,12 +21,14 @@ HEURISTIC_PHRASES = (
 CONTROL_FILES = (
     "pilot/policies/pilot-control/POLICY.md",
     "pilot/policies/invariants/control-invariants.md",
+    "pilot/policies/invariants/host-runtime-contract.md",
     "scripts/compose_opencode_commands.py",
 )
 
+ROUTER = "skills/operator-analysis/routing/uo-query.md"
 OWNERS = (
     "skills/operator-analysis/capabilities/uo-query/METHOD.md",
-    "skills/operator-analysis/capabilities/uo-query-router/METHOD.md",
+    ROUTER,
 )
 
 
@@ -37,18 +39,18 @@ def errors(repo: Path | None = None) -> list[str]:
         text = (root / rel).read_text(encoding="utf-8")
         for phrase in HEURISTIC_PHRASES:
             if phrase in text:
-                out.append(f"HEURISTIC_IN_CONTROL {rel}: {phrase!r} belongs in uo-query METHOD")
+                out.append(f"HEURISTIC_IN_CONTROL {rel}: {phrase!r} belongs in uo-query router")
         if "FIRST_QUERY" in text:
-            out.append(f"HEURISTIC_IN_CONTROL {rel}: 'FIRST_QUERY' belongs in uo-query METHOD / compiler")
-    router = root / "skills/operator-analysis/capabilities/uo-query-router/METHOD.md"
+            out.append(f"HEURISTIC_IN_CONTROL {rel}: 'FIRST_QUERY' belongs in uo-query router / compiler")
+    router = root / ROUTER
     if not router.is_file() or not router.read_text(encoding="utf-8").strip():
-        out.append("missing uo-query-router METHOD.md")
+        out.append(f"missing {ROUTER}")
     else:
         rtext = router.read_text(encoding="utf-8")
         if "相关 ≠ 单域" not in rtext:
-            out.append("uo-query-router METHOD.md must own 相关 ≠ 单域")
+            out.append(f"{ROUTER} must own 相关 ≠ 单域")
         if "host_step.tasks" not in rtext:
-            out.append("uo-query-router METHOD.md must describe compiler fanout authority")
+            out.append(f"{ROUTER} must describe compiler fanout authority")
     for rel in OWNERS:
         if not (root / rel).is_file():
             out.append(f"missing owner {rel}")

@@ -240,13 +240,14 @@ Source -> CodeMap -> {/uo-query 只读提问（主控可见路由） | /uo-updat
 
 ### `/uo-query`（可见 LLM 路由，禁止 Host 润）
 
-查询不是 ACP 工作流：不要 `pilot_run` / `acp start uo-query`。主控看一眼短地图，**先对人说出分类**（短问自查 / 1 个子代理 / N 路并行），再动手。深问必须 `Task(agent=uo-query)`，禁止主控自己连查。若 `host_step.tasks` ≥2，编译器为权威，必须原样并行派发。编译器 0/1 片时按独立证据空间启发式拆（见 `uo-query-router/METHOD.md`）；相关不等于单域。每个 Task 写 `FIRST_QUERY`。不要为空转「问题路由」开子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
+查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控看一眼短地图，**先对人说出分类**（短问自查 / 1 个子代理 / N 路并行），再动手。深问必须 `Task(agent=uo-query)`，禁止主控自己连查。若 `host_step.tasks` ≥2，编译器为权威，必须原样并行派发。编译器 0/1 片时按独立证据空间启发式拆（见 `routing/uo-query.md`）；相关不等于单域。每个 Task 写 `FIRST_QUERY`。不要为空转「问题路由」开子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 
 - 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)
-- METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`
-- 交付：当前会话口语答案，或子代 Task 全文（主控综合）。不要 Write `answer.yaml`。
+- 子代 METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`
+- 主控路由：`skills/operator-analysis/routing/uo-query.md`
+- 交付：短问 = 当前会话 stdout；深问 = 子代 Task 全文（主控综合后 Primary finalize）。子代不要 Write `answer.yaml`。
 
 `readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物。
 

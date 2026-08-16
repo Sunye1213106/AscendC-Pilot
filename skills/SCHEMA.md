@@ -13,10 +13,11 @@ Cognitive skills（五个，缺一不可——闭合集合，不是起点）：
 | Kind | Path | Notes |
 |------|------|-------|
 | Cognitive skills | `skills/<id>/` | Self-contained `SKILL.md` + `references/` + `examples/` |
-| Action METHOD | `skills/<id>/capabilities/<cap>/METHOD.md` | One LLM Action. Spec `action_method_id="{skill}/{capability}"`. Prepare fail-closed if missing. |
+| Action METHOD | `skills/<id>/capabilities/<cap>/METHOD.md` | One LLM Action reasoning playbook. Spec `action_method_id="{skill}/{capability}"`. Prepare fail-closed if missing. Not for routers or engines. |
+| Router | `skills/<id>/routing/*.md` | Primary-visible routing. Not an Action METHOD. |
 | Shared language | `agents/CONTEXT.md` | Compose 进 invariant pack；跨 UO/TG/CE 同名词表 |
 | Templates | `skills/testcase-generation/templates/` | Structure-only snippets (not worked examples) |
-| Authoring shared refs | `knowledge/shared-references/` | SSOT；`compose --sync` 投影到四个 skill 的 `references/`（**不要**塞进 `code-engineering`） |
+| Authoring shared refs | `knowledge/shared-references/` | SSOT；默认五份投影到四个 skill（**不要**塞进 `code-engineering`）。`harness-oracle.md` 只投影到 `testcase-generation` 与 `code-engineering` |
 | Shared | `skills/_shared/` | **已删除，勿再添加。** 运行时不要复活；authoring SSOT 在 `knowledge/` |
 | Maintainer overlay | `.cursor/skills/` | 开发 Pilot 本仓用；**不**进入 `COGNITIVE_SKILL_IDS` / compose |
 

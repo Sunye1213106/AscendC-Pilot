@@ -42,6 +42,10 @@ _NAMED_REF_RE = re.compile(
     r"`(?:(?:skills|cognitive-skills)/[a-z0-9-]+/)?references/([^`\s]+?\.md)`",
     re.I,
 )
+_SKILL_SCOPED_REF_RE = re.compile(
+    r"`(?:skills|cognitive-skills)/([a-z0-9-]+)/references/([^`\s]+?\.md)`",
+    re.I,
+)
 
 
 def _named_reference_files(*texts: str) -> set[str]:
@@ -53,6 +57,21 @@ def _named_reference_files(*texts: str) -> set[str]:
             if rel:
                 found.add(rel)
     return found
+
+
+def _skill_scoped_refs(*texts: str) -> list[tuple[str, str]]:
+    """Return ``(skill_id, references/rel.md)`` named as ``skills/<id>/references/...``."""
+    out: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for text in texts:
+        for match in _SKILL_SCOPED_REF_RE.finditer(text or ""):
+            owner = match.group(1).strip()
+            rel = match.group(2).replace("\\", "/").lstrip("/")
+            key = (owner, rel)
+            if owner and rel and key not in seen:
+                seen.add(key)
+                out.append(key)
+    return out
 
 
 def _ref_is_named(rel: str, wanted: set[str]) -> bool:
@@ -134,6 +153,11 @@ def materialize_method_bundle(
 
     extra_blob = "\n".join(f"`{p}`" for p in (extra_ref_paths or []) if p)
     wanted = _named_reference_files(existing_method, prompt_text, extra_blob)
+    for owner, rel in _skill_scoped_refs(existing_method, prompt_text, extra_blob):
+        if allowed and owner not in allowed:
+            posix = f"skills/{owner}/references/{rel}"
+            if posix not in unauthorized:
+                unauthorized.append(posix)
 
     for sid in skill_ids:
         sid = str(sid).strip()

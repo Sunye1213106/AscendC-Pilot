@@ -238,10 +238,18 @@ def project_kernel_view(codemap: CodeMap, *, fingerprint: str = "") -> dict[str,
         condition = str(attrs.get("condition") or attrs.get("predicate") or attrs.get("expression") or ent.name or "")
         dims = list(attrs.get("dimensions") or attrs.get("tiling_key_dims") or [])
         if not dims and condition:
-            dims = [name for name in key_names if re.search(rf"\b{re.escape(name)}\b", condition)]
+            dims = [
+                name
+                for name in key_names
+                if name and name in condition and re.search(rf"\b{re.escape(name)}\b", condition)
+            ]
         td_fields = list(attrs.get("tilingdata_fields") or attrs.get("tiling_data_fields") or [])
         if not td_fields and condition:
-            td_fields = [name for name in td_names if re.search(rf"\b{re.escape(name)}\b", condition)]
+            td_fields = [
+                name
+                for name in td_names
+                if name and name in condition and re.search(rf"\b{re.escape(name)}\b", condition)
+            ]
         stage = _infer_stage(attrs, condition, dims, td_fields)
         key_specialization = {
             "tiling_key_dims": dims,
@@ -392,20 +400,22 @@ def _host_symbols_for_key(codemap: CodeMap, key: Any, incoming: dict[str, list[A
     seen: set[str] = set()
     packing = [str(x) for x in (key.attrs.get("host_packing_expressions") or [])]
     tokens = {tok for expr in packing for tok in _extract_symbols(expr)}
-    mid_ids = {rel.src for rel in incoming.get(key.id, []) if rel.kind_name() == RelationKind.DERIVES.value}
+    derive_from_key = {
+        rel.src
+        for rel in incoming.get(key.id, [])
+        if rel.kind_name() == RelationKind.DERIVES.value
+    }
+    mid_src = {rel.src for mid in derive_from_key for rel in incoming.get(mid, [])}
     for ent in codemap.entities.values():
         if ent.kind_name() not in {EntityKind.FIELD.value, EntityKind.VARIABLE.value}:
             continue
         if not (ent.attrs.get("host_key_argument") or ent.attrs.get("producer_sites") or ent.name in tokens or any(ent.name.endswith(t) or t.endswith(ent.name) for t in tokens)):
             continue
         related = bool(ent.attrs.get("host_key_argument") and (str(ent.attrs.get("tiling_key") or "") == key.name or key.name in str(ent.attrs.get("host_key_dims") or "")))
-        if any(rel.kind_name() == RelationKind.DERIVES.value and rel.src == ent.id for rel in incoming.get(key.id, [])):
+        if ent.id in derive_from_key:
             related = True
-        if not related:
-            for mid in mid_ids:
-                if any(r2.src == ent.id for r2 in incoming.get(mid, [])):
-                    related = True
-                    break
+        if not related and ent.id in mid_src:
+            related = True
         if related or (ent.attrs.get("host_key_argument") and tokens and any(t in ent.name or ent.name in t for t in tokens)):
             if ent.id not in seen:
                 seen.add(ent.id)

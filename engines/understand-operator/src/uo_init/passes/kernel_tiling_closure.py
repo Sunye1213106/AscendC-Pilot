@@ -230,22 +230,20 @@ def finalize_kernel_tiling_closure(
 
 
 def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
-    from uo_init.passes.source_text_cache import read_text
+    from uo_init.passes.source_text_cache import masked_text, read_text
 
     out: dict[Path, tuple[str, str]] = {}
     for path in selected_kernel_files(root, architecture):
-        raw = read_text(path)
-        out[path.resolve()] = (raw, _mask_non_code(raw))
+        out[path.resolve()] = (read_text(path), masked_text(path))
     return out
 
 
 def _host_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
-    from uo_init.passes.source_text_cache import read_text
+    from uo_init.passes.source_text_cache import masked_text, read_text
 
     out: dict[Path, tuple[str, str]] = {}
     for path in selected_host_files(root, architecture):
-        raw = read_text(path)
-        out[path.resolve()] = (raw, _mask_non_code(raw))
+        out[path.resolve()] = (read_text(path), masked_text(path))
     return out
 
 

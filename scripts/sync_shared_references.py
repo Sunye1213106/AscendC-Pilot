@@ -2,8 +2,10 @@
 """Authoring SSOT for shared skill references → self-contained projections.
 
 Source: knowledge/shared-references/*.md
-Targets: skills/{operator-analysis,testcase-generation,source-proof,code-review}/references/
-Do not project into code-engineering unless a METHOD names the file.
+Default five files project to operator-analysis / testcase-generation /
+source-proof / code-review. harness-oracle.md projects only to
+testcase-generation and code-engineering (a CE METHOD names it).
+Do not dump the default five into code-engineering.
 """
 
 from __future__ import annotations
@@ -14,27 +16,38 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SSOT = REPO / "knowledge" / "shared-references"
-SKILLS = (
+DEFAULT_SKILLS = (
     "operator-analysis",
     "testcase-generation",
     "source-proof",
     "code-review",
 )
-NAMES = (
+DEFAULT_NAMES = (
     "artifact-freshness.md",
     "completeness.md",
     "cpp-semantics.md",
     "evidence-quality.md",
     "finding-format.md",
 )
+# Named by a CE METHOD; do not grant ce-reviewer the whole TG skill tree.
+SPECIAL_PROJECTIONS: dict[str, tuple[str, ...]] = {
+    "harness-oracle.md": ("testcase-generation", "code-engineering"),
+}
+# Back-compat aliases for tests.
+SKILLS = DEFAULT_SKILLS
+NAMES = DEFAULT_NAMES
 
 
 def _pairs(repo: Path) -> list[tuple[Path, Path]]:
     src_root = repo / "knowledge" / "shared-references"
     out: list[tuple[Path, Path]] = []
-    for name in NAMES:
+    for name in DEFAULT_NAMES:
         src = src_root / name
-        for skill in SKILLS:
+        for skill in DEFAULT_SKILLS:
+            out.append((src, repo / "skills" / skill / "references" / name))
+    for name, skills in SPECIAL_PROJECTIONS.items():
+        src = src_root / name
+        for skill in skills:
             out.append((src, repo / "skills" / skill / "references" / name))
     return out
 
@@ -65,6 +78,11 @@ def check(repo: Path | None = None) -> list[str]:
             errors.append(
                 f"SHARED_REF_DRIFT {dest.as_posix()} != {src.as_posix()} (run compose --sync)"
             )
+    ce_forbidden = root / "skills" / "code-engineering" / "references"
+    for name in DEFAULT_NAMES:
+        leaked = ce_forbidden / name
+        if leaked.is_file():
+            errors.append(f"SHARED_REF_CE_LEAK {leaked.as_posix()}")
     return errors
 
 

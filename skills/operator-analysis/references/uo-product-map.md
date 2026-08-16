@@ -2,7 +2,7 @@
 
 短地图：认清权威 → 选 mode → 查完就答。主控先对人说出路由：短问自查，深问必须派 uo-query 子代理（禁止把深问改成主控连查），禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
 
-同一场景可沿图跳（同一结案条件）：`locate`/`tiling_key` → `field` → `kernel_branch` → `impact`。是否并行拆 Task 见 `capabilities/uo-query-router/METHOD.md`（编译器 `host_step.tasks` 优先；启发式看独立证据空间）。
+同一场景可沿图跳（同一结案条件）：`locate`/`tiling_key` → `field` → `kernel_branch` → `impact`。是否并行拆 Task 见 `routing/uo-query.md`（编译器 `host_step.tasks` 优先；启发式看独立证据空间）。
 
 ## 权威分层
 

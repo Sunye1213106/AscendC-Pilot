@@ -16,7 +16,7 @@
 
 ## 冷启动（uo-init 五步）
 
-Harness：`engines/understand-operator/tools/experiments/fag_arch35_cold_start.py`。收据：`artifacts/fag-arch35-rebuild/cold-start-120s/{run.log,rebuild.json}`。
+Harness：`engines/understand-operator/tools/uo_init_perf_gate.py`（必须显式 `--arch` 或 `UO_ARCH`）。收据：`artifacts/fag-arch35-rebuild/cold-start-120s/{run.log,rebuild.json}`。
 
 优化前同机冷启动约 **348s**（prepare 45 / extract 196 / analyze 86 / commit 20 / verify 1）。优化后：
 
@@ -117,7 +117,7 @@ verify **pass**，TilingKey 声明 / packing / producer / root **19/19**，`has_
 ```text
 $env:UO_TIMING = "1"
 # true cold start（会抹掉该算子 arch35 缓存）
-python engines/understand-operator/tools/experiments/fag_arch35_cold_start.py
+python engines/understand-operator/tools/uo_init_perf_gate.py --arch arch35
 
 # 10 算子量级抽检请设 UO_GEN_ONLY；无过滤会跑全家约 33 算子 + FAG arch22 审计
 # $env:UO_GEN_ONLY = "attention/fused_causal_conv1d:arch35,..."

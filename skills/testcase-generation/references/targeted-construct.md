@@ -25,3 +25,7 @@ ScenarioSet
    change, not a silent expand.
 6. Full-key overlay remains `tilingkey_full_coverage` on a separate
    certificate.
+7. Overlay `scenario_targeted` does not freeze or enlarge `T`; `T` is the
+   approved ScenarioSet ids, not all of `D`.
+8. Write a construct trace (scenario id, corpus hits, knobs, csv path).
+   Optional Host replay only when dispatch evidence is also required.

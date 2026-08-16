@@ -700,22 +700,9 @@ def clang_include_paths(
         seen.add(key)
         out.append(Path(name))
     probe = _probe_from_parsed_tu(tu, path_s, str(op_dir or ""))
-    if walk_ctx is not None:
-        try:
-            from uo_init.clang_walk import consume_parsed_tu
-
-            op_needle = Path(op_dir).name if op_dir else ""
-            consume_parsed_tu(
-                tu,
-                path_s,
-                walk_ctx,
-                side=side,
-                dtype_variant="DT_FLOAT16" if side != "host" else None,
-                op_needle="",
-                collect_writes=(side == "host"),
-            )
-        except Exception:  # noqa: BLE001 — include closure must still succeed
-            pass
+    # Do not full-walk here. Prepare include-parse uses a thread pool; AST
+    # walks under the GIL made true-cold slower than extract's process pool.
+    del walk_ctx
     return ClangIncludeResult(ok=True, paths=out, probe=probe)
 
 

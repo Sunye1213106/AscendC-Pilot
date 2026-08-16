@@ -4,10 +4,11 @@
 
 ```text
 确定性计算              -> Engine
-领域推理方法            -> METHOD.md（一个 Action）
+领域推理方法            -> METHOD.md（一次 LLM Action；confirm/deterministic 不要 METHOD）
+主控可见路由            -> skills/<id>/routing/*.md（不是 METHOD）
 领域能力地图            -> Skill
 一次任务说明            -> Prompt（task/input/delta/output）
-状态与迁移              -> Workflow Spec（含显式 action_method_id）
+状态与迁移              -> Workflow Spec（LLM Action 才写显式 action_method_id）
 可执行步骤              -> Action
 身份与权限上限          -> Agent（skill_ids 不是每次装载列表）
 动态事实                -> ContextProfile

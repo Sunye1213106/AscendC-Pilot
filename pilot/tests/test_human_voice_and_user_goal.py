@@ -132,11 +132,11 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": None,
-            "action_method_id": "code-engineering/ce-scenario-infer",
+            "action_method_id": None,
             "id": "scenario_infer",
         },
     )
-    assert "ce-scenario-set" in infer or "Scenario" in infer
+    assert infer == ""
     assert infer_prompt == ""
 
 

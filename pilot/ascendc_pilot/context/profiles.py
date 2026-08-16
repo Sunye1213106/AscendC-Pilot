@@ -201,7 +201,7 @@ PROFILES: dict[str, ContextProfile] = {
         id="ce-verify-harness-evidence-check",
         description="Check harness receipts against scenario obligations.",
         references=(
-            "skills/testcase-generation/references/harness-oracle.md",
+            "skills/code-engineering/references/harness-oracle.md",
             "skills/code-engineering/references/evidence-tiers.md",
             "skills/code-engineering/references/evidence-discipline.md",
         ),

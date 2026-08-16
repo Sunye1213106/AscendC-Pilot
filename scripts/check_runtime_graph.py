@@ -233,7 +233,6 @@ def _main() -> int:
             if FORBIDDEN_PROD_MARKERS.search(body):
                 errors.append(f"production prompt has forbidden marker: {md.relative_to(REPO)}")
 
-    # Unused production prompts are warnings; forward refs above are authoritative.
     unused_prompts: list[str] = []
     if prompts_dir.is_dir():
         for md in prompts_dir.rglob("*.md"):
@@ -244,7 +243,7 @@ def _main() -> int:
             if tid not in used_prompts:
                 unused_prompts.append(tid)
     for tid in unused_prompts:
-        print(f"  warn: unused production prompt prompts/tasks/{tid}.md")
+        errors.append(f"unused production prompt prompts/tasks/{tid}.md")
 
     # Agents: every production agent yaml must be used (allow primary + known)
     agent_allow = {"ascendc-pilot"}

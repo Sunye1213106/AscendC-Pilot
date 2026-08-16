@@ -1,7 +1,13 @@
-# UO Query Router — 主控可见路由（不是子代 playbook）
+# UO Query Router
 
 主控先对人说出路由，再动手。子代查图用 `capabilities/uo-query/METHOD.md`。
 **禁止** `pilot_run` / `acp start uo-query`。不要为空转「问题路由」开子代理。
+
+`host_driver=False` 只表示 Session Driver **不** auto start/drain，**不等于**没有 Action / METHOD / bundle。
+
+- **短问**：主控自己 `acp uo-query --mode`，stdout 即答案。无 prepare / Task / finalize。
+- **深问**：prepare `kb_lookup` → N 个 Task → Primary 综合 → Runtime `kb_lookup --finalize` 物化 `answer.yaml`。子代不得 Write、不得自己 finalize。
+- **Delegated Task**（TG/CE 临时问图）：Task 正文即全部，不要 hunt session `prompt.md`。
 
 缺 `.uo`：产物路径是 `<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`。
 `acp uo-query` 返回 `UO_PRODUCT_REQUIRED` + `ask_question` 时立刻 AskQuestion（选项原样）：先 `/uo-init`，或回退源码作答。禁止 Glob/dir/tree 找产物。
@@ -12,7 +18,7 @@
 
 ## 启发式（仅当编译器给出 0 或 1 片）
 
-看 **独立证据空间**，不是 METHOD 表行数，也不是「症状像不像一单故障」。
+看 **独立证据空间**，不是表行数，也不是「症状像不像一单故障」。
 
 拆成并行 Task（`agent=uo-query`）当且仅当同时成立：
 

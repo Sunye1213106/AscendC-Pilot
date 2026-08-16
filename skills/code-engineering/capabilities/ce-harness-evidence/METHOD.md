@@ -2,7 +2,7 @@
 
 核对测试仓跑测收据是否覆盖 ScenarioSet 中的精度与性能义务。不改账本，不把收据写成排除项。
 
-详见 `references/evidence-tiers.md`、`references/evidence-discipline.md`，以及 `skills/testcase-generation/references/harness-oracle.md`。
+详见 `references/evidence-tiers.md`、`references/evidence-discipline.md`、`references/harness-oracle.md`。
 
 ## 方法
 

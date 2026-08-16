@@ -510,21 +510,20 @@ def check_all(
             aid = str(action.get("id") or "")
             role = str(action.get("role_id") or "")
             agent_id = str(action.get("agent_id") or "").strip()
-            method_id = str(action.get("action_method_id") or "")
+            method_id = str(action.get("action_method_id") or "").strip()
             prompt_id = str(action.get("task_prompt_id") or "").strip()
             contract_id = str(action.get("output_contract_id") or "").strip()
-
-            if method_id:
-                if "/" not in method_id:
-                    errors.append(f"{wid}/{aid}: invalid action_method_id {method_id!r}")
-            elif role in {"producer", "referee", "readonly_analyst", "deterministic_engine"}:
-                errors.append(f"{wid}/{aid}: missing action_method_id")
             mode = str(action.get("execution_mode") or "")
+
+            if method_id and "/" not in method_id:
+                errors.append(f"{wid}/{aid}: invalid action_method_id {method_id!r}")
             if mode == "subagent" and prompt_id:
                 skill, _, cap = method_id.partition("/")
                 mp = root / "skills" / skill / "capabilities" / cap / "METHOD.md"
                 if not method_id or "/" not in method_id or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
                     errors.append(f"{wid}/{aid}: missing METHOD.md for {method_id!r}")
+            elif mode in {"deterministic", "primary_interactive"} and method_id:
+                errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
 
             if prompt_id:
                 prompt_path = _prompt_path(prompts, prompt_id)
