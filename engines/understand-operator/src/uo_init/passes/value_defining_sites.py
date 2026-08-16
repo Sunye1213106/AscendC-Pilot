@@ -187,12 +187,35 @@ def _annotate_key_packing_roots(
     return count
 
 
+_OCCUPANCY_TOKENS = ("aicnum", "corenum", "aivnum")
+
+
+def _is_occupancy_expr(rhs: str) -> bool:
+    low = str(rhs or "").lower()
+    return any(tok in low for tok in _OCCUPANCY_TOKENS)
+
+
+def _plain_local_defs(
+    ident: str,
+    assigns: dict[str, list[dict]],
+    locals_: dict[str, list[dict]],
+) -> list[dict]:
+    return list(locals_.get(ident) or []) + [
+        s for s in (assigns.get(ident) or []) if "." not in str(s.get("lhs") or "")
+    ]
+
+
 def _local_aliases_for_field(
     field,
     assigns: dict[str, list[dict]],
     locals_: dict[str, list[dict]],
 ) -> list[dict]:
-    """Locals that are copied into this tiling field (any op, any name)."""
+    """Locals copied into this field, including occupancy multi-hop formulas.
+
+    Host occupancy often writes ``blockOuter`` from a local of the same name
+    whose RHS mentions another local (``fusedOuter``) together with ``aicNum``.
+    One-hop RHS-of-field-write is not enough for that shape.
+    """
     leaf = str(field.name or "").rsplit(".", 1)[-1]
     if not leaf:
         return []
@@ -200,35 +223,54 @@ def _local_aliases_for_field(
     name = str(field.name or "")
     if name and name != leaf:
         sites.extend(assigns.get(_norm_path(name)) or [])
+    sites.extend(locals_.get(leaf) or [])
     out: list[dict] = []
     seen: set[tuple] = set()
-    for site in sites:
-        rhs = str(site.get("rhs") or "")
-        for ident in _identifiers(rhs):
-            if len(ident) < 3 or ident.lower() == leaf.lower():
-                continue
-            defs = list(locals_.get(ident) or []) + [
-                s for s in (assigns.get(ident) or []) if "." not in str(s.get("lhs") or "")
-            ]
-            if not defs:
-                continue
-            for item in defs:
-                marker = (ident, item.get("file"), item.get("line"), item.get("rhs"))
-                if marker in seen:
-                    continue
-                seen.add(marker)
-                out.append(
-                    {
-                        "name": ident,
-                        "function": item.get("function") or "",
-                        "file": item.get("file") or "",
-                        "line": item.get("line"),
-                        "rhs": item.get("rhs") or "",
-                        "guard": item.get("guards") or [],
-                    }
-                )
-                if len(out) >= 12:
-                    return out
+    visited: set[str] = {leaf.lower()}
+
+    def _emit(ident: str, item: dict, hops: int) -> bool:
+        marker = (ident, item.get("file"), item.get("line"), item.get("rhs"))
+        if marker in seen:
+            return False
+        seen.add(marker)
+        out.append(
+            {
+                "name": ident,
+                "function": item.get("function") or "",
+                "file": item.get("file") or "",
+                "line": item.get("line"),
+                "rhs": item.get("rhs") or "",
+                "guard": item.get("guards") or [],
+                "hops": hops,
+            }
+        )
+        return len(out) >= 12
+
+    frontier: list[str] = [leaf]
+    for hop in range(3):
+        nxt: list[str] = []
+        for current in frontier:
+            seed = list(_plain_local_defs(current, assigns, locals_))
+            if current.lower() == leaf.lower():
+                seed.extend(sites)
+            for site in seed:
+                rhs = str(site.get("rhs") or "")
+                occupancy = _is_occupancy_expr(rhs)
+                for ident in _identifiers(rhs):
+                    if len(ident) < 3 or ident.lower() in visited:
+                        continue
+                    defs = _plain_local_defs(ident, assigns, locals_)
+                    if not defs and not occupancy:
+                        continue
+                    visited.add(ident.lower())
+                    if defs:
+                        nxt.append(ident)
+                    for item in defs:
+                        if _emit(ident, item, hop + 1):
+                            return out
+        frontier = nxt
+        if not frontier:
+            break
     return out
 
 

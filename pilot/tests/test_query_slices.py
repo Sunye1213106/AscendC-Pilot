@@ -56,7 +56,7 @@ def test_focused_question_gates_child() -> None:
     text = focused_user_question(Q18, row)
     assert "SLICE_ID=sel" in text
     assert "FOCUS (this child only): SEL" in text
-    assert "First mode: template_match" in text
+    assert "First mode:" in text
     assert "Answer ONLY this slice" in text
     assert "FIRST_QUERY:" in text
     assert "Do not inherit" in text
@@ -109,7 +109,8 @@ def test_q18_focused_stub_has_first_query_and_no_bleed() -> None:
         "canonical": "dim_coverage",
     }
     text = focused_user_question(Q18, row)
-    assert "FIRST_QUERY: acp uo-query --mode template_match" in text
+    assert "FIRST_QUERY: acp uo-query --mode" in text
+    assert "template_match --query" not in text
     assert "Do not inherit hypotheses" in text
     assert "根因已定位" in text
 

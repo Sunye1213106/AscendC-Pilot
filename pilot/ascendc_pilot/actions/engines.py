@@ -245,11 +245,25 @@ def _run_ce_obligation_build(project_root: Path, ctx: dict[str, Any]) -> dict[st
     out = _dump_ce_yaml(root / "obligations.yaml", doc)
     ledger = Ledger(O={str(row["id"]) for row in obligations if row.get("id")})
     ledger_path = save_ledger(ledger, project_root, architecture=arch, path=root / "ledger.yaml")
+    from code_engineering.change_test_intent import build_change_test_intent, write_yaml
+    from ascendc_pilot.actions.scenario_certificate import live_source_fingerprint, live_uo_digest
+
+    impact = _load_yaml(root / "impact_slice.yaml") or {}
+    intent_doc = build_change_test_intent(
+        impact=impact,
+        obligations=obligations,
+        uo_digest=live_uo_digest(project_root, architecture=arch),
+        source_fingerprint=live_source_fingerprint(project_root),
+        change_revision=str(ctx.get("change_revision") or impact.get("head") or ""),
+    )
+    write_yaml(root / "change_test_intent.yaml", intent_doc)
     return {
         "ok": bool(validation.get("ok")),
         "engine": "obligation_build",
         "artifact": out.as_posix(),
         "ledger": ledger_path.as_posix(),
+        "change_test_intent": str(root / "change_test_intent.yaml"),
+        "target_count": len(intent_doc.get("targets") or []),
         **doc,
     }
 
@@ -280,8 +294,24 @@ def _run_ce_scenario_infer(project_root: Path, ctx: dict[str, Any]) -> dict[str,
         or ""
     )
     doc = infer_scenario_set(anchors, entry=entry, fingerprint=fingerprint, origin="inferred")
-    out = write_scenario_set(doc, ce_root / "scenarios" / "scenario_set.yaml")
-    return {"ok": True, "engine": "scenario_infer", "artifact": out.as_posix(), **doc}
+    if str(ctx.get("workflow_id") or "") == "ce-intent":
+        out = write_scenario_set(doc, ce_root / "intent" / "planned_scenarios.yaml")
+        write_scenario_set(doc, ce_root / "scenarios" / "scenario_set.yaml")
+        return {"ok": True, "engine": "scenario_infer", "artifact": out.as_posix(), **doc}
+    actual_path = write_scenario_set(doc, ce_root / "impact" / "scenario_set.yaml")
+    planned = _load_yaml(ce_root / "intent" / "planned_scenarios.yaml") or {}
+    from code_engineering.change_test_intent import scenario_delta, write_yaml
+
+    delta = scenario_delta(planned, doc)
+    write_yaml(ce_root / "impact" / "scenario_delta.yaml", delta)
+    write_scenario_set(doc, ce_root / "scenarios" / "scenario_set.yaml")
+    return {
+        "ok": True,
+        "engine": "scenario_infer",
+        "artifact": actual_path.as_posix(),
+        "delta": delta,
+        **doc,
+    }
 
 
 def _run_ce_scenario_apply(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -346,21 +376,42 @@ def _run_ce_harness_evidence(project_root: Path, ctx: dict[str, Any]) -> dict[st
     runs = list(results.get("runs") or [])
     missing = (not runs) or any(str(row.get("reason") or "") == "harness_missing" for row in runs)
     ok = bool(runs) and (not missing) and all(bool(row.get("ok")) for row in runs)
+    from ascendc_pilot.actions.scenario_certificate import load_replay_receipts
+
+    cti = _load_yaml(ce_root / "impact" / "change_test_intent.yaml") or {}
+    cti_ids = {
+        str(row.get("obligation_id") or "")
+        for row in (cti.get("targets") or [])
+        if isinstance(row, dict) and row.get("obligation_id")
+    }
+    reached_ids = {
+        str(rec.get("obligation_id") or "")
+        for rec in load_replay_receipts(project_root, arch=arch)
+        if rec.get("target_reached") and rec.get("obligation_id")
+    }
+    missing_replay = sorted(cti_ids - reached_ids)
+    if missing_replay:
+        ok = False
     mode = "only_grad" if precision_hit else "profiler"
     receipt = adapter.to_evidence(
         {
             "ok": ok,
             "mode": mode,
-            "reason": "harness_missing" if missing else "",
+            "reason": "harness_missing" if missing else ("missing_target_reached" if missing_replay else ""),
             "csv": str(results.get("csv") or ""),
         },
         change_head_sha=head_sha,
-        obligation_ids=sorted(wanted) if ok else [],
+        obligation_ids=sorted(wanted & reached_ids) if ok else [],
     )
     if missing:
         receipt["reason"] = "harness_missing"
         receipt["ok"] = False
         receipt["verified_obligations"] = []
+    if missing_replay:
+        receipt["reason"] = "missing_target_reached"
+        receipt["ok"] = False
+        receipt["verified_obligations"] = []
+        receipt["missing_target_reached"] = missing_replay
     out = _dump_ce_yaml(ce_root / "verify" / "harness_evidence.yaml", receipt)
     return {"ok": bool(receipt.get("ok")), "engine": "harness_evidence", "artifact": out.as_posix(), **receipt}
 
@@ -380,7 +431,29 @@ def _run_ce_coverage_bridge(project_root: Path, ctx: dict[str, Any]) -> dict[str
 
     arch = _resolve_ce_arch(project_root, ctx)
     impact = _load_yaml(_ce(project_root, arch=arch) / "impact" / "impact_slice.yaml") or {}
-    result = bridge_tg(project_root, impact, architecture=arch, limit=int(ctx.get("limit") or 256))
+    limit = int(ctx.get("limit") or 256)
+    result = bridge_tg(project_root, impact, architecture=arch, limit=limit)
+    intent = _load_yaml(_ce(project_root, arch=arch) / "impact" / "change_test_intent.yaml") or {}
+    targets = [row for row in (intent.get("targets") or []) if isinstance(row, dict)]
+    truncated = int(result.get("case_count") or 0) >= limit
+    uncovered = []
+    if truncated:
+        uncovered.append(
+            {
+                "obligation_id": "CE-OBL-BRIDGE-TRUNCATED",
+                "reason": "regress_pool_limit",
+                "limit": limit,
+            }
+        )
+    for row in targets:
+        oid = str(row.get("obligation_id") or "")
+        if oid:
+            uncovered.append({"obligation_id": oid, "reason": "requires_targeted_construct"})
+    result["uncovered_obligations"] = uncovered
+    result["primary"] = "change_test_intent" if targets else "regress_pool"
+    result["ok"] = bool(result.get("ok")) and not truncated
+    if truncated:
+        result["error"] = "REGRESS_POOL_TRUNCATED"
     return {"engine": "coverage_bridge", **result}
 
 
@@ -562,23 +635,77 @@ def _run_ce_patch_guard(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
 
 
 def _run_ce_codemap_refresh(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """In-process uo-update: detect → plan → apply → export → diff. Never LLM-write .uo."""
+    """Independent UO transaction: never write .uo under the CE apply lock alone."""
+    from ascendc_pilot.occupancy import (
+        acquire_exclusive_lock,
+        live_exclusive_lock,
+        live_resource_conflict,
+        publish_uo_digest,
+        release_exclusive_lock,
+    )
+
     arch = _resolve_ce_arch(project_root, ctx)
-    detect = _run_detect_changes(project_root, ctx)
-    plan = _run_plan_update(project_root, ctx)
-    applied = _run_apply_update(project_root, ctx)
-    export = _run_export_integrity(project_root, ctx)
-    diff = _run_diff_summary(project_root, ctx)
-    ok = all(bool(step.get("ok")) for step in (detect, plan, applied, export, diff))
-    doc = {
-        "schema": "ce-codemap-refresh/v1",
-        "ok": ok,
-        "detect": {k: detect.get(k) for k in ("ok", "engine", "error", "scoped_change_count") if k in detect},
-        "plan": {k: plan.get(k) for k in ("ok", "engine", "error") if k in plan},
-        "apply": {k: applied.get(k) for k in ("ok", "engine", "error") if k in applied},
-        "export": {k: export.get(k) for k in ("ok", "engine", "error") if k in export},
-        "diff": {k: diff.get(k) for k in ("ok", "engine", "error") if k in diff},
-    }
+    holder = live_exclusive_lock(project_root, "uo")
+    if holder:
+        doc = {
+            "schema": "ce-codemap-refresh/v1",
+            "ok": False,
+            "error": "UO_PRODUCT_LOCKED",
+            "holder": holder,
+            "message_zh": "UO 产物锁被占用，禁止在 CE apply 内静默双写 .uo",
+        }
+        out = _dump_ce_yaml(_ce(project_root, arch=arch) / "apply" / "codemap_refresh.yaml", doc)
+        return {"ok": False, "engine": "codemap_refresh", "artifact": out.as_posix(), **doc}
+    conflict = live_resource_conflict(
+        project_root, "uo-update", ignore_run_id=str(ctx.get("run_id") or "")
+    )
+    if conflict:
+        doc = {
+            "schema": "ce-codemap-refresh/v1",
+            "ok": False,
+            "error": "UO_REFRESH_CONFLICT",
+            **conflict,
+        }
+        out = _dump_ce_yaml(_ce(project_root, arch=arch) / "apply" / "codemap_refresh.yaml", doc)
+        return {"ok": False, "engine": "codemap_refresh", "artifact": out.as_posix(), **doc}
+
+    refresh_run = f"{ctx.get('run_id') or 'CE'}-uo-refresh"
+    nested = False
+    try:
+        acquire_exclusive_lock(
+            project_root,
+            occupancy_group="uo",
+            workflow_id="uo-update",
+            run_id=refresh_run,
+            architecture=arch,
+            session_id=str(ctx.get("session_id") or ""),
+        )
+        nested = True
+        detect = _run_detect_changes(project_root, ctx)
+        plan = _run_plan_update(project_root, ctx)
+        applied = _run_apply_update(project_root, ctx)
+        export = _run_export_integrity(project_root, ctx)
+        diff = _run_diff_summary(project_root, ctx)
+        ok = all(bool(step.get("ok")) for step in (detect, plan, applied, export, diff))
+        published = {}
+        try:
+            published = publish_uo_digest(project_root, architecture=arch)
+        except Exception as exc:  # noqa: BLE001
+            published = {"ok": False, "error": str(exc)[:200]}
+        doc = {
+            "schema": "ce-codemap-refresh/v1",
+            "ok": ok,
+            "uo_transaction": refresh_run,
+            "uo_digest": published.get("digest") or "",
+            "detect": {k: detect.get(k) for k in ("ok", "engine", "error", "scoped_change_count") if k in detect},
+            "plan": {k: plan.get(k) for k in ("ok", "engine", "error") if k in plan},
+            "apply": {k: applied.get(k) for k in ("ok", "engine", "error") if k in applied},
+            "export": {k: export.get(k) for k in ("ok", "engine", "error") if k in export},
+            "diff": {k: diff.get(k) for k in ("ok", "engine", "error") if k in diff},
+        }
+    finally:
+        if nested:
+            release_exclusive_lock(project_root, "uo", run_id=refresh_run)
     out = _dump_ce_yaml(_ce(project_root, arch=arch) / "apply" / "codemap_refresh.yaml", doc)
     return {"ok": ok, "engine": "codemap_refresh", "artifact": out.as_posix(), **doc}
 
@@ -1467,12 +1594,48 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
 
 def _run_tg_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    from ascendc_pilot.source_snapshot import bind_snapshot_env, materialize_source_snapshot
+
+    ident = materialize_source_snapshot(project_root)
+    bind_snapshot_env(ident)
+    arch = str(tg_ctx.get("architecture") or ctx.get("architecture") or "").strip() or None
+    out = _tg(project_root, arch=arch) / "closure" / "source_snapshot.yaml"
+    _dump_closure_yaml(out, ident)
     return {
-        "ok": True,
+        "ok": bool(ident.get("ok")),
         "engine": "solve_precheck",
         "mode": tg_ctx.get("mode"),
         "pre_gates": "runtime",
+        "snapshot": ident,
+        "artifact": out.as_posix(),
     }
+
+
+def _run_tg_local_capability_bootstrap(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.local_extension import bootstrap_local_capability
+
+    arch = str(ctx.get("architecture") or "").strip()
+    interface = str(ctx.get("interface") or ctx.get("local_interface") or "case_builder")
+    result = bootstrap_local_capability(
+        project_root,
+        interface,
+        architecture=arch,
+        reason=str(ctx.get("reason") or "LOCAL_CAPABILITY_REQUIRED"),
+    )
+    run_id = str(ctx.get("run_id") or "")
+    receipt_path = ""
+    if run_id:
+        from ascendc_pilot.paths import runs_root
+
+        dest = runs_root(project_root) / run_id / "actions" / "local_capability_bootstrap" / "receipt.yaml"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        import yaml
+
+        dest.write_text(yaml.safe_dump(result, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        receipt_path = dest.as_posix()
+        result["artifact"] = receipt_path
+    result.setdefault("engine", "local_capability_bootstrap")
+    return result
 
 
 
@@ -2945,14 +3108,48 @@ def _run_tg_targeted_construct(project_root: Path, ctx: dict[str, Any]) -> dict[
             "csv": csv_path.as_posix(),
             "count": len(cases),
         })
+    intent = _load_yaml(ce_root / "impact" / "change_test_intent.yaml") or {}
+    for target in intent.get("targets") or []:
+        if not isinstance(target, dict):
+            continue
+        oid = str(target.get("obligation_id") or "").strip()
+        if not oid:
+            continue
+        sid = f"CTI-{oid}"
+        row = {
+            "Testcase_Name": sid,
+            "obligation_id": oid,
+            "kind": str(target.get("kind") or ""),
+            "symbol": str(target.get("symbol") or ""),
+        }
+        pred = target.get("predicate") if isinstance(target.get("predicate"), dict) else {}
+        for key, value in pred.items():
+            row[str(key)] = value
+        csv_path = dest_root / f"{sid}.csv"
+        adapter.emit([row], csv_path)
+        emitted.append({
+            "id": sid,
+            "oracle": "host_replay",
+            "csv": csv_path.as_posix(),
+            "count": 1,
+            "obligation_id": oid,
+            "kind": target.get("kind"),
+        })
+    from ascendc_pilot.actions.scenario_certificate import (
+        live_source_fingerprint,
+        live_uo_digest,
+    )
+
     receipt = {
         "schema": "tg-targeted-construct/v1",
         "adapter": adapter.identity(),
         "scenarios": emitted,
+        "source_fingerprint": live_source_fingerprint(project_root),
+        "uo_digest": live_uo_digest(project_root, architecture=arch),
     }
     out = dest_root / "construct.yaml"
     _dump_ce_yaml(out, receipt)
-    return {"ok": bool(items), "engine": "targeted_construct", "artifact": out.as_posix(), **receipt}
+    return {"ok": bool(emitted), "engine": "targeted_construct", "artifact": out.as_posix(), **receipt}
 
 
 def _run_tg_harness_run(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -2976,12 +3173,17 @@ def _run_tg_harness_run(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
                 "id": sid,
                 "ok": True,
                 "mode": "none",
-                "reason": "disabled_no_npu",
+                "verdict": "skipped_by_design",
+                "reason": "skipped_by_design",
                 "csv": str(csv_path),
             })
             continue
         result = adapter.run(csv_path, oracle or "only_grad")
         result["id"] = sid
+        reason = str(result.get("reason") or "")
+        if reason == "disabled_no_npu" or str(result.get("verdict") or "") == "not_executed":
+            result["verdict"] = "not_executed"
+            result["ok"] = False
         runs.append(result)
     doc = {
         "schema": "tg-harness-run/v1",
@@ -2991,25 +3193,50 @@ def _run_tg_harness_run(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     }
     out = dest_root / "harness_results.yaml"
     _dump_ce_yaml(out, doc)
-    ok = all(bool(row.get("ok")) or str(row.get("reason") or "") == "disabled_no_npu" for row in runs) if runs else False
+    from ascendc_pilot.actions.scenario_certificate import harness_row_pass
+
+    ok = bool(runs) and all(harness_row_pass(row) for row in runs)
+    from ascendc_pilot.actions.scenario_certificate import write_replay_receipt
+    from ascendc_pilot.source_snapshot import snapshot_identity
+
+    snap = snapshot_identity(project_root)
+    construct_rows = {
+        str(row.get("id") or ""): row
+        for row in (construct.get("scenarios") or [])
+        if isinstance(row, dict)
+    }
+    for row in runs:
+        sid = str(row.get("id") or "")
+        constructed = construct_rows.get(sid) or {}
+        oracle = str(constructed.get("oracle") or row.get("mode") or "")
+        reached = bool(row.get("target_reached"))
+        reason = str(row.get("reason") or "")
+        if not reached:
+            # Host Replay is the only oracle that may set target_reached.
+            reason = reason or "replay_not_executed"
+        if oracle == "host_replay" and not reached:
+            reason = reason or "replay_not_executed"
+        write_replay_receipt(
+            project_root,
+            architecture=arch,
+            scenario_id=sid,
+            obligation_id=str(constructed.get("obligation_id") or ""),
+            target_reached=reached,
+            reason=reason,
+            extra={
+                "harness_ok": harness_row_pass(row),
+                "csv": row.get("csv"),
+                **snap,
+            },
+        )
     return {"ok": ok, "engine": "harness_run", "artifact": out.as_posix(), **doc}
 
 
 def _run_tg_scenario_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.actions.scenario_certificate import evaluate_scenario_certificate
+
     arch = _resolve_ce_arch(project_root, ctx)
-    dest_root = _tg(project_root, arch=arch) / "closure" / "scenarios"
-    construct = _load_yaml(dest_root / "construct.yaml") or {}
-    results = _load_yaml(dest_root / "harness_results.yaml") or {}
-    intent = _load_yaml(_tg(project_root, arch=arch) / "plan" / "plan_intent.yaml") or {}
-    cert = {
-        "schema": "tg-scenario-coverage/v1",
-        "mode": "scenario_targeted",
-        "target_mode": "scenario_set",
-        "scenarios": list(intent.get("scenarios") or [row.get("id") for row in (construct.get("scenarios") or [])]),
-        "construct": construct,
-        "harness": results,
-        "ok": bool(construct.get("scenarios")),
-    }
+    cert = evaluate_scenario_certificate(project_root, architecture=arch)
     out = _tg(project_root, arch=arch) / "closure" / "scenario_certificate.yaml"
     _dump_ce_yaml(out, cert)
     return {"ok": bool(cert["ok"]), "engine": "scenario_certify", "artifact": out.as_posix(), **cert}
@@ -3089,6 +3316,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-plan", "plan_precheck"): _run_tg_plan_precheck,
     ("tg-plan", "plan_build"): _run_tg_plan_build,
     ("tg-solve", "solve_precheck"): _run_tg_solve_precheck,
+    ("tg-solve", "local_capability_bootstrap"): _run_tg_local_capability_bootstrap,
     ("tg-solve", "oracle_probe"): _run_oracle_probe,
     ("tg-solve", "closure_ledger"): _run_closure_ledger,
     ("tg-solve", "closure_search"): _run_closure_search,
@@ -3162,6 +3390,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "obligation-ledger-v1": [
         "ce/impact/obligations.yaml",
         "ce/impact/ledger.yaml",
+        "ce/impact/change_test_intent.yaml",
     ],
     "ce-scenario-set-v1": ["ce/scenarios/scenario_set.yaml"],
     "scenario-knobs-staging-v1": [
@@ -3232,7 +3461,10 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "plan-build-v1": ["tg/plan"],
     "plan-approved-v1": ["tg/plan/levels/*/human_supplement.yaml"],
     # Precondition only; runtime pre_gates own the check. No published artifacts.
-    "solve-precheck-v1": [],
+    "solve-precheck-v1": ["tg/closure/source_snapshot.yaml"],
+    "local-capability-bootstrap-v1": [
+        "runs/{run_id}/actions/local_capability_bootstrap/receipt.yaml",
+    ],
     "oracle-probe-v1": ["tg/closure/oracle_probe.yaml"],
     "closure-ledger-v1": [
         "tg/closure/R.txt",
@@ -3336,4 +3568,15 @@ def invoke_engine(project_root: Path, workflow_id: str, action_id: str, *, ctx: 
         except Exception:  # noqa: BLE001
             pass
     with engine_span(workflow_id, action_id):
-        return fn(project_root, payload)
+        try:
+            return fn(project_root, payload)
+        except Exception as exc:  # noqa: BLE001
+            from ascendc_pilot.local_extension import LocalCapabilityRequired
+
+            if isinstance(exc, LocalCapabilityRequired):
+                payload = exc.as_dict()
+                payload["reason_code"] = "LOCAL_CAPABILITY_REQUIRED"
+                payload["error"] = "LOCAL_CAPABILITY_REQUIRED"
+                payload["recovery_action"] = "local_capability_bootstrap"
+                return payload
+            raise

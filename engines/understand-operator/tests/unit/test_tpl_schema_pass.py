@@ -57,6 +57,9 @@ def test_tpl_schema_pass_builds_d(tmp_path: Path):
     rebuilt = project_tpl_views_from_codemap(cm)
     assert rebuilt
     assert rebuilt["tiling/exhaustive_key_space.yaml"]["legal_key_count"] == 5
+    macros = {e.name for e in cm.by_kind(EntityKind.MACRO)}
+    assert "ASCENDC_TPL_ARGS_SEL" in macros
+    assert "ASCENDC_TPL_BOOL_SEL" in macros
 
 
 def test_split_decl_sel_headers_rebuild_canonical_views(tmp_path: Path):

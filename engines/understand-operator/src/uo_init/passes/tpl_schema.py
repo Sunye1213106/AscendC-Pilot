@@ -7,6 +7,7 @@ Legal packed-key space D goes into ``context['tg_views']`` view blobs.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,11 +21,14 @@ from uo_init.materialize_tiling import (
 from uo_init.canonical_tpl_projection import TPL_VIEW_NAMES
 from uo_init.tpl_dsl import TplSchema, parse_file, parse_tpl_corpus
 
+_TPL_MACRO_RE = re.compile(r"\b((?:ASCENDC_TPL_|GET_TPL_)\w+)\b")
+
 
 def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     ctx = context if context is not None else {}
     try:
         schema, header = _resolve_schema(codemap, ctx)
+        _upsert_tpl_macros(codemap, ctx, header)
         if schema is None or not schema.dims:
             codemap.meta["tpl_schema_pass"] = "v1-missing"
             return codemap
@@ -115,6 +119,81 @@ def _resolve_schema(
         schema.selections = parse_args_sel(dsl)
         return schema, None
     return None, None
+
+
+def _tpl_scan_paths(codemap: CodeMap, ctx: dict[str, Any], header: Path | None) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+
+    def _add(path: Path | None) -> None:
+        if path is None or not path.is_file():
+            return
+        resolved = path.expanduser().resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        paths.append(resolved)
+
+    _add(header)
+    op_root = str(ctx.get("op_root") or "").strip()
+    arch = str(ctx.get("architecture") or codemap.architecture or "")
+    if op_root:
+        root = Path(op_root).expanduser().resolve()
+        try:
+            from uo_init.source_layout import selected_host_files, tpl_sel_files
+
+            for sel in tpl_sel_files(root, arch):
+                _add(sel)
+            for host in selected_host_files(root, arch):
+                _add(host)
+        except Exception:
+            pass
+        for hit in root.glob("op_kernel/**/*template_tiling_key.h"):
+            _add(hit)
+    return paths
+
+
+def _upsert_tpl_macros(
+    codemap: CodeMap, ctx: dict[str, Any], header: Path | None
+) -> int:
+    """Make ASCENDC_TPL_* / GET_TPL_* locatable MACRO entities.
+
+    Coverage proof still goes through ``template_match``; locate only needs the
+    macro name to land on the schema header.
+    """
+    minted = 0
+    seen: set[str] = set()
+    header_ref = _portable_header_ref(header, ctx) if header is not None else ""
+    for path in _tpl_scan_paths(codemap, ctx, header):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        ref = header_ref or _portable_header_ref(path, ctx)
+        for match in _TPL_MACRO_RE.finditer(text):
+            name = match.group(1)
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            line = text.count("\n", 0, match.start()) + 1
+            codemap.upsert(
+                EntityKind.MACRO,
+                name,
+                eid=f"SRCTPLMACRO::{ref}::{name}",
+                attrs={
+                    "layer": "tpl",
+                    "provenance": "source_tpl_macro",
+                    "coverage_hint": "template_match",
+                },
+                file=ref,
+                line=line,
+                status="confirmed",
+            )
+            minted += 1
+    if minted:
+        codemap.meta["tpl_macro_count"] = minted
+    return minted
 
 
 def _portable_header_ref(header: Path | None, ctx: dict[str, Any]) -> str:

@@ -329,12 +329,13 @@ def solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Fail closed if the approved target set or UO/kernel snapshot changed."""
     from ascendc_pilot.actions import engines as E
 
+    snap = E._run_tg_solve_precheck(project_root, ctx)
     tg_ctx = E._resolve_tg_ctx(project_root, ctx)
     if not E._is_tilingkey_full(tg_ctx):
-        return E._run_tg_solve_precheck(project_root, ctx)
+        return snap
     target_path, target = _target_doc(project_root, ctx)
     if not target:
-        return {"ok": False, "engine": "solve_precheck", "error": "TARGET_SET_MISSING"}
+        return {"ok": False, "engine": "solve_precheck", "error": "TARGET_SET_MISSING", "snapshot": snap.get("snapshot")}
     level = _current_level(project_root, ctx)
     supplement = _load(_plan_dir(project_root, level) / "human_supplement.yaml")
     if not supplement.get("approved") or not supplement.get("allow_solve"):

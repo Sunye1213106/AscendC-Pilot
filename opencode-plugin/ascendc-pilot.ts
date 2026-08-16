@@ -743,16 +743,9 @@ function hostContextMemoKey(project: string, stateFile: string): string {
   } catch {
     mtime = "0"
   }
-  const activeHint = stateFile ? resolve(stateFile, "..", "active_action.yaml") : ""
-  let activeM = "0"
-  try {
-    if (activeHint && existsSync(activeHint)) {
-      activeM = String(statSync(activeHint).mtimeMs)
-    }
-  } catch {
-    activeM = "0"
-  }
-  return `${project}|${stateFile}|${mtime}|${activeM}`
+  const session = String(process.env.ASCENDC_SESSION_ID || "").trim()
+  const workflow = String(process.env.ASCENDC_WORKFLOW_ID || "").trim()
+  return `${project}|${session}|${workflow}|${stateFile}|${mtime}`
 }
 
 function fetchHostContext(project: string): HostContext {
@@ -1994,14 +1987,86 @@ function injectActionContext(
 const uoQueryPendingByProject = new Map<string, string>()
 const UO_QUERY_NATIVE_TASK_RESULT_CAP = 200_000
 
+function collectTaskStrings(value: unknown, depth: number): string[] {
+  if (depth < 0 || value == null) return []
+  if (typeof value === "string") {
+    const text = value.trim()
+    return text ? [value] : []
+  }
+  if (Array.isArray(value)) {
+    const out: string[] = []
+    for (const item of value) out.push(...collectTaskStrings(item, depth - 1))
+    return out
+  }
+  if (typeof value === "object") {
+    const rec = value as Record<string, unknown>
+    const out: string[] = []
+    for (const key of ["output", "content", "message", "text", "result", "answer"]) {
+      if (key in rec) out.push(...collectTaskStrings(rec[key], depth - 1))
+    }
+    for (const key of ["parts", "messages", "data"]) {
+      if (key in rec) out.push(...collectTaskStrings(rec[key], depth - 1))
+    }
+    return out
+  }
+  return []
+}
+
 function uoQueryTaskText(output: Record<string, unknown> | undefined): string {
   if (!output) return ""
-  const chunks: string[] = []
-  for (const key of ["output", "content", "message", "text", "result"] as const) {
-    const value = output[key]
-    if (typeof value === "string" && value.trim()) chunks.push(value)
+  return collectTaskStrings(output, 4).join("\n").slice(0, UO_QUERY_NATIVE_TASK_RESULT_CAP)
+}
+
+function fillEmptyUoQueryTaskOutput(
+  output: Record<string, unknown> | undefined,
+  args: Record<string, unknown>,
+): void {
+  if (!output || !isUoQueryTask(args)) return
+  if (uoQueryTaskText(output).trim()) return
+  const recovered = collectTaskStrings(output, 5).join("\n").trim()
+  output.output = recovered
+    ? recovered.slice(0, UO_QUERY_NATIVE_TASK_RESULT_CAP)
+    : "(empty native task_result; use the child session last assistant message)"
+}
+
+function compileUoQueryFirstQuery(project: string, prompt: string): string {
+  if (!project) return ""
+  const question = String(prompt || "").replace(/\s+/g, " ").trim().slice(0, 2000)
+  if (!question) return ""
+  try {
+    const acpBin = resolveAcpBin()
+    const r = spawnSync(
+      acpBin,
+      ["uo-query", "--mode", "compile", "--project", project, "--query", question],
+      {
+        encoding: "utf8",
+        timeout: 45000,
+        env: process.env as NodeJS.ProcessEnv,
+      },
+    )
+    const stdout = String(r.stdout || "")
+    const start = stdout.indexOf("{")
+    if (start < 0) return ""
+    const json = JSON.parse(stdout.slice(start)) as { first_query?: Array<{ cli?: string }> }
+    const cli = String(json.first_query?.[0]?.cli || "").trim()
+    if (!cli) return ""
+    return cli.includes("--project") ? cli : `${cli} --project ${project}`
+  } catch {
+    return `acp uo-query --mode compile --project ${project}`
   }
-  return chunks.join("\n").slice(0, UO_QUERY_NATIVE_TASK_RESULT_CAP)
+}
+
+function injectUoQueryFirstQuery(args: Record<string, unknown>, project: string): void {
+  if (!isUoQueryTask(args)) return
+  const prompt = String(args.prompt || args.description || args.task || "")
+  if (!prompt || /FIRST_QUERY:/.test(prompt)) return
+  const first = compileUoQueryFirstQuery(project || uoQueryPickProject(args), prompt)
+  if (!first) return
+  const extra =
+    `\n\nFIRST_QUERY: ${first}\n` +
+    "Run FIRST_QUERY as written. If empty, retry once from hint; then return PARTIAL.\n"
+  if (typeof args.prompt === "string") args.prompt = `${args.prompt}${extra}`
+  else args.prompt = `${prompt}${extra}`
 }
 
 function uoQueryPickProject(args: Record<string, unknown>, command = ""): string {
@@ -2079,6 +2144,7 @@ function captureUoQueryTaskReturn(
 ): void {
   if (tool === "task" || tool === "subagent" || tool === "task_tool") {
     if (!isUoQueryTask(args)) return
+    fillEmptyUoQueryTaskOutput(output, args)
     const text = uoQueryTaskText(output)
     if (!String(text || "").trim()) return
     const project = uoQueryPickProject(args)
@@ -2248,6 +2314,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
         ? detectProjectRootForTask(taskPromptHint)
         : detectProjectRoot(fromCmd || fromArgs || path)
       if (project) rememberProjectRoot(project)
+      if (isTaskTool) injectUoQueryFirstQuery(args, project)
       const active = readActiveAction(project)
       let agent = resolveEffectiveAgent(input, active, tool, command)
 

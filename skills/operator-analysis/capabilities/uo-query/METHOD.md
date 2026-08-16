@@ -4,7 +4,7 @@
 
 用户问题在 stub「USER QUESTION」。先看 `references/uo-product-map.md` 选 **一个** mode，然后查。
 
-若 stub 含 `SLICE_ID=` / `FOCUS (this child only)`：只答这一片，First mode 用 stub 写明的；若有 `FIRST_QUERY:` 只跑那条，禁止另起 `PRE_CORE_POST` / `search Process` / 第一块 `ARGS_SEL`。不要沿用其它题或其它切片的假设。
+若 stub 含 `SLICE_ID=` / `FOCUS (this child only)`：只答这一片。若有 `FIRST_QUERY:` **只跑那一行**，禁止另起 `PRE_CORE_POST` / `search Process` / 第一块 `ARGS_SEL` / 不存在的 `--mode symbols|fields|callers`。空结果按返回的 `hint` **再查一次**，然后必须交回 Primary（`adequacy: PARTIAL`），禁止继续加刀、禁止读完整 SEL 表当覆盖。不要沿用其它题或其它切片的假设。
 
 CLI：`acp uo-query --project <算子绝对路径> --pattern`（`--query` / `--target` 同义）。Host cwd 是 Pilot 仓，不要只写算子名。`legal_key` / `template_match` 用 `Dim=V,Other=V`。一次一个标识符；图检索不是 regex，不要写 `\|`。
 禁止 OpenCode `skill` 工具（方法已在 session `method.md` / `refs/`）。`acp uo-query` 能答就不要改走其它索引。
@@ -28,7 +28,7 @@ CLI：`acp uo-query --project <算子绝对路径> --pattern`（`--query` / `--t
 | packing / Host 校验点 / 维声明 | `locate`；维声明用 `tiling_key` | packing 看 `packing_value_sites`，不要头文件默认值 |
 | 字段谁写谁读 / 分核 / 占核 | `field` 用问句里的标识符；空了看 `local_aliases` / `suggested_retries` 再查一轮 | 看 `candidates` 全部，不看第一条；`occupancy_axis` 是查询名 vs aicNum |
 | 模板组合能不能编过 | `legal_key` | `total_matched`；0 命中看 `nearby` |
-| Kernel `if constexpr` 走哪条 | `kernel_branch`（精确名字如 `IS_ROPE`） | 第一页最多 3 条样例 |
+| Kernel `if` / `if constexpr` 走哪条 | `kernel_branch`（精确字段名如 `enablePreSfmg`） | 非空；`empty_reason: not_extracted` 时不得把 count=0 写成「没有分支」 |
 | Buffer / 3buff / 4buff / 搬运 / 同步 API | `buffer` / `kernel_api` | 看 `mutex_policy` 等 facts |
 | Pre / Main / Post / 三相 launch | `kernel_launch`（`pipeIn` Pre → `pipeBase` Main → `pipePost` Post + KERNEL / `*_entry*.h`） | **禁止**把 `ProcessVec*` / `*_apt.cpp` 当三相入口。第一刀必须 `--mode kernel_launch`，禁止 `--mode search` 且 pattern 含 `ProcessVec` / `Process()` |
 | 从某点跟邻居 | `impact`（必须 `--file` 与 `--line`） | |
@@ -42,7 +42,7 @@ CLI：`acp uo-query --project <算子绝对路径> --pattern`（`--query` / `--t
 
 `impact` 缺 `--file/--line` 会失败；不要改用 `search` 硬猜位置。
 
-查完就答。最终消息用完整自然语言写清结论、`path:line`、必要 snippet（Cursor Explore 那样）。结论必须能指回 CodeMap 或源码窗，不要写进 `.uo`。OpenCode Task 把这篇全文交回主控，不要把证据压进 yaml，不要再 Glob/Read `answer.yaml`。若决定性 span 没读到，文末必须列出 **未闭合点**（文件 + 要查的 mode/符号），`adequacy: PARTIAL`，不要把 first_hit 写成 ANSWERED——主控会再派一轮，不要自己宣布根因已定位。
+查完就答。最终消息用完整自然语言写清结论、`path:line`、必要 snippet。命中已带 snippet 视为已 Read，不要再 Read 同一文件同一段。结论必须能指回 CodeMap 或源码窗，不要写进 `.uo`。OpenCode Task 把这篇全文交回主控，不要把证据压进 yaml，不要再 Glob/Read `answer.yaml`。若决定性 span 没读到，文末必须列出 **未闭合点**（文件 + 要查的 mode/符号），`adequacy: PARTIAL`，不要把 first_hit 写成 ANSWERED——主控会再派一轮，不要自己宣布根因已定位。
 
 ## 交付
 

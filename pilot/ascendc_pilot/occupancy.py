@@ -200,6 +200,50 @@ def live_exclusive_lock(
     return dict(lock)
 
 
+def live_resource_conflict(
+    project_root: Path | str,
+    workflow_id: str,
+    *,
+    ignore_run_id: str = "",
+) -> dict[str, Any] | None:
+    """RW/WR/WW intersection against live exclusive locks (not occupancy_group)."""
+    from ascendc_pilot.workflows.specs import resource_sets_conflict, workflow_resource_sets
+
+    if is_shared(workflow_id):
+        return None
+    _read, write_set = workflow_resource_sets(workflow_id)
+    if not write_set and not _read:
+        return None
+    doc = read_product_locks(project_root)
+    skip = str(ignore_run_id or "").strip()
+    for group, lock in (doc.get("locks") or {}).items():
+        if not isinstance(lock, dict):
+            continue
+        other = str(lock.get("workflow_id") or "").strip()
+        other_run = str(lock.get("run_id") or "").strip()
+        if not other or not other_run:
+            continue
+        if skip and other_run == skip:
+            continue
+        status = str(lock.get("status") or "").strip()
+        if status and status not in _RUNNING_LIKE:
+            continue
+        if not resource_sets_conflict(workflow_id, other):
+            continue
+        return {
+            "error": "resource_lock_conflict",
+            "active_workflow_id": other,
+            "requested_workflow_id": workflow_id,
+            "occupancy_group": group,
+            "active_run_id": other_run,
+            "message_zh": (
+                f"资源事务冲突：{other} (run {other_run}) 与 {workflow_id} "
+                "的读写集合相交；禁止并行。"
+            ),
+        }
+    return None
+
+
 def acquire_exclusive_lock(
     project_root: Path | str,
     *,

@@ -212,3 +212,27 @@ def test_occupancy_status_exposes_binding_and_locks(
     payload = occupancy_status_payload(tmp_path)
     assert "uo" in (payload.get("product_locks") or {})
     assert (payload.get("session_binding") or {}).get("session_id") == "ses_status"
+
+
+def test_ce_apply_can_run_parallel_with_tg_solve_on_snapshot(tmp_path: Path) -> None:
+    ensure_agent_layout(tmp_path, arch="arch35")
+    tg = start_workflow(tmp_path, "tg-solve", architecture="arch35", phase="gate", force_phase=True)
+    ce = start_workflow(tmp_path, "ce-apply", architecture="arch35")
+    assert tg.get("ok") is True
+    assert ce.get("ok") is True
+
+
+def test_ce_apply_conflicts_with_uo_update(tmp_path: Path) -> None:
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-update", architecture="arch35")
+    with pytest.raises(RuntimeError, match="资源事务冲突"):
+        start_workflow(tmp_path, "ce-apply", architecture="arch35")
+
+
+def test_resource_sets_uo_init_does_not_conflict_tg_init() -> None:
+    from ascendc_pilot.workflows.specs import resource_sets_conflict
+
+    assert resource_sets_conflict("uo-init", "tg-init") is False
+    assert resource_sets_conflict("ce-apply", "tg-solve") is False
+    assert resource_sets_conflict("ce-apply", "uo-update") is True
+

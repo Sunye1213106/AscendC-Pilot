@@ -434,7 +434,9 @@ def _invalid_receipt_actions(project_root: Path, run_id: str) -> list[str]:
 
 
 def _active_action(project_root: Path) -> dict[str, Any]:
-    return _load_yaml(state_root(project_root) / "active_action.yaml")
+    from ascendc_pilot.authorize.lease import active_action_path
+
+    return _load_yaml(active_action_path(project_root))
 
 
 def _action_session(project_root: Path, run_id: str, action_id: str) -> dict[str, Any]:
@@ -556,21 +558,28 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
                 sessions_cleared.append(aid)
 
     lease_revoked = False
-    active = _active_action(root)
-    active_id = str(active.get("action_id") or "").strip()
-    if active_id and active_id in dirty:
-        try:
-            from ascendc_pilot.authorize.lease import clear_lease, revoke_active_lease
+    from ascendc_pilot.authorize.lease import active_action_path
 
-            revoke_active_lease(root, reason="continue_scrub_incomplete")
-            clear_lease(root)
-            lease_revoked = True
-        except Exception:  # noqa: BLE001
-            pass
-        active_path = state_root(root) / "active_action.yaml"
-        if active_path.is_file():
+    for active_path in (
+        state_root(root) / "active_action.yaml",
+        active_action_path(root, run_id=run_id) if run_id else None,
+    ):
+        if active_path is None or not active_path.is_file():
+            continue
+        active = _load_yaml(active_path)
+        active_id = str(active.get("action_id") or "").strip()
+        status = str(active.get("status") or "").strip()
+        if active_id in dirty or status in _INCOMPLETE_SESSION_STATUSES:
+            try:
+                from ascendc_pilot.authorize.lease import clear_lease, revoke_active_lease
+
+                revoke_active_lease(root, reason="continue_scrub_incomplete", run_id=run_id)
+                clear_lease(root, run_id=run_id)
+                lease_revoked = True
+            except Exception:  # noqa: BLE001
+                pass
             active_path.unlink()
-            removed.append("state/active_action.yaml")
+            removed.append(active_path.as_posix())
 
     state_updates: dict[str, Any] = {}
     if state and dirty:
@@ -696,17 +705,25 @@ def wipe_uo_for_reinit(project_root: Path) -> dict[str, Any]:
     return apply_reinit_wipe(project_root, "uo-init")
 
 
-def _cross_workflow_conflict(state: dict[str, Any] | None, workflow_id: str) -> dict[str, Any] | None:
-    """Conflict only inside the same exclusive product-family lock.
+def _cross_workflow_conflict(
+    state: dict[str, Any] | None,
+    workflow_id: str,
+    *,
+    project_root: Path | None = None,
+) -> dict[str, Any] | None:
+    """Conflict from resource RW/WR/WW intersection (family lock is not authority)."""
+    from ascendc_pilot.occupancy import is_shared, live_resource_conflict, occupancy_group_of
 
-    Shared (query/review) never occupies. Different families (uo vs tg vs ce-*)
-    run in parallel against the same ``.uo``.
-    """
-    from ascendc_pilot.occupancy import is_shared, occupancy_group_of
-
-    if not state:
-        return None
     if is_shared(workflow_id):
+        return None
+    if project_root is not None:
+        hit = live_resource_conflict(project_root, workflow_id)
+        if hit:
+            other = str(hit.get("active_workflow_id") or "")
+            # Same workflow holding its own write set is resume, not a cross conflict.
+            if other and other != workflow_id:
+                return hit
+    if not state:
         return None
     active_wid = str(state.get("workflow_id") or "")
     if not active_wid or is_shared(active_wid):
@@ -714,21 +731,25 @@ def _cross_workflow_conflict(state: dict[str, Any] | None, workflow_id: str) -> 
     status = str(state.get("status") or "")
     if active_wid == workflow_id or status not in RUNNING_LIKE:
         return None
+    if not resource_sets_conflict_safe(active_wid, workflow_id):
+        return None
     req_group = occupancy_group_of(workflow_id)
     active_group = occupancy_group_of(active_wid)
-    if not req_group or not active_group or req_group != active_group:
-        return None
     return {
-        "error": "cross_workflow_active_run",
+        "error": "resource_lock_conflict",
         "active_workflow_id": active_wid,
         "requested_workflow_id": workflow_id,
-        "occupancy_group": req_group,
+        "occupancy_group": req_group or active_group,
         "message_zh": (
-            f"当前 {active_group} 产物锁由 {active_wid} 持有，与请求的 {workflow_id} 同族；"
-            "禁止静默覆盖。点「开始」释放该族锁并 start 请求的工作流（不删正式产物），"
-            "或显式删除重开。"
+            f"资源事务冲突：{active_wid} 与 {workflow_id} 的读写集合相交；禁止并行。"
         ),
     }
+
+
+def resource_sets_conflict_safe(left: str, right: str) -> bool:
+    from ascendc_pilot.workflows.specs import resource_sets_conflict
+
+    return resource_sets_conflict(left, right)
 
 
 def build_run_resume_summary(
@@ -839,7 +860,7 @@ def build_run_resume_summary(
         )
     lines.append(f"继续时下一步: {next_hint or 'acp next'}")
 
-    cross = _cross_workflow_conflict(state, workflow_id)
+    cross = _cross_workflow_conflict(state, workflow_id, project_root=root)
     same_workflow_running = (
         bool(state)
         and state_wid == workflow_id
@@ -1064,7 +1085,7 @@ def needs_resume_decision(project_root: Path, workflow_id: str) -> bool:
     if is_shared(workflow_id):
         return False
     state = load_state(root, workflow_id=workflow_id)
-    if _cross_workflow_conflict(state, workflow_id):
+    if _cross_workflow_conflict(state, workflow_id, project_root=root):
         return True
     if (
         state
@@ -1197,7 +1218,7 @@ def apply_resume_decision(
         root, workflow_id=workflow_id, architecture=arch_hint
     )
     cross = _cross_workflow_conflict(
-        load_state(root, workflow_id=workflow_id), workflow_id
+        load_state(root, workflow_id=workflow_id), workflow_id, project_root=root
     )
 
     if choice == "query":

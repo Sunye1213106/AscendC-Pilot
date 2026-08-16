@@ -209,7 +209,56 @@ STATIC_OBLIGATION_GATE_MAP: dict[str, str] = {
     "impact_ledger_ready": "impact_ledger_ready",
     "obligations_classified": "obligations_classified",
     "ce_certificate_sound": "ce_certificate_sound",
+    "scenario_coverage_sound": "scenario_coverage_sound",
 }
+
+# Wave 4: ``operator_snapshot`` is a distinct resource (immutable workspace).
+# TG solve reads the snapshot; CE apply writes live ``operator_source``.
+RESOURCE_SNAPSHOT_ALIASES: dict[str, str] = {}
+
+WORKFLOW_RESOURCES: dict[str, dict[str, list[str]]] = {
+    "uo-init": {"read": ["operator_source"], "write": ["uo_product"]},
+    "uo-update": {"read": ["operator_source"], "write": ["uo_product"]},
+    "uo-query": {"read": ["uo_product"], "write": []},
+    "uo-investigate": {"read": ["uo_product"], "write": []},
+    "tg-init": {"read": [], "write": ["tg_init"]},
+    "tg-plan": {"read": ["tg_init"], "write": ["tg_plan"]},
+    "tg-solve": {
+        "read": ["uo_product", "operator_snapshot", "replay_runtime", "tg_plan", "tg_init"],
+        "write": ["tg_closure"],
+    },
+    "ce-review": {"read": ["uo_product", "operator_source"], "write": []},
+    "ce-intent": {"read": ["uo_product"], "write": ["ce_intent"]},
+    "ce-apply": {"read": ["uo_product"], "write": ["operator_source"]},
+    "ce-handoff": {"read": ["ce_intent"], "write": []},
+    "ce-impact": {"read": ["uo_product", "operator_source"], "write": ["ce_impact"]},
+    "ce-verify": {"read": ["uo_product", "tg_closure", "ce_impact"], "write": ["ce_verify"]},
+}
+
+
+def expand_resource_names(names: list[str] | tuple[str, ...] | set[str]) -> set[str]:
+    out: set[str] = set()
+    for raw in names or []:
+        name = str(raw or "").strip()
+        if not name:
+            continue
+        out.add(name)
+        alias = RESOURCE_SNAPSHOT_ALIASES.get(name)
+        if alias:
+            out.add(alias)
+    return out
+
+
+def workflow_resource_sets(workflow_id: str) -> tuple[set[str], set[str]]:
+    row = WORKFLOW_RESOURCES.get(str(workflow_id or "").strip()) or {}
+    return expand_resource_names(row.get("read") or []), expand_resource_names(row.get("write") or [])
+
+
+def resource_sets_conflict(left_id: str, right_id: str) -> bool:
+    left_r, left_w = workflow_resource_sets(left_id)
+    right_r, right_w = workflow_resource_sets(right_id)
+    return bool((left_r & right_w) or (left_w & right_r) or (left_w & right_w))
+
 
 CLOSED_OBLIGATION_STATUSES = frozenset(
     {
@@ -249,6 +298,7 @@ _CAPS_INVESTIGATE = [
     "source-reading",
     "source-navigation",
     "kb-query",
+    "readonly-source-search",
     "action-scratch",
 ]
 _CAPS_REVIEW = ["kb-query"]
@@ -2089,7 +2139,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             },
             "scenario_targeted": {
                 "terminal_ready_states": ["certify"],
-                "complete_gates": ["plan_approved"],
+                "complete_gates": ["plan_approved", "scenario_coverage_sound"],
                 "phases": ["gate", "construct", "certify"],
                 "states": [
                     _st("gate", "求解前置"),
@@ -2121,6 +2171,11 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 "AUDIT_REWORK": {"type": "phase", "phase": "lemma"},
                 "ORACLE_SUSPECT": {"type": "human_required", "diagnosis": "oracle_batch_integrity"},
                 "PROOF_BLOCKED": {"type": "human_required", "diagnosis": "proof_or_budget_exhausted"},
+                "LOCAL_CAPABILITY_REQUIRED": {
+                    "type": "inspect",
+                    "next_action": "local_capability_bootstrap",
+                    "diagnosis": "local_capability",
+                },
             },
         },
         "actions": [
@@ -2135,6 +2190,20 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=[],
                 output_contract_id="solve-precheck-v1",
                 produces=[],
+            ),
+            _act(
+                "local_capability_bootstrap",
+                label_zh="恢复 Local Extension 脚手架",
+                phases=["gate", "search", "construct", "lemma"],
+                workflow_id="tg-solve",
+                agent_id="deterministic-tg-engine",
+                role_id="deterministic_engine",
+                capability_ids=[],
+                output_contract_id="local-capability-bootstrap-v1",
+                allowed_write_paths=[
+                    "runs/{run_id}/actions/local_capability_bootstrap/receipt.yaml",
+                    "local/**",
+                ],
             ),
             _act(
                 "oracle_probe",
@@ -2364,7 +2433,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             {"id": "closure_soundness", "label_zh": "TilingKey 闭环健全"},
         ],
         "dynamic_obligation_sources": ["tg/closure/**"],
-        "write_roots": ["tg", "runs", "state", "context"],
+        "write_roots": ["tg", "runs", "state", "context", "local"],
         "read_only_uo": True,
         "reset_policy": {
             "reinit_delete": ["tg/solve", "tg/cases", "tg/closure"],
@@ -2386,6 +2455,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "gate", "oracle", "ledger", "search", "residual",
             "construct", "lemma", "audit", "certify",
         ],
-        "gates": ["plan_approved", "closure_soundness", "kb_fingerprint_fresh"],
+        "gates": ["plan_approved", "closure_soundness", "kb_fingerprint_fresh", "scenario_coverage_sound"],
     },
 }

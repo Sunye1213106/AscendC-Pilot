@@ -191,8 +191,17 @@ def _name_rank(
     low_name = str(name or "").lower()
     ident = _last_ident(low_name)
     id_ident = _last_ident(str(eid or "").replace("/", "::"))
-    member = low_name.startswith(needle + "::")
-    exact = low_name == needle or ident == needle or id_ident == needle
+    needle_ident = _last_ident(needle.replace(".", "::"))
+    member = low_name.startswith(needle + "::") or (
+        bool(needle_ident) and low_name.startswith(needle_ident + "::")
+    )
+    exact = (
+        low_name == needle
+        or ident == needle
+        or id_ident == needle
+        or (bool(needle_ident) and ident == needle_ident)
+        or (bool(needle_ident) and id_ident == needle_ident)
+    )
     if member:
         return 0
     if exact:
@@ -262,6 +271,61 @@ def _alias_ident_names(facts: dict[str, Any] | None) -> list[str]:
     return names
 
 
+def _alias_hit_rank(hit: dict[str, Any], needle: str) -> tuple[Any, ...]:
+    """Prefer the tiling field with the strongest occupancy alias to this local."""
+    facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+    needle_l = str(needle or "").lower()
+    count = 0
+    hops = 99
+    occupancy = 1
+    for item in list(facts.get("local_aliases") or []) + list(
+        facts.get("fused_outer_candidates") or []
+    ):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("name") or "").lower() != needle_l:
+            continue
+        count += 1
+        hops = min(hops, int(item.get("hops") or 99))
+        rhs = str(item.get("rhs") or "").lower()
+        if any(tok in rhs for tok in ("aicnum", "corenum", "aivnum")):
+            occupancy = 0
+    kind = 0 if str(hit.get("kind") or "").upper() == EntityKind.TILING_FIELD.value else 1
+    return (-count, occupancy, hops, kind, str(hit.get("name") or ""))
+
+
+def _kind_priority(hit: dict[str, Any], needle: str) -> int:
+    """Prefer tiling/host/method identities over VF ops, getters, and TYPE."""
+    kind = str(hit.get("kind") or "").upper()
+    ident = _last_ident(str(hit.get("name") or "")).lower()
+    file = str(hit.get("file") or "").replace("\\", "/").lower()
+    last_needle = _last_ident(str(needle or "").lower().replace(".", "::"))
+    table = {
+        EntityKind.TILING_KEY.value: 0,
+        EntityKind.TILING_FIELD.value: 0,
+        EntityKind.MACRO.value: 0,
+        EntityKind.PIPE.value: 0,
+        EntityKind.KERNEL.value: 0,
+        EntityKind.VARIABLE.value: 1,
+        EntityKind.METHOD.value: 1,
+        EntityKind.FIELD.value: 1,
+        EntityKind.FUNCTION.value: 2,
+        EntityKind.COMPILE_VAR.value: 2,
+        EntityKind.BRANCH.value: 3,
+        EntityKind.PREDICATE.value: 3,
+        EntityKind.OPERATION.value: 4,
+        EntityKind.TYPE.value: 5,
+    }
+    score = table.get(kind, 3)
+    if ident.startswith("get_") and ident != last_needle:
+        score += 4
+    if "/vector_api/" in file:
+        score += 3
+    if kind == EntityKind.TYPE.value and last_needle == "process":
+        score += 2
+    return score
+
+
 def _agent_sort_key(
     hit: dict[str, Any], needle: str, *, architecture: str = ""
 ) -> tuple[Any, ...]:
@@ -274,8 +338,9 @@ def _agent_sort_key(
         match = 9
     src, use = _definition_rank(kind, name, eid, facts)
     return (
-        _arch_file_rank(str(hit.get("file") or ""), architecture),
         match,
+        _kind_priority(hit, needle),
+        _arch_file_rank(str(hit.get("file") or ""), architecture),
         _entry_rank(hit),
         src,
         use,
@@ -781,11 +846,63 @@ def _payload_size(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str))
 
 
+def _page_by_exactness(
+    hits: list[dict[str, Any]], needle: str, *, limit: int
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep exact ident / ``::`` members on the first page; substring later."""
+    exact: list[dict[str, Any]] = []
+    rest: list[dict[str, Any]] = []
+    n = str(needle or "").lower().strip()
+    exact_ids: set[str] = set()
+    for hit in hits:
+        eid = str(hit.get("id") or hit.get("entity_id") or "")
+        rank = _name_rank(
+            str(hit.get("name") or ""),
+            eid,
+            n,
+            exact_kind=False,
+            kind=str(hit.get("kind") or ""),
+        )
+        if rank in (0, 1):
+            exact.append(hit)
+            if eid:
+                exact_ids.add(eid)
+        else:
+            rest.append(hit)
+    if exact_ids:
+        kept_rest: list[dict[str, Any]] = []
+        for hit in rest:
+            if str(hit.get("id") or hit.get("entity_id") or "") in exact_ids:
+                exact.append(hit)
+            else:
+                kept_rest.append(hit)
+        rest = kept_rest
+    cap = max(0, int(limit))
+    if exact:
+        page = exact[:cap]
+        return page, {
+            "total": len(exact),
+            "clipped": len(exact) > cap,
+            "substring_only": False,
+            "all_matched": len(hits),
+        }
+    page = rest[:cap]
+    return page, {
+        "total": len(rest),
+        "clipped": len(rest) > cap,
+        "substring_only": True,
+        "all_matched": len(hits),
+    }
+
+
 def _hits_coverage(
     hits: list[dict[str, Any]],
     *,
     total: int | None = None,
     dim_coverage: dict[str, Any] | None = None,
+    clipped: bool = False,
+    needle: str = "",
+    substring_only: bool = False,
 ) -> dict[str, Any]:
     sibling_files: list[str] = []
     seen: set[str] = set()
@@ -814,12 +931,34 @@ def _hits_coverage(
         if isinstance(fused, list):
             fused_count = max(fused_count, len(fused))
     total_matched = int(total if total is not None else len(hits))
+    exact_unique = False
+    if needle and len(hits) == 1 and total_matched == 1 and not substring_only:
+        rank = _name_rank(
+            str(hits[0].get("name") or ""),
+            str(hits[0].get("id") or ""),
+            str(needle).lower().strip(),
+            exact_kind=False,
+            kind=str(hits[0].get("kind") or ""),
+        )
+        exact_unique = rank in (0, 1)
     if dim_coverage:
         completeness = "coverage_checked"
+        answerable = True
+    elif clipped:
+        completeness = "first_hit" if len(hits) <= 1 else "page_clipped"
+        answerable = False
+    elif substring_only:
+        completeness = "first_hit"
+        answerable = False
     elif def_count > 1 or len(sibling_files) > 1 or total_matched > 1:
         completeness = "siblings_checked"
+        answerable = True
+    elif exact_unique:
+        completeness = "first_hit"
+        answerable = True
     else:
         completeness = "first_hit"
+        answerable = False
     return {
         "sibling_files": sibling_files,
         "definition_sites_count": def_count or total_matched,
@@ -828,7 +967,7 @@ def _hits_coverage(
         "mutex_policies": mutex,
         "kernel_phases": phases,
         "completeness": completeness,
-        "answerable": completeness != "first_hit",
+        "answerable": answerable,
         **({"dim_coverage": dim_coverage} if dim_coverage else {}),
     }
 
@@ -1197,7 +1336,7 @@ class UoSqlQuery:
         return merged[: max(0, int(limit))]
 
     def _search_one(
-        self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50
+        self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 50, ranked_only: bool = False
     ) -> list[dict[str, Any]]:
         needle = str(pattern or "").lower().strip()
         allowed = _kind_names(kinds)
@@ -1234,11 +1373,22 @@ class UoSqlQuery:
                     needle,
                     f"%{needle}%",
                     *kind_params,
-                    fetch,
                 ]
+                order_sql = """
+                ORDER BY CASE
+                  WHEN lower(IFNULL(e.name, '')) = ? THEN 0
+                  WHEN lower(IFNULL(e.name, '')) LIKE ? THEN 1
+                  WHEN lower(IFNULL(e.name, '')) LIKE '%::' || ? THEN 1
+                  WHEN lower(IFNULL(e.name, '')) LIKE ? THEN 2
+                  ELSE 3
+                END, e.id
+                """
+                sql_params.extend([needle, f"{needle}::%", needle, prefix])
             else:
                 extra = "1=1"
-                sql_params = [*kind_params, fetch]
+                sql_params = [*kind_params]
+                order_sql = "ORDER BY e.id"
+            sql_params.append(fetch)
             rows = conn.execute(
                 f"""
                 SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
@@ -1246,6 +1396,7 @@ class UoSqlQuery:
                 FROM entity e
                 LEFT JOIN source_span s ON s.entity_id = e.id
                 WHERE ({extra}) {kind_filter}
+                {order_sql}
                 LIMIT ?
                 """,
                 tuple(sql_params),
@@ -1275,16 +1426,49 @@ class UoSqlQuery:
                     hit, needle, architecture=self._architecture
                 )
             )
+            if ranked_only:
+                return hits
             if allowed == {EntityKind.BRANCH.value} or (
                 hits and all(str(hit.get("kind") or "") == EntityKind.BRANCH.value for hit in hits)
             ):
                 hits, _ = _diversify_by_function(hits, limit=int(limit))
-            elif hits and all(
+                return hits[: max(0, int(limit))]
+            if hits and all(
                 str(hit.get("kind") or "") in {EntityKind.FUNCTION.value, EntityKind.METHOD.value}
                 for hit in hits
             ):
                 hits, _ = _diversify_by_file(hits, limit=int(limit))
-            return hits[: max(0, int(limit))]
+                return hits[: max(0, int(limit))]
+            page, _meta = _page_by_exactness(hits, needle, limit=int(limit))
+            return page
+
+    def aggregate_search(
+        self, pattern: str, *, kinds: Iterable[str] = (), limit: int = 8
+    ) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        ranked = self._search_one(needle, kinds=kinds, limit=int(limit), ranked_only=True)
+        page, meta = _page_by_exactness(ranked, needle, limit=int(limit))
+        fetch_cap = max(int(limit) * 8, 32)
+        clipped = bool(meta["clipped"] or int(meta.get("all_matched") or 0) >= fetch_cap)
+        coverage = _hits_coverage(
+            page,
+            total=int(meta["total"]),
+            clipped=clipped,
+            needle=needle,
+            substring_only=bool(meta["substring_only"]),
+        )
+        payload = {
+            "ok": True,
+            "mode": "search",
+            "pattern": needle,
+            "kinds": [k for k in kinds if k],
+            "count": len(page),
+            "coverage": coverage,
+            "rows": page,
+            "files": _group_by_file(page),
+        }
+        attach_query_hints(payload, needle, count=len(page), kinds=kinds, mode="search")
+        return _fit_payload(payload)
 
     def neighbors(
         self, entity_id: str, *, depth: int = 1, limit: int = 100
@@ -1671,10 +1855,11 @@ class UoSqlQuery:
             names = {n.lower() for n in _alias_ident_names(facts)}
             if needle in names:
                 matched.append(hit)
+        matched.sort(key=lambda hit: _alias_hit_rank(hit, needle))
         return matched
 
     def field_impact(self, name_or_id: str) -> dict[str, Any]:
-        raw = str(name_or_id or "").strip()
+        raw = str(name_or_id or "").strip().strip('"').strip("'")
         field_kinds = (
             EntityKind.TILING_FIELD.value,
             EntityKind.FIELD.value,
@@ -1882,6 +2067,9 @@ class UoSqlQuery:
                     continue
                 seen.add(extra_key)
                 payload = extra.to_dict()
+                payload.setdefault("id", extra.entity_id)
+                payload.setdefault("name", row.get("name"))
+                payload.setdefault("kind", extra.kind)
                 if not payload.get("snippet"):
                     payload["snippet"] = _disk_window(self._op_root, extra.file, extra.line_start)
                 payload["snippet"] = _cap_snippet(
@@ -2467,8 +2655,7 @@ class UoSqlQuery:
             exemplars, functions = _diversify_by_function(branches, limit=max(cap, int(limit)))
             exemplars = exemplars[:cap]
         coverage = _hits_coverage(exemplars, total=total)
-        return _fit_payload(
-            {
+        payload = {
                 "ok": True,
                 "mode": "kernel_branch",
                 "pattern": needle,
@@ -2478,7 +2665,13 @@ class UoSqlQuery:
                 "functions": functions,
                 "files": _group_by_file(exemplars),
             }
-        )
+        if total == 0:
+            payload["empty_reason"] = "not_extracted"
+            payload["hint"] = (
+                "Kernel if reading this tiling field was not extracted as BRANCH. "
+                "count=0 is not proof that the branch is absent."
+            )
+        return _fit_payload(payload)
 
     def aggregate_template_match(
         self,
@@ -2686,16 +2879,22 @@ class UoSqlQuery:
                 hit, needle, architecture=self._architecture
             )
         )
-        coverage = _hits_coverage(rows, total=len(rows))
-        shown = rows[: max(int(limit), MIN_LIST_KEEP if len(rows) > 1 else int(limit))]
+        page, meta = _page_by_exactness(rows, needle, limit=int(limit))
+        coverage = _hits_coverage(
+            page,
+            total=int(meta["total"]),
+            clipped=bool(meta["clipped"]),
+            needle=needle,
+            substring_only=bool(meta["substring_only"]),
+        )
         payload = {
             "ok": True,
             "mode": "locate",
             "pattern": needle,
             "coverage": coverage,
-            "locations": shown,
-            "count": len(rows),
-            "files": _group_by_file(rows),
+            "locations": page,
+            "count": int(meta["total"]),
+            "files": _group_by_file(page),
         }
         if len(tokens) > 1:
             payload["pattern_tokens"] = tokens

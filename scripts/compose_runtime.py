@@ -433,6 +433,18 @@ def _scan_forbidden(path: Path, text: str, errors: list[str]) -> None:
                 errors.append(f"forbidden pattern {pat.pattern!r} in {path.as_posix()}:{i}")
 
 
+_NUMBERED_STEP = re.compile(r"(?m)^\s*\d+\.\s+\S")
+
+
+def _prompt_repeats_method_procedure(method: str, prompt: str) -> bool:
+    """LLM Action prompts must not restate METHOD numbered procedures."""
+    method_steps = {line.strip() for line in method.splitlines() if _NUMBERED_STEP.match(line)}
+    if len(method_steps) < 2:
+        return False
+    prompt_steps = {line.strip() for line in prompt.splitlines() if _NUMBERED_STEP.match(line)}
+    return len(method_steps & prompt_steps) >= 2
+
+
 _DOMAIN_HARNESS_PATTERNS = [
     re.compile(r"\brun_id\b", re.I),
     re.compile(r"\baction_id\b", re.I),
@@ -713,7 +725,22 @@ def validate(repo: Path) -> list[str]:
                 if not p.is_file():
                     errors.append(f"{wid}/{aid}: missing task prompt {tpid}")
                 else:
-                    _scan_forbidden(p, p.read_text(encoding="utf-8"), errors)
+                    prompt_text = p.read_text(encoding="utf-8")
+                    _scan_forbidden(p, prompt_text, errors)
+                    mid = str(action.get("action_method_id") or "").strip()
+                    if mid and "/" in mid and mode == "subagent":
+                        skill, cap = mid.split("/", 1)
+                        if (skill, cap) in {
+                            ("code-engineering", "ce-intent-grill"),
+                            ("code-engineering", "ce-feature-decompose"),
+                        }:
+                            mp = skills / skill / "capabilities" / cap / "METHOD.md"
+                            if mp.is_file():
+                                method_text = mp.read_text(encoding="utf-8")
+                                if _prompt_repeats_method_procedure(method_text, prompt_text):
+                                    errors.append(
+                                        f"{wid}/{aid}: task prompt repeats METHOD numbered procedure"
+                                    )
             # Semantic / interactive actions need role + context + output contract
             if action.get("role_id") in {
                 "producer",

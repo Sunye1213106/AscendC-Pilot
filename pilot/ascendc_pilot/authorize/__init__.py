@@ -223,9 +223,9 @@ def _load_active_action(project_root: Path | None) -> dict[str, Any]:
     if project_root is None:
         return {}
     try:
-        from ascendc_pilot.paths import agent_root
+        from ascendc_pilot.authorize.lease import active_action_path
 
-        path = agent_root(project_root) / "state" / "active_action.yaml"
+        path = active_action_path(project_root)
         if not path.is_file():
             return {}
         import yaml
@@ -363,7 +363,7 @@ def _load_context(project_root: Path | None) -> dict[str, Any]:
             if wid and phase
             else []
         )
-        lease = load_lease(project_root)
+        lease = load_lease(project_root, run_id=str(state.get("run_id") or ""))
         return {
             "state": state,
             "meta": meta,

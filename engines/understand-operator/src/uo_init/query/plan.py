@@ -388,6 +388,58 @@ def _first_queries(question: str, slices: list[dict[str, str]]) -> list[dict[str
     return out
 
 
+def _rewrite_empty_template_row(blob: str, row: dict[str, str]) -> dict[str, str]:
+    """Empty template_match dumps the whole SEL table; locate a TPL ident instead."""
+    if str(row.get("mode") or "") != "template_match":
+        return row
+    if str(row.get("pattern") or "").strip():
+        return row
+    idents = _question_idents(blob)
+    tpl = next(
+        (
+            tok
+            for tok in idents
+            if "TPL_" in tok.upper() or tok.upper().startswith("ASCENDC_TPL")
+        ),
+        "",
+    )
+    ident = tpl or next((tok for tok in idents if any(ch.isupper() for ch in tok)), "")
+    ident = ident or (idents[0] if idents else "")
+    return {
+        "mode": "locate",
+        "pattern": ident,
+        "canonical": str(row.get("canonical") or "dim_coverage"),
+        "cli": _cli("locate", ident),
+    }
+
+
+def probe_first_queries(plan: dict[str, Any], backend: Any | None = None) -> dict[str, Any]:
+    """Drop first-query modes that cannot hit the product."""
+    question = str(plan.get("question") or "")
+    rows: list[dict[str, Any]] = []
+    for row in list(plan.get("first_query") or []):
+        item = dict(row)
+        item = _rewrite_empty_template_row(question, item)
+        mode = str(item.get("mode") or "")
+        pattern = str(item.get("pattern") or "")
+        if backend is not None and mode == "field" and pattern:
+            try:
+                hit = backend.field_impact(pattern)
+            except Exception:
+                hit = {}
+            if not hit.get("ok"):
+                item = {
+                    "mode": "locate",
+                    "pattern": pattern,
+                    "canonical": str(item.get("canonical") or ""),
+                    "cli": _cli("locate", pattern),
+                    "probe": "field_miss",
+                }
+        rows.append(item)
+    plan["first_query"] = rows
+    return plan
+
+
 def compile_query(question: str, *, architecture: str = "") -> dict[str, Any]:
     """NL question → QueryPlan (modes, canonical tokens, answer contract)."""
     blob = str(question or "")
@@ -395,6 +447,7 @@ def compile_query(question: str, *, architecture: str = "") -> dict[str, Any]:
     matched = _matched_slices(blob)
     differential = is_differential_question(blob) and not is_ut_authoring(blob)
     first = _first_queries(blob, slices or matched[:1])
+    first = [_rewrite_empty_template_row(blob, dict(row)) for row in first]
     contract = {
         "adequacy_default": "PARTIAL" if differential else "ANSWERED",
         "require_decision_tree": differential,
@@ -423,7 +476,10 @@ def focused_user_question(original: str, slice_row: dict[str, str]) -> str:
     canonical = str(slice_row.get("canonical") or "").strip()
     body = str(original or "").rstrip()
     first = _first_queries(body, [dict(slice_row)])
+    first = [_rewrite_empty_template_row(body, dict(row)) for row in first]
     cli = first[0]["cli"] if first else f"acp uo-query --mode {mode}"
+    if first:
+        mode = str(first[0].get("mode") or mode)
     contract = compile_query(body).get("answer_contract") or {}
     forbid = "、".join(contract.get("forbid") or []) or "(none)"
     missing = ", ".join(contract.get("missing_inputs") or []) or "(none)"

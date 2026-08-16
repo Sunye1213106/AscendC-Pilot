@@ -33,17 +33,28 @@ def _stat_key(path: Path) -> tuple[int, int]:
 
 
 def _state_paths(project_root: Path) -> list[Path]:
+    from ascendc_pilot.authorize.lease import active_action_path, lease_path
     from ascendc_pilot.paths import state_root
 
     try:
         root = state_root(project_root)
     except Exception:  # noqa: BLE001
-        return []
-    return [
-        root / "workflow.yaml",
-        root / "action_lease.yaml",
-        root / "active_action.yaml",
-    ]
+        root = None
+    paths = []
+    if root is not None:
+        paths.extend(
+            [
+                root / "workflow.yaml",
+                root / "action_lease.yaml",
+                root / "active_action.yaml",
+            ]
+        )
+    try:
+        paths.append(lease_path(project_root))
+        paths.append(active_action_path(project_root))
+    except Exception:  # noqa: BLE001
+        pass
+    return paths
 
 
 def build_cache_key(

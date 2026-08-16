@@ -214,19 +214,66 @@ def _ask_scenario_confirm(project_root: Path, state: dict[str, Any]) -> dict[str
     )
 
 
+def _intent_doc(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    return _load(ce_root(project_root, arch=_arch(state)) / "intent" / "intent.yaml")
+
+
+def material_decisions(intent: dict[str, Any]) -> list[Any]:
+    """Questions that fork two legal implementation directions (not facts)."""
+    raw = intent.get("material_decisions")
+    if isinstance(raw, list) and raw:
+        return [row for row in raw if row]
+    open_q = intent.get("open_questions") or []
+    if not isinstance(open_q, list):
+        return []
+    out = []
+    for row in open_q:
+        if isinstance(row, dict) and str(row.get("kind") or "").lower() in {"fact", "lookup"}:
+            continue
+        if row:
+            out.append(row)
+    return out
+
+
+def grill_should_ask(project_root: Path, state: dict[str, Any], *, action_id: str = "") -> bool:
+    """False → 0 human grill turns (complete PR / no material fork). CE-intent only."""
+    if str(state.get("workflow_id") or "").strip() != "ce-intent":
+        return True
+    intent = _intent_doc(project_root, state)
+    decisions = material_decisions(intent)
+    complete = bool(
+        intent.get("in_scope") and intent.get("out_of_scope") and intent.get("acceptance")
+    )
+    if action_id == "human_confirm":
+        grilled = _load(ce_root(project_root, arch=_arch(state)) / "intent" / "grill_confirmation.yaml")
+        prior = grilled.get("material_decision_count")
+        if complete and not decisions:
+            return False
+        if prior is not None and int(prior or 0) == len(decisions):
+            return False
+        return bool(decisions)
+    if complete and not decisions:
+        return False
+    return True
+
+
 def _ask_grill_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
-    intent = _load(ce_root(project_root, arch=_arch(state)) / "intent" / "intent.yaml")
-    open_q = intent.get("open_questions") or []
-    n = len(open_q) if isinstance(open_q, list) else 0
-    pending = f"仍有 {n} 个未决问题。" if n else "未决问题列表为空。"
+    intent = _intent_doc(project_root, state)
+    decisions = material_decisions(intent)[:5]
+    n = len(decisions)
+    listed = "；".join(
+        str(row.get("question") or row.get("id") or row)[:80]
+        for row in decisions
+        if row
+    ) or "无分叉决策"
     return decision_question(
         header="需求是否已经问清，可以分解特性？",
-        goal=f"确认 {op}（{arch}）的范围、不做的事和可验证验收",
-        background=f"已写入 in_scope / out_of_scope / acceptance。{pending}未闭合不要进入分解。",
-        decide="是否确认这份问清后的需求？",
+        goal=f"一次确认 {op}（{arch}）的 3–5 个会分叉实现方向的决策",
+        background=f"本轮只问 material decision（{n} 题）：{listed}。事实类问题走 CodeMap / ro-search，不问人。",
+        decide="是否确认这组决策并进入分解？",
         consequences={
-            "确认需求已问清": "进入特性分解；未决问题必须为空",
+            "确认需求已问清": "进入特性分解；未决分叉必须为空",
             "返工": "回到问需求，继续推进设计树",
             "停止": "结束本次定位，不分解",
         },
@@ -452,22 +499,6 @@ def _materialize_ce_intent(
         "artifact_identity": identity,
     }
     path, backups = _write_yaml_receipt(path, doc)
-    try:
-        from code_engineering.handoff import write_session_handoff
-
-        write_session_handoff(
-            project_root,
-            architecture=_arch(state),
-            next_slash="/ce-apply",
-            artifact_paths=[
-                "ce/intent/intent.yaml",
-                "ce/intent/feature_decomposition.yaml",
-                "ce/intent/anchors.yaml",
-                "ce/intent/confirmation.yaml",
-            ],
-        )
-    except Exception:  # noqa: BLE001
-        pass
     return {"ok": True, "path": path, "backups": backups, "identity": identity}
 
 
@@ -551,8 +582,9 @@ def _materialize_grill_confirm(
 ) -> dict[str, Any]:
     ce = ce_root(project_root, arch=_arch(state))
     intent = _load(ce / "intent" / "intent.yaml")
+    decisions = material_decisions(intent)
     open_q = intent.get("open_questions") or []
-    if isinstance(open_q, list) and open_q:
+    if isinstance(open_q, list) and open_q and decisions:
         return {
             "ok": False,
             "error": "GRILL_OPEN",
@@ -564,9 +596,10 @@ def _materialize_grill_confirm(
     doc = {
         "schema": "ce-intent-grill-confirmation/v1",
         "status": "confirmed",
-        "confirmed_by": "human",
+        "confirmed_by": "human" if decisions else "auto_skip",
         "confirmed_at": now,
-        "decision": "confirm",
+        "decision": "confirm" if decisions else "skipped_no_material",
+        "material_decision_count": len(decisions),
         **identity,
         "artifact_identity": identity,
     }
@@ -864,6 +897,16 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     scenario = lookup_scenario(project_root, action_id, state=state)
     if scenario is None:
         return {"ok": False, "error": "NOT_HOSTED_CONFIRM_ACTION", "action_id": action_id}
+
+    skip_gate = action_id in {"grill_confirm", "human_confirm"} and not grill_should_ask(
+        project_root, state, action_id=action_id
+    )
+    if skip_gate:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        identity = _identity(session)
+        identity["human_decision_request_id"] = "auto-skip-no-material"
+        materialize: MaterializeFn = scenario["materialize"]
+        return materialize(project_root, state, identity, now)
 
     from ascendc_pilot.human_interaction import require_decision_receipt
 

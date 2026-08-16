@@ -148,6 +148,13 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
         errors.append(f"{wid}: exclusive occupancy requires occupancy_group")
     elif occ == "shared" and group:
         errors.append(f"{wid}: shared occupancy must have empty occupancy_group")
+    from ascendc_pilot.workflows.specs import workflow_resource_sets
+
+    _read, write_set = workflow_resource_sets(wid)
+    if occ == "exclusive" and not write_set:
+        errors.append(f"{wid}: exclusive occupancy requires non-empty write_set")
+    if occ == "shared" and write_set:
+        errors.append(f"{wid}: shared occupancy must have empty write_set")
     if not str(meta.get("cognitive_skill_id") or "").strip():
         errors.append(f"{wid}: missing cognitive_skill_id")
 

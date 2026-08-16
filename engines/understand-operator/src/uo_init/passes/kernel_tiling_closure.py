@@ -185,6 +185,9 @@ def finalize_kernel_tiling_closure(
 
     td_index = _tiling_index(codemap)
     read_stats = _rebuild_tiling_reads(codemap, scopes, td_index)
+    field_branch_count = enrich_kernel_field_branches(
+        codemap, root, architecture=architecture
+    )
     write_stats = _rebuild_host_tiling_writes(codemap, root, host_texts, td_index)
     selected = _rebuild_tiling_selection(codemap, root, kernel_texts, td_index)
 
@@ -229,6 +232,7 @@ def finalize_kernel_tiling_closure(
         "tiling_read_sites": read_stats["sites"],
         "tiling_resolved_read_sites": read_stats["resolved"],
         "tiling_ambiguous_read_sites": read_stats["ambiguous"],
+        "kernel_field_branches": field_branch_count,
         "tiling_entry_reachable_read_sites": len(reachable_reads["sites"]),
         "tiling_entry_reachable_fields": len(reachable_reads["fields"]),
         "tiling_host_writer_sites": write_stats["sites"],
@@ -242,6 +246,93 @@ def finalize_kernel_tiling_closure(
         "policy": "qualified-source-closure/v1",
     }
     return codemap
+
+
+_IF_HEAD_RE = re.compile(r"\bif(?:\s+constexpr)?\s*\(")
+_FN_HEAD_RE = re.compile(
+    r"(?:^|\n)[^\n;{}]*?\b(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?\{"
+)
+_CONTROL_HEADS = frozenset({
+    "if", "else", "while", "for", "switch", "catch", "do", "return",
+})
+
+
+def enrich_kernel_field_branches(
+    codemap: CodeMap,
+    operator_root: str | Path,
+    *,
+    architecture: str = "",
+) -> int:
+    """Mint BRANCH entities for kernel ``if`` that read a TILING_FIELD.
+
+    Runtime ``if (constInfo.enablePreSfmg)`` is not ``if constexpr``; without
+    this pass ``kernel_branch <field>`` is a silent count=0.
+    """
+    root = Path(operator_root).expanduser().resolve()
+    names = sorted(
+        {
+            str(field.name or "").rsplit(".", 1)[-1]
+            for field in codemap.by_kind(EntityKind.TILING_FIELD)
+        },
+        key=len,
+        reverse=True,
+    )
+    names = [n for n in names if len(n) >= 4]
+    if not names:
+        return 0
+    name_re = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
+    minted = 0
+    from uo_init.passes.source_text_cache import mask_cached, read_text
+    from uo_init.source_layout import selected_kernel_files
+
+    for path in selected_kernel_files(root, architecture):
+        try:
+            raw = read_text(path)
+        except OSError:
+            continue
+        masked = mask_cached(raw)
+        file = _rel(root, path)
+        functions: list[tuple[int, str]] = []
+        for head in _FN_HEAD_RE.finditer(masked):
+            name = head.group("name")
+            if name in _CONTROL_HEADS:
+                continue
+            functions.append((head.start(), name))
+        for match in _IF_HEAD_RE.finditer(masked):
+            open_pos = match.end() - 1
+            close_pos = _matching(masked, open_pos, "(", ")")
+            if close_pos < 0:
+                continue
+            cond = masked[open_pos + 1 : close_pos]
+            found = set(name_re.findall(cond))
+            if not found:
+                continue
+            line = _line(raw, match.start())
+            fn = ""
+            for start, name in functions:
+                if start <= match.start():
+                    fn = name
+                else:
+                    break
+            for field_name in found:
+                codemap.upsert(
+                    EntityKind.BRANCH,
+                    field_name,
+                    eid=f"SRCKFIELDBRANCH::{file}::{line}::{field_name}",
+                    attrs={
+                        "branch_kind": "if",
+                        "condition": cond.replace("\n", " ").strip()[:400],
+                        "function": fn,
+                        "tiling_field": field_name,
+                        "provenance": "source_kernel_field_if",
+                        "layer": "kernel",
+                    },
+                    file=file,
+                    line=line,
+                    status="confirmed",
+                )
+                minted += 1
+    return minted
 
 
 def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:

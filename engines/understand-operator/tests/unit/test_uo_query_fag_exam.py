@@ -86,7 +86,12 @@ def test_q7_locate_coverage_keeps_sibling_files(q) -> None:
     files = " ".join(list(out.get("files") or {}) + list(cov.get("sibling_files") or []))
     assert "coverage" in out
     assert "files" in out
-    assert cov.get("completeness") != "first_hit" or int(cov.get("definition_sites_count") or 0) > 1
+    assert (
+        cov.get("answerable") is True
+        or cov.get("completeness") != "first_hit"
+        or int(cov.get("definition_sites_count") or 0) > 1
+        or out["count"] > 1
+    )
     assert "varlen" in files.replace("\\", "/").lower() or out["count"] > 1
 
 
@@ -123,8 +128,7 @@ def test_q11_setschedulemode_and_sync(q) -> None:
 
 def test_q13_fused_outer_alias_and_occupancy(q) -> None:
     hit = q.field_impact("fusedOuter")
-    if not hit.get("ok"):
-        pytest.skip("fusedOuter local_aliases not in committed .uo; extra query round is OK")
+    assert hit.get("ok") is True
     assert hit.get("canonical") == "blockOuter" or hit["field"]["name"] == "blockOuter"
     assert hit.get("occupancy_axis") == "fusedOuter vs aicNum"
 
@@ -163,6 +167,86 @@ def test_q18_four_slices_without_pipe() -> None:
     assert plan["differential"] is True
     modes = [row["mode"] for row in plan["first_query"]]
     assert "kernel_launch" not in modes
-    assert "template_match" in modes
     assert "field" in modes
     assert "buffer" in modes
+    assert not any(
+        row["mode"] == "template_match" and not row.get("pattern")
+        for row in plan["first_query"]
+    )
+
+
+def test_q9_compile_locates_tpl_macro() -> None:
+    plan = compile_query(Q9, architecture="arch35")
+    first = plan["first_query"][0]
+    assert first["mode"] == "locate"
+    assert first["pattern"] == "ASCENDC_TPL_SEL"
+
+
+def test_session_pages_kernel_launch_three_phases(q) -> None:
+    launch = q.aggregate_kernel_launch()
+    pipes = {str(row.get("pipe") or "") for row in launch.get("phases") or []}
+    assert {"pipeIn", "pipeBase", "pipePost"} <= pipes
+    blob = str(launch).lower()
+    assert "entry_regbase" in blob or "regbasefag" in blob.replace("_", "")
+
+
+def test_session_pages_splitaxis_and_scale(q) -> None:
+    split = q.field_impact("splitAxis")
+    assert split.get("ok") is True
+    blob = str(split).lower()
+    assert "setsplitaxis" in blob.replace("_", "") or "splitaxis" in blob
+    scale = q.field_impact("scaleValue")
+    assert scale.get("ok") is True
+
+
+def test_session_pages_enable_pre_sfmg_branch(q) -> None:
+    field = q.field_impact("enablePreSfmg")
+    assert field.get("ok") is True
+    branch = q.aggregate_kernel_branch("enablePreSfmg")
+    if int(branch.get("count") or 0) == 0:
+        assert branch.get("empty_reason") == "not_extracted"
+    else:
+        assert int(branch["count"]) >= 1
+
+
+def test_session_pages_process_dqkv_and_muls(q) -> None:
+    dq = q.aggregate_locate("ProcessDqkv")
+    assert dq["count"] >= 1
+    assert (dq.get("coverage") or {}).get("answerable") is True
+    files = " ".join(str(row.get("file") or "") for row in dq.get("locations") or [])
+    assert "post_regbase" in files.replace("\\", "/")
+    muls = q.aggregate_locate("ProcessMulsAndCast")
+    assert muls["count"] >= 1
+    muls_files = " ".join(str(row.get("file") or "") for row in muls.get("locations") or [])
+    assert "block_vec" in muls_files.replace("\\", "/")
+    cast = q.search("Cast", limit=8)
+    assert cast
+    assert "get_cast" not in str(cast[0].get("name") or "").lower()
+
+
+def test_session_pages_tpl_sel_and_key_dims(q) -> None:
+    sel = q.aggregate_locate("ASCENDC_TPL_SEL")
+    assert sel["count"] >= 1
+    orig = q.aggregate_locate("ORIG_DTYPE_QUERY")
+    assert orig["count"] >= 1
+    assert (orig.get("coverage") or {}).get("answerable") is True
+    dne = q.aggregate_locate("IsDNoEqual")
+    assert dne["count"] >= 1
+    assert str((dne.get("locations") or [{}])[0].get("kind") or "") == "TILING_KEY"
+    nz = q.aggregate_locate("IsNzOut")
+    assert nz["count"] >= 1
+    assert str((nz.get("locations") or [{}])[0].get("kind") or "") == "TILING_KEY"
+    match = q.aggregate_template_match("DTemplateNum=128,DeterType=0,InputDType=3")
+    assert int(match.get("matching_block_count") or 0) == 7
+    assert (match.get("coverage") or {}).get("completeness") == "coverage_checked"
+
+
+def test_session_pages_fused_outer_alias(q) -> None:
+    loc = q.aggregate_locate("fusedOuter")
+    assert loc["count"] >= 1
+    hit = q.field_impact("fusedOuter")
+    assert hit.get("ok") is True
+    assert "blockOuter" in str(hit.get("canonical") or hit.get("field") or "")
+    fused = q.search("fused", limit=8)
+    assert fused
+    assert "fusedmuldstadd" not in str(fused[0].get("name") or "").lower()

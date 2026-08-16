@@ -67,6 +67,9 @@ def _wsl_path(distro: str, path: Path) -> str:
 
 
 def _ops_root(runner: Any) -> Path:
+    snap = (os.environ.get("ASCENDC_SNAPSHOT_WORKSPACE") or "").strip()
+    if snap:
+        return Path(snap).expanduser().resolve()
     for name in ("OPS_TRANSFORMER_ROOT", "UO_OPS_ROOT", "OPS_ROOT"):
         raw = (os.environ.get(name) or "").strip()
         if raw:

@@ -17,8 +17,10 @@ def test_return_value_hook_is_ephemeral_and_narrow() -> None:
     assert "isKbLookupFinalize" in text
     assert "SLICE_ID=" in text
     assert "fanout_slice" in text
-    assert "captureUoQueryTaskReturn" in text
-    assert "must not finalize itself" in text
+    assert "injectUoQueryFirstQuery" in text
+    assert "fillEmptyUoQueryTaskOutput" in text
+    assert "FIRST_QUERY:" in text
+    assert "empty native task_result" in text
     capture_fn = text.split("function captureUoQueryTaskReturn")[1].split("export const AscendCHarnessPlugin")[0]
     assert "--result-file" not in capture_fn
     assert "isKbLookupFinalize" in capture_fn

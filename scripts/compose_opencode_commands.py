@@ -22,8 +22,8 @@ User arguments: $ARGUMENTS
 1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
 2. **先对人说出路由**，再动手。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。
 3. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子绝对路径>`，把 stdout 说给人听。
-4. 若 `host_step.tasks` ≥2：同一轮原样并行派发每条 stub，全部返回后综合。不要 `pilot_run`。
-5. 子代未闭合再开一轮 Task（FOCUS=缺口），不要改自查、不要问「要不要继续」。
+4. **深问**：先 `acp uo-query --mode compile --project <算子绝对路径> --query <原话>`。compile 只出候选；Primary 按独立 FOCUS 派 1～5 路（每轮最多 5）。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。不要手写不存在的 `--mode`。
+5. 子代只跑探活后的第一刀，空则 hint 再一刀后交回。仅当仍有独立缺口才开第 2 轮（路数=缺口数，≤5）；无第 3 轮。不要 `pilot_run`，不要问「要不要继续」。
 """
     if workflow_id == "uo-init":
         return """Run the AscendC-Pilot workflow `uo-init` for the current operator project.

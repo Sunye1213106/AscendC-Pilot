@@ -236,3 +236,39 @@ def source_scope_for_lease(project_root: Path, *, run_id: str = "") -> dict[str,
         if str(f).strip()
     ]
     return {"allowed_source_roots": roots, "allowed_source_files": files}
+
+
+def run_source_scope_roots(project_root: Path, *, run_id: str = "") -> list[Path]:
+    """ScopeSet confirmed roots ∩ current lease source roots. Never the whole repo."""
+    scope = source_scope_for_lease(project_root, run_id=run_id)
+    roots = [
+        str(x).replace("\\", "/").lstrip("/")
+        for x in (scope.get("allowed_source_roots") or [])
+        if str(x).strip() and str(x).strip() not in {".", "./"}
+    ]
+    try:
+        from ascendc_pilot.authorize.lease import load_lease
+        from ascendc_pilot.state import load_state
+
+        st = load_state(project_root) or {}
+        rid = str(run_id or st.get("run_id") or "").strip()
+        lease = load_lease(project_root, run_id=rid) if rid else {}
+        lease_roots = [
+            str(x).replace("\\", "/").lstrip("/")
+            for x in (lease.get("allowed_source_roots") or [])
+            if str(x).strip()
+        ]
+        if lease_roots:
+            allowed = set(lease_roots)
+            roots = [r for r in roots if r in allowed] or lease_roots
+    except Exception:  # noqa: BLE001
+        pass
+    out: list[Path] = []
+    seen: set[str] = set()
+    for rel in roots:
+        key = rel.replace("\\", "/")
+        if key in seen or key in {".", ".."}:
+            continue
+        seen.add(key)
+        out.append((Path(project_root) / rel).resolve())
+    return out

@@ -232,7 +232,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_ro.add_argument("--project", type=Path, default=None)
     p_ro.add_argument("--pattern", required=True)
-    p_ro.add_argument("--paths", nargs="*", default=["."], help="Relative paths under project")
+    p_ro.add_argument(
+        "--scope",
+        default="run-source-scope",
+        choices=["run-source-scope"],
+        help="Mandatory bounded scope (ScopeSet ∩ lease source roots)",
+    )
+    p_ro.add_argument("--paths", nargs="*", default=None, help="Optional extra relative paths, still intersected with --scope")
     p_ro.add_argument("--glob", default="*.{cpp,h,hpp,cc}", dest="file_glob")
     p_ro.add_argument("--limit", type=int, default=50)
 
@@ -329,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--target", default="", help="Alias of --pattern")
     p_uq.add_argument(
         "--mode",
-        default="search",
+        default=None,
         choices=(
             "search",
             "constraints",
@@ -350,7 +356,7 @@ def main(argv: list[str] | None = None) -> int:
             "kernel_launch",
             "compile",
         ),
-        help="search|constraints|neighbors|impact|field|branches|templates|"
+        help="Required. search|constraints|neighbors|impact|field|branches|templates|"
         "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|"
         "legal_key|locate|kernel_api|kernel_launch|compile",
     )
@@ -1102,11 +1108,34 @@ def main(argv: list[str] | None = None) -> int:
         pattern = str(
             args.pattern or args.target or getattr(args, "query", "") or ""
         ).strip()
-        mode = str(getattr(args, "mode", "search") or "search")
+        mode = str(getattr(args, "mode", "") or "")
+        if not mode:
+            print_json(
+                {
+                    "ok": False,
+                    "error": "mode_required",
+                    "hint": "Pass --mode compile|locate|field|kernel_launch|template_match|search|...",
+                }
+            )
+            return 2
         if mode == "compile":
-            from uo_init.query.plan import compile_query
+            from uo_init.query.plan import compile_query, probe_first_queries
 
             payload = compile_query(pattern, architecture=architecture)
+            backend = None
+            if args.project:
+                try:
+                    compile_root = Path(args.project).resolve()
+                    product = find_uo_product(
+                        compile_root, op_name=op_name, architecture=architecture
+                    )
+                    if product is not None and product.suffix == ".uo":
+                        backend = open_query(
+                            compile_root, architecture=architecture, op_name=op_name
+                        )
+                except Exception:
+                    backend = None
+            payload = probe_first_queries(payload, backend)
             payload["engine"] = "uo_init.uo_query"
             print_json(payload)
             return 0
@@ -1224,35 +1253,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload = q.aggregate_kernel_launch(pattern, limit=limit)
             else:
                 kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
-                rows = q.search(pattern, kinds=kinds, limit=limit)
-                payload = {
-                    "ok": True,
-                    "mode": "search",
-                    "pattern": pattern,
-                    "kinds": kinds,
-                    "count": len(rows),
-                    "rows": rows,
-                    "files": {},
-                }
-                from uo_init.query.hints import attach_query_hints, search_needles
-
-                tokens = search_needles(pattern)
-                if len(tokens) > 1:
-                    payload["pattern_tokens"] = tokens
-                attach_query_hints(payload, pattern, count=len(rows), kinds=kinds, mode="search")
-                coverage = {}
-                try:
-                    from uo_init.query.sql import _hits_coverage
-
-                    coverage = _hits_coverage(rows, total=len(rows))
-                except Exception:
-                    coverage = {}
-                if coverage:
-                    payload["coverage"] = coverage
-                for row in rows:
-                    file = str(row.get("file") or "")
-                    if file:
-                        payload["files"].setdefault(file, []).append(row)
+                payload = q.aggregate_search(pattern, kinds=kinds, limit=limit)
             payload["engine"] = "uo_init.uo_query"
             try:
                 from ascendc_pilot.occupancy import (
@@ -1697,6 +1698,8 @@ def _cmd_ro_search(args: Any) -> int:
     import re
     from pathlib import Path as P
 
+    from ascendc_pilot.environment_capabilities import run_source_scope_roots
+
     project = P(args.project).resolve()
     pattern = str(args.pattern or "")
     try:
@@ -1704,9 +1707,34 @@ def _cmd_ro_search(args: Any) -> int:
     except re.error as exc:
         print_json({"ok": False, "error": "bad_pattern", "detail": str(exc)})
         return 2
-    roots = [project / p for p in (args.paths or ["."])]
+    scope_roots = run_source_scope_roots(project)
+    extra = [str(p).replace("\\", "/").strip() for p in (args.paths or []) if str(p).strip()]
+    if any(p in {".", "./", ""} for p in extra):
+        print_json(
+            {
+                "ok": False,
+                "error": "SCOPE_REQUIRED",
+                "detail": "acp ro-search refuses repo-root paths; use --scope run-source-scope",
+            }
+        )
+        return 2
+    roots = list(scope_roots)
+    for rel in extra:
+        cand = (project / rel).resolve()
+        if any(cand == sr or sr in cand.parents or cand in sr.parents or cand == sr for sr in scope_roots):
+            roots.append(cand)
+    if not roots:
+        print_json(
+            {
+                "ok": False,
+                "error": "EMPTY_RUN_SOURCE_SCOPE",
+                "hits": [],
+                "evidence_tier": "none",
+            }
+        )
+        return 2
     hits: list[dict[str, Any]] = []
-    limit = int(getattr(args, "limit", 50) or 50)
+    limit = min(int(getattr(args, "limit", 50) or 50), 80)
     suffixes = {".cpp", ".h", ".hpp", ".cc", ".c", ".py", ".yaml", ".yml"}
     for root in roots:
         if not root.exists():
@@ -1716,6 +1744,10 @@ def _cmd_ro_search(args: Any) -> int:
             if not fp.is_file() or fp.suffix.casefold() not in suffixes:
                 continue
             try:
+                rel = fp.relative_to(project).as_posix()
+            except ValueError:
+                continue
+            try:
                 text = fp.read_text(encoding="utf-8", errors="ignore")
             except OSError:
                 continue
@@ -1723,15 +1755,28 @@ def _cmd_ro_search(args: Any) -> int:
                 if cre.search(line):
                     hits.append(
                         {
-                            "file": str(fp.relative_to(project)).replace("\\", "/"),
+                            "file": rel,
                             "line": i,
+                            "symbol": "",
                             "text": line[:240],
+                            "evidence_tier": "C",
                         }
                     )
                     if len(hits) >= limit:
-                        print_json({"ok": True, "hits": hits, "truncated": True}, default=str)
+                        print_json(
+                            {
+                                "ok": True,
+                                "hits": hits,
+                                "truncated": True,
+                                "scope": "run-source-scope",
+                            },
+                            default=str,
+                        )
                         return 0
-    print_json({"ok": True, "hits": hits, "truncated": False}, default=str)
+    print_json(
+        {"ok": True, "hits": hits, "truncated": False, "scope": "run-source-scope"},
+        default=str,
+    )
     return 0
 
 

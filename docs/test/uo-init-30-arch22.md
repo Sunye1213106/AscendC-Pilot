@@ -11,6 +11,8 @@ ops-transformer 版本：`4e09c2ec15a414f6e312caf5b3da16cd965af07b`
 本轮名单哈希（SHA256）：`38475FB4F465FD1A57D902AF7FDE4A094536B9AC69F82490FC09D53AEFEA8A91`  
 70 名单哈希（SHA256）：`ACDE707A1A7B1C167A91E161FA5D096538FB12757DC7A6B8487071C72C76B1A9`（与本轮 30 条 `rel` 交集为空）
 
+冻结初测：24/30。通用惯用法修好后，原来 6 个失败全部复测通过，按同一口径 **30/30**，连同已测 70 个合计 **100/100**。没有重跑那 24 个已经过的，也没有覆盖 `pass30-arch22-20260816/` 或 `pass70-20260816/`。70 轮结论仍以 `docs/test/uo-init-70-generalization-perf.md` 为准。修复复测见第 8 节。
+
 ---
 
 ## 1. 为了什么
@@ -85,7 +87,9 @@ discover 在同时有 arch35 时会优先 arch35，所以本轮用 `UO_GEN_CASES
 4. 源码里有 packing 的，图上能指回去；源码里没有的，图上应是 0/0
 5. 本轮自动分 ready 与定位探针为准（没有再做 70 轮那种逐算子打开源码的 LLM 复检）。6 个未过的对照了 scope / host 源码。
 
-## 5. 总结果
+## 5. 总结果（冻结初测）
+
+下表是补 30 第一次冷启动的结果，产物在 `pass30-arch22-20260816/`。修复后口径见第 8 节。
 
 | 看什么 | 70 轮（已测） | 本轮 30 | 合计 100 |
 | --- | ---: | ---: | ---: |
@@ -160,11 +164,53 @@ discover 在同时有 arch35 时会优先 arch35，所以本轮用 `UO_GEN_CASES
 - 4 个「只有 op_tiling/arch22」的 mc2 全部过了。
 - 3 个准备阶段没画出图；3 个图画完但 tiling key packing 对不上。
 
-## 7. 结论
+## 7. 冻结初测结论
 
-补进的 30 个 arch22 与冻结 70 不重复。24/30 五步通过、自动分 ready；3 个卡在准备（kernel 入口对不上 arch22），3 个卡在 packing。连同已测的 70 个，100 个不重复算子里 94 个五步通过；arch22 从 2 个变成 32 个。限制：只在这一个仓；本轮 30 个没有做 70 轮那种逐算子 LLM 对源；3 个准备失败没有产物可审。
+补进的 30 个 arch22 与冻结 70 不重复。初测 24/30 五步通过、自动分 ready；3 个卡在准备（kernel 入口对不上 arch22），3 个卡在 packing。连同已测的 70 个，当时 100 个不重复算子里 94 个五步通过；arch22 从 2 个变成 32 个。限制：只在这一个仓；本轮 30 个没有做 70 轮那种逐算子 LLM 对源；3 个准备失败当时没有产物可审。
 
-## 附录 A. 怎么复现
+## 8. 6 个失败的通用修复与复测
+
+只改惯用法，不算子名特例。没有重跑已经过的 24 个，没有覆盖冻结 30 / 70 产物目录。
+
+| 初测失败 | 停在 | 通用修法 | 复测产物 |
+| --- | --- | --- | --- |
+| `mc2/allto_all_matmul`、`mc2/matmul_allto_all`、`mc2/moe_distribute_dispatch_setup` | 准备 | 文件在 `archNN/` 下以路径定架构，不被共享 `*_arch35.h` 误杀；不要丢掉最后一个 kernel 翻译单元。`op_spec` 找入口时先看 `op_kernel/archNN/*.cpp` | `pass30-fix4/` |
+| `attention/mla_prolog` | packing `0/8` | `ASCENDC_TPL_KERNEL_TYPE_DECL` 算 packing 维（`bw=6`） | `pass30-fix6/` |
+| `mhc/mhc_pre_sinkhorn_backward` | packing `0/1` | 仅 `GET_TPL_TILING_KEY` 允许单参数；其它 `GET_TILINGKEY(packedInt)` 仍跳过 | `pass30-fix6/` |
+| `attention/sparse_flash_attention_grad` | packing / 维数对不上 | `tilingKey *= 10` 当十进制位移；host packing 维才是 schema。`TILING_KEY_IS` 整数目录和旁路架构 TPL 维只当选择事实。后置 `tpl_schema` 与质量分按 `source_declared` 再对齐一次 | `pass30-fix-sfag/` |
+
+复测平台与第 2 节相同。修复后代码在 `e205c3f331a1ac8ea4e3197534b738f384702f57`（相对冻结初测的 `08839883…`）。ops-transformer 仍是 `4e09c2ec15a414f6e312caf5b3da16cd965af07b`。
+
+6 个复测全表（时间单位：秒；口径与第 6 节相同）：
+
+| # | rel | 准备 | 抽图 | 分析 | 落盘 | 自检 | 合计 | 完整 | 自动分 | packing | 节点 | 边 | Buffer | 写点 | 结论 |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | ---: | ---: | ---: | ---: | --- |
+| 6 | attention/mla_prolog | 5.6 | 10.0 | 14.8 | 1.1 | 0.7 | 32.3 | pass | ready | 9/9 | 3833 | 9252 | 358 | 68/45 | 自动 ready |
+| 10 | attention/sparse_flash_attention_grad | 7.4 | 11.0 | 12.9 | 0.5 | 0.6 | 32.7 | pass | ready | 5/5 | 2692 | 5699 | 166 | 79/96 | 自动 ready |
+| 14 | mc2/allto_all_matmul | 21.3 | 14.0 | 52.5 | 1.9 | 2.1 | 91.9 | pass | ready | 5/5 | 10064 | 13838 | 274 | 79/253 | 自动 ready |
+| 22 | mc2/matmul_allto_all | 34.3 | 16.7 | 57.7 | 3.1 | 5.4 | 117.4 | pass | ready | 4/4 | 10158 | 13367 | 268 | 76/239 | 自动 ready |
+| 27 | mc2/moe_distribute_dispatch_setup | 15.0 | 9.4 | 12.1 | 0.9 | 0.3 | 38.2 | pass | ready | 7/7 | 2452 | 4080 | 215 | 26/232 | 自动 ready |
+| 30 | mhc/mhc_pre_sinkhorn_backward | 7.3 | 7.1 | 6.5 | 0.4 | 0.2 | 21.5 | pass | ready | 1/1 | 1207 | 2538 | 96 | 15/16 | 自动 ready |
+
+`mla_prolog` packing 从初测 `0/8` 变成 `9/9`：多出来的一维是 `KERNEL_TYPE_DECL`（`CV_MODE`），不是把原来 8 维凑过去。`sparse_flash_attention_grad` 图上仍有 12 个 `TilingKey` 节点（5 个十进制 packing 维 + 整数目录 / 旁路 TPL），声明与 packing 按 schema 计是 `5/5`。
+
+按同一口径回填第 5 节那张合计表：
+
+| 看什么 | 70 轮（已测，未重跑） | 补 30 冻结初测 | 补 30 修复后 |
+| --- | ---: | ---: | ---: |
+| 五步都跑完 | 70/70 | 24/30 | **30/30** |
+| 产物完整 | 70/70 | 27/30 | **30/30** |
+| 自动分 ready | 70/70 | 24/30 | **30/30** |
+| 说不清类型的节点 | 0 | 0（画出的 27 个） | **0** |
+| 合计 100 | 70/70 | 94/100 | **100/100** |
+
+家族（修复后）：attention 11/11，mc2 17/17，mhc 2/2。
+
+## 9. 修复后结论
+
+冻结初测暴露的是通用缺口，不是这 6 个算子名特例。修好路径主导的 kernel 入口、`KERNEL_TYPE_DECL`、单参 `GET_TPL_TILING_KEY`、十进制 `*= 10`，以及后置 TPL 不得扩大 packing schema 之后，6/6 复测五步通过、自动分 ready。未过的 24 个没有重跑；冻结 30 / 70 产物目录没有覆盖。按同一口径，补 30 为 30/30，连同已测 70 个合计 100/100；arch22 仍是 32 个。限制仍是：只在这一个仓；补 30 没有做 70 轮那种逐算子 LLM 对源；修复复测是分批只跑原来失败的 6 个，不是把 30 个再冷启动一遍。
+
+## 附录 A. 怎么复现（冻结初测）
 
 - AscendC-Pilot commit：`08839883f45bdd3328ddca1bfbdd8491ff800853`
 - ops-transformer commit：`4e09c2ec15a414f6e312caf5b3da16cd965af07b`
@@ -184,3 +230,31 @@ python engines/understand-operator/tools/uo_init_generalization.py
 - 本机环境：见第 2 节
 - 测量日期：2026-08-16（UTC+8）
 - 不要设 `UO_KERNEL_ROOT_TRACE_BUDGET_S` / `UO_COLD_BUDGET_S`；不要用 `UO_GEN_ONLY`（会走 discover，arch 会被选成 arch35）
+- 不要覆盖本目录。修复复测写在 `pass30-fix6/`、`pass30-fix4/`、`pass30-fix-sfag/`
+
+## 附录 B. 怎么复现（6 个失败的修复复测）
+
+- AscendC-Pilot commit：`e205c3f331a1ac8ea4e3197534b738f384702f57`
+- ops-transformer commit：`4e09c2ec15a414f6e312caf5b3da16cd965af07b`
+- 强制 `arch=arch22`，`wipe=true`；每批一个新产物目录
+- 命令模板：
+
+```powershell
+cd d:\TEST\AscendC-Pilot
+$env:UO_OPS_ROOT = "d:\TEST\ops-transformer"
+$env:UO_GEN_OUT = "d:\TEST\AscendC-Pilot\artifacts\uo-init-generalization\<OUT_DIR>"
+$env:UO_GEN_CASES_FILE = "d:\TEST\AscendC-Pilot\artifacts\uo-init-generalization\<OUT_DIR>\sample.json"
+$env:PYTHONUNBUFFERED = "1"
+$env:UO_TIMING = "1"
+python engines/understand-operator/tools/uo_init_generalization.py
+```
+
+| 产物目录 | 复测了谁 | 当时结果 |
+| --- | --- | --- |
+| `pass30-fix6/` | 原来 6 个全跑 | `mla_prolog`、`mhc_pre_sinkhorn_backward` 过；3 个 mc2 仍准备失败；SFAG 仍 packing 对不上 |
+| `pass30-fix4/` | 剩下 4 个 | 3 个 mc2 过（packing 5/5、4/4、7/7）；SFAG 仍 5/12 |
+| `pass30-fix-sfag/` | 只跑 SFAG | packing `5/5`，自动分 ready，通过 |
+
+- 本机环境：见第 2 节
+- 测量日期：2026-08-16（UTC+8）
+- 不要设 `UO_KERNEL_ROOT_TRACE_BUDGET_S` / `UO_COLD_BUDGET_S`；不要用 `UO_GEN_ONLY`

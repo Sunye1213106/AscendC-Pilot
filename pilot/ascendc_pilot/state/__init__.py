@@ -422,7 +422,7 @@ def start_workflow(
         )
         exclusive_live = any(
             live_exclusive_lock(project_root, group)
-            for group in ("uo", "tg", "ce-impact", "ce-intent", "ce-verify")
+            for group in ("uo", "tg", "ce-impact", "ce-intent", "ce-verify", "ce-apply")
         )
         if not exclusive_live:
             write_active_run(
@@ -433,6 +433,14 @@ def start_workflow(
                 status=str(state.get("status") or "running"),
             )
     else:
+        from ascendc_pilot.occupancy import live_resource_conflict
+
+        conflict = live_resource_conflict(project_root, workflow_id)
+        # Same occupancy family is resume/reinit, not a cross-workflow resource abort.
+        if conflict and str(conflict.get("occupancy_group") or "") != str(occ_group or ""):
+            raise RuntimeError(
+                str(conflict.get("message_zh") or conflict.get("error") or "resource_lock_conflict")
+            )
         acquire_exclusive_lock(
             project_root,
             occupancy_group=occ_group,

@@ -209,7 +209,11 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "plan_approve": ["tg/plan/levels/*/human_supplement.yaml"],
     },
     "tg-solve": {
-        "solve_precheck": [],
+        "solve_precheck": ["tg/closure/source_snapshot.yaml"],
+        "local_capability_bootstrap": [
+            "runs/{run_id}/actions/local_capability_bootstrap/receipt.yaml",
+            "local/**",
+        ],
         "oracle_probe": ["tg/closure/oracle_probe.yaml"],
         "closure_ledger": [
             "tg/closure/R.txt",
@@ -221,7 +225,10 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "closure_residual": ["tg/closure/residual/**", "tg/closure/route.yaml"],
         "closure_construct": ["tg/closure/construct/**"],
         "targeted_construct": ["tg/closure/scenarios/**"],
-        "harness_run": ["tg/closure/scenarios/harness_results.yaml"],
+        "harness_run": [
+            "tg/closure/scenarios/harness_results.yaml",
+            "tg/closure/replay_receipts/**",
+        ],
         "scenario_certify": ["tg/closure/scenario_certificate.yaml"],
         "closure_explain": ["tg/closure/why.csv", "tg/closure/construct/**"],
         "lemma_leads": [
@@ -281,9 +288,17 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "uo_freshness": ["ce/impact/freshness.yaml"],
         "impact_slice": ["ce/impact/impact_slice.yaml"],
         "risk_classify": ["ce/impact/risk_classification.yaml"],
-        "scenario_infer": ["ce/scenarios/scenario_set.yaml"],
+        "obligation_build": [
+            "ce/impact/obligations.yaml",
+            "ce/impact/ledger.yaml",
+            "ce/impact/change_test_intent.yaml",
+        ],
+        "scenario_infer": [
+            "ce/impact/scenario_set.yaml",
+            "ce/impact/scenario_delta.yaml",
+            "ce/scenarios/scenario_set.yaml",
+        ],
         "scenario_apply": ["ce/scenarios/scenario_set.yaml"],
-        "obligation_build": ["ce/impact/obligations.yaml", "ce/impact/ledger.yaml"],
         "impact_audit": ["ce/impact/audit_report.yaml"],
         "scenario_confirm": ["ce/scenarios/confirmation.yaml"],
     },
@@ -307,17 +322,17 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/intent_grill/staging.yaml",
         ],
         "grill_promote": ["ce/intent/intent.yaml"],
-        "grill_confirm": ["ce/intent/grill_confirmation.yaml", "ce/session_handoff.md"],
+        "grill_confirm": ["ce/intent/grill_confirmation.yaml"],
         "feature_decompose": [
             "runs/{run_id}/actions/feature_decompose/parts/**",
             "runs/{run_id}/actions/feature_decompose/scratch/**",
             "runs/{run_id}/actions/feature_decompose/staging.yaml",
         ],
         "anchor_locate": ["ce/intent/anchors.yaml"],
-        "scenario_infer": ["ce/scenarios/scenario_set.yaml"],
+        "scenario_infer": ["ce/intent/planned_scenarios.yaml", "ce/scenarios/scenario_set.yaml"],
         "plan_review": ["ce/intent/plan_review.yaml"],
         "feature_promote": ["ce/intent/feature_decomposition.yaml"],
-        "human_confirm": ["ce/intent/confirmation.yaml", "ce/session_handoff.md"],
+        "human_confirm": ["ce/intent/confirmation.yaml"],
     },
     "ce-apply": {
         "apply_gate": ["ce/apply/gate.yaml"],
@@ -436,6 +451,7 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/plan/**",
             "tg/snapshot/**",
         ],
+        "local_capability_bootstrap": ["local/**"],
         "oracle_probe": ["uo/*.uo", "tg/init/**", "local/**"],
         "closure_ledger": ["uo/*.uo", "tg/closure/**"],
         "closure_search": ["uo/*.uo", "tg/closure/**"],

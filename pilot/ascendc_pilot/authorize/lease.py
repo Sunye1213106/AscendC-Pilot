@@ -21,7 +21,7 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_pilot.paths import agent_root, ensure_agent_layout
+from ascendc_pilot.paths import agent_root, ensure_agent_layout, runs_root, state_root
 
 LEASE_FILENAME = "action_lease.yaml"
 REVOKED_LOG = "revoked_leases.jsonl"
@@ -144,12 +144,79 @@ def _now() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def lease_path(project_root: Path) -> Path:
+def _resolve_arch_run(
+    project_root: Path,
+    *,
+    run_id: str = "",
+    arch: str | None = None,
+    state: dict[str, Any] | None = None,
+) -> tuple[str | None, str]:
+    from ascendc_pilot.state import load_state
+
+    st = state if state is not None else (load_state(project_root) or {})
+    arch_name = str(arch or st.get("architecture") or "").strip() or None
+    rid = str(run_id or st.get("run_id") or "").strip()
+    return arch_name, rid
+
+
+def run_control_dir(
+    project_root: Path,
+    *,
+    run_id: str = "",
+    arch: str | None = None,
+    state: dict[str, Any] | None = None,
+) -> Path:
+    """``<arch>/runs/<run_id>/control`` — run-scoped lease / active_action / tickets."""
+    arch_name, rid = _resolve_arch_run(
+        project_root, run_id=run_id, arch=arch, state=state
+    )
+    if not rid:
+        raise ValueError("run_id required for run-scoped control directory")
+    return runs_root(project_root, arch=arch_name) / rid / "control"
+
+
+def legacy_lease_path(project_root: Path, *, arch: str | None = None) -> Path:
     from ascendc_pilot.state import load_state
 
     st = load_state(project_root) or {}
-    arch = str(st.get("architecture") or "").strip() or None
-    return agent_root(project_root, arch=arch) / "state" / LEASE_FILENAME
+    arch_name = str(arch or st.get("architecture") or "").strip() or None
+    return agent_root(project_root, arch=arch_name) / "state" / LEASE_FILENAME
+
+
+def lease_path(
+    project_root: Path,
+    *,
+    run_id: str = "",
+    arch: str | None = None,
+    state: dict[str, Any] | None = None,
+) -> Path:
+    """Run-scoped lease path. Falls back to arch singleton only when run_id is unknown."""
+    try:
+        return (
+            run_control_dir(project_root, run_id=run_id, arch=arch, state=state)
+            / LEASE_FILENAME
+        )
+    except ValueError:
+        return legacy_lease_path(project_root, arch=arch)
+
+
+def active_action_path(
+    project_root: Path,
+    *,
+    run_id: str = "",
+    arch: str | None = None,
+    state: dict[str, Any] | None = None,
+) -> Path:
+    try:
+        return (
+            run_control_dir(project_root, run_id=run_id, arch=arch, state=state)
+            / "active_action.yaml"
+        )
+    except ValueError:
+        arch_name, _ = _resolve_arch_run(
+            project_root, run_id=run_id, arch=arch, state=state
+        )
+        return agent_root(project_root, arch=arch_name) / "state" / "active_action.yaml"
 
 
 def _dump(path: Path, data: dict[str, Any]) -> None:
@@ -172,8 +239,27 @@ def new_lease_id() -> str:
     return f"LEASE_{uuid.uuid4().hex[:12]}"
 
 
-def load_lease(project_root: Path) -> dict[str, Any]:
-    return _load(lease_path(project_root))
+def load_lease(
+    project_root: Path,
+    *,
+    run_id: str = "",
+    arch: str | None = None,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Load this run's lease. Never return another run's arch-singleton lease."""
+    path = lease_path(project_root, run_id=run_id, arch=arch, state=state)
+    data = _load(path)
+    if data:
+        return data
+    arch_name, rid = _resolve_arch_run(
+        project_root, run_id=run_id, arch=arch, state=state
+    )
+    if not rid:
+        return {}
+    legacy = _load(legacy_lease_path(project_root, arch=arch_name))
+    if str(legacy.get("run_id") or "") == rid:
+        return legacy
+    return {}
 
 
 def authorization_mode_for_status(status: str) -> str:
@@ -281,7 +367,7 @@ def issue_action_lease(
         "revoked_at": None,
         "revoke_reason": None,
     }
-    _dump(lease_path(project_root), lease)
+    _dump(lease_path(project_root, run_id=str(st.get("run_id") or ""), state=st), lease)
     append_event(
         project_root,
         {
@@ -511,12 +597,17 @@ def revoke_active_lease(
     *,
     reason: str = "",
     touch_active_action: bool = True,
+    run_id: str = "",
 ) -> dict[str, Any]:
-    """Revoke current lease if active. Returns revoke info (may be empty)."""
+    """Revoke current run's lease if active. Returns revoke info (may be empty)."""
     import json
 
-    path = lease_path(project_root)
+    path = lease_path(project_root, run_id=run_id)
     lease = _load(path)
+    if not lease:
+        lease = load_lease(project_root, run_id=run_id)
+        if lease:
+            path = lease_path(project_root, run_id=str(lease.get("run_id") or run_id))
     if not lease:
         return {"revoked": False}
     if str(lease.get("status") or "") == "revoked":
@@ -527,7 +618,12 @@ def revoke_active_lease(
     lease["revoke_reason"] = reason or "revoked"
     _dump(path, lease)
 
-    log = agent_root(project_root) / "state" / REVOKED_LOG
+    rid = str(lease.get("run_id") or run_id or "").strip()
+    log = (
+        run_control_dir(project_root, run_id=rid) / REVOKED_LOG
+        if rid
+        else agent_root(project_root) / "state" / REVOKED_LOG
+    )
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("a", encoding="utf-8") as fh:
         fh.write(
@@ -535,6 +631,7 @@ def revoke_active_lease(
                 {
                     "lease_id": lease.get("lease_id"),
                     "action_id": lease.get("action_id"),
+                    "run_id": rid,
                     "revoked_at": lease.get("revoked_at"),
                     "reason": reason,
                 },
@@ -544,7 +641,7 @@ def revoke_active_lease(
         )
 
     if touch_active_action:
-        active = agent_root(project_root) / "state" / "active_action.yaml"
+        active = active_action_path(project_root, run_id=rid)
         if active.is_file():
             data = _load(active)
             if data:
@@ -567,26 +664,33 @@ def revoke_active_lease(
     }
 
 
-def clear_lease(project_root: Path) -> None:
-    """Remove lease file (used on fresh start_workflow)."""
-    path = lease_path(project_root)
+def clear_lease(project_root: Path, *, run_id: str = "") -> None:
+    """Remove this run's lease file (used on fresh start_workflow)."""
+    path = lease_path(project_root, run_id=run_id)
     if path.is_file():
         path.unlink()
 
 
-def is_lease_revoked(project_root: Path, lease_id: str) -> bool:
+def is_lease_revoked(project_root: Path, lease_id: str, *, run_id: str = "") -> bool:
     if not lease_id:
         return False
-    current = load_lease(project_root)
+    current = load_lease(project_root, run_id=run_id)
     if str(current.get("lease_id") or "") == lease_id and str(current.get("status") or "") == "revoked":
         return True
-    log = agent_root(project_root) / "state" / REVOKED_LOG
-    if not log.is_file():
-        return False
+    candidates = [agent_root(project_root) / "state" / REVOKED_LOG]
+    try:
+        candidates.append(run_control_dir(project_root, run_id=run_id) / REVOKED_LOG)
+    except ValueError:
+        pass
     needle = f'"lease_id": "{lease_id}"'
     needle2 = f'"lease_id":"{lease_id}"'
-    text = log.read_text(encoding="utf-8")
-    return needle in text or needle2 in text
+    for log in candidates:
+        if not log.is_file():
+            continue
+        text = log.read_text(encoding="utf-8")
+        if needle in text or needle2 in text:
+            return True
+    return False
 
 
 def _normalize_cmd(command: str) -> str:

@@ -51,7 +51,16 @@ def test_gate_closure_soundness():
     except ValueError as exc:
         if "ARCHITECTURE_MISSING" in str(exc):
             import pytest
+
             pytest.skip("Pilot checkout is not an operator tree with architecture")
+        raise
+    except Exception as exc:  # noqa: BLE001
+        name = type(exc).__name__
+        text = str(exc)
+        if name == "ManifestError" or "no operator package selected" in text:
+            import pytest
+
+            pytest.skip("Pilot checkout has no operator replay manifest")
         raise
     assert result["ok"] is True
     assert result.get("gap", 1) == 0

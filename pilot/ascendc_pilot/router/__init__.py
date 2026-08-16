@@ -116,6 +116,12 @@ def route(text: str) -> dict[str, Any]:
             "method": "workflow_id",
         }
 
+    from ascendc_pilot.user_goal import route_natural_goal
+
+    goal = route_natural_goal(raw)
+    if goal:
+        return goal
+
     return {
         "ok": False,
         "workflow_id": None,

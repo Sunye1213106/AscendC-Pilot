@@ -18,6 +18,7 @@ from ascendc_pilot.paths import AGENT_DIR
 
 USER_GOAL_SCHEMA = "pilot-user-goal/v1"
 GOAL_TILINGKEY_FULL = "tilingkey_full_coverage_cases"
+GOAL_CE_CHANGE = "ce_change_verify_chain"
 
 # Phrases that mean "full tilingkey cases" product goal (not a single slash).
 FULL_COVERAGE_PHRASES: tuple[str, ...] = (
@@ -68,6 +69,35 @@ _WORKFLOW_TO_STEP = {
     "tg-solve": "tg_solve",
 }
 
+CE_CHANGE_PHRASES: tuple[str, ...] = (
+    "验证这次改动",
+    "按 PR 定向",
+    "影响分析并验证",
+    "ChangeTestIntent",
+    "定向生成 case",
+    "ce change",
+    "修这个 PR",
+    "这次改动怎么测",
+)
+
+CE_STEPS: tuple[dict[str, str], ...] = (
+    {"id": "ce_intent", "workflow_id": "ce-intent", "summary_zh": "问清并分解变更", "optional": "false"},
+    {"id": "ce_apply", "workflow_id": "ce-apply", "summary_zh": "按锚点改码", "optional": "false"},
+    {"id": "uo_refresh", "workflow_id": "uo-update", "summary_zh": "刷新 CodeMap", "optional": "false"},
+    {"id": "ce_impact", "workflow_id": "ce-impact", "summary_zh": "影响分析并写出 ChangeTestIntent", "optional": "false"},
+    {"id": "tg_targeted", "workflow_id": "tg-solve", "summary_zh": "定向构造并 Host Replay", "optional": "false"},
+    {"id": "ce_verify", "workflow_id": "ce-verify", "summary_zh": "按 target_reached 关闭义务", "optional": "false"},
+)
+
+_CE_WORKFLOW_TO_STEP = {
+    "ce-intent": "ce_intent",
+    "ce-apply": "ce_apply",
+    "uo-update": "uo_refresh",
+    "ce-impact": "ce_impact",
+    "tg-solve": "tg_targeted",
+    "ce-verify": "ce_verify",
+}
+
 
 def _now() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -90,6 +120,40 @@ def matches_full_coverage_intent(text: str) -> bool:
         if phrase.lower() in low or phrase in s:
             return True
     return False
+
+
+def matches_ce_change_intent(text: str) -> bool:
+    s = str(text or "").strip()
+    if not s:
+        return False
+    low = s.lower()
+    for phrase in CE_CHANGE_PHRASES:
+        if phrase.lower() in low or phrase in s:
+            return True
+    return False
+
+
+def route_natural_goal(text: str) -> dict[str, Any] | None:
+    """Map natural language to a predefined Goal Router chain (slash stays expert API)."""
+    if matches_full_coverage_intent(text):
+        return {
+            "ok": True,
+            "goal_id": GOAL_TILINGKEY_FULL,
+            "workflow_id": "tg-init",
+            "slash": "/tg-init",
+            "method": "goal_router",
+            "mode": "tilingkey_full_coverage",
+        }
+    if matches_ce_change_intent(text):
+        return {
+            "ok": True,
+            "goal_id": GOAL_CE_CHANGE,
+            "workflow_id": "ce-intent",
+            "slash": "/ce-intent",
+            "method": "goal_router",
+            "mode": "scenario_targeted",
+        }
+    return None
 
 
 def load_user_goal(project_root: Path | str) -> dict[str, Any] | None:
@@ -179,6 +243,63 @@ def create_tilingkey_full_coverage_goal(
     return write_user_goal(root, doc)
 
 
+def _materialize_steps(spec: tuple[dict[str, str], ...], current_step: str) -> list[dict[str, Any]]:
+    steps = []
+    for s in spec:
+        steps.append(
+            {
+                "id": s["id"],
+                "workflow_id": s["workflow_id"],
+                "summary_zh": s["summary_zh"],
+                "optional": s["optional"] == "true",
+                "status": "pending",
+            }
+        )
+    reached = False
+    for step in steps:
+        if step["id"] == current_step:
+            step["status"] = "in_progress"
+            reached = True
+        elif not reached and step.get("optional"):
+            step["status"] = "skipped"
+        elif not reached:
+            step["status"] = "pending"
+    return steps
+
+
+def create_ce_change_goal(
+    project_root: Path | str,
+    *,
+    architecture: str = "",
+    op_name: str = "",
+    current_step: str = "ce_intent",
+    intent_text: str = "",
+) -> dict[str, Any]:
+    root = Path(project_root).expanduser().resolve()
+    op = (op_name or root.name).strip()
+    arch = str(architecture or "").strip()
+    label = "按改动验证（ChangeTestIntent → TG targeted → Replay）"
+    if op:
+        label = f"{op} {label}"
+    if arch:
+        label = f"{op}（{arch}）按改动验证"
+    doc = {
+        "schema": USER_GOAL_SCHEMA,
+        "goal_id": GOAL_CE_CHANGE,
+        "label_zh": label,
+        "intent_text": str(intent_text or label).strip(),
+        "project": root.as_posix(),
+        "architecture": arch,
+        "op_name": op,
+        "mode": "scenario_targeted",
+        "steps": _materialize_steps(CE_STEPS, current_step),
+        "current_step": current_step,
+        "status": "active",
+        "created_at": _now(),
+    }
+    return write_user_goal(root, doc)
+
+
 def ensure_goal_for_intent(
     project_root: Path | str,
     *,
@@ -187,7 +308,19 @@ def ensure_goal_for_intent(
     workflow_id: str = "",
     op_name: str = "",
 ) -> dict[str, Any] | None:
-    """If NL matches full coverage, create or refresh goal; else None."""
+    """If NL matches a Goal Router chain, create or refresh goal; else None."""
+    if matches_ce_change_intent(intent_text):
+        existing = load_user_goal(project_root)
+        if existing and str(existing.get("goal_id")) == GOAL_CE_CHANGE and str(existing.get("status")) == "active":
+            return existing
+        step = _CE_WORKFLOW_TO_STEP.get(str(workflow_id or "").strip(), "ce_intent")
+        return create_ce_change_goal(
+            project_root,
+            architecture=architecture,
+            op_name=op_name,
+            current_step=step,
+            intent_text=intent_text,
+        )
     if not matches_full_coverage_intent(intent_text):
         # Explicit tg-* start under an existing goal still advances via complete.
         existing = load_user_goal(project_root)
@@ -245,9 +378,13 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     goal = load_user_goal(project_root)
     if not goal or str(goal.get("status")) != "active":
         return None
-    if str(goal.get("goal_id")) != GOAL_TILINGKEY_FULL:
+    goal_id = str(goal.get("goal_id") or "")
+    if goal_id == GOAL_CE_CHANGE:
+        step_id = _CE_WORKFLOW_TO_STEP.get(str(workflow_id or "").strip())
+    elif goal_id == GOAL_TILINGKEY_FULL:
+        step_id = _WORKFLOW_TO_STEP.get(str(workflow_id or "").strip())
+    else:
         return None
-    step_id = _WORKFLOW_TO_STEP.get(str(workflow_id or "").strip())
     if not step_id:
         return None
     steps = [dict(s) for s in (goal.get("steps") or []) if isinstance(s, dict)]

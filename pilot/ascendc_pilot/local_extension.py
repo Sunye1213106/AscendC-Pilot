@@ -265,3 +265,50 @@ class LocalExtensionRegistry:
                     f"{ext.implementation}: selfcheck() returned False"
                 )
         return mod
+
+
+def bootstrap_local_capability(
+    project_root: Path,
+    interface: str,
+    *,
+    architecture: str = "",
+    reason: str = "",
+) -> dict[str, Any]:
+    """Deterministic scaffold for LOCAL_CAPABILITY_REQUIRED recovery (not a new Skill)."""
+    iface = str(interface or "").strip()
+    if iface not in KNOWN_INTERFACES:
+        return {"ok": False, "error": "UNKNOWN_INTERFACE", "interface": iface}
+    from ascendc_pilot.paths import agent_root
+
+    arch = str(architecture or "").strip() or None
+    root = agent_root(project_root, arch) / "local" / _INTERFACE_DIR[iface]
+    root.mkdir(parents=True, exist_ok=True)
+    impl = root / "implementation.py"
+    manifest = root / "manifest.yaml"
+    if not impl.is_file():
+        impl.write_text(
+            (
+                f'"""Local Extension stub for {iface}. Fill required_exports then resume TG."""\n\n'
+                "def selfcheck() -> bool:\n"
+                "    return True\n"
+            ),
+            encoding="utf-8",
+        )
+    if not manifest.is_file():
+        payload = {
+            "interface": iface,
+            "version": 1,
+            "reason": {"code": reason or "LOCAL_CAPABILITY_REQUIRED"},
+            "implementation": "implementation.py",
+        }
+        manifest.write_text(yaml.safe_dump(payload, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return {
+        "ok": True,
+        "engine": "tg_local_capability_bootstrap",
+        "interface": iface,
+        "root": root.as_posix(),
+        "implementation": impl.as_posix(),
+        "write_surface": [impl.as_posix()],
+        "resume": "re-run the original TG action after schema/selfcheck/smoke",
+    }
+

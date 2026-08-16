@@ -1114,6 +1114,25 @@ def gate_tk_file(
     }
 
 
+def gate_scenario_coverage_sound(
+    project_root: Path, *, architecture: str | None = None
+) -> dict[str, Any]:
+    """Scenario-targeted certificate must be a sound conjunction, not construction-only."""
+    from ascendc_pilot.actions.scenario_certificate import evaluate_scenario_certificate
+
+    cert = evaluate_scenario_certificate(project_root, architecture=architecture)
+    return {
+        "gate": "scenario_coverage_sound",
+        "ok": bool(cert.get("ok")),
+        "message": "ok" if cert.get("ok") else "scenario certificate conjunction failed",
+        "construction_complete": cert.get("construction_complete"),
+        "replay_target_receipts_all_pass": cert.get("replay_target_receipts_all_pass"),
+        "required_harness_receipts_all_pass": cert.get("required_harness_receipts_all_pass"),
+        "source_fingerprint_fresh": cert.get("source_fingerprint_fresh"),
+        "uo_digest_fresh": cert.get("uo_digest_fresh"),
+    }
+
+
 def gate_closure_soundness(
     project_root: Path, *, architecture: str | None = None
 ) -> dict[str, Any]:
@@ -1392,6 +1411,9 @@ def run_named_gate(
             project_root, uo, op_name=op_name, architecture=arch
         ),
         "closure_soundness": lambda: gate_closure_soundness(
+            project_root, architecture=arch
+        ),
+        "scenario_coverage_sound": lambda: gate_scenario_coverage_sound(
             project_root, architecture=arch
         ),
         "impact_ledger_ready": lambda: _gate_ce_artifacts(

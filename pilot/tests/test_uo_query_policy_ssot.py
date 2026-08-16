@@ -50,9 +50,10 @@ def test_uo_query_router_owned_by_method() -> None:
     router = _text("skills/operator-analysis/routing/uo-query.md")
     method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
     skill = _text("skills/operator-analysis/SKILL.md")
-    assert "相关 ≠ 单域" in router
+    assert "compile" in router
     assert "FIRST_QUERY" in router
     assert "host_step.tasks" in router
+    assert "每轮最多" in router
     assert "FIRST_QUERY" in method
     assert "SLICE_ID" in method
     assert "kernel_launch" in method
@@ -60,6 +61,8 @@ def test_uo_query_router_owned_by_method() -> None:
     assert "routing/uo-query.md" in skill
     assert "uo-query-router/METHOD.md" not in skill
     assert "相关 ≠ 单域" not in skill
+    assert "相关 ≠ 单域" in router
+    assert "不是默认拆两路" in router
     assert "Q6" not in skill
     assert "Q7" not in skill
     assert "Q18" not in skill

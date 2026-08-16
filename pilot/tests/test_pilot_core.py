@@ -39,7 +39,7 @@ def _write(path: Path, data: object) -> None:
 
 
 def test_router_slash_only_no_nl_keywords():
-    """NL intent is agent+skill description; acp route only accepts slash / workflow id."""
+    """Generic NL stays unmatched; Goal Router only matches predefined product goals."""
     assert route("/uo-init foo").get("workflow_id") == "uo-init"
     assert route("/tg-plan").get("workflow_id") == "tg-plan"
     assert route("uo-init").get("workflow_id") == "uo-init"
@@ -52,6 +52,11 @@ def test_router_slash_only_no_nl_keywords():
     assert route("帮我建库初始化知识库").get("ok") is False
     assert route("完全无关的话").get("ok") is False
     assert route("/uo-diff").get("ok") is False
+    goal = route("建立 TilingKey 全覆盖测试")
+    assert goal.get("ok") is True and goal.get("method") == "goal_router"
+    assert goal.get("workflow_id") == "tg-init"
+    ce = route("验证这次改动")
+    assert ce.get("ok") is True and ce.get("workflow_id") == "ce-intent"
     op = route("/operator /uo-init")
     assert op.get("ok") is True and op.get("workflow_id") == "uo-init" and op.get("via") == "operator"
     assert route("/operator 帮我建库").get("ok") is False

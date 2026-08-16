@@ -136,6 +136,48 @@ void SetSplitCore() {
     assert any(str(s.get("name") or "") == "fusedOuter" for s in aliases)
 
 
+def test_occupancy_multi_hop_aliases_block_outer(tmp_path: Path) -> None:
+    root = tmp_path / "split"
+    host = root / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (root / "op_kernel" / "arch35").mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        """
+void SetSplitCore() {
+  int64_t fusedOuter = b * n2 * g;
+  int64_t blockFactor = (fusedOuter + aicNum - 1) / aicNum;
+  int64_t blockOuter = (fusedOuter + blockFactor - 1) / blockFactor;
+  td->blockOuter = blockOuter;
+}
+""",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="split", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TF_blockOuter",
+            kind=EntityKind.TILING_FIELD,
+            name="blockOuter",
+            attrs={
+                "owner": "SplitParams",
+                "host_writer_sites": [{
+                    "file": "op_host/arch35/tiling.cpp",
+                    "line": 6,
+                    "receiver": "td",
+                    "expression": "td->blockOuter",
+                    "mode": "direct",
+                }],
+            },
+        )
+    )
+    enrich_value_defining_sites(cm, root, architecture="arch35")
+    field = cm.entities["TF_blockOuter"]
+    aliases = field.attrs.get("local_aliases") or []
+    names = {str(s.get("name") or "") for s in aliases}
+    assert "fusedOuter" in names
+    assert "blockFactor" in names
+
+
 def test_field_query_exposes_fused_outer_on_candidates(tmp_path: Path) -> None:
     from uo_init.store.writer import write_codemap
     from uo_init.uo_query import open_query

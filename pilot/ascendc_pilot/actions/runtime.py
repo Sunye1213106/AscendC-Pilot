@@ -72,12 +72,15 @@ def _arch_for(project_root: Path, state: dict[str, Any] | None = None) -> str:
 
 def _write_active_action(project_root: Path, payload: dict[str, Any]) -> Path:
     """Persist current action context for OpenCode plugin / subagent writes."""
+    from ascendc_pilot.authorize.lease import active_action_path
+
     arch = str(payload.get("architecture") or "").strip() or None
     try:
         arch = discover_arch(project_root) if arch is None else require_architecture(arch)
     except ValueError:
         arch = None
-    path = agent_root(project_root, arch) / "state" / "active_action.yaml"
+    run_id = str(payload.get("run_id") or "").strip()
+    path = active_action_path(project_root, run_id=run_id, arch=arch)
     _dump(path, payload)
     return path
 
@@ -398,6 +401,23 @@ def build_task_stub(
                 "Hard stop: this Task answers ONLY the FOCUS / SLICE_ID above. "
                 "Ignore other parts of prompt.md User question."
             )
+        elif action_id == "kb_lookup" and "FIRST_QUERY:" not in q:
+            try:
+                from uo_init.query.plan import compile_query
+
+                plan = compile_query(q, architecture=architecture)
+                first = (plan.get("first_query") or [{}])[0]
+                cli = str(first.get("cli") or "").strip()
+                if cli:
+                    if project_root and "--project" not in cli:
+                        cli = f"{cli} --project {project_root}"
+                    lines.append(f"FIRST_QUERY: {cli}")
+                    lines.append(
+                        "Run FIRST_QUERY as written. If empty, retry once from hint; "
+                        "then return PARTIAL. Do not invent --mode symbols/fields/callers."
+                    )
+            except Exception:
+                pass
     # Public: any Action that lists *.summary.yaml in dispatch read gets MUST_READ_ORDER.
     from ascendc_pilot.ir_summary import large_ir_must_read_order_lines
 
@@ -1223,7 +1243,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         role_id=role_id,
         execution_mode=str(action.get("execution_mode") or "") or None,
     )
-    existing_active = _load(agent_root(project_root, arch) / "state" / "active_action.yaml")
+    from ascendc_pilot.authorize.lease import active_action_path
+
+    existing_active = _load(active_action_path(project_root, run_id=run_id, arch=arch))
     existing_sdir = Path(str(existing_active.get("session_dir") or "") or "")
     reuse_prepared = (
         execution_mode != EXECUTION_DETERMINISTIC
@@ -1782,13 +1804,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 from ascendc_pilot.authorize.lease import load_lease, lease_path
                 import yaml as _yaml
 
-                cur = load_lease(project_root)
+                cur = load_lease(project_root, run_id=run_id)
                 if cur and str(cur.get("status") or "") == "active":
                     ar = list(cur.get("allowed_read_paths") or [])
                     if refs_glob not in ar:
                         ar.append(refs_glob)
                         cur["allowed_read_paths"] = ar
-                        lease_path(project_root).write_text(
+                        lease_path(project_root, run_id=run_id).write_text(
                             _yaml.safe_dump(cur, allow_unicode=True, sort_keys=False),
                             encoding="utf-8",
                         )
@@ -1944,7 +1966,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
         from ascendc_pilot.human_confirm import (
             build_ask,
+            grill_should_ask,
             interaction_kind,
+            materialize_primary_decision,
             primary_interactive_steps,
         )
         from ascendc_pilot.human_interaction import (
@@ -1957,6 +1981,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         voice_state = dict(_load_state_for_voice(project_root) or state or {})
         if not voice_state.get("workflow_id"):
             voice_state["workflow_id"] = wid
+        if action_id in {"grill_confirm", "human_confirm"} and wid == "ce-intent":
+            if not grill_should_ask(project_root, voice_state, action_id=action_id):
+                materialized = materialize_primary_decision(project_root, action_id)
+                fin = finalize_action(project_root, action_id, engine_result=materialized)
+                result["auto_skip_human_gate"] = True
+                result["needs_human_decision"] = False
+                result["auto_finalize"] = True
+                result["finalize"] = fin
+                result["ok"] = bool(fin.get("ok"))
+                result["message_zh"] = "无实现分叉，已跳过人机确认。"
+                return result
         ask = build_ask(
             project_root,
             voice_state,
@@ -2186,6 +2221,7 @@ def _revoke_lease_after_finalize(
     *,
     reason: str,
     touch_active_action: bool,
+    run_id: str = "",
 ) -> None:
     try:
         from ascendc_pilot.authorize.lease import revoke_active_lease
@@ -2194,6 +2230,7 @@ def _revoke_lease_after_finalize(
             project_root,
             reason=reason,
             touch_active_action=touch_active_action,
+            run_id=run_id,
         )
     except Exception:  # noqa: BLE001
         pass
@@ -2210,7 +2247,7 @@ def _finalize_bind_session_lease(
     sdir: Path,
 ) -> dict[str, Any] | None:
     """Return an error payload if prepare session / active_action / lease binding fails."""
-    from ascendc_pilot.authorize.lease import is_lease_revoked, load_lease
+    from ascendc_pilot.authorize.lease import active_action_path, is_lease_revoked, load_lease
 
     prepare_nonce = str(session.get("prepare_nonce") or "").strip()
     if not prepare_nonce:
@@ -2257,7 +2294,7 @@ def _finalize_bind_session_lease(
             "current_phase": phase,
         }
 
-    active = _load(agent_root(project_root) / "state" / "active_action.yaml")
+    active = _load(active_action_path(project_root, run_id=run_id))
     if not isinstance(active, dict) or not active.get("action_id"):
         return {
             "ok": False,
@@ -2303,7 +2340,7 @@ def _finalize_bind_session_lease(
             "message_zh": "active_action.session_dir 与期望 session 不一致",
         }
 
-    lease = load_lease(project_root)
+    lease = load_lease(project_root, run_id=run_id)
     if not lease:
         return {
             "ok": False,
@@ -2311,7 +2348,7 @@ def _finalize_bind_session_lease(
             "message_zh": "当前无有效 lease；请重新 prepare",
         }
     if str(lease.get("status") or "").lower() == "revoked" or is_lease_revoked(
-        project_root, session_lease
+        project_root, session_lease, run_id=run_id
     ):
         return {
             "ok": False,
@@ -2489,13 +2526,14 @@ def finalize_action(
     if bind_err is not None:
         from ascendc_pilot.authorize.lease import load_lease
 
-        cur = load_lease(project_root)
+        cur = load_lease(project_root, run_id=run_id)
         session_lease = str(session.get("lease_id") or "").strip()
         if cur and session_lease and str(cur.get("lease_id") or "") == session_lease:
             _revoke_lease_after_finalize(
                 project_root,
                 reason="finalize_denied",
                 touch_active_action=True,
+                run_id=run_id,
             )
         return bind_err
 
@@ -2765,6 +2803,7 @@ def finalize_action(
             project_root,
             reason="finalize_ok",
             touch_active_action=False,
+            run_id=run_id,
         )
         append_event(
             project_root,

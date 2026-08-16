@@ -14,16 +14,25 @@ except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 
-def _ticket_dir(project_root: Path) -> Path:
+def _ticket_dir(project_root: Path, *, run_id: str = "") -> Path:
+    from ascendc_pilot.authorize.lease import run_control_dir
     from ascendc_pilot.paths import agent_root
 
+    rid = str(run_id or "").strip()
+    if rid:
+        try:
+            d = run_control_dir(project_root, run_id=rid) / "dispatch_tickets"
+            d.mkdir(parents=True, exist_ok=True)
+            return d
+        except ValueError:
+            pass
     d = agent_root(project_root) / "state" / "dispatch_tickets"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def _write_ticket(project_root: Path, doc: dict[str, Any]) -> None:
-    path = _ticket_dir(project_root) / f"{doc['ticket_id']}.yaml"
+    path = _ticket_dir(project_root, run_id=str(doc.get("run_id") or "")) / f"{doc['ticket_id']}.yaml"
     if yaml is not None:
         path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
     else:
@@ -39,10 +48,33 @@ def issue_dispatch_ticket(
     lease_id: str = "",
     session_dir: str = "",
     task_prompt_stub: str = "",
+    session_id: str = "",
+    workflow_id: str = "",
+    prepare_nonce: str = "",
+    uo_digest: str = "",
+    source_revision: str = "",
 ) -> dict[str, Any]:
     """Create a one-shot ticket for Host Session Driver (status=open)."""
+    from ascendc_pilot.occupancy import current_session_id, current_workflow_id, live_digest_for
+
     raw = f"{run_id}:{action_id}:{actor_id}:{time.time_ns()}"
     ticket_id = "dxt_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+    sid = str(session_id or current_session_id() or "").strip()
+    wid = str(workflow_id or current_workflow_id() or "").strip()
+    digest = str(uo_digest or "").strip()
+    if not digest:
+        try:
+            digest = live_digest_for(project_root) or ""
+        except Exception:  # noqa: BLE001
+            digest = ""
+    revision = str(source_revision or "").strip()
+    if not revision:
+        try:
+            from testcase_agent.closure.ledger import baseline_fingerprint
+
+            revision = str((baseline_fingerprint(project_root) or {}).get("source_revision") or "")
+        except Exception:  # noqa: BLE001
+            revision = ""
     doc = {
         "ticket_id": ticket_id,
         "run_id": run_id,
@@ -50,6 +82,11 @@ def issue_dispatch_ticket(
         "actor_id": actor_id,
         "lease_id": lease_id,
         "session_dir": session_dir,
+        "session_id": sid,
+        "workflow_id": wid,
+        "prepare_nonce": prepare_nonce,
+        "uo_digest": digest,
+        "source_revision": revision,
         "status": "open",
         "created_at": time.time(),
         "task_prompt_stub_sha256": hashlib.sha256(
@@ -66,17 +103,42 @@ def load_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any]:
     tid = (ticket_id or "").strip()
     if not tid:
         return {}
-    path = _ticket_dir(project_root) / f"{tid}.yaml"
-    if not path.is_file():
-        return {}
+    from ascendc_pilot.paths import runs_root
+
+    candidates = [
+        _ticket_dir(project_root) / f"{tid}.yaml",
+    ]
     try:
-        if yaml is not None:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        else:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
+        from ascendc_pilot.state import load_state
+
+        rid = str((load_state(project_root) or {}).get("run_id") or "")
+        if rid:
+            candidates.insert(0, _ticket_dir(project_root, run_id=rid) / f"{tid}.yaml")
     except Exception:  # noqa: BLE001
-        return {}
+        pass
+    try:
+        root = runs_root(project_root)
+        if root.is_dir():
+            for control in root.glob("*/control/dispatch_tickets"):
+                candidates.append(control / f"{tid}.yaml")
+    except Exception:  # noqa: BLE001
+        pass
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path)
+        if key in seen or not path.is_file():
+            continue
+        seen.add(key)
+        try:
+            if yaml is not None:
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            else:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and data:
+                return data
+        except Exception:  # noqa: BLE001
+            continue
+    return {}
 
 
 def claim_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any]:
@@ -553,6 +615,8 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             lease_id=str(prep.get("lease_id") or ""),
             session_dir=str(prep.get("session_dir") or ""),
             task_prompt_stub=str(prep.get("task_prompt_stub") or ""),
+            prepare_nonce=str(prep.get("prepare_nonce") or ""),
+            workflow_id=str(prep.get("workflow_id") or ""),
         )
         actor = str(prep.get("actor_id") or actor_id)
         tasks = _compact_dispatch_tasks(prep.get("dispatch_tasks"))

@@ -27,8 +27,16 @@ def _list_arch_candidates(project_root: Path) -> list[str]:
     )
 
 
-def _active_action_payload(project_root: Path, *, arch: str | None) -> dict[str, Any]:
-    path = state_root(project_root, arch=arch) / "active_action.yaml"
+def _active_action_payload(
+    project_root: Path, *, arch: str | None, run_id: str = ""
+) -> dict[str, Any]:
+    from ascendc_pilot.authorize.lease import active_action_path
+
+    path = active_action_path(project_root, run_id=run_id, arch=arch)
+    if not path.is_file():
+        legacy = state_root(project_root, arch=arch) / "active_action.yaml"
+        if legacy.is_file():
+            path = legacy
     if not path.is_file():
         return {"path": str(path), "action_id": "", "actor_id": "", "status": ""}
     try:
@@ -106,8 +114,14 @@ def build_host_context(
 
     base["architecture"] = arch
     try:
+        from ascendc_pilot.occupancy import current_session_id, get_session_binding
+
+        sid = current_session_id()
+        binding = get_session_binding(root, sid) if sid else None
+        bound_run = str((binding or {}).get("run_id") or "").strip()
+        bound_wid = str((binding or {}).get("workflow_id") or "").strip()
         wf_path = workflow_state_path(root, arch=arch)
-        aa = _active_action_payload(root, arch=arch)
+        aa = _active_action_payload(root, arch=arch, run_id=bound_run)
     except ValueError as exc:
         base["error"] = "ARCHITECTURE_MISSING_IN_RUN_STATE"
         base["message_zh"] = str(exc)
@@ -119,23 +133,24 @@ def build_host_context(
     base["actor_id"] = str(aa.get("actor_id") or "")
     base["active_action_status"] = str(aa.get("status") or "")
 
-    pointer_wid = ""
-    try:
-        from ascendc_pilot.active_run import read_active_run
-
-        pointer = read_active_run(root) or {}
-        if str(pointer.get("architecture") or "") in {"", arch}:
-            pointer_wid = str(pointer.get("workflow_id") or "")
-    except Exception:  # noqa: BLE001
-        pointer_wid = ""
-    state = load_state(root, arch=arch, workflow_id=pointer_wid) or {}
+    state = load_state(root, arch=arch, workflow_id=bound_wid, session_id=sid) or {}
+    if not state:
+        state = load_state(root, arch=arch) or {}
     if not state:
         base["error"] = "NO_ACTIVE_WORKFLOW"
         base["message_zh"] = f"no workflow.yaml under .ascendc-pilot/{arch}/state"
         return base
 
+    run_id = bound_run or str(state.get("run_id") or "")
+    if run_id:
+        aa = _active_action_payload(root, arch=arch, run_id=run_id)
+        base["active_action_path"] = str(aa["path"])
+        base["action_id"] = str(aa.get("action_id") or "")
+        base["actor_id"] = str(aa.get("actor_id") or "")
+        base["active_action_status"] = str(aa.get("status") or "")
+
     base["ok"] = True
-    base["run_id"] = str(state.get("run_id") or "")
+    base["run_id"] = run_id or str(state.get("run_id") or "")
     base["workflow_id"] = str(state.get("workflow_id") or "")
     base["phase"] = str(state.get("phase") or "")
     base["status"] = str(state.get("status") or "")

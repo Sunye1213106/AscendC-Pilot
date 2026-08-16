@@ -51,6 +51,11 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
         "ce/impact/ledger.yaml",
     ],
     "ce_certificate_sound": ["ce/verify/certificate.yaml"],
+    "scenario_coverage_sound": [
+        "tg/closure/scenario_certificate.yaml",
+        "tg/closure/scenarios/construct.yaml",
+        "tg/closure/scenarios/harness_results.yaml",
+    ],
 }
 
 _EXTERNAL_ROOTS = (

@@ -60,6 +60,9 @@ def _repo_root() -> Path:
 
 
 def _operator_root(explicit: str | Path | None = None) -> Path:
+    snap = (os.environ.get("ASCENDC_SNAPSHOT_WORKSPACE") or "").strip()
+    if explicit is None and snap:
+        return Path(snap).expanduser().resolve()
     if explicit is not None:
         return Path(explicit).expanduser().resolve()
     state_env = os.environ.get(ENV_STATE)

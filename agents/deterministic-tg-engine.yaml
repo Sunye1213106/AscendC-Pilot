@@ -23,6 +23,7 @@ write_scopes:
 - pilot:tg/**
 - pilot:runs/**
 - pilot:runs/**/actions/**
+- pilot:local/**
 - pilot:context/pilot_params.yaml
 forbidden:
 - modify_pilot_state

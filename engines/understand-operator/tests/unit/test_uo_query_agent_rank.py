@@ -582,3 +582,110 @@ def test_search_diversifies_functions_by_file(tmp_path: Path) -> None:
     files = {str(row.get("file") or "").replace("\\", "/") for row in rows}
     assert "op_host/a.cpp" in files
     assert "op_host/b.cpp" in files
+
+
+def test_search_exact_ident_outranks_getter_and_vector_api(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="FN_get",
+            kind=EntityKind.FUNCTION,
+            name="get_castBufferLen",
+            file="op_host/tiling.cpp",
+            line_start=10,
+            status="extracted",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="OP_cast",
+            kind=EntityKind.OPERATION,
+            name="Cast",
+            attrs={"callee": "Cast"},
+            file="op_kernel/arch35/block_vec.h",
+            line_start=20,
+            status="extracted",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="OP_fused_vf",
+            kind=EntityKind.OPERATION,
+            name="FusedMulDstAdd",
+            attrs={"callee": "FusedMulDstAdd"},
+            file="op_kernel/vector_api/vf.h",
+            line_start=30,
+            status="extracted",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="VAR_fused",
+            kind=EntityKind.VARIABLE,
+            name="fusedOuter",
+            file="op_host/arch35/tiling.cpp",
+            line_start=40,
+            status="extracted",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    cast_rows = q.search("Cast", limit=8)
+    assert cast_rows
+    assert str(cast_rows[0]["name"]) == "Cast"
+    fused_rows = q.search("fused", limit=8)
+    assert fused_rows
+    assert str(fused_rows[0]["name"]) == "fusedOuter"
+    assert "vector_api" not in str(fused_rows[0].get("file") or "").replace("\\", "/")
+
+
+def test_locate_unique_macro_is_answerable(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="MACRO_orig",
+            kind=EntityKind.MACRO,
+            name="ORIG_DTYPE_QUERY",
+            file="op_kernel/arch35/template_tiling_key.h",
+            line_start=10,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    out = q.aggregate_locate("ORIG_DTYPE_QUERY")
+    assert out["count"] == 1
+    assert out["locations"][0]["kind"] == EntityKind.MACRO.value
+    assert (out.get("coverage") or {}).get("answerable") is True
+
+
+def test_kernel_runtime_if_field_is_branch(tmp_path: Path) -> None:
+    from uo_init.passes.kernel_tiling_closure import enrich_kernel_field_branches
+
+    root = tmp_path / "toy"
+    kernel = root / "op_kernel" / "arch35"
+    kernel.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (kernel / "entry.h").write_text(
+        "void InitConst() {\n"
+        "  if (constInfo.enablePreSfmg) {\n"
+        "    runPre();\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TF_pre",
+            kind=EntityKind.TILING_FIELD,
+            name="enablePreSfmg",
+            file="op_host/td.h",
+            line_start=1,
+            status="confirmed",
+        )
+    )
+    minted = enrich_kernel_field_branches(cm, root, architecture="arch35")
+    assert minted >= 1
+    names = [e.name for e in cm.by_kind(EntityKind.BRANCH)]
+    assert "enablePreSfmg" in names

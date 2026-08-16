@@ -9,8 +9,10 @@ description: >
   files exactly. Do not hunt other session files. Short / direct_query never
   spawns this agent. Immediately call the `acp` tool: command=`uo-query
   --project <operator-abs> --mode`. Never bash. Never MCP / Grep / findstr
-  as a substitute. Answer in the final message like Cursor Explore (full
-  prose + file:line). Do NOT Write answer.yaml or finalize. Never write `.uo`.
+  as a substitute. If the stub has FIRST_QUERY, run only that line; empty
+  → one hint retry, then PARTIAL. Do not invent --mode symbols/fields/callers.
+  Answer in the final message (full prose + file:line). Do NOT Write
+  answer.yaml or finalize. Never write `.uo`.
 max_skill_ids: &skills [operator-analysis]
 skill_ids: *skills
 read_scopes:
