@@ -112,10 +112,28 @@ def agent_read_scopes(agent_id: str, project_root: Path | None = None) -> list[s
     return [str(x) for x in (meta.get("read_scopes") or [])]
 
 
-def agent_forbidden(agent_id: str, project_root: Path | None = None) -> list[str]:
-    """Return forbidden tags declared on the agent YAML (may include unmapped tags)."""
+def agent_skill_ceiling(agent_id: str, project_root: Path | None = None) -> list[str]:
+    """Agent max domain ceiling (``max_skill_ids`` or legacy ``skill_ids``)."""
     meta = load_agent_meta(agent_id, str(project_root) if project_root else None)
-    return [str(x).strip() for x in (meta.get("forbidden") or []) if str(x).strip()]
+    raw = meta.get("max_skill_ids") or meta.get("skill_ids") or []
+    out: list[str] = []
+    for x in raw:
+        s = str(x).strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def agent_forbidden(agent_id: str, project_root: Path | None = None) -> list[str]:
+    """Union of legacy ``forbidden`` plus machine/behavioral constraint tags."""
+    meta = load_agent_meta(agent_id, str(project_root) if project_root else None)
+    tags: list[str] = []
+    for key in ("forbidden", "machine_constraints", "behavioral_constraints"):
+        for x in meta.get(key) or []:
+            s = str(x).strip()
+            if s and s not in tags:
+                tags.append(s)
+    return tags
 
 
 def agent_machine_constraints(agent_id: str, project_root: Path | None = None) -> list[str]:
@@ -162,6 +180,29 @@ def forbidden_blocks_write(
             return "FORBIDDEN_MODIFY_UO_PRODUCT"
         if norm.startswith("uo/summary/") or norm.startswith("uo/checks/"):
             return "FORBIDDEN_MODIFY_UO_PRODUCT"
+    if "write_uo_checks" in tags and (
+        norm.startswith("uo/checks/") or "/uo/checks/" in f"/{norm}"
+    ):
+        return "FORBIDDEN_WRITE_UO_CHECKS"
+    if "write_canonical_uo_ir" in tags:
+        if norm.startswith("uo/ir/") and "gap_investigation" not in norm:
+            return "FORBIDDEN_WRITE_CANONICAL_UO_IR"
+    if "write_canonical_ce_plan" in tags:
+        if any(norm.startswith(p) for p in ("ce/intent/", "ce/impact/", "ce/scenarios/", "ce/verify/")):
+            return "FORBIDDEN_WRITE_CANONICAL_CE_PLAN"
+    if "write_excluded_set" in tags:
+        if "excluded" in Path(norm).name.lower() or "/excluded" in f"/{norm}":
+            return "FORBIDDEN_WRITE_EXCLUDED_SET"
+    if "write_uo_formal_products" in tags:
+        if norm.startswith("tg/") and not norm.startswith("tg/init/audit_report"):
+            return "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS"
+    if "rewrite_deterministic_ledger" in tags:
+        name = Path(norm).name.lower()
+        if name in {"ledger.yaml", "obligations.yaml", "r.txt", "open.txt", "excluded.txt"}:
+            return "FORBIDDEN_REWRITE_DETERMINISTIC_LEDGER"
+    if "apply_semantic_gap_patch" in tags:
+        if "unresolved.yaml" in norm or "semantic_gap" in norm or "gap_patch" in norm:
+            return "FORBIDDEN_APPLY_SEMANTIC_GAP_PATCH"
     return None
 
 

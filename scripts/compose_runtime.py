@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
+import stat
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -47,14 +50,9 @@ COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("language", "language.md"),
 )
 
-# Child agents do not receive Host Session Driver / primary routing packs.
-CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
-    ("evidence", "evidence-invariants.md"),
-    ("code-access", "code-access-invariants.md"),
-    ("authority", "authority.md"),
-    ("output-quality", "output-quality.md"),
-    ("language", "language.md"),
-)
+# Child agents do not receive Host Session Driver / policy invariant packs.
+# Identity + tool ceiling + stub runtime contract is enough; METHOD owns how.
+CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = ()
 
 # True Skills (model-facing expertise). Workflow slash entries are generated shells.
 COGNITIVE_SKILL_IDS: tuple[str, ...] = (
@@ -112,6 +110,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'CodeMap-backed review: quick / file / PR',
         "description": (
             "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
+            "Spec 轴对照需求，Standards 轴对照仓规范，两轴分开写。"
             "假设检验；证据先 CodeMap。Pilot 管 scope 到 summary；用 `pilot_run`。"
         ),
     },
@@ -133,8 +132,22 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "ce-intent": {
         "command_description": 'Locate change targets without a diff / 无 diff 时定位改哪里',
         "description": (
-            "无 diff 时定位改哪里：先查 CodeMap 再下结论，冻结变更目标。"
-            "用户要明确改什么/测什么时使用；用 `pilot_run`。"
+            "无 diff 时定位改哪里：需求还没问清时先 grilling 问清范围、不做的事和验收，再分解特性，"
+            "然后查 CodeMap 下结论，冻结变更目标。不要对着一句话空想。用户要明确改什么/测什么时使用；用 `pilot_run`。"
+        ),
+    },
+    "ce-apply": {
+        "command_description": 'Apply confirmed intent to operator source / 按已确认意图改算子源码',
+        "description": (
+            "意图已确认且锚点非空时，按锚点改算子源码（op_host/op_kernel），自动双轴审查。"
+            "不签发证书；精度/性能仍走 /ce-impact → /ce-verify。用 `pilot_run`。"
+        ),
+    },
+    "ce-handoff": {
+        "command_description": 'Write CE session handoff / 写会话交接',
+        "description": (
+            "把当前 CE 会话压成 ce/session_handoff.md：只引用已有产物路径，写清下一跳 slash。"
+            "上下文将满、换窗口或交给同事时使用。不占 CE 锁。用 `pilot_run`。"
         ),
     },
     "tg-init": {
@@ -331,10 +344,16 @@ def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
     """Concatenate short invariant markdown for model context (not full POLICY.md)."""
     root = repo / "pilot" / "policies" / "invariants"
     files = COMPOSE_INVARIANT_FILES if for_primary else CHILD_INVARIANT_FILES
-    parts: list[str] = [
-        "Follow pilot policies (short invariants). Full text: `pilot/policies/*/POLICY.md`.",
-        "",
-    ]
+    if for_primary:
+        parts: list[str] = [
+            "Follow pilot policies (short invariants). Full text: `pilot/policies/*/POLICY.md`.",
+            "",
+        ]
+    else:
+        parts = [
+            "Read task stub pointers. Work only on this Action. Do not finalize.",
+            "",
+        ]
     start_line = _start_requirements_line(repo)
     for _label, fname in files:
         path = root / fname
@@ -908,7 +927,11 @@ _REPO_SEARCH_BASH_ALLOWS: dict[str, str] = {
     "findstr *": "allow",
     "Select-String *": "allow",
     "sls *": "allow",
+    "tree": "allow",
+    "tree *": "allow",
 }
+
+_SEARCH_CAPABILITIES = frozenset({"source-navigation", "readonly-source-search"})
 
 
 def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, str]:
@@ -934,8 +957,6 @@ def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, st
         "dir": "allow",
         "dir *": "allow",
         "pwd": "allow",
-        "tree": "allow",
-        "tree *": "allow",
         "Get-ChildItem *": "allow",
         "gci *": "allow",
         "Get-Item *": "allow",
@@ -1010,7 +1031,7 @@ def _agent_allow_repo_search(repo: Path, agent_meta: dict[str, Any]) -> bool:
     if aid == "uo-query" or "free_repo_search" in tags or "no_free_repo_search" in tags:
         return False
     caps = _agent_capability_union(repo, aid)
-    return bool(caps & {"source-navigation", "readonly-source-search"})
+    return bool(caps & _SEARCH_CAPABILITIES)
 
 
 def _host_remap_skill_paths(text: str, *, host: str) -> str:
@@ -1062,6 +1083,8 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     forbidden_tags = [str(x) for x in (agent_meta.get("forbidden") or [])]
     machine = [str(x) for x in (agent_meta.get("machine_constraints") or [])]
     behavioral = [str(x) for x in (agent_meta.get("behavioral_constraints") or [])]
+    if not forbidden_tags:
+        forbidden_tags = machine + behavioral
     seen_constraints: list[str] = []
     for x in forbidden_tags + machine + behavioral:
         if x and x not in seen_constraints:
@@ -1102,14 +1125,20 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "grep": grep_perm,
             **host_read_perm,
             "task": "allow",
+            "acp": "allow",
             "edit": edit_perm if write_scopes else {"*": "ask"},
             "write": write_perm if write_scopes else {"*": "ask"},
         }
     else:
+        # Fail-closed: `*` denies MCP `{server}_{tool}` names and unknown natives.
         front["mode"] = "subagent"
+        child_bash: Any = {"*": "deny"} if aid == "uo-query" else bash_perm
         front["permission"] = {
-            "bash": bash_perm,
+            "*": "deny",
+            "bash": child_bash,
+            "acp": "allow",
             "grep": grep_perm,
+            "glob": "allow" if allow_repo_search else "deny",
             **host_read_perm,
             "edit": edit_perm,
             "write": write_perm,
@@ -1117,6 +1146,8 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "skill": "deny",
             "webfetch": "deny",
             "websearch": "deny",
+            "lsp": "deny",
+            "todowrite": "deny",
         }
         tools: dict[str, Any] = {"skill": False}
         if not allow_repo_search:
@@ -1126,11 +1157,11 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             tools["bash"] = False
             tools["pilot_run"] = False
         front["tools"] = tools
-        if not allow_repo_search:
-            front["permission"]["glob"] = "deny"
 
     if aid == "uo-query":
         runtime = """## Runtime Contract
+
+execution_variant = delegated_query. Short / direct_query never spawns this agent.
 
 If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not hunt any other session files.
 
@@ -1138,7 +1169,7 @@ If the Task stub names `prompt` / `method` / `bundle` pointers, read those files
 2. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
 3. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
 
-Short query is Primary-only (`acp uo-query` stdout). This agent is the deep / delegated variant.
+Short query is Primary-only (`acp uo-query` stdout).
 """
     else:
         runtime = """## Runtime Contract
@@ -1182,6 +1213,31 @@ You must not:
     return _dump_frontmatter(front) + "\n" + body
 
 
+def _rmtree(path: Path) -> None:
+    """Remove a tree. Windows often raises WinError 145 if a file is briefly locked."""
+    if not path.exists():
+        return
+
+    def _onerror(func: Any, p: str, _exc: Any) -> None:
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+
+    last: OSError | None = None
+    for attempt in range(5):
+        try:
+            shutil.rmtree(path, onerror=_onerror)
+            return
+        except OSError as exc:
+            last = exc
+            time.sleep(0.05 * (attempt + 1))
+    shutil.rmtree(path, ignore_errors=True)
+    if path.exists():
+        raise last or OSError(f"could not remove {path}")
+
+
 def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict[str, Any]:
     paths = _repo_paths(repo)
     skills = paths["skills"]
@@ -1199,7 +1255,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
 
     if out_root.exists():
-        shutil.rmtree(out_root)
+        _rmtree(out_root)
     out_skills = out_root / "skills"
     out_agents = out_root / "agents"
     out_prompts = out_root / "prompts"
@@ -1269,7 +1325,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             if csrc.is_dir():
                 cdst = dest / "capabilities" / cid
                 if cdst.exists():
-                    shutil.rmtree(cdst)
+                    _rmtree(cdst)
                 shutil.copytree(csrc, cdst)
         compiled.append(f"{host}/skills/{wid}")
 
@@ -1280,7 +1336,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     )
     if host == "opencode":
         if cognitive_out.exists():
-            shutil.rmtree(cognitive_out)
+            _rmtree(cognitive_out)
         cognitive_out.mkdir(parents=True, exist_ok=True)
     for skill_id in COGNITIVE_SKILL_IDS:
         src = skills / skill_id
@@ -1288,7 +1344,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             continue
         dst = cognitive_out / skill_id
         if dst.exists():
-            shutil.rmtree(dst)
+            _rmtree(dst)
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns("README.md"))
         skill_md = dst / "SKILL.md"
         text = skill_md.read_text(encoding="utf-8")
@@ -1321,7 +1377,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             if pdir.is_dir():
                 d = pol_dst / pdir.name
                 if d.exists():
-                    shutil.rmtree(d)
+                    _rmtree(d)
                 shutil.copytree(pdir, d)
 
     # Agents — skip kind=deterministic_engine (authorize identity only; not LLM-spawned).
@@ -1340,7 +1396,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     if ref_src.is_dir():
         ref_dst = out_agents / "references"
         if ref_dst.exists():
-            shutil.rmtree(ref_dst)
+            _rmtree(ref_dst)
         shutil.copytree(ref_src, ref_dst)
 
     # Prompts

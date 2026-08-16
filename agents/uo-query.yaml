@@ -4,14 +4,15 @@ name_zh: UO CodeMap 只读查询
 role: readonly_analyst
 mode: subagent
 description: >
-  Readonly CodeMap lookup. If the Task stub names `prompt` / `method` /
-  `bundle` pointers, read those files exactly. Do not hunt other session
-  files. Short questions never spawn this agent.
-  Immediately call the `acp` tool: command=`uo-query --project <operator-abs>
-  --mode`.   Never bash. Never MCP / Grep / findstr as a substitute.
-  Answer in the final message like Cursor Explore (full prose + file:line).
-  Do NOT Write answer.yaml or finalize. Never write `.uo`.
-skill_ids: [operator-analysis]
+  Readonly CodeMap lookup. execution_variant=delegated_query.
+  If the Task stub names `prompt` / `method` / `bundle` pointers, read those
+  files exactly. Do not hunt other session files. Short / direct_query never
+  spawns this agent. Immediately call the `acp` tool: command=`uo-query
+  --project <operator-abs> --mode`. Never bash. Never MCP / Grep / findstr
+  as a substitute. Answer in the final message like Cursor Explore (full
+  prose + file:line). Do NOT Write answer.yaml or finalize. Never write `.uo`.
+max_skill_ids: &skills [operator-analysis]
+skill_ids: *skills
 read_scopes:
 - pilot:uo/**
 - pilot:runs/**
@@ -20,13 +21,6 @@ read_scopes:
 - method:skills/operator-analysis/**
 write_scopes: []
 machine_constraints:
-- modify_pilot_state
-- declare_workflow_passed
-- write_outside_declared_scope
-- modify_uo_product
-- write_uo_checks
-- no_free_repo_search
-forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope

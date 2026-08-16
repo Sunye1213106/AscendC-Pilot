@@ -27,6 +27,13 @@
 
 每次结束时三份文件都必须存在且非空：`ce/review/bug_report.yaml`、`functional_report.yaml`、`index.yaml`。
 
+两轴分开写，禁止合成一个「LGTM」：
+
+- **Spec**（是不是需求要的）：对照 `ce/intent/intent.yaml` 与 `feature_decomposition.yaml`。写入 `functional_report.yaml`。没有意图时标明「无需求」，只做 Standards。
+- **Standards**（是不是仓规范）：对照 `references/ascendc-checks.md`、跨层契约、H0/H1。写入 `bug_report.yaml`。
+
+PR 入口必须有 diff。
+
 - `scope`：确认入口、侧别、CodeMap 邻域；PR 确认 diff。另两份可写空列表骨架。
 - `review`：填写两份 report。快速入口每条 finding 保持短。
 - `summary`：更新 index。快速入口 summary 不超过几行。

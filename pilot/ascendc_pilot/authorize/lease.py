@@ -317,6 +317,36 @@ def lease_allows_write_path(lease: dict[str, Any], rel_posix: str) -> dict[str, 
     return {"ok": True}
 
 
+def lease_allows_source_write(lease: dict[str, Any], rel_posix: str) -> dict[str, Any]:
+    """Operator-source write check (outside .ascendc-pilot).
+
+    Requires a ``source:`` write pattern. Confirmed source roots tighten further
+    when the lease declares them.
+    """
+    from ascendc_pilot.agents_registry import split_scope_ns
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    rel = str(rel_posix or "").replace("\\", "/").lstrip("/")
+    source_pats: list[str] = []
+    for raw in lease.get("allowed_write_paths") or []:
+        ns, pattern = split_scope_ns(str(raw))
+        if ns == "source" and pattern:
+            source_pats.append(pattern)
+    if not source_pats:
+        return {"ok": False, "error": "ACTION_SOURCE_WRITE_DENIED", "path": rel}
+    if not path_matches_patterns(rel, source_pats):
+        return {
+            "ok": False,
+            "error": "ACTION_WRITE_SCOPE_DENIED",
+            "path": rel,
+            "allowed": source_pats,
+        }
+    src_check = lease_allows_source_path(lease, rel)
+    if not src_check.get("ok"):
+        return src_check
+    return {"ok": True}
+
+
 def _rel_from_ascendc_abs(path_s: str) -> str:
     """``…/.ascendc-pilot/<rel>`` → ``<rel>``; otherwise empty."""
     norm = str(path_s or "").replace("\\", "/")
@@ -696,6 +726,7 @@ __all__ = [
     "lease_allows_read_path",
     "lease_allows_source_path",
     "lease_allows_tool",
+    "lease_allows_source_write",
     "lease_allows_write_path",
     "lease_path",
     "load_lease",

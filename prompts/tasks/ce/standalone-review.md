@@ -14,6 +14,7 @@
 
 <constraints>
 无 diff 要定位改哪里：`/ce-intent`。有 diff 要范围与证书：`/ce-impact` → `/ce-verify`。
+Spec 写入 `functional_report.yaml`，Standards 写入 `bug_report.yaml`，不要合成 LGTM。
 禁止写入 `ce/verify/**`。
 </constraints>
 

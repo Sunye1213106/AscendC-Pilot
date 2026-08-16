@@ -169,7 +169,7 @@ fi
 # Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
-for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-impact ce-verify tg-init tg-plan tg-solve operator; do
+for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify tg-init tg-plan tg-solve operator; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"

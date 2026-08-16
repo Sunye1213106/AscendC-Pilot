@@ -597,16 +597,16 @@ def test_install_skill_lists_symmetric():
     sh = (repo / "install.sh").read_text(encoding="utf-8")
     assert (
         '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate",'
-        '"ce-review","ce-intent","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")'
+        '"ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")'
     ) in ps1
     assert (
         "for name in uo-init uo-update uo-query uo-investigate "
-        "ce-review ce-intent ce-impact ce-verify tg-init tg-plan tg-solve operator; do"
+        "ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify tg-init tg-plan tg-solve operator; do"
     ) in sh
     # Retired skills must not be in the install junction list (uninstall purge may still name them).
     install_lists = [
-        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")',
-        "for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-impact ce-verify tg-init tg-plan tg-solve operator; do",
+        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")',
+        "for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify tg-init tg-plan tg-solve operator; do",
     ]
     for block in install_lists:
         for retired in ("uo-diff", "tg-domain-review", "tg-contract"):

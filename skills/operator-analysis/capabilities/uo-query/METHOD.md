@@ -42,7 +42,7 @@ CLI：`acp uo-query --project <算子绝对路径> --pattern`（`--query` / `--t
 
 `impact` 缺 `--file/--line` 会失败；不要改用 `search` 硬猜位置。
 
-查完就答。最终消息用完整自然语言写清结论、file:line、必要 snippet（Cursor Explore 那样）。OpenCode Task 把这篇全文交回主控，不要把证据压进 yaml，不要再 Glob/Read `answer.yaml`。若决定性 span 没读到，文末必须列出 **未闭合点**（文件 + 要查的 mode/符号），`adequacy: PARTIAL`，不要把 first_hit 写成 ANSWERED——主控会再派一轮，不要自己宣布根因已定位。
+查完就答。最终消息用完整自然语言写清结论、`path:line`、必要 snippet（Cursor Explore 那样）。结论必须能指回 CodeMap 或源码窗，不要写进 `.uo`。OpenCode Task 把这篇全文交回主控，不要把证据压进 yaml，不要再 Glob/Read `answer.yaml`。若决定性 span 没读到，文末必须列出 **未闭合点**（文件 + 要查的 mode/符号），`adequacy: PARTIAL`，不要把 first_hit 写成 ANSWERED——主控会再派一轮，不要自己宣布根因已定位。
 
 ## 交付
 

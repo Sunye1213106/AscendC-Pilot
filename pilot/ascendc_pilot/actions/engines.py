@@ -49,6 +49,44 @@ def _dump_ce_yaml(path: Path, doc: Any) -> Path:
     return path
 
 
+def _write_run_receipt(
+    project_root: Path,
+    ctx: dict[str, Any] | None,
+    filename: str,
+    payload: dict[str, Any],
+) -> Path:
+    """Write a gate/check receipt under ``runs/<run_id>/receipts/``."""
+    import yaml
+
+    from ascendc_pilot.runs import receipts_dir
+
+    ctx = dict(ctx or {})
+    run_id = str(ctx.get("run_id") or "").strip()
+    if not run_id:
+        try:
+            from ascendc_pilot.state import load_state
+
+            st = load_state(project_root) or {}
+            run_id = str(st.get("run_id") or "").strip()
+            for key in ("workflow_id", "action_id", "architecture"):
+                if not ctx.get(key) and st.get(key):
+                    ctx[key] = st.get(key)
+        except Exception:  # noqa: BLE001
+            run_id = ""
+    body = dict(payload)
+    body.setdefault("kind", "receipt")
+    if run_id:
+        body.setdefault("run_id", run_id)
+    for key in ("workflow_id", "action_id", "architecture"):
+        val = ctx.get(key)
+        if val and key not in body:
+            body[key] = val
+    out = receipts_dir(project_root, run_id or None) / filename
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(body, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return out
+
+
 def _run_ce_change_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from code_engineering.change.capture import capture
 
@@ -480,6 +518,97 @@ def _run_ce_feature_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str
     )
 
 
+def _run_ce_grill_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.intent import promote_intent_grill
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    return promote_intent_grill(
+        project_root,
+        architecture=arch,
+        run_id=str(ctx.get("run_id") or ""),
+    )
+
+
+def _run_ce_apply_gate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.apply import apply_gate
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    return apply_gate(project_root, architecture=arch)
+
+
+def _run_ce_apply_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.change.capture import capture
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    out = _ce(project_root, arch=arch) / "apply" / "change_capture.yaml"
+    try:
+        payload = capture(
+            project_root,
+            base=str(ctx.get("base") or "HEAD"),
+            head=str(ctx.get("head") or ""),
+            architecture=arch,
+            output=out,
+        )
+        return {"ok": out.is_file(), "engine": "change_capture", "artifact": out.as_posix(), **payload}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "change_capture", "error": str(exc)[:400]}
+
+
+def _run_ce_patch_guard(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.apply import patch_guard
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    return patch_guard(project_root, architecture=arch)
+
+
+def _run_ce_codemap_refresh(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """In-process uo-update: detect → plan → apply → export → diff. Never LLM-write .uo."""
+    arch = _resolve_ce_arch(project_root, ctx)
+    detect = _run_detect_changes(project_root, ctx)
+    plan = _run_plan_update(project_root, ctx)
+    applied = _run_apply_update(project_root, ctx)
+    export = _run_export_integrity(project_root, ctx)
+    diff = _run_diff_summary(project_root, ctx)
+    ok = all(bool(step.get("ok")) for step in (detect, plan, applied, export, diff))
+    doc = {
+        "schema": "ce-codemap-refresh/v1",
+        "ok": ok,
+        "detect": {k: detect.get(k) for k in ("ok", "engine", "error", "scoped_change_count") if k in detect},
+        "plan": {k: plan.get(k) for k in ("ok", "engine", "error") if k in plan},
+        "apply": {k: applied.get(k) for k in ("ok", "engine", "error") if k in applied},
+        "export": {k: export.get(k) for k in ("ok", "engine", "error") if k in export},
+        "diff": {k: diff.get(k) for k in ("ok", "engine", "error") if k in diff},
+    }
+    out = _dump_ce_yaml(_ce(project_root, arch=arch) / "apply" / "codemap_refresh.yaml", doc)
+    return {"ok": ok, "engine": "codemap_refresh", "artifact": out.as_posix(), **doc}
+
+
+def _run_ce_session_handoff(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from code_engineering.handoff import write_session_handoff
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    wid = str(ctx.get("workflow_id") or "").strip()
+    next_slash = {
+        "ce-intent": "/ce-apply",
+        "ce-apply": "/ce-impact",
+        "ce-impact": "/ce-verify",
+        "ce-handoff": str(ctx.get("next_slash") or "/ce-apply"),
+    }.get(wid, "/ce-apply")
+    artifacts = [
+        "ce/intent/intent.yaml",
+        "ce/intent/feature_decomposition.yaml",
+        "ce/intent/anchors.yaml",
+        "ce/review/index.yaml",
+    ]
+    return write_session_handoff(
+        project_root,
+        architecture=arch,
+        next_slash=next_slash,
+        artifact_paths=artifacts,
+        open_items=list(ctx.get("open_items") or []),
+    )
+
+
 
 def _run_export_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Delegate integrity to uo_init.pilot_engines.export_integrity."""
@@ -610,8 +739,6 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Require CodeMap ``.uo`` with TG view blobs (D / host_view / graph)."""
-    import yaml
-
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     ready = _ensure_uo_tg_views(project_root, tg_ctx)
     ok = bool(ready.get("ok")) and int(ready.get("legal_key_count") or 0) > 0
@@ -626,9 +753,7 @@ def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "legal_key_count": int(ready.get("legal_key_count") or 0),
         "error": "" if ok else str(ready.get("error") or "UO TG views not ready"),
     }
-    out = _tg(project_root, arch=str(tg_ctx.get("architecture") or "") or None) / "init" / "uo_ready.yaml"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    out = _write_run_receipt(project_root, ctx, "uo_ready.yaml", receipt)
     return {
         "ok": ok,
         "engine": "kb_check",
@@ -1089,11 +1214,8 @@ def _run_tg_semantic_bind(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
 
 
 def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    import yaml
-
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     tg = _tg(project_root)
-    _ = tg_ctx
     # Full TK mode: key contract / host-view readiness instead of CSV closure.
     contract = _load_yaml(tg / "contract" / "tilingkey_contract.yaml") or {}
     status = str(contract.get("status") or "").lower()
@@ -1106,9 +1228,7 @@ def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         "tilingkey_contract_status": status or "missing",
         "errors": list(contract.get("errors") or []),
     }
-    out = tg / "contract" / "integrity_gate.yaml"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(yaml.safe_dump(receipt, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    out = _write_run_receipt(project_root, ctx, "integrity_gate.yaml", receipt)
     return {
         "ok": ok,
         "engine": "integrity_gate",
@@ -2967,7 +3087,12 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("ce-intent", "kb_check"): _run_ce_intent_kb_check,
     ("ce-intent", "anchor_locate"): _run_ce_anchor_locate,
     ("ce-intent", "feature_promote"): _run_ce_feature_promote,
+    ("ce-intent", "grill_promote"): _run_ce_grill_promote,
     ("ce-intent", "scenario_infer"): _run_ce_scenario_infer,
+    ("ce-apply", "apply_gate"): _run_ce_apply_gate,
+    ("ce-apply", "change_capture"): _run_ce_apply_capture,
+    ("ce-apply", "patch_guard"): _run_ce_patch_guard,
+    ("ce-apply", "codemap_refresh"): _run_ce_codemap_refresh,
     ("tg-init", "init_intent"): _run_tg_init_intent,
     ("tg-init", "kb_check"): _run_tg_kb_check,
     ("tg-init", "contract_build"): _run_tg_contract_build,
@@ -3074,6 +3199,12 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "ce-certificate-v1": ["ce/verify/certificate.yaml"],
     "intent-capture-v1": ["ce/intent/intent.yaml"],
     "intent-kb-check-v1": ["ce/intent/kb_check.yaml"],
+    "intent-grill-v1": ["ce/intent/intent.yaml"],
+    "intent-grill-staging-v1": [
+        "runs/{run_id}/actions/intent_grill/parts/**",
+        "runs/{run_id}/actions/intent_grill/staging.yaml",
+    ],
+    "intent-grilled-v1": ["ce/intent/grill_confirmation.yaml"],
     "feature-decompose-v1": ["ce/intent/feature_decomposition.yaml"],
     "feature-decompose-staging-v1": [
         "runs/{run_id}/actions/feature_decompose/parts/**",
@@ -3082,8 +3213,15 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "anchor-locate-v1": ["ce/intent/anchors.yaml"],
     "plan-review-v1": ["ce/intent/plan_review.yaml"],
     "intent-confirmed-v1": ["ce/intent/confirmation.yaml"],
+    "apply-gate-v1": ["ce/apply/gate.yaml"],
+    "apply-patch-v1": ["ce/apply/patch_notes.yaml"],
+    "apply-capture-v1": ["ce/apply/change_capture.yaml"],
+    "apply-patch-guard-v1": ["ce/apply/patch_report.yaml"],
+    "codemap-refresh-v1": ["ce/apply/codemap_refresh.yaml"],
+    "apply-report-v1": ["ce/apply/report.yaml"],
+    "session-handoff-v1": ["ce/session_handoff.md"],
     # tg-init kb_check receipt: proves CodeMap .uo TG views are readable.
-    "uo-ready-v1": ["tg/init/uo_ready.yaml"],
+    "uo-ready-v1": ["runs/{run_id}/receipts/uo_ready.yaml"],
     "tg-init-intent-v1": ["tg/init/init_intent.yaml"],
     "tilingkey-contract-v1": [
         "tg/contract/tilingkey_contract.yaml",
@@ -3094,7 +3232,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "tg/init/test_repo_contract.yaml",
     ],
     "tilingkey-integrity-v1": [
-        "tg/contract/integrity_gate.yaml",
+        "runs/{run_id}/receipts/integrity_gate.yaml",
     ],
     "init-audit-v1": ["tg/init/audit_report.yaml"],
     "init-confirmed-v1": [
@@ -3191,7 +3329,7 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
         "tg/init/test_repo_contract.yaml",
     ],
     "tilingkey-integrity-v1": [
-        "tg/contract/integrity_gate.yaml",
+        "runs/{run_id}/receipts/integrity_gate.yaml",
     ],
 }
 
@@ -3206,5 +3344,12 @@ def invoke_engine(project_root: Path, workflow_id: str, action_id: str, *, ctx: 
     payload = dict(ctx or {})
     payload["action_id"] = action_id
     payload["workflow_id"] = workflow_id
+    if not str(payload.get("run_id") or "").strip():
+        try:
+            from ascendc_pilot.state import load_state
+
+            payload["run_id"] = str(load_state(project_root).get("run_id") or "").strip()
+        except Exception:  # noqa: BLE001
+            pass
     with engine_span(workflow_id, action_id):
         return fn(project_root, payload)

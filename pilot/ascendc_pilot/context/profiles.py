@@ -275,6 +275,69 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         token_budget=4000,
     ),
+    "ce-intent-intent-grill": ContextProfile(
+        id="ce-intent-intent-grill",
+        description="Grill an intent into in_scope / out_of_scope / acceptance before decompose.",
+        references=(
+            "skills/code-engineering/references/gotchas.md",
+            "skills/code-engineering/references/risk-classes.md",
+            "skills/code-engineering/references/evidence-tiers.md",
+        ),
+        query_slices=(
+            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=8),
+        ),
+        token_budget=3500,
+    ),
+    "ce-intent-grill-confirm": ContextProfile(
+        id="ce-intent-grill-confirm",
+        description="Host-owned confirm that the grilled intent is closed enough to decompose.",
+        references=(),
+        query_slices=(),
+        token_budget=800,
+    ),
+    "ce-apply-patch": ContextProfile(
+        id="ce-apply-patch",
+        description="Apply a confirmed CE intent to operator source at located anchors.",
+        references=(
+            "skills/code-engineering/references/gotchas.md",
+            "skills/code-engineering/references/risk-classes.md",
+        ),
+        query_slices=(
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=12),
+            QuerySlice(method="neighbors", seed_from="impact_files", limit=8),
+        ),
+        token_budget=4000,
+    ),
+    "ce-apply-code-review": ContextProfile(
+        id="ce-apply-code-review",
+        description="Two-axis review of an apply patch against intent and AscendC standards.",
+        references=(
+            "skills/code-review/references/ascendc-checks.md",
+            "skills/code-review/references/cross-layer-contracts.md",
+            "skills/code-review/references/finding-format.md",
+            "skills/code-review/references/gotchas.md",
+        ),
+        query_slices=(
+            QuerySlice(method="impact_of", seed_from="impact_files", limit=8),
+            QuerySlice(method="entities_in_files", seed_from="impact_files", limit=8),
+        ),
+        token_budget=3500,
+    ),
+    "ce-apply-report": ContextProfile(
+        id="ce-apply-report",
+        description="Host-owned report of apply paths and Spec/Standards review conclusions.",
+        references=(),
+        query_slices=(),
+        token_budget=800,
+    ),
+    "ce-handoff-session": ContextProfile(
+        id="ce-handoff-session",
+        description="Pointer-only CE session handoff; next slash, not skill names.",
+        references=(),
+        query_slices=(),
+        token_budget=1200,
+    ),
     "ce-intent-plan-review": ContextProfile(
         id="ce-intent-plan-review",
         description="Referee review of the change-plan decomposition.",

@@ -20,6 +20,8 @@ MATRIX_WORKFLOWS: tuple[str, ...] = (
     "tg-solve",
     "ce-review",
     "ce-intent",
+    "ce-apply",
+    "ce-handoff",
     "ce-impact",
     "ce-verify",
 )

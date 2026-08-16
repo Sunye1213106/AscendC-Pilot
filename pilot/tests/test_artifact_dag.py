@@ -154,3 +154,14 @@ def test_synthetic_orphan_consume_detected() -> None:
         and "tg/never/produced/by/anyone.yaml" in e
         for e in errors
     ), errors
+
+
+def test_artifact_usage_receipts_are_run_scoped(repo_root: Path) -> None:
+    from ascendc_pilot.workflows.artifact_dag import RECEIPT_ARTIFACTS, check_artifact_usage
+
+    errors = check_artifact_usage(repo_root)
+    assert errors == [], errors
+    assert RECEIPT_ARTIFACTS == {
+        "runs/{run_id}/receipts/uo_ready.yaml",
+        "runs/{run_id}/receipts/integrity_gate.yaml",
+    }

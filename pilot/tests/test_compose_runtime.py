@@ -58,7 +58,12 @@ def test_uo_actions_match_engine_and_prompt_boundary():
 
     query = next(a for a in WORKFLOWS["uo-query"]["actions"] if a["id"] == "kb_lookup")
     assert query["task_prompt_id"] == "uo/codemap-query"
+    assert query.get("execution_variant") == "delegated_query"
     assert WORKFLOWS["uo-query"].get("host_driver") is False
+    assert WORKFLOWS["uo-query"].get("execution_variants") == {
+        "short": "direct_query",
+        "deep": "delegated_query",
+    }
 
     investigate = {a["id"]: a for a in WORKFLOWS["uo-investigate"]["actions"]}
     inv = investigate["investigate"]
@@ -98,11 +103,16 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert intent["phases"] == [
         "intent",
         "kb_ready",
+        "grill",
         "decompose",
         "review",
         "locate",
         "confirm",
     ]
+    assert WORKFLOWS["ce-apply"]["cognitive_skill_id"] == "code-engineering"
+    assert WORKFLOWS["ce-handoff"]["cognitive_skill_id"] == "code-engineering"
+    assert WORKFLOWS["ce-apply"]["slash"] == "/ce-apply"
+    assert WORKFLOWS["ce-handoff"]["slash"] == "/ce-handoff"
 
 
 def test_compose_and_prune_runtime_context(tmp_path: Path):
@@ -159,7 +169,9 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" not in uo_query_agent
         assert "If the Task stub names" in uo_query_agent
+        assert "execution_variant = delegated_query" in uo_query_agent
         assert "edit: deny" in uo_query_agent
+        assert "*: deny" in uo_query_agent or "'*': deny" in uo_query_agent
         assert "webfetch: deny" in uo_query_agent
         assert "task: deny" in uo_query_agent
         assert "glob: deny" in uo_query_agent
@@ -172,8 +184,11 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "可见 LLM 路由" not in lemma
         lemma_bytes = len(lemma.encode("utf-8"))
         lemma_lines = lemma.count("\n") + 1
-        assert lemma_bytes < 14000, f"child agent pack regressed: {lemma_bytes} bytes"
-        assert lemma_lines < 230, f"child agent pack regressed: {lemma_lines} lines"
+        assert lemma_bytes < 10000, f"child agent pack regressed: {lemma_bytes} bytes"
+        assert lemma_lines < 200, f"child agent pack regressed: {lemma_lines} lines"
+        assert "*: deny" in lemma or "'*': deny" in lemma
+        assert "acp: allow" in lemma
+        assert "lsp: deny" in lemma
         analyst = (generated / "agents" / "ce-analyst.md").read_text(encoding="utf-8")
         assert "grep: deny" in analyst or "grep: false" in analyst
         assert "glob: deny" in analyst or "glob: false" in analyst
@@ -210,6 +225,8 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
         "ce-review",
         "ce-impact",
         "ce-intent",
+        "ce-apply",
+        "ce-handoff",
         "ce-verify",
     ):
         path = commands / f"{name}.md"
@@ -265,7 +282,7 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
     }
     assert maintainer.isdisjoint(set(COGNITIVE_SKILL_IDS))
     for name in maintainer:
-        assert (REPO / ".cursor" / "skills" / name / "SKILL.md").is_file()
+        assert not (REPO / ".cursor" / "skills" / name / "SKILL.md").is_file()
 
 
 def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
@@ -316,4 +333,11 @@ def test_cognitive_skill_md_does_not_cross_link_other_skill_refs() -> None:
                 continue
             needle = f"skills/{other}/references/"
             assert needle not in text, f"{sid} SKILL.md links {needle}"
+        for method in (REPO / "skills" / sid).glob("capabilities/**/METHOD.md"):
+            body = method.read_text(encoding="utf-8")
+            for other in COGNITIVE_SKILL_IDS:
+                if other == sid:
+                    continue
+                needle = f"skills/{other}/references/"
+                assert needle not in body, f"{method} links {needle}"
 

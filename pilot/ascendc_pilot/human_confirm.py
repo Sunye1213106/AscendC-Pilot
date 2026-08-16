@@ -40,7 +40,12 @@ def _session(project_root: Path, state: dict[str, Any], action_id: str) -> dict[
     run_id = str(state.get("run_id") or "").strip()
     if not run_id:
         return {}
-    return _load(runs_root(project_root) / run_id / "actions" / action_id / "session.yaml")
+    sdir = runs_root(project_root) / run_id / "actions" / action_id
+    for name in ("session_state.yaml", "session.yaml"):
+        hit = _load(sdir / name)
+        if hit:
+            return hit
+    return {}
 
 
 def _identity(session: dict[str, Any]) -> dict[str, str]:
@@ -204,6 +209,50 @@ def _ask_scenario_confirm(project_root: Path, state: dict[str, Any]) -> dict[str
         options=[
             {"label": "确认这些场景", "value": "confirm"},
             {"label": "返工场景", "value": "rework"},
+            {"label": "停止本次目标", "value": "stop"},
+        ],
+    )
+
+
+def _ask_grill_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    op, arch = _op_arch(project_root, state)
+    intent = _load(ce_root(project_root, arch=_arch(state)) / "intent" / "intent.yaml")
+    open_q = intent.get("open_questions") or []
+    n = len(open_q) if isinstance(open_q, list) else 0
+    pending = f"仍有 {n} 个未决问题。" if n else "未决问题列表为空。"
+    return decision_question(
+        header="需求是否已经问清，可以分解特性？",
+        goal=f"确认 {op}（{arch}）的范围、不做的事和可验证验收",
+        background=f"已写入 in_scope / out_of_scope / acceptance。{pending}未闭合不要进入分解。",
+        decide="是否确认这份问清后的需求？",
+        consequences={
+            "确认需求已问清": "进入特性分解；未决问题必须为空",
+            "返工": "回到问需求，继续推进设计树",
+            "停止": "结束本次定位，不分解",
+        },
+        options=[
+            {"label": "确认需求已问清", "value": "confirm"},
+            {"label": "返工继续问", "value": "rework"},
+            {"label": "停止本次目标", "value": "stop"},
+        ],
+    )
+
+
+def _ask_apply_report(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    op, arch = _op_arch(project_root, state)
+    return decision_question(
+        header="改码与审查已完成，是否继续影响分析？",
+        goal=f"确认 {op}（{arch}）本次按锚点的改动与双轴审查结论",
+        background="源码已改、审查已写入 ce/review、CodeMap 已刷新。精度/性能仍要 /ce-impact → /ce-verify。",
+        decide="是否确认这次改码汇报并进入 /ce-impact？",
+        consequences={
+            "确认汇报": "写入交接，下一跳 /ce-impact",
+            "返工": "不交接，回到改码",
+            "停止": "结束本次改码，不进入影响分析",
+        },
+        options=[
+            {"label": "确认汇报，进入影响分析", "value": "confirm"},
+            {"label": "返工改码", "value": "rework"},
             {"label": "停止本次目标", "value": "stop"},
         ],
     )
@@ -403,6 +452,22 @@ def _materialize_ce_intent(
         "artifact_identity": identity,
     }
     path, backups = _write_yaml_receipt(path, doc)
+    try:
+        from code_engineering.handoff import write_session_handoff
+
+        write_session_handoff(
+            project_root,
+            architecture=_arch(state),
+            next_slash="/ce-apply",
+            artifact_paths=[
+                "ce/intent/intent.yaml",
+                "ce/intent/feature_decomposition.yaml",
+                "ce/intent/anchors.yaml",
+                "ce/intent/confirmation.yaml",
+            ],
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return {"ok": True, "path": path, "backups": backups, "identity": identity}
 
 
@@ -478,6 +543,94 @@ def _hints_scenario_confirm(project_root: Path, state: dict[str, Any]) -> list[s
     return [f"Review {rel} (ids, knobs, budget). This is not tilingkey full coverage."]
 
 
+def _materialize_grill_confirm(
+    project_root: Path,
+    state: dict[str, Any],
+    identity: dict[str, str],
+    now: str,
+) -> dict[str, Any]:
+    ce = ce_root(project_root, arch=_arch(state))
+    intent = _load(ce / "intent" / "intent.yaml")
+    open_q = intent.get("open_questions") or []
+    if isinstance(open_q, list) and open_q:
+        return {
+            "ok": False,
+            "error": "GRILL_OPEN",
+            "reason_code": "GRILL_OPEN",
+            "message_zh": "未决问题未闭合，不能进入特性分解",
+            "open_question_count": len(open_q),
+        }
+    path = ce / "intent" / "grill_confirmation.yaml"
+    doc = {
+        "schema": "ce-intent-grill-confirmation/v1",
+        "status": "confirmed",
+        "confirmed_by": "human",
+        "confirmed_at": now,
+        "decision": "confirm",
+        **identity,
+        "artifact_identity": identity,
+    }
+    path, backups = _write_yaml_receipt(path, doc)
+    return {"ok": True, "path": path, "backups": backups, "identity": identity}
+
+
+def _materialize_apply_report(
+    project_root: Path,
+    state: dict[str, Any],
+    identity: dict[str, str],
+    now: str,
+) -> dict[str, Any]:
+    ce = ce_root(project_root, arch=_arch(state))
+    path = ce / "apply" / "report.yaml"
+    doc = {
+        "schema": "ce-apply-report/v1",
+        "status": "reported",
+        "confirmed_by": "human",
+        "confirmed_at": now,
+        "decision": "confirm",
+        "next_slash": "/ce-impact",
+        **identity,
+        "artifact_identity": identity,
+    }
+    path, backups = _write_yaml_receipt(path, doc)
+    try:
+        from code_engineering.handoff import write_session_handoff
+
+        write_session_handoff(
+            project_root,
+            architecture=_arch(state),
+            next_slash="/ce-impact",
+            artifact_paths=[
+                "ce/apply/patch_report.yaml",
+                "ce/review/index.yaml",
+                "ce/review/functional_report.yaml",
+                "ce/review/bug_report.yaml",
+                "ce/apply/codemap_refresh.yaml",
+            ],
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    return {"ok": True, "path": path, "backups": backups, "identity": identity}
+
+
+def _hints_grill_confirm(project_root: Path, state: dict[str, Any]) -> list[str]:
+    try:
+        path = ce_root(project_root, arch=_arch(state)) / "intent" / "intent.yaml"
+        rel = path.relative_to(Path(project_root).resolve()).as_posix()
+    except Exception:  # noqa: BLE001
+        rel = ".ascendc-pilot/<arch>/ce/intent/intent.yaml"
+    return [f"Review {rel} in_scope / out_of_scope / acceptance; open_questions must be empty."]
+
+
+def _hints_apply_report(project_root: Path, state: dict[str, Any]) -> list[str]:
+    try:
+        root = ce_root(project_root, arch=_arch(state))
+        rel = root.relative_to(Path(project_root).resolve()).as_posix()
+    except Exception:  # noqa: BLE001
+        rel = ".ascendc-pilot/<arch>/ce/"
+    return [f"Review {rel}apply/patch_report.yaml and {rel}review/ before continuing to /ce-impact."]
+
+
 SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
     ("tg-init", "human_confirm"): {
         "kind": "primary_confirm",
@@ -517,6 +670,22 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "ask": _ask_scenario_confirm,
         "materialize": _materialize_scenario_confirm,
         "hints": _hints_scenario_confirm,
+        "compact": None,
+    },
+    ("ce-intent", "grill_confirm"): {
+        "kind": "primary_confirm",
+        "expected_values": ["confirm"],
+        "ask": _ask_grill_confirm,
+        "materialize": _materialize_grill_confirm,
+        "hints": _hints_grill_confirm,
+        "compact": None,
+    },
+    ("ce-apply", "apply_report"): {
+        "kind": "primary_confirm",
+        "expected_values": ["confirm"],
+        "ask": _ask_apply_report,
+        "materialize": _materialize_apply_report,
+        "hints": _hints_apply_report,
         "compact": None,
     },
 }

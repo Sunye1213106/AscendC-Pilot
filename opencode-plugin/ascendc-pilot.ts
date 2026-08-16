@@ -614,6 +614,7 @@ function listInstalledPilotAgentNames(): string[] {
     "ce-analyst",
     "ce-change-referee",
     "ce-reviewer",
+    "ce-applier",
     "tg-closure-referee",
     "tg-init-audit",
     "tg-lemma-producer",

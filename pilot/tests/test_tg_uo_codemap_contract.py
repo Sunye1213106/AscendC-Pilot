@@ -75,7 +75,9 @@ def test_flashattention_product_only_uo_to_tg(tmp_path: Path, monkeypatch) -> No
     }
     kb = _run_tg_kb_check(tmp_path, ctx)
     assert kb.get("ok") is True, kb
-    assert (tg_root(tmp_path, arch="arch35") / "init" / "uo_ready.yaml").is_file()
+    ready = Path(kb.get("receipt_path") or "")
+    assert ready.is_file(), kb
+    assert "receipts" in ready.as_posix()
 
     contract = _run_tg_contract_build(tmp_path, ctx)
     assert contract.get("ok") is True, contract

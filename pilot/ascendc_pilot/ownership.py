@@ -71,6 +71,11 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/feature_decompose/scratch/**",
             "runs/{run_id}/actions/feature_decompose/staging.yaml",
         ],
+        "intent_grill": [
+            "runs/{run_id}/actions/intent_grill/parts/**",
+            "runs/{run_id}/actions/intent_grill/scratch/**",
+            "runs/{run_id}/actions/intent_grill/staging.yaml",
+        ],
     },
     "ce-impact": {
         "scenario_knobs": [
@@ -123,6 +128,9 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "feature_decompose": [
             "ce/intent/feature_decomposition.yaml",
         ],
+        "intent_grill": [
+            "ce/intent/intent.yaml",
+        ],
     },
     "ce-impact": {
         "scenario_knobs": [
@@ -161,7 +169,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "tg-init": {
         "init_intent": ["tg/init/init_intent.yaml"],
-        "kb_check": ["tg/init/uo_ready.yaml"],
+        "kb_check": ["runs/{run_id}/receipts/uo_ready.yaml"],
         "contract_build": [
             "tg/intake/**",
             "tg/snapshot/**",
@@ -176,7 +184,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/init/test_repo_inventory.yaml",
             "tg/init/test_repo_contract.yaml",
         ],
-        "integrity_gate": ["tg/contract/integrity_gate.yaml"],
+        "integrity_gate": ["runs/{run_id}/receipts/integrity_gate.yaml"],
         "init_audit": ["tg/init/audit_report.yaml"],
         "human_confirm": [
             "tg/init/status.yaml",
@@ -295,6 +303,13 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "ce-intent": {
         "intent_capture": ["ce/intent/intent.yaml"],
         "kb_check": ["ce/intent/kb_check.yaml"],
+        "intent_grill": [
+            "runs/{run_id}/actions/intent_grill/parts/**",
+            "runs/{run_id}/actions/intent_grill/scratch/**",
+            "runs/{run_id}/actions/intent_grill/staging.yaml",
+        ],
+        "grill_promote": ["ce/intent/intent.yaml"],
+        "grill_confirm": ["ce/intent/grill_confirmation.yaml", "ce/session_handoff.md"],
         "feature_decompose": [
             "runs/{run_id}/actions/feature_decompose/parts/**",
             "runs/{run_id}/actions/feature_decompose/scratch/**",
@@ -304,7 +319,28 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "scenario_infer": ["ce/scenarios/scenario_set.yaml"],
         "plan_review": ["ce/intent/plan_review.yaml"],
         "feature_promote": ["ce/intent/feature_decomposition.yaml"],
-        "human_confirm": ["ce/intent/confirmation.yaml"],
+        "human_confirm": ["ce/intent/confirmation.yaml", "ce/session_handoff.md"],
+    },
+    "ce-apply": {
+        "apply_gate": ["ce/apply/gate.yaml"],
+        "patch": [
+            "source:op_host/**",
+            "source:op_kernel/**",
+            "source:common/**",
+            "ce/apply/patch_notes.yaml",
+            "runs/{run_id}/actions/patch/**",
+        ],
+        "change_capture": ["ce/apply/change_capture.yaml"],
+        "patch_guard": ["ce/apply/patch_report.yaml"],
+        "code_review": [
+            "ce/review/**",
+            "runs/**/actions/code_review/**",
+        ],
+        "codemap_refresh": ["ce/apply/codemap_refresh.yaml"],
+        "apply_report": ["ce/apply/report.yaml", "ce/session_handoff.md"],
+    },
+    "ce-handoff": {
+        "session_handoff": ["ce/session_handoff.md"],
     },
 }
 ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
@@ -337,7 +373,7 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "kb_check": ["uo/*.uo"],
         "contract_build": [
             "uo/*.uo",
-            "tg/init/uo_ready.yaml",
+            "runs/{run_id}/receipts/uo_ready.yaml",
             "context/**",
         ],
         "semantic_bind": [
@@ -349,12 +385,14 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "tg/snapshot/**",
             "tg/realization/**",
             "tg/contract/**",
+            "runs/{run_id}/receipts/uo_ready.yaml",
         ],
         "init_audit": [
             "tg/snapshot/**",
             "tg/contract/**",
             "tg/realization/**",
             "tg/init/**",
+            "runs/{run_id}/receipts/**",
         ],
         "human_confirm": [
             "tg/init/**",
@@ -451,7 +489,6 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/**",
             "context/**",
             "skills/code-review/**",
-            "skills/operator-analysis/**",
         ],
     },
     "ce-impact": {
@@ -505,12 +542,49 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     "ce-intent": {
         "intent_capture": ["context/**"],
         "kb_check": ["uo/*.uo"],
+        "intent_grill": ["uo/*.uo", "ce/intent/**", "context/**", "runs/**"],
+        "grill_promote": ["ce/intent/intent.yaml", "runs/**"],
+        "grill_confirm": ["ce/intent/**"],
         "feature_decompose": ["uo/*.uo", "ce/intent/**", "context/**", "runs/**"],
         "anchor_locate": ["uo/*.uo", "ce/intent/**", "runs/**"],
         "scenario_infer": ["uo/*.uo", "ce/intent/**", "ce/impact/**"],
         "plan_review": ["uo/*.uo", "ce/intent/**", "runs/**"],
         "feature_promote": ["ce/intent/plan_review.yaml", "runs/**"],
         "human_confirm": ["ce/intent/**"],
+    },
+    "ce-apply": {
+        "apply_gate": ["ce/intent/**"],
+        "patch": [
+            "uo/*.uo",
+            "ce/intent/**",
+            "ce/apply/**",
+            "source:op_host/**",
+            "source:op_kernel/**",
+            "source:common/**",
+            "runs/**",
+            "context/**",
+        ],
+        "change_capture": ["context/**", "source/**"],
+        "patch_guard": ["ce/apply/**", "ce/intent/anchors.yaml"],
+        "code_review": [
+            "uo/**",
+            "ce/**",
+            "runs/**",
+            "context/**",
+            "skills/code-review/**",
+        ],
+        "codemap_refresh": ["uo/**", "ce/apply/**"],
+        "apply_report": ["ce/apply/**", "ce/review/**", "uo/checks/**", "ce/intent/**"],
+    },
+    "ce-handoff": {
+        "session_handoff": [
+            "ce/intent/**",
+            "ce/review/**",
+            "ce/apply/**",
+            "ce/session_handoff.md",
+            "uo/*.uo",
+            "context/**",
+        ],
     },
 }
 ACTION_FORBIDDEN_READ_PATHS: dict[str, dict[str, list[str]]] = {

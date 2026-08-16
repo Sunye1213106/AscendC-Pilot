@@ -1,6 +1,6 @@
 # CE：代码工程
 
-CE（Code Engineering）用 UO CodeMap 将变更意图、影响范围和验证证据连成可审计流程。它不等同于自动改码、调试 Agent 或 PR 生成器；CodeMap 切片也不能代替运行时、精度或性能测量。
+CE（Code Engineering）用 UO CodeMap 将变更意图、影响范围和验证证据连成可审计流程。`/ce-apply` 按已确认意图改算子源码并自动审查、刷新 CodeMap；精度/性能仍要收据，CodeMap 切片也不能代替运行时测量。
 
 账本恒等式：`Open = O - V - X`。这是 Pilot 的闭环，审查对方日常流程没有这一层。
 
@@ -10,21 +10,34 @@ CE（Code Engineering）用 UO CodeMap 将变更意图、影响范围和验证�
 
 | 入口 | Skill |
 | --- | --- |
-| `/ce-intent`、`/ce-impact`、`/ce-verify` | `skills/code-engineering/` |
+| `/ce-intent`、`/ce-apply`、`/ce-impact`、`/ce-verify`、`/ce-handoff` | `skills/code-engineering/` |
 | `/ce-review` | `skills/code-review/` |
 
-intent / impact / verify 走变更闭环与义务账本；review 是只读检视，不签发 CE 证书。
+intent / impact / verify 走变更闭环与义务账本；`/ce-apply` 在 confirm 之后按锚点改码；review 是只读检视，不签发 CE 证书。
 
 ### `/ce-intent`
 
 ```text
-intent -> UO freshness -> feature decomposition -> referee review
+intent -> kb_ready -> grill -> feature decomposition -> referee review
        -> backward locate -> human confirmation
 ```
 
 **无 diff**：先定位再下结论。Referee 写入 `ce/intent/plan_review.yaml`；Host `feature_promote` 再写出 canonical `feature_decomposition.yaml`。随后 `anchor_locate` 沿受限关系做 backward slice，得到候选修改点。名称近似命中只能作为 Tier C 线索，不能直接形成证明。遗留的 `ce/impact/change_capture.yaml` 不得阻断 intent 定位。
 
 对应 Issue「先读代码、钉最小改动点」。不实现 GitCode、不写 PR 文案。
+
+### `/ce-apply`
+
+```text
+gate -> patch (anchors only) -> capture + patch_guard
+     -> standalone-review (Spec / Standards) -> uo-update engine -> report
+```
+
+前置：intent 已 confirm 且 `anchors.yaml` 非空。只改锚点覆盖的 `op_host/` / `op_kernel/`。审查和工作流内刷新 CodeMap 自动跑；禁止 LLM 写 `.uo`。之后仍要 `/ce-impact` → `/ce-verify` 才能关义务账本。
+
+### `/ce-handoff`
+
+写入 `.ascendc-pilot/<arch>/ce/session_handoff.md`。只引用已有产物路径，下一跳写 slash（`/ce-apply` / `/ce-impact` / `/ce-verify` / `/uo-query`），不复制 intent/review 正文。与 `ce/verify/tg_handoff.yaml` 不是同一份文件。
 
 ### `/ce-impact`
 
@@ -64,7 +77,7 @@ impact ledger -> obligation-driven review -> TG coverage bridge
 
 ### `/ce-review`
 
-只读检视，三种入口（quick / file / pr）由同一 Action `code_review` 跨 `scope` / `review` / `summary` 判定。证据先 CodeMap 再最小源码窗；假设检验（H0/H1）且必须有 `path:line`。不建立完整变更闭环。产物仍是 `ce/review/*.yaml`。
+只读检视，三种入口（quick / file / pr）由同一 Action `code_review` 跨 `scope` / `review` / `summary` 判定。证据先 CodeMap 再最小源码窗；假设检验（H0/H1）且必须有 `path:line`。Spec 轴写入 `functional_report.yaml`，Standards 轴写入 `bug_report.yaml`。不建立完整变更闭环。产物仍是 `ce/review/*.yaml`。`verify-review` 不改成双轴。
 
 ## Evidence tiers
 

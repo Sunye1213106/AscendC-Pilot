@@ -2,6 +2,8 @@
 
 用这里的词思考和说话。人类全表：`docs/reference/glossary.md`。
 
+CE grill 冒出跨 session 会用错的新词时才改本表；算子结构事实仍以 CodeMap 为准。
+
 **CodeMap** — UO 写入的 `.uo` 源码语义图。不是通用 call-graph。
 **digest** — session binding 上的 `canonical_graph_digest`。fresh = digest 匹配，不是「刚建过库」。
 **短问** — 一名字、一 mode、一两跳；一次 `acp uo-query` stdout 即完成。

@@ -447,8 +447,8 @@ def check_artifact_dag(
 
 RECEIPT_ARTIFACTS = frozenset(
     {
-        "tg/init/uo_ready.yaml",
-        "tg/contract/integrity_gate.yaml",
+        "runs/{run_id}/receipts/uo_ready.yaml",
+        "runs/{run_id}/receipts/integrity_gate.yaml",
     }
 )
 
@@ -508,6 +508,14 @@ def check_artifact_usage(repo_root: Any = None) -> list[str]:
                 errors.append(
                     f"ARTIFACT_USAGE: {cid} declares {raw} but no engine/harness/ownership mention of {name}"
                 )
+    for raw in RECEIPT_ARTIFACTS:
+        rel = str(raw).replace("\\", "/")
+        if not rel.startswith("runs/") or "/receipts/" not in rel:
+            errors.append(f"RECEIPT_NOT_UNDER_RUNS: {raw}")
+        name = rel.rsplit("/", 1)[-1]
+        if name and f'_write_run_receipt' in text:
+            if f'"{name}"' not in text and f"'{name}'" not in text:
+                errors.append(f"ARTIFACT_USAGE: receipt {raw} has no _write_run_receipt writer")
     if "understand_contract.json" in text and "write_text" in text:
         # Residual stub writer is a usage bug even if not in OUTPUT_CONTRACT_PATHS.
         if "snapshot_hash" in text or "tg-tilingkey-snapshot" in text:

@@ -75,7 +75,6 @@ def test_named_gate_without_state_stays_fail_closed(tmp_path: Path, monkeypatch)
 
 def test_tg_kb_check_finalize_issues_receipt_and_advance(tmp_path: Path, monkeypatch) -> None:
     from ascendc_pilot.actions import prepare_action
-    from ascendc_pilot.paths import tg_root
     from ascendc_pilot.state import advance_phase, load_state, start_workflow
     from ascendc_pilot.workflows.pipeline import action_receipt_ok
 
@@ -99,10 +98,13 @@ def test_tg_kb_check_finalize_issues_receipt_and_advance(tmp_path: Path, monkeyp
     assert kb.get("ok") is True, kb
     fin = kb.get("finalize") or {}
     assert fin.get("ok") is True, fin
-    ready = tg_root(root, arch="arch0") / "init" / "uo_ready.yaml"
-    assert ready.is_file(), ready
+    ready = Path(kb.get("receipt_path") or (kb.get("engine") or {}).get("receipt_path") or "")
+    assert ready.is_file(), kb
+    assert ready.name == "uo_ready.yaml"
+    assert "receipts" in ready.as_posix()
     doc = yaml.safe_load(ready.read_text(encoding="utf-8")) or {}
     assert int(doc.get("legal_key_count") or 0) == 4
+    assert str(doc.get("run_id") or "") == str(load_state(root).get("run_id") or "")
     assert action_receipt_ok(root, "kb_check") is True
     assert _receipts(root), "expected completed Action receipt after kb_check finalize"
 

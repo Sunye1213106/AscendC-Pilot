@@ -269,7 +269,7 @@ def _main() -> int:
     if yaml and agents_dir.is_dir():
         for yml in agents_dir.glob("*.yaml"):
             meta = yaml.safe_load(yml.read_text(encoding="utf-8")) or {}
-            for sk in list(meta.get("skills") or []) + list(meta.get("skill_ids") or []):
+            for sk in list(meta.get("skills") or []) + list(meta.get("skill_ids") or []) + list(meta.get("max_skill_ids") or []):
                 sk_s = str(sk).strip()
                 if not sk_s:
                     continue

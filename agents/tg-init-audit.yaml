@@ -6,21 +6,17 @@ mode: subagent
 description: >
   TG init audit referee. Read session prompt.md and method.md first
   (method is materialized into the action session; do not hunt host skill paths).
-skill_ids: [testcase-generation, operator-analysis]
+max_skill_ids: &skills [testcase-generation]
+skill_ids: *skills
 read_scopes:
 - pilot:tg/**
 - pilot:uo/**
 - pilot:runs/**
 - method:skills/testcase-generation/**
-- method:skills/operator-analysis/**
 write_scopes:
 - pilot:tg/init/audit_report.yaml
 - pilot:runs/**/actions/init_audit/**
 machine_constraints:
-- modify_pilot_state
-- declare_workflow_passed
-- write_outside_declared_scope
-forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope

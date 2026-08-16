@@ -4,10 +4,10 @@ name_zh: TG 引理挖掘 producer
 role: producer
 mode: subagent
 description: >
-  In-round lemma producer for tg-solve Round Analysis (expected-growth rejects).
-  Read session prompt.md and method.md first. Write staging certificates only;
-  never defer proofs to end-of-search cleanup.
-skill_ids: [source-proof, testcase-generation, operator-analysis]
+  Proves candidate TG lemmas from supplied leads and writes only staged
+  proof certificates. Read session prompt.md and method.md first.
+max_skill_ids: &skills [source-proof, testcase-generation]
+skill_ids: *skills
 read_scopes:
 - pilot:tg/closure/lemmas/leads.yaml
 - pilot:tg/closure/**
@@ -18,7 +18,6 @@ read_scopes:
 - pilot:context/**
 - method:skills/testcase-generation/**
 - method:skills/source-proof/**
-- method:skills/operator-analysis/**
 write_scopes:
 - pilot:runs/**/actions/lemma_mine/parts/**
 - pilot:runs/**/actions/lemma_mine/scratch/**
@@ -32,11 +31,3 @@ machine_constraints:
 - free_repo_search
 behavioral_constraints:
 - invent_lemma_leads
-forbidden:
-- modify_pilot_state
-- declare_workflow_passed
-- write_outside_declared_scope
-- write_uo_formal_products
-- invent_lemma_leads
-- write_excluded_set
-- free_repo_search

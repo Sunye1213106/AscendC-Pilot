@@ -2,7 +2,7 @@
 
 对 `ce/impact` 账本里的义务做有源码依据的验证审查。不重建 CodeMap 权威。排除项只由 `ce-change-referee` 处理。
 
-详见 `references/ascendc-checks.md`、`references/cross-layer-contracts.md`、`references/precision-perf-findings.md`、`references/evidence-quality.md`。证据档次见 `skills/code-engineering/references/evidence-tiers.md`。
+详见 `references/ascendc-checks.md`、`references/cross-layer-contracts.md`、`references/precision-perf-findings.md`、`references/evidence-quality.md`。证据档次见 `pilot/domain-contracts/evidence-tiers.md`（由 Context Profile 物化 owner 文件）。
 
 ## 方法
 

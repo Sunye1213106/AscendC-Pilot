@@ -308,7 +308,11 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
                 continue
             method, prompt = _load_method_and_prompt(REPO, action)
             actor = str(action.get("agent_id") or "")
-            ceiling = list(load_agent_meta(actor, str(REPO)).get("skill_ids") or [])
+            ceiling = list(
+                load_agent_meta(actor, str(REPO)).get("max_skill_ids")
+                or load_agent_meta(actor, str(REPO)).get("skill_ids")
+                or []
+            )
             profile = get_profile(action.get("context_profile_id"))
             extra = list(profile.references) if profile is not None else []
             from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action

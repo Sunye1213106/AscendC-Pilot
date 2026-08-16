@@ -1,0 +1,68 @@
+# -*- coding: utf-8 -*-
+"""Machine constraint tags must fence writes, not only live in YAML."""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+if str(REPO / "pilot") not in sys.path:
+    sys.path.insert(0, str(REPO / "pilot"))
+
+from ascendc_pilot.agents_registry import (
+    agent_skill_ceiling,
+    forbidden_blocks_write,
+    load_agent_meta,
+)
+
+
+def test_agent_yaml_uses_machine_constraints_not_only_forbidden() -> None:
+    meta = load_agent_meta("tg-lemma-producer", str(REPO))
+    assert meta.get("machine_constraints")
+    assert "write_uo_formal_products" in meta["machine_constraints"]
+    assert "forbidden" not in meta or not meta.get("forbidden")
+    ceiling = agent_skill_ceiling("tg-lemma-producer", REPO)
+    assert ceiling == ["source-proof", "testcase-generation"]
+    assert "operator-analysis" not in ceiling
+
+
+def test_ce_analyst_ceiling_excludes_code_review() -> None:
+    ceiling = agent_skill_ceiling("ce-analyst", REPO)
+    assert "code-engineering" in ceiling
+    assert "code-review" not in ceiling
+
+
+def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:
+    assert (
+        forbidden_blocks_write(
+            "ce-analyst",
+            "ce/intent/feature_decomposition.yaml",
+            project_root=REPO,
+        )
+        == "FORBIDDEN_WRITE_CANONICAL_CE_PLAN"
+    )
+    assert (
+        forbidden_blocks_write(
+            "tg-lemma-producer",
+            "tg/closure/excluded.txt",
+            project_root=REPO,
+        )
+        == "FORBIDDEN_WRITE_EXCLUDED_SET"
+    )
+    assert (
+        forbidden_blocks_write(
+            "tg-lemma-producer",
+            "tg/closure/lemmas/evidence.yaml",
+            project_root=REPO,
+        )
+        == "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS"
+    )
+    assert (
+        forbidden_blocks_write(
+            "ce-analyst",
+            "runs/r1/actions/feature_decompose/staging.yaml",
+            project_root=REPO,
+        )
+        is None
+    )

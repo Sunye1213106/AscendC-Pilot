@@ -3,6 +3,7 @@ name: code-review
 description: >
   基于 CodeMap、源码和变更信息做 AscendC 代码审查。三种入口：快速看风险、文件检视、PR 检视。
   用户要审查算子代码改动、找潜在 bug 时使用。假设检验驱动；证据先 CodeMap 再最小源码窗。
+  Spec 轴对照需求，Standards 轴对照仓规范，两轴分开写不合成 LGTM。
   边界：不签发 CE 证书；检视 Cast/DataCopy/切分改动时认出精度或性能场景线索，仍不关闭验证义务。
 ---
 
@@ -45,10 +46,12 @@ scope → review → summary
 ```
 
 - `scope`：判定 quick / file / pr；Kernel vs Tiling；PR 无 diff 则停并标 UNRESOLVED。
-- `review`：假设检验，写入 bug / functional 两份 finding 列表。
+- `review`：假设检验，两轴分开写：Spec → `functional_report.yaml`，Standards → `bug_report.yaml`。禁止合成一个 LGTM。
 - `summary`：更新 `index.yaml`。快速入口只写短摘要。
 
-需要范围与证书时走 `/ce-intent`（无 diff 定位）或 `/ce-impact` → `/ce-verify`（有 diff）。本 skill 做只读审查，不签发 CE 证书。
+无 intent 时 Spec 轴标明「无需求」，只做 Standards。PR 必须有 diff。
+
+需要范围与证书时走 `/ce-intent`（无 diff 定位）或 `/ce-impact` → `/ce-verify`（有 diff）。本 skill 做只读审查，不签发 CE 证书。`verify-review` 按义务关 V，不是这套双轴。
 
 ## Capability routing
 

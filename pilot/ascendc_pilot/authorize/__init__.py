@@ -1553,7 +1553,11 @@ def _authorize_impl(
                 path_matches_scope,
                 rel_under_agent_dir,
             )
-            from ascendc_pilot.authorize.lease import lease_allows_write_path, load_lease
+            from ascendc_pilot.authorize.lease import (
+                lease_allows_source_write,
+                lease_allows_write_path,
+                load_lease,
+            )
 
             rel = rel_under_agent_dir(path_s or norm, project_root)
             if rel is None:
@@ -1568,9 +1572,54 @@ def _authorize_impl(
                     idx = rel_try.find("uo/")
                     rel = rel_try[idx:]
                 else:
-                    rel = rel_try.lstrip("/")
+                    rel = None
 
-            if rel is not None:
+            if rel is None:
+                from ascendc_pilot.agents_registry import scope_allows_path
+
+                scopes = agent_write_scopes(agent_l, project_root)
+                if not scopes or not scope_allows_path(
+                    path_s or norm, scopes, project_root=project_root
+                ):
+                    return _ok(
+                        "deny",
+                        "AGENT_WRITE_SCOPE",
+                        f"代理 {agent_l} 不得写入声明 write_scopes 之外的路径",
+                        path=path_s,
+                        agent=agent_l,
+                        write_scopes=scopes,
+                    )
+                src_rel = None
+                if project_root is not None:
+                    try:
+                        src_rel = (
+                            Path(path_s or norm)
+                            .resolve()
+                            .relative_to(Path(project_root).resolve())
+                            .as_posix()
+                        )
+                    except Exception:  # noqa: BLE001
+                        src_rel = None
+                if src_rel is None:
+                    return _ok(
+                        "deny",
+                        "ACTION_SOURCE_WRITE_DENIED",
+                        "禁止写入算子 project_root 之外的源码路径",
+                        path=path_s,
+                    )
+                if lease and str(lease.get("status") or "") == "active":
+                    path_check = lease_allows_source_write(lease, src_rel)
+                    if not path_check.get("ok"):
+                        return _ok(
+                            "deny",
+                            str(path_check.get("error") or "ACTION_SOURCE_WRITE_DENIED"),
+                            "当前 Action lease 不允许写入该算子源码路径",
+                            path=path_s,
+                            rel=src_rel,
+                            allowed_write_paths=lease.get("allowed_write_paths") or [],
+                            allowed_source_roots=lease.get("allowed_source_roots") or [],
+                        )
+            elif rel is not None:
                 forbid_code = forbidden_blocks_write(agent_l, rel, project_root=project_root)
                 if forbid_code:
                     return _ok(

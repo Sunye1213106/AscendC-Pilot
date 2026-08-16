@@ -7,15 +7,14 @@ description: >
   Independent referee for CE impact, plan, and exclusion reviews.
   Read session prompt.md and method.md first. Verify CodeMap anchors against
   source evidence and never replace deterministic ledger facts.
-skill_ids: [code-review, operator-analysis, code-engineering]
+max_skill_ids: &skills [code-engineering]
+skill_ids: *skills
 read_scopes:
 - pilot:ce/**
 - pilot:uo/**
 - pilot:tg/**
 - pilot:runs/**
 - pilot:context/**
-- method:skills/code-review/**
-- method:skills/operator-analysis/**
 - method:skills/code-engineering/**
 write_scopes:
 - pilot:ce/impact/audit_report.yaml
@@ -27,10 +26,4 @@ machine_constraints:
 - write_outside_declared_scope
 - rewrite_deterministic_ledger
 behavioral_constraints:
-- approve_own_producer_output
-forbidden:
-- modify_pilot_state
-- declare_workflow_passed
-- write_outside_declared_scope
-- rewrite_deterministic_ledger
 - approve_own_producer_output

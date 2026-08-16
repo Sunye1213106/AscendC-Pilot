@@ -297,7 +297,7 @@ if (Test-Path (Join-Path $genRoot "commands")) {
 # Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
 
-$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
+$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
 $cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
 
 foreach ($name in $workflowSkills) {

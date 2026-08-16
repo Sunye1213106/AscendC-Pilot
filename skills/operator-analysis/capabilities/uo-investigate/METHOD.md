@@ -9,9 +9,10 @@
 ## 方法
 
 1. 读 `uo/ir/unresolved.yaml` 与 bundle 指定的 blocker ids。禁止处理目标集外 ID。
-2. 结构化 CodeMap 查询（`locate` / `impact` / `gaps`）+ 最小源码窗口。partial graph 不能证明 absence。
-3. 对每个 blocker 分类：`deterministic_engine_gap` / `unsupported_operator` / `needs_loop_summary` / `needs_interprocedural` / `opaque_expression` / `missing_evidence`。
-4. 写明缺少的 analyzer 能力（模块/pass）和可复现 `path:line`。证据不足保留 `unknown`。
+2. 先造一条会在该问题上变红的环：一条最小 `acp uo-query` 或可复现命令。不要替代 TG 的 `T=(R∩T)∪E`。
+3. 结构化 CodeMap 查询（`locate` / `impact` / `gaps`）+ 最小源码窗口。partial graph 不能证明 absence。
+4. 对每个 blocker 分类：`deterministic_engine_gap` / `unsupported_operator` / `needs_loop_summary` / `needs_interprocedural` / `opaque_expression` / `missing_evidence`。
+5. 写明缺少的 analyzer 能力（模块/pass）和可复现 `path:line`。证据不足保留 `unknown`。结论不写进 `.uo`。
 
 ## 禁止
 

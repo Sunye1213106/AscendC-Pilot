@@ -63,7 +63,7 @@ python scripts/sync_shared_references.py --check
 | Agent YAML | identity / tools / `skill_ids` 上限 |
 | Docs | 解释性；测试不断言 docs 含某句 |
 
-认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。开发 Pilot 本仓的 grilling / TDD / 诊断 / PR 审查放在 `.cursor/skills/`，不要写进 `agents/*.yaml` 的 `skill_ids`，compose 也不会投影它们。改 agent 向文档时读 `.cursor/skills/writing-for-pilot-skills`。共享语言改 `agents/CONTEXT.md`。这些维护者 skill 吸收了 [mattpocock/skills](https://github.com/mattpocock/skills) 的写法（grilling、缝上的 TDD、双轴 review、CONTEXT），没有把 `/implement` 装进算子主控。
+认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。算子改码主流程接在现有 CE 上：grilling → `/ce-intent`，implement/tdd → `/ce-apply`，双轴 review → `standalone-review`，交接 → `/ce-handoff`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
 
 ## 新增 Engine、Capability 或 Host Adapter
 

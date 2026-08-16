@@ -9,7 +9,8 @@ description: >
   and suggest improvements. Read session prompt.md and method.md first.
   Must not write canonical `.uo` or merge gap patches into CodeMap.
   Must not redo human file-list confirmation or bypass Clang Source Scope.
-skill_ids: [operator-analysis]
+max_skill_ids: &skills [operator-analysis]
+skill_ids: *skills
 read_scopes:
 - pilot:uo/ir/unresolved.yaml
 - pilot:uo/ir/codemap_analyze_receipt.yaml
@@ -28,12 +29,6 @@ machine_constraints:
 - write_outside_declared_scope
 - write_canonical_uo_ir
 - apply_semantic_gap_patch
+- no_free_repo_search
 behavioral_constraints:
 - invent_unresolved_ids
-forbidden:
-- modify_pilot_state
-- declare_workflow_passed
-- write_outside_declared_scope
-- write_canonical_uo_ir
-- invent_unresolved_ids
-- apply_semantic_gap_patch

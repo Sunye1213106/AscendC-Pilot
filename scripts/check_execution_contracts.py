@@ -240,6 +240,8 @@ def audit(repo: Path = REPO) -> list[str]:
         "ce-review",
         "ce-impact",
         "ce-intent",
+        "ce-apply",
+        "ce-handoff",
         "ce-verify",
     )
     for workflow_id in required:

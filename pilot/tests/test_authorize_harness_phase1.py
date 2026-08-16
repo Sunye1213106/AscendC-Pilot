@@ -75,6 +75,7 @@ def test_producer_write_outside_lease_denied(tmp_path: Path) -> None:
         "ACTION_WRITE_SCOPE_DENIED",
         "AGENT_WRITE_SCOPE",
         "FORBIDDEN_MODIFY_UO_PRODUCT",
+        "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS",
     }
 
 

@@ -1,0 +1,41 @@
+id: ce-applier
+version: 1
+name_zh: CE 按锚点改码 producer
+role: producer
+mode: subagent
+description: >
+  Apply an already-confirmed CE intent to operator source at located anchors.
+  Read session prompt.md and method.md first. Do not write .uo or CE certificates.
+max_skill_ids: &skills [code-engineering, operator-analysis, code-review]
+skill_ids: *skills
+read_scopes:
+- pilot:ce/intent/**
+- pilot:ce/apply/**
+- pilot:ce/review/**
+- pilot:uo/**
+- pilot:runs/**
+- pilot:context/**
+- source:op_host/**
+- source:op_kernel/**
+- source:common/**
+- method:skills/code-engineering/**
+- method:skills/operator-analysis/**
+- method:skills/code-review/**
+write_scopes:
+- source:op_host/**
+- source:op_kernel/**
+- source:common/**
+- pilot:ce/apply/**
+- pilot:runs/**/actions/patch/**
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_canonical_ce_plan
+- free_repo_search
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_canonical_ce_plan
+- free_repo_search

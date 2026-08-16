@@ -243,4 +243,10 @@ def test_full_mode_contract_build_finalize_paths(synthetic_root: Path):
 
     integ = _run_tg_integrity(synthetic_root, ctx)
     assert integ["ok"] is True
-    assert (tg / "contract" / "integrity_gate.yaml").is_file()
+    artifact = Path(integ["artifact"])
+    assert artifact.is_file()
+    assert artifact.name == "integrity_gate.yaml"
+    assert "receipts" in artifact.as_posix()
+    receipt = yaml.safe_load(artifact.read_text(encoding="utf-8")) or {}
+    assert receipt.get("kind") == "receipt"
+    assert receipt.get("run_id") or receipt.get("schema")

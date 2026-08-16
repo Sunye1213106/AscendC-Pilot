@@ -21,7 +21,9 @@
         ├── /tg-init ──► /tg-plan ──► /tg-solve     覆盖闭环
         │
         ├── /ce-review                              只读检视
-        ├── /ce-intent                              无 diff：定位改点
+        ├── /ce-intent                              无 diff：问清并定位改点
+        ├── /ce-apply                               按锚点改码 + 审查 + 刷图
+        ├── /ce-handoff                             会话交接（下一跳 slash）
         └── /ce-impact ──► /ce-verify               有 diff：影响 + 证书
 ```
 
@@ -249,7 +251,7 @@ residual [D]  本轮分析
 
 ## CE
 
-intent / impact / verify 走变更闭环；`/ce-review` 只读，不签发证书。
+intent / impact / verify 走变更闭环；`/ce-apply` 在 confirm 之后改码；`/ce-review` 只读，不签发证书。
 
 ### `/ce-review` — 只读检视
 
@@ -268,6 +270,9 @@ intent    [D]  捕获变更意图
 kb_ready  [D]  校验 .uo            ──gate: kb_ready
     │
     ▼
+grill     [S ce-analyst] + [D] grill_promote + [H] 确认问清
+    │
+    ▼
 decompose [S ce-analyst]  特性分解
     │
     ▼
@@ -278,6 +283,33 @@ locate    [D]  锚点 + 场景推断
     │
     ▼
 confirm   [H]  人工确认
+```
+
+### `/ce-apply` — 按已锁定 spec 改码
+
+```text
+gate      [D]  intent confirmed + anchors
+    │
+    ▼
+patch     [S ce-applier]  只改锚点覆盖的 source:
+    │
+    ▼
+capture   [D]  change_capture + patch_guard
+    │
+    ▼
+review    [S ce-reviewer]  Spec / Standards 两轴
+    │
+    ▼
+refresh   [D]  复用 uo-update 引擎（禁止 LLM 写 .uo）
+    │
+    ▼
+report    [H]  改了哪些 path:line + review 结论
+```
+
+### `/ce-handoff` — 会话交接
+
+```text
+session   [S ce-analyst]  写 ce/session_handoff.md（只引用路径，下一跳 slash）
 ```
 
 ### `/ce-impact` — 有 diff，影响切片

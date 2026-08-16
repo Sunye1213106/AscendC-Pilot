@@ -4,7 +4,7 @@
 
 权威闭合证据只有 Host Replay（R）与经审查的源码引理（E）。搜索失败或裸 Host reject 本身不等于不可达。
 
-详见 `references/proof-obligations.md`、`references/failure-patterns.md`、`references/static-evidence.md`、`references/gotchas.md`，以及 `skills/testcase-generation/references/closure-safety.md`。
+详见 `references/proof-obligations.md`、`references/failure-patterns.md`、`references/static-evidence.md`、`references/gotchas.md`。闭合不变量见 `pilot/domain-contracts/closure-safety.md`（由 Context Profile 物化 owner 文件，禁止打开 testcase-generation SKILL）。
 
 ## 方法
 

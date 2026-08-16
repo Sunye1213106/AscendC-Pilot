@@ -16,15 +16,12 @@ description: >
   深问同一轮 Task(agent=uo-query)，把 CLI stdout 或子代全文说给人听。
   用户要「全量/全覆盖 tilingkey case」时：先 Goal 串联 tg-init→tg-plan→tg-solve
   （start 带 --intent 含全覆盖短语；complete 后若有 recommended_next_workflow 则继续）。
-skill_ids: [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
+max_skill_ids: &skills [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
+skill_ids: *skills
 read_scopes:
 - pilot:*
 write_scopes: []
 machine_constraints:
-- modify_pilot_state
-- declare_workflow_passed
-- write_outside_declared_scope
-forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope

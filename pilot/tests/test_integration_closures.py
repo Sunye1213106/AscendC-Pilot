@@ -37,14 +37,12 @@ def test_composer_omits_removed_csv_semantic_bind_agent(tmp_path: Path, monkeypa
 
 
 def test_composer_rejects_type_subagent_in_generated(tmp_path: Path):
-    del tmp_path
-    from compose_runtime import compose_host, validate_generated
+    from compose_runtime import compose_host
 
-    result = compose_host(REPO, "opencode")
+    out = tmp_path / "opencode"
+    result = compose_host(REPO, "opencode", out_root=out)
     assert result["ok"]
-    errors = validate_generated(REPO, host="opencode")
-    assert errors == [], errors
-    md = (REPO / "generated" / "opencode" / "agents" / "tg-lemma-producer.md").read_text(encoding="utf-8")
+    md = (out / "agents" / "tg-lemma-producer.md").read_text(encoding="utf-8")
     assert "mode: subagent" in md
     assert "type: subagent" not in md
 

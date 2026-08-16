@@ -440,7 +440,12 @@ def _active_action(project_root: Path) -> dict[str, Any]:
 def _action_session(project_root: Path, run_id: str, action_id: str) -> dict[str, Any]:
     if not run_id or not action_id:
         return {}
-    return _load_yaml(runs_root(project_root) / run_id / "actions" / action_id / "session.yaml")
+    sdir = runs_root(project_root) / run_id / "actions" / action_id
+    for name in ("session_state.yaml", "session.yaml"):
+        hit = _load_yaml(sdir / name)
+        if hit:
+            return hit
+    return {}
 
 
 def _detect_dirty_actions(project_root: Path, run_id: str, workflow_id: str) -> list[str]:

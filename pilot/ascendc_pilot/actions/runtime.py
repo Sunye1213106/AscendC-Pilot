@@ -139,6 +139,8 @@ def _load(path: Path) -> dict[str, Any]:
 
 
 # Mutable execution overlay. Identity/contract live in bundle.yaml.
+SESSION_STATE_FILENAME = "session_state.yaml"
+SESSION_STATE_LEGACY = "session.yaml"
 _SESSION_STATE_KEYS = (
     "status",
     "lease_id",
@@ -174,10 +176,22 @@ def _session_state_from_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _session_overlay_path(sdir: Path) -> Path:
+    modern = Path(sdir) / SESSION_STATE_FILENAME
+    legacy = Path(sdir) / SESSION_STATE_LEGACY
+    if modern.is_file() or not legacy.is_file():
+        return modern
+    return legacy
+
+
+def _dump_session_state(sdir: Path, bundle: dict[str, Any]) -> None:
+    _dump(Path(sdir) / SESSION_STATE_FILENAME, _session_state_from_bundle(bundle))
+
+
 def _load_action_session(sdir: Path) -> dict[str, Any]:
     """Merge immutable bundle + mutable session overlay."""
     merged = dict(_load(sdir / "bundle.yaml"))
-    overlay = _load(sdir / "session.yaml")
+    overlay = _load(_session_overlay_path(sdir))
     if overlay:
         merged.update(overlay)
     return merged
@@ -1190,7 +1204,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         and str(existing_active.get("action_id") or "") == action_id
         and existing_sdir.is_dir()
         and (
-            (existing_sdir / "session.yaml").is_file()
+            (existing_sdir / SESSION_STATE_FILENAME).is_file()
+            or (existing_sdir / SESSION_STATE_LEGACY).is_file()
             or (existing_sdir / "bundle.yaml").is_file()
         )
     )
@@ -1491,7 +1506,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         f"runs/{run_id}/actions/{action_id}/prompt.md",
         f"runs/{run_id}/actions/{action_id}/method.md",
         f"runs/{run_id}/actions/{action_id}/bundle.yaml",
-        f"runs/{run_id}/actions/{action_id}/session.yaml",
+        f"runs/{run_id}/actions/{action_id}/session_state.yaml",
     ]
     if not dt.get("map_reduce"):
         session_extras.insert(0, f"runs/{run_id}/actions/{action_id}/**")
@@ -1657,7 +1672,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         if fanout:
             bundle["dispatch_tasks"] = fanout
 
-    _dump(sdir / "session.yaml", _session_state_from_bundle(bundle))
+    _dump_session_state(sdir, bundle)
     if execution_mode != EXECUTION_DETERMINISTIC:
         (sdir / "method.md").write_text(method_r, encoding="utf-8")
         (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
@@ -1669,7 +1684,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             check_bundle_readable,
             materialize_method_bundle,
         )
-        from ascendc_pilot.agents_registry import load_agent_meta
         from ascendc_pilot.context.profiles import get_profile
 
         if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
@@ -1681,8 +1695,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             }
         elif execution_mode == EXECUTION_SUBAGENT:
             from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
+            from ascendc_pilot.agents_registry import agent_skill_ceiling
 
-            ceiling = list((load_agent_meta(actor_id, str(project_root)).get("skill_ids") or []))
+            ceiling = agent_skill_ceiling(actor_id, project_root)
             profile = get_profile(context_profile_id)
             extra_refs = list(profile.references) if profile is not None else []
             skill_ids = method_skill_ids_for_action(
@@ -1757,7 +1772,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             sort_keys=True,
         )
         bundle["bundle_digest"] = hashlib.sha256(digest_src.encode("utf-8")).hexdigest()[:16]
-    _dump(sdir / "session.yaml", _session_state_from_bundle(bundle))
+    _dump_session_state(sdir, bundle)
     _dump(
         sdir / "bundle.yaml",
         {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
@@ -1872,6 +1887,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if execution_mode == EXECUTION_DETERMINISTIC or role_id == "deterministic_engine":
         eng = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
         result["engine"] = eng
+        if isinstance(eng, dict) and eng.get("receipt_path"):
+            result["receipt_path"] = eng["receipt_path"]
         fin = finalize_action(project_root, action_id, engine_result=eng)
         result["auto_finalize"] = True
         result["finalize"] = fin
@@ -2655,7 +2672,7 @@ def finalize_action(
         prepare_nonce=prepare_nonce,
     )
     if not out_hashes:
-        out_hashes = {"session": file_sha256(sdir / "session.yaml") or "none"}
+        out_hashes = {"session": file_sha256(_session_overlay_path(sdir)) or "none"}
 
     in_hashes = {
         "context_pack": file_sha256(Path(str(session.get("context_pack_path") or ""))) or "",
@@ -2685,7 +2702,7 @@ def finalize_action(
         )
         session["status"] = "finalized"
         session["receipt"] = str(receipt_path)
-        _dump(sdir / "session.yaml", _session_state_from_bundle(session))
+        _dump_session_state(sdir, session)
         _write_active_action(
             project_root,
             {
@@ -2718,7 +2735,7 @@ def finalize_action(
     else:
         session["status"] = "finalize_failed"
         session["checker_result"] = checker_result
-        _dump(sdir / "session.yaml", _session_state_from_bundle(session))
+        _dump_session_state(sdir, session)
         append_event(
             project_root,
             {"type": "action_finalize_failed", "action_id": action_id, "checker": checker_result},

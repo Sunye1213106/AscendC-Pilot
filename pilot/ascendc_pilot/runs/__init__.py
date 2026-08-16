@@ -109,6 +109,13 @@ def run_dir(project_root: Path, run_id: str | None = None) -> Path:
     return path
 
 
+def receipts_dir(project_root: Path, run_id: str | None = None) -> Path:
+    """Run-scoped receipts (gate proofs), not long-lived TG/CE products."""
+    path = run_dir(project_root, run_id) / "receipts"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def append_event(project_root: Path, event: dict[str, Any], *, run_id: str | None = None) -> None:
     path = run_dir(project_root, run_id) / "events.jsonl"
     row = dict(event)

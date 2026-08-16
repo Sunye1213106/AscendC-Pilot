@@ -68,6 +68,11 @@ def test_tg_init_audit_prepare_dispatches_with_future_write(tmp_path: Path, monk
     )
     gate = prepare_action(root, "integrity_gate")
     assert gate.get("ok") is True, gate
+    receipt = Path((gate.get("engine") or {}).get("artifact") or "")
+    assert receipt.is_file(), gate
+    assert "receipts" in receipt.as_posix()
+    receipt_doc = yaml.safe_load(receipt.read_text(encoding="utf-8")) or {}
+    assert receipt_doc.get("run_id") == gate.get("run_id")
     prep = prepare_action(root, "init_audit")
     assert prep.get("ok") is True, prep
     assert prep.get("reason_code") != "BUNDLE_NOT_READABLE"

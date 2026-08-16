@@ -18,3 +18,8 @@ cases:
     expect_skill: code-review
     expect_references:
       - references/precision-perf-findings.md
+
+  - id: two_axis_review
+    query: 代码审查对照需求做 Spec 轴，对照仓规范做 Standards 轴，两轴分开写不合成 LGTM
+    expect_skill: code-review
+    forbid_skill: ce-verify

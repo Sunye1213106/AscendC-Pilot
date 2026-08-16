@@ -12,3 +12,13 @@ cases:
     query: Plan and verify code changes with a persistent verification-obligation ledger, not a readonly code review certificate
     expect_skill: code-engineering
     forbid_skill: ce-review
+
+  - id: apply_confirmed_intent
+    query: 已确认意图按锚点改算子源码，自动审查，不签发证书
+    expect_skill: code-engineering
+    forbid_skill: ce-review
+
+  - id: grill_before_decompose
+    query: 需求还没问清时先 grilling 范围、不做的事和验收收据，再分解特性，不要对着一句话空想
+    expect_skill: code-engineering
+    forbid_skill: tg-solve

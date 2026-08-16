@@ -107,3 +107,51 @@ def promote_feature_decomposition(
         "feature_count": len(features),
         **doc,
     }
+
+
+def _grill_rows(doc: Any) -> dict[str, Any]:
+    return doc if isinstance(doc, dict) else {}
+
+
+def promote_intent_grill(
+    project_root: Path | str,
+    *,
+    architecture: str,
+    run_id: str = "",
+) -> dict[str, Any]:
+    """Merge staged grill fields into canonical ce/intent/intent.yaml."""
+    arch = str(architecture or "").strip()
+    if not arch:
+        return {"ok": False, "engine": "grill_promote", "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
+    scope = _scope_root(project_root, arch)
+    intent_path = scope / "ce" / "intent" / "intent.yaml"
+    current = _load_yaml(intent_path)
+    staged: dict[str, Any] = {}
+    roots: list[Path] = []
+    if run_id:
+        roots.append(scope / "runs" / run_id / "actions" / "intent_grill")
+    else:
+        roots.extend(sorted(scope.glob("runs/*/actions/intent_grill")))
+    for root in roots:
+        staged.update(_grill_rows(_load_yaml(root / "staging.yaml")))
+        for part in sorted(root.glob("parts/*.yaml")):
+            staged.update(_grill_rows(_load_yaml(part)))
+    if not staged:
+        return {"ok": False, "engine": "grill_promote", "error": "grill_staging_missing"}
+    merged = dict(current)
+    merged["schema"] = str(current.get("schema") or "ce-intent/v1")
+    for key in ("in_scope", "out_of_scope", "acceptance", "open_questions", "side"):
+        if key in staged:
+            merged[key] = staged[key]
+    intent_path.parent.mkdir(parents=True, exist_ok=True)
+    intent_path.write_text(
+        yaml.safe_dump(merged, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    open_q = merged.get("open_questions") or []
+    return {
+        "ok": True,
+        "engine": "grill_promote",
+        "artifact": intent_path.as_posix(),
+        "open_question_count": len(open_q) if isinstance(open_q, list) else 0,
+        **merged,
+    }

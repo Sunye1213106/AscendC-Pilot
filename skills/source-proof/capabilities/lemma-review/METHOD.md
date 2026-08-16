@@ -2,7 +2,7 @@
 
 回放并裁决本轮 producer 提交的引理证书（轮内 expected-growth rejects，不是搜完清理）。
 
-详见 `references/referee-replay.md`、`references/proof-obligations.md`、`references/static-evidence.md`、`references/failure-patterns.md`、`references/gotchas.md`，以及 `skills/testcase-generation/references/closure-safety.md`。
+详见 `references/referee-replay.md`、`references/proof-obligations.md`、`references/static-evidence.md`、`references/failure-patterns.md`、`references/gotchas.md`。闭合不变量见 `pilot/domain-contracts/closure-safety.md`（由 Context Profile 物化 owner 文件）。
 
 ## 方法
 
