@@ -135,6 +135,73 @@ def test_build_host_step_attaches_fanout_tasks() -> None:
     assert step["task_prompt_stub"] == "parent stub"
 
 
+def test_bundle_readable_future_write_and_project_root(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.method_bundle import TaskStubPointers, check_bundle_readable
+    from ascendc_pilot.paths import agent_root, ensure_agent_layout
+
+    ensure_agent_layout(tmp_path, arch="arch0")
+    (tmp_path / "op_host").mkdir()
+    (tmp_path / "op_kernel").mkdir()
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
+    (sdir / "method.md").write_text("# m\n", encoding="utf-8")
+    (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
+    future = agent_root(tmp_path, "arch0") / "tg" / "init" / "audit_report.yaml"
+    ptr = TaskStubPointers(
+        prompt=str(sdir / "prompt.md"),
+        method=str(sdir / "method.md"),
+        bundle=str(sdir / "bundle.yaml"),
+        session_dir=str(sdir),
+        project_root=str(tmp_path.resolve()),
+        write=[str(future)],
+    )
+    br = check_bundle_readable(
+        pointers=ptr,
+        session_dir=sdir,
+        project_root=tmp_path,
+        allowed_read_paths=["runs/**", "tg/**"],
+        allowed_write_paths=["tg/init/audit_report.yaml"],
+        allowed_source_roots=["op_host", "op_kernel"],
+    )
+    assert br.get("ok") is True, br
+    assert not future.exists()
+
+
+def test_bundle_readable_rejects_unleased_source_read(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.method_bundle import TaskStubPointers, check_bundle_readable
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    ensure_agent_layout(tmp_path, arch="arch0")
+    (tmp_path / "op_host").mkdir()
+    outside = tmp_path / "unrelated" / "secret.cpp"
+    outside.parent.mkdir()
+    outside.write_text("int x;\n", encoding="utf-8")
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
+    (sdir / "method.md").write_text("# m\n", encoding="utf-8")
+    (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
+    ptr = TaskStubPointers(
+        prompt=str(sdir / "prompt.md"),
+        method=str(sdir / "method.md"),
+        bundle=str(sdir / "bundle.yaml"),
+        session_dir=str(sdir),
+        project_root=str(tmp_path.resolve()),
+        read=[str(outside)],
+    )
+    br = check_bundle_readable(
+        pointers=ptr,
+        session_dir=sdir,
+        project_root=tmp_path,
+        allowed_read_paths=["runs/**"],
+        allowed_source_roots=["op_host", "op_kernel"],
+    )
+    assert br.get("ok") is False
+    assert br.get("reason_code") == "BUNDLE_NOT_READABLE"
+    assert br.get("unleased")
+
+
 def test_bundle_readable_requires_session_pack(tmp_path: Path) -> None:
     sdir = tmp_path / "session"
     sdir.mkdir()
@@ -161,11 +228,22 @@ def test_bundle_readable_requires_session_pack(tmp_path: Path) -> None:
     assert br2.get("ok") is True
 
 
-def test_extract_stub_paths_finds_product_paths() -> None:
-    stub = "See uo/summary/overview.yaml and tg/init/audit_report.yaml"
+def test_extract_stub_paths_finds_typed_inputs_not_writes() -> None:
+    stub = (
+        "prompt: /s/prompt.md\n"
+        "method: /s/method.md\n"
+        "bundle: /s/bundle.yaml\n"
+        "read: uo/summary/overview.yaml\n"
+        "write: tg/init/audit_report.yaml\n"
+        "acp --project /mnt/op/synthetic_cli\n"
+        "See prose path tg/init/ignored.yaml\n"
+    )
     paths = extract_stub_paths(stub)
     assert any("uo/summary" in p for p in paths)
-    assert any("tg/init" in p for p in paths)
+    assert any("prompt.md" in p for p in paths)
+    assert not any("audit_report" in p for p in paths)
+    assert not any("synthetic_cli" in p for p in paths)
+    assert not any("ignored.yaml" in p for p in paths)
 
 
 def test_materialize_method_bundle_copies_refs(tmp_path: Path) -> None:

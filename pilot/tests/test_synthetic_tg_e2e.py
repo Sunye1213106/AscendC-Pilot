@@ -232,7 +232,7 @@ def test_full_mode_contract_build_finalize_paths(synthetic_root: Path):
     assert built["ok"] is True
     tg = tg_root(synthetic_root, arch="arch0")
     assert (tg / "contract" / "tilingkey_contract.yaml").is_file()
-    assert (tg / "snapshot" / "understand_contract.json").is_file()
+    assert not (tg / "snapshot" / "understand_contract.json").exists()
 
     bind = _run_tg_semantic_bind(synthetic_root, ctx)
     assert bind["ok"] is True

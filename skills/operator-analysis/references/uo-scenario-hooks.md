@@ -1,7 +1,7 @@
 # UO query hooks for scenarios
 
 **When to load**：给 CE 推断场景之前选 `uo-query` mode。  
-场景 id 以 `skills/code-engineering/references/scenario-catalog.md` 为准，此处不复制 attach 表。
+场景 id 权威在 code-engineering `scenario-catalog.md`（由 CE Action Context Profile 物化），此处不复制 attach 表、不链到另一 skill 的 implementation。
 
 UO 只定位结构。不判断 golden、happens-before、profiler。结构事实可以答完；根因仍 PARTIAL。
 

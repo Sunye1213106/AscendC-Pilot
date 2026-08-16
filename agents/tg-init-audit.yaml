@@ -16,6 +16,10 @@ read_scopes:
 write_scopes:
 - pilot:tg/init/audit_report.yaml
 - pilot:runs/**/actions/init_audit/**
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

@@ -47,6 +47,15 @@ COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("language", "language.md"),
 )
 
+# Child agents do not receive Host Session Driver / primary routing packs.
+CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
+    ("evidence", "evidence-invariants.md"),
+    ("code-access", "code-access-invariants.md"),
+    ("authority", "authority.md"),
+    ("output-quality", "output-quality.md"),
+    ("language", "language.md"),
+)
+
 # True Skills (model-facing expertise). Workflow slash entries are generated shells.
 COGNITIVE_SKILL_IDS: tuple[str, ...] = (
     "operator-analysis",
@@ -318,21 +327,21 @@ def _cognitive_skill_for(repo: Path, wid: str) -> str:
     return cognitive_skill_id(wid)
 
 
-def _read_invariant_pack(repo: Path) -> str:
+def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
     """Concatenate short invariant markdown for model context (not full POLICY.md)."""
     root = repo / "pilot" / "policies" / "invariants"
+    files = COMPOSE_INVARIANT_FILES if for_primary else CHILD_INVARIANT_FILES
     parts: list[str] = [
         "Follow pilot policies (short invariants). Full text: `pilot/policies/*/POLICY.md`.",
         "",
     ]
     start_line = _start_requirements_line(repo)
-    for _label, fname in COMPOSE_INVARIANT_FILES:
+    for _label, fname in files:
         path = root / fname
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8").rstrip()
         if fname == "control-invariants.md":
-            # Spec is authority for which workflows need project/architecture.
             text = re.sub(
                 r"(?m)^11\..*$",
                 start_line,
@@ -343,9 +352,30 @@ def _read_invariant_pack(repo: Path) -> str:
         parts.append("")
     context = repo / "agents" / "CONTEXT.md"
     if context.is_file():
-        parts.append(context.read_text(encoding="utf-8").rstrip())
+        ctx_text = context.read_text(encoding="utf-8").rstrip()
+        if not for_primary:
+            ctx_text = _child_context_glossary(ctx_text)
+        parts.append(ctx_text)
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
+
+
+_CHILD_CONTEXT_DROP_PREFIXES = (
+    "**短问**",
+    "**深问**",
+    "**可见 LLM 路由**",
+)
+
+
+def _child_context_glossary(text: str) -> str:
+    """Keep ubiquitous language; drop primary routing bullets from child packs."""
+    keep: list[str] = []
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        if any(stripped.startswith(p) for p in _CHILD_CONTEXT_DROP_PREFIXES):
+            continue
+        keep.append(line)
+    return "\n".join(keep).rstrip()
 
 
 def _read_capability(repo: Path, cid: str) -> tuple[dict[str, Any], str]:
@@ -950,6 +980,39 @@ def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, st
     return perm
 
 
+def _agent_capability_union(repo: Path, agent_id: str) -> set[str]:
+    sys.path.insert(0, str(repo / "pilot"))
+    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
+
+    caps: set[str] = set()
+    for meta in WORKFLOWS.values():
+        if not isinstance(meta, dict):
+            continue
+        for action in meta.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            if str(action.get("agent_id") or "") == agent_id:
+                caps.update(str(c) for c in (action.get("capability_ids") or []) if c)
+    return caps
+
+
+def _agent_allow_repo_search(repo: Path, agent_meta: dict[str, Any]) -> bool:
+    """Native/bash search is an Action capability, not an agent-name special case."""
+    aid = str(agent_meta.get("id") or "")
+    tags = {
+        str(x).strip()
+        for x in (
+            list(agent_meta.get("forbidden") or [])
+            + list(agent_meta.get("machine_constraints") or [])
+        )
+        if str(x).strip()
+    }
+    if aid == "uo-query" or "free_repo_search" in tags or "no_free_repo_search" in tags:
+        return False
+    caps = _agent_capability_union(repo, aid)
+    return bool(caps & {"source-navigation", "readonly-source-search"})
+
+
 def _host_remap_skill_paths(text: str, *, host: str) -> str:
     """Rewrite ``skills/<cognitive>`` → ``cognitive-skills/<cognitive>`` for OpenCode."""
     if host != "opencode" or not text:
@@ -996,9 +1059,19 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         read_scopes = remapped
     reads = "\n".join(f"- `{x}`" for x in read_scopes) or "- (none)"
     writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
-    forbidden = "\n".join(f"- {x}" for x in (agent_meta.get("forbidden") or []))
-    # Short invariant pack for ALL agents (same pack as workflow skills).
-    inv_pack = _host_remap_skill_paths(_read_invariant_pack(repo), host=host)
+    forbidden_tags = [str(x) for x in (agent_meta.get("forbidden") or [])]
+    machine = [str(x) for x in (agent_meta.get("machine_constraints") or [])]
+    behavioral = [str(x) for x in (agent_meta.get("behavioral_constraints") or [])]
+    seen_constraints: list[str] = []
+    for x in forbidden_tags + machine + behavioral:
+        if x and x not in seen_constraints:
+            seen_constraints.append(x)
+    forbidden = "\n".join(f"- {x}" for x in seen_constraints) or "- (none)"
+    is_primary = agent_meta.get("mode") == "primary"
+    inv_pack = _host_remap_skill_paths(
+        _read_invariant_pack(repo, for_primary=is_primary),
+        host=host,
+    )
     desc = _project_primary_description(
         repo, str(agent_meta.get("description") or aid), host=host
     )
@@ -1006,77 +1079,75 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         "name": aid,
         "description": desc,
     }
-    allow_repo_search = aid != "uo-query"
+    allow_repo_search = _agent_allow_repo_search(repo, agent_meta)
     bash_perm = _opencode_bash_permission(allow_repo_search=allow_repo_search)
     grep_perm = "allow" if allow_repo_search else "deny"
-    # AscendC-Pilot mode: Host-level Read of any directory is allow, no ask.
-    # OpenCode cwd is the Pilot repo; operator package / session files live
-    # outside it. `external_directory` default `ask` was the child's opening
-    # red tool error. Write/edit stay ask. Pilot authorize still fences writes.
+    write_scopes = list(agent_meta.get("write_scopes") or [])
+    # OpenCode defaults most tools to allow. Always emit edit/write explicitly.
+    # edit covers write/apply_patch. Empty write_scopes → deny; else ask (ACP lease fences).
+    if write_scopes:
+        edit_perm: Any = {"*": "ask"}
+        write_perm: Any = {"*": "ask"}
+    else:
+        edit_perm = "deny"
+        write_perm = "deny"
     host_read_perm = {
         "read": "allow",
         "external_directory": "allow",
     }
-    if agent_meta.get("mode") == "primary":
+    if is_primary:
         front["mode"] = "primary"
         front["permission"] = {
             "bash": bash_perm,
-            # Native OpenCode Grep tool (not bash); default allow, set explicitly.
             "grep": grep_perm,
             **host_read_perm,
-            # Query + TG/CE subagent dispatch. Unspecified task was omitted from
-            # the schema / treated as deny on some OpenCode builds.
             "task": "allow",
-            "edit": {"*": "ask"},
-            "write": {"*": "ask"},
+            "edit": edit_perm if write_scopes else {"*": "ask"},
+            "write": write_perm if write_scopes else {"*": "ask"},
         }
     else:
-        # OpenCode recognizes mode=subagent (not type=subagent).
         front["mode"] = "subagent"
-        # Same bash fence as primary so Task does not inherit a silent deny-all
-        # while still allowing locate-only search + acp (Pilot authorize remains).
-        # uo-query drops grep/findstr so CodeMap / ro-search stay the search path.
         front["permission"] = {
             "bash": bash_perm,
             "grep": grep_perm,
             **host_read_perm,
+            "edit": edit_perm,
+            "write": write_perm,
+            "task": "deny",
+            "skill": "deny",
+            "webfetch": "deny",
+            "websearch": "deny",
         }
-        # Hide tools that would red-error: skill is denied by authorize
-        # (SKILL_SUBAGENT_ESCAPE); native grep/glob need rg on OpenCode PATH.
-        # `tools: false` omits them from the schema so the child never calls them.
         tools: dict[str, Any] = {"skill": False}
-        if aid == "uo-query":
+        if not allow_repo_search:
             tools["grep"] = False
             tools["glob"] = False
-            # OpenCode 1.18 Windows bash (cmd.exe) spawn NotFound; plugin `acp` tool
-            # is the only reliable CLI. Hide bash so the child cannot burn turns on it.
+        if aid == "uo-query":
             tools["bash"] = False
             tools["pilot_run"] = False
         front["tools"] = tools
+        if not allow_repo_search:
+            front["permission"]["glob"] = "deny"
 
-    # Role stays thin: controller brief only; start rules live in composed invariants.
     if aid == "uo-query":
         runtime = """## Runtime Contract
 
-Query is **not** a Host-prepared Action. There is no session `prompt.md` / `method.md` bundle.
+If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not hunt any other session files.
 
-1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs> --mode <mode> --pattern …`. Do not prefix with bash; the plugin spawns acp.exe. The Task prompt is the sole task body.
+1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs> --mode <mode> --pattern …`. Do not prefix with bash; the plugin spawns acp.exe.
 2. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
-3. Answer in the final message (prose + file:line). Do not Write. Do not finalize.
+3. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
+
+Short query is Primary-only (`acp uo-query` stdout). This agent is the deep / delegated variant.
 """
     else:
         runtime = """## Runtime Contract
 
 At runtime, follow:
 
-1. **First**: Read the session `prompt.md` from the prepared Action Bundle (path given by Host `task_prompt_stub` / `session_dir`). Treat it as the sole task body.
-2. Then the current Pilot Action / METHOD only as referenced by that prompt;
-3. the composed Policy invariants;
-4. the composed Capabilities (`source-navigation`, `source-reading` when declared on the Action);
-5. the declared Output Contract.
-
-When these sources conflict, follow the session `prompt.md` and Pilot Action / source-authority Policy.
-Do **not** invent extra goals beyond the session prompt. Do **not** finalize the Action (primary runs `--finalize`).
+1. **First**: Read the session files named by Host `task_prompt_stub` pointers (`prompt`, `method`, `bundle`). Treat `prompt.md` as the sole task body.
+2. Work only on this Action / METHOD. Do not invent extra goals.
+3. Do **not** finalize (primary runs `--finalize`). Write only declared `write:` targets; otherwise return a short native summary.
 """
     body = f"""# Agent: {aid}
 

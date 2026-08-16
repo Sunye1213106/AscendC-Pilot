@@ -89,10 +89,21 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     assert "quick" in method.lower()
     skill_ids = list(load_agent_meta("ce-reviewer", str(REPO)).get("skill_ids") or [])
     assert "code-engineering" in skill_ids
+    from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
+    from ascendc_pilot.context.profiles import get_profile
+
+    profile = get_profile("ce-review-code-review")
+    extra = list(profile.references) if profile is not None else []
+    scoped = method_skill_ids_for_action(
+        {"action_method_id": "code-review/standalone-review"},
+        agent_skill_ids=skill_ids,
+        extra_ref_paths=extra,
+    )
+    assert scoped == ["code-review"]
     sdir = tmp_path / "ce-review"
     mat = materialize_method_bundle(
         sdir,
-        skill_ids=skill_ids,
+        skill_ids=scoped,
         existing_method=method,
         project_root=REPO,
         prompt=prompt,
@@ -103,6 +114,26 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     assert "Materialized skill:" not in packed
     assert "# 代码审查" not in packed
     assert "Domain map (do not inline): `skills/code-review/SKILL.md`" in packed
+    assert "skills/code-engineering/SKILL.md" not in packed
+
+
+def test_method_skill_ids_intersect_profile_and_ceiling() -> None:
+    from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
+    from ascendc_pilot.context.profiles import get_profile
+
+    ceiling = ["code-review", "operator-analysis", "code-engineering", "testcase-generation"]
+    fd = get_profile("ce-intent-feature-decompose")
+    assert method_skill_ids_for_action(
+        {"action_method_id": "code-engineering/ce-feature-decompose"},
+        agent_skill_ids=ceiling,
+        extra_ref_paths=list(fd.references) if fd else [],
+    ) == ["code-engineering"]
+    knobs = get_profile("ce-impact-scenario-knobs")
+    assert method_skill_ids_for_action(
+        {"action_method_id": "code-engineering/ce-scenario-knobs"},
+        agent_skill_ids=ceiling,
+        extra_ref_paths=list(knobs.references) if knobs else [],
+    ) == ["code-engineering", "testcase-generation"]
 
 
 def test_verify_review_session_is_obligation_method_not_standalone(tmp_path: Path) -> None:
@@ -277,9 +308,16 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
                 continue
             method, prompt = _load_method_and_prompt(REPO, action)
             actor = str(action.get("agent_id") or "")
-            skill_ids = list(load_agent_meta(actor, str(REPO)).get("skill_ids") or [])
+            ceiling = list(load_agent_meta(actor, str(REPO)).get("skill_ids") or [])
             profile = get_profile(action.get("context_profile_id"))
             extra = list(profile.references) if profile is not None else []
+            from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
+
+            skill_ids = method_skill_ids_for_action(
+                action,
+                agent_skill_ids=ceiling,
+                extra_ref_paths=extra,
+            )
             sdir = tmp_path / wid / str(action.get("id"))
             mat = materialize_method_bundle(
                 sdir,

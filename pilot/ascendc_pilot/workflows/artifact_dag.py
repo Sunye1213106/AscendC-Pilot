@@ -443,3 +443,73 @@ def check_artifact_dag(
                         f"{owner} consumes {path} producers={sorted(local_owners)}"
                     )
     return sorted(set(errors))
+
+
+RECEIPT_ARTIFACTS = frozenset(
+    {
+        "tg/init/uo_ready.yaml",
+        "tg/contract/integrity_gate.yaml",
+    }
+)
+
+
+def check_artifact_usage(repo_root: Any = None) -> list[str]:
+    """Declared contract paths must appear as writers in engines.py.
+
+    Catches historical stubs (e.g. understand_contract.json) that the DAG
+    listed but no later step actually read.
+    """
+    from pathlib import Path
+
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+
+    here = Path(__file__).resolve()
+    engines = here.parents[1] / "actions" / "engines.py"
+    if repo_root is not None:
+        root = Path(repo_root)
+        engines = root / "pilot" / "ascendc_pilot" / "actions" / "engines.py"
+        pkg = root / "pilot" / "ascendc_pilot"
+        harness = (
+            root
+            / "engines"
+            / "code-engineering"
+            / "code_engineering"
+            / "harness"
+            / "__init__.py"
+        )
+    else:
+        pkg = here.parents[1]
+        harness = (
+            here.parents[3]
+            / "engines"
+            / "code-engineering"
+            / "code_engineering"
+            / "harness"
+            / "__init__.py"
+        )
+    blobs: list[str] = []
+    for path in (
+        engines,
+        pkg / "actions" / "__init__.py",
+        pkg / "ownership.py",
+        pkg / "actions" / "runtime.py",
+        harness,
+    ):
+        if path.is_file():
+            blobs.append(path.read_text(encoding="utf-8"))
+    text = "\n".join(blobs)
+    errors: list[str] = []
+    for cid, paths in OUTPUT_CONTRACT_PATHS.items():
+        for raw in paths:
+            name = str(raw).replace("\\", "/").rsplit("/", 1)[-1]
+            if not name or "*" in name or "{" in name:
+                continue
+            if name not in text:
+                errors.append(
+                    f"ARTIFACT_USAGE: {cid} declares {raw} but no engine/harness/ownership mention of {name}"
+                )
+    if "understand_contract.json" in text and "write_text" in text:
+        # Residual stub writer is a usage bug even if not in OUTPUT_CONTRACT_PATHS.
+        if "snapshot_hash" in text or "tg-tilingkey-snapshot" in text:
+            errors.append("ARTIFACT_USAGE: understand_contract.json stub writer still present")
+    return errors

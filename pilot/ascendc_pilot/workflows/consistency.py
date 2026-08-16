@@ -448,6 +448,9 @@ def check_all(
         errors.extend(_check_architecture_start_requirements(workflows=wf_map, root=root))
         errors.extend(_check_artifact_dag())
         errors.extend(_check_workflow_model())
+        from ascendc_pilot.workflows.artifact_dag import check_artifact_usage
+
+        errors.extend(check_artifact_usage(root))
     else:
         errors.extend(_check_artifact_dag(workflows=wf_map))
         errors.extend(_check_workflow_model(workflows=wf_map))

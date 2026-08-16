@@ -138,6 +138,51 @@ def _load(path: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+# Mutable execution overlay. Identity/contract live in bundle.yaml.
+_SESSION_STATE_KEYS = (
+    "status",
+    "lease_id",
+    "prepare_nonce",
+    "action_session_id",
+    "run_id",
+    "action_id",
+    "actor_id",
+    "role_id",
+    "workflow_id",
+    "phase",
+    "execution_mode",
+    "output_contract_id",
+    "output_mode",
+    "identity",
+    "prepared_at",
+    "finalized_at",
+    "dispatch_id",
+    "result_digest",
+    "failure",
+    "engine",
+    "receipt",
+    "checker_result",
+    "bundle_digest",
+)
+
+
+def _session_state_from_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
+    row = {"kind": "session_state", "version": 1}
+    for key in _SESSION_STATE_KEYS:
+        if key in bundle:
+            row[key] = bundle[key]
+    return row
+
+
+def _load_action_session(sdir: Path) -> dict[str, Any]:
+    """Merge immutable bundle + mutable session overlay."""
+    merged = dict(_load(sdir / "bundle.yaml"))
+    overlay = _load(sdir / "session.yaml")
+    if overlay:
+        merged.update(overlay)
+    return merged
+
+
 def _repo_root(project_root: Path) -> Path:
     root = Path(project_root).resolve()
     if (root / "skills").is_dir():
@@ -236,7 +281,7 @@ def _render_placeholders(
     return out
 
 
-def _build_task_prompt_stub(
+def build_task_stub(
     *,
     actor_id: str,
     action_id: str,
@@ -253,8 +298,9 @@ def _build_task_prompt_stub(
     environment_path: str = "",
     write_paths: list[str] | None = None,
     user_question: str = "",
-) -> str:
-    """Minimal Host→subagent Task body: pointers only, no METHOD paraphrase."""
+) -> tuple[str, Any]:
+    """Minimal Host→subagent Task body + typed pointers. Stub is human-readable."""
+    from ascendc_pilot.actions.method_bundle import TaskStubPointers
     lines = [
         f"action_id={action_id}",
         f"actor_id={actor_id}",
@@ -363,7 +409,60 @@ def _build_task_prompt_stub(
                 + " --finalize` (optionally `--result-file <kb-answer.yaml>`).",
             ]
         )
-    return "\n".join(lines) + "\n"
+    write_for_ptr = [] if action_id == "kb_lookup" else list(write_list)
+    pointers = TaskStubPointers(
+        prompt=prompt_path,
+        method=method_path,
+        bundle=bundle_path,
+        environment=environment_path,
+        session_dir=session_dir,
+        project_root=project_root,
+        run_id=run_id,
+        action_id=action_id,
+        actor_id=actor_id,
+        read=[_abs_under_agent(str(x)) for x in (dt.get("read") or [])],
+        write=[_abs_under_agent(str(x)) for x in write_for_ptr],
+        forbid_read=[str(x) for x in (dt.get("forbid_read") or [])],
+    )
+    return "\n".join(lines) + "\n", pointers
+
+
+def _build_task_prompt_stub(
+    *,
+    actor_id: str,
+    action_id: str,
+    run_id: str,
+    session_dir: str,
+    prompt_path: str,
+    method_path: str,
+    bundle_path: str,
+    dispatch_targets: dict[str, Any] | None = None,
+    agent_root_path: str = "",
+    project_root: str = "",
+    architecture: str = "",
+    candidates_sha256: str = "",
+    environment_path: str = "",
+    write_paths: list[str] | None = None,
+    user_question: str = "",
+) -> str:
+    stub, _ = build_task_stub(
+        actor_id=actor_id,
+        action_id=action_id,
+        run_id=run_id,
+        session_dir=session_dir,
+        prompt_path=prompt_path,
+        method_path=method_path,
+        bundle_path=bundle_path,
+        dispatch_targets=dispatch_targets,
+        agent_root_path=agent_root_path,
+        project_root=project_root,
+        architecture=architecture,
+        candidates_sha256=candidates_sha256,
+        environment_path=environment_path,
+        write_paths=write_paths,
+        user_question=user_question,
+    )
+    return stub
 
 
 def _kb_lookup_fanout_tasks(
@@ -1090,10 +1189,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         and str(existing_active.get("run_id") or "") == run_id
         and str(existing_active.get("action_id") or "") == action_id
         and existing_sdir.is_dir()
-        and (existing_sdir / "session.yaml").is_file()
+        and (
+            (existing_sdir / "session.yaml").is_file()
+            or (existing_sdir / "bundle.yaml").is_file()
+        )
     )
     if reuse_prepared:
-        session_prev = _load(existing_sdir / "session.yaml")
+        session_prev = _load_action_session(existing_sdir)
         prepare_nonce = str(
             existing_active.get("prepare_nonce") or session_prev.get("prepare_nonce") or ""
         ).strip()
@@ -1331,16 +1433,19 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         write_environment_capabilities,
     )
 
-    env_path = write_environment_capabilities(
-        sdir,
-        project_root,
-        architecture=architecture,
-        run_id=run_id,
-        host="opencode",
-    )
-    env_posix = env_path.as_posix()
+    env_posix = ""
+    if execution_mode != EXECUTION_DETERMINISTIC:
+        env_path = write_environment_capabilities(
+            sdir,
+            project_root,
+            architecture=architecture,
+            run_id=run_id,
+            host="opencode",
+        )
+        env_posix = env_path.as_posix()
     # Stub is built after write_paths are known (see below).
     stub = ""
+    stub_pointers = None
 
     from ascendc_pilot.authorize.lease import issue_action_lease
     from datetime import datetime, timezone
@@ -1539,8 +1644,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "write_paths": write_paths,
             "user_question": user_question,
         }
-        stub = _build_task_prompt_stub(**stub_kwargs)
+        stub, stub_pointers = build_task_stub(**stub_kwargs)
         bundle["task_prompt_stub"] = stub
+        bundle["stub_pointers"] = stub_pointers.as_dict()
         fanout = _kb_lookup_fanout_tasks(
             action_id=action_id,
             actor_id=actor_id,
@@ -1551,9 +1657,10 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         if fanout:
             bundle["dispatch_tasks"] = fanout
 
-    _dump(sdir / "session.yaml", bundle)
-    (sdir / "method.md").write_text(method_r, encoding="utf-8")
-    (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
+    _dump(sdir / "session.yaml", _session_state_from_bundle(bundle))
+    if execution_mode != EXECUTION_DETERMINISTIC:
+        (sdir / "method.md").write_text(method_r, encoding="utf-8")
+        (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
 
     # Materialize Action METHOD + named refs. Never concatenate Agent SKILL.md.
     # Host-owned confirmations skip skill trees entirely.
@@ -1573,9 +1680,16 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 "host_owned_confirm": True,
             }
         elif execution_mode == EXECUTION_SUBAGENT:
-            skill_ids = list((load_agent_meta(actor_id, str(project_root)).get("skill_ids") or []))
+            from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
+
+            ceiling = list((load_agent_meta(actor_id, str(project_root)).get("skill_ids") or []))
             profile = get_profile(context_profile_id)
             extra_refs = list(profile.references) if profile is not None else []
+            skill_ids = method_skill_ids_for_action(
+                action,
+                agent_skill_ids=ceiling,
+                extra_ref_paths=extra_refs,
+            )
             mat = materialize_method_bundle(
                 sdir,
                 skill_ids=[str(x) for x in skill_ids],
@@ -1583,6 +1697,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 project_root=project_root,
                 extra_ref_paths=extra_refs,
             )
+            bundle["method_skill_ids"] = skill_ids
+            bundle["agent_skill_ceiling"] = [str(x) for x in ceiling]
             bundle["method_materialized"] = {
                 "copied": mat.get("copied") or [],
                 "missing": mat.get("missing") or [],
@@ -1634,39 +1750,56 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     # Write bundle.yaml before BUNDLE_NOT_READABLE: the check always requires
     # the session pack (prompt/method/bundle). Dumping after the check made
     # the first kb_lookup prepare fail on its own missing bundle.yaml.
+    if yaml is not None:
+        digest_src = yaml.safe_dump(
+            {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce", "bundle_digest"}},
+            allow_unicode=True,
+            sort_keys=True,
+        )
+        bundle["bundle_digest"] = hashlib.sha256(digest_src.encode("utf-8")).hexdigest()[:16]
+    _dump(sdir / "session.yaml", _session_state_from_bundle(bundle))
     _dump(
         sdir / "bundle.yaml",
         {k: v for k, v in bundle.items() if k not in {"nonce", "prepare_nonce"}},
     )
     if stub:
         (sdir / "task_prompt_stub.md").write_text(stub, encoding="utf-8")
-        # BUNDLE_NOT_READABLE: symmetric to OUTPUT_NOT_WRITABLE.
-        try:
-            from ascendc_pilot.actions.method_bundle import check_bundle_readable
+        from ascendc_pilot.actions.method_bundle import check_bundle_readable
 
+        try:
             br = check_bundle_readable(
                 stub=stub,
+                pointers=stub_pointers,
                 session_dir=sdir,
                 project_root=project_root,
                 allowed_read_paths=read_paths,
+                allowed_write_paths=write_paths,
                 allowed_source_roots=list(
                     (src_scope or {}).get("allowed_source_roots") or []
                 ),
             )
-            if not br.get("ok"):
-                return {
-                    "ok": False,
-                    "error": "BUNDLE_NOT_READABLE",
-                    "reason_code": "BUNDLE_NOT_READABLE",
-                    "missing": br.get("missing") or [],
-                    "unleased": br.get("unleased") or [],
-                    "message_zh": br.get("message_zh")
-                    or "Action Bundle 读闭合失败；禁止派发",
-                    "action_id": action_id,
-                    "session_dir": sdir.as_posix(),
-                }
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "BUNDLE_NOT_READABLE",
+                "reason_code": "BUNDLE_NOT_READABLE",
+                "message_zh": f"Action Bundle 读闭合检查异常：{exc}",
+                "action_id": action_id,
+                "session_dir": sdir.as_posix(),
+            }
+        if not br.get("ok"):
+            return {
+                "ok": False,
+                "error": str(br.get("error") or "BUNDLE_NOT_READABLE"),
+                "reason_code": str(br.get("reason_code") or "BUNDLE_NOT_READABLE"),
+                "missing": br.get("missing") or [],
+                "unleased": br.get("unleased") or [],
+                "unwritable": br.get("unwritable") or [],
+                "message_zh": br.get("message_zh")
+                or "Action Bundle 读闭合失败；禁止派发",
+                "action_id": action_id,
+                "session_dir": sdir.as_posix(),
+            }
     _write_active_action(
         project_root,
         {
@@ -2273,7 +2406,7 @@ def finalize_action(
         return {"ok": False, "error": "action_not_allowed", "action_id": action_id, "phase": phase}
 
     sdir = _session_dir(project_root, run_id, action_id)
-    session = _load(sdir / "session.yaml")
+    session = _load_action_session(sdir)
     if not session:
         return {
             "ok": False,
@@ -2552,7 +2685,7 @@ def finalize_action(
         )
         session["status"] = "finalized"
         session["receipt"] = str(receipt_path)
-        _dump(sdir / "session.yaml", session)
+        _dump(sdir / "session.yaml", _session_state_from_bundle(session))
         _write_active_action(
             project_root,
             {
@@ -2585,7 +2718,7 @@ def finalize_action(
     else:
         session["status"] = "finalize_failed"
         session["checker_result"] = checker_result
-        _dump(sdir / "session.yaml", session)
+        _dump(sdir / "session.yaml", _session_state_from_bundle(session))
         append_event(
             project_root,
             {"type": "action_finalize_failed", "action_id": action_id, "checker": checker_result},

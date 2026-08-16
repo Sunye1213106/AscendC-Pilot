@@ -4,19 +4,43 @@ from __future__ import annotations
 
 from typing import Any
 
-# Shared stable policies composed into every semantic / engine action.
+# Shared stable policies for model-facing semantic Actions. Deterministic
+# engines get ``[]`` — they are not LLM context.
 DEFAULT_POLICY_IDS: list[str] = [
     "source-authority",
     "code-access",
     "evidence",
-    "language",
-    "pilot-control",
     "output-quality",
+]
+DEFAULT_PRODUCER_POLICY_IDS: list[str] = [
+    "source-authority",
+    "evidence",
+    "output-quality",
+]
+DEFAULT_PRIMARY_POLICY_IDS: list[str] = [
+    "pilot-control",
+    "language",
 ]
 
 # Optional global capabilities merged into every action (prepended, de-duped).
 # Keep empty unless a capability is truly universal; prefer per-action lists.
 DEFAULT_CAPABILITY_IDS: list[str] = []
+
+
+def _default_policy_ids(
+    *,
+    execution_mode: str,
+    role_id: str | None,
+    output_mode: str | None,
+) -> list[str]:
+    mode = str(execution_mode or "").strip()
+    if mode == "deterministic" or role_id == "deterministic_engine":
+        return []
+    if mode == "primary_interactive" or role_id == "controller":
+        return list(DEFAULT_PRIMARY_POLICY_IDS)
+    if str(output_mode or "") == "staged" or role_id == "producer":
+        return list(DEFAULT_PRODUCER_POLICY_IDS)
+    return list(DEFAULT_POLICY_IDS)
 
 
 def _merge_capability_ids(capability_ids: list[str] | None) -> list[str]:
@@ -128,7 +152,15 @@ def _act(
         "role_id": role_id,
         "execution_mode": mode,
         "human_interaction": hi,
-        "policy_ids": list(policy_ids if policy_ids is not None else DEFAULT_POLICY_IDS),
+        "policy_ids": list(
+            policy_ids
+            if policy_ids is not None
+            else _default_policy_ids(
+                execution_mode=mode,
+                role_id=role_id,
+                output_mode=output_mode,
+            )
+        ),
         "capability_ids": _merge_capability_ids(capability_ids),
         "action_method_id": method_id,
         "task_prompt_id": task_prompt_id,

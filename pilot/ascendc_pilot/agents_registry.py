@@ -13,6 +13,26 @@ KNOWN_FORBIDDEN_TAGS = frozenset(
         "declare_workflow_passed",
         "write_outside_declared_scope",
         "modify_uo_product",
+        "no_free_repo_search",
+        "free_repo_search",
+        "write_canonical_ce_plan",
+        "write_uo_formal_products",
+        "write_excluded_set",
+        "write_uo_checks",
+        "write_canonical_uo_ir",
+        "apply_semantic_gap_patch",
+        "rewrite_deterministic_ledger",
+    }
+)
+
+BEHAVIORAL_CONSTRAINT_TAGS = frozenset(
+    {
+        "invent_evidence",
+        "invent_lemma_leads",
+        "invent_unresolved_ids",
+        "approve_own_producer_output",
+        "do_not_invent_evidence",
+        "do_not_approve_own_work",
     }
 )
 
@@ -98,9 +118,27 @@ def agent_forbidden(agent_id: str, project_root: Path | None = None) -> list[str
     return [str(x).strip() for x in (meta.get("forbidden") or []) if str(x).strip()]
 
 
+def agent_machine_constraints(agent_id: str, project_root: Path | None = None) -> list[str]:
+    """Tags that authorize / compose must enforce."""
+    meta = load_agent_meta(agent_id, str(project_root) if project_root else None)
+    tags = [str(x).strip() for x in (meta.get("machine_constraints") or []) if str(x).strip()]
+    if not tags:
+        tags = [t for t in agent_forbidden(agent_id, project_root) if t in KNOWN_FORBIDDEN_TAGS]
+    return tags
+
+
+def agent_behavioral_constraints(agent_id: str, project_root: Path | None = None) -> list[str]:
+    meta = load_agent_meta(agent_id, str(project_root) if project_root else None)
+    tags = [str(x).strip() for x in (meta.get("behavioral_constraints") or []) if str(x).strip()]
+    if not tags:
+        tags = [t for t in agent_forbidden(agent_id, project_root) if t in BEHAVIORAL_CONSTRAINT_TAGS]
+    return tags
+
+
 def unknown_forbidden_tags(agent_id: str, project_root: Path | None = None) -> list[str]:
     """Tags present in YAML but not in the harness mapping table."""
-    return [t for t in agent_forbidden(agent_id, project_root) if t not in KNOWN_FORBIDDEN_TAGS]
+    known = KNOWN_FORBIDDEN_TAGS | BEHAVIORAL_CONSTRAINT_TAGS
+    return [t for t in agent_forbidden(agent_id, project_root) if t not in known]
 
 
 def forbidden_blocks_write(
@@ -110,7 +148,9 @@ def forbidden_blocks_write(
     project_root: Path | None = None,
 ) -> str | None:
     """Return a reason_code if a known forbidden tag blocks this write, else None."""
-    tags = set(agent_forbidden(agent_id, project_root))
+    tags = set(agent_forbidden(agent_id, project_root)) | set(
+        agent_machine_constraints(agent_id, project_root)
+    )
     if not tags:
         return None
     norm = rel_under_agent.replace("\\", "/").lstrip("/")
@@ -132,7 +172,9 @@ def forbidden_blocks_bash(
     project_root: Path | None = None,
 ) -> str | None:
     """Return reason_code if bash is blocked by a known forbidden tag."""
-    tags = set(agent_forbidden(agent_id, project_root))
+    tags = set(agent_forbidden(agent_id, project_root)) | set(
+        agent_machine_constraints(agent_id, project_root)
+    )
     if "declare_workflow_passed" not in tags:
         return None
     cmd = (command or "").strip().lower()

@@ -617,6 +617,7 @@ def _run_tg_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     ok = bool(ready.get("ok")) and int(ready.get("legal_key_count") or 0) > 0
     receipt = {
         "schema": "tg-uo-ready/v1",
+        "kind": "receipt",
         "ok": ok,
         "mode": str(tg_ctx.get("mode") or "tilingkey_full_coverage"),
         "op_name": str(tg_ctx.get("op_name") or ""),
@@ -910,27 +911,6 @@ def _write_tilingkey_contract(project_root: Path, tg_ctx: dict[str, Any]) -> dic
     out = tg / "contract" / "tilingkey_contract.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(yaml.safe_dump(contract, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    # Snapshot stub so later bind steps have a file to open.
-    snap = tg / "snapshot" / "understand_contract.json"
-    snap.parent.mkdir(parents=True, exist_ok=True)
-    if not snap.is_file():
-        import json
-
-        snap.write_text(
-            json.dumps(
-                {
-                    "schema": "tg-tilingkey-snapshot/v1",
-                    "mode": "tilingkey_full_coverage",
-                    "op_name": tg_ctx["op_name"],
-                    "architecture": tg_ctx["architecture"],
-                    "files": {},
-                    "snapshot_hash": contract["declared_set"]["fingerprint"],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
     return contract
 
 
@@ -1120,6 +1100,7 @@ def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     ok = status == "pass" and not list(contract.get("errors") or [])
     receipt = {
         "schema": "tg-tilingkey-integrity/v1",
+        "kind": "receipt",
         "mode": "tilingkey_full_coverage",
         "status": "pass" if ok else "fail",
         "tilingkey_contract_status": status or "missing",
@@ -3106,7 +3087,6 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "tg-init-intent-v1": ["tg/init/init_intent.yaml"],
     "tilingkey-contract-v1": [
         "tg/contract/tilingkey_contract.yaml",
-        "tg/snapshot/understand_contract.json",
     ],
     "tilingkey-binding-v1": [
         "tg/realization/binding_inventory.yaml",
@@ -3204,7 +3184,6 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
     ],
     "tilingkey-contract-v1": [
         "tg/contract/tilingkey_contract.yaml",
-        "tg/snapshot/understand_contract.json",
     ],
     "tilingkey-binding-v1": [
         "tg/realization/binding_inventory.yaml",

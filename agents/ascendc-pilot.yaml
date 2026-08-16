@@ -20,6 +20,10 @@ skill_ids: [operator-analysis, testcase-generation, source-proof, code-review, c
 read_scopes:
 - pilot:*
 write_scopes: []
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

@@ -16,10 +16,10 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 - Do not write `.ascendc-pilot/**` via bash / `>` / `Set-Content` / `tee`.
 - Children must not use OpenCode `skill` (read session `method.md`). Primary skills come from installed `SKILL.md`, not process `rg`.
 - Windows: plugin `acp` uses `spawnSync(acp.exe, shell:false)`. Session identity is the ticket (childSessionID↔actor↔action↔lease).
-- Read of any directory is allow in AscendC-Pilot mode; Write/edit still ask.
+- Read of any directory is allow in AscendC-Pilot mode. Primary Write/edit is ask. Children: empty `write_scopes` → `edit`/`write` deny; otherwise ask (ACP lease still fences).
 
 ## uo-query lifecycle
 
 - **Short**: Primary `acp uo-query --mode`; stdout is the answer. No prepare / Task / finalize.
 - **Deep**: prepare `kb_lookup` → N Task → Primary synthesizes → Runtime `acp run-action kb_lookup --finalize` materializes `answer.yaml`. Children never Write `answer.yaml` and never finalize.
-- **Delegated Task** (TG/CE): the Task prompt is the full body; do not hunt session `prompt.md`.
+- **Delegated Task** (TG/CE): Task body is `task_prompt_stub`. Follow its `prompt` / `method` / `bundle` pointers; do not hunt other session files.

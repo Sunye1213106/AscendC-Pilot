@@ -27,6 +27,12 @@ write_scopes:
 - pilot:runs/**/actions/scenario_knobs/parts/**
 - pilot:runs/**/actions/scenario_knobs/scratch/**
 - pilot:runs/**/actions/scenario_knobs/staging.yaml
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_canonical_ce_plan
+- free_repo_search
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

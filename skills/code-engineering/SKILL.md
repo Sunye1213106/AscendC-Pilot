@@ -47,7 +47,8 @@ Git 写操作、fork、PR 文案走维护者流程，不在本 skill。只读审
    precision compare / profiling / retest-pass artifacts. A review narrative is
    not a measurement. Precision/perf runners come from the operator's optional
    test-script repo (`--test-script-root`); CE PRs may patch those scripts from
-   TG `findings`. See `skills/testcase-generation/references/test-script-repo.md`.
+   TG `findings`. Test-script repo contract is owned by testcase-generation;
+   this Action materializes it via the Context Profile, not by inlining that skill.
 
 ## Risk language (developer → CE class)
 

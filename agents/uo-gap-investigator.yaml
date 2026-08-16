@@ -22,6 +22,14 @@ write_scopes:
 - pilot:runs/*/actions/investigate/parts/**
 - pilot:runs/*/actions/investigate/scratch/**
 - pilot:runs/*/actions/investigate/report.yaml
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_canonical_uo_ir
+- apply_semantic_gap_patch
+behavioral_constraints:
+- invent_unresolved_ids
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

@@ -21,6 +21,10 @@ write_scopes:
 - pilot:ce/verify/code_review.yaml
 - pilot:ce/verify/harness_evidence_check.yaml
 - pilot:runs/**/actions/code_review/**
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed

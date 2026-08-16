@@ -4,8 +4,8 @@
  * Install: copy this file to ~/.config/opencode/plugins/ascendc-pilot.ts
  * Does NOT merge or rewrite the user's opencode.json.
  *
- * Intercepts bash/write/edit/apply_patch/task/read/glob/grep/skill before
- * execution and asks `acp authorize`. MCP tools are not intercepted.
+ * Intercepts bash/write/edit/apply_patch/task/read/glob/grep/skill and MCP tools
+ * before execution and asks `acp authorize` (MCP on Pilot children is denied).
  * Soft control plane only — not OS-level security.
  *
  * Platform limits: OpenCode may not expose subagent identity on every hook;
@@ -673,6 +673,9 @@ function patchPilotReadPermissions(
     out.agent && typeof out.agent === "object"
       ? (out.agent as Record<string, unknown>)
       : {}
+  const mcpBag =
+    out.mcp && typeof out.mcp === "object" ? (out.mcp as Record<string, unknown>) : {}
+  const mcpServers = Object.keys(mcpBag)
   for (const name of listInstalledPilotAgentNames()) {
     const cur =
       agentBag[name] && typeof agentBag[name] === "object"
@@ -686,6 +689,18 @@ function patchPilotReadPermissions(
     perm.external_directory = "allow"
     if (name === "ascendc-pilot") {
       perm.task = "allow"
+    } else {
+      // Do not inherit the user's MCP servers on TG/CE/query children.
+      perm.webfetch = perm.webfetch || "deny"
+      perm.websearch = perm.websearch || "deny"
+      perm.task = perm.task || "deny"
+      perm.skill = perm.skill || "deny"
+      // Do not set/overwrite edit: compose already emits deny (empty write_scopes)
+      // or ask (producers/reviewers). Overwriting undefined→deny would clobber
+      // OpenCode agent-md edit:ask when config.agent has no permission bag yet.
+      for (const server of mcpServers) {
+        perm[`${server}_*`] = "deny"
+      }
     }
     agentBag[name] = { ...cur, permission: perm }
   }
@@ -2240,6 +2255,51 @@ export const AscendCHarnessPlugin = async (ctx?: {
       // Build / Plan / other non-Pilot tabs: behave like stock OpenCode.
       if (!shouldEnforceHarness(agent)) {
         return output
+      }
+
+      const nativeTools = new Set([
+        "bash",
+        "shell",
+        "terminal",
+        "write",
+        "edit",
+        "apply_patch",
+        "strreplace",
+        "patch",
+        "read",
+        "glob",
+        "grep",
+        "list",
+        "search",
+        "task",
+        "subagent",
+        "task_tool",
+        "skill",
+        "todowrite",
+        "todo_write",
+        "webfetch",
+        "websearch",
+        "question",
+        "askquestion",
+        "ask_question",
+        "lsp",
+        "acp",
+        "pilot_run",
+        "pilotrun",
+      ])
+      const isMcpTool = !nativeTools.has(tool) && tool.includes("_")
+      if (isMcpTool && agent !== "ascendc-pilot") {
+        throw new Error(
+          `[ascendc-pilot] MCP tool '${tool}' is denied for Pilot child '${agent}'. Use acp / session METHOD.`,
+        )
+      }
+      if (
+        agent !== "ascendc-pilot" &&
+        (tool === "webfetch" || tool === "websearch")
+      ) {
+        throw new Error(
+          `[ascendc-pilot] ${tool} is denied for Pilot child '${agent}'.`,
+        )
       }
 
       const action = resolveAction(args, project)

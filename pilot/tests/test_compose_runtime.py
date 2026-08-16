@@ -157,7 +157,29 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "task: allow" in pilot_agent
         assert "skill: false" in uo_query_agent
         assert "grep: false" in uo_query_agent
-        assert "There is no session `prompt.md`" in uo_query_agent
+        assert "There is no session `prompt.md`" not in uo_query_agent
+        assert "If the Task stub names" in uo_query_agent
+        assert "edit: deny" in uo_query_agent
+        assert "webfetch: deny" in uo_query_agent
+        assert "task: deny" in uo_query_agent
+        assert "glob: deny" in uo_query_agent
+        lemma = (generated / "agents" / "tg-lemma-producer.md").read_text(encoding="utf-8")
+        assert "edit:" in lemma
+        assert "host-runtime-contract" not in lemma.lower()
+        assert "force_new" not in lemma
+        assert "todo_sync" not in lemma
+        assert "短问" not in lemma
+        assert "可见 LLM 路由" not in lemma
+        lemma_bytes = len(lemma.encode("utf-8"))
+        lemma_lines = lemma.count("\n") + 1
+        assert lemma_bytes < 14000, f"child agent pack regressed: {lemma_bytes} bytes"
+        assert lemma_lines < 230, f"child agent pack regressed: {lemma_lines} lines"
+        analyst = (generated / "agents" / "ce-analyst.md").read_text(encoding="utf-8")
+        assert "grep: deny" in analyst or "grep: false" in analyst
+        assert "glob: deny" in analyst or "glob: false" in analyst
+        primary = (generated / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
+        assert "Host Session Driver" in primary or "host_driver=False" in primary
+        assert "edit:" in primary
         assert "uo-query --project" in uo_query_agent
         assert "Never bash" in uo_query_agent or "not bash" in uo_query_agent.lower()
         assert "bash: false" in uo_query_agent
@@ -261,4 +283,37 @@ def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
     assert "同名不可互换" in primary
     oa = (out / "skills" / "operator-analysis" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in oa
+
+
+def test_policy_ids_follow_execution_mode() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    det = next(a for a in WORKFLOWS["uo-init"]["actions"] if a["id"] == "prepare")
+    assert det["execution_mode"] == "deterministic"
+    assert det.get("policy_ids") == []
+
+    review = next(a for a in WORKFLOWS["ce-review"]["actions"] if a["id"] == "code_review")
+    assert "source-authority" in review["policy_ids"]
+    assert "pilot-control" not in review["policy_ids"]
+
+    mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "lemma_mine")
+    assert mine.get("output_mode") == "staged"
+    assert "pilot-control" not in mine["policy_ids"]
+    assert "language" not in mine["policy_ids"]
+
+    confirm = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "human_confirm")
+    assert confirm["execution_mode"] == "primary_interactive"
+    assert confirm["policy_ids"] == ["pilot-control", "language"]
+
+
+def test_cognitive_skill_md_does_not_cross_link_other_skill_refs() -> None:
+    from compose_runtime import COGNITIVE_SKILL_IDS
+
+    for sid in COGNITIVE_SKILL_IDS:
+        text = (REPO / "skills" / sid / "SKILL.md").read_text(encoding="utf-8")
+        for other in COGNITIVE_SKILL_IDS:
+            if other == sid:
+                continue
+            needle = f"skills/{other}/references/"
+            assert needle not in text, f"{sid} SKILL.md links {needle}"
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -143,6 +144,7 @@ def materialize_method_bundle(
 
     method_chunks.append(method_body.rstrip() + "\n")
     allowed = {str(s).strip() for s in skill_ids if str(s).strip()}
+    # Domain map is the Action-scoped set (method_skill_ids), not the Agent ceiling.
     for sid in sorted(allowed):
         method_chunks.append(f"\nDomain map (do not inline): `skills/{sid}/SKILL.md`\n")
 
@@ -232,7 +234,7 @@ def materialize_method_bundle(
     }
 
 
-# Pointer keys Host writes into the stub. Values are leased paths.
+# Typed pointer keys Host writes into the stub. Do not flatten these into one list.
 _POINTER_LINE_RE = re.compile(
     r"^\s*(prompt|method|bundle|session_dir|read|write|forbid_read|environment)\s*:\s*(.+)$",
     re.I,
@@ -245,19 +247,11 @@ _QUESTION_END_PREFIXES = (
     "Return a short",
     "After a directed",
 )
-# Product / session paths. Do NOT match `/foo` after `a/foo` (user identifiers)
-# or `CodeMap / minimal` (prose). Unix abs needs 2+ segments.
-_PRODUCT_PATH_RE = re.compile(
-    r"(?P<p>"
-    r"(?:[A-Za-z]:[/\\][^\s`'\"<>|]+)|"
-    r"(?:/(?:[^\s`'\"<>|/]+/)[^\s`'\"<>|]+)|"
-    r"runs/[^\s`'\"<>|]+|"
-    r"uo/[^\s`'\"<>|]+|"
-    r"tg/[^\s`'\"<>|]+|"
-    r"ce/[^\s`'\"<>|]+|"
-    r"skills/[^\s`'\"<>|]+|"
-    r"cognitive-skills/[^\s`'\"<>|]+)"
+_IDENTITY_LINE_RE = re.compile(
+    r"^\s*(action_id|actor_id|run_id)\s*=\s*(.+)$",
+    re.I,
 )
+_ACP_PROJECT_RE = re.compile(r"acp\s+--project\s+(\S+)", re.I)
 
 
 def _tokens_from_pointer_value(value: str) -> list[str]:
@@ -273,13 +267,58 @@ def _tokens_from_pointer_value(value: str) -> list[str]:
     return out
 
 
-def extract_stub_paths(stub: str) -> list[str]:
-    """Collect leased paths from stub pointer lines — not from USER QUESTION.
+def _soft_ref(raw: str) -> bool:
+    return "*" in raw or "{" in raw
 
-    User questions may contain identifiers like ``queryRope/keyRope`` or prose
-    like ``CodeMap / minimal``; those must not become BUNDLE_NOT_READABLE misses.
-    """
-    found: list[str] = []
+
+@dataclass
+class TaskStubPointers:
+    """Typed Host→subagent pointers. Inputs / outputs / metadata stay separate."""
+
+    prompt: str = ""
+    method: str = ""
+    bundle: str = ""
+    environment: str = ""
+    session_dir: str = ""
+    project_root: str = ""
+    run_id: str = ""
+    action_id: str = ""
+    actor_id: str = ""
+    read: list[str] = field(default_factory=list)
+    write: list[str] = field(default_factory=list)
+    forbid_read: list[str] = field(default_factory=list)
+
+    def required_input_paths(self) -> list[str]:
+        out: list[str] = []
+        for p in (self.prompt, self.method, self.bundle, self.environment, *self.read):
+            s = str(p or "").strip()
+            if s and not s.startswith("(none"):
+                out.append(s)
+        return out
+
+    def output_paths(self) -> list[str]:
+        return [p for p in self.write if str(p or "").strip() and not str(p).startswith("(none")]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "prompt": self.prompt,
+            "method": self.method,
+            "bundle": self.bundle,
+            "environment": self.environment,
+            "session_dir": self.session_dir,
+            "project_root": self.project_root,
+            "run_id": self.run_id,
+            "action_id": self.action_id,
+            "actor_id": self.actor_id,
+            "read": list(self.read),
+            "write": list(self.write),
+            "forbid_read": list(self.forbid_read),
+        }
+
+
+def parse_stub_pointers(stub: str) -> TaskStubPointers:
+    """Parse typed pointer lines only. Never scan prose / ``acp --project`` as inputs."""
+    ptr = TaskStubPointers()
     in_question = False
     for line in str(stub or "").splitlines():
         stripped = line.strip()
@@ -291,93 +330,159 @@ def extract_stub_paths(stub: str) -> list[str]:
                 in_question = False
             else:
                 continue
-        ptr = _POINTER_LINE_RE.match(line)
-        if ptr:
-            for tok in _tokens_from_pointer_value(ptr.group(2)):
-                if tok not in found:
-                    found.append(tok)
+        ident = _IDENTITY_LINE_RE.match(stripped)
+        if ident:
+            key = ident.group(1).lower()
+            val = ident.group(2).strip()
+            if key == "action_id":
+                ptr.action_id = val
+            elif key == "actor_id":
+                ptr.actor_id = val
+            elif key == "run_id":
+                ptr.run_id = val
             continue
-        for m in _PRODUCT_PATH_RE.finditer(line):
-            p = m.group("p").rstrip("),.;")
-            if p and p not in found:
-                found.append(p)
-    return found
+        acp = _ACP_PROJECT_RE.search(stripped)
+        if acp and not ptr.project_root:
+            ptr.project_root = acp.group(1)
+            continue
+        hit = _POINTER_LINE_RE.match(line)
+        if not hit:
+            continue
+        key = hit.group(1).lower()
+        value = hit.group(2).strip()
+        if key == "prompt":
+            ptr.prompt = value
+        elif key == "method":
+            ptr.method = value
+        elif key == "bundle":
+            ptr.bundle = value
+        elif key == "environment":
+            ptr.environment = value
+        elif key == "session_dir":
+            ptr.session_dir = value
+        elif key == "read":
+            ptr.read = _tokens_from_pointer_value(value)
+        elif key == "write":
+            ptr.write = _tokens_from_pointer_value(value)
+        elif key == "forbid_read":
+            ptr.forbid_read = _tokens_from_pointer_value(value)
+    return ptr
 
 
-def check_bundle_readable(
+def extract_stub_paths(stub: str) -> list[str]:
+    """Required input paths from typed pointer lines — not writes, not project root."""
+    return parse_stub_pointers(stub).required_input_paths()
+
+
+def method_skill_ids_for_action(
+    action: dict[str, Any] | None,
     *,
-    stub: str,
+    agent_skill_ids: list[str] | None = None,
+    extra_ref_paths: list[str] | None = None,
+) -> list[str]:
+    """Action-scoped skills: METHOD owner ∪ profile refs, intersected with agent ceiling."""
+    ceiling = {str(s).strip() for s in (agent_skill_ids or []) if str(s).strip()}
+    wanted: set[str] = set()
+    mid = str((action or {}).get("action_method_id") or "").strip()
+    if "/" in mid:
+        wanted.add(mid.split("/", 1)[0].strip())
+    for raw in extra_ref_paths or []:
+        parts = str(raw).replace("\\", "/").lstrip("/").split("/")
+        if len(parts) >= 4 and parts[0] == "skills" and parts[2] == "references":
+            owner = parts[1].strip()
+            if owner:
+                wanted.add(owner)
+    if ceiling:
+        wanted &= ceiling
+    return sorted(wanted)
+
+
+def _resolve_existing_path(
+    raw: str,
+    *,
+    session_dir: Path,
+    project_root: Path,
+) -> Path | None:
+    p = Path(raw)
+    if p.is_absolute():
+        return p if p.exists() else None
+    candidates = [session_dir / raw, Path(project_root) / raw]
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        candidates.append(agent_root(project_root) / raw)
+    except Exception:  # noqa: BLE001
+        pass
+    return next((c for c in candidates if c.exists()), None)
+
+
+def _pilot_rel(path: Path, project_root: Path) -> str | None:
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        return path.resolve().relative_to(agent_root(project_root).resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+def _source_rel(path: Path, project_root: Path) -> str | None:
+    try:
+        rel = path.resolve().relative_to(Path(project_root).resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+    return rel
+
+
+def _in_source_roots(src_rel: str, allowed_source_roots: list[str] | None) -> bool:
+    roots = [str(x).replace("\\", "/").lstrip("/") for x in (allowed_source_roots or []) if str(x).strip()]
+    if not roots:
+        return True
+    if src_rel in {".", ""}:
+        return False
+    return any(src_rel == r or src_rel.startswith(r.rstrip("/") + "/") for r in roots)
+
+
+def check_input_readability(
+    *,
+    pointers: TaskStubPointers,
     session_dir: Path,
     project_root: Path,
     allowed_read_paths: list[str],
     allowed_source_roots: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Fail-closed: every concrete path referenced by stub must exist and be leased."""
+    """Required inputs must exist and be inside the read lease / source roots."""
     from ascendc_pilot.ownership import path_matches_patterns
 
     missing: list[str] = []
     unleased: list[str] = []
     sdir = Path(session_dir).resolve()
-    # Always require session pack essentials.
     for name in ("prompt.md", "method.md", "bundle.yaml"):
         p = sdir / name
         if not p.is_file():
             missing.append(p.as_posix())
 
-    for raw in extract_stub_paths(stub):
-        p = Path(raw)
-        if not p.is_absolute():
-            # Try session-relative then project-relative then agent-relative.
-            candidates = [
-                sdir / raw,
-                Path(project_root) / raw,
-            ]
-            try:
-                from ascendc_pilot.paths import agent_root
-
-                candidates.append(agent_root(project_root) / raw)
-            except Exception:  # noqa: BLE001
-                pass
-            hit = next((c for c in candidates if c.exists()), None)
-            if hit is None:
-                # Globs / templates — skip non-existing soft refs
-                if "*" in raw or "{" in raw:
-                    continue
-                missing.append(raw)
-                continue
-            p = hit
-        elif not p.exists():
-            if "*" in raw:
-                continue
+    for raw in pointers.required_input_paths():
+        if _soft_ref(raw):
+            continue
+        hit = _resolve_existing_path(raw, session_dir=sdir, project_root=project_root)
+        if hit is None:
             missing.append(raw)
             continue
-
-        # Lease check for pilot-relative paths
         try:
-            from ascendc_pilot.paths import agent_root
-
-            rel = p.resolve().relative_to(agent_root(project_root).resolve()).as_posix()
-            if allowed_read_paths and not path_matches_patterns(rel, list(allowed_read_paths)):
-                # Session dir always ok
-                try:
-                    p.resolve().relative_to(sdir)
-                except ValueError:
-                    unleased.append(rel)
+            hit.resolve().relative_to(sdir)
+            continue
         except ValueError:
-            # Outside agent root: source roots
-            try:
-                src_rel = p.resolve().relative_to(Path(project_root).resolve()).as_posix()
-            except ValueError:
-                # Host method path outside project — allow if under session refs or skills
-                continue
-            roots = [str(x).replace("\\", "/").lstrip("/") for x in (allowed_source_roots or [])]
-            if roots:
-                ok = any(
-                    src_rel == r or src_rel.startswith(r.rstrip("/") + "/")
-                    for r in roots
-                )
-                if not ok:
-                    unleased.append(src_rel)
+            pass
+        rel = _pilot_rel(hit, project_root)
+        if rel is not None:
+            if allowed_read_paths and not path_matches_patterns(rel, list(allowed_read_paths)):
+                unleased.append(rel)
+            continue
+        src_rel = _source_rel(hit, project_root)
+        if src_rel is None:
+            continue
+        if not _in_source_roots(src_rel, allowed_source_roots):
+            unleased.append(src_rel)
 
     if missing or unleased:
         return {
@@ -387,16 +492,149 @@ def check_bundle_readable(
             "missing": missing,
             "unleased": unleased,
             "message_zh": (
-                "Action Bundle 读闭合失败：stub/session 引用的路径缺失或不在 lease 可读集合内；"
+                "Action Bundle 读闭合失败：required inputs 缺失或不在 lease 可读集合内；"
                 "禁止派发子代理。"
             ),
         }
     return {"ok": True}
 
 
+def check_output_writability(
+    *,
+    pointers: TaskStubPointers,
+    session_dir: Path,
+    project_root: Path,
+    allowed_write_paths: list[str] | None = None,
+) -> dict[str, Any]:
+    """Outputs need not exist. Only verify they sit inside the write lease."""
+    from ascendc_pilot.ownership import path_matches_patterns
+
+    unwritable: list[str] = []
+    writes = list(allowed_write_paths or [])
+    sdir = Path(session_dir).resolve()
+    for raw in pointers.output_paths():
+        if _soft_ref(raw):
+            rel = str(raw).replace("\\", "/").lstrip("/")
+            if writes and not path_matches_patterns(rel, writes):
+                # Absolute-under-agent glob: strip agent root prefix if present.
+                pilot_rel = rel
+                try:
+                    from ascendc_pilot.paths import agent_root
+
+                    prefix = agent_root(project_root).resolve().as_posix().rstrip("/") + "/"
+                    posix = Path(raw).as_posix() if Path(raw).is_absolute() else rel
+                    if posix.replace("\\", "/").startswith(prefix):
+                        pilot_rel = posix.replace("\\", "/")[len(prefix) :]
+                except Exception:  # noqa: BLE001
+                    pass
+                if not path_matches_patterns(pilot_rel, writes):
+                    unwritable.append(raw)
+            continue
+        p = Path(raw)
+        if not p.is_absolute():
+            try:
+                from ascendc_pilot.paths import agent_root
+
+                p = agent_root(project_root) / raw
+            except Exception:  # noqa: BLE001
+                p = Path(project_root) / raw
+        try:
+            p.resolve().relative_to(sdir)
+            continue
+        except (ValueError, OSError):
+            pass
+        rel = _pilot_rel(p, project_root)
+        if rel is None:
+            continue
+        if writes and not path_matches_patterns(rel, writes):
+            unwritable.append(rel)
+
+    if unwritable:
+        return {
+            "ok": False,
+            "error": "BUNDLE_NOT_WRITABLE",
+            "reason_code": "BUNDLE_NOT_WRITABLE",
+            "unwritable": unwritable,
+            "message_zh": "Action 声明的 write 路径不在 write lease 内；禁止派发。",
+        }
+    return {"ok": True}
+
+
+def check_metadata_identity(
+    *,
+    pointers: TaskStubPointers,
+    project_root: Path,
+) -> dict[str, Any]:
+    """``project_root`` is identity, not a source-read lease."""
+    declared = str(pointers.project_root or "").strip()
+    if not declared:
+        return {"ok": True}
+    try:
+        got = Path(declared).expanduser().resolve()
+        expected = Path(project_root).expanduser().resolve()
+    except OSError as exc:
+        return {
+            "ok": False,
+            "error": "BUNDLE_NOT_READABLE",
+            "reason_code": "PROJECT_ROOT_MISMATCH",
+            "message_zh": f"stub project_root 无法解析：{exc}",
+        }
+    if got != expected:
+        return {
+            "ok": False,
+            "error": "BUNDLE_NOT_READABLE",
+            "reason_code": "PROJECT_ROOT_MISMATCH",
+            "declared": got.as_posix(),
+            "expected": expected.as_posix(),
+            "message_zh": "stub ``acp --project`` 与当前 resolved project 不一致；禁止派发。",
+        }
+    return {"ok": True}
+
+
+def check_bundle_readable(
+    *,
+    stub: str = "",
+    session_dir: Path,
+    project_root: Path,
+    allowed_read_paths: list[str],
+    allowed_source_roots: list[str] | None = None,
+    allowed_write_paths: list[str] | None = None,
+    pointers: TaskStubPointers | None = None,
+) -> dict[str, Any]:
+    """Fail-closed prepare gate using typed pointers, not a flattened path list."""
+    ptr = pointers if pointers is not None else parse_stub_pointers(stub)
+    ident = check_metadata_identity(pointers=ptr, project_root=project_root)
+    if not ident.get("ok"):
+        return ident
+    reads = check_input_readability(
+        pointers=ptr,
+        session_dir=session_dir,
+        project_root=project_root,
+        allowed_read_paths=allowed_read_paths,
+        allowed_source_roots=allowed_source_roots,
+    )
+    if not reads.get("ok"):
+        return reads
+    writes = check_output_writability(
+        pointers=ptr,
+        session_dir=session_dir,
+        project_root=project_root,
+        allowed_write_paths=allowed_write_paths,
+    )
+    if not writes.get("ok"):
+        return writes
+    return {"ok": True}
+
+
 __all__ = [
+    "TaskStubPointers",
     "find_cognitive_skill_dir",
     "materialize_method_bundle",
+    "method_skill_ids_for_action",
+    "parse_stub_pointers",
     "extract_stub_paths",
+    "check_input_readability",
+    "check_output_writability",
+    "check_metadata_identity",
     "check_bundle_readable",
 ]

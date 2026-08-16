@@ -21,6 +21,13 @@ write_scopes:
 - pilot:ce/impact/audit_report.yaml
 - pilot:ce/verify/exclusion_review.yaml
 - pilot:ce/intent/plan_review.yaml
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- rewrite_deterministic_ledger
+behavioral_constraints:
+- approve_own_producer_output
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
