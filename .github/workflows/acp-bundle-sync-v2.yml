@@ -1,0 +1,43 @@
+name: acp-bundle-sync-v2
+
+on:
+  push:
+    paths:
+      - ".acp-bootstrap/ready-baseline"
+
+permissions:
+  contents: write
+
+jobs:
+  sync-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct and publish exact bundle tree
+        shell: bash
+        env:
+          BASE_SHA: 5005b31ad61d0b4c2e25f1bf5d99945592f1541c
+          EXPECTED_TREE: bcb97f350714cc6559bc3736c6f3eeecdcd91ad8
+        run: |
+          set -euo pipefail
+          {
+            for i in $(seq -w 0 12); do cat ".acp-bootstrap/payload.$i"; done
+            cat .acp-bootstrap/repl13.*
+            for i in $(seq -w 14 18); do cat ".acp-bootstrap/payload.$i"; done
+            cat .acp-bootstrap/repl19.*
+            for i in $(seq -w 20 22); do cat ".acp-bootstrap/payload.$i"; done
+          } | base64 -d > /tmp/bundle.patch.xz
+          xz -dc /tmp/bundle.patch.xz > /tmp/bundle.patch
+          git checkout --detach "$BASE_SHA"
+          git apply --index /tmp/bundle.patch
+          git rm -f --ignore-unmatch AscendC-Pilot.bundle
+          TREE="$(git write-tree)"
+          test "$TREE" = "$EXPECTED_TREE"
+          export GIT_AUTHOR_NAME="Sunye1213106"
+          export GIT_AUTHOR_EMAIL="seu136coco@gmail.com"
+          export GIT_COMMITTER_NAME="Sunye1213106"
+          export GIT_COMMITTER_EMAIL="seu136coco@gmail.com"
+          NEW="$(printf '%s\n' 'sync uploaded bundle baseline' | git commit-tree "$TREE" -p "$BASE_SHA")"
+          git push --force origin "$NEW:refs/heads/main"
