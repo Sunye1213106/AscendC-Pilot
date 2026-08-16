@@ -67,6 +67,7 @@ def _act(
     forbidden_read_paths: list[str] | None = None,
     produces: list[str] | None = None,
     consumes: list[str] | None = None,
+    consumes_state: list[str] | None = None,
     schema_version: str = "1",
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
@@ -76,6 +77,8 @@ def _act(
     ``human_interaction`` is ``none`` | ``confirm`` | ``approve``.
     ``produces`` / ``consumes`` are optional Producer/Consumer DAG edges;
     when ``produces`` is omitted (None), artifact_dag auto-fills from contracts.
+    ``consumes_state`` lists run-state fields the deterministic engine reads
+    besides identity (``run_id`` / ``op_name`` / ``architecture`` / ``workflow_id``).
     """
     from ascendc_pilot.ownership import (
         ACTION_FORBIDDEN_READ_PATHS,
@@ -143,6 +146,7 @@ def _act(
         # None → artifact_dag.normalize_produces auto-fills from contracts.
         "produces": list(produces) if produces is not None else None,
         "consumes": list(consumes) if consumes is not None else [],
+        "consumes_state": list(consumes_state or []),
     }
     if output_mode:
         row["output_mode"] = output_mode
@@ -756,6 +760,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 gates=["kb_ready"],
                 capability_ids=["kb-query"],
                 output_contract_id="uo-freshness-v1",
+                consumes_state=["pinned_digest"],
             ),
             _act(
                 "impact_slice",
@@ -1099,6 +1104,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="deterministic_engine",
                 capability_ids=[],
                 output_contract_id="intent-capture-v1",
+                consumes_state=["intent", "targets", "constraints"],
             ),
             _act(
                 "kb_check",

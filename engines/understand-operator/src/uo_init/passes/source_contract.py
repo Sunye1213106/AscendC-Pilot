@@ -76,8 +76,10 @@ _REGISTER_TILING_DEFAULT_RE = re.compile(
     re.S,
 )
 # Positional packed-key helpers (TPL or decimal packers). Not GetTilingKey().
+# Bare GET_TILINGKEY / GET_TILING_KEY is a real host packer; the prefix form
+# covers OP_GET_TILINGKEY-style wrappers.
 _PACKING_HELPER_CALL_RE = re.compile(
-    r"\b(?P<name>GET_TPL_TILING_KEY|[A-Z][A-Z0-9_]*GET_TILING_?KEY)\s*\("
+    r"\b(?P<name>GET_TPL_TILING_KEY|(?:[A-Z][A-Z0-9_]*)?GET_TILING_?KEY)\s*\("
 )
 _PACKING_CAST_WORDS = {
     "static_cast",
@@ -899,7 +901,10 @@ def _parse_tiling_keys(codemap: CodeMap, root: Path, architecture: str) -> dict[
     }
 
 
-_TILING_KEY_IS_RE = re.compile(r"\bTILING_KEY_IS\s*\(\s*([A-Za-z_]\w*|\d+)\s*\)")
+_TILING_KEY_IS_INT = r"(?:0[xX][0-9A-Fa-f]+|\d+)[uUlL]*"
+_TILING_KEY_IS_RE = re.compile(
+    rf"\bTILING_KEY_IS\s*\(\s*([A-Za-z_]\w*|{_TILING_KEY_IS_INT})\s*\)"
+)
 _DEFINE_TILING_KEY_RE = re.compile(
     r"^\s*#\s*define\s+((?:T(?:I)?LING_KEY_|[A-Z0-9_]*TILING_KEY)[A-Za-z0-9_]*)\b"
     r"(?:\s+(-?\d+))?",
@@ -922,6 +927,15 @@ _NOT_TILING_KEY_IDENTS = {
 }
 
 
+def _normalize_tiling_key_is_token(raw: str) -> str:
+    """Strip C integer suffixes so ``TILING_KEY_IS(24UL)`` is the catalog value 24."""
+    token = str(raw or "").strip()
+    stripped = re.sub(r"[uUlL]+$", "", token)
+    if re.fullmatch(r"(?:0[xX][0-9A-Fa-f]+|\d+)", stripped):
+        return stripped
+    return token
+
+
 def _is_include_guard_ident(name: str) -> bool:
     token = str(name or "")
     return token.startswith("__") and token.endswith("__") or bool(re.search(r"_H__?$", token))
@@ -932,10 +946,106 @@ def _looks_like_tiling_key_ident(name: str) -> bool:
     token = str(name or "")
     if not token or token in _NOT_TILING_KEY_IDENTS or _is_include_guard_ident(token):
         return False
-    if token.isdigit():
+    norm = _normalize_tiling_key_is_token(token)
+    if re.fullmatch(r"(?:0[xX][0-9A-Fa-f]+|\d+)", norm):
         return True
     upper = token.upper()
     return "TILING_KEY" in upper or upper.endswith("TILINGKEY")
+
+
+def _is_tiling_key_is_catalog_token(name: str) -> bool:
+    """``TILING_KEY_IS(x)`` is the dispatch catalog; ``x`` need not contain TILING_KEY.
+
+    Host/kernel macros such as ``NORMAL_INT32_FULLY_LOAD`` are still keys. Only
+    include guards and Get/SetTilingKey identifiers are rejected.
+    """
+    token = str(name or "")
+    if not token or token in _NOT_TILING_KEY_IDENTS or _is_include_guard_ident(token):
+        return False
+    return True
+
+
+def _function_like_defines(text: str) -> list[tuple[str, list[str], str]]:
+    """``#define NAME(a, b)`` bodies with backslash continuations joined."""
+    out: list[tuple[str, list[str], str]] = []
+    for match in re.finditer(
+        r"^\s*#\s*define\s+([A-Za-z_]\w*)\s*\(([^)]*)\)",
+        text,
+        re.MULTILINE,
+    ):
+        params = [p.strip() for p in match.group(2).split(",") if p.strip() and p.strip() != "..."]
+        i = match.end()
+        chunks: list[str] = []
+        while True:
+            nl = text.find("\n", i)
+            if nl < 0:
+                chunks.append(text[i:])
+                break
+            line = text[i:nl]
+            if line.rstrip().endswith("\\"):
+                chunks.append(line.rstrip()[:-1] + "\n")
+                i = nl + 1
+                continue
+            chunks.append(line)
+            break
+        out.append((match.group(1), params, "".join(chunks)))
+    return out
+
+
+def _tiling_key_is_wrapper_macros(text: str) -> dict[str, int]:
+    """Function-like macros whose body is ``TILING_KEY_IS(param)`` → arg index."""
+    wrappers: dict[str, int] = {}
+    for name, params, body in _function_like_defines(text):
+        for match in _TILING_KEY_IS_RE.finditer(body):
+            token = _normalize_tiling_key_is_token(match.group(1))
+            if token in params:
+                wrappers[name] = params.index(token)
+                break
+    return wrappers
+
+
+def _tiling_key_is_wrapper_params(text: str) -> set[str]:
+    params: set[str] = set()
+    for _name, macro_params, body in _function_like_defines(text):
+        for match in _TILING_KEY_IS_RE.finditer(body):
+            token = _normalize_tiling_key_is_token(match.group(1))
+            if token in macro_params:
+                params.add(token)
+    return params
+
+
+def iter_tiling_key_is_catalog(text: str) -> Iterable[tuple[str, int]]:
+    """Yield catalog tokens from ``TILING_KEY_IS`` and wrapper-macro invocations.
+
+    ``#define BRANCH(tilingKey, ...) { if (TILING_KEY_IS(tilingKey)) ... }``
+    plus ``BRANCH(TILING_KEY_1111, ...)`` mints ``TILING_KEY_1111``, not the
+    parameter name.
+    """
+    wrapper_params = _tiling_key_is_wrapper_params(text)
+    seen: set[str] = set()
+    for match in _TILING_KEY_IS_RE.finditer(text):
+        name = _normalize_tiling_key_is_token(match.group(1))
+        if name in seen or name in wrapper_params or not _is_tiling_key_is_catalog_token(name):
+            continue
+        seen.add(name)
+        yield name, match.start()
+    for macro, index in _tiling_key_is_wrapper_macros(text).items():
+        for match in re.finditer(rf"\b{re.escape(macro)}\s*\(", text):
+            line_start = text.rfind("\n", 0, match.start()) + 1
+            if re.search(r"#\s*define\b", text[line_start : match.start()]):
+                continue
+            open_pos = match.end() - 1
+            close = _matching_paren(text, open_pos)
+            if close < 0:
+                continue
+            args = [a.strip() for a in _split_args(text[open_pos + 1 : close]) if a.strip()]
+            if index >= len(args):
+                continue
+            name = _normalize_tiling_key_is_token(args[index])
+            if name in seen or not _is_tiling_key_is_catalog_token(name):
+                continue
+            seen.add(name)
+            yield name, match.start()
 
 
 def iter_packing_helper_calls(text: str) -> Iterable[tuple[int, int, list[str], str]]:
@@ -979,8 +1089,7 @@ def _collect_packed_key_catalog(root: Path, architecture: str) -> list[str]:
             text = _read(path)
         except OSError:
             continue
-        for match in _TILING_KEY_IS_RE.finditer(text):
-            name = match.group(1)
+        for name, _offset in iter_tiling_key_is_catalog(text):
             if name in seen:
                 continue
             seen.add(name)
@@ -1051,10 +1160,34 @@ def _parse_fallback_tiling_keys(
                 text = _read(path)
             except OSError:
                 continue
+            defines: dict[str, int] = {}
+            for dm in re.finditer(
+                r"^\s*#\s*define\s+([A-Za-z_]\w*)\s+(-?\d+)[uUlL]*",
+                text,
+                re.MULTILINE,
+            ):
+                defines[dm.group(1)] = int(dm.group(2))
             for regex, prov in patterns:
+                if regex is _TILING_KEY_IS_RE and prov == "source_tiling_key_is":
+                    for name, offset in iter_tiling_key_is_catalog(text):
+                        if name in seen:
+                            continue
+                        seen.add(name)
+                        found.append(
+                            (
+                                name,
+                                path,
+                                _line_of(text, offset),
+                                prov,
+                                defines.get(name),
+                            )
+                        )
+                    continue
                 for m in regex.finditer(text):
-                    name = m.group(1)
-                    if name in seen or not _looks_like_tiling_key_ident(name):
+                    name = _normalize_tiling_key_is_token(m.group(1))
+                    if name in seen:
+                        continue
+                    if not _looks_like_tiling_key_ident(name):
                         continue
                     seen.add(name)
                     value = None
@@ -1062,6 +1195,8 @@ def _parse_fallback_tiling_keys(
                         raw = str(m.group(2))
                         if raw.lstrip("-").isdigit():
                             value = int(raw)
+                    if value is None:
+                        value = defines.get(name)
                     found.append((name, path, _line_of(text, m.start()), prov, value))
 
     _collect(kernel_files, [(_TILING_KEY_IS_RE, "source_tiling_key_is")])
@@ -1086,8 +1221,10 @@ def _parse_fallback_tiling_keys(
             "decl_order": len(declared) - 1,
             "decl_kind": "uint",
         }
-        if value is None and name.isdigit():
+        if value is None and re.fullmatch(r"\d+", name):
             value = int(name)
+        elif value is None and re.fullmatch(r"0[xX][0-9A-Fa-f]+", name):
+            value = int(name, 16)
         if value is not None:
             attrs["value"] = value
             attrs["allowed_values"] = [value]
@@ -1656,7 +1793,7 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
     ]
     for path in _kernel_candidates(root, architecture):
         text = _read(path)
-        names = [m.group(1) for m in _TILING_KEY_IS_RE.finditer(text)]
+        names = [name for name, _offset in iter_tiling_key_is_catalog(text)]
         if not names:
             continue
         file_rel = _rel(root, path)

@@ -120,8 +120,11 @@ def _errors() -> list[str]:
         gotchas = skill_md.parent / "references" / "gotchas.md"
         if not gotchas.is_file():
             errors.append(f"DOMAIN_MISSING_GOTCHAS {gotchas.as_posix()}")
-        for rel in re.findall(r"`(references/[^`]+\.md)`", text):
-            target = skill_md.parent / rel
+        for rel in re.findall(r"`((?:skills/[a-z0-9-]+/)?references/[^`]+\.md)`", text):
+            if rel.startswith("skills/"):
+                target = REPO / rel
+            else:
+                target = skill_md.parent / rel
             if not target.is_file():
                 if "、" in rel or "," in rel:
                     continue

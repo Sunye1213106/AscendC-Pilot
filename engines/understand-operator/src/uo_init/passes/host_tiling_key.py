@@ -232,7 +232,7 @@ def bind_host_tiling_key_expressions(
 _RETURN_RE = re.compile(r"\breturn\s+([^;]+);")
 _GET_TILING_KEY_NAME_RE = re.compile(r"GetTilingKey\s*$")
 _ASSIGN_TILING_KEY_RE = re.compile(
-    r"\b(?P<lhs>tilingKey_|tiling_key_)\s*=\s*(?P<rhs>[^;]+);"
+    r"\b(?P<lhs>tilingKey_|tiling_key_)\s*(?:\+=|=)\s*(?P<rhs>[^;]+);"
 )
 _CATALOG_KEY_PROVENANCE = {
     "source_tiling_key_is",

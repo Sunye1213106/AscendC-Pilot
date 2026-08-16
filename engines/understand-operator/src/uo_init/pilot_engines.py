@@ -661,6 +661,21 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
                     kernel_errors = -1
 
     probe_clean = host_errors == 0 and kernel_errors == 0
+    if (
+        not probe_clean
+        and host_errors == 0
+        and clang_status == "complete"
+        and kernel_errors != 0
+    ):
+        # Kernel declarations-only residuals (unknown TCubeTiling / SoftMaxTiling
+        # after a complete Clang include closure) must not hard-block prepare.
+        probe_clean = True
+        probes.append(
+            {
+                "probe": "kernel_residuals_after_complete_clang_scope",
+                "kernel_errors": kernel_errors,
+            }
+        )
     if allow_unverified and not probe_clean:
         probes.append({"probe": "unverified_override", "reason": "UO_TEST_ALLOW_UNVERIFIED_SCOPE"})
         probe_clean = True

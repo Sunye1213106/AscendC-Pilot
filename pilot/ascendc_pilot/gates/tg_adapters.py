@@ -19,13 +19,20 @@ def _load(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _op_name(project_root: Path) -> str:
+def _op_name(
+    project_root: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
+) -> str:
     """Best-effort op name for TG APIs that still require it."""
-    uo = uo_root(project_root)
+    if str(op_name or "").strip():
+        return str(op_name).strip()
+    uo = uo_root(project_root, arch=architecture)
     man = _load(uo / "manifest.yaml")
     if isinstance(man, dict) and man.get("op_name"):
         return str(man["op_name"])
-    tg = tg_root(project_root)
+    tg = tg_root(project_root, arch=architecture)
     for rel in ("init/status.yaml", "realization/status.yaml"):
         doc = _load(tg / rel)
         if isinstance(doc, dict) and doc.get("op_name"):
@@ -73,10 +80,12 @@ def _wrap_exc(gate: str, fn: Any) -> dict[str, Any]:
         }
 
 
-def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
+def gate_tilingkey_binding_ready(
+    project_root: Path, *, architecture: str | None = None
+) -> dict[str, Any]:
     """Full-mode bind gate: host-view inventory + declared Key space must align."""
-    tg = tg_root(project_root)
-    uo = uo_root(project_root)
+    tg = tg_root(project_root, arch=architecture)
+    uo = uo_root(project_root, arch=architecture)
     issues: list[str] = []
     inv = _load(tg / "realization" / "binding_inventory.yaml")
     if not isinstance(inv, dict):
@@ -93,13 +102,15 @@ def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
     graph: dict[str, Any] = {}
     try:
         from uo_init.store.reader import find_uo_product, load_production_view
-        from ascendc_pilot.paths import discover_arch
 
-        arch = ""
-        try:
-            arch = discover_arch(project_root)
-        except Exception:
-            arch = ""
+        arch = str(architecture or "").strip()
+        if not arch:
+            from ascendc_pilot.paths import discover_arch
+
+            try:
+                arch = discover_arch(project_root)
+            except Exception:
+                arch = ""
         product = find_uo_product(project_root, architecture=arch)
         if product is not None and product.suffix == ".uo":
             blob = load_production_view(product, "tiling/exhaustive_key_space.yaml")
@@ -136,9 +147,11 @@ def gate_tilingkey_binding_ready(project_root: Path) -> dict[str, Any]:
     }
 
 
-def gate_audit_pass(project_root: Path) -> dict[str, Any]:
+def gate_audit_pass(
+    project_root: Path, *, architecture: str | None = None
+) -> dict[str, Any]:
     """Full audit contract via engine require_audit_pass — not shallow status read."""
-    out = tg_root(project_root)
+    out = tg_root(project_root, arch=architecture)
 
     def _run() -> Any:
         from testcase_agent.init_status import require_audit_pass
@@ -148,9 +161,14 @@ def gate_audit_pass(project_root: Path) -> dict[str, Any]:
     return _wrap_exc("audit_pass", _run)
 
 
-def gate_kb_fingerprint_fresh(project_root: Path, *, op_name: str | None = None) -> dict[str, Any]:
-    name = op_name or _op_name(project_root)
-    out = tg_root(project_root)
+def gate_kb_fingerprint_fresh(
+    project_root: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
+) -> dict[str, Any]:
+    name = _op_name(project_root, op_name=op_name, architecture=architecture)
+    out = tg_root(project_root, arch=architecture)
 
     def _run() -> Any:
         from testcase_agent.init_status import require_kb_fingerprint_fresh
@@ -183,9 +201,11 @@ def gate_kb_fingerprint_fresh(project_root: Path, *, op_name: str | None = None)
     return wrapped
 
 
-def gate_kb_fingerprint_matches(project_root: Path) -> dict[str, Any]:
-    out = tg_root(project_root)
-    uo = uo_root(project_root)
+def gate_kb_fingerprint_matches(
+    project_root: Path, *, architecture: str | None = None
+) -> dict[str, Any]:
+    out = tg_root(project_root, arch=architecture)
+    uo = uo_root(project_root, arch=architecture)
 
     def _run() -> Any:
         from testcase_agent.isolation import kb_fingerprint_matches
@@ -200,8 +220,13 @@ def gate_kb_fingerprint_matches(project_root: Path) -> dict[str, Any]:
     return _wrap_exc("kb_fingerprint", _run)
 
 
-def gate_init_confirmed(project_root: Path, *, op_name: str | None = None) -> dict[str, Any]:
-    name = op_name or _op_name(project_root)
+def gate_init_confirmed(
+    project_root: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
+) -> dict[str, Any]:
+    name = _op_name(project_root, op_name=op_name, architecture=architecture)
 
     def _run() -> Any:
         from testcase_agent.init_status import require_init_confirmed
@@ -280,9 +305,11 @@ def _require_approval(
         )
 
 
-def gate_plan_approved(project_root: Path, *, level: str = "") -> dict[str, Any]:
+def gate_plan_approved(
+    project_root: Path, *, level: str = "", architecture: str | None = None
+) -> dict[str, Any]:
     """Validate real human_supplement against snapshot/plan hashes via engine approval rules."""
-    out = tg_root(project_root)
+    out = tg_root(project_root, arch=architecture)
 
     def _run() -> Any:
         try:
@@ -319,8 +346,10 @@ def gate_plan_approved(project_root: Path, *, level: str = "") -> dict[str, Any]
     return _wrap_exc("plan_approved", _run)
 
 
-def gate_allow_solve(project_root: Path, *, level: str = "") -> dict[str, Any]:
-    out = tg_root(project_root)
+def gate_allow_solve(
+    project_root: Path, *, level: str = "", architecture: str | None = None
+) -> dict[str, Any]:
+    out = tg_root(project_root, arch=architecture)
     try:
         plan_dir = _resolve_plan_dir(out, level)
     except Exception as exc:  # noqa: BLE001

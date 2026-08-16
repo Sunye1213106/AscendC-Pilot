@@ -36,6 +36,8 @@ artifacts/
 real-results/
 _tmp*/
 *.uo
+!pilot/tests/fixtures/uo/
+!pilot/tests/fixtures/uo/**
 *.sqlite
 *.sqlite3
 

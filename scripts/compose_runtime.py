@@ -1320,7 +1320,14 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
                     )
                     if m:
                         table_mode, table_agent, table_role = m.group(1), m.group(2), m.group(3)
-                        if table_agent != agent:
+                        deterministic = (
+                            str(action.get("role_id") or "") == "deterministic_engine"
+                            or str(action.get("execution_mode") or "") == "deterministic"
+                        )
+                        allowed_agents = {agent}
+                        if deterministic:
+                            allowed_agents.add("engine")
+                        if table_agent not in allowed_agents:
                             errors.append(
                                 f"generated/{host}/skills/{wid}: action {aid} agent "
                                 f"{table_agent!r} != workflow {agent!r}"

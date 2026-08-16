@@ -9,70 +9,7 @@ import pytest
 import yaml
 
 
-def _write_synthetic_uo(project_root: Path) -> Path:
-    """Minimal CodeMap ``.uo`` whose canonical TPL facts rebuild a 4-key D."""
-    import sys
-
-    uo_src = Path(__file__).resolve().parents[2] / "engines" / "understand-operator" / "src"
-    if uo_src.is_dir() and str(uo_src) not in sys.path:
-        sys.path.insert(0, str(uo_src))
-
-    from uo_init.ir.codemap import CodeMap
-    from uo_init.ir.entity import Entity, EntityKind
-    from uo_init.store.writer import write_codemap
-
-    cm = CodeMap(op_name="_synthetic_toy", architecture="arch0")
-    cm.add_entity(Entity(id="ARCH_arch0", kind=EntityKind.ARCH, name="arch0"))
-    shift = 0
-    dims = (("DimA", ["0", "1"]), ("DimB", ["0", "1"]))
-    for order, (name, domain) in enumerate(dims):
-        bw = 1
-        cm.add_entity(
-            Entity(
-                id=f"TK_{name}",
-                kind=EntityKind.TILING_KEY,
-                name=name,
-                attrs={
-                    "source_declared": True,
-                    "decl_kind": "UINT",
-                    "kind_tpl": "UINT",
-                    "bit_width": bw,
-                    "bw": bw,
-                    "bit_offset": shift,
-                    "bit_lo": shift,
-                    "bit_hi": shift + bw - 1,
-                    "decl_order": order,
-                    "allowed_values": list(domain),
-                    "value_domain": list(domain),
-                    "provenance": "source_tpl_args_decl",
-                },
-                file="op_kernel/arch0/_synthetic_toy_template_tiling_key.h",
-                status="confirmed",
-            )
-        )
-        shift += bw
-    cm.add_entity(
-        Entity(
-            id="TPL_SEL_0",
-            kind=EntityKind.TEMPLATE,
-            name="ARGS_SEL_0",
-            attrs={
-                "tpl_role": "args_sel_group",
-                "sel_group_index": 0,
-                "fixed_fields": {},
-                "field_domains": {name: list(domain) for name, domain in dims},
-                "product_count": 4,
-                "provenance": "source_tpl_args_sel",
-            },
-            file="op_kernel/arch0/_synthetic_toy_template_tiling_key.h",
-            status="confirmed",
-        )
-    )
-    product = (
-        project_root / ".ascendc-pilot" / "arch0" / "uo" / "_synthetic_toy.arch0.uo"
-    )
-    write_codemap(cm, product, meta={"fingerprint": "fp-toy"})
-    return product
+from synthetic_uo import write_synthetic_uo as _write_synthetic_uo
 
 
 @pytest.fixture()

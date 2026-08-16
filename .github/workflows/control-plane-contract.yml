@@ -7,8 +7,10 @@ on:
       - "agents/**"
       - "pilot/**"
       - "prompts/**"
-      - "skills/operator-analysis/**"
+      - "skills/**"
       - "engines/understand-operator/**"
+      - "engines/testcase-generation/**"
+      - "engines/code-engineering/**"
       - "opencode-plugin/**"
       - "scripts/**"
       - "install.sh"
@@ -22,8 +24,10 @@ on:
       - "agents/**"
       - "pilot/**"
       - "prompts/**"
-      - "skills/operator-analysis/**"
+      - "skills/**"
       - "engines/understand-operator/**"
+      - "engines/testcase-generation/**"
+      - "engines/code-engineering/**"
       - "opencode-plugin/**"
       - "scripts/**"
       - "install.sh"
@@ -66,6 +70,10 @@ jobs:
         env:
           PYTHONPATH: pilot
         run: pytest -q pilot/tests/test_session_replay_matrix.py
+      - name: Validate engine consumes_state contract
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_engine_context.py
       - name: Validate skill architecture
         env:
           PYTHONPATH: pilot
@@ -117,8 +125,17 @@ jobs:
           pilot/tests/test_compose_runtime.py::test_uo_actions_match_engine_and_prompt_boundary
           pilot/tests/test_compose_runtime.py::test_tg_and_ce_execution_bindings_are_explicit
           pilot/tests/test_compose_runtime.py::test_native_opencode_commands_are_generated
+      - name: Validate runtime handoff closure
+        env:
+          PYTHONPATH: pilot:engines/understand-operator/src:engines/testcase-generation:engines/code-engineering:engines/common
+        run: >-
+          pytest -q
+          pilot/tests/test_workflow_handoff_contract.py
+          pilot/tests/test_s3_uo_ready_and_contracts.py
       - name: Validate shell installer syntax
-        run: bash -n install.sh
+        run: |
+          bash -n install.sh
+          python -c "import subprocess,sys; r=subprocess.check_output(['git','ls-files','--stage','install.sh'], text=True); assert r.split()[0]=='100755', r"
       - name: Eval smoke (dry; live skip without model)
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/pilot

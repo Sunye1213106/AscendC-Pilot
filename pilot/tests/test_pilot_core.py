@@ -626,3 +626,26 @@ def test_install_skill_lists_symmetric():
     assert "tg-semantic-bind" in sh
     assert "uo-gap-investigator" in ps1
     assert "uo-gap-investigator" in sh
+
+
+def test_python_module_entrypoint_help() -> None:
+    import os
+    import subprocess
+    import sys
+
+    pilot = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(pilot) + os.pathsep + env.get("PYTHONPATH", "")
+    proc = subprocess.run(
+        [sys.executable, "-m", "ascendc_pilot", "--help"],
+        cwd=str(pilot),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    blob = f"{proc.stdout or ''}{proc.stderr or ''}".lower()
+    assert "usage" in blob or "acp" in blob or "ascendc" in blob

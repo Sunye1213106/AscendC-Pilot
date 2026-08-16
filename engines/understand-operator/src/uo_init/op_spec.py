@@ -195,6 +195,64 @@ def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
     return owned or out
 
 
+_INCLUDE_QUOTED_RE = re.compile(r'(?:#\s*include|__has_include)\s*\(?\s*"([^"]+)"')
+# Host packing sites — not GetTilingKey() *calls* (wrappers dispatch to siblings).
+_HOST_PACKING_SITE_RE = re.compile(
+    r"(?:"
+    r"\bGET_TPL_TILING_KEY\s*\("
+    r"|(?:[A-Z][A-Z0-9_]*)?GET_TILING_?KEY\s*\("
+    r"|\btilingKey_\s*(?:\+=|=)"
+    r"|\btiling_key_\s*(?:\+=|=)"
+    r"|\bSetTilingKey\s*\(\s*(?!tilingKey_|tiling_key_)"
+    r")"
+)
+
+
+def _sibling_operator_dirs(kernel_entry: Path, op_dir: Path) -> list[Path]:
+    """Operators whose headers this kernel includes (same family, one hop).
+
+    Thin wrappers such as ``scatter_pa_cache`` include ``../scatter_pa_kv_cache/``
+    and keep tiling TUs on the sibling. Host discovery must follow that include.
+    """
+    op_dir = op_dir.resolve()
+    family = op_dir.parent
+    try:
+        text = kernel_entry.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for match in _INCLUDE_QUOTED_RE.finditer(text):
+        rel = match.group(1)
+        if ".." not in rel.replace("\\", "/"):
+            continue
+        resolved = (kernel_entry.parent / rel).resolve()
+        for parent in [resolved, *resolved.parents]:
+            if parent.parent != family or parent == op_dir:
+                continue
+            if not (parent / "op_host").is_dir():
+                continue
+            if parent not in seen:
+                seen.add(parent)
+                found.append(parent)
+            break
+    return found
+
+
+def _host_files_have_packing(paths: list[Path]) -> bool:
+    """True when these TUs already mint tiling keys (not register/dispatch stubs)."""
+    for path in paths:
+        if path is None or not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _HOST_PACKING_SITE_RE.search(text):
+            return True
+    return False
+
+
 def _targets_from_scope(spec: OpSpec) -> None:
     """Split the scanned scope into the sets each parsing stage consumes.
 
@@ -370,6 +428,51 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
     if not spec.host_targets:
         spec.host_targets = _host_targets(spec.host_root, spec.arch_dir, spec.op_snake)
         spec.ambiguities.append("host_targets_from_glob: scope scan found none")
+
+    entry = spec.kernel_entry
+    if entry is None and spec.kernel_targets:
+        from uo_init.source_layout import pick_kernel_entry
+
+        entry = pick_kernel_entry(spec.kernel_targets, spec.arch_dir) or spec.kernel_targets[0]
+    if entry is None:
+        entry, _notes = _kernel_entry(spec.kernel_root, spec.op_snake)
+        if spec.kernel_entry is None:
+            spec.kernel_entry = entry
+
+    # Fusion kernels often include sibling kernel headers (IFA → PFA/incre).
+    # Union sibling host TUs only when *this* op's host files are register or
+    # dispatch stubs; otherwise IFA would parse PFA's tiling and balloon analyze.
+    extra: list[Path] = []
+    sib_names: list[str] = []
+    if not _host_files_have_packing(spec.host_targets):
+        sources: list[Path] = []
+        if entry is not None:
+            sources.append(entry)
+        sources.extend(spec.host_targets)
+        seen_sib: set[Path] = set()
+        for src in sources:
+            if src is None or not src.is_file():
+                continue
+            for sib in _sibling_operator_dirs(src, spec.op_dir):
+                if sib in seen_sib:
+                    continue
+                seen_sib.add(sib)
+                sib_names.append(sib.name)
+                extra.extend(
+                    _host_targets(
+                        sib / "op_host",
+                        spec.arch_dir,
+                        camel_to_snake(sib.name),
+                    )
+                )
+    if extra:
+        existing = {p.resolve() for p in spec.host_targets}
+        added = [p for p in extra if p.resolve() not in existing]
+        if added:
+            spec.host_targets = list(spec.host_targets) + added
+            spec.ambiguities.append(
+                "host_targets_from_sibling_kernel_include: " + ", ".join(sib_names)
+            )
     if not spec.host_targets:
         spec.ambiguities.append("host_targets_not_found: no op_host tiling TU")
 

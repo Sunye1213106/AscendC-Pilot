@@ -1114,7 +1114,9 @@ def gate_tk_file(
     }
 
 
-def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
+def gate_closure_soundness(
+    project_root: Path, *, architecture: str | None = None
+) -> dict[str, Any]:
     """One-sided closure invariants (I1–I4).
 
     I1  R ∩ E = ∅
@@ -1126,6 +1128,10 @@ def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
     Approximate models must never exclude a key; this gate is what keeps
     ``acp complete`` from certifying a false 100%.
     """
+    if architecture:
+        import os
+
+        os.environ["UO_ARCH"] = str(architecture)
     try:
         from testcase_agent.closure import ledger
         from testcase_agent.closure import lemma
@@ -1248,10 +1254,50 @@ def gate_closure_soundness(project_root: Path) -> dict[str, Any]:
     }
 
 
+def resolve_run_identity(
+    project_root: Path,
+    *,
+    op_name: str | None = None,
+    architecture: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve op_name / architecture for gate runners.
+
+    Explicit arguments win. Otherwise active run state, then ``discover_arch``.
+    """
+    op = str(op_name or "").strip() or None
+    arch = str(architecture or "").strip() or None
+    if op and arch:
+        return op, arch
+    try:
+        from ascendc_pilot.state import load_state
+
+        state = load_state(project_root) or {}
+    except Exception:  # noqa: BLE001
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    if not op:
+        op = str(state.get("op_name") or "").strip() or None
+    if not arch:
+        arch = str(state.get("architecture") or "").strip() or None
+    if not arch:
+        try:
+            from ascendc_pilot.paths import discover_arch
+
+            arch = str(discover_arch(project_root) or "").strip() or None
+        except Exception:  # noqa: BLE001
+            arch = None
+    return op, arch
+
+
 def _gate_ce_artifacts(
-    project_root: Path, gate_id: str, relative_paths: list[str]
+    project_root: Path,
+    gate_id: str,
+    relative_paths: list[str],
+    *,
+    architecture: str | None = None,
 ) -> dict[str, Any]:
-    root = agent_root(project_root)
+    root = agent_root(project_root, architecture)
     missing = [
         rel
         for rel in relative_paths
@@ -1273,11 +1319,29 @@ def run_named_gate(
     op_name: str | None = None,
     architecture: str | None = None,
 ) -> dict[str, Any]:
-    """Dispatch a workflow registry gate id to a concrete checker."""
+    """Dispatch a workflow registry gate id to a concrete checker.
+
+    When ``op_name`` / ``architecture`` are omitted, resolve them from the
+    active run state so Finalize / advance / complete cannot drop identity.
+    Explicit arguments always win over state.
+    """
     from ascendc_pilot.gates import tg_adapters
 
-    arch = str(architecture or "").strip() or None
-    uo = uo_root(project_root, op_name, arch=arch)
+    op_name, architecture = resolve_run_identity(
+        project_root, op_name=op_name, architecture=architecture
+    )
+    arch = architecture
+    try:
+        uo = uo_root(project_root, op_name, arch=arch)
+    except ValueError as exc:
+        if "ARCHITECTURE" in str(exc):
+            return {
+                "gate": gate_id,
+                "ok": False,
+                "message": str(exc)[:240],
+                "legal_key_count": 0,
+            }
+        raise
     mapping = {
         "layout_receipt": lambda: gate_layout_receipt(uo),
         "extract_receipt": lambda: gate_extract_receipt(uo),
@@ -1306,36 +1370,63 @@ def run_named_gate(
             else "context pack missing",
         },
         # TG — real engine adapters (kb_fingerprint is NOT an alias of uo_ready)
-        "tg_init_confirmed": lambda: tg_adapters.gate_init_confirmed(project_root, op_name=op_name),
-        "init_confirmed": lambda: tg_adapters.gate_init_confirmed(project_root, op_name=op_name),
-        "plan_approved": lambda: tg_adapters.gate_plan_approved(project_root),
-        "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(project_root, op_name=op_name),
-        "tilingkey_binding_ready": lambda: tg_adapters.gate_tilingkey_binding_ready(project_root),
-        "audit_pass": lambda: tg_adapters.gate_audit_pass(project_root),
+        "tg_init_confirmed": lambda: tg_adapters.gate_init_confirmed(
+            project_root, op_name=op_name, architecture=arch
+        ),
+        "init_confirmed": lambda: tg_adapters.gate_init_confirmed(
+            project_root, op_name=op_name, architecture=arch
+        ),
+        "plan_approved": lambda: tg_adapters.gate_plan_approved(
+            project_root, architecture=arch
+        ),
+        "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(
+            project_root, op_name=op_name, architecture=arch
+        ),
+        "tilingkey_binding_ready": lambda: tg_adapters.gate_tilingkey_binding_ready(
+            project_root, architecture=arch
+        ),
+        "audit_pass": lambda: tg_adapters.gate_audit_pass(
+            project_root, architecture=arch
+        ),
         "uo_product_ready": lambda: gate_uo_product_ready(
             project_root, uo, op_name=op_name, architecture=arch
         ),
-        "closure_soundness": lambda: gate_closure_soundness(project_root),
+        "closure_soundness": lambda: gate_closure_soundness(
+            project_root, architecture=arch
+        ),
         "impact_ledger_ready": lambda: _gate_ce_artifacts(
             project_root,
             "impact_ledger_ready",
             ["ce/impact/obligations.yaml", "ce/impact/ledger.yaml"],
+            architecture=arch,
         ),
         "obligations_classified": lambda: _gate_ce_artifacts(
             project_root,
             "obligations_classified",
             ["ce/impact/risk_classification.yaml", "ce/impact/obligations.yaml"],
+            architecture=arch,
         ),
         "ce_certificate_sound": lambda: _gate_ce_artifacts(
             project_root,
             "ce_certificate_sound",
             ["ce/verify/certificate.yaml"],
+            architecture=arch,
         ),
     }
     fn = mapping.get(gate_id)
     if fn is None:
         return {"gate": gate_id, "ok": False, "message": f"unknown gate id: {gate_id}"}
-    return fn()
+    try:
+        return fn()
+    except ValueError as exc:
+        if "ARCHITECTURE" in str(exc):
+            return {
+                "gate": gate_id,
+                "ok": False,
+                "message": str(exc)[:240],
+                "legal_key_count": 0,
+            }
+        raise
 
 
 def _gate_tg_status(project_root: Path, *, want: str) -> dict[str, Any]:

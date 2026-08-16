@@ -43,7 +43,7 @@ Git 写操作、fork、PR 文案 **不做**。只读审查走 `/ce-review`。
    precision compare / profiling / retest-pass artifacts. Do not treat a review
    narrative as a measurement. Precision/perf runners come from the operator's
    optional test-script repo (`--test-script-root`); CE PRs may patch those
-   scripts from TG `findings`. See TG `references/test-script-repo.md`.
+   scripts from TG `findings`. See `skills/testcase-generation/references/test-script-repo.md`.
 
 ## Risk language (developer → CE class)
 

@@ -158,6 +158,10 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "There is no session `prompt.md`" in uo_query_agent
         assert "acp uo-query --project" in uo_query_agent
         assert "Do not switch to MCP" in uo_query_agent
+        from compose_runtime import validate_generated
+
+        errors = validate_generated(REPO, host="_test_prune")
+        assert errors == [], errors
     finally:
         shutil.rmtree(generated, ignore_errors=True)
 

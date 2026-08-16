@@ -1,15 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Cold-start uo-init across ops-transformer families (~30 ops).
+"""Cold-start uo-init across ops-transformer families.
 
-Collects verify + unknown/partial/OTHER plus cannbot locate quality
-(source_span / packing / SourceLocator hits). Never wipes
-``flash_attention_score_grad/.ascendc-pilot/arch22``.
+Discovers AICore operators (must have ``op_kernel/``), samples by family
+density (Hamilton), and records verify + cannbot locate quality.
 """
 from __future__ import annotations
 
 import json
 import os
 import random
+import re
 import shutil
 import sys
 import time
@@ -54,67 +54,33 @@ _FAMILIES = (
     "moe",
     "posembedding",
 )
-_SKIP_OP_NAMES = frozenset({"common", "include", "src"})
-
-# One arch per operator. Cover every family folder that has real op_host/op_kernel.
-# FAG arch22 is audit-only (no wipe).
-CASES: list[dict[str, Any]] = [
-    # attention
-    {"rel": "attention/flash_attention_score_grad", "arch": "arch35", "wipe": False},
-    {"rel": "attention/flash_attention_score", "arch": "arch35", "wipe": True},
-    {"rel": "attention/incre_flash_attention", "arch": "arch22", "wipe": True},
-    {"rel": "attention/prompt_flash_attention", "arch": "arch22", "wipe": True},
-    {"rel": "attention/fused_infer_attention_score", "arch": "arch35", "wipe": True},
-    {"rel": "attention/sparse_flash_attention", "arch": "arch35", "wipe": True},
-    {"rel": "attention/lightning_indexer", "arch": "arch22", "wipe": True},
-    {"rel": "attention/mla_prolog", "arch": "arch35", "wipe": True},
-    {"rel": "attention/compressor", "arch": "arch22", "wipe": True},
-    {"rel": "attention/fused_causal_conv1d", "arch": "arch35", "wipe": True},
-    # ffn (only ffn_worker_batching has an arch* dir)
-    {"rel": "ffn/ffn_worker_batching", "arch": "arch35", "wipe": True},
-    # gmm
-    {"rel": "gmm/grouped_matmul", "arch": "arch35", "wipe": True},
-    {"rel": "gmm/grouped_matmul_add", "arch": "arch35", "wipe": True},
-    {"rel": "gmm/grouped_matmul_swiglu_quant_v2", "arch": "arch35", "wipe": True},
-    {"rel": "gmm/grouped_matmul_finalize_routing", "arch": "arch35", "wipe": True},
-    # mamba
-    {"rel": "mamba/causal_conv1d", "arch": "arch35", "wipe": True},
-    # mc2
-    {"rel": "mc2/matmul_all_reduce", "arch": "arch22", "wipe": True},
-    {"rel": "mc2/moe_distribute_dispatch", "arch": "arch22", "wipe": True},
-    {"rel": "mc2/all_gather_matmul_v2", "arch": "arch35", "wipe": True},
-    {"rel": "mc2/moe_distribute_combine", "arch": "arch35", "wipe": True},
-    {"rel": "mc2/matmul_reduce_scatter_v2", "arch": "arch22", "wipe": True},
-    # mhc
-    {"rel": "mhc/mhc_pre", "arch": "arch35", "wipe": True},
-    {"rel": "mhc/mhc_post", "arch": "arch22", "wipe": True},
-    {"rel": "mhc/mhc_sinkhorn", "arch": "arch35", "wipe": True},
-    # moe
-    {"rel": "moe/moe_init_routing_v2", "arch": "arch35", "wipe": True},
-    {"rel": "moe/moe_init_routing", "arch": "arch35", "wipe": True},
-    {"rel": "moe/moe_gating_top_k", "arch": "arch35", "wipe": True},
-    {"rel": "moe/moe_finalize_routing_v2", "arch": "arch35", "wipe": True},
-    {"rel": "moe/moe_gating_top_k_softmax", "arch": "arch35", "wipe": True},
-    # posembedding
-    {"rel": "posembedding/rotary_position_embedding", "arch": "arch35", "wipe": True},
-    {"rel": "posembedding/apply_rotary_pos_emb", "arch": "arch35", "wipe": True},
-    {"rel": "posembedding/rope_with_sin_cos_cache", "arch": "arch35", "wipe": True},
-    {"rel": "posembedding/rotary_position_embedding_grad", "arch": "arch35", "wipe": True},
-    {"rel": "posembedding/kv_rms_norm_rope_cache", "arch": "arch35", "wipe": True},
-    # Extra: existing FAG arch22 product — inspect only, never wipe.
-    {"rel": "attention/flash_attention_score_grad", "arch": "arch22", "wipe": False, "audit_only": True},
-]
+_SKIP_OP_NAMES = frozenset({"common", "include", "src", "3rd", "tests", "test", "docs", "examples"})
+_ARCH_DIR_RE = re.compile(r"^arch\d+$")
 
 
-def _pick_arch(op: Path) -> str | None:
-    for arch in ("arch35", "arch22"):
-        if (op / "op_kernel" / arch).is_dir() or (op / "op_host" / arch).is_dir():
-            return arch
-    return None
+def _list_archs(op: Path) -> list[str]:
+    seen: set[str] = set()
+    for parent in (op / "op_host", op / "op_kernel"):
+        if not parent.is_dir():
+            continue
+        for child in parent.iterdir():
+            if child.is_dir() and _ARCH_DIR_RE.match(child.name):
+                seen.add(child.name)
+    return sorted(seen)
+
+
+def _pick_arch(op: Path) -> str:
+    """Prefer arch35, else newest arch* folder, else arch35 as product slot."""
+    archs = _list_archs(op)
+    if "arch35" in archs:
+        return "arch35"
+    if archs:
+        return archs[-1]
+    return "arch35"
 
 
 def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:
-    """One case per operator: prefer arch35, else arch22. Skip shared/common dirs."""
+    """One case per AICore operator (must have ``op_kernel/``)."""
     root = Path(ops_root or OPS_ROOT)
     cases: list[dict[str, Any]] = []
     for fam in _FAMILIES:
@@ -124,17 +90,15 @@ def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:
         for op in sorted(fam_dir.iterdir()):
             if not op.is_dir() or op.name in _SKIP_OP_NAMES:
                 continue
-            if not (op / "op_kernel").is_dir() and not (op / "op_host").is_dir():
+            if not (op / "op_kernel").is_dir():
                 continue
             arch = _pick_arch(op)
-            if not arch:
-                continue
             rel = f"{fam}/{op.name}"
             cases.append(
                 {
                     "rel": rel,
                     "arch": arch,
-                    "wipe": not _forbidden_wipe(rel, arch),
+                    "wipe": True,
                     "family": fam,
                 }
             )
@@ -185,11 +149,7 @@ def _largest_remainder(n: int, weights: list[int]) -> list[int]:
 
 
 def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dict[str, Any]]:
-    """Sample ``n`` ops. Default quotas follow catalog family sizes (Hamilton).
-
-    ``UO_GEN_ALLOC=equal`` restores the old one-slot-per-family split (seeds
-    20260814/15/16). FAG arch35 is pinned unless excluded.
-    """
+    """Sample ``n`` ops. Default quotas follow eligible family sizes (Hamilton)."""
     exclude = set(_rel_items("UO_GEN_EXCLUDE"))
     pool = [
         case
@@ -210,17 +170,8 @@ def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dic
         seen.add(key)
         picked.append(dict(case))
 
-    fag = next(
-        (c for c in pool if c["rel"] == "attention/flash_attention_score_grad" and c["arch"] == "arch35"),
-        None,
-    )
-    if fag is not None:
-        fag = dict(fag)
-        fag["wipe"] = False
-        _take(fag)
-
     families = [f for f in _FAMILIES if by_fam.get(f)]
-    remain = max(0, int(n) - len(picked))
+    remain = max(0, int(n))
     alloc = str(os.environ.get("UO_GEN_ALLOC") or "proportional").strip().lower()
     if families and remain:
         if alloc in {"equal", "uniform", "even"}:
@@ -245,8 +196,24 @@ def sample_cases(n: int, *, seed: int, ops_root: Path | None = None) -> list[dic
     return picked[:n]
 
 
-def _forbidden_wipe(rel: str, arch: str) -> bool:
-    return rel.endswith("flash_attention_score_grad") and arch == "arch22"
+def dump_sample(n: int, *, seed: int, ops_root: Path | None = None) -> dict[str, Any]:
+    """Freeze a proportional sample plus the eligible universe counts."""
+    universe = discover_ops(ops_root)
+    by_fam = Counter(c["family"] for c in universe)
+    cases = sample_cases(n, seed=seed, ops_root=ops_root)
+    sample_by_fam = Counter(c["family"] for c in cases)
+    return {
+        "schema": "uo-init-sample/v1",
+        "date": time.strftime("%Y-%m-%d"),
+        "ops_root": str(Path(ops_root or OPS_ROOT)),
+        "n": len(cases),
+        "seed": int(seed),
+        "alloc": str(os.environ.get("UO_GEN_ALLOC") or "proportional"),
+        "eligible_n": len(universe),
+        "eligible_by_family": dict(by_fam),
+        "sample_by_family": dict(sample_by_fam),
+        "cases": cases,
+    }
 
 
 def _trim_summary(summary: Any) -> dict[str, Any]:
@@ -727,10 +694,9 @@ def _probe_snapshot(op: Path, arch: str) -> dict[str, Any]:
 
 def _save(doc: dict[str, Any]) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "results.json").write_text(
-        json.dumps(doc, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
+    payload = json.dumps(doc, ensure_ascii=False, indent=2, default=str)
+    (OUT / "results.json").write_text(payload, encoding="utf-8")
+    (OUT / "results_partial.json").write_text(payload, encoding="utf-8")
 
 
 def _write_summary(doc: dict[str, Any]) -> None:
@@ -847,11 +813,6 @@ def run_one(case: dict[str, Any]) -> dict[str, Any]:
         row["mode"] = "audit_existing"
         return row
 
-    if _forbidden_wipe(rel, arch):
-        row["ok"] = False
-        row["error"] = "refused_wipe_fag_arch22"
-        return row
-
     arch_dir = op / ".ascendc-pilot" / arch
     if case.get("wipe") and arch_dir.exists():
         shutil.rmtree(arch_dir)
@@ -943,6 +904,15 @@ def run_one(case: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _load_cases_file(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return [c for c in payload if isinstance(c, dict) and c.get("rel")]
+    if isinstance(payload, dict) and isinstance(payload.get("cases"), list):
+        return [c for c in payload["cases"] if isinstance(c, dict) and c.get("rel")]
+    raise ValueError(f"no cases in {path}")
+
+
 def main() -> int:
     os.environ["UO_TIMING"] = "1"
     os.environ["PYTHONUNBUFFERED"] = "1"
@@ -954,34 +924,49 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     DOCS_TEST.mkdir(parents=True, exist_ok=True)
 
+    argv = set(sys.argv[1:])
+    dump_only = "--dump-sample" in argv
     sample_n = str(os.environ.get("UO_GEN_SAMPLE") or "").strip()
-    sample_seed = int(str(os.environ.get("UO_GEN_SEED") or "20260814").strip() or "20260814")
+    sample_seed = int(str(os.environ.get("UO_GEN_SEED") or "20260816").strip() or "20260816")
+    cases_file = str(os.environ.get("UO_GEN_CASES_FILE") or "").strip()
     only_list = _rel_items("UO_GEN_ONLY")
-    cases = list(CASES)
+    cases: list[dict[str, Any]] = []
     if only_list:
         by_rel = {c["rel"]: c for c in discover_ops(OPS_ROOT)}
         cases = [by_rel[rel] for rel in only_list if rel in by_rel]
-        for c in cases:
-            if str(c.get("rel") or "").endswith("flash_attention_score_grad") and c.get("arch") == "arch35":
-                c["wipe"] = False
         missing = [rel for rel in only_list if rel not in by_rel]
         print(
             f"ONLY n={len(cases)} missing={missing} families="
             f"{Counter(c.get('family') for c in cases)}",
             flush=True,
         )
-        for c in cases:
-            print(f"  {c['rel']} {c['arch']}", flush=True)
+    elif cases_file:
+        cases = _load_cases_file(Path(cases_file))
+        print(f"CASES_FILE n={len(cases)} path={cases_file}", flush=True)
     elif sample_n.isdigit() and int(sample_n) > 0:
-        cases = sample_cases(int(sample_n), seed=sample_seed, ops_root=OPS_ROOT)
+        frozen = dump_sample(int(sample_n), seed=sample_seed, ops_root=OPS_ROOT)
+        sample_path = OUT / "sample.json"
+        sample_path.write_text(
+            json.dumps(frozen, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        cases = list(frozen["cases"])
         print(
             f"SAMPLE n={len(cases)} seed={sample_seed} alloc="
-            f"{os.environ.get('UO_GEN_ALLOC') or 'proportional'} families="
-            f"{Counter(c.get('family') for c in cases)}",
+            f"{frozen['alloc']} eligible={frozen['eligible_n']} "
+            f"families={frozen['sample_by_family']} wrote={sample_path}",
             flush=True,
         )
-        for c in cases:
-            print(f"  {c['rel']} {c['arch']}", flush=True)
+        if dump_only:
+            for c in cases:
+                print(f"  {c['rel']} {c['arch']}", flush=True)
+            print("DUMP_SAMPLE_OK", flush=True)
+            return 0
+    else:
+        print("Set UO_GEN_SAMPLE, UO_GEN_CASES_FILE, or UO_GEN_ONLY", flush=True)
+        return 2
+    for c in cases:
+        print(f"  {c['rel']} {c.get('arch')}", flush=True)
 
     doc: dict[str, Any] = {
         "schema": "uo-init-generalization/v1",
@@ -992,14 +977,17 @@ def main() -> int:
             "ops_root": str(OPS_ROOT),
             "allow_unverified_scope": os.environ.get("UO_TEST_ALLOW_UNVERIFIED_SCOPE", ""),
             "out": str(OUT),
-            "sample_n": sample_n,
-            "sample_seed": sample_seed if sample_n.isdigit() else None,
+            "sample_n": sample_n or len(cases),
+            "sample_seed": sample_seed,
+            "cases_file": cases_file,
             "exclude_n": len(_rel_items("UO_GEN_EXCLUDE")),
             "exclude_file": os.environ.get("UO_GEN_EXCLUDE_FILE", ""),
         },
         "cases": [],
     }
     seed = OUT / "results_partial.json"
+    if not seed.is_file():
+        seed = OUT / "results.json"
     if seed.is_file() and str(os.environ.get("UO_GEN_RESUME") or "").strip() in {"1", "true", "yes"}:
         try:
             prior = json.loads(seed.read_text(encoding="utf-8"))
@@ -1021,6 +1009,9 @@ def main() -> int:
     for prior in doc.get("cases") or []:
         if isinstance(prior, dict) and prior.get("rel") and prior.get("architecture"):
             skip.add(f"{prior['rel']}:{prior['architecture']}")
+    max_raw = str(os.environ.get("UO_GEN_MAX") or "").strip()
+    max_n = int(max_raw) if max_raw.isdigit() and int(max_raw) > 0 else 0
+    ran = 0
     t_all = time.perf_counter()
     for case in cases:
         key = f"{case['rel']}:{case['arch']}"
@@ -1066,6 +1057,10 @@ def main() -> int:
             flush=True,
         )
         _write_summary(doc)
+        ran += 1
+        if max_n and ran >= max_n:
+            print(json.dumps({"stop": "UO_GEN_MAX", "ran": ran}), flush=True)
+            break
 
     doc["elapsed_s"] = round(time.perf_counter() - t_all, 3)
     doc["ok"] = all(bool(c.get("ok")) for c in doc["cases"] if not c.get("audit_only"))

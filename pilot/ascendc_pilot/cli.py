@@ -376,6 +376,11 @@ def main(argv: list[str] | None = None) -> int:
         p_ex.add_argument("--line", type=int, default=0)
         p_ex.add_argument("--line-end", type=int, default=0)
         p_ex.add_argument("--limit", type=int, default=50)
+    p_uo_query_alias = p_uo_sub.add_parser(
+        "query",
+        help="已移除；请用 acp uo-query",
+    )
+    p_uo_query_alias.add_argument("rest", nargs="*", help=argparse.SUPPRESS)
     p_dump = p_uo_sub.add_parser("dump", help="从 .uo 按需导出 YAML view")
     p_dump.add_argument(
         "view",
@@ -1277,6 +1282,15 @@ def main(argv: list[str] | None = None) -> int:
             print_json({"ok": False, "error": str(exc)[:300]})
             return 1
     if args.cmd == "uo":
+        if getattr(args, "uo_cmd", "") == "query":
+            print_json(
+                {
+                    "ok": False,
+                    "error": "use_uo_query",
+                    "message_zh": "acp uo query 不是合法命令。请使用: acp uo-query",
+                }
+            )
+            return 2
         from uo_init.store.reader import find_uo_product, list_views
         from uo_init.uo_query import open_query
 

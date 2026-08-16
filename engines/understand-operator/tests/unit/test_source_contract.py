@@ -804,7 +804,9 @@ def test_packed_tiling_key_is_selects_host_produced_key(tmp_path: Path) -> None:
     cm = CodeMap(op_name="toy", architecture="arch35")
     enrich_codemap_from_operator_source(cm, op, architecture="arch35")
     keys = [e for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")]
-    assert any(e.name == "tilingKey" for e in keys)
+    names = {e.name for e in keys}
+    assert "QF16_NOCACHE_BSA_TILING" in names
+    assert "QBF16_NOCACHE_BSA_TILING" in names
     kernel = cm.by_name("toy", kind=EntityKind.KERNEL)[0]
     assert any(
         r.src in {e.id for e in keys}
@@ -812,3 +814,168 @@ def test_packed_tiling_key_is_selects_host_produced_key(tmp_path: Path) -> None:
         and r.kind_name() == "SELECTS"
         for r in cm.relations.values()
     )
+
+
+def test_bare_get_tilingkey_is_a_packing_helper() -> None:
+    from uo_init.passes.source_contract import iter_packing_helper_calls
+
+    text = "uint64_t GetTilingKey() const { return GET_TILINGKEY(layout, sparse, mask, topk); }\n"
+    calls = list(iter_packing_helper_calls(text))
+    assert len(calls) == 1
+    _start, _end, args, name = calls[0]
+    assert name == "GET_TILINGKEY"
+    assert args == ["layout", "sparse", "mask", "topk"]
+
+
+def test_tiling_key_is_integer_suffix_is_a_catalog(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void DoTiling(auto *ctx) { ctx->SetTilingKey(1); }\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(10000000000000000024UL)) { return; }\n"
+        "  if (TILING_KEY_IS(10000000000000001024UL)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.TILING_KEY)}
+    assert "10000000000000000024" in names
+    assert "10000000000000001024" in names
+
+
+def test_get_tilingkey_helper_mints_packing_dimensions(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "uint64_t GetTilingKey() const {\n"
+        "  return GET_TILINGKEY(tilingKeyLayout, hasAttenMask, hasTopkMask);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(10000000000000000024UL)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")}
+    assert "tilingKeyLayout" in names
+    assert "hasAttenMask" in names
+    assert "hasTopkMask" in names
+
+
+def test_tiling_key_is_plain_macro_ident_is_a_catalog(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void GenTilingKey() {\n"
+        "  tilingKey_ = static_cast<uint64_t>(templateType_) * 100 + isFullyLoad_;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "#define NORMAL_INT32_FULLY_LOAD 141\n"
+        "#define NORMAL_INT32_NOT_FULLY_LOAD 140\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if TILING_KEY_IS(NORMAL_INT32_FULLY_LOAD) { return; }\n"
+        "  else if TILING_KEY_IS(NORMAL_INT32_NOT_FULLY_LOAD) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert "NORMAL_INT32_FULLY_LOAD" in by_name
+    assert "NORMAL_INT32_NOT_FULLY_LOAD" in by_name
+    assert by_name["NORMAL_INT32_FULLY_LOAD"].attrs.get("value") == 141
+    assert by_name["NORMAL_INT32_NOT_FULLY_LOAD"].attrs.get("value") == 140
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 2
+    for name in ("NORMAL_INT32_FULLY_LOAD", "NORMAL_INT32_NOT_FULLY_LOAD"):
+        assert by_name[name].attrs.get("host_packing_expressions")
+
+
+def test_tiling_key_is_wrapper_macro_mints_invocation_args(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void GenTilingKey() {\n"
+        "  tilingKey_ = item.tilingKey;\n"
+        "}\n"
+        "uint64_t GetTilingKey() const { return tilingKey_; }\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "#define TILING_KEY_1111 1111\n"
+        "#define TILING_KEY_1110 1110\n"
+        "#define TILING_KEY_BRANCH(tilingKey, flag) { \\\n"
+        "    if (TILING_KEY_IS(tilingKey)) { (void)flag; } \\\n"
+        "}\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  TILING_KEY_BRANCH(TILING_KEY_1111, true)\n"
+        "  TILING_KEY_BRANCH(TILING_KEY_1110, false)\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert "tilingKey" not in by_name
+    assert "TILING_KEY_1111" in by_name
+    assert "TILING_KEY_1110" in by_name
+    assert by_name["TILING_KEY_1111"].attrs.get("value") == 1111
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 2

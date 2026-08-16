@@ -216,6 +216,37 @@ def test_integer_catalog_keys_bind_from_packed_tiling_key_assign(tmp_path: Path)
         assert key.attrs.get("packing_value_sites")
 
 
+def test_integer_catalog_keys_bind_from_tiling_key_plus_assign(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    host = op / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        "void GenTilingKey() {\n"
+        "  tilingKey_ += normType * NORM_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += ropeType * ROPE_TYPE_TILING_KEY;\n"
+        "}\n"
+        "void PostTiling() { context_->SetTilingKey(tilingKey_); }\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for i, name in enumerate(("0", "10", "100")):
+        cm.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs={
+                "source_declared": True,
+                "provenance": "source_tiling_key_is",
+                "decl_order": i,
+            },
+        )
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 3
+    for name in ("0", "10", "100"):
+        key = cm.by_name(name, kind=EntityKind.TILING_KEY)[0]
+        assert key.attrs.get("host_packing_expressions")
+
+
 def test_set_tiling_key_of_get_tiling_key_is_not_a_packing_formula(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     host = op / "op_host" / "arch35"

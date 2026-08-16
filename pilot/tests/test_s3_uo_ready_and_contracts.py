@@ -9,7 +9,6 @@ from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
 from ascendc_pilot.gates import gate_uo_ready_tg, run_named_gate
 import ascendc_pilot.gates as gates
 from uo_init.ir.codemap import CodeMap
-from uo_init.ir.entity import Entity, EntityKind
 from uo_init.store.writer import write_codemap
 
 
@@ -80,51 +79,14 @@ def test_scenario_set_not_written_by_knobs_producer() -> None:
 
 
 def test_kb_ready_uses_requested_architecture(tmp_path: Path) -> None:
+    from synthetic_uo import write_synthetic_uo
+
     incomplete = CodeMap(op_name="toy", architecture="arch22")
     write_codemap(
         incomplete,
         tmp_path / ".ascendc-pilot" / "arch22" / "uo" / "toy.arch22.uo",
     )
-    complete = CodeMap(op_name="toy", architecture="arch35")
-    complete.add_entity(
-        Entity(
-            id="TK_DType",
-            kind=EntityKind.TILING_KEY,
-            name="DType",
-            attrs={
-                "source_declared": True,
-                "decl_order": 0,
-                "bit_width": 1,
-                "bit_lo": 0,
-                "bit_hi": 0,
-                "value_domain": ["0", "1"],
-                "allowed_values": ["0", "1"],
-                "decl_kind": "UINT",
-                "kind_tpl": "UINT",
-            },
-            file="op_kernel/template_tiling_key.h",
-            status="confirmed",
-        )
-    )
-    complete.add_entity(
-        Entity(
-            id="TPL_0",
-            kind=EntityKind.TEMPLATE,
-            name="ARGS_SEL_0",
-            attrs={
-                "tpl_role": "args_sel_group",
-                "sel_group_index": 0,
-                "fixed_fields": {"DType": "0"},
-                "field_domains": {},
-            },
-            file="op_kernel/template_tiling_key.h",
-            status="confirmed",
-        )
-    )
-    write_codemap(
-        complete,
-        tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo",
-    )
+    write_synthetic_uo(tmp_path, op_name="toy", architecture="arch35")
 
     ready_35 = run_named_gate(
         tmp_path, "kb_ready", op_name="toy", architecture="arch35"

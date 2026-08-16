@@ -54,7 +54,24 @@ def _write_active_action(project_root: Path, payload: dict[str, Any]) -> Path:
     return path
 
 
-def _eng_ctx_from_pack(pack: dict[str, Any], state: dict[str, Any], run_id: str) -> dict[str, Any]:
+LIST_STATE_KEYS = ("targets", "constraints")
+REQUIRED_NONEMPTY_STATE_KEYS = frozenset({"intent"})
+
+
+def _pack_value(pack: dict[str, Any], key: str) -> Any:
+    value = pack.get(key)
+    if isinstance(value, str) and value.startswith("run-action:"):
+        return ""
+    return value
+
+
+def _eng_ctx_from_pack(
+    pack: dict[str, Any],
+    state: dict[str, Any],
+    run_id: str,
+    *,
+    consumes_state: list[str] | None = None,
+) -> dict[str, Any]:
     architecture = str(pack.get("architecture") or state.get("architecture") or "").strip()
     if not architecture:
         return {
@@ -62,14 +79,48 @@ def _eng_ctx_from_pack(pack: dict[str, Any], state: dict[str, Any], run_id: str)
             "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
             "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
         }
-    return {
+    ctx: dict[str, Any] = {
         "run_id": run_id,
         "op_name": pack.get("op_name") or state.get("op_name") or "",
         "architecture": architecture,
+        "workflow_id": str(pack.get("workflow_id") or state.get("workflow_id") or ""),
         "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
         "level": pack.get("level") or state.get("level") or "L0",
         "focus": pack.get("focus") or state.get("focus") or "",
     }
+    declared = [str(k).strip() for k in (consumes_state or []) if str(k).strip()]
+    for key in declared:
+        if key in ctx:
+            continue
+        if key in LIST_STATE_KEYS:
+            raw = state.get(key)
+            if raw is None:
+                raw = _pack_value(pack, key)
+            ctx[key] = list(raw) if isinstance(raw, list) else []
+            continue
+        value = state.get(key)
+        if value in (None, ""):
+            value = _pack_value(pack, key)
+        if key == "description" and value in (None, ""):
+            value = state.get("intent") or _pack_value(pack, "intent") or ""
+        if key == "intent" and value in (None, ""):
+            value = state.get("description") or _pack_value(pack, "description") or ""
+        ctx[key] = "" if value is None else value
+        if key == "intent" and ctx.get("description") in (None, ""):
+            ctx["description"] = ctx["intent"]
+    for key in declared:
+        if key not in REQUIRED_NONEMPTY_STATE_KEYS:
+            continue
+        if str(ctx.get(key) or "").strip():
+            continue
+        code = f"{key.upper()}_MISSING_IN_RUN_STATE"
+        return {
+            "ok": False,
+            "reason_code": code,
+            "error": code,
+            "message_zh": f"run state 缺少引擎必需字段 {key}",
+        }
+    return ctx
 
 
 
@@ -1218,7 +1269,12 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         ),
     }
 
-    eng_ctx = _eng_ctx_from_pack(pack, state, run_id)
+    eng_ctx = _eng_ctx_from_pack(
+        pack,
+        state,
+        run_id,
+        consumes_state=list(action.get("consumes_state") or []),
+    )
     if eng_ctx.get("ok") is False:
         return eng_ctx
     prepare_engine: dict[str, Any] | None = None
