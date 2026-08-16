@@ -23,51 +23,58 @@ from uo_init.tpl_dsl import TplSchema, parse_file, parse_tpl_corpus
 
 def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
     ctx = context if context is not None else {}
-    schema, header = _resolve_schema(codemap, ctx)
-    if schema is None or not schema.dims:
-        codemap.meta["tpl_schema_pass"] = "v1-missing"
-        return codemap
+    try:
+        schema, header = _resolve_schema(codemap, ctx)
+        if schema is None or not schema.dims:
+            codemap.meta["tpl_schema_pass"] = "v1-missing"
+            return codemap
 
-    header_ref = _portable_header_ref(header, ctx)
-    _upsert_dims(codemap, schema, header_ref)
-    _upsert_sel_groups(codemap, schema, header_ref)
-    existing = ctx.get("tg_views")
-    if not isinstance(existing, dict):
-        existing = {}
-    # Views require ARGS_SEL TEMPLATE facts so commit can rebuild them.
-    # Dims-only schemas must not stamp a D that project_tpl_views_from_codemap
-    # returns as {}.
-    if not schema.selections or not any(schema.selections):
-        for name in TPL_VIEW_NAMES:
-            existing.pop(name, None)
+        header_ref = _portable_header_ref(header, ctx)
+        _upsert_dims(codemap, schema, header_ref)
+        _upsert_sel_groups(codemap, schema, header_ref)
+        existing = ctx.get("tg_views")
+        if not isinstance(existing, dict):
+            existing = {}
+        # Views require ARGS_SEL TEMPLATE facts so commit can rebuild them.
+        # Dims-only schemas must not stamp a D that project_tpl_views_from_codemap
+        # returns as {}.
+        if not schema.selections or not any(schema.selections):
+            for name in TPL_VIEW_NAMES:
+                existing.pop(name, None)
+            ctx["tg_views"] = existing
+            codemap.meta["tpl_schema_pass"] = "v1-decl-only"
+            codemap.meta["tpl_schema"] = {
+                "op_tag": schema.op_tag,
+                "dim_count": len(schema.dims),
+                "args_sel_group_count": 0,
+                "legal_key_count": 0,
+                "header": header_ref,
+            }
+            return codemap
+        views = _build_tpl_views(schema, header_ref)
+        existing.update(views)
         ctx["tg_views"] = existing
-        codemap.meta["tpl_schema_pass"] = "v1-decl-only"
+        ctx["tpl_schema"] = schema
+
+        codemap.meta["tpl_schema_pass"] = "v1"
         codemap.meta["tpl_schema"] = {
             "op_tag": schema.op_tag,
             "dim_count": len(schema.dims),
-            "args_sel_group_count": 0,
-            "legal_key_count": 0,
+            "args_sel_group_count": len(schema.selections),
+            "legal_key_count": int(views["tiling/exhaustive_key_space.yaml"]["legal_key_count"]),
             "header": header_ref,
         }
+        codemap.meta["args_sel_group_count"] = len(schema.selections)
+        codemap.meta["legal_key_count"] = int(
+            views["tiling/exhaustive_key_space.yaml"]["legal_key_count"]
+        )
         return codemap
-    views = _build_tpl_views(schema, header_ref)
-    existing.update(views)
-    ctx["tg_views"] = existing
-    ctx["tpl_schema"] = schema
+    finally:
+        # Source-contract packing / selected-arch DECL is the schema.
+        # A later glob of sibling-arch ARGS_DECL must not expand it.
+        from uo_init.passes.source_contract import reconcile_source_declared_tiling_keys
 
-    codemap.meta["tpl_schema_pass"] = "v1"
-    codemap.meta["tpl_schema"] = {
-        "op_tag": schema.op_tag,
-        "dim_count": len(schema.dims),
-        "args_sel_group_count": len(schema.selections),
-        "legal_key_count": int(views["tiling/exhaustive_key_space.yaml"]["legal_key_count"]),
-        "header": header_ref,
-    }
-    codemap.meta["args_sel_group_count"] = len(schema.selections)
-    codemap.meta["legal_key_count"] = int(
-        views["tiling/exhaustive_key_space.yaml"]["legal_key_count"]
-    )
-    return codemap
+        reconcile_source_declared_tiling_keys(codemap)
 
 
 def _resolve_schema(

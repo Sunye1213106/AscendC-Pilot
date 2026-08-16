@@ -56,7 +56,6 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "lemma_mine": [
             "runs/{run_id}/actions/lemma_mine/parts/**",
             "runs/{run_id}/actions/lemma_mine/scratch/**",
-            "runs/{run_id}/actions/lemma_mine/staging.yaml",
         ],
         "lemma_review": [
             "runs/{run_id}/actions/lemma_review/review.yaml",
@@ -236,7 +235,6 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "lemma_mine": [
             "runs/{run_id}/actions/lemma_mine/parts/**",
             "runs/{run_id}/actions/lemma_mine/scratch/**",
-            "runs/{run_id}/actions/lemma_mine/staging.yaml",
         ],
         "lemma_verify": [
             "runs/{run_id}/actions/lemma_verify/verify.yaml",
@@ -846,6 +844,19 @@ def path_matches_patterns(rel_posix: str, patterns: list[str]) -> bool:
             continue
         if rel == p:
             return True
+    return False
+
+
+def write_paths_overlap(left: str, right: str) -> bool:
+    """Glob-aware overlap: exact, pattern-match, or shared /** prefix."""
+    a = str(left or "").replace("\\", "/").lstrip("/")
+    b = str(right or "").replace("\\", "/").lstrip("/")
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if path_matches_patterns(a, [b]) or path_matches_patterns(b, [a]):
+        return True
     return False
 
 

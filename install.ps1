@@ -459,22 +459,27 @@ if ($acpCmd -and $acpCmd.Source) {
 Write-Host "Installed AscendC-Pilot → $Dest"
 Write-Host "Run: acp doctor"
 
-# optional native walker (best-effort). Skip on fast refresh; Python path is enough.
+# optional native frontend (best-effort cmake/libclang). Missing source is a bug.
+# Skip on fast refresh; Python path is enough.
 if (-not $FastInstall) {
-  $uoWalkSrc = Join-Path $Dest "engines\understand-operator\native\uo_walk"
-  $uoWalkBuild = Join-Path $uoWalkSrc "build"
+  $uoFrontendSrc = Join-Path $Dest "engines\understand-operator\native\uo_frontend"
+  $uoFrontendCmake = Join-Path $uoFrontendSrc "CMakeLists.txt"
+  if (-not (Test-Path $uoFrontendCmake)) {
+    throw "native uo_frontend source missing at $uoFrontendSrc"
+  }
+  $uoFrontendBuild = Join-Path $uoFrontendSrc "build"
   if (Get-Command cmake -ErrorAction SilentlyContinue) {
-    New-Item -ItemType Directory -Force -Path $uoWalkBuild | Out-Null
-    cmake -S $uoWalkSrc -B $uoWalkBuild
+    New-Item -ItemType Directory -Force -Path $uoFrontendBuild | Out-Null
+    cmake -S $uoFrontendSrc -B $uoFrontendBuild
     if ($LASTEXITCODE -eq 0) {
-      cmake --build $uoWalkBuild
+      cmake --build $uoFrontendBuild
       if ($LASTEXITCODE -eq 0) {
-        Write-Host "Built optional uo_walk → $uoWalkBuild"
+        Write-Host "Built optional uo_frontend → $uoFrontendBuild"
       } else {
-        Write-Host "uo_walk optional build skipped"
+        Write-Host "uo_frontend optional build skipped (cmake/libclang)"
       }
     } else {
-      Write-Host "uo_walk optional build skipped"
+      Write-Host "uo_frontend optional build skipped (cmake/libclang)"
     }
   }
 }

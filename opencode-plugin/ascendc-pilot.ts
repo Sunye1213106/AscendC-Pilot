@@ -632,7 +632,10 @@ function listInstalledPilotAgentNames(): string[] {
 
 /**
  * AscendC-Pilot mode: Host Read of any directory is allow (no OpenCode ask).
- * Does not change Build/Plan. Does not relax write/edit. Mutates and returns cfg.
+ * `external_directory` is an OpenCode worktree transport workaround — not the
+ * Pilot write boundary (lease + allowed paths). Does not change Build/Plan.
+ * Does not relax write/edit. Must not widen `task` beyond compose ceiling.
+ * Mutates and returns cfg.
  */
 function windowsPowershellPath(): string {
   const roots = [
@@ -689,12 +692,12 @@ function patchPilotReadPermissions(
     perm.read = "allow"
     perm.external_directory = "allow"
     if (name === "ascendc-pilot") {
-      perm.task = "allow"
+      // Do not widen task. Compose emits a Pilot-actor whitelist.
     } else {
       // Do not inherit the user's MCP servers on TG/CE/query children.
       perm.webfetch = perm.webfetch || "deny"
       perm.websearch = perm.websearch || "deny"
-      perm.task = perm.task || "deny"
+      if (perm.task === undefined) perm.task = "deny"
       perm.skill = perm.skill || "deny"
       // Do not set/overwrite edit: compose already emits deny (empty write_scopes)
       // or ask (producers/reviewers). Overwriting undefined→deny would clobber

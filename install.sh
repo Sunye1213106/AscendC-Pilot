@@ -269,14 +269,19 @@ fi
 echo "Installed AscendC-Pilot → $DEST"
 echo "Run: acp doctor"
 
-# optional native walker (best-effort)
+# optional native frontend (best-effort cmake/libclang). Missing source is a bug.
+UO_FRONTEND_SRC="$DEST/engines/understand-operator/native/uo_frontend"
+if [ ! -d "$UO_FRONTEND_SRC" ] || [ ! -f "$UO_FRONTEND_SRC/CMakeLists.txt" ]; then
+  echo "ERROR: native uo_frontend source missing at $UO_FRONTEND_SRC" >&2
+  exit 1
+fi
 if command -v cmake >/dev/null 2>&1; then
-  UO_WALK_BUILD="$DEST/engines/understand-operator/native/uo_walk/build"
-  mkdir -p "$UO_WALK_BUILD"
-  if cmake -S "$DEST/engines/understand-operator/native/uo_walk" -B "$UO_WALK_BUILD" \
-      && cmake --build "$UO_WALK_BUILD"; then
-    echo "Built optional uo_walk → $UO_WALK_BUILD"
+  UO_FRONTEND_BUILD="$UO_FRONTEND_SRC/build"
+  mkdir -p "$UO_FRONTEND_BUILD"
+  if cmake -S "$UO_FRONTEND_SRC" -B "$UO_FRONTEND_BUILD" \
+      && cmake --build "$UO_FRONTEND_BUILD"; then
+    echo "Built optional uo_frontend → $UO_FRONTEND_BUILD"
   else
-    echo "uo_walk optional build skipped"
+    echo "uo_frontend optional build skipped (cmake/libclang)"
   fi
 fi

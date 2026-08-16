@@ -9,7 +9,12 @@ from typing import Any
 _ACTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # Contracts that only assert pre-existing readiness (no producer write_scopes).
 # kb-answer-v1 is a real Action payload (runs/.../answer.yaml), not a precondition.
-_PRECONDITION_CONTRACTS = frozenset()
+_PRECONDITION_CONTRACTS = frozenset(
+    {
+        "plan-precheck-v1",
+        "solve-precheck-v1",
+    }
+)
 _HARDCODED_WORKFLOW_IN_PROMPT = re.compile(
     r"workflow_id:\s*`(uo-init|uo-update|tg-init|tg-plan|tg-solve|ce-review|uo-query)`"
 )
@@ -495,6 +500,10 @@ def check_all(
             all_gate_refs.update(str(g) for g in gates or [])
         all_gate_refs.update(str(g) for g in meta.get("complete_gates") or [])
         all_gate_refs.update(str(g) for g in meta.get("gates") or [])
+        for action in actions:
+            if isinstance(action, dict):
+                all_gate_refs.update(str(g) for g in (action.get("pre_gates") or []))
+                all_gate_refs.update(str(g) for g in (action.get("post_gates") or []))
         for gate in sorted(all_gate_refs):
             if gate and gate not in gate_ids:
                 errors.append(f"{wid}: unregistered gate id {gate!r}")
@@ -575,50 +584,60 @@ def check_all(
                     else:
                         if not scopes:
                             errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
-                        rel_paths = [str(rel).replace("\\", "/") for rel in paths or []]
+                        check_id = (
+                            str(action.get("staging_contract_id") or contract_id)
+                            if output_mode == "staged"
+                            else contract_id
+                        )
+                        check_paths = list(OUTPUT_CONTRACT_PATHS.get(check_id) or paths or [])
+                        rel_paths = [str(rel).replace("\\", "/") for rel in check_paths]
                         # Historical: formal IR checks ignore runs/**. Action-local
                         # contracts (kb-answer-v1) must still be in agent scopes.
                         formal_paths = [rel for rel in rel_paths if not rel.startswith("runs/")]
                         local_paths = [rel for rel in rel_paths if rel.startswith("runs/")]
-                        if formal_paths:
-                            if output_mode == "staged":
-                                errors.extend(
-                                    _check_staged_output(
-                                        wid=wid,
-                                        aid=aid,
-                                        action=action,
-                                        actions_by_id=actions_by_id,
-                                        pipeline_order=pipeline_order,
-                                        agent_id=agent_id,
-                                        scopes=scopes,
-                                        formal_contract_id=contract_id,
-                                        formal_paths=formal_paths,
-                                        root=root,
-                                    )
+                        if output_mode == "staged":
+                            canonical_formal = [
+                                str(rel).replace("\\", "/")
+                                for rel in (paths or [])
+                                if not str(rel).replace("\\", "/").startswith("runs/")
+                            ]
+                            errors.extend(
+                                _check_staged_output(
+                                    wid=wid,
+                                    aid=aid,
+                                    action=action,
+                                    actions_by_id=actions_by_id,
+                                    pipeline_order=pipeline_order,
+                                    agent_id=agent_id,
+                                    scopes=scopes,
+                                    formal_contract_id=contract_id,
+                                    formal_paths=canonical_formal,
+                                    root=root,
+                                )
+                            )
+                        elif formal_paths:
+                            in_scope = [
+                                rel
+                                for rel in formal_paths
+                                if scopes and path_matches_scope(rel, scopes)
+                            ]
+                            if not in_scope:
+                                errors.append(
+                                    f"{wid}/{aid}: agent has no writable output path for contract {contract_id}"
                                 )
                             else:
-                                in_scope = [
-                                    rel
-                                    for rel in formal_paths
-                                    if scopes and path_matches_scope(rel, scopes)
-                                ]
-                                if not in_scope:
-                                    errors.append(
-                                        f"{wid}/{aid}: agent has no writable output path for contract {contract_id}"
-                                    )
-                                else:
-                                    for rel in formal_paths:
-                                        if scopes and not path_matches_scope(rel, scopes):
-                                            errors.append(
-                                                f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
-                                            )
+                                for rel in formal_paths:
+                                    if scopes and not path_matches_scope(rel, scopes):
+                                        errors.append(
+                                            f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
+                                        )
                         for rel in local_paths:
                             if scopes and not path_matches_scope(rel, scopes):
                                 errors.append(
                                     f"{wid}/{aid}: contract path {rel!r} outside {agent_id} write scopes (action {aid})"
                                 )
 
-            for gate in action.get("gates") or []:
+            for gate in list(action.get("pre_gates") or []) + list(action.get("post_gates") or []):
                 gate_id = str(gate)
                 if gate_id and gate_id not in gate_ids:
                     errors.append(f"{wid}/{aid}: action gate {gate_id!r} not registered")

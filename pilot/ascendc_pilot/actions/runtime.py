@@ -33,6 +33,34 @@ from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
 
 
+def _run_action_gates(
+    project_root: Path,
+    gate_ids: list[str],
+) -> list[dict[str, Any]]:
+    """Run named gates and persist outcomes. Empty list → no-op."""
+    from ascendc_pilot.gates import run_named_gate
+    from ascendc_pilot.state import record_gate
+
+    results: list[dict[str, Any]] = []
+    for gid in gate_ids:
+        name = str(gid or "").strip()
+        if not name:
+            continue
+        g = run_named_gate(project_root, name)
+        results.append(g)
+        try:
+            record_gate(
+                project_root,
+                str(g.get("gate") or name),
+                ok=bool(g.get("ok")),
+                detail=g if isinstance(g, dict) else None,
+                bump=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    return results
+
+
 
 def _arch_for(project_root: Path, state: dict[str, Any] | None = None) -> str:
     if state is not None:
@@ -1382,9 +1410,11 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         "context_profile_id": action.get("context_profile_id"),
         "output_contract_id": action.get("output_contract_id"),
         "output_mode": str(action.get("output_mode") or "direct"),
+        "staging_contract_id": action.get("staging_contract_id"),
         "checker_required": bool(action.get("checker_required", True)),
         "referee_required": bool(action.get("referee_required", False)),
-        "gates": list(action.get("gates") or []),
+        "pre_gates": list(action.get("pre_gates") or []),
+        "post_gates": list(action.get("post_gates") or []),
         "context_pack_path": pack_path,
         "context_slice_path": slice_path,
         "context_slice_token_estimate": int((context_slice or {}).get("token_estimate") or 0),
@@ -1578,12 +1608,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
         writable = {"ok": True, "skipped": True, "reason": "host_owned_confirm"}
     else:
+        output_mode = str(action.get("output_mode") or "direct")
+        if output_mode == "staged":
+            check_contract_id = str(action.get("staging_contract_id") or "")
+        else:
+            check_contract_id = str(action.get("output_contract_id") or "")
         writable = _check_required_outputs_writable(
             workflow_id=wid,
             action_id=action_id,
             actor_id=actor_id,
-            contract_id=str(action.get("output_contract_id") or ""),
-            output_mode=str(action.get("output_mode") or "direct"),
+            contract_id=check_contract_id,
+            output_mode=output_mode,
             write_paths=write_paths,
             run_id=run_id,
             project_root=project_root,
@@ -1883,6 +1918,17 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     }
     if prepare_engine is not None:
         result["prepare_engine"] = prepare_engine
+
+    pre_results = _run_action_gates(project_root, list(action.get("pre_gates") or []))
+    pre_ok = all(g.get("ok") for g in pre_results) if pre_results else True
+    if pre_results:
+        result["pre_gates"] = pre_results
+    if not pre_ok:
+        result["ok"] = False
+        result["error"] = "PRE_GATES_FAILED"
+        result["reason_code"] = "PRE_GATES_FAILED"
+        result["message_zh"] = "前置 gate 未通过；禁止执行 Actor"
+        return result
 
     if execution_mode == EXECUTION_DETERMINISTIC or role_id == "deterministic_engine":
         eng = invoke_engine(project_root, wid, action_id, ctx=eng_ctx)
@@ -2455,13 +2501,22 @@ def finalize_action(
 
     actor_id = str(session.get("actor_id") or action.get("agent_id") or "")
     role_id = str(session.get("role_id") or action.get("role_id") or "")
-    contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
-    action_sid = str(session.get("action_session_id") or "")
-    lease_id = str(session.get("lease_id") or "")
-    prepare_nonce = str(session.get("prepare_nonce") or "")
     output_mode = str(
         session.get("output_mode") or action.get("output_mode") or "direct"
     ).strip().lower()
+    if output_mode == "staged":
+        contract_id = str(
+            session.get("staging_contract_id")
+            or action.get("staging_contract_id")
+            or session.get("output_contract_id")
+            or action.get("output_contract_id")
+            or ""
+        )
+    else:
+        contract_id = str(session.get("output_contract_id") or action.get("output_contract_id") or "")
+    action_sid = str(session.get("action_session_id") or "")
+    lease_id = str(session.get("lease_id") or "")
+    prepare_nonce = str(session.get("prepare_nonce") or "")
 
     # return_value: materialize kb-answer from Task result before contract check.
     materialize: dict[str, Any] | None = None
@@ -2596,28 +2651,12 @@ def finalize_action(
     )
     target_violation: dict[str, Any] | None = None
 
-    from ascendc_pilot.gates import run_named_gate
     from ascendc_pilot.spec_hashes import workflow_spec_hash
-    from ascendc_pilot.state import record_gate
 
     gate_results = []
     if producer_identity_ok:
-        for gid in session.get("gates") or action.get("gates") or []:
-            gate_results.append(run_named_gate(project_root, str(gid)))
-        # Persist Action gate outcomes into passed_gates / failed_gates so
-        # static obligations (e.g. scope_validated←scope_receipt) can settle
-        # without waiting for advance/complete to re-run the same gate.
-        for g in gate_results:
-            try:
-                record_gate(
-                    project_root,
-                    str(g.get("gate") or "gate"),
-                    ok=bool(g.get("ok")),
-                    detail=g if isinstance(g, dict) else None,
-                    bump=False,
-                )
-            except Exception:  # noqa: BLE001
-                pass
+        post_ids = list(session.get("post_gates") or action.get("post_gates") or [])
+        gate_results = _run_action_gates(project_root, post_ids)
 
     checker_required = bool(session.get("checker_required", action.get("checker_required", True)))
     gates_ok = all(g.get("ok") for g in gate_results) if gate_results else True

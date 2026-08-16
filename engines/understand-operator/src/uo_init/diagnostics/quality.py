@@ -35,6 +35,20 @@ def _sites_with_span(attrs: dict[str, Any], *keys: str) -> bool:
     return False
 
 
+def source_schema_tiling_keys(keys: list[Any]) -> list[Any]:
+    """Packing / locate coverage is over the source-contract schema.
+
+    ``TILING_KEY_IS`` catalogs and sibling-arch TPL dims stay on the graph as
+    selection facts. They are not extra packing dimensions.
+    """
+    declared = [
+        e
+        for e in keys
+        if bool((getattr(e, "attrs", None) or {}).get("source_declared"))
+    ]
+    return declared or list(keys)
+
+
 def _surface(ok: bool, **extra: Any) -> dict[str, Any]:
     row: dict[str, Any] = {"ok": bool(ok)}
     row.update(extra)
@@ -68,6 +82,7 @@ def codemap_quality(
         by_kind.setdefault(ent.kind_name(), []).append(ent)
 
     keys = by_kind.get(EntityKind.TILING_KEY.value) or []
+    schema_keys = source_schema_tiling_keys(keys)
     fields = by_kind.get(EntityKind.TILING_FIELD.value) or []
     kernels = by_kind.get(EntityKind.KERNEL.value) or []
     inputs = by_kind.get(EntityKind.INPUT.value) or []
@@ -82,11 +97,12 @@ def codemap_quality(
     ]
 
     key_span_n = sum(1 for e in keys if _has_span(e))
+    schema_span_n = sum(1 for e in schema_keys if _has_span(e))
     kernel_span_n = sum(1 for e in kernels if _has_span(e))
     input_span_n = sum(1 for e in inputs if _has_span(e))
     pack_n = sum(
         1
-        for e in keys
+        for e in schema_keys
         if _sites_with_span(e.attrs or {}, "packing_value_sites", "producer_sites")
         or e.attrs.get("host_packing_expressions")
     )
@@ -172,7 +188,7 @@ def codemap_quality(
     if not kernels:
         paths_ok = False
 
-    tiling_key_ok = (not keys) or (pack_n == len(keys) and key_span_n >= 1)
+    tiling_key_ok = (not schema_keys) or (pack_n == len(schema_keys) and schema_span_n >= 1)
     field_ok = field_owner_unknown == 0 and (
         not fields or ((owner_n / len(fields) >= 0.9) and writer_n >= 1)
     )
@@ -190,7 +206,7 @@ def codemap_quality(
         ),
         "tiling_key": _surface(
             tiling_key_ok,
-            packing=f"{pack_n}/{len(keys)}",
+            packing=f"{pack_n}/{len(schema_keys)}",
             coverage=summary.get("tiling_key_host_packing_coverage"),
         ),
         "field_rw": _surface(
@@ -224,7 +240,7 @@ def codemap_quality(
         not_ready_reasons.append("integrity_fail")
     if kernel_span_n < 1:
         not_ready_reasons.append("no_kernel_span")
-    if keys and pack_n == 0:
+    if schema_keys and pack_n == 0:
         not_ready_reasons.append("no_tiling_key_packing_site")
     if field_owner_unknown > 0:
         not_ready_reasons.append("field_owner_unknown")

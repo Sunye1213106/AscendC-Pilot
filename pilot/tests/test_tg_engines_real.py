@@ -106,7 +106,8 @@ def test_output_contracts_require_concrete_tg_artifacts() -> None:
     assert "understand_contract.json" not in joined
     assert "binding_inventory.yaml" in ",".join(OUTPUT_CONTRACT_PATHS["tilingkey-binding-v1"])
     assert OUTPUT_CONTRACT_PATHS["plan-scope-v1"] == ["tg/plan/levels/*/plan_scope.yaml"]
-    assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == ["tg/plan/levels/*/plan_scope.yaml"]
+    assert OUTPUT_CONTRACT_PATHS["plan-precheck-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == []
     assert "plan-build-v1" in OUTPUT_CONTRACT_NONEMPTY_GLOBS
     assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 

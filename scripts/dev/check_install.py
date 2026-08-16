@@ -79,6 +79,21 @@ def check_python(reporter: Reporter) -> None:
     )
 
 
+def check_native_frontend_source(reporter: Reporter) -> None:
+    src = ROOT / "engines" / "understand-operator" / "native" / "uo_frontend" / "CMakeLists.txt"
+    reporter.add(
+        "native uo_frontend source",
+        src.is_file(),
+        str(src) if src.is_file() else "missing; installer must fail-fast if this path is absent",
+    )
+    sh = (ROOT / "install.sh").read_text(encoding="utf-8")
+    ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
+    ok_sh = "native/uo_frontend" in sh and "native/uo_walk" not in sh
+    ok_ps1 = ("native\\uo_frontend" in ps1 or "native/uo_frontend" in ps1.replace("\\", "/")) and "uo_walk" not in ps1
+    reporter.add("install.sh native target", ok_sh, "uo_frontend" if ok_sh else "stale uo_walk path")
+    reporter.add("install.ps1 native target", ok_ps1, "uo_frontend" if ok_ps1 else "stale uo_walk path")
+
+
 def check_base(reporter: Reporter) -> None:
     print("\n== Base Python install ==")
     check_python(reporter)
@@ -96,6 +111,7 @@ def check_base(reporter: Reporter) -> None:
     ):
         check_import(reporter, package, module)
     check_tool(reporter, "acp", required=True)
+    check_native_frontend_source(reporter)
 
 
 def check_uo(reporter: Reporter) -> None:

@@ -271,20 +271,15 @@ def _targets_from_scope(spec: OpSpec) -> None:
     )
 
 
-def _kernel_entry(kernel_root: Path, op_snake: str) -> tuple[Path | None, list[str]]:
-    """`*_apt.cpp` is the AscendC entry when present, else `<snake>.cpp`.
-
-    Fallback for a tree `scope_scan` could not read; the scan decides which
-    architecture an entry builds by what it includes, which names cannot say.
-    """
-    if not kernel_root.is_dir():
-        return None, ["kernel_entry_not_found: no op_kernel/"]
-    apt = sorted(kernel_root.glob("*_apt.cpp"))
+def _cpp_candidates(folder: Path, op_snake: str) -> tuple[Path | None, list[str]]:
+    if not folder.is_dir():
+        return None, []
+    apt = sorted(folder.glob("*_apt.cpp"))
     if len(apt) == 1:
         return apt[0], []
     if len(apt) > 1:
         return apt[0], [f"multiple_kernel_entry: {', '.join(p.name for p in apt)}"]
-    plain = sorted(kernel_root.glob("*.cpp"))
+    plain = sorted(folder.glob("*.cpp"))
     if len(plain) == 1:
         return plain[0], []
     named = [p for p in plain if p.stem == op_snake]
@@ -292,6 +287,28 @@ def _kernel_entry(kernel_root: Path, op_snake: str) -> tuple[Path | None, list[s
         return named[0], []
     if plain:
         return plain[0], [f"multiple_kernel_entry: {', '.join(p.name for p in plain)}"]
+    return None, []
+
+
+def _kernel_entry(
+    kernel_root: Path, op_snake: str, arch_dir: str = ""
+) -> tuple[Path | None, list[str]]:
+    """`*_apt.cpp` is the AscendC entry when present, else `<snake>.cpp`.
+
+    Prefer ``op_kernel/archNN/*.cpp`` when that folder exists. Fallback for a
+    tree ``scope_scan`` could not read; the scan decides which architecture an
+    entry builds by path (under ``archNN/``) or includes (root-level TUs).
+    """
+    if not kernel_root.is_dir():
+        return None, ["kernel_entry_not_found: no op_kernel/"]
+    arch = str(arch_dir or "").strip()
+    if arch:
+        hit, notes = _cpp_candidates(kernel_root / arch, op_snake)
+        if hit is not None:
+            return hit, notes
+    hit, notes = _cpp_candidates(kernel_root, op_snake)
+    if hit is not None:
+        return hit, notes
     return None, ["kernel_entry_not_found: no op_kernel/*.cpp"]
 
 
@@ -435,7 +452,7 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
 
         entry = pick_kernel_entry(spec.kernel_targets, spec.arch_dir) or spec.kernel_targets[0]
     if entry is None:
-        entry, _notes = _kernel_entry(spec.kernel_root, spec.op_snake)
+        entry, _notes = _kernel_entry(spec.kernel_root, spec.op_snake, spec.arch_dir)
         if spec.kernel_entry is None:
             spec.kernel_entry = entry
 
@@ -486,18 +503,35 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
             names = ", ".join(p.name for p in spec.kernel_targets)
             spec.ambiguities.append(f"multiple_kernel_entry: {names}")
     else:
-        spec.kernel_entry, notes = _kernel_entry(spec.kernel_root, spec.op_snake)
+        spec.kernel_entry, notes = _kernel_entry(
+            spec.kernel_root, spec.op_snake, spec.arch_dir
+        )
         spec.ambiguities.extend(notes)
         # Layout glob fallback can pick an arch-neutral *.cpp that builds another
-        # arch; never hand that TU to Clang for this architecture.
+        # arch. Prefer an arch-folder TU; keep the last remaining root TU.
         if spec.kernel_entry is not None and spec.arch_dir:
-            owns = sscan.entry_architecture(spec.kernel_entry)
+            from uo_init.source_layout import path_owned_architecture
+
             arch = spec.arch_dir.strip().lower()
-            if owns and owns != arch:
+            owned = path_owned_architecture(spec.kernel_entry)
+            if owned and owned != arch:
                 spec.ambiguities.append(
-                    f"kernel_entry_other_arch: {spec.kernel_entry.name} builds {owns}"
+                    f"kernel_entry_other_arch: {spec.kernel_entry.name} builds {owned}"
                 )
                 spec.kernel_entry = None
+            elif not owned:
+                includes = sscan.entry_architecture(spec.kernel_entry)
+                if includes and includes != arch:
+                    alt, _alt_notes = _cpp_candidates(
+                        spec.kernel_root / spec.arch_dir, spec.op_snake
+                    )
+                    if alt is not None:
+                        spec.kernel_entry = alt
+                    else:
+                        spec.ambiguities.append(
+                            f"kernel_entry_kept_last_tu: {spec.kernel_entry.name} "
+                            f"builds {includes} but is the only kernel TU"
+                        )
 
     spec.tiling_key_header, notes = _tiling_key_header(
         spec.kernel_root,

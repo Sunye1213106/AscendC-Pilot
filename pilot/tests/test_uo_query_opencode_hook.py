@@ -51,7 +51,8 @@ def test_task_hook_uses_pending_dispatch_project() -> None:
     assert "return output || {}" in plugin
     assert "patchPilotReadPermissions" in plugin
     assert 'perm.external_directory = "allow"' in plugin
-    assert 'perm.task = "allow"' in plugin
+    assert 'perm.task = "allow"' not in plugin
+    assert "Do not widen task" in plugin
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "args.location = { directory: projectRoot }" not in plugin
     assert "readLatestPendingDispatch" in driver

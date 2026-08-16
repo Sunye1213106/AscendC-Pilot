@@ -488,9 +488,12 @@ def _locate_quality(cm: Any, product: Path, op: Path, arch: str) -> dict[str, An
 
     keys = by_kind["TILING_KEY"]
     fields = by_kind["TILING_FIELD"]
+    from uo_init.diagnostics.quality import source_schema_tiling_keys
+
+    schema_keys = source_schema_tiling_keys(keys)
     pack_n = sum(
         1
-        for e in keys
+        for e in schema_keys
         if _sites_with_span(e.attrs or {}, "packing_value_sites", "producer_sites")
         or (e.attrs or {}).get("host_packing_expressions")
     )
@@ -598,7 +601,9 @@ def _locate_quality(cm: Any, product: Path, op: Path, arch: str) -> dict[str, An
     ]
     host_check_n = len(host_checks)
     host_check_span_n = sum(1 for e in host_checks if _has_span(e))
-    keys_ok = key_span["n"] == 0 or (pack_n == len(keys) and key_span["with_span"] >= 1)
+    keys_ok = (not schema_keys) or (
+        pack_n == len(schema_keys) and key_span["with_span"] >= 1
+    )
     kernel_ok = kernel_span["with_span"] >= 1
     input_ok = input_span["with_span"] >= 1
     locate_ok = (not tried) or hit_n >= max(1, len(tried) // 2)
@@ -619,9 +624,9 @@ def _locate_quality(cm: Any, product: Path, op: Path, arch: str) -> dict[str, An
         gaps.append("no_kernel_span")
     if input_span["n"] == 0 or not input_ok:
         gaps.append("no_input_span")
-    if key_span["n"] > 0 and not keys_ok:
+    if schema_keys and not keys_ok:
         gaps.append("weak_tiling_key_span")
-    if keys and pack_n == 0:
+    if schema_keys and pack_n == 0:
         gaps.append("no_tiling_key_packing_site")
     if fields and writer_n == 0:
         gaps.append("no_tiling_field_writer")
@@ -637,7 +642,7 @@ def _locate_quality(cm: Any, product: Path, op: Path, arch: str) -> dict[str, An
         gaps.append("locate_miss")
     return {
         "span": span,
-        "tiling_key_packing_sites": f"{pack_n}/{len(keys)}",
+        "tiling_key_packing_sites": f"{pack_n}/{len(schema_keys)}",
         "tiling_field_writer_sites": f"{writer_n}/{len(fields)}",
         "input_dtype": f"{dtype_n}/{input_n}",
         "kernel_api": kernel_api,

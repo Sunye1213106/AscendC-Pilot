@@ -43,6 +43,7 @@ def audit(repo: Path) -> list[str]:
         EXECUTION_SUBAGENT,
         PRIMARY_AGENT_ID,
         path_within_scopes,
+        write_paths_overlap,
         write_roots_as_scopes,
     )
     from ascendc_pilot.workflows import WORKFLOWS
@@ -213,6 +214,32 @@ def audit(repo: Path) -> list[str]:
                         errors.append(
                             f"{wid}/{aid}: run-scoped contract uses unconstrained *: {rel}"
                         )
+
+            allow_w = [str(x) for x in (action.get("allowed_write_paths") or [])]
+            forbid_w = [str(x) for x in (action.get("forbidden_write_paths") or [])]
+            for a_path in allow_w:
+                for b_path in forbid_w:
+                    if write_paths_overlap(a_path, b_path):
+                        errors.append(
+                            f"WRITE_ALLOW_FORBID_OVERLAP {wid}/{aid}: "
+                            f"{a_path!r} ∩ {b_path!r}"
+                        )
+            if str(action.get("output_mode") or "") == "staged" and str(action.get("role_id") or "") == "producer":
+                from ascendc_pilot.workflows.artifact_dag import normalize_published
+
+                published = normalize_published(action)
+                if published:
+                    errors.append(
+                        f"STAGED_PRODUCER_PUBLISHES_CANONICAL {wid}/{aid}: {published}"
+                    )
+            if contract in {"plan-precheck-v1", "solve-precheck-v1"}:
+                from ascendc_pilot.workflows.artifact_dag import normalize_published
+
+                published = normalize_published(action)
+                if published:
+                    errors.append(
+                        f"PRECONDITION_FAKE_PRODUCER {wid}/{aid}: {published}"
+                    )
 
             if mode == EXECUTION_PRIMARY_INTERACTIVE and aid in {
                 "human_confirm",

@@ -10,6 +10,7 @@ from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
     KERNEL_ENTRY_NAME_RE,
     entry_include_architecture,
+    path_owned_architecture,
     selected_host_files,
     selected_kernel_files,
     selected_tiling_headers,
@@ -275,3 +276,15 @@ def test_mixed_arch_includes_do_not_pin_a_foreign_entry() -> None:
     )
     assert entry_include_architecture(text) == ""
     assert entry_include_architecture('#include "arch35/tiling.h"\n') == "arch35"
+
+
+def test_path_owned_architecture_wins_over_shared_arch35_include(tmp_path: Path) -> None:
+    cpp = tmp_path / "op_kernel" / "arch22" / "widget.cpp"
+    _write(
+        cpp,
+        '#include "../widget_arch35.h"\n'
+        '__global__ __aicore__ void widget() {}\n',
+    )
+    assert path_owned_architecture(cpp) == "arch22"
+    assert entry_include_architecture(cpp.read_text(encoding="utf-8")) == "arch35"
+

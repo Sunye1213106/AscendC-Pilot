@@ -80,7 +80,8 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "primary_router" in driver
     assert 'startedKind === "primary_router"' in driver
-    assert 'perm.task = "allow"' in hook
+    assert 'perm.task = "allow"' not in hook
+    assert "Do not widen task" in hook
     assert '"tasks"' in driver
     assert "native_tasks" in driver
     assert "SLICE_ID=" in hook

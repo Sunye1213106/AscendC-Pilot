@@ -409,3 +409,29 @@ def test_catalog_set_tiling_key_ignores_foreign_get_tpl(tmp_path: Path) -> None:
         exprs = " ".join(cm.by_name(name, kind=EntityKind.TILING_KEY)[0].attrs.get("host_packing_expressions") or [])
         assert "foreignA" not in exprs
         assert "tilingKey" in exprs or "quantMode" in exprs
+
+
+def test_single_arg_get_tpl_binds_declared_field(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    host = op / "op_host" / "arch22"
+    host.mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        "ge::graphStatus DoTiling() {\n"
+        "  GET_TPL_TILING_KEY(isDeterministic);\n"
+        "  return ge::GRAPH_SUCCESS;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch22")
+    cm.upsert(
+        EntityKind.TILING_KEY,
+        "isDeterministic",
+        attrs={"source_declared": True, "decl_order": 0, "bit_width": 1},
+    )
+    bind_host_tiling_key_expressions(cm, op, architecture="arch22")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["calls"] == 1
+    assert meta["fields_bound"] == 1
+    key = cm.by_name("isDeterministic", kind=EntityKind.TILING_KEY)[0]
+    assert key.attrs["host_packing_expressions"] == ["isDeterministic"]
+

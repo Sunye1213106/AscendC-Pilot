@@ -460,6 +460,96 @@ def test_tpl_schema_glob_does_not_merge_unselected_schema(tmp_path: Path) -> Non
     }
 
 
+def test_reconcile_source_declared_demotes_catalog_and_foreign_tpl() -> None:
+    from uo_init.passes.source_contract import reconcile_source_declared_tiling_keys
+
+    cm = CodeMap(op_name="toy", architecture="arch22")
+    cm.meta["source_declared_tiling_keys"] = ["attenEnable", "ropeDim"]
+    cm.meta["source_declared_tiling_key_count"] = 2
+    for name in ("attenEnable", "ropeDim", "100000", "InputDType"):
+        cm.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs={"source_declared": True, "decl_order": 0},
+        )
+    reconcile_source_declared_tiling_keys(cm)
+    declared = {
+        e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")
+    }
+    assert declared == {"attenEnable", "ropeDim"}
+    assert cm.by_name("100000", kind=EntityKind.TILING_KEY)[0].attrs.get("source_declared") is False
+    assert cm.by_name("InputDType", kind=EntityKind.TILING_KEY)[0].attrs.get("source_declared") is False
+
+
+def test_late_tpl_schema_does_not_expand_decimal_packing_schema(tmp_path: Path) -> None:
+    """Host ``tilingKey *= 10`` is the arch22 schema; sibling-arch TPL is not extra declared keys."""
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+    from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
+    from uo_init.passes.tpl_schema import run as run_tpl_schema
+
+    op = tmp_path / "toy"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host" / "arch22").mkdir(parents=True)
+    (op / "op_kernel" / "arch22").mkdir(parents=True)
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
+    (op / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+    (op / "op_host" / "arch22" / "tiling.cpp").write_text(
+        "uint64_t GetTilingKey() const {\n"
+        "  uint64_t tilingKey = 10;\n"
+        "  if (tmpData.attenEnable) { tilingKey += 1; }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.ropeDim != 0) { tilingKey += 1; }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.layout == 1) { tilingKey += 1; }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.deterministic) { tilingKey += 1; }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.kvMerge) { tilingKey += 1; }\n"
+        "  return tilingKey;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch22" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(100000)) { return; }\n"
+        "  if (TILING_KEY_IS(110000)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch35" / "toy_template_tiling_key.h").write_text(
+        "ASCENDC_TPL_ARGS_DECL(Toy,\n"
+        "  ASCENDC_TPL_UINT_DECL(InputDType, ASCENDC_TPL_3_BW, ASCENDC_TPL_UI_LIST, 0, 1),\n"
+        "  ASCENDC_TPL_BOOL_DECL(IsTnd, 0, 1),\n"
+        "  ASCENDC_TPL_BOOL_DECL(IsRope, 0, 1));\n"
+        "ASCENDC_TPL_SEL(ASCENDC_TPL_ARGS_SEL(\n"
+        "  ASCENDC_TPL_UINT_SEL(InputDType, ASCENDC_TPL_UI_LIST, 0, 1),\n"
+        "  ASCENDC_TPL_BOOL_SEL(IsTnd, 0, 1),\n"
+        "  ASCENDC_TPL_BOOL_SEL(IsRope, 0, 1)));\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch22")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch22")
+    bind_host_tiling_key_expressions(cm, op, architecture="arch22")
+    finalize_kernel_tiling_closure(cm, op, architecture="arch22")
+    run_tpl_schema(cm, context={"op_root": str(op), "architecture": "arch22", "tg_views": {}})
+    declared = [
+        e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")
+    ]
+    assert declared == ["attenEnable", "ropeDim", "layout", "deterministic", "kvMerge"]
+    assert cm.meta["source_declared_tiling_key_count"] == 5
+    packing = cm.meta.get("host_tiling_key_packing") or {}
+    assert packing.get("fields_bound") == 5
+    report = audit_codemap(cm)
+    codes = {f.get("code") for f in report.get("blocking") or []}
+    assert "TILING_KEY_CARDINALITY_MISMATCH" not in codes
+    assert "INCOMPLETE_HOST_TILINGKEY_PACKING" not in codes
+
+
 def test_op_def_datatype_chain_fills_input_dtype(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     (op / "op_host").mkdir(parents=True)
@@ -827,6 +917,25 @@ def test_bare_get_tilingkey_is_a_packing_helper() -> None:
     assert args == ["layout", "sparse", "mask", "topk"]
 
 
+def test_single_arg_get_tpl_tiling_key_is_a_packing_helper() -> None:
+    from uo_init.passes.source_contract import iter_packing_helper_calls
+
+    text = "GET_TPL_TILING_KEY(isDeterministic);\n"
+    calls = list(iter_packing_helper_calls(text))
+    assert len(calls) == 1
+    _start, _end, args, name = calls[0]
+    assert name == "GET_TPL_TILING_KEY"
+    assert args == ["isDeterministic"]
+
+
+def test_single_arg_get_tilingkey_is_not_a_dimension_pack() -> None:
+    from uo_init.passes.source_contract import iter_packing_helper_calls
+
+    text = "return GET_TILINGKEY(packed);\n"
+    assert list(iter_packing_helper_calls(text)) == []
+
+
+
 def test_tiling_key_is_integer_suffix_is_a_catalog(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     (op / "op_graph").mkdir(parents=True)
@@ -1070,6 +1179,44 @@ def test_iter_bitpack_dims_ignores_same_place_plus_one_flags() -> None:
         "}\n"
     )
     assert iter_bitpack_dims(text) == []
+
+
+def test_iter_bitpack_dims_times_ten_shifts_plus_one_flags() -> None:
+    from uo_init.passes.source_contract import iter_bitpack_dims
+
+    text = (
+        "uint64_t GetTilingKey() const {\n"
+        "  uint64_t tilingKey = 10;\n"
+        "  if (tmpData.attenEnable) {\n"
+        "    tilingKey += 1;\n"
+        "  }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.ropeDim != 0) {\n"
+        "    tilingKey += 1;\n"
+        "  }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.layout == 1) {\n"
+        "    tilingKey += 1;\n"
+        "  }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.deterministic) {\n"
+        "    tilingKey += 1;\n"
+        "  }\n"
+        "  tilingKey *= 10;\n"
+        "  if (tmpData.kvMerge) {\n"
+        "    tilingKey += 1;\n"
+        "  }\n"
+        "  return tilingKey;\n"
+        "}\n"
+    )
+    dims = iter_bitpack_dims(text)
+    assert [d["name"] for d in dims] == [
+        "attenEnable",
+        "ropeDim",
+        "layout",
+        "deterministic",
+        "kvMerge",
+    ]
 
 
 def test_iter_bitpack_dims_if_literal_pack_is_independent_axes() -> None:

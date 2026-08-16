@@ -21,6 +21,18 @@ ASCENDC_TPL_ARGS_DECL(OpX,
 """
 
 
+def test_parse_kernel_type_decl_is_a_packing_dim():
+    src = (
+        "ASCENDC_TPL_ARGS_DECL(OpX,\n"
+        "    ASCENDC_TPL_UINT_DECL(MODE, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, 0, 1),\n"
+        "    ASCENDC_TPL_KERNEL_TYPE_DECL(CV_MODE, ASCENDC_TPL_MIX_AIC_1_1, ASCENDC_TPL_MIX_AIC_1_2));\n"
+    )
+    sch = parse_args_decl(src)
+    assert [d.name for d in sch.dims] == ["MODE", "CV_MODE"]
+    assert sch.dims[1].kind == "KERNEL_TYPE"
+    assert sch.dims[1].bw == 6
+
+
 def test_parse_minimal_decl_fixture():
     sch = parse_args_decl(MINI)
     assert len(sch.dims) == 3

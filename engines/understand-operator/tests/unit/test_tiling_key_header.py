@@ -81,3 +81,16 @@ def test_tiling_key_header_missing_still_notes_when_probe_dirty():
     )
     assert "clang_probe_unclean" in blockers
     assert not any(b.startswith("tiling_key_header_not_found") for b in blockers)
+
+
+def test_kept_last_kernel_tu_is_soft_ambiguity():
+    blockers = _hard_scope_blockers(
+        ["kernel_entry_kept_last_tu: widget.cpp includes another arch but is the only kernel TU"],
+        arch_user_specified=True,
+        probe_clean=True,
+        clang_scope_status="complete",
+        hosts=["a.cpp"],
+        kernel_entry="k.cpp",
+    )
+    assert blockers == []
+

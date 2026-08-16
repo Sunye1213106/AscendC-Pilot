@@ -164,7 +164,9 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "external_directory: allow" in uo_query_agent
         assert "read: allow" in pilot_agent
         assert "read: allow" in uo_query_agent
-        assert "task: allow" in pilot_agent
+        assert "uo-query: allow" in pilot_agent
+        assert "ce-reviewer: allow" in pilot_agent
+        assert "task: allow" not in pilot_agent
         assert "skill: false" in uo_query_agent
         assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" not in uo_query_agent

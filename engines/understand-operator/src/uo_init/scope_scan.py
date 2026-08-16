@@ -495,21 +495,51 @@ def scan(op_dir: str | Path, *, arch_dir: str = "") -> ScopeSet:
 def _drop_foreign_arch_entries(
     files: list[ScopeFile], arch_dir: str, notes: list[str]
 ) -> list[ScopeFile]:
-    """Kernel entries sit above the `archNN` folders, so the path filter cannot
-    see which architecture they build. Their includes can."""
+    """Drop kernel TUs that belong to another architecture.
+
+    Files under ``archNN/`` are owned by that folder. Root-level entries
+    (``op_kernel/foo.cpp``) are classified from includes. Never drop the last
+    remaining kernel TU: some trees keep one ``.cpp`` and put the other arch
+    in headers.
+    """
     arch = (arch_dir or "").strip().lower()
     if not arch:
         return files
+    from uo_init.source_layout import path_owned_architecture
+
+    def _owns(path: Path) -> str:
+        return path_owned_architecture(path) or entry_architecture(path)
+
+    def _keep_tu(path: Path) -> bool:
+        owned = path_owned_architecture(path)
+        if owned:
+            return owned == arch
+        includes = entry_architecture(path)
+        if includes and includes != arch:
+            return False
+        return True
+
+    kernel_tus = [f for f in files if f.role == ROLE_KERNEL_ENTRY and f.is_tu]
+    kept_tus = [f for f in kernel_tus if _keep_tu(f.path)]
+    if kernel_tus and not kept_tus:
+        kept_tus = [
+            f for f in kernel_tus if path_owned_architecture(f.path) in ("", arch)
+        ]
+        for f in kept_tus:
+            notes.append(
+                f"kernel_entry_kept_last_tu: {f.path.name} includes another arch "
+                "but is the only kernel TU"
+            )
+    keep_ids = {id(f) for f in kept_tus}
     out: list[ScopeFile] = []
     for f in files:
         if f.role != ROLE_KERNEL_ENTRY or not f.is_tu:
             out.append(f)
             continue
-        owns = entry_architecture(f.path)
-        if owns and owns != arch:
-            notes.append(f"kernel_entry_other_arch: {f.path.name} builds {owns}")
+        if id(f) in keep_ids:
+            out.append(f)
             continue
-        out.append(f)
+        notes.append(f"kernel_entry_other_arch: {f.path.name} builds {_owns(f.path)}")
     return out
 
 
@@ -730,12 +760,22 @@ def enrich_with_clang(
         if path is not None and Path(path).is_file():
             jobs.append((Path(path), list(host_args or []), SIDE_HOST))
     if kernel_tu is not None and Path(kernel_tu).is_file():
+        from uo_init.source_layout import path_owned_architecture
+
         kpath = Path(kernel_tu)
-        owns = entry_architecture(kpath)
-        if owns and arch and owns != arch:
+        owns_path = path_owned_architecture(kpath)
+        owns_inc = entry_architecture(kpath)
+        skip = False
+        if owns_path:
+            skip = bool(arch and owns_path != arch)
+        elif owns_inc and arch and owns_inc != arch:
             notes.append(
-                f"kernel_entry_other_arch: {kpath.name} builds {owns}; "
-                "not parsed for clang scope"
+                f"kernel_entry_kept_last_tu: {kpath.name} includes {owns_inc}"
+            )
+        if skip:
+            notes.append(
+                f"kernel_entry_other_arch: {kpath.name} builds "
+                f"{owns_path or owns_inc}; not parsed for clang scope"
             )
         else:
             jobs.append((kpath, list(kernel_args or []), SIDE_KERNEL))

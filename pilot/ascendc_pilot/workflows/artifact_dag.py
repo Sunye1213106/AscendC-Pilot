@@ -111,10 +111,44 @@ def _is_uo_logical(path: str) -> bool:
     return path in _UO_LOGICAL or path == "uo/*.uo" or path.endswith(".uo")
 
 
-def normalize_produces(action: dict[str, Any]) -> list[str]:
-    """Resolve produced artifact paths for an action (facts only)."""
+def _contract_paths(contract_id: str) -> list[str]:
     from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
 
+    out: list[str] = []
+    cid = str(contract_id or "").strip()
+    if not cid:
+        return out
+    for raw in OUTPUT_CONTRACT_PATHS.get(cid) or []:
+        p = _norm(str(raw))
+        if p and p not in out:
+            out.append(p)
+    return out
+
+
+def action_pre_gates(action: dict[str, Any]) -> list[str]:
+    return [str(g).strip() for g in (action.get("pre_gates") or []) if str(g).strip()]
+
+
+def action_post_gates(action: dict[str, Any]) -> list[str]:
+    return [str(g).strip() for g in (action.get("post_gates") or []) if str(g).strip()]
+
+
+def is_staged_producer(action: dict[str, Any]) -> bool:
+    return (
+        str(action.get("output_mode") or "").strip().lower() == "staged"
+        and str(action.get("role_id") or "") == "producer"
+    )
+
+
+def normalize_actor_outputs(action: dict[str, Any]) -> list[str]:
+    """Paths the LLM/actor writes (staging contract only)."""
+    if not is_staged_producer(action):
+        return []
+    return _contract_paths(str(action.get("staging_contract_id") or ""))
+
+
+def normalize_published(action: dict[str, Any]) -> list[str]:
+    """Canonical published paths. Staged producers do not own merge/canonical files."""
     explicit = action.get("produces")
     if explicit is not None:
         out: list[str] = []
@@ -123,32 +157,27 @@ def normalize_produces(action: dict[str, Any]) -> list[str]:
             if p and p not in out:
                 out.append(p)
         return out
+    if is_staged_producer(action):
+        return []
+    return _contract_paths(str(action.get("output_contract_id") or ""))
 
-    out = []
-    cid = str(action.get("output_contract_id") or "").strip()
-    if cid:
-        for raw in OUTPUT_CONTRACT_PATHS.get(cid) or []:
-            p = _norm(str(raw))
-            if p and p not in out:
-                out.append(p)
-    sid = str(action.get("staging_contract_id") or "").strip()
-    if sid:
-        for raw in OUTPUT_CONTRACT_PATHS.get(sid) or []:
-            p = _norm(str(raw))
-            if p and p not in out:
-                out.append(p)
-    return out
+
+def normalize_produces(action: dict[str, Any]) -> list[str]:
+    """DAG produces = published canonical outputs only."""
+    return normalize_published(action)
 
 
 def normalize_consumes(action: dict[str, Any]) -> list[str]:
-    """Resolve consumed artifact paths (explicit + gate-inferred)."""
+    """Resolve consumed artifact paths (explicit + pre_gate-inferred).
+
+    ``post_gates`` must never contribute consumes.
+    """
     out: list[str] = []
     for raw in action.get("consumes") or []:
         p = _norm(str(raw))
         if p and p not in out:
             out.append(p)
-    for gate in action.get("gates") or []:
-        gid = str(gate or "").strip()
+    for gid in action_pre_gates(action):
         for raw in GATE_ARTIFACT_READS.get(gid) or []:
             p = _norm(str(raw))
             if p and p not in out:
@@ -400,14 +429,24 @@ def check_artifact_dag(
                 continue
             owner = f"{wid}/{aid}"
             consume_paths = normalize_consumes(action)
-            for gate in action.get("gates") or []:
-                gid = str(gate or "").strip()
-                if gid not in GATE_ARTIFACT_READS:
-                    continue
-                for raw in GATE_ARTIFACT_READS[gid]:
+            published = normalize_published(action)
+            overlap = [
+                p
+                for p in published
+                if p in consume_paths and p and not _is_external(p)
+            ]
+            if overlap:
+                errors.append(
+                    f"ARTIFACT_SELF_CONSUME: {owner} published∩consumes={overlap}"
+                )
+            for gid in action_post_gates(action):
+                for raw in GATE_ARTIFACT_READS.get(gid) or []:
                     p = _norm(str(raw))
-                    if p and p not in consume_paths:
-                        consume_paths.append(p)
+                    if p and p in consume_paths and not _is_external(p):
+                        errors.append(
+                            f"ARTIFACT_POST_GATE_CONSUME: {owner} post_gate {gid} "
+                            f"must not infer consumes {p}"
+                        )
             for path in consume_paths:
                 if not path or _is_external(path):
                     continue
@@ -427,8 +466,7 @@ def check_artifact_dag(
                 ok_order = False
                 for prod_owner in local_owners:
                     if prod_owner == owner:
-                        ok_order = True
-                        break
+                        continue
                     if _producer_precedes_consumer(
                         producer_owner=prod_owner,
                         consumer_owner=owner,

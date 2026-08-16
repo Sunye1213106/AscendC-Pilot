@@ -9,7 +9,9 @@ from typing import Iterable
 
 
 BW_RE = re.compile(r"ASCENDC_TPL_(\d+)_BW")
-DECL_KIND_RE = re.compile(r"ASCENDC_TPL_(UINT|BOOL|DTYPE|FORMAT)_DECL\s*\(")
+DECL_KIND_RE = re.compile(
+    r"ASCENDC_TPL_(UINT|BOOL|DTYPE|FORMAT|KERNEL_TYPE)_DECL\s*\("
+)
 SEL_KIND_RE = re.compile(
     r"ASCENDC_TPL_(UINT|BOOL|DTYPE|FORMAT)_SEL\s*\(|"
     r"ASCENDC_TPL_TILING_STRUCT_SEL\s*\("
@@ -448,6 +450,9 @@ def parse_args_decl(src: str) -> TplSchema:
             vals = parts[2:]
         elif kind == "BOOL":
             bw, vals = 1, parts[1:]
+        elif kind == "KERNEL_TYPE":
+            # Host GET_TPL_TILING_KEY still passes this dim (cvMode / mix ratio).
+            bw, vals = 6, parts[1:]
         else:
             bw, vals = 8, parts[1:]
         dims.append(TplDim(name=name, kind=kind, bw=bw, vals=vals))

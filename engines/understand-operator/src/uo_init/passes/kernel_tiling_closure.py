@@ -188,11 +188,15 @@ def finalize_kernel_tiling_closure(
     write_stats = _rebuild_host_tiling_writes(codemap, root, host_texts, td_index)
     selected = _rebuild_tiling_selection(codemap, root, kernel_texts, td_index)
 
-    from uo_init.passes.source_contract import _link_tiling_key_kernel_selects
+    from uo_init.passes.source_contract import (
+        _link_tiling_key_kernel_selects,
+        reconcile_source_declared_tiling_keys,
+    )
 
     # Kernel identity is finalized here (masked signatures). Re-bind
     # TILING_KEY_IS → KERNEL so catalog keys survive after the entry exists.
     _link_tiling_key_kernel_selects(codemap, root, architecture)
+    reconcile_source_declared_tiling_keys(codemap)
 
     reachable = _entry_reachable(codemap)
     reachable_reads = _mark_reachable_reads(codemap, reachable)

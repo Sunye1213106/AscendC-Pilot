@@ -153,7 +153,7 @@ def main() -> int:
         "rgMissingRewrite",
         "patchPilotReadPermissions",
         'perm.external_directory = "allow"',
-        'perm.task = "allow"',
+        "Do not widen task",
         "extractKbAnswer",
         "nativeTaskResultCap",
         "captureUoQueryTaskReturn",
@@ -200,6 +200,27 @@ def main() -> int:
         errors.append("compose_runtime.py must allow OpenCode external_directory for Pilot agents")
     if '"read": "allow"' not in compose_src:
         errors.append("compose_runtime.py must allow OpenCode read for Pilot agents")
+    if "opencode_primary_task_permission" not in compose_src:
+        errors.append("compose_runtime.py must emit Primary task whitelist")
+    if "OPENCODE_PRIMARY_TASK_ALLOW" not in compose_src:
+        errors.append("compose_runtime.py missing OPENCODE_PRIMARY_TASK_ALLOW")
+    if '"task": "allow"' in compose_src:
+        errors.append("compose_runtime.py must not emit task: allow for Primary")
+    if 'perm.task = "allow"' in plugin_src:
+        errors.append("plugin must not widen Primary task to allow")
+    sh = (repo / "install.sh").read_text(encoding="utf-8")
+    ps1 = (repo / "install.ps1").read_text(encoding="utf-8")
+    frontend = repo / "engines" / "understand-operator" / "native" / "uo_frontend" / "CMakeLists.txt"
+    if not frontend.is_file():
+        errors.append("native uo_frontend/CMakeLists.txt missing")
+    if "native/uo_frontend" not in sh.replace("\\", "/"):
+        errors.append("install.sh must cmake uo_frontend")
+    if "native\\uo_frontend" not in ps1 and "native/uo_frontend" not in ps1.replace("\\", "/"):
+        errors.append("install.ps1 must cmake uo_frontend")
+    if "native/uo_walk" in sh or "native\\uo_walk" in sh:
+        errors.append("install.sh still references stale uo_walk")
+    if "native\\uo_walk" in ps1 or "native/uo_walk" in ps1:
+        errors.append("install.ps1 still references stale uo_walk")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

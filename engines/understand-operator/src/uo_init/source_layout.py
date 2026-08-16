@@ -49,6 +49,19 @@ _TILING_HEADER_GLOBS = (
 )
 
 
+def path_owned_architecture(path: Path) -> str:
+    """``archNN`` folder the file sits in. Empty when the path is arch-neutral.
+
+    A file under ``op_kernel/arch22/`` belongs to arch22 even if it includes a
+    shared ``*_arch35.h`` (A2/A3 pipeline reuse). Include-derived architecture
+    is only for entries that live *above* the arch folders.
+    """
+    found = [part.lower() for part in Path(path).parts if ARCH_DIR_RE.match(part)]
+    if len(found) == 1:
+        return found[0]
+    return ""
+
+
 def is_other_arch_path(path: Path, architecture: str) -> bool:
     arch = str(architecture or "").strip()
     for part in Path(path).parts:
@@ -79,9 +92,9 @@ def arch_number(architecture: str) -> int:
 def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
     """Pick the kernel TU for this architecture.
 
-    ops-transformer keeps ``foo.cpp`` (typically arch22) beside ``foo_apt.cpp``
-    (regbase / arch35+). Include-derived architecture wins when it is unique;
-    otherwise apt vs plain follows the arch generation.
+    A file under ``op_kernel/archNN/`` is owned by that folder. Root-level
+    entries (``foo.cpp`` vs ``foo_apt.cpp``) use include-derived architecture
+    when it is unique; otherwise apt vs plain follows the arch generation.
     """
     arch = str(architecture or "").strip().lower()
     arch_n = arch_number(arch)
@@ -92,12 +105,17 @@ def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
         if not path.is_file():
             continue
         try:
-            owns = entry_include_architecture(_text(path))
+            owned = path_owned_architecture(path)
         except OSError:
-            owns = ""
-        if owns and arch and owns != arch:
+            owned = ""
+        if not owned:
+            try:
+                owned = entry_include_architecture(_text(path))
+            except OSError:
+                owned = ""
+        if owned and arch and owned != arch:
             continue
-        if owns == arch:
+        if owned == arch:
             matching.append(path)
         else:
             unscoped.append(path)

@@ -431,13 +431,26 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     hosts = [p for p in spec.host_targets if p.exists()]
     kernel = spec.kernel_entry if spec.kernel_entry and spec.kernel_entry.exists() else None
     if kernel is not None:
-        owns = sscan.entry_architecture(kernel)
+        from uo_init.source_layout import path_owned_architecture
+
+        owns_path = path_owned_architecture(kernel)
+        owns_inc = sscan.entry_architecture(kernel)
         arch = (spec.arch_dir or "").strip().lower()
-        if owns and arch and owns != arch:
+        drop = False
+        if owns_path:
+            drop = bool(arch and owns_path != arch)
+        elif owns_inc and arch and owns_inc != arch:
+            # Root-level TU whose includes name another arch: discover already
+            # chose this as the only compile unit for the requested arch.
             if spec.scope is not None:
                 spec.scope.notes.append(
-                    f"kernel_entry_other_arch: {kernel.name} builds {owns}; "
-                    "not used as clang entry"
+                    f"kernel_entry_kept_last_tu: {kernel.name} includes {owns_inc}"
+                )
+        if drop:
+            if spec.scope is not None:
+                spec.scope.notes.append(
+                    f"kernel_entry_other_arch: {kernel.name} builds "
+                    f"{owns_path or owns_inc}; not used as clang entry"
                 )
             kernel = None
             spec.kernel_entry = None
@@ -786,6 +799,8 @@ _SOFT_AMBIGUITY_PREFIXES = (
     # Many families pack keys in host GetTilingKey() without the TPL DSL header.
     # extract already skips fold when the header is missing.
     "tiling_key_header_not_found:",
+    "kernel_entry_kept_last_tu:",
+    "host_targets_from_sibling_kernel_include:",
 )
 
 

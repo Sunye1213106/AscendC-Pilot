@@ -63,6 +63,27 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
     "code-engineering",
 )
 
+# LLM child agents Primary may spawn via OpenCode Task. Deterministic engines
+# are not in this set. Plugin must not widen this ceiling to task: allow.
+OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
+    "uo-query",
+    "uo-gap-investigator",
+    "tg-init-audit",
+    "tg-lemma-producer",
+    "tg-closure-referee",
+    "ce-analyst",
+    "ce-change-referee",
+    "ce-applier",
+    "ce-reviewer",
+)
+
+
+def opencode_primary_task_permission() -> dict[str, str]:
+    perm: dict[str, str] = {"*": "deny"}
+    for name in OPENCODE_PRIMARY_TASK_ALLOW:
+        perm[name] = "allow"
+    return perm
+
 # Slash / discovery entry metadata. Body is generated from Spec; no skills/workflows source.
 # Editorial discovery prose only. cognitive_skill_id / requires_* live on Workflow Spec.
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
@@ -1115,6 +1136,8 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         edit_perm = "deny"
         write_perm = "deny"
     host_read_perm = {
+        # Host transport workaround: OpenCode child worktree vs operator root.
+        # Real write boundary is Pilot lease, not this frontmatter.
         "read": "allow",
         "external_directory": "allow",
     }
@@ -1124,7 +1147,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "bash": bash_perm,
             "grep": grep_perm,
             **host_read_perm,
-            "task": "allow",
+            "task": opencode_primary_task_permission(),
             "acp": "allow",
             "edit": edit_perm if write_scopes else {"*": "ask"},
             "write": write_perm if write_scopes else {"*": "ask"},

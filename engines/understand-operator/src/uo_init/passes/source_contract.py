@@ -157,11 +157,31 @@ def enrich_codemap_from_operator_source(
     _link_tiling_data_reads(codemap, root, architecture)
     _link_tiling_key_kernel_selects(codemap, root, architecture)
     _link_nested_tiling_data_types(codemap)
+    reconcile_source_declared_tiling_keys(codemap)
 
     codemap.meta["source_contract"] = "ascendc-source-contract/v2"
     codemap.meta["source_contract_architecture"] = architecture
     codemap.meta["source_contract_stats"] = stats
     return codemap
+
+
+def reconcile_source_declared_tiling_keys(codemap: CodeMap) -> None:
+    """Keep ``source_declared`` aligned with the source-contract schema.
+
+    Later TPL / clang passes may mint extra TilingKey entities (inactive
+    ``#if`` branches, ``TILING_KEY_IS`` catalogs). Those are selection facts,
+    not additional packing dimensions.
+    """
+    names = [
+        str(n).strip()
+        for n in (codemap.meta.get("source_declared_tiling_keys") or [])
+        if str(n).strip()
+    ]
+    if not names:
+        return
+    allowed = set(names)
+    for ent in codemap.by_kind(EntityKind.TILING_KEY):
+        ent.attrs["source_declared"] = ent.name in allowed
 
 
 def _cpp_files(path: Path, *, recursive: bool = True) -> list[Path]:
@@ -1054,9 +1074,10 @@ def iter_tiling_key_is_catalog(text: str) -> Iterable[tuple[str, int]]:
 def iter_packing_helper_calls(text: str) -> Iterable[tuple[int, int, list[str], str]]:
     """Yield positional packed-key helper calls: GET_TPL_TILING_KEY / *_GET_TILINGKEY.
 
-    Definitions (parameter packs / typenames) are skipped. A helper must pack
-    at least two arguments — those arguments are TilingKey dimensions, not the
-    packed integer catalog ``TILING_KEY_IS`` enumerates.
+    Definitions (parameter packs / typenames) are skipped. ``GET_TPL_TILING_KEY``
+    packs one or more TilingKey dimensions. Other helpers must pack at least
+    two arguments — a single argument is the already-packed catalog integer
+    ``TILING_KEY_IS`` enumerates.
     """
     for match in _PACKING_HELPER_CALL_RE.finditer(text):
         name = match.group("name")
@@ -1068,7 +1089,12 @@ def iter_packing_helper_calls(text: str) -> Iterable[tuple[int, int, list[str], 
         if "..." in args_text or re.search(r"\btypename\b", args_text):
             continue
         args = [a.strip() for a in _split_args(args_text) if a.strip()]
-        if len(args) < 2:
+        # GET_TPL_TILING_KEY(oneDim) is still a packing formula. Other
+        # GET_TILINGKEY(packedInt) helpers with a single argument are the
+        # already-packed catalog integer, not dimensions.
+        if not args:
+            continue
+        if len(args) < 2 and name != "GET_TPL_TILING_KEY":
             continue
         yield match.start(), close_pos + 1, args, name
 
@@ -1095,6 +1121,9 @@ _PLUS_EQ_LIT_RE = re.compile(
 )
 _PLUS_EQ_SCALE_RE = re.compile(
     rf"\b(?P<acc>{_BITPACK_ACC})\s*\+=\s*(?P<rhs>[A-Za-z_]\w*\s*\*\s*[A-Za-z_]\w*)\s*;"
+)
+_MUL_PLACE_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*(?:\*=\s*10[uUlL]*|=\s*(?P=acc)\s*\*\s*10[uUlL]*)\s*;"
 )
 _CAST_WRAP_RE = re.compile(r"^static_cast\s*<[^>]+>\s*\((.*)\)\s*$", re.S)
 _CMP_LHS_RE = re.compile(r"^(.+?)\s*(?:==|!=)\s*.+$")
@@ -1171,7 +1200,17 @@ def _decimal_place(value: int) -> int:
 
 
 def _cond_pack_ident(cond: str) -> str | None:
-    for tok in re.findall(r"[A-Za-z_]\w*", cond or ""):
+    cond = cond or ""
+    chain = re.findall(r"[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)+", cond)
+    if chain:
+        toks = [
+            tok
+            for tok in re.findall(r"[A-Za-z_]\w*", chain[0])
+            if tok not in _COND_PACK_SKIP
+        ]
+        if toks:
+            return toks[-1]
+    for tok in re.findall(r"[A-Za-z_]\w*", cond):
         if tok not in _COND_PACK_SKIP:
             return tok
     return None
@@ -1247,11 +1286,19 @@ def _iter_literal_pack_dims(text: str) -> list[dict[str, Any]]:
         if_bodies = _if_bodies(text, start, end)
         grouped: dict[str, dict[str, Any]] = {}
         places: set[int] = set()
+        shift_offs = [m.start() for m in _MUL_PLACE_RE.finditer(body)]
+
+        def _effective_place(lit: int, body_off: int) -> int:
+            digit = _decimal_place(lit)
+            shifted = sum(1 for pos in shift_offs if pos < body_off)
+            if shifted and digit <= 0:
+                return shifted
+            return digit
 
         def _note(name: str, offset: int, expr: str, lit: int) -> None:
             if not name:
                 return
-            place = _decimal_place(lit)
+            place = _effective_place(lit, offset - abs_start)
             if place >= 0:
                 places.add(place)
             slot = grouped.setdefault(

@@ -1356,15 +1356,8 @@ def _run_tg_plan_scope(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
 
 
 def _run_tg_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from ascendc_pilot.gates import run_named_gate
-
-    tg_ctx = _resolve_tg_ctx(project_root, ctx)
-    op = str(tg_ctx.get("op_name") or "") or None
-    arch = str(tg_ctx.get("architecture") or "") or None
-    g1 = run_named_gate(project_root, "tg_init_confirmed", op_name=op, architecture=arch)
-    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op, architecture=arch)
-    ok = bool(g1.get("ok")) and bool(g2.get("ok"))
-    return {"ok": ok, "engine": "plan_precheck", "gates": {"tg_init_confirmed": g1, "kb_fingerprint_fresh": g2}}
+    del project_root, ctx
+    return {"ok": True, "engine": "plan_precheck", "pre_gates": "runtime"}
 
 
 def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -1473,19 +1466,12 @@ def _run_tg_plan_build(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
 
 
 def _run_tg_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from ascendc_pilot.gates import run_named_gate
-
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
-    op = tg_ctx.get("op_name") or None
-    arch = str(tg_ctx.get("architecture") or "") or None
-    g1 = run_named_gate(project_root, "plan_approved", op_name=op, architecture=arch)
-    g2 = run_named_gate(project_root, "kb_fingerprint_fresh", op_name=op, architecture=arch)
-    ok = bool(g1.get("ok")) and bool(g2.get("ok"))
     return {
-        "ok": ok,
+        "ok": True,
         "engine": "solve_precheck",
         "mode": tg_ctx.get("mode"),
-        "gates": {"plan_approved": g1, "kb_fingerprint_fresh": g2},
+        "pre_gates": "runtime",
     }
 
 
@@ -3242,11 +3228,11 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "plan-scope-v1": ["tg/plan/levels/*/plan_scope.yaml"],
     "plan-intent-v1": ["tg/plan/plan_intent.yaml"],
-    "plan-precheck-v1": ["tg/init/status.yaml"],
+    "plan-precheck-v1": [],
     "plan-build-v1": ["tg/plan"],
     "plan-approved-v1": ["tg/plan/levels/*/human_supplement.yaml"],
-    # Precondition only (produced by plan_approve); not a solve-precheck output.
-    "solve-precheck-v1": ["tg/plan/levels/*/plan_scope.yaml"],
+    # Precondition only; runtime pre_gates own the check. No published artifacts.
+    "solve-precheck-v1": [],
     "oracle-probe-v1": ["tg/closure/oracle_probe.yaml"],
     "closure-ledger-v1": [
         "tg/closure/R.txt",
@@ -3268,10 +3254,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "lemma-mine-staging-v1": [
         "runs/{run_id}/actions/lemma_mine/parts/**",
-        "runs/{run_id}/actions/lemma_mine/staging.yaml",
     ],
     "lemma-mine-v1": [
-        "runs/{run_id}/actions/lemma_mine/parts/**",
         "runs/{run_id}/actions/lemma_mine/staging.yaml",
     ],
     "lemma-review-v1": [

@@ -436,3 +436,46 @@ def test_load_prepared_scope_rejects_incomplete(tmp_path: Path) -> None:
 def test_load_prepared_scope_force_env(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("UO_FORCE_SCOPE_ENRICH", "1")
     assert ss.load_prepared_scope(tmp_path, "arch35") is None
+
+
+def test_arch_folder_kernel_cpp_is_kept_even_if_it_includes_another_arch(
+    tmp_path: Path,
+) -> None:
+    """A2/A3 share a pipeline header named *_arch35.h; the TU still lives in arch22/."""
+    root = tmp_path / "mc2"
+    _write(
+        root,
+        "widget/op_kernel/arch22/widget.cpp",
+        '#include "../widget_arch35.h"\n'
+        '__global__ __aicore__ void widget() {}\n',
+    )
+    _write(root, "widget/op_kernel/widget_arch35.h")
+    _write(
+        root,
+        "widget/op_kernel/arch35/widget_apt.cpp",
+        '#include "widget_arch35.h"\n'
+        '__global__ __aicore__ void widget() {}\n',
+    )
+    scope = ss.scan(root / "widget", arch_dir="arch22")
+    tus = {p.name for p in scope.paths(role=ss.ROLE_KERNEL_ENTRY, tu_only=True)}
+    assert tus == {"widget.cpp"}
+    assert not any("kernel_entry_other_arch" in n for n in scope.notes)
+
+
+def test_last_root_kernel_tu_is_kept_when_includes_name_another_arch(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "mc2"
+    _write(
+        root,
+        "widget/op_kernel/widget.cpp",
+        '#include "arch35/widget_arch35.h"\n'
+        '__global__ __aicore__ void widget() {}\n',
+    )
+    _write(root, "widget/op_kernel/arch22/widget_arch22.h")
+    _write(root, "widget/op_kernel/arch35/widget_arch35.h")
+    scope = ss.scan(root / "widget", arch_dir="arch22")
+    tus = {p.name for p in scope.paths(role=ss.ROLE_KERNEL_ENTRY, tu_only=True)}
+    assert tus == {"widget.cpp"}
+    assert any("kernel_entry_kept_last_tu" in n for n in scope.notes)
+

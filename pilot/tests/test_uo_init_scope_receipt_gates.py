@@ -12,4 +12,4 @@ def test_uo_init_wires_scope_receipt_everywhere() -> None:
     assert "scope_receipt" in (uo.get("gates") or [])
     assert "scope_receipt" in (uo.get("phase_gates") or {}).get("prepare", [])
     prepare = next(a for a in uo["actions"] if a["id"] == "prepare")
-    assert "scope_receipt" in (prepare.get("gates") or [])
+    assert "scope_receipt" in (prepare.get("post_gates") or [])

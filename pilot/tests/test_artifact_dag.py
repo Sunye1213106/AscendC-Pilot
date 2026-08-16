@@ -97,7 +97,8 @@ def test_rework_backedge_cannot_justify_future_producer() -> None:
                 "id": "act_a",
                 "label_zh": "a",
                 "phases": ["A"],
-                "gates": [],
+                "pre_gates": [],
+                "post_gates": [],
                 "produces": [],
                 "consumes": [],
                 "schema_version": "1",
@@ -106,7 +107,8 @@ def test_rework_backedge_cannot_justify_future_producer() -> None:
                 "id": "act_b",
                 "label_zh": "b",
                 "phases": ["B"],
-                "gates": [],
+                "pre_gates": [],
+                "post_gates": [],
                 "produces": [],
                 "consumes": ["kb/future_x.yaml"],
                 "schema_version": "1",
@@ -115,7 +117,8 @@ def test_rework_backedge_cannot_justify_future_producer() -> None:
                 "id": "act_c",
                 "label_zh": "c",
                 "phases": ["C"],
-                "gates": [],
+                "pre_gates": [],
+                "post_gates": [],
                 "produces": ["kb/future_x.yaml"],
                 "consumes": [],
                 "schema_version": "1",
@@ -140,7 +143,8 @@ def test_synthetic_orphan_consume_detected() -> None:
             "id": "broken_consume",
             "label_zh": "broken",
             "phases": ["answer"],
-            "gates": [],
+            "pre_gates": [],
+            "post_gates": [],
             "output_contract_id": None,
             "produces": [],
             "consumes": ["tg/never/produced/by/anyone.yaml"],
@@ -165,3 +169,51 @@ def test_artifact_usage_receipts_are_run_scoped(repo_root: Path) -> None:
         "runs/{run_id}/receipts/uo_ready.yaml",
         "runs/{run_id}/receipts/integrity_gate.yaml",
     }
+
+
+def test_prepare_post_gates_do_not_self_consume() -> None:
+    from ascendc_pilot.workflows.artifact_dag import normalize_consumes, normalize_published
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    prepare = next(a for a in WORKFLOWS["uo-init"]["actions"] if a["id"] == "prepare")
+    assert "scope_receipt" in (prepare.get("post_gates") or [])
+    published = normalize_published(prepare)
+    consumes = normalize_consumes(prepare)
+    assert "uo/runs/{run_id}/scope/scope_validated.yaml" in published
+    assert "uo/runs/{run_id}/scope/scope_validated.yaml" not in consumes
+    assert not (set(published) & set(consumes))
+
+
+def test_precheck_actions_publish_nothing() -> None:
+    from ascendc_pilot.workflows.artifact_dag import normalize_published
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    plan_pc = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_precheck")
+    solve_pc = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "solve_precheck")
+    assert plan_pc.get("pre_gates")
+    assert solve_pc.get("pre_gates")
+    assert normalize_published(plan_pc) == []
+    assert normalize_published(solve_pc) == []
+
+
+def test_lemma_mine_write_allow_forbid_disjoint() -> None:
+    from ascendc_pilot.ownership import write_paths_overlap
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "lemma_mine")
+    allow = list(mine.get("allowed_write_paths") or [])
+    forbid = list(mine.get("forbidden_write_paths") or [])
+    assert any(p.endswith("parts/**") for p in allow)
+    assert any(p.endswith("staging.yaml") for p in forbid)
+    for a in allow:
+        for b in forbid:
+            assert not write_paths_overlap(a, b), (a, b)
+
+
+def test_staged_producer_does_not_publish_canonical() -> None:
+    from ascendc_pilot.workflows.artifact_dag import is_staged_producer, normalize_published
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    grill = next(a for a in WORKFLOWS["ce-intent"]["actions"] if a["id"] == "intent_grill")
+    assert is_staged_producer(grill)
+    assert "ce/intent/intent.yaml" not in normalize_published(grill)

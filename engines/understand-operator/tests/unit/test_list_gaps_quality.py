@@ -356,3 +356,24 @@ def test_quality_paths_fail_when_output_exists_without_path() -> None:
     assert q["surfaces"]["paths"]["ok"] is False, q["surfaces"]["paths"]
     assert q["surfaces"]["paths"]["input_output"] is False
     assert q["grade"] == "usable", q
+
+
+def test_quality_packing_uses_source_declared_schema_not_catalog() -> None:
+    cm = _ready_skeleton(with_output=True, link_output=True)
+    split = cm.by_name("SplitAxis", kind=EntityKind.TILING_KEY)[0]
+    split.attrs["source_declared"] = True
+    cm.upsert(
+        EntityKind.TILING_KEY,
+        "100000",
+        attrs={"source_declared": False, "provenance": "source_tiling_key_is"},
+        status="extracted",
+    )
+    cm.upsert(
+        EntityKind.TILING_KEY,
+        "InputDType",
+        attrs={"source_declared": False, "provenance": "source_tpl_args_decl"},
+        status="extracted",
+    )
+    q = codemap_quality(cm, integrity_ok=True)
+    assert q["surfaces"]["tiling_key"]["ok"] is True, q["surfaces"]["tiling_key"]
+    assert q["surfaces"]["tiling_key"]["packing"] == "1/1"
