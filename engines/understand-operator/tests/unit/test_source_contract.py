@@ -979,3 +979,416 @@ def test_tiling_key_is_wrapper_macro_mints_invocation_args(tmp_path: Path) -> No
     bind_host_tiling_key_expressions(cm, op, architecture="arch35")
     meta = cm.meta["host_tiling_key_packing"]
     assert meta["fields_bound"] == 2
+
+
+def _bare_op(root: Path) -> None:
+    (root / "op_graph").mkdir(parents=True)
+    (root / "op_host").mkdir(parents=True)
+    (root / "op_kernel").mkdir(parents=True)
+    (root / "op_graph" / "toy_proto.h").write_text(
+        "REG_OP(Toy)\n  .INPUT(x, TensorType({DT_FLOAT16}))\n  .OUTPUT(y, TensorType({DT_FLOAT16}))\n"
+        "  .OP_END_FACTORY_REG(Toy)\n",
+        encoding="utf-8",
+    )
+
+
+def test_iter_bitpack_dims_shift_chain_names_fields_not_integers() -> None:
+    from uo_init.passes.source_contract import iter_bitpack_dims
+
+    text = (
+        "void SetTilingKey(const ge::DataType inDtype, bool doRmsQuant, auto *context) {\n"
+        "  uint64_t tilingKey = static_cast<uint64_t>(inDtype == ge::DT_BF16);\n"
+        "  tilingKey = (tilingKey << 2) + static_cast<uint64_t>(param.cacheMode);\n"
+        "  tilingKey = (tilingKey << 1) + static_cast<uint64_t>(formatWeight1 == ge::FORMAT_FRACTAL_NZ);\n"
+        "  tilingKey = (tilingKey << 1) + static_cast<uint64_t>(formatWeight2 == ge::FORMAT_FRACTAL_NZ);\n"
+        "  tilingKey = (tilingKey << 1) + static_cast<uint64_t>(formatWeight3 == ge::FORMAT_FRACTAL_NZ);\n"
+        "  tilingKey = (tilingKey << 2) + static_cast<uint64_t>(param.quantMode);\n"
+        "  if (!doRmsQuant){\n"
+        "    tilingKey += 1000;\n"
+        "  }\n"
+        "  context->SetTilingKey(tilingKey);\n"
+        "}\n"
+    )
+    dims = iter_bitpack_dims(text)
+    names = [d["name"] for d in dims]
+    assert names == [
+        "inDtype",
+        "cacheMode",
+        "formatWeight1",
+        "formatWeight2",
+        "formatWeight3",
+        "quantMode",
+        "doRmsQuant",
+    ]
+    assert "0" not in names
+    assert "4" not in names
+    assert "8" not in names
+
+
+def test_iter_bitpack_dims_weighted_add_is_four_axes() -> None:
+    from uo_init.passes.source_contract import iter_bitpack_dims
+
+    text = (
+        "void ComputeTilingKey() {\n"
+        "  tilingKey_ += normType * NORM_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += normAddedType * NORM_ADDED_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += ropeType * ROPE_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += concatOrder * CONCAT_ORDER_TILING_KEY;\n"
+        "}\n"
+    )
+    dims = iter_bitpack_dims(text)
+    assert [d["name"] for d in dims] == [
+        "normType",
+        "normAddedType",
+        "ropeType",
+        "concatOrder",
+    ]
+
+
+def test_iter_bitpack_dims_ignores_named_key_plus_one() -> None:
+    from uo_init.passes.source_contract import iter_bitpack_dims
+
+    text = (
+        "void GenTilingKey() {\n"
+        "  tilingKey_ = TILING_KEY_DIVIDE_BS_FP16;\n"
+        "  if (tokenDtype_ == 1) tilingKey_ += 1;\n"
+        "}\n"
+    )
+    assert iter_bitpack_dims(text) == []
+
+
+def test_iter_bitpack_dims_ignores_same_place_plus_one_flags() -> None:
+    from uo_init.passes.source_contract import iter_bitpack_dims
+
+    text = (
+        "void GenTilingKey() {\n"
+        "  uint64_t tilingKey = 0;\n"
+        "  if (hasDrop) tilingKey += 1;\n"
+        "  if (hasPse) tilingKey += 1;\n"
+        "  if (hasMask) tilingKey += 1;\n"
+        "  if (hasRope) tilingKey += 1;\n"
+        "}\n"
+    )
+    assert iter_bitpack_dims(text) == []
+
+
+def test_iter_bitpack_dims_if_literal_pack_is_independent_axes() -> None:
+    from uo_init.passes.source_contract import iter_bitpack_dims
+
+    text = (
+        "uint64_t GenerateTilingKey(gert::TilingContext *ctx) {\n"
+        "  uint64_t tilingKey = 9000000000000000ULL;\n"
+        "  if (socVer_ == SOC_VER_950_CODE) {\n"
+        "    tilingKey = 9050000000000000ULL;\n"
+        "  }\n"
+        "  if (dataType_ == ge::DT_FLOAT16) {\n"
+        "    tilingKey += 0;\n"
+        "  } else if (dataType_ == ge::DT_BF16) {\n"
+        "    tilingKey += 22220ULL;\n"
+        "  } else if (dataType_ == ge::DT_FLOAT8_E4M3FN) {\n"
+        "    if (attentionOutDataType_ == ge::DT_FLOAT16) {\n"
+        "      tilingKey += 10;\n"
+        "    } else if (attentionOutDataType_ == ge::DT_BF16) {\n"
+        "      tilingKey += 20;\n"
+        "    }\n"
+        "  }\n"
+        "  if (kvCacheLayout_ == BSAKvCacheLayout::TND_KV) {\n"
+        "    tilingKey += 30000000ULL;\n"
+        "  } else if (kvCacheLayout_ == BSAKvCacheLayout::BNSD_KV) {\n"
+        "    tilingKey += 50000000ULL;\n"
+        "  }\n"
+        "  bool hasPagedCache = (ctx->GetOptionalInputTensor(BLOCK_TABLE_INDEX) != nullptr);\n"
+        "  if (hasPagedCache) {\n"
+        "    tilingKey += 1000000ULL;\n"
+        "  }\n"
+        "  if (innerPrecise_ == 1) {\n"
+        "    tilingKey += 100000ULL;\n"
+        "  } else if (innerPrecise_ == 4) {\n"
+        "    tilingKey += 400000ULL;\n"
+        "  }\n"
+        "  if (maskType_ == 3) {\n"
+        "    tilingKey += 3000ULL;\n"
+        "  }\n"
+        "  if (qInputLayout_ == BSAQInputLayout::TND_Q) {\n"
+        "    tilingKey += 2;\n"
+        "  } else if (qInputLayout_ == BSAQInputLayout::BNSD_Q) {\n"
+        "    tilingKey += 3;\n"
+        "  }\n"
+        "  if (softmaxLseFlag_) {\n"
+        "    tilingKey += 100000000ULL;\n"
+        "  }\n"
+        "  return tilingKey;\n"
+        "}\n"
+    )
+    dims = iter_bitpack_dims(text)
+    names = [d["name"] for d in dims]
+    assert names == [
+        "socVer_",
+        "dataType_",
+        "attentionOutDataType_",
+        "kvCacheLayout_",
+        "hasPagedCache",
+        "innerPrecise_",
+        "maskType_",
+        "qInputLayout_",
+        "softmaxLseFlag_",
+    ]
+    assert "QF16_KVF16_TND_TND_NOCACHE_FLOATSM_NOMASK_BSA_TILING" not in names
+
+
+def test_if_literal_pack_mints_axes_not_named_catalog(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _bare_op(op)
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "uint64_t GenerateTilingKey() {\n"
+        "  uint64_t tilingKey = 9000000000000000ULL;\n"
+        "  if (socVer_ == 950) tilingKey = 9050000000000000ULL;\n"
+        "  if (dataType_ == 1) tilingKey += 22220ULL;\n"
+        "  if (kvCacheLayout_ == 1) tilingKey += 30000000ULL;\n"
+        "  if (hasPagedCache) tilingKey += 1000000ULL;\n"
+        "  if (innerPrecise_ == 1) tilingKey += 100000ULL;\n"
+        "  if (maskType_ == 3) tilingKey += 3000ULL;\n"
+        "  if (qInputLayout_ == 2) tilingKey += 2;\n"
+        "  if (softmaxLseFlag_) tilingKey += 100000000ULL;\n"
+        "  return tilingKey;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  TILING_KEY_IS(QF16_KVF16_TND_TND_NOCACHE_FLOATSM_NOMASK_BSA_TILING);\n"
+        "  TILING_KEY_IS(QBF16_KVBF16_BNSD_BNSD_NOCACHE_HALFSM_NOMASK_BSA_TILING);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert "QF16_KVF16_TND_TND_NOCACHE_FLOATSM_NOMASK_BSA_TILING" not in by_name
+    assert set(by_name) >= {
+        "socVer_",
+        "dataType_",
+        "kvCacheLayout_",
+        "hasPagedCache",
+        "innerPrecise_",
+        "maskType_",
+        "qInputLayout_",
+        "softmaxLseFlag_",
+    }
+    assert by_name["dataType_"].attrs.get("provenance") == "source_bitpack_dim"
+    legal = cm.meta.get("source_packed_legal_keys") or []
+    assert "QF16_KVF16_TND_TND_NOCACHE_FLOATSM_NOMASK_BSA_TILING" in legal
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == meta["declared"]
+    assert meta["declared"] >= 8
+    assert any("dataType_" in e for e in (by_name["dataType_"].attrs.get("host_packing_expressions") or []))
+
+
+def test_shift_pack_mints_dimensions_not_tiling_key_is_catalog(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _bare_op(op)
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void SetTilingKey(const ge::DataType inDtype, bool doRmsQuant, auto *context) {\n"
+        "  uint64_t tilingKey = static_cast<uint64_t>(inDtype == ge::DT_BF16);\n"
+        "  tilingKey = (tilingKey << 2) + static_cast<uint64_t>(param.cacheMode);\n"
+        "  tilingKey = (tilingKey << 1) + static_cast<uint64_t>(formatWeight1 == ge::FORMAT_FRACTAL_NZ);\n"
+        "  tilingKey = (tilingKey << 1) + static_cast<uint64_t>(formatWeight2 == ge::FORMAT_FRACTAL_NZ);\n"
+        "  tilingKey = (tilingKey << 1) + static_cast<uint64_t>(formatWeight3 == ge::FORMAT_FRACTAL_NZ);\n"
+        "  tilingKey = (tilingKey << 2) + static_cast<uint64_t>(param.quantMode);\n"
+        "  if (!doRmsQuant){\n"
+        "    tilingKey += 1000;\n"
+        "  }\n"
+        "  context->SetTilingKey(tilingKey);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(0)) { return; }\n"
+        "  if (TILING_KEY_IS(4)) { return; }\n"
+        "  if (TILING_KEY_IS(8)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert set(by_name) == {
+        "inDtype",
+        "cacheMode",
+        "formatWeight1",
+        "formatWeight2",
+        "formatWeight3",
+        "quantMode",
+        "doRmsQuant",
+    }
+    assert by_name["cacheMode"].attrs.get("provenance") == "source_bitpack_dim"
+    assert by_name["cacheMode"].attrs.get("bit_width") == 2
+    assert "0" not in by_name
+    assert "4" not in by_name
+    assert "8" not in by_name
+    legal = cm.meta.get("source_packed_legal_keys") or []
+    assert "0" in legal
+    assert "4" in legal
+    assert "8" in legal
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 7
+    assert meta["declared"] == 7
+    for name, needle in (
+        ("inDtype", "inDtype"),
+        ("cacheMode", "cacheMode"),
+        ("formatWeight1", "formatWeight1"),
+        ("quantMode", "quantMode"),
+        ("doRmsQuant", "1000"),
+    ):
+        exprs = " ".join(by_name[name].attrs.get("host_packing_expressions") or [])
+        assert needle in exprs
+    kernel = cm.by_name("toy", kind=EntityKind.KERNEL)[0]
+    assert any(
+        r.src == by_name["cacheMode"].id
+        and r.dst == kernel.id
+        and r.kind_name() == "SELECTS"
+        for r in cm.relations.values()
+    )
+
+
+def test_get_tilingkey_helper_wins_over_bitpack_shift(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _bare_op(op)
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "uint64_t GetTilingKey() const {\n"
+        "  return GET_TILINGKEY(layout, sparse, mask);\n"
+        "}\n"
+        "void PackBits() {\n"
+        "  uint64_t tilingKey = static_cast<uint64_t>(inDtype == ge::DT_BF16);\n"
+        "  tilingKey = (tilingKey << 2) + static_cast<uint64_t>(param.cacheMode);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(24UL)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")}
+    assert names == {"layout", "sparse", "mask"}
+    assert "cacheMode" not in names
+    assert "24" not in names
+
+
+def test_tiling_key_is_integer_catalog_without_bitpack(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _bare_op(op)
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void DoTiling(auto *ctx) { ctx->SetTilingKey(24UL); }\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(24UL)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")}
+    assert names == {"24"}
+
+
+def test_named_key_plus_one_stays_macro_catalog(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _bare_op(op)
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "#define TILING_KEY_DIVIDE_BS_FP16 100\n"
+        "#define TILING_KEY_DIVIDE_BS_BF16 101\n"
+        "void GenTilingKey() {\n"
+        "  tilingKey_ = TILING_KEY_DIVIDE_BS_FP16;\n"
+        "  if (tokenDtype_ == 1) tilingKey_ += 1;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "#define TILING_KEY_DIVIDE_BS_FP16 100\n"
+        "#define TILING_KEY_DIVIDE_BS_BF16 101\n"
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        "__gm__ uint8_t *tiling) {\n"
+        "  if (TILING_KEY_IS(TILING_KEY_DIVIDE_BS_FP16)) { return; }\n"
+        "  if (TILING_KEY_IS(TILING_KEY_DIVIDE_BS_BF16)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    names = {e.name for e in cm.by_kind(EntityKind.TILING_KEY) if e.attrs.get("source_declared")}
+    assert names == {"TILING_KEY_DIVIDE_BS_FP16", "TILING_KEY_DIVIDE_BS_BF16"}
+    assert "tokenDtype_" not in names
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 2
+
+
+def test_weighted_add_mints_axes_not_impl_integers(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _bare_op(op)
+    (op / "op_host" / "toy_tiling.cpp").write_text(
+        "void ComputeTilingKey() {\n"
+        "  tilingKey_ += normType * NORM_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += normAddedType * NORM_ADDED_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += ropeType * ROPE_TYPE_TILING_KEY;\n"
+        "  tilingKey_ += concatOrder * CONCAT_ORDER_TILING_KEY;\n"
+        "}\n"
+        "void PostTiling() { context_->SetTilingKey(tilingKey_); }\n",
+        encoding="utf-8",
+    )
+    impls = "\n".join(
+        f"  if (TILING_KEY_IS({v})) {{ return; }}"
+        for v in (0, 10, 100, 110, 200, 100000, 100010, 200000)
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy(__gm__ uint8_t *x, __gm__ uint8_t *y, "
+        f"__gm__ uint8_t *tiling) {{\n{impls}\n}}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert set(by_name) == {"normType", "normAddedType", "ropeType", "concatOrder"}
+    assert "0" not in by_name
+    assert "100000" not in by_name
+    legal = cm.meta.get("source_packed_legal_keys") or []
+    assert "0" in legal
+    assert "100000" in legal
+    from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 4
+    assert meta["declared"] == 4
+    assert "normType" in " ".join(by_name["normType"].attrs.get("host_packing_expressions") or [])

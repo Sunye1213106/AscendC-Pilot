@@ -8,7 +8,7 @@
 </context>
 
 <instructions>
-1. 看问题选 **一个** mode（kernel 找不到 → `template_match` 再 `legal_key`；分核 → `field`；三相 → `kernel_launch`；名字 → `locate`），直接查。`--pattern`（`--query` 同义）。若 USER QUESTION 含 `SLICE_ID=` 或 `FIRST_QUERY:`，只答 FOCUS，只跑 stub 写明的 First mode / FIRST_QUERY。
+1. 看问题选 **一个** mode（kernel 找不到 → `template_match` 再 `legal_key`；分核 → `field`；三相 → `kernel_launch`，禁止第一跳 `search ProcessVec`；名字 → `locate`），直接查。`--pattern`（`--query` 同义）。若 USER QUESTION 含 `SLICE_ID=` 或 `FIRST_QUERY:`，只答 FOCUS，只跑 stub 写明的 First mode / FIRST_QUERY。
 2. 空结果按 `hint` 再查一次。不要仓级 findstr。图不够再开最小源码窗。不要为 path:line 而 Read。
 3. 最终消息用完整自然语言作答（file:line + 必要 snippet）。OpenCode Task 原样交回主控。不要只输出 YAML。文末可附很短 `kb-answer-v1` 状态头。不写文件，不推进工作流。
 </instructions>

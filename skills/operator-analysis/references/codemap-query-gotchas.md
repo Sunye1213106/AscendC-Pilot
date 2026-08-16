@@ -9,7 +9,7 @@
 - **SEL 全集**：第一块 `ARGS_SEL` 不是全部合法组合。声称某维没注册必须有 `template_match.dim_coverage` 或 `legal_key.total_matched`。
 - **Host branch ≠ Kernel branch**：不得因命名相似直接等同。
 - **字段定位看 writer，不看最后赋值**：保存→修改→恢复的临时赋值不是最终来源。问句里的局部名常常不是 TILING_FIELD 名；`field` 空了看 `local_aliases` / `suggested_retries`，再查一轮即可。
-- **入口 ≠ 内层 Process**：Pre/Main/Post 先 `kernel_launch` / `pipeIn` / KERNEL / `*_entry*.h`，禁止把 `Process()` 里的 V1–V6 或 `*_apt.cpp` 当成三相。
+- **入口 ≠ 内层 Process**：Pre/Main/Post 第一刀 `--mode kernel_launch`（`pipeIn` / KERNEL / `*_entry*.h`）。禁止把 `Process()` 里的 V1–V6 或 `*_apt.cpp` 当成三相；禁止第一跳 `--mode search` 且 pattern 含 `ProcessVec`。
 - **Host TilingContext ≠ kernel_api**：`SetScheduleMode` / `SetBlockDim` 用 `locate`。`SyncALLCores` 是工程方法，也用 `locate`，不要当 CANN `kernel_api`。
 - **同名函数**：`.h` 虚函数不是唯一实现；看 `locate` 的全部 `definition_sites`。
 - **宏与 compile-time**：运行时值不能回填成宏条件的唯一真值。

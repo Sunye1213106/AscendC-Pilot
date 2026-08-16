@@ -19,6 +19,8 @@
 - [TG - Testcase Generation](modules/tg.md)
 - [CE - Code Engineering](modules/ce.md)
 - 认知 Skill：`operator-analysis`、`testcase-generation`、`source-proof`、`code-review`、`code-engineering`（见 `skills/`）
+- Agent 词表：[`agents/CONTEXT.md`](../agents/CONTEXT.md)
+- 开发本仓的维护者 skill：`.cursor/skills/`（见 [扩展指南](development/extending.md)）
 
 ## 开发 AscendC-Pilot
 

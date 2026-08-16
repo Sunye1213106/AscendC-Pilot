@@ -218,6 +218,28 @@ def test_start_requires_askquestion_when_running(tmp_path: Path, capsys) -> None
     assert "继续上次" in output
 
 
+def test_start_uo_init_with_ready_codemap_is_not_a_lock(tmp_path: Path, capsys) -> None:
+    import json
+
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_kernel" / "arch35").mkdir(parents=True)
+    product = agent_root(tmp_path, arch="arch35") / "uo" / "foo.arch35.uo"
+    _write(product, "sqlite-placeholder")
+    assert needs_resume_decision(tmp_path, "uo-init") is True
+    code = acp_main(
+        ["start", "uo-init", "--project", str(tmp_path), "--architecture", "arch35"]
+    )
+    assert code == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get("error") == "UO_ALREADY_READY"
+    msg = str(payload.get("message_zh") or "")
+    assert "锁已释放" in msg
+    assert "未完成" not in msg
+    opts = payload.get("ask_question", {}).get("options") or []
+    assert opts and opts[0].get("value") == "query"
+    assert any(o.get("value") == "reinit" for o in opts)
+
+
 def test_decision_continue_resumes_same_run(tmp_path: Path) -> None:
     state = start_workflow(tmp_path, "uo-init", architecture="arch35")
     result = apply_resume_decision(

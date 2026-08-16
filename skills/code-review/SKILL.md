@@ -18,6 +18,8 @@ description: >
 
 侧别：`op_kernel/` → Kernel；`op_host/` → Tiling。两侧都动则分侧陈述。
 
+完成条件：每条 FINDING 有 `path:line`；H1 在报告前被尝试推翻。
+
 ```text
 入口 + 侧别 → CodeMap 邻域 → H0/H1 → 最小源码窗 → 推翻 → FINDING / NO_CONFIRMED_ISSUE / UNRESOLVED
 ```
@@ -26,13 +28,13 @@ description: >
 
 对每个可疑代码段：
 
-1. **H0**：该段安全 / 合同成立。  
-2. **H1**：存在可观察风险（越界、除零、同步缺失、跨层断裂、精度路径错误）。  
-3. 每条判定必须有 `path:line`。没有行号就不是 finding。  
-4. 「来源 = TilingData」**不是**已校验。上游校验必须能 `locate` 到 `OP_CHECK_IF`（`facts.check_sites`）且保护的是**同一个变量**。  
-5. 报告前尝试推翻 H1；partial 索引不得证伪「没有其他调用者」。
+1. **H0**：该段安全 / 合同成立。
+2. **H1**：存在可观察风险（越界、除零、同步缺失、跨层断裂、精度路径错误）。
+3. 判定带 `path:line`。没有行号就不是 finding。
+4. 「来源 = TilingData」仍待校验：上游必须能 `locate` 到 `OP_CHECK_IF`（`facts.check_sites`）且保护**同一个变量**。
+5. 报告前尝试推翻 H1；partial 索引不能证伪「没有其他调用者」。
 
-证据顺序：**先 `acp uo-query`（impact / locate / field / buffer / kernel_api）**，不够再开最小源码窗。不要全文 Grep 结构事实。
+证据顺序：**先 `acp uo-query`（impact / locate / field / buffer / kernel_api）**，不够再开最小源码窗。结构事实走 CodeMap，不走全文 Grep。
 
 跨层与 AscendC 检查用本仓库 `references/cross-layer-contracts.md` 与 `references/ascendc-checks.md`。条例级 API 细则不在本 skill。
 
@@ -42,11 +44,11 @@ description: >
 scope → review → summary
 ```
 
-- `scope`：判定 quick / file / pr；Kernel vs Tiling；PR 无 diff 则停并标 UNRESOLVED。  
-- `review`：假设检验，写入 bug / functional 两份 finding 列表。  
+- `scope`：判定 quick / file / pr；Kernel vs Tiling；PR 无 diff 则停并标 UNRESOLVED。
+- `review`：假设检验，写入 bug / functional 两份 finding 列表。
 - `summary`：更新 `index.yaml`。快速入口只写短摘要。
 
-需要范围与证书时走 `/ce-intent`（无 diff 定位）或 `/ce-impact` → `/ce-verify`（有 diff）。
+需要范围与证书时走 `/ce-intent`（无 diff 定位）或 `/ce-impact` → `/ce-verify`（有 diff）。本 skill 做只读审查，不签发 CE 证书。
 
 ## 按需参考
 

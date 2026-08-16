@@ -107,6 +107,7 @@ _PACKING_NODE_PROVS = {
     "source_set_tiling_key",
     "source_get_tiling_key",
     "source_assign_tiling_key",
+    "source_bitpack_dim",
 }
 _PACKING_SOURCE_PROVS = {
     "source_get_tpl_tiling_key_symbol",

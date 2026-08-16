@@ -553,6 +553,7 @@ def release_live_execution(
         persist_path_for_state,
         read_product_locks,
         release_exclusive_lock,
+        release_session_occupancy,
         slot_state_path,
         unregister_shared_run,
     )
@@ -677,6 +678,14 @@ def release_live_execution(
         from ascendc_pilot.human_interaction import clear_pending
 
         clear_pending(root)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        release_session_occupancy(
+            root,
+            run_id=run_id,
+            session_id=str(st.get("session_id") or ""),
+        )
     except Exception:  # noqa: BLE001
         pass
     return {

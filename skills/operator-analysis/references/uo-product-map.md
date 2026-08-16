@@ -1,8 +1,8 @@
 # UO Product Map（progressive）
 
-短地图：认清权威 → 选 mode → 查完就答。主控先对人说出路由（自查或几个 uo-query 子代理），禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
+短地图：认清权威 → 选 mode → 查完就答。主控先对人说出路由：短问自查，深问必须派 uo-query 子代理（禁止把深问改成主控连查），禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
 
-同一场景可沿图跳：`locate`/`tiling_key` → `field` → `kernel_branch` → `impact`。互不相关的独立域再拆 Task。
+同一场景可沿图跳（METHOD **同一行**）：`locate`/`tiling_key` → `field` → `kernel_branch` → `impact`。打中 **≥2 行**必须拆 Task，即使症状相关、像一条因果链。相关 ≠ 单域。
 
 ## 权威分层
 

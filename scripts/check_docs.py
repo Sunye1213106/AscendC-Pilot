@@ -64,7 +64,7 @@ def rel(path: Path) -> str:
 
 
 # Vendor / VCS / plugin trees are not product docs.
-SKIP_DIR_NAMES = frozenset({".git", ".opencode", "node_modules"})
+SKIP_DIR_NAMES = frozenset({".git", ".opencode", ".cursor", "node_modules"})
 
 
 def _skip_tree(path: Path) -> bool:
@@ -100,6 +100,7 @@ def check_readme_locations(errors: list[str]) -> None:
         if (
             r.startswith(".git/")
             or r.startswith(".opencode/")
+            or r.startswith(".cursor/")
             or r.startswith("_pytest_tmp")
             or "/.pytest_cache/" in f"/{r}"
             or "/node_modules/" in f"/{r}"

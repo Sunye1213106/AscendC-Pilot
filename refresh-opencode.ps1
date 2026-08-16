@@ -171,7 +171,8 @@ Assert-True ($pluginText -match 'shell:\s*false') "installed plugin uses shell:f
 Assert-True ($pluginText -match 'resolveAcpBin|never use shell:true') "installed plugin documents Windows spawn fix"
 # Current resolveAcpBin() returns bare "acp" (or cached ASCENDC_HARNESS_BIN path).
 # Older builds used a candidates loop like ["acp"] / ["pilot"] — do not require that shape.
-Assert-True ($pluginText -match 'function resolveAcpBin') "installed plugin defines resolveAcpBin"
+Assert-True ($pluginText -match 'function createAcpCliTool') "installed plugin exposes native acp tool"
+Assert-True ($pluginText -match 'function patchWindowsShell') "installed plugin pins Windows PowerShell for bash"
 Assert-True ($pluginText -match 'return\s+"acp"') "installed plugin resolves acp (not legacy pilot)"
 Assert-True ($pluginText -notmatch 'return\s+"pilot"') "installed plugin no longer looks up pilot binary"
 Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin has no pilot binary candidate list"

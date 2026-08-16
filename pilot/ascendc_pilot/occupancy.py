@@ -341,6 +341,45 @@ def bind_session(
     return row
 
 
+def release_session_occupancy(
+    project_root: Path | str,
+    *,
+    run_id: str = "",
+    session_id: str = "",
+) -> list[str]:
+    """Clear exclusive occupancy on bindings for a finished run.
+
+    Digest pin stays (STALE detection). ``bind_session`` cannot clear
+    ``occupancy_group`` because empty string is treated as "keep previous".
+    """
+    rid = str(run_id or "").strip()
+    sid = _session_key(session_id)
+    if not rid and not sid:
+        return []
+    doc = read_session_bindings(project_root)
+    bindings = dict(doc.get("bindings") or {})
+    changed_ids: list[str] = []
+    changed = False
+    for key, row in list(bindings.items()):
+        if not isinstance(row, dict):
+            continue
+        match_run = bool(rid) and str(row.get("run_id") or "") == rid
+        match_sid = bool(sid) and key == sid
+        if not match_run and not match_sid:
+            continue
+        row = dict(row)
+        row["occupancy_group"] = ""
+        row["released"] = True
+        row["updated_at"] = _now()
+        bindings[key] = row
+        changed_ids.append(str(row.get("session_id") or key))
+        changed = True
+    if changed:
+        doc["bindings"] = bindings
+        write_session_bindings(project_root, doc)
+    return changed_ids
+
+
 def get_session_binding(
     project_root: Path | str,
     session_id: str = "",

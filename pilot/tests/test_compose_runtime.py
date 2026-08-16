@@ -156,7 +156,10 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "skill: false" in uo_query_agent
         assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" in uo_query_agent
-        assert "acp uo-query --project" in uo_query_agent
+        assert "uo-query --project" in uo_query_agent
+        assert "Never bash" in uo_query_agent or "not bash" in uo_query_agent.lower()
+        assert "bash: false" in uo_query_agent
+        assert "pilot_run: false" in uo_query_agent
         assert "Do not switch to MCP" in uo_query_agent
         from compose_runtime import validate_generated
 
@@ -195,6 +198,9 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
             assert "不要 `pilot_run`" in text
             assert "先对人说出路由" in text
             assert "acp run-action auto" not in text
+        elif name == "uo-init":
+            assert "UO_ALREADY_READY" in text
+            assert "acp run-action auto" in text
         else:
             assert "acp run-action auto" in text
 
@@ -210,3 +216,47 @@ def test_cognitive_skill_ids_include_code_engineering():
     assert remapped == (
         "method:cognitive-skills/code-engineering/** and `cognitive-skills/code-engineering`"
     )
+
+
+def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
+    from compose_runtime import COGNITIVE_SKILL_IDS, _read_invariant_pack
+
+    pack = _read_invariant_pack(REPO)
+    assert "短问" in pack
+    assert "同名不可互换" in pack
+    assert "Open" in pack
+    assert COGNITIVE_SKILL_IDS == (
+        "operator-analysis",
+        "testcase-generation",
+        "source-proof",
+        "code-review",
+        "code-engineering",
+    )
+    maintainer = {
+        "writing-for-pilot-skills",
+        "diagnosing-pilot",
+        "grill-pilot",
+        "tdd-engines",
+        "pilot-pr-review",
+    }
+    assert maintainer.isdisjoint(set(COGNITIVE_SKILL_IDS))
+    for name in maintainer:
+        assert (REPO / ".cursor" / "skills" / name / "SKILL.md").is_file()
+
+
+def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
+    from compose_runtime import compose_host
+
+    out = tmp_path / "cursor"
+    result = compose_host(REPO, "cursor", out_root=out)
+    assert result["ok"]
+    compiled = " ".join(result["compiled"])
+    assert "diagnosing-pilot" not in compiled
+    assert "pilot-pr-review" not in compiled
+    assert "tdd-engines" not in compiled
+    primary = (out / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
+    assert "短问" in primary
+    assert "同名不可互换" in primary
+    oa = (out / "skills" / "operator-analysis" / "SKILL.md").read_text(encoding="utf-8")
+    assert "disable-model-invocation: true" in oa
+

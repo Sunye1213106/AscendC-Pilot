@@ -633,6 +633,38 @@ function listInstalledPilotAgentNames(): string[] {
  * AscendC-Pilot mode: Host Read of any directory is allow (no OpenCode ask).
  * Does not change Build/Plan. Does not relax write/edit. Mutates and returns cfg.
  */
+function windowsPowershellPath(): string {
+  const roots = [
+    process.env.SystemRoot,
+    process.env.SYSTEMROOT,
+    process.env.windir,
+    "C:\\Windows",
+  ].filter((x): x is string => Boolean(x))
+  for (const root of roots) {
+    const p = resolve(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    if (existsSync(p)) return p
+  }
+  return ""
+}
+
+/**
+ * OpenCode 1.18.18 on this machine switched bash from absolute powershell.EXE
+ * to bare `cmd.exe`. The non-PS branch does ChildProcess.make(command, [], {shell:"cmd.exe"}).
+ * Effect spawn then treats the whole `acp uo-query …` string as the executable
+ * → NotFound: ChildProcess.spawn (ses_ff6fe, 2026-08-15 15:56).
+ * Pin an absolute PowerShell so the PS branch (argv spawn) is used.
+ */
+function patchWindowsShell(cfg: Record<string, unknown>): Record<string, unknown> {
+  if (process.platform !== "win32") return cfg
+  const current = String(cfg.shell || "").trim()
+  if (/powershell/i.test(current) && (!/[\\/]/.test(current) || existsSync(current))) {
+    return cfg
+  }
+  const ps = windowsPowershellPath()
+  if (ps) cfg.shell = ps
+  return cfg
+}
+
 function patchPilotReadPermissions(
   cfg: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
@@ -658,7 +690,7 @@ function patchPilotReadPermissions(
     agentBag[name] = { ...cur, permission: perm }
   }
   out.agent = agentBag
-  return out
+  return patchWindowsShell(out)
 }
 
 type HostContext = {
@@ -776,6 +808,11 @@ function harnessBinCachePath(): string {
   return resolve(homedir(), ".config", "opencode", "ascendc-harness-bin")
 }
 
+function envPathOf(env?: Record<string, string | undefined> | NodeJS.ProcessEnv): string {
+  const bag = env || process.env
+  return String(bag.PATH || bag.Path || process.env.PATH || process.env.Path || "")
+}
+
 function resolveAcpBin(): string {
   // Install scripts write the cache; Host adapter must not re-implement install discovery.
   const fromEnv = String(process.env.ASCENDC_HARNESS_BIN || "").trim()
@@ -788,7 +825,17 @@ function resolveAcpBin(): string {
     // ignore
   }
 
-  // Bare name: rely on PATH at spawn time (agent-facing bash stays `acp *`).
+  // Windows spawn({shell:false}) does not apply PATHEXT. Never return a bare "acp"
+  // name for plugin-internal ChildProcess — that is ENOENT even when acp.exe is on Path.
+  if (process.platform === "win32") {
+    for (const dir of envPathOf().split(delimiter)) {
+      if (!dir) continue
+      const p = resolve(dir, "acp.exe")
+      if (existsSync(p)) return p
+    }
+  }
+
+  // Bare name: Unix agent-facing bash stays `acp *`.
   return "acp"
 }
 
@@ -1118,6 +1165,173 @@ function createPilotSkillTool(): {
   }
 }
 
+function tokenizeArgv(input: string): string[] {
+  const out: string[] = []
+  let cur = ""
+  let quote = ""
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (quote) {
+      if (ch === quote) quote = ""
+      else cur += ch
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (/\s/.test(ch)) {
+      if (cur) {
+        out.push(cur)
+        cur = ""
+      }
+      continue
+    }
+    cur += ch
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+function stripAcpPrefix(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .replace(/^(?:acp(?:\.exe|\.cmd)?)\s+/i, "")
+}
+
+function childSpawnEnv(project?: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  if (process.platform === "win32") {
+    const systemRoot = env.SystemRoot || env.SYSTEMROOT || "C:\\Windows"
+    env.SystemRoot = systemRoot
+    env.SYSTEMROOT = systemRoot
+    if (!env.ComSpec) env.ComSpec = resolve(systemRoot, "System32", "cmd.exe")
+    if (!env.PATHEXT) env.PATHEXT = ".COM;.EXE;.BAT;.CMD;.VBS;.JS;.MSC"
+    const pathVal = envPathOf(env)
+    env.PATH = pathVal
+    env.Path = pathVal
+  }
+  env.PYTHONUNBUFFERED = "1"
+  env.PYTHONIOENCODING = "utf-8"
+  if (project) env.ASCENDC_PROJECT_ROOT = project
+  const bin = resolveAcpBin()
+  if (bin && bin !== "acp") env.ASCENDC_HARNESS_BIN = bin
+  return env
+}
+
+/**
+ * Native ACP CLI tool. Same spawn path as pilot_run: absolute acp.exe, shell:false.
+ * Subagents must use this — OpenCode 1.18 Windows bash (cmd.exe + Effect spawn)
+ * returns NotFound: ChildProcess.spawn for any `acp …` line (ses_ff6fe).
+ */
+function createAcpCliTool(): {
+  description: string
+  args: Record<string, { type: string; description: string }>
+  execute: (
+    args: Record<string, unknown>,
+    ctx?: Record<string, unknown>,
+  ) => Promise<{ title: string; output: string; metadata: Record<string, unknown> }>
+} {
+  return {
+    description:
+      "Run the AscendC-Pilot CLI (acp.exe). Prefer this over bash. " +
+      "Pass command without a leading 'acp' (example: " +
+      "`uo-query --project <operator-abs> --mode locate --pattern s1Inner`). " +
+      "Do not use bash/MCP/Grep as a substitute.",
+    args: {
+      command: {
+        type: "string",
+        description:
+          "acp argv after the binary, or a full `acp …` line. Include --project <operator-abs>.",
+      },
+    },
+    async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
+      const raw = String(args.command || args.cmd || args.argv || "").trim()
+      if (!raw) {
+        return {
+          title: "acp",
+          output:
+            "[ascendc-pilot] acp tool requires command, e.g. " +
+            "`uo-query --project <operator-abs> --mode locate --pattern <id>`.",
+          metadata: { ok: false, error: "missing_command" },
+        }
+      }
+      const projectHint = uoQueryPickProject(args, raw)
+      const full = /^(?:acp(?:\.exe|\.cmd)?)(\s|$)/i.test(raw) ? raw : `acp ${raw}`
+      const rewritten = projectHint ? rewriteAcpProjectFlag(full, projectHint) : full
+      const stripped = stripAcpPrefix(rewritten)
+      const argv = tokenizeArgv(stripped)
+      if (!argv.length) {
+        return {
+          title: "acp",
+          output: "[ascendc-pilot] acp command parsed empty.",
+          metadata: { ok: false, error: "empty_argv" },
+        }
+      }
+      const project =
+        extractProjectFromAcpCommand(rewritten) ||
+        projectHint ||
+        readRememberedProjectRoot() ||
+        detectProjectRoot()
+      const agent = String(
+        ctx?.agent || ctx?.sessionAgent || process.env.ASCENDC_AGENT || "ascendc-pilot",
+      )
+      const action = String(args.action || args.action_id || process.env.ASCENDC_ACTION || "")
+      const sessionId = String(ctx?.sessionID || ctx?.sessionId || "")
+      const verdict = runAuthorize({
+        tool: "bash",
+        command: `acp ${stripped}`,
+        agent,
+        action,
+        project,
+        sessionId,
+      })
+      if (verdict.decision === "deny" || (verdict.ok === false && verdict.decision !== "ask")) {
+        return {
+          title: `acp ${argv[0]}`,
+          output: denyMessage(verdict, "acp", stripped),
+          metadata: { ok: false, error: verdict.reason_code || "denied" },
+        }
+      }
+      const acpBin = resolveAcpBin()
+      if (!acpBin || (acpBin === "acp" && process.platform === "win32")) {
+        return {
+          title: "acp",
+          output:
+            `[ascendc-pilot] acp.exe not found (resolveAcpBin=${acpBin}). ` +
+            `Run .\\refresh-opencode.ps1 so ~/.config/opencode/ascendc-harness-bin points at Scripts\\acp.exe.`,
+          metadata: { ok: false, error: "HARNESS_MISSING", bin: acpBin },
+        }
+      }
+      const cwd = project && existsSync(project) ? project : undefined
+      const res = spawnSync(acpBin, argv, {
+        encoding: "utf-8",
+        shell: false,
+        windowsHide: true,
+        cwd,
+        env: childSpawnEnv(project),
+        timeout: 180_000,
+        maxBuffer: 8 * 1024 * 1024,
+      })
+      const stdout = String(res.stdout || "")
+      const stderr = String(res.stderr || "")
+      const err = res.error ? String(res.error) : ""
+      const output = (stdout || stderr || err).trim() || `(acp exited ${res.status})`
+      return {
+        title: `acp ${argv[0]}`,
+        output,
+        metadata: {
+          ok: !res.error && res.status === 0,
+          exit: res.status,
+          bin: acpBin,
+          argv,
+          project,
+        },
+      }
+    },
+  }
+}
+
 function rgBinaryName(): string {
   return process.platform === "win32" ? "rg.exe" : "rg"
 }
@@ -1196,8 +1410,8 @@ function ensureOpenCodeRipgrep(): void {
 
 function prependOpenCodeRgPath(env: Record<string, string>): Record<string, string> {
   const prefix = openCodeRgBinDirs().join(delimiter)
-  const cur = String(env.PATH || env.Path || process.env.PATH || "")
-  if (!prefix) return env
+  const cur = envPathOf(env)
+  if (!prefix || !cur) return env
   const next = { ...env }
   next.PATH = prefix + delimiter + cur
   if (process.platform === "win32") next.Path = next.PATH
@@ -1222,7 +1436,8 @@ function prependAcpPath(env: Record<string, string>): Record<string, string> {
   const next = { ...env }
   if (bin && bin !== "acp") next.ASCENDC_HARNESS_BIN = bin
   if (!dir) return next
-  const cur = String(next.PATH || next.Path || process.env.PATH || "")
+  const cur = envPathOf(next)
+  if (!cur) return next
   if (cur.toLowerCase().split(delimiter.toLowerCase()).includes(dir.toLowerCase())) return next
   next.PATH = dir + delimiter + cur
   if (process.platform === "win32") next.Path = next.PATH
@@ -1231,10 +1446,10 @@ function prependAcpPath(env: Record<string, string>): Record<string, string> {
 
 function ensureAcpOnPath(): void {
   const patched = prependAcpPath({
-    PATH: String(process.env.PATH || ""),
+    PATH: envPathOf(),
     ...(process.env.Path ? { Path: String(process.env.Path) } : {}),
   })
-  process.env.PATH = patched.PATH
+  if (patched.PATH) process.env.PATH = patched.PATH
   if (patched.Path) process.env.Path = patched.Path
   if (patched.ASCENDC_HARNESS_BIN) process.env.ASCENDC_HARNESS_BIN = patched.ASCENDC_HARNESS_BIN
 }
@@ -1703,7 +1918,6 @@ function pinOperatorBashContext(args: Record<string, unknown>, operatorRoot: str
   if (!root || !looksLikeOperatorDir(root) || isHarnessCheckout(root)) return
   const cwdNow = String(args.cwd || args.workdir || args.working_directory || "").trim()
   if (!cwdNow || isHarnessCheckout(cwdNow) || !looksLikeOperatorDir(cwdNow)) {
-    args.cwd = root
     args.workdir = root
   }
   const command = String(args.command || args.cmd || "")
@@ -1715,17 +1929,10 @@ function pinOperatorBashContext(args: Record<string, unknown>, operatorRoot: str
       if (!("command" in args) && !("cmd" in args)) args.command = rewritten
     }
   }
-  const envBag = (args.env || args.environment || args.envVars) as Record<string, string> | undefined
-  const existingPath = String(
-    (envBag && (envBag.PATH || envBag.Path)) || process.env.PATH || "",
-  )
-  const acpEnv = prependAcpPath({ PATH: existingPath })
-  const envPatch: Record<string, string> = { ASCENDC_PROJECT_ROOT: root, ...acpEnv }
-  if (envBag && typeof envBag === "object") {
-    Object.assign(envBag, envPatch)
-  } else {
-    args.env = { ...envPatch }
-  }
+  // Do NOT set args.env / args.cwd. OpenCode bash schema is
+  // {command, workdir?, timeout?, description}. Extra env trains the LLM to
+  // pass a non-schema field (ses_ff6fe: "env param is malformed"). Zod strips
+  // it; a partial env would also stomp PATHEXT/SystemRoot if it ever leaked.
 }
 
 function injectActionContext(
@@ -1962,6 +2169,9 @@ export const AscendCHarnessPlugin = async (ctx?: {
   // which dies on ripgrep.find even after Skill.require succeeded (ses_ff9e).
   if (pilotTools && typeof pilotTools === "object") {
     ;(pilotTools as Record<string, unknown>).skill = createPilotSkillTool()
+    // Last-write-wins with skill. Native `acp` bypasses OpenCode bash spawn
+    // (cmd.exe + Effect ChildProcess.make(command) → NotFound on Windows 1.18).
+    ;(pilotTools as Record<string, unknown>).acp = createAcpCliTool()
   }
 
   return {
@@ -1975,7 +2185,12 @@ export const AscendCHarnessPlugin = async (ctx?: {
       _input: { cwd?: string; sessionID?: string; callID?: string },
       output: { env: Record<string, string> },
     ) => {
-      output.env = prependPilotToolPath(output.env || {})
+      const bag = output.env && typeof output.env === "object" ? output.env : {}
+      const patched = prependPilotToolPath(bag)
+      Object.assign(bag, patched)
+      const root = readRememberedProjectRoot()
+      if (root) bag.ASCENDC_PROJECT_ROOT = root
+      output.env = bag
     },
     "tool.execute.before": async (
       input: { tool?: string; agent?: string; sessionAgent?: string },

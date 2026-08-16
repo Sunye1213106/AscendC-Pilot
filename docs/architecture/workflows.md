@@ -144,12 +144,14 @@ done        Primary 读 quality.yaml，对人总结刷新后的节点/关系/未
         │         → 主控自己 acp uo-query --mode，stdout 对人说
         ├── 深问单域：METHOD 表一行、要沿图走
         │         → 一个 Task(agent=uo-query)，点卡片看思考
-        └── 深问多域：互不相关的层 / 路径 / 症状
-                  → 同一轮并行 N 个 Task(agent=uo-query)
+        └── 深问多域：METHOD ≥2 行 / 画图+变体 / 多个结案条件
+                  → 同一轮并行 N 个 Task(agent=uo-query)；相关 ≠ 单域
+                  → 每个 Task 写 FIRST_QUERY（本片唯一先查 mode）
                   → 主控按各子代全文综合，禁止发明没引用的事实
+                  → 未闭合再开一轮 Task；禁止把深问改成主控自查
 ```
 
-切片由主控自己分类，不以 Host `host_step.tasks` 为准。不写 `answer.yaml`，不 `finalize` kb_lookup。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。子代没有 session `prompt.md`：直接 `acp uo-query --project`；Host 负责让子会话 PATH 上看见 `acp`。
+切片由主控自己分类，不以 Host `host_step.tasks` 为准。不写 `answer.yaml`，不 `finalize` kb_lookup。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。子代没有 session `prompt.md`：直接用插件 `acp` 工具（`command=uo-query --project …`），不要 bash。
 
 ### `/uo-investigate` — 查 unresolved
 

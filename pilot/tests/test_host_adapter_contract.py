@@ -235,6 +235,7 @@ def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
     assert "isAcpStartSuccess" in text
     assert "normalizeResumeDecision" in text
     assert "answer_from_source" in text
+    assert 'startedKind === "primary_router"' in text
     assert 'decision === "uo-init"' in text
     assert 'decision === "source"' in text
     assert "renderPilotProgressBar" in text

@@ -133,7 +133,7 @@ def _resume_summary_without_arch_tree(root: Path, workflow_id: str) -> dict[str,
             f"workflow: {workflow_id}",
             "phase/status: - / -",
             "architecture: -",
-            "已有 CodeMap，无活动写锁。删除后重建，或改走查询。",
+            "上一场建库已完成，产物锁已释放。新会话可直接查询，不是卡住。",
         ]
     else:
         ask_opts = [o for o in ask_opts if o.get("value") == "reinit"] or ask_opts
@@ -145,7 +145,7 @@ def _resume_summary_without_arch_tree(root: Path, workflow_id: str) -> dict[str,
             "无活动 run。参数齐则可直接 start。",
         ]
     return {
-        "has_existing_run": False,
+        "has_existing_run": has_uo,
         "has_uo_artifacts": has_uo,
         "workflow_id": workflow_id,
         "requested_workflow_id": workflow_id,
@@ -178,7 +178,9 @@ def _resume_summary_without_arch_tree(root: Path, workflow_id: str) -> dict[str,
         "resume_next_action": "",
         "summary_text_zh": "\n".join(lines),
         "ask_question": {
-            "header": f"启动 {wf_label}",
+            "header": (
+                f"CodeMap 已就绪（{wf_label} 已结束）" if has_uo else f"启动 {wf_label}"
+            ),
             "question": "\n".join(lines),
             "options": ask_opts,
         },
@@ -195,14 +197,14 @@ def leftover_uo_ask_options() -> list[dict[str, str]]:
     reinit = next(o for o in ask_options_for("uo-init") if o.get("value") == "reinit")
     return [
         {
+            "label": "去查询",
+            "description": "保留已完成的 CodeMap，新会话直接查；上一场锁已释放",
+            "value": "query",
+        },
+        {
             "label": reinit["label"],
             "description": reinit["description"],
             "value": "reinit",
-        },
-        {
-            "label": "去查询",
-            "description": "不重建 CodeMap，改走 uo-query",
-            "value": "query",
         },
     ]
 
@@ -879,10 +881,12 @@ def build_run_resume_summary(
     elif workflow_id == "uo-init" and has_uo and (not state or state_wid in {"", "uo-init"}):
         ask_opts = leftover_uo_ask_options()
         question_body = (
-            "已有 CodeMap，无活动 run。删除后重建，或改去查询。\n\n"
+            "上一场建库已经完成，产物锁已释放（不是卡住）。"
+            "新会话可以直接查询，不必再走 uo-init。"
+            "选「去查询」保留现有 CodeMap；只有要推倒重来才选「删除重开」。\n\n"
             + "\n".join(lines)
         )
-        header = f"已有 CodeMap（{wf_label}）"
+        header = f"CodeMap 已就绪（{wf_label} 已结束）"
         has_existing_run = True
     else:
         ask_opts = [_ask_opt(ask_opts_src[1])]
@@ -1196,9 +1200,13 @@ def apply_resume_decision(
         return {
             "ok": True,
             "decision": "query",
-            "next_workflow_id": "uo-query",
+            "next_workflow_id": "",
             "skipped_reinit": True,
-            "message_zh": "不重建 CodeMap；Host 应启动 uo-query",
+            "already_ready": True,
+            "message_zh": (
+                "CodeMap 已就绪，产物锁已释放。不要重建，也不要 acp start / pilot_run uo-query。"
+                "等人提问后由主控路由查询。"
+            ),
             "run_summary": summary,
         }
 
@@ -1331,15 +1339,32 @@ def existing_run_decision_payload(
         project_root, workflow_id=workflow_id, architecture=architecture
     )
     wf_label = _workflow_label(workflow_id)
+    running = str(summary.get("status") or "") in RUNNING_LIKE
+    leftover_ready = (
+        workflow_id == "uo-init"
+        and bool(summary.get("has_uo_artifacts"))
+        and not running
+        and not summary.get("cross_workflow")
+    )
+    if leftover_ready:
+        error = "UO_ALREADY_READY"
+        message_zh = (
+            "上一场建库已经完成，产物锁已释放。新会话可以直接查询，不必再 /uo-init。"
+            "选「去查询」保留 CodeMap；只有要推倒重来才选「删除重开」。"
+        )
+    else:
+        error = "EXISTING_RUN_NEEDS_DECISION"
+        message_zh = (
+            f"检测到未完成的 {wf_label} run 或同族写锁冲突。"
+            "请等待 Host 弹出选项；选定后 Host 会继续执行。"
+            "不要自己 bash `acp answer` 或 `acp start`。"
+        )
     payload = {
         "ok": False,
         "needs_human_decision": True,
-        "error": "EXISTING_RUN_NEEDS_DECISION",
-        "message_zh": (
-            f"检测到未完成的 {wf_label} run、CodeMap 残留或同族写锁冲突。"
-            "请等待 Host 弹出选项；选定后 Host 会继续执行。"
-            "不要自己 bash `acp answer` 或 `acp start`。"
-        ),
+        "error": error,
+        "already_ready": leftover_ready,
+        "message_zh": message_zh,
         "ask_question": summary["ask_question"],
         "decision_values": summary["decision_values"],
         "commands": summary["commands"],

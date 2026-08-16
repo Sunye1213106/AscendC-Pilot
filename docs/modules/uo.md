@@ -240,7 +240,7 @@ Source -> CodeMap -> {/uo-query 只读提问（主控可见路由） | /uo-updat
 
 ### `/uo-query`（可见 LLM 路由，禁止 Host 润）
 
-查询不是 ACP 工作流：不要 `pilot_run` / `acp start uo-query`。主控看一眼短地图，**先对人说出分类**（短问自查 / 1 个子代理 / N 路并行），再动手。不要为空转「问题路由」开子代理。切片由主控判断，不靠 Host `host_step.tasks`。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
+查询不是 ACP 工作流：不要 `pilot_run` / `acp start uo-query`。主控看一眼短地图，**先对人说出分类**（短问自查 / 1 个子代理 / N 路并行），再动手。深问必须 `Task(agent=uo-query)`，禁止主控自己连查。切片看 METHOD 行数，相关 ≠ 单域；每个 Task 写 `FIRST_QUERY`。不要为空转「问题路由」开子代理。切片由主控判断，不靠 Host `host_step.tasks`。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 

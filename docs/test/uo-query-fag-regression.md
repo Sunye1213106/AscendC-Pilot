@@ -7,9 +7,11 @@ architecture：`arch35`
 
 Wave 3 抽取（PIPE `kernel_phase`、`definition_sites`、registry PREDICATE、`fused_outer_candidates`、`mutex_policy`）要先 **重建** `.uo` 才出现在真实查询里。Wave 1–2（`template_match.dim_coverage`、`--query`、空结果 hint、禁仓级 findstr）对现有产物立刻生效。
 
+测查询时 **不要再发 `/uo-init`**。上一场建库已完成、写锁已释放；leftover 弹窗不是卡住。直接贴题。
+
 ## 当前派发（Cursor 同构）
 
-Cursor：主控把互不相关的域拆开，**同一条消息里并行多个 Task**，子代理隔离上下文；全部返回后 **Primary 综合**，不发明子代理没引用的事实。
+Cursor：主控按 METHOD 行切片（相关 ≠ 单域），**同一条消息里并行多个 Task**，子代理隔离上下文；全部返回后 **Primary 综合**，不发明子代理没引用的事实。
 
 uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，再动手。刚跑完 `/uo-init` 后 leftover 阶段不含 `uo-query` **不得**拦 `Task(agent=uo-query)`。
 
@@ -27,6 +29,8 @@ uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，�
 - 声称某维没注册必须引用 `dim_coverage` 或 `legal_key.total_matched`。
 - 仓级 `findstr /S` / `grep -r` / 无路径 `rg` = 失败。
 - 综合题：题面 **不会** 点名 mode / API /「请拆成三个问题」。主控应自己判断并**对人说出**要并行几个 `uo-query` Task，终答是分叉的，不是收成一个根因。
+- 子代标 PARTIAL / 未闭合 / 互相矛盾时，主控必须再开一轮 Task（FOCUS=缺口），禁止问「要不要继续」就收工。Q6 三相对了但 scale 乘几次没坐实 = 未结案。
+- 深问（Q6/Q18 等）主控自己连 `acp`/Read、一次都不 `Task(agent=uo-query)` = 失败。禁止「这是深问但我短问范围内查清了」。
 
 ---
 
@@ -37,6 +41,8 @@ uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，�
 > FP16 精度不过：dq 量级差一截，FP32 同 shape 过了。是不是 POST 的 scale/cast 写错了？先画出 arch35 单 launch 的三相，并说明 FP32 / BN2 / `enablePreSfmg` 各自怎么走。
 
 上次错：把三相讲成主循环 V1–V6。要对：`kernel_launch`，`pipeIn` Pre → Destroy → `pipeBase` Main →（非 FP32）`pipePost`；入口是 `RegbaseFAG` / `*_entry_regbase.h`，不是 `ProcessVec*`。
+
+阅卷：题面像一单故障也必须 **同一轮并行 ≥2** 个 Task（三相=`kernel_launch` 一路；FP32/BN2/`enablePreSfmg`=`kernel_branch`/`field` 一路）。禁止「相关所以一个 agent 更连贯」。每个 Task 带 `FIRST_QUERY`。三相那路第一刀必须 `--mode kernel_launch`，不是 `--mode search ProcessVec`。结构事实可以讲；scale 乘几次没坐实 = 未结案，禁止把 POST 乘 scale 当已证实根因。
 
 ### Q7 确定性 dK 不齐
 

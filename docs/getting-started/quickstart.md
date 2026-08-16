@@ -83,7 +83,7 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，对人说出「自查 / 几个子代理」，短问自己 `acp uo-query --mode`，深问同一轮 `Task(agent=uo-query)`。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
+查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，对人说出「短问自查 / 几个子代理」。短问自己 `acp uo-query --mode`；深问同一轮 `Task(agent=uo-query)`，禁止把深问改成主控连查。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
 
 默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 

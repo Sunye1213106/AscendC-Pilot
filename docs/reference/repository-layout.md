@@ -5,7 +5,7 @@
 | 路径 | 归属 |
 | --- | --- |
 | `adapters/` | Host overlays。 |
-| `agents/` | 稳定 Agent 与 deterministic-engine identities。 |
+| `agents/` | 稳定 Agent 与 deterministic-engine identities。`CONTEXT.md` 是 agent 常驻词表。 |
 | `engines/` | UO、TG、CE 和 common 的确定性 packages。 |
 | `evals/` | Eval cases、harnesses 与大型可复用 fixtures。 |
 | `generated/` | 生成的 host runtime output。 |
@@ -15,6 +15,7 @@
 | `schemas/` | Local extension 与 artifact schemas。 |
 | `scripts/` | 生成、校验、replay 与 developer tools。 |
 | `skills/` | Runtime skill bundles、references、examples、templates。 |
+| `.cursor/skills/` | 开发本仓用的维护者 overlay（不 compose 给算子 Host）。 |
 | `tests/` | 仓库级 tests 与 fixtures。 |
 | `tools/` | Runtime capability 合同：`tools/source/`、`tools/codemap/`（各含 `METHOD.md` / `capability.yaml`）。 |
 | `docs/` | 人类说明文档。 |
@@ -27,6 +28,10 @@
 | 修改权限 | `pilot/ascendc_pilot/ownership.py`, `agents/*.yaml` |
 | 新增 agent | `agents/<id>.yaml`，然后重新生成 agent matrix |
 | 新增领域方法文本 | `skills/<domain>/SKILL.md` 或 `skills/<domain>/references/` |
+| 共享语言（agent 常驻） | `agents/CONTEXT.md` |
+| 开发本仓的维护者 skill | `.cursor/skills/`（不要写进 `skill_ids`） |
+| 改 agent 常驻词表 | `agents/CONTEXT.md` |
+| 开发本仓的维护者纪律 | `.cursor/skills/`（不 compose） |
 | 新增 task prompt | `prompts/tasks/<domain>/` |
 | 修改 UO extraction | `engines/understand-operator/src/uo_init/` |
 | 修改 TG closure | `engines/testcase-generation/testcase_agent/closure/` |

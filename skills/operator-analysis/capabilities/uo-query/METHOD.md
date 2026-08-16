@@ -30,7 +30,7 @@ CLI：`acp uo-query --project <算子绝对路径> --pattern`（`--query` / `--t
 | 模板组合能不能编过 | `legal_key` | `total_matched`；0 命中看 `nearby` |
 | Kernel `if constexpr` 走哪条 | `kernel_branch`（精确名字如 `IS_ROPE`） | 第一页最多 3 条样例 |
 | Buffer / 3buff / 4buff / 搬运 / 同步 API | `buffer` / `kernel_api` | 看 `mutex_policy` 等 facts |
-| Pre / Main / Post / 三相 launch | `kernel_launch`（`pipeIn` Pre → `pipeBase` Main → `pipePost` Post + KERNEL / `*_entry*.h`） | **禁止**把 `ProcessVec*` / `*_apt.cpp` 当三相入口 |
+| Pre / Main / Post / 三相 launch | `kernel_launch`（`pipeIn` Pre → `pipeBase` Main → `pipePost` Post + KERNEL / `*_entry*.h`） | **禁止**把 `ProcessVec*` / `*_apt.cpp` 当三相入口。第一刀必须 `--mode kernel_launch`，禁止 `--mode search` 且 pattern 含 `ProcessVec` / `Process()` |
 | 从某点跟邻居 | `impact`（必须 `--file` 与 `--line`） | |
 | 图上还缺什么 | `gaps` | |
 
@@ -42,7 +42,7 @@ CLI：`acp uo-query --project <算子绝对路径> --pattern`（`--query` / `--t
 
 `impact` 缺 `--file/--line` 会失败；不要改用 `search` 硬猜位置。
 
-查完就答。最终消息用完整自然语言写清结论、file:line、必要 snippet（Cursor Explore 那样）。OpenCode Task 把这篇全文交回主控，不要把证据压进 yaml，不要再 Glob/Read `answer.yaml`。
+查完就答。最终消息用完整自然语言写清结论、file:line、必要 snippet（Cursor Explore 那样）。OpenCode Task 把这篇全文交回主控，不要把证据压进 yaml，不要再 Glob/Read `answer.yaml`。若决定性 span 没读到，文末必须列出 **未闭合点**（文件 + 要查的 mode/符号），`adequacy: PARTIAL`，不要把 first_hit 写成 ANSWERED——主控会再派一轮，不要自己宣布根因已定位。
 
 ## 交付
 

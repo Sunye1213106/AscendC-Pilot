@@ -26,7 +26,7 @@ from ascendc_pilot.occupancy import (
 )
 from ascendc_pilot.paths import ensure_agent_layout, state_root
 from ascendc_pilot.run_resume import needs_resume_decision
-from ascendc_pilot.state import load_state, start_workflow
+from ascendc_pilot.state import load_state, release_live_execution, start_workflow
 
 
 @pytest.fixture(autouse=True)
@@ -162,6 +162,22 @@ def test_same_family_second_start_still_needs_decision(tmp_path: Path) -> None:
     assert needs_resume_decision(tmp_path, "uo-init") is True
     assert needs_resume_decision(tmp_path, "uo-update") is True
     assert needs_resume_decision(tmp_path, "uo-query") is False
+
+
+def test_release_clears_session_occupancy(tmp_path: Path, monkeypatch) -> None:
+    ensure_agent_layout(tmp_path, arch="arch35")
+    monkeypatch.setenv(SESSION_ENV, "ses_done")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
+    bound = get_session_binding(tmp_path, "ses_done")
+    assert bound and bound.get("occupancy_group") == "uo"
+    release_live_execution(
+        tmp_path, reason="workflow_passed", state=load_state(tmp_path)
+    )
+    assert live_exclusive_lock(tmp_path, "uo") is None
+    bound = get_session_binding(tmp_path, "ses_done")
+    assert bound
+    assert bound.get("occupancy_group") == ""
+    assert bound.get("released") is True
 
 
 def test_legacy_active_run_migrates_into_uo_slot(tmp_path: Path) -> None:

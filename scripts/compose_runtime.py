@@ -36,6 +36,7 @@ COMPOSE_POLICY_IDS: tuple[str, ...] = (
 )
 
 # Short model-facing packs under pilot/policies/invariants/ (≤ ~50 lines total).
+# agents/CONTEXT.md is appended separately: ubiquitous language, not a policy.
 COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("control", "control-invariants.md"),
     ("evidence", "evidence-invariants.md"),
@@ -82,9 +83,11 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": '查询算子知识库：可见路由后自查或派子代理 / Query CodeMap',
         "description": (
             "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
-            "TilingData、Kernel、字段、路径）。主控先对人说出路由（短问自查 / 几个 uo-query 子代理），"
-            "再自己 `acp uo-query --mode` 或同一轮原生 Task(agent=`uo-query`)。"
-            "**禁止** `pilot_run` / `acp start uo-query`。不要为空转「问题路由」开子代理。"
+            "TilingData、Kernel、字段、路径）。主控先对人说出路由："
+            "短问（一名字/一 mode）自查 `acp uo-query`；深问必须同一轮 Task(agent=`uo-query`)，"
+            "禁止把深问改成主控自己连查。**禁止** `pilot_run` / `acp start uo-query`。"
+            "不要为空转「问题路由」开子代理。子代 PARTIAL / 未闭合 / 互相矛盾时再开一轮 Task（FOCUS=缺口），"
+            "禁止问「要不要继续」，禁止主控代劳收工。"
         ),
     },
     "uo-investigate": {
@@ -99,7 +102,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'CodeMap-backed review: quick / file / PR',
         "description": (
             "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
-            "假设检验；证据先 CodeMap。Pilot 管 scope→review→summary；用 `pilot_run`。"
+            "假设检验；证据先 CodeMap。Pilot 管 scope 到 summary；用 `pilot_run`。"
         ),
     },
     "ce-impact": {
@@ -131,8 +134,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "全量/全覆盖/tilingkey case/建立 TilingKey 全覆盖测试时加载。"
             "全覆盖产品目标：写入 control/user_goal 后串联 init→plan→solve；"
             "start 时 --intent 带全覆盖短语。默认 tilingkey_full_coverage（无需 CSV）。"
-            "对人只说「建立覆盖合同」进度与确认后果；禁止甩内部字段名。"
-            "Pilot 管阶段；加载后用 Host `pilot_run`。"
+            "对人只说「建立覆盖合同」进度与确认后果；机器 id 留在 payload。"
+            "Pilot 管阶段；加载后用 `pilot_run`。"
         ),
     },
     "tg-plan": {
@@ -337,6 +340,10 @@ def _read_invariant_pack(repo: Path) -> str:
             )
         parts.append(text)
         parts.append("")
+    context = repo / "agents" / "CONTEXT.md"
+    if context.is_file():
+        parts.append(context.read_text(encoding="utf-8").rstrip())
+        parts.append("")
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -418,9 +425,12 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
         lines.append("")
     if wid == "uo-query":
         run_via = (
-            "Visible LLM router (not a Host workflow). First speak the route to the user "
-            "(self `acp uo-query` vs N native Tasks agent=`uo-query`), then act. "
-            "Never `pilot_run` / `acp start` for uo-query. Do not spawn a routing-only subagent."
+            "Visible LLM router (not a Host workflow). First speak the route to the user. "
+            "短问: self `acp uo-query`. 深问: N native Tasks agent=`uo-query` same turn — "
+            "never demote 深问 to primary Read/acp. "
+            "Never `pilot_run` / `acp start` for uo-query. Do not spawn a routing-only subagent. "
+            "If any child is PARTIAL / 未闭合 / contradicts another, launch another Task round "
+            "(FOCUS=the gap) before closing; do not ask 要不要继续."
         )
     else:
         run_via = (
@@ -1014,6 +1024,10 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         if aid == "uo-query":
             tools["grep"] = False
             tools["glob"] = False
+            # OpenCode 1.18 Windows bash (cmd.exe) spawn NotFound; plugin `acp` tool
+            # is the only reliable CLI. Hide bash so the child cannot burn turns on it.
+            tools["bash"] = False
+            tools["pilot_run"] = False
         front["tools"] = tools
 
     # Role stays thin: controller brief only; start rules live in composed invariants.
@@ -1022,7 +1036,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
 
 Query is **not** a Host-prepared Action. There is no session `prompt.md` / `method.md` bundle.
 
-1. **First**: bash `acp uo-query --project <operator-abs> --mode <mode> --pattern …` (bare `acp` on PATH). The Task prompt is the sole task body.
+1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs> --mode <mode> --pattern …`. Do not prefix with bash; the plugin spawns acp.exe. The Task prompt is the sole task body.
 2. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
 3. Answer in the final message (prose + file:line). Do not Write. Do not finalize.
 """

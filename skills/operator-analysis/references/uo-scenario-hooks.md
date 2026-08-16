@@ -12,7 +12,7 @@ UO 只定位结构。不判断 golden、happens-before、profiler。结构事实
 | Buffer / queue 方向 / 3buff / 4buff | `buffer`（看 `mutex_policy`） |
 | 切分字段写点 / 公式 / 占核 | `field`（问句标识符；空则 `local_aliases`） / `tiling_data` |
 | kernel 找不到 / 561003 / 某维有没有编 | `template_match` → `legal_key`（必须看 `dim_coverage` / `total_matched`） |
-| Pre / Main / Post / 三相 launch | `kernel_launch`；禁止先搜 `Process` / `*_apt.cpp` |
+| Pre / Main / Post / 三相 launch | `kernel_launch`；第一刀禁止搜 `Process` / `*_apt.cpp` |
 | SetScheduleMode / Host TilingContext | `locate`；不是 `kernel_api` |
 | 同名函数 / virtual override | `locate` 短名（全部 `definition_sites`） |
 | diff 邻域 | `impact` |

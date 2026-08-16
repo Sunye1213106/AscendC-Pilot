@@ -12,6 +12,8 @@ Precision/perf daily work infers a ScenarioSet (not all legal keys).
 
 对齐 Issue 改码：无 diff 先定位，有 diff 再切片挂义务，验证只收可审计的测量/测试收据。
 
+完成条件：`Open = O - V - X` 中的 `V` 只来自本仓库可审计收据；`X` 只来自 referee。
+
 ```text
 intent (locate) -> impact (slice + obligations) -> verify (V from measurements)
 Open = O - V - X
@@ -26,7 +28,7 @@ Open = O - V - X
 | 要关闭义务、出证书 | `/ce-verify`：V 只收本仓库可审计的测量/测试收据 |
 | 静态「该测哪些精度/性能」 | 同 `/ce-intent` 扫描，产出 ScenarioSet |
 
-Git 写操作、fork、PR 文案 **不做**。只读审查走 `/ce-review`。
+Git 写操作、fork、PR 文案走维护者流程，不在本 skill。只读审查走 `/ce-review`。
 
 ## Non-negotiable rules
 
@@ -34,16 +36,16 @@ Git 写操作、fork、PR 文案 **不做**。只读审查走 `/ce-review`。
    deterministic derivation from Tier A, and Tier C is a hypothesis or lead.
 2. Maintain `Open = O - V - X`, where `O` is all obligations, `V` is verified,
    and `X` is referee-approved exclusions.
-3. Tier C evidence can discover or refine obligations, but cannot place an
+3. Tier C evidence can discover or refine obligations; only A/B can place an
    obligation in `V` or `X`.
 4. A truncated slice or stale UO product is a disclosed boundary, never proof
    that impact is absent.
 5. Precision and performance claims require declared external measurements.
 6. External V receipts use schema `ce-external-evidence/v1`. Accept UT / ST /
-   precision compare / profiling / retest-pass artifacts. Do not treat a review
-   narrative as a measurement. Precision/perf runners come from the operator's
-   optional test-script repo (`--test-script-root`); CE PRs may patch those
-   scripts from TG `findings`. See `skills/testcase-generation/references/test-script-repo.md`.
+   precision compare / profiling / retest-pass artifacts. A review narrative is
+   not a measurement. Precision/perf runners come from the operator's optional
+   test-script repo (`--test-script-root`); CE PRs may patch those scripts from
+   TG `findings`. See `skills/testcase-generation/references/test-script-repo.md`.
 
 ## Risk language (developer → CE class)
 
@@ -67,7 +69,7 @@ Git 写操作、fork、PR 文案 **不做**。只读审查走 `/ce-review`。
   `references/evidence-discipline.md`
 - Risk classification:
   `references/risk-classes.md`
-- Scenario ids (do not invent):
+- Scenario ids (catalog is the source of truth):
   `references/scenario-catalog.md`
 - Scenario infer (engine writes skeleton):
   `references/scenario-infer.md`, `capabilities/ce-scenario-infer/METHOD.md`

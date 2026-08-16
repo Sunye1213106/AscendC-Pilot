@@ -46,6 +46,8 @@ Skill 是自包含的 runtime method bundle。修改 `skills/<domain>/SKILL.md`�
 python scripts/check_skill_architecture.py
 ```
 
+认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。开发 Pilot 本仓的 grilling / TDD / 诊断 / PR 审查放在 `.cursor/skills/`，不要写进 `agents/*.yaml` 的 `skill_ids`，compose 也不会投影它们。改 agent 向文档时读 `.cursor/skills/writing-for-pilot-skills`。共享语言改 `agents/CONTEXT.md`。这些维护者 skill 吸收了 [mattpocock/skills](https://github.com/mattpocock/skills) 的写法（grilling、缝上的 TDD、双轴 review、CONTEXT），没有把 `/implement` 装进算子主控。
+
 ## 新增 Engine、Capability 或 Host Adapter
 
 Engine 放在 `engines/<name>/`，应有 package metadata、测试和需要时的 CLI entry point；若 Pilot 需要授权它，则新增 deterministic identity 并把 action 接入 workflow。Capability 应描述可调用的工具或 runtime 方法合同，而非承载领域解释。

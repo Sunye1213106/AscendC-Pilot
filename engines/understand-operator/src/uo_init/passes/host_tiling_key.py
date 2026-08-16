@@ -17,7 +17,7 @@ from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknow
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
-from uo_init.passes.source_contract import iter_packing_helper_calls
+from uo_init.passes.source_contract import iter_bitpack_dims, iter_packing_helper_calls
 from uo_init.passes.host_defuse import _compile_symbols, _is_compile_reference
 from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
 from uo_init.source_layout import quoted_include_basenames, selected_host_files
@@ -240,10 +240,15 @@ _CATALOG_KEY_PROVENANCE = {
     "source_tiling_key_constexpr",
     "source_set_tiling_key",
 }
+_DIM_KEY_PROVENANCE = {
+    "source_tpl_args_decl",
+    "source_packing_helper_arg",
+    "source_bitpack_dim",
+}
 
 
 def _catalog_keys(keys: list[Entity]) -> list[Entity]:
-    """Integer / TILING_KEY_IS catalog — not TPL dimension fields."""
+    """Integer / TILING_KEY_IS catalog — not packing dimension fields."""
     hits = [
         key
         for key in keys
@@ -251,7 +256,7 @@ def _catalog_keys(keys: list[Entity]) -> list[Entity]:
     ]
     if hits:
         return hits
-    if any(str(key.attrs.get("provenance") or "") == "source_tpl_args_decl" for key in keys):
+    if any(str(key.attrs.get("provenance") or "") in _DIM_KEY_PROVENANCE for key in keys):
         return []
     return list(keys)
 
@@ -366,6 +371,22 @@ def _bind_non_tpl_packing(
 
     for path, text in host_files:
         file = _rel(root, path)
+        for dim in iter_bitpack_dims(text):
+            key = key_by_name.get(dim["name"])
+            if key is None:
+                continue
+            if str(key.attrs.get("provenance") or "") != "source_bitpack_dim":
+                continue
+            expr = str(dim.get("expr") or "").strip()
+            if not expr:
+                continue
+            line = _line(text, int(dim["offset"]))
+            function = _containing_function(text, int(dim["offset"]))
+            calls += 1
+            bind(key, expr, file, line, function, "source_bitpack_dim")
+
+    for path, text in host_files:
+        file = _rel(root, path)
         for match in _ASSIGN_TILING_KEY_RE.finditer(text):
             rhs = match.group("rhs").strip()
             line = _line(text, match.start())
@@ -397,7 +418,7 @@ def _bind_non_tpl_packing(
                 for key in hits:
                     bind(key, expr, file, line, function, "source_set_tiling_key")
             elif re.search(r"\bGetTilingKey\s*\(", expr):
-                catalog = _catalog_keys(keys) or list(keys)
+                catalog = _catalog_keys(keys)
                 for key in catalog:
                     bind(key, expr, file, line, function, "source_set_tiling_key")
             else:
@@ -435,7 +456,7 @@ def _bind_non_tpl_packing(
                         if node is not None:
                             packed_nodes.append((key, node))
                 elif re.fullmatch(r"tilingKey_|tiling_key_", expr.strip()):
-                    catalog = _catalog_keys(keys) or list(keys)
+                    catalog = _catalog_keys(keys)
                     for key in catalog:
                         node = bind(key, expr, file, line, function, "source_get_tiling_key")
                         if node is not None:

@@ -1,5 +1,7 @@
 ﻿# 术语表
 
+Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../../agents/CONTEXT.md)。本页是人类全表。
+
 | Term | 含义 |
 | --- | --- |
 | ACP | AscendC-Pilot CLI（`acp`）与其控制面入口；见 [Agent Runtime](../architecture/agent-runtime.md)。 |

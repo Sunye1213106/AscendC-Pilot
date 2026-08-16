@@ -1080,6 +1080,388 @@ def _packing_dim_name(expr: str, index: int) -> str:
     return f"pack_arg_{index}"
 
 
+_BITPACK_ACC = r"(?:tilingKey_|tiling_key_|tilingKey)"
+_SHIFT_PACK_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*=\s*\(\s*(?P=acc)\s*<<\s*(?P<bw>\d+)\s*\)\s*\+\s*(?P<rhs>[^;]+);"
+)
+_TYPED_INIT_RE = re.compile(
+    rf"\b(?:(?:u?int(?:32|64)_t)|auto)\s+(?P<acc>{_BITPACK_ACC})\s*=\s*(?P<rhs>[^;]+);"
+)
+_PLUS_EQ_LIT_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*\+=\s*(?P<lit>\d+)[uUlL]*\s*;"
+)
+_PLUS_EQ_SCALE_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*\+=\s*(?P<rhs>[A-Za-z_]\w*\s*\*\s*[A-Za-z_]\w*)\s*;"
+)
+_CAST_WRAP_RE = re.compile(r"^static_cast\s*<[^>]+>\s*\((.*)\)\s*$", re.S)
+_CMP_LHS_RE = re.compile(r"^(.+?)\s*(?:==|!=)\s*.+$")
+_SCALE_LHS_RE = re.compile(r"^([A-Za-z_]\w*)\s*\*")
+_IF_IDENT_RE = re.compile(r"if\s*\(\s*!?\s*([A-Za-z_]\w*)\s*\)")
+_ACC_ASSIGN_LIT_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*=\s*(?P<lit>\d+)[uUlL]*\s*;"
+)
+_ACC_ASSIGN_MACRO_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*=\s*(?P<rhs>[A-Z][A-Z0-9_]*)\s*;"
+)
+_PLUS_EQ_SCALE_LIT_RE = re.compile(
+    rf"\b(?P<acc>{_BITPACK_ACC})\s*\+=\s*\(?\s*(?P<ident>[A-Za-z_]\w*)\s*\*\s*(?P<lit>\d+)[uUlL]*\s*\)?\s*;"
+)
+_HOST_FN_RE = re.compile(
+    r"(?:inline\s+|static\s+|virtual\s+|constexpr\s+)*"
+    r"[A-Za-z_][\w:<>,\s*&~]*?\s+"
+    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
+    r"\([^;{}]*\)\s*(?:const\s*)?(?:override\s*)?\{",
+    re.S,
+)
+_IF_OPEN_RE = re.compile(r"\bif\s*\(")
+_COND_PACK_SKIP = _PACKING_CAST_WORDS | {
+    "true",
+    "false",
+    "nullptr",
+    "NULL",
+    "ge",
+    "std",
+    "this",
+    "if",
+    "else",
+    "return",
+}
+
+
+def _unwrap_cast_expr(expr: str) -> str:
+    expr = expr.strip()
+    match = _CAST_WRAP_RE.match(expr)
+    if match:
+        return match.group(1).strip()
+    return expr
+
+
+def _bitpack_dim_name(expr: str, index: int) -> str:
+    inner = _unwrap_cast_expr(expr)
+    cmp_match = _CMP_LHS_RE.match(inner)
+    if cmp_match:
+        return _packing_dim_name(cmp_match.group(1).strip(), index)
+    scale_match = _SCALE_LHS_RE.match(inner)
+    if scale_match:
+        return scale_match.group(1)
+    return _packing_dim_name(inner, index)
+
+
+def _unique_dim_name(name: str, used: set[str], index: int) -> str:
+    if name not in used:
+        used.add(name)
+        return name
+    alt = f"{name}_{index}"
+    used.add(alt)
+    return alt
+
+
+def _decimal_place(value: int) -> int:
+    value = abs(int(value))
+    if value == 0:
+        return -1
+    place = 0
+    while value % 10 == 0:
+        value //= 10
+        place += 1
+    return place
+
+
+def _cond_pack_ident(cond: str) -> str | None:
+    for tok in re.findall(r"[A-Za-z_]\w*", cond or ""):
+        if tok not in _COND_PACK_SKIP:
+            return tok
+    return None
+
+
+_FN_NAME_SKIP = {"if", "else", "while", "for", "switch", "catch"}
+
+
+def _iter_fn_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    for match in _HOST_FN_RE.finditer(text):
+        name = match.group("name").split("::")[-1]
+        if name in _FN_NAME_SKIP:
+            continue
+        open_brace = match.end() - 1
+        close = _matching_brace(text, open_brace)
+        if close > open_brace:
+            spans.append((open_brace, close))
+    return spans or [(0, len(text))]
+
+
+def _if_bodies(text: str, start: int, end: int) -> list[tuple[int, int, str]]:
+    """Innermost-friendly list of ``if`` bodies in ``text[start:end]``."""
+    out: list[tuple[int, int, str]] = []
+    pos = start
+    while pos < end:
+        match = _IF_OPEN_RE.search(text, pos, end)
+        if not match:
+            break
+        open_par = match.end() - 1
+        close_par = _matching_paren(text, open_par)
+        if close_par < 0 or close_par >= end:
+            break
+        cond = text[open_par + 1 : close_par]
+        cursor = close_par + 1
+        while cursor < end and text[cursor] in " \t\r\n":
+            cursor += 1
+        if cursor < end and text[cursor] == "{":
+            close_brace = _matching_brace(text, cursor)
+            if close_brace < 0 or close_brace > end:
+                break
+            out.append((cursor, close_brace, cond))
+        else:
+            semi = text.find(";", cursor, end)
+            if semi < 0:
+                break
+            out.append((cursor, semi, cond))
+        pos = close_par + 1
+    return out
+
+
+def _innermost_if_cond(bodies: list[tuple[int, int, str]], offset: int) -> str | None:
+    covering = [item for item in bodies if item[0] <= offset <= item[1]]
+    if not covering:
+        return None
+    covering.sort(key=lambda item: item[1] - item[0])
+    return covering[0][2]
+
+
+def _iter_literal_pack_dims(text: str) -> list[dict[str, Any]]:
+    """Host ``if (axis) tilingKey += LITERAL`` decimal-field packing axes.
+
+    Distinct controlling identifiers become dimensions only when the literals
+    occupy at least two decimal places. A named-macro catalog plus ``+= 1``
+    is not a multi-axis pack.
+    """
+    best: list[dict[str, Any]] = []
+    for start, end in _iter_fn_spans(text):
+        body = text[start : end + 1]
+        abs_start = start
+        if _ACC_ASSIGN_MACRO_RE.search(body):
+            continue
+        if_bodies = _if_bodies(text, start, end)
+        grouped: dict[str, dict[str, Any]] = {}
+        places: set[int] = set()
+
+        def _note(name: str, offset: int, expr: str, lit: int) -> None:
+            if not name:
+                return
+            place = _decimal_place(lit)
+            if place >= 0:
+                places.add(place)
+            slot = grouped.setdefault(
+                name,
+                {"name": name, "expr": expr, "offset": offset, "lits": []},
+            )
+            if offset < int(slot["offset"]):
+                slot["offset"] = offset
+                slot["expr"] = expr
+            if lit:
+                slot["lits"].append(lit)
+
+        for match in _PLUS_EQ_LIT_RE.finditer(body):
+            lit = int(match.group("lit"))
+            if lit == 0:
+                continue
+            abs_off = abs_start + match.start()
+            ident = _cond_pack_ident(_innermost_if_cond(if_bodies, abs_off) or "")
+            if ident:
+                _note(ident, abs_off, ident, lit)
+        for match in _ACC_ASSIGN_LIT_RE.finditer(body):
+            lit = int(match.group("lit"))
+            if lit == 0:
+                continue
+            abs_off = abs_start + match.start()
+            ident = _cond_pack_ident(_innermost_if_cond(if_bodies, abs_off) or "")
+            if ident:
+                _note(ident, abs_off, ident, lit)
+        for match in _PLUS_EQ_SCALE_LIT_RE.finditer(body):
+            ident = match.group("ident")
+            lit = int(match.group("lit"))
+            abs_off = abs_start + match.start()
+            cond_ident = _cond_pack_ident(_innermost_if_cond(if_bodies, abs_off) or "")
+            _note(cond_ident or ident, abs_off, ident, lit)
+
+        names = [name for name, slot in grouped.items() if slot["lits"]]
+        if len(names) < 2 or len(places) < 2:
+            continue
+        names.sort(key=lambda name: int(grouped[name]["offset"]))
+        dims = [
+            {
+                "name": name,
+                "expr": grouped[name]["expr"],
+                "bw": 0,
+                "offset": grouped[name]["offset"],
+                "bit_lo": None,
+                "bit_hi": None,
+            }
+            for name in names
+        ]
+        if len(dims) > len(best):
+            best = dims
+    return best
+
+
+def iter_bitpack_dims(text: str) -> list[dict[str, Any]]:
+    """Host packing *axes*: shift-chain, weighted-add, or if-gated decimal fields.
+
+    These are TilingKey *dimensions*, not the expanded ``TILING_KEY_IS`` catalog.
+    A lone ``tilingKey_ = NAMED_KEY; tilingKey_ += 1`` is not a pack chain.
+    """
+    shifts = list(_SHIFT_PACK_RE.finditer(text))
+    if shifts:
+        acc = shifts[0].group("acc")
+        chain = [m for m in shifts if m.group("acc") == acc]
+        if not chain:
+            return []
+        first = chain[0].start()
+        init_rhs = None
+        init_off = 0
+        for init in _TYPED_INIT_RE.finditer(text[:first]):
+            if init.group("acc") != acc:
+                continue
+            rhs = init.group("rhs").strip()
+            if re.fullmatch(r"\d+[uUlL]*", rhs):
+                continue
+            if "<<" in rhs:
+                continue
+            init_rhs = rhs
+            init_off = init.start()
+        dims: list[dict[str, Any]] = []
+        used: set[str] = set()
+        if init_rhs:
+            name = _unique_dim_name(_bitpack_dim_name(init_rhs, 0), used, 0)
+            dims.append({"name": name, "expr": init_rhs, "bw": 1, "offset": init_off})
+        for index, match in enumerate(chain, start=len(dims)):
+            rhs = match.group("rhs").strip()
+            name = _unique_dim_name(_bitpack_dim_name(rhs, index), used, index)
+            dims.append(
+                {
+                    "name": name,
+                    "expr": rhs,
+                    "bw": int(match.group("bw")),
+                    "offset": match.start(),
+                }
+            )
+        last = chain[-1].end()
+        window = text[last : last + 400]
+        plus = _PLUS_EQ_LIT_RE.search(window)
+        if plus and plus.group("acc") == acc:
+            prefix = text[max(0, last + plus.start() - 120) : last + plus.start()]
+            ident = _IF_IDENT_RE.findall(prefix)
+            name = ident[-1] if ident else f"pack_flag_{plus.group('lit')}"
+            name = _unique_dim_name(name, used, len(dims))
+            dims.append(
+                {
+                    "name": name,
+                    "expr": plus.group(0).strip(),
+                    "bw": 0,
+                    "offset": last + plus.start(),
+                }
+            )
+        if len(dims) < 2:
+            return []
+        cursor = 0
+        for dim in reversed(dims):
+            bw = max(int(dim["bw"]), 1) if dim["bw"] else 0
+            if bw:
+                dim["bit_lo"] = cursor
+                dim["bit_hi"] = cursor + bw - 1
+                cursor = dim["bit_hi"] + 1
+            else:
+                dim["bit_lo"] = None
+                dim["bit_hi"] = None
+        return dims
+
+    scales = list(_PLUS_EQ_SCALE_RE.finditer(text))
+    if len(scales) >= 2:
+        acc = scales[0].group("acc")
+        chain = [m for m in scales if m.group("acc") == acc]
+        raw_names = [_bitpack_dim_name(m.group("rhs").strip(), i) for i, m in enumerate(chain)]
+        if len(chain) >= 2 and len(set(raw_names)) >= 2:
+            dims = []
+            used: set[str] = set()
+            for index, match in enumerate(chain):
+                rhs = match.group("rhs").strip()
+                name = _unique_dim_name(raw_names[index], used, index)
+                dims.append(
+                    {
+                        "name": name,
+                        "expr": rhs,
+                        "bw": 0,
+                        "offset": match.start(),
+                        "bit_lo": None,
+                        "bit_hi": None,
+                    }
+                )
+            return dims
+
+    return _iter_literal_pack_dims(text)
+
+
+def _parse_bitpack_tiling_keys(
+    codemap: CodeMap, root: Path, architecture: str
+) -> list[str]:
+    """Mint packing *dimensions* from host bit-pack / weighted-add / decimal-field chains."""
+    best: list[dict[str, Any]] | None = None
+    site: Path | None = None
+    for path in selected_host_files(root, architecture):
+        try:
+            text = _read(path)
+        except OSError:
+            continue
+        dims = iter_bitpack_dims(text)
+        if not dims:
+            continue
+        if best is None or len(dims) > len(best):
+            best = dims
+            site = path
+    if not best or site is None:
+        return []
+    text = _read(site)
+    declared: list[str] = []
+    for order, dim in enumerate(best):
+        name = dim["name"]
+        declared.append(name)
+        line = _line_of(text, int(dim["offset"]))
+        bw = int(dim.get("bw") or 0)
+        attrs: dict[str, Any] = {
+            "source_declared": True,
+            "provenance": "source_bitpack_dim",
+            "decl_order": order,
+            "decl_kind": "uint",
+            "host_packing_expressions": [dim["expr"]],
+        }
+        if bw:
+            attrs["bit_width"] = bw
+            attrs["bw"] = bw
+        if dim.get("bit_lo") is not None:
+            attrs["bit_lo"] = dim["bit_lo"]
+            attrs["bit_hi"] = dim["bit_hi"]
+            attrs["bit_offset"] = dim["bit_lo"]
+        existing = codemap.by_name(name, kind=EntityKind.TILING_KEY)
+        if existing:
+            ent = existing[0]
+            ent.attrs.update(attrs)
+            ent.file = _rel(root, site)
+            ent.line_start = line
+            ent.line_end = line
+            ent.status = "confirmed"
+            ent.confidence = 1.0
+        else:
+            codemap.upsert(
+                EntityKind.TILING_KEY,
+                name,
+                attrs=attrs,
+                file=_rel(root, site),
+                line=line,
+                status="confirmed",
+            )
+    return declared
+
+
 def _collect_packed_key_catalog(root: Path, architecture: str) -> list[str]:
     """``TILING_KEY_IS`` packed values are the legal-key set, not dimensions."""
     names: list[str] = []
@@ -1149,6 +1531,9 @@ def _parse_fallback_tiling_keys(
     helper_keys = _parse_packing_helper_keys(codemap, root, architecture)
     if helper_keys:
         return helper_keys
+    bitpack_keys = _parse_bitpack_tiling_keys(codemap, root, architecture)
+    if bitpack_keys:
+        return bitpack_keys
     found: list[tuple[str, Path, int, str, int | None]] = []
     seen: set[str] = set()
     kernel_files = list(selected_kernel_files(root, architecture))
@@ -1789,7 +2174,8 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
     packing_dims = [
         e
         for e in keys.values()
-        if str(e.attrs.get("provenance") or "") == "source_packing_helper_arg"
+        if str(e.attrs.get("provenance") or "")
+        in {"source_packing_helper_arg", "source_bitpack_dim"}
     ]
     for path in _kernel_candidates(root, architecture):
         text = _read(path)

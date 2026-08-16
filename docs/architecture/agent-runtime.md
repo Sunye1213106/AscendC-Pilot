@@ -116,7 +116,7 @@ User intent -> pilot_run / acp start
             -> acp dispatch-result   # finalize + 继续 drive
 ```
 
-**只读查询是例外**：`uo-query` 不是 Session Driver 工作流。主控在当前会话做可见分类，再自己 `acp uo-query` 或原生 `Task(agent=uo-query)`。Host 不 `start`、不发 ticket、不 `finalize`。
+**只读查询是例外**：`uo-query` 不是 Session Driver 工作流。主控在当前会话做可见分类：短问自己 `acp uo-query`，深问原生 `Task(agent=uo-query)`，禁止把深问改成主控连查。Host 不 `start`、不发 ticket、不 `finalize`。
 
 ---
 
@@ -265,7 +265,7 @@ acp start
 
 **人话与 Goal**：Primary 对用户的总结 / AskQuestion / 进度必须带意图与动作（见 `human-voice-invariants.md`）；禁止把 referee 黑话贴给用户。全量 tilingkey case 产品目标串联 init→plan→solve，不把 NL 塞进 `acp route`。Todo 同步与 `return_value` finalize 由 Driver 持有，不要求模型再实现一遍。
 
-Host 侧（以 OpenCode 为例）在工具真正执行前走 `serve-authorize`（或 `authorize`）。常见拒绝：直调领域脚本、用 bash 乱写 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了**当前 Host 阶段未声明**的子代理（`uo-query` 除外：它不是 Host 工作流，主控可见路由后随时可 Task）、子代理调用 OpenCode `skill`。默认 bash 优先走 `acp *` 与只读探查；其他 shell 对主控多为 `ask`。MCP 不拦截。子会话身份靠 session ticket（childSessionID↔actor↔action↔lease），不靠猜环境变量。OpenCode 原生 `skill` 依赖 rg 抽样 skill 目录，缺 rg 或 spawn 失败会把已找到的 skill 变成 `ripgrep execution failed`。插件 **覆盖** `skill` 工具：直接 Read 已安装 `SKILL.md`，不 spawn rg；同时把 `rg.exe` 种到 OpenCode 的 **cache** bin（`%LOCALAPPDATA%/opencode/bin` 与 `~/.cache/opencode/bin`，不只是 `~/.local/share/opencode/bin`），并把该目录 prepend 到 PATH，让 Grep/Glob 也能用。Task 子代的 bash PATH 更瘦：插件把缓存的 `acp.exe` 所在目录（`~/.config/opencode/ascendc-harness-bin` 指向的 Scripts）也 prepend 进去，否则子代 `acp uo-query` 会 `NotFound`，然后去 MCP / 乱 Read。`uo-query` 子代**没有** Host 物化的 session `prompt.md`：Task prompt 就是任务正文，直接 `acp uo-query --project`。**AscendC-Pilot 模式（主控与子代）对任意目录 Read 不弹 OpenCode 确认**：`permission.read` / `external_directory` 均为 `allow`。Host 工作区是 Pilot 仓、算子包在仓外。Write/edit 仍 ask。Build/Plan Tab 不改。
+Host 侧（以 OpenCode 为例）在工具真正执行前走 `serve-authorize`（或 `authorize`）。常见拒绝：直调领域脚本、用 bash 乱写 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了**当前 Host 阶段未声明**的子代理（`uo-query` 除外：它不是 Host 工作流，主控可见路由后随时可 Task）、子代理调用 OpenCode `skill`。默认 bash 优先走 `acp *` 与只读探查；其他 shell 对主控多为 `ask`。MCP 不拦截。子会话身份靠 session ticket（childSessionID↔actor↔action↔lease），不靠猜环境变量。OpenCode 原生 `skill` 依赖 rg 抽样 skill 目录，缺 rg 或 spawn 失败会把已找到的 skill 变成 `ripgrep execution failed`。插件 **覆盖** `skill` 工具：直接 Read 已安装 `SKILL.md`，不 spawn rg；同时把 `rg.exe` 种到 OpenCode 的 **cache** bin（`%LOCALAPPDATA%/opencode/bin` 与 `~/.cache/opencode/bin`，不只是 `~/.local/share/opencode/bin`），并把该目录 prepend 到 PATH，让 Grep/Glob 也能用。OpenCode 1.18 Windows bash 会选裸 `cmd.exe`，Effect spawn 把整行 `acp …` 当成可执行文件 → `NotFound: ChildProcess.spawn`。子代不要走 bash：插件暴露 `acp` 工具，内部 `spawnSync(绝对路径 acp.exe, shell:false)`，与 `pilot_run` 同一条路。`uo-query` 子代**没有** Host 物化的 session `prompt.md`：Task prompt 就是任务正文，直接 `acp` 工具 `command=uo-query --project …`。**AscendC-Pilot 模式（主控与子代）对任意目录 Read 不弹 OpenCode 确认**：`permission.read` / `external_directory` 均为 `allow`。Host 工作区是 Pilot 仓、算子包在仓外。Write/edit 仍 ask。Build/Plan Tab 不改。
 
 LLM Action 端到端：
 
@@ -285,14 +285,17 @@ prepare（物化 method.md / refs + Bundle 读闭合）
 ```text
 主控（operator-analysis skill）——先对人说出路由
 ├── 短问：当前会话 acp uo-query --mode，把 stdout 说给人听
-├── 深问单域：Task(agent=uo-query) × 1（点卡片看思考）
-└── 深问多域：同一轮 Task(agent=uo-query) × N，返回后主控综合
+├── 深问单域：METHOD 一行 → Task(agent=uo-query) × 1（点卡片看思考）
+└── 深问多域：METHOD ≥2 行 → 同一轮 Task(agent=uo-query) × N，返回后主控综合
+         └── 相关 ≠ 单域；禁止「一条因果链更连贯」收成 1 路
+         └── 每个 Task 写 FIRST_QUERY；综合未闭合再开一轮（FOCUS=缺口），禁止问「要不要继续」
 ```
 
-- **短问**：一名字、一 mode、一两跳。不派子代理。
-- **深问**：主控自己拆 FOCUS；每个 Task prompt 写清本片只答什么 + 绝对 `--project`。不以 Host `task_prompt_stub` 为准。
+- **短问**：一名字、一 mode、一两跳。不派子代理。一次 `acp` stdout 答完。
+- **深问**：主控按 METHOD 行拆独立搜索空间；每个 Task 只带本片 FOCUS + `FIRST_QUERY` + 本片那一句 + 绝对 `--project`。禁止把整题丢给一个子代理再转述。不以 Host `task_prompt_stub` 为准。**禁止**把深问降成主控自查。相关 ≠ 单域。
 - **Delegated Task**（TG/CE 需要读图时）：直接 `Task(actor=uo-query)`，不要再套 `/uo-query` lifecycle。共用同一 Agent / METHOD。
 - Parent **必须**传入算子绝对路径（`--project`）与 architecture（已有 `.uo`）；禁止子代理 Glob 找 `.uo`。子答 `UNKNOWN`/`PARTIAL` 不得抬成 high；禁止跨 architecture 证据闭合。
+- **综合未闭合不得收工**：任一子代 PARTIAL / 未闭合 / 互相矛盾 / 跳过 CodeMap 时，主控必须再派一轮 Task（FOCUS=缺口），直到原问能结案或明确列出缺的 span。禁止问「要不要继续」。禁止主控改自查收工。
 
 确定性 Action 跳过 Task：prepare 后由 Pilot 调度 Engine，再 finalize。
 

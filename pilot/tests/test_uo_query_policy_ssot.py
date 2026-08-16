@@ -66,6 +66,25 @@ def test_uo_query_visible_router_ssot() -> None:
     assert "先对人说出路由" in skill
     assert "同一轮" in skill
     assert "综合" in skill
+    assert "相关 ≠ 单域" in skill
+    assert "更连贯" in skill
+    assert "FIRST_QUERY" in skill
+    assert "整题" in skill
+    assert "Q6" not in skill
+    assert "Q7" not in skill
+    assert "Q18" not in skill
+    assert "整题" in policy
+    assert "整题" in command_src
+    assert "kernel_launch" in method
+    assert "search" in method and "ProcessVec" in method
+    assert "FIRST_QUERY" in method
+    assert "相关 ≠ 单域" in policy
+    assert "FIRST_QUERY" in policy
+    assert "related ≠ 单域" in invariant
+    assert "FIRST_QUERY" in invariant
+    assert "相关 ≠ 单域" in command_src
+    assert "FIRST_QUERY" in command_src
+    assert "相关 ≠ 单域" in docs
     assert "SLICE_ID" in method
     assert "可见 LLM 路由" in policy
     assert "禁止" in policy and "pilot_run" in policy
@@ -74,6 +93,7 @@ def test_uo_query_visible_router_ssot() -> None:
     assert "不要 `pilot_run`" in command_src
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "primary_router" in driver
+    assert 'startedKind === "primary_router"' in driver
     assert "perm.task = \"allow\"" in hook
     assert "可见 LLM 路由" in docs or "可见分类" in docs
     assert "host_step.tasks" in invariant  # still for TG/CE Host dispatch

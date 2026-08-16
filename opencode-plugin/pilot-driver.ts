@@ -1475,10 +1475,16 @@ export async function runPilotDriver(
       String(payload.decision || "") === "query" ||
       String(payload.next_workflow_id || "") === "uo-query"
     ) {
-      workflow = "uo-query"
-      applyForceNew = false
-      lastResumeDecision = ""
-      payload = await startOnce()
+      const messageZh =
+        "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
+        "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `acp uo-query` 或 Task(agent=`uo-query`)。" +
+        "不要 pilot_run / acp start uo-query。"
+      return {
+        ok: true,
+        reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
+        host_step: { kind: "primary_router", message_zh: messageZh },
+        message_zh: messageZh,
+      }
     }
     const logAcc: Array<Record<string, unknown>> = [
       { event: "start", ok: isAcpStartSuccess(payload), workflow },
@@ -1513,8 +1519,9 @@ export async function runPilotDriver(
       const archChoice = String(asked.architecture_choice || "")
       if (decision === "query") {
         const messageZh =
-          "查询不是 Host 工作流。先对人说出路由（短问自查 / 几个 uo-query 子代理），" +
-          "再自己跑 `acp uo-query` 或原生 Task(agent=`uo-query`)。不要 pilot_run uo-query。"
+          "上一场建库已经完成，产物锁已释放。新会话直接查询即可，不是卡住。" +
+          "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `acp uo-query` 或 Task(agent=`uo-query`)。" +
+          "不要 pilot_run / acp start uo-query。"
         return {
           ok: true,
           reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
@@ -1571,7 +1578,16 @@ export async function runPilotDriver(
         todo: (live as Record<string, unknown>).todo,
       }
     : await consumeStartAsks(await startOnce())
-  if (started.answer_from_source === true || String((started.host_step as HostStep | undefined)?.kind || "") === "answer_from_source") {
+  const startedKind = String((started.host_step as HostStep | undefined)?.kind || "")
+  if (started.answer_from_source === true || startedKind === "answer_from_source") {
+    return started
+  }
+  // leftover「去查询」returns ok:true + primary_router; must not enter auto-drive.
+  if (
+    startedKind === "primary_router" ||
+    String(started.reason_code || "") === "UO_QUERY_NOT_HOST_DRIVEN"
+  ) {
+    reporter?.setStatus("done")
     return started
   }
   // Answered AskQuestion blobs still carry ask_question; do not treat them as start-failed.
@@ -1694,23 +1710,18 @@ export async function runPilotDriver(
           continue
         }
         if (decision === "query") {
-          workflow = "uo-query"
-          applyForceNew = false
-          const switched = await consumeStartAsks(await startOnce())
-          if (isHumanDecision(switched)) return switched
-          if (!isAcpStartSuccess(switched)) {
-            reporter?.setStatus("fail")
-            return {
-              ok: false,
-              host_step: {
-                kind: "failed",
-                message_zh: String(switched.message_zh || switched.error || "start uo-query failed"),
-              },
-              log,
-            }
+          reporter?.setStatus("done")
+          const messageZh =
+            "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
+            "先对人说出路由，再 `acp uo-query` 或 Task(agent=`uo-query`)。不要 pilot_run uo-query。"
+          return {
+            ok: true,
+            reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
+            host_step: { kind: "primary_router", message_zh: messageZh },
+            message_zh: messageZh,
+            log,
+            todo: todoPayload,
           }
-          pendingTodo = switched.todo
-          continue
         }
         const actionId = String(step.action_id || asked.action_id || "")
         if (actionId && decision !== "reinit" && decision !== "continue") {

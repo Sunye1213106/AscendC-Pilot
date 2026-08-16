@@ -286,3 +286,39 @@ def test_set_tiling_key_of_get_tiling_key_is_not_a_packing_formula(tmp_path: Pat
         if e.kind_name() == EntityKind.COMPILE_VAR.value and e.attrs.get("compile_root")
     ]
     assert compile_roots
+
+
+def test_bitpack_dims_bind_field_exprs_not_passthrough(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    host = op / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        "void SetKey() {\n"
+        "  uint64_t tilingKey = static_cast<uint64_t>(inDtype == ge::DT_BF16);\n"
+        "  tilingKey = (tilingKey << 2) + static_cast<uint64_t>(param.cacheMode);\n"
+        "  context->SetTilingKey(tilingKey);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for i, name in enumerate(("inDtype", "cacheMode")):
+        cm.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs={
+                "source_declared": True,
+                "provenance": "source_bitpack_dim",
+                "decl_order": i,
+            },
+        )
+    cm.meta["source_declared_tiling_keys"] = ["inDtype", "cacheMode"]
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 2
+    in_dtype = cm.by_name("inDtype", kind=EntityKind.TILING_KEY)[0]
+    cache = cm.by_name("cacheMode", kind=EntityKind.TILING_KEY)[0]
+    assert any("inDtype" in e for e in (in_dtype.attrs.get("host_packing_expressions") or []))
+    assert any("cacheMode" in e for e in (cache.attrs.get("host_packing_expressions") or []))
+    assert not any(
+        e.strip() == "tilingKey" for e in (in_dtype.attrs.get("host_packing_expressions") or [])
+    )

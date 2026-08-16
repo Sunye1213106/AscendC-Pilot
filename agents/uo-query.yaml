@@ -5,8 +5,9 @@ role: readonly_analyst
 mode: subagent
 description: >
   Readonly CodeMap lookup. The Task prompt is the task body — do not hunt
-  session prompt.md (query is not Host-prepared). Immediately `acp uo-query
-  --project <operator-abs> --mode`. Never MCP / Grep / findstr as a substitute.
+  session prompt.md (query is not Host-prepared). Immediately call the `acp`
+  tool: command=`uo-query --project <operator-abs> --mode`. Never bash.
+  Never MCP / Grep / findstr as a substitute.
   Answer in the final message like Cursor Explore (full prose + file:line).
   Do NOT finalize. Never write `.uo`.
 skill_ids: [operator-analysis]

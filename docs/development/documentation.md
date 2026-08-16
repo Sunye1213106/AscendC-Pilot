@@ -27,7 +27,7 @@
 
 ## Runtime Markdown 的边界
 
-人类项目说明集中在 `docs/`。会被 Agent、Composer 或 Harness 消费的 Markdown 必须留在 runtime 附近：`skills/*/SKILL.md`、skill references、`prompts/tasks/`、`pilot/policies/`、`pilot/runtime/`、examples 和 generated host instructions。
+人类项目说明集中在 `docs/`。会被 Agent、Composer 或 Harness 消费的 Markdown 必须留在 runtime 附近：`skills/*/SKILL.md`、skill references、`prompts/tasks/`、`pilot/policies/`、`pilot/runtime/`、`agents/CONTEXT.md`、examples 和 generated host instructions。`.cursor/skills/` 只给开发本仓的 agent 读，不进 host compose。
 
 不要在 `pilot/`、`agents/`、`engines/`、`skills/`、`prompts/`、`tools/`、`adapters/` 或 `evals/` 下新增 developer-facing README。根 `README.md`、`docs/**/README.md` 与 runtime example 所需 README 是例外。
 

@@ -22,8 +22,22 @@ User arguments: $ARGUMENTS
 1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
 2. **先对人说出路由**（短问自查 / 1 个 Task / N 路并行，以及为什么），再动手。
 3. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子绝对路径>`，把 stdout 说给人听。
-4. **深问**：同一轮原生 Task（agent=`uo-query`）。每个 prompt 写清 FOCUS + 用户原问 + 绝对 `--project`。N≥2 时并行全部返回后 Primary 综合。点卡片可看子代思考。
-5. 不要 `pilot_run`。
+4. **深问必须 Task**：METHOD≥2 行 / 多个独立结案条件 → 同一轮并行原生 Task（agent=`uo-query`）。切片看 METHOD 行数，相关 ≠ 单域。禁止「一条因果链 / 一个 agent 更连贯」收成 1 路。禁止把整题丢给一个子代理。禁止主控自己连 `acp`/Read。每个 prompt 只带 FOCUS + `FIRST_QUERY: acp uo-query --mode <本片唯一先查> --project <绝对路径>` + 本片那一句。全部返回后 Primary 综合。点卡片可看子代思考。
+5. 子代未闭合再开一轮 Task（FOCUS=缺口），不要改自查、不要问「要不要继续」。
+6. 不要 `pilot_run`。
+"""
+    if workflow_id == "uo-init":
+        return """Run the AscendC-Pilot workflow `uo-init` for the current operator project.
+
+User arguments: $ARGUMENTS
+
+Execution contract:
+1. Treat Workflow Spec / ACP as orchestration authority. Prefer Host `pilot_run` to start `uo-init` when it is not already the active workflow; do not call domain CLIs directly.
+2. If ACP returns `UO_ALREADY_READY` (CodeMap already exists, lock released): this is not an unfinished run. Present options verbatim. 「去查询」means stop Host drive and wait for a question — do not auto-drive, do not `pilot_run uo-query`, do not read quality.yaml as if you just built.
+3. After a real start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Fallback: `acp run-action auto` to drain consecutive deterministic Actions. Do not dispatch deterministic engine identities as OpenCode Tasks. Run `acp` directly with `--project`; never pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
+4. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
+5. Finalize the interactive Action through ACP, then call `acp run-action auto` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.
+6. Canonical UO/TG/CE artifacts and workflow state are written only through the declared actor + ACP finalizer/gates.
 """
     return f"""Run the AscendC-Pilot workflow `{workflow_id}` for the current operator project.
 

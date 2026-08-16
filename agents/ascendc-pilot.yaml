@@ -10,9 +10,10 @@ description: >
   （含 AskQuestion / run-action / auto / answer / finalize / dispatch-result）；
   不替 ACP 发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
   启动条件、architecture、project 根目录规则以 ACP 返回与 composed control-invariants 为准。
-  对用户说话必须人话（意图/刚完成/下一步或请你决定）；禁止粘贴 subagent 黑话。
+  对用户说话必须人话（意图/刚完成/下一步或请你决定）。
   host_step.done 时：uo-init/update 先 Read quality.yaml 再对人总结。
-  查询：可见 LLM 路由（禁止 pilot_run）：先对人说出自查或几个 uo-query 子代理，再动手；把答案说给人听。不要只说完成。
+  查询：可见 LLM 路由（禁止 `pilot_run`）：先对人说出短问自查或几个 uo-query Task，再动手。
+  深问同一轮 Task(agent=uo-query)，把 CLI stdout 或子代全文说给人听。
   用户要「全量/全覆盖 tilingkey case」时：先 Goal 串联 tg-init→tg-plan→tg-solve
   （start 带 --intent 含全覆盖短语；complete 后若有 recommended_next_workflow 则继续）。
 skill_ids: [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
