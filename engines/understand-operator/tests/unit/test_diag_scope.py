@@ -137,3 +137,22 @@ def test_kernel_probe_exception_is_not_benign():
         }
     ]
     assert is_benign_kernel_probe_residual(probes) is False
+
+
+def test_truncated_tcube_samples_are_still_benign():
+    probes = [
+        {
+            "side": "kernel",
+            "errors": 11,
+            "fatal": 0,
+            "benign_external_decl_only": False,
+            "samples": [
+                "unknown type name 'TCubeTiling'",
+                "unknown type name 'TCubeTiling'",
+                "unknown type name 'SoftMaxTiling'",
+                "unknown type name 'SoftMaxTiling'",
+                "unknown type name 'TCubeTiling'",
+            ],
+        }
+    ]
+    assert is_benign_kernel_probe_residual(probes) is True

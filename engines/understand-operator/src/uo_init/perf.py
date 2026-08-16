@@ -35,36 +35,38 @@ _T0 = time.perf_counter()
 
 
 class TimeBudget:
-    """Single deadline shared by every sub-scan of one pass."""
+    """Optional deadline for one pass. ``seconds <= 0`` means no deadline."""
 
     def __init__(self, seconds: float) -> None:
-        self.seconds = max(0.0, float(seconds))
-        self.deadline = time.perf_counter() + self.seconds
+        self.seconds = float(seconds)
+        if self.seconds <= 0:
+            self.deadline = float("inf")
+        else:
+            self.deadline = time.perf_counter() + self.seconds
 
     def remaining(self) -> float:
+        if self.deadline == float("inf"):
+            return float("inf")
         return max(0.0, self.deadline - time.perf_counter())
 
     def expired(self) -> bool:
-        return self.remaining() <= 0.0
+        return self.deadline != float("inf") and self.remaining() <= 0.0
 
 
 def kernel_root_trace_budget_s(profile: str | None = None) -> float:
-    """fast=30s, full=60s. ``UO_KERNEL_ROOT_TRACE_BUDGET_S`` still overrides."""
+    """Seconds before kernel_root_trace may stop filling. ``0`` = no cutoff.
+
+    Graph fill must not be truncated to hit a wall-clock target. Set
+    ``UO_KERNEL_ROOT_TRACE_BUDGET_S`` only when an explicit cap is required.
+    """
+    del profile  # profile no longer picks a default cutoff
     override = str(os.environ.get("UO_KERNEL_ROOT_TRACE_BUDGET_S") or "").strip()
     if override:
         try:
-            return max(1.0, float(override))
+            return float(override)
         except ValueError:
             pass
-    name = str(profile or os.environ.get("UO_INIT_PROFILE") or "fast").strip().lower()
-    if name in {"full", "complete", "all", "max"}:
-        raw = str(os.environ.get("UO_KERNEL_ROOT_TRACE_BUDGET_FULL") or "60").strip()
-    else:
-        raw = str(os.environ.get("UO_KERNEL_ROOT_TRACE_BUDGET_FAST") or "30").strip()
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        return 60.0 if name in {"full", "complete", "all", "max"} else 30.0
+    return 0.0
 
 
 def reset() -> None:

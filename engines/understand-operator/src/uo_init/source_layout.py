@@ -36,7 +36,7 @@ GLOBAL_KERNEL_RE = re.compile(
     r"(?:template\s*<(?P<tpl>[^>]{0,800})>\s*)?"
     r"(?:extern\s+\"C\"\s+)?"
     rf"{_KERNEL_QUALS}void\s+"
-    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^;{}]{0,4000})\)\s*\{",
+    r"(?P<name>[A-Za-z_]\w*)\s*\((?P<params>[^;{}]{0,16000})\)(?:\s|//[^\n]*)*\{",
 )
 KERNEL_ENTRY_NAME_RE = re.compile(rf"{_KERNEL_QUALS}void\s+([A-Za-z_]\w*)")
 

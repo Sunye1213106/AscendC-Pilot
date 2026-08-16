@@ -109,6 +109,11 @@ _KEEP_REL_PROVENANCE = {
     "source_register_tiling_for_key",
     "source_tiling_registration_verified",
     "source_get_tiling_data",
+    "source_tiling_key_is",
+    "source_packed_key_is_selects",
+    "source_packing_helper_selects",
+    "source_tpl_header_selects",
+    "source_single_kernel_selects",
 }
 _PURGE_REL_PROVENANCE = {
     "source_call_site",
@@ -182,6 +187,12 @@ def finalize_kernel_tiling_closure(
     read_stats = _rebuild_tiling_reads(codemap, scopes, td_index)
     write_stats = _rebuild_host_tiling_writes(codemap, root, host_texts, td_index)
     selected = _rebuild_tiling_selection(codemap, root, kernel_texts, td_index)
+
+    from uo_init.passes.source_contract import _link_tiling_key_kernel_selects
+
+    # Kernel identity is finalized here (masked signatures). Re-bind
+    # TILING_KEY_IS → KERNEL so catalog keys survive after the entry exists.
+    _link_tiling_key_kernel_selects(codemap, root, architecture)
 
     reachable = _entry_reachable(codemap)
     reachable_reads = _mark_reachable_reads(codemap, reachable)

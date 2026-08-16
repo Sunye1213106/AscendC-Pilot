@@ -336,19 +336,15 @@ def build_kernel_ir(
             macros=ctx.kernel_defines() if hasattr(ctx, "kernel_defines") else None,
         )
         mixed_assignment = gates.pick_mixed_orig_assignment(str(variants[0]))
-        # Fast caps dtype walks to 1; a second mixed-ORIG parse of the same
-        # multi-MB IFA TU doubles extract wall (~80s) while lexical fill still
-        # sees EnQue/DeQue. Full profile keeps the extra walk.
-        skip_mixed = max_variants is not None and 0 < int(max_variants) <= 1
-        if mixed_assignment and not skip_mixed:
+        # ORIG=1 / MIXED=1 gates hide EnQue/DataCopy behind a second parse of
+        # the same TU. Skipping it for speed left IFA with 13 operations.
+        if mixed_assignment:
             for entry in entries:
                 jobs.append((entry, variants[0], mixed_assignment))
             ir.notes.append(
                 "mixed_orig_walk="
                 + ",".join(f"{k}={v}" for k, v in sorted(mixed_assignment.items()))
             )
-        elif mixed_assignment and skip_mixed:
-            ir.notes.append("mixed_orig_walk=skipped_fast")
 
     import time as _time
     from uo_init.timing import log as _tlog

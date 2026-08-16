@@ -208,6 +208,23 @@ def test_kernel_entry_regex_accepts_qualifier_orders() -> None:
     assert KERNEL_ENTRY_NAME_RE.findall(text) == ["plain", "reversed", "classic"]
 
 
+def test_kernel_entry_regex_accepts_long_commented_abi_list() -> None:
+    params = ",\n".join(
+        f"                            GM_ADDR arg{i},  // input {i}: {'x' * 80}"
+        for i in range(16)
+    )
+    text = (
+        "extern \"C\" __global__ __aicore__ void\n"
+        f"inplace_fused_causal_conv1d({params},\n"
+        "                            GM_ADDR tiling)  // tiling\n"
+        "{\n"
+        "  if (TILING_KEY_IS(TILING_KEY_BH_BF16)) { return; }\n"
+        "}\n"
+    )
+    names = {m.group("name") for m in GLOBAL_KERNEL_RE.finditer(text)}
+    assert names == {"inplace_fused_causal_conv1d"}
+
+
 def test_tpl_sel_files_follow_entry_include_to_split_header(tmp_path: Path) -> None:
     op = tmp_path / "toy"
     _write(

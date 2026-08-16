@@ -21,7 +21,11 @@ from uo_init.passes.source_contract import iter_bitpack_dims, iter_packing_helpe
 from uo_init.passes.host_defuse import _compile_symbols, _is_compile_reference
 from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
 from uo_init.passes.source_text_cache import mask_cached, read_text
-from uo_init.source_layout import quoted_include_basenames, selected_host_files
+from uo_init.source_layout import (
+    _path_is_under,
+    quoted_include_basenames,
+    selected_host_files,
+)
 from uo_init.tpl_dsl import expand_tpl_source, load_quoted_include_texts
 from uo_init.cpp_lex import containing_function, iter_function_defs, line_at, line_index
 
@@ -105,108 +109,113 @@ def bind_host_tiling_key_expressions(
         for key in keys
         if key.file
     }
+    local_host = [(path, text) for path, text in host_files if _path_is_under(path, root)]
+    other_host = [(path, text) for path, text in host_files if not _path_is_under(path, root)]
 
-    for path, text in host_files:
-        file = _rel(root, path)
-        included = quoted_include_basenames(path)
-        other_tpl = {
-            name
-            for name in included
-            if ("tiling_key" in name or name.endswith("tilingkey.h"))
-            and schema_headers
-            and name not in schema_headers
-        }
-        if other_tpl and not (included & schema_headers) and _CALL_TOKEN not in text:
-            continue
-        key_provs = {str(e.attrs.get("provenance") or "") for e in keys}
-        for start, _end, args, helper_name in iter_packing_helper_calls(text):
-            if "source_tpl_args_decl" in key_provs and helper_name != _CALL_TOKEN:
+    def _bind_tpl_from_files(files: list[tuple[Path, str]]) -> None:
+        nonlocal calls
+        for path, text in files:
+            file = _rel(root, path)
+            included = quoted_include_basenames(path)
+            other_tpl = {
+                name
+                for name in included
+                if ("tiling_key" in name or name.endswith("tilingkey.h"))
+                and schema_headers
+                and name not in schema_headers
+            }
+            if other_tpl and not (included & schema_headers) and _CALL_TOKEN not in text:
                 continue
-            if "source_packing_helper_arg" in key_provs and helper_name == _CALL_TOKEN:
-                continue
-            calls += 1
-            line = _line(text, start)
-            function = _containing_function(text, start)
-            provenance = (
-                "source_get_tpl_tiling_key"
-                if helper_name == _CALL_TOKEN
-                else "source_packing_helper"
-            )
-            if len(args) != len(keys):
-                mismatches.append(
-                    {
+            key_provs = {str(e.attrs.get("provenance") or "") for e in keys}
+            for start, _end, args, helper_name in iter_packing_helper_calls(text):
+                if "source_tpl_args_decl" in key_provs and helper_name != _CALL_TOKEN:
+                    continue
+                calls += 1
+                line = _line(text, start)
+                function = _containing_function(text, start)
+                provenance = (
+                    "source_get_tpl_tiling_key"
+                    if helper_name == _CALL_TOKEN
+                    else "source_packing_helper"
+                )
+                if len(args) != len(keys):
+                    mismatches.append(
+                        {
+                            "file": file,
+                            "line": line,
+                            "argument_count": len(args),
+                            "declared_key_count": len(keys),
+                        }
+                    )
+                    continue
+                for index, (key, expr) in enumerate(zip(keys, args)):
+                    expr = expr.strip()
+                    node = codemap.upsert(
+                        EntityKind.PREDICATE,
+                        expr,
+                        eid=f"HOSTKEYEXPR::{file}::{line}::{index}",
+                        attrs={
+                            "predicate_role": "host_tiling_key_argument",
+                            "tiling_key": key.name,
+                            "argument_index": index,
+                            "expression": expr,
+                            "function": function,
+                            "provenance": provenance,
+                        },
+                        file=file,
+                        line=line,
+                        status="confirmed",
+                    )
+                    codemap.link(
+                        RelationKind.DERIVES,
+                        node.id,
+                        key.id,
+                        attrs={
+                            "provenance": provenance,
+                            "argument_index": index,
+                            "expression": expr,
+                            "file": file,
+                            "line": line,
+                            "function": function,
+                        },
+                        status="confirmed",
+                    )
+                    key.attrs.setdefault("host_packing_expressions", [])
+                    if expr not in key.attrs["host_packing_expressions"]:
+                        key.attrs["host_packing_expressions"].append(expr)
+                    site = {
                         "file": file,
                         "line": line,
-                        "argument_count": len(args),
-                        "declared_key_count": len(keys),
+                        "expression": expr[:300],
+                        "function": function,
                     }
-                )
-                continue
-            for index, (key, expr) in enumerate(zip(keys, args)):
-                expr = expr.strip()
-                node = codemap.upsert(
-                    EntityKind.PREDICATE,
-                    expr,
-                    eid=f"HOSTKEYEXPR::{file}::{line}::{index}",
-                    attrs={
-                        "predicate_role": "host_tiling_key_argument",
-                        "tiling_key": key.name,
-                        "argument_index": index,
-                        "expression": expr,
-                        "function": function,
-                        "provenance": provenance,
-                    },
-                    file=file,
-                    line=line,
-                    status="confirmed",
-                )
-                codemap.link(
-                    RelationKind.DERIVES,
-                    node.id,
-                    key.id,
-                    attrs={
-                        "provenance": provenance,
-                        "argument_index": index,
-                        "expression": expr,
-                        "file": file,
-                        "line": line,
-                        "function": function,
-                    },
-                    status="confirmed",
-                )
-                key.attrs.setdefault("host_packing_expressions", [])
-                if expr not in key.attrs["host_packing_expressions"]:
-                    key.attrs["host_packing_expressions"].append(expr)
-                site = {
-                    "file": file,
-                    "line": line,
-                    "expression": expr[:300],
-                    "function": function,
-                }
-                key.attrs.setdefault("packing_value_sites", [])
-                if site not in key.attrs["packing_value_sites"]:
-                    key.attrs["packing_value_sites"].append(site)
-                bound_names.add(key.name)
-                ambiguity = _link_expression_sources(
-                    codemap,
-                    node,
-                    expr,
-                    exact_index=exact_index,
-                    short_index=short_index,
-                    compile_symbols=compile_symbols,
-                    file=file,
-                    line=line,
-                    function=function,
-                    key_name=key.name,
-                )
-                if ambiguity:
-                    ambiguous_sources.append(ambiguity)
+                    key.attrs.setdefault("packing_value_sites", [])
+                    if site not in key.attrs["packing_value_sites"]:
+                        key.attrs["packing_value_sites"].append(site)
+                    bound_names.add(key.name)
+                    ambiguity = _link_expression_sources(
+                        codemap,
+                        node,
+                        expr,
+                        exact_index=exact_index,
+                        short_index=short_index,
+                        compile_symbols=compile_symbols,
+                        file=file,
+                        line=line,
+                        function=function,
+                        key_name=key.name,
+                    )
+                    if ambiguity:
+                        ambiguous_sources.append(ambiguity)
 
-    if len(bound_names) < len(keys):
+    def _bind_non_tpl_from_files(files: list[tuple[Path, str]]) -> None:
+        nonlocal calls
+        if len(bound_names) >= len(keys) or not files:
+            return
         extra_calls, extra_bound = _bind_non_tpl_packing(
             codemap,
             root,
-            host_files,
+            files,
             keys,
             bound_names,
             exact_index=exact_index,
@@ -215,6 +224,14 @@ def bind_host_tiling_key_expressions(
         )
         calls += extra_calls
         bound_names.update(extra_bound)
+
+    # This operator's host first. Sibling / 3rd-party GET_TPL often has a
+    # coincidental arity and must not zip onto a TILING_KEY_IS catalog.
+    _bind_tpl_from_files(local_host)
+    _bind_non_tpl_from_files(local_host)
+    if len(bound_names) < len(keys):
+        _bind_tpl_from_files(other_host)
+        _bind_non_tpl_from_files(other_host)
 
     codemap.meta["host_tiling_key_packing"] = {
         "calls": calls,
@@ -231,7 +248,7 @@ def bind_host_tiling_key_expressions(
 _RETURN_RE = re.compile(r"\breturn\s+([^;]+);")
 _GET_TILING_KEY_NAME_RE = re.compile(r"GetTilingKey\s*$")
 _ASSIGN_TILING_KEY_RE = re.compile(
-    r"\b(?P<lhs>tilingKey_|tiling_key_)\s*(?:\+=|=)\s*(?P<rhs>[^;]+);"
+    r"\b(?P<lhs>tilingKey_|tiling_key_|tilingKey)\s*(?:\+=|=)\s*(?P<rhs>[^;]+);"
 )
 _CATALOG_KEY_PROVENANCE = {
     "source_tiling_key_is",

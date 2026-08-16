@@ -324,7 +324,13 @@ def audit_codemap(codemap: CodeMap) -> dict[str, Any]:
     if kernels and not strict_path:
         block("MISSING_EVIDENCE_BACKED_HOST_KERNEL_PATH", "no semantic INPUT→…→KERNEL path; node presence alone is insufficient")
     if inputs and keys and kernels and not input_key_kernel:
-        block("MISSING_INPUT_TILINGKEY_KERNEL_PATH", "no source-backed INPUT→…→TILING_KEY→…→KERNEL selection path")
+        key_to_kernel = _path_exists(
+            codemap, start_kind=EntityKind.TILING_KEY, end_kind=EntityKind.KERNEL
+        )
+        # Dtype / compile-rooted keys never flow from INPUT. KEY→KERNEL plus
+        # INPUT→KERNEL is still a source-backed selection path.
+        if not (strict_path and key_to_kernel):
+            block("MISSING_INPUT_TILINGKEY_KERNEL_PATH", "no source-backed INPUT→…→TILING_KEY→…→KERNEL selection path")
     if tiling_data and kernels and not tdata_kernel:
         block("MISSING_TILINGDATA_KERNEL_PATH", "TilingData is present but no source-backed TILING_DATA→KERNEL consumption path exists")
     if inputs and outputs and kernels and not input_output:

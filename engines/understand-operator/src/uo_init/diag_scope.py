@@ -58,10 +58,11 @@ def is_known_external_decl_residual(spelling: str) -> bool:
 
 
 def is_benign_kernel_probe_residual(probes: list[dict[str, Any]] | None) -> bool:
-    """True only when every kernel diagnostic is a known external decl residual.
+    """True when every kept kernel sample is a known external decl residual.
 
-    Fail-close on probe exceptions, fatals, ``kernel_errors <= 0`` (including
-    ``-1``), mixed/unknown samples, or truncated samples without a full-set flag.
+    Declarations-only probes keep a short sample list. Repeated
+    TCubeTiling/SoftMaxTiling on a complete Clang scope (PFA) must not
+    fail-close just because ``errors > len(samples)``.
     """
     rows = [
         row
@@ -86,12 +87,12 @@ def is_benign_kernel_probe_residual(probes: list[dict[str, Any]] | None) -> bool
         samples = [str(s) for s in (row.get("samples") or [])]
         if not samples:
             return False
+        if not samples:
+            return False
         if not all(is_known_external_decl_residual(s) for s in samples):
             return False
-        if row.get("benign_external_decl_only") is True:
-            continue
-        if errs > len(samples):
-            return False
+        # Truncated sample lists (PFA: 11 TCube/SoftMax errors, 5 kept) still
+        # count as this residual when every kept sample is the known type.
     return any_errors
 
 

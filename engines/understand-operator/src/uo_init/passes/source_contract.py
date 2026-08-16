@@ -20,6 +20,7 @@ from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
+    _path_is_under,
     follow_repo_includes,
     quoted_include_basenames,
     selected_host_files,
@@ -1404,12 +1405,17 @@ def iter_bitpack_dims(text: str) -> list[dict[str, Any]]:
 
 
 def _parse_bitpack_tiling_keys(
-    codemap: CodeMap, root: Path, architecture: str
+    codemap: CodeMap,
+    root: Path,
+    architecture: str,
+    *,
+    paths: list[Path] | None = None,
 ) -> list[str]:
     """Mint packing *dimensions* from host bit-pack / weighted-add / decimal-field chains."""
     best: list[dict[str, Any]] | None = None
     site: Path | None = None
-    for path in selected_host_files(root, architecture):
+    host_paths = list(paths) if paths is not None else list(selected_host_files(root, architecture))
+    for path in host_paths:
         try:
             text = _read(path)
         except OSError:
@@ -1481,13 +1487,27 @@ def _collect_packed_key_catalog(root: Path, architecture: str) -> list[str]:
     return names
 
 
+def _local_source_files(root: Path, files: list[Path]) -> list[Path]:
+    return [path for path in files if _path_is_under(path, root)]
+
+
+def _foreign_source_files(root: Path, files: list[Path]) -> list[Path]:
+    return [path for path in files if not _path_is_under(path, root)]
+
+
 def _parse_packing_helper_keys(
-    codemap: CodeMap, root: Path, architecture: str
+    codemap: CodeMap,
+    root: Path,
+    architecture: str,
+    *,
+    paths: list[Path] | None = None,
 ) -> list[str]:
     """Recover TilingKey dimensions from host packed-key helper call sites."""
     schema: list[str] | None = None
+    schema_args: list[str] | None = None
     site: tuple[Path, int] | None = None
-    for path in selected_host_files(root, architecture):
+    host_paths = list(paths) if paths is not None else list(selected_host_files(root, architecture))
+    for path in host_paths:
         try:
             text = _read(path)
         except OSError:
@@ -1503,6 +1523,7 @@ def _parse_packing_helper_keys(
                 names.append(name)
             if schema is None or len(names) > len(schema):
                 schema = names
+                schema_args = list(args)
                 site = (path, _line_of(text, start))
     if not schema or site is None:
         return []
@@ -1510,6 +1531,7 @@ def _parse_packing_helper_keys(
     declared: list[str] = []
     for order, name in enumerate(schema):
         declared.append(name)
+        expr = (schema_args or [""] * len(schema))[order]
         codemap.upsert(
             EntityKind.TILING_KEY,
             name,
@@ -1518,6 +1540,12 @@ def _parse_packing_helper_keys(
                 "provenance": "source_packing_helper_arg",
                 "decl_order": order,
                 "decl_kind": "uint",
+                "host_packing_expressions": [expr] if expr else [],
+                "packing_value_sites": [
+                    {"file": _rel(root, path), "line": line, "expression": expr[:300]}
+                ]
+                if expr
+                else [],
             },
             file=_rel(root, path),
             line=line,
@@ -1530,16 +1558,22 @@ def _parse_fallback_tiling_keys(
     codemap: CodeMap, root: Path, architecture: str
 ) -> list[str]:
     """Integer/macro TilingKeys used when there is no ASCENDC_TPL_*_DECL."""
-    helper_keys = _parse_packing_helper_keys(codemap, root, architecture)
+    host_files = list(selected_host_files(root, architecture))
+    local_host = _local_source_files(root, host_files)
+    foreign_host = _foreign_source_files(root, host_files)
+    helper_keys = _parse_packing_helper_keys(
+        codemap, root, architecture, paths=local_host
+    )
     if helper_keys:
         return helper_keys
-    bitpack_keys = _parse_bitpack_tiling_keys(codemap, root, architecture)
+    bitpack_keys = _parse_bitpack_tiling_keys(
+        codemap, root, architecture, paths=local_host
+    )
     if bitpack_keys:
         return bitpack_keys
     found: list[tuple[str, Path, int, str, int | None]] = []
     seen: set[str] = set()
     kernel_files = list(selected_kernel_files(root, architecture))
-    host_files = list(selected_host_files(root, architecture))
 
     def _collect(files: list[Path], patterns: list[tuple[re.Pattern[str], str]]) -> None:
         for path in files:
@@ -1589,8 +1623,19 @@ def _parse_fallback_tiling_keys(
     _collect(kernel_files, [(_TILING_KEY_IS_RE, "source_tiling_key_is")])
     # Kernel ``TILING_KEY_IS(10000)`` is the dispatch contract. Host
     # ``TLING_KEY_*`` / ``FULL_LOAD_*TILING_KEY`` literals pack onto those
-    # values; they are not extra keys.
+    # values; they are not extra keys. Sibling / 3rd-party GET_TPL must not
+    # replace that catalog just because Clang confirmed those files.
     if not found:
+        helper_keys = _parse_packing_helper_keys(
+            codemap, root, architecture, paths=foreign_host
+        )
+        if helper_keys:
+            return helper_keys
+        bitpack_keys = _parse_bitpack_tiling_keys(
+            codemap, root, architecture, paths=foreign_host
+        )
+        if bitpack_keys:
+            return bitpack_keys
         _collect(
             kernel_files + host_files,
             [

@@ -38,19 +38,19 @@ def test_pick_arch_prefers_discovered_arch35(tmp_path: Path, gen):
     assert gen._pick_arch(op) == "arch35"
 
 
-def test_pick_arch_none_when_no_arch_dirs(tmp_path: Path, gen):
+def test_pick_arch_defaults_arch35_when_no_arch_dirs(tmp_path: Path, gen):
     op = tmp_path / "toy"
     (op / "op_kernel").mkdir(parents=True)
-    assert gen._pick_arch(op) is None
+    assert gen._pick_arch(op) == "arch35"
 
 
-def test_discover_ops_skips_ops_without_arch(tmp_path: Path, gen, capsys):
+def test_discover_ops_keeps_arch_agnostic_trees(tmp_path: Path, gen, capsys):
     fam = tmp_path / "attention" / "noarch"
     (fam / "op_kernel").mkdir(parents=True)
     has_arch = tmp_path / "attention" / "widget"
     (has_arch / "op_kernel" / "arch22").mkdir(parents=True)
     cases = gen.discover_ops(tmp_path)
-    rels = {c["rel"] for c in cases}
-    assert "attention/widget" in rels
-    assert "attention/noarch" not in rels
-    assert "NO_ARCHITECTURE_DISCOVERED attention/noarch" in capsys.readouterr().out
+    by_rel = {c["rel"]: c for c in cases}
+    assert by_rel["attention/widget"]["arch"] == "arch22"
+    assert by_rel["attention/noarch"]["arch"] == "arch35"
+    assert "NO_ARCHITECTURE_DISCOVERED" not in capsys.readouterr().out

@@ -322,3 +322,90 @@ def test_bitpack_dims_bind_field_exprs_not_passthrough(tmp_path: Path) -> None:
     assert not any(
         e.strip() == "tilingKey" for e in (in_dtype.attrs.get("host_packing_expressions") or [])
     )
+
+
+def test_packing_helper_arg_keys_still_bind_get_tpl(tmp_path: Path) -> None:
+    """Fusion wrappers declare pack_arg_* keys; GET_TPL must still attach packing."""
+    op = tmp_path / "toy"
+    host = op / "op_host"
+    host.mkdir(parents=True)
+    (host / "tiling.cpp").write_text(
+        "uint64_t BuildKey() {\n"
+        "  return GET_TPL_TILING_KEY(0, 0, cvMode);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for i, name in enumerate(("pack_arg_0", "pack_arg_1", "cvMode")):
+        cm.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs={
+                "source_declared": True,
+                "provenance": "source_packing_helper_arg",
+                "decl_order": i,
+            },
+        )
+    cm.meta["source_declared_tiling_keys"] = ["pack_arg_0", "pack_arg_1", "cvMode"]
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 3
+    assert meta["argument_count_mismatches"] == []
+    cv = cm.by_name("cvMode", kind=EntityKind.TILING_KEY)[0]
+    assert "cvMode" in (cv.attrs.get("host_packing_expressions") or [])
+
+
+def test_catalog_set_tiling_key_ignores_foreign_get_tpl(tmp_path: Path) -> None:
+    """3rd-party GET_TPL with matching arity must not zip onto TILING_KEY_IS keys."""
+    import yaml
+
+    family = tmp_path / "mc2"
+    op = family / "teardown"
+    foreign = family / "matmul"
+    (op / "op_host").mkdir(parents=True)
+    (foreign / "op_host").mkdir(parents=True)
+    (op / "op_host" / "tiling.cpp").write_text(
+        "void Pack() {\n"
+        "  uint64_t tilingKey = 10000;\n"
+        "  tilingKey += static_cast<uint64_t>(quantMode);\n"
+        "  context_->SetTilingKey(tilingKey);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (foreign / "op_host" / "tiling.cpp").write_text(
+        "uint64_t Build() { return GET_TPL_TILING_KEY(foreignA, foreignB); }\n",
+        encoding="utf-8",
+    )
+    scope = op / ".ascendc-pilot" / "arch35" / "uo" / "summary"
+    scope.mkdir(parents=True)
+    (scope / "scope_set.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "confirmed_source_files": [
+                    "op_host/tiling.cpp",
+                    "matmul/op_host/tiling.cpp",
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="teardown", architecture="arch35")
+    for i, name in enumerate(("10000", "11000")):
+        cm.upsert(
+            EntityKind.TILING_KEY,
+            name,
+            attrs={
+                "source_declared": True,
+                "provenance": "source_tiling_key_is",
+                "decl_order": i,
+                "value": int(name),
+            },
+        )
+    cm.meta["source_declared_tiling_keys"] = ["10000", "11000"]
+    bind_host_tiling_key_expressions(cm, op, architecture="arch35")
+    meta = cm.meta["host_tiling_key_packing"]
+    assert meta["fields_bound"] == 2
+    for name in ("10000", "11000"):
+        exprs = " ".join(cm.by_name(name, kind=EntityKind.TILING_KEY)[0].attrs.get("host_packing_expressions") or [])
+        assert "foreignA" not in exprs
+        assert "tilingKey" in exprs or "quantMode" in exprs

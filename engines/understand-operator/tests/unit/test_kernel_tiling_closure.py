@@ -292,3 +292,55 @@ def test_host_setter_is_bound_to_receiver_tiling_type_not_short_name(tmp_path: P
     ]
     assert {r.dst for r in writes} == {ax.id}
     assert cm.meta["kernel_tiling_closure"]["tiling_ambiguous_writer_sites"] == 0
+
+
+def test_closure_binds_tiling_key_is_catalog_to_kernel(tmp_path: Path) -> None:
+    """Long commented ABI lists used to hide the entry from GLOBAL_KERNEL_RE."""
+    from uo_init.passes.source_contract import enrich_codemap_from_operator_source
+    from uo_init.diagnostics.audit import _path_exists
+
+    root = tmp_path / "toy"
+    (root / "op_graph").mkdir(parents=True)
+    (root / "op_host").mkdir(parents=True)
+    (root / "op_kernel").mkdir(parents=True)
+    params = ",\n".join(
+        f"                            GM_ADDR arg{i},  // input {i}: {'x' * 80}"
+        for i in range(16)
+    )
+    (root / "op_kernel" / "toy.cpp").write_text(
+        "#define TILING_KEY_BH_BF16 20000\n"
+        "#define TILING_KEY_BH_FP16 20001\n"
+        "extern \"C\" __global__ __aicore__ void\n"
+        f"toy({params},\n"
+        "                            GM_ADDR tiling)  // tiling\n"
+        "{\n"
+        "  if (TILING_KEY_IS(TILING_KEY_BH_BF16)) { return; }\n"
+        "  if (TILING_KEY_IS(TILING_KEY_BH_FP16)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, root, architecture="arch35")
+    finalize_kernel_tiling_closure(cm, root, architecture="arch35")
+    keys = [
+        e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    ]
+    assert {e.name for e in keys} == {"TILING_KEY_BH_BF16", "TILING_KEY_BH_FP16"}
+    kernels = cm.by_kind(EntityKind.KERNEL)
+    assert [k.name for k in kernels] == ["toy"]
+    selects = {
+        (cm.entities[r.src].name, cm.entities[r.dst].name)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.SELECTS.value
+        and cm.entities[r.src].kind_name() == EntityKind.TILING_KEY.value
+        and cm.entities[r.dst].kind_name() == EntityKind.KERNEL.value
+    }
+    assert selects == {
+        ("TILING_KEY_BH_BF16", "toy"),
+        ("TILING_KEY_BH_FP16", "toy"),
+    }
+    assert _path_exists(
+        cm, start_kind=EntityKind.TILING_KEY, end_kind=EntityKind.KERNEL
+    )

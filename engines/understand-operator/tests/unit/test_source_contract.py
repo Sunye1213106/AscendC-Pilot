@@ -1392,3 +1392,107 @@ def test_weighted_add_mints_axes_not_impl_integers(tmp_path: Path) -> None:
     assert meta["fields_bound"] == 4
     assert meta["declared"] == 4
     assert "normType" in " ".join(by_name["normType"].attrs.get("host_packing_expressions") or [])
+
+
+def test_local_tiling_key_is_not_replaced_by_foreign_get_tpl(tmp_path: Path) -> None:
+    import yaml
+
+    family = tmp_path / "mc2"
+    op = family / "teardown"
+    foreign = family / "matmul"
+    (op / "op_graph").mkdir(parents=True)
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (foreign / "op_host").mkdir(parents=True)
+    (op / "op_host" / "tiling.cpp").write_text(
+        "void Pack() {\n"
+        "  uint64_t tilingKey = 10000;\n"
+        "  tilingKey += static_cast<uint64_t>(quantMode);\n"
+        "  context_->SetTilingKey(tilingKey);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (foreign / "op_host" / "tiling.cpp").write_text(
+        "uint64_t Build() {\n"
+        "  return GET_TPL_TILING_KEY(a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "teardown.cpp").write_text(
+        "__global__ __aicore__ void teardown() {\n"
+        "  if (TILING_KEY_IS(10000)) { return; }\n"
+        "  if (TILING_KEY_IS(11000)) { return; }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    scope = op / ".ascendc-pilot" / "arch35" / "uo" / "summary"
+    scope.mkdir(parents=True)
+    (scope / "scope_set.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "confirmed_source_files": [
+                    "op_host/tiling.cpp",
+                    "op_kernel/teardown.cpp",
+                    "matmul/op_host/tiling.cpp",
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="teardown", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, op, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert set(by_name) == {"10000", "11000"}
+    assert not any(name.startswith("pack_arg_") for name in by_name)
+
+
+def test_wrapper_uses_sibling_get_tpl_when_local_host_has_no_packing(tmp_path: Path) -> None:
+    import yaml
+
+    family = tmp_path / "attention"
+    wrap = family / "mla_v3"
+    sib = family / "mla"
+    (wrap / "op_graph").mkdir(parents=True)
+    (wrap / "op_host").mkdir(parents=True)
+    (wrap / "op_kernel").mkdir(parents=True)
+    (sib / "op_host").mkdir(parents=True)
+    (wrap / "op_host" / "register.cpp").write_text(
+        "IMPL_OP_OPTILING(MlaV3).Tiling(TilingMla);\n",
+        encoding="utf-8",
+    )
+    (sib / "op_host" / "tiling.cpp").write_text(
+        "uint64_t Build() { return GET_TPL_TILING_KEY(0, 0, cvMode); }\n",
+        encoding="utf-8",
+    )
+    (wrap / "op_kernel" / "mla_v3.cpp").write_text(
+        '#include "../../mla/op_kernel/kernel.h"\n'
+        "__global__ __aicore__ void mla_v3() {}\n",
+        encoding="utf-8",
+    )
+    scope = wrap / ".ascendc-pilot" / "arch35" / "uo" / "summary"
+    scope.mkdir(parents=True)
+    (scope / "scope_set.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "confirmed_source_files": [
+                    "op_host/register.cpp",
+                    "op_kernel/mla_v3.cpp",
+                    "mla/op_host/tiling.cpp",
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="mla_v3", architecture="arch35")
+    enrich_codemap_from_operator_source(cm, wrap, architecture="arch35")
+    by_name = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.TILING_KEY)
+        if e.attrs.get("source_declared")
+    }
+    assert "cvMode" in by_name
+    assert by_name["cvMode"].attrs.get("provenance") == "source_packing_helper_arg"
