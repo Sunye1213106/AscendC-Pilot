@@ -1,0 +1,52 @@
+name: apply-bundle-tree
+
+on:
+  push:
+    branches:
+      - agent/bundle-sync-staging
+    paths:
+      - .github/workflows/apply-bundle-tree.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fast-forward main to uploaded bundle tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EXPECTED_BASE: 5005b31ad61d0b4c2e25f1bf5d99945592f1541c
+          TARGET_TREE: bcb97f350714cc6559bc3736c6f3eeecdcd91ad8
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${REPO}"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+
+          base_sha="$(curl -fsSL "${auth[@]}" "${api}/git/ref/heads/main" | python -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])')"
+          test "${base_sha}" = "${EXPECTED_BASE}"
+
+          tree_sha="$(curl -fsSL "${auth[@]}" "${api}/git/trees/${TARGET_TREE}" | python -c 'import json,sys; print(json.load(sys.stdin)["sha"])')"
+          test "${tree_sha}" = "${TARGET_TREE}"
+
+          payload="$(python - <<'PY'
+          import json, os
+          print(json.dumps({
+              "message": "sync uploaded bundle baseline",
+              "tree": os.environ["TARGET_TREE"],
+              "parents": [os.environ["EXPECTED_BASE"]],
+          }))
+          PY
+          )"
+          commit_sha="$(curl -fsSL -X POST "${auth[@]}" "${api}/git/commits" -d "${payload}" | python -c 'import json,sys; print(json.load(sys.stdin)["sha"])')"
+
+          ref_payload="$(python -c 'import json,sys; print(json.dumps({"sha": sys.argv[1], "force": False}))' "${commit_sha}")"
+          curl -fsSL -X PATCH "${auth[@]}" "${api}/git/refs/heads/main" -d "${ref_payload}" >/dev/null
+
+          final_sha="$(curl -fsSL "${auth[@]}" "${api}/git/ref/heads/main" | python -c 'import json,sys; print(json.load(sys.stdin)["object"]["sha"])')"
+          test "${final_sha}" = "${commit_sha}"
+          final_tree="$(curl -fsSL "${auth[@]}" "${api}/git/commits/${final_sha}" | python -c 'import json,sys; print(json.load(sys.stdin)["tree"]["sha"])')"
+          test "${final_tree}" = "${TARGET_TREE}"
