@@ -269,6 +269,11 @@ def test_prepare_kb_lookup_fanout_emits_slice_stubs(tmp_path: Path) -> None:
     assert len(tasks) >= 2, result.get("message_zh")
     ids = [str(t.get("slice_id") or "") for t in tasks]
     assert "sel" in ids
+    from ascendc_pilot.query_slices import plan_query_slices
+
+    planned = plan_query_slices(question)
+    assert len(tasks) == len(planned)
+    assert {t.get("first_mode") for t in tasks} == {row["first_mode"] for row in planned}
     for row in tasks:
         stub = str(row.get("task_prompt_stub") or "")
         assert "SLICE_ID=" in stub

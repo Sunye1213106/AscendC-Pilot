@@ -14,6 +14,7 @@ from uo_init.anchors import extract_registry
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.registry_capable import extract_iscapable
+from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import selected_host_files, selected_kernel_files
 
 _REGISTER_TILING_DEFAULT_RE = re.compile(
@@ -96,7 +97,7 @@ def _emit_register_tiling_defaults(
         if key in seen or not path.is_file():
             continue
         seen.add(key)
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         try:
             rel = path.resolve().relative_to(root).as_posix()
         except ValueError:

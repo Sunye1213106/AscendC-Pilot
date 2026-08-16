@@ -15,6 +15,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.symbol_identity import normalize_symbol
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import selected_host_files as _layout_host_files
@@ -67,7 +68,7 @@ def enrich_tiling_host_writes(
         rf"\s*(?P<name>[A-Za-z_]\w*)\b"
     ) if type_alt else None
     for path in paths:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         masked = _mask_non_code(raw)
         texts.append((path, raw, masked))
         local: dict[str, set[str]] = defaultdict(set)

@@ -1191,9 +1191,22 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         "architecture": tg_ctx.get("architecture") or "",
     }
     if mode == "scenario_targeted":
+        if not scenario_ids:
+            return {
+                "ok": False,
+                "engine": "plan_intent",
+                "error": "SCENARIO_SET_EMPTY",
+                "reason_code": "SCENARIO_SET_EMPTY",
+                "message_zh": (
+                    "scenario_targeted 需要已确认 ScenarioSet；"
+                    "禁止静默扩大成全部合法 Key，禁止笛卡尔展开 D。"
+                ),
+            }
         intent["target_mode"] = "scenario_set"
         intent["scenarios"] = scenario_ids
         intent["scenario_set"] = "ce/scenarios/scenario_set.yaml"
+        intent["forbid_cartesian_over_declared"] = True
+        intent["do_not_widen_to_declared_set"] = True
     out = tg / "plan" / "plan_intent.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(yaml.safe_dump(intent, allow_unicode=True, sort_keys=False), encoding="utf-8")

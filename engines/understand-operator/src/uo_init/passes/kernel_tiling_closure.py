@@ -34,6 +34,7 @@ from typing import Any, Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.symbol_identity import normalize_symbol
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import (
@@ -1165,7 +1166,7 @@ def _attach_default_initializers(codemap: CodeMap, root: Path, index: dict[str, 
             if path is None:
                 cache[field.file] = []
             else:
-                cache[field.file] = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                cache[field.file] = read_text(path).splitlines()
         lines = cache[field.file]
         if not (1 <= int(field.line_start) <= len(lines)):
             continue

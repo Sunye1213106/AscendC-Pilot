@@ -14,6 +14,7 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.source_contract import _kernel_candidates, _rel as _src_rel
+from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import selected_tiling_headers
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -62,7 +63,7 @@ def complete_tiling_fields(
         paths.append(path)
 
     for path in paths:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text(path)
         path_is_tiling_data = (
             "tiling_data" in path.name.lower() or "tilingdata" in path.name.lower()
         )

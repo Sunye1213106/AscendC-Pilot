@@ -16,9 +16,16 @@ class CompilerFacts:
     functions: dict[str, Any] = field(default_factory=dict)
     call_sites: list[Any] = field(default_factory=list)
     writes: list[Any] = field(default_factory=list)
+    local_writes: list[Any] = field(default_factory=list)
     controls: list[Any] = field(default_factory=list)
     field_decls: list[Any] = field(default_factory=list)
     local_decls: list[Any] = field(default_factory=list)
+    type_decls: list[Any] = field(default_factory=list)
+    alias_decls: list[Any] = field(default_factory=list)
+    base_decls: list[Any] = field(default_factory=list)
+    diagnostics: list[Any] = field(default_factory=list)
+    class_fields: set[str] = field(default_factory=set)
+    macro_idioms: int = 0
     macros: list[dict[str, Any]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
@@ -28,7 +35,14 @@ class CompilerFacts:
             "function_count": len(self.functions),
             "call_sites": len(self.call_sites),
             "writes": len(self.writes),
+            "local_writes": len(self.local_writes),
             "controls": len(self.controls),
+            "field_decls": len(self.field_decls),
+            "local_decls": len(self.local_decls),
+            "type_decls": len(self.type_decls),
+            "alias_decls": len(self.alias_decls),
+            "base_decls": len(self.base_decls),
+            "macro_idioms": int(self.macro_idioms),
             "macros": list(self.macros),
             "notes": list(self.notes),
         }
@@ -58,9 +72,16 @@ def extract_compiler_facts(
     facts.functions = dict(getattr(result, "functions", None) or {})
     facts.call_sites = list(getattr(result, "call_sites", None) or [])
     facts.writes = list(getattr(result, "writes", None) or [])
+    facts.local_writes = list(getattr(result, "local_writes", None) or [])
     facts.controls = list(getattr(result, "controls", None) or [])
     facts.field_decls = list(getattr(result, "field_decls", None) or [])
     facts.local_decls = list(getattr(result, "local_decls", None) or [])
+    facts.type_decls = list(getattr(result, "type_decls", None) or [])
+    facts.alias_decls = list(getattr(result, "alias_decls", None) or [])
+    facts.base_decls = list(getattr(result, "base_decls", None) or [])
+    facts.diagnostics = list(getattr(result, "diagnostics", None) or [])
+    facts.class_fields = set(getattr(result, "class_fields", None) or set())
+    facts.macro_idioms = int(getattr(result, "macro_idioms", 0) or 0)
     # Opaque macro-expanded guards surface as control notes.
     for ctrl in facts.controls:
         pretty = ""

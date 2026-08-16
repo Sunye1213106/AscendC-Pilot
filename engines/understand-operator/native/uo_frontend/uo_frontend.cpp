@@ -1,5 +1,5 @@
-// Optional fast libclang walker for uo-init cold start.
-// CLI: uo_walk --file PATH --side host|kernel --args ARGFILE --out OUT.json
+// uo_frontend — one-shot libclang facts extractor.
+// CLI: uo_frontend --file PATH --side host|kernel --args ARGFILE --out OUT.json
 //      [--needle N] [--op-root R]
 
 #include <clang-c/Index.h>
@@ -30,11 +30,20 @@ struct WalkState {
   std::string needle;
   std::string op_root;
   std::string current_func;
+  std::string current_func_usr;
+  std::string current_type;
+  std::vector<std::string> func_stack;
   std::vector<std::string> functions;
   std::vector<std::string> call_sites;
   std::vector<std::string> controls;
   std::vector<std::string> writes;
+  std::vector<std::string> local_writes;
   std::vector<std::string> diagnostics;
+  std::vector<std::string> field_decls;
+  std::vector<std::string> local_decls;
+  std::vector<std::string> type_decls;
+  std::vector<std::string> alias_decls;
+  std::vector<std::string> base_decls;
   std::unordered_set<std::string> class_fields;
   int ctrl_ordinal = 0;
 };
@@ -76,7 +85,8 @@ static std::string norm_path(CXFile file) {
   if (!file)
     return "";
   CXString sp = clang_getFileName(file);
-  std::string p = clang_getCString(sp);
+  const char *cs = clang_getCString(sp);
+  std::string p = cs ? cs : "";
   clang_disposeString(sp);
   for (char &c : p) {
     if (c == '\\')
@@ -89,13 +99,6 @@ static bool in_scope(const std::string &file, const std::string &needle,
                      const std::string &op_root) {
   if (file.empty())
     return false;
-  if (!needle.empty() && file.find(needle) == std::string::npos &&
-      (op_root.empty() || file.find(op_root) == std::string::npos)) {
-    if (!op_root.empty() && file.find(op_root) != 0)
-      return false;
-    if (!needle.empty() && file.find(needle) == std::string::npos)
-      return false;
-  }
   if (!op_root.empty() && file.find(op_root) == 0)
     return true;
   if (!needle.empty() && file.find(needle) != std::string::npos)
@@ -105,7 +108,24 @@ static bool in_scope(const std::string &file, const std::string &needle,
 
 static std::string spelling(CXCursor cur) {
   CXString s = clang_getCursorSpelling(cur);
-  std::string out = clang_getCString(s);
+  const char *cs = clang_getCString(s);
+  std::string out = cs ? cs : "";
+  clang_disposeString(s);
+  return out;
+}
+
+static std::string usr_of(CXCursor cur) {
+  CXString s = clang_getCursorUSR(cur);
+  const char *cs = clang_getCString(s);
+  std::string out = cs ? cs : "";
+  clang_disposeString(s);
+  return out;
+}
+
+static std::string type_spelling(CXType t) {
+  CXString s = clang_getTypeSpelling(t);
+  const char *cs = clang_getCString(s);
+  std::string out = cs ? cs : "";
   clang_disposeString(s);
   return out;
 }
@@ -119,24 +139,23 @@ static std::string tokens_text(CXTranslationUnit tu, CXCursor cur, unsigned max)
     if (i)
       out += ' ';
     CXString ts = clang_getTokenSpelling(tu, toks[i]);
-    out += clang_getCString(ts);
+    const char *cs = clang_getCString(ts);
+    out += cs ? cs : "";
     clang_disposeString(ts);
   }
   clang_disposeTokens(tu, toks, n);
   return out;
 }
 
-static std::string func_json(const std::string &name, const std::string &file,
-                             unsigned line, const std::vector<std::string> &params) {
+static std::string json_str_array(const std::vector<std::string> &items) {
   std::ostringstream os;
-  os << "{\"name\":\"" << json_escape(name) << "\",\"file\":\""
-     << json_escape(file) << "\",\"line\":" << line << ",\"params\":[";
-  for (size_t i = 0; i < params.size(); ++i) {
+  os << '[';
+  for (size_t i = 0; i < items.size(); ++i) {
     if (i)
       os << ',';
-    os << '"' << json_escape(params[i]) << '"';
+    os << '"' << json_escape(items[i]) << '"';
   }
-  os << "]}";
+  os << ']';
   return os.str();
 }
 
@@ -144,21 +163,24 @@ static CXChildVisitResult visit(CXCursor cursor, CXCursor parent, CXClientData d
   WalkState *st = static_cast<WalkState *>(data);
   CXTranslationUnit tu = clang_Cursor_getTranslationUnit(cursor);
   CXCursorKind kind = clang_getCursorKind(cursor);
-  if (!file.empty() && !in_scope(file, st->needle, st->op_root) &&
-      kind != CXCursor_TranslationUnit) {
-    return CXChildVisit_Recurse;
-  }
+  CXSourceLocation loc = clang_getCursorLocation(cursor);
   CXFile cxfile = nullptr;
   unsigned line = 0, col = 0, off = 0;
   clang_getExpansionLocation(loc, &cxfile, &line, &col, &off);
   std::string file = norm_path(cxfile);
+  if (!file.empty() && !in_scope(file, st->needle, st->op_root) &&
+      kind != CXCursor_TranslationUnit) {
+    return CXChildVisit_Recurse;
+  }
 
   if (kind == CXCursor_FunctionDecl || kind == CXCursor_CXXMethod ||
       kind == CXCursor_Constructor || kind == CXCursor_FunctionTemplate) {
     if (clang_isCursorDefinition(cursor)) {
       std::string name = spelling(cursor);
       if (!name.empty()) {
+        st->func_stack.push_back(st->current_func);
         st->current_func = name;
+        st->current_func_usr = usr_of(cursor);
         std::vector<std::string> params;
         int n = clang_Cursor_getNumArguments(cursor);
         for (int i = 0; i < n; ++i) {
@@ -167,17 +189,44 @@ static CXChildVisitResult visit(CXCursor cursor, CXCursor parent, CXClientData d
           if (!pn.empty())
             params.push_back(pn);
         }
-        st->functions.push_back(func_json(name, file, line, params));
+        std::ostringstream os;
+        os << "{\"name\":\"" << json_escape(name) << "\",\"usr\":\""
+           << json_escape(st->current_func_usr) << "\",\"file\":\""
+           << json_escape(file) << "\",\"line\":" << line << ",\"params\":"
+           << json_str_array(params) << "}";
+        st->functions.push_back(os.str());
       }
     }
   } else if (kind == CXCursor_CallExpr || kind == CXCursor_CXXMemberCallExpr) {
     std::string callee = spelling(cursor);
     if (!callee.empty() && !st->current_func.empty()) {
+      CXCursor ref = clang_getCursorReferenced(cursor);
+      std::string callee_usr = usr_of(ref);
+      CXFile decl_file = nullptr;
+      unsigned decl_line = 0, decl_col = 0, decl_off = 0;
+      clang_getExpansionLocation(clang_getCursorLocation(ref), &decl_file,
+                                 &decl_line, &decl_col, &decl_off);
+      std::string receiver;
+      std::string receiver_type;
+      std::vector<std::string> args;
+      unsigned argc = clang_Cursor_getNumArguments(cursor);
+      for (unsigned i = 0; i < argc; ++i) {
+        CXCursor a = clang_Cursor_getArgument(cursor, i);
+        std::string ts = tokens_text(tu, a, 24);
+        if (!ts.empty())
+          args.push_back(ts);
+      }
       std::ostringstream os;
-      os << "{\"caller\":\"" << json_escape(st->current_func)
-         << "\",\"callee\":\"" << json_escape(callee) << "\",\"file\":\""
-         << json_escape(file) << "\",\"line\":" << line << ",\"column\":" << col
-         << ",\"receiver\":\"\",\"args\":[]}";
+      os << "{\"caller_usr\":\"" << json_escape(st->current_func_usr)
+         << "\",\"caller\":\"" << json_escape(st->current_func)
+         << "\",\"callee_usr\":\"" << json_escape(callee_usr)
+         << "\",\"callee\":\"" << json_escape(callee)
+         << "\",\"callee_file\":\"" << json_escape(norm_path(decl_file))
+         << "\",\"callee_line\":" << decl_line << ",\"receiver\":\""
+         << json_escape(receiver) << "\",\"receiver_type\":\""
+         << json_escape(receiver_type) << "\",\"args\":" << json_str_array(args)
+         << ",\"file\":\"" << json_escape(file) << "\",\"line\":" << line
+         << ",\"column\":" << col << "}";
       st->call_sites.push_back(os.str());
     }
   } else if (kind == CXCursor_IfStmt || kind == CXCursor_ForStmt ||
@@ -214,25 +263,80 @@ static CXChildVisitResult visit(CXCursor cursor, CXCursor parent, CXClientData d
        << "\",\"function\":\"" << json_escape(st->current_func) << "\"}";
     st->controls.push_back(os.str());
   } else if (kind == CXCursor_BinaryOperator) {
-    CXCursor lhs = clang_getCursorSemanticParent(cursor);
-    (void)lhs;
     std::string op = tokens_text(tu, cursor, 8);
     if (op.find('=') != std::string::npos && op.find("==") == std::string::npos &&
         !st->current_func.empty()) {
+      std::string rhs = tokens_text(tu, cursor, 32);
       std::ostringstream os;
-      os << "{\"path\":\"\",\"line\":" << line << ",\"rhs\":\""
-         << json_escape(tokens_text(tu, cursor, 32))
-         << "\",\"file\":\"" << json_escape(file) << "\",\"function\":\""
+      os << "{\"path\":\"" << json_escape(spelling(cursor)) << "\",\"line\":"
+         << line << ",\"rhs\":\"" << json_escape(rhs) << "\",\"file\":\""
+         << json_escape(file) << "\",\"function\":\""
          << json_escape(st->current_func) << "\",\"column\":" << col << "}";
       st->writes.push_back(os.str());
+      st->local_writes.push_back(os.str());
     }
   } else if (kind == CXCursor_FieldDecl) {
     std::string name = spelling(cursor);
-    if (!name.empty())
+    if (!name.empty()) {
       st->class_fields.insert(name);
+      std::string ty = type_spelling(clang_getCursorType(cursor));
+      std::ostringstream os;
+      os << "{\"host\":\"" << json_escape(st->current_type) << "\",\"name\":\""
+         << json_escape(name) << "\",\"type_text\":\"" << json_escape(ty)
+         << "\",\"file\":\"" << json_escape(file) << "\",\"line\":" << line
+         << "}";
+      st->field_decls.push_back(os.str());
+    }
+  } else if (kind == CXCursor_VarDecl) {
+    std::string name = spelling(cursor);
+    if (!name.empty() && !st->current_func.empty()) {
+      std::ostringstream os;
+      os << "{\"name\":\"" << json_escape(name) << "\",\"type_text\":\""
+         << json_escape(type_spelling(clang_getCursorType(cursor)))
+         << "\",\"file\":\"" << json_escape(file) << "\",\"line\":" << line
+         << ",\"function\":\"" << json_escape(st->current_func) << "\"}";
+      st->local_decls.push_back(os.str());
+    }
+  } else if (kind == CXCursor_ClassDecl || kind == CXCursor_StructDecl) {
+    std::string name = spelling(cursor);
+    if (!name.empty()) {
+      st->current_type = name;
+      std::ostringstream os;
+      os << "{\"name\":\"" << json_escape(name) << "\",\"kind\":\""
+         << (kind == CXCursor_ClassDecl ? "class" : "struct") << "\",\"file\":\""
+         << json_escape(file) << "\",\"line\":" << line << ",\"usr\":\""
+         << json_escape(usr_of(cursor)) << "\"}";
+      st->type_decls.push_back(os.str());
+    }
+  } else if (kind == CXCursor_TypedefDecl || kind == CXCursor_TypeAliasDecl) {
+    std::string name = spelling(cursor);
+    if (!name.empty()) {
+      CXType under = (kind == CXCursor_TypedefDecl)
+                         ? clang_getTypedefDeclUnderlyingType(cursor)
+                         : clang_getCursorType(cursor);
+      std::ostringstream os;
+      os << "{\"alias\":\"" << json_escape(name) << "\",\"target\":\""
+         << json_escape(type_spelling(under)) << "\",\"file\":\""
+         << json_escape(file) << "\",\"line\":" << line << "}";
+      st->alias_decls.push_back(os.str());
+    }
+  } else if (kind == CXCursor_CXXBaseSpecifier) {
+    std::ostringstream os;
+    os << "{\"derived\":\"" << json_escape(st->current_type) << "\",\"base\":\""
+       << json_escape(spelling(cursor)) << "\",\"file\":\"" << json_escape(file)
+       << "\",\"line\":" << line << "}";
+    st->base_decls.push_back(os.str());
   }
 
-  return CXChildVisit_Recurse;
+  clang_visitChildren(cursor, visit, data);
+
+  if ((kind == CXCursor_FunctionDecl || kind == CXCursor_CXXMethod ||
+       kind == CXCursor_Constructor || kind == CXCursor_FunctionTemplate) &&
+      clang_isCursorDefinition(cursor) && !st->func_stack.empty()) {
+    st->current_func = st->func_stack.back();
+    st->func_stack.pop_back();
+  }
+  return CXChildVisit_Continue;
 }
 
 static bool parse_args(int argc, char **argv, Options *opt, std::string *err) {
@@ -263,7 +367,7 @@ static bool parse_args(int argc, char **argv, Options *opt, std::string *err) {
     }
   }
   if (opt->file.empty() || opt->argfile.empty() || opt->out.empty()) {
-    *err = "usage: uo_walk --file PATH --side host|kernel --args ARGFILE --out OUT.json";
+    *err = "usage: uo_frontend --file PATH --side host|kernel --args ARGFILE --out OUT.json";
     return false;
   }
   for (char &c : opt->op_root) {
@@ -273,30 +377,32 @@ static bool parse_args(int argc, char **argv, Options *opt, std::string *err) {
   return true;
 }
 
-static std::vector<const char *> read_compile_args(const std::string &path) {
+static std::vector<std::string> read_compile_args(const std::string &path) {
   std::vector<std::string> storage;
-  std::vector<const char *> out;
   std::ifstream in(path);
   std::string line;
   while (std::getline(in, line)) {
     while (!line.empty() && (line.back() == '\r' || line.back() == '\n'))
       line.pop_back();
-    if (line.empty())
-      continue;
-    storage.push_back(line);
-    out.push_back(storage.back().c_str());
+    if (!line.empty())
+      storage.push_back(line);
   }
-  return out;
+  return storage;
 }
 
 static int run(const Options &opt, std::string *err) {
-  auto args = read_compile_args(opt.argfile);
+  std::vector<std::string> arg_storage = read_compile_args(opt.argfile);
+  std::vector<const char *> clang_args;
+  clang_args.reserve(arg_storage.size());
+  for (auto &arg : arg_storage)
+    clang_args.push_back(arg.c_str());
+
   CXIndex idx = clang_createIndex(0, 0);
   CXTranslationUnit tu = nullptr;
   unsigned flags = CXTranslationUnit_DetailedPreprocessingRecord;
   CXErrorCode ec = clang_parseTranslationUnit2(
-      idx, opt.file.c_str(), args.data(), static_cast<int>(args.size()), nullptr, 0,
-      flags, &tu);
+      idx, opt.file.c_str(), clang_args.data(),
+      static_cast<int>(clang_args.size()), nullptr, 0, flags, &tu);
   if (ec != CXError_Success || !tu) {
     *err = "clang_parseTranslationUnit2 failed";
     clang_disposeIndex(idx);
@@ -314,10 +420,10 @@ static int run(const Options &opt, std::string *err) {
     unsigned dl = 0, dc = 0, dof = 0;
     clang_getExpansionLocation(clang_getDiagnosticLocation(d), &df, &dl, &dc, &dof);
     std::string dfname = norm_path(df);
+    const char *dcs = clang_getCString(ds);
     std::ostringstream os;
-    os << '[' << static_cast<int>(clang_getDiagnosticSeverity(d)) << ',"'
-       << json_escape(dfname) << "\",\"" << json_escape(clang_getCString(ds))
-       << "\"]";
+    os << '[' << static_cast<int>(clang_getDiagnosticSeverity(d)) << ",\""
+       << json_escape(dfname) << "\",\"" << json_escape(dcs ? dcs : "") << "\"]";
     st.diagnostics.push_back(os.str());
     clang_disposeString(ds);
     clang_disposeDiagnostic(d);
@@ -326,39 +432,33 @@ static int run(const Options &opt, std::string *err) {
   CXCursor root = clang_getTranslationUnitCursor(tu);
   clang_visitChildren(root, visit, &st);
 
+  auto dump_list = [](std::ostringstream &json, const char *key,
+                      const std::vector<std::string> &rows, bool last) {
+    json << "  \"" << key << "\": [";
+    for (size_t i = 0; i < rows.size(); ++i) {
+      if (i)
+        json << ',';
+      json << rows[i];
+    }
+    json << (last ? "]\n" : "],\n");
+  };
+
   std::ostringstream json;
-  json << "{\n  \"path\": \"" << json_escape(opt.file) << "\",\n";
-  json << "  \"functions\": [";
-  for (size_t i = 0; i < st.functions.size(); ++i) {
-    if (i)
-      json << ',';
-    json << st.functions[i];
-  }
-  json << "],\n  \"call_sites\": [";
-  for (size_t i = 0; i < st.call_sites.size(); ++i) {
-    if (i)
-      json << ',';
-    json << st.call_sites[i];
-  }
-  json << "],\n  \"controls\": [";
-  for (size_t i = 0; i < st.controls.size(); ++i) {
-    if (i)
-      json << ',';
-    json << st.controls[i];
-  }
-  json << "],\n  \"writes\": [";
-  for (size_t i = 0; i < st.writes.size(); ++i) {
-    if (i)
-      json << ',';
-    json << st.writes[i];
-  }
-  json << "],\n  \"diagnostics\": [";
-  for (size_t i = 0; i < st.diagnostics.size(); ++i) {
-    if (i)
-      json << ',';
-    json << st.diagnostics[i];
-  }
-  json << "],\n  \"class_fields\": [";
+  json << "{\n  \"schema\": \"compiler-facts/v2\",\n";
+  json << "  \"path\": \"" << json_escape(opt.file) << "\",\n";
+  dump_list(json, "functions", st.functions, false);
+  dump_list(json, "call_sites", st.call_sites, false);
+  dump_list(json, "controls", st.controls, false);
+  dump_list(json, "writes", st.writes, false);
+  dump_list(json, "local_writes", st.local_writes, false);
+  dump_list(json, "field_decls", st.field_decls, false);
+  dump_list(json, "local_decls", st.local_decls, false);
+  dump_list(json, "type_decls", st.type_decls, false);
+  dump_list(json, "alias_decls", st.alias_decls, false);
+  dump_list(json, "base_decls", st.base_decls, false);
+  dump_list(json, "diagnostics", st.diagnostics, false);
+  json << "  \"macro_idioms\": 0,\n";
+  json << "  \"class_fields\": [";
   bool first = true;
   for (const auto &f : st.class_fields) {
     if (!first)
@@ -376,7 +476,6 @@ static int run(const Options &opt, std::string *err) {
     return 1;
   }
   out << json.str();
-
   clang_disposeTranslationUnit(tu);
   clang_disposeIndex(idx);
   return 0;

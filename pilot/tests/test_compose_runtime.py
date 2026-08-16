@@ -82,8 +82,10 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert ce["agent_id"] == "ce-reviewer"
     assert ce["actors"] == ["ce-reviewer"]
     assert ce["task_prompt_id"] == "ce/standalone-review"
+    assert ce["action_method_id"] == "code-review/standalone-review"
     verify = next(a for a in WORKFLOWS["ce-verify"]["actions"] if a["id"] == "code_review")
     assert verify["task_prompt_id"] == "ce/code-review"
+    assert verify["action_method_id"] == "code-review/verify-review"
 
     intent = WORKFLOWS["ce-intent"]
     assert intent["cognitive_skill_id"] == "code-engineering"

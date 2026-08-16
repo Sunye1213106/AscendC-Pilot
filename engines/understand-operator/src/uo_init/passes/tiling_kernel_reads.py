@@ -16,6 +16,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
 
 _ACCESS_RE = re.compile(
@@ -331,7 +332,7 @@ def _load(root: Path, selected: list[str]) -> dict[str, str]:
     for raw in selected:
         path = _resolve_file(root, raw)
         if path is not None:
-            out[raw.replace("\\", "/").lstrip("./")] = path.read_text(encoding="utf-8", errors="replace")
+            out[raw.replace("\\", "/").lstrip("./")] = read_text(path)
     return out
 
 

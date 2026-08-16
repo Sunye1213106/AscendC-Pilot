@@ -319,7 +319,9 @@ def load_quoted_include_texts(path: Path, *, extra_roots: list[Path] | None = No
     """Quoted includes from ``path`` (a few levels), plus CANN search roots."""
     parent = Path(path).parent
     try:
-        src = Path(path).read_text(encoding="utf-8", errors="replace")
+        from uo_init.passes.source_text_cache import read_text
+
+        src = read_text(path)
     except OSError:
         return []
     walk: list[Path] = []
@@ -360,7 +362,9 @@ def load_quoted_include_texts(path: Path, *, extra_roots: list[Path] | None = No
                         continue
                     seen.add(cand)
                     try:
-                        body = cand.read_text(encoding="utf-8", errors="replace")
+                        from uo_init.passes.source_text_cache import read_text
+
+                        body = read_text(cand)
                     except OSError:
                         break
                     texts.append(body)

@@ -8,6 +8,7 @@ on:
       - "pilot/**"
       - "prompts/**"
       - "skills/**"
+      - "knowledge/**"
       - "engines/understand-operator/**"
       - "engines/testcase-generation/**"
       - "engines/code-engineering/**"
@@ -25,6 +26,7 @@ on:
       - "pilot/**"
       - "prompts/**"
       - "skills/**"
+      - "knowledge/**"
       - "engines/understand-operator/**"
       - "engines/testcase-generation/**"
       - "engines/code-engineering/**"
@@ -85,6 +87,12 @@ jobs:
         env:
           PYTHONPATH: pilot
         run: python scripts/check_skill_architecture.py
+      - name: Validate instruction ownership
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_instruction_ownership.py
+      - name: Validate shared reference projections
+        run: python scripts/sync_shared_references.py --check --repo .
       - name: Validate uo-query Explore control plane
         env:
           PYTHONPATH: pilot
@@ -95,6 +103,7 @@ jobs:
           pilot/tests/test_uo_query_policy_ssot.py
           pilot/tests/test_uo_query_opencode_hook.py
           pilot/tests/test_uo_query_eval_gates.py
+          pilot/tests/test_instruction_ownership.py
           pilot/tests/test_prepare_placeholders.py::test_kb_lookup_stub_requires_answer_yaml_not_integrity
       - name: Validate UO projection freshness and aggregate queries
         env:

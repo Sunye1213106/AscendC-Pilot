@@ -27,8 +27,16 @@ _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
 # Process-local hit stats for tests / timing lines.
-_STATS = {"hit": 0, "miss": 0, "store": 0, "bypass": 0, "load_failures": 0}
+_STATS = {
+    "hit": 0,
+    "miss": 0,
+    "store": 0,
+    "bypass": 0,
+    "load_failures": 0,
+    "pickle_load": 0,
+}
 _LOCK = threading.Lock()
+_WALK_BUNDLE: dict[str, list[Any]] = {}
 
 
 def cache_enabled() -> bool:
@@ -40,6 +48,7 @@ def reset_stats() -> None:
     with _LOCK:
         for k in _STATS:
             _STATS[k] = 0
+        _WALK_BUNDLE.clear()
 
 
 def stats() -> dict[str, int]:
@@ -444,21 +453,40 @@ def load_walk(
         return None
 
 
-def iter_cached_walks(
+def load_walk_bundle(
     op_dir: str | Path | None,
     arch: str | None = None,
     *,
     path_substr: str = "op_kernel",
-    limit: int = 64,
 ) -> list[Any]:
-    """Load up to ``limit`` cached WalkResults whose TU path matches ``path_substr``.
-
-    Used by Kernel Execution extraction to reuse Clang call sites already paid
-    for during ``build_kernel_ir`` / host walks — no extra libclang parse.
-    """
+    """Deserialize matching WalkResults once per process run."""
     if not cache_enabled() or op_dir is None:
         return []
     root = tu_cache_dir(op_dir, arch)
+    key = f"{Path(op_dir).resolve()}|{require_architecture(arch)}|{path_substr}"
+    with _LOCK:
+        hit = _WALK_BUNDLE.get(key)
+    if hit is not None:
+        try:
+            from uo_init.perf import bump
+
+            bump("walk_bundle_hits")
+        except Exception:  # noqa: BLE001
+            pass
+        return hit
+    try:
+        from uo_init.perf import bump
+
+        bump("walk_bundle_loads")
+    except Exception:  # noqa: BLE001
+        pass
+    walks = _load_walks_from_disk(root, path_substr=path_substr)
+    with _LOCK:
+        _WALK_BUNDLE[key] = walks
+    return walks
+
+
+def _load_walks_from_disk(root: Path, *, path_substr: str) -> list[Any]:
     if not root.is_dir():
         return []
     needle = str(path_substr or "").replace("\\", "/").lower()
@@ -467,11 +495,17 @@ def iter_cached_walks(
     for path in sorted(root.glob("*.pkl")):
         if path.name.endswith(".probe.pkl"):
             continue
-        if len(out) >= max(1, int(limit)):
-            break
         try:
             with open(path, "rb") as fh:
                 payload = pickle.load(fh)
+            _bump("pickle_load")
+            try:
+                from uo_init.perf import bump
+
+                bump("pickle_load")
+                bump("pickle_deserialize")
+            except Exception:  # noqa: BLE001
+                pass
             if not isinstance(payload, dict) or int(payload.get("version") or 0) != CACHE_VERSION:
                 failures.append(
                     {"path": str(path), "reason": "version_or_payload_mismatch"}
@@ -495,8 +529,6 @@ def iter_cached_walks(
             )
             _bump("miss")
             continue
-    # Persist last-load failure reasons for kernel_root_trace / meta visibility.
-    # Empty list is also meaningful: it means the cache was readable.
     with _LOCK:
         _STATS["load_failures"] = len(failures)
     if failures:
@@ -511,6 +543,23 @@ def iter_cached_walks(
         except OSError:
             pass
     return out
+
+
+def iter_cached_walks(
+    op_dir: str | Path | None,
+    arch: str | None = None,
+    *,
+    path_substr: str = "op_kernel",
+    limit: int = 64,
+) -> list[Any]:
+    """Load up to ``limit`` cached WalkResults whose TU path matches ``path_substr``.
+
+    Used by Kernel Execution extraction to reuse Clang call sites already paid
+    for during ``build_kernel_ir`` / host walks — no extra libclang parse.
+    """
+    walks = load_walk_bundle(op_dir, arch, path_substr=path_substr)
+    cap = max(1, int(limit))
+    return list(walks[:cap])
 
 
 def load_probe(

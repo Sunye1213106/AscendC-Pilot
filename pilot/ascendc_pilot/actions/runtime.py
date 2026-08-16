@@ -434,28 +434,20 @@ def _tg_init_audit_method_path(repo: Path) -> Path:
 
 
 def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | None:
-    """Map ``action_method_id`` / prompt / action id onto a capability METHOD.md."""
-    mid = str(action.get("action_method_id") or "")
-    tpid = str(action.get("task_prompt_id") or "")
-    aid = str(action.get("id") or action.get("action_id") or "")
+    """Map explicit ``action_method_id`` ``{skill}/{capability}`` onto METHOD.md.
 
-    if mid.startswith("uo-query/") or tpid == "uo/codemap-query":
-        return _capability_method_path(repo, "operator-analysis", "uo-query")
-    if mid.startswith("tg-init/init-audit") or tpid == "tg/init-audit" or aid == "init_audit":
-        return _capability_method_path(repo, "testcase-generation", "tg-init-audit")
-    if mid.endswith("/impact-audit") or tpid == "ce/impact-audit" or aid == "impact_audit":
-        return _capability_method_path(repo, "code-engineering", "ce-impact-audit")
-    if (
-        mid.endswith("/exclusion-review")
-        or tpid == "ce/exclusion-review"
-        or aid == "exclusion_review"
-    ):
-        return _capability_method_path(repo, "code-engineering", "ce-exclusion-review")
-    if aid == "scenario_knobs" or tpid in {"ce/scenario-infer", "ce/scenario-knobs"}:
-        return _capability_method_path(repo, "code-engineering", "ce-scenario-knobs")
-    if aid == "scenario_infer" or mid.endswith("/scenario-infer"):
-        return _capability_method_path(repo, "code-engineering", "ce-scenario-infer")
-    return None
+    No heuristic fallback on prompt id or action id. Missing files are the
+    caller's problem (prepare fail-closed for subagent LLM Actions).
+    """
+    mid = str(action.get("action_method_id") or "").strip()
+    if "/" not in mid:
+        return None
+    domain, capability = mid.split("/", 1)
+    domain = domain.strip()
+    capability = capability.strip()
+    if not domain or not capability:
+        return None
+    return _capability_method_path(repo, domain, capability)
 
 
 def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, str]:
@@ -1165,6 +1157,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "context_profile_id": context_profile_id,
         }
     method, prompt = _load_method_and_prompt(repo, action)
+    if execution_mode == EXECUTION_SUBAGENT and str(action.get("task_prompt_id") or "").strip():
+        mp = _resolve_capability_method(repo, action)
+        if mp is None or not mp.is_file() or not str(method or "").strip():
+            mid = str(action.get("action_method_id") or "")
+            return {
+                "ok": False,
+                "error": "METHOD_MISSING",
+                "reason_code": "METHOD_MISSING",
+                "message_zh": (
+                    f"Action {action_id} missing METHOD.md for {mid or '(no action_method_id)'}；"
+                    "禁止拼接 Agent SKILL.md。"
+                ),
+                "action_method_id": mid,
+            }
     if execution_mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
         tpid = str(action.get("task_prompt_id") or "")
         if tpid and not str(prompt or "").strip():
@@ -1174,6 +1180,14 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 "message_zh": f"Action {action_id} missing task prompt {tpid}",
                 "task_prompt_id": tpid,
             }
+    if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
+        if not str(method or "").strip():
+            method = (
+                "# Host-owned confirmation\n"
+                "Surface ask_question.options verbatim. Do not load domain skills.\n"
+            )
+        if not str(prompt or "").strip():
+            prompt = "# Host-owned confirmation\n"
     root_s = Path(project_root).expanduser().resolve().as_posix()
     try:
         architecture = require_architecture(str(state.get("architecture") or ""))
@@ -1441,16 +1455,19 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 seen_rp.add(p)
                 deduped_rp.append(p)
         read_paths = deduped_rp
-    writable = _check_required_outputs_writable(
-        workflow_id=wid,
-        action_id=action_id,
-        actor_id=actor_id,
-        contract_id=str(action.get("output_contract_id") or ""),
-        output_mode=str(action.get("output_mode") or "direct"),
-        write_paths=write_paths,
-        run_id=run_id,
-        project_root=project_root,
-    )
+    if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
+        writable = {"ok": True, "skipped": True, "reason": "host_owned_confirm"}
+    else:
+        writable = _check_required_outputs_writable(
+            workflow_id=wid,
+            action_id=action_id,
+            actor_id=actor_id,
+            contract_id=str(action.get("output_contract_id") or ""),
+            output_mode=str(action.get("output_mode") or "direct"),
+            write_paths=write_paths,
+            run_id=run_id,
+            project_root=project_root,
+        )
     if not writable.get("ok"):
         return {
             "ok": False,
@@ -1538,40 +1555,54 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     (sdir / "method.md").write_text(method_r, encoding="utf-8")
     (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
 
-    # Materialize cognitive skill method/refs into session so subagents never
-    # hunt host-specific skill discovery paths.
+    # Materialize Action METHOD + named refs. Never concatenate Agent SKILL.md.
+    # Host-owned confirmations skip skill trees entirely.
     try:
         from ascendc_pilot.actions.method_bundle import (
             check_bundle_readable,
             materialize_method_bundle,
         )
         from ascendc_pilot.agents_registry import load_agent_meta
+        from ascendc_pilot.context.profiles import get_profile
 
-        skill_ids = list((load_agent_meta(actor_id, str(project_root)).get("skill_ids") or []))
-        mat = materialize_method_bundle(
-            sdir,
-            skill_ids=[str(x) for x in skill_ids],
-            existing_method=method_r,
-            project_root=project_root,
-        )
-        bundle["method_materialized"] = {
-            "copied": mat.get("copied") or [],
-            "missing": mat.get("missing") or [],
-            "ok": bool(mat.get("ok")),
-        }
-        if skill_ids and not mat.get("ok"):
-            return {
-                "ok": False,
-                "error": str(mat.get("error") or "METHOD_BUNDLE_MISSING"),
-                "reason_code": str(mat.get("reason_code") or "METHOD_BUNDLE_MISSING"),
-                "missing": mat.get("missing") or [],
-                "message_zh": str(
-                    mat.get("message_zh")
-                    or "Required cognitive skill missing；禁止派发"
-                ),
-                "action_id": action_id,
-                "session_dir": sdir.as_posix(),
+        if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
+            bundle["method_materialized"] = {
+                "copied": [],
+                "missing": [],
+                "ok": True,
+                "host_owned_confirm": True,
             }
+        elif execution_mode == EXECUTION_SUBAGENT:
+            skill_ids = list((load_agent_meta(actor_id, str(project_root)).get("skill_ids") or []))
+            profile = get_profile(context_profile_id)
+            extra_refs = list(profile.references) if profile is not None else []
+            mat = materialize_method_bundle(
+                sdir,
+                skill_ids=[str(x) for x in skill_ids],
+                existing_method=method_r,
+                project_root=project_root,
+                extra_ref_paths=extra_refs,
+            )
+            bundle["method_materialized"] = {
+                "copied": mat.get("copied") or [],
+                "missing": mat.get("missing") or [],
+                "ok": bool(mat.get("ok")),
+            }
+            if not mat.get("ok"):
+                return {
+                    "ok": False,
+                    "error": str(mat.get("error") or "METHOD_BUNDLE_MISSING"),
+                    "reason_code": str(mat.get("reason_code") or "METHOD_BUNDLE_MISSING"),
+                    "missing": mat.get("missing") or [],
+                    "message_zh": str(
+                        mat.get("message_zh")
+                        or "Required METHOD missing；禁止派发"
+                    ),
+                    "action_id": action_id,
+                    "session_dir": sdir.as_posix(),
+                }
+        else:
+            bundle["method_materialized"] = {"ok": True, "skipped": "deterministic"}
         # Session refs always readable.
         refs_glob = f"runs/{run_id}/actions/{action_id}/refs/**"
         if refs_glob not in read_paths:

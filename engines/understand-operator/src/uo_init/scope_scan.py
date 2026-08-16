@@ -642,6 +642,7 @@ def clang_include_paths(
     *,
     op_dir: str | Path = "",
     side: str = "kernel",
+    walk_ctx: Any = None,
 ) -> ClangIncludeResult:
     """Files Clang actually included while parsing ``tu_path``.
 
@@ -664,6 +665,12 @@ def clang_include_paths(
             options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
             **parse_unsaved_kwargs(op_dir, side=side),
         )
+        try:
+            from uo_init.perf import bump
+
+            bump("clang_tu_parse")
+        except Exception:  # noqa: BLE001
+            pass
     except Exception as exc:  # noqa: BLE001
         return ClangIncludeResult(
             ok=False, error=f"clang_parse_failed:{Path(tu_path).name}:{str(exc)[:160]}"
@@ -693,6 +700,22 @@ def clang_include_paths(
         seen.add(key)
         out.append(Path(name))
     probe = _probe_from_parsed_tu(tu, path_s, str(op_dir or ""))
+    if walk_ctx is not None:
+        try:
+            from uo_init.clang_walk import consume_parsed_tu
+
+            op_needle = Path(op_dir).name if op_dir else ""
+            consume_parsed_tu(
+                tu,
+                path_s,
+                walk_ctx,
+                side=side,
+                dtype_variant="DT_FLOAT16" if side != "host" else None,
+                op_needle="",
+                collect_writes=(side == "host"),
+            )
+        except Exception:  # noqa: BLE001 — include closure must still succeed
+            pass
     return ClangIncludeResult(ok=True, paths=out, probe=probe)
 
 
@@ -703,6 +726,7 @@ def enrich_with_clang(
     kernel_args: list[str] | None = None,
     host_tus: Iterable[Path] | None = None,
     kernel_tu: Path | None = None,
+    walk_ctx: Any = None,
 ) -> ClangEnrichment:
     """Build Source Scope from Clang's authoritative include closure only.
 
@@ -775,7 +799,9 @@ def enrich_with_clang(
 
     def _parse_one(job: tuple[Path, list[str], str]) -> tuple[Path, str, ClangIncludeResult]:
         tu_path, args, side = job
-        return tu_path, side, clang_include_paths(tu_path, args, op_dir=op_dir_s, side=side)
+        return tu_path, side, clang_include_paths(
+            tu_path, args, op_dir=op_dir_s, side=side, walk_ctx=walk_ctx
+        )
 
     parsed_jobs: list[tuple[Path, str, ClangIncludeResult]]
     if len(jobs) <= 1:

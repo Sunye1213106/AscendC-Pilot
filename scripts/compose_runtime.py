@@ -531,10 +531,13 @@ def check_skill_action_markers(repo: Path) -> list[str]:
 
 
 def sync_sources(repo: Path) -> list[str]:
-    """Write path: Spec is authority; nothing to sync into skills/workflows."""
+    """Write path: Spec is authority; project shared-reference SSOT into skills."""
+    from sync_shared_references import sync as sync_shared_refs
+
     errors: list[str] = []
     errors.extend(sync_action_yaml_mirrors(repo))
     errors.extend(sync_skill_action_markers(repo))
+    errors.extend(sync_shared_refs(repo))
     return errors
 
 
@@ -544,9 +547,12 @@ def validate(repo: Path) -> list[str]:
     skills = paths["skills"]
     prompts = paths["prompts"]
     agents = paths["agents"]
+    from sync_shared_references import check as check_shared_refs
+
     errors: list[str] = []
     errors.extend(check_skill_action_markers(repo))
     errors.extend(validate_domain_skills(repo))
+    errors.extend(check_shared_refs(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
@@ -610,6 +616,23 @@ def validate(repo: Path) -> list[str]:
             if not mid:
                 errors.append(f"{wid}/{aid}: missing action_method_id")
             tpid = action.get("task_prompt_id")
+            mode = str(action.get("execution_mode") or "")
+            if mode == "subagent" and tpid:
+                default_mid = f"{wid}/{str(aid).replace('_', '-')}"
+                if not mid or "/" not in str(mid) or str(mid) == default_mid:
+                    errors.append(
+                        f"{wid}/{aid}: subagent LLM Action missing explicit "
+                        f"skill/capability action_method_id (not {default_mid!r})"
+                    )
+                else:
+                    skill, cap = str(mid).split("/", 1)
+                    mp = skills / skill / "capabilities" / cap / "METHOD.md"
+                    if not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                        errors.append(f"{wid}/{aid}: missing METHOD.md for {mid}")
+                    if skill not in COGNITIVE_SKILL_IDS:
+                        errors.append(
+                            f"{wid}/{aid}: action_method_id skill {skill!r} not in COGNITIVE_SKILL_IDS"
+                        )
             if tpid:
                 p = prompts / "tasks" / f"{tpid}.md"
                 # tpid is domain/name
@@ -810,7 +833,7 @@ def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any], *, host: str
             )
         )
         mid = str(a.get("action_method_id") or "")
-        folder = mid.split("/", 1)[-1] if mid else "-"
+        folder = str(a.get("id") or "").replace("_", "-") or "-"
         tpid = str(a.get("task_prompt_id") or "")
         prompt_path = f"prompts/tasks/{tpid}.md" if tpid and "/" not in tpid else (
             f"prompts/tasks/{tpid}.md" if tpid else "-"
@@ -1153,11 +1176,10 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         _assert_generated_skill(skill_out, expected_actions=expected_n)
         # Emit Spec-derived Action Bundle sidecars (identity only).
         for a in wf_meta.get("actions") or []:
-            mid = a.get("action_method_id")
-            if not mid:
+            aid_folder = str(a.get("id") or "").replace("_", "-")
+            if not aid_folder:
                 continue
-            folder = str(mid).split("/", 1)[-1]
-            adir = dest / "actions" / folder
+            adir = dest / "actions" / aid_folder
             adir.mkdir(parents=True, exist_ok=True)
             merged = _spec_action_yaml(wid, a)
             if yaml is not None:

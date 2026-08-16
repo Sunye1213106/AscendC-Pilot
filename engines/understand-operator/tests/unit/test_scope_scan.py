@@ -270,7 +270,7 @@ def test_enrich_with_clang_replaces_regex_shared(domain: Path) -> None:
     extra_shared.write_text("// clang-only\n", encoding="utf-8")
     external = Path("/opt/cann-asc-devkit/include/ghost.h")
 
-    def _fake_includes(tu_path, args, op_dir=""):
+    def _fake_includes(tu_path, args, op_dir="", **_kwargs):
         return ss.ClangIncludeResult(ok=True, paths=[extra_shared, external])
 
     old = ss.clang_include_paths
@@ -308,7 +308,7 @@ def test_enrich_with_clang_replaces_regex_shared(domain: Path) -> None:
 def test_enrich_with_clang_incomplete_when_parse_fails(domain: Path) -> None:
     scope = ss.scan(domain, arch_dir="arch35")
 
-    def _fail(tu_path, args, op_dir=""):
+    def _fail(tu_path, args, op_dir="", **_kwargs):
         return ss.ClangIncludeResult(ok=False, error=f"clang_parse_failed:{Path(tu_path).name}")
 
     old = ss.clang_include_paths
@@ -342,7 +342,7 @@ def test_classify_path_marks_workspace_non_owned_as_shared(domain: Path) -> None
 def test_enrich_with_clang_collects_probes(domain: Path) -> None:
     scope = ss.scan(domain, arch_dir="arch35")
 
-    def _fake(tu_path, args, op_dir=""):
+    def _fake(tu_path, args, op_dir="", **_kwargs):
         return ss.ClangIncludeResult(
             ok=True,
             paths=[],

@@ -87,11 +87,14 @@ def materialize_method_bundle(
     project_root: Path | None = None,
     max_refs: int = 24,
     prompt: str = "",
+    extra_ref_paths: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Write method.md (SKILL.md if empty) and an index of available refs.
+    """Write session method.md from the Action METHOD only.
 
-    Copy a ``references/*.md`` file only when METHOD or the task prompt names it
-    in backticks. Default is SKILL.md + filename index, not the whole refs tree.
+    Never concatenate Agent ``SKILL.md`` files. ``skill_ids`` is a permission
+    ceiling: named ``references/*.md`` may be copied only from those trees.
+    Copy a reference when METHOD, the task prompt, or ``extra_ref_paths``
+    names it.
 
     Returns ``{ok, method_path, refs_dir, copied, indexed, missing}``.
     """
@@ -102,83 +105,84 @@ def materialize_method_bundle(
     copied: list[str] = []
     indexed: list[str] = []
     missing: list[str] = []
+    unauthorized: list[str] = []
     method_chunks: list[str] = []
-    if existing_method.strip():
-        method_chunks.append(existing_method.rstrip() + "\n")
+    method_body = existing_method.strip()
+    if not method_body:
+        return {
+            "ok": False,
+            "error": "METHOD_BUNDLE_MISSING",
+            "reason_code": "METHOD_BUNDLE_MISSING",
+            "method_path": "",
+            "refs_dir": refs_dir.as_posix(),
+            "copied": copied,
+            "indexed": indexed,
+            "missing": missing,
+            "unauthorized": unauthorized,
+            "message_zh": "Action METHOD 缺失；禁止拼接 Agent SKILL.md 作为 fallback。",
+        }
+
+    method_chunks.append(method_body.rstrip() + "\n")
+    allowed = {str(s).strip() for s in skill_ids if str(s).strip()}
+    for sid in sorted(allowed):
+        method_chunks.append(f"\nDomain map (do not inline): `skills/{sid}/SKILL.md`\n")
 
     prompt_text = prompt
     prompt_file = sdir / "prompt.md"
     if not prompt_text and prompt_file.is_file():
         prompt_text = prompt_file.read_text(encoding="utf-8")
 
+    extra_blob = "\n".join(f"`{p}`" for p in (extra_ref_paths or []) if p)
+    wanted = _named_reference_files(existing_method, prompt_text, extra_blob)
+
     for sid in skill_ids:
+        sid = str(sid).strip()
+        if not sid:
+            continue
         skill_dir = find_cognitive_skill_dir(sid, project_root)
         if skill_dir is None:
             missing.append(sid)
             continue
-        skill_md = skill_dir / "SKILL.md"
-        skill_body = ""
-        include_skill = skill_md.is_file() and not existing_method.strip()
-        if include_skill:
-            skill_body = skill_md.read_text(encoding="utf-8")
-            method_chunks.append(f"# Materialized skill: {sid}\n\n")
-            method_chunks.append(skill_body)
-            method_chunks.append("\n")
-        scan_texts = [existing_method, prompt_text]
-        if include_skill:
-            scan_texts.append(skill_body)
-        wanted = _named_reference_files(*scan_texts)
         ref_src = skill_dir / "references"
-        available: list[str] = []
-        if ref_src.is_dir():
-            for src in sorted(ref_src.rglob("*")):
-                if not src.is_file():
-                    continue
-                available.append(src.relative_to(ref_src).as_posix())
-            dest = refs_dir / sid
-            count = 0
-            for src in sorted(ref_src.rglob("*")):
-                if not src.is_file():
-                    continue
-                rel = src.relative_to(ref_src).as_posix()
-                if not _ref_is_named(rel, wanted):
-                    continue
-                if count >= max_refs:
-                    break
-                dest.mkdir(parents=True, exist_ok=True)
-                target = dest / rel
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, target)
-                copied.append(f"refs/{sid}/{rel}")
-                count += 1
-        if available:
-            method_chunks.append(f"\n## Available refs (index): {sid}\n\n")
-            for rel in available:
-                method_chunks.append(f"- {rel}\n")
-                indexed.append(f"references/{sid}/{rel}")
+        if not ref_src.is_dir():
+            continue
+        dest = refs_dir / sid
+        count = 0
+        for src in sorted(ref_src.rglob("*")):
+            if not src.is_file():
+                continue
+            rel = src.relative_to(ref_src).as_posix()
+            if not _ref_is_named(rel, wanted):
+                continue
+            if count >= max_refs:
+                break
+            dest.mkdir(parents=True, exist_ok=True)
+            target = dest / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target)
+            copied.append(f"refs/{sid}/{rel}")
+            indexed.append(f"references/{sid}/{rel}")
+            count += 1
+
+    for raw in extra_ref_paths or []:
+        posix = str(raw).replace("\\", "/").lstrip("/")
+        parts = posix.split("/")
+        if len(parts) >= 4 and parts[0] == "skills" and parts[2] == "references":
+            owner = parts[1]
+            if allowed and owner not in allowed:
+                unauthorized.append(posix)
 
     method_path = sdir / "method.md"
-    if method_chunks:
-        if copied:
-            method_chunks.append("\n## Materialized refs (session-local)\n\n")
-            for c in copied:
-                method_chunks.append(f"- `{c}`\n")
-        method_path.write_text("".join(method_chunks), encoding="utf-8")
-    elif existing_method.strip():
-        method_path.write_text(existing_method, encoding="utf-8")
-    # Fail-closed: required skill missing and no pre-rendered method → do not
-    # invent a placeholder that would pass BUNDLE_NOT_READABLE.
-    ok = len(missing) == 0 or bool(existing_method.strip())
-    if not ok and not method_path.is_file():
-        # Leave no placeholder; prepare must abort with METHOD_BUNDLE_MISSING.
-        pass
-    elif not ok:
-        # Do not keep a stale/empty method.md as a false positive for existence.
+    if copied:
+        method_chunks.append("\n## Materialized refs (session-local)\n\n")
+        for c in copied:
+            method_chunks.append(f"- `{c}`\n")
+    method_path.write_text("".join(method_chunks), encoding="utf-8")
+
+    ok = len(missing) == 0 and len(unauthorized) == 0
+    if not ok:
         try:
-            if method_path.is_file() and not existing_method.strip():
-                text = method_path.read_text(encoding="utf-8")
-                if "(no cognitive skill materialized)" in text or not text.strip():
-                    method_path.unlink(missing_ok=True)
+            method_path.unlink(missing_ok=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -186,17 +190,18 @@ def materialize_method_bundle(
         "ok": ok,
         "error": "" if ok else "METHOD_BUNDLE_MISSING",
         "reason_code": "" if ok else "METHOD_BUNDLE_MISSING",
-        "method_path": method_path.as_posix() if method_path.is_file() else "",
+        "method_path": method_path.as_posix() if ok and method_path.is_file() else "",
         "refs_dir": refs_dir.as_posix(),
         "copied": copied,
         "indexed": indexed,
         "missing": missing,
+        "unauthorized": unauthorized,
         "message_zh": (
             ""
             if ok
             else (
-                "Required cognitive skill missing: "
-                + ", ".join(missing[:8])
+                "Required cognitive skill missing or unauthorized reference: "
+                + ", ".join((missing + unauthorized)[:8])
                 + "；禁止派发（禁止 placeholder method.md）。"
             )
         ),

@@ -2234,173 +2234,6 @@ def member_path(n) -> str:
     return ".".join(reversed([p for p in parts if p]))
 
 
-def _native_walk_bin() -> Path | None:
-    """Locate optional native uo_walk executable."""
-    import os
-    import sys
-
-    override = os.environ.get("UO_WALK_BIN", "").strip()
-    if override:
-        p = Path(override).expanduser()
-        if p.is_file():
-            return p.resolve()
-    here = Path(__file__).resolve()
-    uo_root = here.parents[2]
-    candidates = [
-        uo_root / "native" / "uo_walk" / "build" / "uo_walk",
-        uo_root / "native" / "uo_walk" / "build" / "Release" / "uo_walk.exe",
-        uo_root / "native" / "uo_walk" / "build" / "Debug" / "uo_walk.exe",
-    ]
-    if sys.platform == "win32":
-        candidates = [
-            uo_root / "native" / "uo_walk" / "build" / "Release" / "uo_walk.exe",
-            uo_root / "native" / "uo_walk" / "build" / "Debug" / "uo_walk.exe",
-            uo_root / "native" / "uo_walk" / "build" / "uo_walk.exe",
-        ] + candidates
-    for cand in candidates:
-        if cand.is_file():
-            return cand.resolve()
-    return None
-
-
-def _walk_result_from_native(data: dict, *, path: str) -> WalkResult:
-    """Map native JSON into WalkResult (empty lists for unimplemented fields)."""
-    functions: dict[str, FuncRecord] = {}
-    for row in data.get("functions") or []:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name") or "")
-        if not name:
-            continue
-        functions[name] = FuncRecord(
-            name=name,
-            file=str(row.get("file") or path),
-            line=int(row.get("line") or 0),
-            params=[str(p) for p in (row.get("params") or [])],
-        )
-    call_sites: list[CallSite] = []
-    for row in data.get("call_sites") or []:
-        if not isinstance(row, dict):
-            continue
-        call_sites.append(
-            CallSite(
-                caller=str(row.get("caller") or ""),
-                callee=str(row.get("callee") or ""),
-                file=str(row.get("file") or path),
-                line=int(row.get("line") or 0),
-                column=int(row.get("column") or 0),
-                receiver=str(row.get("receiver") or ""),
-                args=tuple(str(a) for a in (row.get("args") or ())),
-            )
-        )
-    controls: list[CtrlNode] = []
-    for row in data.get("controls") or []:
-        if not isinstance(row, dict):
-            continue
-        controls.append(
-            CtrlNode(
-                id=str(row.get("id") or f"{row.get('file')}:{row.get('line')}:0:{row.get('kind')}:0"),
-                kind=str(row.get("kind") or "if"),
-                file=str(row.get("file") or path),
-                line=int(row.get("line") or 0),
-                column=int(row.get("column") or 0),
-                condition=str(row.get("condition") or "")[:512],
-                function=str(row.get("function") or ""),
-            )
-        )
-    writes: list[WriteRecord] = []
-    for row in data.get("writes") or []:
-        if not isinstance(row, dict):
-            continue
-        writes.append(
-            WriteRecord(
-                path=str(row.get("path") or ""),
-                line=int(row.get("line") or 0),
-                rhs=str(row.get("rhs") or ""),
-                file=str(row.get("file") or path),
-                function=str(row.get("function") or ""),
-                column=int(row.get("column") or 0),
-            )
-        )
-    diags = [
-        (int(d[0]), str(d[1]), str(d[2]))
-        for d in (data.get("diagnostics") or [])
-        if isinstance(d, (list, tuple)) and len(d) >= 3
-    ]
-    return WalkResult(
-        path=_norm(path),
-        controls=controls,
-        writes=writes,
-        local_writes=[],
-        call_sites=call_sites,
-        functions=functions,
-        diagnostics=diags,
-        class_fields=set(data.get("class_fields") or []),
-        field_decls={},
-        local_decls=[],
-        type_decls=[],
-        alias_decls=[],
-        base_decls=[],
-    )
-
-
-def _try_native_walk(
-    path: str,
-    args: list[str],
-    *,
-    side: str,
-    op_needle: str,
-    op_root: str,
-) -> WalkResult | None:
-    """Run native uo_walk when available; return None on any failure."""
-    import json
-    import os
-    import subprocess
-    import tempfile
-
-    if os.environ.get("UO_NATIVE_WALK", "1").strip().lower() in {"0", "false", "off", "no"}:
-        return None
-    exe = _native_walk_bin()
-    if exe is None:
-        return None
-    with tempfile.TemporaryDirectory(prefix="uo_walk_") as td:
-        td_path = Path(td)
-        argfile = td_path / "args.txt"
-        outfile = td_path / "out.json"
-        argfile.write_text("\n".join(args) + "\n", encoding="utf-8")
-        cmd = [
-            str(exe),
-            "--file",
-            path,
-            "--side",
-            side,
-            "--args",
-            str(argfile),
-            "--out",
-            str(outfile),
-        ]
-        if op_needle:
-            cmd += ["--needle", op_needle]
-        if op_root:
-            cmd += ["--op-root", op_root]
-        try:
-            proc = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=int(os.environ.get("UO_NATIVE_WALK_TIMEOUT", "600")),
-                check=False,
-            )
-            if proc.returncode != 0 or not outfile.is_file():
-                return None
-            data = json.loads(outfile.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                return None
-            return _walk_result_from_native(data, path=path)
-        except Exception:  # noqa: BLE001
-            return None
-
-
 def probe_diagnostics(
     path: str | Path,
     ctx: BuildContext,
@@ -2461,6 +2294,12 @@ def probe_diagnostics(
         options=cindex.TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
         **parse_unsaved_kwargs(op_dir, side=side),
     )
+    try:
+        from uo_init.perf import bump
+
+        bump("clang_tu_parse")
+    except Exception:  # noqa: BLE001
+        pass
     scored = score_tu_diagnostics(tu.diagnostics, path, op_dir)
     errors = int(scored["error_count"])
     fatals = int(scored["fatal_count"])
@@ -2482,6 +2321,18 @@ def probe_diagnostics(
         f"op_errors={op_errors}"
     )
     return out
+
+
+_INJECTED = __import__("threading").local()
+
+
+def consume_parsed_tu(tu: Any, path: str | Path, ctx: BuildContext, **kwargs: Any) -> WalkResult:
+    """Walk an already-parsed TU and store the WalkResult (prepare/extract fusion)."""
+    _INJECTED.tu = tu
+    try:
+        return walk_file(path, ctx, **kwargs)
+    finally:
+        _INJECTED.tu = None
 
 
 def _use_single_ast_pass(side: str) -> bool:
@@ -2537,6 +2388,18 @@ def walk_file(
                 orig_assignment=orig_assignment,
             )
             cached = tu_cache.load_walk(cache_key, op_dir=op_dir or None, arch=arch)
+            if cached is None:
+                front_key = tu_cache.walk_cache_key(
+                    path,
+                    ctx,
+                    side=side,
+                    dtype_variant=dtype_variant,
+                    op_needle="",
+                    collect_writes=collect_writes,
+                    orig_assignment=orig_assignment,
+                )
+                if front_key != cache_key:
+                    cached = tu_cache.load_walk(front_key, op_dir=op_dir or None, arch=arch)
             if cached is not None:
                 dt = _time.perf_counter() - t_all
                 _tlog(
@@ -2557,40 +2420,27 @@ def walk_file(
             orig_assignment=orig_assignment,
         )
     )
-    from uo_init.bisheng_attrs import kernel_unsaved_files, parse_unsaved_kwargs
+    from uo_init.bisheng_attrs import parse_unsaved_kwargs
 
-    # Native walk cannot apply in-memory Bisheng-attribute rewrites.
-    native = None
-    if not (side == "kernel" and op_root and kernel_unsaved_files(op_root)):
-        native = _try_native_walk(
-            path, args, side=side, op_needle=op_needle, op_root=op_root
-        )
-    if native is not None:
-        if cache_key:
-            try:
-                tu_cache.store_walk(cache_key, native, op_dir=op_dir or None, arch=arch)
-            except Exception:  # noqa: BLE001
-                pass
-        dt = _time.perf_counter() - t_all
-        budget = phase_budget_s()
-        flag = " SLOW" if dt > budget else ""
-        _tlog(
-            f"{dt:7.3f}s{flag}  walk_file  file={name} side={side} "
-            f"backend=native controls={len(native.controls)} "
-            f"writes={len(native.writes)} calls={len(native.call_sites)}"
-        )
-        return native
+    # Native walker is not a product path: one Python frontend only.
+    from uo_init.perf import bump as _perf_bump
 
+    injected = getattr(_INJECTED, "tu", None)
     _require_clang()
     idx = cindex.Index.create()
     t0 = _time.perf_counter()
-    tu = idx.parse(
-        path,
-        args=args,
-        options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
-        **parse_unsaved_kwargs(op_root, side=side),
-    )
-    t_parse = _time.perf_counter() - t0
+    if injected is not None:
+        tu = injected
+        t_parse = 0.0
+    else:
+        tu = idx.parse(
+            path,
+            args=args,
+            options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+            **parse_unsaved_kwargs(op_root, side=side),
+        )
+        _perf_bump("clang_tu_parse")
+        t_parse = _time.perf_counter() - t0
     diags = [
         (int(d.severity), _norm(d.location.file.name) if d.location.file else "?", d.spelling)
         for d in tu.diagnostics

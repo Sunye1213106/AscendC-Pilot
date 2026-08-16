@@ -105,6 +105,23 @@ def audit(repo: Path) -> list[str]:
                 if (wid, aid) not in ENGINE_REGISTRY:
                     errors.append(f"{wid}/{aid}: deterministic Action missing engine registry entry")
 
+            if mode == EXECUTION_SUBAGENT and tpid:
+                default_mid = f"{wid}/{aid.replace('_', '-')}"
+                if not mid or "/" not in mid or mid == default_mid:
+                    errors.append(
+                        f"{wid}/{aid}: subagent LLM Action missing explicit "
+                        f"skill/capability action_method_id (not {default_mid!r})"
+                    )
+                else:
+                    skill, cap = mid.split("/", 1)
+                    mp = skills_dir / skill / "capabilities" / cap / "METHOD.md"
+                    if not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                        errors.append(f"METHOD_MISSING {wid}/{aid}: {mid} -> {mp.as_posix()}")
+                    if skill not in compose.COGNITIVE_SKILL_IDS:
+                        errors.append(
+                            f"{wid}/{aid}: action_method_id skill {skill!r} not a cognitive skill"
+                        )
+
             if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
                 if mid and "/" not in mid:
                     errors.append(f"{wid}/{aid}: invalid action_method_id {mid!r}")

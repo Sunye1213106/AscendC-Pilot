@@ -146,32 +146,24 @@ PROFILES: dict[str, ContextProfile] = {
     ),
     "tg-init-human-confirm": ContextProfile(
         id="tg-init-human-confirm",
-        description="Human confirm to enter planning; no CodeMap dump.",
-        references=("skills/testcase-generation/references/planning.md",),
+        description="Host-owned confirm to enter planning; no domain skill load.",
+        references=(),
         query_slices=(),
-        token_budget=1500,
+        token_budget=800,
     ),
     "tg-plan-scenario-plan": ContextProfile(
         id="tg-plan-scenario-plan",
-        description="Freeze ScenarioSet as the TG plan target.",
-        references=(
-            "skills/code-engineering/references/scenario-catalog.md",
-            "skills/testcase-generation/references/precision-scenarios.md",
-            "skills/testcase-generation/references/perf-scenarios.md",
-            "skills/testcase-generation/references/planning.md",
-        ),
+        description="Host-owned freeze of ScenarioSet as the TG plan target.",
+        references=(),
         query_slices=(),
-        token_budget=2500,
+        token_budget=800,
     ),
     "tg-plan-plan-approve": ContextProfile(
         id="tg-plan-plan-approve",
-        description="Approve the generated test-obligation plan.",
-        references=(
-            "skills/testcase-generation/references/planning.md",
-            "skills/testcase-generation/references/planning-gotchas.md",
-        ),
+        description="Host-owned approve of the generated test-obligation plan.",
+        references=(),
         query_slices=(),
-        token_budget=1500,
+        token_budget=800,
     ),
     "ce-review-code-review": ContextProfile(
         id="ce-review-code-review",
@@ -262,14 +254,10 @@ PROFILES: dict[str, ContextProfile] = {
     ),
     "ce-impact-scenario-confirm": ContextProfile(
         id="ce-impact-scenario-confirm",
-        description="Confirm inferred precision/perf ScenarioSet.",
-        references=(
-            "skills/code-engineering/references/scenario-catalog.md",
-            "skills/code-engineering/references/scenario-infer.md",
-            "skills/testcase-generation/references/precision-scenarios.md",
-        ),
+        description="Host-owned confirm of inferred precision/perf ScenarioSet.",
+        references=(),
         query_slices=(),
-        token_budget=2000,
+        token_budget=800,
     ),
     "ce-intent-feature-decompose": ContextProfile(
         id="ce-intent-feature-decompose",
@@ -302,10 +290,10 @@ PROFILES: dict[str, ContextProfile] = {
     ),
     "ce-intent-human-confirm": ContextProfile(
         id="ce-intent-human-confirm",
-        description="Human confirm of the CE change plan.",
-        references=("skills/code-engineering/references/gotchas.md",),
+        description="Host-owned confirm of the CE change plan.",
+        references=(),
         query_slices=(),
-        token_budget=1500,
+        token_budget=800,
     ),
 }
 

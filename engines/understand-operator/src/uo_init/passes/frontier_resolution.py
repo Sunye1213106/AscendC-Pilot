@@ -14,6 +14,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 
 _BRANCH_RE = re.compile(r"\b(if\s+constexpr|if|while|for|switch)\s*\(")
 _PP_RE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif)\b(.*)$", re.M)
@@ -50,7 +51,7 @@ def resolve_class_frontiers(
             path = _resolve_source(root, str(candidate.get("file") or ""))
             if path is None:
                 continue
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text(path)
             for method, body_start, body_end, start_line in _method_bodies(text, symbol):
                 body = text[body_start:body_end]
                 owner = codemap.upsert(

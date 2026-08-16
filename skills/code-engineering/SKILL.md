@@ -75,3 +75,8 @@ Git 写操作、fork、PR 文案走维护者流程，不在本 skill。只读审
   `references/scenario-infer.md`, `capabilities/ce-scenario-infer/METHOD.md`
 - Scenario knobs (agent overlay, Host merges before confirm):
   `capabilities/ce-scenario-knobs/METHOD.md`
+- Feature decompose / plan review:
+  `capabilities/ce-feature-decompose/METHOD.md`,
+  `capabilities/ce-plan-review/METHOD.md`
+- Harness evidence (verify):
+  `capabilities/ce-harness-evidence/METHOD.md`

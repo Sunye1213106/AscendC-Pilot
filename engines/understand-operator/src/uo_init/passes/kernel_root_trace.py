@@ -25,6 +25,7 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from uo_init.perf import TimeBudget, kernel_root_trace_budget_s
 from uo_init.ids import buffer_site_id, make_id, operation_site_id, register_site_id
 from uo_init.ir.codemap import CodeMap, _rid
 from uo_init.ir.entity import EntityKind
@@ -211,15 +212,8 @@ _CXX_SKIP_BASE = frozenset(
 )
 
 
-_GATED_FILL_S = 120.0
-
-
 def _budget_s() -> float:
-    raw = str(os.environ.get("UO_KERNEL_ROOT_TRACE_BUDGET_S") or "25").strip()
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        return 25.0
+    return kernel_root_trace_budget_s()
 
 
 def _enabled() -> bool:
@@ -791,138 +785,20 @@ def _select_framework_bridge(
 
 
 def _scan_type_aliases(files: list[Path], *, root: str, deadline: float) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for path in files:
-        if time.perf_counter() > deadline:
-            break
-        try:
-            text = read_text(path)
-        except OSError:
-            continue
-        nfile = _norm_file(str(path), root)
-        for i, line in enumerate(text.splitlines(), start=1):
-            for m in _USING_RE.finditer(line):
-                out.append(
-                    {
-                        "alias": m.group("alias"),
-                        "target": m.group("target").strip(),
-                        "file": nfile,
-                        "line": i,
-                    }
-                )
-            for m in _TYPEDEF_RE.finditer(line):
-                out.append(
-                    {
-                        "alias": m.group("alias"),
-                        "target": m.group("target").strip(),
-                        "file": nfile,
-                        "line": i,
-                    }
-                )
-    return out
+    from uo_init.source_index import get_or_build
+
+    if time.perf_counter() > deadline:
+        return []
+    return get_or_build(files, root=root, deadline=deadline).aliases_for(files)
 
 
 def _scan_class_members(files: list[Path], *, root: str, deadline: float) -> list[dict[str, Any]]:
     """All class/struct field members in source scope (complete composition graph)."""
-    out: list[dict[str, Any]] = []
-    for path in files:
-        if time.perf_counter() > deadline:
-            break
-        try:
-            text = read_text(path)
-        except OSError:
-            continue
-        lines = text.splitlines()
-        current: str | None = None
-        depth = 0
-        pending_type: str | None = None
-        pending_line = 0
-        for i, line in enumerate(lines, start=1):
-            cm = _CLASS_RE.search(line)
-            if cm and ";" not in line:
-                current = cm.group("name")
-                depth = line.count("{") - line.count("}")
-                if depth < 0:
-                    depth = 0
-                pending_type = None
-                continue
-            if current is None:
-                continue
-            depth += line.count("{") - line.count("}")
-            if depth <= 0:
-                current = None
-                depth = 0
-                pending_type = None
-                continue
-            if pending_type is not None:
-                nm = _CONTINUATION_NAME_RE.match(line)
-                combined = f"{pending_type} {line.strip()}"
-                emit_name = ""
-                emit_type = ""
-                if nm:
-                    emit_name = nm.group("name")
-                    emit_type = pending_type
-                elif ";" in line:
-                    m = _MEMBER_RE.search(combined.replace("\n", " "))
-                    if m:
-                        emit_type = m.group("type").strip()
-                        emit_name = m.group("name")
-                    else:
-                        m2 = _MEMBER_RE.search(line)
-                        if m2:
-                            emit_type = f"{pending_type} {m2.group('type')}".strip()
-                            emit_name = m2.group("name")
-                if emit_name:
-                    pending_type = None
-                    if is_valid_storage_name(emit_name):
-                        base = _base_type_name(emit_type)
-                        if base and base not in _CXX_SKIP_BASE:
-                            out.append(
-                                {
-                                    "owner": current,
-                                    "member": emit_name,
-                                    "type_text": emit_type,
-                                    "base_type": base,
-                                    "file": _norm_file(str(path), root),
-                                    "line": pending_line,
-                                }
-                            )
-                    continue
-                pending_type = combined
-                continue
-            if "(" in line and "std::conditional" not in line and "conditional_t" not in line:
-                continue
-            stripped = line.rstrip()
-            if ";" not in line and (
-                stripped.endswith("::type")
-                or stripped.endswith(",")
-                or (
-                    ("MutexBuffer" in line or "conditional" in line or "Tensor" in line)
-                    and not re.search(r"\b[A-Za-z_]\w*\s*;\s*$", line)
-                )
-            ):
-                pending_type = stripped
-                pending_line = i
-                continue
-            for m in _MEMBER_RE.finditer(line):
-                type_text = m.group("type").strip()
-                name = m.group("name")
-                if not is_valid_storage_name(name):
-                    continue
-                base = _base_type_name(type_text)
-                if not base or base in _CXX_SKIP_BASE:
-                    continue
-                out.append(
-                    {
-                        "owner": current,
-                        "member": name,
-                        "type_text": type_text,
-                        "base_type": base,
-                        "file": _norm_file(str(path), root),
-                        "line": i,
-                    }
-                )
-    return out
+    from uo_init.source_index import get_or_build
+
+    if time.perf_counter() > deadline:
+        return []
+    return get_or_build(files, root=root, deadline=deadline).members_for(files)
 
 
 def _existing_type_id(codemap: CodeMap, spell: str) -> str | None:
@@ -1329,7 +1205,8 @@ def finalize_kernel_root_trace(
         return codemap
 
     t0 = time.perf_counter()
-    deadline = t0 + _budget_s()
+    budget = TimeBudget(_budget_s())
+    deadline = budget.deadline
     root = str(Path(source_root).expanduser().resolve())
     arch = require_architecture(architecture or codemap.architecture)
     reachable, filter_strict = kscan.reachable_function_names(codemap)
@@ -1337,6 +1214,17 @@ def finalize_kernel_root_trace(
     identity_filled = 0
 
     _purge_root_trace_entities(codemap)
+
+    try:
+        from uo_init import tu_cache as _tu_cache
+
+        _tu_cache.load_walk_bundle(Path(root), arch, path_substr="op_kernel")
+    except Exception:  # noqa: BLE001
+        pass
+    if files:
+        from uo_init.source_index import get_or_build
+
+        get_or_build(files, root=root, deadline=deadline)
 
     # --- 1. Source facts -------------------------------------------------
     calls, decls, _controls, provenance = kscan.collect_call_sites_from_walks(
@@ -1434,12 +1322,12 @@ def finalize_kernel_root_trace(
         )
         decls = list(decls or []) + list(lex_decls or [])
 
-    # Gated source n is this_op + sibling_op. Fill those primitives even if the
-    # 25s compile budget is gone; family_common cube templates stay clang-only.
+    # Gated source n is this_op + sibling_op. Fill those primitives on the
+    # same TimeBudget; family_common cube templates stay clang-only.
     extra_arch = kscan.kernel_corpus(
         Path(root),
         arch,
-        deadline=time.perf_counter() + _GATED_FILL_S,
+        deadline=deadline,
     )
     extra_added = 0
     gated_fill_complete = True
@@ -1449,19 +1337,18 @@ def finalize_kernel_root_trace(
         if owner in {"this_op", "sibling_op"}:
             priority.append(path)
     if priority:
-        prim_deadline = time.perf_counter() + _GATED_FILL_S
         extra_sites = kscan.lexical_source_call_sites(
             priority,
             reachable=reachable,
             filter_strict=False,
             root=root,
-            deadline=prim_deadline,
+            deadline=deadline,
             primitives_only=True,
         )
         calls, extra_added = kscan.merge_lexical_sites(calls, extra_sites, root=root)
         if extra_added:
             provenance = f"{provenance}+arch_kernel_primitives"
-        if time.perf_counter() >= prim_deadline:
+        if budget.expired():
             gated_fill_complete = False
     try:
         from uo_init.diagnostics.source_api import count_source_kernel_apis
@@ -2974,9 +2861,22 @@ def finalize_kernel_root_trace(
         "gated_corpus_n": len(priority),
         "arch_kernel_primitives_added": extra_added,
         "gated_fill_complete": gated_fill_complete,
+        "budget_expired": budget.expired(),
         "source_api_gated": source_api_gated,
         "quality": quality,
     }
+    try:
+        from uo_init.perf import record_pass
+
+        record_pass(
+            "kernel_root_trace",
+            source_files=len(files),
+            gated_fill_complete=gated_fill_complete,
+            budget_expired=budget.expired(),
+            cache_walk_loads=int((walk_stats or {}).get("pickle_load") or 0),
+        )
+    except Exception:  # noqa: BLE001
+        pass
     codemap.meta["kernel_root_trace"] = meta
     codemap.meta["kernel_backend"] = kernel_backend
     # Thin compat for older query helpers (not an execution model).

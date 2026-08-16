@@ -15,6 +15,7 @@ from pathlib import Path
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.tiling_host_writes import _line, _mask_non_code, _selected_host_files
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -40,7 +41,7 @@ def enrich_value_defining_sites(
     paths = _selected_host_files(root, architecture)
     texts: list[tuple[str, str, str]] = []
     for path in paths:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         texts.append((_rel(root, path), raw, _mask_non_code(raw)))
 
     # Collect every direct assignment lhs -> (file, line, rhs) once.

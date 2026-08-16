@@ -47,6 +47,8 @@ def test_q18_fans_out_independent_slices() -> None:
     assert "pipe" not in ids
     assert len(ids) >= 2
     assert len(ids) <= 5
+    modes = [row["first_mode"] for row in slices]
+    assert len(modes) == len(set(modes))
 
 
 def test_focused_question_gates_child() -> None:

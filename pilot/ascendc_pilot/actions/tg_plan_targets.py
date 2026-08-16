@@ -84,12 +84,15 @@ def _selection(ctx: dict[str, Any], intent: dict[str, Any]) -> dict[str, Any]:
         or intent.get("dimension_filter")
     )
     requested = str(ctx.get("target_mode") or intent.get("target_mode") or "").strip()
+    intent_mode = str(intent.get("mode") or "").strip()
     if keys:
         mode = "explicit_keys"
     elif dimensions:
         mode = "dimension_filter"
-    elif requested in {"explicit_keys", "dimension_filter", "all_declared"}:
+    elif requested in {"explicit_keys", "dimension_filter", "all_declared", "scenario_set"}:
         mode = requested
+    elif intent_mode == "scenario_targeted":
+        mode = "scenario_set"
     else:
         mode = "all_declared"
     return {"target_mode": mode, "target_keys": keys, "target_dimensions": dimensions}
@@ -167,6 +170,9 @@ def _select_targets(declared: set[int], selection: dict[str, Any]) -> tuple[set[
             if all(str(inst.get(name)) in allowed for name, allowed in filt.items()):
                 selected.add(key)
         return selected, errors
+    if mode == "scenario_set":
+        errors.append("SCENARIO_SET_IS_NOT_DECLARED_KEYS")
+        return set(), errors
     return set(declared), errors
 
 
@@ -183,6 +189,18 @@ def plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     doc = _load(path)
     doc.update(_selection(ctx, doc))
     doc["mode"] = str(doc.get("mode") or tg_ctx.get("mode") or "tilingkey_full_coverage")
+    if doc["mode"] == "scenario_targeted":
+        doc["target_mode"] = "scenario_set"
+        doc["forbid_cartesian_over_declared"] = True
+        doc["do_not_widen_to_declared_set"] = True
+        if not (doc.get("scenarios") or []):
+            return {
+                "ok": False,
+                "engine": "plan_intent",
+                "error": "SCENARIO_SET_EMPTY",
+                "reason_code": "SCENARIO_SET_EMPTY",
+                "message_zh": "scenario_targeted 禁止在缺 ScenarioSet 时把 T 扩成 D。",
+            }
     doc["scope_policy"] = "freeze_targets_in_plan_build"
     _dump(path, doc)
     return {**result, **doc, "artifact": path.as_posix()}

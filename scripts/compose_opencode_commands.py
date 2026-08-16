@@ -20,11 +20,10 @@ def _command_body(workflow_id: str) -> str:
 User arguments: $ARGUMENTS
 
 1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
-2. **先对人说出路由**（短问自查 / 1 个 Task / N 路并行，以及为什么），再动手。
+2. **先对人说出路由**，再动手。怎么拆见 `cognitive-skills/operator-analysis/capabilities/uo-query-router/METHOD.md`。
 3. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子绝对路径>`，把 stdout 说给人听。
-4. **深问必须 Task**：METHOD≥2 行 / 多个独立结案条件 → 同一轮并行原生 Task（agent=`uo-query`）。切片看 METHOD 行数，相关 ≠ 单域。禁止「一条因果链 / 一个 agent 更连贯」收成 1 路。禁止把整题丢给一个子代理。禁止主控自己连 `acp`/Read。每个 prompt 只带 FOCUS + `FIRST_QUERY: acp uo-query --mode <本片唯一先查> --project <绝对路径>` + 本片那一句。全部返回后 Primary 综合。点卡片可看子代思考。
+4. 若 `host_step.tasks` ≥2：同一轮原样并行派发每条 stub，全部返回后综合。不要 `pilot_run`。
 5. 子代未闭合再开一轮 Task（FOCUS=缺口），不要改自查、不要问「要不要继续」。
-6. 不要 `pilot_run`。
 """
     if workflow_id == "uo-init":
         return """Run the AscendC-Pilot workflow `uo-init` for the current operator project.

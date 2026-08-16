@@ -13,9 +13,11 @@ Cognitive skills（五个，缺一不可——闭合集合，不是起点）：
 | Kind | Path | Notes |
 |------|------|-------|
 | Cognitive skills | `skills/<id>/` | Self-contained `SKILL.md` + `references/` + `examples/` |
+| Action METHOD | `skills/<id>/capabilities/<cap>/METHOD.md` | One LLM Action. Spec `action_method_id="{skill}/{capability}"`. Prepare fail-closed if missing. |
 | Shared language | `agents/CONTEXT.md` | Compose 进 invariant pack；跨 UO/TG/CE 同名词表 |
 | Templates | `skills/testcase-generation/templates/` | Structure-only snippets (not worked examples) |
-| Shared | `skills/_shared/` | **已删除，勿再添加。** 内容已迁入各 skill 的 `references/` |
+| Authoring shared refs | `knowledge/shared-references/` | SSOT；`compose --sync` 投影到四个 skill 的 `references/`（**不要**塞进 `code-engineering`） |
+| Shared | `skills/_shared/` | **已删除，勿再添加。** 运行时不要复活；authoring SSOT 在 `knowledge/` |
 | Maintainer overlay | `.cursor/skills/` | 开发 Pilot 本仓用；**不**进入 `COGNITIVE_SKILL_IDS` / compose |
 
 Each cognitive skill must ship ≥2 worked example case directories under `examples/<case>/` with `README.md`, `input/`, `expected/`.
@@ -27,7 +29,8 @@ Cognitive skills 是 **method bundle**，不是 Host 发现的 slash：
 - Cursor / Codex compose 会给认知 `SKILL.md` 加上 `disable-model-invocation: true`
 - OpenCode 把它们投影到 `cognitive-skills/`，不进 Skill discovery
 - 人侧发现入口是生成的 workflow slash（`/uo-init`、`/uo-query`、`/tg-plan`、…）
-- Action prepare 把认知 skill 正文物化进 lease bundle
+- Action prepare 把该 Action 的 **METHOD.md** 物化进 lease bundle；`Agent.skill_ids` 只是 refs 授权上限，不拼接 SKILL 正文
+- 纯确认（`primary_interactive`）不装载认知 Skill
 
 不要把通用 `/implement`、`/tdd`、第二份 `code-review` 写进 `skill_ids`。维护者纪律放 `.cursor/skills/`。
 

@@ -4,11 +4,14 @@
 
 ```text
 确定性计算              -> Engine
-领域推理方法            -> Skill
-一次任务说明            -> Prompt
-状态与迁移              -> Workflow
+领域推理方法            -> METHOD.md（一个 Action）
+领域能力地图            -> Skill
+一次任务说明            -> Prompt（task/input/delta/output）
+状态与迁移              -> Workflow Spec（含显式 action_method_id）
 可执行步骤              -> Action
-需要独立 identity/context/permission/referee -> Agent
+身份与权限上限          -> Agent（skill_ids 不是每次装载列表）
+动态事实                -> ContextProfile
+硬不变量                -> Policy / Invariant（不是 LLM heuristic）
 工具或 runtime 方法合同 -> Capability
 控制面传输与派发        -> Host Session Driver（Host Adapter 运行时）
 ```
@@ -40,11 +43,24 @@ python scripts/check_ownership_contracts.py
 
 Skill 是自包含的 runtime method bundle。修改 `skills/<domain>/SKILL.md`，将必要的证据、完整性和易错点规则放在 `references/`，将可执行示例放在 `examples/`。行为改变时更新 `evals/skills/<domain>/`。
 
-不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。运行：
+不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。共享纪律改 `knowledge/shared-references/`，再 `python scripts/compose_runtime.py --sync`。运行：
 
 ```bash
 python scripts/check_skill_architecture.py
+python scripts/check_instruction_ownership.py
+python scripts/sync_shared_references.py --check
 ```
+
+### 指令所有权
+
+| 层 | 独有什么 |
+| --- | --- |
+| METHOD | 相关 ≠ 单域、FIRST_QUERY、怎么拆、怎么查 mode |
+| Policy / invariant | 硬约束：深问必须经授权 actor；Primary 不得绕过 lease；不得伪造 Task result；不得 `pilot_run`/`acp start uo-query` |
+| SKILL.md | 领域地图 + 指向 METHOD 的一行 |
+| Prompt | 本次 task / input / constraints / output |
+| Agent YAML | identity / tools / `skill_ids` 上限 |
+| Docs | 解释性；测试不断言 docs 含某句 |
 
 认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。开发 Pilot 本仓的 grilling / TDD / 诊断 / PR 审查放在 `.cursor/skills/`，不要写进 `agents/*.yaml` 的 `skill_ids`，compose 也不会投影它们。改 agent 向文档时读 `.cursor/skills/writing-for-pilot-skills`。共享语言改 `agents/CONTEXT.md`。这些维护者 skill 吸收了 [mattpocock/skills](https://github.com/mattpocock/skills) 的写法（grilling、缝上的 TDD、双轴 review、CONTEXT），没有把 `/implement` 装进算子主控。
 
@@ -61,7 +77,7 @@ acp doctor --host opencode
 python scripts/check_host_driver_contract.py
 ```
 
-并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。Agent YAML 路径优先使用 `pilot:` / `method:` / `source:` 命名空间；prepare 会物化 cognitive skill 正文，读失败走 `BUNDLE_NOT_READABLE`。
+并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。Agent YAML 路径优先使用 `pilot:` / `method:` / `source:` 命名空间；prepare 只物化该 Action 的 METHOD.md，读失败走 `BUNDLE_NOT_READABLE`。`Agent.skill_ids` 是权限上限，不是每次调用的装载列表。
 
 ## Gate、测试与 Reference
 

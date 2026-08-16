@@ -18,6 +18,7 @@ from typing import Any
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.symbol_identity import is_member_symbol, normalize_symbol, short_symbol
 from uo_init.source_layout import selected_host_files
 
@@ -111,7 +112,7 @@ def trace_host_key_roots(
     texts: list[tuple[Path, str]] = []
     records: list[_Record] = []
     for path in host_files:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text(path)
         texts.append((path, text))
         records.extend(_assignments(root, path, text))
 

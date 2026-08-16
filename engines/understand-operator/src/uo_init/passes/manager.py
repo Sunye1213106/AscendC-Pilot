@@ -47,8 +47,14 @@ class PassManager:
     def run(self, codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         ctx = dict(context or {})
         ran: list[str] = []
+        import time
+
+        from uo_init.perf import record_pass
+
         for name, fn in self.passes:
+            t0 = time.perf_counter()
             codemap = fn(codemap, context=ctx)
+            record_pass(name, time.perf_counter() - t0)
             ran.append(name)
         codemap.meta["passes_run"] = ran
         return codemap

@@ -11,17 +11,17 @@ Wave 3 抽取（PIPE `kernel_phase`、`definition_sites`、registry PREDICATE、
 
 ## 当前派发（Cursor 同构）
 
-Cursor：主控按 METHOD 行切片（相关 ≠ 单域），**同一条消息里并行多个 Task**，子代理隔离上下文；全部返回后 **Primary 综合**，不发明子代理没引用的事实。
+Cursor：若 `host_step.tasks` ≥2，**同一条消息里并行多个 Task**（编译器权威）；否则按独立证据空间启发式拆。子代理隔离上下文；全部返回后 **Primary 综合**，不发明子代理没引用的事实。
 
 uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，再动手。刚跑完 `/uo-init` 后 leftover 阶段不含 `uo-query` **不得**拦 `Task(agent=uo-query)`。
 
 | 问法 | 谁查 |
 | --- | --- |
 | 短、一两跳 | 主控自己 `acp uo-query --mode`，不开子代理 |
-| 深、但只打中 METHOD 表 **一行** | **一个** `Task(agent=uo-query)`（主控写 FOCUS；点卡片看思考） |
-| 深、打中 **两行及以上** | 主控 **同一轮并行** 多个 `Task(agent=uo-query)`；全部返回后综合，禁止只转述某一个 |
+| 深、一个独立证据空间 | **一个** `Task(agent=uo-query)`（主控写 FOCUS；点卡片看思考） |
+| 深、多个独立证据空间 | 主控 **同一轮并行** 多个 `Task(agent=uo-query)`；全部返回后综合，禁止只转述某一个 |
 
-不是「一个子代理串 15 个 mode」。切片由主控分类，不以 Host `host_step.tasks` 为准。
+不是「一个子代理串 15 个 mode」。`host_step.tasks` ≥2 时按编译器 fanout；0/1 片才用启发式。算法见 `skills/operator-analysis/capabilities/uo-query-router/METHOD.md`。
 
 ## 怎么判
 

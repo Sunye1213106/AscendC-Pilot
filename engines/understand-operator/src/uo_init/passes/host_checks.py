@@ -14,6 +14,7 @@ from uo_init.ids import branch_id
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.tiling_host_writes import (
     _line,
     _mask_non_code,
@@ -83,7 +84,7 @@ def enrich_host_checks(
     sites = 0
     bound = 0
     for path in paths:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         masked = _mask_non_code(raw)
         file = _rel(root, path)
         for match in _CHECK_RE.finditer(masked):

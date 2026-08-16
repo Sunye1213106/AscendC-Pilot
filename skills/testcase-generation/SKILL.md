@@ -83,5 +83,7 @@ Plan `level=L3` / `branch_outcome_coverage`：TD dump + `branch_eval` 增长 R�
 | 黑盒因子意图 | `references/blackbox-factors.md` |
 | 白盒路径 | `references/whitebox-paths.md` |
 | 针对性构造 METHOD | `capabilities/tg-targeted-construct/METHOD.md` |
+| Init 审计 METHOD | `capabilities/tg-init-audit/METHOD.md` |
+| Closure 审计 METHOD | `capabilities/closure-audit/METHOD.md` |
 
 源码引理细节见独立 Skill：`source-proof`。

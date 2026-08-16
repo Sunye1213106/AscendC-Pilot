@@ -171,7 +171,9 @@ def _cpp_files(path: Path, *, recursive: bool = True) -> list[Path]:
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    from uo_init.passes.source_text_cache import read_text
+
+    return read_text(path)
 
 
 def _rel(root: Path, path: Path) -> str:

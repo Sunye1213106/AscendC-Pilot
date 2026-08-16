@@ -14,6 +14,7 @@ from pathlib import Path
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.symbol_identity import normalize_symbol
 from uo_init.source_layout import selected_host_files
 
@@ -38,7 +39,7 @@ def validate_host_defuse(
     valid_sites: set[tuple[str, int, str]] = set()
     files: dict[str, str] = {}
     for path in host_files:
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         masked = _mask_non_code(raw)
         file = _rel(root, path)
         files[file] = raw

@@ -24,6 +24,7 @@ from uo_init.passes.kernel_scan import (
     kernel_corpus,
     kernel_file_owner,
 )
+from uo_init.passes.source_text_cache import read_text
 
 # Precision bar vs FAG 口径. DataCopyPad before DataCopy is documentation only;
 # matching is exact.
@@ -141,7 +142,7 @@ def count_source_kernel_apis(
     seen: set[tuple[str, int, str]] = set()
     for path in scan:
         try:
-            text = _COMMENT_RE.sub(" ", path.read_text(encoding="utf-8", errors="replace"))
+            text = _COMMENT_RE.sub(" ", read_text(path))
         except OSError:
             continue
         if allow and kernel_file_owner(path, root) not in allow:

@@ -30,6 +30,11 @@ description: >
 5. **主动寻反例**：其他入口、分流、间接调用、模板/宏、alias。踩坑：`references/failure-patterns.md`。
 6. **结论与证书**：`references/proof-certificate.md`；裁判：`references/referee-replay.md`；新鲜度：`references/artifact-freshness.md`。
 
+## Capability routing
+
+- 采矿：`capabilities/lemma-mine/METHOD.md`
+- 审查：`capabilities/lemma-review/METHOD.md`
+
 ## 按需参考
 
 | 条件 | 文件 |

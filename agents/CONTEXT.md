@@ -5,7 +5,7 @@
 **CodeMap** — UO 写入的 `.uo` 源码语义图。不是通用 call-graph。
 **digest** — session binding 上的 `canonical_graph_digest`。fresh = digest 匹配，不是「刚建过库」。
 **短问** — 一名字、一 mode、一两跳；一次 `acp uo-query` stdout 即完成。
-**深问** — 画图 / 多变体 / METHOD ≥2 行 / 差分；同一轮 `Task(agent=uo-query)`。
+**深问** — 多个独立证据空间 / 多个结案条件；同一轮 `Task(agent=uo-query)`。行数不是不变量，见 `capabilities/uo-query-router/METHOD.md`。
 **可见 LLM 路由** — 查询不是 Host workflow：先对人说出短问或几个 Task，再动手。
 **Open** — 未闭合集合。CE：`Open = O - V - X`。TG：`T` 中尚未进入 `(R∩T)∪E` 的元素。两套账本，不要合并。
 **Tier A/B/C** — A 权威窗口，B 由 A 确定性推出，C 是线索。C 不能把义务送进 `V` 或 `X`。

@@ -312,6 +312,21 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             quality["architecture"] = arch
             quality["op_name"] = op_name or product.stem.split(".")[0]
             pe._dump(uo / "checks" / "quality.yaml", quality)
+        with step("verify.write_performance_receipt"):
+            perf_path = None
+            try:
+                from uo_init.perf import dump_yaml
+
+                perf_path = uo / "checks" / "performance.yaml"
+                dump_yaml(
+                    perf_path,
+                    extra={
+                        "operator": op_name or product.stem.split(".")[0],
+                        "architecture": arch,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                perf_path = None
         return {
             "ok": ok,
             "engine": "verify",
@@ -320,6 +335,7 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             "verdict": "pass" if ok else "fail",
             "integrity": str(uo / "checks" / "integrity.yaml"),
             "quality": str(uo / "checks" / "quality.yaml"),
+            "performance": str(perf_path) if perf_path else None,
             "quality_grade": quality.get("grade"),
             "locate_ready": quality.get("locate_ready"),
         }

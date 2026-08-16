@@ -20,6 +20,7 @@ from uo_init.ir.relation import RelationKind
 from uo_init.passes.source_contract import iter_bitpack_dims, iter_packing_helper_calls
 from uo_init.passes.host_defuse import _compile_symbols, _is_compile_reference
 from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
+from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import quoted_include_basenames, selected_host_files
 from uo_init.tpl_dsl import expand_tpl_source, load_quoted_include_texts
 
@@ -96,7 +97,7 @@ def bind_host_tiling_key_expressions(
 
     host_files: list[tuple[Path, str]] = []
     for path in selected_host_files(root, architecture):
-        raw = path.read_text(encoding="utf-8", errors="replace")
+        raw = read_text(path)
         extras = load_quoted_include_texts(path)
         host_files.append((path, expand_tpl_source(raw, extras)))
 

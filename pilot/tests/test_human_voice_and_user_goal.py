@@ -78,7 +78,7 @@ def test_tg_init_audit_method_materialized() -> None:
         ROOT,
         {
             "task_prompt_id": "tg/init-audit",
-            "action_method_id": "tg-init/init-audit",
+            "action_method_id": "testcase-generation/tg-init-audit",
             "id": "init_audit",
         },
     )
@@ -110,7 +110,7 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": "ce/impact-audit",
-            "action_method_id": "ce-impact/impact-audit",
+            "action_method_id": "code-engineering/ce-impact-audit",
             "id": "impact_audit",
         },
     )
@@ -121,7 +121,7 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": "ce/exclusion-review",
-            "action_method_id": "ce-verify/exclusion-review",
+            "action_method_id": "code-engineering/ce-exclusion-review",
             "id": "exclusion_review",
         },
     )
@@ -132,7 +132,7 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": None,
-            "action_method_id": "ce-impact/scenario-infer",
+            "action_method_id": "code-engineering/ce-scenario-infer",
             "id": "scenario_infer",
         },
     )

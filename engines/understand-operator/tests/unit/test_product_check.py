@@ -58,7 +58,7 @@ def test_product_check_fails_when_graph_drops(tmp_path: Path) -> None:
     op = tmp_path / "op"
     (op / "op_kernel" / "arch35").mkdir(parents=True)
     (op / "op_kernel" / "arch35" / "k.h").write_text(
-        "void Kernel() { DataCopy(a, b, n); DataCopy(c, d, n); }\n",
+        "void Kernel() {\n  DataCopy(a, b, n);\n  DataCopy(c, d, n);\n}\n",
         encoding="utf-8",
     )
     cm = CodeMap(op_name="toy", architecture="arch35")

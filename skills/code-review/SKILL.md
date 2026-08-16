@@ -50,6 +50,11 @@ scope → review → summary
 
 需要范围与证书时走 `/ce-intent`（无 diff 定位）或 `/ce-impact` → `/ce-verify`（有 diff）。本 skill 做只读审查，不签发 CE 证书。
 
+## Capability routing
+
+- `/ce-review` 只读检视：`capabilities/standalone-review/METHOD.md`
+- `ce-verify/code_review` 义务判定：`capabilities/verify-review/METHOD.md`（不是同一套入口 SOP）
+
 ## 按需参考
 
 | 条件 | 文件 |

@@ -17,6 +17,7 @@ from typing import Any
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import KERNEL_ENTRY_NAME_RE, selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -38,7 +39,7 @@ def enrich_tiling_registrations(
     decoded_field_edges = 0
 
     for path in _candidate_files(root, architecture):
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text(path)
         for match in _REGISTER_RE.finditer(text):
             expr = match.group("expr").strip()
             type_name = match.group("type").split("::")[-1]

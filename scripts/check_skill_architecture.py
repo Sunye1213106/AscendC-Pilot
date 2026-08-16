@@ -146,6 +146,11 @@ def _errors() -> list[str]:
     if PROMPTS.is_dir():
         for p in PROMPTS.rglob("*.md"):
             text = p.read_text(encoding="utf-8")
+            n = len(text.splitlines())
+            if n > 40:
+                errors.append(f"PROMPT_TOO_LONG {p.as_posix()}: {n}>40")
+            if re.search(r"\bH0\b|\bH1\b|Open\s*=\s*O\s*-\s*V\s*-\s*X", text):
+                errors.append(f"PROMPT_METHOD_LEAK {p.as_posix()}: domain method belongs in METHOD.md")
             for i, line in enumerate(text.splitlines(), 1):
                 scanned = line
                 for tok in RUNTIME_PROMPT_TOKENS:

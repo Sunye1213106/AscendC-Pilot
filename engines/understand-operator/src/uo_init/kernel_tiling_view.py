@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import (
     entry_include_architecture,
     selected_host_files,
@@ -240,7 +241,7 @@ def _kernel_defined_types(op_dir: Path, architecture: str) -> set[str]:
         if path.suffix.lower() not in _CPP_SUFFIXES:
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text(path)
         except OSError:
             continue
         names.update(_CLASS_RE.findall(text))
@@ -261,7 +262,7 @@ def _collect_structs(op_dir: Path, architecture: str) -> list[dict[str, Any]]:
             continue
         seen.add(key)
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text(path)
         except OSError:
             continue
         if "BEGIN_TILING_DATA_DEF" not in text:
@@ -343,7 +344,7 @@ def _default_tiling_type(op_dir: Path, architecture: str) -> str:
         if path.suffix.lower() not in _CPP_SUFFIXES:
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = read_text(path)
         except OSError:
             continue
         owns = entry_include_architecture(text)

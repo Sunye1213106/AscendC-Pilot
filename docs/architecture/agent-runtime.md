@@ -76,13 +76,14 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 | Session binding | Host session 钉住的 `.uo` 路径与 digest | `control/session_bindings.yaml` |
 | Action | 定义一次可执行任务，包括输入输出 contract | Workflow specification |
 | Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
-| Skill | 定义领域方法、分析流程和证据要求 | `skills/*/SKILL.md` |
+| Skill | 定义领域能力地图与公共认知原则 | `skills/*/SKILL.md` |
+| METHOD | 一个 Action 的推理方法 | `skills/*/capabilities/*/METHOD.md` |
 | Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |
 | Policy | 定义运行约束和行为规则 | `pilot/policies/` |
 | Capability | 定义 Agent 或 Engine 可以调用的能力 | runtime capability registry |
 | Engine | 执行确定性逻辑并生成可信产物 | `engines/` |
 
-职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管领域方法；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
+职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管领域地图；METHOD 管 Action 方法；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
 
 例如在 TG closure 中：“如何判断不可达”属于 Skill；“生成 lemma”属于 Prompt；“验证 replay 结果”属于 Engine；“是否允许更新 closure ledger”属于 Workflow + Gate。它们不能混在一个 Agent 中。
 
@@ -92,7 +93,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 
 ```text
 确定性计算                    -> Engine
-领域推理方法                  -> Skill
+领域推理方法                  -> METHOD.md（Skill 是领域地图）
 一次任务目标                  -> Prompt
 状态迁移                      -> Workflow
 需要独立身份、权限或隔离上下文 -> Agent
@@ -147,7 +148,7 @@ Workflow 允许的根目录
 * **主控不写正式结论**：主控 Agent（`ascendc-pilot`）即使角色叫 controller，也不能直接写正式 IR / summary / checks / review / TG 正式产物；这些由声明的 Producer、Referee 或 Engine 写入。
 * **角色只是上限**：例如 `readonly_analyst` 不写正式 domain 产物（`.uo` / TG / CE），但**允许** action-local result / scratch；`referee` 只写 review。最终权限仍以「角色 ∩ Agent 上限 ∩ 本步通行证 ∩ Workflow 根目录 ∩ 身份禁令」为准。
 * **prepare 静态闭合（写）**：`direct` 模式下合同产物必须落在 `agent.write_scopes ∩ action.allowed_write_paths`，否则 `OUTPUT_NOT_WRITABLE` 当场失败，不派发子代理。`return_value` 由 finalizer 物化，不要求子代理先 Write。
-* **prepare 静态闭合（读）**：`task_prompt_stub` 引用的路径必须存在且落在 lease 可读集合内，否则 `BUNDLE_NOT_READABLE` 当场失败。Cognitive skill 正文与 references 在 prepare 时物化进 action session 的 `method.md` / `refs/`，子代理只读自己的 session dir。
+* **prepare 静态闭合（读）**：`task_prompt_stub` 引用的路径必须存在且落在 lease 可读集合内，否则 `BUNDLE_NOT_READABLE` 当场失败。Action METHOD 与点名的 references 在 prepare 时物化进 session 的 `method.md` / `refs/`；确认 Action 不装载认知 Skill。子代理只读自己的 session dir。
 * **scope 命名空间**：`agents/*.yaml` 的 `read_scopes` / `write_scopes` 支持前缀 `pilot:`（`.ascendc-pilot/<arch>/` 相对）、`method:`（host cognitive-skills / skills 树）、`source:`（算子仓源码根）。无前缀旧值按现行语义兼容。
 * **run 级 source scope**：`acp start` 解析一次 `allowed_source_roots` 写入 `runs/<run_id>/source_scope.yaml`，后续 action lease 继承；探查性只读不再表现为「没有仓库权限」。
 * **containment 只读白名单**：`failed` / `blocked` / `human_required` 下仍禁止推进与写入，但允许读 session `method.md` / `prompt.md` / skill 文本，避免 abort 后连方法都读不了。
@@ -276,26 +277,24 @@ prepare（物化 method.md / refs + Bundle 读闭合）
   -> dispatch-result / finalize -> Gate -> advance
 ```
 
-查询路由在主控，且**必须对人可见**：看 skill / 短地图，判断水平（短问自查 / 深问 1 路 / 深问 N 路并行），把「谁查、为什么、接下来」写进当前会话，再动手。不要 `pilot_run workflow=uo-query`，不要为空转「问题路由」开子代理。
+查询路由在主控，且**必须对人可见**。算法正文在 `skills/operator-analysis/capabilities/uo-query-router/METHOD.md`。`host_step.tasks` ≥2 时编译器为权威，必须原样并行派发。不要 `pilot_run workflow=uo-query`，不要为空转「问题路由」开子代理。
 
 子代理（若派了）最终消息用完整自然语言作答（Cursor Explore：结论 + file:line + snippet）。OpenCode Task 把全文交回主控；主控综合后对人说。**不要 Write `answer.yaml`**，不要 `kb_lookup --finalize`。YAML 不是 primary↔subagent 的传话通道。Domain 正式产物仍禁止 LLM 直写。
 
 ### 查询：可见 LLM 路由（不是 Host workflow）
 
 ```text
-主控（operator-analysis skill）——先对人说出路由
+主控 ——先对人说出路由（见 uo-query-router METHOD）
 ├── 短问：当前会话 acp uo-query --mode，把 stdout 说给人听
-├── 深问单域：METHOD 一行 → Task(agent=uo-query) × 1（点卡片看思考）
-└── 深问多域：METHOD ≥2 行 → 同一轮 Task(agent=uo-query) × N，返回后主控综合
-         └── 相关 ≠ 单域；禁止「一条因果链更连贯」收成 1 路
-         └── 每个 Task 写 FIRST_QUERY；综合未闭合再开一轮（FOCUS=缺口），禁止问「要不要继续」
+├── host_step.tasks ≥2：原样并行 Task(agent=uo-query)，返回后主控综合
+└── 编译器 0/1 片：按独立证据空间决定自查 / 1 Task / N Task
 ```
 
 - **短问**：一名字、一 mode、一两跳。不派子代理。一次 `acp` stdout 答完。
-- **深问**：主控按 METHOD 行拆独立搜索空间；每个 Task 只带本片 FOCUS + `FIRST_QUERY` + 本片那一句 + 绝对 `--project`。禁止把整题丢给一个子代理再转述。不以 Host `task_prompt_stub` 为准。**禁止**把深问降成主控自查。相关 ≠ 单域。
-- **Delegated Task**（TG/CE 需要读图时）：直接 `Task(actor=uo-query)`，不要再套 `/uo-query` lifecycle。共用同一 Agent / METHOD。
+- **深问**：独立证据空间才拆；每个 Task 只带本片 FOCUS + `FIRST_QUERY` + 本片那一句 + 绝对 `--project`。禁止把整题丢给一个子代理再转述。
+- **Delegated Task**（TG/CE 需要读图时）：直接 `Task(actor=uo-query)`，不要再套 `/uo-query` lifecycle。共用同一 Agent / 子代 METHOD。
 - Parent **必须**传入算子绝对路径（`--project`）与 architecture（已有 `.uo`）；禁止子代理 Glob 找 `.uo`。子答 `UNKNOWN`/`PARTIAL` 不得抬成 high；禁止跨 architecture 证据闭合。
-- **综合未闭合不得收工**：任一子代 PARTIAL / 未闭合 / 互相矛盾 / 跳过 CodeMap 时，主控必须再派一轮 Task（FOCUS=缺口），直到原问能结案或明确列出缺的 span。禁止问「要不要继续」。禁止主控改自查收工。
+- **综合未闭合不得收工**：任一子代 PARTIAL / 未闭合 / 互相矛盾 / 跳过 CodeMap 时，主控必须再派一轮 Task（FOCUS=缺口）。禁止问「要不要继续」。
 
 确定性 Action 跳过 Task：prepare 后由 Pilot 调度 Engine，再 finalize。
 

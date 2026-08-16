@@ -130,8 +130,15 @@ def clear_compile_cache(op_root: Path | None = None, architecture: str | None = 
 
 
 def _span(name: str, t0: float) -> None:
+    dt = time.perf_counter() - t0
     if timing_enabled():
-        _tlog(f"{time.perf_counter() - t0:7.3f}s  compile.{name}")
+        _tlog(f"{dt:7.3f}s  compile.{name}")
+    try:
+        from uo_init.perf import record_pass
+
+        record_pass(name, dt)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def compile_codemap(
@@ -192,8 +199,12 @@ def compile_codemap(
     source_root = Path(op_root).expanduser().resolve() if op_root is not None else None
     if source_root is not None and _looks_like_operator_source(source_root):
         from uo_init.passes.source_text_cache import clear as clear_source_text
+        from uo_init.perf import reset_file_reads
+        from uo_init.source_index import reset_index_cache
 
         clear_source_text()
+        reset_index_cache()
+        reset_file_reads()
         for name, fn, kwargs in (
             ("inventory", inventory_source_files, {}),
             ("source_contract", enrich_codemap_from_operator_source, {}),

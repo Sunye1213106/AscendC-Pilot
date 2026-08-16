@@ -469,6 +469,7 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
                     ),
                     host_tus=hosts,
                     kernel_tu=kernel,
+                    walk_ctx=bctx,
                 )
 
             enrichment, heal_rep = enrich_scope_with_heal(

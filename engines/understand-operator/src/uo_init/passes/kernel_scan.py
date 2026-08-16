@@ -15,33 +15,16 @@ from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.source_text_cache import read_text
-from uo_init.semantics import registry as semreg
+
+from uo_init.source_index.builder import (  # noqa: F401  re-export for quality / identity
+    _CALL_RE,
+    _CXX_CALL_SKIP,
+    _is_false_lexical_callee,
+    _is_tpl_dsl_file,
+    _strip_line_noise,
+)
 
 _WALK_CACHE_LIMIT = 48
-
-_STORAGE_TYPE_RE = re.compile(
-    r"\b(?:LocalTensor|GlobalTensor|TBuf|TQue|TPipe|MutexBuffer|"
-    r"RegTensor|MaskReg|UnalignReg(?:ForLoad|ForStore)?|AddrReg)\b",
-    re.I,
-)
-_DECL_RE = re.compile(
-    r"(?P<type>(?:[\w:<>,\s*&]+?))\s+(?P<name>[A-Za-z_]\w*)\s*(?:=|;)",
-)
-_CALL_RE = re.compile(
-    r"(?:(?P<receiver>[A-Za-z_]\w*)(?:\s*\[[^\n]{0,300}\])?\s*(?:\.|->)\s*)?"
-    r"(?:template\s+)?"
-    r"(?P<name>[A-Za-z_]\w*)\s*"
-    # Template args must stay inside one <> pair (no '=' / nested '>' from decls).
-    r"(?:<(?P<targs>[^;{}()=<]{0,240})>)?\s*\(",
-)
-_ARG_SPLIT_RE = re.compile(r",(?![^()]*\))")
-_METHOD_DEF_RE = re.compile(
-    r"\b(?:[A-Za-z_]\w*(?:\s*<[^;{}()]{0,200}>)?\s*::\s*)+"
-    r"(?P<name>[A-Za-z_~]\w*)\s*\("
-)
-_FUNC_DEF_RE = re.compile(
-    r"\b(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?(?:noexcept\s*)?\{"
-)
 
 
 def caller_allowed(caller: str, reachable: set[str], *, filter_strict: bool) -> bool:
@@ -267,7 +250,7 @@ def _add_corpus_file(
 
 def _quoted_include_targets(path: Path, search_roots: list[Path]) -> list[Path]:
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = read_text(path)
     except OSError:
         return []
     parent = path.parent
@@ -756,137 +739,6 @@ def collect_type_graph_from_walks(
     return {"members": members, "aliases": aliases, "types": types, "bases": bases}
 
 
-def update_enclosing_func(line: str, current: str) -> str:
-    m_method = _METHOD_DEF_RE.search(line)
-    if m_method:
-        return m_method.group("name")
-    mdef = _FUNC_DEF_RE.search(line)
-    if mdef and not line.strip().startswith(("if", "for", "while", "switch", "else")):
-        cand = mdef.group("name")
-        if cand not in {"if", "for", "while", "switch", "return", "sizeof"}:
-            return cand
-    return current
-
-
-# Control / language keywords that are never AscendC callees.
-# NOTE: ``constexpr`` / ``consteval`` are intentionally NOT here — AscendC
-# kernels are compile-time heavy (``if constexpr`` + NTTP templates). Lexical
-# denoise must not treat “compile-time” as skippable; only reject the *false
-# call shape* ``if constexpr (`` via :func:`_is_false_lexical_callee`.
-_CXX_CALL_SKIP = frozenset(
-    {
-        "if",
-        "else",
-        "for",
-        "while",
-        "do",
-        "switch",
-        "catch",
-        "return",
-        "sizeof",
-        "alignof",
-        "decltype",
-        "static_assert",
-        "sizeof...",
-        "new",
-        "delete",
-        "static_cast",
-        "reinterpret_cast",
-        "const_cast",
-        "dynamic_cast",
-        "likely",
-        "unlikely",
-        # TPL DSL schema macros — owned by tpl_schema pass, not call graphs.
-        "ASCENDC_TPL_BOOL_SEL",
-        "ASCENDC_TPL_UINT_SEL",
-        "ASCENDC_TPL_TILING_STRUCT_SEL",
-        "ASCENDC_TPL_ARGS_SEL",
-        "ASCENDC_TPL_BOOL_DECL",
-        "ASCENDC_TPL_UINT_DECL",
-    }
-)
-
-
-def _is_false_lexical_callee(name: str, line: str, match_start: int) -> bool:
-    """Reject regex hits that look like calls but are C++ / AscendC non-calls.
-
-    AscendC relies on ``if constexpr``; that construct must stay in compile-time
-    analysis (harness fold). Here we only suppress the lexical false positive
-    where ``if constexpr (cond)`` is mistaken for a call named ``constexpr``.
-    """
-    if name in _CXX_CALL_SKIP:
-        return True
-    if name in {"constexpr", "consteval", "constinit"}:
-        prefix = line[:match_start].rstrip()
-        # ``if constexpr (`` / ``if consteval (`` — not a call.
-        if re.search(r"\bif\s*$", prefix):
-            return True
-        # Bare ``constexpr (x);`` is ill-formed C++ and was only ever noise.
-        if re.search(r"(^|[\s;{}])$", prefix) or not prefix:
-            return True
-        return False
-    prefix = line[:match_start]
-    # Member / qualified calls are never declarators.
-    if re.search(r"(?:\.|->|::)\s*$", prefix.rstrip()):
-        return False
-    if re.search(r"\b(return|else)\s+$", prefix):
-        return False
-    # ``void Init(`` / ``__aicore__ inline T Get(`` — function definition, not a call.
-    if re.search(r"\b(__aicore__|inline|constexpr|virtual|explicit|static)\b", prefix):
-        return True
-    if re.search(r"[=,]\s*$", prefix.rstrip()):
-        return False
-    if re.search(r"\b(if|while|for|switch|catch)\s*$", prefix.rstrip()):
-        return False
-    if re.search(r"(?:[\w:>]|[*&])\s+$", prefix):
-        return True
-    return False
-
-_TPL_DSL_NAME_MARKERS = (
-    "template_tiling_key.h",
-    "tiling_key.h",
-)
-
-
-def _strip_line_noise(line: str) -> str:
-    """Remove // comments and rough string/char literals before call scanning."""
-    # License headers are sometimes emitted as bare ``Copyright (c) 2024``;
-    # without this guard the generic call regex reports a callee named ``c``.
-    if re.search(r"\bCopyright\s*\(\s*c\s*\)", line, flags=re.I):
-        return ""
-    out: list[str] = []
-    i = 0
-    n = len(line)
-    in_str = False
-    in_char = False
-    while i < n:
-        ch = line[i]
-        nxt = line[i + 1] if i + 1 < n else ""
-        if not in_str and not in_char and ch == "/" and nxt == "/":
-            break
-        if not in_char and ch == '"' and (i == 0 or line[i - 1] != "\\"):
-            in_str = not in_str
-            out.append(" ")
-            i += 1
-            continue
-        if not in_str and ch == "'" and (i == 0 or line[i - 1] != "\\"):
-            in_char = not in_char
-            out.append(" ")
-            i += 1
-            continue
-        if in_str or in_char:
-            out.append(" ")
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def _is_tpl_dsl_file(path: Path) -> bool:
-    name = path.name.lower().replace("\\", "/")
-    return any(marker in name for marker in _TPL_DSL_NAME_MARKERS)
-
-
 def lexical_source_call_sites(
     files: list[Path],
     *,
@@ -896,113 +748,23 @@ def lexical_source_call_sites(
     deadline: float,
     primitives_only: bool = False,
 ) -> list[dict[str, Any]]:
-    """Collect source-scope identifier call sites (Clang fallback).
+    """Collect source-scope identifier call sites from the shared SourceIndex."""
+    from uo_init.source_index import get_or_build
 
-    When ``primitives_only`` is True, only callees present in the AscendC
-    semantics registry are kept.
-    """
-    registry_names: set[str] | None = None
-    if primitives_only:
-        try:
-            names = set(semreg.load_registry())
-            names.update({"Get", "GetTensor", "GetPre", "GetReused"})
-            registry_names = names or None
-        except Exception:  # noqa: BLE001
-            registry_names = None
-
+    if time.perf_counter() > deadline:
+        return []
+    index = get_or_build(files, root=root, deadline=deadline)
     sites: list[dict[str, Any]] = []
-    for path in files:
-        if time.perf_counter() > deadline:
-            break
-        if _is_tpl_dsl_file(path):
+    for site in index.calls_for(files, primitives_only=primitives_only):
+        func = str(site.get("caller") or "")
+        if not caller_allowed(func, reachable, filter_strict=filter_strict):
             continue
-        try:
-            text = read_text(path)
-        except OSError:
-            continue
-        text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-        func = ""
-        lines = text.splitlines()
-        for i, line in enumerate(lines, start=1):
-            if time.perf_counter() > deadline:
-                break
-            cleaned = _strip_line_noise(line)
-            func = update_enclosing_func(cleaned, func)
-            for m in _CALL_RE.finditer(cleaned):
-                name = m.group("name")
-                if not name or not name.isidentifier():
-                    continue
-                if _is_false_lexical_callee(name, cleaned, m.start()):
-                    continue
-                if registry_names is not None and name not in registry_names:
-                    # Also accept names the classifier already knows.
-                    try:
-                        cat, _, conf = semreg.classify(name)
-                        if cat == "UNKNOWN" or conf == "unresolved":
-                            continue
-                    except Exception:  # noqa: BLE001
-                        continue
-                if not caller_allowed(func, reachable, filter_strict=filter_strict):
-                    continue
-                rest = cleaned[m.end() :]
-                extra = 0
-                while True:
-                    depth = 0
-                    end = 0
-                    for j, ch in enumerate(rest):
-                        if ch == "(":
-                            depth += 1
-                        elif ch == ")":
-                            depth -= 1
-                            if depth < 0:
-                                end = j
-                                break
-                    if end or extra >= 6 or i + extra >= len(lines):
-                        break
-                    extra += 1
-                    rest = rest + " " + _strip_line_noise(lines[i + extra - 1])
-                # First char of rest is inside the opening '(' already consumed by _CALL_RE.
-                arg_text = rest[:end] if end else rest
-                args = [a.strip() for a in _ARG_SPLIT_RE.split(arg_text) if a.strip()]
-                targs = m.group("targs") or ""
-                targs_list = [a.strip() for a in targs.split(",") if a.strip()] if targs else []
-                sites.append(
-                    {
-                        "caller": func,
-                        "callee": name,
-                        "file": str(path),
-                        "line": i,
-                        "column": m.start() + 1,
-                        "args": args,
-                        "template_args": targs_list,
-                        "receiver": m.group("receiver") or "",
-                        "path_conditions": (),
-                        "provenance": "lexical_source_calls",
-                        "entry_reachable": caller_allowed(func, reachable, filter_strict=True)
-                        if reachable
-                        else True,
-                    }
-                )
-    _ = root
+        row = dict(site)
+        row["entry_reachable"] = (
+            caller_allowed(func, reachable, filter_strict=True) if reachable else True
+        )
+        sites.append(row)
     return sites
-
-
-def lexical_primitive_sites(
-    files: list[Path],
-    *,
-    reachable: set[str],
-    filter_strict: bool,
-    root: str,
-    deadline: float,
-) -> list[dict[str, Any]]:
-    """Deprecated alias — prefer :func:`lexical_source_call_sites`."""
-    return lexical_source_call_sites(
-        files,
-        reachable=reachable,
-        filter_strict=filter_strict,
-        root=root,
-        deadline=deadline,
-    )
 
 
 def lexical_buffer_decls(
@@ -1012,35 +774,15 @@ def lexical_buffer_decls(
     filter_strict: bool,
     deadline: float,
 ) -> list[dict[str, Any]]:
+    from uo_init.source_index import get_or_build
+
+    if time.perf_counter() > deadline:
+        return []
+    index = get_or_build(files, root="", deadline=deadline)
     decls: list[dict[str, Any]] = []
-    func = ""
-    for path in files:
-        if time.perf_counter() > deadline:
-            break
-        try:
-            text = read_text(path)
-        except OSError:
+    for decl in index.buffers_for(files):
+        func = str(decl.get("function") or "")
+        if not caller_allowed(func, reachable, filter_strict=filter_strict):
             continue
-        for i, line in enumerate(text.splitlines(), start=1):
-            func = update_enclosing_func(line, func)
-            if not caller_allowed(func, reachable, filter_strict=filter_strict):
-                continue
-            if not _STORAGE_TYPE_RE.search(line):
-                continue
-            for m in _DECL_RE.finditer(line):
-                type_text = m.group("type")
-                name = m.group("name")
-                if not _STORAGE_TYPE_RE.search(type_text):
-                    continue
-                decls.append(
-                    {
-                        "name": name,
-                        "function": func,
-                        "type_text": type_text.strip(),
-                        "init": None,
-                        "file": str(path),
-                        "line": i,
-                        "column": m.start() + 1,
-                    }
-                )
+        decls.append(decl)
     return decls

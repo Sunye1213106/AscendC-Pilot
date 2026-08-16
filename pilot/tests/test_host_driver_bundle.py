@@ -178,12 +178,12 @@ def test_materialize_method_bundle_copies_refs(tmp_path: Path) -> None:
         project_root=REPO,
     )
     assert (sdir / "method.md").is_file()
-    assert "copied" in mat or "missing" in mat
     method = (sdir / "method.md").read_text(encoding="utf-8")
-    assert "Available refs (index)" in method
-    # Default: index only; unnamed refs are not copied.
+    assert "# existing" in method
+    assert "Materialized skill:" not in method
+    assert "Available refs (index)" not in method
     assert mat.get("copied") == []
-    assert mat.get("indexed")
+    assert mat.get("indexed") == []
 
 
 def test_materialize_method_bundle_copies_named_refs_only(tmp_path: Path) -> None:
@@ -204,7 +204,10 @@ def test_materialize_method_bundle_copies_named_refs_only(tmp_path: Path) -> Non
     assert (sdir / "refs" / "code-engineering" / "gotchas.md").is_file()
     assert (sdir / "refs" / "code-engineering" / "risk-classes.md").is_file()
     assert not (sdir / "refs" / "code-engineering" / "scenario-catalog.md").is_file()
-    assert any("scenario-catalog.md" in x for x in (mat.get("indexed") or []))
+    assert mat.get("indexed") == [
+        "references/code-engineering/gotchas.md",
+        "references/code-engineering/risk-classes.md",
+    ]
 
 
 def test_method_bundle_repo_root_is_parents_3() -> None:

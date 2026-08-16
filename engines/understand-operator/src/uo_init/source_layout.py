@@ -12,6 +12,12 @@ import re
 from pathlib import Path
 from typing import Iterable, Iterator
 
+def _text(path: Path | str) -> str:
+    from uo_init.passes.source_text_cache import read_text
+
+    return read_text(path)
+
+
 ARCH_DIR_RE = re.compile(r"^arch\d+$")
 _ARCH_IN_PATH_RE = re.compile(r"(?:^|/)(arch\d+)(?:/|$)")
 # Path segment `/arch22/` or filename token `_arch22.h` / `foo_arch35_bar.h`.
@@ -85,9 +91,7 @@ def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
         if not path.is_file():
             continue
         try:
-            owns = entry_include_architecture(
-                path.read_text(encoding="utf-8", errors="replace")
-            )
+            owns = entry_include_architecture(_text(path))
         except OSError:
             owns = ""
         if owns and arch and owns != arch:
@@ -156,7 +160,7 @@ def entry_include_architecture(text: str) -> str:
 def quoted_include_basenames(path: Path) -> set[str]:
     """Basenames from ``#include "..."`` in ``path`` (not angle includes)."""
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        text = _text(path)
     except OSError:
         return set()
     return {Path(inc.replace("\\", "/")).name.lower() for inc in _QUOTED_INCLUDE_RE.findall(text)}
@@ -167,7 +171,7 @@ def resolve_quoted_includes(path: Path) -> list[Path]:
     parent = Path(path).parent
     out: list[Path] = []
     try:
-        text = Path(path).read_text(encoding="utf-8", errors="replace")
+        text = _text(path)
     except OSError:
         return out
     for inc in _QUOTED_INCLUDE_RE.findall(text):
@@ -333,9 +337,7 @@ def selected_kernel_files(
             if not is_other_arch_path(kernel_entry, architecture):
                 key = kernel_entry.resolve()
                 if key not in {p.resolve() for p in out}:
-                    owns = entry_include_architecture(
-                        kernel_entry.read_text(encoding="utf-8", errors="replace")
-                    )
+                    owns = entry_include_architecture(_text(kernel_entry))
                     arch = str(architecture or "").strip().lower()
                     if not (owns and arch and owns != arch):
                         out.append(kernel_entry)
@@ -365,7 +367,7 @@ def selected_kernel_files(
         root_tus: list[tuple[Path, str, str]] = []
         for path in sorted(iter_cpp(kernel_root, recursive=False)):
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = _text(path)
             except OSError:
                 continue
             owns = entry_include_architecture(text)
@@ -471,7 +473,7 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
         if is_other_arch_path(path, architecture):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = _text(path)
         except OSError:
             continue
         if GLOBAL_KERNEL_RE.search(text):
@@ -513,7 +515,7 @@ def _first_tpl_marker_file(
         if path.suffix.lower() not in {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}:
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = _text(path)
         except OSError:
             continue
         if marker not in text:
@@ -524,7 +526,7 @@ def _first_tpl_marker_file(
             if not _path_is_under(inc, root):
                 continue
             try:
-                inc_text = inc.read_text(encoding="utf-8", errors="replace")
+                inc_text = _text(inc)
             except OSError:
                 continue
             if marker in inc_text:
@@ -547,7 +549,7 @@ def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
         if not _path_is_under(path, root):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = _text(path)
         except OSError:
             continue
         if "ASCENDC_TPL_ARGS_DECL" in text:
@@ -568,7 +570,7 @@ def tpl_sel_files(root: Path, architecture: str) -> list[Path]:
         if not _path_is_under(path, root):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = _text(path)
         except OSError:
             continue
         if "ASCENDC_TPL_ARGS_SEL" not in text:

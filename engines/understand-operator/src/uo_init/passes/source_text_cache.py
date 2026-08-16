@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 """Process-local source text cache shared across CodeMap enrichment passes.
 
-``resolve_source_gaps`` and ``finalize_kernel_tiling_closure`` both walk the
-same operator tree. Reading each file once keeps both passes complete while
-avoiding duplicate I/O on large kernels.
+Every disk read is counted so ``performance.yaml`` can show files scanned more
+than once. Callers should go through this module instead of ``Path.read_text``.
 """
 
 from __future__ import annotations
@@ -13,13 +12,29 @@ from pathlib import Path
 _TEXT: dict[str, str] = {}
 
 
+def _key(path: str | Path) -> str:
+    return str(Path(path).expanduser().resolve())
+
+
 def read_text(path: str | Path) -> str:
-    key = str(Path(path).expanduser().resolve())
+    key = _key(path)
     hit = _TEXT.get(key)
     if hit is not None:
+        try:
+            from uo_init.perf import record_read
+
+            record_read(key, 0, cache_hit=True)
+        except Exception:  # noqa: BLE001
+            pass
         return hit
     text = Path(key).read_text(encoding="utf-8", errors="replace")
     _TEXT[key] = text
+    try:
+        from uo_init.perf import record_read
+
+        record_read(key, len(text.encode("utf-8", errors="replace")), cache_hit=False)
+    except Exception:  # noqa: BLE001
+        pass
     return text
 
 
@@ -45,6 +60,9 @@ def cached_snippet(path: str | Path, line: int) -> str:
     return lines[int(line) - 1].strip()[:400]
 
 
+def stats() -> dict[str, int]:
+    return {"cached_files": len(_TEXT)}
+
+
 def clear() -> None:
     _TEXT.clear()
-

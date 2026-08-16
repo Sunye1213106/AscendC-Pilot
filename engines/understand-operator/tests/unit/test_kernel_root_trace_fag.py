@@ -16,7 +16,7 @@ from uo_init.passes.kernel_tiling_closure import finalize_kernel_tiling_closure
 from uo_init.passes.source_text_cache import clear as clear_source_text
 from uo_init.semantics import registry as semreg
 
-_TRACE_BUDGET_S = 45.0
+_TRACE_BUDGET_S = 32.0
 
 
 @pytest.mark.requires_fag
@@ -24,6 +24,12 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
     """Root-trace on real FAG: AscendC roots reachable, no exec/pipeline."""
     semreg.load_registry.cache_clear()
     clear_source_text()
+    try:
+        from uo_init.source_index import reset_index_cache
+
+        reset_index_cache()
+    except Exception:
+        pass
 
     cm = CodeMap(op_name=fag_dir.name, architecture=arch_dir)
     cm.upsert(
@@ -49,6 +55,7 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
 
     assert trace_s < _TRACE_BUDGET_S, f"kernel_root_trace took {trace_s:.2f}s meta={meta}"
     assert float(meta.get("elapsed_s") or trace_s) < _TRACE_BUDGET_S
+    assert meta.get("gated_fill_complete") is not False
     assert len(ops) >= 50, f"expected AscendC call sites on FAG, got {len(ops)}"
     assert "DataCopy" in callees
     assert any(n in callees for n in ("SetFlag", "WaitFlag", "CrossCoreSetFlag", "CrossCoreWaitFlag"))
@@ -106,38 +113,3 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
         f"gaps={meta.get('gap_count')} gap_counts={meta.get('gap_counts')} "
         f"files={meta.get('selected_files')}"
     )
-
-
-@pytest.mark.requires_fag
-def test_fag_arch35_kernel_root_trace_delta_vs_disabled(
-    fag_dir: Path, arch_dir: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    semreg.load_registry.cache_clear()
-    clear_source_text()
-
-    def _seed() -> CodeMap:
-        cm = CodeMap(op_name=fag_dir.name, architecture=arch_dir)
-        cm.upsert(
-            EntityKind.KERNEL,
-            "flash_attention_score_grad",
-            attrs={"source_signature": True, "source_definition": True},
-            file=f"op_kernel/{arch_dir}/flash_attention_score_grad_kernel.h",
-        )
-        finalize_kernel_tiling_closure(cm, fag_dir, architecture=arch_dir)
-        return cm
-
-    monkeypatch.setenv("UO_KERNEL_ROOT_TRACE", "0")
-    cm0 = _seed()
-    t0 = time.perf_counter()
-    finalize_kernel_root_trace(cm0, fag_dir, architecture=arch_dir)
-    off_s = time.perf_counter() - t0
-
-    monkeypatch.setenv("UO_KERNEL_ROOT_TRACE", "1")
-    monkeypatch.setenv("UO_KERNEL_ROOT_TRACE_BUDGET_S", "25")
-    cm1 = _seed()
-    t1 = time.perf_counter()
-    finalize_kernel_root_trace(cm1, fag_dir, architecture=arch_dir)
-    on_s = time.perf_counter() - t1
-    delta = on_s - off_s
-    assert delta < _TRACE_BUDGET_S, f"root-trace delta {delta:.2f}s exceeds budget"
-    print(f"\n[FAG root-trace delta] off={off_s:.3f}s on={on_s:.3f}s delta={delta:.3f}s")
