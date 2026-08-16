@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from uo_init.diag_scope import is_libclang_cann_residual, score_tu_diagnostics
+from uo_init.diag_scope import (
+    is_benign_kernel_probe_residual,
+    is_libclang_cann_residual,
+    score_tu_diagnostics,
+)
 
 
 class _File:
@@ -86,3 +90,50 @@ def test_heal_hints_keep_missing_header_past_sample_cap(tmp_path: Path):
     assert all("unknown type name 'T'" == s for s in scored["samples"])
     assert "'op_kernel/platform_util.h' file not found" not in scored["samples"]
     assert "'op_kernel/platform_util.h' file not found" in scored["heal_hints"]
+
+
+def test_tcube_tiling_decl_residual_is_benign():
+    probes = [
+        {
+            "side": "kernel",
+            "errors": 1,
+            "fatal": 0,
+            "samples": ["unknown type name 'TCubeTiling'"],
+        }
+    ]
+    assert is_benign_kernel_probe_residual(probes) is True
+
+
+def test_softmax_tiling_decl_residual_is_benign():
+    probes = [
+        {
+            "side": "kernel",
+            "errors": 1,
+            "fatal": 0,
+            "samples": ["unknown type name 'SoftMaxTiling'"],
+        }
+    ]
+    assert is_benign_kernel_probe_residual(probes) is True
+
+
+def test_kernel_syntax_error_is_not_benign():
+    probes = [
+        {
+            "side": "kernel",
+            "errors": 1,
+            "fatal": 0,
+            "samples": ["expected ';' after expression"],
+        }
+    ]
+    assert is_benign_kernel_probe_residual(probes) is False
+
+
+def test_kernel_probe_exception_is_not_benign():
+    probes = [
+        {
+            "side": "kernel",
+            "error": "libclang crashed",
+            "errors": -1,
+        }
+    ]
+    assert is_benign_kernel_probe_residual(probes) is False

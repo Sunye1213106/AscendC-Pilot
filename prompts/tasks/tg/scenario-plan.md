@@ -15,10 +15,10 @@ AskQuestion 文案由控制面生成。
 1. 存在已确认 ScenarioSet → 规划目标为其中的场景 id，不是全部声明 Key。
 2. 不要在规划阶段跑全量笛卡尔。
 3. 场景与全覆盖目标混用或缺失 ScenarioSet 时显式标出，禁止静默扩大范围。
-4. Host 弹出 AskQuestion；选项必须原样使用控制面返回的 `ask_question.options`。
-5. Primary 禁止 Write `tg/plan/scenario_plan.yaml`。确认后由 Host `--finalize` 写入。
+4. 弹出 AskQuestion；选项必须原样使用控制面返回的 `ask_question.options`。
+5. 返回候选场景计划供用户确认。不要自行提交正式计划。
 </instructions>
 
 <output>
-不写文件。确认后由 Host finalize 写入 `tg/plan/scenario_plan.yaml`。
+不写文件。返回候选供确认，不要自行提交正式计划。
 </output>

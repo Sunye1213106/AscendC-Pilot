@@ -33,6 +33,11 @@ _CANN_VECTOR_TYPE_RE = re.compile(
 _CANN_SIMT_BUILTIN_RE = re.compile(
     r"use of undeclared identifier 'warpSize'"
 )
+# Declarations-only kernel probe may still see CANN tiling structs that the
+# include closure did not fully materialize. Only these two names are waived.
+KNOWN_EXTERNAL_DECL_RESIDUAL = re.compile(
+    r"unknown type name '(?:TCubeTiling|SoftMaxTiling)'"
+)
 
 
 def is_libclang_cann_residual(spelling: str) -> bool:
@@ -45,6 +50,49 @@ def is_libclang_cann_residual(spelling: str) -> bool:
         or _CANN_VECTOR_TYPE_RE.search(text)
         or _CANN_SIMT_BUILTIN_RE.search(text)
     )
+
+
+def is_known_external_decl_residual(spelling: str) -> bool:
+    """True for known CANN tiling-struct unknown-type residuals."""
+    return bool(KNOWN_EXTERNAL_DECL_RESIDUAL.search(str(spelling or "")))
+
+
+def is_benign_kernel_probe_residual(probes: list[dict[str, Any]] | None) -> bool:
+    """True only when every kernel diagnostic is a known external decl residual.
+
+    Fail-close on probe exceptions, fatals, ``kernel_errors <= 0`` (including
+    ``-1``), mixed/unknown samples, or truncated samples without a full-set flag.
+    """
+    rows = [
+        row
+        for row in (probes or [])
+        if isinstance(row, dict) and str(row.get("side") or "") == "kernel"
+    ]
+    if not rows:
+        return False
+    any_errors = False
+    for row in rows:
+        if row.get("error"):
+            return False
+        fatals = int(row.get("fatal") or row.get("fatal_count") or 0)
+        if fatals > 0:
+            return False
+        errs = int(row.get("errors") or 0)
+        if errs < 0:
+            return False
+        if errs == 0:
+            continue
+        any_errors = True
+        samples = [str(s) for s in (row.get("samples") or [])]
+        if not samples:
+            return False
+        if not all(is_known_external_decl_residual(s) for s in samples):
+            return False
+        if row.get("benign_external_decl_only") is True:
+            continue
+        if errs > len(samples):
+            return False
+    return any_errors
 
 
 def score_tu_diagnostics(
@@ -60,6 +108,7 @@ def score_tu_diagnostics(
     samples: list[str] = []
     heal_hints: list[str] = []
     heal_seen: set[str] = set()
+    benign_only = True
     for d in diagnostics:
         try:
             sev = int(d.severity)
@@ -74,6 +123,8 @@ def score_tu_diagnostics(
         if is_libclang_cann_residual(spelling):
             continue
         errors += 1
+        if not is_known_external_decl_residual(spelling):
+            benign_only = False
         if sev >= 4:
             fatals += 1
         loc_file = ""
@@ -109,6 +160,7 @@ def score_tu_diagnostics(
         "probe_relevant_errors": relevant,
         "samples": samples,
         "heal_hints": heal_hints,
+        "benign_external_decl_only": bool(errors > 0 and fatals == 0 and benign_only),
     }
 
 

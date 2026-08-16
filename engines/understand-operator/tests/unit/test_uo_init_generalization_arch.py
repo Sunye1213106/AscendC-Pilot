@@ -1,0 +1,56 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+
+def _load_gen():
+    path = (
+        Path(__file__).resolve().parents[2] / "tools" / "uo_init_generalization.py"
+    )
+    spec = importlib.util.spec_from_file_location("uo_init_generalization", path)
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.fixture(scope="module")
+def gen():
+    return _load_gen()
+
+
+def test_pick_arch_numeric_newest_not_string_order(tmp_path: Path, gen):
+    op = tmp_path / "toy"
+    for name in ("arch9", "arch22", "arch100"):
+        (op / "op_kernel" / name).mkdir(parents=True)
+    assert gen._list_archs(op) == ["arch9", "arch22", "arch100"]
+    assert gen._pick_arch(op) == "arch100"
+
+
+def test_pick_arch_prefers_discovered_arch35(tmp_path: Path, gen):
+    op = tmp_path / "toy"
+    (op / "op_kernel" / "arch22").mkdir(parents=True)
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    assert gen._pick_arch(op) == "arch35"
+
+
+def test_pick_arch_none_when_no_arch_dirs(tmp_path: Path, gen):
+    op = tmp_path / "toy"
+    (op / "op_kernel").mkdir(parents=True)
+    assert gen._pick_arch(op) is None
+
+
+def test_discover_ops_skips_ops_without_arch(tmp_path: Path, gen, capsys):
+    fam = tmp_path / "attention" / "noarch"
+    (fam / "op_kernel").mkdir(parents=True)
+    has_arch = tmp_path / "attention" / "widget"
+    (has_arch / "op_kernel" / "arch22").mkdir(parents=True)
+    cases = gen.discover_ops(tmp_path)
+    rels = {c["rel"] for c in cases}
+    assert "attention/widget" in rels
+    assert "attention/noarch" not in rels
+    assert "NO_ARCHITECTURE_DISCOVERED attention/noarch" in capsys.readouterr().out

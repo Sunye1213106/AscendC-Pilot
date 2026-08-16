@@ -15,12 +15,12 @@
 </context>
 
 <instructions>
-1. Host 弹出 AskQuestion；选项必须原样使用控制面返回的 `ask_question.options`（value 也不得改写）。
+1. 弹出 AskQuestion；选项必须原样使用控制面返回的 `ask_question.options`（value 也不得改写）。
 2. 选「确认进入规划」后才能完成本步；返工/停止则不要完成本步。
-3. Primary 禁止 Write 正式确认 YAML。Host `--finalize` 写入 `tg/init/confirmation.yaml`。
+3. 返回候选确认结果供用户选择。不要自行提交正式确认。
 4. 对用户转述只用意图/刚完成/下一步，禁止粘贴审计黑话。
 </instructions>
 
 <output>
-不写文件。确认后由 Host finalize 写入正式收据。
+不写文件。不要自行提交正式确认。
 </output>

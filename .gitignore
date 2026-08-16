@@ -32,6 +32,7 @@ _*.err
 _*.out
 
 # Local run products / obligation dumps / UO exports (never commit)
+*.bundle
 artifacts/
 real-results/
 _tmp*/

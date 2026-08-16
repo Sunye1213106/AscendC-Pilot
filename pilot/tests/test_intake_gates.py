@@ -302,6 +302,15 @@ def test_start_intake_gate_uo_query_offers_source_fallback(tmp_path: Path, monke
     assert "Glob" in str(gate.get("primary_instruction_zh") or "")
 
 
+def test_cli_uo_query_alias_with_project_flag_hints_uo_query(capsys):
+    code = main(["uo", "query", "--project", "xxx"])
+    assert code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["ok"] is False
+    assert out["error"] == "use_uo_query"
+    assert "请使用: acp uo-query" in out["message_zh"]
+
+
 def test_cli_uo_query_missing_product_asks_human(tmp_path: Path, capsys, monkeypatch):
     monkeypatch.delenv("UO_ARCH", raising=False)
     monkeypatch.delenv("ASCENDC_ARCH", raising=False)

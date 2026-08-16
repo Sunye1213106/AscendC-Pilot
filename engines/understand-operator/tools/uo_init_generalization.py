@@ -58,6 +58,10 @@ _SKIP_OP_NAMES = frozenset({"common", "include", "src", "3rd", "tests", "test", 
 _ARCH_DIR_RE = re.compile(r"^arch\d+$")
 
 
+def _arch_sort_key(name: str) -> int:
+    return int(str(name).removeprefix("arch"))
+
+
 def _list_archs(op: Path) -> list[str]:
     seen: set[str] = set()
     for parent in (op / "op_host", op / "op_kernel"):
@@ -66,17 +70,18 @@ def _list_archs(op: Path) -> list[str]:
         for child in parent.iterdir():
             if child.is_dir() and _ARCH_DIR_RE.match(child.name):
                 seen.add(child.name)
-    return sorted(seen)
+    return sorted(seen, key=_arch_sort_key)
 
 
-def _pick_arch(op: Path) -> str:
-    """Prefer arch35, else newest arch* folder, else arch35 as product slot."""
+def _pick_arch(op: Path) -> str | None:
+    """Prefer arch35 when discovered; else newest numeric arch*; else None."""
     archs = _list_archs(op)
-    if "arch35" in archs:
-        return "arch35"
+    preferred = "arch35"
+    if preferred in archs:
+        return preferred
     if archs:
-        return archs[-1]
-    return "arch35"
+        return max(archs, key=_arch_sort_key)
+    return None
 
 
 def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:
@@ -94,6 +99,9 @@ def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:
                 continue
             arch = _pick_arch(op)
             rel = f"{fam}/{op.name}"
+            if arch is None:
+                print(f"NO_ARCHITECTURE_DISCOVERED {rel}", flush=True)
+                continue
             cases.append(
                 {
                     "rel": rel,

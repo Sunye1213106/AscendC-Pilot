@@ -46,6 +46,13 @@ jobs:
           python-version: "3.11"
       - name: Install control-plane test dependencies
         run: python -m pip install --disable-pip-version-check PyYAML jsonschema pytest
+      - name: Compile Python packages
+        run: >-
+          python -m compileall -q
+          pilot/ascendc_pilot
+          engines/understand-operator/src
+          engines/testcase-generation
+          engines/code-engineering
       - name: Validate execution ownership and prompts
         env:
           PYTHONPATH: pilot

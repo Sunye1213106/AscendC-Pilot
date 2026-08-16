@@ -39,6 +39,16 @@ def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     configure_stdio()
+    raw = list(argv if argv is not None else sys.argv[1:])
+    if raw[:2] == ["uo", "query"]:
+        print_json(
+            {
+                "ok": False,
+                "error": "use_uo_query",
+                "message_zh": "acp uo query 不是合法命令。请使用: acp uo-query",
+            }
+        )
+        return 2
     parser = argparse.ArgumentParser(prog="acp", description="AscendC-Pilot")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

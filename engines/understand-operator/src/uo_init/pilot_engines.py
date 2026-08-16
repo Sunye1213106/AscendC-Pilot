@@ -526,6 +526,8 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         }
         if samples:
             entry["samples"] = samples
+        if "benign_external_decl_only" in res:
+            entry["benign_external_decl_only"] = bool(res.get("benign_external_decl_only"))
         return entry, errs
 
     from uo_init.progress import emit as _progress
@@ -661,21 +663,21 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
                     kernel_errors = -1
 
     probe_clean = host_errors == 0 and kernel_errors == 0
-    if (
-        not probe_clean
-        and host_errors == 0
-        and clang_status == "complete"
-        and kernel_errors != 0
-    ):
-        # Kernel declarations-only residuals (unknown TCubeTiling / SoftMaxTiling
-        # after a complete Clang include closure) must not hard-block prepare.
-        probe_clean = True
-        probes.append(
-            {
-                "probe": "kernel_residuals_after_complete_clang_scope",
-                "kernel_errors": kernel_errors,
-            }
-        )
+    if not probe_clean and host_errors == 0 and clang_status == "complete":
+        from uo_init.diag_scope import is_benign_kernel_probe_residual
+
+        if is_benign_kernel_probe_residual(probes):
+            # Kernel declarations-only residuals (unknown TCubeTiling /
+            # SoftMaxTiling after a complete Clang include closure) must not
+            # hard-block prepare. Arbitrary kernel errors and probe exceptions
+            # stay fail-closed.
+            probe_clean = True
+            probes.append(
+                {
+                    "probe": "kernel_residuals_after_complete_clang_scope",
+                    "kernel_errors": kernel_errors,
+                }
+            )
     if allow_unverified and not probe_clean:
         probes.append({"probe": "unverified_override", "reason": "UO_TEST_ALLOW_UNVERIFIED_SCOPE"})
         probe_clean = True
