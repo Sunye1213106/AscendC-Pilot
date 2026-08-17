@@ -9,6 +9,9 @@
 # Host runtime trees are composed at install time (see install.ps1)
 generated/
 
+# Extracted CANN toolkit (scripts/cann_extract.py --dest _cann/pkg)
+_cann/
+
 # Python cache and test artifacts
 __pycache__/
 *.py[cod]

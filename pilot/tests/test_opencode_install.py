@@ -48,3 +48,10 @@ def test_plugin_resolve_acp_uses_opencode_home() -> None:
     assert "acp.exe" in helper
     assert "replace(/^\\uFEFF/" in helper or "\\uFEFF" in helper
     assert "replace(/^\\uFEFF/" in plugin or "\\uFEFF" in plugin
+
+
+def test_doctor_cann_warning_mentions_fixup_and_repo_pkg() -> None:
+    text = (ROOT / "pilot" / "ascendc_pilot" / "cli.py").read_text(encoding="utf-8")
+    assert "--fixup" in text
+    assert "_cann" in text
+    assert "SetEnvironmentVariable" in text

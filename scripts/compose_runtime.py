@@ -1012,14 +1012,20 @@ def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, st
         "dir": "allow",
         "dir *": "allow",
         "pwd": "allow",
+        "Get-ChildItem": "allow",
         "Get-ChildItem *": "allow",
+        "gci": "allow",
         "gci *": "allow",
+        "Get-Item": "allow",
         "Get-Item *": "allow",
+        "gi": "allow",
         "gi *": "allow",
         "Get-Location": "allow",
         "Get-Location *": "allow",
         "gl": "allow",
+        "Test-Path": "allow",
         "Test-Path *": "allow",
+        "Resolve-Path": "allow",
         "Resolve-Path *": "allow",
         # acp discovery only (ses_00c4: Get-Command was denied by frontmatter)
         "Get-Command acp": "allow",
@@ -1180,6 +1186,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         front["permission"] = {
             "bash": bash_perm,
             "grep": grep_perm,
+            "glob": "allow",
             **host_read_perm,
             "task": opencode_primary_task_permission(),
             "acp": "allow",
@@ -1222,7 +1229,7 @@ execution_variant = delegated_query. Simple queries never spawn this agent.
 
 If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not search additional session files.
 
-1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not prefix with bash; the plugin spawns acp.exe.
+1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not call `--help` to discover CLI. Do not prefix with bash; the plugin spawns acp.exe.
 2. Follow card `next` / `hint`. A card with `file:line` + snippet is already Read — do not Read the same span. Copy `file` from the card; do not guess paths.
 3. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
 4. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.

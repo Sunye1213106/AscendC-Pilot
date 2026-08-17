@@ -50,6 +50,28 @@ def test_snapshot_isolates_tg_solve_from_ce_apply(tmp_path: Path, monkeypatch) -
     start_workflow(tmp_path, "ce-apply", architecture="arch35")
 
 
+def test_source_snapshot_copies_uncommitted_overlay(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    monkeypatch.setenv("ASCENDC_SNAPSHOT_CACHE", str(tmp_path / "cache"))
+    host = tmp_path / "op_host"
+    host.mkdir()
+    src = host / "a.cpp"
+    src.write_text("int x;\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "add", "op_host/a.cpp"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t.t", "commit", "-m", "base"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    src.write_text("int x = 1;\n", encoding="utf-8")
+    ident = materialize_source_snapshot(tmp_path)
+    copied = Path(ident["workspace_path"]) / "op_host" / "a.cpp"
+    assert copied.read_text(encoding="utf-8") == "int x = 1;\n"
+
+
 def test_host_branch_obligation_needs_target_reached() -> None:
     doc = build_change_test_intent(
         impact={"affected_keys": [], "head": "abc"},

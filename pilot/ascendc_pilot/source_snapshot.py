@@ -54,15 +54,44 @@ def bind_snapshot_env(ident: dict[str, Any]) -> None:
         os.environ["ASCENDC_SOURCE_FINGERPRINT"] = fp
 
 
-def _dirty_patch_digest(project_root: Path) -> str:
+def _git_executable() -> str:
+    explicit = (os.environ.get("GIT_EXECUTABLE") or os.environ.get("GIT") or "").strip()
+    if explicit:
+        path = Path(explicit)
+        if path.is_file():
+            return str(path)
+        found = shutil.which(explicit)
+        if found:
+            return found
+    found = shutil.which("git")
+    if found:
+        return found
+    if os.name == "nt":
+        for candidate in (
+            r"C:\Program Files\Git\cmd\git.exe",
+            r"C:\Program Files\Git\bin\git.exe",
+            r"C:\Program Files (x86)\Git\cmd\git.exe",
+        ):
+            if Path(candidate).is_file():
+                return candidate
+    return "git"
+
+
+def _run_git(project_root: Path, *args: str) -> subprocess.CompletedProcess[str] | None:
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(project_root), "diff", "HEAD"],
+        return subprocess.run(
+            [_git_executable(), "-C", str(project_root), *args],
             text=True,
             capture_output=True,
             check=False,
         )
     except OSError:
+        return None
+
+
+def _dirty_patch_digest(project_root: Path) -> str:
+    proc = _run_git(project_root, "diff", "HEAD")
+    if proc is None or proc.returncode not in {0, 1}:
         return ""
     blob = (proc.stdout or "").encode("utf-8")
     if not blob.strip():
@@ -76,30 +105,16 @@ def materialize_source_snapshot(project_root: Path) -> dict[str, Any]:
     dest = cache_root() / str(ident.get("workspace_id") or "SRC_unknown")
     dest.mkdir(parents=True, exist_ok=True)
     root = Path(project_root).expanduser().resolve()
-    copied = False
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(root), "archive", "--format=tar", "HEAD"],
-            capture_output=True,
-            check=False,
-        )
-        if proc.returncode == 0 and proc.stdout:
-            import tarfile
-            import io
-
-            with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as tar:
-                tar.extractall(dest)
-            copied = True
-    except Exception:  # noqa: BLE001
-        copied = False
-    if not copied:
-        for role in ("op_host", "op_kernel", "common", "op_graph"):
-            src = root / role
-            if src.is_dir():
-                target = dest / role
-                if target.exists():
-                    shutil.rmtree(target, ignore_errors=True)
-                shutil.copytree(src, target)
+    # Copy the live operator tree (including uncommitted overlay). ``git archive
+    # HEAD`` would snapshot the last commit and, from a nested operator dir,
+    # extract the whole repo — both hide the PR worktree used by /uo-update.
+    for role in ("op_host", "op_kernel", "common", "op_graph"):
+        src = root / role
+        if src.is_dir():
+            target = dest / role
+            if target.exists():
+                shutil.rmtree(target, ignore_errors=True)
+            shutil.copytree(src, target)
     ident["workspace_path"] = dest.as_posix()
     ident["ok"] = dest.is_dir()
     if yaml is not None:

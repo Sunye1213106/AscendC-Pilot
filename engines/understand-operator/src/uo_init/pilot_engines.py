@@ -163,10 +163,10 @@ def _cann_env_block(engine: str, ctx: dict[str, Any] | None = None) -> dict[str,
         "message_zh": (
             "UO 解析前 CANN 环境未就绪。"
             f"{detail}。"
-            "请设置 UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH，"
-            "或运行 scripts/cann_extract.py 解包到 _cann/pkg，"
-            "并确保 post_extract_fixups（含 asc/impl/include  junction）已完成。"
-            "可先执行: acp doctor"
+            "请把 toolkit 解到当前仓库 _cann/pkg（自动发现，无需环境变量），"
+            "或设置用户级 UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH。"
+            "若缺 asc/impl/include：python scripts/cann_extract.py --fixup --dest <pkg>。"
+            "可先执行: acp doctor / python -m ascendc_pilot doctor"
         ),
     }
 
@@ -225,6 +225,12 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
     )
     uo = _uo_root(root, arch=spec.arch_dir)
     scrub = _reset_uo_skeleton(uo, run_id=run_id, keep_other_runs=bool(ctx.get("keep_other_runs")))
+    try:
+        from uo_init.store.writer import detect_source_revision
+
+        source_revision = detect_source_revision(root) or "unknown"
+    except Exception:  # noqa: BLE001
+        source_revision = "unknown"
 
     manifest = {
         "version": 1,
@@ -236,7 +242,12 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
         "architecture": spec.arch_dir,
         "schema": "uo-codemap/v1",
         "run_id": run_id,
-        "source": "uo_init.pilot_engines.prepare_layout",
+        "source": {
+            "kind": "uo_init.pilot_engines.prepare_layout",
+            "revision": source_revision,
+            "root": str(root),
+        },
+        "source_revision": source_revision,
         "workflow": "uo-init",
         "contract": "clang-codemap",
     }

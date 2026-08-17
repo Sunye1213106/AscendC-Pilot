@@ -177,13 +177,72 @@ function Get-PluginsDest([string]$plat) {
   }
 }
 
+function Remove-ReparseOrItem([string]$Path) {
+  # Junction/symlink: rmdir/del the link only. Remove-Item -Recurse on a
+  # junction can walk into the plugin dest and delete the real tree.
+  # Dangling junctions often make Test-Path return false, so always try rmdir.
+  if ([string]::IsNullOrWhiteSpace($Path)) { return }
+  cmd /c "rmdir `"$Path`"" 2>$null | Out-Null
+  if (Test-Path -LiteralPath $Path) {
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      cmd /c "del /f `"$Path`"" 2>$null | Out-Null
+    }
+  }
+  if (Test-Path -LiteralPath $Path) {
+    Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Install-DirLink([string]$Link, [string]$Target) {
+  Remove-ReparseOrItem $Link
+  cmd /c "mklink /J `"$Link`" `"$Target`"" | Out-Null
+  if (Test-Path -LiteralPath $Link) { return }
+  Write-Host "WARN: junction failed for $Link; copying instead"
+  Remove-ReparseOrItem $Link
+  Copy-Item -Recurse -Force -LiteralPath $Target -Destination $Link
+}
+
+function Install-FileLink([string]$Link, [string]$Target) {
+  Remove-ReparseOrItem $Link
+  cmd /c "mklink `"$Link`" `"$Target`"" | Out-Null
+  if (Test-Path -LiteralPath $Link) { return }
+  Write-Host "WARN: symlink failed for $Link; copying instead"
+  Remove-ReparseOrItem $Link
+  Copy-Item -Force -LiteralPath $Target -Destination $Link
+}
+
+function Write-CannHint {
+  $local = Join-Path $BundleRoot "_cann\pkg"
+  $user = [Environment]::GetEnvironmentVariable("UO_CANN_ROOT", "User")
+  if (-not [string]::IsNullOrWhiteSpace($user) -and (Test-Path -LiteralPath $user)) {
+    Write-Host "UO_CANN_ROOT (User) = $user"
+    return
+  }
+  if (-not [string]::IsNullOrWhiteSpace($env:UO_CANN_ROOT) -and (Test-Path -LiteralPath $env:UO_CANN_ROOT)) {
+    Write-Host "UO_CANN_ROOT (session) = $env:UO_CANN_ROOT"
+    Write-Host "This is lost when the terminal closes. Persist with:"
+    Write-Host "  [Environment]::SetEnvironmentVariable('UO_CANN_ROOT', '$($env:UO_CANN_ROOT)', 'User')"
+    return
+  }
+  if ((Test-Path -LiteralPath (Join-Path $local "cann-asc-devkit")) -or (Test-Path -LiteralPath (Join-Path $local "cann-metadef"))) {
+    Write-Host "CANN headers auto-discovered at $local (no env var needed)"
+    return
+  }
+  Write-Host "WARN: CANN headers not found. Extract into the checkout so doctor can discover it:"
+  Write-Host "  python `"$BundleRoot\scripts\cann_extract.py`" <toolkit.run> --dest `"$local`""
+  Write-Host "  python `"$BundleRoot\scripts\cann_extract.py`" --fixup --dest `"$local`""
+  Write-Host "If already extracted elsewhere, persist (session `$env: is not enough):"
+  Write-Host "  [Environment]::SetEnvironmentVariable('UO_CANN_ROOT', '<abs-pkg>', 'User')"
+}
+
 function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$agents, [string]$plugins) {
   # Remove previous or deterministic-only entries that would otherwise appear
   # as selectable OpenCode/Cursor agents after an upgrade.
   foreach ($name in @("uo-code-review", "understand-operator", "uo-diff")) {
     $p = Join-Path $skills $name
     if (Test-Path -LiteralPath $p) {
-      Remove-Item -Recurse -Force -LiteralPath $p
+      Remove-ReparseOrItem $p
       Write-Host "Removed legacy skill → $p"
     }
   }
@@ -193,7 +252,7 @@ function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$
   )) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path -LiteralPath $p) {
-      Remove-Item -Force -LiteralPath $p
+      Remove-ReparseOrItem $p
       Write-Host "Removed legacy agent → $p"
     }
   }
@@ -222,12 +281,10 @@ if ($Platform -like "uninstall-*") {
   $commands = Get-CommandsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
   foreach ($name in ($workflowSkills + $legacySkills + $cognitiveSkills + @("_shared"))) {
-    $p = Join-Path $skills $name
-    if (Test-Path $p) { Remove-Item -Recurse -Force $p }
+    Remove-ReparseOrItem (Join-Path $skills $name)
   }
   foreach ($name in ($currentAgents + $legacyAgents)) {
-    $p = Join-Path $agents "$name.md"
-    if (Test-Path $p) { Remove-Item -Force $p }
+    Remove-ReparseOrItem (Join-Path $agents "$name.md")
   }
   if ($plat -eq "opencode") {
     if ($commands) {
@@ -340,12 +397,7 @@ foreach ($name in $workflowSkills) {
     throw "generated skill missing: $target (compose/copy failed)"
   }
   $link = Join-Path $Skills $name
-  if (Test-Path -LiteralPath $link) { Remove-Item -Recurse -Force -LiteralPath $link }
-  try {
-    New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
-  } catch {
-    Copy-Item -Recurse -Force -LiteralPath $target -Destination $link
-  }
+  Install-DirLink $link $target
   if (-not (Test-Path -LiteralPath $link)) {
     throw "failed to install skill $name → $link"
   }
@@ -353,8 +405,7 @@ foreach ($name in $workflowSkills) {
 
 if ($Platform -eq "opencode") {
   foreach ($name in $cognitiveSkills) {
-    $link = Join-Path $Skills $name
-    if (Test-Path -LiteralPath $link) { Remove-Item -Recurse -Force -LiteralPath $link }
+    Remove-ReparseOrItem (Join-Path $Skills $name)
   }
   $cogSrc = Join-Path $genRoot "cognitive-skills"
   if (Test-Path -LiteralPath $cogSrc) {
@@ -369,20 +420,14 @@ if ($Platform -eq "opencode") {
       throw "generated skill missing: $target (compose/copy failed)"
     }
     $link = Join-Path $Skills $name
-    if (Test-Path -LiteralPath $link) { Remove-Item -Recurse -Force -LiteralPath $link }
-    try {
-      New-Item -ItemType Junction -Path $link -Target $target -ErrorAction Stop | Out-Null
-    } catch {
-      Copy-Item -Recurse -Force -LiteralPath $target -Destination $link
-    }
+    Install-DirLink $link $target
     if (-not (Test-Path -LiteralPath $link)) {
       throw "failed to install skill $name → $link"
     }
   }
 }
 
-$legacyShared = Join-Path $Skills "_shared"
-if (Test-Path -LiteralPath $legacyShared) { Remove-Item -Recurse -Force -LiteralPath $legacyShared }
+Remove-ReparseOrItem (Join-Path $Skills "_shared")
 
 $agentDir = Join-Path $Dest "agents"
 if (-not (Test-Path $agentDir)) {
@@ -398,12 +443,7 @@ if ($agentFiles.Count -eq 0) {
 foreach ($agentFile in $agentFiles) {
   $link = Join-Path $Agents $agentFile.Name
   if (-not $link) { throw "Agents dest unresolved: Agents=$Agents" }
-  if (Test-Path -LiteralPath $link) { Remove-Item -Force -LiteralPath $link }
-  try {
-    New-Item -ItemType SymbolicLink -Path $link -Target $agentFile.FullName -ErrorAction Stop | Out-Null
-  } catch {
-    Copy-Item -Force -LiteralPath $agentFile.FullName -Destination $link
-  }
+  Install-FileLink $link $agentFile.FullName
   if (-not (Test-Path -LiteralPath $link)) {
     throw "failed to install agent $($agentFile.Name) → $link"
   }
@@ -493,6 +533,7 @@ if ($acpExe) {
 }
 
 Write-Host "Installed AscendC-Pilot → $Dest"
+Write-CannHint
 Write-Host "Run: python -m ascendc_pilot doctor --host $Platform"
 Write-Host "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 

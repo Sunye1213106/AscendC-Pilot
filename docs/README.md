@@ -7,6 +7,7 @@
 ```text
 安装
   -> Quick Start
+  -> ACP 工具（pilot_run / 插件 acp；不要 --help）
   -> UO：建立并查询 CodeMap
   -> TG：建立覆盖闭环
   -> CE：审查改动影响
@@ -14,6 +15,7 @@
 
 - [安装](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)
+- [ACP 工具使用](getting-started/acp-tools.md)（`pilot_run` / 插件 `acp`；不要用 `--help` 摸协议）
 - [UO - Understand Operator](modules/uo.md)
 - [当前版本 UO benchmark（FAG arch35 冷启动 119s、查询与未闭合项）](benchmark.md)
 - [TG - Testcase Generation](modules/tg.md)
@@ -46,7 +48,7 @@
 
 - [Workflow Reference](reference/workflows.generated.md)
 - [Agent Matrix](reference/agent-matrix.generated.md)
-- [CLI Reference](reference/cli.generated.md)
+- [CLI Reference](reference/cli.generated.md)（清单；用法见 [ACP 工具使用](getting-started/acp-tools.md)）
 - [产物布局 Reference](reference/artifact-layout.generated.md)
 - [仓库结构](reference/repository-layout.md)
 - [术语表](reference/glossary.md)

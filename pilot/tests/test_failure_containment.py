@@ -46,6 +46,18 @@ def test_classify_uo_scope_finalize_is_environment_invariant():
     assert c["recommended_transition"] == "human_required"
 
 
+def test_classify_cann_env_not_ready_is_environment_invariant():
+    c = classify_failure(
+        error_code="CANN_ENV_NOT_READY",
+        action_id="apply_update",
+        source="finalize_action",
+        messages=["UO 解析前 CANN 环境未就绪。请设置 UO_CANN_ROOT。"],
+    )
+    assert c["failure_class"] == ENVIRONMENT_INVARIANT
+    assert c["retryable"] is False
+    assert c["recommended_transition"] == "human_required"
+
+
 def test_finalize_failure_updates_state(tmp_path: Path):
     start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     issue_action_lease(tmp_path, action_id="prepare", mode="normal")
@@ -137,16 +149,26 @@ def test_glob_read_denied_after_human_required(tmp_path: Path):
         messages=["installed_skill_check.consistent is not true"],
         source="uo_scope",
     )
-    # Paths outside the failed Action's contract must stay denied.
-    # (Contract-matched IR under prepare may be allowed as CONTAINMENT_INSPECT_READ.)
-    for tool, path in [
-        ("read", str(tmp_path / "engines" / "understand-operator" / "prepare_operator.py")),
-        ("grep", "finalize_scope"),
-    ]:
-        verdict = authorize(tmp_path, tool=tool, path=path, agent="ascendc-pilot")
-        assert verdict.get("ok") is False
-        assert verdict.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
-        assert verdict.get("decision") == "deny"
+    # Engine scripts stay denied (bypass surface).
+    verdict = authorize(
+        tmp_path,
+        tool="read",
+        path=str(tmp_path / "engines" / "understand-operator" / "prepare_operator.py"),
+        agent="ascendc-pilot",
+    )
+    assert verdict.get("ok") is False
+    assert verdict.get("error_code") == "HARNESS_ACTION_NOT_AUTHORIZED"
+    assert verdict.get("decision") == "deny"
+
+    # Primary diagnostic glob of the operator tree is allowed.
+    glob_ok = authorize(
+        tmp_path,
+        tool="glob",
+        path=str(tmp_path / "**"),
+        agent="ascendc-pilot",
+    )
+    assert glob_ok.get("decision") == "allow", glob_ok
+    assert glob_ok.get("reason_code") == "CONTAINMENT_PRIMARY_READ"
 
 
 def test_build_agent_passthrough_during_containment(tmp_path: Path):
@@ -171,8 +193,50 @@ def test_build_agent_passthrough_during_containment(tmp_path: Path):
             agent=agent,
         )
         assert v2.get("decision") == "allow", (agent, v2)
-    deny = authorize(tmp_path, tool="bash", command="dir", agent="ascendc-pilot")
+    deny = authorize(tmp_path, tool="bash", command="python prepare_operator.py", agent="ascendc-pilot")
     assert deny.get("decision") == "deny"
+
+
+def test_primary_readonly_inspect_during_containment(tmp_path: Path):
+    """Primary may list/read to diagnose; writes and engine scripts stay denied."""
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="prepare",
+        step_id="uo_scope_finalize",
+        messages=["installed_skill_check.consistent is not true"],
+        source="uo_scope",
+    )
+    for cmd in ("dir", "Get-ChildItem", "ls", "pwd", "gci"):
+        v = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
+        assert v.get("decision") == "allow", (cmd, v)
+        assert v.get("reason_code") == "BASH_READONLY_INSPECT", (cmd, v)
+    read_ok = authorize(
+        tmp_path,
+        tool="read",
+        path=str(tmp_path / "op_host" / "arch35" / "foo.cpp"),
+        agent="ascendc-pilot",
+    )
+    assert read_ok.get("decision") == "allow", read_ok
+    assert read_ok.get("reason_code") == "CONTAINMENT_PRIMARY_READ"
+    grep_ok = authorize(
+        tmp_path,
+        tool="grep",
+        path=str(tmp_path / "op_kernel"),
+        command="CANN",
+        agent="ascendc-pilot",
+    )
+    assert grep_ok.get("decision") == "allow", grep_ok
+    child_deny = authorize(tmp_path, tool="bash", command="dir", agent="uo-analyst")
+    assert child_deny.get("decision") == "deny", child_deny
+    write_deny = authorize(
+        tmp_path,
+        tool="write",
+        path=str(tmp_path / "notes.txt"),
+        agent="ascendc-pilot",
+    )
+    assert write_deny.get("decision") == "deny", write_deny
 
 
 def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
@@ -440,10 +504,9 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
         v = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
         assert v.get("ok") is True, cmd
 
-    # Illegal after failure
+    # Illegal after failure (writes / domain CLI / engine source). Primary
+    # Read / Glob / Get-ChildItem are allowed for diagnosis.
     illegal = [
-        ("glob", str(tmp_path / ".ascendc-pilot" / "uo" / "**"), ""),
-        ("grep", "prepare_operator", ""),
         ("read", str(tmp_path / "engines" / "understand-operator" / "uo" / "scripts" / "prepare_operator.py"), ""),
         ("write", str(tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml"), ""),
         ("bash", "", "python prepare_operator.py"),

@@ -411,6 +411,61 @@ def test_attach_host_step_continue_goal(tmp_path: Path) -> None:
     assert "全量" in str(step.get("intent") or "") or bool(step.get("intent"))
 
 
+def test_attach_host_step_failed_keeps_engine_error(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": False,
+            "stop_reason": "deterministic_action_failed",
+            "failed_action": "detect_changes",
+            "error": "manifest.source.revision is unknown; run /uo-init first",
+            "message_zh": "确定性 Action `detect_changes` 失败：manifest.source.revision is unknown; run /uo-init first",
+            "failure": {
+                "error": "manifest.source.revision is unknown; run /uo-init first",
+                "engine": {"ok": False, "error": "manifest.source.revision is unknown; run /uo-init first"},
+            },
+        },
+    )
+    step = out.get("host_step") or {}
+    assert step.get("kind") == "failed"
+    assert "unknown" in str(step.get("message_zh") or "")
+    assert step.get("failed_action") == "detect_changes"
+    assert "unknown" in str(step.get("error_detail") or "")
+    assert "unknown" in str(out.get("error") or "")
+
+
+def test_attach_host_step_failed_keeps_nested_cann_message(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": False,
+            "stop_reason": "deterministic_action_failed",
+            "failed_action": "apply_update",
+            "engine": {
+                "ok": False,
+                "engine": "apply_update",
+                "action_results": [
+                    {
+                        "ok": False,
+                        "result": {
+                            "error": "CANN_ENV_NOT_READY",
+                            "message_zh": "UO 解析前 CANN 环境未就绪。请设置 UO_CANN_ROOT。",
+                        }
+                    }
+                ],
+            },
+        },
+    )
+    step = out.get("host_step") or {}
+    assert step.get("kind") == "failed"
+    assert "UO_CANN_ROOT" in str(step.get("message_zh") or "")
+    assert str(step.get("message_zh") or "") != "deterministic_action_failed"
+
+
 def test_done_read_hint_uses_arch_scoped_quality_path(tmp_path: Path) -> None:
     from ascendc_pilot.actions.dispatch import attach_host_step
 

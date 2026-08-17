@@ -152,6 +152,17 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "commit": ["uo/*.uo", "uo/checks/**"],
         "verify": ["uo/checks/**"],
     },
+    "uo-update": {
+        "detect_changes": ["uo/diff/**"],
+        "plan_update": ["uo/diff/**", "uo/summary/**"],
+        "apply_update": [
+            "uo/**",
+            "uo/*.uo",
+        ],
+        "export_integrity": ["uo/checks/**"],
+        "diff_summary": ["uo/diff/**", "uo/summary/**"],
+        "diff_only": ["uo/diff/**", "uo/summary/**"],
+    },
     "uo-investigate": {
         "investigate": [
             "runs/{run_id}/actions/investigate/parts/**",
@@ -366,6 +377,14 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "analyze": ["uo/**"],
         "commit": ["uo/**", "uo/*.uo"],
         "verify": ["uo/**", "uo/*.uo"],
+    },
+    "uo-update": {
+        "detect_changes": ["uo/**", "uo/*.uo"],
+        "plan_update": ["uo/**", "uo/*.uo"],
+        "apply_update": ["uo/**", "uo/*.uo"],
+        "export_integrity": ["uo/**", "uo/*.uo"],
+        "diff_summary": ["uo/**", "uo/*.uo"],
+        "diff_only": ["uo/**", "uo/*.uo"],
     },
     "uo-investigate": {
         "investigate": [

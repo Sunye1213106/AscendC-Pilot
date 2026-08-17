@@ -158,7 +158,11 @@ class BuildContext:
         }
 
     def resolve_path(self, template: str) -> str:
-        return _sub(template, self.mapping()).replace("\\", "/")
+        out = _sub(template, self.mapping()).replace("\\", "/")
+        host = paths.cann_host_dir(Path(self.cann_root)) if self.cann_root else None
+        if host and host != "x86_64-linux":
+            out = out.replace("/x86_64-linux/", f"/{host}/")
+        return out
 
     def sysroot_includes(self) -> list[str]:
         return [self.resolve_path(p) for p in self.raw.get("sysroot_includes") or []]

@@ -72,6 +72,11 @@ _ENV_INVARIANT_PATTERNS = (
     re.compile(r"environment[_-]invariant", re.I),
     re.compile(r"layout[_-]missing", re.I),
     re.compile(r"invariant", re.I),
+    re.compile(r"CANN_ENV_NOT_READY", re.I),
+    re.compile(r"UO_CANN_ROOT", re.I),
+    re.compile(r"ASCEND_CANN_PACKAGE_PATH", re.I),
+    re.compile(r"CANN packages not found", re.I),
+    re.compile(r"CANN 环境未就绪"),
 )
 _TRANSIENT_PATTERNS = (
     re.compile(r"timeout", re.I),

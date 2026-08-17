@@ -15,6 +15,7 @@ from ascendc_pilot.workflows.specs import WORKFLOWS as _SPEC_WORKFLOWS
 _DETERMINISTIC_ENGINE_BY_DOMAIN = {
     "uo": "deterministic-uo-engine",
     "tg": "deterministic-tg-engine",
+    "ce": "deterministic-ce-engine",
 }
 
 

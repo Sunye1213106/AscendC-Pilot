@@ -142,3 +142,35 @@ def test_uo_init_pipeline_matches_preferred() -> None:
     for phase in ("prepare", "extract", "analyze", "commit", "verify"):
         assert phase_pipeline("uo-init", phase) == preferred_pipeline("uo-init", phase)
         assert preferred_pipeline("uo-init", phase)
+
+
+def test_direct_action_empty_write_paths_fail_closed(repo_root: Path) -> None:
+    from ascendc_pilot.workflows.consistency import check_all
+
+    wf = {
+        "slash": "/x",
+        "phases": ["p"],
+        "gates": [],
+        "pipelines": {"p": ["review_like"]},
+        "actions": [
+            {
+                "id": "review_like",
+                "label_zh": "x",
+                "phases": ["p"],
+                "checker_required": True,
+                "referee_required": False,
+                "gates": [],
+                "agent_id": "ce-reviewer",
+                "role_id": "readonly_reviewer",
+                "execution_mode": "subagent",
+                "policy_ids": [],
+                "capability_ids": [],
+                "task_prompt_id": None,
+                "output_contract_id": "code-review-v1",
+                "allowed_write_paths": [],
+                "actors": ["ce-reviewer"],
+            }
+        ],
+    }
+    errors = check_all(repo_root, workflows={"_ssot_empty_writes": wf})
+    assert any("not covered by allowed_write_paths" in e for e in errors)

@@ -11,11 +11,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "engines" / "understand-operator" / "src"))
 
-from uo_init.paths import _cann_candidates, _looks_like_cann, cann_root, explain, ops_root
+from uo_init.paths import (
+    _cann_candidates,
+    _looks_like_cann,
+    cann_layout_issues,
+    cann_root,
+    explain,
+    ops_root,
+    repo_root,
+)
 
 
 def main() -> int:
     print(f"repo={ROOT}")
+    print(f"default extract dest={repo_root() / '_cann' / 'pkg'}")
     print("environment:")
     for name in (
         "UO_CANN_ROOT",
@@ -30,11 +39,19 @@ def main() -> int:
         "UO_REPLAY_DISTRO",
     ):
         print(f"  {name}={os.environ.get(name)!r}")
-    print(f"cann_root() => {cann_root()}")
+    root = cann_root()
+    print(f"cann_root() => {root}")
     print(f"ops_root()  => {ops_root()}")
     print("CANN candidates:")
     for candidate in _cann_candidates():
         print(f"  {candidate} exists={candidate.is_dir()} looks_like_cann={_looks_like_cann(candidate)}")
+    issues = cann_layout_issues(root)
+    if root is not None and not issues:
+        print("cann_layout=ok")
+    else:
+        print("cann_layout_issues:")
+        for item in issues:
+            print(f"  {item}")
     print("resolution:")
     print(explain())
     return 0

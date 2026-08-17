@@ -906,26 +906,34 @@ def _run_export_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
 
 
 def _run_detect_changes(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    try:
+        uo, op_name, arch = _uo_op_ctx(project_root, ctx)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "detect_changes", "error": str(exc)[:300]}
     if not op_name:
         return {"ok": False, "engine": "detect_changes", "error": "op_name required"}
     try:
         from uo_init.update import detect_kb_changes
 
-        payload = detect_kb_changes(project_root, op_name, write=True)
+        payload = detect_kb_changes(project_root, op_name, write=True, architecture=arch)
         out = uo / "diff" / "change_set.yaml"
         return {
             "ok": out.is_file(),
             "engine": "detect_changes",
             "artifact": out.as_posix() if out.is_file() else "",
             "scoped_change_count": payload.get("scoped_change_count"),
+            "detection": payload.get("detection"),
+            "worktree_dirty": payload.get("worktree_dirty"),
         }
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "detect_changes", "error": str(exc)[:300]}
 
 
 def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    try:
+        uo, op_name, arch = _uo_op_ctx(project_root, ctx)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "plan_update", "error": str(exc)[:300]}
     if not op_name:
         return {"ok": False, "engine": "plan_update", "error": "op_name required"}
     try:
@@ -934,8 +942,8 @@ def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         change_set = load_change_set_if_fresh(uo, repo_root=project_root)
         reused = change_set is not None
         if change_set is None:
-            change_set = detect_kb_changes(project_root, op_name, write=True)
-        plan_kb_update(project_root, op_name, change_set=change_set, write=True)
+            change_set = detect_kb_changes(project_root, op_name, write=True, architecture=arch)
+        plan_kb_update(project_root, op_name, change_set=change_set, write=True, architecture=arch)
         out = uo / "summary" / "update_plan.yaml"
         return {
             "ok": out.is_file(),
@@ -947,8 +955,50 @@ def _run_plan_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "engine": "plan_update", "error": str(exc)[:300]}
 
 
+def _cann_not_ready(engine: str, ctx: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Fail closed with a user-facing CANN hint before clang work."""
+    try:
+        from uo_init.pilot_engines import _cann_env_block
+    except Exception:  # noqa: BLE001
+        return None
+    return _cann_env_block(engine, ctx)
+
+
+def _rebuild_failure_from_update(result: dict[str, Any] | None) -> dict[str, Any]:
+    """Copy nested prepare_layout / clang errors out of update_operator status=fail."""
+    from ascendc_pilot.actions.failure_text import preferred_failure_text
+
+    payload = result if isinstance(result, dict) else {}
+    for row in payload.get("action_results") or []:
+        if not isinstance(row, dict) or row.get("ok"):
+            continue
+        inner = row.get("result") if isinstance(row.get("result"), dict) else {}
+        merged = {**inner, "error": inner.get("error") or row.get("error")}
+        return {
+            "ok": False,
+            "failed_rebuild_action": row.get("action"),
+            "error": str(inner.get("error") or row.get("error") or "rebuild_action_failed"),
+            "message_zh": preferred_failure_text(merged, fallback=str(row.get("error") or "")),
+            "issues": list(inner.get("issues") or []),
+        }
+    receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else {}
+    msg = str(receipt.get("message") or "")
+    return {
+        "ok": False,
+        "error": msg or "APPLY_UPDATE_FAILED",
+        "message_zh": msg,
+        "issues": [],
+    }
+
+
 def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    uo, op_name, arch = _uo_op_ctx(project_root, ctx)
+    blocked = _cann_not_ready("apply_update", ctx)
+    if blocked is not None:
+        return blocked
+    try:
+        uo, op_name, arch = _uo_op_ctx(project_root, ctx)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "apply_update", "error": str(exc)[:800]}
     if not op_name:
         return {"ok": False, "engine": "apply_update", "error": "op_name required"}
     run_id = str((ctx or {}).get("run_id") or "").strip()
@@ -970,7 +1020,7 @@ def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         eng_ok = status in {"pass", "blocked", "noop"} or status == "pass"
         if status == "fail":
             eng_ok = False
-        return {
+        payload = {
             "ok": eng_ok and (diff_ok or status == "blocked"),
             "engine": "apply_update",
             "receipt_present": receipt_ok,
@@ -980,13 +1030,23 @@ def _run_apply_update(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             "result_keys": list(result.keys())[:12] if isinstance(result, dict) else [],
             "status": status,
         }
+        if not payload["ok"]:
+            nested = _rebuild_failure_from_update(result if isinstance(result, dict) else {})
+            payload["error"] = nested.get("error") or "APPLY_UPDATE_FAILED"
+            payload["message_zh"] = nested.get("message_zh") or nested.get("error")
+            payload["issues"] = nested.get("issues") or []
+            payload["failed_rebuild_action"] = nested.get("failed_rebuild_action") or ""
+        return payload
     except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "apply_update", "error": str(exc)[:300]}
+        return {"ok": False, "engine": "apply_update", "error": str(exc)[:800]}
 
 
 def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Emit canonical diff/ product from existing change_set/update_plan when fresh."""
-    uo, op_name, _arch = _uo_op_ctx(project_root, ctx)
+    try:
+        uo, op_name, arch = _uo_op_ctx(project_root, ctx)
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "diff_summary", "error": str(exc)[:300]}
     if not op_name:
         return {"ok": False, "engine": "diff_summary", "error": "op_name required"}
     try:
@@ -1002,15 +1062,18 @@ def _run_diff_summary(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         plan = load_update_plan_if_fresh(uo, change_set=change_set) if change_set else None
         reused = change_set is not None and plan is not None
         if change_set is None:
-            change_set = detect_kb_changes(project_root, op_name, write=True)
+            change_set = detect_kb_changes(project_root, op_name, write=True, architecture=arch)
         if plan is None:
-            plan = plan_kb_update(project_root, op_name, change_set=change_set, write=True)
+            plan = plan_kb_update(
+                project_root, op_name, change_set=change_set, write=True, architecture=arch
+            )
         product = export_diff_product(
             project_root,
             op_name,
             change_set=change_set,
             update_plan=plan,
             write=True,
+            architecture=arch,
         )
         return {"ok": True, "engine": "diff_summary", "product": product, "artifacts_reused": reused}
     except Exception as exc:  # noqa: BLE001
@@ -3581,7 +3644,10 @@ def _run_tg_scenario_certify(project_root: Path, ctx: dict[str, Any]) -> dict[st
 
 
 def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]:
-    uo = _uo(project_root)
+    architecture = str(ctx.get("architecture") or "").strip()
+    if not architecture:
+        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
+    uo = _uo(project_root, arch=architecture)
     op_name = str(ctx.get("op_name") or "").strip()
     if not op_name:
         try:
@@ -3591,9 +3657,6 @@ def _uo_op_ctx(project_root: Path, ctx: dict[str, Any]) -> tuple[Path, str, str]
             op_name = str(man.get("op_name") or "").strip()
         except Exception:  # noqa: BLE001
             op_name = ""
-    architecture = str(ctx.get("architecture") or "").strip()
-    if not architecture:
-        raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
     return uo, op_name, architecture
 
 

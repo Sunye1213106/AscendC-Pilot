@@ -5,6 +5,8 @@
 内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)；各 workflow 阶段图见 [工作流流程图](../architecture/workflows.md)。
 
 > 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有），不必让主控手工编排 `acp start` / `auto` / `finalize`。详情见 Runtime 文档。
+>
+> Agent 不要用 `acp --help` 发现协议：Windows bash 和权限弹窗都会让会话看起来卡住。工具怎么选、失败怎么查，见 [ACP 工具使用](acp-tools.md)。
 
 ## 1. 打开目标算子
 
@@ -174,6 +176,7 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三�
 | `acp status` / `next` / `inspect-failure` | 状态与失败诊断 |
 | `acp scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
 | `pilot_run`（OpenCode 工具） | Host Session Driver：启动并驱动 workflow |
+| 插件 `acp`（OpenCode 工具） | 查询与诊断；`command` 不要带前导 `acp`，不要 `--help`。用法见 [ACP 工具使用](acp-tools.md) |
 
 正常使用时优先向 `AscendC-Pilot` 描述目标，或使用带参数的 Slash Command。
 

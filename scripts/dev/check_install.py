@@ -131,7 +131,7 @@ def check_uo(reporter: Reporter) -> None:
     )
 
     try:
-        from uo_init.paths import cann_root, explain, ops_root
+        from uo_init.paths import cann_layout_issues, cann_root, explain, ops_root
     except Exception as exc:  # noqa: BLE001 - diagnostic script
         reporter.add("uo_init.paths", False, f"{exc}")
         return
@@ -141,8 +141,20 @@ def check_uo(reporter: Reporter) -> None:
     reporter.add(
         "CANN root",
         cann is not None,
-        str(cann) if cann else "not found; set UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH / CANN_ROOT",
+        str(cann) if cann else (
+            "not found; extract to <repo>/_cann/pkg or set UO_CANN_ROOT / "
+            "ASCEND_CANN_PACKAGE_PATH / CANN_ROOT"
+        ),
+        required=False,
     )
+    if cann is not None:
+        layout = cann_layout_issues(cann)
+        reporter.add(
+            "CANN layout",
+            not layout,
+            "ok" if not layout else layout[0],
+            required=False,
+        )
     reporter.add(
         "source/dependency root",
         ops is not None,

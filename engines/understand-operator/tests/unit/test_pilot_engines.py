@@ -104,6 +104,9 @@ def test_prepare_layout_scrubs_legacy_layers_without_stubs(tmp_path: Path, monke
     assert "uo-codemap/v1" in manifest
     assert "prepared" in manifest
     assert "DummyOp.arch35.uo" in manifest
+    assert "kind: uo_init.pilot_engines.prepare_layout" in manifest
+    assert "source_revision:" in manifest
+    assert "revision:" in manifest
     assert (uo / "runs" / "r_new" / "scope" / "layout_receipt.yaml").is_file()
     assert (uo / "summary").is_dir()
     assert (uo / "tiling").is_dir()

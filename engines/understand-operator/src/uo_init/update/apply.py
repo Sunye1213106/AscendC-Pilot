@@ -11,6 +11,7 @@ from uo_init.update.artifacts import (
     load_change_set_if_fresh,
     load_update_plan_if_fresh,
     resolve_uo_root,
+    revision_sha,
 )
 from uo_init.update.changes import detect_kb_changes
 from uo_init.update.diff import export_diff_product
@@ -248,7 +249,7 @@ def _bump_manifest(uo_root: Path, head_revision: Any, run_id: str) -> None:
     source = man.get("source") if isinstance(man.get("source"), dict) else {}
     source = dict(source)
     if head_revision:
-        source["revision"] = str(head_revision)
+        source["revision"] = revision_sha(head_revision) or str(head_revision)
     man["source"] = source
     man["current_run_id"] = run_id
     man["updated_at"] = datetime.now(timezone.utc).isoformat()

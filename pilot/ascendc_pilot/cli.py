@@ -1774,10 +1774,19 @@ def _doctor(project: Path | None) -> int:
         if cann_issues:
             for item in cann_issues:
                 warnings.append(f"cann: {item}")
+            default_pkg = uo_paths.repo_root() / "_cann" / "pkg"
             warnings.append(
-                "UO prepare/scope_scan requires extracted CANN under UO_CANN_ROOT "
-                "or _cann/pkg (see scripts/cann_extract.py); installed toolkit "
-                "ASCEND_HOME_PATH alone is not enough for BuildContext."
+                "UO prepare/scope_scan needs extracted CANN packages (not just "
+                "ASCEND_HOME_PATH). Default dest is auto-discovered: "
+                f"{default_pkg} — python scripts/cann_extract.py <toolkit.run> "
+                f"--dest {default_pkg}"
+            )
+            warnings.append(
+                "If impl/include is missing (Windows junction): "
+                "python scripts/cann_extract.py --fixup --dest <pkg>. "
+                "Session-only $env:UO_CANN_ROOT is lost when the terminal closes; "
+                "persist with [Environment]::SetEnvironmentVariable("
+                "'UO_CANN_ROOT', '<abs>', 'User')."
             )
         else:
             print("cann_layout=ok")

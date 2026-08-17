@@ -85,3 +85,11 @@ def test_installers_copy_all_opencode_ts_hooks() -> None:
     assert ".cache\\opencode\\bin" in ps1
     assert "Get-AcpExe" in ps1
     assert "resolve_acp_bin" in sh
+    assert "function Remove-ReparseOrItem" in ps1
+    assert "function Install-DirLink" in ps1
+    assert "function Write-CannHint" in ps1
+    assert "New-Item -ItemType Junction" not in ps1
+    assert 'mklink /J `"$Link`" `"$Target`"' in ps1
+    assert "--fixup" in ps1
+    assert r"_cann\pkg" in ps1
+    assert "_cann/pkg" in sh

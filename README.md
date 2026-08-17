@@ -104,7 +104,7 @@ Architecture **对 `/uo-init` 和 `/uo-update` 强制**：选项从当前算子�
 
 # 文档
 
-* 入门：[Installation](docs/getting-started/installation.md) → [Quick Start](docs/getting-started/quickstart.md)
+* 入门：[Installation](docs/getting-started/installation.md) → [Quick Start](docs/getting-started/quickstart.md) → [ACP 工具使用](docs/getting-started/acp-tools.md)
 * 模块：[UO](docs/modules/uo.md) · [TG](docs/modules/tg.md) · [CE](docs/modules/ce.md)
 * 设计：[Architecture](docs/architecture/overview.md) · [Agent Runtime](docs/architecture/agent-runtime.md) · [Artifacts](docs/architecture/artifacts-and-authority.md)
 * 完整导航：[docs/README.md](docs/README.md)

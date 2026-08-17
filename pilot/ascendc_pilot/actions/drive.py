@@ -16,6 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ascendc_pilot.actions.failure_text import preferred_failure_text
+
 PrepareAction = Callable[[Path, str], dict[str, Any]]
 
 
@@ -117,6 +119,11 @@ def _attach_todo(root: Path, payload: dict[str, Any]) -> dict[str, Any]:
     todo["todo_sync"] = sync
     out["todo"] = todo
     return out
+
+
+def _action_failure_detail(result: dict[str, Any]) -> str:
+    """Prefer engine/finalize human text over the generic stop_reason token."""
+    return preferred_failure_text(result, fallback="deterministic_action_failed")
 
 
 def drive_until_interaction(
@@ -253,6 +260,15 @@ def drive_until_interaction(
             )
             if not result.get("ok"):
                 _progress(f"{action_id} FAIL")
+                detail = _action_failure_detail(result)
+                eng = result.get("engine") if isinstance(result.get("engine"), dict) else {}
+                from ascendc_pilot.actions.failure_text import with_failure_hint
+
+                message_zh = with_failure_hint(
+                    str(result.get("message_zh") or "").strip()
+                    or f"确定性 Action `{action_id}` 失败：{detail}",
+                    result,
+                )
                 return _done(
                     {
                         "ok": False,
@@ -262,10 +278,15 @@ def drive_until_interaction(
                         "phase": phase,
                         "failed_action": action_id,
                         "executed": executed,
+                        "error": str(eng.get("error") or result.get("error") or detail),
+                        "message_zh": message_zh,
+                        "hint_zh": str(result.get("hint_zh") or ""),
                         "failure": {
-                            "error": result.get("error"),
-                            "message_zh": result.get("message_zh"),
+                            "error": eng.get("error") or result.get("error"),
+                            "message_zh": result.get("message_zh") or eng.get("message_zh"),
+                            "issues": eng.get("issues") or result.get("issues"),
                             "finalize": result.get("finalize"),
+                            "engine": eng,
                         },
                     }
                 )

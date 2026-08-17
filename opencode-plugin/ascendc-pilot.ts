@@ -77,11 +77,53 @@ function isAcpResumeStartCommand(command: string): boolean {
 }
 
 function isAcpHelpCommand(command: string): boolean {
-  return (
-    /\bacp(\.cmd|\.exe)?(\s+\S+)?\s+--help\b/i.test(command) ||
-    /\bacp(\.cmd|\.exe)?\s+help\b/i.test(command)
+  const cmd = String(command || "").trim()
+  if (!cmd) return false
+  if (/(^|\s)(--help|-h)(\s|$)/i.test(cmd)) return true
+  return /^(?:acp(?:\.cmd|\.exe)?\s+)?help(?:\s|$)/i.test(cmd)
+}
+
+function isPrimaryPilotAgent(agent: string): boolean {
+  const a = String(agent || "").trim().toLowerCase()
+  return !a || a === "ascendc-pilot" || a === "ascendc_agent"
+}
+
+/** Listing / cwd probes only. File contents go through Read (engine-source fence). */
+function isReadonlyInspectBash(command: string): boolean {
+  const cmd = String(command || "").trim()
+  if (!cmd) return false
+  if (/\s>>?/.test(cmd)) return false
+  if (/\b(set-content|out-file|add-content|new-item|tee)\b/i.test(cmd)) return false
+  return /^(ls|dir|tree|pwd|get-childitem|gci|get-item|gi|get-location|gl|test-path|resolve-path|cd|set-location|sl|push-location|pop-location)\b/i.test(
+    cmd,
   )
 }
+
+function isAcpDiagnosticCommand(command: string): boolean {
+  return /\b(inspect-failure|next|status|run-summary|scan-architectures|abort|answer)\b/i.test(
+    String(command || ""),
+  )
+}
+
+/** Returned by the plugin `acp` tool instead of argparse --help (ses_ff08 discovery trap). */
+const ACP_HELP_USAGE_CARD = [
+  "[ascendc-pilot] Do not use --help to discover protocol.",
+  "argparse lists internal commands (authorize / debug / serve-authorize) and is not the Session Driver contract.",
+  "",
+  "Workflows (uo-init / uo-update / tg-* / ce-* / uo-investigate): Host tool pilot_run(workflow, project, architecture).",
+  "Never bash `acp start` / `acp next`. Never pilot_run for uo-query.",
+  "",
+  "Plugin `acp` command examples (no leading acp):",
+  "  uo-query --project <operator-abs> [--architecture arch] <identifier|Dim=V>",
+  "  uo-query --project <operator-abs> --status-only",
+  "  scan-architectures --project <operator-abs>",
+  "  status --project <operator-abs>",
+  "  inspect-failure --project <operator-abs>",
+  "",
+  "On failure: inspect-failure / status, not another --help.",
+  "Pending AskQuestion: use the options verbatim; --help does not consume the question.",
+  "Do not bash-pipe acp (Select-Object / Out-String / tail). Do not pass an absolute acp.exe path.",
+].join("\n")
 
 function readPendingFromDisk(project: string): PendingHumanInteraction | null {
   if (!project) return null
@@ -1256,12 +1298,14 @@ function createAcpCliTool(): {
       "Run the AscendC-Pilot CLI (acp.exe). Prefer this over bash. " +
       "Pass command without a leading 'acp' (example: " +
       "`uo-query --project <operator-abs> s1Inner`). Never `--mode`. " +
+      "Do not call `--help` to discover protocol; use status / inspect-failure / scan-architectures. " +
       "Do not use bash/MCP/Grep as a substitute.",
     args: {
       command: {
         type: "string",
         description:
-          "acp argv after the binary, or a full `acp …` line. Include --project <operator-abs>.",
+          "acp argv after the binary, or a full `acp …` line. Include --project <operator-abs>. " +
+          "Do not pass --help / -h; that returns a short usage card, not argparse.",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
@@ -1277,6 +1321,13 @@ function createAcpCliTool(): {
       }
       const projectHint = uoQueryPickProject(args, raw)
       const full = /^(?:acp(?:\.exe|\.cmd)?)(\s|$)/i.test(raw) ? raw : `acp ${raw}`
+      if (isAcpHelpCommand(full) || raw === "-h" || raw === "--help" || raw === "help") {
+        return {
+          title: "acp help",
+          output: ACP_HELP_USAGE_CARD,
+          metadata: { ok: true, error: "help_usage_card" },
+        }
+      }
       const rewritten = projectHint ? rewriteAcpProjectFlag(full, projectHint) : full
       const stripped = stripAcpPrefix(rewritten)
       const argv = tokenizeArgv(stripped)
@@ -2374,6 +2425,16 @@ export const AscendCHarnessPlugin = async (ctx?: {
         // a second pilot_run after EXISTING_RUN left pending yaml on disk.
         const isPilotDriver = tool === "pilot_run" || tool === "pilotrun"
         const isSkillTool = tool === "skill" || tool.endsWith("skill")
+        const isPrimaryReadonly =
+          isPrimaryPilotAgent(agent) &&
+          (tool === "read" ||
+            tool === "glob" ||
+            tool === "grep" ||
+            tool === "list" ||
+            tool === "search" ||
+            ((tool === "bash" || tool === "shell" || tool === "terminal") &&
+              isReadonlyInspectBash(command)) ||
+            (tool === "acp" && isAcpDiagnosticCommand(command)))
         if (
           !isQuestion &&
           !isAnswerBash &&
@@ -2381,7 +2442,8 @@ export const AscendCHarnessPlugin = async (ctx?: {
           !isHelpBash &&
           !isResumeStartBash &&
           !isPilotDriver &&
-          !isSkillTool
+          !isSkillTool &&
+          !isPrimaryReadonly
         ) {
           const allowed = pending.allowed_values.length
             ? ` allowed=${pending.allowed_values.join("|")}`
@@ -2390,8 +2452,9 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
-              `Only the question UI, acp answer, acp --help, acp start --decision continue|reinit|--force-new, ` +
-              `acp scan-architectures, acp abort, skill, or pilot_run is allowed until the user answers.`,
+              `Answer the question UI (or acp answer / start --decision). ` +
+              `Primary may Read / Glob / Get-ChildItem / inspect-failure / status while the prompt is open. ` +
+              `Do not Write, Task, or run domain CLI until the user answers.`,
           )
         }
       }

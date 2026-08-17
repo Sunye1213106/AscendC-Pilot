@@ -568,10 +568,40 @@ def check_all(
                 paths = OUTPUT_CONTRACT_PATHS.get(contract_id)
                 if paths is None:
                     errors.append(f"{wid}/{aid}: unknown output_contract_id {contract_id!r}")
-                elif (
-                    agent_id
+                else:
+                    omode = str(action.get("output_mode") or "direct").strip().lower()
+                    if (
+                        omode not in {"return_value", "return"}
+                        and mode != "primary_interactive"
+                        and contract_id not in _PRECONDITION_CONTRACTS
+                    ):
+                        check_id = (
+                            str(action.get("staging_contract_id") or contract_id)
+                            if omode == "staged"
+                            else contract_id
+                        )
+                        check_paths = list(OUTPUT_CONTRACT_PATHS.get(check_id) or paths or [])
+                        writes = [
+                            str(p).replace("\\", "/")
+                            for p in (action.get("allowed_write_paths") or [])
+                        ]
+                        for rel in check_paths:
+                            norm = str(rel).replace("\\", "/")
+                            if not writes or not path_matches_scope(norm, writes):
+                                errors.append(
+                                    f"{wid}/{aid}: contract path {norm!r} not covered by "
+                                    f"allowed_write_paths={writes}"
+                                )
+                if (
+                    paths is not None
+                    and agent_id
                     and agent_id not in {"", "ascendc-pilot"}
-                    and role in {"producer", "referee", "readonly_analyst"}
+                    and role in {
+                        "producer",
+                        "referee",
+                        "readonly_analyst",
+                        "readonly_reviewer",
+                    }
                     and contract_id not in _PRECONDITION_CONTRACTS
                 ):
                     scopes = _effective_write_scopes(agent_id, aid, root)

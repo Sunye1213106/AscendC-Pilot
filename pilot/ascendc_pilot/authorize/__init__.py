@@ -1,7 +1,8 @@
 """Authorize tool invocations for AscendC-Pilot (OpenCode plugin hook).
 
 State / Workflow Spec / Action Lease aware. Soft control-plane only — not OS security.
-On human_required / containment lease, tools are hard-denied before execution.
+On human_required / containment, Write / Task / domain CLI stay denied. Primary may
+Read / Glob / Grep and readonly inspect bash (ls / Get-ChildItem / …) to diagnose.
 """
 
 from __future__ import annotations
@@ -1034,6 +1035,26 @@ def _authorize_impl(
                     command=cmd[:200],
                     allowed_actions=allowed_cmds[:8],
                 )
+            if agent_l in _PRIMARY_AGENTS and _is_readonly_inspect_bash(
+                cmd_raw if cmd_raw else cmd
+            ):
+                denied = _maybe_deny_uo_query_repo_search(
+                    command=cmd_raw if cmd_raw else cmd,
+                    agent_l=agent_l,
+                    action_id=action_id,
+                    workflow_id=str(ctx.get("workflow_id") or wid),
+                    status=status,
+                    phase=ctx.get("phase"),
+                )
+                if denied:
+                    return denied
+                return _ok(
+                    "allow",
+                    "BASH_READONLY_INSPECT",
+                    f"失败收敛模式允许主控只读探查（ls/Get-ChildItem/pwd/cd/…）（status={status}）",
+                    status=status,
+                    command=cmd[:200],
+                )
             return _deny_not_authorized(
                 f"Current run is {status}; bash not authorized",
                 status=status,
@@ -1080,6 +1101,36 @@ def _authorize_impl(
                     status=status,
                     path=path_s,
                 )
+        # Primary diagnostic reads: operator tree / logs / .ascendc-pilot artifacts.
+        # Engine scripts stay denied so containment cannot be used to bypass ACP.
+        if agent_l in _PRIMARY_AGENTS and tool_l in _READ_TOOLS:
+            if tool_l == "grep" and _is_uo_query_actor(
+                agent_l, action_id, str(ctx.get("workflow_id") or wid)
+            ):
+                return _ok(
+                    "deny",
+                    "REPO_GREP_ESCAPE",
+                    "uo-query 禁止 Grep 工具；用 acp uo-query 或 acp ro-search --paths <已 citation 文件>",
+                    error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                    tool=tool_l,
+                    status=status,
+                )
+            if path_s and _is_engine_source(path_s):
+                return _deny_not_authorized(
+                    f"Current run is {status}; reading engine source not authorized",
+                    status=status,
+                    path=path_s,
+                    tool=tool_l,
+                    allowed_actions=allowed_cmds[:8],
+                )
+            return _ok(
+                "allow",
+                "CONTAINMENT_PRIMARY_READ",
+                f"失败收敛模式允许主控 Read/Glob/Grep 诊断（status={status}）",
+                status=status,
+                path=path_s or None,
+                tool=tool_l,
+            )
         if tool_l in _READ_TOOLS | _WRITE_TOOLS | _TASK_TOOLS:
             return _deny_not_authorized(
                 f"Current run is {status}; {tool_l} not authorized",

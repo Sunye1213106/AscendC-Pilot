@@ -83,6 +83,8 @@ def main() -> int:
         "continue_goal",
         "--intent",
         "compactPilotRunPayload",
+        "error_detail",
+        "hint_zh",
         "toPluginToolResult",
         "createProgressReporter",
         "createToolRowProgressReporter",
@@ -168,6 +170,10 @@ def main() -> int:
         "lastSkillName",
         "createPilotSkillTool",
         "createAcpCliTool",
+        "ACP_HELP_USAGE_CARD",
+        "Do not use --help to discover protocol",
+        "isReadonlyInspectBash",
+        "isPrimaryPilotAgent",
         "patchWindowsShell",
         "ensureOpenCodeRipgrep",
         "ensureAcpOnPath",
@@ -188,6 +194,8 @@ def main() -> int:
     )
     if "workflow_uses_host_driver" not in auth_src:
         errors.append("authorize must allow Task of host_driver=False actors (uo-query)")
+    if "CONTAINMENT_PRIMARY_READ" not in auth_src:
+        errors.append("authorize must allow primary Read/Glob during containment")
     driver_src = (plug / "pilot-driver.ts").read_text(encoding="utf-8")
     if "Do not strip to the yaml fence" not in driver_src:
         errors.append("pilot-driver.ts must keep native Task text (not yaml-fence-only)")
@@ -200,6 +208,8 @@ def main() -> int:
         errors.append("compose_runtime.py must allow OpenCode external_directory for Pilot agents")
     if '"read": "allow"' not in compose_src:
         errors.append("compose_runtime.py must allow OpenCode read for Pilot agents")
+    if '"Get-ChildItem": "allow"' not in compose_src:
+        errors.append("compose_runtime.py must allow bare Get-ChildItem for OpenCode bash")
     if "opencode_primary_task_permission" not in compose_src:
         errors.append("compose_runtime.py must emit Primary task whitelist")
     if "OPENCODE_PRIMARY_TASK_ALLOW" not in compose_src:

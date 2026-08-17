@@ -1,7 +1,7 @@
 # UO Query Router
 
 主控先向用户说明将如何查询，再执行。子代理查图用 `capabilities/uo-query/METHOD.md`。
-**禁止** `pilot_run` / `acp start uo-query`。禁止仅为问题分类而委派子代理。不要为确认协议调用 `--help` 或 Glob 查找 routing。
+**禁止** `pilot_run` / `acp start uo-query`。禁止仅为问题分类而委派子代理。不要为确认协议调用 `--help` 或 Glob 查找 routing。失败用 `acp inspect-failure` / `acp uo-query --status-only`，不要对 `uo-query` / `start` / `run-action` 再调 `--help`。
 
 `host_driver=False` 只表示 Session Driver **不** auto start/drain，**不等于**没有 Action / METHOD / bundle。
 

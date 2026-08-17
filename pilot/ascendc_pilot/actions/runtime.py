@@ -2017,10 +2017,30 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result["engine"] = eng
         if isinstance(eng, dict) and eng.get("receipt_path"):
             result["receipt_path"] = eng["receipt_path"]
+        if isinstance(eng, dict) and not eng.get("ok", True):
+            from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint
+
+            result["error"] = str(eng.get("error") or "ENGINE_FAILED")
+            result["message_zh"] = with_failure_hint(
+                str(eng.get("message_zh") or preferred_failure_text(eng)),
+                eng,
+            )
+            if eng.get("issues"):
+                result["issues"] = eng.get("issues")
         fin = finalize_action(project_root, action_id, engine_result=eng)
         result["auto_finalize"] = True
         result["finalize"] = fin
         result["ok"] = bool(fin.get("ok"))
+        if not result["ok"]:
+            from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint
+
+            result["error"] = str(
+                result.get("error") or fin.get("error") or (eng.get("error") if isinstance(eng, dict) else "") or "ENGINE_FAILED"
+            )
+            result["message_zh"] = with_failure_hint(
+                str(result.get("message_zh") or preferred_failure_text(result)),
+                result,
+            )
         return result
 
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
@@ -2896,6 +2916,14 @@ def finalize_action(
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),
     }
+    if not overall_ok and not engine_ok and isinstance(engine_result, dict):
+        from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint
+
+        result["error"] = str(engine_result.get("error") or "ENGINE_FAILED")
+        result["message_zh"] = with_failure_hint(
+            preferred_failure_text(engine_result, fallback=str(result["message_zh"])),
+            engine_result,
+        )
     if not overall_ok and not producer_identity_ok:
         result["error"] = "PRODUCER_DECLARED_IDENTITY_MISMATCH"
     elif not overall_ok and not identity_injection.get("ok"):
@@ -2973,6 +3001,12 @@ def finalize_action(
         return result
 
     msgs = ["Finalize 失败：Checker/Output Contract 未通过"]
+    if not engine_ok and engine_result:
+        from ascendc_pilot.actions.failure_text import preferred_failure_text
+
+        eng_msg = preferred_failure_text(engine_result, fallback="")
+        if eng_msg:
+            msgs = [eng_msg]
     if not producer_identity_ok:
         msgs.append(str(producer_identity.get("error") or "PRODUCER_DECLARED_IDENTITY_MISMATCH"))
     if not identity_injection.get("ok"):

@@ -330,6 +330,17 @@ else
 fi
 
 echo "Installed AscendC-Pilot → $DEST"
+cann_pkg="$BUNDLE_ROOT/_cann/pkg"
+if [[ -n "${UO_CANN_ROOT:-}" && -d "$UO_CANN_ROOT" ]]; then
+  echo "UO_CANN_ROOT=$UO_CANN_ROOT"
+elif [[ -d "$cann_pkg/cann-asc-devkit" || -d "$cann_pkg/cann-metadef" ]]; then
+  echo "CANN headers auto-discovered at $cann_pkg (no env var needed)"
+else
+  echo "WARN: CANN headers not found. Extract into the checkout so doctor can discover it:"
+  echo "  $PYTHON \"$BUNDLE_ROOT/scripts/cann_extract.py\" <toolkit.run> --dest \"$cann_pkg\""
+  echo "  $PYTHON \"$BUNDLE_ROOT/scripts/cann_extract.py\" --fixup --dest \"$cann_pkg\""
+  echo "If already extracted elsewhere: export UO_CANN_ROOT=<abs-pkg> (put it in your shell profile)"
+fi
 echo "Run: $PYTHON -m ascendc_pilot doctor --host $PLATFORM"
 echo "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 

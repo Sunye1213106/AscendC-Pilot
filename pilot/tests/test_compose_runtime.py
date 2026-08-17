@@ -156,6 +156,8 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         pilot_agent = (generated / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
         uo_query_agent = (generated / "agents" / "uo-query.md").read_text(encoding="utf-8")
         assert "Select-Object *" in pilot_agent
+        assert "Get-ChildItem: allow" in pilot_agent
+        assert "glob: allow" in pilot_agent
         assert "grep: deny" in uo_query_agent
         assert "external_directory: allow" in pilot_agent
         assert "external_directory: allow" in uo_query_agent
@@ -204,6 +206,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "pilot_run: false" in uo_query_agent
         assert "Do not switch to MCP" in uo_query_agent
         assert "Never `--mode`" in uo_query_agent
+        assert "Do not call `--help`" in uo_query_agent
         assert "--mode <mode>" not in uo_query_agent
         assert "--mode locate" not in uo_query_agent
         assert "If the stub still contains" not in uo_query_agent

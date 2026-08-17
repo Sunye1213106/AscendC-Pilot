@@ -225,20 +225,41 @@ Ascend-cann-toolkit_<version>_linux-x86_64.run
 
 对于 UO，不需要在当前机器完整安装 Toolkit。AscendC-Pilot 可以直接从 `.run` 包中提取需要的 CANN package tree。
 
-Windows：
+**推荐解到当前仓库的 `_cann/pkg`**：安装脚本和 `acp doctor` 会自动发现它，不必再设环境变量。不要依赖某个开发机上的绝对路径（例如 `D:\AscendC\cann\pkg`）。
+
+Windows（在仓库根目录）：
 
 ```powershell id="cjmtht"
+$pkg = Join-Path (Get-Location) "_cann\pkg"
 python scripts/cann_extract.py `
   "D:\Downloads\Ascend-cann-toolkit_<version>_linux-x86_64.run" `
-  --dest "D:\AscendC\cann\pkg"
+  --dest $pkg
+# 若 doctor 报缺 impl/include（junction 失败或悬空），只补链接、不解包：
+python scripts/cann_extract.py --fixup --dest $pkg
 ```
 
 Linux：
 
 ```bash id="qvqaqj"
+pkg="$(pwd)/_cann/pkg"
 python scripts/cann_extract.py \
   ~/Downloads/Ascend-cann-toolkit_<version>_linux-x86_64.run \
-  --dest ~/ascendc/cann/pkg
+  --dest "$pkg"
+python scripts/cann_extract.py --fixup --dest "$pkg"
+```
+
+也支持 `~/ascendc/cann/pkg`（自动发现）。若必须解到别处，再设**用户级**环境变量；只写 `$env:UO_CANN_ROOT=...` 关掉终端就会丢。
+
+Windows 持久化：
+
+```powershell id="f8u8rq"
+[Environment]::SetEnvironmentVariable("UO_CANN_ROOT", "<abs-pkg>", "User")
+```
+
+Linux：
+
+```bash id="xb7h94"
+echo 'export UO_CANN_ROOT=/abs/path/to/cann/pkg' >> ~/.bashrc
 ```
 
 提取完成后目录大致如下：
@@ -253,21 +274,9 @@ cann/pkg/
 └── bisheng/
 ```
 
-将 package 根目录配置给 UO。
+将 package 根目录配置给 UO。解到 `<checkout>/_cann/pkg` 时无需再设变量。
 
-Windows：
-
-```powershell id="f8u8rq"
-$env:UO_CANN_ROOT = "D:\AscendC\cann\pkg"
-```
-
-Linux：
-
-```bash id="xb7h94"
-export UO_CANN_ROOT=$HOME/ascendc/cann/pkg
-```
-
-`UO_CANN_ROOT` 应指向 CANN package 根目录，而不是某个具体的 `include/`。
+`UO_CANN_ROOT` 若使用，应指向 CANN package 根目录，而不是某个具体的 `include/`。
 
 正确：
 
@@ -281,10 +290,11 @@ UO_CANN_ROOT=/path/to/cann/pkg
 UO_CANN_ROOT=/path/to/cann/pkg/cann-asc-devkit/.../include
 ```
 
-检查 UO 是否正确找到 CANN：
+检查 UO 是否正确找到 CANN（会打印 candidates 和 layout，缺 `impl/include` 时提示 `--fixup`）：
 
 ```bash id="vzw9ke"
 python scripts/dev/check_cann.py
+python -m ascendc_pilot doctor
 ```
 
 正常情况下应能看到解析后的 `cann_root` 路径。
@@ -537,7 +547,7 @@ python -m pip uninstall -y ascendc-pilot acp-common uo-init testcase-agent code-
 如果提取的 CANN package tree 只用于 AscendC-Pilot，可以直接删除对应目录，例如：
 
 ```text id="jaw6oi"
-D:\AscendC\cann\pkg
+<checkout>/_cann/pkg
 ```
 
 或：

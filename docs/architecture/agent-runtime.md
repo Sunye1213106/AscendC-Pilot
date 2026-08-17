@@ -153,7 +153,7 @@ Workflow 允许的根目录
 * **prepare 静态闭合（读）**：`task_prompt_stub` 引用的路径必须存在且落在 lease 可读集合内，否则 `BUNDLE_NOT_READABLE` 当场失败。Action METHOD 与点名的 references 在 prepare 时物化进 session 的 `method.md` / `refs/`；确认 Action 不装载认知 Skill。子代理只读自己的 session dir。
 * **scope 命名空间**：`agents/*.yaml` 的 `read_scopes` / `write_scopes` 支持前缀 `pilot:`（`.ascendc-pilot/<arch>/` 相对）、`method:`（host cognitive-skills / skills 树）、`source:`（算子仓源码根）。无前缀旧值按现行语义兼容。
 * **run 级 source scope**：`acp start` 解析一次 `allowed_source_roots` 写入 `runs/<run_id>/source_scope.yaml`，后续 action lease 继承；探查性只读不再表现为「没有仓库权限」。
-* **containment 只读白名单**：`failed` / `blocked` / `human_required` 下仍禁止推进与写入，但允许读 session `method.md` / `prompt.md` / skill 文本，避免 abort 后连方法都读不了。
+* **containment 只读白名单**：`failed` / `blocked` / `human_required` 下仍禁止推进与写入。主控可以 `Read` / `Glob` / `Grep` 以及 `ls` / `dir` / `Get-ChildItem` 做诊断；仍禁止写、派 Task、读引擎脚本、直调领域 CLI。所有人仍可读取 session `method.md` / `prompt.md` / skill 文本，避免 abort 后连方法都读不了。
 
 Agent YAML 里 `forbidden` 标签的确定含义：
 
@@ -174,7 +174,7 @@ Agent YAML 里 `forbidden` 标签的确定含义：
 | --- | --- | --- |
 | `running`（及默认） | `normal` | 正常跑 `acp *`、在声明路径上读写、派当前阶段声明的 Task、只读探查。**例外**：`host_driver: False` 的只读查询（`uo-query`）不是 Host 阶段 actor，主控随时可 `Task(agent=uo-query)`，不要求当前 workflow 声明它 |
 | `rework_required` | `rework` | 重试失败的那一步 / 声明的恢复动作；禁止 advance/complete |
-| `human_required` / `blocked` / `failed` | `containment` | 几乎只能做恢复类命令；默认禁止 Write/Task |
+| `human_required` / `blocked` / `failed` | `containment` | 恢复类 `acp`；主控可 Read/Glob/Get-ChildItem 诊断；禁止 Write/Task/引擎脚本/领域 CLI |
 
 `acp start` 在各 mode 下始终允许。只有 Pilot 相关 Agent（`ascendc-pilot`、`uo-*` / `tg-*` / `ce-*` / `deterministic-*`）走这套约束；普通 Build / Plan / General Tab 不套用。
 
@@ -264,7 +264,7 @@ acp start
 | `acp rework` / `abort` / `block` | 沿声明边恢复、终止或收敛 |
 | `acp status` / `inspect-failure` | 只读观测（失败卡含面向用户的自然语言摘要） |
 
-完整命令表见 [CLI Reference](../reference/cli.generated.md)。
+Agent 侧怎么调用（不要 `--help`、不要 bash 管道）见 [ACP 工具使用](../getting-started/acp-tools.md)。完整命令表见 [CLI Reference](../reference/cli.generated.md)。
 
 **面向用户的表述与 Goal**：Primary 对用户的总结 / AskQuestion / 进度必须带意图与动作（见 `human-voice-invariants.md`）；禁止把 referee 内部术语贴给用户。全量 tilingkey case 产品目标串联 init→plan→solve，不把 NL 塞进 `acp route`。Todo 同步与 `return_value` finalize 由 Driver 持有，不要求模型再实现一遍。
 

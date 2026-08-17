@@ -36,6 +36,72 @@ def test_uo_update_contracts_aligned() -> None:
         assert cid in OUTPUT_CONTRACT_NONEMPTY_GLOBS
 
 
+def test_uo_update_write_paths_cover_contracts() -> None:
+    from ascendc_pilot.agents_registry import path_matches_scope
+    from ascendc_pilot.ownership import ACTION_WRITE_PATHS
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    mapping = {
+        "detect_changes": "change-detect-v1",
+        "plan_update": "update-plan-v1",
+        "apply_update": "update-apply-v1",
+        "export_integrity": "integrity-v1",
+        "diff_summary": "diff-summary-v1",
+        "diff_only": "diff-summary-v1",
+    }
+    actions = {a["id"]: a for a in WORKFLOWS["uo-update"]["actions"]}
+    for aid, cid in mapping.items():
+        writes = list(actions[aid].get("allowed_write_paths") or [])
+        assert writes == ACTION_WRITE_PATHS["uo-update"][aid], aid
+        for rel in OUTPUT_CONTRACT_PATHS[cid]:
+            assert path_matches_scope(rel, writes), (aid, rel, writes)
+
+
+def test_detect_changes_outputs_writable(tmp_path) -> None:
+    from ascendc_pilot.actions.runtime import _check_required_outputs_writable, prepare_action
+    from ascendc_pilot.paths import ensure_agent_layout, uo_root
+    from ascendc_pilot.state import start_workflow
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    action = next(a for a in WORKFLOWS["uo-update"]["actions"] if a["id"] == "detect_changes")
+    writes = list(action.get("allowed_write_paths") or [])
+    ok = _check_required_outputs_writable(
+        workflow_id="uo-update",
+        action_id="detect_changes",
+        actor_id="deterministic-uo-engine",
+        contract_id="change-detect-v1",
+        output_mode="direct",
+        write_paths=writes,
+        run_id="r1",
+        project_root=tmp_path,
+    )
+    assert ok.get("ok") is True, ok
+
+    blocked = _check_required_outputs_writable(
+        workflow_id="uo-update",
+        action_id="detect_changes",
+        actor_id="deterministic-uo-engine",
+        contract_id="change-detect-v1",
+        output_mode="direct",
+        write_paths=[],
+        run_id="r1",
+        project_root=tmp_path,
+    )
+    assert blocked.get("error") == "OUTPUT_NOT_WRITABLE"
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    uo = uo_root(tmp_path, arch="arch35")
+    (uo / "Toy.arch35.uo").write_bytes(b"SQLite format 3\x00")
+    (uo / "manifest.yaml").write_text(
+        "op_name: Toy\narchitecture: arch35\n",
+        encoding="utf-8",
+    )
+    start_workflow(tmp_path, "uo-update", architecture="arch35", op_name="Toy")
+    prepared = prepare_action(tmp_path, "detect_changes")
+    assert prepared.get("ok") is True, prepared
+    assert prepared.get("error") != "OUTPUT_NOT_WRITABLE"
+
+
 def test_uo_query_review_ready_contracts_not_bare_dirs() -> None:
     # kb-answer is the Action payload under lease, not a uo/checks readiness gate.
     assert _joined("kb-answer-v1") == "runs/{run_id}/actions/kb_lookup/answer.yaml"

@@ -547,11 +547,41 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
     if stop in {"deterministic_action_failed", "advance_failed", "completion_gate_failed"} or (
         out.get("ok") is False and stop not in {"interaction_required", "workflow_status"}
     ):
+        from ascendc_pilot.actions.failure_text import (
+            preferred_failure_text,
+            with_failure_hint,
+        )
+
+        fail = out.get("failure") if isinstance(out.get("failure"), dict) else {}
+        eng = fail.get("engine") if isinstance(fail.get("engine"), dict) else {}
+        detail = with_failure_hint(
+            preferred_failure_text(out, fallback=str(stop or "deterministic_action_failed")),
+            out,
+        )
+        error_detail = preferred_failure_text(
+            {"engine": eng, "failure": fail, "error": out.get("error")},
+            fallback=str(out.get("error") or ""),
+        )
+        hint_zh = str(out.get("hint_zh") or "")
+        out["message_zh"] = detail
+        if not str(out.get("error") or "").strip():
+            out["error"] = error_detail or stop
+        extra = {
+            "stop_reason": stop,
+            "failed_action": out.get("failed_action") or "",
+            "error_detail": error_detail or detail,
+        }
+        if hint_zh:
+            extra["hint_zh"] = hint_zh
+        issues = fail.get("issues") or eng.get("issues") or out.get("issues")
+        if issues:
+            extra["issues"] = issues
         out["host_step"] = build_host_step(
             kind="failed",
             project_root=project_root,
-            message_zh=str(out.get("message_zh") or out.get("error") or stop),
-            extra={"stop_reason": stop, "failure": out.get("failure")},
+            action_id=str(out.get("failed_action") or ""),
+            message_zh=detail,
+            extra=extra,
         )
         return out
 

@@ -95,6 +95,12 @@ const HOST_STEP_MODEL_KEYS = [
   "task_prompt_stub",
   "tasks",
   "session_dir",
+  "failed_action",
+  "error_detail",
+  "hint_zh",
+  "suggested_fix",
+  "issues",
+  "stop_reason",
 ] as const
 
 const HOST_STEP_TASK_KEYS = [
@@ -159,13 +165,23 @@ export function compactPilotRunPayload(result: unknown): Record<string, unknown>
       : {}
   const ok = rec.ok !== false
   const err = String(rec.error || rec.error_code || "")
-  const messageZh = String(rec.message_zh || step.message_zh || rec.message || "")
+  let messageZh = String(rec.message_zh || step.message_zh || rec.message || "")
+  const errorDetail = String(step.error_detail || rec.error_detail || "")
+  if (
+    (!messageZh || messageZh === "deterministic_action_failed") &&
+    errorDetail &&
+    errorDetail !== "deterministic_action_failed"
+  ) {
+    messageZh = errorDetail
+  }
   const out: Record<string, unknown> = { ok }
   if (Object.keys(step).length) out.host_step = step
   if (messageZh) out.message_zh = messageZh
   if (err) out.error = err
   if (rec.answer_from_source === true) out.answer_from_source = true
   if (rec.reason_code) out.reason_code = rec.reason_code
+  const hintZh = String(rec.hint_zh || step.hint_zh || "")
+  if (hintZh) out.hint_zh = hintZh
   if (rec.native_task === true) out.native_task = true
   if (rec.native_tasks === true) out.native_tasks = true
   return out
@@ -1647,7 +1663,22 @@ export async function runPilotDriver(
         return { ok: true, host_step: step, log, todo: todoPayload, drive: driven }
       } else if (step.kind === "failed") {
         reporter?.setStatus("fail")
-        return { ok: false, host_step: step, log, drive: driven, todo: todoPayload }
+        const failMsg = String(
+          step.message_zh ||
+            driven.message_zh ||
+            step.error_detail ||
+            driven.error ||
+            "deterministic_action_failed",
+        )
+        return {
+          ok: false,
+          host_step: { ...step, kind: "failed", message_zh: failMsg },
+          error: String(driven.error || step.error_detail || ""),
+          message_zh: failMsg,
+          hint_zh: step.hint_zh || driven.hint_zh,
+          log,
+          todo: todoPayload,
+        }
       } else if (step.kind === "ask_human") {
         reporter?.setStatus("ask")
         const ask =
@@ -1733,12 +1764,13 @@ export async function runPilotDriver(
       } else if (!step.kind) {
         reporter?.setStatus("fail")
         const err = String(driven.error || driven.error_code || "ACP_NO_JSON")
-        const failMsg = String(driven.message_zh || driven.message || err)
+        const failMsg = String(
+          driven.message_zh || driven.message || driven.stderr || err,
+        )
         return {
           ok: false,
-          host_step: { kind: "failed", message_zh: failMsg },
+          host_step: { kind: "failed", message_zh: failMsg, error_detail: err },
           log,
-          drive: driven,
           error: err,
           message_zh: failMsg,
           todo: todoPayload,
@@ -1746,12 +1778,11 @@ export async function runPilotDriver(
       } else if (step.kind !== "dispatch_subagent") {
         reporter?.setStatus("fail")
         const err = String(driven.error || step.kind || "UNEXPECTED_HOST_STEP")
-        const failMsg = String(driven.message_zh || driven.message || err)
+        const failMsg = String(driven.message_zh || step.message_zh || driven.message || err)
         return {
           ok: false,
-          host_step: { kind: "failed", message_zh: failMsg },
+          host_step: { ...step, kind: "failed", message_zh: failMsg },
           log,
-          drive: driven,
           error: err,
           message_zh: failMsg,
           todo: todoPayload,

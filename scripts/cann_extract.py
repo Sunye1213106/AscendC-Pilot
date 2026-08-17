@@ -192,24 +192,167 @@ def extract(run: Path, dest: Path, plan: LinkPlan) -> int:
     return files
 
 
+_REPARSE_POINT = 0x400
+
+
+def _lexists(path: Path) -> bool:
+    try:
+        os.lstat(path)
+        return True
+    except OSError:
+        return False
+
+
+def _is_reparse(path: Path) -> bool:
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    attrs = getattr(st, "st_file_attributes", 0)
+    if attrs:
+        return bool(attrs & _REPARSE_POINT)
+    return os.path.islink(path)
+
+
+def unlink_reparse(path: Path) -> None:
+    """Remove a junction/symlink without deleting the target tree."""
+    if not _lexists(path):
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["cmd", "/c", f'rmdir "{path}"'],
+            check=False,
+            capture_output=True,
+        )
+        if _lexists(path):
+            subprocess.run(
+                ["cmd", "/c", f'del /f "{path}"'],
+                check=False,
+                capture_output=True,
+            )
+        if _lexists(path):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        return
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
+def mklink_junction_argv(link: Path, target: Path) -> list[str]:
+    """Quoted so paths with spaces survive ``cmd /c``."""
+    return ["cmd", "/c", f'mklink /J "{link}" "{target}"']
+
+
+def make_dir_link(link: Path, target: Path, *, copy_fallback: bool = False) -> str:
+    """Create ``link`` -> ``target`` directory.
+
+    Returns ``junction``, ``symlink``, ``copy``, or ``exists``. Windows uses
+    quoted ``mklink /J``. Dangling leftover reparse points are replaced.
+    ``copy_fallback`` is for the one known ``impl/include`` shim — not for
+    replaying every tar symlink (that would duplicate the toolkit).
+    """
+    target = target.resolve()
+    if not target.is_dir():
+        raise FileNotFoundError(f"link target is not a directory: {target}")
+
+    if _lexists(link):
+        working = False
+        try:
+            working = (
+                link.exists()
+                and link.is_dir()
+                and (_is_reparse(link) or link.is_symlink())
+                and link.resolve() == target
+            )
+        except OSError:
+            working = False
+        if working:
+            return "exists"
+        populated_copy = (
+            link.exists()
+            and link.is_dir()
+            and not (_is_reparse(link) or link.is_symlink())
+            and any(link.iterdir())
+        )
+        if populated_copy:
+            return "exists"
+        unlink_reparse(link)
+        if link.exists():
+            if link.is_symlink() or link.is_file():
+                link.unlink()
+            elif link.is_dir():
+                try:
+                    link.rmdir()
+                except OSError:
+                    if _is_reparse(link) or link.is_symlink():
+                        raise OSError(f"could not remove leftover reparse: {link}") from None
+                    shutil.rmtree(link)
+
+    link.parent.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        os.symlink(target, link, target_is_directory=True)
+        return "symlink"
+    proc = subprocess.run(
+        mklink_junction_argv(link, target),
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if proc.returncode == 0 and link.exists():
+        return "junction"
+    err = (proc.stderr or proc.stdout or f"rc={proc.returncode}").strip()
+    if not copy_fallback:
+        raise OSError(f"mklink /J failed: {err}")
+    unlink_reparse(link)
+    if _is_reparse(link) or link.is_symlink():
+        raise OSError(f"could not remove leftover reparse before copy: {link}")
+    if link.exists():
+        shutil.rmtree(link)
+    shutil.copytree(target, link, dirs_exist_ok=False, symlinks=False)
+    return "copy"
+
+
+def detect_toolkit_host(pkg: Path) -> str:
+    """Host tuple under extracted packages; do not import uo_init here."""
+    for name in ("cann-asc-devkit", "cann-metadef", "cann-opbase", "cann-npu-runtime"):
+        base = pkg / name
+        if not base.is_dir():
+            continue
+        for host in ("x86_64-linux", "aarch64-linux"):
+            if (base / host).is_dir():
+                return host
+        found = sorted(
+            child.name
+            for child in base.iterdir()
+            if child.is_dir() and child.name.endswith("-linux")
+        )
+        if found:
+            return found[0]
+    return "x86_64-linux"
+
+
 def replay_links(plan: LinkPlan) -> None:
     """Recreate tar symlinks as junctions (dirs) or copies (files)."""
     for link_path, target in plan.links:
-        if link_path.exists() or link_path.is_symlink():
-            continue
         resolved = (link_path.parent / target).resolve()
         link_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             if resolved.is_dir():
-                subprocess.run(
-                    ["cmd", "/c", "mklink", "/J", str(link_path), str(resolved)],
-                    check=True,
-                    capture_output=True,
-                )
-                plan.made += 1
+                kind = make_dir_link(link_path, resolved, copy_fallback=False)
+                if kind != "exists":
+                    plan.made += 1
             elif resolved.is_file():
-                shutil.copy2(resolved, link_path)
-                plan.copied += 1
+                if _lexists(link_path) and not link_path.exists():
+                    unlink_reparse(link_path)
+                if not link_path.exists():
+                    shutil.copy2(resolved, link_path)
+                    plan.copied += 1
             else:
                 plan.skipped.append(f"dangling link {link_path} -> {target}")
         except Exception as exc:  # noqa: BLE001 - report and carry on
@@ -220,27 +363,29 @@ def apply_known_fixups(pkg: Path, plan: LinkPlan) -> None:
     """Layout repairs the toolkit assumes a POSIX filesystem provides.
 
     Declared in spec/build_context.yaml as `post_extract_fixups`; kept here so
-    extraction alone leaves a tree clang can traverse.
+    extraction alone leaves a tree clang can traverse. On Linux the .run tar
+    usually already has this symlink; on Windows it must be a junction.
     """
-    asc = pkg / "cann-asc-devkit" / "x86_64-linux" / "asc"
+    host = detect_toolkit_host(pkg)
+    asc = pkg / "cann-asc-devkit" / host / "asc"
     shim = asc / "impl" / "include"
-    if asc.is_dir() and (asc / "include").is_dir() and not shim.exists():
-        shim.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            subprocess.run(
-                ["cmd", "/c", "mklink", "/J", str(shim), str(asc / "include")],
-                check=True,
-                capture_output=True,
-            )
+    include = asc / "include"
+    if not asc.is_dir() or not include.is_dir():
+        return
+    try:
+        kind = make_dir_link(shim, include, copy_fallback=True)
+        if kind in {"junction", "symlink", "copy"}:
             plan.made += 1
-            print(f"  fixup: {shim} -> {asc / 'include'}")
-        except Exception as exc:  # noqa: BLE001
-            plan.skipped.append(f"fixup {shim}: {exc}")
+            print(f"  fixup ({kind}): {shim} -> {include}")
+        elif kind == "exists":
+            print(f"  fixup already present: {shim}")
+    except Exception as exc:  # noqa: BLE001
+        plan.skipped.append(f"fixup {shim}: {exc}")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("run", type=Path, help="outer CANN .run installer")
+    ap.add_argument("run", type=Path, nargs="?", help="outer CANN .run installer")
     ap.add_argument("--dest", type=Path, required=True, help="where sub-packages land")
     ap.add_argument(
         "--stage",
@@ -255,12 +400,29 @@ def main() -> int:
         help="substrings of inner .run names to unpack (default: all)",
     )
     ap.add_argument("--list", action="store_true", help="only list inner archives")
+    ap.add_argument(
+        "--fixup",
+        action="store_true",
+        help="only recreate asc/impl/include (and skip unpack); repair dangling junctions",
+    )
     args = ap.parse_args()
 
-    run: Path = args.run
+    dest: Path = args.dest
+    if args.fixup:
+        if not dest.is_dir():
+            raise SystemExit(f"--fixup dest is not a directory: {dest}")
+        plan = LinkPlan()
+        apply_known_fixups(dest, plan)
+        print(f"fixup junctions={plan.made} skipped={len(plan.skipped)}")
+        for line in plan.skipped[:20]:
+            print(f"    {line}")
+        return 0 if not plan.skipped else 1
+
+    run: Path | None = args.run
+    if run is None:
+        raise SystemExit("provide the .run installer, or pass --fixup to repair an existing tree")
     if not run.is_file():
         raise SystemExit(f"no such file: {run}")
-    dest: Path = args.dest
     stage: Path = args.stage or dest.parent / "run_package"
 
     plan = LinkPlan()

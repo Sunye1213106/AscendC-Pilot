@@ -13,10 +13,12 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 ## Shell / OpenCode
 
 - Prefer `pilot_run` / plugin `acp` over bash. Do not pipe `acp` through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
+- Do not call `acp --help` / `acp <cmd> --help` / `help` to discover protocol. argparse lists internal commands (`authorize`, `debug`, `serve-authorize`) and is not the Session Driver contract. Diagnose with plugin `acp` `status` / `inspect-failure` / `scan-architectures`. Workflows: `pilot_run`. Query: plugin `acp` `uo-query --project <abs>`.
 - Do not write `.ascendc-pilot/**` via bash / `>` / `Set-Content` / `tee`.
 - Children must not use OpenCode `skill` (read session `method.md`). Primary skills come from installed `SKILL.md`, not process `rg`.
 - Windows: plugin `acp` uses `spawnSync(acp.exe, shell:false)`. Session identity is the ticket (childSessionID↔actor↔action↔lease).
 - Read of any directory is allow in AscendC-Pilot mode. Primary Write/edit is ask. Children: empty `write_scopes` → `edit`/`write` deny; otherwise ask (ACP lease still fences).
+- Containment (`human_required` / `blocked` / `failed`) and pending AskQuestion: Primary may `Read` / `Glob` / `Grep` and `ls` / `dir` / `Get-ChildItem` to diagnose. Still deny Write, Task, engine scripts, and domain CLI. Prefer plugin `acp` `inspect-failure` / `status`. Children stay contained.
 
 ## uo-query lifecycle
 

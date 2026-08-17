@@ -4,7 +4,7 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 
 | Term | 含义 |
 | --- | --- |
-| ACP | AscendC-Pilot CLI（`acp`）与其控制面入口；见 [Agent Runtime](../architecture/agent-runtime.md)。 |
+| ACP | AscendC-Pilot CLI（`acp`）与其控制面入口。OpenCode 上用 `pilot_run` / 插件 `acp`，不要 bash `--help`；见 [ACP 工具使用](../getting-started/acp-tools.md)、[Agent Runtime](../architecture/agent-runtime.md)。 |
 | Action | 一个 workflow step，带 contract、actor、gates 和 scoped permissions。 |
 | Action Bundle | 为 action 准备的 runtime packet（含 stub、method 物化、context）。 |
 | Action Lease | 单个 action 的 runtime authorization token。 |

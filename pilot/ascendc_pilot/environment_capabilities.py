@@ -162,7 +162,12 @@ def build_environment_capabilities(
             "ready": cann_ready,
             "root": cann_root,
             "issues": cann_issues[:12],
-            "env_hints": ["UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT"],
+            "env_hints": [
+                "UO_CANN_ROOT",
+                "ASCEND_CANN_PACKAGE_PATH",
+                "CANN_ROOT",
+                "<repo>/_cann/pkg",
+            ],
         },
         "source_scope": scope,
         "commands": {

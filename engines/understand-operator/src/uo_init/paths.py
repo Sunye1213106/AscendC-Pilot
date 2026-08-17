@@ -61,14 +61,60 @@ def _env(names: tuple[str, ...]) -> Path | None:
     return None
 
 
+#: Toolkit packages use one of these host tuples under each sub-package.
+CANN_HOST_DIRS = ("x86_64-linux", "aarch64-linux")
+
+
+def cann_host_dir(root: Path | None) -> str | None:
+    """Return ``x86_64-linux`` / ``aarch64-linux`` (or any ``*-linux``) under a tree."""
+    if root is None or not root.is_dir():
+        return None
+    for pkg in ("cann-asc-devkit", "cann-metadef", "cann-opbase", "cann-npu-runtime"):
+        base = root / pkg
+        if not base.is_dir():
+            continue
+        named = [name for name in CANN_HOST_DIRS if (base / name).is_dir()]
+        if named:
+            return named[0]
+        found = sorted(
+            child.name
+            for child in base.iterdir()
+            if child.is_dir() and child.name.endswith("-linux")
+        )
+        if found:
+            return found[0]
+    return None
+
+
+def required_cann_relative(root: Path | None = None) -> tuple[str, ...]:
+    """REQUIRED_CANN_RELATIVE with the tree's host tuple substituted."""
+    host = cann_host_dir(root) or "x86_64-linux"
+    if host == "x86_64-linux":
+        return REQUIRED_CANN_RELATIVE
+    return tuple(p.replace("/x86_64-linux/", f"/{host}/") for p in REQUIRED_CANN_RELATIVE)
+
+
 def _cann_candidates() -> list[Path]:
+    """Auto-discovery only. Never include a machine-specific absolute path.
+
+    Order: checkout ``_cann/`` first (so ``cann_extract.py --dest _cann/pkg``
+    works with no env), then sibling checkouts, then ``~/ascendc/cann/pkg``.
+    """
     repo = repo_root()
-    roots = [repo.parent, repo.parent.parent]
     out: list[Path] = []
-    for base in roots:
-        # A verified slim tree is cheaper to read and is preferred.
-        out.append(base / "_cann" / "slim")
-        out.append(base / "_cann" / "pkg")
+    seen: set[str] = set()
+
+    def add(path: Path) -> None:
+        key = str(path)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(path)
+
+    for base in (repo, repo.parent, repo.parent.parent):
+        add(base / "_cann" / "slim")
+        add(base / "_cann" / "pkg")
+    add(Path.home() / "ascendc" / "cann" / "pkg")
     return out
 
 
@@ -151,9 +197,11 @@ def cann_layout_issues(root: Path | None = None) -> list[str]:
     """
     path = root if root is not None else cann_root()
     if path is None:
+        repo = repo_root()
         return [
             "CANN packages not found. Set UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH "
-            f"or extract under _cann/pkg. Looked in:\n"
+            f"or run: python scripts/cann_extract.py <toolkit.run> --dest {repo / '_cann' / 'pkg'}"
+            "\nLooked in:\n"
             + "\n".join(f"  {p}" for p in _cann_candidates())
         ]
     if not _looks_like_cann(path):
@@ -162,9 +210,15 @@ def cann_layout_issues(root: Path | None = None) -> list[str]:
             "(need cann-asc-devkit/ or cann-metadef/)."
         ]
     issues: list[str] = []
-    for rel in REQUIRED_CANN_RELATIVE:
+    for rel in required_cann_relative(path):
         if not (path / rel).exists():
-            issues.append(f"missing: {(path / rel).as_posix()}")
+            note = f"missing: {(path / rel).as_posix()}"
+            if rel.endswith("impl/include"):
+                note += (
+                    " (Windows extract junction; repair with "
+                    f"python scripts/cann_extract.py --fixup --dest {path})"
+                )
+            issues.append(note)
     return issues
 
 
