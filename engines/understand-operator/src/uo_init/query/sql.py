@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.evidence import TRUST_ADVISORY
 from uo_init.ir.relation import RelationKind
 from uo_init.query.evidence import (
     USEFUL_EDGE_KINDS,
@@ -51,6 +52,15 @@ _PROTECTED_PAYLOAD_KEYS = frozenset(
         "answer_contract",
         "filters",
         "occupancy_axis",
+        "fixed_coverage",
+        "other_kernels",
+        "cards",
+        "next",
+        "dim_names",
+        "tiling_data_names",
+        "shape",
+        "total_matched",
+        "edges",
     }
 )
 PACKING_RHS_TRIM = 400
@@ -69,8 +79,30 @@ NEIGHBOR_REL_KINDS = (
     "READS",
     "WRITES",
 )
+CARD_EDGE_KINDS = NEIGHBOR_REL_KINDS + (
+    "ROOTED_AT",
+    "GUARDED_BY",
+    "DERIVES",
+    "PRECEDES",
+    "ACTIVE_UNDER",
+    "ALIASES",
+    "CONTAINS",
+    "FLOWS_TO",
+    "LAUNCHES",
+)
+EDGES_PER_KIND = 8
+MAX_NAME_CARDS = 4
+_LAUNCH_NAMES = frozenset({"tpipe", "pipein", "pipebase", "pipepost", "pipe"})
 _EXACT_KINDS = {EntityKind.TYPE.value}
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_HW_PIPE_RE = re.compile(r"^PIPE_[A-Z][A-Z0-9]*$")
+_OCCUPANCY_IDENT_RE = re.compile(
+    r"(?:^|[_.])(?:coreNum|aicNum|aivNum|blockDim|blockOuter|fusedOuter|"
+    r"usedCoreNum|cubeCoreNum|vecCoreNum|coreSplit|splitCount|"
+    r"tschBlockDim|blockIdx)(?:$|[_.])",
+    re.IGNORECASE,
+)
+_WRITER_SKIP_KINDS = {EntityKind.INPUT.value, EntityKind.OUTPUT.value}
 _LEGACY_KIND_MAP: dict[str, set[str]] = {
     "Variable": {"VARIABLE", "COMPILE_VAR", "MACRO"},
     "Input": {"INPUT"},
@@ -110,6 +142,10 @@ def _parse_data(raw: Any) -> dict[str, Any]:
     except (TypeError, json.JSONDecodeError):
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _is_advisory_data(raw: Any) -> bool:
+    return str(_parse_data(raw).get("trust") or "") == TRUST_ADVISORY
 
 
 def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
@@ -161,9 +197,11 @@ def _is_truncated_branch_text(text: str) -> bool:
         return False
     if "..." in raw:
         return True
-    if raw.count("<") != raw.count(">"):
+    # ``ptr->field`` and ``a > b`` are not truncated templates.
+    stripped = raw.replace("->", " ")
+    if "<" in stripped and stripped.count("<") != stripped.count(">"):
         return True
-    return len(raw) > 80 and "<" in raw
+    return len(raw) > 80 and "<" in stripped
 
 
 def _keep_branch(kind: str, name: str, data: dict[str, Any]) -> bool:
@@ -253,6 +291,156 @@ def _arch_file_rank(file: str, architecture: str) -> int:
     if arch and (blob.startswith("/op_host/") or "/op_host/" in blob):
         return 2
     return 1
+
+
+def _is_occupancy_ident(name: str) -> bool:
+    leaf = _last_ident(str(name or ""))
+    if not leaf:
+        return False
+    return _OCCUPANCY_IDENT_RE.search(f"_{leaf}_") is not None
+
+
+def _is_launch_pipe_hit(hit: dict[str, Any]) -> bool:
+    """TPipe instances with a source file — not HardEvent hardware pipe enums."""
+    facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+    if str(facts.get("catalog") or "") == "ascendc":
+        return False
+    if facts.get("pointer"):
+        return False
+    role = str(facts.get("role") or "")
+    if role in {"src_pipe", "dst_pipe"}:
+        return False
+    name = str(hit.get("name") or "")
+    if _HW_PIPE_RE.match(name):
+        return False
+    file = str(hit.get("file") or "").strip()
+    return bool(file)
+
+
+def _launch_group_key(hit: dict[str, Any], architecture: str) -> tuple[Any, ...]:
+    file = str(hit.get("file") or "").replace("\\", "/")
+    fname = file.rsplit("/", 1)[-1].lower()
+    return (
+        _arch_file_rank(file, architecture),
+        0 if "entry" in fname else 1,
+        1 if fname.endswith("_apt.cpp") else 0,
+        file.lower(),
+    )
+
+
+def _select_launch_phases(
+    hits: list[dict[str, Any]], *, architecture: str, limit: int
+) -> tuple[list[dict[str, Any]], list[str]]:
+    launchable = [hit for hit in hits if _is_launch_pipe_hit(hit)]
+    if not launchable:
+        return [], []
+    launchable.sort(key=lambda hit: _launch_group_key(hit, architecture))
+    winner_file = str(launchable[0].get("file") or "").replace("\\", "/").lower()
+    selected = [
+        hit
+        for hit in launchable
+        if str(hit.get("file") or "").replace("\\", "/").lower() == winner_file
+    ]
+    other_files: list[str] = []
+    seen: set[str] = set()
+    for hit in launchable:
+        file = str(hit.get("file") or "").replace("\\", "/")
+        if file.lower() == winner_file or not file or file in seen:
+            continue
+        seen.add(file)
+        other_files.append(file)
+    selected.sort(
+        key=lambda hit: (
+            int((hit.get("facts") or {}).get("pipe_ordinal") or 0)
+            if isinstance(hit.get("facts"), dict)
+            else 0,
+            int(hit.get("line_start") or 0),
+            str(hit.get("name") or ""),
+        )
+    )
+    return selected[: max(0, int(limit))], other_files
+
+
+def _collapse_locate_hits(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One location per (kind, name, file); extra lines stay on definition_sites."""
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str, str]] = []
+    for row in rows:
+        file = str(row.get("file") or "").replace("\\", "/")
+        name = str(row.get("name") or "")
+        kind = str(row.get("kind") or "")
+        key = (kind, name, file)
+        line = int(row.get("line_start") or row.get("line") or 0)
+        if key not in grouped:
+            host = dict(row)
+            facts = dict(host.get("facts") or {}) if isinstance(host.get("facts"), dict) else {}
+            sites = list(facts.get("definition_sites") or [])
+            facts["definition_sites"] = sites
+            host["facts"] = facts
+            grouped[key] = host
+            order.append(key)
+        host = grouped[key]
+        facts = host["facts"]
+        sites = facts.setdefault("definition_sites", [])
+        if line > 0 and file:
+            if not any(
+                int(site.get("line") or site.get("line_start") or 0) == line
+                and str(site.get("file") or "").replace("\\", "/") == file
+                for site in sites
+                if isinstance(site, dict)
+            ):
+                sites.append({"file": file, "line": line, "line_start": line, "name": name})
+        host_line = int(host.get("line_start") or 0)
+        if line > 0 and (host_line <= 0 or line < host_line):
+            host["line_start"] = line
+            if row.get("snippet"):
+                host["snippet"] = row["snippet"]
+    return [grouped[key] for key in order]
+
+
+def _dim_coverage_restricted(
+    blocks: list[dict[str, Any]], filters: dict[str, str] | None = None
+) -> dict[str, list[str]]:
+    """Union coverage, but pin filtered dims to the queried values."""
+    pinned = {
+        str(k): str(v)
+        for k, v in dict(filters or {}).items()
+        if str(k).strip() and str(v).strip()
+    }
+    coverage: dict[str, set[str]] = {}
+    for row in blocks:
+        fixed = row.get("fixed_fields") or {}
+        domains = row.get("field_domains") or {}
+        if isinstance(fixed, dict):
+            for name, value in fixed.items():
+                key = str(name)
+                if key in pinned:
+                    coverage.setdefault(key, set()).add(pinned[key])
+                else:
+                    coverage.setdefault(key, set()).add(str(value))
+        if isinstance(domains, dict):
+            for name, domain in domains.items():
+                key = str(name)
+                bucket = coverage.setdefault(key, set())
+                if key in pinned:
+                    bucket.add(pinned[key])
+                    continue
+                if isinstance(domain, (list, tuple, set)):
+                    bucket.update(str(v) for v in domain)
+                elif domain is not None:
+                    bucket.add(str(domain))
+    return {name: sorted(vals) for name, vals in coverage.items()}
+
+
+def _fixed_coverage(blocks: list[dict[str, Any]]) -> dict[str, list[str]]:
+    coverage: dict[str, set[str]] = {}
+    for row in blocks:
+        fixed = row.get("fixed_fields") or {}
+        if not isinstance(fixed, dict):
+            continue
+        for name, value in fixed.items():
+            coverage.setdefault(str(name), set()).add(str(value))
+    return {name: sorted(vals) for name, vals in coverage.items()}
 
 
 def _alias_ident_names(facts: dict[str, Any] | None) -> list[str]:
@@ -403,21 +591,44 @@ def _entry_rank(hit: dict[str, Any]) -> int:
     return 2
 
 
+def _hit_function(hit: dict[str, Any]) -> str:
+    facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+    return str(facts.get("function") or "").strip() or "(unknown)"
+
+
 def _diversify_by_function(
     hits: list[dict[str, Any]], *, limit: int
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """One exemplar per file first, then remaining unique functions.
+
+    Ranking already put the richest bodies first; without a file pass, three
+    functions in one translation unit crowd out the kernel entry ``if``.
+    """
     counts: dict[str, int] = {}
-    exemplars: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for hit in hits:
-        facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
-        fn = str(facts.get("function") or "").strip() or "(unknown)"
+        fn = _hit_function(hit)
         counts[fn] = counts.get(fn, 0) + 1
-        if fn in seen:
+    cap = max(0, int(limit))
+    exemplars: list[dict[str, Any]] = []
+    seen_fn: set[str] = set()
+    seen_file: set[str] = set()
+    for hit in hits:
+        file = str(hit.get("file") or "").replace("\\", "/") or "(unknown)"
+        if file in seen_file:
             continue
-        seen.add(fn)
-        if len(exemplars) < max(0, int(limit)):
-            exemplars.append(hit)
+        seen_file.add(file)
+        seen_fn.add(_hit_function(hit))
+        exemplars.append(hit)
+        if len(exemplars) >= cap:
+            break
+    for hit in hits:
+        if len(exemplars) >= cap:
+            break
+        fn = _hit_function(hit)
+        if fn in seen_fn:
+            continue
+        seen_fn.add(fn)
+        exemplars.append(hit)
     return exemplars, counts
 
 
@@ -917,9 +1128,13 @@ def _hits_coverage(
             sibling_files.append(file)
         facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
         policy = str(facts.get("mutex_policy") or "").strip()
+        if facts.get("wraps_lock") and "lock" not in mutex:
+            mutex.append("lock")
+        if facts.get("allocated") and "allocated" not in mutex:
+            mutex.append("allocated")
         if policy and policy not in mutex:
             mutex.append(policy)
-        phase = str(facts.get("kernel_phase") or "").strip()
+        phase = str(facts.get("pipe_ordinal") or facts.get("kernel_phase") or "").strip()
         if phase and phase not in phases:
             phases.append(phase)
         sites = facts.get("definition_sites")
@@ -1169,7 +1384,7 @@ class UoSqlQuery:
         fetch = max(int(limit) * 4, 16)
         rows = conn.execute(
             f"""
-            SELECT r.kind AS rel_kind, r.src AS src, r.dst AS dst,
+            SELECT r.kind AS rel_kind, r.src AS src, r.dst AS dst, r.data AS rel_data,
                    e.id AS other_id, e.kind AS other_kind, e.name AS other_name,
                    e.file AS other_file, e.line_start AS other_line
             FROM relation r
@@ -1183,6 +1398,8 @@ class UoSqlQuery:
         skip_tpl = str(entity_kind or "").upper() == EntityKind.TILING_KEY.value
         out: list[dict[str, Any]] = []
         for row in rows:
+            if _is_advisory_data(row["rel_data"]):
+                continue
             other_kind = str(row["other_kind"] or "")
             other_name = str(row["other_name"] or "")
             rel_kind = str(row["rel_kind"] or "")
@@ -1488,12 +1705,14 @@ class UoSqlQuery:
                     continue
                 for row in conn.execute(
                     """
-                    SELECT CASE WHEN src = ? THEN dst ELSE src END AS other
+                    SELECT CASE WHEN src = ? THEN dst ELSE src END AS other, data
                     FROM relation
                     WHERE src = ? OR dst = ?
                     """,
                     (cur, cur, cur),
                 ):
+                    if _is_advisory_data(row["data"]):
+                        continue
                     other = str(row["other"] or "")
                     if not other or other in seen:
                         continue
@@ -1599,11 +1818,13 @@ class UoSqlQuery:
                     continue
                 for row in conn.execute(
                     """
-                    SELECT CASE WHEN src = ? THEN dst ELSE src END AS other
+                    SELECT CASE WHEN src = ? THEN dst ELSE src END AS other, data
                     FROM relation WHERE src = ? OR dst = ?
                     """,
                     (cur, cur, cur),
                 ):
+                    if _is_advisory_data(row["data"]):
+                        continue
                     other = str(row["other"] or "")
                     if not other or other in seen:
                         continue
@@ -1730,11 +1951,13 @@ class UoSqlQuery:
                     continue
                 for row in conn.execute(
                     f"""
-                    SELECT dst FROM relation
+                    SELECT dst, data FROM relation
                     WHERE src = ? AND kind IN ({placeholders})
                     """,
                     (cur, *useful_sorted),
                 ):
+                    if _is_advisory_data(row["data"]):
+                        continue
                     other = str(row["dst"] or "")
                     if not other or other in seen:
                         continue
@@ -1901,7 +2124,7 @@ class UoSqlQuery:
                 if rel.get("kind") in {RelationKind.WRITES.value, RelationKind.DERIVES.value} and dst_id == fid:
                     row = self._entity_row(conn, src_id)
                     hit = self._hit(row, why="host_writer", with_snippet=False) if row else None
-                    if hit:
+                    if hit and str(hit.get("kind") or "") not in _WRITER_SKIP_KINDS:
                         writers.append(hit)
         for hit in writers[:12]:
             stmt = _read_statement(
@@ -1962,7 +2185,8 @@ class UoSqlQuery:
             candidates = patched
         occupancy = ""
         queried = alias_from or raw
-        if fused or facts.get("local_aliases"):
+        occupancy_names = [queried, str(primary.get("name") or "")] + _alias_ident_names(facts)
+        if any(_is_occupancy_ident(name) for name in occupancy_names):
             occupancy = f"{queried} vs aicNum"
             facts["occupancy_axis"] = occupancy
             primary["facts"] = facts
@@ -2062,10 +2286,32 @@ class UoSqlQuery:
             for extra in locations_from_attr_sites(
                 str(row.get("id") or ""), str(row.get("kind") or ""), attrs or row
             ):
-                extra_key = (extra.entity_id, extra.file, extra.line_start)
+                extra_file = str(extra.file or "").replace("\\", "/")
+                extra_line = int(extra.line_start or 0)
+                extra_key = (extra.entity_id, extra_file, extra_line)
                 if extra_key in seen:
                     continue
                 seen.add(extra_key)
+                if extra_file and extra_file == file.replace("\\", "/"):
+                    host = out[-1] if out else loc
+                    hf = dict(host.get("facts") or {}) if isinstance(host.get("facts"), dict) else {}
+                    sites = list(hf.get("definition_sites") or [])
+                    if extra_line > 0 and not any(
+                        int(site.get("line") or site.get("line_start") or 0) == extra_line
+                        for site in sites
+                        if isinstance(site, dict)
+                    ):
+                        sites.append(
+                            {
+                                "file": extra_file,
+                                "line": extra_line,
+                                "line_start": extra_line,
+                                "name": row.get("name"),
+                            }
+                        )
+                        hf["definition_sites"] = sites
+                        host["facts"] = hf
+                    continue
                 payload = extra.to_dict()
                 payload.setdefault("id", extra.entity_id)
                 payload.setdefault("name", row.get("name"))
@@ -2076,9 +2322,9 @@ class UoSqlQuery:
                     str(payload.get("snippet") or ""), int(payload.get("line_start") or 0)
                 )
                 out.append(payload)
-            if len(out) >= int(limit):
-                break
-        return out[: int(limit)]
+                if len(out) >= max(int(limit) * 4, 24):
+                    break
+        return _collapse_locate_hits(out)[: int(limit)]
 
     @staticmethod
     def _location(row: dict[str, Any]) -> dict[str, Any]:
@@ -2195,7 +2441,16 @@ class UoSqlQuery:
                            IFNULL(s.snippet, '') AS snippet
                     FROM entity e
                     LEFT JOIN source_span s ON s.entity_id = e.id
-                    WHERE e.kind = 'TILING_DATA'
+                    WHERE (
+                        e.kind = 'TILING_DATA'
+                        OR (
+                            e.kind = 'TYPE'
+                            AND (
+                                json_extract(e.data, '$.role') = 'type_alias'
+                                OR IFNULL(json_extract(e.data, '$.alias_of'), '') != ''
+                            )
+                        )
+                    )
                       AND (e.name = ? OR e.id = ? OR e.name LIKE ?)
                     LIMIT 40
                     """,
@@ -2313,6 +2568,7 @@ class UoSqlQuery:
         depth: int,
         budget: int,
         direction: str,
+        include_advisory: bool = False,
     ) -> dict[str, Any]:
         wanted = {
             str(kind.value if hasattr(kind, "value") else kind).upper()
@@ -2345,13 +2601,15 @@ class UoSqlQuery:
                     continue
                 for rel in conn.execute(
                     f"""
-                    SELECT id, kind, src, dst, status
+                    SELECT id, kind, src, dst, status, data
                     FROM relation
                     WHERE {col_from} = ? AND kind IN ({placeholders})
                     ORDER BY kind, src, dst, id
                     """,
                     (current, *wanted_sorted),
                 ):
+                    if not include_advisory and _is_advisory_data(rel["data"]):
+                        continue
                     other = str(rel[col_to] or "")
                     if not other:
                         continue
@@ -2398,9 +2656,15 @@ class UoSqlQuery:
         edge_kinds: Iterable[str] | None = None,
         depth: int = 3,
         budget: int = 500,
+        include_advisory: bool = False,
     ) -> dict[str, Any]:
         return self._slice(
-            seed_ids, edge_kinds=edge_kinds, depth=depth, budget=budget, direction="forward"
+            seed_ids,
+            edge_kinds=edge_kinds,
+            depth=depth,
+            budget=budget,
+            direction="forward",
+            include_advisory=include_advisory,
         )
 
     def slice_backward(
@@ -2410,9 +2674,15 @@ class UoSqlQuery:
         edge_kinds: Iterable[str] | None = None,
         depth: int = 3,
         budget: int = 500,
+        include_advisory: bool = False,
     ) -> dict[str, Any]:
         return self._slice(
-            seed_ids, edge_kinds=edge_kinds, depth=depth, budget=budget, direction="backward"
+            seed_ids,
+            edge_kinds=edge_kinds,
+            depth=depth,
+            budget=budget,
+            direction="backward",
+            include_advisory=include_advisory,
         )
 
     def find_path(self, start: str, end: str | None = None, *, end_kind: str = "") -> list[dict[str, Any]]:
@@ -2481,7 +2751,9 @@ class UoSqlQuery:
                 break
             if dist >= max_depth:
                 continue
-            for rel in conn.execute("SELECT dst FROM relation WHERE src = ?", (cur,)):
+            for rel in conn.execute("SELECT dst, data FROM relation WHERE src = ?", (cur,)):
+                if _is_advisory_data(rel["data"]):
+                    continue
                 nxt = str(rel["dst"] or "")
                 if not nxt or nxt in prev:
                     continue
@@ -2559,6 +2831,10 @@ class UoSqlQuery:
             fields = self.tiling_fields()[: int(limit)]
             impact = {}
             data = self.tiling_data()
+        if needle:
+            count = len(data) if data else len(fields)
+        else:
+            count = len(fields)
         return _fit_payload(
             {
                 "ok": True,
@@ -2567,7 +2843,7 @@ class UoSqlQuery:
                 "tiling_data": data[: int(limit)],
                 "fields": fields,
                 "impact": impact,
-                "count": len(fields),
+                "count": count,
             }
         )
 
@@ -2735,7 +3011,9 @@ class UoSqlQuery:
                 ]
                 matching_block_count = len(block_matches)
                 dim_coverage = (
-                    _dim_coverage(block_matches) if block_matches else universe_coverage
+                    _dim_coverage_restricted(block_matches, structured)
+                    if block_matches
+                    else universe_coverage
                 )
                 if matching_block_count == 0:
                     nearby = _template_nearby(all_blocks, structured)
@@ -2744,9 +3022,11 @@ class UoSqlQuery:
                 matching_block_count = len(all_blocks)
                 block_matches = all_blocks
         compact_blocks = [_compact_template_block(row) for row in block_matches]
+        fixed_coverage = _fixed_coverage(block_matches) if block_matches else {}
         coverage = {
             **_hits_coverage([], total=matching_block_count, dim_coverage=dim_coverage),
             "dim_coverage": dim_coverage,
+            "fixed_coverage": fixed_coverage,
             "completeness": "coverage_checked" if dim_coverage else "first_hit",
             "answerable": bool(dim_coverage),
         }
@@ -2765,6 +3045,7 @@ class UoSqlQuery:
             "macros_compile_vars": macros[: int(limit)],
             "template_blocks": compact_blocks[: int(limit)],
             "template_projection": block_status,
+            "fixed_coverage": fixed_coverage,
         }
         if nearby:
             payload["nearby"] = nearby
@@ -2787,7 +3068,7 @@ class UoSqlQuery:
                     ? = ''
                     OR lower(IFNULL(e.name, '')) LIKE ?
                     OR lower(e.id) LIKE ?
-                    OR lower(IFNULL(json_extract(e.data, '$.mutex_policy'), '')) LIKE ?
+                    OR lower(IFNULL(json_extract(e.data, '$.allocated'), '')) LIKE ?
                     OR lower(IFNULL(e.data, '')) LIKE ?
                   )
                 LIMIT ?
@@ -2802,17 +3083,20 @@ class UoSqlQuery:
                 LEFT JOIN source_span s ON s.entity_id = e.id
                 WHERE e.kind = 'TYPE'
                   AND (
-                    json_extract(e.data, '$.role') = 'storage_wrapper_type'
-                    OR e.data LIKE '%"role":"storage_wrapper_type"%'
-                    OR lower(IFNULL(json_extract(e.data, '$.mutex_policy'), '')) != ''
-                    OR lower(IFNULL(e.name, '')) LIKE '%policy%'
+                    json_extract(e.data, '$.wraps_storage') = 1
+                    OR json_extract(e.data, '$.wraps_lock') = 1
+                    OR e.data LIKE '%"wraps_storage"%'
+                    OR e.data LIKE '%"wraps_lock"%'
+                    OR json_extract(e.data, '$.role') IN (
+                        'storage_wrapper', 'storage_wrapper_type', 'project_wrapper_type'
+                    )
                   )
                   AND (
                     ? = ''
                     OR lower(IFNULL(e.name, '')) = ?
                     OR lower(IFNULL(e.name, '')) LIKE ?
                     OR lower(IFNULL(e.name, '')) LIKE '%::' || ?
-                    OR lower(IFNULL(json_extract(e.data, '$.mutex_policy'), '')) LIKE ?
+                    OR lower(IFNULL(json_extract(e.data, '$.wraps_lock'), '')) LIKE ?
                     OR lower(IFNULL(e.data, '')) LIKE ?
                   )
                 LIMIT ?
@@ -2829,9 +3113,9 @@ class UoSqlQuery:
         def _buf_key(hit: dict[str, Any]) -> tuple[Any, ...]:
             name = str(hit.get("name") or "").lower()
             facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
-            policy = str(facts.get("mutex_policy") or "").lower()
-            strong = 0 if low and (low in name or low in policy) else 1
-            return (strong, *_agent_sort_key(hit, low, architecture=self._architecture))
+            allocated = 0 if facts.get("allocated") else 1
+            strong = 0 if low and low in name else 1
+            return (allocated, strong, *_agent_sort_key(hit, low, architecture=self._architecture))
 
         rows.sort(key=_buf_key)
         total = len(rows)
@@ -2874,6 +3158,7 @@ class UoSqlQuery:
                     break
             if len(rows) >= fetch_limit:
                 break
+        rows = _collapse_locate_hits(rows)
         rows.sort(
             key=lambda hit: _agent_sort_key(
                 hit, needle, architecture=self._architecture
@@ -3055,64 +3340,73 @@ class UoSqlQuery:
         return hits
 
     def aggregate_kernel_launch(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
-        """One page: pipeIn(pre) → pipeBase(main) → pipePost(post) + arch entry."""
-        phase_names = (
-            ("pre", "pipeIn"),
-            ("main", "pipeBase"),
-            ("post", "pipePost"),
+        """TPipe instances on the selected kernel entry, ordered by declaration."""
+        with self._connect() as conn:
+            pipe_rows = conn.execute(
+                """
+                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                       IFNULL(s.snippet, '') AS snippet
+                FROM entity e
+                LEFT JOIN source_span s ON s.entity_id = e.id
+                WHERE e.kind = 'PIPE'
+                  AND IFNULL(json_extract(e.data, '$.catalog'), '') != 'ascendc'
+                  AND IFNULL(json_extract(e.data, '$.pointer'), 0) != 1
+                  AND IFNULL(e.file, '') != ''
+                ORDER BY IFNULL(json_extract(e.data, '$.scope'), ''),
+                         IFNULL(json_extract(e.data, '$.pipe_ordinal'), 0),
+                         IFNULL(e.line_start, 0),
+                         e.name
+                LIMIT 200
+                """
+            ).fetchall()
+            hits = self._hits_from_rows(
+                conn, pipe_rows, why="kernel_launch_pipe", with_snippet=True, with_rels=True
+            )
+        selected, other_files = _select_launch_phases(
+            hits, architecture=self._architecture, limit=max(int(limit), 1)
         )
-        pipes = self.search("pipe", kinds=(EntityKind.PIPE.value,), limit=80)
-        by_name: dict[str, dict[str, Any]] = {}
-        for hit in pipes:
-            ident = _last_ident(str(hit.get("name") or "")).lower()
-            for _phase, want in phase_names:
-                if ident == want.lower() and want not in by_name:
-                    by_name[want] = hit
-                    break
-        for _phase, want in phase_names:
-            if want in by_name:
-                continue
-            extra = self.search(want, kinds=(EntityKind.PIPE.value,), limit=8)
-            if extra:
-                extra.sort(
-                    key=lambda hit: _agent_sort_key(
-                        hit, want, architecture=self._architecture
-                    )
-                )
-                by_name[want] = extra[0]
+        winner_file = str(selected[0].get("file") or "").replace("\\", "/").lower() if selected else ""
+        group_total = sum(
+            1
+            for hit in hits
+            if _is_launch_pipe_hit(hit)
+            and str(hit.get("file") or "").replace("\\", "/").lower() == winner_file
+        ) if winner_file else 0
+        clipped = bool(selected) and group_total > len(selected)
         phases: list[dict[str, Any]] = []
-        for phase, want in phase_names:
-            hit = by_name.get(want)
-            if hit is None:
-                phases.append(
-                    {
-                        "phase": phase,
-                        "pipe": want,
-                        "ok": False,
-                    }
-                )
-                continue
+        for hit in selected:
             item = dict(hit)
             facts = dict(item.get("facts") or {}) if isinstance(item.get("facts"), dict) else {}
-            facts.setdefault("kernel_phase", phase)
+            ordinal = facts.get("pipe_ordinal") or (len(phases) + 1)
+            facts["pipe_ordinal"] = ordinal
             item["facts"] = facts
-            item["phase"] = phase
-            item["pipe"] = want
+            item["phase"] = str(ordinal)
+            item["pipe"] = item.get("name")
             item["ok"] = True
             phases.append(item)
         entry_hits = self._kernel_launch_entry(str(pattern or "").strip())
         entry = entry_hits[0] if entry_hits else None
         coverage = _hits_coverage(
             [p for p in phases if p.get("ok")] + ([entry] if entry else []),
-            total=sum(1 for p in phases if p.get("ok")),
+            total=group_total or sum(1 for p in phases if p.get("ok")),
+            clipped=clipped,
         )
         coverage["kernel_phases"] = [
-            str(p.get("facts", {}).get("kernel_phase") or p.get("phase") or "")
+            str(p.get("facts", {}).get("pipe_ordinal") or p.get("phase") or "")
             for p in phases
             if p.get("ok")
         ]
-        if sum(1 for p in phases if p.get("ok")) >= 2:
+        if other_files:
+            coverage["other_kernel_files"] = other_files[:8]
+        ok_n = sum(1 for p in phases if p.get("ok"))
+        if clipped:
+            coverage["completeness"] = "page_clipped"
+            coverage["answerable"] = False
+        elif ok_n >= 2:
             coverage["completeness"] = "siblings_checked"
+            coverage["answerable"] = True
+        elif ok_n == 1:
+            coverage["completeness"] = "first_hit"
             coverage["answerable"] = True
         payload = {
             "ok": True,
@@ -3121,14 +3415,16 @@ class UoSqlQuery:
             "coverage": coverage,
             "phases": phases,
             "entry": entry,
-            "count": sum(1 for p in phases if p.get("ok")),
+            "count": ok_n,
             "files": _group_by_file(
                 [p for p in phases if p.get("ok")] + ([entry] if entry else [])
             ),
         }
+        if other_files:
+            payload["other_kernels"] = other_files[:8]
         attach_query_hints(
             payload,
-            pattern or "pipeIn",
+            pattern or "TPipe",
             count=int(payload["count"]),
             kinds=("PIPE",),
             mode="kernel_launch",
@@ -3156,6 +3452,394 @@ class UoSqlQuery:
                 "total": total,
             }
         )
+
+    def agent_query(
+        self,
+        *,
+        pattern: str = "",
+        file: str = "",
+        line: int = 0,
+        line_end: int = 0,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        """Agent-facing query: name card, Dim=V cover, file:line, or index."""
+        path = str(file or "").strip()
+        line_n = int(line or 0)
+        if path and line_n:
+            return self.query_around(path, line_n, line_end=int(line_end or line_n), limit=limit)
+        text = str(pattern or "").strip()
+        if not text:
+            return self.query_index(limit=limit)
+        if "=" in text:
+            return self.query_cover(text, limit=limit)
+        return self.query_name_card(text, limit=limit)
+
+    def query_name_card(self, pattern: str, *, limit: int = 8) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        if not needle:
+            payload = {"ok": False, "shape": "name", "pattern": needle, "cards": [], "count": 0}
+            attach_query_hints(payload, needle, count=0, mode="name")
+            return _fit_payload(payload)
+        hits = self._exact_name_hits(needle, limit=max(int(limit) * 4, 16))
+        if not hits:
+            located = self.aggregate_locate(needle, limit=max(int(limit), 8))
+            hits = list(located.get("locations") or [])
+        by_kind: dict[str, dict[str, Any]] = {}
+        ranked = sorted(
+            hits,
+            key=lambda hit: _agent_sort_key(hit, needle, architecture=self._architecture),
+        )
+        for hit in ranked:
+            kind = str(hit.get("kind") or "")
+            if kind and kind not in by_kind:
+                by_kind[kind] = hit
+        cards_src = list(by_kind.values())[:MAX_NAME_CARDS]
+        cards: list[dict[str, Any]] = []
+        next_names: list[str] = []
+        seen_next: set[str] = set()
+        self_names = {needle.lower()}
+        for hit in cards_src:
+            kind = str(hit.get("kind") or "")
+            eid = str(hit.get("id") or "")
+            name = str(hit.get("name") or needle)
+            self_names.add(name.lower())
+            grouped = self._grouped_edges(eid, entity_kind=kind)
+            card: dict[str, Any] = {
+                "kind": kind,
+                "name": name,
+                "id": eid,
+                "file": hit.get("file") or "",
+                "line": int(hit.get("line_start") or 0),
+                "snippet": hit.get("snippet") or "",
+                "edges": grouped,
+            }
+            extras = self._card_extras(hit)
+            if extras:
+                card["extras"] = extras
+            cards.append(card)
+            for group in grouped.values():
+                for row in list(group.get("neighbors") or []):
+                    other = str(row.get("name") or "").strip()
+                    if (
+                        not other
+                        or other.lower() in self_names
+                        or other.lower() in seen_next
+                        or other.startswith("ARGS_SEL")
+                    ):
+                        continue
+                    seen_next.add(other.lower())
+                    next_names.append(other)
+                    if len(next_names) >= 12:
+                        break
+                if len(next_names) >= 12:
+                    break
+        coverage = _hits_coverage(cards_src, total=len(hits), needle=needle)
+        payload = {
+            "ok": bool(cards),
+            "shape": "name",
+            "pattern": needle,
+            "cards": cards,
+            "next": next_names,
+            "count": len(cards),
+            "coverage": coverage,
+            "files": _group_by_file(cards_src),
+        }
+        attach_query_hints(payload, needle, count=len(cards), mode="name")
+        return _fit_payload(payload)
+
+    def _exact_name_hits(self, needle: str, *, limit: int) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = self._select_entities(
+                conn,
+                extra_where="lower(IFNULL(e.name, '')) = ?",
+                params=(needle.lower(),),
+                limit=max(int(limit), 8),
+            )
+            return self._hits_from_rows(conn, rows, why="name_card", with_snippet=True)
+
+    def _grouped_edges(self, entity_id: str, *, entity_kind: str = "") -> dict[str, Any]:
+        if not entity_id:
+            return {}
+        placeholders = ",".join("?" for _ in CARD_EDGE_KINDS)
+        skip_tpl = str(entity_kind or "").upper() == EntityKind.TILING_KEY.value
+        grouped: dict[str, dict[str, Any]] = {}
+        with self._connect() as conn:
+            counts = {
+                str(row[0] or ""): int(row[1] or 0)
+                for row in conn.execute(
+                    f"""
+                    SELECT kind, COUNT(*) FROM relation
+                    WHERE (src = ? OR dst = ?) AND kind IN ({placeholders})
+                    GROUP BY kind
+                    """,
+                    (entity_id, entity_id, *CARD_EDGE_KINDS),
+                )
+            }
+            try:
+                rows = conn.execute(
+                    f"""
+                    SELECT rel_kind, rel_data, other_kind, other_name, other_file, other_line
+                    FROM (
+                        SELECT r.kind AS rel_kind, r.data AS rel_data,
+                               e.kind AS other_kind, e.name AS other_name,
+                               e.file AS other_file, e.line_start AS other_line,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY r.kind ORDER BY e.kind, e.name
+                               ) AS rn
+                        FROM relation r
+                        JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
+                        WHERE (r.src = ? OR r.dst = ?) AND r.kind IN ({placeholders})
+                    ) ranked
+                    WHERE rn <= ?
+                    """,
+                    (entity_id, entity_id, entity_id, *CARD_EDGE_KINDS, EDGES_PER_KIND),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+                for kind in CARD_EDGE_KINDS:
+                    rows.extend(
+                        conn.execute(
+                            """
+                            SELECT r.kind AS rel_kind, r.data AS rel_data,
+                                   e.kind AS other_kind, e.name AS other_name,
+                                   e.file AS other_file, e.line_start AS other_line
+                            FROM relation r
+                            JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
+                            WHERE (r.src = ? OR r.dst = ?) AND r.kind = ?
+                            ORDER BY e.kind, e.name
+                            LIMIT ?
+                            """,
+                            (entity_id, entity_id, entity_id, kind, EDGES_PER_KIND),
+                        ).fetchall()
+                    )
+        for rel_kind, n in counts.items():
+            if rel_kind:
+                grouped[rel_kind] = {"count": n, "neighbors": []}
+        for row in rows:
+            if _is_advisory_data(_row_get(row, "rel_data")):
+                continue
+            rel_kind = str(_row_get(row, "rel_kind") or "")
+            other_kind = str(_row_get(row, "other_kind") or "")
+            other_name = str(_row_get(row, "other_name") or "")
+            if skip_tpl and rel_kind == "BINDS" and (
+                other_kind == EntityKind.TEMPLATE.value or other_name.startswith("ARGS_SEL")
+            ):
+                continue
+            bucket = grouped.setdefault(rel_kind, {"count": counts.get(rel_kind, 0), "neighbors": []})
+            neighbors = bucket["neighbors"]
+            if len(neighbors) >= EDGES_PER_KIND:
+                continue
+            neighbors.append(
+                {
+                    "name": other_name,
+                    "kind": other_kind,
+                    "file": _norm_file(str(_row_get(row, "other_file") or "")),
+                    "line": int(_row_get(row, "other_line") or 0),
+                }
+            )
+        return grouped
+
+    def _card_extras(self, hit: dict[str, Any]) -> dict[str, Any]:
+        kind = str(hit.get("kind") or "")
+        name = str(hit.get("name") or "")
+        extras: dict[str, Any] = {}
+        if kind in {EntityKind.TILING_FIELD.value, EntityKind.FIELD.value, EntityKind.TILING_KEY.value}:
+            field = self.field_impact(name)
+            if field.get("ok"):
+                extras["writers"] = [
+                    {
+                        "name": row.get("name"),
+                        "file": row.get("file"),
+                        "line": row.get("line_start"),
+                    }
+                    for row in list(field.get("writers") or [])[:5]
+                ]
+                extras["readers"] = [
+                    {
+                        "name": row.get("name"),
+                        "file": row.get("file"),
+                        "line": row.get("line_start"),
+                    }
+                    for row in list(field.get("readers") or [])[:5]
+                ]
+                if field.get("canonical"):
+                    extras["canonical"] = field.get("canonical")
+                if field.get("occupancy_axis"):
+                    extras["occupancy_axis"] = field.get("occupancy_axis")
+        if kind in {EntityKind.PIPE.value, EntityKind.KERNEL.value} or name.lower() in _LAUNCH_NAMES:
+            launch = self.aggregate_kernel_launch(name if kind == EntityKind.KERNEL.value else "", limit=8)
+            extras["phases"] = [
+                {
+                    "pipe": row.get("pipe") or row.get("name"),
+                    "file": row.get("file"),
+                    "line": row.get("line_start"),
+                    "phase": row.get("phase"),
+                }
+                for row in list(launch.get("phases") or [])
+                if row.get("ok")
+            ][:8]
+            entry = launch.get("entry") if isinstance(launch.get("entry"), dict) else None
+            if entry:
+                extras["entry"] = {
+                    "name": entry.get("name"),
+                    "file": entry.get("file"),
+                    "line": entry.get("line_start"),
+                }
+        facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+        packing = facts.get("packing_value_sites")
+        if isinstance(packing, list) and packing:
+            extras["packing_value_sites"] = packing[:3]
+        if kind in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}:
+            extras["definition"] = {
+                "file": hit.get("file") or "",
+                "line": int(hit.get("line_start") or 0),
+                "snippet": hit.get("snippet") or "",
+            }
+            for key in ("value", "value_expr", "origin"):
+                if facts.get(key) not in (None, "", []):
+                    extras[key] = facts[key]
+        if kind == EntityKind.TYPE.value:
+            for key in ("alias_of", "cpp_kind", "type_name", "members"):
+                if facts.get(key) not in (None, "", []):
+                    extras[key] = facts[key]
+        if kind == EntityKind.OPERATION.value:
+            for key in ("callee", "mechanism", "function"):
+                if facts.get(key) not in (None, "", []):
+                    extras[key] = facts[key]
+        return extras
+
+    def query_cover(self, pattern: str, *, limit: int = 8) -> dict[str, Any]:
+        needle = str(pattern or "").strip()
+        match = self.aggregate_template_match(needle, limit=limit)
+        legal = self.legal_key_query(pattern=needle, limit=limit)
+        matched = int(match.get("matching_block_count") or 0)
+        coverage = dict(match.get("coverage") or {})
+        dim_coverage = coverage.get("dim_coverage") or match.get("dim_coverage") or {}
+        payload: dict[str, Any] = {
+            "ok": bool(match.get("ok") or legal.get("ok")),
+            "shape": "cover",
+            "pattern": needle,
+            "dim_coverage": dim_coverage,
+            "matching_block_count": matched,
+            "nearby": list(match.get("nearby") or [])[: int(limit)],
+            "total_matched": int(legal.get("total_matched") or legal.get("count") or 0),
+            "coverage": coverage,
+            "count": matched,
+        }
+        if matched > 0:
+            payload["template_blocks"] = list(match.get("template_blocks") or [])[: int(limit)]
+        else:
+            payload["template_blocks"] = []
+            payload.pop("templates", None)
+            payload.pop("macros_compile_vars", None)
+        attach_query_hints(payload, needle, count=matched, mode="cover")
+        return _fit_payload(payload)
+
+    def query_around(
+        self,
+        file: str,
+        line: int,
+        *,
+        line_end: int = 0,
+        limit: int = 8,
+    ) -> dict[str, Any]:
+        path = str(file or "").strip()
+        start = int(line or 0)
+        end = int(line_end or start)
+        if not path or start <= 0:
+            return {
+                "ok": False,
+                "shape": "around",
+                "error": "around_needs_file_line",
+                "hint": "Pass --file and --line from a previous card.",
+            }
+        result = self.impact_of(path, (start, end or start))
+        if isinstance(result, dict):
+            payload = {
+                "ok": True,
+                "shape": "around",
+                "file": path,
+                "line": start,
+                "line_end": end or start,
+                **result,
+            }
+        else:
+            rows = list(result)[: int(limit)]
+            payload = {
+                "ok": True,
+                "shape": "around",
+                "file": path,
+                "line": start,
+                "line_end": end or start,
+                "count": len(rows),
+                "rows": rows,
+            }
+        attach_query_hints(payload, path, count=int(payload.get("count") or 0), mode="around")
+        return _fit_payload(payload)
+
+    def query_index(self, *, limit: int = 8) -> dict[str, Any]:
+        launch = self.aggregate_kernel_launch(limit=max(int(limit), 8))
+        dim_names: list[str] = []
+        tiling_data: list[str] = []
+        with self._connect() as conn:
+            dim_names = [
+                str(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT DISTINCT name FROM entity
+                    WHERE kind = 'TILING_KEY' AND IFNULL(name, '') != ''
+                    ORDER BY name
+                    """
+                ).fetchall()
+                if row[0]
+            ]
+            tiling_data = [
+                str(row[0])
+                for row in conn.execute(
+                    """
+                    SELECT DISTINCT name FROM entity
+                    WHERE kind = 'TILING_DATA' AND IFNULL(name, '') != ''
+                    ORDER BY name
+                    """
+                ).fetchall()
+                if row[0]
+            ]
+        gaps = self.aggregate_gaps(limit=1)
+        phases = [
+            {
+                "pipe": row.get("pipe") or row.get("name"),
+                "file": row.get("file"),
+                "line": row.get("line_start"),
+                "phase": row.get("phase"),
+            }
+            for row in list(launch.get("phases") or [])
+            if row.get("ok")
+        ]
+        entry = launch.get("entry") if isinstance(launch.get("entry"), dict) else None
+        payload = {
+            "ok": True,
+            "shape": "index",
+            "entry": (
+                {
+                    "name": entry.get("name"),
+                    "file": entry.get("file"),
+                    "line": entry.get("line_start"),
+                }
+                if entry
+                else None
+            ),
+            "phases": phases,
+            "dim_names": dim_names,
+            "tiling_data_names": tiling_data,
+            "gaps_count": int(gaps.get("total") or gaps.get("count") or 0),
+            "coverage": launch.get("coverage") or {},
+            "count": len(phases),
+            "files": launch.get("files") or {},
+        }
+        if launch.get("other_kernels"):
+            payload["other_kernels"] = launch.get("other_kernels")
+        attach_query_hints(payload, "", count=len(phases), mode="index")
+        return _fit_payload(payload)
 
     def legal_key_query(
         self,

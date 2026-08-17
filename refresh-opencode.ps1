@@ -27,6 +27,14 @@ $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $BundleRoot
 $InstallPs1 = Join-Path $BundleRoot "install.ps1"
+
+function Get-OpenCodeHome {
+  $xdg = [string]$env:XDG_CONFIG_HOME
+  if (-not [string]::IsNullOrWhiteSpace($xdg)) {
+    return (Join-Path $xdg.Trim() "opencode")
+  }
+  return (Join-Path $HOME ".config\opencode")
+}
 $sw = [Diagnostics.Stopwatch]::StartNew()
 # -SkipPip is the default; -ForcePip is the only way to reinstall packages.
 $doPip = [bool]$ForcePip -and -not $SkipPip
@@ -156,7 +164,8 @@ Write-Host ""
 Write-Host "[3/3] Verify install matches current repo..."
 
 $pluginSrc = Join-Path $BundleRoot "opencode-plugin\ascendc-pilot.ts"
-$pluginDst = Join-Path $HOME ".config\opencode\plugins\ascendc-pilot.ts"
+$ocHome = Get-OpenCodeHome
+$pluginDst = Join-Path $ocHome "plugins\ascendc-pilot.ts"
 $srcHash = Get-FileSha256 $pluginSrc
 $dstHash = Get-FileSha256 $pluginDst
 
@@ -178,17 +187,19 @@ Assert-True ($pluginText -notmatch 'return\s+"pilot"') "installed plugin no long
 Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin has no pilot binary candidate list"
 
 # Skills / primary agent / native slash commands
-$skillLink = Join-Path $HOME ".config\opencode\skills\uo-init"
-$agentLink = Join-Path $HOME ".config\opencode\agents\ascendc-pilot.md"
-$commandsDir = Join-Path $HOME ".config\opencode\commands"
+$skillLink = Join-Path $ocHome "skills\uo-init"
+$agentLink = Join-Path $ocHome "agents\ascendc-pilot.md"
+$commandsDir = Join-Path $ocHome "commands"
 Assert-True (Test-Path -LiteralPath $skillLink) "uo-init skill linked"
 Assert-True (Test-Path -LiteralPath $agentLink) "ascendc-pilot.md installed"
-foreach ($name in @("uo-init", "tg-init", "tg-plan", "tg-solve", "ce-review")) {
+foreach ($name in @("uo-init", "uo-query", "tg-init", "tg-plan", "tg-solve", "ce-review", "ce-intent", "ce-apply", "ce-handoff", "ce-impact", "ce-verify")) {
   $commandPath = Join-Path $commandsDir "$name.md"
   Assert-True (Test-Path -LiteralPath $commandPath) "native /$name command installed"
   $commandText = Get-Content -LiteralPath $commandPath -Raw -Encoding UTF8
   Assert-True ($commandText -match 'agent:\s*ascendc-pilot') "/$name command binds primary controller"
-  Assert-True ($commandText -match 'acp run-action auto') "/$name command uses deterministic auto-dispatch"
+  if ($name -ne "uo-query") {
+    Assert-True ($commandText -match 'acp run-action auto') "/$name command uses deterministic auto-dispatch"
+  }
 }
 
 # Pilot Python must be THIS repo (editable) and include new modules
@@ -238,6 +249,6 @@ Write-Host "Plugin hash : $dstHash"
 Write-Host ("Elapsed     : {0:N1}s" -f $sw.Elapsed.TotalSeconds)
 Write-Host "Next steps  :"
 Write-Host "  1. Start OpenCode"
-Write-Host "  2. Tab → ascendc-pilot (primary)"
+Write-Host "  2. Tab → AscendC-Pilot (ascendc-pilot primary)"
 Write-Host "  3. Run /uo-init, then /tg-init → /tg-plan → /tg-solve"
 Write-Host ""

@@ -1,0 +1,6 @@
+
+using xType = DTYPE_X;
+#if (ORIG_DTYPE_QUERY == DT_FLOAT16) && (ORIG_DTYPE_ATTENTION_OUT == DT_FLOAT16)
+#if TILING_KEY_VAR == QF16_PATH
+#endif
+#endif

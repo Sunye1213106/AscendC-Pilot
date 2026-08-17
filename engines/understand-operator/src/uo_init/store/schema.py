@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-SCHEMA_VERSION = "codemap-uo/v1"
+SCHEMA_VERSION = "codemap-uo/v2"
+SCHEMA_COMPAT = ("codemap-uo/v1", "codemap-uo/v2")
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;

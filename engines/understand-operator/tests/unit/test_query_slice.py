@@ -34,3 +34,21 @@ def test_directed_slice_filters_depth_budget_and_evidence() -> None:
     assert {row["id"] for row in backward["nodes"]} == {"sink", "middle"}
     assert backward["truncated"] is True
     assert any(row["evidence_tier"] == "C" for row in backward["nodes"])
+
+
+def test_slice_skips_advisory_calls_by_default() -> None:
+    cm = CodeMap(op_name="slice", architecture="arch35")
+    source = cm.upsert(EntityKind.FUNCTION, "source", eid="source", attrs={"provenance": "clang_ast"})
+    hidden = cm.upsert(EntityKind.FUNCTION, "hidden", eid="hidden")
+    cm.mint_candidate_relation(
+        RelationKind.CALLS,
+        source.id,
+        hidden.id,
+        provenance="source_kernel_call_bound",
+    )
+    closed = slice_forward(cm, [source.id], edge_kinds=["CALLS"], depth=2)
+    assert {row["id"] for row in closed["nodes"]} == {"source"}
+    opened = slice_forward(
+        cm, [source.id], edge_kinds=["CALLS"], depth=2, include_advisory=True
+    )
+    assert {row["id"] for row in opened["nodes"]} == {"source", "hidden"}

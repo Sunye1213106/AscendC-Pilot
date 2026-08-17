@@ -12,12 +12,22 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-# arch_dir short name → NpuArch number in INI (`NpuArch=3510`).
+# arch_dir short name → NpuArch number (`NpuArch=3510` in INI / DAV_NNNN).
 ARCH_TO_NPU_ARCH = {
     "arch35": 3510,
     "arch22": 2201,
     "arch32": 3202,
     "arch50": 5001,
+    "arch-920r1": 9201,  # DAV_9201 unpublished; distinct identity, ISA family arch35
+}
+
+# Programming-model family for clang/VF. Identity stays on ARCH_TO_NPU_ARCH.
+# DAV_9201 adds no new ISA vs DAV_3510; CANN headers do not list 9201 yet, so
+# kernel parse reuses the family's header-enable -D set. Not a silent 3510 fallback:
+# only explicit family members are redirected, and a real ARCH_KERNEL_MACROS
+# entry for the child wins when the chip is published.
+ARCH_PARSE_FAMILY = {
+    "arch-920r1": "arch35",
 }
 
 # Default SKU when the run only names an arch.
@@ -35,6 +45,18 @@ ARCH_KERNEL_MACROS: dict[str, dict[str, str]] = {
 }
 
 
+def parse_family_for_arch(arch_dir: str | None) -> str:
+    """Published ISA family used for clang/VF. Identity is still ``arch_dir``."""
+    arch = str(arch_dir or "").strip()
+    return ARCH_PARSE_FAMILY.get(arch, arch)
+
+
+def dav_name_for_arch(arch_dir: str | None) -> str | None:
+    """``arch-920r1`` → ``DAV_9201``. None when the arch_dir is unknown."""
+    npu = ARCH_TO_NPU_ARCH.get(str(arch_dir or "").strip())
+    return f"DAV_{npu}" if npu is not None else None
+
+
 def kernel_macros_for_arch(arch_dir: str | None) -> dict[str, str]:
     """Clang -D map for this architecture. Unknown arch: NPU number only."""
     arch = str(arch_dir or "").strip()
@@ -43,6 +65,11 @@ def kernel_macros_for_arch(arch_dir: str | None) -> dict[str, str]:
     known = ARCH_KERNEL_MACROS.get(arch)
     if known is not None:
         return dict(known)
+    family = ARCH_PARSE_FAMILY.get(arch)
+    if family:
+        fam = ARCH_KERNEL_MACROS.get(family)
+        if fam is not None:
+            return dict(fam)
     npu = ARCH_TO_NPU_ARCH.get(arch)
     if npu is not None:
         return {"__NPU_ARCH__": str(npu)}

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from uo_init.cpp_lex import iter_function_defs, mask_non_code, matching_brace
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
@@ -44,13 +45,6 @@ _ASSIGN_RE = re.compile(
 )
 _IF_RE = re.compile(r"\b(?:if|else\s+if)\s*\((?P<cond>[^{};]*)\)\s*\{", re.S)
 _SWITCH_RE = re.compile(r"\bswitch\s*\((?P<cond>[^{};]*)\)\s*\{", re.S)
-_FUNCTION_RE = re.compile(
-    r"(?:inline\s+|static\s+|virtual\s+|constexpr\s+)*"
-    r"[A-Za-z_][\w:<>,\s*&~]*?\s+"
-    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
-    r"\([^;{}]*\)\s*(?:const\s*)?(?:override\s*)?\{",
-    re.S,
-)
 _IDENT_RE = re.compile(r"(?<![0-9A-Za-z_])[A-Za-z_]\w*(?:\s*(?:\.|->|::)\s*[A-Za-z_]\w*)*")
 _API_TOKEN_RE = re.compile(r"\b(InputIndex|AttrIndex)::([A-Za-z_]\w*)")
 _INPUT_ACCESS_RE = re.compile(
@@ -102,6 +96,8 @@ def trace_host_key_roots(
     operator_root: str | Path,
     *,
     architecture: str = "",
+    host_ir: Any = None,
+    kernel_ir: Any = None,
 ) -> CodeMap:
     architecture = str(architecture or getattr(codemap, "architecture", "") or "")
     root = Path(operator_root).expanduser().resolve()
@@ -111,10 +107,16 @@ def trace_host_key_roots(
 
     texts: list[tuple[Path, str]] = []
     records: list[_Record] = []
+    clang_records = _records_from_host_ir(root, host_ir)
+    clang_keys = {(r.file, r.line, r.lhs) for r in clang_records}
+    records.extend(clang_records)
     for path in host_files:
         text = read_text(path)
         texts.append((path, text))
-        records.extend(_assignments(root, path, text))
+        for rec in _assignments(root, path, text):
+            if (rec.file, rec.line, rec.lhs) in clang_keys:
+                continue
+            records.append(rec)
 
     by_exact: dict[str, list[_Record]] = defaultdict(list)
     by_short: dict[str, list[_Record]] = defaultdict(list)
@@ -191,16 +193,11 @@ def trace_host_key_roots(
     return codemap
 
 
-def _function_scopes(text: str) -> list[_Scope]:
+def _function_scopes(masked: str) -> list[_Scope]:
     out: list[_Scope] = []
-    for match in _FUNCTION_RE.finditer(text):
-        name = match.group("name")
-        if name.split("::")[-1] in _CONTROL_NAMES:
-            continue
-        open_pos = text.find("{", match.start(), match.end())
-        close_pos = _matching_brace(text, open_pos)
-        if close_pos >= 0:
-            out.append(_Scope(name, open_pos + 1, close_pos))
+    for hit in iter_function_defs(masked):
+        if hit.close_brace > hit.open_brace:
+            out.append(_Scope(hit.name, hit.open_brace + 1, hit.close_brace))
     return out
 
 
@@ -212,22 +209,23 @@ def _containing_scope(scopes: list[_Scope], offset: int) -> str:
 
 
 def _assignments(root: Path, path: Path, text: str) -> list[_Record]:
-    scopes = _function_scopes(text)
+    masked = mask_non_code(text)
+    scopes = _function_scopes(masked)
     guard_scopes: list[tuple[int, int, str]] = []
-    for match in _IF_RE.finditer(text):
-        open_pos = text.find("{", match.start(), match.end())
-        close_pos = _matching_brace(text, open_pos)
+    for match in _IF_RE.finditer(masked):
+        open_pos = masked.find("{", match.start(), match.end())
+        close_pos = matching_brace(masked, open_pos)
         if close_pos >= 0:
             guard_scopes.append((open_pos + 1, close_pos, match.group("cond").strip()))
-    for match in _SWITCH_RE.finditer(text):
-        open_pos = text.find("{", match.start(), match.end())
-        close_pos = _matching_brace(text, open_pos)
+    for match in _SWITCH_RE.finditer(masked):
+        open_pos = masked.find("{", match.start(), match.end())
+        close_pos = matching_brace(masked, open_pos)
         if close_pos >= 0:
             guard_scopes.append((open_pos + 1, close_pos, match.group("cond").strip()))
     out: list[_Record] = []
-    for match in _ASSIGN_RE.finditer(text):
+    for match in _ASSIGN_RE.finditer(masked):
         lhs = normalize_symbol(match.group("lhs"))
-        rhs = match.group("rhs").strip()
+        rhs = text[match.start("rhs"):match.end("rhs")].strip()
         guards = tuple(cond for start, end, cond in guard_scopes if start <= match.start() <= end)
         out.append(
             _Record(
@@ -237,6 +235,47 @@ def _assignments(root: Path, path: Path, text: str) -> list[_Record]:
                 file=_rel(root, path),
                 line=_line(text, match.start()),
                 function=_containing_scope(scopes, match.start()),
+            )
+        )
+    return out
+
+
+def _records_from_host_ir(root: Path, host_ir: Any) -> list[_Record]:
+    """Prefer Clang SSA writes when a HostIR walk is available."""
+    if host_ir is None:
+        return []
+    out: list[_Record] = []
+    seen: set[tuple[str, int, str, str]] = set()
+    events = list(getattr(host_ir, "writes", None) or [])
+    events.extend(getattr(host_ir, "local_writes", None) or [])
+    for ev in events:
+        kind = str(getattr(ev, "kind", "assign") or "assign")
+        if kind not in {"assign", "replace", ""}:
+            continue
+        lhs = normalize_symbol(str(getattr(ev, "path", "") or "").replace("->", "."))
+        rhs = str(getattr(ev, "rhs", "") or "").strip()
+        if not lhs or not rhs:
+            continue
+        file = str(getattr(ev, "file", "") or "").replace("\\", "/")
+        try:
+            file = _rel(root, Path(file)) if file else file
+        except Exception:
+            pass
+        line = int(getattr(ev, "line", 0) or 0)
+        function = str(getattr(ev, "function", "") or "")
+        key = (file, line, lhs, rhs)
+        if key in seen:
+            continue
+        seen.add(key)
+        guards = tuple(str(g) for g in (ev.guards() if hasattr(ev, "guards") else []) if g)
+        out.append(
+            _Record(
+                lhs=lhs,
+                rhs=rhs,
+                guards=guards,
+                file=file,
+                line=line,
+                function=function,
             )
         )
     return out

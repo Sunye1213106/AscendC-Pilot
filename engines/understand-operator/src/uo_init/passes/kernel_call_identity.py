@@ -696,6 +696,22 @@ def enrich_call_sites(
         callee = str(d.get("callee") or "").split("::")[-1]
         if not callee or callee in _SKIP_NAMES:
             return False
+        raw_line = ""
+        lines = index.files.get(nfile) or []
+        if 0 < line <= len(lines):
+            raw_line = lines[line - 1]
+        # `AscendC::Mutex::Lock<pipe>(…)` is a qualified call, not MutexBuffer::Lock.
+        if re.search(
+            rf"::\s*(?:template\s+)?{re.escape(callee)}\s*(?:<|\()",
+            raw_line,
+        ):
+            m = re.search(
+                rf"((?:[A-Za-z_]\w*::)+)(?:template\s+)?{re.escape(callee)}\s*(?:<|\()",
+                raw_line,
+            )
+            if m and not d.get("callee_qualified"):
+                d["callee_qualified"] = m.group(1) + callee
+            return False
         recv = str(d.get("receiver") or "")
         rtype = _receiver_type(index, d, root=root)
         if recv and rtype and not d.get("receiver_type"):

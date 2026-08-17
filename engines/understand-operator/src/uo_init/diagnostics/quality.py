@@ -14,6 +14,7 @@ from uo_init.diagnostics.source_api import (
 )
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
+from uo_init.ir.evidence import summarize_graph
 from uo_init.resolve.semantic_gap import list_gaps, summarize_gaps
 
 _KERNEL_API_NEEDLES = GRAPH_API_NEEDLES
@@ -280,6 +281,15 @@ def codemap_quality(
         else "CodeMap is not a substitute for source; locate surface is incomplete"
     )
     cm_summary = codemap.summary()
+    trust_summary = {}
+    if isinstance(codemap.meta, dict) and isinstance(codemap.meta.get("trust_summary"), dict):
+        trust_summary = dict(codemap.meta.get("trust_summary") or {})
+    if not trust_summary:
+        trust_summary = summarize_graph(codemap.entities.values(), codemap.relations.values())
+    roles_meta = dict((codemap.meta or {}).get("symbol_roles") or {})
+    role_candidates = int(roles_meta.get("candidate_symbol_count") or 0)
+    role_resolved = int(roles_meta.get("resolved_symbol_count") or 0)
+    role_rate = (role_resolved / role_candidates) if role_candidates else None
     return {
         "schema": "uo-product-quality/v1",
         "grade": grade,
@@ -290,6 +300,7 @@ def codemap_quality(
             "entities_by_kind": dict(cm_summary.get("entities_by_kind") or {}),
             "relations_by_kind": dict(cm_summary.get("relations_by_kind") or {}),
         },
+        "trust": trust_summary,
         "integrity": "pass" if integrity_ok else "fail",
         "surfaces": surfaces,
         "unresolved": {
@@ -306,5 +317,7 @@ def codemap_quality(
             "unpaired_flag_sync": kq.get("unpaired_flag_sync") or ke.get("unpaired_flag_sync"),
             "reached_operations": kq.get("reached_operations") or ke.get("reached_operations"),
             "reached_buffers": kq.get("reached_buffers") or ke.get("reached_buffers"),
+            "tiling_data_binding_count": len(list((codemap.meta or {}).get("tiling_data_bindings") or [])),
+            "role_resolution_rate": role_rate,
         },
     }

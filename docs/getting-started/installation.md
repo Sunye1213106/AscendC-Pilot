@@ -2,13 +2,29 @@
 
 AscendC-Pilot 支持 Windows 和 Linux。
 
-基础运行需要 Python 3.10+。使用 UO 还需要 Clang 和 CANN Headers；使用 TG Host Replay 需要 Linux 或 WSL 中可用的 CANN 环境。
+基础运行需要 **Python 3.10+**。接入 OpenCode 还需要已安装的 **OpenCode 1.18**（V1 plugin API：`~/.config/opencode/plugins/*.ts` 自动加载）。使用 UO 还需要 Clang 和 CANN Headers；使用 TG Host Replay 需要 Linux 或 WSL 中可用的 CANN 环境。
+
+`pip install -r requirements.txt` 使用可编辑安装（`-e`），**必须保留本仓库 checkout**，不要装完就删。
 
 推荐按下面的顺序安装：
 
 ```text id="ejc5x7"
-AscendC-Pilot → Host Adapter → Clang → CANN Headers → TG Replay Environment
+OpenCode 1.18 → Python venv → AscendC-Pilot → Host Adapter → Clang → CANN Headers → TG Replay Environment
 ```
+
+## 0. 安装 OpenCode
+
+从 [opencode.ai](https://opencode.ai) 安装 **1.18.x**。当前插件导出的是 V1 `export default async (ctx) => hooks`，不是 V2 的 `Plugin.define({ id, setup })`。
+
+安装后确认：
+
+```bash
+opencode --version
+```
+
+配置目录默认为 `~/.config/opencode`（若设置了 `XDG_CONFIG_HOME`，则为 `$XDG_CONFIG_HOME/opencode`）。**运行本仓库的 install 脚本前，请完全退出 OpenCode**（不是只关聊天标签）。
+
+---
 
 ## 1. 安装 AscendC-Pilot
 
@@ -19,17 +35,38 @@ git clone https://github.com/Sunye1213106/AscendC-Pilot.git
 cd AscendC-Pilot
 ```
 
+建议使用虚拟环境（Linux / macOS 用 `python3`，Windows 用 `python`）：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
 安装全部 Python 依赖：
 
 ```bash id="zt9jdn"
 python -m pip install -r requirements.txt
 ```
 
-安装完成后检查（环境预检，不需要 `--architecture`，不创建算子 arch 树）：
+若 `python` 不存在，改用 `python3`。Windows 若禁止运行脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1 opencode
+```
+
+安装完成后检查 Python 包（不需要 `--architecture`，不创建算子 arch 树，**不要求已经提取 CANN**）：
 
 ```bash id="17r0qi"
-acp doctor
+python scripts/dev/check_install.py
+python -m ascendc_pilot doctor
 ```
+
+`acp doctor` 与 `python -m ascendc_pilot doctor` 等价；若 `Scripts` / `~/.local/bin` 不在 PATH 上，请用后者。缺 CANN / Clang 在这一步只是警告，不会让预检失败。
 
 如果需要查看 Python、Clang 等本机工具状态：
 
@@ -41,13 +78,13 @@ python scripts/dev/check_env.py
 
 ## 2. 接入 OpenCode、Cursor 或 Codex
 
-推荐使用 OpenCode。
+推荐使用 OpenCode 1.18。
 
 Python 环境已经安装完成后，可以通过 `SKIP_PIP=1` 只安装 Host 侧的 Agent、Skill 和 Plugin。
 
 ### OpenCode
 
-Windows：
+Windows（若 ExecutionPolicy 受限，见上面的 Bypass 调用）：
 
 ```powershell id="dz4d9i"
 $env:SKIP_PIP = "1"
@@ -61,21 +98,30 @@ Linux：
 SKIP_PIP=1 ./install.sh opencode
 ```
 
-重新打开 OpenCode 后，通过 **Tab** 切换到：
+脚本会：
+
+- 把 plugin 拷到 `~/.config/opencode/plugins/ascendc-pilot.ts`（不修改现有 `opencode.json`）
+- 把 Session Driver 库放在 `~/.config/opencode/ascendc-pilot-plugin/opencode-plugin/`（不要把 `pilot-driver.ts` 放进 `plugins/` 自动加载目录）
+- 写入 `ascendc-harness-bin`（`acp.exe` 的绝对路径；即使 `acp` 不在 PATH 也会从 Python `Scripts` 目录回退查找）
+- 安装 `/uo-*`、`/tg-*`、`/ce-*` slash command，Tab 主控为 **AscendC-Pilot**
+
+校验 Host 契约：
+
+```bash
+python -m ascendc_pilot doctor --host opencode
+```
+
+然后 **完全退出再打开 OpenCode**，通过 **Tab** 切换到：
 
 ```text id="fjpe4u"
 AscendC-Pilot
 ```
 
-安装会投影 plugin（含 Session Driver 工具 `pilot_run`）与 `cognitive-skills/`。改过 `opencode-plugin/` 或 Pilot 控制面后请重新跑一遍本安装，并执行：
+日常改 plugin / skill 后，Windows 可用仓库根目录的 `.\refresh-opencode.ps1`（默认跳过 pip、复用 engines 拷贝）。Linux 重新跑 `SKIP_PIP=1 ./install.sh opencode`。
 
-```bash
-acp doctor --host opencode
-```
+OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序与插件会把 `rg.exe` 种到 cache/data 两套目录。主控 `skill` 由插件**覆盖**原生工具：直接读 OpenCode skills 目录下的 `SKILL.md`，不 spawn rg。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。
 
-安装程序不会修改现有的 `opencode.json`。MCP 保持放行。
-
-OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序与插件会把 `rg.exe` 种到 cache/data 两套目录。主控 `skill` 由插件**覆盖**原生工具：直接读 `~/.config/opencode/skills/<name>/SKILL.md`，不 spawn rg。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。安装后请 **完全退出再打开 OpenCode** 再测。
+MCP 保持放行。
 
 ### Cursor
 
@@ -367,10 +413,11 @@ Host Replay driver、Host UT 构建和 testcase 执行由 TG workflow 在运行�
 
 ## 8. 验证安装
 
-基础运行环境：
+Python 包与 Host 契约（缺 CANN 只警告，不失败）：
 
 ```bash id="gz1vae"
-acp doctor
+python scripts/dev/check_install.py
+python -m ascendc_pilot doctor --host opencode
 ```
 
 Python 和本机工具：
@@ -379,7 +426,7 @@ Python 和本机工具：
 python scripts/dev/check_env.py
 ```
 
-CANN Headers：
+CANN Headers（UO 建库前再确认）：
 
 ```bash id="osxds5"
 python scripts/dev/check_cann.py
@@ -388,13 +435,15 @@ python scripts/dev/check_cann.py
 至少确认：
 
 ```text id="fq1w6r"
-acp             available
-clang           available
-clang.cindex    import OK
-cann_root       found
+acp / python -m ascendc_pilot   available
+plugin_ascendc_pilot_ts         ok
+plugin_pilot_driver_ts          ok
+clang                           available（UO）
+clang.cindex                    import OK（UO）
+cann_root                       found（UO）
 ```
 
-然后进入目标算子目录，在 OpenCode 中切换到 `AscendC-Pilot`，即可开始：
+然后进入目标算子目录，**完全退出再打开 OpenCode**，Tab 切换到 `AscendC-Pilot`，即可开始：
 
 ```text id="zk5j1w"
 /uo-init
@@ -421,9 +470,12 @@ python -m pip install -r requirements.txt
 OpenCode：
 
 ```text id="kp3isw"
-Windows:  .\install.ps1 opencode
-Linux:    ./install.sh opencode
+Windows:  .\refresh-opencode.ps1          （日常；改 plugin/skill）
+          .\install.ps1 opencode          （完整重装）
+Linux:    SKIP_PIP=1 ./install.sh opencode
 ```
+
+装完后完全退出再打开 OpenCode。
 
 Cursor：
 

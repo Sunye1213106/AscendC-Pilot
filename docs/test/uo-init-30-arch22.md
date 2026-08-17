@@ -156,7 +156,7 @@ discover 在同时有 arch35 时会优先 arch35，所以本轮用 `UO_GEN_CASES
 | 29 | mhc/mhc_post | 4.8 | 11.0 | 2.6 | 0.3 | 0.2 | 19.0 | pass | ready | 1/1 | 647 | 1229 | 32 | 12/12 | 自动 ready |
 | 30 | mhc/mhc_pre_sinkhorn_backward | 7.5 | 7.6 | 6.6 | 0.4 | 0.2 | 22.4 | pass | not_ready | 0/1 | 1199 | 2504 | 96 | 15/16 | 失败 |
 
-人话摘要：
+自然语言摘要：
 
 - 节点最多：`attention/incre_flash_attention`（17355 节点 / 41550 边；运算 5001；分析 101.3s）。
 - 合计最慢：同一个 IFA，160.7s。其次 `mc2/inplace_matmul_all_reduce_add_rms_norm` 109.1s。

@@ -16,7 +16,7 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 | Gate | 推进状态前的确定性 pass/fail 条件。 |
 | Harness | Pilot + authorize 钩子 + Lease 组成的软控制面；见 [Agent Runtime](../architecture/agent-runtime.md)。 |
 | Host adapter | OpenCode、Cursor、Codex 的 host-specific 投影：**安装期** compose + **运行时** Session Driver。 |
-| Host Session Driver | Host 侧传输角色：消费 `host_step`、派发 Task / AskQuestion、调用 `dispatch-result`；不写 canonical、不 advance。**不驱动** `uo-query`（主控可见路由）。 |
+| Host Session Driver | Host 侧传输角色：消费 `host_step`、派发 Task / AskQuestion、调用 `dispatch-result`；不写 canonical、不 advance。**不驱动** `uo-query`（由主控向用户说明查询方式）。 |
 | `host_step` | ACP drive 返回的结构化下一步：`dispatch_subagent` / `ask_human` / `done` / `failed` / `primary_router`（查询拒走 Driver）。 |
 | L0 | TG **计划目录**默认档：`tg/plan/levels/L0/`；CLI `--level` 省略时为此档。不是概念层 TilingKey 闭合。 |
 | L2 | TG **概念层** TilingKey closure（`D=(R∩D)∪E`）。要写入计划目录需显式 `--level L2`。 |

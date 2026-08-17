@@ -172,7 +172,9 @@ def _is_pilot_project_root(project_root: Path | None) -> bool:
 
 def _read_last_project_cache() -> Path | None:
     """OpenCode plugin cache of the last live Pilot operator root."""
-    cache = Path.home() / ".config" / "opencode" / "ascendc-last-project"
+    from ascendc_pilot.paths import opencode_home
+
+    cache = opencode_home() / "ascendc-last-project"
     try:
         if not cache.is_file():
             return None
@@ -191,7 +193,9 @@ def _read_pending_dispatch_project() -> Path | None:
     the stub path. ``ascendc-pending-dispatch.json`` is written with the live
     operator before Primary calls Task — that is the source of truth.
     """
-    cache = Path.home() / ".config" / "opencode" / "ascendc-pending-dispatch.json"
+    from ascendc_pilot.paths import opencode_home
+
+    cache = opencode_home() / "ascendc-pending-dispatch.json"
     try:
         if not cache.is_file():
             return None

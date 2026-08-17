@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
-import pytest
-
 from uo_init.harness import (
     build_harness_jobs,
     count_legal_instances,
     emit_instantiation,
     pairwise_coverage,
     parse_entry_signature,
-    parse_fold_dump,
     sample_instances,
     write_harness_dir,
 )
@@ -92,101 +89,3 @@ def test_dtype_orthogonal(fag_dir):
     for j in jobs:
         assert f"ORIG_DTYPE_QUERY {j.dtype}" in j.source
         assert "flash_attention_score_grad<" in j.source
-
-
-def test_parse_fold_controls_skips_null_arms():
-    from uo_init.harness import parse_fold_controls, mint_kernel_branches
-
-    dump = "\n".join(
-        [
-            "Dumping my_op:",
-            "`-FunctionDecl 0x3 'my_op' 'void (unsigned char *)' explicit_instantiation_definition",
-            "  |-TemplateArgument integral 1",
-            "  `-CompoundStmt 0x4",
-            "    |-IfStmt 0x5 <a.cpp:9:5> has_else constexpr",
-            "    | |-BinaryOperator 0x6 'bool' '=='",
-            "    | | |-DeclRefExpr 0x7 'int' lvalue Var 0x8 'flag' 'int'",
-            "    | | `-IntegerLiteral 0x9 'int' 0",
-            "    | `-<<<NULL>>>",
-            "    `-IfStmt 0xa <a.cpp:12:5>",
-            "      |-BinaryOperator 0xb 'bool' '>'",
-            "      | |-DeclRefExpr 0xc 'int' lvalue Var 0xd 'n' 'int'",
-            "      | `-IntegerLiteral 0xe 'int' 0",
-            "      `-CompoundStmt 0xf",
-        ]
-    )
-    ctrls = parse_fold_controls(dump, entry="my_op", file="a.cpp")
-    # discarded constexpr arm skipped; live if kept
-    assert len(ctrls) == 1
-    assert ctrls[0].kind == "if"
-    ids = mint_kernel_branches(ctrls, entry="my_op")
-    assert ids and ids[0].id.startswith("KBR_")
-    assert ids[0].file == "a.cpp"
-
-
-def test_parse_fold_dump_reads_specialisation():
-    dump = "\n".join(
-        [
-            "Dumping my_op:",
-            "FunctionTemplateDecl 0x1 <a.cpp:1:1> my_op",
-            "|-NonTypeTemplateParmDecl 0x2 <line:1:1> 'bool' depth 0 index 0",
-            "`-FunctionDecl 0x3 'my_op' 'void (unsigned char *)' explicit_instantiation_definition",
-            "  |-TemplateArgument integral 1",
-            "  |-TemplateArgument integral 0",
-            "  `-CompoundStmt 0x4",
-            "    `-IfStmt 0x5 <line:9:5> has_else constexpr",
-            "      |-ConstantExpr 0x6",
-            "      `-<<<NULL>>>",
-        ]
-    )
-    rep = parse_fold_dump(dump)
-    assert rep.instantiated
-    assert rep.template_args == ["1", "0"]
-    assert rep.constexpr_ifs == 1
-    assert rep.discarded_branches == 1
-
-
-def test_parse_fold_dump_ignores_declref_function_noise():
-    from uo_init.harness import parse_fold_controls
-
-    dump = "\n".join(
-        [
-            "Dumping my_op:",
-            "FunctionTemplateDecl 0x1 my_op",
-            "|-FunctionDecl 0x2 'my_op' 'void ()'",
-            "| `-CompoundStmt 0x3",
-            "|   `-DeclRefExpr 0x4 'bool ()' lvalue Function 0x99 'HELPER' 'bool ()'",
-            "`-FunctionDecl 0x5 'my_op' 'void ()' explicit_instantiation_definition",
-            "  |-TemplateArgument integral 7",
-            "  `-CompoundStmt 0x6",
-            "    `-IfStmt 0x7 <line:3:1>",
-            "      `-IntegerLiteral 0x8 'int' 1",
-        ]
-    )
-    rep = parse_fold_dump(dump)
-    assert rep.instantiated
-    assert rep.template_args == ["7"]
-    assert len(parse_fold_controls(dump, entry="my_op", file="a.cpp")) == 1
-
-
-def test_parse_fold_dump_detects_missing_instantiation():
-    rep = parse_fold_dump("Dumping x:\nFunctionTemplateDecl 0x1 x\n")
-    assert not rep.instantiated
-    assert rep.template_args == []
-
-
-@pytest.mark.requires_cann
-def test_instantiation_materialises_under_clang(fag_dir, build_ctx, clang_exe, tmp_path):
-    """The emitted TU really instantiates: clang reports all 19 template args."""
-    from uo_init.harness import fold_report
-
-    sch = parse_file(_key(fag_dir))
-    sig = parse_entry_signature(_apt(fag_dir), "flash_attention_score_grad")
-    inst = sample_instances(sch, strategy="pairwise")[0]
-    p = tmp_path / "h.cpp"
-    p.write_text(emit_instantiation(sch, inst, signature=sig), encoding="utf-8")
-
-    rep = fold_report(p, build_ctx, clang_exe=clang_exe, entry="flash_attention_score_grad")
-    assert rep.instantiated
-    assert len(rep.template_args) == 19
-    assert rep.template_args[0] == str(int(inst["IsEmptyTensor"]))

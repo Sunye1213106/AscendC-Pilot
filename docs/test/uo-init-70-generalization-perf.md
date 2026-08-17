@@ -226,7 +226,7 @@ arch 分布：arch35 共 68 个，arch22 共 2 个（`mc2/attention_to_ffn`、`m
 | 69 | posembedding/inplace_partial_rotary_mul | arch35 | 8.8 | 10.4 | 15.7 | 1.0 | 0.9 | 36.9 | pass | ready | 18/18 | 5261 | 12469 | 427 | 63/61 | 通过 |
 | 70 | posembedding/inplace_partial_rotary_mul_grad | arch35 | 8.1 | 11.9 | 8.8 | 0.4 | 0.3 | 29.6 | pass | ready | 7/7 | 1556 | 3054 | 75 | 38/38 | 通过 |
 
-人话摘要：
+自然语言摘要：
 
 - 节点最多：`attention/fused_infer_attention_score`（37497 节点 / 58250 边；运算 7928；图上 EnQue 106、DataCopy 219、SetFlag 322，均带行号）。上轮同一算子 34782 节点 / 55426 边。
 - 节点次多：`attention/prompt_flash_attention`（32408 节点 / 55527 边；运算 6011；packing 11/11）。

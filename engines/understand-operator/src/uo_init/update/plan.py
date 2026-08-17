@@ -14,7 +14,7 @@ from uo_init.yaml_io import read_yaml, write_yaml
 
 # Layers map onto uo_init.pilot_engines actions. Persistence is compile/commit
 # of the arch-scoped ``.uo`` product — never sqlite export_kb / build_index.
-ALL_LAYERS = ("host", "tilingkey", "registry", "kernel", "normalize", "compile", "commit")
+ALL_LAYERS = ("host", "kernel", "compile", "commit")
 
 
 def plan_kb_update(
@@ -47,8 +47,7 @@ def plan_kb_update(
             layers.update(mapped)
             reasons.append(f"{item.get('path')}: role={role} -> {sorted(mapped)}")
 
-    if layers & {"host", "tilingkey", "kernel"}:
-        layers.add("normalize")
+    if layers & {"host", "kernel"}:
         layers.add("compile")
         layers.add("commit")
 
@@ -112,34 +111,26 @@ def plan_kb_update(
 
 def _layers_for_role(role: str, path: str) -> set[str]:
     if role in {"tilingkey"} or "template_tiling_key" in path:
-        return {"tilingkey", "normalize", "compile", "commit"}
+        return {"host", "compile", "commit"}
     if role in {"kernel"}:
-        return {"kernel", "normalize", "compile", "commit"}
+        return {"kernel", "compile", "commit"}
     if role in {"host", "tiling"}:
-        return {"host", "tilingkey", "registry", "normalize", "compile", "commit"}
+        return {"host", "compile", "commit"}
     if role in {"golden"}:
         return {"compile", "commit"}
     if role in {"api", "input_output", "proto"}:
-        return {"host", "registry", "normalize", "compile", "commit"}
+        return {"host", "compile", "commit"}
     if role in {"common", "headers"}:
         return set(ALL_LAYERS)
     if role in {"other", ""}:
-        return {"host", "tilingkey", "kernel", "normalize", "compile", "commit"}
+        return {"host", "kernel", "compile", "commit"}
     return set()
 
 
 def _actions_for_layers(layers: set[str]) -> list[str]:
     ordered: list[str] = []
-    if "host" in layers:
+    if "host" in layers or "kernel" in layers:
         ordered.append("extract_host")
-    if "tilingkey" in layers and "extract_host" not in ordered:
-        ordered.append("extract_host")
-    if "registry" in layers:
-        ordered.append("extract_registry")
-    if "kernel" in layers:
-        ordered.append("extract_kernel")
-    if "normalize" in layers:
-        ordered.extend(["normalize_variables", "normalize_predicates"])
     if "compile" in layers or "commit" in layers or layers:
         ordered.extend(["compile", "commit"])
     # de-dupe preserve order

@@ -32,7 +32,7 @@ LLM summary 不得成为下一轮静态事实的隐式输入
 candidate → evidence → review → accepted fact
 ```
 
-不得悄悄写回 authority，也不得用 digest 冒充实抽取结果。
+不得悄悄写回 authority，也不得用 digest 当作实抽取结果。
 
 ## 与完整性的关系
 

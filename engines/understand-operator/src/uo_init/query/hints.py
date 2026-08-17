@@ -9,7 +9,7 @@ from typing import Any, Iterable
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _REGEX_MARKERS_RE = re.compile(r"(\\\||\||\.\*)")
 _PIPE_EMPTY_RE = re.compile(
-    r"(PRE_CORE_POST|三相|pipeIn|pipeBase|pipePost|\bPIPE\b|Pre/Main/Post|\bPre\b|\bPost\b)",
+    r"(PRE_CORE_POST|三相|\bPIPE\b|\bTPipe\b|Pre/Main/Post|\bPre\b|\bPost\b)",
     re.I,
 )
 
@@ -70,24 +70,28 @@ def attach_query_hints(
     if pipe_empty:
         payload["empty_reason"] = payload.get("empty_reason") or "no_substring_match"
         payload["hint"] = (
-            "Use acp uo-query --mode kernel_launch "
-            "(pipeIn → pipeBase → pipePost + arch entry / *_entry*.h). "
-            "PRE_CORE_POST is not a graph token."
+            "Omit the identifier and call acp uo-query --project <operator-abs> "
+            "for the operator index (launch phases). PRE_CORE_POST is not a graph token."
         )
-        payload["suggested_retries"] = ["pipeIn", "pipeBase", "pipePost", "kernel_launch"]
+        payload["suggested_retries"] = [
+            "TPipe",
+            "InitBuffer",
+            "PopStackBuffer",
+            "InitShareBufStart",
+        ]
     elif regex:
         payload.setdefault("empty_reason", "pattern_looks_like_regex")
         payload["hint"] = (
             "Graph search is not regex; query one identifier. "
-            "For Dim=V use template_match or legal_key."
+            "For template coverage use Dim=V[,Other=V]."
         )
         payload["suggested_retries"] = tokens[:4]
         payload["pattern_tokens"] = tokens
     elif count == 0 and multi:
         payload["empty_reason"] = "no_substring_match"
         payload["hint"] = (
-            "Retry one shorter identifier; macros → template_match; "
-            "combos → legal_key Dim=V,Other=V."
+            "Retry one shorter identifier, or Dim=V for template coverage, "
+            "or --file --line from a previous card."
         )
         payload["suggested_retries"] = tokens[:4]
         payload["pattern_tokens"] = tokens
@@ -95,14 +99,14 @@ def attach_query_hints(
         payload["empty_reason"] = payload.get("empty_reason") or "no_substring_match"
         payload.setdefault(
             "hint",
-            "Retry a shorter name; macros → template_match; "
-            "combos → legal_key Dim=V,Other=V. "
+            "Retry a shorter identifier, or Dim=V for template coverage, "
+            "or --file --line from a previous card. "
             "Empty is not proof the symbol is absent.",
         )
         if tokens:
             payload["suggested_retries"] = tokens[:4]
     if indexed is False:
-        extra = "legal_key prefers Dim=V,Other=V; free-text is unindexed."
+        extra = "Template coverage prefers Dim=V[,Other=V]; free-text is unindexed."
         prev = str(payload.get("hint") or "").strip()
         payload["hint"] = f"{prev} {extra}".strip() if prev else extra
     return payload

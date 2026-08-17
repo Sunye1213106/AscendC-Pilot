@@ -1,8 +1,8 @@
 # 工作流流程图
 
-阶段与 Action 的精确表见 [Workflow Reference](../reference/workflows.generated.md)。本页只画**人能跟着走的主路径**：谁先跑、哪里要人点、产物交给谁。
+阶段与 Action 的精确表见 [Workflow Reference](../reference/workflows.generated.md)。本页只画**用户可跟随的主路径**：谁先跑、何处需要确认、产物交给谁。
 
-执行方标记：`[D]` 确定性 Engine，`[S]` 子代理，`[H]` 主控人话确认。
+执行方标记：`[D]` 确定性 Engine，`[S]` 子代理，`[H]` 主控向用户确认。
 
 ---
 
@@ -23,7 +23,7 @@
         ├── /ce-review                              只读检视
         ├── /ce-intent                              无 diff：问清并定位改点
         ├── /ce-apply                               按锚点改码 + 审查 + 刷图
-        ├── /ce-handoff                             会话交接（下一跳 slash）
+        ├── /ce-handoff                             会话交接（后续 slash 命令）
         └── /ce-impact ──► /ce-verify               有 diff：影响 + 证书
 ```
 
@@ -33,7 +33,7 @@
 
 ## 启动（所有 workflow 共用）
 
-`/uo-query` **不是** Host Session Driver 工作流：主控在当前会话做可见 LLM 路由（自查或派几个 `uo-query` 子代理），**禁止** `pilot_run` / `acp start uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
+`/uo-query` **不是** Host Session Driver 工作流：主控在当前会话向用户说明查询方式（自行查询或派几个 `uo-query` 子代理），**禁止** `pilot_run` / `acp start uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
 
 ```text
 用户意图（自然语言或 /slash）
@@ -41,10 +41,11 @@
         ├── /uo-query 或只读提问
         │         │
         │         ▼
-        │   主控对人说出路由（短问自查 / 1 路 / N 路并行）
+        │   主控向用户说明将直接调用还是委派
         │         │
-        │         ├── 自查：当前会话 `acp uo-query --mode`
-        │         └── 深问：同一轮 Task(agent=uo-query) × N → 主控综合
+        │         ├── 简单查询：当前会话 `acp uo-query`
+        │         └── 复杂查询：同一轮 Task(agent=uo-query) × N → 主控综合
+        │                   图上缺口自动第 2 轮；方向选择则 AskQuestion 选项
         │
         ▼
   Host 工具 pilot_run(workflow, project, architecture?)
@@ -107,7 +108,7 @@ commit  [D]  写入 <op>.<arch>.uo
 verify  [D]  结构合法性 → uo/checks/integrity.yaml + quality.yaml
     │
     ▼
-done        Primary 读 quality.yaml，对人总结节点/关系/未闭合及原因
+done        Primary 读 quality.yaml，向用户报告节点/关系/未闭合及原因
 ```
 
 Rework（失败才走，不画进主链）：extract→prepare；analyze→extract；commit→analyze；verify→analyze / commit / prepare。
@@ -130,31 +131,30 @@ export [D]  完整性校验  ──gate: integrity
 diff   [D]  差异摘要
     │
     ▼
-done        Primary 读 quality.yaml，对人总结刷新后的节点/关系/未闭合
+done        Primary 读 quality.yaml，向用户报告刷新后的节点/关系/未闭合
 ```
 
 `intent=diff_only` 可 detect → diff，跳过中间更新链。
 
 ### `/uo-query` — 只读提问（可见 LLM 路由）
 
-查询**没有** Host Session Driver 传输环（`host_driver=False` ≠ 没有 method bundle）。分类是主控的推理，必须写在对用户的消息里（不能只藏在思考里），再动手。不要为空转「问题路由」开子代理。
+查询**没有** Host Session Driver 传输环（`host_driver=False` ≠ 没有 method bundle）。分类是主控的推理，必须写在对用户的消息里（不能只藏在思考里），再执行。禁止仅为问题分类而委派子代理。
 
 ```text
 用户问题
-  └── 主控可见路由（当前会话说出来）
-        ├── 短问：一名字 / 一 mode / 一两跳
-        │         → 主控自己 acp uo-query --mode，stdout 对人说
-        ├── 深问单域：一个独立证据空间、要沿图走
-        │         → 一个 Task(agent=uo-query)，点卡片看思考
-        └── 深问多域：多个独立证据空间 / 多个结案条件
-                  → 若 host_step.tasks ≥2：原样并行派发（编译器权威）
-                  → 否则主控按独立证据空间启发式拆；相关不等于单域
-                  → 每个 Task 写 FIRST_QUERY（本片唯一先查 mode）
+  └── 主控向用户说明查询方式（写在当前会话消息中）
+        ├── 简单查询：主控直接调用 acp uo-query
+        │         → stdout 向用户陈述
+        ├── 复杂查询、一个独立查询目标
+        │         → 一个 Task(agent=uo-query)
+        └── 复杂查询、多个独立查询目标
+                  → 同一轮并行 1～5 路 Task
+                  → 每个 Task 写 FOCUS 与建议的首次调用
                   → 主控按各子代全文综合，禁止发明没引用的事实
-                  → 未闭合再开一轮 Task；禁止把深问改成主控自查
+                  → 未闭合再开一轮 Task
 ```
 
-`host_step.tasks` ≥2 时 Host fanout 为权威。子代不写 `answer.yaml`、不自己 finalize。深问走 prepare `kb_lookup` → Task → Primary 综合 → Runtime `kb_lookup --finalize`。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。Delegated Task 的正文即全部，不要 hunt session `prompt.md`；直接用插件 `acp` 工具（`command=uo-query --project …`），不要 bash。
+子代不写 `answer.yaml`、不自己 finalize。复杂查询直接委派 Task，主控综合。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。Delegated Task 的正文即全部，不要另行查找 session `prompt.md`；直接用插件 `acp` 工具（`command=uo-query --project …`），不要 bash。
 
 ### `/uo-investigate` — 查 unresolved
 
@@ -185,10 +185,10 @@ contract  [D]  覆盖合同骨架
 bind      [D]  Host 视图绑定      ──gate: tilingkey_binding_ready
     │
     ▼
-gate      [D] 完整性 + [S tg-init-audit]
+gate      [D] 完整性 + init_audit
     │                              ──gate: audit_pass
     ▼
-confirm   [H]  人话确认是否进入规划  ──gate: init_confirmed
+confirm   [H]  向用户确认是否进入规划  ──gate: init_confirmed
 ```
 
 ### `/tg-plan` — 规划测试义务
@@ -256,8 +256,9 @@ intent / impact / verify 走变更闭环；`/ce-apply` 在 confirm 之后改码�
 ### `/ce-review` — 只读检视
 
 ```text
-scope / review / summary  [S ce-reviewer]  同一 Action `code_review`
-                          判定 quick / file / PR；假设检验；证据要 path:line
+scope / review [S ce-reviewer] → summary [H] 只看结论 | 落盘报告
+                          scope 判定 quick / file / PR
+                          review 并行 Spec ∥ Standards 两个 Task（隔离上下文）
                           ──gate: kb_ready, context_pack
 ```
 
@@ -282,34 +283,34 @@ review    [S ce-change-referee] + [D] feature_promote
 locate    [D]  锚点 + 场景推断
     │
     ▼
-confirm   [H]  人工确认
+confirm   [H]  人工确认 → 写入 ce/intent/plan.md
 ```
 
 ### `/ce-apply` — 按已锁定 spec 改码
 
 ```text
-gate      [D]  intent confirmed + anchors
+gate      [D]  intent confirmed + anchors + plan.md/todo.md
     │
     ▼
-patch     [S ce-applier]  只改锚点覆盖的 source:
+patch     [S ce-applier]  对齐 plan.md，一次一个 todo 切片
     │
     ▼
 capture   [D]  change_capture + patch_guard
     │
     ▼
-review    [S ce-reviewer]  Spec / Standards 两轴
+review    [S ce-reviewer ×2]  Spec ∥ Standards 并行
     │
     ▼
 refresh   [D]  复用 uo-update 引擎（禁止 LLM 写 .uo）
     │
     ▼
-report    [H]  改了哪些 path:line + review 结论
+report    [H]  path:line 结论；可选落盘审查报告
 ```
 
 ### `/ce-handoff` — 会话交接
 
 ```text
-session   [S ce-analyst]  写 ce/session_handoff.md（只引用路径，下一跳 slash）
+session   [S ce-analyst]  写 ce/session_handoff.md（只引用路径，后续 slash 命令）
 ```
 
 ### `/ce-impact` — 有 diff，影响切片
@@ -331,7 +332,8 @@ scenarios   [D] 推断场景骨架（默认只跑 `scenario_infer`）
             overlay `scenario_targeted` 才走
             [S ce-analyst] knobs → [D] apply → [H] 确认
     ▼
-obligations [D]  验证义务           ──gate: obligations_classified
+obligations [D]  验证义务 + 写出 tg_plan_intent.yaml（给 /tg-plan，不自动开跑）
+            ──gate: obligations_classified
     │
     ▼
 audit       [S ce-change-referee]  ──gate: impact_ledger_ready
@@ -352,8 +354,7 @@ coverage [D]  桥接 TG 覆盖证据
 residual [D]  剩余义务
     │
     ▼
-external [D]  harness 证据
-    │         [S ce-reviewer] 检查
+external [D]  harness 证据 + 闭清单核对
     │         [D] 外部摄取
     │         [S ce-change-referee] 排除审查
     ▼

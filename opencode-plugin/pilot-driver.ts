@@ -13,8 +13,8 @@
 
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
 import { resolve } from "node:path"
+import { openCodeHome, resolveAcpBin } from "./opencode-home.mjs"
 import {
   createToolRowProgressReporter,
   formatPilotElapsed,
@@ -23,21 +23,6 @@ import {
 } from "./pilot-progress.mjs"
 
 export { formatPilotElapsed, renderPilotProgressBar, withProgressArg }
-
-function resolveAcpBin(): string {
-  const fromEnv = String(process.env.ASCENDC_HARNESS_BIN || "").trim()
-  if (fromEnv && existsSync(fromEnv)) return fromEnv
-  try {
-    const cached = readFileSync(
-      resolve(homedir(), ".config", "opencode", "ascendc-harness-bin"),
-      "utf-8",
-    ).trim()
-    if (cached && existsSync(cached)) return cached
-  } catch {
-    /* ignore */
-  }
-  return "acp"
-}
 
 /** Test helper: parse ACP machine JSON from stdout, ignoring stderr heartbeats. */
 export function parseAcpStdoutJson(
@@ -746,12 +731,12 @@ export type PendingDispatch = {
 }
 
 export function pendingDispatchPath(): string {
-  return resolve(homedir(), ".config", "opencode", "ascendc-pending-dispatch.json")
+  return resolve(openCodeHome(), "ascendc-pending-dispatch.json")
 }
 
 export function rememberPendingDispatch(entry: PendingDispatch): void {
   try {
-    mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
+    mkdirSync(openCodeHome(), { recursive: true })
     writeFileSync(pendingDispatchPath(), JSON.stringify(entry), "utf-8")
   } catch {
     /* ignore */
@@ -824,7 +809,7 @@ export function extractKbAnswer(text: string): string {
 }
 
 function authIpcDir(): string {
-  return resolve(homedir(), ".config", "opencode", "ascendc-auth-ipc")
+  return resolve(openCodeHome(), "ascendc-auth-ipc")
 }
 
 /** Best-effort register-session via authorize daemon IPC (same dir as plugin). */
@@ -868,7 +853,7 @@ function registerSessionDisk(args: {
   runId?: string
 }): void {
   try {
-    const dir = resolve(homedir(), ".config", "opencode", "ascendc-sessions")
+    const dir = resolve(openCodeHome(), "ascendc-sessions")
     mkdirSync(dir, { recursive: true })
     writeFileSync(
       resolve(dir, `${args.sessionId.replace(/[^\w.-]/g, "_")}.json`),
@@ -1448,8 +1433,8 @@ export async function runPilotDriver(
   // force_new / 删除重开 applies only to this start, not continue_goal's next workflow.
   let applyForceNew = Boolean(args.forceNew)
   try {
-    const cache = resolve(homedir(), ".config", "opencode", "ascendc-last-project")
-    mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
+    const cache = resolve(openCodeHome(), "ascendc-last-project")
+    mkdirSync(openCodeHome(), { recursive: true })
     const looksLikeOperator =
       existsSync(resolve(project, ".ascendc-pilot")) ||
       existsSync(resolve(project, "op_kernel")) ||

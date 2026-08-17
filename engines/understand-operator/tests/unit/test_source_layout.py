@@ -9,7 +9,9 @@ from uo_init.kernel_tiling_view import _default_tiling_type, render_stub
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
     KERNEL_ENTRY_NAME_RE,
+    arch_number,
     entry_include_architecture,
+    is_other_arch_path,
     path_owned_architecture,
     selected_host_files,
     selected_kernel_files,
@@ -287,4 +289,17 @@ def test_path_owned_architecture_wins_over_shared_arch35_include(tmp_path: Path)
     )
     assert path_owned_architecture(cpp) == "arch22"
     assert entry_include_architecture(cpp.read_text(encoding="utf-8")) == "arch35"
+
+
+def test_hyphenated_arch_920r1_is_a_distinct_owned_path(tmp_path: Path) -> None:
+    own = tmp_path / "op_kernel" / "arch-920r1" / "widget.cpp"
+    foreign = tmp_path / "op_kernel" / "arch35" / "old.cpp"
+    _write(own, '#include "tiling.h"\n__global__ __aicore__ void widget() {}\n')
+    _write(foreign, "struct Old {};\n")
+    assert path_owned_architecture(own) == "arch-920r1"
+    assert is_other_arch_path(foreign, "arch-920r1") is True
+    assert is_other_arch_path(own, "arch-920r1") is False
+    assert arch_number("arch-920r1") == 920
+    assert arch_number("arch35") == 35
+    assert entry_include_architecture('#include "arch-920r1/tiling.h"\n') == "arch-920r1"
 

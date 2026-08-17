@@ -15,12 +15,14 @@ read_scopes:
 - pilot:tg/**
 - pilot:runs/**
 - pilot:context/**
+- source:op_host/**
+- source:op_kernel/**
+- source:common/**
 - method:skills/code-review/**
 - method:skills/code-engineering/**
 write_scopes:
 - pilot:ce/review/**
 - pilot:ce/verify/code_review.yaml
-- pilot:ce/verify/harness_evidence_check.yaml
 - pilot:runs/**/actions/code_review/**
 machine_constraints:
 - modify_pilot_state

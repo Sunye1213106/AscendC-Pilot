@@ -18,6 +18,18 @@ from typing import Any, Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.ir.tiling_binding import (
+    KEY_CHAIN_CONSUMER,
+    KEY_CHAIN_DISPATCH,
+    kernels_for_use_site,
+    link_tiling_data_binding,
+    summarize_tiling_data_bindings,
+)
+from uo_init.ir.type_identity import (
+    clang_type_short_counts,
+    iter_unique_field_decls,
+    named_type_is_unique,
+)
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
     _path_is_under,
@@ -40,7 +52,6 @@ _ALIAS_ATTR_RE = re.compile(
     r"\b(?:auto|const\s+auto|[A-Za-z_:<>\s\*&]+)\s+([A-Za-z_]\w*)\s*=.{0,420}?AttrIndex::([A-Za-z_]\w*)",
     re.S,
 )
-_SETTER_RE = re.compile(r"(?:\.|->)set_([A-Za-z_]\w*)\s*\((.*?)\)\s*;", re.S)
 _GET_TILING_RE = re.compile(
     r"GET_TILING_DATA_WITH_STRUCT\s*\(\s*([A-Za-z_:]\w*(?:::\w+)*)\s*,",
     re.S,
@@ -51,10 +62,15 @@ _GET_TILING_MEMBER_RE = re.compile(
 )
 _GET_TILING_BARE_CALL_RE = re.compile(r"\bGET_TILING_DATA\s*\(")
 # Kernel TUs that skip GET_TILING_DATA* still consume the registered POD via
-# ``reinterpret_cast<TilingData*>(tiling)`` / C-style cast.
+# ``reinterpret_cast<T*>(tiling)`` / C-style cast / GetRawTilingData.
 _CAST_TILING_DATA_RE = re.compile(
     r"(?:reinterpret_cast|static_cast)\s*<\s*[^>]*?\b([A-Za-z_]\w*TilingData)\b[^>]*>"
-    r"|\(\s*(?:const\s+)?(?:__\w+__\s+)*([A-Za-z_]\w*TilingData)\s*\*",
+    r"|\(\s*(?:const\s+)?(?:__\w+__\s+)*([A-Za-z_]\w*TilingData)\s*\*"
+)
+_CAST_TILING_USE_SITE_RE = re.compile(
+    r"(?:reinterpret_cast|static_cast)\s*<\s*(?:const\s+)?(?:struct\s+|class\s+)?"
+    r"([A-Za-z_:]\w*)\s*\*\s*>\s*\(\s*"
+    r"(?:[^;]{0,120}?\b(?:GetRawTilingData|tiling_data|tilingData|rawTiling|tiling)\b)"
 )
 _API_HEAD_RE = re.compile(
     r"\.(?P<op>INPUT|OPTIONAL_INPUT|DYNAMIC_INPUT|OUTPUT|DYNAMIC_OUTPUT|ATTR|REQUIRED_ATTR)\s*\("
@@ -102,9 +118,6 @@ _PACKING_CAST_WORDS = {
     "true",
     "false",
 }
-_AICORE_FN_RE = re.compile(
-    r"(?:inline\s+)?__aicore__\s+(?:inline\s+)?(?:void|[A-Za-z_]\w*)\s+([A-Za-z_]\w*)\s*\("
-)
 _MEMBER_PACK_ARG_RE = re.compile(
     r"^[A-Za-z_]\w*(?:\s*(?:\.|->)\s*[A-Za-z_]\w*)+$"
 )
@@ -124,13 +137,13 @@ _CLASS_RE = re.compile(
     re.S,
 )
 _MEMBER_RE = re.compile(
-    r"^\s*(?P<type>[A-Za-z_][\w:\s<>,*&]*?)\s+"
+    # ``!isNewDeter && isTnd`` is a real std::conditional predicate (FAG TndParam).
+    r"^\s*(?P<type>[A-Za-z_][\w:\s<>,*&!]*?)\s+"
     r"(?P<name>[A-Za-z_]\w*)\s*"
     r"(?P<arrays>(?:\[[^\]]+\]\s*)*)"
     r"(?:(?:=\s*(?P<init>[^;]+))|(?P<brace>\{[^;]*\}))?"
     r";\s*$"
 )
-_NON_TILING_TYPE_SUFFIXES = ("Helper", "Utils", "Util", "Traits", "Policy")
 
 
 def enrich_codemap_from_operator_source(
@@ -138,6 +151,8 @@ def enrich_codemap_from_operator_source(
     operator_root: str | Path,
     *,
     architecture: str = "",
+    host_ir: Any = None,
+    kernel_ir: Any = None,
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     if not root.is_dir():
@@ -150,14 +165,14 @@ def enrich_codemap_from_operator_source(
     _link_api_to_historical_variables(codemap, root, enum_maps)
 
     stats.update(_parse_tiling_keys(codemap, root, architecture))
-    stats.update(_parse_tiling_data(codemap, root, architecture))
-    _link_host_setters(codemap, root, architecture)
+    stats.update(_parse_tiling_data(codemap, root, architecture, host_ir=host_ir, kernel_ir=kernel_ir))
 
-    stats.update(_parse_kernel_contract(codemap, root, architecture, api))
-    _link_tiling_data_reads(codemap, root, architecture)
+    stats.update(_parse_kernel_contract(codemap, root, architecture, api, kernel_ir=kernel_ir))
+    _link_tiling_data_reads(codemap, root, architecture, host_ir=host_ir, kernel_ir=kernel_ir)
     _link_tiling_key_kernel_selects(codemap, root, architecture)
     _link_nested_tiling_data_types(codemap)
     reconcile_source_declared_tiling_keys(codemap)
+    codemap.meta["tiling_data_bindings"] = summarize_tiling_data_bindings(codemap)
 
     codemap.meta["source_contract"] = "ascendc-source-contract/v2"
     codemap.meta["source_contract_architecture"] = architecture
@@ -948,6 +963,18 @@ _NOT_TILING_KEY_IDENTS = {
     "SetTilingKey",
     "set_tiling_key",
 }
+_GENERIC_TILING_OBJECTS = {
+    "tiling",
+    "tilingData",
+    "tiling_data",
+    "tilingKey",
+    "tiling_key",
+    "tilingKey_",
+    "tiling_key_",
+    "td",
+    "rawTiling",
+    "raw_tiling",
+}
 
 
 def _normalize_tiling_key_is_token(raw: str) -> str:
@@ -965,7 +992,7 @@ def _is_include_guard_ident(name: str) -> bool:
 
 
 def _looks_like_tiling_key_ident(name: str) -> bool:
-    """Reject include guards and generic ``tiling`` objects leaked from 3rd-party headers."""
+    """Name-spelling score only. Not identity. Sinks use ``_is_tiling_key_sink_token``."""
     token = str(name or "")
     if not token or token in _NOT_TILING_KEY_IDENTS or _is_include_guard_ident(token):
         return False
@@ -974,6 +1001,25 @@ def _looks_like_tiling_key_ident(name: str) -> bool:
         return True
     upper = token.upper()
     return "TILING_KEY" in upper or upper.endswith("TILINGKEY")
+
+
+def _is_tiling_key_sink_token(name: str) -> bool:
+    """Identity from SetTilingKey / TILING_KEY_IS / GET_TILING_KEY arguments.
+
+    Catalog macros need not contain ``TILING_KEY``. Generic tiling objects
+    (the POD pointer, packed ``tilingKey_``) are not keys.
+    """
+    token = str(name or "")
+    if not _is_tiling_key_is_catalog_token(token):
+        return False
+    if token in _GENERIC_TILING_OBJECTS:
+        return False
+    if _looks_like_tiling_key_ident(token):
+        return True
+    norm = _normalize_tiling_key_is_token(token)
+    if re.fullmatch(r"(?:0[xX][0-9A-Fa-f]+|\d+)", norm):
+        return True
+    return bool(re.fullmatch(r"[A-Z][A-Z0-9]*(_[A-Z0-9]+)+", token))
 
 
 def _is_tiling_key_is_catalog_token(name: str) -> bool:
@@ -1106,7 +1152,7 @@ def _packing_dim_name(expr: str, index: int) -> str:
     idents = [tok for tok in re.findall(r"[A-Za-z_]\w*", expr) if tok not in _PACKING_CAST_WORDS]
     if len(idents) == 1:
         return idents[0]
-    return f"pack_arg_{index}"
+    return ""
 
 
 _BITPACK_ACC = r"(?:tilingKey_|tiling_key_|tilingKey)"
@@ -1561,16 +1607,22 @@ def _parse_packing_helper_keys(
             continue
         for start, _end, args, _name in iter_packing_helper_calls(text):
             names: list[str] = []
+            named_exprs: list[str] = []
             used: set[str] = set()
             for index, expr in enumerate(args):
                 name = _packing_dim_name(expr, index)
+                if not name or name.startswith("pack_arg_"):
+                    continue
                 if name in used:
                     name = f"{name}_{index}"
                 used.add(name)
                 names.append(name)
+                named_exprs.append(expr)
+            if not names:
+                continue
             if schema is None or len(names) > len(schema):
                 schema = names
-                schema_args = list(args)
+                schema_args = named_exprs
                 site = (path, _line_of(text, start))
     if not schema or site is None:
         return []
@@ -1655,7 +1707,10 @@ def _parse_fallback_tiling_keys(
                     name = _normalize_tiling_key_is_token(m.group(1))
                     if name in seen:
                         continue
-                    if not _looks_like_tiling_key_ident(name):
+                    if regex is _SET_TILING_KEY_IDENT_RE:
+                        if not _is_tiling_key_sink_token(name):
+                            continue
+                    elif not _is_tiling_key_is_catalog_token(name):
                         continue
                     seen.add(name)
                     value = None
@@ -1699,6 +1754,8 @@ def _parse_fallback_tiling_keys(
             "provenance": prov,
             "decl_order": len(declared) - 1,
             "decl_kind": "uint",
+            "candidate_score": 2 if _looks_like_tiling_key_ident(name) else 1,
+            "key_chain_role": KEY_CHAIN_DISPATCH if prov == "source_tiling_key_is" else KEY_CHAIN_CONSUMER,
         }
         if value is None and re.fullmatch(r"\d+", name):
             value = int(name)
@@ -1762,11 +1819,6 @@ def _class_members(body: str, body_start_line: int) -> Iterable[tuple[str, str, 
         depth = max(0, depth)
 
 
-def _is_tiling_layout_type_name(name: str) -> bool:
-    """Reject helper/policy classes that sit beside packing structs."""
-    return bool(name) and not name.endswith(_NON_TILING_TYPE_SUFFIXES)
-
-
 def wanted_tiling_data_names(codemap: CodeMap, root: Path, architecture: str) -> set[str]:
     """TilingData types from registration / GET_TILING_DATA contracts."""
     names = {e.name.split("::")[-1] for e in codemap.by_kind(EntityKind.TILING_DATA) if e.name}
@@ -1787,6 +1839,10 @@ def _cast_tiling_data_names(text: str) -> set[str]:
         name = match.group(1) or match.group(2)
         if name:
             out.add(name.split("::")[-1])
+    for match in _CAST_TILING_USE_SITE_RE.finditer(text or ""):
+        name = (match.group(1) or "").split("::")[-1]
+        if name and name not in _PRIMITIVE_TYPES:
+            out.add(name)
     return out
 
 
@@ -1841,7 +1897,14 @@ def _resolve_tiling_aliases(text: str, known_classes: set[str]) -> dict[str, str
     return out
 
 
-def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[str, Any]:
+def _parse_tiling_data(
+    codemap: CodeMap,
+    root: Path,
+    architecture: str,
+    *,
+    host_ir: Any = None,
+    kernel_ir: Any = None,
+) -> dict[str, Any]:
     class_count = 0
     field_count = 0
     files = list(_kernel_candidates(root, architecture))
@@ -1877,23 +1940,7 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
         except OSError:
             continue
     wanted = wanted_tiling_data_names(codemap, root, architecture)
-    # Generic AscendC packing layout: current-arch *tiling_data* headers declare
-    # the ABI structs. Entry TUs may only REGISTER an alias or a subset type;
-    # nested members still need owners for kernel reads / host setters.
-    for path in selected_tiling_headers(root, architecture):
-        name = path.name.lower()
-        if "tiling_data" not in name and "tilingdata" not in name:
-            continue
-        try:
-            text = _read(path)
-        except OSError:
-            continue
-        for match in _CLASS_RE.finditer(text):
-            if re.search(r"\benum\s+$", text[: match.start()]):
-                continue
-            type_name = match.group(1)
-            if _is_tiling_layout_type_name(type_name):
-                wanted.add(type_name)
+    clang_fields = {(o, m) for o, m, *_ in iter_unique_field_decls(host_ir, kernel_ir)}
     # Collapse ``using Alias = ConcreteType<...>`` onto the class index name.
     for alias, concrete in aliases.items():
         if alias in wanted:
@@ -1935,6 +1982,16 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
         body = text[open_pos + 1 : close_pos]
         body_line = _line_of(text, open_pos + 1)
         for cpp_type, field_name, field_line in _class_members(body, body_line):
+            nested_hits = _referenced_type_names(cpp_type, known_classes)
+            nested = _cpp_type_name(cpp_type)
+            if nested and nested not in _PRIMITIVE_TYPES and nested in index:
+                nested_hits.add(nested)
+            for nested_name in nested_hits:
+                if nested_name not in _PRIMITIVE_TYPES:
+                    queue.append(nested_name)
+                    wanted.add(nested_name)
+            if (owner, field_name) in clang_fields:
+                continue
             field = codemap.upsert(
                 EntityKind.TILING_FIELD,
                 field_name,
@@ -1957,14 +2014,6 @@ def _parse_tiling_data(codemap: CodeMap, root: Path, architecture: str) -> dict[
                 status="confirmed",
             )
             field_count += 1
-            nested_hits = _referenced_type_names(cpp_type, known_classes)
-            nested = _cpp_type_name(cpp_type)
-            if nested and nested not in _PRIMITIVE_TYPES and nested in index:
-                nested_hits.add(nested)
-            for nested_name in nested_hits:
-                if nested_name not in _PRIMITIVE_TYPES:
-                    queue.append(nested_name)
-                    wanted.add(nested_name)
     from uo_init.tiling_data_ir import parse_macro_structs
 
     for path in files:
@@ -2037,38 +2086,6 @@ def _link_nested_tiling_data_types(codemap: CodeMap) -> None:
             )
 
 
-def _link_host_setters(codemap: CodeMap, root: Path, architecture: str) -> None:
-    variables = {name: ent for ent in codemap.by_kind(EntityKind.VARIABLE) if (name := _runtime_source_name(ent))}
-    fields_by_name: dict[str, list[Entity]] = {}
-    for field in codemap.by_kind(EntityKind.TILING_FIELD):
-        fields_by_name.setdefault(field.name, []).append(field)
-
-    for path in selected_host_files(root, architecture):
-        text = _read(path)
-        for m in _SETTER_RE.finditer(text):
-            field_name, expr = m.groups()
-            targets = fields_by_name.get(field_name) or []
-            if not targets:
-                continue
-            line = _line_of(text, m.start())
-            for source_name, source in variables.items():
-                if not re.search(rf"\b{re.escape(source_name)}\b", expr):
-                    continue
-                for target in targets:
-                    codemap.link(
-                        RelationKind.DERIVES,
-                        source.id,
-                        target.id,
-                        attrs={
-                            "provenance": "source_tilingdata_setter",
-                            "file": _rel(root, path),
-                            "line": line,
-                            "expression": expr.strip()[:300],
-                        },
-                        status="confirmed",
-                    )
-
-
 def _kernel_candidates(root: Path, architecture: str) -> list[Path]:
     return selected_kernel_files(root, architecture)
 
@@ -2079,7 +2096,144 @@ def _param_name(raw: str) -> str:
     return m.group(1) if m else ""
 
 
-def _parse_kernel_contract(codemap: CodeMap, root: Path, architecture: str, api: dict[str, Any]) -> dict[str, Any]:
+_ABI_SKIP_NAMES = frozenset(
+    {
+        "tiling",
+        "tiling_data",
+        "tilingdata",
+        "tiling_arg",
+        "tilingarg",
+        "workspace",
+        "usrworkspace",
+        "aicore_sync",
+        "aicoresync",
+        "sync",
+    }
+)
+
+
+def is_abi_skip_param(name: str) -> bool:
+    compact = str(name or "").replace("_", "").lower()
+    if compact in _ABI_SKIP_NAMES:
+        return True
+    return "tiling" in compact and compact.endswith("data")
+
+
+def _squash_ident(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
+def _abi_squash_keys(param: str) -> set[str]:
+    """Kernel ``queryRope`` / ``deqScaleQ`` vs REG_OP ``query_rope`` / ``d_scale_q``."""
+    keys: set[str] = set()
+    squashed = _squash_ident(param)
+    if squashed:
+        keys.add(squashed)
+    if squashed.startswith("deq") and len(squashed) > 3:
+        keys.add("d" + squashed[3:])
+    return keys
+
+
+def _unique_io_for_kernel_param(codemap: CodeMap, param: str) -> tuple[Any | None, Any | None]:
+    """Bind by exact name, then by unique squashed spelling. Never zip by position."""
+    inputs = list(codemap.by_name(param, kind=EntityKind.INPUT))
+    outputs = list(codemap.by_name(param, kind=EntityKind.OUTPUT))
+    if len(inputs) == 1 and not outputs:
+        return inputs[0], None
+    if len(outputs) == 1 and not inputs:
+        return None, outputs[0]
+    if inputs or outputs:
+        return None, None
+    keys = _abi_squash_keys(param)
+    if not keys:
+        return None, None
+    in_hits = [
+        entity
+        for entity in codemap.by_kind(EntityKind.INPUT)
+        if _squash_ident(entity.name) in keys
+    ]
+    out_hits = [
+        entity
+        for entity in codemap.by_kind(EntityKind.OUTPUT)
+        if _squash_ident(entity.name) in keys
+    ]
+    if len(in_hits) == 1 and not out_hits:
+        return in_hits[0], None
+    if len(out_hits) == 1 and not in_hits:
+        return None, out_hits[0]
+    return None, None
+
+
+def kernel_params_from_ir(kernel_ir: Any, kernel_name: str) -> list[str]:
+    if kernel_ir is None:
+        return []
+    rec = (getattr(kernel_ir, "functions", None) or {}).get(kernel_name) or {}
+    params = [str(p) for p in (rec.get("params") or []) if str(p)]
+    if params:
+        return params
+    short = kernel_name.split("::")[-1]
+    for name, row in (getattr(kernel_ir, "functions", None) or {}).items():
+        if str(name).split("::")[-1] == short:
+            return [str(p) for p in (row.get("params") or []) if str(p)]
+    return []
+
+
+def link_kernel_abi_by_param_name(
+    codemap: CodeMap,
+    kernel: Entity,
+    params: list[str],
+    *,
+    provenance: str,
+    file: str,
+    line: int,
+) -> int:
+    """Bind INPUT/OUTPUT by kernel parameter name. Never zip by position."""
+    linked = 0
+    seen_params: set[str] = set()
+    for param in params:
+        if not param or param in seen_params or is_abi_skip_param(param):
+            continue
+        seen_params.add(param)
+        inp, out = _unique_io_for_kernel_param(codemap, param)
+        if inp is not None and out is None:
+            codemap.link(
+                RelationKind.FLOWS_TO,
+                inp.id,
+                kernel.id,
+                attrs={
+                    "provenance": provenance,
+                    "kernel_param": param,
+                    "file": file,
+                    "line": line,
+                },
+                status="confirmed",
+            )
+            linked += 1
+        elif out is not None and inp is None:
+            codemap.link(
+                RelationKind.FLOWS_TO,
+                kernel.id,
+                out.id,
+                attrs={
+                    "provenance": provenance,
+                    "kernel_param": param,
+                    "file": file,
+                    "line": line,
+                },
+                status="confirmed",
+            )
+            linked += 1
+    return linked
+
+
+def _parse_kernel_contract(
+    codemap: CodeMap,
+    root: Path,
+    architecture: str,
+    api: dict[str, Any],
+    *,
+    kernel_ir: Any = None,
+) -> dict[str, Any]:
     input_names = list(api.get("_api_tensor_input_names") or [])
     output_names = list(api.get("_api_output_names") or [])
     kernel_count = 0
@@ -2134,48 +2288,36 @@ def _parse_kernel_contract(codemap: CodeMap, root: Path, architecture: str, api:
                 )
                 codemap.link(RelationKind.DECLARES, template.id, arg.id, attrs={"provenance": "source_kernel_template"}, status="confirmed")
                 for key in codemap.by_name(arg_name, kind=EntityKind.TILING_KEY):
-                    codemap.link(RelationKind.BINDS, key.id, arg.id, attrs={"provenance": "source_tpl_name_match"}, status="confirmed")
+                    codemap.mint_candidate_relation(
+                        RelationKind.BINDS,
+                        key.id,
+                        arg.id,
+                        provenance="source_tpl_name_match",
+                    )
                     codemap.link(RelationKind.CONTROLS, arg.id, kernel.id, attrs={"provenance": "source_kernel_template_param"}, status="confirmed")
                     tpl_args_bound += 1
 
             params = [_param_name(x) for x in _split_args(m.group("params"))]
             params = [p for p in params if p]
-            if len(params) >= len(input_names) + len(output_names):
-                for idx, api_name in enumerate(input_names):
-                    hits = codemap.by_name(api_name, kind=EntityKind.INPUT)
-                    if hits:
-                        codemap.link(
-                            RelationKind.FLOWS_TO,
-                            hits[0].id,
-                            kernel.id,
-                            attrs={
-                                "provenance": "source_kernel_abi_position",
-                                "kernel_param": params[idx],
-                                "api_index": idx,
-                                "file": _rel(root, path),
-                                "line": line,
-                            },
-                            status="confirmed",
-                        )
-                        abi_links += 1
-                base = len(input_names)
-                for idx, api_name in enumerate(output_names):
-                    hits = codemap.by_name(api_name, kind=EntityKind.OUTPUT)
-                    if hits:
-                        codemap.link(
-                            RelationKind.FLOWS_TO,
-                            kernel.id,
-                            hits[0].id,
-                            attrs={
-                                "provenance": "source_kernel_abi_position",
-                                "kernel_param": params[base + idx],
-                                "api_index": idx,
-                                "file": _rel(root, path),
-                                "line": line,
-                            },
-                            status="confirmed",
-                        )
-                        abi_links += 1
+            clang_params = kernel_params_from_ir(kernel_ir, name)
+            if clang_params:
+                abi_links += link_kernel_abi_by_param_name(
+                    codemap,
+                    kernel,
+                    clang_params,
+                    provenance="clang_kernel_abi",
+                    file=_rel(root, path),
+                    line=line,
+                )
+            elif params:
+                abi_links += link_kernel_abi_by_param_name(
+                    codemap,
+                    kernel,
+                    params,
+                    provenance="source_kernel_abi_position",
+                    file=_rel(root, path),
+                    line=line,
+                )
     return {
         "source_kernel_entries": kernel_count,
         "source_template_args_bound": tpl_args_bound,
@@ -2183,81 +2325,61 @@ def _parse_kernel_contract(codemap: CodeMap, root: Path, architecture: str, api:
     }
 
 
-def _link_tiling_data_reads(codemap: CodeMap, root: Path, architecture: str) -> None:
+def _link_tiling_data_reads(
+    codemap: CodeMap,
+    root: Path,
+    architecture: str,
+    *,
+    host_ir: Any = None,
+    kernel_ir: Any = None,
+) -> None:
     owners = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
+    clang_counts = clang_type_short_counts(host_ir, kernel_ir)
+    macro_names = {
+        e.name
+        for e in owners.values()
+        if "macro" in str(e.attrs.get("provenance") or "").lower()
+        or str(e.attrs.get("provenance") or "") == "source_tiling_data_macro"
+    }
     for path in _kernel_candidates(root, architecture):
         text = _read(path)
-        used = {name.split("::")[-1] for name in _GET_TILING_RE.findall(text)}
-        used.update(name.split("::")[-1] for name in _GET_TILING_MEMBER_RE.findall(text))
-        used.update(_cast_tiling_data_names(text))
+        typed = {name.split("::")[-1] for name in _GET_TILING_RE.findall(text)}
+        typed.update(name.split("::")[-1] for name in _GET_TILING_MEMBER_RE.findall(text))
+        typed.update(_cast_tiling_data_names(text))
+        # Untyped GET_TILING_DATA is only a contract when REGISTER_TILING_DEFAULT
+        # names the struct. Never spray every TilingData identifier in the file.
         if _GET_TILING_BARE_CALL_RE.search(text):
-            used.update(
+            typed.update(
                 name.split("::")[-1] for name in _REGISTER_TILING_DEFAULT_RE.findall(text)
             )
-            used.update(name for name in owners if re.search(rf"\b{re.escape(name)}\b", text))
-            if not used:
-                used.update(owners)
-        if not used:
+        if not typed:
             continue
-        entry_names = {m.group("name") for m in _GLOBAL_KERNEL_RE.finditer(text)}
-        target_kernels = [
-            k for k in codemap.by_kind(EntityKind.KERNEL)
-            if k.name in entry_names
-            or str(k.file).replace("\\", "/") == _rel(root, path)
-        ]
+        target_kernels = kernels_for_use_site(codemap, path, text, root)
         if not target_kernels:
-            target_kernels = list(codemap.by_kind(EntityKind.KERNEL))
-        for type_name in used:
+            continue
+        for type_name in typed:
+            if not named_type_is_unique(
+                type_name, clang_counts=clang_counts, macro_names=macro_names
+            ):
+                continue
             tdata = owners.get(type_name)
             if tdata is None:
                 continue
             for kernel in target_kernels:
-                codemap.link(
-                    RelationKind.FLOWS_TO,
-                    tdata.id,
-                    kernel.id,
-                    attrs={"provenance": "source_get_tiling_data", "file": _rel(root, path)},
-                    status="confirmed",
+                link_tiling_data_binding(
+                    codemap,
+                    tdata,
+                    kernel,
+                    provenance="source_get_tiling_data",
+                    file=_rel(root, path),
                 )
 
 
 def _kernels_for_packed_key_file(
     codemap: CodeMap, path: Path, text: str, root: Path
 ) -> list[Entity]:
-    """Pick kernels that consume a packed-key catalog in this file.
-
-    Prefer a ``__global__`` entry defined here. If the catalog lives in a
-    header, pick kernels whose names are the longest prefix of an ``__aicore__``
-    function in that header so wrapper entries are not cartesian-linked.
-    """
-    kernels = list(codemap.by_kind(EntityKind.KERNEL))
-    if not kernels:
-        return []
-    entry_names = {m.group("name") for m in _GLOBAL_KERNEL_RE.finditer(text)}
-    file_rel = _rel(root, path).replace("\\", "/")
-    same_file = [
-        k
-        for k in kernels
-        if k.name in entry_names or str(k.file or "").replace("\\", "/") == file_rel
-    ]
-    if same_file:
-        return same_file
-    aicore_names = _AICORE_FN_RE.findall(text)
-    if not aicore_names:
-        return kernels
-    scored: list[tuple[int, Entity]] = []
-    for kernel in kernels:
-        score = 0
-        for fn in aicore_names:
-            if fn.startswith(kernel.name) or kernel.name.startswith(fn):
-                score = max(score, len(kernel.name))
-        if score:
-            scored.append((score, kernel))
-    if not scored:
-        return kernels
-    best = max(score for score, _k in scored)
-    picked = [k for score, k in scored if score == best]
-    return picked or kernels
+    """Pick kernels that consume a packed-key catalog in this file."""
+    return kernels_for_use_site(codemap, path, text, root)
 
 
 def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: str) -> None:
@@ -2278,6 +2400,8 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
             continue
         file_rel = _rel(root, path)
         target_kernels = _kernels_for_packed_key_file(codemap, path, text, root)
+        if not target_kernels:
+            continue
         if packing_dims:
             for key in packing_dims:
                 for kernel in target_kernels:
@@ -2285,7 +2409,11 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
                         RelationKind.SELECTS,
                         key.id,
                         kernel.id,
-                        attrs={"provenance": "source_packing_helper_selects", "file": file_rel},
+                        attrs={
+                            "provenance": "source_packing_helper_selects",
+                            "file": file_rel,
+                            "key_chain_role": KEY_CHAIN_DISPATCH,
+                        },
                         status="confirmed",
                     )
             continue
@@ -2300,7 +2428,11 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
                     RelationKind.SELECTS,
                     key.id,
                     kernel.id,
-                    attrs={"provenance": "source_tiling_key_is", "file": file_rel},
+                    attrs={
+                        "provenance": "source_tiling_key_is",
+                        "file": file_rel,
+                        "key_chain_role": KEY_CHAIN_DISPATCH,
+                    },
                     status="confirmed",
                 )
         if matched:
@@ -2320,7 +2452,11 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
                     RelationKind.SELECTS,
                     key.id,
                     kernel.id,
-                    attrs={"provenance": "source_packed_key_is_selects", "file": file_rel},
+                    attrs={
+                        "provenance": "source_packed_key_is_selects",
+                        "file": file_rel,
+                        "key_chain_role": KEY_CHAIN_DISPATCH,
+                    },
                     status="confirmed",
                 )
 
@@ -2351,29 +2487,15 @@ def _link_tiling_key_kernel_selects(codemap: CodeMap, root: Path, architecture: 
                         RelationKind.SELECTS,
                         key.id,
                         kernel.id,
-                        attrs={"provenance": "source_tpl_header_selects", "file": file_rel},
+                        attrs={
+                            "provenance": "source_tpl_header_selects",
+                            "file": file_rel,
+                            "key_chain_role": KEY_CHAIN_DISPATCH,
+                        },
                         status="confirmed",
                     )
 
-    kernels = list(codemap.by_kind(EntityKind.KERNEL))
-    declared = [e for e in keys.values() if e.attrs.get("source_declared")]
-    if len(kernels) == 1 and declared:
-        kernel = kernels[0]
-        has_select = any(
-            rel.kind_name() == RelationKind.SELECTS.value
-            and rel.src in {e.id for e in declared}
-            and rel.dst == kernel.id
-            for rel in codemap.relations.values()
-        )
-        if not has_select:
-            for key in declared:
-                codemap.link(
-                    RelationKind.SELECTS,
-                    key.id,
-                    kernel.id,
-                    attrs={"provenance": "source_single_kernel_selects"},
-                    status="confirmed",
-                )
+    # A single KERNEL is not evidence that every declared TilingKey selects it.
 
 
 def source_contract_stats(codemap: CodeMap) -> dict[str, int]:

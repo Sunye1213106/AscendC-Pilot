@@ -25,7 +25,7 @@ field
 | def_sites | 证明入口与写点枚举起点 | 忽略只读表达式 |
 | guards | 构造路径条件 | 漏 early return / 第一行分流 |
 | roots | 绑定输入/属性前提 | 当成已证明可达 |
-| undecided / free vars | 保持 OPEN/BLOCKED | 假装已闭合 |
+| undecided / free vars | 保持 OPEN/BLOCKED | 声称已闭合 |
 | domain | 候选值上界 | **当成可达域** |
 
 ## 硬规则

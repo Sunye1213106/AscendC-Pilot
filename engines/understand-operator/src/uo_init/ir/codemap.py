@@ -10,6 +10,22 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Iterator
 
 from uo_init.ir.entity import Entity, EntityKind
+from uo_init.ir.evidence import (
+    SOURCE_CLANG_AST,
+    SOURCE_DSL,
+    SOURCE_LEXICAL,
+    SOURCE_UNSPECIFIED,
+    STATE_CANDIDATE,
+    STATE_RESOLVED,
+    TRUST_ADVISORY,
+    TRUST_AUTHORITATIVE,
+    TRUST_DERIVED,
+    assert_semantic_mint,
+    derive_trust,
+    merge_attrs,
+    mint_payload,
+    stamp_attrs,
+)
 from uo_init.ir.relation import Relation, RelationKind
 
 
@@ -319,11 +335,12 @@ class CodeMap:
     def add_entity(self, entity: Entity) -> Entity:
         existing = self.entities.get(entity.id)
         if existing is None:
+            entity.attrs = self._stamp_attrs(entity.attrs)
             self.entities[entity.id] = entity
             return entity
         old_name = existing.name
         old_sites = list(existing.attrs.get("definition_sites") or []) if isinstance(existing.attrs.get("definition_sites"), list) else []
-        existing.attrs.update(entity.attrs)
+        existing.attrs = merge_attrs(existing.attrs, entity.attrs)
         if old_sites:
             existing.attrs["definition_sites"] = old_sites
         if entity.name and not existing.name:
@@ -414,7 +431,7 @@ class CodeMap:
             ]
             if len(kernels) == 1:
                 entity = kernels[0]
-                entity.attrs.update(attrs_doc)
+                entity.attrs = merge_attrs(entity.attrs, self._stamp_attrs(attrs_doc))
                 if file:
                     entity.file = file
                     entity.line_start = int(line)
@@ -429,13 +446,19 @@ class CodeMap:
                 id=entity_id,
                 kind=kind,
                 name=name,
-                attrs=attrs_doc,
+                attrs=self._stamp_attrs(attrs_doc),
                 file=file,
                 line_start=int(line),
                 line_end=int(line),
                 status=status,
                 confidence=confidence,
             )
+        )
+
+    def _stamp_attrs(self, attrs: dict[str, Any] | None) -> dict[str, Any]:
+        return stamp_attrs(
+            attrs,
+            build_context_id=str(self.meta.get("build_context_id") or ""),
         )
 
     def link(
@@ -450,17 +473,113 @@ class CodeMap:
     ) -> Relation:
         kind_name = kind.value if isinstance(kind, RelationKind) else str(kind)
         rid = _rid(kind_name, src, dst)
-        rel = Relation(
-            id=rid,
-            kind=kind,
-            src=src,
-            dst=dst,
-            attrs=dict(attrs or {}),
-            status=status,
-            confidence=confidence,
+        stamped = self._stamp_attrs(dict(attrs or {}))
+        existing = self.relations.get(rid)
+        if existing is None:
+            rel = Relation(
+                id=rid,
+                kind=kind,
+                src=src,
+                dst=dst,
+                attrs=stamped,
+                status=status,
+                confidence=confidence,
+            )
+            self.relations[rid] = rel
+            return rel
+        existing.attrs = merge_attrs(existing.attrs, stamped)
+        return existing
+
+    def mint_semantic_relation(
+        self,
+        kind: RelationKind | str,
+        src: str,
+        dst: str,
+        *,
+        provenance: str,
+        source: str = SOURCE_CLANG_AST,
+        extra: dict[str, Any] | None = None,
+        evidence_ids: list[str] | None = None,
+        status: str = "confirmed",
+    ) -> Relation:
+        trust = TRUST_AUTHORITATIVE if source == SOURCE_CLANG_AST else TRUST_DERIVED
+        assert_semantic_mint(source=source, trust=trust)
+        payload = mint_payload(
+            provenance=provenance,
+            source=source,
+            trust=trust,
+            semantic_state=STATE_RESOLVED,
+            build_context_id=str(self.meta.get("build_context_id") or ""),
+            extra=extra,
+            evidence_ids=evidence_ids,
         )
-        self.relations.setdefault(rid, rel)
-        return self.relations[rid]
+        return self.link(kind, src, dst, attrs=payload, status=status)
+
+    def mint_candidate_relation(
+        self,
+        kind: RelationKind | str,
+        src: str,
+        dst: str,
+        *,
+        provenance: str,
+        extra: dict[str, Any] | None = None,
+        status: str = "confirmed",
+        source: str = SOURCE_LEXICAL,
+    ) -> Relation:
+        payload = mint_payload(
+            provenance=provenance,
+            source=source,
+            trust=TRUST_ADVISORY,
+            semantic_state=STATE_CANDIDATE,
+            build_context_id=str(self.meta.get("build_context_id") or ""),
+            extra=extra,
+        )
+        return self.link(kind, src, dst, attrs=payload, status=status)
+
+    def derive_relation(
+        self,
+        kind: RelationKind | str,
+        src: str,
+        dst: str,
+        *,
+        provenance: str,
+        rule: str,
+        input_ids: list[str],
+        extra: dict[str, Any] | None = None,
+        status: str = "confirmed",
+    ) -> Relation:
+        input_trusts: list[str] = []
+        for fid in input_ids:
+            node = self.entities.get(fid)
+            if node is not None:
+                input_trusts.append(str(node.attrs.get("trust") or TRUST_ADVISORY))
+                continue
+            edge = self.relations.get(fid)
+            if edge is not None:
+                input_trusts.append(str(edge.attrs.get("trust") or TRUST_ADVISORY))
+                continue
+            input_trusts.append(TRUST_ADVISORY)
+        trust = derive_trust(input_trusts)
+        if trust == TRUST_AUTHORITATIVE:
+            trust = TRUST_DERIVED
+            source = SOURCE_DSL
+        elif trust == TRUST_DERIVED:
+            source = SOURCE_DSL
+        elif trust == TRUST_ADVISORY:
+            source = SOURCE_LEXICAL
+        else:
+            source = SOURCE_UNSPECIFIED
+        payload = mint_payload(
+            provenance=provenance,
+            source=source,
+            trust=trust,
+            semantic_state=STATE_RESOLVED,
+            build_context_id=str(self.meta.get("build_context_id") or ""),
+            extra=extra,
+            evidence_ids=input_ids,
+            derivation={"rule": rule, "inputs": list(input_ids)},
+        )
+        return self.link(kind, src, dst, attrs=payload, status=status)
 
     # -- query helpers -----------------------------------------------------
     def by_kind(self, kind: EntityKind | str) -> list[Entity]:
@@ -483,6 +602,7 @@ class CodeMap:
         *,
         kind: RelationKind | str | None = None,
         direction: str = "out",
+        include_advisory: bool = True,
     ) -> list[tuple[Relation, Entity]]:
         kn = None
         if kind is not None:
@@ -492,12 +612,16 @@ class CodeMap:
             for rel in (self._out.get(entity_id) or {}).values():
                 if kn is not None and rel.kind_name() != kn:
                     continue
+                if not include_advisory and str(rel.attrs.get("trust") or "") == TRUST_ADVISORY:
+                    continue
                 dst = self.entities.get(rel.dst)
                 if dst is not None:
                     hits.append((rel, dst))
         if direction in ("in", "both"):
             for rel in (self._in.get(entity_id) or {}).values():
                 if kn is not None and rel.kind_name() != kn:
+                    continue
+                if not include_advisory and str(rel.attrs.get("trust") or "") == TRUST_ADVISORY:
                     continue
                 src = self.entities.get(rel.src)
                 if src is not None:
@@ -515,6 +639,7 @@ class CodeMap:
         end_kinds: Iterable[str] | None = None,
         end_id: str | None = None,
         max_depth: int = 32,
+        include_advisory: bool = True,
     ) -> list[str]:
         """BFS path of entity ids from start to end_id or first end_kind."""
         ends = {str(k) for k in (end_kinds or ())}
@@ -542,6 +667,8 @@ class CodeMap:
             if depth > max_depth:
                 continue
             for rel in (self._out.get(cur) or {}).values():
+                if not include_advisory and str(rel.attrs.get("trust") or "") == TRUST_ADVISORY:
+                    continue
                 nxt = rel.dst
                 if nxt in prev:
                     continue

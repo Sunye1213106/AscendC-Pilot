@@ -104,6 +104,9 @@ def test_ce_human_confirm_materialize_writes_ce_not_tg(tmp_path: Path) -> None:
     doc = yaml.safe_load(ce_confirm.read_text(encoding="utf-8"))
     assert doc.get("schema") == "ce-intent-confirmation/v1"
     assert doc.get("status") == "confirmed"
+    plan = ce_root(tmp_path, arch="arch35") / "intent" / "plan.md"
+    assert plan.is_file()
+    assert "# 变更计划" in plan.read_text(encoding="utf-8")
 
 
 def test_scenario_confirm_is_hosted(tmp_path: Path) -> None:

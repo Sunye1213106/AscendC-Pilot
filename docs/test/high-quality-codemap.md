@@ -132,11 +132,11 @@ FAG 当前 13 条 host leaf + 3 条 catalog，与 8e 那版「未闭合 14」同
 查询抽检（名字换成该算子真实符号）：
 
 ```text
-acp uo-query --project <op> --mode locate --pattern <TILING_FIELD>
-acp uo-query --project <op> --mode tiling_key --pattern <TILING_KEY>
-acp uo-query --project <op> --mode kernel_api --pattern EnQue
-acp uo-query --project <op> --mode kernel_api --pattern DataCopy
-acp uo-query --project <op> --mode buffer --pattern <QUEUE>
+acp uo-query --project <op> <TILING_FIELD>
+acp uo-query --project <op> <TILING_KEY>
+acp uo-query --project <op> EnQue
+acp uo-query --project <op> DataCopy
+acp uo-query --project <op> <QUEUE>
 ```
 
 泛化抽检过线仍是：**抽到的每个算子 verify pass，且能 locate Key / Field / Kernel / Input / `OP_CHECK`。** 当前并集 **49** 个不重复算子，见 [uo-init-generalization.md](uo-init-generalization.md)。

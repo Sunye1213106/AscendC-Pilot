@@ -246,7 +246,8 @@ def _main() -> int:
         errors.append(f"unused production prompt prompts/tasks/{tid}.md")
 
     # Agents: every production agent yaml must be used (allow primary + known)
-    agent_allow = {"ascendc-pilot"}
+    # Production agents that are checklist specs, not spawnable actors.
+    agent_allow = {"ascendc-pilot", "tg-init-audit"}
     if agents_dir.is_dir():
         for yml in agents_dir.glob("*.yaml"):
             aid = yml.stem

@@ -93,6 +93,8 @@ def _selection(ctx: dict[str, Any], intent: dict[str, Any]) -> dict[str, Any]:
         mode = requested
     elif intent_mode == "scenario_targeted":
         mode = "scenario_set"
+    elif intent_mode == "ce_change_scoped":
+        mode = "explicit_keys" if keys or not dimensions else "dimension_filter"
     else:
         mode = "all_declared"
     return {"target_mode": mode, "target_keys": keys, "target_dimensions": dimensions}

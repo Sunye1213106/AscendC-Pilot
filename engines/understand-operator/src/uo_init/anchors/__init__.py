@@ -128,6 +128,9 @@ def extract_registry(root: str | Path, op_name: str) -> list[dict]:
 
 
 def arch_bucket(arch_expr: str) -> str:
+    # Distinct DAV identities — do not collapse 9201 into 3510.
+    if "9201" in arch_expr:
+        return "DAV_9201"
     if "3510" in arch_expr:
         return "DAV_3510"
     if "2201" in arch_expr or "2002" in arch_expr:

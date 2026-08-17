@@ -19,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args or args[0] in {"-h", "--help"}:
         print(
             "uo_kb_query is a wrapper for `acp uo-query`.\n"
-            "Example: uo_kb_query.py --project <op> --mode locate --pattern s1Inner",
+            "Example: uo_kb_query.py --project <op> s1Inner",
             file=sys.stderr,
         )
         if not args:

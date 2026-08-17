@@ -802,10 +802,10 @@ Target
 见 `.ascendc-pilot/control/user_goal.yaml`；不合并三个 Spec）：
 
 
-| 阶段          | 对人称呼 | 主要工作                                                          |
+| 阶段          | 对用户称呼 | 主要工作                                                          |
 | ----------- | --- | ------------------------------------------------------------- |
-| `/tg-init`  | 建立覆盖合同 | 读取 UO，固定算子、架构、TilingKey domain 和 fingerprint；默认全覆盖模式下空 `reads`/`exactness` 不是 audit blocker；审计顶层 `status` 只能是 `pass`/`fail`；人话 AskQuestion 后 `human_confirm` finalize 写出 `tg/init/confirmation.yaml` |
-| `/tg-plan`  | 规划测试义务 | 将覆盖目标转成明确 obligation；人话批准后写出 `human_supplement.yaml` |
+| `/tg-init`  | 建立覆盖合同 | 读取 UO，固定算子、架构、TilingKey domain 和 fingerprint；默认全覆盖模式下空 `reads`/`exactness` 不是 audit blocker；审计顶层 `status` 只能是 `pass`/`fail`；向用户 AskQuestion 后 `human_confirm` finalize 写出 `tg/init/confirmation.yaml` |
+| `/tg-plan`  | 规划测试义务 | 将覆盖目标转成明确 obligation；向用户批准后写出 `human_supplement.yaml` |
 | `/tg-solve` | 求解并生成用例 | 轮次循环：构造 → Replay → Round Analysis（search→residual；lemma / construct / search）→ 直至闭环 |
 
 
@@ -814,12 +814,12 @@ Target
 ```text
 /tg-init  （建立覆盖合同）
    ↓
-人话确认：是否进入规划？
+向用户确认：是否进入规划？
 AskQuestion → human_confirm --finalize
 
 /tg-plan  （规划测试义务）
    ↓
-人话批准：是否开始求解？
+向用户批准：是否开始求解？
 AskQuestion → plan_approve --finalize
 
 /tg-solve （求解并生成用例）
@@ -827,7 +827,7 @@ AskQuestion → plan_approve --finalize
 Each round: construct → replay → analyze
 ```
 
-对用户出口遵守人话合同（意图 / 刚完成 / 下一步或请你决定）；内部字段只留在 payload。详见 `pilot/policies/invariants/human-voice-invariants.md`。
+对用户出口遵守面向用户的表述合同（意图 / 刚完成 / 下一步或请你决定）；内部字段只留在 payload。详见 `pilot/policies/invariants/human-voice-invariants.md`。
 
 `/tg-solve` 内部按轮自动分支：
 

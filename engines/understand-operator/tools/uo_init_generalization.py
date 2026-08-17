@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import random
-import re
 import shutil
 import sys
 import time
@@ -31,6 +30,7 @@ from uo_init.diagnostics.source_api import (
     rank_blockers,
     source_api_from_codemap,
 )
+from uo_init.source_layout import ARCH_DIR_RE, arch_number
 from uo_init.paths import ops_root as _resolve_ops_root
 
 OPS_ROOT = Path(
@@ -55,11 +55,10 @@ _FAMILIES = (
     "posembedding",
 )
 _SKIP_OP_NAMES = frozenset({"common", "include", "src", "3rd", "tests", "test", "docs", "examples"})
-_ARCH_DIR_RE = re.compile(r"^arch\d+$")
 
 
 def _arch_sort_key(name: str) -> int:
-    return int(str(name).removeprefix("arch"))
+    return arch_number(name)
 
 
 def _list_archs(op: Path) -> list[str]:
@@ -68,7 +67,7 @@ def _list_archs(op: Path) -> list[str]:
         if not parent.is_dir():
             continue
         for child in parent.iterdir():
-            if child.is_dir() and _ARCH_DIR_RE.match(child.name):
+            if child.is_dir() and ARCH_DIR_RE.match(child.name):
                 seen.add(child.name)
     return sorted(seen, key=_arch_sort_key)
 

@@ -239,9 +239,9 @@ def check_and_record(
     if soft_hit or counts["total"] >= max(1, int(limits.get("total") or DEFAULT_LIMITS["total"]) - 1):
         out["warning"] = SOFT_REASON
         out["message_zh"] = (
-            "接近/超过探索软预算，只有会改变结论的 material gap 才继续；否则立即收束答案"
+            "接近/超过探索软预算，只有会改变结论的 material gap 才继续；否则立即给出结论"
         )
     if counts["total"] >= hard_total:
         out["hard_limit_reached"] = True
-        out["message_zh"] = "本次为最后一次允许的探索调用；现在必须收束答案"
+        out["message_zh"] = "本次为最后一次允许的探索调用；现在必须给出结论"
     return out

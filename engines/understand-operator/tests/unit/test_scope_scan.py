@@ -155,10 +155,14 @@ def test_a_bare_file_name_does_not_attach_shared_code(tmp_path: Path) -> None:
 def test_roles_separate_the_layers(domain: Path) -> None:
     scope = ss.scan(domain, arch_dir="arch35")
     by_role = {f.path.name: f.role for f in scope.files}
+    by_hint = {f.path.name: f.role_hints for f in scope.files}
     assert by_role["aclnn_widget.cpp"] == ss.ROLE_API
-    assert by_role["widget_def.cpp"] == ss.ROLE_HOST_DEF
-    assert by_role["widget_infershape.cpp"] == ss.ROLE_HOST_INFERSHAPE
-    assert by_role["widget_tiling.cpp"] == ss.ROLE_HOST_TILING
+    assert by_role["widget_def.cpp"] == ss.ROLE_HOST_OTHER
+    assert ss.HINT_DEF in by_hint["widget_def.cpp"]
+    assert by_role["widget_infershape.cpp"] == ss.ROLE_HOST_OTHER
+    assert ss.HINT_INFERSHAPE in by_hint["widget_infershape.cpp"]
+    assert by_role["widget_tiling.cpp"] == ss.ROLE_HOST_OTHER
+    assert ss.HINT_TILING in by_hint["widget_tiling.cpp"]
     assert by_role["widget_apt.cpp"] == ss.ROLE_KERNEL_ENTRY
     # The prototype is a header by suffix but a prototype by where it sits,
     # and `op_graph` holds nothing else. Reading it as a plain header loses
@@ -194,7 +198,9 @@ def test_op_tiling_directory_is_host_tiling_even_without_tiling_in_name(tmp_path
     _write(root, "widget/op_kernel/arch22/widget.cpp")
     scope = ss.scan(root / "widget", arch_dir="arch22")
     by_role = {f.path.name: f.role for f in scope.files}
-    assert by_role["widget_tilling.cpp"] == ss.ROLE_HOST_TILING
+    tilling = next(f for f in scope.files if f.path.name == "widget_tilling.cpp")
+    assert by_role["widget_tilling.cpp"] == ss.ROLE_HOST_OTHER
+    assert ss.HINT_TILING in tilling.role_hints
     tiling = scope.paths(role=ss.ROLE_HOST_TILING, tu_only=True)
     assert {p.name for p in tiling} == {"widget_tilling.cpp"}
 

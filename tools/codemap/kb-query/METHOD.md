@@ -13,8 +13,8 @@
 ## Method
 
 1. 确认 `kb_ready` / `uo_ready`（由 Pilot gate 判定）。没有 `.uo` 则停止，先 `/uo-init`。
-2. 用 `acp uo-query --project <op> --mode <mode> --pattern <needle>`（或本能力脚本 `uo_kb_query.py`，它只转发到该 CLI）。
-3. 按问题选 mode（`locate` / `field` / `tiling_key` / `neighbors` / `constraints` / `kernel_api` / …），先查图再开最小源码窗。
+2. 用 `acp uo-query --project <op> [--architecture arch35]` 加上一种参数形态：标识符、`Dim=V`、`--file --line`、或无参数索引（或本能力脚本 `uo_kb_query.py`，它只转发到该 CLI）。不要传 `--mode`。
+3. 先查图再开最小源码窗。卡片已带 `file:line` + snippet 视为已 Read。
 4. 记录每个命中的 CodeMap reference。缺口显式列出，不猜测填补。
 
 ## Hard Constraints

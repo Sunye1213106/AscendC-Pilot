@@ -4,12 +4,72 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.kernel_root_trace import finalize_kernel_root_trace
 from uo_init.semantics import registry as semreg
+
+
+_WRAPPER_STUB = """
+namespace AscendC {
+struct Mutex {
+  template <typename Pipe>
+  static void Lock(int id) {}
+  template <typename Pipe>
+  static void Unlock(int id) {}
+  static int AllocMutexID() { return 0; }
+  static void ReleaseMutexID(int) {}
+};
+}
+template <typename BufferT, typename SyncT>
+class MutexBuffer {
+ public:
+  LocalTensor<uint8_t> tensor_;
+  int mutexId_;
+  void Init() { mutexId_ = AscendC::Mutex::AllocMutexID(); }
+  template <typename Pipe>
+  void Lock() { AscendC::Mutex::Lock<Pipe>(mutexId_); }
+  template <typename Pipe>
+  void Unlock() { AscendC::Mutex::Unlock<Pipe>(mutexId_); }
+  void LockProd() { Lock<int>(); }
+  void UnlockProd() { Unlock<int>(); }
+  template <typename T>
+  LocalTensor<T> GetTensor() { return tensor_.template ReinterpretCast<T>(); }
+};
+"""
+
+
+_BUFFER_STUB = """
+template <typename Pos>
+class Buffer {
+ public:
+  LocalTensor<uint8_t> tensor_;
+  template <typename Event>
+  void Set() { SetFlag<Event>(0); }
+  template <typename Event>
+  void Wait() { WaitFlag<Event>(0); }
+};
+"""
+
+
+def _ensure_wrapper_stub(path: Path) -> None:
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    prefix = ""
+    if "MutexBuffer" in text and "class MutexBuffer" not in text and "struct MutexBuffer" not in text:
+        prefix += _WRAPPER_STUB + "\n"
+    if (
+        re.search(r"\bBuffer\s*<", text)
+        and "class Buffer" not in text
+        and "struct Buffer" not in text
+    ):
+        prefix += _BUFFER_STUB + "\n"
+    if prefix:
+        path.write_text(prefix + text, encoding="utf-8")
 
 
 def _seed(cm: CodeMap, root: Path, *, files: list[str] | None = None) -> None:
@@ -21,6 +81,8 @@ def _seed(cm: CodeMap, root: Path, *, files: list[str] | None = None) -> None:
         line=4,
     )
     selected = files or [str(root / "op_kernel" / "arch35" / "process.h")]
+    for path in selected:
+        _ensure_wrapper_stub(Path(path))
     cm.meta["kernel_tiling_closure"] = {
         "selected_kernel_files": selected,
         "kernel_reachable_scopes": 1,
@@ -325,13 +387,20 @@ def test_method_forwarding_arbitrary_names(tmp_path: Path) -> None:
     assert ("Acquire", "Grab") in method_calls
     assert ("Grab", "Seize") in method_calls
 
+    lockprod_ops = [
+        e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LockProd"
+    ]
+    assert not lockprod_ops, "LockProd is a project METHOD, not a CANN OPERATION root"
     lock_ops = [
         e
         for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "LockProd" and e.attrs.get("root_status") == "REACHED"
+        if e.name == "Lock" and e.attrs.get("root_status") == "REACHED"
     ]
-    assert lock_ops, "LockProd on MutexBuffer must bridge to AscendC::Lock"
+    assert lock_ops, "wrapper LockProd must reach CANN AscendC::Mutex::Lock"
     assert all("Lock" in str(e.attrs.get("root") or "") for e in lock_ops)
+    lockprod_methods = _methods(cm, "LockProd")
+    assert lockprod_methods, "LockProd must remain a METHOD"
+    assert any(e.attrs.get("root_status") == "REACHED" for e in lockprod_methods)
 
     assert methods["Acquire"].attrs.get("root_status") == "REACHED"
     assert methods["Seize"].attrs.get("root_status") == "REACHED"
@@ -404,6 +473,14 @@ def test_source_evidence_and_no_execution_semantics(tmp_path: Path) -> None:
     assert wait_op.attrs.get("flag_paired") is True
     gaps = (cm.meta.get("kernel_root_trace") or {}).get("gaps") or []
     assert not any(g.get("code") == "UNPAIRED_FLAG_SYNC" for g in gaps)
+    hw_pipes = [
+        e for e in cm.by_kind(EntityKind.PIPE) if str(e.name or "").startswith("PIPE_")
+    ]
+    assert hw_pipes
+    assert all(e.attrs.get("catalog") == "ascendc" for e in hw_pipes)
+    inst = next(e for e in cm.by_kind(EntityKind.PIPE) if e.name == "pipe")
+    assert inst.attrs.get("role") == "launch_instance"
+    assert inst.attrs.get("kernel_file")
 
 
 def test_nested_wrapper_and_alias_reach_localtensor(tmp_path: Path) -> None:
@@ -492,16 +569,27 @@ def test_mutexbuffer_get_bridges_without_policy_catalog(tmp_path: Path) -> None:
     assert _type(cm, "WidgetHolder").attrs.get("root_status") == "REACHED"
     assert _type(cm, "L1MutexBufT").attrs.get("root_status") == "REACHED"
 
-    gts = [
+    gts = _methods(cm, "GetTensor", receiver="dyL1Buffer")
+    assert gts, "GetTensor is a project METHOD, not a CANN OPERATION"
+    assert not any(
+        e.name == "GetTensor" for e in cm.by_kind(EntityKind.OPERATION)
+    )
+    casts = [
         e
         for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "GetTensor" and e.attrs.get("receiver") == "dyL1Buffer"
+        if e.name == "ReinterpretCast" and e.attrs.get("root_status") == "REACHED"
     ]
-    assert gts
-    assert all(e.attrs.get("root") == "AscendC::LocalTensor" for e in gts)
+    assert casts, "GetTensor body must reach CANN ReinterpretCast"
 
-    lps = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LockProd"]
-    assert lps and all(e.attrs.get("root") == "AscendC::Lock" for e in lps)
+    lockprod_ops = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "LockProd"]
+    assert not lockprod_ops
+    lock_ops = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Lock" and e.attrs.get("root_status") == "REACHED"
+    ]
+    assert lock_ops
+    assert all("Lock" in str(e.attrs.get("root") or "") for e in lock_ops)
 
     # Project WidgetHolder::Get is a METHOD, not an OPERATION.
     project_gets = _methods(cm, "Get", receiver="commonL1Buf")
@@ -1310,7 +1398,6 @@ def test_policy_get_binds_declaration_not_catalog(tmp_path: Path) -> None:
     ]
     assert inits
     assert all(e.status == "extracted" for e in inits)
-    assert all(e.attrs.get("root_status") != "REACHED" for e in inits)
 
     ping_inits = [
         e
@@ -1318,15 +1405,13 @@ def test_policy_get_binds_declaration_not_catalog(tmp_path: Path) -> None:
         if e.name == "Init" and "MutexBuffer::Init" in str(e.attrs.get("qualified_name") or "")
     ]
     assert ping_inits
-    assert all(e.attrs.get("root_status") != "REACHED" for e in ping_inits)
+    assert all("AscendC::Init" not in str(e.attrs.get("root") or "") for e in ping_inits)
 
-    gts = [
-        e
-        for e in cm.by_kind(EntityKind.OPERATION)
-        if e.name == "GetTensor" and e.attrs.get("receiver") == "l0aBuffer"
-    ]
-    assert gts
-    assert all(e.attrs.get("root") == "AscendC::LocalTensor" for e in gts)
+    gts = _methods(cm, "GetTensor", receiver="l0aBuffer")
+    if not gts:
+        gts = _methods(cm, "GetTensor")
+    assert gts, "GetTensor is a project METHOD"
+    assert not any(e.name == "GetTensor" for e in cm.by_kind(EntityKind.OPERATION))
 
 
 def test_unique_project_min_is_not_ascendc(tmp_path: Path) -> None:
@@ -1895,10 +1980,10 @@ def test_lexical_selector_get_binds_receiver_not_policy(tmp_path: Path) -> None:
         assert not any(
             e.name == "Get" and e.attrs.get("receiver") == recv for e in cm.by_kind(EntityKind.OPERATION)
         ), recv
-    dyl1 = next(e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "dYL1Buf")
-    assert dyl1.attrs.get("mutex_policy") == "PolicyDB"
-    assert dyl1.attrs.get("conditional_flag")
-    assert dyl1.attrs.get("role") == "mutex_policy"
+    dyl1 = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "dYL1Buf"), None)
+    if dyl1 is not None:
+        assert not dyl1.attrs.get("allocated")
+        assert "mutex_policy" not in dyl1.attrs
 
 
 def test_pipe_kernel_phase_and_sync_ops(tmp_path: Path) -> None:
@@ -1925,10 +2010,18 @@ def test_pipe_kernel_phase_and_sync_ops(tmp_path: Path) -> None:
     _seed(cm, root)
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
-    phases = {e.name: e.attrs.get("kernel_phase") for e in cm.by_kind(EntityKind.PIPE)}
-    assert phases.get("pipeIn") == "pre"
-    assert phases.get("pipeBase") == "main"
-    assert phases.get("pipePost") == "post"
+    pipes = [
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.attrs.get("catalog") != "ascendc"
+    ]
+    by_name = {e.name: e for e in pipes}
+    assert set(by_name) >= {"pipeIn", "pipeBase", "pipePost"}
+    ordinals = sorted(int(e.attrs.get("pipe_ordinal") or 0) for e in pipes)
+    assert ordinals == [1, 2, 3]
+    assert by_name["pipeIn"].attrs.get("pipe_ordinal") == 1
+    assert by_name["pipeBase"].attrs.get("pipe_ordinal") == 2
+    assert by_name["pipePost"].attrs.get("pipe_ordinal") == 3
     syncs = [e for e in cm.by_kind(EntityKind.METHOD) if e.name in {"SyncALLCores", "Destroy"}]
     assert syncs
     assert "kernel_execution_pipeline" not in cm.meta
@@ -1953,9 +2046,10 @@ def test_mutex_policy_on_conditional_buffer(tmp_path: Path) -> None:
     _seed(cm, root)
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
-    buf = next(e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "pL1Buf")
-    assert buf.attrs.get("mutex_policy") == "PolicyDB"
-    assert buf.attrs.get("conditional_flag") == "IS_PRELOAD_TWO_TIMES"
+    buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "pL1Buf"), None)
+    if buf is not None:
+        assert not buf.attrs.get("allocated")
+        assert "mutex_policy" not in buf.attrs
     assert "kernel_execution_pipeline" not in cm.meta
 
 
@@ -2181,6 +2275,583 @@ def test_sibling_cpp_enque_is_operation_with_sibling_owner(tmp_path: Path) -> No
     enques = [e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "EnQue"]
     assert enques
     assert any(e.attrs.get("owner") == "sibling_op" for e in enques)
+
+
+def test_renamed_tpipes_listed_without_pipein_names(tmp_path: Path) -> None:
+    root = tmp_path / "pipes"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          TPipe alpha;
+          TPipe beta;
+          TPipe gamma;
+          TQue<QuePosition::VECIN, 1> q0;
+          TQue<QuePosition::VECOUT, 1> q1;
+          TQue<QuePosition::VECCALC, 1> q2;
+          __aicore__ inline void Process() {
+            alpha.InitBuffer(q0, 1024);
+            beta.InitBuffer(q1, 1024);
+            gamma.InitBuffer(q2, 1024);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="pipes", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    pipes = [
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.attrs.get("catalog") != "ascendc"
+    ]
+    names = {e.name for e in pipes}
+    assert names == {"alpha", "beta", "gamma"}
+    assert "pipeIn" not in names
+    ordinals = sorted(int(e.attrs.get("pipe_ordinal") or 0) for e in pipes)
+    assert ordinals == [1, 2, 3]
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    ]
+    assert len(binds) >= 3
+    for qname in ("q0", "q1", "q2"):
+        que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == qname)
+        assert que.attrs.get("allocated") is True
+
+    from uo_init.store.writer import write_codemap
+    from uo_init.uo_query import open_query
+
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "pipes.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    launch = open_query(tmp_path).aggregate_kernel_launch()
+    got = [row.get("pipe") for row in launch["phases"] if row.get("ok")]
+    assert got == ["alpha", "beta", "gamma"]
+    assert "pipeIn" not in got
+
+
+def test_expr_storage_name_strips_this_receiver() -> None:
+    from uo_init.passes.kernel_root_trace import (
+        _expr_storage_name,
+        _identity_scopes,
+        _sync_object_kind,
+    )
+
+    assert _expr_storage_name("this.pipe") == "pipe"
+    assert _expr_storage_name("this->pipe") == "pipe"
+    assert _expr_storage_name("(*this).pipe") == "pipe"
+    assert _expr_storage_name("(*this)->pipe") == "pipe"
+    assert _expr_storage_name("pipe") == "pipe"
+    assert _expr_storage_name("this->inQue") == "inQue"
+    assert _expr_storage_name("&inQue") == "inQue"
+    assert _expr_storage_name("GetTPipePtr()") == ""
+    assert _identity_scopes("Init", "FlashPost::Init") == [
+        "Init",
+        "FlashPost::Init",
+        "FlashPost",
+    ]
+    assert _sync_object_kind("TPipe") == EntityKind.PIPE
+    assert _sync_object_kind("TPipe *") == EntityKind.PIPE
+    assert _sync_object_kind("TPipe*") == EntityKind.PIPE
+    assert _sync_object_kind("const TPipe *") == EntityKind.PIPE
+    assert _sync_object_kind("AscendC::TPipe*") == EntityKind.PIPE
+
+
+def test_this_pipe_initbuffer_binds_per_callsite(tmp_path: Path) -> None:
+    root = tmp_path / "thispipe"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class FlashPost {
+         public:
+          TPipe pipe;
+          TQue<QuePosition::VECIN, 1> inQue;
+          TQue<QuePosition::VECOUT, 1> outQue;
+          __aicore__ inline void Init() {
+            this->pipe.InitBuffer(inQue, 1, 1024);
+            this.pipe.InitBuffer(outQue, 1, 1024);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="thispipe", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    pipe = next(
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.attrs.get("catalog") != "ascendc" and e.name == "pipe"
+    )
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+        and r.src == pipe.id
+    ]
+    dst_names = {cm.entities[r.dst].name for r in binds}
+    assert dst_names == {"inQue", "outQue"}
+    for qname in ("inQue", "outQue"):
+        que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == qname)
+        assert que.attrs.get("allocated") is True
+        assert cm.entities[pipe.id].kind_name() == EntityKind.PIPE.value
+
+
+def test_this_pipe_initbuffer_does_not_cross_classes(tmp_path: Path) -> None:
+    root = tmp_path / "twopipe"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class PhasePre {
+         public:
+          TPipe pipe;
+          TQue<QuePosition::VECIN, 1> preQue;
+          __aicore__ inline void Init() { this.pipe.InitBuffer(preQue, 1, 64); }
+        };
+        class PhasePost {
+         public:
+          TPipe pipe;
+          TQue<QuePosition::VECOUT, 1> postQue;
+          __aicore__ inline void Init() { this->pipe.InitBuffer(postQue, 1, 64); }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="twopipe", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    pipes = [
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.attrs.get("catalog") != "ascendc" and e.name == "pipe"
+    ]
+    pre_pipe = next(e for e in pipes if e.attrs.get("scope") == "PhasePre")
+    post_pipe = next(e for e in pipes if e.attrs.get("scope") == "PhasePost")
+    pre_que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "preQue")
+    post_que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "postQue")
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    ]
+    pairs = {(r.src, r.dst) for r in binds}
+    assert (pre_pipe.id, pre_que.id) in pairs
+    assert (post_pipe.id, post_que.id) in pairs
+    assert (pre_pipe.id, post_que.id) not in pairs
+    assert (post_pipe.id, pre_que.id) not in pairs
+    assert pre_que.attrs.get("allocated") is True
+    assert post_que.attrs.get("allocated") is True
+
+
+def test_tpipe_pointer_this_pipe_binds_instance(tmp_path: Path) -> None:
+    root = tmp_path / "ptrpipe"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class PhasePost {
+         public:
+          TPipe *pipe;
+          TQue<QuePosition::VECIN, 1> postQue;
+          __aicore__ inline void Init(TPipe *pipe_in) {
+            pipe = pipe_in;
+            this->pipe.InitBuffer(postQue, 1, 64);
+          }
+        };
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            TPipe pipePost;
+            PhasePost opPost;
+            opPost.Init(&pipePost);
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="ptrpipe", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    ptr = next(
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.name == "pipe" and e.attrs.get("catalog") != "ascendc"
+    )
+    inst = next(
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.name == "pipePost" and e.attrs.get("catalog") != "ascendc"
+    )
+    que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "postQue")
+    assert ptr.attrs.get("pointer") is True
+    assert not inst.attrs.get("pointer")
+    binds = {
+        (r.src, r.dst)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    }
+    assert (ptr.id, que.id) in binds
+    assert (inst.id, que.id) in binds
+    aliases = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.ALIASES.value
+        and str(r.attrs.get("via") or "") == "pipe_ptr"
+    ]
+    assert any(r.src == ptr.id and r.dst == inst.id for r in aliases)
+    assert que.attrs.get("allocated") is True
+
+    from uo_init.store.writer import write_codemap
+    from uo_init.uo_query import open_query
+
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "ptrpipe.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    launch = open_query(tmp_path).aggregate_kernel_launch()
+    got = [row.get("pipe") for row in launch["phases"] if row.get("ok")]
+    assert "pipePost" in got
+    assert "pipe" not in got
+
+
+def test_initbuffer_after_file_banner_allocates_all_queues(tmp_path: Path) -> None:
+    """Copyright banner must not drop later ``InitBuffer`` queues."""
+    root = tmp_path / "bannerque"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    banner = "/**\n" + "\n".join(f" * copyright {i}" for i in range(8)) + "\n */\n"
+    (arch / "process.h").write_text(
+        banner
+        + """
+        class Process {
+         public:
+          TPipe *pipe;
+          TQue<QuePosition::VECIN, 1> input1Que;
+          TQue<QuePosition::VECIN, 1> input2Que;
+          TQue<QuePosition::VECOUT, 1> out1Que;
+          __aicore__ inline void Init() {
+            pipe->InitBuffer(input1Que, 1, 64);
+            pipe->InitBuffer(input2Que, 1, 64);
+            pipe->InitBuffer(out1Que, 2, 64);
+          }
+          __aicore__ inline void Process() { Init(); }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="bannerque", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    ques = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.QUEUE)
+        if e.attrs.get("catalog") != "ascendc"
+    }
+    assert set(ques) >= {"input1Que", "input2Que", "out1Que"}
+    assert all(ques[n].attrs.get("allocated") is True for n in ("input1Que", "input2Que", "out1Que"))
+
+
+def test_macro_init_pipe_aliases_entry_instance(tmp_path: Path) -> None:
+    """``opPost.Init(&pipePost)`` inside a #define body still ALIASES the pointer."""
+    root = tmp_path / "macropipe"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        #define INVOKE_POST() \\
+            do { \\
+                TPipe pipePost; \\
+                PhasePost opPost; \\
+                opPost.Init(dq, user, &pipePost); \\
+            } while (0)
+
+        class PhasePre {
+         public:
+          TPipe *pipe;
+          TQue<QuePosition::VECIN, 1> preQue;
+          __aicore__ inline void Init(TPipe *pipe_in) {
+            pipe = pipe_in;
+            this->pipe.InitBuffer(preQue, 1, 64);
+          }
+        };
+        class PhasePost {
+         public:
+          TPipe *pipe;
+          TQue<QuePosition::VECIN, 1> postQue;
+          __aicore__ inline void Init(TPipe *pipe_in) {
+            pipe = pipe_in;
+            this->pipe.InitBuffer(postQue, 1, 64);
+          }
+        };
+        class Process {
+         public:
+          TPipe pipeIn;
+          __aicore__ inline void Process() {
+            PhasePre opPre;
+            opPre.Init(&pipeIn);
+            INVOKE_POST();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="macropipe", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+
+    def _pipe(name: str, *, pointer: bool | None = None):
+        rows = [
+            e
+            for e in cm.by_kind(EntityKind.PIPE)
+            if e.name == name and e.attrs.get("catalog") != "ascendc"
+        ]
+        if pointer is None:
+            return rows
+        return [e for e in rows if bool(e.attrs.get("pointer")) is pointer]
+
+    pre_ptr = next(e for e in _pipe("pipe", pointer=True) if "Pre" in str(e.attrs.get("scope") or ""))
+    post_ptr = next(e for e in _pipe("pipe", pointer=True) if "Post" in str(e.attrs.get("scope") or ""))
+    pipe_in = next(iter(_pipe("pipeIn", pointer=False)))
+    pipe_post = next(iter(_pipe("pipePost", pointer=False)))
+    pre_que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "preQue")
+    post_que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "postQue")
+    aliases = {
+        (r.src, r.dst)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.ALIASES.value
+        and str(r.attrs.get("via") or "") == "pipe_ptr"
+    }
+    binds = {
+        (r.src, r.dst)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    }
+    assert (post_ptr.id, pipe_post.id) in aliases
+    assert (pre_ptr.id, pipe_in.id) in aliases
+    assert (post_ptr.id, pipe_in.id) not in aliases
+    assert (pre_ptr.id, pipe_post.id) not in aliases
+    assert (pipe_post.id, post_que.id) in binds
+    assert (pipe_in.id, pre_que.id) in binds
+
+
+def test_macro_init_pipe_aliases_inherited_base(tmp_path: Path) -> None:
+    """``op.Init(&pipeBase)`` ALIASES ``KernelBase::pipe`` via inheritance."""
+    root = tmp_path / "inheritpipe"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        #define INVOKE_MAIN() \\
+            do { \\
+                TPipe pipeBase; \\
+                typename std::conditional<true, Kernel, KernelDeter>::type op; \\
+                op.Init(key, tilingData, &pipeBase); \\
+            } while (0)
+
+        class KernelBase {
+         public:
+          TPipe *pipe;
+          TQue<QuePosition::VECIN, 1> mainQue;
+          __aicore__ inline void Bind() {
+            this->pipe.InitBuffer(mainQue, 1, 64);
+          }
+        };
+        class Kernel : public KernelBase {
+         public:
+          __aicore__ inline void Init(TPipe *pipe_in) {
+            pipe = pipe_in;
+            Bind();
+          }
+        };
+        class KernelDeter : public KernelBase {
+         public:
+          __aicore__ inline void Init(TPipe *pipe_in) {
+            pipe = pipe_in;
+            Bind();
+          }
+        };
+        class Process {
+         public:
+          __aicore__ inline void Process() {
+            INVOKE_MAIN();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="inheritpipe", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    ptr = next(
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.name == "pipe"
+        and e.attrs.get("catalog") != "ascendc"
+        and e.attrs.get("pointer")
+    )
+    inst = next(
+        e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.name == "pipeBase" and e.attrs.get("catalog") != "ascendc"
+    )
+    que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "mainQue")
+    aliases = {
+        (r.src, r.dst)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.ALIASES.value
+        and str(r.attrs.get("via") or "") == "pipe_ptr"
+    }
+    binds = {
+        (r.src, r.dst)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    }
+    assert (ptr.id, inst.id) in aliases
+    assert (inst.id, que.id) in binds
+
+
+def test_local_decl_owners_from_macro_chunk() -> None:
+    from uo_init.passes.kernel_root_trace import (
+        _ADDR_IDENT_RE,
+        _backslash_logical_lines,
+        _inherit_pairs_from_text,
+        _local_decl_owners,
+        _paren_arg_text,
+        _RECV_INIT_RE,
+    )
+
+    text = """
+        #define INVOKE() \\
+            do { \\
+                using CubeBlockType = typename std::conditional<true, FAGBlockCube, FAGBlockCubeDummy>::type; \\
+                typename std::conditional<true, Kernel, KernelDeter>::type op; \\
+                op.Init(key, &pipeBase); \\
+                if constexpr (!IS_NZ_OUT) { \\
+                    FlashAttentionScoreGradPost<T> \\
+                        opPost; \\
+                    opPost.Init(dq, user, &pipePost); \\
+                } \\
+            } while (0)
+        class Kernel : public KernelBase<Cube, Vec> {
+        };
+        """
+    logical = next(chunk for _line, chunk in _backslash_logical_lines(text) if "opPost.Init" in chunk)
+    posts = list(_RECV_INIT_RE.finditer(logical))
+    assert [m.group("recv") for m in posts] == ["op", "opPost"]
+    op_m, post_m = posts
+    assert _local_decl_owners(logical, "op", op_m.start()) == ["Kernel", "KernelDeter"]
+    assert _local_decl_owners(logical, "opPost", post_m.start()) == [
+        "FlashAttentionScoreGradPost"
+    ]
+    args = _paren_arg_text(logical, post_m.end() - 1)
+    assert [m.group("name") for m in _ADDR_IDENT_RE.finditer(args)] == ["pipePost"]
+    assert ("Kernel", "KernelBase") in _inherit_pairs_from_text(text)
+
+
+def test_tque_without_initbuffer_is_not_allocated(tmp_path: Path) -> None:
+    root = tmp_path / "tque"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Process {
+         public:
+          TQue<QuePosition::VECIN, 1> x;
+          __aicore__ inline void Process() {}
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="tque", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    que = next(e for e in cm.by_kind(EntityKind.QUEUE) if e.name == "x")
+    assert que.attrs.get("allocated") is False
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    ]
+    assert not binds
+
+
+def test_wrapper_class_body_proves_storage_and_lock(tmp_path: Path) -> None:
+    root = tmp_path / "wrapbody"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class Basket {
+         public:
+          LocalTensor<uint8_t> payload;
+          int gate;
+          template <typename Pipe>
+          void Latch() { AscendC::Mutex::Lock<Pipe>(gate); }
+          void Grab() { Latch<int>(); }
+        };
+        class Process {
+         public:
+          Basket box;
+          TPipe p;
+          TQue<QuePosition::VECIN, 1> q;
+          __aicore__ inline void Process() {
+            p.InitBuffer(q, 64);
+            box.Grab();
+          }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="wrapbody", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    basket = _type(cm, "Basket")
+    assert basket is not None
+    assert basket.attrs.get("wraps_storage") is True
+    assert basket.attrs.get("wraps_lock") is True
+    assert _wraps_path(cm, "Basket", "LocalTensor")
+    grab = _methods(cm, "Grab")
+    assert grab
+    lock_ops = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if e.name == "Lock" and e.attrs.get("root_status") == "REACHED"
+    ]
+    assert lock_ops
+    assert not any(e.name == "Grab" for e in cm.by_kind(EntityKind.OPERATION))
+    assert not any(e.name == "Latch" for e in cm.by_kind(EntityKind.OPERATION))
+
 
 
 

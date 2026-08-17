@@ -117,6 +117,7 @@ class TilingStruct:
     file: str
     line: int
     fields: list[TilingField] = field(default_factory=list)
+    candidate_score: int = 0
 
 
 @dataclass
@@ -361,15 +362,6 @@ def parse_class_structs(text: str, *, file: str = "") -> list[TilingStruct]:
             )
         if not fields:
             continue
-        # Prefer types that look like tiling data (name heuristic is soft).
-        tilingish = (
-            "Tiling" in name
-            or "Params" in name
-            or "tiling_data" in file.replace("\\", "/").lower()
-            or any(f.name in {"b", "s1", "s2", "coreNum", "batch"} for f in fields)
-        )
-        if not tilingish and "tiling" not in file.replace("\\", "/").lower():
-            continue
         structs.append(
             TilingStruct(
                 name=name,
@@ -377,9 +369,23 @@ def parse_class_structs(text: str, *, file: str = "") -> list[TilingStruct]:
                 file=file,
                 line=_line_of(clean, m.start()),
                 fields=fields,
+                candidate_score=_tiling_struct_candidate_score(name, file, fields),
             )
         )
     return structs
+
+
+def _tiling_struct_candidate_score(name: str, file: str, fields: list[TilingField]) -> int:
+    """Name/path hints only. Never used to drop a parsed struct."""
+    score = 0
+    if "Tiling" in name or "Params" in name:
+        score += 2
+    path = file.replace("\\", "/").lower()
+    if "tiling" in path:
+        score += 2
+    if any(f.name in {"b", "s1", "s2", "coreNum", "batch"} for f in fields):
+        score += 1
+    return score
 
 
 def _drop_nested_types(body: str) -> str:

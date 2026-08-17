@@ -77,6 +77,26 @@ def test_parse_regbase_class_and_constants():
     assert any(c.name == "MAX_CORE_NUM" and c.value == "36" for c in consts)
 
 
+def test_parse_class_structs_does_not_drop_non_tiling_names():
+    """Use-site binding decides identity; name/path is candidate_score only."""
+    src = """
+    class WireAbi {
+    public:
+        uint32_t blockDim;
+        uint32_t usedCoreNum;
+    };
+    class WireAbiHelper {
+    public:
+        uint32_t skipMe;
+    };
+    """
+    structs = parse_class_structs(src, file="op_kernel/arch35/layout_types.h")
+    names = {st.name: st for st in structs}
+    assert "WireAbi" in names
+    assert names["WireAbi"].candidate_score == 0
+    assert "WireAbiHelper" not in names
+
+
 def test_join_writers_and_scan_readers(tmp_path: Path):
     header = tmp_path / "demo_tiling_data_regbase.h"
     header.write_text(CLASS_SRC, encoding="utf-8")

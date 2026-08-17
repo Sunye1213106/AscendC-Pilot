@@ -600,30 +600,37 @@ def test_install_skill_lists_symmetric():
     repo = Path(__file__).resolve().parents[2]
     ps1 = (repo / "install.ps1").read_text(encoding="utf-8")
     sh = (repo / "install.sh").read_text(encoding="utf-8")
-    assert (
-        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate",'
-        '"ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")'
-    ) in ps1
-    assert (
-        "for name in uo-init uo-update uo-query uo-investigate "
-        "ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify tg-init tg-plan tg-solve operator; do"
-    ) in sh
-    # Retired skills must not be in the install junction list (uninstall purge may still name them).
-    install_lists = [
-        '$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")',
-        "for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify tg-init tg-plan tg-solve operator; do",
-    ]
-    for block in install_lists:
-        for retired in ("uo-diff", "tg-domain-review", "tg-contract"):
-            assert retired not in block
-    assert (
-        '$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")'
-    ) in ps1
-    cog = next(line for line in ps1.splitlines() if line.startswith("$cognitiveSkills"))
-    assert "code-engineering" in cog
-    assert "_shared" not in cog
+    workflow = (
+        "uo-init",
+        "uo-update",
+        "uo-query",
+        "uo-investigate",
+        "ce-review",
+        "ce-intent",
+        "ce-apply",
+        "ce-handoff",
+        "ce-impact",
+        "ce-verify",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+        "operator",
+    )
+    wf_ps1 = next(line for line in ps1.splitlines() if line.startswith("$workflowSkills"))
+    wf_sh_start = sh.index("WORKFLOW_SKILLS=(")
+    wf_sh = sh[wf_sh_start : sh.index(")", wf_sh_start) + 1]
+    for name in workflow:
+        assert name in wf_ps1, name
+        assert name in wf_sh, name
+        assert name in ps1 and name in sh
+    for retired in ("uo-diff", "tg-domain-review", "tg-contract"):
+        assert retired not in wf_ps1
+        assert retired not in wf_sh
+    cog_ps1 = next(line for line in ps1.splitlines() if line.startswith("$cognitiveSkills"))
+    assert "code-engineering" in cog_ps1
+    assert "_shared" not in cog_ps1
     assert "code-engineering" in sh
-    assert "for name in operator-analysis testcase-generation source-proof code-review code-engineering; do" in sh
+    assert "COGNITIVE_SKILLS=" in sh
     assert "ascendc-pilot" in ps1
     assert "ascendc-pilot.ts" in ps1
     assert "ascendc-pilot.ts" in sh
@@ -631,6 +638,24 @@ def test_install_skill_lists_symmetric():
     assert "tg-semantic-bind" in sh
     assert "uo-gap-investigator" in ps1
     assert "uo-gap-investigator" in sh
+    for extra in (
+        "ce-intent",
+        "ce-apply",
+        "ce-handoff",
+        "ce-impact",
+        "ce-verify",
+        "tg-lemma-producer",
+        "tg-closure-referee",
+        "ce-change-referee",
+        "ce-applier",
+        "ce-analyst",
+    ):
+        assert extra in ps1 and extra in sh
+    assert "XDG_CONFIG_HOME" in ps1
+    assert "XDG_CONFIG_HOME" in sh
+    assert "Get-AcpExe" in ps1
+    assert "resolve_acp_bin" in sh
+    assert "python3" in sh
 
 
 def test_python_module_entrypoint_help() -> None:

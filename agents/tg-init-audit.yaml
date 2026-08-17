@@ -1,11 +1,12 @@
 id: tg-init-audit
 version: 1
-name_zh: TG init audit referee
+name_zh: TG init audit checklist (engine-owned)
 role: referee
 mode: subagent
 description: >
-  TG init audit referee. Read session prompt.md and method.md first
-  (method is materialized into the action session; do not hunt host skill paths).
+  Checklist spec for tg-init init_audit. The deterministic TG engine
+  executes this closed list and writes init/audit_report.yaml.
+  Primary must not spawn this agent.
 max_skill_ids: &skills [testcase-generation]
 skill_ids: *skills
 read_scopes:

@@ -97,3 +97,59 @@ def write_yaml(path: Path, doc: dict[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
+
+
+def _parse_int_keys(raw: Any) -> list[int]:
+    out: list[int] = []
+    values = raw if isinstance(raw, (list, tuple, set)) else []
+    for value in values:
+        try:
+            key = int(str(value).strip(), 0)
+        except (TypeError, ValueError):
+            continue
+        if key not in out:
+            out.append(key)
+    return out
+
+
+def build_tg_plan_intent(
+    *,
+    impact: dict[str, Any],
+    architecture: str = "",
+    op_name: str = "",
+    source: str = "ce-impact",
+) -> dict[str, Any]:
+    """CE → tg-plan: ``tg-plan-intent/v1`` with keys/dims, never silent T=D."""
+    keys = _parse_int_keys(
+        impact.get("affected_keys") or impact.get("affected_keys_sample") or []
+    )
+    dim_names: list[str] = []
+    raw_dims = impact.get("target_dimensions") or impact.get("key_dims") or impact.get("fields") or []
+    if isinstance(raw_dims, dict):
+        target_dimensions = {
+            str(name): [str(v) for v in (values if isinstance(values, (list, tuple, set)) else [values]) if str(v)]
+            for name, values in raw_dims.items()
+            if str(name).strip()
+        }
+        target_dimensions = {k: v for k, v in target_dimensions.items() if v}
+    else:
+        dim_names = [str(name).strip() for name in raw_dims if str(name).strip()]
+        target_dimensions = {}
+    if keys:
+        target_mode = "explicit_keys"
+    elif target_dimensions:
+        target_mode = "dimension_filter"
+    else:
+        target_mode = "explicit_keys"
+    return {
+        "schema": "tg-plan-intent/v1",
+        "mode": "ce_change_scoped",
+        "source": source,
+        "target_mode": target_mode,
+        "target_keys": keys,
+        "target_dimensions": target_dimensions,
+        "dimension_names": dim_names,
+        "architecture": architecture,
+        "op_name": op_name,
+        "do_not_widen_to_declared_set": True,
+    }

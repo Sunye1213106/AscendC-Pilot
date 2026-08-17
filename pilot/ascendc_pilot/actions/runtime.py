@@ -396,28 +396,11 @@ def build_task_stub(
     if q:
         lines.append("USER QUESTION (answer this against the CodeMap / minimal source windows):")
         lines.append(q)
-        if "SLICE_ID=" in q:
+        if "SLICE_ID=" in q or "AXIS=" in q:
             lines.append(
                 "Hard stop: this Task answers ONLY the FOCUS / SLICE_ID above. "
                 "Ignore other parts of prompt.md User question."
             )
-        elif action_id == "kb_lookup" and "FIRST_QUERY:" not in q:
-            try:
-                from uo_init.query.plan import compile_query
-
-                plan = compile_query(q, architecture=architecture)
-                first = (plan.get("first_query") or [{}])[0]
-                cli = str(first.get("cli") or "").strip()
-                if cli:
-                    if project_root and "--project" not in cli:
-                        cli = f"{cli} --project {project_root}"
-                    lines.append(f"FIRST_QUERY: {cli}")
-                    lines.append(
-                        "Run FIRST_QUERY as written. If empty, retry once from hint; "
-                        "then return PARTIAL. Do not invent --mode symbols/fields/callers."
-                    )
-            except Exception:
-                pass
     # Public: any Action that lists *.summary.yaml in dispatch read gets MUST_READ_ORDER.
     from ascendc_pilot.ir_summary import large_ir_must_read_order_lines
 
@@ -527,56 +510,133 @@ def _build_task_prompt_stub(
     return stub
 
 
-def _kb_lookup_fanout_tasks(
+def _review_axis_fanout_tasks(
     *,
     action_id: str,
     actor_id: str,
-    user_question: str,
+    phase: str,
     sdir: Path,
     stub_kwargs: dict[str, Any],
+    repo: Path,
+    dispatch_targets: dict[str, Any] | None,
+    write_paths: list[str] | None,
+    project_root: str,
+    architecture: str,
 ) -> list[dict[str, str]]:
-    """Cursor-style parallel Tasks: one focused stub per METHOD slice."""
-    if action_id != "kb_lookup":
+    """Parallel Spec / Standards Tasks so the two axes do not share context."""
+    del write_paths
+    if action_id != "code_review":
         return []
-    from ascendc_pilot.query_slices import (
-        compile_query,
-        focused_user_question,
-        plan_query_slices,
+    if str(phase or "").strip() != "review":
+        return []
+    run_id = str(stub_kwargs.get("run_id") or "").strip() or "current"
+    axes = (
+        (
+            "spec",
+            "spec-review",
+            f"runs/{run_id}/actions/code_review/parts/spec.yaml",
+            "ce/review/bug_report.yaml",
+            (
+                "Spec — 对照 ce/intent/plan.md；没有则从 diff / change capture 推断意图，"
+                "检查 diff 是否满足该预期。结论写在 Task 回复（path:line）。"
+                "不要填 ce/review/*.yaml。"
+            ),
+        ),
+        (
+            "standards",
+            "standards-review",
+            f"runs/{run_id}/actions/code_review/parts/standards.yaml",
+            "ce/review/functional_report.yaml",
+            (
+                "Standards — 对照 ascendc-checks 与跨层契约。"
+                "结论写在 Task 回复（path:line）。不要填 ce/review/*.yaml。"
+            ),
+        ),
     )
-
-    slices = plan_query_slices(user_question)
-    if len(slices) < 2:
-        return []
+    dt = dict(dispatch_targets or {})
     tasks: list[dict[str, str]] = []
-    for row in slices:
-        slice_stub = _build_task_prompt_stub(
-            **{**stub_kwargs, "user_question": focused_user_question(user_question, row)}
+    for axis, cap, artifact, other, focus in axes:
+        mp = _capability_method_path(repo, "code-review", cap)
+        if not mp.is_file():
+            return []
+        axis_method = sdir / f"method_{axis}.md"
+        axis_method.write_text(mp.read_text(encoding="utf-8"), encoding="utf-8")
+        axis_dt = dict(dt)
+        axis_dt["write"] = [artifact]
+        forbid = list(axis_dt.get("forbid_read") or [])
+        for blocked in (
+            other,
+            "ce/review/functional_report.yaml",
+            "ce/review/bug_report.yaml",
+            "ce/review/index.yaml",
+        ):
+            if blocked not in forbid:
+                forbid.append(blocked)
+        axis_dt["forbid_read"] = forbid
+        question = (
+            f"AXIS={axis}\n"
+            f"FOCUS: {focus}\n"
+            f"SLICE_ID={axis}\n"
+            "Read only the method path in this stub. "
+            f"Optional session part: {artifact}. Do not Write ce/review/*.yaml. "
+            f"Do not Read {other}."
         )
+        axis_kwargs = {
+            **stub_kwargs,
+            "method_path": axis_method.as_posix(),
+            "dispatch_targets": axis_dt,
+            "write_paths": [artifact],
+            "user_question": question,
+        }
+        slice_stub = _build_task_prompt_stub(**axis_kwargs)
         tasks.append(
             {
-                "slice_id": row["slice_id"],
-                "focus": row["focus"],
-                "first_mode": row["first_mode"],
+                "slice_id": axis,
+                "focus": focus,
+                "first_mode": axis,
                 "actor_id": actor_id,
                 "action_id": action_id,
                 "task_prompt_stub": slice_stub,
             }
         )
-        (sdir / f"task_prompt_stub_{row['slice_id']}.md").write_text(
-            slice_stub, encoding="utf-8"
-        )
+        (sdir / f"task_prompt_stub_{axis}.md").write_text(slice_stub, encoding="utf-8")
+    if len(tasks) < 2:
+        return []
+    _ensure_review_report_skeletons(project_root, architecture)
     _dump(
-        sdir / "query_slices.yaml",
+        sdir / "review_axes.yaml",
         {
-            "question": user_question,
-            "slices": [
-                {k: t[k] for k in ("slice_id", "focus", "first_mode")} for t in tasks
+            "phase": phase,
+            "axes": [
+                {k: t[k] for k in ("slice_id", "focus")}
+                for t in tasks
             ],
-            "original_question": user_question,
-            "plan": compile_query(user_question),
         },
     )
     return tasks
+
+
+def _ensure_review_report_skeletons(project_root: str, architecture: str) -> None:
+    """Keep code-review-v1 contract satisfiable when review fans out two writers."""
+    arch = str(architecture or "").strip()
+    root = str(project_root or "").strip()
+    if not arch or not root:
+        return
+    try:
+        from ascendc_pilot.paths import ce_root
+    except Exception:  # noqa: BLE001
+        return
+    review = ce_root(root, arch=arch) / "review"
+    review.mkdir(parents=True, exist_ok=True)
+    skeletons = {
+        "index.yaml": "schema: ce-review-index/v1\nentry: ''\nfindings: []\n",
+        "functional_report.yaml": "schema: ce-review-spec/v1\naxis: spec\nfindings: []\n",
+        "bug_report.yaml": "schema: ce-review-standards/v1\naxis: standards\nfindings: []\n",
+    }
+    for name, body in skeletons.items():
+        path = review / name
+        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
+            path.write_text(body, encoding="utf-8")
 
 
 def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
@@ -587,11 +647,6 @@ def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
 def _uo_query_method_path(repo: Path) -> Path:
     """Query playbook for ``uo-query`` (materialized as session/method.md)."""
     return _capability_method_path(repo, "operator-analysis", "uo-query")
-
-
-def _tg_init_audit_method_path(repo: Path) -> Path:
-    """Referee playbook for ``tg-init-audit`` (materialized as session/method.md)."""
-    return _capability_method_path(repo, "testcase-generation", "tg-init-audit")
 
 
 def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | None:
@@ -1719,13 +1774,18 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         stub, stub_pointers = build_task_stub(**stub_kwargs)
         bundle["task_prompt_stub"] = stub
         bundle["stub_pointers"] = stub_pointers.as_dict()
-        fanout = _kb_lookup_fanout_tasks(
-            action_id=action_id,
-            actor_id=actor_id,
-            user_question=user_question,
-            sdir=sdir,
-            stub_kwargs=stub_kwargs,
-        )
+        fanout = _review_axis_fanout_tasks(
+                action_id=action_id,
+                actor_id=actor_id,
+                phase=phase,
+                sdir=sdir,
+                stub_kwargs=stub_kwargs,
+                repo=repo,
+                dispatch_targets=dt if isinstance(dt, dict) else None,
+                write_paths=write_paths,
+                project_root=root_s,
+                architecture=architecture,
+            )
         if fanout:
             bundle["dispatch_tasks"] = fanout
 
@@ -2032,7 +2092,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if len(fanout_tasks) >= 2:
         result["dispatch_tasks"] = fanout_tasks
         result["message_zh"] = (
-            f"已准备 {len(fanout_tasks)} 个并行 uo-query Task（同一 Action `{action_id}` / 一张 ticket）。"
+            f"已准备 {len(fanout_tasks)} 个并行 Task（agent=`{actor_id}`，同一 Action `{action_id}` / 一张 ticket）。"
             "同一轮用 OpenCode 原生 Task 全部派发；每条 prompt 必须原样为 "
             "`dispatch_tasks[i].task_prompt_stub`。"
             "禁止用父 `task_prompt_stub` 再开一个。"
@@ -2906,7 +2966,7 @@ def finalize_action(
                     }
                     if completed.get("ok"):
                         result["message_zh"] = (
-                            "查询已 finalize 并释放 ephemeral run；把答案正文说给人听。"
+                            "查询已 finalize 并释放 ephemeral run；请将答案正文向用户陈述。"
                         )
             except Exception:  # noqa: BLE001
                 pass
@@ -2956,7 +3016,6 @@ def _finalize_owned_artifact_path(
     root = agent_root(project_root, _arch_for(project_root))
     owned: dict[str, Path] = {
         "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
-        "kb_review": _uo_root(project_root) / "review" / "kb_product_review.yaml",
         # prepare owns the machine scope receipt; gate stamp is scope_validated.
         "prepare": scope_validated,
         "scope_validated": scope_validated,

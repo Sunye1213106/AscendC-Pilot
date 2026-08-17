@@ -113,17 +113,45 @@ def resolve_tg_mode(project_root: Any | None = None, *, default: str = "tilingke
         return default
     try:
         from pathlib import Path
-        from ascendc_pilot.paths import tg_root
-        tg = tg_root(Path(project_root))
-        for rel in ("plan/plan_intent.yaml", "init/init_intent.yaml"):
-            path = tg / rel
+        from ascendc_pilot.paths import ce_root, tg_root
+
+        root = Path(project_root)
+        tg = tg_root(root)
+        planned = tg / "plan" / "plan_intent.yaml"
+        if planned.is_file():
+            try:
+                import yaml
+
+                doc = yaml.safe_load(planned.read_text(encoding="utf-8")) or {}
+            except Exception:
+                doc = {}
+            mode = str((doc or {}).get("mode") or "").strip()
+            if mode:
+                return mode
+        ce_candidates = [ce_root(root) / "impact" / "tg_plan_intent.yaml"]
+        agent = root / ".ascendc-pilot"
+        if agent.is_dir():
+            ce_candidates.extend(sorted(agent.glob("*/ce/impact/tg_plan_intent.yaml")))
+        for path in ce_candidates:
             if not path.is_file():
                 continue
             try:
                 import yaml
+
                 doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             except Exception:
                 continue
+            mode = str((doc or {}).get("mode") or "").strip()
+            if mode:
+                return mode
+        init = tg / "init" / "init_intent.yaml"
+        if init.is_file():
+            try:
+                import yaml
+
+                doc = yaml.safe_load(init.read_text(encoding="utf-8")) or {}
+            except Exception:
+                doc = {}
             mode = str((doc or {}).get("mode") or "").strip()
             if mode:
                 return mode

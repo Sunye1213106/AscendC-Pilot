@@ -21,11 +21,10 @@ def test_named_gate_uo_ready_is_tg_not_sqlite() -> None:
     assert "architecture" in named.parameters
 
 
-def test_init_confirmed_contract_includes_confirmation() -> None:
-    paths = OUTPUT_CONTRACT_PATHS["init-confirmed-v1"]
-    assert "tg/init/confirmation.yaml" in paths
-    assert "tg/init/status.yaml" in paths
-    assert "tg/init/kb_fingerprint.yaml" in paths
+def test_intent_confirmed_contract_includes_plan() -> None:
+    paths = OUTPUT_CONTRACT_PATHS["intent-confirmed-v1"]
+    assert "ce/intent/confirmation.yaml" in paths
+    assert "ce/intent/plan.md" in paths
 
 
 def test_plan_review_contract_is_only_plan_review_yaml() -> None:

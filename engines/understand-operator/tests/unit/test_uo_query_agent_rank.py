@@ -689,3 +689,169 @@ def test_kernel_runtime_if_field_is_branch(tmp_path: Path) -> None:
     assert minted >= 1
     names = [e.name for e in cm.by_kind(EntityKind.BRANCH)]
     assert "enablePreSfmg" in names
+
+
+def test_kernel_pp_and_macro_body_if_become_branches(tmp_path: Path) -> None:
+    from uo_init.passes.kernel_tiling_closure import enrich_kernel_field_branches
+
+    root = tmp_path / "toy"
+    kernel = root / "op_kernel" / "arch35"
+    kernel.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (kernel / "entry.h").write_text(
+        "#if ORIG_DTYPE_QUERY == 1\n"
+        "void fp16_path() {}\n"
+        "#endif\n"
+        "#define INVOKE_IMPL() \\\n"
+        "    if (tilingData->enablePreSfmg) { runPre(); }\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="MACRO_orig",
+            kind=EntityKind.MACRO,
+            name="ORIG_DTYPE_QUERY",
+            file="op_kernel/arch35/td.h",
+            line_start=10,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="TF_pre",
+            kind=EntityKind.TILING_FIELD,
+            name="enablePreSfmg",
+            file="op_host/td.h",
+            line_start=1,
+            status="confirmed",
+        )
+    )
+    minted = enrich_kernel_field_branches(cm, root, architecture="arch35")
+    assert minted >= 2
+    names = {e.name for e in cm.by_kind(EntityKind.BRANCH)}
+    assert "ORIG_DTYPE_QUERY" in names
+    assert "enablePreSfmg" in names
+    kinds = {e.attrs.get("branch_kind") for e in cm.by_kind(EntityKind.BRANCH)}
+    assert any(str(k).startswith("pp_") for k in kinds)
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    arrow = q.aggregate_kernel_branch("enablePreSfmg", limit=8)
+    assert int(arrow.get("count") or 0) >= 1
+    conds = " ".join(
+        str((hit.get("facts") or {}).get("condition") or "")
+        for hit in arrow.get("branches") or []
+    )
+    assert "tilingData" in conds or "enablePreSfmg" in conds
+    pp = q.aggregate_kernel_branch("ORIG_DTYPE_QUERY", limit=8)
+    assert int(pp.get("count") or 0) >= 1
+    assert any(
+        str((hit.get("facts") or {}).get("branch_kind") or "").startswith("pp_")
+        for hit in pp.get("branches") or []
+    )
+
+
+def test_kernel_branch_keeps_arrow_and_pages_files(tmp_path: Path) -> None:
+    files = {
+        "op_kernel/arch35/entry.h": 10,
+        "op_kernel/arch35/kernel.h": 20,
+        "op_kernel/arch35/block.h": 30,
+    }
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    for rel, line in files.items():
+        _write_src(tmp_path, rel, "\n".join(f"line {i}" for i in range(1, 40)) + "\n")
+        cm.add_entity(
+            Entity(
+                id=f"KBR_{Path(rel).stem}",
+                kind=EntityKind.BRANCH,
+                name="enablePreSfmg",
+                attrs={
+                    "condition": "tilingData->base.enablePreSfmg",
+                    "function": Path(rel).stem.title(),
+                    "layer": "kernel",
+                    "branch_kind": "if",
+                },
+                file=rel,
+                line_start=line,
+                line_end=line,
+                status="confirmed",
+            )
+        )
+    cm.add_entity(
+        Entity(
+            id="KBR_block2",
+            kind=EntityKind.BRANCH,
+            name="enablePreSfmg",
+            attrs={
+                "condition": "constInfo.enablePreSfmg",
+                "function": "ProcessVec3",
+                "layer": "kernel",
+                "branch_kind": "if",
+            },
+            file="op_kernel/arch35/block.h",
+            line_start=31,
+            line_end=31,
+            status="confirmed",
+        )
+    )
+    cm.add_entity(
+        Entity(
+            id="KBR_trunc",
+            kind=EntityKind.BRANCH,
+            name="enablePreSfmg",
+            attrs={
+                "condition": "Foo<Bar<Baz...",
+                "function": "Truncated",
+                "layer": "kernel",
+            },
+            file="op_kernel/arch35/junk.h",
+            line_start=1,
+            line_end=1,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    out = q.aggregate_kernel_branch("enablePreSfmg", limit=8)
+    assert out["count"] == 4
+    page_files = {
+        str(hit.get("file") or "").replace("\\", "/")
+        for hit in out.get("branches") or []
+    }
+    assert "op_kernel/arch35/entry.h" in page_files
+    assert "op_kernel/arch35/kernel.h" in page_files
+    assert "op_kernel/arch35/block.h" in page_files
+    assert "Truncated" not in (out.get("functions") or {})
+
+
+def test_if_constexpr_is_not_a_function_name(tmp_path: Path) -> None:
+    from uo_init.passes.kernel_tiling_closure import enrich_kernel_field_branches
+
+    root = tmp_path / "toy"
+    kernel = root / "op_kernel" / "arch35"
+    kernel.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (kernel / "block.h").write_text(
+        "inline void ProcessVec3() {\n"
+        "  if constexpr (IS_ROPE) {\n"
+        "    if (constInfo.enablePreSfmg) { runPre(); }\n"
+        "  }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TF_pre",
+            kind=EntityKind.TILING_FIELD,
+            name="enablePreSfmg",
+            file="op_host/td.h",
+            line_start=1,
+            status="confirmed",
+        )
+    )
+    minted = enrich_kernel_field_branches(cm, root, architecture="arch35")
+    assert minted >= 1
+    fns = {str(e.attrs.get("function") or "") for e in cm.by_kind(EntityKind.BRANCH)}
+    assert "constexpr" not in fns
+    assert "ProcessVec3" in fns

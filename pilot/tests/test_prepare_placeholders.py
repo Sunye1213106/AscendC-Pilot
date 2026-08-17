@@ -246,8 +246,8 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     assert not result.get("dispatch_tasks")
 
 
-def test_prepare_kb_lookup_fanout_emits_slice_stubs(tmp_path: Path) -> None:
-    """Deep multi-domain question → N focused stubs, one Action."""
+def test_prepare_kb_lookup_does_not_fanout_on_keywords(tmp_path: Path) -> None:
+    """Deep multi-domain question stays one Action; Primary LLM owns dispatch."""
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
@@ -265,26 +265,12 @@ def test_prepare_kb_lookup_fanout_emits_slice_stubs(tmp_path: Path) -> None:
     start_workflow(op, "uo-query", architecture="arch35", intent=question)
     result = prepare_action(op, "kb_lookup")
     assert result.get("ok") is True, result
-    tasks = result.get("dispatch_tasks") or []
-    assert len(tasks) >= 2, result.get("message_zh")
-    ids = [str(t.get("slice_id") or "") for t in tasks]
-    assert "sel" in ids
-    from ascendc_pilot.query_slices import plan_query_slices
-
-    planned = plan_query_slices(question)
-    assert len(tasks) == len(planned)
-    assert {t.get("first_mode") for t in tasks} == {row["first_mode"] for row in planned}
-    for row in tasks:
-        stub = str(row.get("task_prompt_stub") or "")
-        assert "SLICE_ID=" in stub
-        assert "FOCUS (this child only)" in stub
-        assert "Hard stop: this Task answers ONLY the FOCUS" in stub
+    assert not result.get("dispatch_tasks")
     session = Path(str(result["session_dir"]))
-    assert (session / "query_slices.yaml").is_file()
-    assert (session / f"task_prompt_stub_{ids[0]}.md").is_file()
-    msg = str(result.get("message_zh") or "")
-    assert "同一轮" in msg
-    assert "综合" in msg
+    assert not (session / "query_slices.yaml").is_file()
+    stub = str(result.get("task_prompt_stub") or "")
+    assert "FIRST_QUERY:" not in stub
+    assert "SLICE_ID=" not in stub
 
 
 def test_uo_query_agent_has_empty_write_scopes() -> None:

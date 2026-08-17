@@ -1,0 +1,6 @@
+REG_OP(Toy)
+  .INPUT(key, "T")
+  .INPUT(slot, TensorType({DT_INT32, DT_INT64}))
+  .OUTPUT(key_cache, "T")
+  .DATATYPE(T, TensorType({DT_FLOAT16, DT_BF16, DT_INT8}))
+  .OP_END_FACTORY_REG(Toy)

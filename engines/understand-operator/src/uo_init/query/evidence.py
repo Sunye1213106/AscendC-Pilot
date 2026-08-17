@@ -7,7 +7,16 @@ import re
 from typing import Any
 
 from uo_init.ir.entity import Entity, EntityKind
-from uo_init.semantics.ascendc_sync import FLAG_SYNC_CALLEES, TPIPE_CALLEES, TQUE_CALLEES
+from uo_init.semantics.ascendc_sync import (
+    BARRIER_CALLEES,
+    FLAG_SYNC_CALLEES,
+    SYNC_MECHANISM,
+    TPIPE_CALLEES,
+    TQUE_CALLEES,
+    canonical_sync_name,
+    is_flag_sync,
+    is_sync_root,
+)
 
 USEFUL_EDGE_KINDS: tuple[str, ...] = (
     "WRITES",
@@ -25,6 +34,10 @@ USEFUL_EDGE_KINDS: tuple[str, ...] = (
     "DECLARES",
     "ROOTED_AT",
     "ALIASES",
+    "GUARDED_BY",
+    "PRECEDES",
+    "ACTIVE_UNDER",
+    "CONTAINS",
 )
 
 _FIELD_EDGE_KINDS = frozenset({"WRITES", "READS", "DERIVES", "CONTROLS"})
@@ -32,8 +45,8 @@ _FIELD_EDGE_KINDS = frozenset({"WRITES", "READS", "DERIVES", "CONTROLS"})
 _FLAG_SYNC_CALLEES = FLAG_SYNC_CALLEES
 _TQUE_CALLEES = TQUE_CALLEES
 _TPIPE_CALLEES = TPIPE_CALLEES
-_BARRIER_CALLEES = frozenset({"PipeBarrier", "DataSyncBarrier", "SyncAll"})
-_SYNC_CALLEES = _FLAG_SYNC_CALLEES | _TQUE_CALLEES | _TPIPE_CALLEES | _BARRIER_CALLEES
+_BARRIER_CALLEES = BARRIER_CALLEES
+_SYNC_CALLEES = _FLAG_SYNC_CALLEES | _TQUE_CALLEES | _TPIPE_CALLEES | _BARRIER_CALLEES | frozenset(SYNC_MECHANISM)
 _PRECISION_CALLEES = frozenset({"Cast", "DataCopy", "DataCopyPad"})
 _KERNEL_API_CALLEES = _SYNC_CALLEES | _PRECISION_CALLEES | frozenset(
     {
@@ -41,7 +54,14 @@ _KERNEL_API_CALLEES = _SYNC_CALLEES | _PRECISION_CALLEES | frozenset(
         "SetGlobalBuffer",
         "GetPhyAddr",
         "LoadAlign",
+        "StoreAlign",
+        "StoreUnAlign",
+        "CreateMask",
+        "UpdateMask",
         "InitOutput",
+        "PopStackBuffer",
+        "InitShareBufStart",
+        "InitShareBufEnd",
     }
 )
 
@@ -74,15 +94,19 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "owner",
         "cpp_type",
         "default_initializer",
+        "definition_sites",
     ),
     EntityKind.TYPE.value: (
         "cpp_kind",
         "role",
+        "alias_of",
         "root",
         "root_kind",
         "type_name",
         "owner",
-        "mutex_policy",
+        "wraps_storage",
+        "wraps_lock",
+        "wraps_flag",
         "conditional_flag",
     ),
     EntityKind.BUFFER.value: (
@@ -92,7 +116,10 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "scope",
         "type_name",
         "role",
-        "mutex_policy",
+        "allocated",
+        "stack_pop",
+        "wraps_lock",
+        "wraps_storage",
         "conditional_flag",
     ),
     EntityKind.REGISTER.value: ("register_class", "scope", "type_name"),
@@ -110,7 +137,17 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "layer",
         "catalog",
     ),
-    EntityKind.PIPE.value: ("identity", "scope", "type_name", "kernel_phase"),
+    EntityKind.PIPE.value: (
+        "identity",
+        "scope",
+        "type_name",
+        "pipe_ordinal",
+        "kernel_phase",
+        "role",
+        "catalog",
+        "pointer",
+        "kernel_file",
+    ),
     EntityKind.EVENT.value: ("identity", "scope", "event_type", "mechanism", "cross_core"),
     EntityKind.QUEUE.value: ("identity", "scope", "type_name", "tposition", "memory_space"),
     EntityKind.BRANCH.value: ("predicate", "condition", "branch_kind", "layer", "function", "dimensions"),
@@ -129,7 +166,7 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
     EntityKind.FUNCTION.value: ("definition_sites",),
     EntityKind.METHOD.value: ("definition_sites",),
     EntityKind.MACRO.value: ("value", "definition", "layer"),
-    EntityKind.COMPILE_VAR.value: ("value", "origin", "layer"),
+    EntityKind.COMPILE_VAR.value: ("value", "value_expr", "origin", "layer"),
     EntityKind.PREDICATE.value: (
         "predicate_role",
         "class",
@@ -344,7 +381,7 @@ def project_relation(value: Any) -> dict[str, Any]:
 def skill_bucket(hit: dict[str, Any]) -> str:
     kind = str(hit.get("kind") or "")
     facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
-    name = str(facts.get("callee") or hit.get("name") or "")
+    name = canonical_sync_name(str(facts.get("callee") or hit.get("name") or ""))
     if kind in {EntityKind.TILING_KEY.value, EntityKind.TEMPLATE.value, EntityKind.PREDICATE.value}:
         return "dispatch"
     if kind in {EntityKind.TILING_FIELD.value, EntityKind.TILING_DATA.value}:
@@ -356,7 +393,7 @@ def skill_bucket(hit: dict[str, Any]) -> str:
     if kind == EntityKind.OPERATION.value:
         if name in _PRECISION_CALLEES:
             return "precision"
-        if name in _SYNC_CALLEES:
+        if name in _SYNC_CALLEES or is_sync_root(name):
             return "sync"
         return "memory"
     if kind in {EntityKind.INPUT.value, EntityKind.OUTPUT.value}:
@@ -382,7 +419,8 @@ def bucket_hits(hits: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
 
 
 def is_kernel_api_name(name: str) -> bool:
-    return str(name or "").split("::")[-1] in _KERNEL_API_CALLEES
+    short = canonical_sync_name(name)
+    return short in _KERNEL_API_CALLEES or str(name or "").split("::")[-1] in _KERNEL_API_CALLEES
 
 
 def is_tque_api_name(name: str) -> bool:
@@ -390,7 +428,7 @@ def is_tque_api_name(name: str) -> bool:
 
 
 def is_flag_sync_api_name(name: str) -> bool:
-    return str(name or "").split("::")[-1] in _FLAG_SYNC_CALLEES
+    return is_flag_sync(name)
 
 
 def field_edge_kinds() -> frozenset[str]:

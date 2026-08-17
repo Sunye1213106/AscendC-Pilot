@@ -231,7 +231,9 @@ def _repo_root_from_project(project_root: Path) -> Path:
         if _looks_like_repo(base):
             return base
     # Installed OpenCode plugin tree
-    home_plug = Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin"
+    from ascendc_pilot.paths import opencode_plugin_root
+
+    home_plug = opencode_plugin_root()
     if _looks_like_repo(home_plug):
         return home_plug
     cwd = Path.cwd().resolve()
@@ -418,6 +420,8 @@ def _run_query(
 
 def _resolve_reference_path(repo: Path, rel: str) -> tuple[Path | None, str]:
     """Return ``(path, recorded_rel)`` for a profile reference, or ``(None, rel)``."""
+    from ascendc_pilot.paths import opencode_plugin_root
+
     path = repo / rel
     if path.is_file():
         return path, rel
@@ -425,7 +429,7 @@ def _resolve_reference_path(repo: Path, rel: str) -> tuple[Path | None, str]:
     if rel.startswith("skills/"):
         alt = "cognitive-" + rel
     alt_path = repo / alt
-    home_alt = Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin" / alt
+    home_alt = opencode_plugin_root() / alt
     if alt_path.is_file():
         return alt_path, alt
     if home_alt.is_file():

@@ -92,7 +92,7 @@ Control Plane：`User → Host Adapter (Driver) → Pilot Workflow → Engine �
 
 核心原则：
 
-> Deterministic Engine 负责事实，LLM Agent 负责推理，Harness 负责约束两者之间的边界，**Host Adapter 负责传输与派发**（建库 / TG / CE 不再由 Primary LLM 手搓 ACP 协议环）。**只读查询例外**：主控在当前会话做可见分类，再 `acp uo-query` 或原生 Task，不走 `pilot_run`。
+> Deterministic Engine 负责事实，LLM Agent 负责推理，Harness 负责约束两者之间的边界，**Host Adapter 负责传输与派发**（建库 / TG / CE 不再由 Primary LLM 手工编排 ACP 协议环）。**只读查询例外**：主控在当前会话说明查询方式，再 `acp uo-query` 或原生 Task，不走 `pilot_run`。
 
 覆盖如何闭环见 [TG](../modules/tg.md)；Agent 如何受约束见 [Agent Runtime](agent-runtime.md)；各 workflow 阶段图见 [工作流流程图](workflows.md)；文件放哪见 [产物与权威](artifacts-and-authority.md)。
 
@@ -104,4 +104,4 @@ Control Plane：`User → Host Adapter (Driver) → Pilot Workflow → Engine �
 Compiler-aware Knowledge + Deterministic Verification + Bounded Agent Reasoning + Host-owned Transport
 ```
 
-通过提前建立 Operator CodeMap，减少 Agent 对源码的重复理解、把上下文留给真正需要推理的地方；通过 Harness 限制执行范围；通过 Host Session Driver 把建库 / TG / CE 的 `start → auto → Task → finalize` 从 LLM turn 挪到 Host；只读查询由主控可见路由，不进该环；通过 replay 和 proof 保证结果具有工程可信度。
+通过提前建立 Operator CodeMap，减少 Agent 对源码的重复理解、把上下文留给真正需要推理的地方；通过 Harness 限制执行范围；通过 Host Session Driver 把建库 / TG / CE 的 `start → auto → Task → finalize` 从 LLM turn 挪到 Host；只读查询由主控向用户说明查询方式，不进该环；通过 replay 和 proof 保证结果具有工程可信度。

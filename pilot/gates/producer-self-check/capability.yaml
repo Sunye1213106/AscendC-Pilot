@@ -1,7 +1,7 @@
 id: producer-self-check
 version: 1
 name_zh: Producer 自检
-description: Map worker / producer 在交卷前用受控 inspect/validate 自检本 shard 覆盖与越权，结果写 scratch。
+description: Map worker / producer 在提交前用受控 inspect/validate 自检本 shard 覆盖与越权，结果写 scratch。
 applies_when:
   - extract_plan Map worker
   - adjudicate_llm_tasks Map worker

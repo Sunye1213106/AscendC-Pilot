@@ -181,6 +181,13 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         token_budget=4500,
     ),
+    "ce-review-persist": ContextProfile(
+        id="ce-review-persist",
+        description="Host-owned: speak review findings; persist reports only if asked.",
+        references=(),
+        query_slices=(),
+        token_budget=800,
+    ),
     "ce-verify-code-review": ContextProfile(
         id="ce-verify-code-review",
         description="Obligation-driven review during CE verify.",
@@ -282,6 +289,7 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-engineering/references/gotchas.md",
             "skills/code-engineering/references/risk-classes.md",
             "skills/code-engineering/references/evidence-tiers.md",
+            "skills/code-engineering/references/intent-grill-staging.md",
         ),
         query_slices=(
             QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),

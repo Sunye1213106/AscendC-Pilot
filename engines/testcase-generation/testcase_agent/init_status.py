@@ -238,7 +238,7 @@ def mark_init_pending(
         "artifacts": artifacts or {},
         "next": [
             "acp run-action auto (drain tg-init deterministic phases)",
-            "Task tg-init-audit → init/audit_report.yaml (TILINGKEY_AUDIT_CHECKLIST_IDS)",
+            "init_audit engine → init/audit_report.yaml (TILINGKEY_AUDIT_CHECKLIST_IDS)",
             "AskQuestion: confirm | rework | stop",
             "acp run-action human_confirm --finalize",
             "Then /tg-plan",
@@ -319,7 +319,7 @@ def require_audit_pass(
     *,
     checklist: str = "tilingkey",
 ) -> dict[str, Any]:
-    """Require init/audit_report.yaml from tg-init-audit subagent before confirm."""
+    """Require init/audit_report.yaml from the init_audit engine before confirm."""
     from .resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
 
     # Legacy CSV checklist removed; only tilingkey ids are accepted.
@@ -329,9 +329,9 @@ def require_audit_pass(
     path = Path(out_root) / "init" / "audit_report.yaml"
     if not path.is_file():
         raise InitGateError(
-            "Missing init/audit_report.yaml. Open Task Follow agents/tg-init-audit (composed) before --confirm.",
+            "Missing init/audit_report.yaml. Re-run /tg-init init_audit (deterministic engine) before --confirm.",
             ask="audit_required",
-            payload={"expected": path.as_posix(), "next": "Task tg-init-audit → write init/audit_report.yaml"},
+            payload={"expected": path.as_posix(), "next": "init_audit engine → write init/audit_report.yaml"},
         )
     doc = read_yaml(path)
     if not isinstance(doc, dict):
@@ -353,7 +353,7 @@ def require_audit_pass(
     if missing_ids:
         raise InitGateError(
             f"init/audit_report.yaml missing checklist ids: {missing_ids[:12]}. "
-            "tg-init-audit MUST cover the mode checklist.",
+            "init_audit MUST cover the mode checklist.",
             ask="audit_incomplete",
             payload={"missing_ids": missing_ids, "checklist": checklist},
         )

@@ -25,9 +25,9 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     assert "MUST NOT Write `answer.yaml`" in invariant
     assert "源码作答" in method
     assert "禁止 Glob/dir/tree 找 `.uo`" in method
-    assert "template_match" in method
     assert "dim_coverage" in method
-    assert "kernel_launch" in method
+    assert "Dim=V" in method
+    assert "edges" in method
     assert "findstr" in method
     assert "--query" in _text("pilot/ascendc_pilot/cli.py")
     assert "session `method.md`" in method
@@ -50,19 +50,30 @@ def test_uo_query_router_owned_by_method() -> None:
     router = _text("skills/operator-analysis/routing/uo-query.md")
     method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
     skill = _text("skills/operator-analysis/SKILL.md")
-    assert "compile" in router
-    assert "FIRST_QUERY" in router
-    assert "host_step.tasks" in router
+    assert "compile" not in router
+    assert "FIRST_QUERY" not in router
+    assert "直接调用" in router
+    assert "委派" in router
+    assert "分别委派" in router
+    assert "综合只在主控" in router
+    assert "数量由主控判断" not in router
+    assert "host_step.tasks" not in router
     assert "每轮最多" in router
-    assert "FIRST_QUERY" in method
-    assert "SLICE_ID" in method
-    assert "kernel_launch" in method
-    assert "search" in method and "ProcessVec" in method
+    assert "不要传 `--mode`" in method
+    assert "丢掉" not in method
+    assert "旧 CLI" not in method
+    assert "旧 mode" not in router
+    assert "kernel_launch" not in method
+    assert "ProcessVec" not in method
+    assert "template_match" not in method
+    assert "SLICE_ID" not in method
+    assert "Dim=V" in method
+    assert "--file" in method and "--line" in method
+    assert "视为已 Read" in method
     assert "routing/uo-query.md" in skill
     assert "uo-query-router/METHOD.md" not in skill
     assert "相关 ≠ 单域" not in skill
     assert "相关 ≠ 单域" in router
-    assert "不是默认拆两路" in router
     assert "Q6" not in skill
     assert "Q7" not in skill
     assert "Q18" not in skill
@@ -80,6 +91,12 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     assert "host_step.tasks" in invariant
     assert "不要 `pilot_run`" in command_src
     assert "routing/uo-query.md" in command_src
+    assert "禁止在 Task 正文写 `--mode`" in command_src
+    assert "丢掉" not in command_src
+    assert "--mode locate" not in hook
+    assert "短问" not in invariant
+    assert "深问" not in invariant
+    assert "Compile output is candidates" not in invariant
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "primary_router" in driver
     assert 'startedKind === "primary_router"' in driver
@@ -96,3 +113,17 @@ def test_splitaxis_example_is_non_normative() -> None:
     product_map = _text("skills/operator-analysis/references/uo-product-map.md")
     assert "non-normative" in product_map
     assert "examples/uo-query-splitaxis/" in product_map
+
+
+def test_ce_intent_grill_staging_in_bundle_profile() -> None:
+    from ascendc_pilot.context.profiles import get_profile
+
+    profile = get_profile("ce-intent-intent-grill")
+    refs = list(profile.references) if profile is not None else []
+    assert any("intent-grill-staging.md" in str(r) for r in refs)
+    staging = _text("skills/code-engineering/references/intent-grill-staging.md")
+    method = _text("skills/code-engineering/capabilities/ce-intent-grill/METHOD.md")
+    for field in ("in_scope", "out_of_scope", "acceptance", "open_questions", "side"):
+        assert field in staging
+        assert field in method
+    assert "目录遍历" in method

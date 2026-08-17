@@ -12,9 +12,8 @@
 ## 推荐接口
 
 ```text
-acp uo-query --mode template_match --pattern <name_or_key>
-acp uo-query --mode templates --pattern <key>
-acp uo-query --mode search --kind TEMPLATE,MACRO,COMPILE_VAR --pattern <needle>
+acp uo-query --project <op> <name_or_key>
+acp uo-query --project <op> Dim=V
 ```
 
 ## Claim 提示

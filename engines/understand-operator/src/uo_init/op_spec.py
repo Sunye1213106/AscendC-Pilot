@@ -30,7 +30,7 @@ from typing import Any
 import yaml
 
 from uo_init import scope_scan as sscan
-from uo_init.source_layout import is_other_arch_path
+from uo_init.source_layout import ARCH_DIR_RE, is_other_arch_path
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 OVERRIDE_DIR = SPEC_DIR / "operators"
@@ -40,7 +40,6 @@ OP_CLASS_RE = re.compile(r"\bclass\s+([A-Z]\w*)\s*:\s*public\s+OpDef\b")
 OP_ADD_RE = re.compile(r"\bOP_ADD\s*\(\s*([A-Z]\w*)\s*\)")
 # `ASCENDC_TPL_ARGS_DECL(FlashAttentionScoreGrad,`
 TPL_TAG_RE = re.compile(r"ASCENDC_TPL_ARGS_DECL\s*\(\s*([A-Za-z_]\w*)")
-ARCH_DIR_RE = re.compile(r"^arch\d+$")
 
 
 def camel_to_snake(name: str) -> str:
@@ -75,6 +74,7 @@ class OpSpec:
     ambiguities: list[str] = field(default_factory=list)
     scope: sscan.ScopeSet | None = None
     source: str = "discovered"
+    display_name_hint: str = ""
 
     @property
     def op_needle(self) -> str:
@@ -123,6 +123,7 @@ class OpSpec:
             "docs": [rel(p) for p in self.docs],
             "ambiguities": list(self.ambiguities),
             "source": self.source,
+            "display_name_hint": self.display_name_hint,
         }
 
     @property
@@ -138,13 +139,30 @@ def _read(path: Path) -> str:
 
 
 def _find_opdef(host_root: Path) -> tuple[Path | None, list[str]]:
-    candidates = sorted(host_root.glob("*_def.cpp")) if host_root.is_dir() else []
-    if not candidates:
+    """Recall OpDef TUs. ``*_def.cpp`` is a candidate glob, not identity."""
+    if not host_root.is_dir():
         return None, ["opdef_not_found: no op_host/*_def.cpp"]
-    if len(candidates) > 1:
-        names = ", ".join(p.name for p in candidates)
-        return candidates[0], [f"multiple_opdef: {names}"]
-    return candidates[0], []
+    hinted = sorted(host_root.glob("*_def.cpp"))
+    confirmed: list[Path] = []
+    for path in hinted:
+        text = _read(path)
+        if OP_CLASS_RE.search(text) or OP_ADD_RE.search(text):
+            confirmed.append(path)
+    if not confirmed:
+        for path in sorted(host_root.glob("*.cpp")):
+            if path in hinted:
+                continue
+            text = _read(path)
+            if OP_CLASS_RE.search(text) or OP_ADD_RE.search(text):
+                confirmed.append(path)
+    if confirmed:
+        if len(confirmed) > 1:
+            names = ", ".join(p.name for p in confirmed)
+            return confirmed[0], [f"multiple_opdef: {names}"]
+        return confirmed[0], []
+    if hinted:
+        return hinted[0], [f"display_name_hint: {hinted[0].name}"]
+    return None, ["opdef_not_found: no op_host/*_def.cpp"]
 
 
 def _op_name_from(opdef: Path | None, op_dir: Path) -> tuple[str, list[str]]:
@@ -154,8 +172,8 @@ def _op_name_from(opdef: Path | None, op_dir: Path) -> tuple[str, list[str]]:
         if m:
             return m.group(1), []
         stem = opdef.stem[: -len("_def")] if opdef.stem.endswith("_def") else opdef.stem
-        return snake_to_camel(stem), [f"op_name_from_filename: {opdef.name}"]
-    return snake_to_camel(op_dir.name), ["op_name_from_directory"]
+        return snake_to_camel(stem), [f"display_name_hint: {opdef.name}"]
+    return snake_to_camel(op_dir.name), ["display_name_hint: directory"]
 
 
 def _discover_archs(op_dir: Path) -> list[str]:
@@ -170,7 +188,7 @@ def _discover_archs(op_dir: Path) -> list[str]:
 
 
 def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
-    """Tiling TUs for this architecture: the shared entry plus the arch folder.
+    """Candidate tiling TUs: glob recall only, not a semantic role.
 
     Headers are excluded (they are pulled in by the TUs) and other arch folders
     are excluded so a single run models exactly one hardware generation.
@@ -241,31 +259,71 @@ def _sibling_operator_dirs(kernel_entry: Path, op_dir: Path) -> list[Path]:
 
 def _host_files_have_packing(paths: list[Path]) -> bool:
     """True when these TUs already mint tiling keys (not register/dispatch stubs)."""
+    return bool(_packing_host_tus(paths))
+
+
+def _packing_host_tus(paths: list[Path]) -> list[Path]:
+    """Host TUs whose text contains a packing sink. Candidate recall, not a role."""
+    out: list[Path] = []
+    seen: set[Path] = set()
     for path in paths:
         if path is None or not path.is_file():
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            text = _read(path)
         except OSError:
             continue
         if _HOST_PACKING_SITE_RE.search(text):
-            return True
-    return False
+            out.append(path)
+    return out
+
+
+def _unique_paths(*groups: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for group in groups:
+        for path in group:
+            try:
+                key = path.resolve()
+            except OSError:
+                key = path
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(path)
+    return out
 
 
 def _targets_from_scope(spec: OpSpec) -> None:
     """Split the scanned scope into the sets each parsing stage consumes.
 
-    Tiling stays on its own: the definition and shape-inference TUs describe the
-    operator rather than compute a TilingKey, and folding their writes into the
-    host IR would attribute assignments to runs that never make one.
+    File roles are layout bootstrap. Tiling TUs are recalled by directory/stem
+    hint or packing-site text; that recall is not a semantic ``host_tiling``
+    identity for the whole file. Definition / infershape TUs stay out of
+    ``host_targets`` so their writes are not folded into a TilingKey run.
     """
     scope = spec.scope
     if scope is None:
         return
-    spec.host_targets = scope.paths(role=sscan.ROLE_HOST_TILING, tu_only=True)
     spec.api_targets = scope.paths(role=sscan.ROLE_API, tu_only=True)
     spec.kernel_targets = scope.paths(role=sscan.ROLE_KERNEL_ENTRY, tu_only=True)
+    hinted = scope.paths(role=sscan.ROLE_HOST_TILING, tu_only=True)
+    host_owned = [
+        f.path
+        for f in scope.files
+        if f.is_tu
+        and f.side == sscan.SIDE_HOST
+        and not f.shared
+        and "op_host" in {p.lower() for p in f.path.parts}
+    ]
+    spec.host_targets = _unique_paths(hinted, _packing_host_tus(host_owned))
     spec.decl_targets = scope.paths(
         role=(sscan.ROLE_HOST_DEF, sscan.ROLE_HOST_INFERSHAPE), tu_only=True
     )
@@ -429,6 +487,8 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
 
     spec.op_name, notes = _op_name_from(spec.opdef, op_dir)
     spec.ambiguities.extend(notes)
+    if any(str(n).startswith("display_name_hint:") for n in notes):
+        spec.display_name_hint = spec.op_name
     spec.op_snake = camel_to_snake(spec.op_name)
 
     # Scanned even when the spec is pinned: a pin says which files to parse,

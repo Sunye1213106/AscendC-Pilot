@@ -23,6 +23,8 @@ from uo_init.clang_walk import (
     WalkResult,
     WriteRecord,
     walk_file,
+    TypeDecl,
+    BaseDecl,
 )
 
 
@@ -281,6 +283,10 @@ class HostIR:
     #: Local declarations, including those initialising nothing. Read through
     #: `local_decl()`.
     local_decls: list[LocalDecl] = field(default_factory=list)
+    #: Class/struct declarations from the already-walked TUs (no extra Clang).
+    type_decls: list[TypeDecl] = field(default_factory=list)
+    #: Base-class edges from the already-walked TUs.
+    base_decls: list[BaseDecl] = field(default_factory=list)
 
     def local_decl(self, name: str, function: str) -> LocalDecl | None:
         """Where `name` was declared in `function`, if it was declared there.
@@ -896,7 +902,11 @@ def build_host_ir(
     all_controls: list[CtrlNode] = []
     all_field_decls: dict[tuple[str, str], FieldDecl] = {}
     all_local_decls: list[LocalDecl] = []
+    all_type_decls: list[TypeDecl] = []
+    all_base_decls: list[BaseDecl] = []
     seen_local_decls: set[tuple[str, str, int, int]] = set()
+    seen_type_decls: set[tuple[str, str, int]] = set()
+    seen_base_decls: set[tuple[str, str, str]] = set()
     seen_calls: set[tuple[str, str, str, int, int, str]] = set()
     seen_controls: set[tuple[str, int, int, str]] = set()
     summaries: dict[str, FuncSummary] = {}
@@ -985,6 +995,16 @@ def build_host_ir(
             if dkey not in seen_local_decls:
                 seen_local_decls.add(dkey)
                 all_local_decls.append(d)
+        for td in getattr(res, "type_decls", ()) or ():
+            tkey = (getattr(td, "usr", "") or td.name, td.file, td.line)
+            if tkey not in seen_type_decls:
+                seen_type_decls.add(tkey)
+                all_type_decls.append(td)
+        for bd in getattr(res, "base_decls", ()) or ():
+            bkey = (bd.derived_name, bd.base_name, getattr(bd, "file", "") or "")
+            if bkey not in seen_base_decls:
+                seen_base_decls.add(bkey)
+                all_base_decls.append(bd)
         for site in getattr(res, "call_sites", ()) or ():
             # A header included by several TUs is walked once per TU, so the
             # same physical call arrives repeatedly. Position has to include the
@@ -1060,6 +1080,8 @@ def build_host_ir(
         controls=all_controls,
         field_decls=all_field_decls,
         local_decls=all_local_decls,
+        type_decls=all_type_decls,
+        base_decls=all_base_decls,
     )
 
 

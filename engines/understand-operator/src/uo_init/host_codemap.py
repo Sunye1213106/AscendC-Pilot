@@ -379,37 +379,30 @@ class QueryResult:
 
 def default_codemap_completeness(
     *,
-    init_profile: str = "fast",
-    closure_mode: str = "keypath",
+    init_profile: str = "",
+    closure_mode: str = "",
 ) -> dict[str, Any]:
-    """Profile-level completeness contract stored in KB meta / view blob."""
-    profile = (init_profile or "fast").strip().lower()
-    mode = (closure_mode or "keypath").strip().lower()
-    host_complete = mode == "full" and profile == "full"
+    """Product completeness contract stored in KB meta / view blob."""
+    del init_profile, closure_mode
     return {
         "schema": "codemap-completeness/v1",
-        "init_profile": profile,
-        "closure_mode": mode,
         "host": {
             "functions": {
-                "mode": mode,
+                "mode": "host_ir",
                 "entry_roots_complete": True,
-                "call_closure": "complete" if host_complete else "partial",
+                "call_closure": "partial",
             },
-            "writes": "complete" if mode in {"full", "keypath"} else "partial",
-            "reads": "complete" if mode in {"full", "keypath"} else "partial",
+            "writes": "complete",
+            "reads": "complete",
         },
         "kernel": {
-            "completeness": "partial" if profile == "fast" else "complete",
-            "dtype_variants": "fast_one" if profile == "fast" else "full",
+            "completeness": "partial",
+            "dtype_variants": "one",
         },
-        "api": {"completeness": "skipped" if profile == "fast" else "partial"},
         "macros": {"completeness": "partial"},
         "lemma_certificate": {
-            "assignment_sites_complete": host_complete,
-            "call_closure_complete": host_complete,
-            "alias_state_exact": False,
-            "macro_context_complete": False,
+            "assignment_sites_complete": False,
+            "call_closure_complete": False,
         },
     }
 

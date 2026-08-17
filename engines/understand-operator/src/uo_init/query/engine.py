@@ -67,11 +67,17 @@ class CodeMapQuery:
         edge_kinds: list[str] | None = None,
         depth: int = 3,
         budget: int = 500,
+        include_advisory: bool = False,
     ) -> dict[str, Any]:
         from uo_init.query.slice import slice_forward
 
         return slice_forward(
-            self.codemap, seed_ids, edge_kinds=edge_kinds, depth=depth, budget=budget
+            self.codemap,
+            seed_ids,
+            edge_kinds=edge_kinds,
+            depth=depth,
+            budget=budget,
+            include_advisory=include_advisory,
         )
 
     def slice_backward(
@@ -81,11 +87,17 @@ class CodeMapQuery:
         edge_kinds: list[str] | None = None,
         depth: int = 3,
         budget: int = 500,
+        include_advisory: bool = False,
     ) -> dict[str, Any]:
         from uo_init.query.slice import slice_backward
 
         return slice_backward(
-            self.codemap, seed_ids, edge_kinds=edge_kinds, depth=depth, budget=budget
+            self.codemap,
+            seed_ids,
+            edge_kinds=edge_kinds,
+            depth=depth,
+            budget=budget,
+            include_advisory=include_advisory,
         )
 
     def find_path(self, start: str, end: str | None = None, *, end_kind: str = "") -> list[dict[str, Any]]:
@@ -116,7 +128,9 @@ class CodeMapQuery:
                 end_kinds = [end.upper()]
         kinds = end_kinds or (["KERNEL"] if not end else None)
         for ent in start_ents:
-            path_ids = self.codemap.find_path(ent.id, end_id=end_id, end_kinds=kinds)
+            path_ids = self.codemap.find_path(
+                ent.id, end_id=end_id, end_kinds=kinds, include_advisory=False
+            )
             if path_ids:
                 return [
                     self.codemap.entities[i].to_dict()
@@ -394,7 +408,9 @@ class CodeMapQuery:
         ents = self.codemap.by_name(name)
         out: list[dict[str, Any]] = []
         for ent in ents:
-            for _rel, other in self.codemap.neighbors(ent.id, kind=kind, direction=direction):
+            for _rel, other in self.codemap.neighbors(
+                ent.id, kind=kind, direction=direction, include_advisory=False
+            ):
                 out.append(other.to_dict())
         return out
 
@@ -407,7 +423,9 @@ class CodeMapQuery:
         ordered: list[Entity] = []
         while frontier and len(ordered) < limit:
             cur = frontier.pop(0)
-            for _rel, other in self.codemap.neighbors(cur, direction=direction):
+            for _rel, other in self.codemap.neighbors(
+                cur, direction=direction, include_advisory=False
+            ):
                 if other.id in seen:
                     continue
                 seen.add(other.id)

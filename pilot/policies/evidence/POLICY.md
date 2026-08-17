@@ -13,7 +13,7 @@
 5. 证据不足时保留 `unresolved` / `needs_human`，不得猜测闭合。
 6. 仅 `confidence: high` 可闭合 true / false / not_input_derivable 类字段。
 7. **高置信 = 源码比对（全局硬规则）**：凡写入 `confidence: high` 或 `source_verified: true` 的结论，必须同时具备：
-   - `evidence_source: source|uo_graph`（禁止 `candidate_only` 冒充 verified）
+   - `evidence_source: source|uo_graph`（禁止将 `candidate_only` 当作 verified）
    - 非空 `evidence_files` + `evidence_lines: [start, end]`（1-based inclusive）
    - `evidence_window_sha256`：磁盘窗口 sha（pad=0；可从候选 `source_window.sha256` 拷贝）
    - `evidence_snippet`：该窗口内**连续**真实源码文本（足够长），**必须为磁盘窗口连续子串**（可去缩进比对）；禁止挑行拼贴

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from uo_init.platform_ini import (
     DEFAULT_SKU_BY_ARCH,
+    dav_name_for_arch,
+    kernel_macros_for_arch,
     load_platform_profile,
     list_profiles,
+    parse_family_for_arch,
 )
 from uo_init.variable_model import PLATFORM_VARS, apply_platform_profile, build_variable_model
 
@@ -42,3 +45,14 @@ def test_list_3510_profiles_have_closed_cube_set(cann_root):
     assert profiles
     cubes = {p.aic_num for p in profiles}
     assert 28 in cubes or 32 in cubes
+
+
+def test_arch_920r1_is_distinct_identity_parsed_as_arch35():
+    assert parse_family_for_arch("arch-920r1") == "arch35"
+    assert parse_family_for_arch("arch35") == "arch35"
+    assert dav_name_for_arch("arch-920r1") == "DAV_9201"
+    assert dav_name_for_arch("arch35") == "DAV_3510"
+    assert kernel_macros_for_arch("arch-920r1") == kernel_macros_for_arch("arch35")
+    assert kernel_macros_for_arch("arch-920r1")["__NPU_ARCH__"] == "3510"
+    assert kernel_macros_for_arch("arch-920r1")["__DAV_C310__"] == ""
+    assert kernel_macros_for_arch("arch22")["__NPU_ARCH__"] == "2201"

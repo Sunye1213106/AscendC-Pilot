@@ -7,15 +7,12 @@ from typing import Any, Callable
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.passes import (
-    compile_time,
     dataflow,
     host_kernel,
     kernel,
     macro,
     reachability,
     symbol,
-    template,
-    tiling,
     tpl_schema,
 )
 
@@ -29,12 +26,9 @@ PassFn = Callable[..., CodeMap]
 ANALYZE_PASSES: list[tuple[str, PassFn]] = [
     ("reachability", reachability.run),
     ("core_codemap", symbol.run),
-    ("compile_time", compile_time.run),
     ("macro", macro.run),
     ("tpl_schema", tpl_schema.run),
-    ("template", template.run),
     ("dataflow", dataflow.run),
-    ("tiling", tiling.run),
     ("kernel", kernel.run),
     ("host_kernel_bind", host_kernel.run),
 ]

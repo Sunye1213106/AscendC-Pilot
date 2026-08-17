@@ -15,11 +15,10 @@ from uo_init.ir.relation import RelationKind
 from uo_init.store.writer import write_codemap
 
 
-def test_default_completeness_marks_fast_as_partial():
-    c = default_codemap_completeness(init_profile="fast", closure_mode="keypath")
+def test_default_completeness_is_partial():
+    c = default_codemap_completeness()
     assert c["host"]["functions"]["call_closure"] == "partial"
     assert c["lemma_certificate"]["call_closure_complete"] is False
-    assert c["api"]["completeness"] == "skipped"
 
 
 def test_callers_of_and_fields(tmp_path: Path):

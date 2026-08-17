@@ -59,18 +59,13 @@ def test_full_perception_fits_the_budget(perception):
 
 
 def test_perception_reaches_every_layer(perception):
-    """A budget met by looking at less is not the point.
-
-    Each of these is a layer that was outside the analysis before: the API
-    states which inputs may arrive together, the declarations pair the dtypes,
-    and the kernel says which dimension decides which code.
-    """
+    """Extract product is host IR ∥ kernel IR over a scoped operator tree."""
     spec = perception["spec"]
     assert spec.scope is not None
     assert spec.host_targets, "no host tiling translation unit"
-    assert spec.api_targets, "no API translation unit: input contract unread"
     assert spec.kernel_targets, "no kernel entry: branch map unread"
-    assert spec.decl_targets, "no definition translation unit"
+    assert perception.get("host_ir") is not None
+    assert perception.get("kernel_ir") is not None
 
 
 def test_shared_headers_the_operator_includes_are_in_scope(perception):
@@ -98,47 +93,24 @@ def test_one_architecture_at_a_time(perception, arch_dir):
         assert not others, f"{f.path} belongs to {others}, not {arch_dir}"
 
 
-def test_the_declared_interface_is_read(perception):
-    facts = perception["decl_facts"]
-    assert facts.params, "no declared parameters"
-    # The dtype lists are columns: entry i of every parameter is one supported
-    # combination. Without them a query dtype looks independent of the key's.
-    assert facts.combinations, "no dtype combinations: the columns did not line up"
-
-
-def test_the_api_states_what_it_refuses(perception):
-    contract = perception["api_contract"]
-    assert contract.premises, "no premises: the API layer refuses nothing?"
-    ungrounded = [p for p in contract.premises if not p.is_grounded]
-    assert not ungrounded, (
-        "premises that reached no declared parameter: "
-        + "; ".join(f"{p.text} ({p.unresolved})" for p in ungrounded[:5])
-    )
-
-
-def test_the_kernel_branch_map_is_built(perception):
+def test_the_kernel_ir_is_built(perception):
     kernel = perception["kernel_ir"]
     assert kernel is not None
+    assert perception.get("host_ir") is not None
+    assert set(perception) >= {"spec", "host_ir", "kernel_ir", "timing"}
+    assert "decl_facts" not in perception
+    assert "api_contract" not in perception
+    assert "metrics" not in perception
+    assert "families" not in perception
     assert kernel.branches, "no compile-time branches found in the kernel"
-    # Parsing once per dtype variant only pays for itself if the variants
-    # actually compile different code.
-    assert len(kernel.variants) > 1
-    assert kernel.variant_only(), (
-        "every branch compiles under every dtype variant, so the extra parses "
-        "bought nothing -- check the dtype macro is reaching the parse"
-    )
 
 
-def test_the_closure_is_not_paid_for_unless_asked(perception):
-    """It is five sixths of the run and key derivation reads none of it.
-
-    The skipped path still hands back empty ``ClosureMetrics`` / ``GapReport``
-    rather than ``None``, because ``extract_host_bundle`` reads their fields
-    unconditionally. Emptiness is the evidence that nothing was computed.
-    """
-    metrics = perception["metrics"]
-    gap = perception["gap"]
-    assert metrics is not None and gap is not None
-    assert metrics.total_nodes == 0, "closure nodes were built without being asked"
-    assert metrics.total_predicates == 0
-    assert not gap.blockers
+@pytest.mark.requires_cann
+@pytest.mark.requires_fag
+def test_extract_host_bundle_is_the_only_extract_product(perception):
+    """uo-extract-v1 is host_ir + kernel_ir; no families/fold/key_bind sidecars."""
+    timing = perception.get("timing") or {}
+    assert float(perception["_elapsed"]) < BUDGET
+    assert "total_seconds" in timing or timing
+    kernel = perception["kernel_ir"]
+    assert len(list(getattr(kernel, "variants", None) or [])) <= 1

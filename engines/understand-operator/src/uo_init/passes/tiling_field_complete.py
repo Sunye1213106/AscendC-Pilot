@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.ir.type_identity import iter_unique_field_decls, short_type_name
 from uo_init.passes.source_contract import _kernel_candidates, _rel as _src_rel
 from uo_init.passes.source_text_cache import read_text
 from uo_init.source_layout import selected_tiling_headers
@@ -38,6 +40,8 @@ def complete_tiling_fields(
     operator_root: str | Path,
     *,
     architecture: str = "",
+    host_ir: Any = None,
+    kernel_ir: Any = None,
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     kernel_root = root / "op_kernel"
@@ -49,6 +53,7 @@ def complete_tiling_fields(
     arrays = 0
     initializers = 0
     created_owners = 0
+    clang_fields = 0
     paths: list[Path] = []
     seen: set[Path] = set()
     for path in list(_kernel_candidates(root, architecture)) + list(
@@ -62,34 +67,58 @@ def complete_tiling_fields(
         seen.add(key)
         paths.append(path)
 
+    # Clang members first so lexical complete cannot mint the same (kind,src,dst)
+    # at advisory trust and freeze out the authoritative record.
+    for owner_name, field_name, cpp_type, file, line in iter_unique_field_decls(
+        host_ir, kernel_ir
+    ):
+        owner = owners.get(owner_name) or owners.get(short_type_name(owner_name))
+        if owner is None:
+            continue
+        eid = f"TDF::{owner.name}::{field_name}"
+        existing = codemap.entities.get(eid)
+        if existing is None:
+            field = codemap.upsert(
+                EntityKind.TILING_FIELD,
+                field_name,
+                eid=eid,
+                attrs={
+                    "owner": owner.name,
+                    "qualified_name": f"{owner.name}::{field_name}",
+                    "cpp_type": cpp_type,
+                    "provenance": "clang_field_decl",
+                },
+                file=file,
+                line=line or 0,
+                status="confirmed",
+            )
+            codemap.link(
+                RelationKind.DECLARES,
+                owner.id,
+                field.id,
+                attrs={"provenance": "clang_field_decl"},
+                status="confirmed",
+            )
+            added += 1
+            clang_fields += 1
+        else:
+            if cpp_type:
+                existing.attrs.setdefault("cpp_type", cpp_type)
+        array_suffix = "".join(re.findall(r"\[[^\]]*\]", cpp_type or ""))
+        if array_suffix:
+            field = existing or codemap.entities[eid]
+            field.attrs["array_extent"] = re.sub(r"\s+", "", array_suffix)
+            field.attrs["is_array"] = True
+            arrays += 1
+
     for path in paths:
         text = read_text(path)
-        path_is_tiling_data = (
-            "tiling_data" in path.name.lower() or "tilingdata" in path.name.lower()
-        )
         for match in _CLASS_RE.finditer(text):
             if re.search(r"\benum\s+$", text[: match.start()]):
                 continue
             owner_name = match.group(1)
             owner = owners.get(owner_name)
-            # Layout headers may declare packing structs before any REGISTER /
-            # GET_TILING_DATA names them. Create the owner from the header itself.
-            if owner is None and path_is_tiling_data and not owner_name.endswith(
-                ("Helper", "Utils", "Util", "Traits", "Policy")
-            ):
-                owner = codemap.upsert(
-                    EntityKind.TILING_DATA,
-                    owner_name,
-                    attrs={
-                        "provenance": "source_tiling_data_class_complete",
-                        "architecture": architecture,
-                    },
-                    file=_src_rel(root, path),
-                    line=_line(text, match.start()),
-                    status="confirmed",
-                )
-                owners[owner_name] = owner
-                created_owners += 1
+            # REGISTER / GET_TILING_DATA name the type. Filename globs must not.
             if owner is None:
                 continue
             open_pos = text.find("{", match.start(), match.end())
@@ -143,7 +172,10 @@ def complete_tiling_fields(
                             field = existing
                             field.attrs.setdefault("owner", owner_name)
                             field.attrs.setdefault("qualified_name", f"{owner_name}::{field_name}")
-                            field.attrs["cpp_type"] = cpp_type
+                            if str(field.attrs.get("provenance") or "").startswith("clang"):
+                                field.attrs.setdefault("cpp_type", cpp_type)
+                            else:
+                                field.attrs["cpp_type"] = cpp_type
                         if array_suffix:
                             field.attrs["array_extent"] = array_suffix
                             field.attrs["is_array"] = True
@@ -161,6 +193,7 @@ def complete_tiling_fields(
     codemap.meta["source_tiling_data_complete"] = {
         "added_fields": added,
         "created_owners": created_owners,
+        "clang_fields": clang_fields,
         "array_fields": arrays,
         "default_initializers": initializers,
         "total_fields": len(codemap.by_kind(EntityKind.TILING_FIELD)),

@@ -5,6 +5,7 @@ from uo_init.source_resolver import (
     LEGAL_ROOTS,
     REASON_FUNCTION_PARAMETER,
     REASON_NO_CONDITION,
+    REASON_TILING_DATA_NO_WRITER,
     REASON_UNMAPPED_SYMBOL,
     SourceResolver,
     dotted_path,
@@ -359,9 +360,16 @@ def test_self_derived_counter_is_loop_derived_not_initial_constant():
         local_roots=local_roots,
     )
     res = r.resolve("needCoreNum > fBaseParams.aicNum")
-    assert res.closed
     assert "LOOP_DERIVED" in res.roots
     assert "CONSTANT" not in res.roots
+    assert any(
+        a.symbol == "needCoreNum" and a.root == "LOOP_DERIVED" and not a.partial
+        for a in res.atoms
+    )
+    # Params-shaped fields without a writer stay partial, not a closed root.
+    assert any(
+        a.reason == REASON_TILING_DATA_NO_WRITER for a in res.atoms
+    )
 
 
 def test_local_container_member_access_inherits_loop_derived_root():
@@ -518,7 +526,7 @@ def test_tuple_unpack_local_is_loop_derived():
     assert r.resolve("x < 0").roots == ["LOOP_DERIVED"]
 
 
-def test_generated_tiling_pointer_decl_closes_as_tiling_data():
+def test_generated_tiling_pointer_decl_does_not_close_without_writer():
     ir = HostIR(
         class_fields={"tndParam_"},
         field_decls={
@@ -532,7 +540,10 @@ def test_generated_tiling_pointer_decl_closes_as_tiling_data():
         },
     )
     res = SourceResolver(host_ir=ir).resolve("tndParam_ != nullptr")
-    assert res.closed and res.roots == ["TILING_DATA"]
+    assert not res.closed
+    assert res.partial
+    assert REASON_TILING_DATA_NO_WRITER in res.reasons
+    assert res.roots == ["TILING_DATA"]
 
 
 def test_constant_ternary_value_uses_selector_provenance():

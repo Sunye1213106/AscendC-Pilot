@@ -123,8 +123,7 @@ python engines/understand-operator/tools/uo_init_perf_gate.py --arch arch35
 # $env:UO_GEN_ONLY = "attention/fused_causal_conv1d:arch35,..."
 python engines/understand-operator/tools/uo_init_generalization.py
 
-acp uo-query --project <op> --mode locate --pattern s1Inner
-acp uo-query --project <op> --mode field --pattern s1Inner
-acp uo-query --project <op> --mode tiling_key --pattern SplitAxis
-acp uo-query --project <op> --mode kernel_api --pattern EnQue
+acp uo-query --project <op> s1Inner
+acp uo-query --project <op> SplitAxis
+acp uo-query --project <op> EnQue
 ```

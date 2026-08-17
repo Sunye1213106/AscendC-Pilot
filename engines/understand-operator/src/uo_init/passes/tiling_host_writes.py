@@ -11,10 +11,12 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.ir.type_identity import ir_var_types, short_type_name, type_tokens
 from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.symbol_identity import normalize_symbol
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
@@ -42,6 +44,8 @@ def enrich_tiling_host_writes(
     operator_root: str | Path,
     *,
     architecture: str = "",
+    host_ir: Any = None,
+    kernel_ir: Any = None,
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     types = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
@@ -90,6 +94,58 @@ def enrich_tiling_host_writes(
     _purge(codemap)
     sites = resolved = ambiguous = 0
     written: set[str] = set()
+    clang_written: set[tuple[str, int, str]] = set()
+    clang_types = dict(receiver_types)
+    for name, types in ir_var_types(host_ir, known).items():
+        clang_types.setdefault(name, set()).update(types)
+    if host_ir is not None:
+        events = list(getattr(host_ir, "writes", None) or [])
+        events.extend(getattr(host_ir, "local_writes", None) or [])
+        for ev in events:
+            kind = str(getattr(ev, "kind", "assign") or "assign")
+            if kind not in {"assign", "replace", ""}:
+                continue
+            path_text = normalize_symbol(str(getattr(ev, "path", "") or "").replace("->", "."))
+            parts = [p for p in path_text.split(".") if p]
+            if len(parts) < 2:
+                continue
+            receiver, field_name = ".".join(parts[:-1]), parts[-1]
+            targets = _targets(
+                receiver, field_name, clang_types, clang_types, fields, nested, known
+            )
+            if not targets:
+                type_hits = type_tokens(path_text) & known
+                if len(type_hits) == 1:
+                    owner = next(iter(type_hits))
+                    field = fields.get((owner, field_name)) or fields.get(
+                        (short_type_name(owner), field_name)
+                    )
+                    if field is not None:
+                        targets = [field]
+            if len(targets) != 1:
+                continue
+            file = str(getattr(ev, "file", "") or "").replace("\\", "/")
+            try:
+                file = _rel(root, Path(file)) if file else file
+            except Exception:
+                pass
+            line = int(getattr(ev, "line", 0) or 0)
+            expr = str(getattr(ev, "rhs", "") or "").strip()
+            sites += 1
+            _write(
+                codemap,
+                targets[0],
+                file,
+                line,
+                receiver,
+                expr,
+                "clang_assign",
+                provenance="clang_host_write",
+            )
+            written.add(targets[0].id)
+            clang_written.add((file, line, targets[0].id))
+            resolved += 1
+
     for path, raw, masked in texts:
         file = _rel(root, path)
         local_types = dict(file_types.get(path) or {})
@@ -108,6 +164,8 @@ def enrich_tiling_host_writes(
             line = _line(raw, match.start())
             expr = raw[match.end():close].strip()
             if len(targets) == 1:
+                if (file, line, targets[0].id) in clang_written:
+                    continue
                 _write(codemap, targets[0], file, line, receiver, expr, "setter")
                 written.add(targets[0].id); resolved += 1
             elif len(targets) > 1:
@@ -130,6 +188,8 @@ def enrich_tiling_host_writes(
             line = _line(raw, match.start())
             expr = raw[match.start("rhs"):match.end("rhs")].strip()
             if len(targets) == 1:
+                if (file, line, targets[0].id) in clang_written:
+                    continue
                 _write(codemap, targets[0], file, line, receiver, expr, "assignment")
                 written.add(targets[0].id); resolved += 1
             else:
@@ -280,26 +340,47 @@ def _receiver_owners(receiver, receiver_types, fields, nested, known) -> set[str
 
 
 def _purge(codemap: CodeMap) -> None:
-    provs = {"source_tilingdata_host_write_verified", "source_tilingdata_host_write_unresolved"}
+    provs = {
+        "source_tilingdata_host_write_verified",
+        "source_tilingdata_host_write_unresolved",
+        "clang_host_write",
+    }
     remove_ent = {eid for eid,e in codemap.entities.items() if str(e.attrs.get("provenance") or "") in provs}
-    remove_rel = {rid for rid,r in codemap.relations.items() if str(r.attrs.get("provenance") or "") == "source_tilingdata_host_write_verified"}
+    remove_rel = {
+        rid for rid,r in codemap.relations.items()
+        if str(r.attrs.get("provenance") or "") in {
+            "source_tilingdata_host_write_verified",
+            "clang_host_write",
+        }
+    }
     for rid,r in list(codemap.relations.items()):
         if r.src in remove_ent or r.dst in remove_ent: remove_rel.add(rid)
     for rid in remove_rel: codemap.relations.pop(rid, None)
     for eid in remove_ent: codemap.entities.pop(eid, None)
 
 
-def _write(codemap, field, file, line, receiver, expr, mode) -> None:
+def _write(codemap, field, file, line, receiver, expr, mode, provenance="source_tilingdata_host_write_verified") -> None:
     owner = str(field.attrs.get("owner") or "")
+    prefix = "TDWRITECL" if provenance.startswith("clang") else "TDWRITEV"
     node = codemap.upsert(
         EntityKind.PREDICATE, f"{owner}::{field.name} <- {expr[:120]}",
-        eid=f"TDWRITEV::{file}::{line}::{owner}::{field.name}",
+        eid=f"{prefix}::{file}::{line}::{owner}::{field.name}",
         attrs={"predicate_role":"tilingdata_writer","owner":owner,"field":field.name,"receiver":receiver,
-               "expression":expr[:600],"write_mode":mode,"provenance":"source_tilingdata_host_write_verified"},
+               "expression":expr[:600],"write_mode":mode,"provenance":provenance},
         file=file,line=line,status="confirmed",
     )
-    codemap.link(RelationKind.WRITES,node.id,field.id,
-        attrs={"provenance":"source_tilingdata_host_write_verified","file":file,"line":line,"mode":mode},status="confirmed")
+    attrs = {"file": file, "line": line, "mode": mode, "provenance": provenance}
+    if provenance.startswith("clang"):
+        codemap.link(RelationKind.WRITES, node.id, field.id, attrs=attrs, status="confirmed")
+    else:
+        codemap.mint_candidate_relation(
+            RelationKind.WRITES,
+            node.id,
+            field.id,
+            provenance=provenance,
+            extra={"file": file, "line": line, "mode": mode},
+            status="confirmed",
+        )
     site={"file":file,"line":line,"receiver":receiver,"expression":expr[:300],"mode":mode}
     if site not in field.attrs.setdefault("host_writer_sites",[]): field.attrs["host_writer_sites"].append(site)
     field.attrs["host_writer_site_count"]=len(field.attrs["host_writer_sites"])

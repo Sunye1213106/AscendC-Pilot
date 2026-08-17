@@ -32,9 +32,7 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
     ],
     "uo-extract-v1": [
         "uo/ir/host_extract_receipt.yaml",
-        "uo/tiling/key_bind_receipt.yaml",
-        "uo/tiling/families.yaml",
-        "uo/kernel/fold_receipt.yaml",
+        "uo/ir/kernel_ir.yaml",
     ],
     "uo-analyze-v1": [
         "uo/ir/codemap_analyze_receipt.yaml",

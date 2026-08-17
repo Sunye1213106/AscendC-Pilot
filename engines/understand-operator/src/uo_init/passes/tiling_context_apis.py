@@ -20,8 +20,14 @@ from uo_init.passes.kernel_scan import norm_file
 
 # Frozen CANN gert::TilingContext methods. Not every host setter.
 TILING_CONTEXT_HOST_APIS = frozenset({"SetScheduleMode", "SetBlockDim"})
+# Frozen CANN platform-info APIs. Separate catalog from TilingContext setters.
+PLATFORM_HOST_APIS = frozenset({"GetCoreNumAiv", "GetCoreNumAic", "GetCurNpuArch"})
+_API_CATALOGS = (
+    (TILING_CONTEXT_HOST_APIS, "cann_tiling_context", "host_tiling_context_api"),
+    (PLATFORM_HOST_APIS, "cann_platform", "host_platform_api"),
+)
 _MAX_SITES_PER_API = 32
-_MAX_TOTAL = 64
+_MAX_TOTAL = 128
 
 
 def _site_get(site: Any, name: str, default: Any = "") -> Any:
@@ -42,18 +48,23 @@ def enrich_tiling_context_apis(
     architecture: str = "",
     host_ir: Any = None,
 ) -> CodeMap:
-    """Mint locatable host OPERATION nodes for catalog TilingContext calls."""
+    """Mint locatable host OPERATION nodes for catalog TilingContext / platform calls."""
     if host_ir is None:
         return codemap
     root = Path(operator_root).expanduser().resolve() if operator_root else Path()
     root_s = str(root) if operator_root else ""
     per_api: dict[str, int] = defaultdict(int)
     minted = 0
+    catalog_of: dict[str, str] = {}
+    for names, _catalog, _prov in _API_CATALOGS:
+        for name in names:
+            catalog_of[name] = _catalog
+    api_names = set(catalog_of)
     for site in list(getattr(host_ir, "call_sites", None) or []):
         if minted >= _MAX_TOTAL:
             break
         callee = _callee_short(site)
-        if callee not in TILING_CONTEXT_HOST_APIS:
+        if callee not in api_names:
             continue
         if per_api[callee] >= _MAX_SITES_PER_API:
             continue
@@ -68,17 +79,21 @@ def enrich_tiling_context_apis(
         )
         args_raw = _site_get(site, "args") or ()
         args = [str(a) for a in (args_raw if not isinstance(args_raw, str) else (args_raw,))]
+        catalog = catalog_of[callee]
+        provenance = next(
+            prov for names, _cat, prov in _API_CATALOGS if callee in names
+        )
         attrs = {
             "callee": callee,
             "layer": "host",
-            "catalog": "cann_tiling_context",
+            "catalog": catalog,
             "function": str(_site_get(site, "caller") or ""),
             "receiver": str(_site_get(site, "receiver") or ""),
             "receiver_type": str(_site_get(site, "receiver_type") or ""),
             "args": args,
             "argument": args[0] if args else "",
             "architecture": architecture,
-            "provenance": "host_tiling_context_api",
+            "provenance": provenance,
             "column": column,
         }
         codemap.upsert(
@@ -96,5 +111,6 @@ def enrich_tiling_context_apis(
         "count": minted,
         "by_callee": dict(per_api),
         "catalog": sorted(TILING_CONTEXT_HOST_APIS),
+        "platform_catalog": sorted(PLATFORM_HOST_APIS),
     }
     return codemap

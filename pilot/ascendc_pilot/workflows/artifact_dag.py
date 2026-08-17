@@ -20,7 +20,7 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
     "scope_receipt": ["uo/runs/{run_id}/scope/scope_validated.yaml"],
     "extract_receipt": [
         "uo/ir/host_extract_receipt.yaml",
-        "uo/kernel/fold_receipt.yaml",
+        "uo/ir/kernel_ir.yaml",
     ],
     "uo_product_ready": ["uo/*.uo"],
     "integrity": ["uo/checks/integrity.yaml"],

@@ -38,6 +38,39 @@ def test_conditional_and_array_tiling_fields_are_real_abi_fields(tmp_path: Path)
     assert any(r.src == root_ent.id and r.kind_name() == RelationKind.DECLARES.value for r in cm.relations.values())
 
 
+def test_clang_field_decl_fills_registered_owner_members(tmp_path: Path) -> None:
+    from uo_init.clang_walk import FieldDecl
+    from uo_init.host_ir import HostIR
+
+    root = tmp_path / "toy"
+    (root / "op_kernel" / "arch35").mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (root / "op_kernel" / "arch35" / "toy_tiling_data.h").write_text(
+        "class Root { public: int leftover; };\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    owner = cm.upsert(EntityKind.TILING_DATA, "Root")
+    host_ir = HostIR(
+        field_decls={
+            ("Root", "child"): FieldDecl(
+                host="Root",
+                name="child",
+                init=None,
+                file="op_kernel/arch35/toy_tiling_data.h",
+                line=4,
+                type_text="Child",
+            )
+        }
+    )
+    complete_tiling_fields(cm, root, architecture="arch35", host_ir=host_ir)
+    child = cm.entities["TDF::Root::child"]
+    assert child.attrs.get("provenance") == "clang_field_decl"
+    leftover = cm.entities["TDF::Root::leftover"]
+    assert leftover.attrs.get("provenance") == "source_tiling_data_member_complete"
+    assert owner.id
+
+
 def test_shared_host_file_referencing_arch35_supplies_tiling_writer(tmp_path: Path) -> None:
     root = tmp_path / "toy"
     (root / "op_host" / "arch35").mkdir(parents=True)

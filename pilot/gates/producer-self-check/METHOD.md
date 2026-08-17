@@ -2,7 +2,7 @@
 
 ## Purpose
 
-交卷前自检本 shard：覆盖完整、无越权 id、无空 candidate_id。
+提交前自检本 shard：覆盖完整、无越权 id、无空 candidate_id。
 
 ## Method
 

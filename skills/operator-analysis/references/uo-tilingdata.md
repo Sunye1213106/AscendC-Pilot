@@ -14,12 +14,11 @@
 ## 推荐接口
 
 ```text
-acp uo-query --mode tiling_data --pattern <FieldOrStruct>
-acp uo-query --mode field --pattern <FieldName>
-acp uo-query --mode neighbors --pattern <entity_id> --depth 2
+acp uo-query --project <op> <FieldOrStruct>
+acp uo-query --project <op> --file <path> --line <n>
 ```
 
 ## Claim 提示
 
 - 「谁写谁读」→ host-produced / kernel-consumed  
-- 中间 wrapper 未闭合 → `PARTIAL`，不要用节点共存冒充关系
+- 中间 wrapper 未闭合 → `PARTIAL`，不要用节点共存当作关系

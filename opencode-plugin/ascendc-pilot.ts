@@ -33,6 +33,13 @@ import { homedir } from "node:os"
 import { delimiter, dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
+/** Inlined: OpenCode autoloads this file from plugins/ without sibling imports. */
+function openCodeHome(): string {
+  const xdg = String(process.env.XDG_CONFIG_HOME || "").trim()
+  if (xdg) return resolve(xdg, "opencode")
+  return resolve(homedir(), ".config", "opencode")
+}
+
 /** Host-side pending human interaction (mirrors ACP pending_interaction.yaml). */
 type PendingHumanInteraction = {
   request_id: string
@@ -395,11 +402,11 @@ function operatorName(root: string): string {
 }
 
 function lastProjectCachePath(): string {
-  return resolve(homedir(), ".config", "opencode", "ascendc-last-project")
+  return resolve(openCodeHome(), "ascendc-last-project")
 }
 
 function pendingDispatchCachePath(): string {
-  return resolve(homedir(), ".config", "opencode", "ascendc-pending-dispatch.json")
+  return resolve(openCodeHome(), "ascendc-pending-dispatch.json")
 }
 
 function readPendingDispatchProject(): string {
@@ -422,7 +429,7 @@ function rememberProjectRoot(project: string): void {
   if (!root || !looksLikeOperatorDir(root) || isHarnessCheckout(root)) return
   try {
     const cache = lastProjectCachePath()
-    mkdirSync(resolve(homedir(), ".config", "opencode"), { recursive: true })
+    mkdirSync(openCodeHome(), { recursive: true })
     writeFileSync(cache, root, "utf-8")
   } catch {
     // best-effort
@@ -620,7 +627,7 @@ function listInstalledPilotAgentNames(): string[] {
     "tg-lemma-producer",
   ])
   try {
-    const dir = resolve(homedir(), ".config", "opencode", "agents")
+    const dir = resolve(openCodeHome(), "agents")
     for (const f of readdirSync(dir)) {
       if (f.endsWith(".md")) names.add(f.slice(0, -3))
     }
@@ -817,7 +824,7 @@ function resolveAction(args: Record<string, unknown>, project: string): string {
 }
 
 function harnessBinCachePath(): string {
-  return resolve(homedir(), ".config", "opencode", "ascendc-harness-bin")
+  return resolve(openCodeHome(), "ascendc-harness-bin")
 }
 
 function envPathOf(env?: Record<string, string | undefined> | NodeJS.ProcessEnv): string {
@@ -831,7 +838,7 @@ function resolveAcpBin(): string {
   if (fromEnv && existsSync(fromEnv)) return fromEnv
 
   try {
-    const cached = readFileSync(harnessBinCachePath(), "utf-8").trim()
+    const cached = readFileSync(harnessBinCachePath(), "utf-8").replace(/^\uFEFF/, "").trim()
     if (cached && existsSync(cached)) return cached
   } catch {
     // ignore
@@ -860,7 +867,7 @@ let _authDaemon: AuthorizeDaemon | null = null
 let _authReqSeq = 0
 
 function authIpcDir(): string {
-  return resolve(homedir(), ".config", "opencode", "ascendc-auth-ipc")
+  return resolve(openCodeHome(), "ascendc-auth-ipc")
 }
 
 function ensureAuthorizeDaemon(): boolean {
@@ -1028,7 +1035,7 @@ function registerAuthorizeSession(args: {
   runId?: string
 }): void {
   try {
-    const dir = resolve(homedir(), ".config", "opencode", "ascendc-sessions")
+    const dir = resolve(openCodeHome(), "ascendc-sessions")
     mkdirSync(dir, { recursive: true })
     writeFileSync(
       resolve(dir, `${args.sessionId.replace(/[^\w.-]/g, "_")}.json`),
@@ -1068,7 +1075,7 @@ function resolveInstalledSkillPath(name: string): string {
       .filter(Boolean)
       .pop() || ""
   if (!n || n.includes("..")) return ""
-  const home = resolve(homedir(), ".config", "opencode")
+  const home = openCodeHome()
   const candidates = [
     resolve(home, "skills", n, "SKILL.md"),
     resolve(home, "ascendc-pilot-plugin", "skills", n, "SKILL.md"),
@@ -1248,7 +1255,7 @@ function createAcpCliTool(): {
     description:
       "Run the AscendC-Pilot CLI (acp.exe). Prefer this over bash. " +
       "Pass command without a leading 'acp' (example: " +
-      "`uo-query --project <operator-abs> --mode locate --pattern s1Inner`). " +
+      "`uo-query --project <operator-abs> s1Inner`). Never `--mode`. " +
       "Do not use bash/MCP/Grep as a substitute.",
     args: {
       command: {
@@ -1264,7 +1271,7 @@ function createAcpCliTool(): {
           title: "acp",
           output:
             "[ascendc-pilot] acp tool requires command, e.g. " +
-            "`uo-query --project <operator-abs> --mode locate --pattern <id>`.",
+            "`uo-query --project <operator-abs> <identifier>`.",
           metadata: { ok: false, error: "missing_command" },
         }
       }
@@ -2029,46 +2036,6 @@ function fillEmptyUoQueryTaskOutput(
     : "(empty native task_result; use the child session last assistant message)"
 }
 
-function compileUoQueryFirstQuery(project: string, prompt: string): string {
-  if (!project) return ""
-  const question = String(prompt || "").replace(/\s+/g, " ").trim().slice(0, 2000)
-  if (!question) return ""
-  try {
-    const acpBin = resolveAcpBin()
-    const r = spawnSync(
-      acpBin,
-      ["uo-query", "--mode", "compile", "--project", project, "--query", question],
-      {
-        encoding: "utf8",
-        timeout: 45000,
-        env: process.env as NodeJS.ProcessEnv,
-      },
-    )
-    const stdout = String(r.stdout || "")
-    const start = stdout.indexOf("{")
-    if (start < 0) return ""
-    const json = JSON.parse(stdout.slice(start)) as { first_query?: Array<{ cli?: string }> }
-    const cli = String(json.first_query?.[0]?.cli || "").trim()
-    if (!cli) return ""
-    return cli.includes("--project") ? cli : `${cli} --project ${project}`
-  } catch {
-    return `acp uo-query --mode compile --project ${project}`
-  }
-}
-
-function injectUoQueryFirstQuery(args: Record<string, unknown>, project: string): void {
-  if (!isUoQueryTask(args)) return
-  const prompt = String(args.prompt || args.description || args.task || "")
-  if (!prompt || /FIRST_QUERY:/.test(prompt)) return
-  const first = compileUoQueryFirstQuery(project || uoQueryPickProject(args), prompt)
-  if (!first) return
-  const extra =
-    `\n\nFIRST_QUERY: ${first}\n` +
-    "Run FIRST_QUERY as written. If empty, retry once from hint; then return PARTIAL.\n"
-  if (typeof args.prompt === "string") args.prompt = `${args.prompt}${extra}`
-  else args.prompt = `${prompt}${extra}`
-}
-
 function uoQueryPickProject(args: Record<string, unknown>, command = ""): string {
   const env =
     args.env && typeof args.env === "object"
@@ -2135,7 +2102,7 @@ function clearUoQueryResult(project: string): void {
   delete process.env.ASCENDC_ACTION_RESULT_ACTION
 }
 
-/** Capture uo-query Task text for the Primary's next kb_lookup --finalize.
+/** Capture uo-query Task text. Primary synthesizes; do not kb_lookup --finalize.
  * This hook must not finalize itself (avoids a double-finalize race). */
 function captureUoQueryTaskReturn(
   tool: string,
@@ -2226,9 +2193,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
     // pilot-driver.ts is a library — load it from the installed bundle, never
     // from the plugins/ root (that path is treated as a second plugin factory).
     const bundled = resolve(
-      homedir(),
-      ".config",
-      "opencode",
+      openCodeHome(),
       "ascendc-pilot-plugin",
       "opencode-plugin",
       "pilot-driver.ts",
@@ -2314,7 +2279,6 @@ export const AscendCHarnessPlugin = async (ctx?: {
         ? detectProjectRootForTask(taskPromptHint)
         : detectProjectRoot(fromCmd || fromArgs || path)
       if (project) rememberProjectRoot(project)
-      if (isTaskTool) injectUoQueryFirstQuery(args, project)
       const active = readActiveAction(project)
       let agent = resolveEffectiveAgent(input, active, tool, command)
 

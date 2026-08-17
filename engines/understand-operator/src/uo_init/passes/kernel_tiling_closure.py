@@ -34,12 +34,19 @@ from typing import Any, Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.ir.tiling_binding import (
+    kernels_for_use_site,
+    link_tiling_data_binding,
+    summarize_tiling_data_bindings,
+)
+from uo_init.ir.type_identity import ir_var_types, macro_type_aliases, merge_unique_macro_aliases
 from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.symbol_identity import normalize_symbol
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
     is_other_arch_path,
+    iter_cpp,
     selected_host_files,
     selected_kernel_files,
 )
@@ -69,7 +76,6 @@ _CALL_RE = re.compile(
     r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
     r"(?:<[^;{}()]{0,1200}>)?\s*\("
 )
-_BRANCH_RE = re.compile(r"\bif\s+constexpr\s*\(")
 _ALIAS_RE = re.compile(r"\busing\s+([A-Za-z_]\w*)\s*=\s*([^;]+);", re.S)
 _TILING_READ_RE = re.compile(
     r"\b(?P<base>[A-Za-z_]\w*)\s*(?:->|\.)\s*(?P<outer>[A-Za-z_]\w*)"
@@ -101,7 +107,12 @@ _GET_TILING_MEMBER_RE = re.compile(
 )
 _CAST_TILING_DATA_RE = re.compile(
     r"(?:reinterpret_cast|static_cast)\s*<\s*[^>]*?\b([A-Za-z_]\w*TilingData)\b[^>]*>"
-    r"|\(\s*(?:const\s+)?(?:__\w+__\s+)*([A-Za-z_]\w*TilingData)\s*\*",
+    r"|\(\s*(?:const\s+)?(?:__\w+__\s+)*([A-Za-z_]\w*TilingData)\s*\*"
+)
+_CAST_TILING_USE_SITE_RE = re.compile(
+    r"(?:reinterpret_cast|static_cast)\s*<\s*(?:const\s+)?(?:struct\s+|class\s+)?"
+    r"([A-Za-z_:]\w*)\s*\*\s*>\s*\(\s*"
+    r"(?:[^;]{0,120}?\b(?:GetRawTilingData|tiling_data|tilingData|rawTiling|tiling)\b)"
 )
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 
@@ -166,6 +177,8 @@ def finalize_kernel_tiling_closure(
     operator_root: str | Path,
     *,
     architecture: str = "",
+    host_ir: Any = None,
+    kernel_ir: Any = None,
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     if not root.is_dir():
@@ -177,7 +190,7 @@ def finalize_kernel_tiling_closure(
 
     removed = _purge_broad_kernel_facts(codemap, allowed_kernel_files)
     kernel_entries, template_args, abi_links = _rebuild_kernel_contract(
-        codemap, root, architecture, kernel_texts
+        codemap, root, architecture, kernel_texts, kernel_ir=kernel_ir
     )
 
     scopes, class_names = _rebuild_kernel_scopes(codemap, root, architecture, kernel_texts)
@@ -188,7 +201,9 @@ def finalize_kernel_tiling_closure(
     field_branch_count = enrich_kernel_field_branches(
         codemap, root, architecture=architecture
     )
-    write_stats = _rebuild_host_tiling_writes(codemap, root, host_texts, td_index)
+    write_stats = _rebuild_host_tiling_writes(
+        codemap, root, host_texts, td_index, host_ir=host_ir
+    )
     selected = _rebuild_tiling_selection(codemap, root, kernel_texts, td_index)
 
     from uo_init.passes.source_contract import (
@@ -245,16 +260,66 @@ def finalize_kernel_tiling_closure(
         "architecture_pure": purity["ok"],
         "policy": "qualified-source-closure/v1",
     }
+    codemap.meta["tiling_data_bindings"] = summarize_tiling_data_bindings(codemap)
     return codemap
 
 
 _IF_HEAD_RE = re.compile(r"\bif(?:\s+constexpr)?\s*\(")
+_PP_IF_RE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif)\b(.*)$", re.M)
 _FN_HEAD_RE = re.compile(
     r"(?:^|\n)[^\n;{}]*?\b(?P<name>[A-Za-z_]\w*)\s*\([^;{}]*\)\s*(?:const\s*)?\{"
 )
 _CONTROL_HEADS = frozenset({
     "if", "else", "while", "for", "switch", "catch", "do", "return",
+    "constexpr", "likely", "unlikely",
 })
+_BRANCH_NAME_KINDS = (
+    EntityKind.TILING_FIELD,
+    EntityKind.MACRO,
+    EntityKind.COMPILE_VAR,
+    EntityKind.TEMPLATE_ARG,
+    EntityKind.TILING_KEY,
+)
+_SKIP_BRANCH_LEAFS = _CONTROL_HEADS | {
+    "true", "false", "this", "auto", "void", "int", "bool", "const", "nullptr",
+}
+
+
+def _branch_scan_files(root: Path, architecture: str) -> list[Path]:
+    """Confirmed kernel TUs plus the selected ``op_kernel/<arch>`` tree.
+
+    ``#if`` / macro-body ``if`` often live in headers clang listed only as
+    includes; the arch folder is still the same kernel universe, not a second
+    operator layout.
+    """
+    seen: set[Path] = set()
+    out: list[Path] = []
+    for path in list(selected_kernel_files(root, architecture)):
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    arch_dir = Path(root) / "op_kernel" / str(architecture or "")
+    if arch_dir.is_dir():
+        for path in sorted(iter_cpp(arch_dir)):
+            key = path.resolve()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(path)
+    return out
+
+
+def _branch_ident_names(codemap: CodeMap) -> list[str]:
+    names: set[str] = set()
+    for kind in _BRANCH_NAME_KINDS:
+        for ent in codemap.by_kind(kind):
+            leaf = str(ent.name or "").replace("::", ".").rsplit(".", 1)[-1]
+            if len(leaf) < 4 or leaf in _SKIP_BRANCH_LEAFS or not leaf.isidentifier():
+                continue
+            names.add(leaf)
+    return sorted(names, key=len, reverse=True)
 
 
 def enrich_kernel_field_branches(
@@ -263,29 +328,49 @@ def enrich_kernel_field_branches(
     *,
     architecture: str = "",
 ) -> int:
-    """Mint BRANCH entities for kernel ``if`` that read a TILING_FIELD.
+    """Mint BRANCH entities for kernel ``if`` / ``#if`` that read known idents.
 
-    Runtime ``if (constInfo.enablePreSfmg)`` is not ``if constexpr``; without
-    this pass ``kernel_branch <field>`` is a silent count=0.
+    Runtime ``if (constInfo.enablePreSfmg)``, macro-body ``if``, and
+    ``#if ORIG_DTYPE_QUERY`` are not ``if constexpr``; without this pass
+    ``kernel_branch <field>`` is a silent count=0.
     """
     root = Path(operator_root).expanduser().resolve()
-    names = sorted(
-        {
-            str(field.name or "").rsplit(".", 1)[-1]
-            for field in codemap.by_kind(EntityKind.TILING_FIELD)
-        },
-        key=len,
-        reverse=True,
-    )
-    names = [n for n in names if len(n) >= 4]
+    names = _branch_ident_names(codemap)
     if not names:
         return 0
     name_re = re.compile(r"\b(" + "|".join(re.escape(n) for n in names) + r")\b")
     minted = 0
     from uo_init.passes.source_text_cache import mask_cached, read_text
-    from uo_init.source_layout import selected_kernel_files
 
-    for path in selected_kernel_files(root, architecture):
+    def _mint(
+        *,
+        file: str,
+        line: int,
+        field_name: str,
+        cond: str,
+        fn: str,
+        branch_kind: str,
+    ) -> None:
+        nonlocal minted
+        codemap.upsert(
+            EntityKind.BRANCH,
+            field_name,
+            eid=f"SRCKFIELDBRANCH::{file}::{line}::{field_name}::{branch_kind}",
+            attrs={
+                "branch_kind": branch_kind,
+                "condition": cond.replace("\n", " ").strip()[:400],
+                "function": fn,
+                "tiling_field": field_name,
+                "provenance": "source_kernel_field_if",
+                "layer": "kernel",
+            },
+            file=file,
+            line=line,
+            status="confirmed",
+        )
+        minted += 1
+
+    for path in _branch_scan_files(root, architecture):
         try:
             raw = read_text(path)
         except OSError:
@@ -298,6 +383,16 @@ def enrich_kernel_field_branches(
             if name in _CONTROL_HEADS:
                 continue
             functions.append((head.start(), name))
+
+        def _fn_at(pos: int) -> str:
+            fn = ""
+            for start, name in functions:
+                if start <= pos:
+                    fn = name
+                else:
+                    break
+            return fn
+
         for match in _IF_HEAD_RE.finditer(masked):
             open_pos = match.end() - 1
             close_pos = _matching(masked, open_pos, "(", ")")
@@ -308,30 +403,33 @@ def enrich_kernel_field_branches(
             if not found:
                 continue
             line = _line(raw, match.start())
-            fn = ""
-            for start, name in functions:
-                if start <= match.start():
-                    fn = name
-                else:
-                    break
+            fn = _fn_at(match.start())
+            kind = "if_constexpr" if "constexpr" in match.group(0) else "if"
             for field_name in found:
-                codemap.upsert(
-                    EntityKind.BRANCH,
-                    field_name,
-                    eid=f"SRCKFIELDBRANCH::{file}::{line}::{field_name}",
-                    attrs={
-                        "branch_kind": "if",
-                        "condition": cond.replace("\n", " ").strip()[:400],
-                        "function": fn,
-                        "tiling_field": field_name,
-                        "provenance": "source_kernel_field_if",
-                        "layer": "kernel",
-                    },
+                _mint(
                     file=file,
                     line=line,
-                    status="confirmed",
+                    field_name=field_name,
+                    cond=cond,
+                    fn=fn,
+                    branch_kind=kind,
                 )
-                minted += 1
+        for match in _PP_IF_RE.finditer(raw):
+            cond = str(match.group(2) or "").strip()
+            found = set(name_re.findall(cond) or name_re.findall(match.group(0)))
+            if not found:
+                continue
+            line = _line(raw, match.start())
+            kind = f"pp_{match.group(1)}"
+            for field_name in found:
+                _mint(
+                    file=file,
+                    line=line,
+                    field_name=field_name,
+                    cond=cond or field_name,
+                    fn=_fn_at(match.start()),
+                    branch_kind=kind,
+                )
     return minted
 
 
@@ -394,17 +492,17 @@ def _rebuild_kernel_contract(
     root: Path,
     architecture: str,
     texts: dict[Path, tuple[str, str]],
+    *,
+    kernel_ir: Any = None,
 ) -> tuple[int, int, int]:
+    from uo_init.passes.source_contract import (
+        kernel_params_from_ir,
+        link_kernel_abi_by_param_name,
+    )
+
     entries = 0
     template_args = 0
     abi_links = 0
-    input_entities = sorted(
-        (e for e in codemap.by_kind(EntityKind.INPUT) if e.attrs.get("api_kind") == "tensor"),
-        key=lambda e: int(e.attrs.get("api_index") or 0),
-    )
-    output_entities = sorted(
-        codemap.by_kind(EntityKind.OUTPUT), key=lambda e: int(e.attrs.get("api_index") or 0)
-    )
 
     # Existing broad ABI/template relations were purged above. Rebuild only
     # from selected architecture entries.
@@ -473,12 +571,12 @@ def _rebuild_kernel_contract(
                     status="confirmed",
                 )
                 for key in codemap.by_name(arg_name, kind=EntityKind.TILING_KEY):
-                    codemap.link(
+                    codemap.mint_candidate_relation(
                         RelationKind.BINDS,
                         key.id,
                         arg.id,
-                        attrs={"provenance": "source_tpl_name_match_verified", "file": file, "line": line},
-                        status="confirmed",
+                        provenance="source_tpl_name_match_verified",
+                        extra={"file": file, "line": line},
                     )
                     codemap.link(
                         RelationKind.CONTROLS,
@@ -491,40 +589,20 @@ def _rebuild_kernel_contract(
 
             params = [_param_name(x) for x in _split_args(match.group("params"))]
             params = [p for p in params if p]
-            if len(params) >= len(input_entities) + len(output_entities):
-                for idx, inp in enumerate(input_entities):
-                    rel = codemap.link(
-                        RelationKind.FLOWS_TO,
-                        inp.id,
-                        kernel.id,
-                        attrs={
-                            "provenance": "source_kernel_abi_position_verified",
-                            "kernel_param": params[idx],
-                            "api_index": idx,
-                            "file": file,
-                            "line": line,
-                        },
-                        status="confirmed",
-                    )
-                    rel.attrs.update({"file": file, "line": line, "kernel_param": params[idx]})
-                    abi_links += 1
-                base = len(input_entities)
-                for idx, out in enumerate(output_entities):
-                    rel = codemap.link(
-                        RelationKind.FLOWS_TO,
-                        kernel.id,
-                        out.id,
-                        attrs={
-                            "provenance": "source_kernel_abi_position_verified",
-                            "kernel_param": params[base + idx],
-                            "api_index": idx,
-                            "file": file,
-                            "line": line,
-                        },
-                        status="confirmed",
-                    )
-                    rel.attrs.update({"file": file, "line": line, "kernel_param": params[base + idx]})
-                    abi_links += 1
+            clang_params = kernel_params_from_ir(kernel_ir, name)
+            chosen = clang_params or params
+            provenance = (
+                "clang_kernel_abi" if clang_params else "source_kernel_abi_position_verified"
+            )
+            if chosen:
+                abi_links += link_kernel_abi_by_param_name(
+                    codemap,
+                    kernel,
+                    chosen,
+                    provenance=provenance,
+                    file=file,
+                    line=line,
+                )
     return entries, template_args, abi_links
 
 
@@ -793,31 +871,6 @@ def _rebuild_kernel_calls(codemap: CodeMap, scopes: list[_Scope], class_names: s
                 unresolved_internal += 1
             else:
                 external += 1
-
-        # Rebuild branch ownership on verified scopes.
-        for branch in _BRANCH_RE.finditer(body):
-            absolute = scope.body_start + branch.start()
-            line = _line(scope.text, absolute)
-            node = codemap.upsert(
-                EntityKind.BRANCH,
-                f"{scope.entity.name}:if_constexpr@{line}",
-                eid=f"SRCKBRANCH::{scope.file}::{line}::{scope.entity.id}",
-                attrs={
-                    "branch_kind": "if_constexpr",
-                    "owner": scope.entity.name,
-                    "provenance": "source_kernel_frontier_bound",
-                },
-                file=scope.file,
-                line=line,
-                status="confirmed",
-            )
-            codemap.link(
-                RelationKind.CONTROLS,
-                node.id,
-                scope.entity.id,
-                attrs={"provenance": "source_kernel_frontier_bound", "file": scope.file, "line": line},
-                status="confirmed",
-            )
     return {"bound": bound, "external": external, "unresolved_internal": unresolved_internal}
 
 
@@ -847,14 +900,21 @@ def _rebuild_tiling_reads(codemap: CodeMap, scopes: list[_Scope], index: dict[st
     sites = resolved = ambiguous = 0
     aliases_by_file: dict[str, dict[str, set[str]]] = {}
     tdata_names = set(index["types"])
+    file_texts = {scope.file: scope.masked for scope in scopes if scope.file}
+    global_macros = merge_unique_macro_aliases(*file_texts.values(), known=tdata_names)
     for scope in scopes:
         if scope.file not in aliases_by_file:
-            aliases_by_file[scope.file] = _aliases(scope.masked, tdata_names)
+            aliases = _aliases(scope.masked, tdata_names)
+            for name, types in global_macros.items():
+                aliases.setdefault(name, set()).update(types)
+            aliases_by_file[scope.file] = aliases
         var_types = _variable_types(scope, tdata_names, aliases_by_file[scope.file])
         body = scope.masked[scope.body_start:scope.body_end]
         for match in _TILING_READ_RE.finditer(body):
-            sites += 1
             base, outer, inner = match.group("base"), match.group("outer"), match.group("inner")
+            if not var_types.get(base):
+                continue
+            sites += 1
             candidates = _resolve_tiling_field(index, base, outer, inner, var_types)
             absolute = scope.body_start + match.start()
             line = _line(scope.text, absolute)
@@ -900,11 +960,15 @@ def _rebuild_host_tiling_writes(
     root: Path,
     texts: dict[Path, tuple[str, str]],
     index: dict[str, Any],
+    *,
+    host_ir: Any = None,
 ) -> dict[str, int]:
     sites = ambiguous = 0
     written_fields: set[str] = set()
     known_types = set(index["types"])
     global_types: dict[str, set[str]] = defaultdict(set)
+    for name, types in ir_var_types(host_ir, known_types).items():
+        global_types[name].update(types)
     for _path, (_raw, masked) in texts.items():
         aliases = _aliases(masked, known_types)
         for var, types in _declaration_types(masked, known_types, aliases).items():
@@ -920,7 +984,9 @@ def _rebuild_host_tiling_writes(
             receiver = normalize_symbol(match.group("receiver"))
             field_name = match.group("field")
             expr = raw[match.end():close].strip()
-            candidates = _resolve_writer_field(index, receiver, field_name, global_types)
+            candidates = _resolve_writer_field(
+                index, receiver, field_name, global_types, allow_unique=False
+            )
             line = _line(raw, match.start())
             if len(candidates) == 1:
                 field = candidates[0]
@@ -965,27 +1031,36 @@ def _rebuild_tiling_selection(
 ) -> dict[str, set[str]]:
     roots: set[str] = set()
     tdata_names = set(index["types"])
+    sites: list[tuple[str, Path, str, str]] = []
     for path, (raw, masked) in texts.items():
         file = _rel(root, path)
         aliases = _aliases(masked, tdata_names)
+        local: set[str] = set()
         for match in _DEFAULT_REG_RE.finditer(masked):
-            roots.update(_type_candidates(match.group(1), tdata_names, aliases))
+            local.update(_type_candidates(match.group(1), tdata_names, aliases))
         for match in _KEY_REG_RE.finditer(masked):
-            roots.update(_type_candidates(match.group(1), tdata_names, aliases))
+            local.update(_type_candidates(match.group(1), tdata_names, aliases))
         for match in _DATA_CLASS_REG_RE.finditer(masked):
-            roots.update(_type_candidates(match.group(1), tdata_names, aliases))
+            local.update(_type_candidates(match.group(1), tdata_names, aliases))
         for name in _GET_TILING_STRUCT_RE.findall(raw):
             simple = name.split("::")[-1]
             if simple in tdata_names:
-                roots.add(simple)
+                local.add(simple)
         for name in _GET_TILING_MEMBER_RE.findall(raw):
             simple = name.split("::")[-1]
             if simple in tdata_names:
-                roots.add(simple)
+                local.add(simple)
         for match in _CAST_TILING_DATA_RE.finditer(raw):
             simple = (match.group(1) or match.group(2) or "").split("::")[-1]
             if simple in tdata_names:
-                roots.add(simple)
+                local.add(simple)
+        for match in _CAST_TILING_USE_SITE_RE.finditer(raw):
+            simple = (match.group(1) or "").split("::")[-1]
+            if simple in tdata_names:
+                local.add(simple)
+        roots.update(local)
+        for type_name in local:
+            sites.append((type_name, path, raw, file))
 
     # Existing explicit TilingKey registrations are also source-backed.
     for rel in codemap.relations.values():
@@ -1014,19 +1089,17 @@ def _rebuild_tiling_selection(
                 closure.add(nested)
                 q.append(nested)
 
-    kernels = codemap.by_kind(EntityKind.KERNEL)
-    for type_name in roots:
+    for type_name, path, raw, file in sites:
         td = index["types"].get(type_name)
         if td is None:
             continue
-        td.attrs["selected_by_kernel_entry"] = True
-        for kernel in kernels:
-            codemap.link(
-                RelationKind.FLOWS_TO,
-                td.id,
-                kernel.id,
-                attrs={"provenance": "source_tiling_registration_verified"},
-                status="confirmed",
+        for kernel in kernels_for_use_site(codemap, path, raw, root):
+            link_tiling_data_binding(
+                codemap,
+                td,
+                kernel,
+                provenance="source_tiling_registration_verified",
+                file=file,
             )
     return {"roots": roots, "closure": closure}
 
@@ -1132,7 +1205,7 @@ def _resolve_tiling_field(
     candidates = _unique_entities(candidates)
     if candidates:
         return candidates
-    return list(index["by_name"].get(outer) or ()) if len(index["by_name"].get(outer) or ()) == 1 else []
+    return []
 
 
 def _resolve_writer_field(
@@ -1141,7 +1214,7 @@ def _resolve_writer_field(
     field_name: str,
     var_types: dict[str, set[str]],
     *,
-    allow_unique: bool = True,
+    allow_unique: bool = False,
 ) -> list[Entity]:
     owners = _receiver_type_candidates(index, receiver, var_types)
     candidates = [index["fields"].get((owner, field_name)) for owner in owners]
@@ -1312,7 +1385,9 @@ def _unresolved_call(codemap: CodeMap, scope: _Scope, site: dict[str, Any], cand
 
 
 def _link_site(codemap: CodeMap, kind: RelationKind, src: str, dst: str, provenance: str, site: dict[str, Any]) -> None:
-    rel = codemap.link(kind, src, dst, attrs={"provenance": provenance, **site}, status="confirmed")
+    rel = codemap.mint_candidate_relation(
+        kind, src, dst, provenance=provenance, extra=dict(site), status="confirmed"
+    )
     rel.attrs["provenance"] = provenance
     sites = rel.attrs.setdefault("sites", [])
     clean = dict(site)
@@ -1368,6 +1443,8 @@ def _aliases(text: str, known_types: set[str]) -> dict[str, set[str]]:
                 types.update(out.get(token) or ())
             if types:
                 out[name] = types
+    for name, types in macro_type_aliases(text, known_types).items():
+        out.setdefault(name, set()).update(types)
     return out
 
 

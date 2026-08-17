@@ -39,11 +39,18 @@ _CLASS_RE = re.compile(r"\b(?:class|struct)\s+(?P<name>[A-Za-z_]\w*)\b")
 _USING_RE = re.compile(
     r"\busing\s+(?P<alias>[A-Za-z_]\w*)\s*=\s*(?P<target>[^;{]{1,400})\s*;"
 )
+_USING_START_RE = re.compile(
+    r"\busing\s+(?P<alias>[A-Za-z_]\w*)\s*=\s*(?P<target>[^;{]*)$"
+)
 _TYPEDEF_RE = re.compile(
     r"\btypedef\s+(?P<target>[\w:<>,\s*&]+?)\s+(?P<alias>[A-Za-z_]\w*)\s*;"
 )
 _MEMBER_RE = re.compile(
     r"(?P<type>(?:[\w:<>,\s*&]+?))\s+(?P<name>[A-Za-z_]\w*)\s*;"
+)
+# ``TPipe *pipe;`` — star sits between type and name, so _MEMBER_RE misses it.
+_PTR_MEMBER_RE = re.compile(
+    r"(?P<type>(?:const\s+|volatile\s+)*[\w:]+(?:\s*<[^;{>]*>)?)\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*;"
 )
 _CONTINUATION_NAME_RE = re.compile(r"^\s*(?P<name>[A-Za-z_]\w*)\s*;\s*$")
 _QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
@@ -130,6 +137,24 @@ def _base_type_name(type_text: str) -> str:
 def _is_tpl_dsl_file(path: Path) -> bool:
     name = path.name.lower().replace("\\", "/")
     return any(marker in name for marker in _TPL_DSL_NAME_MARKERS)
+
+
+_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
+
+
+def _blank_block_comments(text: str) -> str:
+    """Replace ``/* ... */`` with spaces, keeping newlines so line numbers stay physical.
+
+    A single-space substitution collapses a file banner onto one line and shifts
+    every later call. Clang walk sites use the raw file; merge keys ``(file,
+    line, callee)`` then drop the lexical ``InitBuffer`` that landed on an
+    earlier real call.
+    """
+
+    def _repl(m: re.Match[str]) -> str:
+        return re.sub(r"[^\n]", " ", m.group(0))
+
+    return _BLOCK_COMMENT_RE.sub(_repl, str(text or ""))
 
 
 def _strip_line_noise(line: str) -> str:
@@ -228,35 +253,57 @@ def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFac
     # Members/aliases must see raw lines (same as the historical scanner).
     # Stripping block comments joins lines and mints extra BUFFER fields.
     raw_lines = text.splitlines()
-    call_text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    call_lines = call_text.splitlines()
+    call_lines = _blank_block_comments(text).splitlines()
+    if len(call_lines) < len(raw_lines):
+        call_lines = call_lines + [""] * (len(raw_lines) - len(call_lines))
+    elif len(call_lines) > len(raw_lines):
+        call_lines = call_lines[: len(raw_lines)]
     current: str | None = None
     depth = 0
     pending_type: str | None = None
     pending_line = 0
+    pending_alias: str | None = None
+    pending_alias_line = 0
+    pending_alias_parts: list[str] = []
     skip_calls = _is_tpl_dsl_file(path)
+
+    def _record_alias(alias: str, target: str, line_no: int) -> None:
+        text_target = str(target or "").strip()
+        if not alias or not text_target:
+            return
+        facts.type_aliases.append(
+            {
+                "alias": alias,
+                "target": text_target,
+                "file": nfile,
+                "line": line_no,
+            }
+        )
 
     for i, line in enumerate(raw_lines, start=1):
         for inc in _QUOTED_INCLUDE_RE.findall(line):
             facts.includes.append(inc.replace("\\", "/"))
+        if pending_alias is not None:
+            pending_alias_parts.append(line.strip())
+            joined = " ".join(pending_alias_parts)
+            if ";" in joined:
+                target = joined.split(";", 1)[0].strip()
+                _record_alias(pending_alias, target, pending_alias_line)
+                pending_alias = None
+                pending_alias_parts = []
+            continue
+        using_hit = False
         for m in _USING_RE.finditer(line):
-            facts.type_aliases.append(
-                {
-                    "alias": m.group("alias"),
-                    "target": m.group("target").strip(),
-                    "file": nfile,
-                    "line": i,
-                }
-            )
+            _record_alias(m.group("alias"), m.group("target"), i)
+            using_hit = True
+        if not using_hit:
+            start = _USING_START_RE.search(line)
+            if start is not None:
+                pending_alias = start.group("alias")
+                pending_alias_line = i
+                pending_alias_parts = [str(start.group("target") or "").strip()]
         for m in _TYPEDEF_RE.finditer(line):
-            facts.type_aliases.append(
-                {
-                    "alias": m.group("alias"),
-                    "target": m.group("target").strip(),
-                    "file": nfile,
-                    "line": i,
-                }
-            )
+            _record_alias(m.group("alias"), m.group("target"), i)
         cm = _CLASS_RE.search(line)
         if cm and ";" not in line:
             current = cm.group("name")
@@ -284,9 +331,8 @@ def _scan_file(path: Path, *, root: str, registry: set[str] | None) -> SourceFac
             pending_line=pending_line,
         )
 
-    # Buffer decls use raw line numbers so they align with Clang sites and
-    # ``buffer_site_id(file, line, scope, name)`` can actually de-dupe.
-    # Collapsing ``/* ... */`` onto one line shifts every later decl.
+    # Decls and calls both use physical line numbers so they align with Clang
+    # sites. Block comments are blanked in place; they must not collapse.
     func = ""
     for i, line in enumerate(raw_lines, start=1):
         func = _update_enclosing_func(line, func)
@@ -371,6 +417,16 @@ def _advance_members(
         return stripped, i
     for m in _MEMBER_RE.finditer(line):
         _emit_member(facts, current, m.group("name"), m.group("type").strip(), path, root, i)
+    for m in _PTR_MEMBER_RE.finditer(line):
+        _emit_member(
+            facts,
+            current,
+            m.group("name"),
+            f"{m.group('type').strip()} *",
+            path,
+            root,
+            i,
+        )
     return pending_type, pending_line
 
 

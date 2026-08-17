@@ -625,7 +625,7 @@ def render_failure_card(state: dict[str, Any], observation: dict[str, Any] | Non
         user_summary = str(lf.get("message_zh") or "当前步骤未通过，请按合法后续处理。")
     state["user_summary_zh"] = user_summary
     lines = [
-        f"【给你】{user_summary}",
+        f"【摘要】{user_summary}",
         "",
         f"当前阶段：{phase}",
         f"失败 Action：{action_id or '(unknown)'}",

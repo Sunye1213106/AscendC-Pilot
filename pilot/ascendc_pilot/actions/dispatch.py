@@ -428,10 +428,10 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
             hint["unresolved_path"] = u_abs
             hint["read_after_done"] = [q_abs, u_abs]
             hint["message_zh"] = (
-                f"建库完成。请 Read `{q_abs}`（verify 收据），"
-                "对人总结节点/关系数量、未闭合桶及原因；"
-                f"要名单再读 `{u_abs}`。"
-                "不要打开 .uo 二进制，不要只说完成。"
+                f"建库已完成。请 Read `{q_abs}`（quality.yaml），"
+                "向用户报告节点数、关系数、未闭合分类及原因；"
+                f"如需未闭合清单，再读 `{u_abs}`。"
+                "禁止打开 .uo 二进制，禁止仅回复「完成」。"
                 "禁止读 `.ascendc-pilot/uo/`（无 arch 段的旧路径）。"
             )
         elif wid == "uo-query" and run_id:
@@ -459,13 +459,13 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
                 hint["answer_zh"] = answer_zh
                 hint["answer_status"] = status
                 hint["message_zh"] = (
-                    "查询完成。下面是答案，直接对人说（含 path:line）。"
+                    "查询完成。以下为答案正文（含 path:line），请向用户陈述。"
                     "禁止再 Glob/Read answer.yaml 或其它 yaml。\n\n"
                     f"{answer_zh}"
                 )
             else:
                 hint["message_zh"] = (
-                    "查询完成。把本次子代理返回的答案正文说给人听。"
+                    "查询完成。请将本次子代理返回的答案正文向用户陈述。"
                     "禁止再 Glob/Read yaml。"
                 )
     except Exception:  # noqa: BLE001
@@ -629,7 +629,7 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                 prep.get("message_zh")
                 or (
                     f"请用 OpenCode 原生 Task（agent={actor}）"
-                    "原样派发 task_prompt_stub；点 Task 卡片可跳进子会话看思考。不要改写 stub。"
+                    "原样派发 task_prompt_stub；可打开 Task 卡片查看子会话推理过程。禁止改写 stub。"
                 )
             )
         out["host_step"] = build_host_step(

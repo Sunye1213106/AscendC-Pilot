@@ -29,6 +29,7 @@ from uo_init.perf import TimeBudget, kernel_root_trace_budget_s
 from uo_init.ids import buffer_site_id, make_id, operation_site_id, register_site_id
 from uo_init.ir.codemap import CodeMap, _rid
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.evidence import TRUST_ADVISORY
 from uo_init.ir.relation import RelationKind
 from uo_init.passes import kernel_scan as kscan
 from uo_init.passes.source_text_cache import read_text
@@ -36,14 +37,13 @@ from uo_init.semantics import registry as semreg
 from uo_init.semantics.ascendc_storage import (
     ASCENDC_BUFFER_TYPES,
     ASCENDC_REGISTER_TYPES,
-    ASCENDC_STORAGE_WRAPPER_TYPES,
-    MUTEX_BUFFER_METHOD_BRIDGES,
+    SHARE_BUFFER_CALLEES,
+    STACK_BUFFER_CALLEES,
     TENSOR_METHOD_BRIDGES,
     TPIPE_METHOD_BRIDGES,
     TQUE_METHOD_BRIDGES,
     is_non_storage_type,
     is_storage_type_text,
-    is_storage_wrapper_type,
     is_valid_storage_name,
     memory_space_from_type_text,
     register_class_from_type,
@@ -54,16 +54,23 @@ from uo_init.semantics.ascendc_storage import (
 from uo_init.semantics.ascendc_vf import (
     AMBIGUOUS_VF_ROOTS,
     VF_ALIASES,
+    architecture_has_vf,
     is_ambiguous_vf_name,
     is_cann_vf_api,
+    is_vf_only_api,
     vf_root_spelling,
 )
 from uo_init.semantics.ascendc_util import is_cann_util_api
 from uo_init.semantics.ascendc_sync import (
+    ASCENDC_SYNC_TYPES,
     FLAG_PAIR_MATE,
     SYNC_MECHANISM,
+    SYNC_SPELLING_ALIASES,
+    VF_GATED_SYNC,
+    canonical_sync_name,
     flag_pair_key,
     is_flag_sync,
+    is_sync_root,
     is_tpipe_callee,
     is_tque_callee,
     resolve_sync_site,
@@ -93,6 +100,9 @@ _ROOT_KIND_BY_CATEGORY: dict[str, str] = {
     "sync_wait": "SYNC",
     "sync_barrier": "SYNC",
     "reg_mask": "REGISTER",
+    "reg_load": "REGISTER",
+    "reg_store": "REGISTER",
+    "reg_compute": "REGISTER",
     "vector": "COMPUTE_API",
     "vector_compute": "COMPUTE_API",
     "cube": "COMPUTE_API",
@@ -116,8 +126,6 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "EnQue",
         "DeQue",
         "Cast",
-        "Get",
-        "GetTensor",
         "SetAtomicAdd",
         "SetAtomicNone",
         "SetAtomicType",
@@ -127,19 +135,19 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "Matmul",
         # TPipe / tensor (kernel_tpipe.h, kernel_tensor.h, kernel_common.h)
         "TPipe",
-        "FetchEventID",
+        "GroupBarrier",
+        "TQueSync",
         "GetTPipePtr",
         "GetBlockIdx",
         "GetSubBlockIdx",
         "SetGlobalBuffer",
         "GetPhyAddr",
         "InitOutput",
-        # AscendC::Reg public free functions (kernel_reg_compute_*_intf.h)
-        "LoadAlign",
-        "StoreAlign",
-        "StoreUnAlign",
-        "CreateMask",
-        "UpdateMask",
+        "PopStackBuffer",
+        "InitShareBufStart",
+        "InitShareBufEnd",
+        # Level-2 vector (arch22 and arch35). VF-only LoadAlign/CreateMask
+        # come from is_cann_vf_api and are gated by architecture.
         "Interleave",
         "Duplicate",
         "ReduceSum",
@@ -155,8 +163,6 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
         "Select",
         "sqrt",
         "Log",
-        "DataCopyScatter",
-        "LocalMemBar",
     }
 )
 
@@ -165,9 +171,7 @@ _ASCENDC_API_ROOTS: frozenset[str] = frozenset(
 _VECTOR_AMBIGUOUS_ROOTS: frozenset[str] = frozenset(AMBIGUOUS_VF_ROOTS)
 
 # Catalog spellings that are member contracts, never free-function roots.
-_MEMBER_ONLY_ROOTS: frozenset[str] = frozenset(
-    {"Get", "GetTensor", "GetPre", "GetReused", "LockProd", "UnlockProd", "LockCons", "UnlockCons"}
-)
+_MEMBER_ONLY_ROOTS: frozenset[str] = frozenset({"Get"})
 
 _CLASS_RE = re.compile(r"\b(?:class|struct)\s+(?P<name>[A-Za-z_]\w*)\b")
 _USING_RE = re.compile(
@@ -254,9 +258,11 @@ _SYNC_PRECEDES_CALLEES: frozenset[str] = frozenset(
         "PipeBarrier",
         "DataSyncBarrier",
         "InitBuffer",
+        "PopStackBuffer",
         "Cast",
     }
     | set(SYNC_MECHANISM)
+    | set(STACK_BUFFER_CALLEES)
 )
 
 
@@ -276,16 +282,33 @@ def _type_identity_key(type_text: str, *, usr: str = "", qualified: str = "") ->
     return _base_type_name(text)
 
 
+_TRACE_ARCHITECTURE = ""
+
+
+def _vf_blocked(name: str) -> bool:
+    """VF/Reg/SIMT roots are illegal on arch22."""
+    if architecture_has_vf(_TRACE_ARCHITECTURE):
+        return False
+    short = canonical_sync_name(vf_root_spelling(name))
+    if short in VF_GATED_SYNC or name in VF_GATED_SYNC:
+        return True
+    return is_vf_only_api(short)
+
+
 def _is_ascendc_root_spelling(name: str) -> bool:
     """Catalog candidate check only — not REACHED proof."""
-    short = vf_root_spelling(name)
+    if _vf_blocked(name):
+        return False
+    short = canonical_sync_name(vf_root_spelling(name))
     return (
         name in _ASCENDC_API_ROOTS
         or short in _ASCENDC_API_ROOTS
         or name in ASCENDC_BUFFER_TYPES
         or name in ASCENDC_REGISTER_TYPES
-        or is_cann_vf_api(name)
+        or short in ASCENDC_SYNC_TYPES
+        or is_cann_vf_api(name, architecture=_TRACE_ARCHITECTURE)
         or is_cann_util_api(name)
+        or is_sync_root(name)
     )
 
 
@@ -334,15 +357,17 @@ def _short_from_qualified(qualified: str, fallback: str = "") -> str:
 
 
 def _looks_like_framework_type_name(name: str) -> bool:
-    """CANN param/config structs and similar type-like identifiers."""
+    """CANN catalog roots and param/config structs — never project class names."""
     if not name or not name[0].isupper():
         return False
     if not re.match(r"^[A-Za-z_]\w*$", name):
         return False
-    return True
+    if _is_ascendc_root_spelling(name):
+        return True
+    return name.endswith(("Params", "Config", "ExtParams", "PadParams")) or "Params" in name
 
 
-_SPELLING_ALIASES: dict[str, str] = {"abs": "Abs", **VF_ALIASES}
+_SPELLING_ALIASES: dict[str, str] = {"abs": "Abs", **VF_ALIASES, **SYNC_SPELLING_ALIASES}
 
 _BUILTIN_SPELLINGS: frozenset[str] = frozenset(
     {
@@ -390,7 +415,7 @@ def _is_type_like_root(callee: str) -> bool:
     short = str(callee or "").split("::")[-1]
     if short in ASCENDC_REGISTER_TYPES or short in ASCENDC_BUFFER_TYPES:
         return True
-    if short in {"TPipe"}:
+    if short in {"TPipe"} or short in ASCENDC_SYNC_TYPES:
         return True
     if short.endswith(("Params", "Config", "ExtParams", "PadParams")) or "Params" in short:
         return True
@@ -406,6 +431,8 @@ def _should_mint_operation(
 ) -> bool:
     """OPERATION nodes are source call sites of execution primitives, not every CallExpr."""
     if is_builtin:
+        return False
+    if _vf_blocked(callee):
         return False
     if _is_type_like_root(callee):
         return False
@@ -464,8 +491,8 @@ def _prove_ascendc_api_root(
         return True, callee
     if _receiver_looks_tensor(receiver_type, receiver_canonical_type) and callee in TENSOR_METHOD_BRIDGES:
         return True, callee
-    # Get/GetTensor/LockProd are member contracts. A CANN header hit is not
-    # proof of a free AscendC::Get — Policy/Selector/TBuf all share the name.
+    # Get is a member contract. A CANN header hit is not proof of a free
+    # AscendC::Get — Policy/Selector/TBuf all share the name.
     if short in _MEMBER_ONLY_ROOTS:
         if _qualified_looks_ascendc(callee_qualified) and not (
             receiver or receiver_type or receiver_canonical_type
@@ -553,13 +580,14 @@ def _ensure_ascendc_root(codemap: CodeMap, spelling: str, *, root_kind: str) -> 
 
 
 def _category_root_kind(category: str, callee: str) -> str:
-    if callee in SYNC_MECHANISM or category.startswith("sync_"):
+    canon = canonical_sync_name(callee)
+    if canon in SYNC_MECHANISM or callee in SYNC_MECHANISM or category.startswith("sync_"):
         return "SYNC"
     if callee in ASCENDC_REGISTER_TYPES or category.startswith("reg_"):
         return "REGISTER"
     if category in _ROOT_KIND_BY_CATEGORY:
         return _ROOT_KIND_BY_CATEGORY[category]
-    if callee in ASCENDC_BUFFER_TYPES or is_storage_wrapper_type(callee):
+    if callee in ASCENDC_BUFFER_TYPES:
         return "STORAGE"
     low = str(callee or "")
     if low.endswith(("Params", "Config", "ExtParams", "PadParams")) or "Params" in low:
@@ -588,54 +616,70 @@ def _decl_fields(decl: Any) -> tuple[str, str, str, str, int]:
 def _sync_object_kind(type_text: str) -> EntityKind | None:
     """Classify only explicit AscendC sync/storage type spellings."""
     text = re.sub(r"\s+", "", str(type_text or ""))
-    if re.search(r"(?:^|::)TPipe(?:<|$)", text):
+    if re.search(r"(?:^|::)(?:const|volatile)*TPipe(?:\*|\&|<|$)", text):
         return EntityKind.PIPE
-    if re.search(r"(?:^|::)TQue(?:Bind)?(?:<|$)", text):
+    if re.search(r"(?:^|::)(?:const|volatile)*TQue(?:Bind)?(?:\*|\&|<|$)", text):
         return EntityKind.QUEUE
-    if re.search(r"(?:^|::)HardEvent(?:Aic|Aiv)?(?:<|$)", text):
+    if re.search(r"(?:^|::)(?:const|volatile)*HardEvent(?:Aic|Aiv)?(?:\*|\&|<|$)", text):
         return EntityKind.EVENT
     return None
 
 
-def infer_kernel_phase(name: str, *, file: str = "", scope: str = "") -> str:
-    """Cheap pre/main/post label from TPipe / op names. Not happens-before."""
-    blob = f"{name} {scope} {file}".lower().replace("\\", "/")
-    if any(tok in blob for tok in ("pipein", "pipepre", "oppre")):
-        return "pre"
-    if any(tok in blob for tok in ("pipepost", "oppost")):
-        return "post"
-    if any(tok in blob for tok in ("pipebase", "pipemain")):
-        return "main"
+def _type_is_pointer(type_text: str) -> bool:
+    return "*" in re.sub(r"\s+", "", str(type_text or ""))
+
+
+def _catalog_storage_root(type_text: str) -> str:
+    """CANN storage/queue spelling in a type, or empty."""
+    text = str(type_text or "")
+    for spell in ("LocalTensor", "GlobalTensor", "TBufPool", "TBuf", "TQueBind", "TQue"):
+        if spell in text:
+            return spell
     return ""
 
 
-def _mutex_policy_attrs(type_text: str) -> dict[str, str]:
-    """Policy token on a wrapper/selector type — not a project class catalog.
-
-    Matches ``*Policy<Suffix>`` (PolicyDB, Policy3buff, L1PolicySingleBuffer, …)
-    and ``std::conditional`` flags. Does not require MutexBuffer in the spelling.
-    """
+def _wraps_lock_type(type_text: str) -> bool:
     text = str(type_text or "")
-    out: dict[str, str] = {}
-    m = re.search(
-        r"\b(?:[A-Za-z_]\w*?)?Policy([A-Za-z][A-Za-z0-9]*|\d+[Bb]uff)\b",
-        text,
-    )
-    if m:
-        raw = m.group(1)
-        low = raw.lower()
-        if low in {"3buff", "4buff"}:
-            out["mutex_policy"] = low
-        elif raw in {"DB", "PolicyDB"}:
-            out["mutex_policy"] = "PolicyDB"
-        elif "SingleBuffer" in raw:
-            out["mutex_policy"] = "PolicySingleBuffer"
-        else:
-            out["mutex_policy"] = raw
-    cm = re.search(r"std::conditional(?:_t)?\s*<\s*([^,>]+)", text)
-    if cm:
-        out["conditional_flag"] = cm.group(1).strip()
-    return out
+    return "MutexID" in text or re.search(r"(?:^|::)Mutex(?:<|$)", text) is not None
+
+
+def _propagate_wrap_flags(codemap: CodeMap) -> None:
+    """Push wraps_storage / wraps_lock / wraps_flag up WRAPS (source composition)."""
+    parents: dict[str, list[str]] = defaultdict(list)
+    for rel in codemap.relations.values():
+        if rel.kind_name() != RelationKind.WRAPS.value:
+            continue
+        parents[rel.dst].append(rel.src)
+
+    def _seed_storage(ent: Any) -> bool:
+        return bool(
+            ent.attrs.get("wraps_storage")
+            or _catalog_storage_root(str(ent.name or ""))
+            or ent.kind_name() in {EntityKind.BUFFER.value, EntityKind.QUEUE.value}
+        )
+
+    def _push(start_id: str, flag: str) -> None:
+        stack = list(parents.get(start_id, ()))
+        seen: set[str] = set()
+        while stack:
+            src_id = stack.pop()
+            if src_id in seen:
+                continue
+            seen.add(src_id)
+            src = codemap.entities.get(src_id)
+            if src is None:
+                continue
+            if not src.attrs.get(flag):
+                src.attrs[flag] = True
+            stack.extend(parents.get(src_id, ()))
+
+    for ent in codemap.entities.values():
+        if _seed_storage(ent):
+            _push(ent.id, "wraps_storage")
+        if ent.attrs.get("wraps_lock"):
+            _push(ent.id, "wraps_lock")
+        if ent.attrs.get("wraps_flag"):
+            _push(ent.id, "wraps_flag")
 
 
 def _receiver_is_tque(
@@ -744,6 +788,201 @@ def _owner_from_receiver_type(type_text: str) -> str:
     return base
 
 
+_THIS_PREFIX_RE = re.compile(
+    r"^(?:\(\s*\*\s*this\s*\)\s*(?:\.|->)|this\s*(?:\.|->))"
+)
+
+
+def _expr_storage_name(text: str) -> str:
+    """Last identifier in a receiver/arg (`this->pipe` → `pipe`).
+
+    Call expressions such as ``GetTPipePtr()`` are not names and return empty.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    while True:
+        nxt = _THIS_PREFIX_RE.sub("", raw, count=1).strip()
+        if nxt == raw:
+            break
+        raw = nxt
+    raw = raw.lstrip("&").strip().replace("->", ".")
+    if "[" in raw:
+        raw = raw.split("[", 1)[0]
+    if "." in raw:
+        raw = raw.rsplit(".", 1)[-1]
+    raw = raw.strip()
+    if not raw or "(" in raw or ")" in raw:
+        return ""
+    return raw if raw.isidentifier() else ""
+
+
+def _identity_scopes(function: str, caller_qualified: str) -> list[str]:
+    """Owner/method names that can key a class-member PIPE/BUFFER/QUEUE."""
+    scopes: list[str] = []
+
+    def add(value: str) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        text = text.split("<", 1)[0].strip()
+        if text.endswith("()"):
+            text = text[:-2].strip()
+        if text and text not in scopes:
+            scopes.append(text)
+
+    add(function)
+    q = str(caller_qualified or "").strip()
+    add(q)
+    for blob in (q, function):
+        if "::" not in blob:
+            continue
+        head = blob.rsplit("::", 1)[0]
+        add(head)
+        add(head.split("::")[-1])
+        add(blob.split("::")[-1])
+    return scopes
+
+
+def _short_type_name(type_text: str) -> str:
+    return _base_type_name(type_text) or str(type_text or "").split("<")[0].split("::")[-1].strip()
+
+
+def _backslash_logical_lines(text: str) -> list[tuple[int, str]]:
+    """Join `\\` continuations so a #define body is one searchable line."""
+    physical = str(text or "").splitlines()
+    out: list[tuple[int, str]] = []
+    i = 0
+    while i < len(physical):
+        start = i + 1
+        chunk = physical[i]
+        while chunk.rstrip().endswith("\\") and i + 1 < len(physical):
+            chunk = chunk.rstrip()[:-1] + " " + physical[i + 1]
+            i += 1
+        out.append((start, chunk))
+        i += 1
+    return out
+
+
+def _split_top_level_args(text: str) -> list[str]:
+    args: list[str] = []
+    depth = 0
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            args.append(text[start:i].strip())
+            start = i + 1
+    args.append(text[start:].strip())
+    return [a for a in args if a]
+
+
+def _paren_arg_text(text: str, open_at: int) -> str:
+    if open_at < 0 or open_at >= len(text) or text[open_at] != "(":
+        return ""
+    depth = 0
+    for i in range(open_at, len(text)):
+        ch = text[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return text[open_at + 1 : i]
+    return ""
+
+
+def _conditional_branch_classes(prefix: str) -> list[str]:
+    """True/false types of ``std::conditional<Cond, A, B>`` in a local decl prefix."""
+    idx = str(prefix or "").find("conditional")
+    if idx < 0:
+        return []
+    lt = prefix.find("<", idx)
+    if lt < 0:
+        return []
+    depth = 0
+    for j in range(lt, len(prefix)):
+        if prefix[j] == "<":
+            depth += 1
+        elif prefix[j] == ">":
+            depth -= 1
+            if depth == 0:
+                parts = _split_top_level_args(prefix[lt + 1 : j])
+                names = [_short_type_name(p) for p in parts[1:3]]
+                return [n for n in names if n]
+    return []
+
+
+def _local_decl_owners(chunk: str, ident: str, before: int) -> list[str]:
+    """Class names of the local ``Type ident;`` preceding a call in the same chunk."""
+    if not ident or before <= 0:
+        return []
+    needle = re.compile(rf"\b{re.escape(ident)}\s*;")
+    last = None
+    for m in needle.finditer(chunk[:before]):
+        last = m
+    if last is None:
+        return []
+    prefix = chunk[: last.start()].rstrip()
+    # A #define body is one logical line: ignore earlier decls / ``conditional`` aliases.
+    cut = max(prefix.rfind(";"), prefix.rfind("{"), prefix.rfind("}"))
+    if cut >= 0:
+        prefix = prefix[cut + 1 :].rstrip()
+    cond = _conditional_branch_classes(prefix)
+    if cond:
+        return cond
+    if prefix.endswith(">"):
+        depth = 0
+        i = len(prefix) - 1
+        while i >= 0:
+            if prefix[i] == ">":
+                depth += 1
+            elif prefix[i] == "<":
+                depth -= 1
+                if depth == 0:
+                    prefix = prefix[:i].rstrip()
+                    break
+            i -= 1
+    m = re.search(r"([A-Za-z_]\w*(?:\s*::\s*[A-Za-z_]\w*)*)\s*$", prefix)
+    if not m:
+        return []
+    name = _short_type_name(m.group(1))
+    return [name] if name else []
+
+
+_RECV_INIT_RE = re.compile(
+    r"(?P<recv>[A-Za-z_]\w*)\s*(?:\.|->)\s*Init\s*\("
+)
+_ADDR_IDENT_RE = re.compile(r"&(?:\s*)(?P<name>[A-Za-z_]\w*)")
+_CLASS_INHERIT_RE = re.compile(
+    r"\b(?:class|struct)\s+(?P<name>[A-Za-z_]\w*)\b(?:\s*<[^;{]*>)?\s*:"
+    r"(?P<bases>[^{;]+)\{",
+    re.DOTALL,
+)
+
+
+def _inherit_pairs_from_text(text: str) -> list[tuple[str, str]]:
+    """``class Kernel : public KernelBase<...>`` — independent of Clang BaseDecl."""
+    pairs: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for m in _CLASS_INHERIT_RE.finditer(str(text or "")):
+        child = m.group("name")
+        for part in _split_top_level_args(m.group("bases") or ""):
+            cleaned = re.sub(r"\b(?:public|private|protected|virtual)\b", " ", part)
+            parent = _short_type_name(cleaned)
+            if not child or not parent or parent == child:
+                continue
+            key = (child, parent)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append(key)
+    return pairs
+
+
 def _select_framework_bridge(
     *,
     callee: str,
@@ -756,15 +995,12 @@ def _select_framework_bridge(
     callee_usr: str = "",
     targs: list[str] | None = None,
 ) -> tuple[str, str] | None:
-    """Explicit CANN/framework method contracts. Spelling alone never proves members."""
-    if recv_is_wrapper:
-        hit = MUTEX_BUFFER_METHOD_BRIDGES.get(callee)
-        if hit:
-            return hit
+    """Explicit CANN method contracts. Spelling alone never proves members."""
+    del recv_is_wrapper
     # TBuf / TQueBind ``.template Get<T>()`` returns LocalTensor.
     if callee == "Get" and _looks_like_typed_buffer_get(targs):
         return ("LocalTensor", "STORAGE")
-    # TPipe::InitBuffer / FetchEventID. Receiver is the pipe; TQue is an argument.
+    # TPipe::InitBuffer / FetchEventID / AllocEventID. Receiver is the pipe; TQue is an argument.
     if callee in TPIPE_METHOD_BRIDGES and (recv_is_tpipe or (receiver and not recv_is_tque)):
         return TPIPE_METHOD_BRIDGES[callee]
     # EnQue/DeQue/Alloc/Free exist only on TQueBind in CANN.
@@ -918,6 +1154,7 @@ def _link(
     *,
     attrs: dict[str, Any] | None = None,
     status: str = "confirmed",
+    candidate: bool = False,
 ) -> None:
     """Topology-unique edge; accumulate call-site evidence under attrs['sites']."""
     payload = {**(attrs or {}), "provenance": "kernel_root_trace"}
@@ -930,7 +1167,26 @@ def _link(
             "receiver": str(payload.get("receiver") or ""),
             "via": str(payload.get("via") or ""),
         }
-    rel = codemap.link(kind, src, dst, attrs=payload, status=status)
+    if candidate:
+        rid = _rid(
+            kind.value if isinstance(kind, RelationKind) else str(kind),
+            src,
+            dst,
+        )
+        existing = codemap.relations.get(rid)
+        if existing is not None and str(existing.attrs.get("trust") or "") != TRUST_ADVISORY:
+            rel = existing
+        else:
+            rel = codemap.mint_candidate_relation(
+                kind,
+                src,
+                dst,
+                provenance="lexical_source_calls",
+                extra=payload,
+                status=status,
+            )
+    else:
+        rel = codemap.link(kind, src, dst, attrs=payload, status=status)
     if site is None:
         return
     sites = list(rel.attrs.get("sites") or [])
@@ -992,6 +1248,7 @@ def _record_flag_pair_appearance(codemap: CodeMap, gaps: list[dict[str, Any]]) -
             present_id = (sides["signals"] or sides["awaits"])[0]
             present_op = codemap.entities.get(present_id)
             present = str((present_op.attrs.get("callee") if present_op else "") or "")
+            present_canon = canonical_sync_name(present)
             gaps.append(
                 {
                     "code": REASON_UNPAIRED_FLAG_SYNC,
@@ -999,7 +1256,7 @@ def _record_flag_pair_appearance(codemap: CodeMap, gaps: list[dict[str, Any]]) -
                     "identity": key[1],
                     "event": key[2],
                     "present": present,
-                    "missing": FLAG_PAIR_MATE.get(present, ""),
+                    "missing": FLAG_PAIR_MATE.get(present_canon, FLAG_PAIR_MATE.get(present, "")),
                     "entity_id": present_id,
                 }
             )
@@ -1031,6 +1288,10 @@ def _propagate_reachability(codemap: CodeMap) -> None:
             RelationKind.CALLS.value,
             RelationKind.ROOTED_AT.value,
         }:
+            continue
+        # Lexical CALLS are candidates; the reverse climb only follows
+        # resolved CallExpr / compiler-backed edges.
+        if kn == RelationKind.CALLS.value and str(rel.attrs.get("trust") or "") == TRUST_ADVISORY:
             continue
         # Reverse: dst → src means "src reaches via dst"
         if kn == RelationKind.ROOTED_AT.value:
@@ -1209,9 +1470,12 @@ def finalize_kernel_root_trace(
     deadline = budget.deadline
     root = str(Path(source_root).expanduser().resolve())
     arch = require_architecture(architecture or codemap.architecture)
+    global _TRACE_ARCHITECTURE
+    _TRACE_ARCHITECTURE = arch
     reachable, filter_strict = kscan.reachable_function_names(codemap)
     files = kscan.selected_kernel_files(codemap, Path(root))
     identity_filled = 0
+    walk_confirm = 0
 
     _purge_root_trace_entities(codemap)
 
@@ -1301,6 +1565,17 @@ def finalize_kernel_root_trace(
                 deadline=deadline,
                 primitives_only=False,
             )
+        walk_confirm = 0
+        if lexical and provenance.startswith("clang_walk"):
+            try:
+                from uo_init import tu_cache as _tu_cache
+
+                walks = _tu_cache.iter_cached_walks(
+                    Path(root), arch, path_substr="op_kernel", limit=96
+                )
+                walk_confirm = kscan.confirm_lexical_from_walks(lexical, walks)
+            except Exception:  # noqa: BLE001
+                walk_confirm = 0
         calls, added = kscan.merge_lexical_sites(calls, lexical, root=root)
         if added:
             provenance = f"{provenance}+lexical_source_calls"
@@ -1592,25 +1867,6 @@ def finalize_kernel_root_trace(
             if existing:
                 type_ents[member_ikey] = existing
                 type_ents.setdefault(resolved_base, existing)
-            elif is_storage_wrapper_type(resolved) or resolved_base in ASCENDC_STORAGE_WRAPPER_TYPES:
-                mid = make_id("Type", "wrapper", member_ikey, row["file"], int(row["line"]))
-                ment = codemap.upsert(
-                    EntityKind.TYPE,
-                    display,
-                    eid=mid,
-                    attrs={
-                        "role": "storage_wrapper_type",
-                        "root_status": "UNRESOLVED",
-                        "type_name": _persist_type_name(resolved),
-                        "spelling_base": resolved_base,
-                    },
-                    file=str(row["file"]),
-                    line=int(row["line"]),
-                    status="partial",
-                    confidence=0.5,
-                )
-                type_ents[member_ikey] = ment.id
-                type_ents.setdefault(resolved_base, ment.id)
             elif _is_ascendc_root_spelling(resolved_base):
                 type_ents[member_ikey] = _ensure_ascendc_root(
                     codemap,
@@ -1660,6 +1916,36 @@ def finalize_kernel_root_trace(
 
     for src, dst, attrs in wraps_edges:
         _link(codemap, RelationKind.WRAPS, src, dst, attrs=attrs)
+        src_e = codemap.entities.get(src)
+        dst_e = codemap.entities.get(dst)
+        if src_e is None or dst_e is None:
+            continue
+        member_name = str(attrs.get("member") or "")
+        type_name = str(attrs.get("type_name") or "")
+        catalog = _catalog_storage_root(type_name) or _catalog_storage_root(dst_e.name)
+        if catalog:
+            src_e.attrs["wraps_storage"] = True
+            src_e.attrs.setdefault("wrapped_roots", [])
+            roots = src_e.attrs.get("wrapped_roots")
+            if isinstance(roots, list) and catalog not in roots:
+                roots.append(catalog)
+        if _wraps_lock_type(type_name) or _wraps_lock_type(dst_e.name):
+            src_e.attrs["wraps_lock"] = True
+        if member_name:
+            _link(
+                codemap,
+                RelationKind.CONTAINS,
+                src,
+                dst,
+                attrs={"member": member_name, "via": "class_member"},
+            )
+            _link(
+                codemap,
+                RelationKind.DECLARES,
+                src,
+                dst,
+                attrs={"member": member_name, "via": "class_member"},
+            )
 
     # Inheritance edges from Clang BaseDecl.
     for row in clang_bases:
@@ -1707,92 +1993,169 @@ def finalize_kernel_root_trace(
                 },
             )
 
-    # --- 3. Seed AscendC / CANN roots (+ framework wrapper contracts) ----
+    # --- 3. Seed AscendC / CANN roots ------------------------------------
     for spell in sorted(ASCENDC_BUFFER_TYPES):
         type_ents.setdefault(spell, _ensure_ascendc_root(codemap, spell, root_kind="STORAGE"))
     for spell in sorted(ASCENDC_REGISTER_TYPES):
         type_ents.setdefault(spell, _ensure_ascendc_root(codemap, spell, root_kind="REGISTER"))
     for spell in sorted(SYNC_MECHANISM):
+        if _vf_blocked(spell):
+            continue
         type_ents.setdefault(spell, _ensure_ascendc_root(codemap, spell, root_kind="SYNC"))
     for spell in sorted(_ASCENDC_API_ROOTS - ASCENDC_BUFFER_TYPES - set(ASCENDC_REGISTER_TYPES) - set(SYNC_MECHANISM)):
+        if _vf_blocked(spell):
+            continue
         type_ents.setdefault(
             spell,
             _ensure_ascendc_root(codemap, spell, root_kind=_category_root_kind("", spell)),
         )
 
-    def _seed_wrapper_contract(eid: str, spell: str) -> None:
-        rid = _ensure_ascendc_root(codemap, "LocalTensor", root_kind="STORAGE")
-        _link(
-            codemap,
-            RelationKind.WRAPS,
-            eid,
-            rid,
-            attrs={"via": "framework_storage_contract"},
-        )
-        me = codemap.entities[eid]
-        me.attrs["root_status"] = "REACHED"
-        me.attrs["root"] = "AscendC::LocalTensor"
-        me.attrs["root_kind"] = "STORAGE"
-        me.attrs["role"] = "storage_wrapper_type"
-        me.attrs["trace"] = list(me.attrs.get("trace") or [spell]) + ["AscendC::LocalTensor"]
-        me.status = "extracted"
-        _link(codemap, RelationKind.ROOTED_AT, eid, rid)
-
-    # Framework wrapper contract: concrete MutexBuffer / Buffer<...> nodes.
-    # Bare ambiguous "Buffer" spelling is never seeded; templated Buffer is.
-    for spell in sorted(ASCENDC_STORAGE_WRAPPER_TYPES):
-        if spell == "Buffer":
-            continue
-        if spell not in type_ents:
-            existing = None
-            for hit in codemap.by_name(spell, kind=EntityKind.TYPE):
-                if str(hit.id).startswith("SRCTYPE::"):
-                    existing = hit
-                    break
-                if existing is None:
-                    existing = hit
-            if existing is not None:
-                type_ents[spell] = existing.id
-            else:
-                mid = make_id("Type", "wrapper", spell, "catalog", 0)
-                ment = codemap.upsert(
-                    EntityKind.TYPE,
-                    spell,
-                    eid=mid,
-                    attrs={
-                        "role": "storage_wrapper_type",
-                        "root_status": "UNRESOLVED",
-                        "trace": [spell],
-                        "type_name": spell,
-                    },
-                    status="partial",
-                    confidence=0.5,
-                )
-                type_ents[spell] = ment.id
-        _seed_wrapper_contract(type_ents[spell], spell)
-
-    for e in list(codemap.by_kind(EntityKind.TYPE)):
-        if e.attrs.get("catalog") == "ascendc":
-            continue
-        tt = str(e.attrs.get("type_name") or e.attrs.get("type_text") or "")
-        base = str(e.attrs.get("spelling_base") or _base_type_name(tt) or e.name)
-        if not (is_storage_wrapper_type(tt) or is_storage_wrapper_type(e.name) or base == "MutexBuffer"):
-            # Buffer only when templated (Buffer<...>), never bare Buffer.
-            if not (base == "Buffer" and ("<" in tt or "<" in e.name)):
-                continue
-        if e.attrs.get("root_status") == "REACHED" and "LocalTensor" in str(e.attrs.get("root") or ""):
-            continue
-        _seed_wrapper_contract(e.id, base or e.name)
-
     rewrite = _collapse_duplicate_type_hashes(codemap)
     if rewrite:
         for key, eid in list(type_ents.items()):
             type_ents[key] = rewrite.get(eid, eid)
+    _propagate_wrap_flags(codemap)
 
     # --- 4. BUFFER / REGISTER decl sites ---------------------------------
     buffer_by_key: dict[tuple[str, str], str] = {}
     buffer_by_name: dict[str, str] = {}
+    buffer_by_file: dict[tuple[str, str], str] = {}
     gaps: list[dict[str, Any]] = []
+
+    def _index_storage(eid: str, *, scope: str, name: str, nfile: str) -> None:
+        if not eid or not name:
+            return
+        if scope:
+            buffer_by_key[(scope, name)] = eid
+        buffer_by_name[name] = eid
+        nf = str(nfile or "").replace("\\", "/")
+        if nf:
+            buffer_by_file[(nf, name)] = eid
+
+    def _lookup_storage(
+        name: str,
+        scopes: list[str],
+        nfile: str = "",
+        kinds: set[str] | None = None,
+    ) -> str:
+        if not name:
+            return ""
+
+        def _ok(eid: str) -> bool:
+            if not eid:
+                return False
+            if not kinds:
+                return True
+            ent = codemap.entities.get(eid)
+            return ent is not None and ent.kind_name() in kinds
+
+        for scope in scopes:
+            hit = buffer_by_key.get((scope, name))
+            if _ok(hit or ""):
+                return hit or ""
+        nf = str(nfile or "").replace("\\", "/")
+        if nf:
+            hit = buffer_by_file.get((nf, name))
+            if _ok(hit or ""):
+                return hit or ""
+        hit = buffer_by_name.get(name) or ""
+        return hit if _ok(hit) else ""
+
+    def _unique_pipe_in_scopes(scopes: list[str]) -> str:
+        found: list[str] = []
+        seen: set[str] = set()
+        scope_set = {s for s in scopes if s}
+        if not scope_set:
+            return ""
+        for (scope, _name), eid in buffer_by_key.items():
+            if scope not in scope_set or eid in seen:
+                continue
+            ent = codemap.entities.get(eid)
+            if ent is None or ent.kind_name() != EntityKind.PIPE.value:
+                continue
+            seen.add(eid)
+            found.append(eid)
+        return found[0] if len(found) == 1 else ""
+
+    def _lookup_instance_pipe(name: str, nfile: str) -> str:
+        """Prefer a non-pointer TPipe; skip ``TPipe *pipeIn`` parameters."""
+        if not name:
+            return ""
+        hit = _lookup_storage(name, [], nfile, kinds={EntityKind.PIPE.value})
+        ent = codemap.entities.get(hit) if hit else None
+        if (
+            ent is not None
+            and not ent.attrs.get("pointer")
+            and ent.attrs.get("catalog") != "ascendc"
+        ):
+            return hit
+        nf = str(nfile or "").replace("\\", "/")
+        file_hits: list[str] = []
+        other_hits: list[str] = []
+        for e in codemap.by_kind(EntityKind.PIPE):
+            if e.name != name:
+                continue
+            if e.attrs.get("catalog") == "ascendc" or e.attrs.get("pointer"):
+                continue
+            ef = str(e.file or "").replace("\\", "/")
+            if nf and ef == nf:
+                file_hits.append(e.id)
+            else:
+                other_hits.append(e.id)
+        if len(file_hits) == 1:
+            return file_hits[0]
+        if file_hits:
+            return file_hits[0]
+        return other_hits[0] if len(other_hits) == 1 else ""
+
+    def _collect_lexical_init_pipe_args() -> None:
+        """``opPost.Init(..., &pipePost)`` in #define bodies clang never turns into Init calls."""
+        for path in files or []:
+            pth = Path(path)
+            if not pth.is_file():
+                continue
+            try:
+                text = read_text(pth)
+            except OSError:
+                continue
+            nfile = _norm_file(str(pth), root)
+            phys = text.splitlines()
+            lexical_inherit.extend(_inherit_pairs_from_text(text))
+            for start_line, logical in _backslash_logical_lines(text):
+                for m in _RECV_INIT_RE.finditer(logical):
+                    recv = m.group("recv")
+                    args = _paren_arg_text(logical, m.end() - 1)
+                    if not args:
+                        continue
+                    inst_ids: list[str] = []
+                    first_name = ""
+                    for am in _ADDR_IDENT_RE.finditer(args):
+                        name = am.group("name")
+                        aid = _lookup_instance_pipe(name, nfile)
+                        if not aid:
+                            continue
+                        inst_ids.append(aid)
+                        if not first_name:
+                            first_name = name
+                    if not inst_ids:
+                        continue
+                    owners = _local_decl_owners(logical, recv, m.start())
+                    if not owners:
+                        continue
+                    aline = start_line
+                    token = f"&{first_name}" if first_name else ""
+                    if token:
+                        for pi in range(start_line - 1, min(len(phys), start_line + 160)):
+                            if token in phys[pi] or first_name in phys[pi]:
+                                aline = pi + 1
+                                break
+                    for owner in owners:
+                        for aid in inst_ids:
+                            pipe_arg_sites.append((owner, aid, nfile, aline))
+
+    pipe_arg_sites: list[tuple[str, str, str, int]] = []
+    lexical_inherit: list[tuple[str, str]] = []
+    initbuffer_links: list[tuple[str, str, str, int, str]] = []
     buf_count = 0
     reg_count = 0
     pipe_count = 0
@@ -1812,6 +2175,8 @@ def finalize_kernel_root_trace(
             nfile = str(row["file"])
             line = int(row["line"])
             owner = str(row["owner"])
+            if (owner, name) in buffer_by_key:
+                continue
             sid = make_id(sync_kind.value.title(), "decl", owner, name, nfile, line)
             root_spell = (
                 "TPipe"
@@ -1832,10 +2197,12 @@ def finalize_kernel_root_trace(
                     "root_kind": "SYNC",
                     "root": f"AscendC::{root_spell}",
                     "provenance": str(row.get("provenance") or "kernel_root_trace"),
+                    "allocated": False,
+                    "pointer": _type_is_pointer(type_text) or _type_is_pointer(expanded),
             }
-            phase = infer_kernel_phase(name, file=nfile, scope=owner)
-            if phase:
-                pipe_attrs["kernel_phase"] = phase
+            if sync_kind == EntityKind.PIPE and not pipe_attrs["pointer"]:
+                pipe_attrs["role"] = "launch_instance"
+                pipe_attrs["kernel_file"] = nfile
             ent = codemap.upsert(
                 sync_kind,
                 name,
@@ -1847,23 +2214,39 @@ def finalize_kernel_root_trace(
                 confidence=1.0,
             )
             _link(codemap, RelationKind.ROOTED_AT, ent.id, root_id)
-            buffer_by_key[(owner, name)] = ent.id
-            buffer_by_name[name] = ent.id
+            if owner in type_ents:
+                _link(
+                    codemap,
+                    RelationKind.CONTAINS,
+                    type_ents[owner],
+                    ent.id,
+                    attrs={"member": name, "via": "class_member"},
+                )
+                _link(
+                    codemap,
+                    RelationKind.DECLARES,
+                    type_ents[owner],
+                    ent.id,
+                    attrs={"member": name, "via": "class_member"},
+                )
+            _index_storage(ent.id, scope=owner, name=name, nfile=nfile)
             pipe_count += int(sync_kind == EntityKind.PIPE)
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
-        mutex_attrs = _mutex_policy_attrs(type_text + " " + expanded)
+        owner_ent = codemap.entities.get(type_ents[base]) if base in type_ents else None
+        wraps_storage = bool(owner_ent and owner_ent.attrs.get("wraps_storage"))
+        catalog_root = _catalog_storage_root(expanded) or _catalog_storage_root(type_text)
         known = (
             is_storage_type_text(expanded)
-            or is_storage_wrapper_type(expanded)
+            or catalog_root
+            or wraps_storage
             or base in alias_to_target
             or (
-                base in type_ents
-                and str(codemap.entities[type_ents[base]].attrs.get("root_status") or "") == "REACHED"
+                owner_ent is not None
+                and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
+                and "LocalTensor" in str(owner_ent.attrs.get("root") or "")
             )
-            or is_storage_wrapper_type(type_text)
-            or bool(mutex_attrs.get("mutex_policy"))
         )
         if not known:
             continue
@@ -1871,16 +2254,17 @@ def finalize_kernel_root_trace(
         line = int(row["line"])
         owner = str(row["owner"])
         bid = buffer_site_id(file=nfile, line=line, scope=owner, name=name, root=root)
-        is_wrapper = is_storage_wrapper_type(expanded) or is_storage_wrapper_type(type_text)
         resolved = resolve_buffer_decl(expanded) or resolve_buffer_decl(type_text)
         space = memory_space_from_type_text(expanded) or memory_space_from_type_text(type_text) or "UNKNOWN"
-        root_spell = ""
-        if is_wrapper:
-            root_spell = str((resolved or {}).get("storage_root_kind") or "LocalTensor")
-        elif base in ASCENDC_BUFFER_TYPES:
+        root_spell = catalog_root
+        if not root_spell and wraps_storage:
+            roots = list(owner_ent.attrs.get("wrapped_roots") or []) if owner_ent else []
+            root_spell = str(roots[0] if roots else "LocalTensor")
+        elif not root_spell and base in ASCENDC_BUFFER_TYPES:
             root_spell = base
-        elif base in type_ents and codemap.entities[type_ents[base]].attrs.get("root_status") == "REACHED":
-            root_spell = str(codemap.entities[type_ents[base]].attrs.get("root") or "").replace("AscendC::", "")
+        elif not root_spell and owner_ent is not None:
+            root_spell = str(owner_ent.attrs.get("root") or "").replace("AscendC::", "")
+        is_wrapper = bool(wraps_storage and not catalog_root)
         attrs = {
             "memory_space": space,
             "tposition": tposition_from_type_text(expanded)
@@ -1888,20 +2272,15 @@ def finalize_kernel_root_trace(
             or "",
             "scope": owner,
             "type_name": _persist_type_name(type_text),
-            "role": (
-                "storage_wrapper"
-                if is_wrapper
-                else ("mutex_policy" if mutex_attrs.get("mutex_policy") else "project_wrapper")
-            ),
-            "wrapper": "MutexBuffer" if is_wrapper and "MutexBuffer" in (expanded + type_text) else (
-                _base_type_name(expanded) if is_wrapper else ""
-            ),
+            "role": "storage_wrapper" if is_wrapper else "storage",
+            "wrapper": base if is_wrapper else "",
             "root_status": "REACHED" if root_spell else "UNRESOLVED",
             "root_kind": "STORAGE" if root_spell else "",
             "root": f"AscendC::{root_spell}" if root_spell else "",
             "trace": [name] + ([base] if base else []) + ([root_spell] if root_spell else []),
+            "allocated": bool(catalog_root in {"TBuf", "TBufPool"}),
+            "wraps_lock": bool(owner_ent and owner_ent.attrs.get("wraps_lock")),
         }
-        attrs.update(mutex_attrs)
         ent = codemap.upsert(
             EntityKind.BUFFER,
             name,
@@ -1912,9 +2291,23 @@ def finalize_kernel_root_trace(
             status="extracted" if root_spell else "partial",
             confidence=0.9 if root_spell else 0.4,
         )
-        buffer_by_key[(owner, name)] = ent.id
-        buffer_by_name[name] = ent.id
+        _index_storage(ent.id, scope=owner, name=name, nfile=nfile)
         buf_count += 1
+        if owner in type_ents:
+            _link(
+                codemap,
+                RelationKind.CONTAINS,
+                type_ents[owner],
+                ent.id,
+                attrs={"member": name, "via": "class_member"},
+            )
+            _link(
+                codemap,
+                RelationKind.DECLARES,
+                type_ents[owner],
+                ent.id,
+                attrs={"member": name, "via": "class_member"},
+            )
         if base in type_ents:
             _link(codemap, RelationKind.WRAPS, ent.id, type_ents[base], attrs={"via": "member_type"})
         if root_spell:
@@ -1931,6 +2324,10 @@ def finalize_kernel_root_trace(
         sync_kind = _sync_object_kind(expanded) or _sync_object_kind(type_text)
         if sync_kind is not None:
             nfile = _norm_file(file, root)
+            if (function, name) in buffer_by_key or name in buffer_by_name:
+                existing = buffer_by_key.get((function, name)) or buffer_by_name.get(name)
+                if existing:
+                    continue
             sid = make_id(sync_kind.value.title(), "decl", function, name, nfile, line)
             root_spell = (
                 "TPipe"
@@ -1951,10 +2348,12 @@ def finalize_kernel_root_trace(
                     "root_kind": "SYNC",
                     "root": f"AscendC::{root_spell}",
                     "provenance": "kernel_root_trace",
+                    "allocated": False,
+                    "pointer": _type_is_pointer(type_text) or _type_is_pointer(expanded),
             }
-            phase = infer_kernel_phase(name, file=nfile, scope=function)
-            if phase:
-                pipe_attrs["kernel_phase"] = phase
+            if sync_kind == EntityKind.PIPE and not pipe_attrs["pointer"]:
+                pipe_attrs["role"] = "launch_instance"
+                pipe_attrs["kernel_file"] = nfile
             ent = codemap.upsert(
                 sync_kind,
                 name,
@@ -1966,22 +2365,24 @@ def finalize_kernel_root_trace(
                 confidence=1.0,
             )
             _link(codemap, RelationKind.ROOTED_AT, ent.id, root_id)
-            buffer_by_key[(function, name)] = ent.id
-            buffer_by_name[name] = ent.id
+            _index_storage(ent.id, scope=function, name=name, nfile=nfile)
             pipe_count += int(sync_kind == EntityKind.PIPE)
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
-        mutex_attrs = _mutex_policy_attrs(type_text + " " + expanded)
+        owner_ent = codemap.entities.get(type_ents[base]) if base in type_ents else None
+        wraps_storage = bool(owner_ent and owner_ent.attrs.get("wraps_storage"))
+        catalog_root = _catalog_storage_root(expanded) or _catalog_storage_root(type_text)
         known = (
             is_storage_type_text(expanded)
             or is_storage_type_text(type_text)
+            or catalog_root
+            or wraps_storage
             or base in alias_to_target
             or (
-                base in type_ents
-                and str(codemap.entities[type_ents[base]].attrs.get("root_status") or "") == "REACHED"
+                owner_ent is not None
+                and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
             )
-            or bool(mutex_attrs.get("mutex_policy"))
         )
         if not known:
             continue
@@ -2020,28 +2421,24 @@ def finalize_kernel_root_trace(
 
         resolved = resolve_buffer_decl(expanded) or resolve_buffer_decl(type_text)
         space = memory_space_from_type_text(expanded) or memory_space_from_type_text(type_text) or "UNKNOWN"
-        is_wrapper = bool((resolved or {}).get("is_wrapper")) or is_storage_wrapper_type(expanded)
-        wrapper_spell = ""
-        if is_wrapper:
-            wrapper_spell = (
-                "MutexBuffer" if "MutexBuffer" in (expanded or type_text) else _base_type_name(expanded)
-            )
-        project_reached = (
-            base in type_ents
-            and str(codemap.entities[type_ents[base]].attrs.get("root_status") or "") == "REACHED"
+        is_wrapper = bool(wraps_storage and not catalog_root)
+        wrapper_spell = base if is_wrapper else ""
+        project_reached = bool(
+            owner_ent is not None
+            and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
         )
         root_status = "REACHED"
-        root_spell = ""
+        root_spell = catalog_root
         if is_wrapper:
-            root_spell = str((resolved or {}).get("storage_root_kind") or "LocalTensor")
+            roots = list(owner_ent.attrs.get("wrapped_roots") or []) if owner_ent else []
+            root_spell = str(roots[0] if roots else "LocalTensor")
         elif base in ASCENDC_BUFFER_TYPES:
             root_spell = base
         elif project_reached:
-            root_spell = str(codemap.entities[type_ents[base]].attrs.get("root") or "").replace(
+            root_spell = str(owner_ent.attrs.get("root") or "").replace(
                 "AscendC::", ""
             ) or "LocalTensor"
         elif space != "UNKNOWN" and (resolved or is_storage_type_text(expanded)):
-            # Memory space only from type template args (TPosition/BufferType), not names.
             root_spell = storage_root_kind_from_space(space)
         else:
             root_status = "UNRESOLVED"
@@ -2057,11 +2454,7 @@ def finalize_kernel_root_trace(
             "role": (
                 "storage_wrapper"
                 if is_wrapper
-                else (
-                    "mutex_policy"
-                    if mutex_attrs.get("mutex_policy")
-                    else ("project_wrapper" if project_reached else "cann_storage")
-                )
+                else ("project_wrapper" if project_reached else "cann_storage")
             ),
             "wrapper": wrapper_spell,
             "root_status": root_status,
@@ -2070,8 +2463,9 @@ def finalize_kernel_root_trace(
             "trace": [name]
             + ([wrapper_spell] if wrapper_spell else [])
             + ([root_spell] if root_spell else []),
+            "allocated": bool(catalog_root in {"TBuf", "TBufPool"}),
+            "wraps_lock": bool(owner_ent and owner_ent.attrs.get("wraps_lock")),
         }
-        attrs.update(mutex_attrs)
         if root_status == "UNRESOLVED":
             attrs["gap_code"] = REASON_NO_ASCENDC_ROOT
             gaps.append(
@@ -2093,8 +2487,7 @@ def finalize_kernel_root_trace(
             status="extracted" if root_status == "REACHED" else "partial",
             confidence=1.0 if root_status == "REACHED" else 0.4,
         )
-        buffer_by_key[(function, name)] = ent.id
-        buffer_by_name[name] = ent.id
+        _index_storage(ent.id, scope=function, name=name, nfile=nfile)
         buf_count += 1
         if root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind="STORAGE")
@@ -2191,23 +2584,23 @@ def finalize_kernel_root_trace(
         receiver_canonical = str(d.get("receiver_canonical_type") or "")
         has_identity = bool(callee_usr or callee_qualified or callee_decl_file)
 
-        # Receiver buffer / type for framework bridges (MutexBuffer / TQue).
+        # Receiver for TPipe/TQue CANN method contracts.
+        recv_name = _expr_storage_name(receiver)
+        identity_scopes = _identity_scopes(function, caller_qualified)
         bid_recv = ""
-        if receiver:
-            bid_recv = buffer_by_key.get((function, receiver)) or buffer_by_name.get(receiver) or ""
+        if recv_name:
+            bid_recv = _lookup_storage(recv_name, identity_scopes, nfile)
+        elif receiver:
+            bid_recv = (
+                buffer_by_key.get((function, receiver)) or buffer_by_name.get(receiver) or ""
+            )
         recv_is_wrapper = False
         if bid_recv and bid_recv in codemap.entities:
             be = codemap.entities[bid_recv]
             recv_is_wrapper = be.attrs.get("role") in {
                 "storage_wrapper",
                 "project_wrapper",
-            } or is_storage_wrapper_type(
-                str(be.attrs.get("wrapper") or be.attrs.get("type_name") or "")
-            )
-        if not recv_is_wrapper and (receiver_type or receiver_canonical):
-            recv_is_wrapper = is_storage_wrapper_type(receiver_type) or is_storage_wrapper_type(
-                receiver_canonical
-            )
+            } or bool(be.attrs.get("wraps_lock") or be.attrs.get("wraps_storage"))
         recv_is_tque = _receiver_is_tque(
             bid_recv=bid_recv,
             receiver_type=receiver_type,
@@ -2223,6 +2616,110 @@ def finalize_kernel_root_trace(
 
         args = [str(a) for a in (d.get("args") or [])]
         targs = [str(a) for a in (d.get("template_args") or [])]
+        callee_owner = ""
+        if callee_qualified and "::" in callee_qualified:
+            callee_owner = (
+                callee_qualified.rsplit("::", 1)[0].split("::")[-1].split("<")[0]
+            )
+        elif receiver_canonical or receiver_type:
+            callee_owner = _owner_from_receiver_type(
+                receiver_canonical or receiver_type
+            )
+        for arg in args:
+            raw = str(arg).strip()
+            if not raw.startswith("&"):
+                continue
+            aname = _expr_storage_name(raw)
+            if not aname:
+                continue
+            aid = _lookup_storage(
+                aname, identity_scopes, nfile, kinds={EntityKind.PIPE.value}
+            )
+            ae = codemap.entities.get(aid) if aid else None
+            if ae is None or ae.attrs.get("pointer"):
+                continue
+            pipe_arg_sites.append((callee_owner, aid, nfile, line))
+        if callee == "InitBuffer":
+            obj_name = _expr_storage_name(args[0] if args else "")
+            if not obj_name and args:
+                obj_name = str(args[0]).lstrip("&").replace("->", ".").split(".")[-1]
+            obj_id = (
+                _lookup_storage(
+                    obj_name,
+                    identity_scopes,
+                    nfile,
+                    kinds={EntityKind.BUFFER.value, EntityKind.QUEUE.value},
+                )
+                if obj_name
+                else ""
+            )
+            pipe_id = bid_recv
+            if pipe_id and pipe_id in codemap.entities:
+                if codemap.entities[pipe_id].kind_name() != EntityKind.PIPE.value:
+                    pipe_id = ""
+            if not pipe_id and recv_name:
+                pipe_id = _lookup_storage(
+                    recv_name, identity_scopes, nfile, kinds={EntityKind.PIPE.value}
+                )
+            if not pipe_id and recv_is_tpipe and not recv_name:
+                pipe_id = _unique_pipe_in_scopes(identity_scopes)
+            obj_ok = False
+            if obj_id and obj_id in codemap.entities:
+                obj_kind = codemap.entities[obj_id].kind_name()
+                obj_ok = obj_kind in {
+                    EntityKind.BUFFER.value,
+                    EntityKind.QUEUE.value,
+                }
+            if obj_ok:
+                obj = codemap.entities[obj_id]
+                obj.attrs["allocated"] = True
+                obj.attrs["root_status"] = "REACHED"
+                obj.status = "extracted"
+            if pipe_id and obj_ok:
+                _link(
+                    codemap,
+                    RelationKind.BINDS,
+                    pipe_id,
+                    obj_id,
+                    attrs={
+                        "via": "InitBuffer",
+                        "file": nfile,
+                        "line": line,
+                        "receiver": receiver,
+                    },
+                )
+                initbuffer_links.append((pipe_id, obj_id, nfile, line, receiver))
+        if callee in STACK_BUFFER_CALLEES:
+            obj_name = _expr_storage_name(args[0] if args else "")
+            if not obj_name and args:
+                obj_name = str(args[0]).lstrip("&").replace("->", ".").split(".")[-1]
+            obj_id = _lookup_storage(obj_name, identity_scopes, nfile) if obj_name else ""
+            if obj_id and obj_id in codemap.entities:
+                obj = codemap.entities[obj_id]
+                obj.attrs["allocated"] = True
+                obj.attrs["root_status"] = "REACHED"
+                obj.attrs["stack_pop"] = True
+                obj.status = "extracted"
+                stack_pipe = bid_recv
+                if stack_pipe and stack_pipe in codemap.entities:
+                    if (
+                        codemap.entities[stack_pipe].kind_name()
+                        != EntityKind.PIPE.value
+                    ):
+                        stack_pipe = ""
+                if stack_pipe:
+                    _link(
+                        codemap,
+                        RelationKind.BINDS,
+                        stack_pipe,
+                        obj_id,
+                        attrs={
+                            "via": "PopStackBuffer",
+                            "file": nfile,
+                            "line": line,
+                            "receiver": receiver,
+                        },
+                    )
         # Incomplete member-Get / empty Or: spelling alone is a guess.
         if callee == "Get" and not receiver and not targs and not has_identity:
             continue
@@ -2256,7 +2753,7 @@ def finalize_kernel_root_trace(
             and _looks_like_reg_or_vector_call(args, targs)
             and (
                 callee in _VECTOR_AMBIGUOUS_ROOTS
-                or is_cann_vf_api(callee)
+                or is_cann_vf_api(callee, architecture=_TRACE_ARCHITECTURE)
                 or is_ambiguous_vf_name(callee)
             )
         ):
@@ -2392,11 +2889,15 @@ def finalize_kernel_root_trace(
         }
         if targs:
             attrs["template_arg_sets"] = [list(targs)]
-        if is_tque_callee(callee):
+        if callee in STACK_BUFFER_CALLEES:
+            attrs["mechanism"] = "stack"
+        elif callee in SHARE_BUFFER_CALLEES:
+            attrs["mechanism"] = "share"
+        elif is_tque_callee(callee):
             attrs["mechanism"] = "tque"
         elif is_tpipe_callee(callee):
             attrs["mechanism"] = "tpipe"
-        elif is_flag_sync(callee) or callee in SYNC_MECHANISM:
+        elif is_flag_sync(callee) or is_sync_root(callee):
             attrs["mechanism"] = str(resolve_sync_site(callee, args, targs).get("mechanism") or "")
         if not is_root and not is_builtin:
             if not nfile or line <= 0 or not callee.isidentifier():
@@ -2448,9 +2949,6 @@ def finalize_kernel_root_trace(
                 )
                 seen_op_ids.add(oid)
                 op_count += 1
-            phase = infer_kernel_phase(callee, file=nfile, scope=function)
-            if phase:
-                ent.attrs["kernel_phase"] = phase
 
         # Flag identity only. TQue EnQue/DeQue have no user event; CANN owns that
         # handshake, so they never get SIGNALS/AWAITS.
@@ -2478,7 +2976,7 @@ def finalize_kernel_root_trace(
                 )
                 relation_kind = (
                     RelationKind.SIGNALS
-                    if "Wait" in FLAG_PAIR_MATE.get(callee, "")
+                    if "Wait" in FLAG_PAIR_MATE.get(canonical_sync_name(callee), "")
                     else RelationKind.AWAITS
                 )
                 _link(
@@ -2507,11 +3005,14 @@ def finalize_kernel_root_trace(
                         eid=pipe_id,
                         attrs={
                             "role": role,
+                            "catalog": "ascendc",
                             "root_status": "REACHED",
                             "root_kind": "SYNC",
                             "root": f"AscendC::{pipe_name}",
                             "provenance": str(d.get("provenance") or provenance),
                         },
+                        file=nfile,
+                        line=line,
                         status="extracted",
                         confidence=1.0,
                     )
@@ -2599,6 +3100,7 @@ def finalize_kernel_root_trace(
                     "column": column,
                     "receiver": receiver,
                 },
+                candidate=not has_identity,
             )
         if caller_mid and ent is not None:
             _link(
@@ -2613,17 +3115,10 @@ def finalize_kernel_root_trace(
                     "column": column,
                     "receiver": receiver,
                 },
+                candidate=not has_identity,
             )
         if ent is not None and is_root and root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind=root_kind or "COMPUTE_API")
-            if bridge and "MutexBuffer" in type_ents:
-                _link(
-                    codemap,
-                    RelationKind.WRAPS,
-                    ent.id,
-                    type_ents["MutexBuffer"],
-                    attrs={"via": "framework_method_bridge"},
-                )
             _link(
                 codemap,
                 RelationKind.ROOTED_AT,
@@ -2669,7 +3164,138 @@ def finalize_kernel_root_trace(
                     status="partial",
                 )
 
+    _collect_lexical_init_pipe_args()
+    inherit_from: dict[str, set[str]] = defaultdict(set)
+    for rel in list(codemap.relations.values()):
+        if rel.kind_name() != RelationKind.WRAPS.value:
+            continue
+        if str(rel.attrs.get("via") or "") != "inherits":
+            continue
+        src_e = codemap.entities.get(rel.src)
+        dst_e = codemap.entities.get(rel.dst)
+        if src_e is None or dst_e is None:
+            continue
+        child = _short_type_name(src_e.name)
+        parent = _short_type_name(dst_e.name)
+        if child and parent:
+            inherit_from[child].add(parent)
+    for child, parent in lexical_inherit:
+        inherit_from[child].add(parent)
+
+    def _owner_ancestors(name: str) -> set[str]:
+        start = _short_type_name(name)
+        found = {start} if start else set()
+        stack = [start] if start else []
+        while stack:
+            cur = stack.pop()
+            for base in inherit_from.get(cur, ()):
+                if base and base not in found:
+                    found.add(base)
+                    stack.append(base)
+        return found
+
+    def _owners_match(ptr_scope: str, site_owner: str) -> bool:
+        ps = _short_type_name(ptr_scope)
+        so = _short_type_name(site_owner)
+        if not ps or not so:
+            return False
+        if ps == so:
+            return True
+        return ps in _owner_ancestors(so)
+
+    for pipe_id, obj_id, nfile, line, receiver in initbuffer_links:
+        ptr = codemap.entities.get(pipe_id)
+        if ptr is None or not ptr.attrs.get("pointer"):
+            continue
+        owner = str(ptr.attrs.get("scope") or "")
+        if not owner:
+            continue
+        seen_inst: set[str] = set()
+        for callee_owner, instance_id, afile, aline in pipe_arg_sites:
+            if (
+                not _owners_match(owner, callee_owner)
+                or instance_id == pipe_id
+                or instance_id in seen_inst
+            ):
+                continue
+            inst = codemap.entities.get(instance_id)
+            if inst is None or inst.attrs.get("pointer"):
+                continue
+            seen_inst.add(instance_id)
+            _link(
+                codemap,
+                RelationKind.ALIASES,
+                pipe_id,
+                instance_id,
+                attrs={"via": "pipe_ptr", "file": afile, "line": aline},
+            )
+            _link(
+                codemap,
+                RelationKind.BINDS,
+                instance_id,
+                obj_id,
+                attrs={
+                    "via": "InitBuffer",
+                    "file": nfile,
+                    "line": line,
+                    "receiver": receiver,
+                },
+            )
+
     pair_stats = _record_flag_pair_appearance(codemap, gaps)
+
+    by_scope: dict[str, list[Any]] = defaultdict(list)
+    for e in codemap.by_kind(EntityKind.PIPE):
+        if e.attrs.get("catalog") == "ascendc":
+            continue
+        if e.attrs.get("pointer"):
+            continue
+        by_scope[str(e.attrs.get("scope") or "")].append(e)
+    for _scope, pipes in by_scope.items():
+        pipes.sort(key=lambda item: (int(item.line_start or 0), item.name))
+        for idx, pipe in enumerate(pipes, start=1):
+            pipe.attrs["pipe_ordinal"] = idx
+
+    lock_roots = {"Lock", "Unlock", "AllocMutexID", "ReleaseMutexID"}
+    flag_roots = set(FLAG_PAIR_MATE)
+    marked_lock: set[str] = set()
+    marked_flag: set[str] = set()
+    call_rels = [
+        rel
+        for rel in list(codemap.relations.values())
+        if rel.kind_name() == RelationKind.CALLS.value
+    ]
+    for rel in call_rels:
+        dst = codemap.entities.get(rel.dst)
+        src = codemap.entities.get(rel.src)
+        if dst is None or src is None:
+            continue
+        leaf = str(dst.attrs.get("callee") or dst.name or "").split("::")[-1]
+        root_leaf = str(dst.attrs.get("root") or "").split("::")[-1]
+        is_lock = leaf in lock_roots or root_leaf in lock_roots
+        is_flag = leaf in flag_roots or root_leaf in flag_roots
+        if not (is_lock or is_flag):
+            continue
+        qn = str(src.attrs.get("qualified_name") or "")
+        owner = qn.rsplit("::", 1)[0].split("::")[-1] if "::" in qn else ""
+        if not owner or owner not in type_ents:
+            continue
+        te = codemap.entities.get(type_ents[owner])
+        if te is None:
+            continue
+        if is_lock and te.id not in marked_lock:
+            marked_lock.add(te.id)
+            te.attrs["wraps_lock"] = True
+            lock_id = _ensure_ascendc_root(codemap, "Lock", root_kind="SYNC")
+            _link(codemap, RelationKind.WRAPS, te.id, lock_id, attrs={"via": "calls_cann_lock"})
+        if is_flag and te.id not in marked_flag:
+            marked_flag.add(te.id)
+            te.attrs["wraps_flag"] = True
+            flag_id = _ensure_ascendc_root(
+                codemap, leaf if leaf in flag_roots else root_leaf, root_kind="SYNC"
+            )
+            _link(codemap, RelationKind.WRAPS, te.id, flag_id, attrs={"via": "calls_cann_flag"})
+    _propagate_wrap_flags(codemap)
 
     # Bounded lexical statement order.  PRECEDES is adjacency in one source
     # function/file, not flag pairing and not a happens-before relation.
@@ -2841,6 +3467,7 @@ def finalize_kernel_root_trace(
         "walk_cache_stats": walk_stats,
         "clang_covered_files": len(covered),
         "lexical_uncovered_files": len(uncovered),
+        "walk_cache_confirms": walk_confirm,
         "selected_files": len(files),
         "class_members": len(members),
         "type_aliases": len(aliases),
@@ -2891,4 +3518,5 @@ def finalize_kernel_root_trace(
         "root_trace": True,
         "kernel_backend": kernel_backend,
     }
+    _TRACE_ARCHITECTURE = ""
     return codemap

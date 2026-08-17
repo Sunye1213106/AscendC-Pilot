@@ -4,6 +4,19 @@ CE（Code Engineering）用 UO CodeMap 将变更意图、影响范围和验证�
 
 账本恒等式：`Open = O - V - X`。这是 Pilot 的闭环，审查对方日常流程没有这一层。
 
+## 面向用户的落盘 vs 引擎私有
+
+YAML 可以留在磁盘上给引擎推进工作流，但审查/改码子代理的 `allowed_read_paths` **不含** `ce/**`。用户默认只看结论；复杂开发才默认写 plan / todo。
+
+| 何时 | 写什么 |
+| --- | --- |
+| `/ce-intent` 用户确认 | `ce/intent/plan.md` |
+| `/ce-apply` gate | `ce/apply/todo.md`（简单需求一条也写） |
+| `/ce-impact` 引擎 | `ce/impact/tg_plan_intent.yaml`（`tg-plan-intent/v1`，给 `/tg-plan`） |
+| 用户明确说落盘 / 选「落盘审查报告」 | 才把 findings 写入 `ce/review/*.yaml` |
+
+gate、confirmation、anchors、change_capture、ledger、证书仍由 Host 写，不进子代理 prompt。`/ce-verify` 账本与证书本次不改。
+
 ## 工作流
 
 认知 Skill 分工（不要混用）：
@@ -22,7 +35,7 @@ intent -> kb_ready -> grill -> feature decomposition -> referee review
        -> backward locate -> human confirmation
 ```
 
-**无 diff**：先定位再下结论。Referee 写入 `ce/intent/plan_review.yaml`；Host `feature_promote` 再写出 canonical `feature_decomposition.yaml`。随后 `anchor_locate` 沿受限关系做 backward slice，得到候选修改点。名称近似命中只能作为 Tier C 线索，不能直接形成证明。遗留的 `ce/impact/change_capture.yaml` 不得阻断 intent 定位。
+**无 diff**：先定位再下结论。Referee 写入 `ce/intent/plan_review.yaml`；Host `feature_promote` 再写出 canonical `feature_decomposition.yaml`。随后 `anchor_locate` 沿受限关系做 backward slice，得到候选修改点。用户确认后 Host 写入 `ce/intent/plan.md`（冻结的面向用户计划）。名称近似命中只能作为 Tier C 线索，不能直接形成证明。遗留的 `ce/impact/change_capture.yaml` 不得阻断 intent 定位。
 
 对应 Issue「先读代码、钉最小改动点」。不实现 GitCode、不写 PR 文案。
 
@@ -33,11 +46,11 @@ gate -> patch (anchors only) -> capture + patch_guard
      -> standalone-review (Spec / Standards) -> uo-update engine -> report
 ```
 
-前置：intent 已 confirm 且 `anchors.yaml` 非空。只改锚点覆盖的 `op_host/` / `op_kernel/`。审查和工作流内刷新 CodeMap 自动跑；禁止 LLM 写 `.uo`。之后仍要 `/ce-impact` → `/ce-verify` 才能关义务账本。
+前置：intent 已 confirm、`anchors.yaml` 非空、且存在 `ce/intent/plan.md` 或 `ce/apply/todo.md`。只改锚点覆盖的 `op_host/` / `op_kernel/`。一次一个 todo 切片。审查阶段并行 Spec / Standards 子代理；工作流内刷新 CodeMap 自动跑；禁止 LLM 写 `.uo`。之后仍要 `/ce-impact` → `/ce-verify` 才能关义务账本。
 
 ### `/ce-handoff`
 
-写入 `.ascendc-pilot/<arch>/ce/session_handoff.md`。只引用已有产物路径，下一跳写 slash（`/ce-apply` / `/ce-impact` / `/ce-verify` / `/uo-query`），不复制 intent/review 正文。与 `ce/verify/tg_handoff.yaml` 不是同一份文件。
+写入 `.ascendc-pilot/<arch>/ce/session_handoff.md`。只引用已有产物路径，后续步骤写 slash（`/ce-apply` / `/ce-impact` / `/ce-verify` / `/uo-query`），不复制 intent/review 正文。与 `ce/verify/tg_handoff.yaml` 不是同一份文件。
 
 ### `/ce-impact`
 
@@ -52,11 +65,13 @@ reproducible change -> freshness -> forward/backward UO slices -> risk classes
 
 `evaluate_risks` 按锚点 `kind` 挂义务，并且**每个锚点单独成条**：BUFFER 只进 sync/perf，不会单独产生 dispatch；一条 Tier C 锚点不得把其它锚点的义务打成 `open_only`。无 kind 的锚点默认不挂类；只有调用方**显式**传入 `risk_classes` 时才按所选类挂上，这不是静默默认。
 
+`obligation_build` 同时写出 `ce/impact/tg_plan_intent.yaml`（`tg-plan-intent/v1`，mode=`ce_change_scoped`）。`/tg-plan` 若见到这份文件就合并进 `tg/plan/plan_intent.yaml`，用 affected keys / dims 作为 T，禁止静默扩成全部合法 Key。不自动 `pilot_run` tg-plan。
+
 风险用开发者语言理解：Tiling 失败 / Kernel 找不到 → dispatch；越界与同步 → sync；精度 / 性能 → 外部测量才能进 `V`。
 
 ### 场景 overlay 与 harness
 
-日常精度/性能不默认跑全量 TilingKey。`/ce-impact` 与 `/ce-intent` 会写出 `ce/scenarios/scenario_set.yaml`（`ce-scenario-set/v1`），场景 id 只能来自目录（`P-*` / `F-*`）。`scenario_targeted` overlay 由引擎写骨架，Agent 只写 knobs staging，Host `scenario_apply` 合并后再人话确认。测试仓适配器把少量 CSV 的跑测译成 `ce-external-evidence/v1`；没有适配器时精度/性能保持 Open，并记录 `harness_missing`。Host replay 不能关闭 `P-*` / `F-*`。全量覆盖仍走独立的 `tilingkey_full_coverage` overlay。
+日常精度/性能不默认跑全量 TilingKey。`/ce-impact` 与 `/ce-intent` 会写出 `ce/scenarios/scenario_set.yaml`（`ce-scenario-set/v1`），场景 id 只能来自目录（`P-*` / `F-*`）。`scenario_targeted` overlay 由引擎写骨架，Agent 只写 knobs staging，Host `scenario_apply` 合并后再向用户确认。测试仓适配器把少量 CSV 的跑测译成 `ce-external-evidence/v1`；没有适配器时精度/性能保持 Open，并记录 `harness_missing`。Host replay 不能关闭 `P-*` / `F-*`。全量覆盖仍走独立的 `tilingkey_full_coverage` overlay。
 
 ### `/ce-verify`
 
@@ -77,7 +92,7 @@ impact ledger -> obligation-driven review -> TG coverage bridge
 
 ### `/ce-review`
 
-只读检视，三种入口（quick / file / pr）由同一 Action `code_review` 跨 `scope` / `review` / `summary` 判定。证据先 CodeMap 再最小源码窗；假设检验（H0/H1）且必须有 `path:line`。Spec 轴写入 `functional_report.yaml`，Standards 轴写入 `bug_report.yaml`。不建立完整变更闭环。产物仍是 `ce/review/*.yaml`。`verify-review` 不改成双轴。
+只读检视，三种入口（quick / file / pr）由同一 Action `code_review` 跨 `scope` / `review` 判定。`review` 阶段并行两个 `ce-reviewer` 子代理隔离上下文：Spec 对照 `plan.md`（没有则从 **diff** 推断意图），Standards 对照仓规范。结论默认在会话中陈述（`path:line`）；`summary` 询问用户「只看结论 / 落盘审查报告」，落盘才写 `ce/review/*.yaml`。证据先 CodeMap 再最小源码窗；假设检验（H0/H1）且必须有 `path:line`。不建立完整变更闭环。`verify-review` 不改成双轴。
 
 ## Evidence tiers
 

@@ -4,7 +4,7 @@ description: >
   Plan, scope, and verify AscendC code changes with UO slices, evidence tiers,
   risk classes, and a persistent verification-obligation ledger.
   Use when locating a change, grilling 需求范围与验收再分解特性, applying a
-  confirmed intent 已确认意图按锚点改算子源码, slicing a diff, or closing
+  confirmed intent 已确认意图按 plan.md / todo.md 改算子源码, slicing a diff, or closing
   obligations with measurement receipts. Boundary: not readonly code review;
   not TilingKey search. 不签发证书.
 ---
@@ -14,12 +14,12 @@ description: >
 Use this skill for `/ce-intent`, `/ce-apply`, `/ce-impact`, `/ce-verify`, and `/ce-handoff`.
 Precision/perf daily work infers a ScenarioSet (not all legal keys).
 
-对齐 Issue 改码：无 diff 先问清再定位，已 confirm 后按锚点改码并自动审查刷图，有 diff 再切片挂义务，验证只收可审计的测量/测试收据。
+对齐 Issue 改码：无 diff 先问清再定位并冻结 `ce/intent/plan.md`，已 confirm 后按 plan / `ce/apply/todo.md` 一次一个切片改码并自动双轴并行审查刷图，有 diff 再切片挂义务，验证只收可审计的测量/测试收据。
 
 完成条件：`Open = O - V - X` 中的 `V` 只来自本仓库可审计收据；`X` 只来自 referee。
 
 ```text
-intent (grill → locate) -> apply (patch + review + CodeMap) -> impact (slice + obligations) -> verify (V from measurements)
+intent (grill → locate) -> plan.md -> apply (todo.md 一切片 + 双轴并行审查 + CodeMap) -> impact -> verify
 Open = O - V - X
 ```
 
@@ -28,10 +28,10 @@ Open = O - V - X
 | 场景 | 入口 |
 | --- | --- |
 | Issue / 需求还没问清 | `/ce-intent`：grill 问清范围与验收，再分解、定位锚点 |
-| 已 confirm，要按 spec 改码 | `/ce-apply`：只改锚点覆盖的源码，自动双轴审查并刷新 CodeMap |
+| 已 confirm，要按 spec 改码 | `/ce-apply`：读 `ce/intent/plan.md` 与 `ce/apply/todo.md`，一次一个切片，自动双轴并行审查并刷新 CodeMap |
 | 已有改动 / diff | `/ce-impact`：切片 + 按 kind 挂义务 + 精度/性能场景 |
 | 要关闭义务、出证书 | `/ce-verify`：V 只收本仓库可审计的测量/测试收据 |
-| 换窗口 / 上下文满 / 交给同事 | `/ce-handoff`：只引用产物路径，写清下一跳 slash |
+| 换窗口 / 上下文满 / 交给同事 | `/ce-handoff`：只引用产物路径，写明后续 slash 命令 |
 | 静态「该测哪些精度/性能」 | 同 `/ce-intent` 扫描，产出 ScenarioSet |
 
 Git 写操作、fork、PR 文案走维护者流程，不在本 skill。只读审查走 `/ce-review`。
@@ -89,5 +89,5 @@ Git 写操作、fork、PR 文案走维护者流程，不在本 skill。只读审
   `capabilities/ce-intent-grill/METHOD.md`,
   `capabilities/ce-apply/METHOD.md`,
   `capabilities/ce-handoff/METHOD.md`
-- Harness evidence (verify):
+- Harness evidence check (verify, deterministic engine):
   `capabilities/ce-harness-evidence/METHOD.md`

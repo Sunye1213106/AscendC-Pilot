@@ -29,6 +29,7 @@ from uo_init.passes.manager import run_analyze_passes
 from uo_init.passes.source_contract import enrich_codemap_from_operator_source
 from uo_init.passes.source_inventory import inventory_source_files
 from uo_init.passes.source_resolution import resolve_source_gaps
+from uo_init.passes.symbol_roles import project_symbol_roles
 from uo_init.passes.tiling_field_complete import complete_tiling_fields
 from uo_init.passes.tiling_host_writes import enrich_tiling_host_writes
 from uo_init.passes.value_defining_sites import enrich_value_defining_sites
@@ -173,8 +174,17 @@ def compile_codemap(
     t_all = time.perf_counter()
     arch = require_architecture(architecture)
     variant = build_variant_from_context(architecture=arch, build_context=build_context, name=arch)
+    variant_doc = variant.to_dict()
+    from uo_init.ir.evidence import build_context_id
+
     cm = CodeMap(op_name=op_name, architecture=arch)
-    bv = cm.upsert(EntityKind.BUILD_VARIANT, variant.name, attrs=variant.to_dict())
+    cm.meta["build_context_id"] = build_context_id(variant_doc)
+    cm.meta["build_context"] = {
+        "context_id": cm.meta["build_context_id"],
+        "arch": arch,
+        "dtype_variant": str(variant_doc.get("dtype_variant") or ""),
+    }
+    bv = cm.upsert(EntityKind.BUILD_VARIANT, variant.name, attrs=variant_doc)
     arch_e = cm.upsert(EntityKind.ARCH, arch)
     cm.link(RelationKind.ACTIVE_UNDER, arch_e.id, bv.id, attrs={"provenance": "build_variant"}, status="confirmed")
 
@@ -207,22 +217,23 @@ def compile_codemap(
         reset_file_reads()
         for name, fn, kwargs in (
             ("inventory", inventory_source_files, {}),
-            ("source_contract", enrich_codemap_from_operator_source, {}),
+            ("source_contract", enrich_codemap_from_operator_source, {"needs_irs": True}),
+            ("symbol_roles", project_symbol_roles, {"needs_irs": True}),
             ("tiling_template_registry", enrich_tiling_template_registry, {}),
-            ("tiling_fields", complete_tiling_fields, {}),
+            ("tiling_fields", complete_tiling_fields, {"needs_irs": True}),
             ("host_tiling_key", bind_host_tiling_key_expressions, {}),
-            ("host_defuse", trace_host_key_roots, {}),
+            ("host_defuse", trace_host_key_roots, {"needs_irs": True}),
             ("host_defuse_validate", validate_host_defuse, {}),
             ("tiling_registration", enrich_tiling_registrations, {}),
             ("source_gaps", resolve_source_gaps, {}),
             ("class_frontiers", resolve_class_frontiers, {}),
-            ("kernel_tiling_closure", finalize_kernel_tiling_closure, {}),
+            ("kernel_tiling_closure", finalize_kernel_tiling_closure, {"needs_irs": True}),
             ("kernel_identity", preserve_verified_kernel_identity, {"skip_arch": True}),
             ("kernel_call_refine", refine_kernel_calls_and_tiling_reads, {}),
             ("kernel_call_frontiers", resolve_kernel_call_frontiers, {}),
             ("kernel_call_boundaries", classify_kernel_call_boundaries, {"skip_arch": True}),
             ("tiling_reads", rebuild_verified_tiling_reads, {}),
-            ("tiling_host_writes", enrich_tiling_host_writes, {}),
+            ("tiling_host_writes", enrich_tiling_host_writes, {"needs_irs": True}),
             ("value_defining_sites", enrich_value_defining_sites, {}),
             ("host_checks", enrich_host_checks, {}),
             ("kernel_tiling_truth", finalize_kernel_tiling_truth, {"skip_arch": True}),
@@ -237,6 +248,8 @@ def compile_codemap(
                 fn(cm)  # type: ignore[misc]
             elif kwargs.get("needs_host_ir"):
                 fn(cm, source_root, architecture=arch, host_ir=host_ir)  # type: ignore[misc]
+            elif kwargs.get("needs_irs"):
+                fn(cm, source_root, architecture=arch, host_ir=host_ir, kernel_ir=kernel_ir)  # type: ignore[misc]
             else:
                 fn(cm, source_root, architecture=arch)  # type: ignore[misc]
             _span(name, t0)

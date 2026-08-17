@@ -59,6 +59,9 @@ def test_apply_gate_requires_confirm_and_anchors(tmp_path: Path) -> None:
     )
     allowed = apply_gate(tmp_path, architecture=arch)
     assert allowed.get("ok") is True, allowed
+    todo = tmp_path / ".ascendc-pilot" / arch / "ce" / "apply" / "todo.md"
+    assert todo.is_file()
+    assert "- [ ]" in todo.read_text(encoding="utf-8")
 
 
 def test_patch_guard_rejects_files_outside_anchors(tmp_path: Path) -> None:
@@ -91,3 +94,38 @@ def test_write_session_handoff_is_pointer_only(tmp_path: Path) -> None:
     assert "/ce-apply" in text
     assert "ce/intent/intent.yaml" in text
     assert "grill-with-docs" not in text
+
+
+def test_write_intent_plan_and_todo(tmp_path: Path) -> None:
+    from code_engineering.intent import seed_apply_todo, write_intent_plan
+
+    arch = "arch35"
+    ce = tmp_path / ".ascendc-pilot" / arch / "ce"
+    (ce / "intent").mkdir(parents=True)
+    (ce / "intent" / "intent.yaml").write_text(
+        "schema: ce-intent/v1\nintent: fix sync\nin_scope: [sync]\nout_of_scope: [perf]\nacceptance: [UT]\nside: kernel\n",
+        encoding="utf-8",
+    )
+    (ce / "intent" / "feature_decomposition.yaml").write_text(
+        "schema: ce-feature-decomposition/v1\nfeatures:\n- id: F1\n  title: fix SyncAll\n  goal: pair cv\n  blocked_by: []\n  acceptance: [UT hang]\n",
+        encoding="utf-8",
+    )
+    (ce / "intent" / "anchors.yaml").write_text(
+        "anchors:\n- file: op_kernel/foo.cpp\n  line: 12\n  name: Process\n",
+        encoding="utf-8",
+    )
+    (ce / "intent" / "confirmation.yaml").write_text(
+        "schema: ce-intent-confirmation/v1\nstatus: confirmed\n", encoding="utf-8"
+    )
+    plan = write_intent_plan(tmp_path, architecture=arch)
+    assert plan.get("ok") is True, plan
+    text = Path(plan["artifact"]).read_text(encoding="utf-8")
+    assert "# 变更计划" in text
+    assert "fix SyncAll" in text
+    assert "op_kernel/foo.cpp:12" in text
+    todo = seed_apply_todo(tmp_path, architecture=arch)
+    assert todo.get("ok") is True, todo
+    todo_text = Path(todo["artifact"]).read_text(encoding="utf-8")
+    assert "- [ ] fix SyncAll" in todo_text
+    assert "grill-with-docs" not in text
+    assert "/implement" not in text

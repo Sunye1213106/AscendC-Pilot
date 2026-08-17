@@ -130,7 +130,14 @@ def resolve_kernel_call_frontiers(
                 "dispatch_candidates": [e.id for e in candidates],
             }
             for target in candidates:
-                new_rel = codemap.link(RelationKind.CALLS, caller.id, target.id, attrs=site, status="confirmed")
+                new_rel = codemap.mint_candidate_relation(
+                    RelationKind.CALLS,
+                    caller.id,
+                    target.id,
+                    provenance=provenance,
+                    extra=site,
+                    status="confirmed",
+                )
                 new_rel.attrs.update(site)
                 new_rel.attrs.setdefault("sites", []).append({"file": file, "line": line, "receiver": receiver, "call": call})
             remove_rel.add(rel.id)

@@ -9,8 +9,8 @@
  * clean ToolStateRunning body whose first input key is `progress`.
  */
 import { appendFileSync, mkdirSync } from "node:fs"
-import { homedir } from "node:os"
 import { dirname, resolve } from "node:path"
+import { openCodeHome } from "./opencode-home.mjs"
 
 export function renderPilotProgressBar(done, total, width = 10) {
   const n = Math.max(1, total)
@@ -54,7 +54,7 @@ function serializeUnknown(value) {
 }
 
 function defaultLogPath() {
-  return resolve(homedir(), ".config", "opencode", "logs", "pilot-progress.jsonl")
+  return resolve(openCodeHome(), "logs", "pilot-progress.jsonl")
 }
 
 const NOISY_EVENTS = new Set(["patch_fail", "find_miss", "patch_skip", "patch_queue_error", "session_list_fail"])

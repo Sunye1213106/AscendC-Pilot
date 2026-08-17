@@ -20,7 +20,9 @@ _TRACE_BUDGET_S = 32.0
 
 
 @pytest.mark.requires_fag
-def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir: str) -> None:
+def test_fag_arch35_kernel_root_trace_quality_and_timing(
+    fag_dir: Path, arch_dir: str, tmp_path: Path
+) -> None:
     """Root-trace on real FAG: AscendC roots reachable, no exec/pipeline."""
     semreg.load_registry.cache_clear()
     clear_source_text()
@@ -58,6 +60,13 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
     assert meta.get("gated_fill_complete") is not False
     assert len(ops) >= 50, f"expected AscendC call sites on FAG, got {len(ops)}"
     assert "DataCopy" in callees
+    assert "LoadAlign" in callees
+    assert "CreateMask" in callees
+    assert all(
+        e.attrs.get("root_status") == "REACHED"
+        for e in ops
+        if e.name in {"LoadAlign", "CreateMask"}
+    )
     assert any(n in callees for n in ("SetFlag", "WaitFlag", "CrossCoreSetFlag", "CrossCoreWaitFlag"))
     assert bufs, "expected BUFFER entities"
 
@@ -86,25 +95,58 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
     assert isinstance(quality, dict) and int(quality.get("operations") or 0) > 0
     assert "gap_count" in meta
 
-    # MutexBuffer is a wrapper TYPE → AscendC::LocalTensor (+ sync ops), not a BUFFER kind.
-    mutex_types = [
-        e
-        for e in cm.by_kind(EntityKind.TYPE)
-        if e.name == "MutexBuffer" and e.attrs.get("role") == "storage_wrapper_type"
-    ]
-    if mutex_types:
-        assert any(t.attrs.get("root_status") == "REACHED" for t in mutex_types)
-        assert any("LocalTensor" in str(t.attrs.get("root") or "") for t in mutex_types)
+    # MutexBuffer identity is source composition: WRAPS LocalTensor + CALLS Lock.
+    mutex_types = [e for e in cm.by_kind(EntityKind.TYPE) if e.name == "MutexBuffer"]
+    assert mutex_types, "expected MutexBuffer TYPE from FAG source"
+    assert any(t.attrs.get("wraps_storage") for t in mutex_types)
+    assert any(t.attrs.get("wraps_lock") for t in mutex_types)
+    assert any(
+        "LocalTensor" in str(t.attrs.get("root") or "") or t.attrs.get("wraps_storage")
+        for t in mutex_types
+    )
     mutex_sites = [
         b
         for b in bufs
         if b.attrs.get("wrapper") == "MutexBuffer"
-        or ("MutexBuffer" in str(b.attrs.get("trace") or []) and b.attrs.get("role") == "storage_wrapper")
+        or "MutexBuffer" in str(b.attrs.get("type_name") or "")
     ]
     if mutex_sites:
         assert any(b.attrs.get("root_status") == "REACHED" for b in mutex_sites)
-        assert all("LocalTensor" in str(b.attrs.get("root") or "") for b in mutex_sites if b.attrs.get("root_status") == "REACHED")
-        assert not any(b.attrs.get("root", "").endswith("MutexBuffer") for b in mutex_sites)
+        assert not any(str(b.attrs.get("root") or "").endswith("MutexBuffer") for b in mutex_sites)
+
+    assert not any(
+        e.name == "LockProd" and e.attrs.get("root_status") == "REACHED" for e in ops
+    )
+    assert any(n in callees for n in ("Lock", "Unlock", "AllocMutexID", "SetFlag", "WaitFlag"))
+    pipes = [e for e in cm.by_kind(EntityKind.PIPE) if e.attrs.get("catalog") != "ascendc"]
+    assert len(pipes) >= 3, f"expected >=3 TPipe instances, got {len(pipes)}"
+    binds = [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.BINDS.value
+        and str(r.attrs.get("via") or "") == "InitBuffer"
+    ]
+    assert binds, "expected PIPE --BINDS--> buffer via InitBuffer"
+
+    from uo_init.store.writer import write_codemap
+    from uo_init.uo_query import open_query
+
+    product = tmp_path / ".ascendc-pilot" / arch_dir / "uo" / f"{fag_dir.name}.{arch_dir}.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path, architecture=arch_dir)
+    launch = q.aggregate_kernel_launch()
+    assert int(launch.get("count") or 0) >= 3
+    lock = q.aggregate_kernel_api("Lock")
+    assert int(lock.get("count") or 0) >= 1
+    lock_names = {str(row.get("name") or "") for row in lock.get("calls") or []}
+    assert "LockProd" not in lock_names
+    assert any(n in lock_names for n in ("Lock", "Unlock"))
+    flags = q.aggregate_kernel_api("SetFlag")
+    waits = q.aggregate_kernel_api("WaitFlag")
+    assert int(flags.get("count") or 0) >= 1 or int(waits.get("count") or 0) >= 1
+    prod = q.aggregate_kernel_api("LockProd")
+    assert not any(str(row.get("name") or "") == "LockProd" for row in prod.get("calls") or [])
 
     print(
         f"\n[FAG root-trace] closure={closure_s:.2f}s trace={trace_s:.2f}s "
@@ -113,3 +155,22 @@ def test_fag_arch35_kernel_root_trace_quality_and_timing(fag_dir: Path, arch_dir
         f"gaps={meta.get('gap_count')} gap_counts={meta.get('gap_counts')} "
         f"files={meta.get('selected_files')}"
     )
+
+    from uo_init.store.writer import write_codemap
+    from uo_init.uo_query import open_query
+
+    product = tmp_path / ".ascendc-pilot" / arch_dir / "uo" / f"{fag_dir.name}.{arch_dir}.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path, architecture=arch_dir)
+    launch = q.aggregate_kernel_launch()
+    assert int(launch.get("count") or 0) >= 3
+    lock = q.aggregate_kernel_api("Lock")
+    assert int(lock.get("count") or 0) >= 1
+    lock_names = {str(row.get("name") or "") for row in (lock.get("calls") or [])}
+    assert "LockProd" not in lock_names
+    flags = q.aggregate_kernel_api("SetFlag")
+    waits = q.aggregate_kernel_api("WaitFlag")
+    assert int(flags.get("count") or 0) >= 1 or int(waits.get("count") or 0) >= 1
+    buf_hits = q.aggregate_buffer("MutexBuffer")
+    assert int(buf_hits.get("count") or 0) >= 1

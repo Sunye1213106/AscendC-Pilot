@@ -45,6 +45,12 @@ def test_registry_priority_order(fag_dir):
     assert "Normal" in a35[1]["class"] and a35[1]["priority"] == 950
 
 
+def test_arch_bucket_keeps_9201_distinct_from_3510():
+    assert arch_bucket("NpuArch::DAV_9201") == "DAV_9201"
+    assert arch_bucket("npuArch == NpuArch::DAV_3510") == "DAV_3510"
+    assert arch_bucket("NpuArch::DAV_2201") == "DAV_2201_family"
+
+
 def test_kernel_entry_nttp_arity(fag_dir):
     e = extract_kernel_entry(fag_dir / "op_kernel" / "flash_attention_score_grad_apt.cpp")
     assert e["nttp_arity"] == 19

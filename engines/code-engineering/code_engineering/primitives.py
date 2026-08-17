@@ -232,6 +232,7 @@ def _slice(
     project_root: Path | str,
     architecture: str,
     budget: int,
+    include_advisory: bool = False,
 ) -> dict[str, Any]:
     conn = _connect(project_root, architecture)
     if conn is None:
@@ -266,6 +267,8 @@ def _slice(
                 except (TypeError, json.JSONDecodeError):
                     data = {}
                 rel["attrs"] = data if isinstance(data, dict) else {}
+                if not include_advisory and str(rel["attrs"].get("trust") or "") == "advisory":
+                    continue
                 rel["evidence_tier"] = classify_relation(rel)
                 from uo_init.query.evidence import project_relation
 
@@ -306,11 +309,12 @@ def slice_forward(
     project_root: Path | str = ".",
     architecture: str = "",
     budget: int = 10_000,
+    include_advisory: bool = False,
 ) -> dict[str, Any]:
     """Traverse outgoing relations with deterministic breadth-first search."""
     return _slice(
         seed_ids, edge_kinds, depth, forward=True, project_root=project_root,
-        architecture=architecture, budget=budget,
+        architecture=architecture, budget=budget, include_advisory=include_advisory,
     )
 
 
@@ -322,11 +326,12 @@ def slice_backward(
     project_root: Path | str = ".",
     architecture: str = "",
     budget: int = 10_000,
+    include_advisory: bool = False,
 ) -> dict[str, Any]:
     """Traverse incoming relations with deterministic breadth-first search."""
     return _slice(
         seed_ids, edge_kinds, depth, forward=False, project_root=project_root,
-        architecture=architecture, budget=budget,
+        architecture=architecture, budget=budget, include_advisory=include_advisory,
     )
 
 

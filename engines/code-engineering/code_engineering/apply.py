@@ -24,7 +24,7 @@ def _scope(project_root: Path | str, architecture: str) -> Path:
 
 
 def apply_gate(project_root: Path | str, *, architecture: str) -> dict[str, Any]:
-    """Fail closed unless intent is confirmed and anchors exist."""
+    """Fail closed unless intent is confirmed, anchors exist, and plan/todo is present."""
     arch = str(architecture or "").strip()
     if not arch:
         return {"ok": False, "engine": "apply_gate", "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
@@ -33,12 +33,28 @@ def apply_gate(project_root: Path | str, *, architecture: str) -> dict[str, Any]
     anchors = _load(ce / "intent" / "anchors.yaml")
     status = str(confirm.get("status") or confirm.get("decision") or "").strip().lower()
     rows = anchors.get("anchors") if isinstance(anchors.get("anchors"), list) else []
-    ok = status in {"confirmed", "confirm", "ok"} and bool(rows)
+    plan_path = ce / "intent" / "plan.md"
+    from code_engineering.intent import seed_apply_todo
+
+    seed_apply_todo(project_root, architecture=arch)
+    todo_path = ce / "apply" / "todo.md"
+    has_plan = plan_path.is_file() and bool(plan_path.read_text(encoding="utf-8").strip())
+    has_todo = todo_path.is_file() and bool(todo_path.read_text(encoding="utf-8").strip())
+    ok = status in {"confirmed", "confirm", "ok"} and bool(rows) and (has_plan or has_todo)
     doc = {
         "schema": "ce-apply-gate/v1",
         "ok": ok,
         "intent_confirmed": status in {"confirmed", "confirm", "ok"},
         "anchor_count": len(rows),
+        "plan_present": has_plan,
+        "todo_present": has_todo,
+        "reason_code": ""
+        if ok
+        else (
+            "APPLY_PLAN_OR_TODO_MISSING"
+            if not (has_plan or has_todo)
+            else ("ANCHORS_MISSING" if not rows else "INTENT_NOT_CONFIRMED")
+        ),
     }
     out = ce / "apply" / "gate.yaml"
     out.parent.mkdir(parents=True, exist_ok=True)

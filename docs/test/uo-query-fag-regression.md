@@ -1,6 +1,6 @@
 # uo-query 回归测卷（FAG arch35）
 
-上次 GLM-5.2 在 `session-ses_ffba` 上翻车的题，加上一道 **看起来像一单、其实跨好几层** 的线上故障。给 OpenCode / Cursor 主控逐题粘贴。算子：
+上次 GLM-5.2 在 `session-ses_ffba` 上失败的题，加上一道 **看起来像一单、其实跨好几层** 的线上故障。给 OpenCode / Cursor 主控逐题粘贴。算子：
 
 `d:\TEST\ops-transformer\attention\flash_attention_score_grad`  
 architecture：`arch35`
@@ -11,38 +11,38 @@ Wave 3 抽取（PIPE `kernel_phase`、`definition_sites`、registry PREDICATE、
 
 ## 当前派发（Cursor 同构）
 
-Cursor：若 `host_step.tasks` ≥2，**同一条消息里并行多个 Task**（编译器权威）；否则按独立证据空间启发式拆。子代理隔离上下文；全部返回后 **Primary 综合**，不发明子代理没引用的事实。
+Cursor：复杂查询由 **主控** 按独立查询目标拆路。同一条消息里并行多个 Task；子代理隔离上下文；全部返回后 **主控综合**，不发明子代理没引用的事实。
 
-uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，再动手。刚跑完 `/uo-init` 后 leftover 阶段不含 `uo-query` **不得**拦 `Task(agent=uo-query)`。
+uo-query **禁止** `pilot_run`。主控必须先说明将直接调用还是委派，再执行。刚跑完 `/uo-init` 后 leftover 阶段不含 `uo-query` **不得**拦 `Task(agent=uo-query)`。
 
 | 问法 | 谁查 |
 | --- | --- |
-| 短、一两跳 | 主控自己 `acp uo-query --mode`，不开子代理 |
-| 深、一个独立证据空间 | **一个** `Task(agent=uo-query)`（主控写 FOCUS；点卡片看思考） |
-| 深、多个独立证据空间 | 主控 **同一轮并行** 多个 `Task(agent=uo-query)`；全部返回后综合，禁止只转述某一个 |
+| 简单查询 | 主控直接调用 `acp uo-query`，不开子代理 |
+| 复杂、一个独立查询目标 | **一个** `Task(agent=uo-query)` |
+| 复杂、多个独立查询目标 | 主控 **同一轮并行** 多个 `Task(agent=uo-query)`；全部返回后综合 |
 
-不是「一个子代理串 15 个 mode」。`host_step.tasks` ≥2 时按编译器 fanout；0/1 片才用启发式。算法见 `skills/operator-analysis/routing/uo-query.md`。
+调用形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。算法见 `skills/operator-analysis/routing/uo-query.md`。
 
 ## 怎么判
 
 - 列表型（SEL / virtual / fusedOuter / PIPE / Mutex）`completeness: first_hit` 不得 `ANSWERED`。
 - 声称某维没注册必须引用 `dim_coverage` 或 `legal_key.total_matched`。
 - 仓级 `findstr /S` / `grep -r` / 无路径 `rg` = 失败。
-- 综合题：题面 **不会** 点名 mode / API /「请拆成三个问题」。主控应自己判断并**对人说出**要并行几个 `uo-query` Task，终答是分叉的，不是收成一个根因。
-- 子代标 PARTIAL / 未闭合 / 互相矛盾时，主控必须再开一轮 Task（FOCUS=缺口），禁止问「要不要继续」就收工。Q6 三相对了但 scale 乘几次没坐实 = 未结案。
-- 深问（Q6/Q18 等）主控自己连 `acp`/Read、一次都不 `Task(agent=uo-query)` = 失败。禁止「这是深问但我短问范围内查清了」。
+- 综合题：题面 **不会** 点名 mode / API /「请拆成三个问题」。主控应自己判断并**向用户说明**要并行几个 `uo-query` Task，终答是分叉的，不是收成一个根因。
+- 子代标 PARTIAL / 未闭合 / 互相矛盾且图上还能查时，主控必须再开一轮 Task（FOCUS=缺口），禁止用无实质内容的确认（例如「要不要继续」）代替第 2 轮就结束。多路已有结论但结案仍不清时 AskQuestion 给出选项。Q6 三相对了但 scale 乘几次未证实 = 未结案。
+- 复杂查询（Q6/Q18 等）主控自己连 `acp`/Read、一次都不 `Task(agent=uo-query)` = 失败。禁止「这是复杂查询但我简单查询范围内查清了」。
 
 ---
 
-## 上次翻车题（原话，可直接问）
+## 上次回归失败题（原话，可直接问）
 
 ### Q6 Pre/Main/Post
 
 > FP16 精度不过：dq 量级差一截，FP32 同 shape 过了。是不是 POST 的 scale/cast 写错了？先画出 arch35 单 launch 的三相，并说明 FP32 / BN2 / `enablePreSfmg` 各自怎么走。
 
-上次错：把三相讲成主循环 V1–V6。要对：`kernel_launch`，`pipeIn` Pre → Destroy → `pipeBase` Main →（非 FP32）`pipePost`；入口是 `RegbaseFAG` / `*_entry_regbase.h`，不是 `ProcessVec*`。
+上次错：把三相讲成主循环 V1–V6。要对：无参数索引里的 launch 阶段，`pipeIn` Pre → Destroy → `pipeBase` Main →（非 FP32）`pipePost`；入口是 `RegbaseFAG` / `*_entry_regbase.h`，不是 `ProcessVec*`。
 
-阅卷：题面像一单故障也必须 **同一轮并行 ≥2** 个 Task（三相=`kernel_launch` 一路；FP32/BN2/`enablePreSfmg`=`kernel_branch`/`field` 一路）。禁止「相关所以一个 agent 更连贯」。每个 Task 带 `FIRST_QUERY`。三相那路第一刀必须 `--mode kernel_launch`，不是 `--mode search ProcessVec`。结构事实可以讲；scale 乘几次没坐实 = 未结案，禁止把 POST 乘 scale 当已证实根因。
+评分要点：题面像一单故障也必须 **同一轮并行 ≥2** 个 Task（三相/launch 一路；FP32/BN2/`enablePreSfmg` 字段与分支一路）。禁止「相关所以一个 agent 更连贯」。三相那路先无参数索引，不要把内层函数名当 Pre/Main/Post。结构事实可以讲；scale 乘几次未证实 = 未结案，禁止把 POST 乘 scale 当已证实根因。
 
 ### Q7 确定性 dK 不齐
 
@@ -58,7 +58,7 @@ uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，�
 
 > 950 上某 FP16、D=80、带 dropout 的 case 报 kernel 找不到。host 算出的 TilingKey 在 ASCENDC_TPL_SEL 里一定有吗？ORIG_DTYPE_QUERY 和 IsDNoEqual / IsNzOut 怎么把组合砍掉
 
-上次错：第一块 `ARGS_SEL` 没有 D=128 就说没注册。必须 `template_match` `DTemplateNum=128,DeterType=0,InputDType=3`，看 `dim_coverage`。
+上次错：第一块 `ARGS_SEL` 没有 D=128 就说没注册。必须 `Dim=V` 查 `DTemplateNum=128,DeterType=0,InputDType=3`，看 `dim_coverage`。
 
 ### Q10 TilingData offset
 
@@ -102,7 +102,7 @@ uo-query **禁止** `pilot_run`。主控必须先在当前会话说出路由，�
 
 > 950 上一个 FP16 dropout 的 case，D=80，B=1 N=4 S=2048。host 算出 TilingKey 了，板上却报找不到 kernel。同一份 shape 打开确定性 TND 之后能编过、tiling 也成功，可是一进核 coreNum/s1/s2 就是垃圾，连跑下来 dK 对不齐、dQ 齐。把确定性关掉又能跑完，但核占不满，只有四个 AIC 在动，msprof 里 AIC 堵着等 AIV 的 L1。先别改 VF，按 CodeMap 把这条路径说清楚；缺实际 seq 或分核轴就说还缺什么，不要先认定是同一处 bug。
 
-**阅卷（不要贴进问题）**
+**评分要点（不要贴进问题）**
 
 - 题面没有 ①②③、没有点名 SEL / virtual / fusedOuter / PIPE / Mutex。应仍看到 **≥2 个并行** `uo-query` Task。
 - 「找不到 kernel」→ `template_match` + `dim_coverage`，不能拿第一块 `ARGS_SEL` 否定全集。

@@ -186,26 +186,3 @@ def test_get_index_from_make_tuple_actual():
     )
     res = r.resolve("__tuple_elem(0, coord) > 0")
     assert res.closed, res.reasons
-
-
-def test_keyword_condition_is_constant_noise():
-    """Truncated macro text that is just `for` closes as CONSTANT, not a gap."""
-    from uo_init.controllability import ControllabilityBuilder
-    from uo_init.variable_model import VariableModel
-    from types import SimpleNamespace
-
-    model = VariableModel()
-    builder = ControllabilityBuilder(SourceResolver(), model, side="host")
-    node = SimpleNamespace(
-        condition="for",
-        file="f.cpp",
-        line=1,
-        function="f",
-        kind="if",
-        path_conditions=(),
-        induction_vars=(),
-        snippet="for",
-    )
-    a = builder.analyse(node)
-    assert a.closed
-    assert a.roots == ["CONSTANT"]

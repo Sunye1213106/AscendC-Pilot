@@ -13,14 +13,14 @@ Two start modes (Spec SSOT):
 from __future__ import annotations
 
 import os
-import re
 from pathlib import Path
 from typing import Any
 
-from ascendc_pilot.paths import is_under_pilot_checkout, pilot_checkout_root
+from ascendc_pilot.paths import is_under_pilot_checkout, opencode_home, pilot_checkout_root
+from uo_init.source_layout import ARCH_DIR_RE
 
-LAST_PROJECT_CACHE = Path.home() / ".config" / "opencode" / "ascendc-last-project"
-HARNESS_BIN_CACHE = Path.home() / ".config" / "opencode" / "ascendc-harness-bin"
+LAST_PROJECT_CACHE = opencode_home() / "ascendc-last-project"
+HARNESS_BIN_CACHE = opencode_home() / "ascendc-harness-bin"
 
 
 def _workflows_need_arch() -> frozenset[str]:
@@ -168,7 +168,7 @@ def discover_architectures(root: Path | str | None) -> list[str]:
             continue
         for child in sorted(base.iterdir()):
             name = child.name
-            if child.is_dir() and re.fullmatch(r"arch\d+", name):
+            if child.is_dir() and ARCH_DIR_RE.fullmatch(name):
                 if name not in found:
                     found.append(name)
     return found
@@ -309,7 +309,7 @@ def parse_uo_product_name(path: Path) -> dict[str, str]:
     """Parse ``<op>.<arch>.uo`` filename into op_name / architecture."""
     stem = path.name[: -len(path.suffix)] if path.suffix == ".uo" else path.stem
     parts = stem.rsplit(".", 1)
-    if len(parts) == 2 and re.fullmatch(r"arch\d+", parts[1]):
+    if len(parts) == 2 and ARCH_DIR_RE.fullmatch(parts[1]):
         return {"op_name": parts[0], "architecture": parts[1], "path": str(path)}
     return {"op_name": stem, "architecture": "", "path": str(path)}
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.ir.type_identity import macro_type_aliases, merge_unique_macro_aliases
 from uo_init.passes.source_text_cache import read_text
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
 
@@ -66,25 +67,50 @@ def rebuild_verified_tiling_reads(
     types = {e.name: e for e in codemap.by_kind(EntityKind.TILING_DATA)}
     known_types = set(types)
     fields: dict[tuple[str, str], Entity] = {}
-    by_name: dict[str, list[Entity]] = defaultdict(list)
     nested: dict[str, set[str]] = defaultdict(set)
     for field in codemap.by_kind(EntityKind.TILING_FIELD):
         owner = str(field.attrs.get("owner") or "")
         fields[(owner, field.name)] = field
-        by_name[field.name].append(field)
         nested[field.name].update(_referenced_types(str(field.attrs.get("cpp_type") or ""), known_types))
 
     scopes = [
-        e for e in codemap.entities.values()
+        e
+        for e in codemap.entities.values()
         if str(e.attrs.get("provenance") or "") in {
-            "source_kernel_definition_v2", "source_kernel_macro_definition_v2"
+            "source_kernel_definition_v2",
+            "source_kernel_macro_definition_v2",
+            "source_kernel_definition",
+            "source_kernel_macro_definition",
         }
     ]
     aliases_by_file = {file: _aliases(raw, known_types) for file, raw in texts.items()}
+    global_macros = merge_unique_macro_aliases(*texts.values(), known=known_types)
+    if global_macros:
+        for aliases in aliases_by_file.values():
+            for name, types in global_macros.items():
+                aliases[name].update(types)
     variable_types_by_file = {
         file: _declared_variable_types(raw, known_types, aliases_by_file[file], fields)
         for file, raw in texts.items()
     }
+    # Function parameters named ``tilingData`` (empty-tensor Init) must not
+    # poison unique member typing of the same name on another class.
+    inherited = _unique_cross_file_var_types(
+        {
+            file: _declared_variable_types(
+                raw,
+                known_types,
+                aliases_by_file[file],
+                fields,
+                statement_only=True,
+            )
+            for file, raw in texts.items()
+        }
+    )
+    if inherited:
+        for var_types in variable_types_by_file.values():
+            for name, types in inherited.items():
+                var_types.setdefault(name, set()).update(types)
 
     sites = resolved = unresolved = 0
     for scope in scopes:
@@ -103,7 +129,7 @@ def rebuild_verified_tiling_reads(
             # Nested TilingData field *names* also appear on ordinary locals
             # (``info.s2Size``). Only typed TilingData values or tiling-named
             # pointers are structurally TilingData-like.
-            looks_tiling = "tiling" in base.lower() or bool(var_types.get(base))
+            looks_tiling = bool(var_types.get(base))
             if not looks_tiling:
                 continue
             sites += 1
@@ -130,23 +156,21 @@ def rebuild_verified_tiling_reads(
                 for owner in var_types.get(base) or ():
                     candidates.append(fields.get((owner, leaf)))
                 candidates = _unique(candidates)
-                if not candidates and "tiling" in base.lower():
-                    declared = by_name.get(leaf) or []
-                    if len(declared) == 1:
-                        candidates.extend(declared)
             candidates = _unique(candidates)
             absolute = body_start + match.start()
             line = _line(raw, absolute)
             expression = raw[absolute:body_start + match.end()].replace("\n", " ").strip()
             if len(candidates) == 1:
                 field = candidates[0]
-                rel = codemap.link(
+                rel = codemap.mint_candidate_relation(
                     RelationKind.READS,
                     scope.id,
                     field.id,
-                    attrs={
-                        "provenance": "source_tilingdata_read_verified",
-                        "file": file, "line": line, "expression": expression,
+                    provenance="source_tilingdata_read_verified",
+                    extra={
+                        "file": file,
+                        "line": line,
+                        "expression": expression,
                         "field_owner": field.attrs.get("owner"),
                     },
                     status="confirmed",
@@ -245,11 +269,22 @@ def _scope_body(raw: str, start_line: int, short_name: str) -> tuple[int, int] |
     return open_brace + 1, close_brace
 
 
+def _is_stmt_declarator(raw: str, name_end: int) -> bool:
+    """True for ``Type name;`` / ``Type name = …;`` / ``Type name[N];``, not params."""
+    i = name_end
+    n = len(raw)
+    while i < n and raw[i] in " \t\r\n":
+        i += 1
+    return i < n and raw[i] in ";=["
+
+
 def _declared_variable_types(
     raw: str,
     known: set[str],
     aliases: dict[str, set[str]],
     fields: dict[tuple[str, str], Entity] | None = None,
+    *,
+    statement_only: bool = False,
 ) -> dict[str, set[str]]:
     out: dict[str, set[str]] = defaultdict(set)
     field_index = fields or {}
@@ -262,6 +297,8 @@ def _declared_variable_types(
         for match in pattern.finditer(raw):
             name = match.group("name")
             if name in _DECL_QUAL_NAMES or name in known or name in aliases:
+                continue
+            if statement_only and not _is_stmt_declarator(raw, match.end()):
                 continue
             token = match.group("type")
             if token in known:
@@ -304,7 +341,34 @@ def _aliases(raw: str, known: set[str]) -> dict[str, set[str]]:
             out[alias].update(tokens & known)
             for token in tokens:
                 out[alias].update(out.get(token) or ())
+    for alias, types in macro_type_aliases(raw, known).items():
+        out[alias].update(types)
     return out
+
+
+_TILING_PTR_NAME_RE = re.compile(r"(?i)tiling")
+
+
+def _unique_cross_file_var_types(
+    variable_types_by_file: dict[str, dict[str, set[str]]],
+) -> dict[str, set[str]]:
+    """Promote uniquely typed tiling pointers declared in one TU into others.
+
+    FAG declares ``FagTilingType tilingData`` on the base class and reads
+    ``this->tilingData->nested.field`` in derived headers. Only names that
+    look like tiling pointers are inherited, and only when every *statement*
+    declaration of that name maps to one TilingData type. Init parameters
+    that reuse the same name (empty-tensor ``tilingData``) are excluded from
+    the inherit source so they cannot drop the member type. Ordinary locals
+    (``info``) never qualify.
+    """
+    grouped: dict[str, set[str]] = defaultdict(set)
+    for var_types in variable_types_by_file.values():
+        for name, types in var_types.items():
+            if not _TILING_PTR_NAME_RE.search(name):
+                continue
+            grouped[name].update(types)
+    return {name: set(types) for name, types in grouped.items() if len(types) == 1}
 
 
 def _referenced_types(raw: str, known: set[str]) -> set[str]:

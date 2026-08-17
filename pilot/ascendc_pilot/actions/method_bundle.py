@@ -18,12 +18,13 @@ def _repo_candidates(project_root: Path | None) -> list[Path]:
     here = Path(__file__).resolve()
     # actions/ → ascendc_pilot → pilot → repo
     roots.append(here.parents[3])
-    home = Path.home()
+    from ascendc_pilot.paths import opencode_plugin_root
+
     roots.extend(
         [
-            home / ".config" / "opencode" / "ascendc-pilot-plugin",
-            home / ".cursor" / "ascendc-pilot-plugin",
-            home / ".agents" / "ascendc-pilot-plugin",
+            opencode_plugin_root(),
+            Path.home() / ".cursor" / "ascendc-pilot-plugin",
+            Path.home() / ".agents" / "ascendc-pilot-plugin",
         ]
     )
     if project_root is not None:

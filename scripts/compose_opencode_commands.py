@@ -15,15 +15,19 @@ if str(PILOT) not in sys.path:
 
 def _command_body(workflow_id: str) -> str:
     if workflow_id == "uo-query":
-        return """查询已有 Operator CodeMap。主控做可见 LLM 路由，不要 `pilot_run`，不要为空转「问题路由」开子代理。
+        return """查询已有 Operator CodeMap。主控先向用户说明查询方式，不要 `pilot_run`，禁止仅为问题分类而委派子代理。
 
 User arguments: $ARGUMENTS
 
-1. 看一眼 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
-2. **先对人说出路由**，再动手。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。
-3. **短问（一两跳）**：自己跑 `acp uo-query --mode <mode> --project <算子绝对路径>`，把 stdout 说给人听。
-4. **深问**：先 `acp uo-query --mode compile --project <算子绝对路径> --query <原话>`。compile 只出候选；Primary 按独立 FOCUS 派 1～5 路（每轮最多 5）。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。不要手写不存在的 `--mode`。
-5. 子代只跑探活后的第一刀，空则 hint 再一刀后交回。仅当仍有独立缺口才开第 2 轮（路数=缺口数，≤5）；无第 3 轮。不要 `pilot_run`，不要问「要不要继续」。
+1. 先阅读 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
+2. **先向用户说明**将直接调用还是委派几路，再执行。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。
+3. **简单查询**：主控直接调用 `acp uo-query --project <算子绝对路径>`（标识符 / Dim=V / --file --line / 无参数索引），将 stdout 向用户陈述。
+4. **复杂查询**：用户原话里几个可独立作为首次调用的起始点，就同一轮并行几路 `Task(agent=uo-query)`（上限 5）。「要交叉综合」不是合并的理由。每路 Task 正文：
+   FOCUS: <本路唯一查询目标>
+   建议的首次调用: acp uo-query --project <绝对路径> [--architecture arch35] <标识符或 Dim=V>
+   本片那一句: <这一路要回答的那一句>
+   禁止在 Task 正文写 `--mode`。
+5. 子代按卡片 `next` / `hint` 继续调用 `acp uo-query`。图上还能查的独立缺口必须开第 2 轮（路数=缺口数，≤5），禁止用无实质内容的确认（例如「是否继续」）代替。多路已有结论但结案仍不清时 AskQuestion 给出选项。不要 `pilot_run`。
 """
     if workflow_id == "uo-init":
         return """Run the AscendC-Pilot workflow `uo-init` for the current operator project.

@@ -28,4 +28,4 @@ artifact existence ≠ semantic completeness
 | completeness 抄自 env/profile | 与真实 extraction receipt 无关 |
 | 索引 partial 却报「无其他符号」 | 假完备 |
 
-不足时：补抽取、记 gap，或阻断；禁止假装完备。共享原则：`references/completeness.md`。
+不足时：补抽取、记 gap，或阻断；禁止声称完备。共享原则：`references/completeness.md`。

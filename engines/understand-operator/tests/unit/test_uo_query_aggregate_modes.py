@@ -204,7 +204,7 @@ def test_type_search_is_exact_and_skips_info_manager(tmp_path: Path) -> None:
             id="SRCTYPE::mutex_buffer.h::MutexBuffer",
             kind=EntityKind.TYPE,
             name="MutexBuffer",
-            attrs={"cpp_kind": "class", "role": "storage_wrapper_type", "root": "AscendC::LocalTensor"},
+            attrs={"cpp_kind": "class", "wraps_storage": True, "wraps_lock": True, "root": "AscendC::LocalTensor"},
             file="mutex_buffer.h",
             line_start=52,
             line_end=52,
@@ -242,7 +242,9 @@ def test_type_search_is_exact_and_skips_info_manager(tmp_path: Path) -> None:
     assert names == ["MutexBuffer"]
     assert rows[0]["file"].endswith("mutex_buffer.h")
     assert int(rows[0]["line_start"] or 0) == 52
-    assert (rows[0].get("facts") or {}).get("role") == "storage_wrapper_type"
+    assert (rows[0].get("facts") or {}).get("wraps_storage") is True or (
+        rows[0].get("facts") or {}
+    ).get("role") in {"storage_wrapper_type", "storage_wrapper"}
     buf = q.aggregate_buffer("MutexBuffer")
     assert buf["count"] >= 1
     assert any(row["name"] == "MutexBuffer" for row in buf["buffers"])
@@ -298,6 +300,62 @@ def test_template_match_dim_coverage_is_global_not_first_block(tmp_path: Path) -
     assert zero["total_matched"] == 0
     dropped = {row["dropped"]: row for row in zero["nearby"]}
     assert "128" in dropped["DTemplateNum"]["values"]
+
+
+def test_template_match_pins_filter_dim_and_exposes_fixed_coverage(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    _add_tpl_key(cm, name="IsRope", order=0, bw=1, domain=[0, 1], kind="BOOL")
+    _add_tpl_key(cm, name="DTemplateNum", order=1, bw=4, domain=[64, 128, 192, 256])
+    _add_tpl_group(
+        cm,
+        index=0,
+        fixed={"IsRope": 1, "DTemplateNum": 192},
+    )
+    _add_tpl_group(
+        cm,
+        index=1,
+        fixed={},
+        domains={"IsRope": [0, 1], "DTemplateNum": [64, 128, 256]},
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    out = q.aggregate_template_match("IsRope=1")
+    assert out["matching_block_count"] == 2
+    assert out["dim_coverage"]["IsRope"] == ["1"]
+    assert set(out["dim_coverage"]["DTemplateNum"]) == {"64", "128", "192", "256"}
+    assert (out.get("fixed_coverage") or {}).get("DTemplateNum") == ["192"]
+    assert (out.get("coverage") or {}).get("fixed_coverage", {}).get("DTemplateNum") == [
+        "192"
+    ]
+
+
+def test_tiling_data_resolves_type_alias(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="TYPE_alias",
+            kind=EntityKind.TYPE,
+            name="ToyTilingFFFF",
+            attrs={
+                "role": "type_alias",
+                "alias_of": "ToyTilingData",
+            },
+            file="op_kernel/arch35/td.h",
+            line_start=32,
+            status="confirmed",
+        )
+    )
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    rows = q.tiling_data("ToyTilingFFFF")
+    assert any(str(row.get("name") or "") == "ToyTilingFFFF" for row in rows)
+    agg = q.aggregate_tiling_data("ToyTilingFFFF")
+    assert agg["count"] >= 1
+    assert any(str(row.get("name") or "") == "ToyTilingFFFF" for row in agg["tiling_data"])
 
 
 def test_locate_ors_tokens_and_regex_gets_hint(tmp_path: Path) -> None:

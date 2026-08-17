@@ -226,6 +226,26 @@ def reset_index_cache() -> None:
 class MissingInclude:
     name: str
     side: str  # host | kernel
+    reason: str = ""
+    candidates: list[str] = field(default_factory=list)
+
+
+INCLUDE_UNIQUE = "unique"
+INCLUDE_AMBIGUOUS = "INCLUDE_AMBIGUOUS"
+INCLUDE_UNRESOLVED = "unresolved"
+
+_LAST_INCLUDE_STATUS = INCLUDE_UNRESOLVED
+_LAST_INCLUDE_CANDIDATES: list[str] = []
+
+
+def last_include_resolution() -> tuple[str, list[str]]:
+    return _LAST_INCLUDE_STATUS, list(_LAST_INCLUDE_CANDIDATES)
+
+
+def _set_include_resolution(status: str, candidates: Iterable[Path | str] | None = None) -> None:
+    global _LAST_INCLUDE_STATUS, _LAST_INCLUDE_CANDIDATES
+    _LAST_INCLUDE_STATUS = str(status or INCLUDE_UNRESOLVED)
+    _LAST_INCLUDE_CANDIDATES = [_posix(Path(p)) for p in (candidates or [])]
 
 
 @dataclass
@@ -264,7 +284,15 @@ class HealReport:
                 }
                 for h in self.healed
             ],
-            "unresolved": [{"include": u.name, "side": u.side} for u in self.unresolved],
+            "unresolved": [
+                {
+                    "include": u.name,
+                    "side": u.side,
+                    "reason": u.reason,
+                    "candidates": list(u.candidates),
+                }
+                for u in self.unresolved
+            ],
         }
 
 
@@ -527,6 +555,7 @@ def find_type_header(ctx: Any, type_name: str, *, side: str) -> HealHit | None:
     """Locate the CANN (or kernel) header that declares ``type_name``."""
     name = str(type_name or "").strip()
     if not name or name in SKIP_UNKNOWN_TYPES:
+        _set_include_resolution(INCLUDE_UNRESOLVED, [])
         return None
     # Hinted CANN headers first — no full-tree walk for SoftMaxTiling / TCubeTiling.
     for rel in TYPE_HEADER_HINTS:
@@ -554,20 +583,20 @@ def find_type_header(ctx: Any, type_name: str, *, side: str) -> HealHit | None:
         if is_forbidden_include_dir(path):
             continue
         ranked.append(path)
-    ranked.sort(
-        key=lambda p: _score_hit(p, p.name, side=side, roots=roots),
-        reverse=True,
+    status, viable = _pick_unique_header(ranked, roots=roots, rel=name)
+    _set_include_resolution(status, viable)
+    if status != INCLUDE_UNIQUE or not viable:
+        return None
+    found = viable[0]
+    if not _header_declares_type(found, name):
+        _set_include_resolution(INCLUDE_UNRESOLVED, viable)
+        return None
+    return HealHit(
+        include=name,
+        include_dir=_posix(found.parent),
+        found=_posix(found),
+        side=side,
     )
-    for found in ranked:
-        if not _header_declares_type(found, name):
-            continue
-        return HealHit(
-            include=name,
-            include_dir=_posix(found.parent),
-            found=_posix(found),
-            side=side,
-        )
-    return None
 
 
 def heal_unknown_types(
@@ -583,6 +612,9 @@ def heal_unknown_types(
     for item in missing:
         hit = find_type_header(ctx, item.name, side=item.side)
         if hit is None:
+            status, cands = last_include_resolution()
+            item.reason = status if status == INCLUDE_AMBIGUOUS else (item.reason or INCLUDE_UNRESOLVED)
+            item.candidates = cands
             continue
         hit.side = item.side
         hit.round = round_no
@@ -800,107 +832,122 @@ def _posix_under_roots(found: Path, roots: list[Path] | None) -> str:
     return _posix(found).lower()
 
 
-def _score_hit(
-    found: Path,
-    include_name: str,
-    *,
-    side: str,
-    roots: list[Path] | None = None,
-) -> int:
-    posix = _posix(found).lower()
-    rel = include_name.replace("\\", "/").strip().lower()
-    if is_forbidden_include_dir(found.parent):
-        return -10000
+def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            key = _norm_key(path)
+        except OSError:
+            key = _posix(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def _is_test_layout_header(found: Path, roots: list[Path]) -> bool:
     scoped = "/" + _posix_under_roots(found, roots).replace("\\", "/").strip("/") + "/"
-    if "/tests/" in scoped or "/test/" in scoped:
-        return -50
-    score = 0
-    if posix.endswith("/" + rel):
-        score += 100
-    elif "/" in rel:
-        return -1000
-    # Operator-tree headers beat CANN lookalikes (TLA ``Tuple`` vs a CANN
-    # utility that happens to mention the same identifier).
-    if "/op_kernel/" in posix or "/op_host/" in posix:
-        score += 40
-    if "cann-" in posix:
-        score += 10
-    if side == "kernel" and "/asc/" in posix:
-        score += 5
-    if "/3rd/" in posix:
-        score += 2
-    # Prefer shallower include dirs (less accidental capture).
-    score -= min(posix.count("/"), 40)
-    return score
+    return "/tests/" in scoped or "/test/" in scoped
+
+
+def _viable_header(found: Path, *, roots: list[Path]) -> bool:
+    try:
+        if not found.is_file():
+            return False
+    except OSError:
+        return False
+    if is_forbidden_include_dir(found) or is_forbidden_include_dir(found.parent):
+        return False
+    if _is_test_layout_header(found, roots):
+        return False
+    return True
+
+
+def _clang_join_hits(roots: list[Path], rel: str) -> list[Path]:
+    """O(search paths): ``root / include_spelling``, the way Clang uses -I."""
+    hits: list[Path] = []
+    rel_n = rel.replace("\\", "/").strip().lstrip("./")
+    if not rel_n or ".." in rel_n.split("/"):
+        return []
+    for root in roots:
+        cand = root / rel_n
+        try:
+            if cand.is_file():
+                hits.append(cand)
+        except OSError:
+            continue
+    return _dedupe_paths(hits)
+
+
+def _basename_hits(roots: list[Path], rel: str) -> list[Path]:
+    """Cold-start basename index. Never a semantic pick among many."""
+    rel_n = rel.replace("\\", "/").strip().lstrip("./")
+    base = rel_n.rsplit("/", 1)[-1].lower()
+    if not base:
+        return []
+    hits: list[Path] = []
+    for raw in _basename_index(roots).get(base, []):
+        path = Path(raw)
+        posix = _posix(path).replace("\\", "/").lower()
+        if "/" in rel_n and not posix.endswith("/" + rel_n.lower()):
+            continue
+        hits.append(path)
+    return _dedupe_paths(hits)
+
+
+def _pick_unique_header(
+    hits: list[Path], *, roots: list[Path], rel: str
+) -> tuple[str, list[Path]]:
+    viable = [p for p in _dedupe_paths(hits) if _viable_header(p, roots=roots)]
+    if not viable:
+        return INCLUDE_UNRESOLVED, []
+    if len(viable) > 1:
+        return INCLUDE_AMBIGUOUS, viable
+    return INCLUDE_UNIQUE, viable
 
 
 def find_include_dir(ctx: Any, include_name: str, *, side: str) -> HealHit | None:
     rel = include_name.replace("\\", "/").strip().lstrip("./")
     if not rel or ".." in rel.split("/"):
+        _set_include_resolution(INCLUDE_UNRESOLVED, [])
         return None
     roots = search_roots(ctx)
-    candidates: list[Path] = []
-    seen: set[str] = set()
-
-    def consider(path: Path) -> None:
-        try:
-            if not path.is_file():
-                return
-        except OSError:
-            return
-        key = _norm_key(path)
-        if key in seen:
-            return
-        seen.add(key)
-        candidates.append(path)
-
-    for root in roots:
-        consider(root / rel)
-        if "/" not in rel:
-            try:
-                for child in root.iterdir():
-                    if child.is_dir() and not _skip_walk_dir(child.name):
-                        consider(child / rel)
-            except OSError:
-                continue
-
     aliased = aliased_include_name(rel)
+    hits = _clang_join_hits(roots, rel)
+    source = "clang_join"
     if aliased:
-        for root in roots:
-            consider(root / aliased)
-
-    if not candidates:
-        base = rel.rsplit("/", 1)[-1].lower()
-        for raw in _basename_index(roots).get(base, []):
-            consider(Path(raw))
-
-    ranked = sorted(
-        candidates,
-        key=lambda p: _score_hit(
-            p, aliased or rel, side=side, roots=roots
-        ),
-        reverse=True,
+        alias_hits = _clang_join_hits(roots, aliased)
+        if alias_hits:
+            hits = _dedupe_paths(hits + alias_hits)
+            source = "alias_join"
+    if not hits:
+        hits = _basename_hits(roots, rel)
+        source = "unique_basename"
+        if aliased:
+            hits = _dedupe_paths(hits + _basename_hits(roots, aliased))
+    status, viable = _pick_unique_header(hits, roots=roots, rel=aliased or rel)
+    _set_include_resolution(status, viable)
+    if status != INCLUDE_UNIQUE or not viable:
+        return None
+    found = viable[0]
+    posix = _posix(found).replace("\\", "/").lower()
+    if aliased and posix.endswith("/" + aliased.lower()):
+        hit = materialize_include_alias(ctx, rel, aliased, side=side)
+        if hit is not None:
+            return hit
+    include_dir = include_dir_for(found, rel)
+    if is_forbidden_include_dir(include_dir) or not include_dir.is_dir():
+        _set_include_resolution(INCLUDE_UNRESOLVED, viable)
+        return None
+    return HealHit(
+        include=rel,
+        include_dir=_posix(include_dir),
+        found=_posix(found),
+        side=side,
+        source=source,
     )
-    for found in ranked:
-        posix = _posix(found).replace("\\", "/").lower()
-        if aliased and posix.endswith("/" + aliased.lower()):
-            hit = materialize_include_alias(ctx, rel, aliased, side=side)
-            if hit is not None:
-                return hit
-        if _score_hit(found, rel, side=side, roots=roots) < 0:
-            continue
-        include_dir = include_dir_for(found, rel)
-        if is_forbidden_include_dir(include_dir):
-            continue
-        if not include_dir.is_dir():
-            continue
-        return HealHit(
-            include=rel,
-            include_dir=_posix(include_dir),
-            found=_posix(found),
-            side=side,
-        )
-    return None
 
 
 def heal_missing_includes(
@@ -914,6 +961,9 @@ def heal_missing_includes(
     for item in missing:
         hit = find_include_dir(ctx, item.name, side=item.side)
         if hit is None:
+            status, cands = last_include_resolution()
+            item.reason = status if status == INCLUDE_AMBIGUOUS else (item.reason or INCLUDE_UNRESOLVED)
+            item.candidates = cands
             continue
         hit.side = item.side
         hit.round = round_no

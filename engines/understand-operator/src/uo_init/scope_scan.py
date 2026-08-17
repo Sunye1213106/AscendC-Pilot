@@ -14,6 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from uo_init.source_layout import ARCH_DIR_RE as ARCH_SEGMENT_RE
+
 SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
 SCANNED_SUFFIXES = SOURCE_SUFFIXES | HEADER_SUFFIXES
@@ -28,8 +30,6 @@ EXCLUDED_SEGMENTS = frozenset(
 # what makes a file operator-owned; the file name plays no part.
 OP_SEGMENTS = frozenset({"op_api", "op_graph", "op_host", "op_kernel"})
 
-ARCH_SEGMENT_RE = re.compile(r"^arch\d+$")
-ARCH_IN_PATH_RE = re.compile(r"(?:^|/)(arch\d+)/")
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
 
 # Only the head of a file is scanned for includes; no translation unit puts
@@ -46,6 +46,19 @@ ROLE_KERNEL_ENTRY = "kernel_entry"
 ROLE_KERNEL_OTHER = "kernel_other"
 ROLE_HEADER = "header"
 
+# Glob/stem/directory may recall a file. These are not semantic identity.
+HINT_TILING = "maybe_tiling"
+HINT_DEF = "maybe_def"
+HINT_INFERSHAPE = "maybe_infershape"
+HINT_APT = "maybe_apt"
+HINT_KERNEL = "maybe_kernel_tu"
+
+_HINT_FROM_ROLE = {
+    ROLE_HOST_TILING: HINT_TILING,
+    ROLE_HOST_DEF: HINT_DEF,
+    ROLE_HOST_INFERSHAPE: HINT_INFERSHAPE,
+}
+
 SIDE_HOST = "host"
 SIDE_KERNEL = "kernel"
 
@@ -58,7 +71,11 @@ KIND_SYSTEM = "SYSTEM"
 
 @dataclass(frozen=True)
 class ScopeFile:
-    """One file the analysis may read, and what it is."""
+    """One file the analysis may read.
+
+    ``role`` is layout bootstrap (which compiler SIDE / which directory).
+    ``role_hints`` are glob/stem/directory candidates, never semantic identity.
+    """
 
     path: Path
     role: str
@@ -67,6 +84,7 @@ class ScopeFile:
     shared: bool = False
     kind: str = KIND_OWNED
     provenance: str = "layout"
+    role_hints: tuple[str, ...] = ()
 
     @property
     def is_header(self) -> bool:
@@ -93,14 +111,40 @@ class ScopeSet:
         return _key(path) in self._index
 
     def select(
-        self, *, role: str | Iterable[str] | None = None, side: str | None = None,
+        self,
+        *,
+        role: str | Iterable[str] | None = None,
+        hint: str | Iterable[str] | None = None,
+        side: str | None = None,
         tu_only: bool = False,
     ) -> list[ScopeFile]:
-        roles = {role} if isinstance(role, str) else (set(role) if role else None)
+        requested = {role} if isinstance(role, str) else (set(role) if role else None)
+        hints = {hint} if isinstance(hint, str) else (set(hint) if hint else None)
+        layout_roles: set[str] | None = None
+        if requested:
+            layout_roles = set()
+            hint_from_role: set[str] = set()
+            for item in requested:
+                mapped = _HINT_FROM_ROLE.get(item)
+                if mapped:
+                    hint_from_role.add(mapped)
+                else:
+                    layout_roles.add(item)
+            if hint_from_role:
+                hints = (hints or set()) | hint_from_role
+            if not layout_roles:
+                layout_roles = None
         out = []
         for f in self.files:
-            if roles is not None and f.role not in roles:
-                continue
+            if layout_roles is not None and hints is not None:
+                if f.role not in layout_roles and not hints.intersection(f.role_hints):
+                    continue
+            elif layout_roles is not None:
+                if f.role not in layout_roles:
+                    continue
+            elif hints is not None:
+                if not hints.intersection(f.role_hints):
+                    continue
             if side is not None and f.side != side:
                 continue
             if tu_only and not f.is_tu:
@@ -140,6 +184,7 @@ class ScopeSet:
                 "shared": f.shared,
                 "kind": f.kind,
                 "provenance": f.provenance,
+                "role_hints": list(f.role_hints),
             }
             for f in self.files
         ]
@@ -164,6 +209,7 @@ class ScopeSet:
                 path = (workspace_root / rel).resolve()
             shared = bool(row.get("shared"))
             kind = str(row.get("kind") or (KIND_SHARED if shared else KIND_OWNED))
+            hints = tuple(str(h) for h in (row.get("role_hints") or ()) if str(h))
             files.append(
                 ScopeFile(
                     path=path,
@@ -173,6 +219,7 @@ class ScopeSet:
                     shared=shared,
                     kind=kind,
                     provenance=str(row.get("provenance") or "layout"),
+                    role_hints=hints or _role_hints_of(path),
                 )
             )
         return cls(
@@ -396,16 +443,68 @@ def prune_shared_by_includes(
     return sorted(selected.values())
 
 
+def _role_hints_of(path: Path) -> tuple[str, ...]:
+    """Candidate labels from directory/stem. Never a semantic conclusion."""
+    stem = path.stem.lower()
+    name = path.name.lower()
+    segments = {p.lower() for p in path.parts}
+    hints: list[str] = []
+    if "op_tiling" in segments or "_tiling" in stem:
+        hints.append(HINT_TILING)
+    if stem.endswith("_def"):
+        hints.append(HINT_DEF)
+    if "infershape" in stem or stem.endswith("_proto"):
+        hints.append(HINT_INFERSHAPE)
+    if name.endswith("_apt.cpp"):
+        hints.append(HINT_APT)
+    if "op_kernel" in segments and path.suffix.lower() in SOURCE_SUFFIXES:
+        hints.append(HINT_KERNEL)
+    return tuple(hints)
+
+
+def _make_scope_file(
+    path: Path,
+    *,
+    role: str | None = None,
+    side: str | None = None,
+    is_tu: bool | None = None,
+    shared: bool = False,
+    kind: str = KIND_OWNED,
+    provenance: str = "layout",
+    role_hints: tuple[str, ...] | None = None,
+) -> ScopeFile:
+    return ScopeFile(
+        path=path,
+        role=_role_of(path) if role is None else role,
+        side=_side_of(path) if side is None else side,
+        is_tu=(path.suffix.lower() in SOURCE_SUFFIXES) if is_tu is None else is_tu,
+        shared=shared,
+        kind=kind,
+        provenance=provenance,
+        role_hints=_role_hints_of(path) if role_hints is None else role_hints,
+    )
+
+
+def _copy_scope_file(prev: ScopeFile, **overrides: Any) -> ScopeFile:
+    data: dict[str, Any] = {
+        "path": prev.path,
+        "role": prev.role,
+        "side": prev.side,
+        "is_tu": prev.is_tu,
+        "shared": prev.shared,
+        "kind": prev.kind,
+        "provenance": prev.provenance,
+        "role_hints": prev.role_hints,
+    }
+    data.update(overrides)
+    return ScopeFile(**data)
+
+
 def _role_of(path: Path) -> str:
-    """What a file is, from where it sits and what kind of file it is."""
+    """Layout bootstrap: directory and suffix, not the file's stem identity."""
     suffix = path.suffix.lower()
     segments = {p.lower() for p in path.parts}
-    stem = path.stem.lower()
 
-    # These two directories hold one thing each, so what a file is there does
-    # not depend on its suffix: the prototype is a header and is still the
-    # prototype. Under `op_host` and `op_kernel` the suffix does matter, since
-    # the finer roles below describe translation units.
     if "op_api" in segments:
         return ROLE_API
     if "op_graph" in segments:
@@ -415,14 +514,6 @@ def _role_of(path: Path) -> str:
     if "op_kernel" in segments:
         return ROLE_KERNEL_ENTRY
     if "op_host" in segments:
-        if "op_tiling" in segments:
-            return ROLE_HOST_TILING
-        if stem.endswith("_def"):
-            return ROLE_HOST_DEF
-        if "infershape" in stem or stem.endswith("_proto"):
-            return ROLE_HOST_INFERSHAPE
-        if "_tiling" in stem:
-            return ROLE_HOST_TILING
         return ROLE_HOST_OTHER
     return ROLE_HOST_OTHER
 
@@ -470,11 +561,8 @@ def scan(op_dir: str | Path, *, arch_dir: str = "") -> ScopeSet:
     for path in owned + shared:
         is_shared = _key(path) in from_common
         files.append(
-            ScopeFile(
-                path=path,
-                role=_role_of(path),
-                side=_side_of(path),
-                is_tu=path.suffix.lower() in SOURCE_SUFFIXES,
+            _make_scope_file(
+                path,
                 shared=is_shared,
                 kind=KIND_SHARED if is_shared else KIND_OWNED,
                 provenance="include_regex" if is_shared else "layout",
@@ -807,14 +895,15 @@ def enrich_with_clang(
             resolved = tu_path.resolve()
         except OSError:
             resolved = Path(tu_path)
-        index[key] = ScopeFile(
-            path=resolved,
-            role=prev.role if prev is not None else _role_of(resolved),
+        index[key] = _make_scope_file(
+            resolved,
+            role=prev.role if prev is not None else None,
             side=prev.side if prev is not None else side,
             is_tu=True,
             shared=False,
             kind=KIND_OWNED,
             provenance="clang_tu",
+            role_hints=prev.role_hints if prev is not None else None,
         )
 
     added = 0
@@ -869,11 +958,8 @@ def enrich_with_clang(
                 if prev.provenance == "clang_tu":
                     continue
                 if prev.shared or kind == KIND_SHARED:
-                    index[key] = ScopeFile(
-                        path=prev.path,
-                        role=prev.role,
-                        side=prev.side,
-                        is_tu=prev.is_tu,
+                    index[key] = _copy_scope_file(
+                        prev,
                         shared=True,
                         kind=KIND_SHARED,
                         provenance="clang_include",
@@ -885,8 +971,8 @@ def enrich_with_clang(
                 resolved = Path(inc)
             is_shared = kind == KIND_SHARED
             layout_prev = layout_by_key.get(key)
-            index[key] = ScopeFile(
-                path=resolved,
+            index[key] = _make_scope_file(
+                resolved,
                 role=(
                     layout_prev.role
                     if layout_prev is not None
@@ -905,6 +991,11 @@ def enrich_with_clang(
                 shared=is_shared,
                 kind=kind,
                 provenance="clang_include",
+                role_hints=(
+                    layout_prev.role_hints
+                    if layout_prev is not None
+                    else (_role_hints_of(resolved) if not is_shared else ())
+                ),
             )
             added += 1
 

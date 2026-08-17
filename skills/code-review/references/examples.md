@@ -29,5 +29,5 @@ verification:
 
 - 忽略更早 guard
 - 把 partial 索引当成「没有其他调用者」
-- 风格偏好冒充缺陷
+- 风格偏好当作缺陷
 - 未解析 overload 就下结论

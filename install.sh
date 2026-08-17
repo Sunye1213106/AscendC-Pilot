@@ -3,16 +3,65 @@
 # Usage:
 #   ./install.sh opencode|cursor|codex
 #   ./install.sh uninstall-opencode|uninstall-cursor|uninstall-codex
-#   SKIP_PIP=1 ./install.sh cursor
+#   SKIP_PIP=1 ./install.sh opencode
+#   PYTHON=python3.12 ./install.sh opencode
 set -euo pipefail
 
 BUNDLE_ROOT="$(cd "$(dirname "$0")" && pwd)"
 PLATFORM="${1:-opencode}"
 SKIP_PIP="${SKIP_PIP:-0}"
 
+resolve_python() {
+  if [[ -n "${PYTHON:-}" ]] && command -v "$PYTHON" >/dev/null 2>&1; then
+    command -v "$PYTHON"
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    command -v python3
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    command -v python
+    return 0
+  fi
+  echo "ERROR: python3 or python >= 3.10 required" >&2
+  exit 1
+}
+
+PYTHON="$(resolve_python)"
+
+opencode_home() {
+  echo "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+}
+
+# Install and uninstall share these names (compose slash workflows + operator).
+WORKFLOW_SKILLS=(
+  uo-init uo-update uo-query uo-investigate
+  ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify
+  tg-init tg-plan tg-solve operator
+)
+COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
+OPENCODE_COMMANDS=(
+  uo-init uo-update uo-query uo-investigate
+  ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify
+  tg-init tg-plan tg-solve
+)
+CURRENT_AGENTS=(
+  ascendc-pilot uo-query uo-gap-investigator ce-reviewer tg-init-audit
+  tg-lemma-producer tg-closure-referee ce-change-referee ce-applier ce-analyst
+)
+LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies)
+LEGACY_AGENTS=(
+  ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve
+  uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer
+  tg-csv-contract tg-semantic-bind deterministic-uo-engine deterministic-tg-engine
+  deterministic-ce-engine README
+)
+LEGACY_PLUGINS=(ascendc-pilot.ts zz-uo-query-return-value.ts uo-query-return-value.ts ascendc-harness.ts pilot-driver.ts)
+
 plugin_dest() {
   case "$1" in
-    opencode) echo "$HOME/.config/opencode/ascendc-pilot-plugin" ;;
+    opencode) echo "$(opencode_home)/ascendc-pilot-plugin" ;;
     cursor) echo "$HOME/.cursor/ascendc-pilot-plugin" ;;
     codex) echo "$HOME/.agents/ascendc-pilot-plugin" ;;
     *) return 1 ;;
@@ -21,7 +70,7 @@ plugin_dest() {
 
 skills_dest() {
   case "$1" in
-    opencode) echo "$HOME/.config/opencode/skills" ;;
+    opencode) echo "$(opencode_home)/skills" ;;
     cursor) echo "$HOME/.cursor/skills" ;;
     codex) echo "$HOME/.agents/skills" ;;
   esac
@@ -29,7 +78,7 @@ skills_dest() {
 
 agents_dest() {
   case "$1" in
-    opencode) echo "$HOME/.config/opencode/agents" ;;
+    opencode) echo "$(opencode_home)/agents" ;;
     cursor) echo "$HOME/.cursor/agents" ;;
     codex) echo "$HOME/.agents/agents" ;;
   esac
@@ -37,14 +86,14 @@ agents_dest() {
 
 commands_dest() {
   case "$1" in
-    opencode) echo "$HOME/.config/opencode/commands" ;;
+    opencode) echo "$(opencode_home)/commands" ;;
     *) echo "" ;;
   esac
 }
 
 plugins_dest() {
   case "$1" in
-    opencode) echo "$HOME/.config/opencode/plugins" ;;
+    opencode) echo "$(opencode_home)/plugins" ;;
     *) echo "" ;;
   esac
 }
@@ -52,22 +101,20 @@ plugins_dest() {
 purge_legacy_ascendc_agent() {
   local plat="$1" skills="$2" agents="$3" plugins="$4"
   local name
-  for name in uo-code-review understand-operator uo-diff; do
+  for name in "${LEGACY_SKILLS[@]}"; do
     if [[ -e "$skills/$name" || -L "$skills/$name" ]]; then
       rm -rf "$skills/$name"
       echo "Removed legacy skill → $skills/$name"
     fi
   done
-  for name in \
-    ascendc-agent uo-code-reviewer deterministic-uo-engine deterministic-tg-engine \
-    uo-semantic-resolve uo-gap-resolve uo-key-resolve uo-confidence-review uo-kb-review README; do
+  for name in "${LEGACY_AGENTS[@]}"; do
     if [[ -f "$agents/$name.md" || -L "$agents/$name.md" ]]; then
       rm -f "$agents/$name.md"
       echo "Removed legacy agent → $agents/$name.md"
     fi
   done
   if [[ "$plat" == "opencode" ]]; then
-    rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
+    rm -rf "$(opencode_home)/ascendc-agent-plugin"
     if [[ -n "$plugins" ]]; then
       rm -f "$plugins/ascendc-harness.ts"
     fi
@@ -76,34 +123,49 @@ purge_legacy_ascendc_agent() {
 
 uninstall() {
   local plat="$1"
-  local plug skills agents plugins commands
+  local plug skills agents plugins commands name
   plug="$(plugin_dest "$plat")"
   skills="$(skills_dest "$plat")"
   agents="$(agents_dest "$plat")"
   plugins="$(plugins_dest "$plat")"
   commands="$(commands_dest "$plat")"
   rm -rf "$plug"
-  for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve operator _policies uo-code-review; do
+  for name in "${WORKFLOW_SKILLS[@]}" "${LEGACY_SKILLS[@]}" "${COGNITIVE_SKILLS[@]}" _shared; do
     rm -rf "$skills/$name"
   done
-  for name in \
-    ascendc-pilot ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-investigator uo-gap-resolve uo-key-resolve \
-    uo-confidence-review uo-kb-review ce-reviewer uo-query uo-code-reviewer tg-csv-contract \
-    tg-semantic-bind tg-init-audit deterministic-uo-engine deterministic-tg-engine README; do
+  for name in "${CURRENT_AGENTS[@]}" "${LEGACY_AGENTS[@]}"; do
     rm -f "$agents/$name.md"
   done
   if [[ "$plat" == "opencode" ]]; then
     if [[ -n "$commands" ]]; then
-      for name in uo-init uo-update uo-query uo-investigate ce-review tg-init tg-plan tg-solve; do
+      for name in "${OPENCODE_COMMANDS[@]}"; do
         rm -f "$commands/$name.md"
       done
     fi
     if [[ -n "$plugins" ]]; then
-      rm -f "$plugins/ascendc-pilot.ts" "$plugins/zz-uo-query-return-value.ts" "$plugins/ascendc-harness.ts" "$plugins/pilot-driver.ts"
+      for name in "${LEGACY_PLUGINS[@]}"; do
+        rm -f "$plugins/$name"
+      done
     fi
-    rm -rf "$HOME/.config/opencode/ascendc-agent-plugin"
+    rm -rf "$(opencode_home)/ascendc-agent-plugin"
   fi
   echo "Uninstalled $plat ascendc-pilot plugin"
+}
+
+resolve_acp_bin() {
+  if command -v acp >/dev/null 2>&1; then
+    command -v acp
+    return 0
+  fi
+  "$PYTHON" -c "
+import pathlib, sysconfig
+scripts = pathlib.Path(sysconfig.get_path('scripts'))
+for name in ('acp', 'acp.exe'):
+    p = scripts / name
+    if p.is_file():
+        print(p)
+        break
+" 2>/dev/null || true
 }
 
 case "$PLATFORM" in
@@ -118,18 +180,18 @@ case "$PLATFORM" in
 esac
 
 if [[ "$SKIP_PIP" != "1" ]]; then
-  python -m pip install -r "$BUNDLE_ROOT/requirements.txt"
+  "$PYTHON" -m pip install -r "$BUNDLE_ROOT/requirements.txt"
 fi
 
 # Fail installation before composing a Host runtime when execution ownership is
 # internally inconsistent.
-python "$BUNDLE_ROOT/scripts/check_execution_contracts.py"
+"$PYTHON" "$BUNDLE_ROOT/scripts/check_execution_contracts.py"
 
 # Compose sources, then retain only model-reachable runtime context.
-python "$BUNDLE_ROOT/scripts/compose_runtime.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
-python "$BUNDLE_ROOT/scripts/prune_runtime_context.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
+"$PYTHON" "$BUNDLE_ROOT/scripts/compose_runtime.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
+"$PYTHON" "$BUNDLE_ROOT/scripts/prune_runtime_context.py" --repo "$BUNDLE_ROOT" --host "$PLATFORM"
 if [[ "$PLATFORM" == "opencode" ]]; then
-  python "$BUNDLE_ROOT/scripts/compose_opencode_commands.py"
+  "$PYTHON" "$BUNDLE_ROOT/scripts/compose_opencode_commands.py"
 fi
 
 DEST="$(plugin_dest "$PLATFORM")"
@@ -169,7 +231,7 @@ fi
 # Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
 
-for name in uo-init uo-update uo-query uo-investigate ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify tg-init tg-plan tg-solve operator; do
+for name in "${WORKFLOW_SKILLS[@]}"; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
   ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
@@ -178,7 +240,7 @@ done
 # Cognitive skills: Cursor/Codex install into skill discovery with
 # disable-model-invocation; OpenCode keeps them plugin-internal only.
 if [[ "$PLATFORM" == "opencode" ]]; then
-  for name in operator-analysis testcase-generation source-proof code-review code-engineering _shared; do
+  for name in "${COGNITIVE_SKILLS[@]}" _shared; do
     rm -rf "$SKILLS/$name"
   done
   if [[ -d "$BUNDLE_ROOT/generated/opencode/cognitive-skills" ]]; then
@@ -186,7 +248,7 @@ if [[ "$PLATFORM" == "opencode" ]]; then
     cp -R "$BUNDLE_ROOT/generated/opencode/cognitive-skills" "$DEST/cognitive-skills"
   fi
 else
-  for name in operator-analysis testcase-generation source-proof code-review code-engineering; do
+  for name in "${COGNITIVE_SKILLS[@]}"; do
     [[ -d "$DEST/skills/$name" ]] || continue
     rm -rf "$SKILLS/$name"
     ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
@@ -248,26 +310,28 @@ if [[ "$PLATFORM" == "opencode" ]]; then
       [[ -f "$f" ]] || continue
       cp "$f" "$COMMANDS/$(basename "$f")"
     done
-    echo "Workflow commands → $COMMANDS/{uo-*,tg-*,ce-review}.md"
+    echo "Workflow commands → $COMMANDS/{uo-*,tg-*,ce-*}.md"
   fi
-  echo "Primary agent → $AGENTS/ascendc-pilot.md (Tab switch; opencode.json untouched)"
+  echo "Primary agent → $AGENTS/ascendc-pilot.md (Tab: AscendC-Pilot; opencode.json untouched)"
 fi
 
 mkdir -p "$DEST/templates/$PLATFORM"
 echo "plugin_root=$DEST" > "$DEST/templates/$PLATFORM/install_stamp.txt"
 
 # Cache absolute acp path for OpenCode plugin (Node often has a thinner PATH).
-if command -v acp >/dev/null 2>&1; then
-  ACP_BIN="$(command -v acp)"
-  mkdir -p "$HOME/.config/opencode"
-  printf '%s\n' "$ACP_BIN" > "$HOME/.config/opencode/ascendc-harness-bin"
+OC_HOME="$(opencode_home)"
+ACP_BIN="$(resolve_acp_bin || true)"
+mkdir -p "$OC_HOME"
+if [[ -n "${ACP_BIN:-}" && -e "$ACP_BIN" ]]; then
+  printf '%s\n' "$ACP_BIN" > "$OC_HOME/ascendc-harness-bin"
   echo "Cached acp bin → $ACP_BIN"
 else
   echo "WARN: acp not on PATH after pip install; OpenCode may fail to find harness"
 fi
 
 echo "Installed AscendC-Pilot → $DEST"
-echo "Run: acp doctor"
+echo "Run: $PYTHON -m ascendc_pilot doctor --host $PLATFORM"
+echo "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 
 # optional native frontend (best-effort cmake/libclang). Missing source is a bug.
 UO_FRONTEND_SRC="$DEST/engines/understand-operator/native/uo_frontend"

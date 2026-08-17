@@ -7,7 +7,7 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 
 - Prefer Host tool `pilot_run` (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged. After `run-action auto`, sync immediately.
 - Exception: **never** `pilot_run` / `acp start` for `uo-query`.
-- When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If `host_step.tasks` ≥2, launch all in the same turn, then Primary synthesizes each child's **native Task text**.
+- When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If a Host-driver `host_step.tasks` ≥2 (review dual-axis, not uo-query keyword fanout), launch all in the same turn, then Primary synthesizes each child's **native Task text**.
 - Same-Action rework resumes the original Task session. Formal IR is Host **finalize** only.
 
 ## Shell / OpenCode
@@ -20,6 +20,6 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 
 ## uo-query lifecycle
 
-- **Short**: Primary `acp uo-query --mode`; stdout is the answer. No prepare / Task / finalize.
-- **Deep**: prepare `kb_lookup` → N Task → Primary synthesizes → Runtime `acp run-action kb_lookup --finalize` materializes `answer.yaml`. Children never Write `answer.yaml` and never finalize.
-- **Delegated Task** (TG/CE): Task body is `task_prompt_stub`. Follow its `prompt` / `method` / `bundle` pointers; do not hunt other session files.
+- **简单查询**：主控直接调用 `acp uo-query`；stdout 即答案。无 prepare / Task / finalize。
+- **复杂查询**：主控按独立查询目标同一轮并行 `Task(agent=uo-query)`，主控综合。Task 正文的建议首次调用只能是四种参数形态之一，禁止 `--mode`。无 `kb_lookup` prepare / finalize。子代不得 Write `answer.yaml`，不得自己 finalize。
+- **Delegated Task**（TG/CE）：Task 正文是 `task_prompt_stub`。Follow its `prompt` / `method` / `bundle` pointers; do not search additional session files.

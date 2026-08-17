@@ -1,7 +1,7 @@
 """Map OpenCode child session IDs to Pilot actor/action/lease identity.
 
 Used by Host Session Driver so authorize does not guess identity from env.
-Persists to ~/.config/opencode/ascendc-sessions/ for cross-process lookup.
+Persists to the OpenCode config dir (``opencode_home()/ascendc-sessions``).
 """
 
 from __future__ import annotations
@@ -17,7 +17,9 @@ _MAX = 512
 
 
 def _disk_dir() -> Path:
-    return Path.home() / ".config" / "opencode" / "ascendc-sessions"
+    from ascendc_pilot.paths import opencode_home
+
+    return opencode_home() / "ascendc-sessions"
 
 
 def _safe_name(session_id: str) -> str:

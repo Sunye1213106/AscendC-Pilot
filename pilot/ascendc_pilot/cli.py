@@ -323,46 +323,30 @@ def main(argv: list[str] | None = None) -> int:
     p_uq.add_argument("--project", type=Path, default=None)
     p_uq.add_argument("--op-name", default="")
     p_uq.add_argument(
+        "tokens",
+        nargs="*",
+        default=[],
+        help="Identifier, or Dim=V[,Other=V]. Omit for the operator index.",
+    )
+    p_uq.add_argument(
         "--pattern",
         default="",
-        help="Search/locate/filter string. legal_key/template_match: Dim=V,Other=V",
+        help="Identifier or Dim=V. Alias of the positional token.",
     )
     p_uq.add_argument(
         "--query",
         default="",
-        help="Alias of --pattern (Dim=V,Other=V for legal_key/template_match)",
+        help="Alias of --pattern",
     )
     p_uq.add_argument("--target", default="", help="Alias of --pattern")
     p_uq.add_argument(
         "--mode",
-        default=None,
-        choices=(
-            "search",
-            "constraints",
-            "neighbors",
-            "impact",
-            "field",
-            "branches",
-            "templates",
-            "tiling_key",
-            "tiling_data",
-            "kernel_branch",
-            "template_match",
-            "buffer",
-            "gaps",
-            "legal_key",
-            "locate",
-            "kernel_api",
-            "kernel_launch",
-            "compile",
-        ),
-        help="Required. search|constraints|neighbors|impact|field|branches|templates|"
-        "tiling_key|tiling_data|kernel_branch|template_match|buffer|gaps|"
-        "legal_key|locate|kernel_api|kernel_launch|compile",
+        default="",
+        help="Removed. Do not pass --mode; dispatch follows the argument shape.",
     )
-    p_uq.add_argument("--file", default="", help="impact 模式：源码相对路径")
-    p_uq.add_argument("--line", type=int, default=0, help="impact 模式：起始行")
-    p_uq.add_argument("--line-end", type=int, default=0, help="impact 模式：结束行（默认=--line）")
+    p_uq.add_argument("--file", default="", help="Walk the graph from this source path")
+    p_uq.add_argument("--line", type=int, default=0, help="Start line for --file")
+    p_uq.add_argument("--line-end", type=int, default=0, help="End line (default=--line)")
     p_uq.add_argument("--kind", default="", help="search 时限定 node kind，逗号分隔")
     p_uq.add_argument("--depth", type=int, default=1)
     p_uq.add_argument("--limit", type=int, default=8)
@@ -861,7 +845,7 @@ def main(argv: list[str] | None = None) -> int:
                     state["user_summary_zh"] = progress_line_zh(goal)
                     state["message_zh"] = (
                         progress_line_zh(goal)
-                        + " 对人说明意图与当前动作；完成后按 Goal 串联下一步。"
+                        + " 向用户说明意图与当前动作；完成后按 Goal 串联下一步。"
                     )
         except Exception:  # noqa: BLE001
             pass
@@ -1105,40 +1089,24 @@ def main(argv: list[str] | None = None) -> int:
         project = Path(args.project).resolve()
         op_name = str(getattr(args, "op_name", "") or "")
         architecture = str(getattr(args, "architecture", "") or "")
+        tokens = [str(tok).strip() for tok in (getattr(args, "tokens", None) or []) if str(tok).strip()]
         pattern = str(
-            args.pattern or args.target or getattr(args, "query", "") or ""
+            args.pattern or args.target or getattr(args, "query", "") or " ".join(tokens) or ""
         ).strip()
         mode = str(getattr(args, "mode", "") or "")
-        if not mode:
+        if mode:
             print_json(
                 {
                     "ok": False,
-                    "error": "mode_required",
-                    "hint": "Pass --mode compile|locate|field|kernel_launch|template_match|search|...",
+                    "error": "mode_removed",
+                    "message_zh": "已取消 --mode。按参数形态调用：标识符；Dim=V；--file --line；无参数索引。",
+                    "hint": (
+                        "acp uo-query --project <operator-abs> [--architecture arch] "
+                        "[<identifier> | Dim=V[,Other=V] | --file PATH --line N]"
+                    ),
                 }
             )
             return 2
-        if mode == "compile":
-            from uo_init.query.plan import compile_query, probe_first_queries
-
-            payload = compile_query(pattern, architecture=architecture)
-            backend = None
-            if args.project:
-                try:
-                    compile_root = Path(args.project).resolve()
-                    product = find_uo_product(
-                        compile_root, op_name=op_name, architecture=architecture
-                    )
-                    if product is not None and product.suffix == ".uo":
-                        backend = open_query(
-                            compile_root, architecture=architecture, op_name=op_name
-                        )
-                except Exception:
-                    backend = None
-            payload = probe_first_queries(payload, backend)
-            payload["engine"] = "uo_init.uo_query"
-            print_json(payload)
-            return 0
         product = find_uo_product(project, op_name=op_name, architecture=architecture)
         if product is None or product.suffix != ".uo":
             from ascendc_pilot.intake import missing_uo_product_payload
@@ -1163,97 +1131,16 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 0
-        allow_empty = mode in {
-            "impact",
-            "gaps",
-            "buffer",
-            "tiling_key",
-            "tiling_data",
-            "kernel_branch",
-            "template_match",
-            "legal_key",
-            "locate",
-            "kernel_api",
-            "kernel_launch",
-            "compile",
-        }
-        if mode != "impact" and not pattern and not allow_empty:
-            print_json(
-                {
-                    "ok": False,
-                    "error": "pattern_required",
-                    "message_zh": "非 --status-only 时需要 --pattern（impact 用 --file/--line；聚合 mode 可空）",
-                }
-            )
-            return 2
         try:
             q = open_query(project, op_name=op_name, architecture=architecture)
             limit = int(args.limit or 8)
-            if mode == "constraints":
-                rows = q.constraints_for(pattern)
-                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
-            elif mode == "neighbors":
-                rows = q.neighbors(pattern, depth=int(args.depth or 1), limit=limit)
-                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows}
-            elif mode == "impact":
-                f = str(getattr(args, "file", "") or pattern)
-                line = int(getattr(args, "line", 0) or 0)
-                line_end = int(getattr(args, "line_end", 0) or line or 0)
-                if not f or not line:
-                    print_json({"ok": False, "error": "impact_needs_file_line"})
-                    return 2
-                result = q.impact_of(f, (line, line_end or line))
-                if isinstance(result, dict):
-                    payload = {
-                        "ok": True,
-                        "mode": mode,
-                        "file": f,
-                        "line": line,
-                        "line_end": line_end or line,
-                        **result,
-                    }
-                else:
-                    payload = {
-                        "ok": True,
-                        "mode": mode,
-                        "file": f,
-                        "line": line,
-                        "line_end": line_end or line,
-                        "count": len(result),
-                        "rows": result[:limit],
-                    }
-            elif mode == "field":
-                payload = q.field_impact(pattern)
-                payload["mode"] = mode
-            elif mode == "branches":
-                rows = q.branches_for_key(pattern)
-                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
-            elif mode == "templates":
-                rows = q.templates_for_key(pattern)
-                payload = {"ok": True, "mode": mode, "pattern": pattern, "count": len(rows), "rows": rows[:limit]}
-            elif mode == "tiling_key":
-                payload = q.aggregate_tiling_key(pattern, limit=limit)
-            elif mode == "tiling_data":
-                payload = q.aggregate_tiling_data(pattern, limit=limit)
-            elif mode == "kernel_branch":
-                payload = q.aggregate_kernel_branch(pattern, limit=limit)
-            elif mode == "template_match":
-                payload = q.aggregate_template_match(pattern, limit=limit)
-            elif mode == "buffer":
-                payload = q.aggregate_buffer(pattern, limit=limit)
-            elif mode == "gaps":
-                payload = q.aggregate_gaps(pattern, limit=limit)
-            elif mode == "legal_key":
-                payload = q.legal_key_query(pattern=pattern, limit=limit)
-            elif mode == "locate":
-                payload = q.aggregate_locate(pattern, limit=limit)
-            elif mode == "kernel_api":
-                payload = q.aggregate_kernel_api(pattern, limit=limit)
-            elif mode == "kernel_launch":
-                payload = q.aggregate_kernel_launch(pattern, limit=limit)
-            else:
-                kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
-                payload = q.aggregate_search(pattern, kinds=kinds, limit=limit)
+            payload = q.agent_query(
+                pattern=pattern,
+                file=str(getattr(args, "file", "") or ""),
+                line=int(getattr(args, "line", 0) or 0),
+                line_end=int(getattr(args, "line_end", 0) or 0),
+                limit=limit,
+            )
             payload["engine"] = "uo_init.uo_query"
             try:
                 from ascendc_pilot.occupancy import (
@@ -1886,8 +1773,8 @@ def _doctor(project: Path | None) -> int:
             print(f"cann_root={cann_root}")
         if cann_issues:
             for item in cann_issues:
-                issues.append(f"cann: {item}")
-            issues.append(
+                warnings.append(f"cann: {item}")
+            warnings.append(
                 "UO prepare/scope_scan requires extracted CANN under UO_CANN_ROOT "
                 "or _cann/pkg (see scripts/cann_extract.py); installed toolkit "
                 "ASCEND_HOME_PATH alone is not enough for BuildContext."

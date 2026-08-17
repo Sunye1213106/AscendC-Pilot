@@ -34,3 +34,14 @@ def test_change_test_intent_is_typed() -> None:
     assert "tiling_key" in kinds
     assert "host_branch" in kinds
     assert any(row.get("obligation_id") == "CE-OBL-17" for row in doc["targets"])
+
+
+def test_tg_plan_intent_from_impact_keys() -> None:
+    from code_engineering.change_test_intent import build_tg_plan_intent
+
+    doc = build_tg_plan_intent(impact={"affected_keys": [3], "fields": ["DType"]})
+    assert doc["mode"] == "ce_change_scoped"
+    assert doc["target_keys"] == [3]
+    empty = build_tg_plan_intent(impact={})
+    assert empty["target_keys"] == []
+    assert empty["target_mode"] == "explicit_keys"

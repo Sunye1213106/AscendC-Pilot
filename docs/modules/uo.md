@@ -184,7 +184,7 @@ Canonical Kernel UO 提供的是 sync **facts**：operation、参数、pipe/even
 
 ### `.uo` 是什么
 
-`<op>.<arch>.uo` 是 **SQLite 数据库**（schema：`codemap-uo/v1`），不是 YAML/JSON 文本。它是对外唯一的 canonical Operator CodeMap：Query / TG / CE 都读它；只有 UO 确定性 `commit` 可写。
+`<op>.<arch>.uo` 是 **SQLite 数据库**（schema：`codemap-uo/v2`，兼容读取 `codemap-uo/v1`），不是 YAML/JSON 文本。它是对外唯一的 canonical Operator CodeMap：Query / TG / CE 都读它；只有 UO 确定性 `commit` 可写。v2 边带 `trust`（authoritative / derived / advisory / legacy_unknown）；Query 默认不沿 `advisory` 边闭合。v1 产品读入后标 `legacy_unknown`，不会被推断成 lexical。
 
 可用普通 SQLite 工具打开（只读排查），但不要手工改库内容——应走 `/uo-init` 或 `/uo-update`。
 
@@ -229,7 +229,7 @@ meta + BuildVariant
 ## 四条 UO 入口
 
 ```text
-Source -> CodeMap -> {/uo-query 只读提问（主控可见路由） | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
+Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
 ```
 
 `/uo-init` 从源码建立新的 CodeMap：`prepare -> extract -> analyze -> commit -> verify`。
@@ -238,28 +238,27 @@ Source -> CodeMap -> {/uo-query 只读提问（主控可见路由） | /uo-updat
 
 `/uo-query` 只读回答已有 CodeMap 上的问题。可借助模型解释，但不得改写 canonical CodeMap。
 
-### `/uo-query`（可见 LLM 路由，禁止 Host 润）
+### `/uo-query`（可见 LLM 路由，禁止 Host Session Driver）
 
-查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控看一眼短地图，**先对人说出分类**（短问自查 / 1 个子代理 / N 路并行），再动手。深问必须 `Task(agent=uo-query)`，禁止主控自己连查。若 `host_step.tasks` ≥2，编译器为权威，必须原样并行派发。编译器 0/1 片时按独立证据空间启发式拆（见 `routing/uo-query.md`）；相关不等于单域。每个 Task 写 `FIRST_QUERY`。不要为空转「问题路由」开子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
+查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控先阅读短地图，**先说明**将直接调用还是委派，再执行。简单查询主控直接调用 `acp uo-query`；复杂查询委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 
 - 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)
 - 子代 METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`
 - 主控路由：`skills/operator-analysis/routing/uo-query.md`
-- 交付：短问 = 当前会话 stdout；深问 = 子代 Task 全文（主控综合后 Primary finalize）。子代不要 Write `answer.yaml`。
+- 交付：简单查询 = 当前会话 stdout；复杂查询 = 子代 Task 全文（主控综合）。子代不要 Write `answer.yaml`。
 
 `readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物。
 
 高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `acp inspect evidence-window --project … --path … --lines A-B`。
 
-结构化查询（`acp uo-query --mode`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图。除 tiling_key / tiling_data / kernel_branch / buffer / legal_key / gaps 外，还包括：
+结构化查询（`acp uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图：
 
-- `locate`：按名字给出 `file:line` 与 capped 源码窗（含 packing / writer site）
-- `kernel_api`：DataCopy / SetFlag / Cast / LoadAlign / SetGlobalBuffer 等 catalog 调用；Flag 带 `SIGNALS` / `AWAITS` 与 `flag_paired`；TQue EnQue/DeQue 带 QUEUE，不带 Flag 边；TPipe InitBuffer 为 `mechanism=tpipe`
-- `kernel_branch`：按 BRANCH 名精确搜 `if constexpr`；同名按 function 各一条样例并带 `functions` 目录；第二 ident 过滤函数；snippet 从命中行向后盖 body；不附 kernel overview
-- `impact`：源码位置 → 有向有用边邻居 + skill 分桶；`field` 模式只回 writers/readers/edges，不再给无向 neighbors
-- `search`：TYPE 按精确名字；命中带 snippet 与 1 跳关系
+- 标识符：实体卡片（定义点 + 按边类型分组的邻居 + `next`）
+- `Dim=V`：模板覆盖（`dim_coverage` / `matching_block_count` / `total_matched`）
+- `--file --line`：从位点走图
+- 无参数：算子索引（launch 阶段、维名、TilingData、gaps 计数）
 
 与官方 cannbot 的适配（CodeMap 作为源码结构底座，含 FAG arch35 覆盖验证）见下文 [与官方 cannbot 的适配](#与官方-cannbot-的适配)。
 
@@ -329,14 +328,14 @@ Flag 同步在 identity 已知时记录 `SIGNALS`/`AWAITS`，并检查成对出�
 | Host 函数声明 | 同日 pass6 `fast` 冷启动：`locate CheckShapeValid` → `op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:194`；`CheckSoftmaxMaxShape` `:23`、`CheckSoftmaxSumShape` `:50`。BRANCH `host_check` **117/117** 有 span。按函数名 locate 是加分项，cannbot 主门仍是 Key / Field / Kernel / Input / `check_sites` |
 
 ```text
-acp uo-query --project <op> --mode locate --pattern s1Inner
-acp uo-query --project <op> --mode field --pattern s1Inner
-acp uo-query --project <op> --mode buffer --pattern attenMaskOrYInQue
-acp uo-query --project <op> --mode kernel_api --pattern EnQue
-acp uo-query --project <op> --mode kernel_api --pattern InitBuffer
-acp uo-query --project <op> --mode kernel_api --pattern DataCopy
-acp uo-query --project <op> --mode locate --pattern CheckShapeValid
-acp uo-query --project <op> --mode tiling_key --pattern SplitAxis
+acp uo-query --project <op> s1Inner
+acp uo-query --project <op> attenMaskOrYInQue
+acp uo-query --project <op> EnQue
+acp uo-query --project <op> InitBuffer
+acp uo-query --project <op> DataCopy
+acp uo-query --project <op> CheckShapeValid
+acp uo-query --project <op> SplitAxis
+acp uo-query --project <op> SplitAxis=1,IsTnd=1
 ```
 
 ---

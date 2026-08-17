@@ -1,0 +1,6 @@
+REG_OP(Toy)
+  .INPUT(query, TensorType({DT_FLOAT16}))
+  .OPTIONAL_INPUT(query_rope, TensorType({DT_FLOAT16}))
+  .OUTPUT(dq, TensorType({DT_FLOAT16}))
+  .REQUIRED_ATTR(input_layout, String)
+  .OP_END_FACTORY_REG(Toy)

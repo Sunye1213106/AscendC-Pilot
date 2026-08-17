@@ -6,9 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-def _opencode_home() -> Path:
-    return Path.home() / ".config" / "opencode"
+from ascendc_pilot.paths import opencode_home as _opencode_home
 
 
 def doctor_host(host: str, *, project: Path | None = None) -> dict[str, Any]:
@@ -35,12 +33,11 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
         (plugins / "ascendc-pilot.ts").is_file(),
         str(plugins / "ascendc-pilot.ts"),
     )
+    bundled_driver = home / "ascendc-pilot-plugin" / "opencode-plugin" / "pilot-driver.ts"
     add(
         "plugin_pilot_driver_ts",
-        (plugins / "pilot-driver.ts").is_file()
-        or (home / "ascendc-pilot-plugin" / "opencode-plugin" / "pilot-driver.ts").is_file()
-        or (Path(__file__).resolve().parents[2] / "opencode-plugin" / "pilot-driver.ts").is_file(),
-        "pilot-driver.ts required for Host Session Driver",
+        bundled_driver.is_file(),
+        str(bundled_driver),
     )
 
     agents = home / "agents"
@@ -101,6 +98,8 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
                 [acp_bin, "uo-query", "--help"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=20,
                 check=False,
             )
@@ -148,7 +147,11 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
         "host": "opencode",
         "checks": checks,
         "message_zh": "OpenCode host contract "
-        + ("通过" if ok else "失败——请重装 install.ps1 opencode / compose_runtime"),
+        + (
+            "通过"
+            if ok
+            else "失败——请重新运行安装脚本（Windows: .\\install.ps1 opencode；Linux: ./install.sh opencode）"
+        ),
     }
 
 

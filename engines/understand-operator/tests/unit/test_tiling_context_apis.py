@@ -84,6 +84,49 @@ def test_tiling_context_apis_locate_setschedulemode(tmp_path: Path) -> None:
     assert str(facts.get("argument") or "") == "1"
 
 
+def test_tiling_context_apis_mints_platform_getcorenumaiv(tmp_path: Path) -> None:
+    host = tmp_path / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    src = host / "tiling.cpp"
+    src.write_text(
+        "void DoTiling() {\n"
+        "  uint32_t aiv = plat->GetCoreNumAiv();\n"
+        "  ctx->SetBlockDim(aiv);\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    rel = "op_host/arch35/tiling.cpp"
+    ir = HostIR(
+        call_sites=[
+            CallSite(
+                caller="DoTiling",
+                callee="GetCoreNumAiv",
+                file=rel,
+                line=2,
+                receiver="plat",
+            ),
+            CallSite(
+                caller="DoTiling",
+                callee="SetBlockDim",
+                file=rel,
+                line=3,
+                args=("aiv",),
+                receiver="ctx",
+            ),
+        ]
+    )
+    cm = CodeMap(op_name="ToyOp", architecture="arch35")
+    enrich_tiling_context_apis(cm, tmp_path, architecture="arch35", host_ir=ir)
+    aiv = next(e for e in cm.by_kind(EntityKind.OPERATION) if e.name == "GetCoreNumAiv")
+    assert aiv.attrs.get("catalog") == "cann_platform"
+    assert aiv.line_start == 2
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    loc = open_query(tmp_path).aggregate_locate("GetCoreNumAiv")
+    assert loc["count"] >= 1
+
+
 def test_tiling_context_apis_skips_without_host_ir(tmp_path: Path) -> None:
     cm = CodeMap(op_name="ToyOp", architecture="arch35")
     enrich_tiling_context_apis(cm, tmp_path, architecture="arch35", host_ir=None)

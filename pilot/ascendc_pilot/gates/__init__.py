@@ -1023,12 +1023,12 @@ def gate_scope_probe_clean(uo: Path) -> dict[str, Any]:
 
 def gate_extract_receipt(uo: Path) -> dict[str, Any]:
     host = uo / "ir" / "host_extract_receipt.yaml"
-    fold = uo / "kernel" / "fold_receipt.yaml"
-    ok = host.is_file() and fold.is_file()
+    kir = uo / "ir" / "kernel_ir.yaml"
+    ok = host.is_file() and kir.is_file()
     return {
         "gate": "extract_receipt",
         "ok": ok,
-        "message": "ok" if ok else "host/kernel extract receipt missing",
+        "message": "ok" if ok else "host extract receipt or kernel_ir.yaml missing",
     }
 
 

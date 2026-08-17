@@ -68,7 +68,6 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
     "uo-query",
     "uo-gap-investigator",
-    "tg-init-audit",
     "tg-lemma-producer",
     "tg-closure-referee",
     "ce-analyst",
@@ -94,9 +93,9 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "抽取 CompilerFacts、运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
             "semantic residual 保留在 unresolved.yaml，不由 LLM 写入 canonical UO。"
             "用户要求建立知识库、建库、建 UO/CodeMap、索引/分析算子、首次理解算子或指定 "
-            "architecture 建图时使用——这些口语一律走本 workflow，禁止改用外部 MCP/"
+            "architecture 建图时使用——上述用户说法一律走本 workflow，禁止改用外部 MCP/"
             "通用代码图谱索引。"
-            "缺 architecture 时由 Host `pilot_run` 弹出 AskQuestion；禁止仓根 Glob 或翻 cmake/classify_rule 考古。"
+            "缺 architecture 时由 Host `pilot_run` 弹出 AskQuestion；禁止在仓库根目录 Glob，禁止翻查 cmake/classify_rule 以猜测 architecture。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
     },
@@ -109,14 +108,16 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-query": {
-        "command_description": '查询算子知识库：可见路由后自查或派子代理 / Query CodeMap',
+        "command_description": '查询算子知识库：说明查询方式后自行查询或委派 / Query CodeMap',
         "description": (
             "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
-            "TilingData、Kernel、字段、路径）。主控先对人说出路由："
-            "短问（一名字/一 mode）自查 `acp uo-query`；深问必须同一轮 Task(agent=`uo-query`)，"
-            "禁止把深问改成主控自己连查。**禁止** `pilot_run` / `acp start uo-query`。"
-            "不要为空转「问题路由」开子代理。子代 PARTIAL / 未闭合 / 互相矛盾时再开一轮 Task（FOCUS=缺口），"
-            "禁止问「要不要继续」，禁止主控代劳收工。"
+            "TilingData、Kernel、字段、路径）。主控先向用户说明查询方式："
+            "简单查询由主控自行调用 `acp uo-query`（标识符 / Dim=V / --file --line / 无参数索引）；"
+            "复杂查询必须同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
+            "Task 正文不要写 `--mode`。禁止把复杂查询改成主控自行连续查询。"
+            "**禁止** `pilot_run` / `acp start uo-query`。"
+            "禁止仅为问题分类而委派子代理。子代 PARTIAL / 未闭合 / 互相矛盾且图上还能查时再开一轮 Task（FOCUS=缺口），"
+            "禁止用无实质内容的确认（例如「要不要继续」）代替第 2 轮。多路已有结论但结案仍不清时 AskQuestion 给出选项（带推荐答案），请用户选择探查路径或 PARTIAL 停止。"
         ),
     },
     "uo-investigate": {
@@ -131,7 +132,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'CodeMap-backed review: quick / file / PR',
         "description": (
             "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
-            "Spec 轴对照需求，Standards 轴对照仓规范，两轴分开写。"
+            "Spec 轴对照 `ce/intent/plan.md`（无则从 diff 推断意图），Standards 轴对照仓规范；"
+            "review 阶段并行两个子代理隔离上下文。结论默认在会话中陈述，用户要落盘才写 `ce/review`。"
             "假设检验；证据先 CodeMap。Pilot 管 scope 到 summary；用 `pilot_run`。"
         ),
     },
@@ -154,20 +156,22 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'Locate change targets without a diff / 无 diff 时定位改哪里',
         "description": (
             "无 diff 时定位改哪里：需求还没问清时先 grilling 问清范围、不做的事和验收，再分解特性，"
-            "然后查 CodeMap 下结论，冻结变更目标。不要对着一句话空想。用户要明确改什么/测什么时使用；用 `pilot_run`。"
+            "然后查 CodeMap 下结论，冻结变更计划并写入 `ce/intent/plan.md`。"
+            "禁止仅凭一句需求推断改点。用户要明确改什么/测什么时使用；用 `pilot_run`。"
         ),
     },
     "ce-apply": {
         "command_description": 'Apply confirmed intent to operator source / 按已确认意图改算子源码',
         "description": (
-            "意图已确认且锚点非空时，按锚点改算子源码（op_host/op_kernel），自动双轴审查。"
+            "意图已确认且锚点非空时，按 `ce/intent/plan.md` 与 `ce/apply/todo.md` 一次一个垂直切片改算子源码，"
+            "自动双轴审查（Spec / Standards 并行子代理）。"
             "不签发证书；精度/性能仍走 /ce-impact → /ce-verify。用 `pilot_run`。"
         ),
     },
     "ce-handoff": {
         "command_description": 'Write CE session handoff / 写会话交接',
         "description": (
-            "把当前 CE 会话压成 ce/session_handoff.md：只引用已有产物路径，写清下一跳 slash。"
+            "将当前 CE 会话整理为 ce/session_handoff.md：只引用已有产物路径，写明后续 slash 命令。"
             "上下文将满、换窗口或交给同事时使用。不占 CE 锁。用 `pilot_run`。"
         ),
     },
@@ -178,7 +182,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "全量/全覆盖/tilingkey case/建立 TilingKey 全覆盖测试时加载。"
             "全覆盖产品目标：写入 control/user_goal 后串联 init→plan→solve；"
             "start 时 --intent 带全覆盖短语。默认 tilingkey_full_coverage（无需 CSV）。"
-            "对人只说「建立覆盖合同」进度与确认后果；机器 id 留在 payload。"
+            "向用户仅说明「建立覆盖合同」进度与确认后果；机器 id 留在 payload。"
             "Pilot 管阶段；加载后用 `pilot_run`。"
         ),
     },
@@ -188,7 +192,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "规划测试义务并冻结目标集（全覆盖 Goal 的第二步）。"
             "用户未指定目标时默认计划全部合法 TilingKey（覆盖全部合法 Key）；"
             "指定 packed keys 或维度过滤时只计划该子集。Plan 不构造 case、不做可达性求解。"
-            "对人说明「规划测试义务」与批准后进入求解的后果。"
+            "向用户说明「规划测试义务」与批准后进入求解的后果。"
         ),
     },
     "tg-solve": {
@@ -197,14 +201,14 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "求解并生成用例（全覆盖 Goal 的第三步）：按轮构造→Replay→Round Analysis。"
             "增长符合预期则轮内对 reject 证源码引理扩 E；不符合则基于已发现 key+源码定向再构造；"
             "直到覆盖义务关闭。未指定目标由 tg-plan 默认覆盖全部合法 Key。"
-            "对人报告求解进度与真实需人门禁，禁止粘贴内部 reason_code 当唯一说明。"
+            "向用户报告求解进度与实际需要用户确认的步骤，禁止粘贴内部 reason_code 当唯一说明。"
         ),
     },
     "operator": {
         "command_description": 'AscendC-Pilot operator skill entry',
         "description": (
             "可选助手：列出可用 Pilot workflow entry，或把 /uo-init 等 slash 转给 acp route。"
-            "自然语言意图请直接加载对应 entry，不要依赖本入口做口语路由。"
+            "自然语言意图请直接加载对应 entry，不要依赖本入口做意图分类。"
         ),
     },
 }
@@ -342,14 +346,14 @@ def _start_requirements_line(repo: Path) -> str:
     proj = "/".join(sorted(workflows_needing_project()))
     return (
         f"11. `{arch}` 启动必须同时有算子目录（`--project`）与 architecture（仓内 `arch*`）。"
-        f"缺 arch → Host `pilot_run` 弹出 AskQuestion（禁止仓根 Glob / cmake 考古）。"
-        f"齐了 → `pilot_run`（workflow + project + architecture）一次启动。"
+        f"缺 arch → Host `pilot_run` 弹出 AskQuestion（禁止在仓库根目录 Glob 或翻查 cmake 以猜测 architecture）。"
+        f"参数齐全后 → `pilot_run`（workflow + project + architecture）一次启动。"
         f"`{uo}` 以已有 `.uo` CodeMap 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`。"
         f"产物路径确定（`<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`），禁止 Glob/dir 找 `.uo`。"
         f"查询类 AskQuestion：`/uo-init` 或回退源码作答；TG/CE 仍须先 `/uo-init`。"
         f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
         f"需要算子目录的 workflow：`{proj}`。"
-        f"`uo-query` 禁止 `pilot_run`：主控可见路由后自查或 Task。"
+        f"`uo-query` 禁止 `pilot_run`：主控先向用户说明查询方式，再自行查询或委派 Task。"
         f"其余后续动作由 Host `pilot_run` 驱动；`.ascendc-pilot/` 只允许在该算子目录下。"
     )
 
@@ -401,9 +405,9 @@ def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
 
 
 _CHILD_CONTEXT_DROP_PREFIXES = (
-    "**短问**",
-    "**深问**",
-    "**可见 LLM 路由**",
+    "**简单查询**",
+    "**复杂查询**",
+    "**查询方式说明**",
 )
 
 
@@ -508,12 +512,15 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
         lines.append("")
     if wid == "uo-query":
         run_via = (
-            "Visible LLM router (not a Host workflow). First speak the route to the user. "
-            "短问: self `acp uo-query`. 深问: N native Tasks agent=`uo-query` same turn — "
-            "never demote 深问 to primary Read/acp. "
+            "Not a Host workflow. Tell the user the query plan first "
+            "(direct `acp uo-query` vs delegated Tasks), then execute. "
+            "Simple: primary calls `acp uo-query`. Complex: N native Tasks agent=`uo-query` same turn — "
+            "never demote a complex query to primary Read/acp. Never `--mode` in a Task stub. "
             "Never `pilot_run` / `acp start` for uo-query. Do not spawn a routing-only subagent. "
             "If any child is PARTIAL / 未闭合 / contradicts another, launch another Task round "
-            "(FOCUS=the gap) before closing; do not ask 要不要继续."
+            "(FOCUS=the gap) before closing; do not replace round 2 with a content-free confirmation. "
+            "After children have conclusions but the remaining choice is which gap to explore, "
+            "AskQuestion with labelled options and a recommended answer."
         )
     else:
         run_via = (
@@ -1211,15 +1218,16 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     if aid == "uo-query":
         runtime = """## Runtime Contract
 
-execution_variant = delegated_query. Short / direct_query never spawns this agent.
+execution_variant = delegated_query. Simple queries never spawn this agent.
 
-If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not hunt any other session files.
+If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not search additional session files.
 
-1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs> --mode <mode> --pattern …`. Do not prefix with bash; the plugin spawns acp.exe.
-2. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
-3. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
+1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not prefix with bash; the plugin spawns acp.exe.
+2. Follow card `next` / `hint`. A card with `file:line` + snippet is already Read — do not Read the same span. Copy `file` from the card; do not guess paths.
+3. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
+4. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
 
-Short query is Primary-only (`acp uo-query` stdout).
+Simple query is Primary-only (`acp uo-query` stdout).
 """
     else:
         runtime = """## Runtime Contract

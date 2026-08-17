@@ -793,6 +793,7 @@ _SOFT_AMBIGUITY_PREFIXES = (
     "host_targets_from_glob:",
     "op_name_from_filename:",
     "op_name_from_directory:",
+    "display_name_hint:",
     "multiple_opdef:",
     "multiple_kernel_entry:",
     "multiple_tiling_key_header:",
@@ -1050,30 +1051,14 @@ def _bundle_cache(uo: Path) -> Path:
 
 
 def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Build host IR + controllability + kernel/API facts.
-
-    Default profile is ``UO_INIT_PROFILE=fast``: ``closure_mode=keypath``,
-    one dtype kernel walk (overlapped with host IR), no API clang contract,
-    so cold uo-init stays within ``UO_COLD_BUDGET_S``.  Set
-    ``UO_INIT_PROFILE=full`` (or ``closure_mode=full``) for every PRODUCTION
-    control.  Per-TU walks hit ``UO_TU_CACHE`` on warm runs.
-    """
+    """Build host IR ∥ uninstantiated kernel IR (one product path)."""
     from uo_init.extract_bundle import extract_host_bundle
-    from uo_init.controllability import ClosureMetrics
     from uo_init.extract_cache import (
         compute_extract_fingerprint,
         skip_reextract_for_unchanged_tus,
         store_extract_fingerprint,
     )
-    from uo_init.gaps import GapReport
-    from uo_init.init_profile import (
-        default_closure_max_nodes,
-        default_closure_mode,
-        default_kernel_max_variants,
-        default_with_api,
-        default_with_kernel,
-        profile_name,
-    )
+    from uo_init.init_profile import default_kernel_max_variants, default_with_kernel
     from uo_init.progress import emit as _progress
 
     _progress("extract_host: building host/kernel IR bundle …")
@@ -1081,10 +1066,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
     uo = _uo_root(root, arch=ctx.get("arch_dir"))
-    mode = default_closure_mode(ctx)
-    max_nodes = default_closure_max_nodes(ctx)
     with_kernel = default_with_kernel(ctx)
-    with_api = default_with_api(ctx)
     kernel_max_variants = default_kernel_max_variants(ctx)
     skip_plan = skip_reextract_for_unchanged_tus(
         root, uo_root=uo, arch=ctx.get("arch_dir") or ctx.get("architecture")
@@ -1095,10 +1077,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             cann_root=_cann_root(ctx),
             ops_root=_ops_root(ctx, root),
             arch_dir=ctx.get("arch_dir"),
-            closure_mode=str(mode),
-            closure_max_nodes=int(max_nodes),
             with_kernel=with_kernel,
-            with_api=with_api,
             kernel_max_variants=kernel_max_variants,
         )
     except Exception as exc:  # noqa: BLE001
@@ -1112,8 +1091,6 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             "traceback": tb[-1200:],
         }
 
-    # Same-process follow-on actions (tiling_key / analyze / commit) must not
-    # rebuild the bundle; cross-process callers fall back to the pickle below.
     _STORE["bundle"] = bundle
     try:
         import pickle
@@ -1127,10 +1104,6 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     except Exception:  # noqa: BLE001
         pass
 
-    metrics_obj = bundle.get("metrics") or ClosureMetrics()
-    gap_obj = bundle.get("gap") or GapReport()
-    metrics = metrics_obj.to_dict()
-    gap = gap_obj.to_dict()
     fp_meta = compute_extract_fingerprint(
         root, uo_root=uo, arch=getattr(bundle["spec"], "arch_dir", None)
     )
@@ -1138,24 +1111,13 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     kir = bundle.get("kernel_ir")
     kernel_branches = len(getattr(kir, "branches", []) or [])
     if kir is not None and hasattr(kir, "to_persist_dict"):
-        # Cross-process export_kb must not lose uninstantiated branches.
         _dump(uo / "ir" / "kernel_ir.yaml", kir.to_persist_dict())
     meta = {
         "version": 1,
         "status": "extracted",
         "op_name": bundle["spec"].op_name,
         "architecture": bundle["spec"].arch_dir,
-        "quality": metrics,
-        "gap": gap,
-        "node_count": metrics.get("total_nodes", 0),
-        "blocker_count": len(gap_obj.blockers),
-        "bind_error": bundle.get("bind_error") or "",
-        "closure_mode": bundle.get("closure_mode") or mode,
-        "closure_selected": bundle.get("closure_selected") or 0,
-        "closure_max_nodes": int(max_nodes),
-        "init_profile": profile_name(ctx),
         "with_kernel": bool(with_kernel),
-        "with_api": bool(with_api),
         "kernel_max_variants": int(kernel_max_variants or 0),
         "kernel_branches": kernel_branches,
         "extract_fingerprint": fp_meta.get("extract_fingerprint"),
@@ -1166,31 +1128,13 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         uo / "ir" / "host_extract_receipt.yaml",
         {"ok": True, "engine": "extract_host", **meta},
     )
-    binding = bundle.get("binding")
-    n_bind = len(binding.bindings) if binding is not None else 0
-    _dump(
-        uo / "tiling" / "key_bind_receipt.yaml",
-        {
-            "ok": True,
-            "binding_count": n_bind,
-            "bind_error": bundle.get("bind_error") or "",
-            "status": "extracted" if binding is not None else "partial",
-        },
-    )
-    # Keep analyses alive across process? Pilot engines are in-process; stash on module.
     _STORE["bundle"] = bundle
     return {
         "ok": True,
         "engine": "extract_host",
-        "source_closure": metrics.get("source_closure"),
-        "blocker_count": meta["blocker_count"],
-        "node_count": meta["node_count"],
-        "closure_mode": meta["closure_mode"],
-        "closure_selected": meta["closure_selected"],
         "kernel_branches": meta["kernel_branches"],
         "extract_fingerprint": meta["extract_fingerprint"],
         "sources_unchanged_at_start": meta["sources_unchanged_at_start"],
-        "binding_count": n_bind,
     }
 
 
@@ -1202,26 +1146,14 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         return _STORE["bundle"]
     from uo_init.extract_bundle import extract_host_bundle
     from uo_init.kernel_ir import kernel_ir_from_dict
+    from uo_init.init_profile import default_kernel_max_variants, default_with_kernel
 
     root = Path(project_root).expanduser().resolve()
-    # ``acp run-action`` launches each deterministic action in a fresh
-    # process, so the in-memory bundle from extract_host is not available to
-    # the next action. Downstream only needs the structural bundle — rebuild
-    # with closure off when meta exists (TU cache makes this cheap).
-    from uo_init.init_profile import (
-        default_closure_mode,
-        default_kernel_max_variants,
-        default_with_api,
-        default_with_kernel,
-    )
-
     uo = _uo_root(root, arch=ctx.get("arch_dir"))
     cached_meta = _load(_bundle_cache(uo))
     persisted_kir = _load(uo / "ir" / "kernel_ir.yaml")
     has_persist = isinstance(persisted_kir, dict) and bool(persisted_kir.get("branches"))
     host_pkl = uo / "ir" / "host_ir.pkl"
-    # Prefer a pickled HostIR from extract_host: rebuild would re-pay
-    # var_model (~20s) even when every TU walk is a cache hit.
     if cached_meta and host_pkl.is_file():
         try:
             import pickle
@@ -1236,10 +1168,6 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
                 "spec": discover(root, arch_dir=ctx.get("arch_dir")),
                 "host_ir": hir,
                 "kernel_ir": kir,
-                "binding": None,
-                "metrics": None,
-                "gap": None,
-                "closure_mode": "off",
                 "restored_from": "host_ir.pkl",
             }
             _STORE["bundle"] = bundle
@@ -1247,16 +1175,10 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         except Exception:  # noqa: BLE001
             pass
 
-    mode = ctx.get("closure_mode") or ("off" if cached_meta else default_closure_mode(ctx))
-    # Prefer the persisted uninstantiated kernel IR from extract_host so
-    # export_kb does not drop branches (and does not re-pay a cold walk).
     with_kernel = False if (cached_meta and has_persist) else default_with_kernel(ctx)
-    with_api = False if cached_meta else default_with_api(ctx)
     kernel_max_variants = default_kernel_max_variants(ctx)
     if "with_kernel" in ctx:
         with_kernel = bool(ctx.get("with_kernel"))
-    if "with_api" in ctx:
-        with_api = bool(ctx.get("with_api"))
     if "kernel_max_variants" in ctx:
         try:
             kernel_max_variants = int(ctx.get("kernel_max_variants"))
@@ -1267,9 +1189,7 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         cann_root=_cann_root(ctx),
         ops_root=_ops_root(ctx, root),
         arch_dir=ctx.get("arch_dir"),
-        closure_mode=str(mode),
         with_kernel=with_kernel,
-        with_api=with_api,
         kernel_max_variants=kernel_max_variants,
     )
     if not getattr(bundle.get("kernel_ir"), "branches", None) and has_persist:
@@ -1284,301 +1204,6 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     return bundle
 
 
-def extract_registry(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from uo_init.op_spec import discover
-    from uo_init.registry_capable import build_arch35_competition
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    try:
-        spec = discover(root, arch_dir=ctx.get("arch_dir"))
-        comp = build_arch35_competition(spec.host_root, op_name=spec.op_name)
-        payload_out = {
-            "version": 1,
-            "status": "extracted",
-            "ordered": list(comp.ordered),
-            "pred_count": len(comp.preds),
-        }
-        _dump(_uo_root(root) / "tiling" / "families.yaml", payload_out)
-        return {"ok": True, "engine": "extract_registry", "pred_count": len(comp.preds)}
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "extract_registry", "error": str(exc)[:400]}
-
-
-def extract_kernel(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    import tempfile
-
-    from uo_init.harness import (
-        build_harness_jobs,
-        collect_folded_kernel_branches,
-        find_clang,
-    )
-    from uo_init.op_spec import discover
-    from uo_init.build_context import BuildContext
-
-    from uo_init.init_profile import default_fold_kernel, default_harness_limit
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    # ``fast`` skips the clang -ast-dump fold; uninstantiated kernel_ir already
-    # maps tilingkey → branches.  ``full`` / UO_FOLD_KERNEL=1 turns fold on.
-    fold = default_fold_kernel(ctx)
-    limit = ctx.get("harness_limit")
-    if limit is None:
-        limit = default_harness_limit(ctx)
-    try:
-        spec = discover(root, arch_dir=ctx.get("arch_dir"))
-        if not fold or not spec.tiling_key_header or not spec.kernel_entry:
-            _STORE["kbr"] = []
-            _STORE["kbr_ids"] = []
-            _dump(
-                _uo_root(root) / "kernel" / "fold_receipt.yaml",
-                {"ok": True, "skipped": True, "kernel_branch_count": 0, "kernel_branches": []},
-            )
-            return {"ok": True, "engine": "extract_kernel", "skipped": True, "kernel_branch_count": 0}
-        exe = find_clang(ctx.get("clang_exe"))
-        if exe is None:
-            # libclang has already produced the uninstantiated kernel IR in
-            # extract_host.  A folded harness additionally needs the clang
-            # executable; keep that limitation explicit while emitting a
-            # valid receipt so the static pipeline can continue to TG/replay.
-            meta = _load(_bundle_cache(_uo_root(root)))
-            branch_count = int(meta.get("kernel_branches") or 0)
-            _dump(
-                _uo_root(root) / "kernel" / "fold_receipt.yaml",
-                {
-                    "ok": True,
-                    "skipped": True,
-                    "reason": "clang_driver_missing",
-                    "kernel_branch_count": branch_count,
-                    "kernel_branches": [],
-                },
-            )
-            return {
-                "ok": True,
-                "engine": "extract_kernel",
-                "skipped": True,
-                "reason": "clang_driver_missing",
-                "kernel_branch_count": branch_count,
-            }
-        bctx = BuildContext.load(
-            cann_root=_cann_root(ctx),
-            ops_root=_ops_root(ctx, root),
-            op_dir=str(spec.op_dir),
-            arch_dir=spec.arch_dir,
-        )
-        jobs = build_harness_jobs(
-            spec.tiling_key_header,
-            entry_source=spec.kernel_entry,
-            entry_name=spec.op_snake,
-            limit=int(limit) if limit is not None else None,
-        )
-        wd = Path(ctx["work_dir"]) if ctx.get("work_dir") else Path(tempfile.mkdtemp(prefix="uo_fold_"))
-        minted = collect_folded_kernel_branches(
-            jobs,
-            bctx,
-            entry=spec.op_snake,
-            work_dir=wd,
-            op_root=str(spec.op_dir),
-            clang_exe=exe,
-            workers=int(ctx.get("harness_workers") or 4),
-            logical_file=str(spec.kernel_entry).replace("\\", "/"),
-        )
-        _STORE["kbr"] = minted
-        _STORE["kbr_ids"] = [m.id for m in minted]
-        _dump(
-            _uo_root(root) / "kernel" / "fold_receipt.yaml",
-            {
-                "ok": True,
-                "jobs": len(jobs),
-                "kernel_branch_count": len(minted),
-                "kernel_branch_ids": [m.id for m in minted],
-                "kernel_branches": [m.to_dict() for m in minted],
-            },
-        )
-        return {
-            "ok": True,
-            "engine": "extract_kernel",
-            "jobs": len(jobs),
-            "kernel_branch_count": len(minted),
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "extract_kernel", "error": str(exc)[:400]}
-
-
-def normalize_variables(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Variable layer is produced inside export; this action records a receipt."""
-    meta = _load(_bundle_cache(_uo_root(project_root)))
-    _dump(
-        _uo_root(project_root) / "tiling" / "normalize_variables_receipt.yaml",
-        {"ok": True, "status": "pending_export", "from_host": bool(meta)},
-    )
-    return {"ok": True, "engine": "normalize_variables", "deferred_to": "commit"}
-
-
-def derive_key_fields(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Expand every TilingKey dimension to input roots; write host_derivation.yaml.
-
-    This is the step that used to live only in ``scripts/_probe_derive.py``.
-    Downstream K6 and TG consume the artifact; undecided guards that survive
-    the soft-scheduling pre-sort feed the gap loop.
-    """
-    from uo_init.host_derivation import derive_host_fields, to_key_derivations
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root)
-    try:
-        local_ctx = dict(ctx)
-        local_ctx.setdefault("with_kernel", False)
-        bundle = _ensure_bundle(root, local_ctx)
-        timeout = int(ctx.get("derive_timeout") or 180)
-        helper = int(ctx.get("max_helper_guards") or 4)
-        isolate = ctx.get("derive_isolate", True)
-        if isinstance(isolate, str):
-            isolate = isolate.strip().lower() not in {"0", "false", "no"}
-        workers = ctx.get("derive_workers") or ctx.get("workers")
-        try:
-            workers_n = int(workers) if workers is not None else 0
-        except (TypeError, ValueError):
-            workers_n = 0
-        derive_kwargs: dict[str, Any] = {
-            "timeout": timeout,
-            "max_helper_guards": helper,
-            "isolate": bool(isolate),
-            "only": ctx.get("derive_only"),
-        }
-        if workers_n > 0:
-            derive_kwargs["workers"] = workers_n
-        doc = derive_host_fields(bundle, **derive_kwargs)
-        bundle["host_derivation"] = doc
-        _dump(uo / "ir" / "host_derivation.yaml", doc.to_dict())
-        # TG-facing view is written early so commit can attach it without
-        # re-deriving; still a contract stub until TG consumes it.
-        _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(doc))
-        try:
-            from uo_init.materialize_tiling import write_key_index
-
-            field_dicts = [f.to_dict() for f in doc.fields]
-            write_key_index(uo, field_dicts)
-        except Exception:
-            pass
-        totals = doc.totals()
-        receipt = {
-            "ok": True,
-            "engine": "derive_key_fields",
-            "status": doc.status,
-            "totals": totals,
-            "encode_function": doc.encode_function,
-            "note": doc.note,
-        }
-        _dump(uo / "ir" / "derive_key_fields_receipt.yaml", receipt)
-        return receipt
-    except Exception as exc:  # noqa: BLE001
-        err = {"ok": False, "engine": "derive_key_fields", "error": str(exc)[:400]}
-        _dump(uo / "ir" / "derive_key_fields_receipt.yaml", err)
-        return err
-
-
-def normalize_predicates(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from uo_init.gaps import (
-        build_derivation_gap_report,
-        merge_gap_reports,
-    )
-    from uo_init.host_derivation import HostDerivation, derive_host_fields
-
-    ctx = _ctx(payload)
-    try:
-        # Fast cross-process path: extract_host persists the complete gap
-        # ledger in its receipt, while the Python object graph is process
-        # local.  Rehydrate the facts directly instead of reparsing all clang
-        # translation units for this normalization-only action.
-        uo = _uo_root(project_root)
-        host_receipt = _load(uo / "ir" / "host_extract_receipt.yaml")
-        cached_gap = host_receipt.get("gap") if isinstance(host_receipt, dict) else None
-        if isinstance(cached_gap, dict) and isinstance(cached_gap.get("blockers"), list):
-            blockers = list(cached_gap.get("blockers") or [])
-            unresolved = {
-                "version": 1,
-                "status": "unresolved" if blockers else "closed",
-                "blocker_count": len(blockers),
-                "predicate_blocker_count": len(blockers),
-                "derivation_blocker_count": 0,
-                "blockers": blockers,
-                "closed_vocabulary": {
-                    "classification": [
-                        "scheduling",
-                        "input_derived",
-                        "validation_assumption",
-                        "genuinely_unknown",
-                    ],
-                    "binding_ops": ["eq", "ne", "lt", "le", "gt", "ge", "in"],
-                },
-                "source": "host_extract_receipt",
-            }
-            _dump(uo / "ir" / "unresolved.yaml", unresolved)
-            return {
-                "ok": True,
-                "engine": "normalize_predicates",
-                "blocker_count": len(blockers),
-                "derivation_blocker_count": 0,
-                "source_closure": host_receipt.get("quality", {}).get("source_closure"),
-                "rehydrated": True,
-            }
-        bundle = _ensure_bundle(project_root, ctx)
-        gap = bundle["gap"]
-        # Prefer an in-memory derivation from derive_key_fields; otherwise load
-        # the artifact or run a quick in-process derive so key-field undecided
-        # guards become blockers in the same unresolved.yaml.
-        derivation = bundle.get("host_derivation")
-        uo = _uo_root(project_root)
-        if not isinstance(derivation, HostDerivation):
-            raw = _load(uo / "ir" / "host_derivation.yaml")
-            if raw.get("fields"):
-                # Re-derive cheaply so UndecidedGuard objects exist for clustering.
-                derivation = derive_host_fields(
-                    bundle,
-                    isolate=bool(ctx.get("derive_isolate", False)),
-                    timeout=int(ctx.get("derive_timeout") or 180),
-                )
-                bundle["host_derivation"] = derivation
-                _dump(uo / "ir" / "host_derivation.yaml", derivation.to_dict())
-        reports = [gap]
-        der_count = 0
-        if isinstance(derivation, HostDerivation) and derivation.fields:
-            der_report = build_derivation_gap_report(derivation)
-            der_count = der_report.blocker_count
-            reports.append(der_report)
-        merged = merge_gap_reports(*reports)
-        unresolved = {
-            "version": 1,
-            "status": "unresolved" if merged.blockers else "closed",
-            "blocker_count": merged.blocker_count,
-            "predicate_blocker_count": len(gap.blockers),
-            "derivation_blocker_count": der_count,
-            "blockers": [b.to_dict() for b in merged.blockers],
-            "closed_vocabulary": {
-                "classification": [
-                    "scheduling",
-                    "input_derived",
-                    "validation_assumption",
-                    "genuinely_unknown",
-                ],
-                "binding_ops": ["eq", "ne", "lt", "le", "gt", "ge", "in"],
-            },
-        }
-        _dump(uo / "ir" / "unresolved.yaml", unresolved)
-        return {
-            "ok": True,
-            "engine": "normalize_predicates",
-            "blocker_count": merged.blocker_count,
-            "derivation_blocker_count": der_count,
-            "source_closure": bundle["metrics"].source_closure,
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "engine": "normalize_predicates", "error": str(exc)[:400]}
-
-
 def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Removed from ``/uo-init``. Residual analysis is ``/uo-investigate``."""
     del project_root, payload
@@ -1588,146 +1213,6 @@ def resolve_gaps(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "engine": "resolve_gaps",
         "message_zh": "uo-init 不再做 LLM 缺口补齐；未闭合项请用 /uo-investigate。",
     }
-
-
-def apply_gap_patch(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    from uo_init.gap_patch import (
-        apply_bindings_to_derivation,
-        dump_bindings,
-        load_bindings,
-        load_unresolved,
-        merge_accepted,
-        validate_patches,
-    )
-    from uo_init.host_derivation import HostDerivation, derive_host_fields, to_key_derivations
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root, arch=_payload_arch(ctx))
-    run = _run_dir(uo, ctx)
-    parts = run / "actions" / "resolve_gaps" / "parts"
-    patch_files = list(parts.glob("**/*.yaml")) if parts.is_dir() else []
-    # Also accept a single consolidated proposal for local / subagent handoff.
-    consolidated = uo / "ir" / "gap_patch_proposal.yaml"
-    if consolidated.is_file():
-        patch_files.append(consolidated)
-    if not patch_files:
-        dump_bindings(uo / "ir" / "gap_bindings.yaml", [])
-        _dump(
-            uo / "ir" / "gap_patch_receipt.yaml",
-            {"ok": True, "applied": 0, "skipped": True},
-        )
-        return {"ok": True, "engine": "apply_gap_patch", "applied": 0, "skipped": True}
-
-    patches: list[dict[str, Any]] = []
-    for path in patch_files:
-        data = _load(path)
-        if isinstance(data.get("patches"), list):
-            patches.extend(p for p in data["patches"] if isinstance(p, dict))
-        elif data.get("blocker_id"):
-            patches.append(data)
-
-    blockers = load_unresolved(uo / "ir" / "unresolved.yaml")
-    local_ctx = dict(ctx)
-    local_ctx.setdefault("with_kernel", False)
-    bundle = _ensure_bundle(root, local_ctx)
-    var_model = bundle.get("var_model")
-    ops_root = Path(_ops_root(ctx, root)) if _ops_root(ctx, root) else None
-    verdicts = validate_patches(
-        patches, blockers=blockers, var_model=var_model, ops_root=ops_root
-    )
-    existing = load_bindings(uo / "ir" / "gap_bindings.yaml")
-    # Snapshot derivation metrics before applying.
-    before_doc = bundle.get("host_derivation")
-    if not isinstance(before_doc, HostDerivation):
-        before_doc = derive_host_fields(
-            bundle, isolate=bool(ctx.get("derive_isolate", False))
-        )
-        bundle["host_derivation"] = before_doc
-    before_derived = sum(1 for f in before_doc.fields if f.status == "derived")
-    before_escalating = sum(len(f.escalating) for f in before_doc.fields)
-    before_free = len({v for f in before_doc.fields for v in f.free_vars})
-
-    merged, accepted, rejected = merge_accepted(
-        existing, verdicts, blockers=blockers
-    )
-    # LLM / subagent patches are never sound — force grade llm.
-    for row in merged:
-        if isinstance(row, dict):
-            src = str(row.get("source") or row.get("origin") or "llm")
-            if src in {"llm", "subagent", "producer", ""} or "grade" not in row:
-                row["grade"] = "llm"
-            elif str(row.get("grade") or "") in {"sound", "source_lemma", "solver_derived"}:
-                row["grade"] = "llm"
-    for row in accepted:
-        if isinstance(row, dict):
-            row["grade"] = "llm"
-    # Tentatively apply; roll back accepted rows that fail the loop gate.
-    dump_bindings(uo / "ir" / "gap_bindings.yaml", merged)
-    after_doc = derive_host_fields(
-        bundle, isolate=bool(ctx.get("derive_isolate", False))
-    )
-    metrics = apply_bindings_to_derivation(after_doc, merged)
-    after_derived = sum(1 for f in after_doc.fields if f.status == "derived")
-    after_free = len({v for f in after_doc.fields for v in f.free_vars})
-    # A round has to shrink the questions without growing what is unexplained.
-    # Counting only `derived` and `escalating` let a patch trade one for the
-    # other: strike guards off the record, leave their variables in the
-    # expressions, and both tracked numbers still improve.
-    loop_ok = (
-        after_derived >= before_derived
-        and metrics["escalating_after"] < before_escalating
-        and after_free <= before_free
-    )
-    if accepted and not loop_ok:
-        # Roll back: keep only previously existing bindings.
-        dump_bindings(uo / "ir" / "gap_bindings.yaml", existing)
-        for row in accepted:
-            row["status"] = "rejected"
-            row["issues"] = [
-                {
-                    "code": "loop_regression",
-                    "message": (
-                        f"derived {before_derived}->{after_derived}, "
-                        f"escalating {before_escalating}->{metrics['escalating_after']}, "
-                        f"free_vars {before_free}->{after_free}"
-                    ),
-                }
-            ]
-            rejected.append(row)
-        accepted = []
-        after_doc = before_doc
-        metrics = {
-            "escalating_before": before_escalating,
-            "escalating_after": before_escalating,
-            "resolved": 0,
-            "softened": 0,
-            "reverted": 0,
-        }
-    else:
-        bundle["host_derivation"] = after_doc
-        _dump(uo / "ir" / "host_derivation.yaml", after_doc.to_dict())
-        _dump(uo / "tiling" / "key_derivations.yaml", to_key_derivations(after_doc))
-
-    receipt = {
-        "ok": True,
-        "engine": "apply_gap_patch",
-        "applied": len(accepted),
-        "rejected": len(rejected),
-        "skipped": False,
-        "loop": {
-            "derived_before": before_derived,
-            "derived_after": after_derived,
-            "free_vars_before": before_free,
-            "free_vars_after": after_free,
-            **metrics,
-            "ok": loop_ok if accepted else True,
-        },
-        "accepted": accepted,
-        "rejected": rejected,
-    }
-    _dump(uo / "ir" / "gap_patch_receipt.yaml", receipt)
-    return receipt
 
 
 def export_tg_host_view(
@@ -1743,7 +1228,6 @@ def export_tg_host_view(
         export_tg_host_view as _export_view,
         rebuild_codemap_index,
     )
-    from uo_init.host_derivation import HostDerivation
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
@@ -1847,13 +1331,8 @@ def export_tg_host_view(
                 "error": "bundle has no host_ir; re-run extract_host",
             }
         derive_fields: list[dict[str, Any]] | None = None
-        derivation = bundle.get("host_derivation")
-        if isinstance(derivation, HostDerivation):
-            derive_fields = [f.to_dict() for f in derivation.fields]
-        elif isinstance(derivation, dict):
-            derive_fields = list(derivation.get("fields") or [])
-        else:
-            kd = _load(uo / "tiling" / "key_derivations.yaml")
+        kd = _load(uo / "tiling" / "key_derivations.yaml")
+        if isinstance(kd, dict):
             derive_fields = list(kd.get("fields") or []) or None
 
         declared: dict[str, Any] | None = None
@@ -2017,56 +1496,6 @@ def export_integrity(project_root: Path, payload: dict[str, Any] | None = None) 
     return {"ok": not errors, "engine": "export_integrity", **doc}
 
 
-def kb_review(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Referee trigger: auto-skip when quality gate already green."""
-    from uo_init.store.reader import find_uo_product, load_view_blob
-
-    ctx = _ctx(payload)
-    root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root, arch=_payload_arch(ctx))
-    q = _load(uo / "checks" / "quality.yaml") or _load(uo / "quality.yaml")
-    ur = _load(uo / "ir" / "unresolved.yaml")
-    host_meta = _load(uo / "ir" / "host_extract_receipt.yaml")
-    product = find_uo_product(root, architecture=str(_payload_arch(ctx) or ""))
-    if product is not None and product.suffix == ".uo":
-        if not q:
-            blob = load_view_blob(product, "quality.yaml")
-            if isinstance(blob, dict):
-                q = blob
-        if not ur:
-            blob = load_view_blob(product, "ir/unresolved.yaml")
-            if isinstance(blob, dict):
-                ur = blob
-    from uo_init.init_profile import review_skips_closure_gate
-
-    closure = float(q.get("source_closure") or 0.0)
-    blockers = int(ur.get("blocker_count") or len(ur.get("blockers") or []))
-    closure_mode = str(host_meta.get("closure_mode") or "")
-    # keypath/off never measured full source_closure — do not demand ≥0.95.
-    if review_skips_closure_gate(closure_mode):
-        auto_ok = blockers < 20
-    else:
-        auto_ok = closure >= 0.95 and blockers < 20
-    review = {
-        "version": 1,
-        "status": "skipped" if auto_ok else "needs_review",
-        "verdict": "pass" if auto_ok else "open",
-        "source_closure": closure,
-        "blocker_count": blockers,
-        "closure_mode": closure_mode or "unknown",
-        "init_profile": host_meta.get("init_profile") or "",
-        "auto": auto_ok,
-    }
-    _dump(uo / "review" / "kb_product_review.yaml", review)
-    return {
-        "ok": True,
-        "engine": "kb_review",
-        "skipped": auto_ok,
-        "need_subagent": not auto_ok,
-        **review,
-    }
-
-
 def _codemap_engine(name: str):
     """Lazy import to avoid circular import with codemap_engines."""
     from uo_init import codemap_engines as ce
@@ -2103,16 +1532,10 @@ ENGINES: dict[str, Any] = {
     "scope_scan": scope_scan,
     "scope_validate": scope_validate,
     "extract_host": extract_host,
-    "extract_registry": extract_registry,
-    "extract_kernel": extract_kernel,
-    "normalize_variables": normalize_variables,
-    "derive_key_fields": derive_key_fields,
-    "normalize_predicates": normalize_predicates,
     "compile": lambda project_root, payload=None: _codemap_engine("analyze")(
         project_root, payload
     ),
     "export_tg_host_view": export_tg_host_view,
     "export_adapter_pack": export_adapter_pack,
-    "kb_review": kb_review,
 }
 

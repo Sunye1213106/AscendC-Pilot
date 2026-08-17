@@ -56,3 +56,29 @@ ops:
     confidence: confirmed
     args:
       "0": write_buffer
+  DataCopyScatter:
+    category: memory_transfer
+    engine: MTE
+    confidence: confirmed
+    args:
+      "0": write_buffer
+      "1": read_buffer
+  PopStackBuffer:
+    category: buffer_acquire
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: stack
+    # CANN leftover UB after TQue (kernel_pop_stack_buffer.h). No InitBuffer.
+    args:
+      "0": write_buffer
+  InitShareBufStart:
+    category: buffer_init
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: share
+    # CANN free function (kernel_tpipe.h). Shared UB between cores; not InitBuffer.
+  InitShareBufEnd:
+    category: buffer_init
+    engine: UNKNOWN
+    confidence: confirmed
+    mechanism: share

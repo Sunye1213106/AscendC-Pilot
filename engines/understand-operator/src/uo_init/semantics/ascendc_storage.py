@@ -33,31 +33,6 @@ ASCENDC_BUFFER_TYPES: frozenset[str] = frozenset(
     }
 )
 
-# Framework wrappers with a known CANN-backed storage contract (outside project
-# source scope). Not AscendC buffer kinds — they WRAPS → LocalTensor.
-ASCENDC_STORAGE_WRAPPER_TYPES: frozenset[str] = frozenset(
-    {
-        "MutexBuffer",
-        # Position-templated framework Buffer<> (ambiguous bare Buffer is handled
-        # only when written as Buffer<...>).
-        "Buffer",
-    }
-)
-
-# External framework methods on MutexBuffer whose bodies are not in project
-# source. Bridge to AscendC roots only when the receiver is a storage wrapper.
-MUTEX_BUFFER_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
-    # method → (AscendC root spelling, root_kind)
-    "LockProd": ("Lock", "SYNC"),
-    "UnlockProd": ("Unlock", "SYNC"),
-    "LockCons": ("Lock", "SYNC"),
-    "UnlockCons": ("Unlock", "SYNC"),
-    "Get": ("LocalTensor", "STORAGE"),
-    "GetTensor": ("LocalTensor", "STORAGE"),
-    "GetPre": ("LocalTensor", "STORAGE"),
-    "GetReused": ("LocalTensor", "STORAGE"),
-}
-
 # TQue / TQueBind methods whose bodies live in CANN (kernel_tquebind_impl.h).
 # EnQue internally SetFlag, DeQue internally WaitFlag — keep the TQue root;
 # do not unfold to user-level flag pairing. InitBuffer is TPipe, not TQue.
@@ -72,11 +47,20 @@ TQUE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
 TPIPE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
     "InitBuffer": ("InitBuffer", "MEMORY_API"),
     "FetchEventID": ("FetchEventID", "SYNC"),
+    "AllocEventID": ("AllocEventID", "SYNC"),
+    "ReleaseEventID": ("ReleaseEventID", "SYNC"),
+    "AllocCrossSyncId": ("AllocCrossSyncId", "SYNC"),
 }
 
+# Free-function leftover-UB pop (kernel_tpipe.h / kernel_pop_stack_buffer.h).
+# Does not go through TPipe::InitBuffer; dest LocalTensor/TBuf is still allocated.
+STACK_BUFFER_CALLEES: frozenset[str] = frozenset({"PopStackBuffer"})
+
+# Shared-UB setup between cores (kernel_tpipe.h friends). Not InitBuffer / TQue.
+SHARE_BUFFER_CALLEES: frozenset[str] = frozenset({"InitShareBufStart", "InitShareBufEnd"})
+
 # GlobalTensor / LocalTensor methods (kernel_tensor.h). Unique CANN spellings.
-# Get is *not* here: MutexBuffer::Get is a wrapper bridge; bare Get is often a
-# project Selector/Policy and must not be guessed.
+# Get is *not* here: bare Get is often a project Selector/Policy.
 TENSOR_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
     "SetGlobalBuffer": ("SetGlobalBuffer", "MEMORY_API"),
     "GetPhyAddr": ("GetPhyAddr", "MEMORY_API"),
@@ -86,7 +70,9 @@ TENSOR_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
     "ReinterpretCast": ("ReinterpretCast", "MEMORY_API"),
 }
 
-ASCENDC_NON_STORAGE_TYPES: frozenset[str] = frozenset({"TPipe"})
+# Token names only — is_non_storage_type matches these as whole identifiers.
+# Do not put "Mutex" here: it is a substring of project MutexBuffer.
+ASCENDC_NON_STORAGE_TYPES: frozenset[str] = frozenset({"TPipe", "GroupBarrier", "TQueSync"})
 
 BUFFER_MEMORY_SPACES: frozenset[str] = frozenset(
     {"GM", "UB", "L1", "L0A", "L0B", "L0C", "QUEUE", "WORKSPACE", "C2"}
@@ -107,6 +93,11 @@ TPOSITION_TO_SPACE: dict[str, str] = {
     "CO2": "L0C",
     "C2": "C2",
     "LCM": "UB",
+    "TSCM": "L1",
+    "SPM": "UB",
+    "SHM": "UB",
+    "C2PIPE2GM": "GM",
+    "C2PIPE2LOCAL": "UB",
 }
 
 # Common BufferType enums used with AscendC TPosition.
@@ -177,24 +168,18 @@ def register_class_from_type(type_text: str) -> str | None:
 
 def is_buffer_type(type_text: str) -> bool:
     text = str(type_text or "")
-    if any(t in text for t in ASCENDC_BUFFER_TYPES):
-        return True
-    return is_storage_wrapper_type(text)
+    return any(t in text for t in ASCENDC_BUFFER_TYPES)
 
 
 def is_storage_wrapper_type(type_text: str) -> bool:
-    """True for framework types that wrap a CANN LocalTensor/GlobalTensor."""
-    text = str(type_text or "")
-    if re.search(r"\bMutexBuffer\b", text):
-        return True
-    if re.search(r"\bBuffer\s*<", text):
-        return True
+    """Project wrappers are proven from source WRAPS, never by class spelling."""
+    del type_text
     return False
 
 
 def is_non_storage_type(type_text: str) -> bool:
     text = str(type_text or "")
-    return any(t in text for t in ASCENDC_NON_STORAGE_TYPES)
+    return any(re.search(rf"(?:^|::)\b{re.escape(name)}\b", text) is not None for name in ASCENDC_NON_STORAGE_TYPES)
 
 
 def is_storage_type_text(type_text: str) -> bool:
@@ -255,8 +240,8 @@ def resolve_buffer_decl(type_text: str) -> dict[str, Any] | None:
         return None
     if is_non_storage_type(text):
         return None
-    wrapper = is_storage_wrapper_type(text)
-    if not (wrapper or any(t in text for t in ASCENDC_BUFFER_TYPES)):
+    wrapper = False
+    if not any(t in text for t in ASCENDC_BUFFER_TYPES):
         return None
     space = memory_space_from_type_text(text) or "UNKNOWN"
     root = "LocalTensor" if wrapper else (

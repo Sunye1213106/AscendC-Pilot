@@ -1,8 +1,8 @@
 # UO Product Map（progressive）
 
-短地图：认清权威 → 选 mode → 查完就答。主控先对人说出路由：短问自查，深问必须派 uo-query 子代理（禁止把深问改成主控连查），禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
+短地图：认清权威 → 调用 `acp uo-query` → 查询完成后立即作答。主控先说明将直接调用还是委派。禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
 
-同一场景可沿图跳（同一结案条件）：`locate`/`tiling_key` → `field` → `kernel_branch` → `impact`。是否并行拆 Task 见 `routing/uo-query.md`（编译器 `host_step.tasks` 优先；启发式看独立证据空间）。
+同一查询目标可沿图继续调用（跟卡片 `next`）。是否并行委派见 `routing/uo-query.md`。
 
 ## 权威分层
 
@@ -22,28 +22,22 @@
 4. **kernel-consumed** — Kernel 是否消费
 5. **full reachability** — 端到端可达（常需 TG）
 
-主问只需 1–3 时不要拖到 5。不同层级分开说，不能用 Host 不产生去否定「模板可接纳」。
+主问只需 1–3 时不要扩展到第 5 层。不同层级分开说，不能用 Host 不产生去否定「模板可接纳」。
 
-## 日常任务 → mode
+## 日常任务 → 调用形态
 
 按手头任务选最短查询。配对、时序、仿真、sanitizer **不在 UO**。
 
-| 任务 | 先查 | 再补 | UO 不回答 |
+| 任务 | 先调用 | 再补 | UO 不回答 |
 | --- | --- | --- | --- |
-| 检视 / 看风险 | `impact` 或 `locate` | `buffer` / `kernel_api`；校验点看 `locate` | 长报告、条例级 API |
-| 检视 PR | 先有 diff，再 `impact` | finding 必须落在 diff 内 | 拉 PR / 写 PR |
-| Tiling 失败 / Kernel 找不到 / 某维有没有编 | **`template_match` → `legal_key`** | `kernel_branch`；Host 写出用 `tiling_data` | 运行时日志解读。禁止 grep SEL 头文件 |
-| 声明 dtype | `search` INPUT/OUTPUT | 已有声明即可；不要默认全量抽取 | 默认改成 full profile |
-| 卡死 / hang / SetScheduleMode | `locate`（Host TilingContext） | 核内 `kernel_api` SyncAll / `buffer`；`impact` | happens-before、测量 |
-| 越界 / 核内同步 API | `kernel_api` + `buffer` | `impact` 分到 sync/memory | happens-before、测量 |
-| 精度（Cast / 搬运 / 多 dtype） | `kernel_api` + `field` | `buffer` 方向 | golden / atol |
-| 性能（结构事实）/ 分核 / 占核 | `field`（问句标识符；空则 `local_aliases`）+ `tiling_key` | `buffer` | profiling 数字 |
-| Pre / Main / Post / 三相 | `kernel_launch`（pipeIn/pipeBase/pipePost + KERNEL / `*_entry*.h`） | `kernel_api` Destroy / SyncAll | 把内层 `Process()` / `*_apt.cpp` 当三相 |
-| UT / 白盒线索 | `legal_key` + `kernel_branch` + `gaps` | 字段写读作覆盖线索 | 生成完整 ST 矩阵 |
-| 精度/性能场景推断 | `kernel_api` / `buffer` / `field` / `impact` | `uo-scenario-hooks.md`；id 以 CE catalog 为准 | golden、profiler |
-| Issue 定位 / 改码影响 | 无 diff：`locate` / `field`；有 diff：`impact` | — | Git / PR |
+| 名字 / 定义 / 字段写读 | 标识符（卡片含边与写读） | `--file --line` | 长报告 |
+| 模板能否编过 / kernel 是否注册 | `Dim=V` | 维名见无参数索引 | 运行时日志解读 |
+| 卡死 / Host schedule | 标识符（Host 调用点在卡片上） | 无参数索引看 launch 阶段 | happens-before、测量 |
+| 多阶段 launch | 无参数索引 | 跟 PIPE 名再查 | 把内层函数名当阶段 |
+| 从已知位点扩邻居 | `--file --line` | 卡片 `next` | Git / PR |
+| UT / 白盒线索 | `Dim=V` + 字段名 | 无参数索引的 gaps 计数 | 生成完整 ST 矩阵 |
 
-`source_span` 或查询返回的带行号 `snippet` **视为已 Read**，不要 Grep/再 Read 同一段。`template_match.dim_coverage` / `legal_key.total_matched` 是全集，不要用第一块 SEL snippet 否定其它组。缺语义用 `PARTIAL` / `UNKNOWN`，不要编事实。空结果按 `hint` 用更短名字再查一次，禁止仓级 findstr。看到 `functions` 目录时按问题选函数名再查；`field` 只问字段名，packing 表达式走 `tiling_key`。局部变量名常常不是 TILING_FIELD 名，空了看 `local_aliases`。
+`source_span` 或查询返回的带行号 `snippet` **视为已 Read**。覆盖类 `dim_coverage` / `total_matched` 是全集。缺语义用 `PARTIAL` / `UNKNOWN`。空结果按 `hint` 用更短名字再查一次，禁止仓级 findstr。
 
 ## 按需域文档
 

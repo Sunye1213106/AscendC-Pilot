@@ -20,7 +20,7 @@ from typing import Any, Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
-from uo_init.source_layout import selected_kernel_files
+from uo_init.source_layout import iter_cpp, selected_host_files, selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CONSTEXPR_RE = re.compile(
@@ -34,6 +34,9 @@ _MEMBER_RE = re.compile(
     r"^\s*([A-Za-z_][\w:\s<>,*&]*?)\s+([A-Za-z_]\w*)(?:\[[^\]]+\])?\s*(?:=[^;]+)?;\s*$"
 )
 _TILING_READ_RE = re.compile(r"\btilingData\s*->\s*([A-Za-z_]\w*)(?:\s*\.\s*([A-Za-z_]\w*))?")
+_FIELD_TILING_ASSIGN_RE = re.compile(
+    r"\b(?:[A-Za-z_]\w*\s*(?:\.|->)\s*)*([A-Za-z_]\w*)\s*=\s*[^=\n]{0,240}?\btilingData\b"
+)
 _CALL_RE = re.compile(
     r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
     r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
@@ -91,11 +94,21 @@ def resolve_source_gaps(
         raise FileNotFoundError(root)
 
     sources = _load_kernel_sources(root, architecture)
+    host_sources = _load_text_sources(
+        root, selected_host_files(root, architecture), parse_functions=False
+    )
     stats: dict[str, Any] = {}
     stats.update(_extract_calls_macros_and_frontiers(codemap, sources))
     stats.update(_resolve_tiling_reads(codemap, sources))
-    stats.update(_extract_compile_facts(codemap, sources, architecture))
+    stats.update(_extract_compile_facts(codemap, sources + host_sources, architecture))
     stats.update(_extract_runtime_structs_and_resources(codemap, sources, architecture))
+    arch_dir = root / "op_kernel" / str(architecture or "")
+    assign_sources = sources
+    if arch_dir.is_dir():
+        assign_sources = sources + _load_text_sources(
+            root, list(iter_cpp(arch_dir)), parse_functions=False
+        )
+    stats.update(_extract_field_tiling_assigns(codemap, assign_sources))
     stats.update(_resolve_gap_records(codemap, stats))
     codemap.meta["source_resolution"] = "ascendc-source-resolution/v2"
     codemap.meta["source_resolution_stats"] = stats
@@ -140,8 +153,21 @@ def _line_at(newlines: list[int], offset: int) -> int:
 
 
 def _load_kernel_sources(root: Path, architecture: str) -> list[_KernelSource]:
+    return _load_text_sources(
+        root, _kernel_files(root, architecture), parse_functions=True
+    )
+
+
+def _load_text_sources(
+    root: Path, paths: Iterable[Path], *, parse_functions: bool
+) -> list[_KernelSource]:
     out: list[_KernelSource] = []
-    for path in _kernel_files(root, architecture):
+    seen: set[Path] = set()
+    for path in paths:
+        key = path.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
         text = _read(path)
         file = _rel(root, path)
         newlines = _line_index(text)
@@ -151,7 +177,9 @@ def _load_kernel_sources(root: Path, architecture: str) -> list[_KernelSource]:
                 text=text,
                 file=file,
                 newlines=newlines,
-                functions=_function_scopes(text, file, newlines=newlines),
+                functions=_function_scopes(text, file, newlines=newlines)
+                if parse_functions
+                else [],
             )
         )
     return out
@@ -540,6 +568,7 @@ def _extract_compile_facts(
 ) -> dict[str, int]:
     macros = 0
     compile_vars = 0
+    type_aliases = 0
     archs = codemap.by_name(architecture, kind=EntityKind.ARCH)
     arch_ent = archs[0] if archs else None
     for src in sources:
@@ -602,7 +631,69 @@ def _extract_compile_facts(
                     status="confirmed",
                 )
                 compile_vars += 1
-    return {"source_macros": macros, "source_compile_vars": compile_vars}
+        for m in _TYPE_ALIAS_RE.finditer(text):
+            alias, target = m.groups()
+            codemap.upsert(
+                EntityKind.TYPE,
+                alias,
+                eid=f"SRCTYPEALIAS::{file}::{alias}",
+                attrs={
+                    "role": "type_alias",
+                    "alias_of": target,
+                    "provenance": "source_type_alias",
+                    "architecture": architecture,
+                },
+                file=file,
+                line=_line_at(newlines, m.start()),
+                status="confirmed",
+            )
+            type_aliases += 1
+    return {
+        "source_macros": macros,
+        "source_compile_vars": compile_vars,
+        "source_type_aliases": type_aliases,
+    }
+
+
+def _extract_field_tiling_assigns(
+    codemap: CodeMap, sources: list[_KernelSource]
+) -> dict[str, int]:
+    """Record ``lhs = … tilingData …`` as definition sites on known FIELD names."""
+    fields: dict[str, list[Entity]] = {}
+    for field in codemap.by_kind(EntityKind.FIELD):
+        leaf = str(field.name or "").rsplit(".", 1)[-1]
+        if leaf:
+            fields.setdefault(leaf, []).append(field)
+    if not fields:
+        return {"field_tiling_assign_sites": 0}
+    assigned = 0
+    for src in sources:
+        for match in _FIELD_TILING_ASSIGN_RE.finditer(src.text):
+            name = match.group(1)
+            candidates = fields.get(name) or []
+            if not candidates:
+                continue
+            line = _line_at(src.newlines, match.start())
+            site = {
+                "file": src.file,
+                "line": line,
+                "line_start": line,
+                "kind": "tiling_assign",
+                "provenance": "source_field_tiling_assign",
+            }
+            for field in candidates:
+                sites = list(field.attrs.get("definition_sites") or [])
+                if any(
+                    isinstance(item, dict)
+                    and str(item.get("file") or "") == src.file
+                    and int(item.get("line") or item.get("line_start") or 0) == line
+                    for item in sites
+                ):
+                    continue
+                sites.append(site)
+                field.attrs["definition_sites"] = sites
+                assigned += 1
+    return {"field_tiling_assign_sites": assigned}
 
 
 def _extract_runtime_structs_and_resources(

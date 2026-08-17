@@ -601,7 +601,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
                 payload["primary_directive_zh"] = (
                     "本阶段工作流已完成。"
                     + str(goal_adv.get("message_zh") or "")
-                    + " 对人只说意图/刚完成/下一步；禁止粘贴内部字段名。"
+                    + " 向用户仅说明意图/刚完成/下一步；禁止粘贴内部字段名。"
                     + f" 下一步：acp start {goal_adv['next_workflow_id']} "
                     f"--project <算子目录>（若需 architecture 则带上）。"
                 )

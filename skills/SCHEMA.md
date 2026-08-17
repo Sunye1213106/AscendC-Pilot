@@ -32,7 +32,7 @@ Cognitive skills 是 **method bundle**，不是 Host 发现的 slash：
 - Action prepare 把该 Action 的 **METHOD.md** 物化进 lease bundle；`Agent.skill_ids` 只是 refs 授权上限，不拼接 SKILL 正文
 - 纯确认（`primary_interactive`）不装载认知 Skill
 
-不要把通用 `/implement`、`/tdd`、第二份 `code-review` 写进 `skill_ids`。工程主流程已经嵌进现有 CE：grilling → `/ce-intent`，改码 → `/ce-apply`，双轴审查 → `standalone-review`，交接 → `/ce-handoff`。
+不要把通用 `/implement`、`/tdd`、第二份 `code-review` 写进 `skill_ids`。工程主流程已经嵌进现有 CE：grilling → `/ce-intent`（冻结 `ce/intent/plan.md`），改码 → `/ce-apply`（对齐 plan / `ce/apply/todo.md`），双轴审查 → 并行 spec/standards 子代理（结论默认在会话中陈述，用户要落盘才写报告），交接 → `/ce-handoff`。`/ce-impact` 写出 `tg_plan_intent.yaml` 给 `/tg-plan` 消费。
 
 ## Writing
 

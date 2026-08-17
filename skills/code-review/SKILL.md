@@ -3,7 +3,7 @@ name: code-review
 description: >
   基于 CodeMap、源码和变更信息做 AscendC 代码审查。三种入口：快速看风险、文件检视、PR 检视。
   用户要审查算子代码改动、找潜在 bug 时使用。假设检验驱动；证据先 CodeMap 再最小源码窗。
-  Spec 轴对照需求，Standards 轴对照仓规范，两轴分开写不合成 LGTM。
+  Spec 轴对照 `ce/intent/plan.md`（无则从 diff 推断意图），Standards 轴对照仓规范；review 阶段并行两个子代理隔离上下文。结论默认在会话中陈述，用户要落盘才写报告。
   边界：不签发 CE 证书；检视 Cast/DataCopy/切分改动时认出精度或性能场景线索，仍不关闭验证义务。
 ---
 
@@ -13,8 +13,8 @@ description: >
 
 | 入口 | 何时 | 产物 |
 | --- | --- | --- |
-| **快速** | 「有没有问题 / 快速看风险」 | 短 finding；不写长报告 |
-| **文件** | 指定文件或全量检视当前算子 | `ce/review/*.yaml` 完整 finding |
+| **快速** | 「有没有问题 / 快速看风险」 | 会话中给出简短 finding；默认不写报告 |
+| **文件** | 指定文件或全量检视当前算子 | 会话中给出 `path:line`；用户要落盘才写 `ce/review/*.yaml` |
 | **PR** | 有 diff / change capture | 先有 diff 再检；finding 必须落在变更范围内 |
 
 侧别：`op_kernel/` → Kernel；`op_host/` → Tiling。两侧都动则分侧陈述。
@@ -42,20 +42,21 @@ description: >
 ## `/ce-review` 阶段
 
 ```text
-scope → review → summary
+scope → review（Spec 子代理 ∥ Standards 子代理）→ persist（用户：只看结论 / 落盘报告）
 ```
 
 - `scope`：判定 quick / file / pr；Kernel vs Tiling；PR 无 diff 则停并标 UNRESOLVED。
-- `review`：假设检验，两轴分开写：Spec → `functional_report.yaml`，Standards → `bug_report.yaml`。禁止合成一个 LGTM。
-- `summary`：更新 `index.yaml`。快速入口只写短摘要。
+- `review`：Host 同一轮并行两个 `ce-reviewer` Task，隔离上下文。结论写在 Task 回复。禁止合成一个 LGTM，禁止一个子代理写两轴。
+- `summary`：AskQuestion「只看结论」或「落盘审查报告」。默认不填 `ce/review/*.yaml`。
 
-无 intent 时 Spec 轴标明「无需求」，只做 Standards。PR 必须有 diff。
+无 `plan.md` 时 Spec 轴从 **diff** 推断意图，再检查 diff 是否满足该预期。PR 必须有 diff。
 
 需要范围与证书时走 `/ce-intent`（无 diff 定位）或 `/ce-impact` → `/ce-verify`（有 diff）。本 skill 做只读审查，不签发 CE 证书。`verify-review` 按义务关 V，不是这套双轴。
 
 ## Capability routing
 
-- `/ce-review` 只读检视：`capabilities/standalone-review/METHOD.md`
+- `/ce-review` 只读检视：`capabilities/standalone-review/METHOD.md`（scope）
+- review 阶段并行轴：`capabilities/spec-review/METHOD.md`、`capabilities/standards-review/METHOD.md`
 - `ce-verify/code_review` 义务判定：`capabilities/verify-review/METHOD.md`（不是同一套入口 SOP）
 
 ## 按需参考

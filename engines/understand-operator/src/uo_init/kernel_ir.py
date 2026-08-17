@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 IDENT_RE = re.compile(r"\b[A-Za-z_]\w*\b")
 CALL_RE = re.compile(r"\b([A-Za-z_]\w*)\s*[(<]")
@@ -61,6 +62,10 @@ class KernelIR:
     branches: list[KernelBranch] = field(default_factory=list)
     variants: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: name → {file, line, calls, params} from the already-walked kernel TU.
+    functions: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: (owner, member) → {type_text, file, line} from kernel Clang walks.
+    field_decls: dict[tuple[str, str], dict[str, Any]] = field(default_factory=dict)
 
     def mint_ids(self, op_root: str = "") -> None:
         """Assign `KBR_*` ids using the same material as the folded branches.
@@ -407,6 +412,40 @@ def build_kernel_ir(
                 found[key] = branch
             if label not in branch.variants:
                 branch.variants.append(label)
+        for name, fr in (getattr(res, "functions", None) or {}).items():
+            rec = ir.functions.setdefault(
+                str(name),
+                {
+                    "file": str(getattr(fr, "file", "") or ""),
+                    "line": int(getattr(fr, "line", 0) or 0),
+                    "calls": [],
+                    "params": list(getattr(fr, "params", None) or []),
+                },
+            )
+            if getattr(fr, "file", "") and not rec.get("file"):
+                rec["file"] = str(fr.file)
+                rec["line"] = int(getattr(fr, "line", 0) or 0)
+            if getattr(fr, "params", None) and not rec.get("params"):
+                rec["params"] = list(fr.params)
+            calls = rec.setdefault("calls", [])
+            for callee, _args in getattr(fr, "calls", ()) or ():
+                callee_s = str(callee)
+                if callee_s and callee_s not in calls:
+                    calls.append(callee_s)
+        for key, decl in (getattr(res, "field_decls", None) or {}).items():
+            host = str(getattr(decl, "host", "") or key[0] if isinstance(key, tuple) else "")
+            member = str(getattr(decl, "name", "") or (key[1] if isinstance(key, tuple) else ""))
+            if not host or not member:
+                continue
+            ir.field_decls.setdefault(
+                (host, member),
+                {
+                    "type_text": str(getattr(decl, "type_text", "") or ""),
+                    "file": str(getattr(decl, "file", "") or ""),
+                    "line": int(getattr(decl, "line", 0) or 0),
+                    "canonical_type": str(getattr(decl, "canonical_type", "") or ""),
+                },
+            )
 
     ir.branches = sorted(found.values(), key=lambda b: (b.file, b.line))
     named = sum(1 for b in ir.branches if b.dimensions or b.derived)

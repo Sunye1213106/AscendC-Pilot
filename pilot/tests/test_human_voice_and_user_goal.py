@@ -73,11 +73,19 @@ def test_progress_template_structure() -> None:
     assert "【下一步】" in text
 
 
-def test_tg_init_audit_method_materialized() -> None:
+def test_tg_init_audit_is_deterministic_and_method_documents_checklist() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "init_audit")
+    assert action["execution_mode"] == "deterministic"
+    assert action["agent_id"] == "deterministic-tg-engine"
+    assert not action.get("task_prompt_id")
+    assert not action.get("action_method_id")
+    assert not action.get("referee_required")
     method, prompt = _load_method_and_prompt(
         ROOT,
         {
-            "task_prompt_id": "tg/init-audit",
+            "task_prompt_id": None,
             "action_method_id": "testcase-generation/tg-init-audit",
             "id": "init_audit",
         },
@@ -86,8 +94,7 @@ def test_tg_init_audit_method_materialized() -> None:
     assert "status: pass" in method or "status` 只能是 `pass" in method or "pass` 或 `fail" in method
     assert "conditional_pass" in method  # banned instruction present
     assert "reads" in method and "不是 blocker" in method
-    assert prompt.strip()
-    assert "pass | fail" in prompt or "pass` 或 `fail" in prompt or "status: pass" in prompt
+    assert prompt == ""
 
 
 def test_init_audit_method_file_exists() -> None:

@@ -17,6 +17,7 @@ from uo_init.expr_ir import Bin, Call, Const, Expr, Ite, Ref, Select, Un, Unknow
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.ir.tiling_binding import KEY_CHAIN_PACKING, KEY_CHAIN_PRODUCER
 from uo_init.passes.source_contract import iter_bitpack_dims, iter_packing_helper_calls
 from uo_init.passes.host_defuse import _compile_symbols, _is_compile_reference
 from uo_init.passes.symbol_identity import normalize_symbol, short_symbol
@@ -177,6 +178,7 @@ def bind_host_tiling_key_expressions(
                             "file": file,
                             "line": line,
                             "function": function,
+                            "key_chain_role": KEY_CHAIN_PACKING,
                         },
                         status="confirmed",
                     )
@@ -355,6 +357,7 @@ def _bind_non_tpl_packing(
                 "file": file,
                 "line": line,
                 "function": function,
+                "key_chain_role": KEY_CHAIN_PACKING,
             },
             status="confirmed",
         )
@@ -645,6 +648,7 @@ def _link_expression_sources(
                 "file": file,
                 "line": line,
                 "function": function,
+                "key_chain_role": KEY_CHAIN_PRODUCER,
             },
             status="confirmed",
         )
@@ -718,6 +722,7 @@ def _link_expression_sources(
                 "file": file,
                 "line": line,
                 "function": function,
+                "key_chain_role": KEY_CHAIN_PRODUCER,
             },
             status="confirmed",
         )

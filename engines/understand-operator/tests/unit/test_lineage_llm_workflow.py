@@ -7,7 +7,6 @@ from uo_init.lineage import (
     tnd_unroll,
     tpl_vs_host_diff,
 )
-from uo_init.llm_harness import Ledger, LlmOutput
 from uo_init.operator_report import run_operator_report
 
 
@@ -59,47 +58,6 @@ def test_coverage_baseline_row(fag_dir):
     # same_as_input=1 => tnd_softmax_in=TND => Normal false
     pred = c.preds[c.ordered[1]["class"]]
     assert pred.eval_arch35({"npu_arch": "DAV_3510", "tnd_softmax_in": "TND"}) is False
-
-
-def test_llm_output_requires_provenance():
-    import pytest
-
-    with pytest.raises(ValueError):
-        LlmOutput(
-            mode="review", task_id="t", evidence="", confidence=0.5, payload={}
-        ).validate()
-
-
-def test_ledger_strip_recomputes():
-    led = Ledger()
-    led.deterministic_facts["a"] = 1
-    led.add_llm(
-        LlmOutput(
-            mode="aside",
-            task_id="t1",
-            evidence="f.cpp:1",
-            confidence=0.9,
-            payload="note",
-        )
-    )
-    stripped = led.strip_llm()
-    assert stripped.entries == []
-    assert stripped.deterministic_facts["a"] == 1
-
-
-def test_deterministic_overrides_llm():
-    led = Ledger()
-    led.add_llm(
-        LlmOutput(
-            mode="arbitrate",
-            task_id="t",
-            evidence="f:2",
-            confidence=0.5,
-            payload="llm_val",
-        )
-    )
-    led.apply_override("k", "det_val")
-    assert led.deterministic_facts["k"] == "det_val"
 
 
 def test_e2e_report_nonempty(fag_dir):

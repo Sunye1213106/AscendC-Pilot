@@ -448,8 +448,8 @@ def test_enrich_retries_unknown_cann_type(tmp_path: Path):
     assert find_type_header(ctx, "SoftMaxTiling", side="kernel") is not None
 
 
-def test_type_header_prefers_operator_kernel_over_cann(tmp_path: Path):
-    from uo_init.include_heal import find_type_header
+def test_type_header_ambiguous_does_not_score_pick(tmp_path: Path):
+    from uo_init.include_heal import INCLUDE_AMBIGUOUS, find_type_header, last_include_resolution
 
     reset_index_cache()
     ctx = _ctx(tmp_path, op_rel="attention/block_toy")
@@ -470,8 +470,28 @@ def test_type_header_prefers_operator_kernel_over_cann(tmp_path: Path):
     local.parent.mkdir(parents=True)
     local.write_text("namespace tla { struct Tuple {}; }\n", encoding="utf-8")
     hit = find_type_header(ctx, "Tuple", side="kernel")
-    assert hit is not None
-    assert "op_kernel/tla/tuple.hpp" in hit.found.replace("\\", "/")
+    assert hit is None
+    status, cands = last_include_resolution()
+    assert status == INCLUDE_AMBIGUOUS
+    assert len(cands) >= 2
+
+
+def test_basename_ambiguous_does_not_score_pick(tmp_path: Path):
+    reset_index_cache()
+    ctx = _ctx(tmp_path)
+    left = tmp_path / "ops" / "mc2" / "common" / "utils" / "shared.h"
+    right = tmp_path / "ops" / "attention" / "common" / "utils" / "shared.h"
+    left.parent.mkdir(parents=True)
+    right.parent.mkdir(parents=True)
+    left.write_text("// left\n", encoding="utf-8")
+    right.write_text("// right\n", encoding="utf-8")
+    hit = find_include_dir(ctx, "shared.h", side="host")
+    assert hit is None
+    from uo_init.include_heal import INCLUDE_AMBIGUOUS, last_include_resolution
+
+    status, cands = last_include_resolution()
+    assert status == INCLUDE_AMBIGUOUS
+    assert len(cands) >= 2
 
 
 def test_hcom_header_aliases_to_hccl_h():

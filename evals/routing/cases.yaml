@@ -78,7 +78,7 @@ cases:
     should_not_trigger: [uo-init, tg-solve]
 
   - id: route_ce_handoff
-    query: 把当前 CE 会话压成交接文档，写清下一跳 slash
+    query: 将当前 CE 会话整理为交接文档，写明后续 slash 命令
     should_trigger: [ce-handoff]
     should_not_trigger: [tg-solve, uo-init]
 

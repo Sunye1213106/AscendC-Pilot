@@ -270,30 +270,6 @@ CLOSED_OBLIGATION_STATUSES = frozenset(
     }
 )
 
-_CAPS_CODE = ["source-reading", "source-navigation", "kb-query"]
-_CAPS_EXTRACT = [
-    "source-reading",
-    "source-navigation",
-    "kb-query",
-    "structured-ir-query",
-    "readonly-source-search",
-    "action-scratch",
-    "sharded-llm-producer",
-    "bounded-semantic-batch",
-    "producer-self-check",
-]
-_CAPS_ADJUDICATE = [
-    "source-reading",
-    "source-navigation",
-    "kb-query",
-    "structured-ir-query",
-    "readonly-source-search",
-    "action-scratch",
-    "sharded-semantic-producer",
-    "sharded-llm-producer",
-    "bounded-semantic-batch",
-    "producer-self-check",
-]
 _CAPS_INVESTIGATE = [
     "source-reading",
     "source-navigation",
@@ -301,7 +277,6 @@ _CAPS_INVESTIGATE = [
     "readonly-source-search",
     "action-scratch",
 ]
-_CAPS_REVIEW = ["kb-query"]
 _CAPS_CONTRACT = ["contract-building", "kb-query"]
 _CAPS_OBLIGATION = ["kb-query"]
 
@@ -602,10 +577,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         # Primary LLM router: classify in the visible chat, then DIY or Task.
         # Host Session Driver must not start / drain this workflow.
         "host_driver": False,
-        "execution_variants": {
-            "short": "direct_query",
-            "deep": "delegated_query",
-        },
         "requires_project": True,
         "requires_architecture": False,
         "requires_uo_product": True,
@@ -636,7 +607,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 task_prompt_id="uo/codemap-query",
                 context_profile_id="uo-query-kb-lookup",
                 output_contract_id="kb-answer-v1",
-                # Ephemeral Q&A: subagent returns kb-answer-v1; finalize materializes.
+                # Ephemeral Q&A: child answers in the Task message; primary synthesizes.
                 output_mode="return_value",
                 execution_variant="delegated_query",
                 allowed_write_paths=[
@@ -741,7 +712,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "states": [
             _st("scope", "判定入口与侧别"),
             _st("review", "假设检验"),
-            _st("summary", "汇总"),
+            _st("summary", "结论或落盘"),
         ],
         "transitions": [
             _tr("scope", "review"),
@@ -752,13 +723,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "pipelines": {
             "scope": ["code_review"],
             "review": ["code_review"],
-            "summary": ["code_review"],
+            "summary": ["review_persist"],
         },
         "actions": [
             _act(
                 "code_review",
                 label_zh="代码审查",
-                phases=["scope", "review", "summary"],
+                phases=["scope", "review"],
                 workflow_id="ce-review",
                 agent_id="ce-reviewer",
                 role_id="readonly_reviewer",
@@ -769,8 +740,25 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 output_contract_id="code-review-v1",
                 pre_gates=["kb_ready", "context_pack"],
             ),
+            _act(
+                "review_persist",
+                label_zh="结论或落盘审查报告",
+                phases=["summary"],
+                workflow_id="ce-review",
+                agent_id="ascendc-pilot",
+                role_id="controller",
+                execution_mode="primary_interactive",
+                human_interaction="confirm",
+                capability_ids=[],
+                task_prompt_id=None,
+                context_profile_id="ce-review-persist",
+                output_contract_id="review-persist-v1",
+            ),
         ],
-        "agents": [{"id": "ce-reviewer", "role": "readonly_reviewer"}],
+        "agents": [
+            {"id": "ce-reviewer", "role": "readonly_reviewer"},
+            {"id": "ascendc-pilot", "role": "controller"},
+        ],
         "static_obligations": [{"id": "kb_ready", "label_zh": "KB 就绪"}],
         "dynamic_obligation_sources": [],
         "write_roots": ["ce/review", "runs", "context"],
@@ -1093,12 +1081,9 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 label_zh="核对精度性能收据是否覆盖场景义务",
                 phases=["external"],
                 workflow_id="ce-verify",
-                agent_id="ce-reviewer",
-                role_id="readonly_reviewer",
-                capability_ids=["kb-query"],
-                action_method_id="code-engineering/ce-harness-evidence",
-                task_prompt_id="ce/harness-evidence",
-                context_profile_id="ce-verify-harness-evidence-check",
+                agent_id="deterministic-ce-engine",
+                role_id="deterministic_engine",
+                capability_ids=[],
                 output_contract_id="harness-evidence-check-v1",
             ),
             _act(
@@ -1652,14 +1637,11 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 label_zh="审计覆盖合同",
                 phases=["gate"],
                 workflow_id="tg-init",
-                agent_id="tg-init-audit",
-                role_id="referee",
-                referee_required=True,
+                agent_id="deterministic-tg-engine",
+                role_id="deterministic_engine",
+                referee_required=False,
                 post_gates=["audit_pass"],
-                capability_ids=_CAPS_REVIEW,
-                action_method_id="testcase-generation/tg-init-audit",
-                task_prompt_id="tg/init-audit",
-                context_profile_id="tg-init-init-audit",
+                capability_ids=[],
                 output_contract_id="init-audit-v1",
             ),
             _act(
@@ -1679,7 +1661,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
         ],
         "agents": [
-            {"id": "tg-init-audit", "role": "referee"},
             {"id": "deterministic-tg-engine", "role": "deterministic_engine"},
             {"id": "ascendc-pilot", "role": "controller"},
         ],
@@ -1950,6 +1931,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     "plan_scope": {
                         "label_zh": "从 CE 影响账本确定规划范围",
                         "allowed_read_paths": [
+                            "ce/impact/tg_plan_intent.yaml",
                             "ce/impact/ledger.yaml",
                             "ce/impact/impact_slice.yaml",
                             "uo/*.uo",

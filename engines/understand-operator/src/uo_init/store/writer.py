@@ -14,6 +14,7 @@ from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
+from uo_init.ir.evidence import summarize_trust, validate_trust_records
 from uo_init.ir.relation import RelationKind
 from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 
@@ -40,6 +41,21 @@ def uo_product_path(op_root: str | Path, op_name: str, architecture: str) -> Pat
     safe_op = (op_name or "operator").replace("/", "_").replace("\\", "_")
     arch = require_architecture(architecture)
     return uo_product_dir(op_root, architecture=arch) / f"{safe_op}.{arch}.uo"
+
+
+def _trust_rows(codemap: CodeMap) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for ent in codemap.entities.values():
+        row = dict(ent.attrs)
+        row["id"] = ent.id
+        row["status"] = ent.status
+        rows.append(row)
+    for rel in codemap.relations.values():
+        row = dict(rel.attrs)
+        row["id"] = rel.id
+        row["status"] = rel.status
+        rows.append(row)
+    return rows
 
 
 def _drop_unproven_direct_selection_edges(codemap: CodeMap) -> int:
@@ -251,6 +267,15 @@ def write_codemap(
         tmp.unlink()
 
     removed = _drop_unproven_direct_selection_edges(codemap)
+    trust_rows = _trust_rows(codemap)
+    trust_errors = validate_trust_records(trust_rows)
+    if trust_errors:
+        raise ValueError(
+            "TRUST_INVARIANT: lexical/heuristic facts cannot be derived/authoritative: "
+            + "; ".join(trust_errors[:5])
+        )
+    trust_summary = summarize_trust(trust_rows)
+    codemap.meta["trust_summary"] = trust_summary
     # A CodeMap read from a previous product may carry its former identities.
     # Any canonical mutation invalidates those values; projection finalization
     # below recomputes all three from the post-mutation graph.
@@ -299,6 +324,7 @@ def write_codemap(
         conn.executescript(SCHEMA_SQL)
         product_meta: dict[str, Any] = {
             "schema": SCHEMA_VERSION,
+            "trust_model": "v2",
             "authority": "uo",
             "op_name": codemap.op_name,
             "architecture": codemap.architecture,

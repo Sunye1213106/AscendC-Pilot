@@ -29,6 +29,13 @@ def test_discover_architectures_from_tree_only(tmp_path: Path):
     assert intake.discover_architectures(empty) == []
 
 
+def test_discover_architectures_includes_hyphenated_920r1(tmp_path: Path):
+    (tmp_path / "op_host" / "arch-920r1").mkdir(parents=True)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_host" / "notes").mkdir()
+    assert intake.discover_architectures(tmp_path) == ["arch-920r1", "arch35"]
+
+
 def test_describe_architectures_has_source_counts(tmp_path: Path):
     d = tmp_path / "op_host" / "arch35"
     d.mkdir(parents=True)
@@ -337,6 +344,26 @@ def test_cli_uo_query_missing_product_asks_human(tmp_path: Path, capsys, monkeyp
     assert "found none" not in str(out.get("message_zh") or "")
     assert out.get("host_step", {}).get("kind") == "ask_human"
     assert "human_interaction_request" in out
+
+
+def test_cli_uo_query_mode_removed_does_not_list_old_modes(tmp_path: Path, capsys):
+    code = main(
+        [
+            "uo-query",
+            "--project",
+            str(tmp_path),
+            "--mode",
+            "locate",
+            "s1Inner",
+        ]
+    )
+    assert code == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "mode_removed"
+    blob = json.dumps(out)
+    for stale in ("kernel_launch", "template_match", "tiling_key", "compile", "locate"):
+        assert stale not in blob
+    assert "Dim=V" in blob or "identifier" in blob.lower() or "标识符" in blob
 
 
 def test_prepare_workflow_start_inherits_arch_from_uo(tmp_path: Path, monkeypatch):

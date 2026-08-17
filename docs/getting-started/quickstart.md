@@ -4,7 +4,7 @@
 
 内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)；各 workflow 阶段图见 [工作流流程图](../architecture/workflows.md)。
 
-> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有），不必让主控手搓 `acp start` / `auto` / `finalize`。详情见 Runtime 文档。
+> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有），不必让主控手工编排 `acp start` / `auto` / `finalize`。详情见 Runtime 文档。
 
 ## 1. 打开目标算子
 
@@ -83,7 +83,7 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，对人说出「短问自查 / 几个子代理」。短问自己 `acp uo-query --mode`；深问同一轮 `Task(agent=uo-query)`，禁止把深问改成主控连查。常用 mode：`tiling_key` / `tiling_data` / `kernel_branch` / `buffer` / `locate` / `kernel_api` / `impact` / `gaps`。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
+查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，向用户说明将直接调用还是委派。简单查询主控直接调用 `acp uo-query`；复杂查询同一轮 `Task(agent=uo-query)`。调用形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
 
 默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 
@@ -110,10 +110,10 @@ TG 和 CE 应使用更新后的 CodeMap，不要基于过期 UO 继续工作。
 TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建库，会返回 `UO_PRODUCT_REQUIRED`，请先完成 §2。
 
 **产品目标（推荐）**：说「全量 / 全覆盖 / tilingkey case / 建立 TilingKey 全覆盖测试」时，Pilot 会写入
-`.ascendc-pilot/control/user_goal.yaml`，并按三步串联（每步用人话说明意图与下一步）：
+`.ascendc-pilot/control/user_goal.yaml`，并按三步串联（每步用自然语言说明意图与下一步）：
 
-1. **建立覆盖合同**（`/tg-init`）→ 人话确认是否进入规划  
-2. **规划测试义务**（`/tg-plan`）→ 人话批准是否开始求解  
+1. **建立覆盖合同**（`/tg-init`）→ 向用户确认是否进入规划  
+2. **规划测试义务**（`/tg-plan`）→ 向用户批准是否开始求解  
 3. **求解并生成用例**（`/tg-solve`）
 
 也可分步 Slash：
@@ -132,7 +132,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 帮我为这个算子建立 TilingKey 全覆盖测试。
 ```
 
-对人可见说明会交代「目标 / 刚完成 / 下一步或请你决定」；不会用内部字段名当作唯一解释。
+对用户可见说明会交代「目标 / 刚完成 / 下一步或请你决定」；不会用内部字段名当作唯一解释。
 
 `/tg-solve` 会生成候选输入并运行 Host Replay，根据实际结果继续搜索或证明剩余目标不可达，直到覆盖义务关闭或遇到需要人工处理的问题。详细算法见 [TG](../modules/tg.md)。
 
@@ -164,7 +164,7 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三�
 | --- | --- |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
-| `/uo-query` | 只读提问：主控可见路由后自查或派 `uo-query` 子代理（需已有 `.uo`；不走 `pilot_run`） |
+| `/uo-query` | 只读提问：主控向用户说明查询方式后自行查询或派 `uo-query` 子代理（需已有 `.uo`；不走 `pilot_run`） |
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
 | `/ce-review` | 只读检视（快速 / 文件 / PR；需已有 `.uo`） |

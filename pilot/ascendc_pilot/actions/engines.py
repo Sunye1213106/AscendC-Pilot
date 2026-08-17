@@ -245,7 +245,11 @@ def _run_ce_obligation_build(project_root: Path, ctx: dict[str, Any]) -> dict[st
     out = _dump_ce_yaml(root / "obligations.yaml", doc)
     ledger = Ledger(O={str(row["id"]) for row in obligations if row.get("id")})
     ledger_path = save_ledger(ledger, project_root, architecture=arch, path=root / "ledger.yaml")
-    from code_engineering.change_test_intent import build_change_test_intent, write_yaml
+    from code_engineering.change_test_intent import (
+        build_change_test_intent,
+        build_tg_plan_intent,
+        write_yaml,
+    )
     from ascendc_pilot.actions.scenario_certificate import live_source_fingerprint, live_uo_digest
 
     impact = _load_yaml(root / "impact_slice.yaml") or {}
@@ -257,12 +261,20 @@ def _run_ce_obligation_build(project_root: Path, ctx: dict[str, Any]) -> dict[st
         change_revision=str(ctx.get("change_revision") or impact.get("head") or ""),
     )
     write_yaml(root / "change_test_intent.yaml", intent_doc)
+    tg_intent = build_tg_plan_intent(
+        impact=impact,
+        architecture=arch,
+        op_name=str(ctx.get("op_name") or ""),
+        source="ce-impact",
+    )
+    write_yaml(root / "tg_plan_intent.yaml", tg_intent)
     return {
         "ok": bool(validation.get("ok")),
         "engine": "obligation_build",
         "artifact": out.as_posix(),
         "ledger": ledger_path.as_posix(),
         "change_test_intent": str(root / "change_test_intent.yaml"),
+        "tg_plan_intent": str(root / "tg_plan_intent.yaml"),
         "target_count": len(intent_doc.get("targets") or []),
         **doc,
     }
@@ -414,6 +426,148 @@ def _run_ce_harness_evidence(project_root: Path, ctx: dict[str, Any]) -> dict[st
         receipt["missing_target_reached"] = missing_replay
     out = _dump_ce_yaml(ce_root / "verify" / "harness_evidence.yaml", receipt)
     return {"ok": bool(receipt.get("ok")), "engine": "harness_evidence", "artifact": out.as_posix(), **receipt}
+
+
+_PRECISION_RECEIPT_KINDS = frozenset({"golden", "only_grad", "precision", "precision_compare"})
+_PERF_RECEIPT_KINDS = frozenset({"profiler", "profiling", "perf"})
+_HOST_REPLAY_KINDS = frozenset({"host_replay", "default_input"})
+
+
+def _ce_receipt_kinds(row: dict[str, Any]) -> set[str]:
+    kinds: set[str] = set()
+    for key in ("kind", "mode", "oracle"):
+        val = str(row.get(key) or "").strip().lower()
+        if val:
+            kinds.add(val)
+    return kinds
+
+
+def _ce_evidence_receipts(ce_root: Path) -> list[tuple[str, dict[str, Any]]]:
+    out: list[tuple[str, dict[str, Any]]] = []
+    harness_path = ce_root / "verify" / "harness_evidence.yaml"
+    harness = _load_yaml(harness_path)
+    if isinstance(harness, dict) and harness:
+        out.append((harness_path.as_posix(), harness))
+    ext_path = ce_root / "verify" / "external_evidence.yaml"
+    ext = _load_yaml(ext_path)
+    if isinstance(ext, dict) and ext:
+        receipts = ext.get("receipts")
+        if isinstance(receipts, list):
+            for row in receipts:
+                if not isinstance(row, dict):
+                    continue
+                src = str(row.get("artifact") or row.get("source") or ext_path.as_posix())
+                out.append((src, row))
+        elif ext.get("kind") or ext.get("verified_obligations") is not None:
+            out.append((ext_path.as_posix(), ext))
+    return out
+
+
+def _run_ce_harness_evidence_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Closed-set check: precision/perf obligations vs golden/profiler receipts."""
+    from code_engineering.harness import load_adapter
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    ce_root = _ce(project_root, arch=arch)
+    obligations_doc = _load_yaml(ce_root / "impact" / "obligations.yaml") or {}
+    scenarios = _load_yaml(ce_root / "scenarios" / "scenario_set.yaml") or {}
+    adapter = load_adapter(project_root, architecture=arch)
+    adapter_kind = str((adapter.identity() or {}).get("kind") or "").strip().lower()
+    adapter_missing = adapter_kind in {"", "default_input", "host_replay"}
+    receipts = _ce_evidence_receipts(ce_root)
+    if any(str(row.get("reason") or "") == "harness_missing" for _, row in receipts):
+        adapter_missing = True
+
+    wanted: list[dict[str, Any]] = []
+    for row in obligations_doc.get("obligations") or []:
+        if not isinstance(row, dict):
+            continue
+        oid = str(row.get("id") or "").strip()
+        risk = str(row.get("risk_class") or "").strip().lower()
+        if oid and risk in {"precision", "perf"}:
+            wanted.append({"id": oid, "risk_class": risk})
+    scenario_ids = {
+        str(row.get("id") or "").strip()
+        for row in (scenarios.get("items") or [])
+        if isinstance(row, dict) and row.get("id")
+    }
+    seen_ids = {row["id"] for row in wanted}
+    for sid in sorted(scenario_ids):
+        if sid in seen_ids:
+            continue
+        if sid.startswith("P-"):
+            wanted.append({"id": sid, "risk_class": "precision"})
+            seen_ids.add(sid)
+        elif sid.startswith("F-"):
+            wanted.append({"id": sid, "risk_class": "perf"})
+            seen_ids.add(sid)
+
+    items: list[dict[str, Any]] = []
+    for row in wanted:
+        oid = row["id"]
+        risk = row["risk_class"]
+        accepted = _PRECISION_RECEIPT_KINDS if risk == "precision" else _PERF_RECEIPT_KINDS
+        pf_locked = oid.startswith(("P-", "F-")) or risk in {"precision", "perf"}
+        covered_by = ""
+        open_reason = "uncovered"
+        host_replay_claimed = False
+        wrong_kind = False
+        for src, rec in receipts:
+            verified = {str(v) for v in (rec.get("verified_obligations") or []) if v}
+            if oid not in verified:
+                continue
+            kinds = _ce_receipt_kinds(rec)
+            if kinds & _HOST_REPLAY_KINDS or str(rec.get("kind") or "") == "host_replay":
+                host_replay_claimed = True
+                if pf_locked:
+                    continue
+            if not (kinds & accepted):
+                wrong_kind = True
+                continue
+            if rec.get("ok") is False:
+                continue
+            covered_by = src
+            break
+        if covered_by:
+            status = "covered"
+            reason = ""
+        else:
+            status = "open"
+            if adapter_missing:
+                reason = "harness_missing"
+            elif host_replay_claimed and pf_locked:
+                reason = "host_replay_not_closing"
+            elif wrong_kind:
+                reason = "wrong_receipt_kind"
+            else:
+                reason = open_reason
+        items.append(
+            {
+                "obligation_id": oid,
+                "risk_class": risk,
+                "status": status,
+                "receipt": covered_by,
+                "reason": reason,
+            }
+        )
+
+    doc = {
+        "schema": "ce-harness-evidence-check/v1",
+        "ok": True,
+        "adapter_kind": adapter_kind or "missing",
+        "harness_missing": adapter_missing,
+        "excepted_obligations": [],
+        "items": items,
+        "covered": [row["obligation_id"] for row in items if row["status"] == "covered"],
+        "open": [row["obligation_id"] for row in items if row["status"] == "open"],
+    }
+    out = _dump_ce_yaml(ce_root / "verify" / "harness_evidence_check.yaml", doc)
+    return {
+        "ok": True,
+        "engine": "harness_evidence_check",
+        "artifact": out.as_posix(),
+        **doc,
+    }
 
 
 def _run_ce_verify_gate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -722,10 +876,9 @@ def _run_ce_session_handoff(project_root: Path, ctx: dict[str, Any]) -> dict[str
         "ce-handoff": str(ctx.get("next_slash") or "/ce-apply"),
     }.get(wid, "/ce-apply")
     artifacts = [
-        "ce/intent/intent.yaml",
-        "ce/intent/feature_decomposition.yaml",
-        "ce/intent/anchors.yaml",
-        "ce/review/index.yaml",
+        "ce/intent/plan.md",
+        "ce/apply/todo.md",
+        "ce/session_handoff.md",
     ]
     return write_session_handoff(
         project_root,
@@ -1371,6 +1524,170 @@ def _run_tg_integrity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _tg_init_audit_check(
+    check_id: str,
+    *,
+    ok: bool,
+    detail: str,
+) -> dict[str, str]:
+    return {
+        "id": check_id,
+        "status": "pass" if ok else "fail",
+        "detail": detail,
+    }
+
+
+def _run_tg_init_audit(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Closed tilingkey checklist → ``tg/init/audit_report.yaml``."""
+    from datetime import datetime, timezone
+
+    import yaml
+    from testcase_agent.resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    tg = _tg(project_root)
+    contract_path = tg / "contract" / "tilingkey_contract.yaml"
+    inventory_path = tg / "realization" / "binding_inventory.yaml"
+    contract = _load_yaml(contract_path) or {}
+    inventory = _load_yaml(inventory_path) or {}
+    if not isinstance(contract, dict):
+        contract = {}
+    if not isinstance(inventory, dict):
+        inventory = {}
+
+    contract_status = str(contract.get("status") or "").strip().lower()
+    contract_present = contract_path.is_file() and bool(contract)
+    contract_ok = (
+        contract_present
+        and contract_status == "pass"
+        and not list(contract.get("errors") or [])
+    )
+    declared = contract.get("declared_set") if isinstance(contract.get("declared_set"), dict) else {}
+    declared_count = int(declared.get("count") or 0)
+    fields = [row for row in (inventory.get("fields") or []) if isinstance(row, dict)]
+    inventory_ok = inventory_path.is_file() and bool(fields)
+    fingerprint = str(
+        contract.get("graph_fingerprint")
+        or inventory.get("graph_fingerprint")
+        or declared.get("fingerprint")
+        or ""
+    ).strip()
+
+    run_id = str(ctx.get("run_id") or "").strip()
+    if not run_id:
+        try:
+            from ascendc_pilot.state import load_state
+
+            run_id = str((load_state(project_root) or {}).get("run_id") or "").strip()
+        except Exception:  # noqa: BLE001
+            run_id = ""
+    from ascendc_pilot.runs import receipts_dir
+
+    integrity = _load_yaml(receipts_dir(project_root, run_id or None) / "integrity_gate.yaml") or {}
+    if not isinstance(integrity, dict):
+        integrity = {}
+    integrity_status = str(integrity.get("status") or "").strip().lower()
+    integrity_ok = integrity_status == "pass"
+
+    warnings: list[str] = []
+    for row in fields:
+        name = str(row.get("field") or row.get("name") or "").strip() or "(unnamed)"
+        reads = row.get("reads")
+        exactness = str(row.get("exactness") or "").strip()
+        if not reads:
+            warnings.append(f"{name}: empty reads (non-blocking in tilingkey full coverage)")
+        if not exactness:
+            warnings.append(f"{name}: empty exactness (non-blocking in tilingkey full coverage)")
+
+    checks = [
+        _tg_init_audit_check(
+            "tilingkey_contract",
+            ok=contract_ok,
+            detail=(
+                "tilingkey contract present and status=pass"
+                if contract_ok
+                else (
+                    "tilingkey_contract.yaml missing"
+                    if not contract_present
+                    else f"tilingkey contract status={contract_status or 'missing'}"
+                )
+            ),
+        ),
+        _tg_init_audit_check(
+            "declared_set_nonempty",
+            ok=declared_count > 0,
+            detail=(
+                f"declared TilingKey set count={declared_count}"
+                if declared_count > 0
+                else "declared TilingKey set is empty or missing"
+            ),
+        ),
+        _tg_init_audit_check(
+            "binding_inventory",
+            ok=inventory_ok,
+            detail=(
+                f"host binding inventory fields={len(fields)}"
+                if inventory_ok
+                else "binding_inventory.yaml missing or has no fields"
+            ),
+        ),
+        _tg_init_audit_check(
+            "host_view_aligned",
+            ok=inventory_path.is_file(),
+            detail=(
+                "host view inventory present; empty reads/exactness are warnings only"
+                if inventory_path.is_file()
+                else "binding inventory missing; host view cannot be aligned"
+            ),
+        ),
+        _tg_init_audit_check(
+            "graph_fingerprint",
+            ok=bool(fingerprint),
+            detail=(
+                "graph fingerprint present on contract or inventory"
+                if fingerprint
+                else "graph fingerprint missing on contract and inventory"
+            ),
+        ),
+        _tg_init_audit_check(
+            "integrity_gate",
+            ok=integrity_ok,
+            detail=(
+                "integrity gate receipt status=pass"
+                if integrity_ok
+                else f"integrity gate status={integrity_status or 'missing'}"
+            ),
+        ),
+    ]
+    by_id = {row["id"]: row for row in checks}
+    ordered = [by_id[cid] for cid in TILINGKEY_AUDIT_CHECKLIST_IDS if cid in by_id]
+    for row in checks:
+        if row["id"] not in {c["id"] for c in ordered}:
+            ordered.append(row)
+    blockers = [
+        f"{row['id']}: {row['detail']}" for row in ordered if row["status"] == "fail"
+    ]
+    status = "fail" if blockers else "pass"
+    report = {
+        "version": 1,
+        "status": status,
+        "checked_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "op_name": str(tg_ctx.get("op_name") or ctx.get("op_name") or ""),
+        "checks": ordered,
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+    out = tg / "init" / "audit_report.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(yaml.safe_dump(report, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return {
+        "ok": status == "pass",
+        "engine": "init_audit",
+        "artifact": out.as_posix(),
+        **report,
+    }
+
+
 def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     """Write plan_intent.yaml. Default mode = tilingkey_full_coverage."""
     import yaml
@@ -1379,9 +1696,12 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     tg = _tg(project_root)
     init_intent = _load_yaml(tg / "init" / "init_intent.yaml") or {}
     existing = _load_yaml(tg / "plan" / "plan_intent.yaml") or {}
+    arch = str(tg_ctx.get("architecture") or "").strip() or _resolve_ce_arch(project_root, ctx)
+    ce_intent = _load_yaml(_ce(project_root, arch=arch) / "impact" / "tg_plan_intent.yaml") or {}
     requested = (
         str(ctx.get("mode") or "").strip()
         or str(existing.get("mode") or "").strip()
+        or str(ce_intent.get("mode") or "").strip()
         or str(init_intent.get("mode") or "").strip()
     )
     full_coverage = {
@@ -1389,7 +1709,6 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         "branch_outcome_coverage",
         "ce_change_scoped",
     }
-    arch = str(tg_ctx.get("architecture") or "").strip() or _resolve_ce_arch(project_root, ctx)
     scenario_doc = _load_yaml(
         _ce(project_root, arch=arch) / "scenarios" / "scenario_set.yaml"
     ) or {}
@@ -1407,6 +1726,7 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     source = (
         str(ctx.get("source") or "").strip()
         or str(existing.get("source") or "").strip()
+        or str(ce_intent.get("source") or "").strip()
         or ("init_intent" if init_intent.get("mode") else "default")
     )
     intent = {
@@ -1418,6 +1738,24 @@ def _run_tg_plan_intent(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
         "op_name": tg_ctx.get("op_name") or "",
         "architecture": tg_ctx.get("architecture") or "",
     }
+    if mode == "ce_change_scoped" and ce_intent:
+        for key in (
+            "target_keys",
+            "target_dimensions",
+            "target_mode",
+            "dimension_names",
+            "do_not_widen_to_declared_set",
+        ):
+            if key in ce_intent and ce_intent.get(key) not in (None, ""):
+                intent[key] = ce_intent[key]
+        intent["source"] = str(ce_intent.get("source") or "ce-impact")
+        intent["do_not_widen_to_declared_set"] = True
+        if not intent.get("target_mode"):
+            intent["target_mode"] = (
+                "explicit_keys"
+                if intent.get("target_keys") or not intent.get("target_dimensions")
+                else "dimension_filter"
+            )
     if mode == "scenario_targeted":
         if not scenario_ids:
             return {
@@ -3295,6 +3633,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("ce-verify", "residual_analyse"): _run_ce_residual_analyse,
     ("ce-verify", "external_ingest"): _run_ce_external_ingest,
     ("ce-verify", "harness_evidence"): _run_ce_harness_evidence,
+    ("ce-verify", "harness_evidence_check"): _run_ce_harness_evidence_check,
     ("ce-verify", "ce_certify"): _run_ce_certify,
     ("ce-intent", "intent_capture"): _run_ce_intent_capture,
     ("ce-intent", "kb_check"): _run_ce_intent_kb_check,
@@ -3311,6 +3650,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("tg-init", "contract_build"): _run_tg_contract_build,
     ("tg-init", "semantic_bind"): _run_tg_semantic_bind,
     ("tg-init", "integrity_gate"): _run_tg_integrity,
+    ("tg-init", "init_audit"): _run_tg_init_audit,
     ("tg-plan", "plan_intent"): _run_tg_plan_intent,
     ("tg-plan", "plan_scope"): _run_tg_plan_scope,
     ("tg-plan", "plan_precheck"): _run_tg_plan_precheck,
@@ -3350,9 +3690,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "uo-extract-v1": [
         "uo/ir/host_extract_receipt.yaml",
-        "uo/tiling/key_bind_receipt.yaml",
-        "uo/tiling/families.yaml",
-        "uo/kernel/fold_receipt.yaml",
+        "uo/ir/kernel_ir.yaml",
     ],
     "uo-analyze-v1": [
         "uo/ir/unresolved.yaml",
@@ -3391,6 +3729,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "ce/impact/obligations.yaml",
         "ce/impact/ledger.yaml",
         "ce/impact/change_test_intent.yaml",
+        "ce/impact/tg_plan_intent.yaml",
     ],
     "ce-scenario-set-v1": ["ce/scenarios/scenario_set.yaml"],
     "scenario-knobs-staging-v1": [
@@ -3427,13 +3766,14 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "anchor-locate-v1": ["ce/intent/anchors.yaml"],
     "plan-review-v1": ["ce/intent/plan_review.yaml"],
-    "intent-confirmed-v1": ["ce/intent/confirmation.yaml"],
+    "intent-confirmed-v1": ["ce/intent/confirmation.yaml", "ce/intent/plan.md"],
     "apply-gate-v1": ["ce/apply/gate.yaml"],
     "apply-patch-v1": ["ce/apply/patch_notes.yaml"],
     "apply-capture-v1": ["ce/apply/change_capture.yaml"],
     "apply-patch-guard-v1": ["ce/apply/patch_report.yaml"],
     "codemap-refresh-v1": ["ce/apply/codemap_refresh.yaml"],
     "apply-report-v1": ["ce/apply/report.yaml"],
+    "review-persist-v1": ["ce/review/persist.yaml"],
     "session-handoff-v1": ["ce/session_handoff.md"],
     # tg-init kb_check receipt: proves CodeMap .uo TG views are readable.
     "uo-ready-v1": ["runs/{run_id}/receipts/uo_ready.yaml"],
@@ -3531,6 +3871,9 @@ OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {
         "ce/review/index.yaml",
         "ce/review/functional_report.yaml",
         "ce/review/bug_report.yaml",
+    ],
+    "review-persist-v1": [
+        "ce/review/persist.yaml",
     ],
     "plan-build-v1": [
         "tg/plan/levels/*/coverage_obligations.yaml",

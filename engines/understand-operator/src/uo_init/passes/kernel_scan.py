@@ -569,9 +569,66 @@ def merge_lexical_sites(
             out[i] = _enrich_site_templates(out[i], site)
             continue
         index[key] = len(out)
-        out.append(site)
+        row = dict(site) if isinstance(site, dict) else site
+        if isinstance(row, dict):
+            row.setdefault("call_kind", "unresolved_call")
+            row.setdefault("semantic_state", "candidate")
+        out.append(row)
         added += 1
     return out, added
+
+
+_MAX_WALK_CONFIRMS = 256
+
+
+def confirm_lexical_from_walks(
+    sites: list[Any],
+    walks: list[Any],
+    *,
+    max_attempts: int = _MAX_WALK_CONFIRMS,
+) -> int:
+    """Stamp USR onto lexical sites from tu_cache. No extra parse.
+
+    Same callee spelling × same cached functions: at most one confirm. Ambiguous
+    names stay unresolved.
+    """
+    by_name: dict[str, tuple[str, str, str]] = {}
+    ambiguous: set[str] = set()
+    for wr in walks or []:
+        fns = getattr(wr, "functions", None) or {}
+        items = fns.items() if isinstance(fns, dict) else []
+        for name, fr in items:
+            usr = str(getattr(fr, "usr", "") or "")
+            if not usr:
+                continue
+            qn = str(getattr(fr, "qualified_name", "") or name)
+            file_s = str(getattr(fr, "file", "") or "")
+            for key in {str(name), str(name).split("::")[-1]}:
+                if not key or key in ambiguous:
+                    continue
+                prev = by_name.get(key)
+                if prev is not None and prev[0] != usr:
+                    ambiguous.add(key)
+                    by_name.pop(key, None)
+                    continue
+                by_name[key] = (usr, qn, file_s)
+    confirmed = 0
+    for site in sites or []:
+        if confirmed >= max_attempts:
+            break
+        if not isinstance(site, dict):
+            continue
+        if site.get("callee_usr"):
+            continue
+        callee = str(site.get("callee") or "").split("::")[-1]
+        hit = by_name.get(callee)
+        if hit is None:
+            continue
+        site["callee_usr"], site["callee_qualified"], site["callee_decl_file"] = hit
+        site["identity_kind"] = "walk_cache_confirm"
+        site["call_kind"] = "resolved_call"
+        confirmed += 1
+    return confirmed
 
 
 def _function_names_from_walk(wr: Any) -> set[str]:

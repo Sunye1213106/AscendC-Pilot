@@ -19,27 +19,40 @@ AscendC Source → UO → Operator CodeMap → TG → Coverage
 
 # 安装
 
-要求 Python 3.10+。
+要求 Python 3.10+ 和 **OpenCode 1.18**（V1 plugin API：`~/.config/opencode/plugins/*.ts` 自动加载）。可编辑 pip 安装绑定本仓库，**不要装完删除 clone**。
+
+建议先建虚拟环境，再装依赖：
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-```bash
 python scripts/dev/check_install.py
 ```
 
-接入 Host（推荐 OpenCode）：
+Linux 若没有 `python` 命令，用 `python3`。Windows 若 ExecutionPolicy 拦截脚本：
 
 ```powershell
-./install.ps1 opencode
+powershell -ExecutionPolicy Bypass -File .\install.ps1 opencode
+```
+
+接入 Host（推荐 OpenCode）。先**完全退出 OpenCode**，再运行：
+
+```powershell
+.\install.ps1 opencode
 ```
 
 ```bash
 ./install.sh opencode
 ```
 
-也支持 `cursor` / `codex`。完整环境见 [Installation](docs/getting-started/installation.md)。
+然后：
+
+```bash
+python -m ascendc_pilot doctor --host opencode
+```
+
+完全退出再打开 OpenCode，Tab 切换到 **AscendC-Pilot**。也支持 `cursor` / `codex`。完整环境见 [Installation](docs/getting-started/installation.md)。开发迭代可用 `.\refresh-opencode.ps1`。
 
 ---
 

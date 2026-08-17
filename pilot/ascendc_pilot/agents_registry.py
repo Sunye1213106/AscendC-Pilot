@@ -49,12 +49,13 @@ def _repo_root_candidates(project_root: Path | None) -> list[Path]:
             roots.append(parent)
             if len(roots) > 12:
                 break
-    home = Path.home()
+    from ascendc_pilot.paths import opencode_plugin_root
+
     roots.extend(
         [
-            home / ".config" / "opencode" / "ascendc-pilot-plugin",
-            home / ".cursor" / "ascendc-pilot-plugin",
-            home / ".agents" / "ascendc-pilot-plugin",
+            opencode_plugin_root(),
+            Path.home() / ".cursor" / "ascendc-pilot-plugin",
+            Path.home() / ".agents" / "ascendc-pilot-plugin",
         ]
     )
     # Deduplicate while preserving order
@@ -359,13 +360,14 @@ def scope_allows_path(
 
 def _method_roots(project_root: Path | None) -> list[Path]:
     roots: list[Path] = []
-    home = Path.home()
+    from ascendc_pilot.paths import opencode_home, opencode_plugin_root
+
     roots.extend(
         [
-            home / ".config" / "opencode" / "ascendc-pilot-plugin",
-            home / ".config" / "opencode",
-            home / ".cursor" / "ascendc-pilot-plugin",
-            home / ".agents" / "ascendc-pilot-plugin",
+            opencode_plugin_root(),
+            opencode_home(),
+            Path.home() / ".cursor" / "ascendc-pilot-plugin",
+            Path.home() / ".agents" / "ascendc-pilot-plugin",
         ]
     )
     for root in _repo_root_candidates(project_root):

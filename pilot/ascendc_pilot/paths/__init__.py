@@ -38,6 +38,19 @@ def is_under_pilot_checkout(path: Path) -> bool:
         return False
 
 
+def opencode_home() -> Path:
+    """OpenCode config root (respects ``XDG_CONFIG_HOME``)."""
+    xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg:
+        return Path(xdg).expanduser() / "opencode"
+    return Path.home() / ".config" / "opencode"
+
+
+def opencode_plugin_root() -> Path:
+    """Installed OpenCode runtime bundle (plugin + generated skills/agents)."""
+    return opencode_home() / "ascendc-pilot-plugin"
+
+
 def resolve_operator_root(
     explicit: str | os.PathLike[str] | Path | None = None,
     *,

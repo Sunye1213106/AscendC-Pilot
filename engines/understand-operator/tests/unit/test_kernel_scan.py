@@ -225,3 +225,155 @@ def test_operation_site_id_ignores_ordinal_keeps_column() -> None:
     d = operation_site_id(file="a.h", line=10, column=8, callee="Cast")
     assert c != d
     assert c != a
+
+
+def test_confirm_lexical_from_walks_unique_usr() -> None:
+    walks = [
+        SimpleNamespace(
+            functions={
+                "Process": SimpleNamespace(
+                    usr="c:@S@Kernel@F@Process",
+                    qualified_name="Kernel::Process",
+                    file="op_kernel/k.h",
+                )
+            }
+        )
+    ]
+    sites = [{"caller": "kernel", "callee": "Process"}]
+    n = kscan.confirm_lexical_from_walks(sites, walks)
+    assert n == 1
+    assert sites[0]["callee_usr"] == "c:@S@Kernel@F@Process"
+    assert sites[0]["call_kind"] == "resolved_call"
+
+
+def test_confirm_lexical_from_walks_ambiguous_stays_unresolved() -> None:
+    walks = [
+        SimpleNamespace(
+            functions={
+                "Init": SimpleNamespace(usr="c:@S@A@F@Init", qualified_name="A::Init", file="a.h"),
+            }
+        ),
+        SimpleNamespace(
+            functions={
+                "Init": SimpleNamespace(usr="c:@S@B@F@Init", qualified_name="B::Init", file="b.h"),
+            }
+        ),
+    ]
+    sites = [{"caller": "kernel", "callee": "Init"}]
+    assert kscan.confirm_lexical_from_walks(sites, walks) == 0
+    assert not sites[0].get("callee_usr")
+
+
+def test_advisory_calls_do_not_close_reachability() -> None:
+    from uo_init.ir.codemap import CodeMap
+    from uo_init.ir.entity import EntityKind
+    from uo_init.ir.evidence import TRUST_ADVISORY, TRUST_AUTHORITATIVE
+    from uo_init.ir.relation import RelationKind
+    from uo_init.passes.kernel_root_trace import _propagate_reachability
+
+    cm = CodeMap(op_name="op", architecture="arch35")
+    lexical_fn = cm.upsert(EntityKind.FUNCTION, "Guessed")
+    reached = cm.upsert(
+        EntityKind.FUNCTION,
+        "Add",
+        attrs={"root_status": "REACHED", "root": "AscendC::Add"},
+    )
+    cm.mint_candidate_relation(
+        RelationKind.CALLS, lexical_fn.id, reached.id, provenance="lexical_source_calls"
+    )
+    _propagate_reachability(cm)
+    assert lexical_fn.attrs.get("root_status") != "REACHED"
+
+    resolved_fn = cm.upsert(EntityKind.FUNCTION, "Caller")
+    cm.mint_semantic_relation(
+        RelationKind.CALLS,
+        resolved_fn.id,
+        reached.id,
+        provenance="clang_ast",
+    )
+    rel = [r for r in cm.relations.values() if r.src == resolved_fn.id][0]
+    assert rel.attrs.get("trust") == TRUST_AUTHORITATIVE
+    _propagate_reachability(cm)
+    assert resolved_fn.attrs.get("root_status") == "REACHED"
+    assert lexical_fn.attrs.get("root_status") != "REACHED"
+    assert any(
+        r.attrs.get("trust") == TRUST_ADVISORY
+        for r in cm.relations.values()
+        if r.src == lexical_fn.id
+    )
+
+
+def test_blank_block_comments_keeps_newline_count() -> None:
+    from uo_init.source_index.builder import _blank_block_comments
+
+    text = "a\n/*\nb\nc\n*/\nd\n"
+    assert text.count("\n") == _blank_block_comments(text).count("\n")
+
+
+def test_initbuffer_after_file_banner_keeps_physical_lines(tmp_path: Path) -> None:
+    """File-banner ``/* */`` must not shift later InitBuffer onto earlier Clang lines."""
+    from uo_init.source_index.builder import _scan_file
+
+    banner = "/**\n" + "\n".join(f" * copyright {i}" for i in range(8)) + "\n */\n"
+    body = (
+        "void Init() {\n"
+        "  pipe->InitBuffer(dqInitBuf, 1);\n"
+        "  pipe->InitBuffer(dkInitBuf, 1);\n"
+        "  pipe->InitBuffer(input2Que[0], 1, n);\n"
+        "  pipe->InitBuffer(out1Que, 2, n);\n"
+        "}\n"
+    )
+    text = banner + body
+    path = tmp_path / "presfmg.h"
+    path.write_text(text, encoding="utf-8")
+    facts = _scan_file(path, root=str(tmp_path), registry=None)
+    inits = [s for s in facts.call_sites if s.get("callee") == "InitBuffer"]
+    lines = text.splitlines()
+    by_arg = {(s.get("args") or ["?"])[0]: int(s.get("line") or 0) for s in inits}
+    assert "input2Que[0]" in by_arg
+    assert "out1Que" in by_arg
+    for arg, line in by_arg.items():
+        assert 1 <= line <= len(lines)
+        assert arg in lines[line - 1], (arg, line, lines[line - 1])
+
+
+def test_shifted_initbuffer_does_not_clobber_clang_merge(tmp_path: Path) -> None:
+    """Lexical sites at physical lines merge in; shifted lines would drop them."""
+    from uo_init.source_index.builder import _scan_file
+
+    banner = "/**\n" + "\n".join(f" * copyright {i}" for i in range(8)) + "\n */\n"
+    body = (
+        "void Init() {\n"
+        "  pipe->InitBuffer(dqInitBuf, 1);\n"
+        "  pipe->InitBuffer(dkInitBuf, 1);\n"
+        "  pipe->InitBuffer(input2Que[0], 1, n);\n"
+        "  pipe->InitBuffer(out1Que, 2, n);\n"
+        "}\n"
+    )
+    path = tmp_path / "presfmg.h"
+    path.write_text(banner + body, encoding="utf-8")
+    physical = list((banner + body).splitlines())
+    clang = []
+    for i, src in enumerate(physical, start=1):
+        if "InitBuffer(dqInitBuf" in src or "InitBuffer(dkInitBuf" in src:
+            clang.append(
+                {
+                    "file": str(path),
+                    "line": i,
+                    "callee": "InitBuffer",
+                    "args": ["early"],
+                }
+            )
+    facts = _scan_file(path, root=str(tmp_path), registry=None)
+    lexical = [s for s in facts.call_sites if s.get("callee") == "InitBuffer"]
+    merged, _added = kscan.merge_lexical_sites(clang, lexical, root=str(tmp_path))
+    names = []
+    for site in merged:
+        d = kscan.site_as_dict(site)
+        if d.get("callee") == "InitBuffer":
+            args = d.get("args") or []
+            if args:
+                names.append(str(args[0]))
+    assert "input2Que[0]" in names
+    assert "out1Que" in names
+

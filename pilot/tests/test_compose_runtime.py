@@ -60,10 +60,7 @@ def test_uo_actions_match_engine_and_prompt_boundary():
     assert query["task_prompt_id"] == "uo/codemap-query"
     assert query.get("execution_variant") == "delegated_query"
     assert WORKFLOWS["uo-query"].get("host_driver") is False
-    assert WORKFLOWS["uo-query"].get("execution_variants") == {
-        "short": "direct_query",
-        "deep": "delegated_query",
-    }
+    assert "execution_variants" not in WORKFLOWS["uo-query"]
 
     investigate = {a["id"]: a for a in WORKFLOWS["uo-investigate"]["actions"]}
     inv = investigate["investigate"]
@@ -183,6 +180,10 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "force_new" not in lemma
         assert "todo_sync" not in lemma
         assert "短问" not in lemma
+        assert "深问" not in lemma
+        assert "简单查询" not in lemma
+        assert "复杂查询" not in lemma
+        assert "查询方式说明" not in lemma
         assert "可见 LLM 路由" not in lemma
         lemma_bytes = len(lemma.encode("utf-8"))
         lemma_lines = lemma.count("\n") + 1
@@ -202,6 +203,12 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "bash: false" in uo_query_agent
         assert "pilot_run: false" in uo_query_agent
         assert "Do not switch to MCP" in uo_query_agent
+        assert "Never `--mode`" in uo_query_agent
+        assert "--mode <mode>" not in uo_query_agent
+        assert "--mode locate" not in uo_query_agent
+        assert "If the stub still contains" not in uo_query_agent
+        assert "丢掉" not in uo_query_agent
+        assert "direct_query" not in uo_query_agent
         from compose_runtime import validate_generated
 
         errors = validate_generated(REPO, host="_test_prune")
@@ -239,7 +246,10 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
         if name == "uo-query":
             assert "pilot_run" in text
             assert "不要 `pilot_run`" in text
-            assert "先对人说出路由" in text
+            assert "直接调用" in text
+            assert "委派" in text
+            assert "禁止在 Task 正文写 `--mode`" in text
+            assert "丢掉" not in text
             assert "acp run-action auto" not in text
         elif name == "uo-init":
             assert "UO_ALREADY_READY" in text
@@ -265,7 +275,9 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
     from compose_runtime import COGNITIVE_SKILL_IDS, _read_invariant_pack
 
     pack = _read_invariant_pack(REPO)
-    assert "短问" in pack
+    assert "简单查询" in pack
+    assert "短问" not in pack
+    assert "深问" not in pack
     assert "同名不可互换" in pack
     assert "Open" in pack
     assert COGNITIVE_SKILL_IDS == (
@@ -298,7 +310,9 @@ def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
     assert "pilot-pr-review" not in compiled
     assert "tdd-engines" not in compiled
     primary = (out / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
-    assert "短问" in primary
+    assert "简单查询" in primary
+    assert "短问" not in primary
+    assert "深问" not in primary
     assert "同名不可互换" in primary
     oa = (out / "skills" / "operator-analysis" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in oa

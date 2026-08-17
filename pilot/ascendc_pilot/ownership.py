@@ -282,6 +282,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "ce/review/**",
             "runs/**/actions/code_review/**",
         ],
+        "review_persist": ["ce/review/**"],
     },
     "ce-impact": {
         "change_capture": ["ce/impact/change_capture.yaml"],
@@ -292,6 +293,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "ce/impact/obligations.yaml",
             "ce/impact/ledger.yaml",
             "ce/impact/change_test_intent.yaml",
+            "ce/impact/tg_plan_intent.yaml",
         ],
         "scenario_infer": [
             "ce/impact/scenario_set.yaml",
@@ -332,15 +334,16 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "scenario_infer": ["ce/intent/planned_scenarios.yaml", "ce/scenarios/scenario_set.yaml"],
         "plan_review": ["ce/intent/plan_review.yaml"],
         "feature_promote": ["ce/intent/feature_decomposition.yaml"],
-        "human_confirm": ["ce/intent/confirmation.yaml"],
+        "human_confirm": ["ce/intent/confirmation.yaml", "ce/intent/plan.md"],
     },
     "ce-apply": {
-        "apply_gate": ["ce/apply/gate.yaml"],
+        "apply_gate": ["ce/apply/gate.yaml", "ce/apply/todo.md"],
         "patch": [
             "source:op_host/**",
             "source:op_kernel/**",
             "source:common/**",
             "ce/apply/patch_notes.yaml",
+            "ce/apply/todo.md",
             "runs/{run_id}/actions/patch/**",
         ],
         "change_capture": ["ce/apply/change_capture.yaml"],
@@ -350,7 +353,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/**/actions/code_review/**",
         ],
         "codemap_refresh": ["ce/apply/codemap_refresh.yaml"],
-        "apply_report": ["ce/apply/report.yaml", "ce/session_handoff.md"],
+        "apply_report": ["ce/apply/report.yaml", "ce/session_handoff.md", "ce/review/**"],
     },
     "ce-handoff": {
         "session_handoff": ["ce/session_handoff.md"],
@@ -415,7 +418,7 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         ],
     },
     "tg-plan": {
-        "plan_intent": ["uo/*.uo", "tg/init/**", "context/**", "ce/scenarios/**"],
+        "plan_intent": ["uo/*.uo", "tg/init/**", "context/**", "ce/scenarios/**", "ce/impact/tg_plan_intent.yaml"],
         "scenario_plan": ["ce/scenarios/**", "tg/plan/plan_intent.yaml"],
         "plan_scope": [
             "uo/*.uo",
@@ -498,11 +501,21 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "ce-review": {
         "code_review": [
-            "uo/**",
-            "ce/**",
+            "uo/*.uo",
+            "ce/intent/plan.md",
+            "ce/impact/change_capture.yaml",
+            "ce/apply/change_capture.yaml",
+            "source:op_host/**",
+            "source:op_kernel/**",
+            "source:common/**",
             "runs/**",
             "context/**",
             "skills/code-review/**",
+        ],
+        "review_persist": [
+            "ce/intent/plan.md",
+            "ce/review/**",
+            "runs/{run_id}/actions/code_review/**",
         ],
     },
     "ce-impact": {
@@ -567,11 +580,11 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "human_confirm": ["ce/intent/**"],
     },
     "ce-apply": {
-        "apply_gate": ["ce/intent/**"],
+        "apply_gate": ["ce/intent/**", "ce/apply/todo.md"],
         "patch": [
             "uo/*.uo",
-            "ce/intent/**",
-            "ce/apply/**",
+            "ce/intent/plan.md",
+            "ce/apply/todo.md",
             "source:op_host/**",
             "source:op_kernel/**",
             "source:common/**",
@@ -581,8 +594,13 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "change_capture": ["context/**", "source/**"],
         "patch_guard": ["ce/apply/**", "ce/intent/anchors.yaml"],
         "code_review": [
-            "uo/**",
-            "ce/**",
+            "uo/*.uo",
+            "ce/intent/plan.md",
+            "ce/apply/todo.md",
+            "ce/apply/change_capture.yaml",
+            "source:op_host/**",
+            "source:op_kernel/**",
+            "source:common/**",
             "runs/**",
             "context/**",
             "skills/code-review/**",
@@ -592,9 +610,8 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "ce-handoff": {
         "session_handoff": [
-            "ce/intent/**",
-            "ce/review/**",
-            "ce/apply/**",
+            "ce/intent/plan.md",
+            "ce/apply/todo.md",
             "ce/session_handoff.md",
             "uo/*.uo",
             "context/**",

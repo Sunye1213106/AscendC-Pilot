@@ -17,9 +17,7 @@ def test_return_value_hook_is_ephemeral_and_narrow() -> None:
     assert "isKbLookupFinalize" in text
     assert "SLICE_ID=" in text
     assert "fanout_slice" in text
-    assert "injectUoQueryFirstQuery" in text
     assert "fillEmptyUoQueryTaskOutput" in text
-    assert "FIRST_QUERY:" in text
     assert "empty native task_result" in text
     capture_fn = text.split("function captureUoQueryTaskReturn")[1].split("export const AscendCHarnessPlugin")[0]
     assert "--result-file" not in capture_fn
@@ -81,5 +79,9 @@ def test_installers_copy_all_opencode_ts_hooks() -> None:
     assert "LOCALAPPDATA" in ps1
     assert r"opencode\bin" in ps1
     assert "XDG_CACHE_HOME" in sh
+    assert "XDG_CONFIG_HOME" in sh
+    assert "XDG_CONFIG_HOME" in ps1
     assert ".cache/opencode/bin" in sh
     assert ".cache\\opencode\\bin" in ps1
+    assert "Get-AcpExe" in ps1
+    assert "resolve_acp_bin" in sh

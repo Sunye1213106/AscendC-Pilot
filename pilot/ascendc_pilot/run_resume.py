@@ -340,8 +340,6 @@ def _artifact_checklist(agent: Path, workflow_id: str) -> list[dict[str, Any]]:
         "export_adapter_pack": "适配包导出",
         "export_tg_host_view": "TG Host 视图",
         "export_integrity": "完整性检查",
-        "kb_review": "KB 审查",
-        # tg / ce
         "kb_check": "UO KB 就绪",
         "contract_build": "TG 合同",
         "code_review": "CE 审查",
@@ -967,7 +965,7 @@ def discover_available_archs(project_root: Path) -> list[str]:
     except Exception:  # noqa: BLE001
         import re
 
-        arch_re = re.compile(r"^arch\d+$")
+        arch_re = re.compile(r"^arch(?:\d+|-\d+r\d+)$")
         seen: set[str] = set()
         for parent in (root / "op_host", root / "op_kernel"):
             if not parent.is_dir():

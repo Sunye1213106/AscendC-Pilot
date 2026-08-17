@@ -1447,10 +1447,6 @@ class SourceResolver:
             return Atom(text=path, reason=REASON_DEPTH_EXCEEDED)
         path = _strip_subscripts(path)
         if path in self._chasing:
-            if re.search(
-                r"(?:BaseParams|Params|TilingData|tilingData|PrefixData)\.", path
-            ):
-                return Atom(text=path, root="TILING_DATA", symbol=path)
             return _unproven_field(path, "CYCLIC_FIELD_DEPENDENCY")
         tail = path.split(".")[-1]
         by_tail = (
@@ -1472,24 +1468,6 @@ class SourceResolver:
             writes = [w for _, w in (pool or loose)]
             writes = sorted(writes, key=lambda w: (w.file, w.line), reverse=True)[:8]
         if not writes:
-            # Leaf under a Params/TilingData aggregate is host tiling state even
-            # when this TU did not record the defining write.
-            if re.search(
-                r"(?:BaseParams|Params|TilingData|tilingData|PrefixData)\.", path
-            ):
-                return Atom(text=path, root="TILING_DATA", symbol=path)
-            decl = self.host_ir.field_decl(path) if hasattr(self.host_ir, "field_decl") else None
-            if (
-                decl is not None
-                and str(getattr(decl, "init", "") or "").strip() in {"nullptr", "NULL"}
-                and re.search(r"(?:Param|Params)_$", tail)
-            ):
-                return Atom(
-                    text=path,
-                    root="TILING_DATA",
-                    symbol=path,
-                    via=(f"{tail} declared nullptr generated-tiling-pointer",),
-                )
             return _unproven_field(path, REASON_TILING_DATA_NO_WRITER)
 
         self._chasing.add(path)

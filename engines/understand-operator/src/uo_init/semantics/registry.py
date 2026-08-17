@@ -44,21 +44,32 @@ def load_registry() -> dict[str, dict[str, Any]]:
             row["source_file"] = name
             out[key] = row
     try:
-        from uo_init.semantics.ascendc_vf import cann_vf_api_names, vf_root_spelling
+        from uo_init.semantics.ascendc_vf import (
+            cann_vf_api_names,
+            is_vf_only_api,
+            vf_root_spelling,
+        )
 
         for spell in cann_vf_api_names():
             key = vf_root_spelling(spell)
+            vf_only = is_vf_only_api(key)
             row = {
-                "category": "vector_compute",
+                "category": "reg_compute" if vf_only else "vector_compute",
                 "engine": "VECTOR",
                 "confidence": "confirmed",
                 "callee": key,
                 "registry_version": REGISTRY_VERSION,
                 "source_file": "cann_vf",
             }
-            out.setdefault(key, dict(row))
+            if vf_only:
+                row["requires_vf"] = True
+            existing = out.get(key)
+            if existing is None:
+                out[key] = dict(row)
+            elif vf_only:
+                existing.setdefault("requires_vf", True)
             if spell != key:
-                alias = dict(row)
+                alias = dict(out.get(key) or row)
                 alias["callee"] = spell
                 alias["alias_of"] = key
                 out.setdefault(spell, alias)

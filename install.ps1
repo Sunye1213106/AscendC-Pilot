@@ -15,10 +15,47 @@ $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SkipPip = $env:SKIP_PIP
 $FastInstall = $env:ASCENDC_FAST_INSTALL -eq "1"
 
+function Get-OpenCodeHome {
+  $xdg = [string]$env:XDG_CONFIG_HOME
+  if (-not [string]::IsNullOrWhiteSpace($xdg)) {
+    return (Join-Path $xdg.Trim() "opencode")
+  }
+  return (Join-Path $HOME ".config\opencode")
+}
+
+# Keep install and uninstall on the same names (compose slash workflows + operator).
+$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
+$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
+$openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve")
+$currentAgents = @("ascendc-pilot","uo-query","uo-gap-investigator","ce-reviewer","tg-init-audit","tg-lemma-producer","tg-closure-referee","ce-change-referee","ce-applier","ce-analyst")
+$legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies")
+$legacyAgents = @("ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","deterministic-uo-engine","deterministic-tg-engine","deterministic-ce-engine","README")
+$legacyPlugins = @("ascendc-pilot.ts","zz-uo-query-return-value.ts","uo-query-return-value.ts","ascendc-harness.ts","pilot-driver.ts")
+
 function Get-PythonScriptsDir {
   $dir = python -c "import sysconfig; print(sysconfig.get_path('scripts'))" 2>$null
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dir)) { return $null }
   return ([string]$dir).Trim()
+}
+
+function Get-AcpExe {
+  $cmd = Get-Command acp -ErrorAction SilentlyContinue
+  if ($cmd -and $cmd.Source -and (Test-Path -LiteralPath $cmd.Source)) {
+    return $cmd.Source
+  }
+  $scripts = Get-PythonScriptsDir
+  if ($scripts) {
+    foreach ($name in @("acp.exe", "acp")) {
+      $p = Join-Path $scripts $name
+      if (Test-Path -LiteralPath $p) { return $p }
+    }
+  }
+  $fromPy = python -c "import pathlib,sysconfig; p=pathlib.Path(sysconfig.get_path('scripts')); print(next((str(p/n) for n in ('acp.exe','acp') if (p/n).is_file()), ''))" 2>$null
+  if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($fromPy)) {
+    $fromPy = ([string]$fromPy).Trim()
+    if (Test-Path -LiteralPath $fromPy) { return $fromPy }
+  }
+  return $null
 }
 
 function Stop-AcpConsoleScriptProcesses {
@@ -107,7 +144,7 @@ function Invoke-PipRequirements {
 
 function Get-PluginDest([string]$plat) {
   switch ($plat) {
-    "opencode" { Join-Path $HOME ".config\opencode\ascendc-pilot-plugin" }
+    "opencode" { Join-Path (Get-OpenCodeHome) "ascendc-pilot-plugin" }
     "cursor" { Join-Path $HOME ".cursor\ascendc-pilot-plugin" }
     "codex" { Join-Path $HOME ".agents\ascendc-pilot-plugin" }
     default { throw "Unknown platform $plat" }
@@ -115,27 +152,27 @@ function Get-PluginDest([string]$plat) {
 }
 function Get-SkillsDest([string]$plat) {
   switch ($plat) {
-    "opencode" { Join-Path $HOME ".config\opencode\skills" }
+    "opencode" { Join-Path (Get-OpenCodeHome) "skills" }
     "cursor" { Join-Path $HOME ".cursor\skills" }
     "codex" { Join-Path $HOME ".agents\skills" }
   }
 }
 function Get-AgentsDest([string]$plat) {
   switch ($plat) {
-    "opencode" { Join-Path $HOME ".config\opencode\agents" }
+    "opencode" { Join-Path (Get-OpenCodeHome) "agents" }
     "cursor" { Join-Path $HOME ".cursor\agents" }
     "codex" { Join-Path $HOME ".agents\agents" }
   }
 }
 function Get-CommandsDest([string]$plat) {
   switch ($plat) {
-    "opencode" { Join-Path $HOME ".config\opencode\commands" }
+    "opencode" { Join-Path (Get-OpenCodeHome) "commands" }
     default { $null }
   }
 }
 function Get-PluginsDest([string]$plat) {
   switch ($plat) {
-    "opencode" { Join-Path $HOME ".config\opencode\plugins" }
+    "opencode" { Join-Path (Get-OpenCodeHome) "plugins" }
     default { $null }
   }
 }
@@ -161,7 +198,7 @@ function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$
     }
   }
   if ($plat -eq "opencode") {
-    $legacyPlug = Join-Path $HOME ".config\opencode\ascendc-agent-plugin"
+    $legacyPlug = Join-Path (Get-OpenCodeHome) "ascendc-agent-plugin"
     if (Test-Path -LiteralPath $legacyPlug) {
       Remove-Item -Recurse -Force -LiteralPath $legacyPlug
       Write-Host "Removed legacy plugin tree → $legacyPlug"
@@ -184,28 +221,28 @@ if ($Platform -like "uninstall-*") {
   $plugins = Get-PluginsDest $plat
   $commands = Get-CommandsDest $plat
   if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve","operator","_policies","understand-operator","uo-diff","uo-code-review")) {
+  foreach ($name in ($workflowSkills + $legacySkills + $cognitiveSkills + @("_shared"))) {
     $p = Join-Path $skills $name
     if (Test-Path $p) { Remove-Item -Recurse -Force $p }
   }
-  foreach ($name in @("ascendc-pilot","ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-investigator","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","ce-reviewer","uo-query","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","deterministic-uo-engine","deterministic-tg-engine","README")) {
+  foreach ($name in ($currentAgents + $legacyAgents)) {
     $p = Join-Path $agents "$name.md"
     if (Test-Path $p) { Remove-Item -Force $p }
   }
   if ($plat -eq "opencode") {
     if ($commands) {
-      foreach ($name in @("uo-init","uo-update","uo-query","uo-investigate","ce-review","tg-init","tg-plan","tg-solve")) {
+      foreach ($name in $openCodeCommands) {
         $p = Join-Path $commands "$name.md"
         if (Test-Path -LiteralPath $p) { Remove-Item -Force -LiteralPath $p }
       }
     }
     if ($plugins) {
-      foreach ($pluginName in @("ascendc-pilot.ts", "zz-uo-query-return-value.ts", "ascendc-harness.ts", "pilot-driver.ts")) {
+      foreach ($pluginName in $legacyPlugins) {
         $pluginFile = Join-Path $plugins $pluginName
         if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
       }
     }
-    $legacyPlug = Join-Path $HOME ".config\opencode\ascendc-agent-plugin"
+    $legacyPlug = Join-Path (Get-OpenCodeHome) "ascendc-agent-plugin"
     if (Test-Path -LiteralPath $legacyPlug) { Remove-Item -Recurse -Force -LiteralPath $legacyPlug }
   }
   Write-Host "Uninstalled $plat"
@@ -296,9 +333,6 @@ if (Test-Path (Join-Path $genRoot "commands")) {
 
 # Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
-
-$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
-$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
 
 foreach ($name in $workflowSkills) {
   $target = Join-Path $Dest "skills\$name"
@@ -436,9 +470,9 @@ if ($Platform -eq "opencode") {
     Get-ChildItem -Path $commandSrc -Filter "*.md" -File | ForEach-Object {
       Copy-Item -Force -LiteralPath $_.FullName -Destination (Join-Path $commands $_.Name)
     }
-    Write-Host "Workflow commands → $commands\{uo-*,tg-*,ce-review}.md"
+    Write-Host "Workflow commands → $commands\{uo-*,tg-*,ce-*}.md"
   }
-  Write-Host "Primary agent → $Agents\ascendc-pilot.md (Tab 切换；未改 opencode.json)"
+  Write-Host "Primary agent → $Agents\ascendc-pilot.md (Tab: AscendC-Pilot；未改 opencode.json)"
 }
 
 $stampDir = Join-Path $Dest "templates\$Platform"
@@ -446,18 +480,21 @@ New-Item -ItemType Directory -Force -Path $stampDir | Out-Null
 Set-Content -Path (Join-Path $stampDir "install_stamp.txt") -Value "plugin_root=$Dest"
 
 # Cache absolute acp path for OpenCode plugin (Node often has a thinner PATH).
-$acpCmd = Get-Command acp -ErrorAction SilentlyContinue
-if ($acpCmd -and $acpCmd.Source) {
-  $cacheDir = Join-Path $HOME ".config\opencode"
-  New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
-  Set-Content -Path (Join-Path $cacheDir "ascendc-harness-bin") -Value $acpCmd.Source -Encoding utf8
-  Write-Host "Cached acp bin → $($acpCmd.Source)"
+$acpExe = Get-AcpExe
+$cacheDir = Get-OpenCodeHome
+New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+if ($acpExe) {
+  $cacheFile = Join-Path $cacheDir "ascendc-harness-bin"
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($cacheFile, ($acpExe.Trim() + "`n"), $utf8)
+  Write-Host "Cached acp bin → $acpExe"
 } else {
   Write-Host "WARN: acp not on PATH after pip install; OpenCode may fail to find harness"
 }
 
 Write-Host "Installed AscendC-Pilot → $Dest"
-Write-Host "Run: acp doctor"
+Write-Host "Run: python -m ascendc_pilot doctor --host $Platform"
+Write-Host "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 
 # optional native frontend (best-effort cmake/libclang). Missing source is a bug.
 # Skip on fast refresh; Python path is enough.

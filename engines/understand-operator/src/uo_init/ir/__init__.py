@@ -12,6 +12,19 @@ the CodeMap directly via ``passes/kernel_root_trace.py``.
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import Relation, RelationKind
+from uo_init.ir.evidence import (
+    SOURCE_CLANG_AST,
+    SOURCE_DSL,
+    SOURCE_LEXICAL,
+    TRUST_ADVISORY,
+    TRUST_AUTHORITATIVE,
+    TRUST_DERIVED,
+    TRUST_LEGACY_UNKNOWN,
+    build_context_id,
+    stamp_attrs,
+    summarize_trust,
+    validate_trust_records,
+)
 
 __all__ = [
     "CodeMap",
@@ -19,4 +32,15 @@ __all__ = [
     "EntityKind",
     "Relation",
     "RelationKind",
+    "SOURCE_CLANG_AST",
+    "SOURCE_DSL",
+    "SOURCE_LEXICAL",
+    "TRUST_ADVISORY",
+    "TRUST_AUTHORITATIVE",
+    "TRUST_DERIVED",
+    "TRUST_LEGACY_UNKNOWN",
+    "build_context_id",
+    "stamp_attrs",
+    "summarize_trust",
+    "validate_trust_records",
 ]

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from uo_init.ir.codemap import CodeMap
+from uo_init.ir.evidence import TRUST_ADVISORY, is_authoritative_trust
 from uo_init.store.reader import read_codemap
 
 
@@ -25,8 +26,15 @@ def _codemap(value: Any) -> CodeMap:
     return open_codemap_query(path).codemap
 
 
-def _tier(status: str, provenance: str) -> str:
-    """Return a conservative A/B/C evidence hint, never a proof upgrade."""
+def _tier(status: str, provenance: str, trust: str = "") -> str:
+    """Return a conservative A/B/C evidence hint, never a proof upgrade.
+
+    ``trust`` is authoritative; ``status=confirmed`` does not promote advisory facts.
+    """
+    if str(trust or "") == TRUST_ADVISORY:
+        return "C"
+    if is_authoritative_trust(trust):
+        return "A" if str(trust) == "authoritative" else "B"
     state = str(status or "").lower()
     prov = str(provenance or "").lower()
     if state in {"unresolved", "partial", "unknown", "external"}:
@@ -34,7 +42,7 @@ def _tier(status: str, provenance: str) -> str:
     if any(mark in prov for mark in ("llm", "heuristic", "inferred", "lexical")):
         return "C"
     if any(mark in prov for mark in ("clang", "compiler", "source_", "source-", "ast")):
-        return "A"
+        return "B"
     return "B"
 
 
@@ -48,6 +56,7 @@ def _row(value: Any) -> dict[str, Any]:
     hit["evidence_tier"] = _tier(
         str(getattr(value, "status", "") or ""),
         str(getattr(value, "attrs", {}).get("provenance") or ""),
+        str(getattr(value, "attrs", {}).get("trust") or ""),
     )
     return hit
 
@@ -60,6 +69,7 @@ def _slice(
     depth: int,
     budget: int,
     direction: str,
+    include_advisory: bool = False,
 ) -> dict[str, Any]:
     codemap = _codemap(codemap_or_product)
     max_depth = max(0, int(depth))
@@ -73,6 +83,8 @@ def _slice(
     outgoing: dict[str, list[Any]] = defaultdict(list)
     for rel in codemap.relations.values():
         if wanted and rel.kind_name().upper() not in wanted:
+            continue
+        if not include_advisory and str(rel.attrs.get("trust") or "") == TRUST_ADVISORY:
             continue
         key = rel.src if direction == "forward" else rel.dst
         outgoing[key].append(rel)
@@ -123,8 +135,13 @@ def slice_forward(
     edge_kinds: Iterable[str] | None = None,
     depth: int = 3,
     budget: int = 500,
+    include_advisory: bool = False,
 ) -> dict[str, Any]:
-    """Return a bounded outgoing subgraph rooted at ``seed_ids``."""
+    """Return a bounded outgoing subgraph rooted at ``seed_ids``.
+
+    Advisory edges are excluded by default so lexical candidates cannot
+    expand the semantic closure.
+    """
     return _slice(
         codemap_or_product,
         seed_ids,
@@ -132,6 +149,7 @@ def slice_forward(
         depth=depth,
         budget=budget,
         direction="forward",
+        include_advisory=include_advisory,
     )
 
 
@@ -142,6 +160,7 @@ def slice_backward(
     edge_kinds: Iterable[str] | None = None,
     depth: int = 3,
     budget: int = 500,
+    include_advisory: bool = False,
 ) -> dict[str, Any]:
     """Return a bounded incoming subgraph rooted at ``seed_ids``."""
     return _slice(
@@ -151,4 +170,5 @@ def slice_backward(
         depth=depth,
         budget=budget,
         direction="backward",
+        include_advisory=include_advisory,
     )

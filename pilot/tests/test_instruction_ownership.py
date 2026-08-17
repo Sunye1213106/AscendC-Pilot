@@ -1,4 +1,4 @@
-"""Instruction ownership: METHOD load, confirm skip, compiler fanout, shared refs."""
+"""Instruction ownership: METHOD load, confirm skip, query prepare, shared refs."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from ascendc_pilot.actions.method_bundle import materialize_method_bundle
 from ascendc_pilot.actions.runtime import _load_method_and_prompt, _resolve_capability_method, prepare_action
 from ascendc_pilot.agents_registry import load_agent_meta
 from ascendc_pilot.paths import ce_root, ensure_agent_layout
-from ascendc_pilot.query_slices import plan_query_slices
 from ascendc_pilot.state import start_workflow
 
 
@@ -195,13 +194,7 @@ def test_confirm_prepare_skips_cognitive_skills(tmp_path: Path) -> None:
     assert not list((session / "refs").rglob("SKILL.md"))
 
 
-def test_compiler_fanout_matches_dispatch_tasks(tmp_path: Path) -> None:
-    planned = plan_query_slices(Q18)
-    assert len(planned) >= 2
-    modes = [str(row.get("first_mode") or "") for row in planned]
-    assert "" not in modes
-    assert len(modes) == len(set(modes))
-
+def test_prepare_kb_lookup_does_not_fanout_tasks(tmp_path: Path) -> None:
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
@@ -211,20 +204,13 @@ def test_compiler_fanout_matches_dispatch_tasks(tmp_path: Path) -> None:
     start_workflow(op, "uo-query", architecture="arch35", intent=Q18)
     result = prepare_action(op, "kb_lookup")
     assert result.get("ok") is True, result
-    tasks = result.get("dispatch_tasks") or []
-    assert len(tasks) == len(planned)
-    stub_modes = [str(t.get("first_mode") or "") for t in tasks]
-    assert stub_modes == modes
-    for row in tasks:
-        stub = str(row.get("task_prompt_stub") or "")
-        assert "FIRST_QUERY:" in stub
-        assert "--project" in stub
-        assert "SLICE_ID=" in stub
-        assert "method.md" in stub
+    assert not result.get("dispatch_tasks")
+    stub = str(result.get("task_prompt_stub") or "")
+    assert "FIRST_QUERY:" not in stub
+    assert "SLICE_ID=" not in stub
 
 
 def test_short_question_does_not_fanout(tmp_path: Path) -> None:
-    assert plan_query_slices(Q9) == []
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")

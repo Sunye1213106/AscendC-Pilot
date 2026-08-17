@@ -5,6 +5,7 @@ from pathlib import Path
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.passes.host_defuse import trace_host_key_roots
 from uo_init.passes.host_defuse_validate import validate_host_defuse
 
 
@@ -51,3 +52,30 @@ def test_log_format_assignment_is_not_a_host_definition(tmp_path: Path) -> None:
     stats = cm.meta["host_defuse_validation"]
     assert stats["invalid_definition_nodes_removed"] == 1
     assert stats["dangling_dependency_nodes_removed"] == 1
+
+
+def test_log_format_is_not_extracted_as_host_defuse(tmp_path: Path) -> None:
+    root = tmp_path / "toy"
+    host = root / "op_host" / "arch35"
+    host.mkdir(parents=True)
+    (host / "host.cpp").write_text(
+        "void F() {\n"
+        "  int real = inputValue;\n"
+        '  OP_LOGD("F", "blockIdx = %ld: actual = %f", real, 1.0f);\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.upsert(
+        EntityKind.VARIABLE,
+        "blockIdx",
+        attrs={"host_key_argument": True, "canonical_symbol": "blockIdx"},
+    )
+    trace_host_key_roots(cm, root, architecture="arch35")
+    defs = [
+        e
+        for e in cm.by_kind(EntityKind.PREDICATE)
+        if str(e.attrs.get("provenance") or "") == "source_host_defuse"
+        and str(e.attrs.get("lhs") or "") == "blockIdx"
+    ]
+    assert defs == []

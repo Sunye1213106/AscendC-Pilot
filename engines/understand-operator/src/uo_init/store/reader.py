@@ -10,7 +10,24 @@ from typing import Any
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
+from uo_init.ir.evidence import (
+    SOURCE_UNSPECIFIED,
+    STATE_RESOLVED,
+    TRUST_LEGACY_UNKNOWN,
+)
 from uo_init.ir.relation import Relation, RelationKind
+
+
+def _legacy_trust_attrs(attrs: dict[str, Any], *, legacy: bool) -> dict[str, Any]:
+    """v1 products: missing trust is unknown, not lexical. v2 keeps stored fields."""
+    if not legacy:
+        return attrs
+    if str(attrs.get("trust") or "") in {TRUST_LEGACY_UNKNOWN, "authoritative", "derived", "advisory"}:
+        return attrs
+    attrs["trust"] = TRUST_LEGACY_UNKNOWN
+    attrs.setdefault("evidence_source", SOURCE_UNSPECIFIED)
+    attrs.setdefault("semantic_state", STATE_RESOLVED)
+    return attrs
 
 
 def open_uo(path: str | Path) -> sqlite3.Connection:
@@ -40,6 +57,10 @@ def read_codemap(path: str | Path) -> CodeMap:
             architecture=meta.get("architecture") or "",
         )
         cm.meta = {k[3:]: _maybe_json(v) for k, v in meta.items() if k.startswith("cm_")}
+        schema = str(meta.get("schema") or "")
+        legacy = schema != "codemap-uo/v2"
+        if legacy:
+            cm.meta["trust_model"] = "legacy_unknown"
         for row in conn.execute(
             "SELECT id, kind, name, status, confidence, file, line_start, line_end, data FROM entity"
         ):
@@ -69,7 +90,7 @@ def read_codemap(path: str | Path) -> CodeMap:
                     id=str(row["id"]),
                     kind=kind,
                     name=str(row["name"] or ""),
-                    attrs=attrs,
+                    attrs=_legacy_trust_attrs(attrs, legacy=legacy),
                     file=str(row["file"] or ""),
                     line_start=int(row["line_start"] or 0),
                     line_end=int(row["line_end"] or 0),
@@ -96,7 +117,7 @@ def read_codemap(path: str | Path) -> CodeMap:
                 kind=rkind,
                 src=str(row["src"]),
                 dst=str(row["dst"]),
-                attrs=attrs,
+                attrs=_legacy_trust_attrs(attrs, legacy=legacy),
                 status=str(row["status"] or "extracted"),
                 confidence=float(row["confidence"] or 1.0),
             )

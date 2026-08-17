@@ -5,7 +5,7 @@
 ```text
 确定性计算              -> Engine
 领域推理方法            -> METHOD.md（一次 LLM Action；confirm/deterministic 不要 METHOD）
-主控可见路由            -> skills/<id>/routing/*.md（不是 METHOD）
+主控查询方式说明        -> skills/<id>/routing/*.md（不是 METHOD）
 领域能力地图            -> Skill
 一次任务说明            -> Prompt（task/input/delta/output）
 状态与迁移              -> Workflow Spec（LLM Action 才写显式 action_method_id）
@@ -56,14 +56,14 @@ python scripts/sync_shared_references.py --check
 
 | 层 | 独有什么 |
 | --- | --- |
-| METHOD | 相关 ≠ 单域、FIRST_QUERY、怎么拆、怎么查 mode |
-| Policy / invariant | 硬约束：深问必须经授权 actor；Primary 不得绕过 lease；不得伪造 Task result；不得 `pilot_run`/`acp start uo-query` |
+| METHOD | 直接调用 / 委派、四种参数形态、沿卡片 `next` 继续查 |
+| Policy / invariant | 硬约束：复杂查询必须经授权 actor；Primary 不得绕过 lease；不得伪造 Task result；不得 `pilot_run`/`acp start uo-query`；Task 正文不得写 `--mode` |
 | SKILL.md | 领域地图 + 指向 METHOD 的一行 |
 | Prompt | 本次 task / input / constraints / output |
 | Agent YAML | identity / tools / `skill_ids` 上限 |
 | Docs | 解释性；测试不断言 docs 含某句 |
 
-认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。算子改码主流程接在现有 CE 上：grilling → `/ce-intent`，implement/tdd → `/ce-apply`，双轴 review → `standalone-review`，交接 → `/ce-handoff`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
+认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。算子改码主流程接在现有 CE 上：grilling → `/ce-intent`（冻结 `ce/intent/plan.md`），implement/tdd → `/ce-apply`（对齐 plan / `ce/apply/todo.md`），双轴 review → 并行 spec/standards 子代理，交接 → `/ce-handoff`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
 
 ## 新增 Engine、Capability 或 Host Adapter
 

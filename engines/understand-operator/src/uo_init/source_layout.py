@@ -18,10 +18,14 @@ def _text(path: Path | str) -> str:
     return read_text(path)
 
 
-ARCH_DIR_RE = re.compile(r"^arch\d+$")
-_ARCH_IN_PATH_RE = re.compile(r"(?:^|/)(arch\d+)(?:/|$)")
+# Hardware-generation directory / path token:
+#   arch35, arch22     — published DAV_NNNN → first two digits
+#   arch-920r1         — unpublished DAV_9201 (hyphenated product name)
+ARCH_NAME = r"arch(?:\d+|-\d+r\d+)"
+ARCH_DIR_RE = re.compile(rf"^{ARCH_NAME}$")
+ARCH_IN_PATH_RE = re.compile(rf"(?:^|/)({ARCH_NAME})(?:/|$)")
 # Path segment `/arch22/` or filename token `_arch22.h` / `foo_arch35_bar.h`.
-_ARCH_TOKEN_RE = re.compile(r"(?:^|[/_.-])(arch\d+)(?:[/_.-]|$)")
+_ARCH_TOKEN_RE = re.compile(rf"(?:^|[/_.-])({ARCH_NAME})(?:[/_.-]|$)")
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
 _ANY_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
@@ -85,8 +89,15 @@ def arch_tokens_in_include(include: str) -> set[str]:
 
 
 def arch_number(architecture: str) -> int:
-    m = re.fullmatch(r"arch(\d+)", str(architecture or "").strip().lower())
-    return int(m.group(1)) if m else 0
+    """Numeric rank for apt-vs-plain entry picking. ``arch-920r1`` → 920."""
+    raw = str(architecture or "").strip().lower()
+    m = re.fullmatch(r"arch(\d+)", raw)
+    if m:
+        return int(m.group(1))
+    m = re.fullmatch(r"arch-(\d+)r\d+", raw)
+    if m:
+        return int(m.group(1))
+    return 0
 
 
 def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
@@ -94,7 +105,8 @@ def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
 
     A file under ``op_kernel/archNN/`` is owned by that folder. Root-level
     entries (``foo.cpp`` vs ``foo_apt.cpp``) use include-derived architecture
-    when it is unique; otherwise apt vs plain follows the arch generation.
+    when it is unique; otherwise apt vs plain is a candidate ranking by
+    arch generation, not a semantic identity for the TU.
     """
     arch = str(architecture or "").strip().lower()
     arch_n = arch_number(arch)

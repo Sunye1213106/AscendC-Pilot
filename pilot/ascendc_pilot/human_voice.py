@@ -68,7 +68,7 @@ def progress_zh(
     next_step: str = "",
     need_you: str = "",
 ) -> str:
-    """三句式进度 / 总结（agent → 人）。"""
+    """三句式进度 / 总结（agent → 用户）。"""
     lines = [
         f"【目标】{goal.strip()}",
         f"【刚完成】{just_done.strip()}",

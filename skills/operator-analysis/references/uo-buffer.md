@@ -13,6 +13,5 @@
 ## 推荐接口
 
 ```text
-acp uo-query --mode buffer --pattern <name_or_function>
-acp uo-query --mode search --kind BUFFER --pattern <needle>
+acp uo-query --project <op> <name_or_function>
 ```

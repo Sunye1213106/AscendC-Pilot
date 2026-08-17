@@ -972,7 +972,9 @@ def resolve_project_root(explicit: Path | str | None = None) -> Path:
     env = (os.environ.get("ASCENDC_PROJECT_ROOT") or "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    cache = Path.home() / ".config" / "opencode" / "ascendc-last-project"
+    from ascendc_pilot.paths import opencode_home
+
+    cache = opencode_home() / "ascendc-last-project"
     if cache.is_file():
         root = cache.read_text(encoding="utf-8").strip()
         if root and Path(root).is_dir():

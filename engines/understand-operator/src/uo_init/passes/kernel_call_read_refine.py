@@ -567,7 +567,14 @@ def _consume_declaration(
 
 
 def _link_site(codemap: CodeMap, src: Entity, dst: Entity, provenance: str, site: dict) -> None:
-    rel = codemap.link(RelationKind.CALLS, src.id, dst.id, attrs={"provenance": provenance, **site}, status="confirmed")
+    rel = codemap.mint_candidate_relation(
+        RelationKind.CALLS,
+        src.id,
+        dst.id,
+        provenance=provenance,
+        extra=dict(site),
+        status="confirmed",
+    )
     rel.attrs["provenance"] = provenance
     sites = rel.attrs.setdefault("sites", [])
     if site not in sites:

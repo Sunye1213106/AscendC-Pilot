@@ -101,8 +101,6 @@ def extract(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         payload,
         [
             ("extract_host", pe.extract_host),
-            ("extract_registry", pe.extract_registry),
-            ("extract_kernel", pe.extract_kernel),
         ],
         engine="extract",
     )

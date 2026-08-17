@@ -177,7 +177,7 @@ def _ask_ce_intent(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     return decision_question(
         header="变更计划已审阅，是否确认？",
         goal=f"确认 {op}（{arch}）的改码范围、锚点与验收条件",
-        background="特性分解已经过审查。确认后冻结变更计划；返工则回到分解/审查。",
+        background="特性分解已经过审查。确认后冻结变更计划并写入 ce/intent/plan.md；返工则回到分解/审查。",
         decide="是否确认这份变更计划？",
         consequences={
             "确认变更计划": "冻结范围与验收条件，后续可按计划改码/验证",
@@ -288,18 +288,42 @@ def _ask_grill_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, A
 def _ask_apply_report(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     return decision_question(
-        header="改码与审查已完成，是否继续影响分析？",
-        goal=f"确认 {op}（{arch}）本次按锚点的改动与双轴审查结论",
-        background="源码已改、审查已写入 ce/review、CodeMap 已刷新。精度/性能仍要 /ce-impact → /ce-verify。",
-        decide="是否确认这次改码汇报并进入 /ce-impact？",
+        header="改码与审查已完成。结论已在对话里；是否落盘报告并继续影响分析？",
+        goal=f"确认 {op}（{arch}）本次改动与双轴审查结论",
+        background="源码已改、CodeMap 已刷新。审查结论默认在会话中陈述。精度/性能仍要 /ce-impact → /ce-verify。",
+        decide="只看结论，还是把审查报告写入 ce/review 后再进入 /ce-impact？",
         consequences={
-            "确认汇报": "写入交接，下一跳 /ce-impact",
+            "只看结论": "不填审查 YAML，写入交接，后续步骤 /ce-impact",
+            "落盘审查报告": "把 session 里的 findings 写入 ce/review，再进入 /ce-impact",
             "返工": "不交接，回到改码",
             "停止": "结束本次改码，不进入影响分析",
         },
         options=[
-            {"label": "确认汇报，进入影响分析", "value": "confirm"},
+            {"label": "只看结论，进入影响分析", "value": "confirm"},
+            {"label": "落盘审查报告，进入影响分析", "value": "persist"},
             {"label": "返工改码", "value": "rework"},
+            {"label": "停止本次目标", "value": "stop"},
+        ],
+    )
+
+
+def _ask_review_persist(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    op, arch = _op_arch(project_root, state)
+    return decision_question(
+        header="审查结论已给出。是否把报告落到磁盘？",
+        goal=f"告诉你 {op}（{arch}）哪里有问题",
+        background="Spec / Standards 结论在对话里（path:line）。默认不写 ce/review YAML。",
+        decide="只看结论，还是落盘审查报告？",
+        consequences={
+            "只看结论": "保持 skeleton，结束本次检视",
+            "落盘审查报告": "把 session findings 写入 ce/review/*.yaml",
+            "返工": "回到审查",
+            "停止": "结束本次检视",
+        },
+        options=[
+            {"label": "只看结论", "value": "confirm"},
+            {"label": "落盘审查报告", "value": "persist"},
+            {"label": "返工审查", "value": "rework"},
             {"label": "停止本次目标", "value": "stop"},
         ],
     )
@@ -499,7 +523,23 @@ def _materialize_ce_intent(
         "artifact_identity": identity,
     }
     path, backups = _write_yaml_receipt(path, doc)
-    return {"ok": True, "path": path, "backups": backups, "identity": identity}
+    from code_engineering.intent import write_intent_plan
+
+    plan = write_intent_plan(project_root, architecture=_arch(state))
+    if not plan.get("ok"):
+        return {
+            "ok": False,
+            "error": str(plan.get("error") or "INTENT_PLAN_WRITE_FAILED"),
+            "message_zh": "变更计划 plan.md 未能写入，禁止确认。",
+            "plan": plan,
+        }
+    return {
+        "ok": True,
+        "path": path,
+        "plan_path": plan.get("artifact"),
+        "backups": backups,
+        "identity": identity,
+    }
 
 
 def _materialize_scenario_confirm(
@@ -562,7 +602,7 @@ def _hints_ce_intent(project_root: Path, state: dict[str, Any]) -> list[str]:
         rel = root.relative_to(Path(project_root).resolve()).as_posix()
     except Exception:  # noqa: BLE001
         rel = ".ascendc-pilot/<arch>/ce/intent/"
-    return [f"Review {rel}feature_decomposition.yaml and plan_review.yaml before asking to freeze the plan."]
+    return [f"Review {rel}feature_decomposition.yaml and plan_review.yaml before asking to freeze the plan. Confirm writes ce/intent/plan.md."]
 
 
 def _hints_scenario_confirm(project_root: Path, state: dict[str, Any]) -> list[str]:
@@ -629,15 +669,22 @@ def _materialize_apply_report(
     try:
         from code_engineering.handoff import write_session_handoff
 
+        from code_engineering.review_persist import persist_review_reports
+
+        persist_review_reports(
+            project_root,
+            architecture=_arch(state) or "",
+            run_id=str(state.get("run_id") or ""),
+            persist=str(identity.get("human_decision_value") or "") == "persist",
+        )
         write_session_handoff(
             project_root,
             architecture=_arch(state),
             next_slash="/ce-impact",
             artifact_paths=[
+                "ce/intent/plan.md",
+                "ce/apply/todo.md",
                 "ce/apply/patch_report.yaml",
-                "ce/review/index.yaml",
-                "ce/review/functional_report.yaml",
-                "ce/review/bug_report.yaml",
                 "ce/apply/codemap_refresh.yaml",
             ],
         )
@@ -656,12 +703,32 @@ def _hints_grill_confirm(project_root: Path, state: dict[str, Any]) -> list[str]
 
 
 def _hints_apply_report(project_root: Path, state: dict[str, Any]) -> list[str]:
-    try:
-        root = ce_root(project_root, arch=_arch(state))
-        rel = root.relative_to(Path(project_root).resolve()).as_posix()
-    except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/ce/"
-    return [f"Review {rel}apply/patch_report.yaml and {rel}review/ before continuing to /ce-impact."]
+    del project_root, state
+    return ["Speak path:line findings. Persist review YAML only if the user chose 落盘审查报告."]
+
+
+def _materialize_review_persist(
+    project_root: Path,
+    state: dict[str, Any],
+    identity: dict[str, str],
+    now: str,
+) -> dict[str, Any]:
+    from code_engineering.review_persist import persist_review_reports
+
+    result = persist_review_reports(
+        project_root,
+        architecture=_arch(state) or "",
+        run_id=str(state.get("run_id") or ""),
+        persist=str(identity.get("human_decision_value") or "") == "persist",
+    )
+    path = Path(str(result.get("artifact") or ""))
+    backups = {path: path.read_bytes() if path.is_file() else None} if path else {}
+    return {"ok": bool(result.get("ok")), "path": path, "backups": backups, "identity": identity, **result}
+
+
+def _hints_review_persist(project_root: Path, state: dict[str, Any]) -> list[str]:
+    del project_root, state
+    return ["Speak path:line findings. Persist ce/review/*.yaml only if the user chose 落盘审查报告."]
 
 
 SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
@@ -715,10 +782,18 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("ce-apply", "apply_report"): {
         "kind": "primary_confirm",
-        "expected_values": ["confirm"],
+        "expected_values": ["confirm", "persist"],
         "ask": _ask_apply_report,
         "materialize": _materialize_apply_report,
         "hints": _hints_apply_report,
+        "compact": None,
+    },
+    ("ce-review", "review_persist"): {
+        "kind": "primary_confirm",
+        "expected_values": ["confirm", "persist"],
+        "ask": _ask_review_persist,
+        "materialize": _materialize_review_persist,
+        "hints": _hints_review_persist,
         "compact": None,
     },
 }
@@ -923,6 +998,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     identity = _identity(session)
     identity["human_decision_request_id"] = str(receipt.get("request_id") or "")
+    identity["human_decision_value"] = str(receipt.get("value") or "")
     materialize: MaterializeFn = scenario["materialize"]
     return materialize(project_root, state, identity, now)
 
