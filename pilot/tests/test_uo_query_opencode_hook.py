@@ -45,11 +45,24 @@ def test_task_hook_uses_pending_dispatch_project() -> None:
     assert "ensureAcpOnPath" in plugin
     assert "prependPilotToolPath" in plugin
     assert "openCodeRgBinDirs" in plugin
-    assert 'pilotTools as Record<string, unknown>).skill' in plugin or 'createPilotSkillTool()' in plugin
+    assert "denyPilotWorkflowSkills" in plugin
+    assert "PILOT_WORKFLOW_SKILLS" in plugin
+    assert ").skill = createPilotSkillTool" not in plugin
+    assert 'pilotTools as Record<string, unknown>).skill' not in plugin
+    assert "Do not assign plugin.tool.skill" in plugin
+    assert "Must not be applied to the global OpenCode config" in plugin
+    assert "return patchWindowsShell(out)" not in plugin
+    assert "  ensureAcpOnPath()" not in plugin
+    assert "delete perm[\"*\"]" in plugin or 'delete perm["*"]' in plugin
     assert '"shell.env"' in plugin
     assert "lastSkillName" in plugin
     assert "return output || {}" in plugin
     assert "patchPilotReadPermissions" in plugin
+    assert "isolateNativeOpenCodeAgents" in plugin
+    assert "rememberSessionAgent" in plugin
+    assert "NATIVE_OPENCODE_AGENTS" in plugin
+    assert "Never default unlabeled sessions to ascendc-pilot" in plugin
+    assert '"chat.params"' in plugin
     assert 'perm.external_directory = "allow"' in plugin
     assert 'perm.task = "allow"' not in plugin
     assert "Do not widen task" in plugin
@@ -80,12 +93,17 @@ def test_installers_copy_all_opencode_ts_hooks() -> None:
     assert r"opencode\bin" in ps1
     assert "XDG_CACHE_HOME" in sh
     assert "XDG_CONFIG_HOME" in sh
+    assert "Keep workflow skills plugin-internal" in ps1
+    assert "plugin-internal only. Global skills/" in sh
     assert "XDG_CONFIG_HOME" in ps1
     assert ".cache/opencode/bin" in sh
     assert ".cache\\opencode\\bin" in ps1
     assert "Get-AcpExe" in ps1
     assert "resolve_acp_bin" in sh
     assert "function Remove-ReparseOrItem" in ps1
+    assert "function Invoke-CmdQuiet" in ps1
+    assert "PSNativeCommandUseErrorActionPreference" in ps1
+    assert ps1.rstrip().endswith("exit 0")
     assert "function Install-DirLink" in ps1
     assert "function Write-CannHint" in ps1
     assert "New-Item -ItemType Junction" not in ps1

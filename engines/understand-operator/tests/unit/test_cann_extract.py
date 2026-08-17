@@ -66,6 +66,44 @@ def test_apply_fixup_uses_detected_host(ce, tmp_path: Path, monkeypatch) -> None
     assert plan.made >= 1
 
 
+def test_replay_links_skips_live_paths(ce, tmp_path: Path, monkeypatch) -> None:
+    dest = tmp_path / "pkg"
+    target = dest / "real"
+    target.mkdir(parents=True)
+    live = dest / "already"
+    live.mkdir()
+    (live / "h.h").write_text("ok\n", encoding="utf-8")
+
+    def boom(*_a, **_k):
+        raise AssertionError("live paths must not enter make_dir_link")
+
+    monkeypatch.setattr(ce, "make_dir_link", boom)
+    plan = ce.LinkPlan()
+    plan.links.append((live, "real"))
+    ce.replay_links(plan)
+    assert plan.made == 0
+    assert plan.copied == 0
+
+
+def test_replay_links_creates_missing_dir_link(ce, tmp_path: Path, monkeypatch) -> None:
+    dest = tmp_path / "pkg"
+    target = dest / "real"
+    target.mkdir(parents=True)
+    link = dest / "missing"
+    seen: list[tuple[Path, Path, bool]] = []
+
+    def fake(link_path: Path, resolved: Path, *, copy_fallback: bool = False) -> str:
+        seen.append((link_path, resolved, copy_fallback))
+        return "junction"
+
+    monkeypatch.setattr(ce, "make_dir_link", fake)
+    plan = ce.LinkPlan()
+    plan.links.append((link, "real"))
+    ce.replay_links(plan)
+    assert seen == [(link, target.resolve(), False)]
+    assert plan.made == 1
+
+
 @pytest.mark.skipif(os.name == "nt", reason="Windows junctions poison pytest tmp cleanup")
 def test_make_dir_link_replaces_dangling(ce, tmp_path: Path) -> None:
     target = tmp_path / "include"

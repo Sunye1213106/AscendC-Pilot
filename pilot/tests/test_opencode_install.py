@@ -35,6 +35,9 @@ def test_host_doctor_requires_installed_bundle_not_source_tree(tmp_path, monkeyp
     source_driver = ROOT / "opencode-plugin" / "pilot-driver.ts"
     assert source_driver.is_file()
     assert source_driver.as_posix() not in by_name["plugin_pilot_driver_ts"]["detail"]
+    assert by_name["workflow_skills_plugin_internal"]["ok"] is False
+    assert by_name["plugin_does_not_override_native_skill"]["ok"] is False
+    assert by_name["workflow_skills_not_in_global_discovery"]["ok"] is True
 
 
 def test_plugin_resolve_acp_uses_opencode_home() -> None:

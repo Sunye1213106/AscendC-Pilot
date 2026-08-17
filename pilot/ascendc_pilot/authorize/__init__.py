@@ -141,6 +141,11 @@ _PASS_THROUGH_AGENTS = frozenset(
         "general",
         "general-purpose",
         "generalpurpose",
+        "explore",
+        "scout",
+        "compaction",
+        "title",
+        "summary",
         "ask",
         "debug",
     }

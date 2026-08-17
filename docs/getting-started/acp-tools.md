@@ -1,6 +1,6 @@
 # ACP 工具使用说明
 
-OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `acp`。日常任务按本页选工具即可。
+OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `acp`。日常任务按本页选工具即可。这两个工具只属于 **AscendC-Pilot Tab**；Build / Plan 保持 OpenCode 原生权限、原生 skill、原生 shell，不会套用 Pilot harness，也看不到 Pilot workflow skill。
 
 **不要用 `acp --help` / `acp <子命令> --help` 来摸协议。** argparse 帮助会列出三十多个内部子命令（`authorize`、`debug`、`serve-authorize` 等），那不是 Session Driver 合同，也不是查询路由。Agent 跟着帮助文字去编排 `start` → `run-action` → `finalize`，或在 Windows 上改走 bash，就会表现为卡住。
 

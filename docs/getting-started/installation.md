@@ -119,7 +119,7 @@ AscendC-Pilot
 
 日常改 plugin / skill 后，Windows 可用仓库根目录的 `.\refresh-opencode.ps1`（默认跳过 pip、复用 engines 拷贝）。Linux 重新跑 `SKIP_PIP=1 ./install.sh opencode`。
 
-OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序与插件会把 `rg.exe` 种到 cache/data 两套目录。主控 `skill` 由插件**覆盖**原生工具：直接读 OpenCode skills 目录下的 `SKILL.md`，不 spawn rg。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。
+OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序会把 `rg.exe` 种到 cache/data 两套目录。AscendC-Pilot 的 workflow skill **只**放在 `~/.config/opencode/ascendc-pilot-plugin/skills/`，不链进全局 `~/.config/opencode/skills/`，也不覆盖 OpenCode 原生 `skill` 工具。Pilot Tab 的 after-hook 在缺 rg 时从插件目录恢复 `SKILL.md`。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。**Build / Plan Tab 保持 OpenCode 原生权限、原生 skill、原生 shell**，看不到 `pilot_run` / `acp` / Pilot workflow skill，也不走 Pilot harness。
 
 MCP 保持放行。
 

@@ -67,8 +67,44 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
     cog_ids = [p.name for p in cog.iterdir()] if cog.is_dir() else []
     add("cognitive_skills_present", bool(cog_ids), ",".join(cog_ids[:8]))
 
+    workflow_skill_names = (
+        "uo-init",
+        "uo-update",
+        "uo-query",
+        "uo-investigate",
+        "ce-review",
+        "ce-intent",
+        "ce-apply",
+        "ce-handoff",
+        "ce-impact",
+        "ce-verify",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+        "operator",
+    )
+    leaked = [n for n in workflow_skill_names if (home / "skills" / n).exists()]
+    add(
+        "workflow_skills_not_in_global_discovery",
+        len(leaked) == 0,
+        "ok" if not leaked else "leaked into ~/.config/opencode/skills: " + ",".join(leaked[:8]),
+    )
+    internal_uo = home / "ascendc-pilot-plugin" / "skills" / "uo-init" / "SKILL.md"
+    add(
+        "workflow_skills_plugin_internal",
+        internal_uo.is_file(),
+        str(internal_uo),
+    )
+
     plug_ts = plugins / "ascendc-pilot.ts"
     plug_text = plug_ts.read_text(encoding="utf-8") if plug_ts.is_file() else ""
+    add(
+        "plugin_does_not_override_native_skill",
+        plug_ts.is_file()
+        and ").skill = createPilotSkillTool" not in plug_text
+        and "pilotTools as Record<string, unknown>).skill" not in plug_text,
+        "native OpenCode skill tool left intact for Build/Plan",
+    )
     add(
         "plugin_uo_query_return_capture",
         "captureUoQueryTaskReturn" in plug_text and "ASCENDC_ACTION_RESULT" in plug_text,

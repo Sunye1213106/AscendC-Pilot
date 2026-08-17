@@ -186,11 +186,13 @@ Assert-True ($pluginText -match 'return\s+"acp"') "installed plugin resolves acp
 Assert-True ($pluginText -notmatch 'return\s+"pilot"') "installed plugin no longer looks up pilot binary"
 Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin has no pilot binary candidate list"
 
-# Skills / primary agent / native slash commands
+# Skills stay plugin-internal (not ~/.config/opencode/skills — that is Build/Plan discovery)
 $skillLink = Join-Path $ocHome "skills\uo-init"
+$skillInternal = Join-Path $ocHome "ascendc-pilot-plugin\skills\uo-init\SKILL.md"
 $agentLink = Join-Path $ocHome "agents\ascendc-pilot.md"
 $commandsDir = Join-Path $ocHome "commands"
-Assert-True (Test-Path -LiteralPath $skillLink) "uo-init skill linked"
+Assert-True (-not (Test-Path -LiteralPath $skillLink)) "uo-init must not be in global OpenCode skills/"
+Assert-True (Test-Path -LiteralPath $skillInternal) "uo-init skill installed plugin-internal"
 Assert-True (Test-Path -LiteralPath $agentLink) "ascendc-pilot.md installed"
 foreach ($name in @("uo-init", "uo-query", "tg-init", "tg-plan", "tg-solve", "ce-review", "ce-intent", "ce-apply", "ce-handoff", "ce-impact", "ce-verify")) {
   $commandPath = Join-Path $commandsDir "$name.md"

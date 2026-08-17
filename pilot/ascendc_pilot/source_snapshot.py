@@ -82,6 +82,8 @@ def _run_git(project_root: Path, *args: str) -> subprocess.CompletedProcess[str]
         return subprocess.run(
             [_git_executable(), "-C", str(project_root), *args],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             check=False,
         )

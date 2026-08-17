@@ -182,7 +182,7 @@ def test_build_agent_passthrough_during_containment(tmp_path: Path):
         messages=["installed_skill_check.consistent is not true"],
         source="uo_scope",
     )
-    for agent in ("Build", "build", "plan", "Plan"):
+    for agent in ("Build", "build", "plan", "Plan", "explore", "scout"):
         v = authorize(tmp_path, tool="bash", command="dir", agent=agent)
         assert v.get("decision") == "allow", (agent, v)
         assert v.get("reason_code") == "HARNESS_INACTIVE"

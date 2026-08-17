@@ -85,7 +85,7 @@ function isAcpHelpCommand(command: string): boolean {
 
 function isPrimaryPilotAgent(agent: string): boolean {
   const a = String(agent || "").trim().toLowerCase()
-  return !a || a === "ascendc-pilot" || a === "ascendc_agent"
+  return a === "ascendc-pilot" || a === "ascendc_agent"
 }
 
 /** Listing / cwd probes only. File contents go through Read (engine-source fence). */
@@ -592,10 +592,23 @@ function detectProjectRootForTask(promptHint?: string): string {
   return detectProjectRoot()
 }
 
-function resolveAgent(input: { agent?: string; sessionAgent?: string }): string {
-  const fromEnv = process.env.ASCENDC_AGENT || process.env.OPENCODE_AGENT || ""
-  const fromInput = input.agent || input.sessionAgent || ""
-  return String(fromEnv || fromInput || "ascendc-pilot").trim()
+function resolveAgent(input: {
+  agent?: string
+  sessionAgent?: string
+  sessionID?: string
+  sessionId?: string
+}): string {
+  const fromInput = String(input.agent || input.sessionAgent || "").trim()
+  if (fromInput) return fromInput
+  const sid = String(input.sessionID || input.sessionId || "").trim()
+  if (sid) {
+    const cached = sessionAgentById.get(sid) || ""
+    if (cached) return cached
+  }
+  const fromEnv = String(process.env.ASCENDC_AGENT || process.env.OPENCODE_AGENT || "").trim()
+  if (fromEnv) return fromEnv
+  // Never default unlabeled sessions to ascendc-pilot — that steals Build/Plan.
+  return ""
 }
 
 /** Prefer declared producer actor when the hook mislabels the session as primary. */
@@ -626,15 +639,97 @@ function resolveEffectiveAgent(
   return agent
 }
 
-const PASS_THROUGH_AGENTS = new Set([
+const NATIVE_OPENCODE_AGENTS = [
   "build",
   "plan",
   "general",
-  "general-purpose",
-  "generalpurpose",
+  "explore",
+  "scout",
+  "compaction",
+  "title",
+  "summary",
   "ask",
   "debug",
+] as const
+
+const PASS_THROUGH_AGENTS = new Set<string>([
+  ...NATIVE_OPENCODE_AGENTS,
+  "general-purpose",
+  "generalpurpose",
 ])
+
+const PILOT_ONLY_TOOLS = new Set(["pilot_run", "pilotrun", "acp"])
+
+/** Workflow skills live plugin-internal only. Never install into global OpenCode skills/. */
+const PILOT_WORKFLOW_SKILLS = [
+  "uo-init",
+  "uo-update",
+  "uo-query",
+  "uo-investigate",
+  "ce-review",
+  "ce-intent",
+  "ce-apply",
+  "ce-handoff",
+  "ce-impact",
+  "ce-verify",
+  "tg-init",
+  "tg-plan",
+  "tg-solve",
+  "operator",
+] as const
+
+const PILOT_COGNITIVE_SKILLS = [
+  "operator-analysis",
+  "testcase-generation",
+  "source-proof",
+  "code-review",
+  "code-engineering",
+] as const
+
+const PILOT_MANAGED_SKILLS = new Set<string>([
+  ...PILOT_WORKFLOW_SKILLS,
+  ...PILOT_COGNITIVE_SKILLS,
+])
+
+function isPilotManagedSkill(name: string): boolean {
+  const n = String(name || "")
+    .trim()
+    .replace(/\\/g, "/")
+    .split("/")
+    .filter(Boolean)
+    .pop()
+    ?.toLowerCase() || ""
+  return PILOT_MANAGED_SKILLS.has(n)
+}
+
+/** Named deny so leftover global links cannot be invoked from Build/Plan. */
+function denyPilotWorkflowSkills(perm: Record<string, unknown>): void {
+  const named: Record<string, unknown> = {}
+  for (const n of PILOT_MANAGED_SKILLS) named[n] = "deny"
+  const cur = perm.skill
+  if (typeof cur === "string") {
+    perm.skill = { "*": cur, ...named }
+    return
+  }
+  if (cur && typeof cur === "object") {
+    perm.skill = { ...(cur as Record<string, unknown>), ...named }
+    return
+  }
+  perm.skill = { "*": "allow", ...named }
+}
+
+/** sessionID → Tab / child agent. OpenCode tool hooks often omit `agent`. */
+const sessionAgentById = new Map<string, string>()
+
+function rememberSessionAgent(sessionID: string, agent: string): void {
+  const id = String(sessionID || "").trim()
+  const a = String(agent || "").trim()
+  if (id && a) sessionAgentById.set(id, a)
+}
+
+function isPilotOnlyTool(tool: string): boolean {
+  return PILOT_ONLY_TOOLS.has(String(tool || "").trim().toLowerCase())
+}
 
 const PILOT_AGENT_PREFIXES = ["uo-", "tg-", "deterministic-", "ce-"]
 
@@ -643,15 +738,23 @@ function isPilotFamilyAgent(agent: string): boolean {
   const a = String(agent || "")
     .trim()
     .toLowerCase()
-  if (!a || a === "ascendc-pilot" || a === "ascendc_agent") return true
+  if (!a) return false
+  if (a === "ascendc-pilot" || a === "ascendc_agent") return true
   if (PASS_THROUGH_AGENTS.has(a)) return false
   if (PILOT_AGENT_PREFIXES.some((p) => a.startsWith(p))) return true
   return false
 }
 
 /** Enforce harness only for Pilot-family agents (global plugin stays loaded). */
-function shouldEnforceHarness(agent: string): boolean {
-  return isPilotFamilyAgent(agent)
+function shouldEnforceHarness(agent: string, tool = ""): boolean {
+  const a = String(agent || "")
+    .trim()
+    .toLowerCase()
+  if (PASS_THROUGH_AGENTS.has(a)) return false
+  if (isPilotFamilyAgent(a)) return true
+  // Plugin tools are Pilot-only; native bash/write with unknown agent stay stock OpenCode.
+  if (!a && isPilotOnlyTool(tool)) return true
+  return false
 }
 
 /** Installed Pilot agent ids (markdown names under ~/.config/opencode/agents). */
@@ -679,13 +782,31 @@ function listInstalledPilotAgentNames(): string[] {
   return [...names].filter((n) => isPilotFamilyAgent(n) && !PASS_THROUGH_AGENTS.has(n))
 }
 
-/**
- * AscendC-Pilot mode: Host Read of any directory is allow (no OpenCode ask).
- * `external_directory` is an OpenCode worktree transport workaround — not the
- * Pilot write boundary (lease + allowed paths). Does not change Build/Plan.
- * Does not relax write/edit. Must not widen `task` beyond compose ceiling.
- * Mutates and returns cfg.
- */
+function isolateNativeOpenCodeAgents(agentBag: Record<string, unknown>): void {
+  for (const name of NATIVE_OPENCODE_AGENTS) {
+    const cur =
+      agentBag[name] && typeof agentBag[name] === "object"
+        ? { ...(agentBag[name] as Record<string, unknown>) }
+        : {}
+    const perm =
+      cur.permission && typeof cur.permission === "object"
+        ? { ...(cur.permission as Record<string, unknown>) }
+        : {}
+    perm.pilot_run = "deny"
+    perm.pilotrun = "deny"
+    perm.acp = "deny"
+    denyPilotWorkflowSkills(perm)
+    const tools =
+      cur.tools && typeof cur.tools === "object"
+        ? { ...(cur.tools as Record<string, unknown>) }
+        : {}
+    tools.pilot_run = false
+    tools.pilotrun = false
+    tools.acp = false
+    agentBag[name] = { ...cur, permission: perm, tools }
+  }
+}
+
 function windowsPowershellPath(): string {
   const roots = [
     process.env.SystemRoot,
@@ -706,6 +827,9 @@ function windowsPowershellPath(): string {
  * Effect spawn then treats the whole `acp uo-query …` string as the executable
  * → NotFound: ChildProcess.spawn (ses_ff6fe, 2026-08-15 15:56).
  * Pin an absolute PowerShell so the PS branch (argv spawn) is used.
+ *
+ * Must not be applied to the global OpenCode config: that would change
+ * Build/Plan bash. Pilot `acp` uses spawnSync({shell:false}) instead.
  */
 function patchWindowsShell(cfg: Record<string, unknown>): Record<string, unknown> {
   if (process.platform !== "win32") return cfg
@@ -718,6 +842,15 @@ function patchWindowsShell(cfg: Record<string, unknown>): Record<string, unknown
   return cfg
 }
 
+/**
+ * AscendC-Pilot mode: Host Read of any directory is allow (no OpenCode ask).
+ * `external_directory` is an OpenCode worktree transport workaround — not the
+ * Pilot write boundary (lease + allowed paths). Does not change Build/Plan
+ * Does not change Build/Plan edit/bash/skill/shell rules; those tabs only
+ * get Pilot tools (`pilot_run` / `acp`) and Pilot workflow skill names denied.
+ * Does not relax write/edit. Must not widen `task` beyond compose ceiling.
+ * Mutates and returns cfg.
+ */
 function patchPilotReadPermissions(
   cfg: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
@@ -742,6 +875,17 @@ function patchPilotReadPermissions(
     perm.external_directory = "allow"
     if (name === "ascendc-pilot") {
       // Do not widen task. Compose emits a Pilot-actor whitelist.
+      // Never set top-level `*`: OpenCode treats it as a tool glob and it
+      // matches read/glob/grep even when those keys are allow.
+      delete perm["*"]
+      perm.glob = "allow"
+      perm.grep = "allow"
+      perm.list = "allow"
+      perm.pilot_run = perm.pilot_run || "allow"
+      perm.acp = perm.acp || "allow"
+      perm.skill = perm.skill || "allow"
+      perm.question = perm.question || "allow"
+      perm.todowrite = perm.todowrite || "allow"
     } else {
       // Do not inherit the user's MCP servers on TG/CE/query children.
       perm.webfetch = perm.webfetch || "deny"
@@ -757,8 +901,9 @@ function patchPilotReadPermissions(
     }
     agentBag[name] = { ...cur, permission: perm }
   }
+  isolateNativeOpenCodeAgents(agentBag)
   out.agent = agentBag
-  return patchWindowsShell(out)
+  return out
 }
 
 type HostContext = {
@@ -1118,8 +1263,9 @@ function resolveInstalledSkillPath(name: string): string {
       .pop() || ""
   if (!n || n.includes("..")) return ""
   const home = openCodeHome()
+  // Plugin-internal only. Global ~/.config/opencode/skills/ is native OpenCode
+  // discovery (Build/Plan). Do not read or recover from there.
   const candidates = [
-    resolve(home, "skills", n, "SKILL.md"),
     resolve(home, "ascendc-pilot-plugin", "skills", n, "SKILL.md"),
     resolve(home, "ascendc-pilot-plugin", "cognitive-skills", n, "SKILL.md"),
   ]
@@ -1197,7 +1343,7 @@ function createPilotSkillTool(): {
 } {
   return {
     description:
-      "Load an installed OpenCode / AscendC-Pilot skill by name. Reads SKILL.md from disk; does not spawn rg.",
+      "Load an AscendC-Pilot workflow skill by name from the plugin-internal skills tree. Not registered as plugin.tool.skill (that would replace native Skill globally).",
     args: {
       name: {
         type: "string",
@@ -1213,7 +1359,7 @@ function createPilotSkillTool(): {
           title: name ? `skill ${name}` : "skill",
           output:
             `[ascendc-pilot] skill ${name || "(missing name)"} 未找到 SKILL.md。` +
-            `请 Read ~/.config/opencode/skills/<name>/SKILL.md 或 ~/.config/opencode/ascendc-pilot-plugin/skills/<name>/SKILL.md。`,
+            `请 Read ~/.config/opencode/ascendc-pilot-plugin/skills/<name>/SKILL.md。`,
           metadata: { name, ok: false },
         }
       }
@@ -1343,11 +1489,23 @@ function createAcpCliTool(): {
         projectHint ||
         readRememberedProjectRoot() ||
         detectProjectRoot()
-      const agent = String(
-        ctx?.agent || ctx?.sessionAgent || process.env.ASCENDC_AGENT || "ascendc-pilot",
-      )
-      const action = String(args.action || args.action_id || process.env.ASCENDC_ACTION || "")
       const sessionId = String(ctx?.sessionID || ctx?.sessionId || "")
+      rememberSessionAgent(sessionId, String(ctx?.agent || ctx?.sessionAgent || ""))
+      let agent = resolveAgent({
+        agent: ctx?.agent as string | undefined,
+        sessionAgent: ctx?.sessionAgent as string | undefined,
+        sessionID: sessionId,
+      })
+      if (agent && !shouldEnforceHarness(agent, "acp")) {
+        return {
+          title: "acp",
+          output:
+            "[ascendc-pilot] acp 只在 AscendC-Pilot Tab 可用。Build / Plan 使用 OpenCode 原生权限，不走 Pilot harness。",
+          metadata: { ok: false, error: "HARNESS_INACTIVE" },
+        }
+      }
+      if (!agent) agent = "ascendc-pilot"
+      const action = String(args.action || args.action_id || process.env.ASCENDC_ACTION || "")
       const verdict = runAuthorize({
         tool: "bash",
         command: `acp ${stripped}`,
@@ -1471,11 +1629,7 @@ function ensureOpenCodeRipgrep(): void {
       /* ignore */
     }
   }
-  const prefix = openCodeRgBinDirs().join(delimiter)
-  const cur = String(process.env.PATH || "")
-  if (prefix && !cur.toLowerCase().startsWith(prefix.toLowerCase())) {
-    process.env.PATH = prefix + delimiter + cur
-  }
+  // Seed files only. Do not mutate process.env.PATH — that leaks into Build/Plan bash.
 }
 
 function prependOpenCodeRgPath(env: Record<string, string>): Record<string, string> {
@@ -1526,7 +1680,6 @@ function ensureAcpOnPath(): void {
 
 function prependPilotToolPath(env: Record<string, string>): Record<string, string> {
   ensureOpenCodeRipgrep()
-  ensureAcpOnPath()
   return prependAcpPath(prependOpenCodeRgPath(env || {}))
 }
 
@@ -1535,7 +1688,7 @@ function rgMissingRewrite(tool: string, skillName?: string): string {
     const hint = skillName ? `（${skillName}）` : ""
     return (
       `[ascendc-pilot] OpenCode skill 工具依赖 rg，本机 OpenCode PATH 没有 rg${hint}。` +
-      `主控请 Read ~/.config/opencode/skills/<name>/SKILL.md；` +
+      `主控请 Read ~/.config/opencode/ascendc-pilot-plugin/skills/<name>/SKILL.md；` +
       `子代理请读 session method.md，不要用 skill。`
     )
   }
@@ -1570,6 +1723,7 @@ function recoverSkillToolOutput(
       lastSkillName ||
       "",
   ).trim()
+  if (!isPilotManagedSkill(name)) return false
   const body = resolveInstalledSkillMd(name)
   const failed = isRipgrepHostFailure(
     `${extractToolError(output, tool)}\n${toolOutputText(output)}`,
@@ -2217,7 +2371,6 @@ export const AscendCHarnessPlugin = async (ctx?: {
   $?: unknown
 }) => {
   ensureOpenCodeRipgrep()
-  ensureAcpOnPath()
   const client = ctx && typeof ctx === "object" ? (ctx as any).client : undefined
   let pilotTools: Record<string, unknown> = {}
   let capturePilotToolSession:
@@ -2266,10 +2419,9 @@ export const AscendCHarnessPlugin = async (ctx?: {
     console.error("[ascendc-pilot] failed to load pilot-driver", err)
     pilotTools = {}
   }
-  // Last-write-wins: plugin `skill` replaces OpenCode's native SkillTool,
-  // which dies on ripgrep.find even after Skill.require succeeded (ses_ff9e).
+  // Do not assign plugin.tool.skill: that replaces native Skill globally and
+  // leaks into Build/Plan. Pilot after-hook recovers plugin-internal SKILL.md.
   if (pilotTools && typeof pilotTools === "object") {
-    ;(pilotTools as Record<string, unknown>).skill = createPilotSkillTool()
     // Last-write-wins with skill. Native `acp` bypasses OpenCode bash spawn
     // (cmd.exe + Effect ChildProcess.make(command) → NotFound on Windows 1.18).
     ;(pilotTools as Record<string, unknown>).acp = createAcpCliTool()
@@ -2283,9 +2435,13 @@ export const AscendCHarnessPlugin = async (ctx?: {
     dispose: async () => ({}),
     tool: pilotTools,
     "shell.env": async (
-      _input: { cwd?: string; sessionID?: string; callID?: string },
+      input: { cwd?: string; sessionID?: string; callID?: string },
       output: { env: Record<string, string> },
     ) => {
+      const agent = resolveAgent({ sessionID: input.sessionID || "" })
+      if (!shouldEnforceHarness(agent, "bash")) {
+        return
+      }
       const bag = output.env && typeof output.env === "object" ? output.env : {}
       const patched = prependPilotToolPath(bag)
       Object.assign(bag, patched)
@@ -2293,22 +2449,50 @@ export const AscendCHarnessPlugin = async (ctx?: {
       if (root) bag.ASCENDC_PROJECT_ROOT = root
       output.env = bag
     },
+    "chat.message": async (input: { sessionID?: string; agent?: string }) => {
+      rememberSessionAgent(String(input.sessionID || ""), String(input.agent || ""))
+    },
+    "chat.params": async (input: { sessionID?: string; agent?: string }) => {
+      rememberSessionAgent(String(input.sessionID || ""), String(input.agent || ""))
+    },
+    "chat.headers": async (input: { sessionID?: string; agent?: string }) => {
+      rememberSessionAgent(String(input.sessionID || ""), String(input.agent || ""))
+    },
     "tool.execute.before": async (
-      input: { tool?: string; agent?: string; sessionAgent?: string },
+      input: {
+        tool?: string
+        agent?: string
+        sessionAgent?: string
+        sessionID?: string
+        sessionId?: string
+      },
       output: { args?: Record<string, unknown> },
     ) => {
-      capturePilotToolSession?.(input as Record<string, unknown>, output as Record<string, unknown>)
       const tool = String(input.tool || "").toLowerCase()
       const args = output.args || {}
       const command = String(args.command || args.cmd || "")
+      const sessionId = extractHostSessionId(input as Record<string, unknown>)
+      rememberSessionAgent(sessionId, String(input.agent || input.sessionAgent || ""))
+      let agent = resolveAgent({ ...input, sessionID: sessionId })
+      // Build / Plan / other non-Pilot tabs: stock OpenCode permissions, no harness.
+      if (!shouldEnforceHarness(agent, tool)) {
+        return output
+      }
+      capturePilotToolSession?.(input as Record<string, unknown>, output as Record<string, unknown>)
       const isSkillToolEarly = tool === "skill" || tool.endsWith("skill")
       if (isSkillToolEarly) {
         lastSkillName = String(args.name || args.skill || args.skill_name || "").trim()
       }
+      // OpenCode todowrite schema requires priority — inject when Host omitted it.
+      if (tool === "todowrite" || tool === "todo_write" || (tool.includes("todo") && tool.includes("write"))) {
+        ensureTodowritePriority(args)
+      }
+      if (!agent && isPilotOnlyTool(tool)) agent = "ascendc-pilot"
+
       if ((tool === "bash" || tool === "shell" || tool === "terminal") && isKbLookupFinalize(command)) {
-        const project = uoQueryPickProject(args, command)
-        const resultText = project ? uoQueryPendingByProject.get(project) : ""
-        if (project && resultText) injectUoQueryResult(args, project, resultText)
+        const projectHint = uoQueryPickProject(args, command)
+        const resultText = projectHint ? uoQueryPendingByProject.get(projectHint) : ""
+        if (projectHint && resultText) injectUoQueryResult(args, projectHint, resultText)
       }
       const path = String(
         args.filePath ||
@@ -2331,17 +2515,12 @@ export const AscendCHarnessPlugin = async (ctx?: {
         : detectProjectRoot(fromCmd || fromArgs || path)
       if (project) rememberProjectRoot(project)
       const active = readActiveAction(project)
-      let agent = resolveEffectiveAgent(input, active, tool, command)
-
-      // OpenCode todowrite schema requires priority — inject when Host omitted it.
-      if (tool === "todowrite" || tool === "todo_write" || (tool.includes("todo") && tool.includes("write"))) {
-        ensureTodowritePriority(args)
-      }
-
-      // Build / Plan / other non-Pilot tabs: behave like stock OpenCode.
-      if (!shouldEnforceHarness(agent)) {
-        return output
-      }
+      agent = resolveEffectiveAgent(
+        { ...input, agent, sessionAgent: agent, sessionID: sessionId },
+        active,
+        tool,
+        command,
+      )
 
       const nativeTools = new Set([
         "bash",
@@ -2656,7 +2835,21 @@ export const AscendCHarnessPlugin = async (ctx?: {
     ) => {
       try {
         const tool = String(input.tool || "").toLowerCase()
+        const sessionIdEarly = extractHostSessionId(input as Record<string, unknown>)
+        rememberSessionAgent(sessionIdEarly, String(input.agent || input.sessionAgent || ""))
+        const afterAgent = resolveAgent({ ...input, sessionID: sessionIdEarly })
+        if (!shouldEnforceHarness(afterAgent, tool)) {
+          return
+        }
         recoverSkillToolOutput(input as Record<string, unknown>, output, tool)
+        const errEarly = extractToolError(output, tool)
+        const outTextEarly = `${errEarly}\n${toolOutputText(output)}`
+        if (output && isRipgrepHostFailure(outTextEarly)) {
+          if (tool === "grep" || tool === "glob") {
+            output.output = rgMissingRewrite(tool)
+            if ("error" in output) delete output.error
+          }
+        }
         const args = (output && typeof output.args === "object" ? output.args : {}) as Record<
           string,
           unknown

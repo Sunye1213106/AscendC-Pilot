@@ -234,7 +234,10 @@ purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLA
 for name in "${WORKFLOW_SKILLS[@]}"; do
   [[ -d "$DEST/skills/$name" ]] || continue
   rm -rf "$SKILLS/$name"
-  ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
+  # OpenCode: plugin-internal only. Global skills/ is native Build/Plan discovery.
+  if [[ "$PLATFORM" != "opencode" ]]; then
+    ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
+  fi
 done
 
 # Cognitive skills: Cursor/Codex install into skill discovery with
@@ -303,7 +306,7 @@ if [[ "$PLATFORM" == "opencode" ]]; then
     fi
   done
   if [[ "$SEEDED" -eq 0 ]]; then
-    echo "WARN: no rg to seed; plugin skill tool still loads SKILL.md without rg"
+    echo "WARN: no rg to seed; Pilot after-hook still loads plugin-internal SKILL.md without rg"
   fi
   if [[ -d "$DEST/commands" ]]; then
     for f in "$DEST/commands"/*.md; do

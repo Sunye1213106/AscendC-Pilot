@@ -180,13 +180,27 @@ def main() -> int:
         "prependPilotToolPath",
         "openCodeRgBinDirs",
         "resolveInstalledSkillPath",
+        "isolateNativeOpenCodeAgents",
+        "denyPilotWorkflowSkills",
+        "rememberSessionAgent",
+        "NATIVE_OPENCODE_AGENTS",
+        "PILOT_WORKFLOW_SKILLS",
+        "Do not assign plugin.tool.skill",
+        "Never default unlabeled sessions to ascendc-pilot",
+        '"chat.params"',
     ):
         if marker not in plugin_src:
             errors.append(f"ascendc-pilot.ts missing {marker}")
     if "args.location = { directory: projectRoot }" in plugin_src:
         errors.append("ascendc-pilot.ts must not pin Task location.directory to operator package")
+    if ").skill = createPilotSkillTool" in plugin_src or "pilotTools as Record<string, unknown>).skill" in plugin_src:
+        errors.append("ascendc-pilot.ts must not override native OpenCode skill (Build/Plan isolation)")
     if "createPilotSkillTool" not in plugin_src:
-        errors.append("ascendc-pilot.ts must override OpenCode skill tool (no rg)")
+        errors.append("ascendc-pilot.ts must keep createPilotSkillTool for Pilot SKILL.md recovery")
+    if 'if (perm["*"] === undefined) perm["*"] = "deny"' in plugin_src:
+        errors.append("plugin must not add top-level * deny on Primary (blocks read/grep)")
+    if "denyPilotWorkflowSkills" not in plugin_src:
+        errors.append("plugin must deny Pilot workflow skill names on native Build/Plan")
     if "ensureOpenCodeRipgrep" not in plugin_src:
         errors.append("ascendc-pilot.ts must seed OpenCode cache rg.bin")
     auth_src = (repo / "pilot" / "ascendc_pilot" / "authorize" / "__init__.py").read_text(
@@ -212,6 +226,12 @@ def main() -> int:
         errors.append("compose_runtime.py must allow bare Get-ChildItem for OpenCode bash")
     if "opencode_primary_task_permission" not in compose_src:
         errors.append("compose_runtime.py must emit Primary task whitelist")
+    if "opencode_isolated_primary_permission" not in compose_src:
+        errors.append("compose_runtime.py must isolate Primary permission from Build/Plan")
+    if 'Do **not** set top-level ``*: deny``' not in compose_src:
+        errors.append("compose_runtime.py must not use top-level * deny on Primary (blocks read)")
+    if '"pilot_run": "allow"' not in compose_src:
+        errors.append("compose_runtime.py must allowlist pilot_run on Primary")
     if "OPENCODE_PRIMARY_TASK_ALLOW" not in compose_src:
         errors.append("compose_runtime.py missing OPENCODE_PRIMARY_TASK_ALLOW")
     if '"task": "allow"' in compose_src:
@@ -231,6 +251,10 @@ def main() -> int:
         errors.append("install.sh still references stale uo_walk")
     if "native\\uo_walk" in ps1 or "native/uo_walk" in ps1:
         errors.append("install.ps1 still references stale uo_walk")
+    if "Keep workflow skills plugin-internal" not in ps1:
+        errors.append("install.ps1 must not link workflow skills into global OpenCode skills/")
+    if "plugin-internal only. Global skills/" not in sh:
+        errors.append("install.sh must not link workflow skills into global OpenCode skills/")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

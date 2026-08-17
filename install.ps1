@@ -177,16 +177,37 @@ function Get-PluginsDest([string]$plat) {
   }
 }
 
+function Invoke-CmdQuiet([string]$Line) {
+  # Native stderr (e.g. rmdir of a missing path → "系统找不到指定的文件") becomes
+  # NativeCommandError under $ErrorActionPreference=Stop, even with 2>$null.
+  $prev = $ErrorActionPreference
+  $native = $null
+  if (Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue) {
+    $native = $PSNativeCommandUseErrorActionPreference
+    $PSNativeCommandUseErrorActionPreference = $false
+  }
+  $ErrorActionPreference = "Continue"
+  try {
+    cmd /c $Line 2>$null | Out-Null
+    return $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $prev
+    if ($null -ne $native) {
+      $PSNativeCommandUseErrorActionPreference = $native
+    }
+  }
+}
+
 function Remove-ReparseOrItem([string]$Path) {
   # Junction/symlink: rmdir/del the link only. Remove-Item -Recurse on a
   # junction can walk into the plugin dest and delete the real tree.
   # Dangling junctions often make Test-Path return false, so always try rmdir.
   if ([string]::IsNullOrWhiteSpace($Path)) { return }
-  cmd /c "rmdir `"$Path`"" 2>$null | Out-Null
+  Invoke-CmdQuiet "rmdir `"$Path`"" | Out-Null
   if (Test-Path -LiteralPath $Path) {
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
     if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-      cmd /c "del /f `"$Path`"" 2>$null | Out-Null
+      Invoke-CmdQuiet "del /f `"$Path`"" | Out-Null
     }
   }
   if (Test-Path -LiteralPath $Path) {
@@ -196,20 +217,28 @@ function Remove-ReparseOrItem([string]$Path) {
 
 function Install-DirLink([string]$Link, [string]$Target) {
   Remove-ReparseOrItem $Link
-  cmd /c "mklink /J `"$Link`" `"$Target`"" | Out-Null
-  if (Test-Path -LiteralPath $Link) { return }
+  Invoke-CmdQuiet "mklink /J `"$Link`" `"$Target`"" | Out-Null
+  if (Test-Path -LiteralPath $Link) {
+    $global:LASTEXITCODE = 0
+    return
+  }
   Write-Host "WARN: junction failed for $Link; copying instead"
   Remove-ReparseOrItem $Link
   Copy-Item -Recurse -Force -LiteralPath $Target -Destination $Link
+  $global:LASTEXITCODE = 0
 }
 
 function Install-FileLink([string]$Link, [string]$Target) {
   Remove-ReparseOrItem $Link
-  cmd /c "mklink `"$Link`" `"$Target`"" | Out-Null
-  if (Test-Path -LiteralPath $Link) { return }
+  Invoke-CmdQuiet "mklink `"$Link`" `"$Target`"" | Out-Null
+  if (Test-Path -LiteralPath $Link) {
+    $global:LASTEXITCODE = 0
+    return
+  }
   Write-Host "WARN: symlink failed for $Link; copying instead"
   Remove-ReparseOrItem $Link
   Copy-Item -Force -LiteralPath $Target -Destination $Link
+  $global:LASTEXITCODE = 0
 }
 
 function Write-CannHint {
@@ -397,6 +426,12 @@ foreach ($name in $workflowSkills) {
     throw "generated skill missing: $target (compose/copy failed)"
   }
   $link = Join-Path $Skills $name
+  if ($Platform -eq "opencode") {
+    # Keep workflow skills plugin-internal. Linking into ~/.config/opencode/skills
+    # puts them on Build/Plan available_skills.
+    Remove-ReparseOrItem $link
+    continue
+  }
   Install-DirLink $link $target
   if (-not (Test-Path -LiteralPath $link)) {
     throw "failed to install skill $name → $link"
@@ -503,7 +538,7 @@ if ($Platform -eq "opencode") {
     $seeded = $true
   }
   if (-not $seeded) {
-    Write-Host "WARN: no rg.exe to seed; plugin skill tool still loads SKILL.md without rg"
+    Write-Host "WARN: no rg.exe to seed; Pilot after-hook still loads plugin-internal SKILL.md without rg"
   }
   $commandSrc = Join-Path $Dest "commands"
   if (Test-Path -LiteralPath $commandSrc) {
@@ -561,3 +596,7 @@ if (-not $FastInstall) {
     }
   }
 }
+
+# cmd/mklink often leaves LASTEXITCODE=1/2 after a swallowed fallback copy.
+# Without an explicit success exit, refresh-opencode.ps1 treats install as failed.
+exit 0

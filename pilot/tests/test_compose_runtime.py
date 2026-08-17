@@ -166,6 +166,24 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "uo-query: allow" in pilot_agent
         assert "ce-reviewer: allow" in pilot_agent
         assert "task: allow" not in pilot_agent
+        fm = pilot_agent.split("---")[1]
+        assert "pilot_run: allow" in fm
+        assert "skill: allow" in fm
+        assert "grep: allow" in fm
+        assert "read: allow" in fm
+        assert "glob: allow" in fm
+        try:
+            import yaml as _yaml
+        except ImportError:
+            _yaml = None
+        if _yaml is not None:
+            perm = _yaml.safe_load(fm)["permission"]
+            assert "*" not in perm, perm
+            assert perm["grep"] == "allow"
+            assert perm["read"] == "allow"
+            assert perm["glob"] == "allow"
+            assert perm["list"] == "allow"
+            assert perm["pilot_run"] == "allow"
         assert "skill: false" in uo_query_agent
         assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" not in uo_query_agent

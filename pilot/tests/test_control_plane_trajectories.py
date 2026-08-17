@@ -58,13 +58,12 @@ def test_source_snapshot_copies_uncommitted_overlay(tmp_path: Path, monkeypatch)
     host.mkdir()
     src = host / "a.cpp"
     src.write_text("int x;\n", encoding="utf-8")
-    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    subprocess.run(["git", "add", "op_host/a.cpp"], cwd=tmp_path, check=True, capture_output=True)
+    git_kw = {"cwd": tmp_path, "check": True, "capture_output": True, "text": True, "encoding": "utf-8"}
+    subprocess.run(["git", "init"], **git_kw)
+    subprocess.run(["git", "add", "op_host/a.cpp"], **git_kw)
     subprocess.run(
         ["git", "-c", "user.name=t", "-c", "user.email=t@t.t", "commit", "-m", "base"],
-        cwd=tmp_path,
-        check=True,
-        capture_output=True,
+        **git_kw,
     )
     src.write_text("int x = 1;\n", encoding="utf-8")
     ident = materialize_source_snapshot(tmp_path)

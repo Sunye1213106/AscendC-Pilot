@@ -338,8 +338,19 @@ def detect_toolkit_host(pkg: Path) -> str:
 
 
 def replay_links(plan: LinkPlan) -> None:
-    """Recreate tar symlinks as junctions (dirs) or copies (files)."""
+    """Recreate tar symlinks as junctions (dirs) or copies (files).
+
+    Live paths (``exists()``) are left alone — a CANN toolkit has thousands of
+    these, and ``Path.resolve()`` on Windows junctions is the hot path.
+    Dangling reparse points fail ``exists()`` and are rebuilt; do not also
+    skip ``is_symlink()``, that was leaving header holes.
+    """
     for link_path, target in plan.links:
+        try:
+            if link_path.exists():
+                continue
+        except OSError:
+            pass
         resolved = (link_path.parent / target).resolve()
         link_path.parent.mkdir(parents=True, exist_ok=True)
         try:

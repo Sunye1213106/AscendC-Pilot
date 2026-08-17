@@ -83,6 +83,41 @@ def opencode_primary_task_permission() -> dict[str, str]:
         perm[name] = "allow"
     return perm
 
+
+def opencode_isolated_primary_permission(
+    *,
+    bash_perm: Any,
+    edit_perm: Any,
+    write_perm: Any,
+) -> dict[str, Any]:
+    """AscendC-Pilot Tab permission bag.
+
+    Do **not** set top-level ``*: deny``. OpenCode treats ``*`` as a tool glob;
+    it matches ``read`` / ``glob`` / ``grep`` and can deny Primary reads even
+    when those keys are ``allow``. Isolation from Build/Plan is a separate
+    agent bag (plugin denies ``pilot_run`` / ``acp`` on native tabs), not a
+    shared wildcard. Grep/Read/Glob stay allow so the controller can inspect.
+    """
+    return {
+        "bash": bash_perm,
+        "grep": "allow",
+        "glob": "allow",
+        "list": "allow",
+        "read": "allow",
+        "external_directory": "allow",
+        "task": opencode_primary_task_permission(),
+        "acp": "allow",
+        "pilot_run": "allow",
+        "skill": "allow",
+        "question": "allow",
+        "todowrite": "allow",
+        "edit": edit_perm,
+        "write": write_perm,
+        "webfetch": "deny",
+        "websearch": "deny",
+        "lsp": "deny",
+    }
+
 # Slash / discovery entry metadata. Body is generated from Spec; no skills/workflows source.
 # Editorial discovery prose only. cognitive_skill_id / requires_* live on Workflow Spec.
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
@@ -1183,16 +1218,23 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     }
     if is_primary:
         front["mode"] = "primary"
-        front["permission"] = {
-            "bash": bash_perm,
-            "grep": grep_perm,
-            "glob": "allow",
-            **host_read_perm,
-            "task": opencode_primary_task_permission(),
-            "acp": "allow",
-            "edit": edit_perm if write_scopes else {"*": "ask"},
-            "write": write_perm if write_scopes else {"*": "ask"},
-        }
+        if host == "opencode":
+            # Isolated from OpenCode Build/Plan defaults (those tabs keep stock rules).
+            front["permission"] = opencode_isolated_primary_permission(
+                bash_perm=bash_perm,
+                edit_perm=edit_perm if write_scopes else {"*": "ask"},
+                write_perm=write_perm if write_scopes else {"*": "ask"},
+            )
+        else:
+            front["permission"] = {
+                "bash": bash_perm,
+                "grep": grep_perm,
+                **host_read_perm,
+                "task": opencode_primary_task_permission(),
+                "acp": "allow",
+                "edit": edit_perm if write_scopes else {"*": "ask"},
+                "write": write_perm if write_scopes else {"*": "ask"},
+            }
     else:
         # Fail-closed: `*` denies MCP `{server}_{tool}` names and unknown natives.
         front["mode"] = "subagent"
@@ -1201,6 +1243,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "*": "deny",
             "bash": child_bash,
             "acp": "allow",
+            "pilot_run": "deny",
             "grep": grep_perm,
             "glob": "allow" if allow_repo_search else "deny",
             **host_read_perm,
@@ -1213,13 +1256,12 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "lsp": "deny",
             "todowrite": "deny",
         }
-        tools: dict[str, Any] = {"skill": False}
+        tools: dict[str, Any] = {"skill": False, "pilot_run": False}
         if not allow_repo_search:
             tools["grep"] = False
             tools["glob"] = False
         if aid == "uo-query":
             tools["bash"] = False
-            tools["pilot_run"] = False
         front["tools"] = tools
 
     if aid == "uo-query":
