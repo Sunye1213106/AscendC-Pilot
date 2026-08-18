@@ -32,7 +32,7 @@ jobs:
           scripts
       - name: Validate PR flow contracts
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: pilot:engines/understand-operator/src:engines/testcase-generation:engines/code-engineering:engines/common
         run: >-
           pytest -q
           pilot/tests/test_pr_task_plan_contract.py
