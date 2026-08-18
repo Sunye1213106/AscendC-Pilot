@@ -1,22 +1,14 @@
 <task>
-把 test_request 融进 plan.md：上半散文推理，下半 YAML 义务表。每条义务必须 root 到 init.yaml 的列。
+基于本次 `tg/init.yaml` 与已给定的 Planning Context，生成 `plan.md` 草稿；不要重新解释原始用户 NL，也不要重新做 PR review。
 </task>
 
 <input>
 - Init: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/tg/init.yaml`
-- test_request: `--intent` / 对话 / `ce/plan/*_plan.md` / 审查结论 / `session_handoff.md`（有则融合；TG 自己总结，不做 CE yaml 强制）
-- UO: `<UO_ROOT>`
+- Planning Context: 当前 Task 上下文中来自 `/ce-review`、`/ce-plan`、用户显式测试计划或 session handoff 的已确定测试意图
+- UO query authority: `<UO_ROOT>`
 - Draft: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/runs/<RUN_ID>/actions/plan_fuse`
 </input>
 
-<delta_constraints>
-1. 控制面是 CSV/XLS 列，不是 T=D / tilingkey 全覆盖。
-2. 指标只有 replay（Host tiling，无 NPU）和 derived（公式）。没有第三类上板误差/耗时。
-3. root 不到的另列 `untestable`（带 `reason`），不要写成 `class: untestable`。
-4. 缺列或 generate_inputs 造不出 → `test_harness_gap`，先改测试仓。
-5. 无意图时默认 L0，仍要有能 root 的精度/性能义务，禁止空表。
-</delta_constraints>
-
 <output>
-写入本步草稿 markdown：散文 + 末尾 yaml 围栏。不要写正式 `tg/plan.md`。
+写入本步草稿 markdown：测试范围/精度/性能/覆盖/solve 判据说明 + 末尾 YAML 义务表。Planning Context 缺失时返回 `PLAN_CONTEXT_REQUIRED`，不要写正式 `tg/plan.md`。
 </output>
