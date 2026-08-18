@@ -1081,9 +1081,9 @@ function injectHiddenChildPrompts(agentBag: Record<string, unknown>): void {
   } catch {
     return
   }
+  const owned = ownedPilotAgentIds()
   for (const f of files) {
     const name = f.slice(0, -3)
-    const owned = ownedPilotAgentIds()
     if (!owned.has(name.toLowerCase())) continue
     if (name === "ascendc-pilot") continue
     let text = ""
