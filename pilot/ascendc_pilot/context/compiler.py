@@ -286,51 +286,6 @@ def _run_query(
             return [{"error": f"{method}:{exc}"}]
         return rows[:limit]
 
-    if method == "impact_of":
-        for seed in seeds[:limit]:
-            # seed may be "file:start-end" or plain path
-            file_path = seed
-            line_range = (1, 1)
-            if ":" in seed and seed.rsplit(":", 1)[-1].replace("-", "").isdigit():
-                file_path, rng = seed.rsplit(":", 1)
-                if "-" in rng:
-                    a, b = rng.split("-", 1)
-                    try:
-                        line_range = (int(a), int(b))
-                    except ValueError:
-                        line_range = (1, 1)
-            try:
-                part = list(fn(file_path, line_range) or [])
-                rows.extend(part)
-            except TypeError:
-                try:
-                    part = list(fn(file_path) or [])
-                    rows.extend(part)
-                except Exception as exc:  # noqa: BLE001
-                    rows.append({"error": f"{method}:{exc}", "seed": seed})
-            except Exception as exc:  # noqa: BLE001
-                rows.append({"error": f"{method}:{exc}", "seed": seed})
-        return rows[:limit]
-
-    if method == "search":
-        for seed in seeds[:limit]:
-            try:
-                part = list(fn(seed, limit=min(8, limit)) or [])
-            except TypeError:
-                try:
-                    part = list(fn(seed) or [])
-                except Exception as exc:  # noqa: BLE001
-                    rows.append({"error": f"{method}:{exc}", "seed": seed})
-                    continue
-            except Exception as exc:  # noqa: BLE001
-                rows.append({"error": f"{method}:{exc}", "seed": seed})
-                continue
-            for item in part:
-                if isinstance(item, dict):
-                    item = {**item, "_seed": seed}
-                rows.append(item)
-        return rows[:limit]
-
     # Generic per-seed methods: neighbors, constraints_for, branches_for_key, ...
     for seed in seeds[:limit]:
         try:

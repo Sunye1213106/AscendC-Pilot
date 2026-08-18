@@ -228,6 +228,7 @@ export function toPluginToolResult(result: unknown): {
 
 export function isHumanDecision(payload: Record<string, unknown> | undefined | null): boolean {
   if (!payload || typeof payload !== "object") return false
+  if (payload.ask_interrupted === true || payload.disposition === "superseded") return false
   if (payload.answered === true && payload.needs_human_decision === false) return false
   if (payload.needs_human_decision) return true
   const ask = payload.ask_question
@@ -244,6 +245,7 @@ export function isHumanDecision(payload: Record<string, unknown> | undefined | n
 /** `acp start` success is a workflow state blob; it historically omitted `ok: true`. */
 export function isAcpStartSuccess(payload: Record<string, unknown> | undefined | null): boolean {
   if (!payload || typeof payload !== "object") return false
+  if (payload.ask_interrupted === true || payload.disposition === "superseded") return false
   if (isHumanDecision(payload)) return false
   if (payload.ok === false) return false
   if (payload.ok === true) return true
@@ -1159,6 +1161,15 @@ async function invokeAskHuman(
   return { answered: false, via: "deferred_exact_options", error: "ASK_UI_UNAVAILABLE" }
 }
 
+function isAskInterrupted(
+  asked: { error?: string; answered?: boolean },
+  toolCtx?: PilotToolContext,
+): boolean {
+  if (toolCtx?.abort?.aborted) return true
+  const err = String(asked.error || "")
+  return /\babort(?:ed|ing)?\b|\binterrupt(?:ed)?\b|\bcancel(?:led|ed)?\b/i.test(err)
+}
+
 async function handleAskHumanStep(args: {
   client: any
   toolCtx?: PilotToolContext
@@ -1221,6 +1232,22 @@ async function handleAskHumanStep(args: {
   }
 
   // UI missing: still mark host-owned so Primary must not invent options.
+  if (isAskInterrupted(asked, toolCtx)) {
+    log.push({ event: "ask_interrupted", error: asked.error })
+    return {
+      ok: true,
+      answered: false,
+      ask_interrupted: true,
+      needs_human_decision: false,
+      host_owned_ask: false,
+      log,
+      todo,
+      message_zh:
+        "确认框被打断。请按用户本轮新消息继续：能对应原选项则 interpret-user-turn，否则不要重问上一题。未点选不等于批准删除/重开。",
+      ask_ui_error: asked.error,
+    }
+  }
+
   return {
     ok: false,
     answered: false,
@@ -1232,7 +1259,7 @@ async function handleAskHumanStep(args: {
     todo,
     message_zh:
       step.message_zh ||
-      "需要人工确认：请立即用 AskQuestion，options 必须原样使用 ask_question.options；禁止自行改写选项。",
+      "需要人工确认：请立即用 AskQuestion，options 必须原样使用 ask_question.options；禁止自行改写选项。若用户已在对话里回复，改为 interpret-user-turn，不要重问。",
     ask_ui_error: asked.error,
   }
 }
@@ -1427,9 +1454,8 @@ export async function runPilotDriver(
   if (workflow === "uo-query") {
     reporter?.setStatus("done")
     const messageZh =
-      "查询不是 Host 工作流，不要再用 pilot_run。先对人说出路由（短问自查 / 几个 uo-query 子代理），" +
-      "再自己跑插件工具 `pilot_cli` command=`uo-query --project <算子绝对路径> <identifier>`，" +
-      "或同一轮原生 Task(agent=`uo-query`)。禁止 `--mode`。禁止为空转「问题路由」开子代理。"
+      "查询不是 Host 工作流，不要再用 pilot_run。直接用插件工具 `pilot_cli` command=`uo-query --project <算子绝对路径> <identifier>`，" +
+      "或同一轮原生 Task(agent=`uo-query`)。禁止单独一轮只宣布路数。禁止 `--mode`。禁止为空转「问题路由」开子代理。"
     return {
       ok: true,
       reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
@@ -1486,7 +1512,7 @@ export async function runPilotDriver(
     ) {
       const messageZh =
         "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
-        "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `pilot_cli` `uo-query` 或 Task(agent=`uo-query`)。" +
+        "直接 `pilot_cli` `uo-query` 或同一轮 Task(agent=`uo-query`)。禁止单独一轮只宣布路数。" +
         "不要 pilot_run / acp start uo-query。"
       return {
         ok: true,
@@ -1529,7 +1555,7 @@ export async function runPilotDriver(
       if (decision === "query") {
         const messageZh =
           "上一场建库已经完成，产物锁已释放。新会话直接查询即可，不是卡住。" +
-          "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `pilot_cli` `uo-query` 或 Task(agent=`uo-query`)。" +
+          "直接 `pilot_cli` `uo-query` 或同一轮 Task(agent=`uo-query`)。禁止单独一轮只宣布路数。" +
           "不要 pilot_run / acp start uo-query。"
         return {
           ok: true,
@@ -1596,6 +1622,10 @@ export async function runPilotDriver(
     startedKind === "primary_router" ||
     String(started.reason_code || "") === "UO_QUERY_NOT_HOST_DRIVEN"
   ) {
+    reporter?.setStatus("done")
+    return started
+  }
+  if (started.ask_interrupted === true || started.disposition === "superseded") {
     reporter?.setStatus("done")
     return started
   }
@@ -1737,7 +1767,7 @@ export async function runPilotDriver(
           reporter?.setStatus("done")
           const messageZh =
             "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
-            "先对人说出路由，再 `pilot_cli` `uo-query` 或 Task(agent=`uo-query`)。不要 pilot_run uo-query。"
+            "直接 `pilot_cli` `uo-query` 或同一轮 Task(agent=`uo-query`)。禁止单独一轮只宣布路数。不要 pilot_run uo-query。"
           return {
             ok: true,
             reason_code: "UO_QUERY_NOT_HOST_DRIVEN",

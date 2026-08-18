@@ -147,11 +147,11 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-query": {
-        "command_description": '查询算子知识库：说明查询方式后自行查询或委派 / Query CodeMap',
+        "command_description": '查询算子知识库：直接查询或同一轮委派 / Query CodeMap',
         "description": (
             "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
-            "TilingData、Kernel、字段、路径）。主控先向用户说明查询方式："
-            "简单查询由主控自行调用 `pilot_cli` `uo-query`（标识符 / Dim=V / --file --line / 无参数索引）；"
+            "TilingData、Kernel、字段、路径）。简单查询由主控直接调用 `pilot_cli` `uo-query`"
+            "（标识符 / Dim=V / --file --line / 无参数索引），禁止单独一轮只宣布路数；"
             "复杂查询必须同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
             "Task 正文不要写 `--mode`。禁止把复杂查询改成主控自行连续查询。"
             "**禁止** `pilot_run` / `acp start uo-query`。"
@@ -373,7 +373,7 @@ def _start_requirements_line(repo: Path) -> str:
         f"查询类 AskQuestion：`/uo-init` 或回退源码作答；TG/CE 仍须先 `/uo-init`。"
         f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
         f"需要算子目录的 workflow：`{proj}`。"
-        f"`uo-query` 禁止 `pilot_run`：主控先向用户说明查询方式，再自行查询或委派 Task。"
+        f"`uo-query` 禁止 `pilot_run`：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 Task。"
         f"其余后续动作由 Host `pilot_run` 驱动；`.ascendc-pilot/` 只允许在该算子目录下。"
     )
 

@@ -229,7 +229,7 @@ meta + BuildVariant
 ## 四条 UO 入口
 
 ```text
-Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
+Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派） | /uo-update 受控增量刷新 | /uo-investigate 调查 gap}
 ```
 
 `/uo-init` 从源码建立新的 CodeMap：`prepare -> extract -> analyze -> commit -> verify`。
@@ -240,7 +240,7 @@ Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo
 
 ### `/uo-query`（可见 LLM 路由，禁止 Host Session Driver）
 
-查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控先阅读短地图，**先说明**将直接调用还是委派，再执行。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
+查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控先阅读短地图，简单查询直接调用 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 

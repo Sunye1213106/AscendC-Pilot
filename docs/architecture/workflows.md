@@ -31,7 +31,7 @@
 
 ## 启动（所有 workflow 共用）
 
-`/uo-query` **不是** Host Session Driver 工作流：主控在当前会话向用户说明查询方式（自行查询或派几个 `uo-query` 子代理），**禁止** `pilot_run` / `acp start uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
+`/uo-query` **不是** Host Session Driver 工作流：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数），复杂查询同一轮派 `uo-query` 子代理，**禁止** `pilot_run` / `acp start uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
 
 ```text
 用户意图（自然语言或 /slash）
@@ -39,7 +39,8 @@
         ├── /uo-query 或只读提问
         │         │
         │         ▼
-        │   主控向用户说明将直接调用还是委派
+        │   简单查询直接 `pilot_cli` `uo-query`；复杂查询同一轮 Task
+        │   （禁止单独一轮只宣布路数）
         │         │
         │         ├── 简单查询：当前会话 `pilot_cli` `uo-query`
         │         └── 复杂查询：同一轮 Task(agent=uo-query) × N → 主控综合
@@ -55,6 +56,7 @@
         │         │
         │         ▼
         │   AskQuestion（选项原样）──► 再 start 一次
+        │   用户打断并在对话里回复 → interpret-user-turn（对上选项则继续；否则跟新消息，不重问）
         │
         ├── 同产物族已有未完成写 run / 残留 .uo
         │         │
@@ -136,13 +138,13 @@ done        Primary 读 quality.yaml，向用户报告刷新后的节点/关系/
 
 ### `/uo-query` — 只读提问（可见 LLM 路由）
 
-查询**没有** Host Session Driver 传输环（`host_driver=False` ≠ 没有 method bundle）。分类是主控的推理，必须写在对用户的消息里（不能只藏在思考里），再执行。禁止仅为问题分类而委派子代理。
+查询**没有** Host Session Driver 传输环（`host_driver=False` ≠ 没有 method bundle）。简单查询直接执行，首屏就是答案；复杂查询同一轮委派。禁止仅为问题分类而委派子代理。
 
 ```text
 用户问题
-  └── 主控向用户说明查询方式（写在当前会话消息中）
+  └── 简单查询直接 `pilot_cli` `uo-query`；复杂查询同一轮 Task
         ├── 简单查询：主控直接调用 `pilot_cli` `uo-query`
-        │         → stdout 向用户陈述
+        │         → stdout 向用户陈述（禁止单独一轮只宣布路数）
         ├── 复杂查询、一个独立查询目标
         │         → 一个 Task(agent=uo-query)
         └── 复杂查询、多个独立查询目标

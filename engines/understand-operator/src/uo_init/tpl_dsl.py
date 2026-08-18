@@ -221,7 +221,7 @@ _TPL_HINT = "ASCENDC_TPL_"
 
 def cann_include_search_roots() -> list[Path]:
     try:
-        from uo_init.paths import cann_root
+        from uo_init.paths import cann_root, resolve_cann_relative
     except Exception:
         return []
     root = cann_root()
@@ -235,7 +235,7 @@ def cann_include_search_roots() -> list[Path]:
         "cann-asc-devkit/x86_64-linux/asc/include",
         "cann-asc-devkit/x86_64-linux/ascendc/include/highlevel_api",
     )
-    return [root / rel for rel in rels if (root / rel).is_dir()]
+    return [resolve_cann_relative(root, rel) for rel in rels if resolve_cann_relative(root, rel).is_dir()]
 
 
 def collect_defines(text: str) -> dict[str, tuple[list[str] | None, str]]:

@@ -4,9 +4,12 @@
 ``build_context.yaml`` is a generic ``-I/-D`` baseline. Operators still include
 CANN / family headers from directories that yaml never listed. Prepare used to
 fail as ``clang_probe_unclean`` / ``SCOPE_VALIDATE_BLOCKED``; this module finds
-the header in the extracted CANN tree or ops repo, adds the matching include
-directory, and retries. Per-operator extras are persisted so extract uses the
-same flags. The shared yaml is not rewritten.
+the header in the CANN tree (extracted ``cann-*`` or official install) or ops
+repo, adds the matching include directory, and retries. Per-operator extras are
+persisted so extract uses the same flags. The shared yaml is not rewritten
+unless include-heal cannot see the file at all — then the agent updates extras
+or the yaml include list against the real tree. Official CANN packages are
+complete; do not treat a hardcoded relative path as a missing vendor file.
 
 Disable with ``UO_INCLUDE_HEAL=0``. Round cap: ``UO_INCLUDE_HEAL_ROUNDS`` (8).
 """
@@ -109,7 +112,7 @@ SKIP_DIR_NAMES = {
 FORBIDDEN_INCLUDE_SUBSTR = (
     "ascendc/include/basic_api",
 )
-# Relative to each cann-* package. Seeded even when yaml omitted them.
+# Relative to each cann-* package (host tuple substituted at search time).
 CANN_PACKAGE_RELS = (
     "x86_64-linux/include",
     "x86_64-linux/include/base",
@@ -129,6 +132,15 @@ CANN_PACKAGE_RELS = (
     "x86_64-linux/third_party/include",
     "x86_64-linux/include/nlohmann",
 )
+
+
+def _cann_package_rels(root: Path) -> tuple[str, ...]:
+    from uo_init.paths import cann_host_dir
+
+    host = cann_host_dir(root) or "x86_64-linux"
+    if host == "x86_64-linux":
+        return CANN_PACKAGE_RELS
+    return tuple(rel.replace("x86_64-linux", host) for rel in CANN_PACKAGE_RELS)
 STD_HEADERS = frozenset(
     {
         "algorithm",
@@ -744,13 +756,26 @@ def search_roots(ctx: Any) -> list[Path]:
         add(p)
     cann = Path(getattr(ctx, "cann_root", "") or "")
     if cann.is_dir():
+        from uo_init.paths import cann_host_dir
+
+        rels = _cann_package_rels(cann)
         try:
             packages = [p for p in cann.iterdir() if p.is_dir()]
         except OSError:
             packages = []
         for pkg in packages:
-            for rel in CANN_PACKAGE_RELS:
+            for rel in rels:
                 add(pkg / rel)
+        for rel in rels:
+            add(cann / rel)
+        add(cann / "asc" / "include")
+        add(cann / "asc" / "impl")
+        add(cann / "include")
+        host = cann_host_dir(cann)
+        if host:
+            add(cann / host / "asc" / "include")
+            add(cann / host / "asc" / "impl")
+            add(cann / host / "include")
     ops = Path(getattr(ctx, "ops_root", "") or "")
     if ops.is_dir():
         add(ops)

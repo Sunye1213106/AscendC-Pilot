@@ -710,9 +710,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "uo/diff/impact.yaml",
         "uo/diff/unresolved.yaml",
     ],
-    # kb-answer: subagent payload under Action lease (never uo/checks/*).
-    # UO readiness is enforced by requires_uo_product + intake, not this contract.
-    "kb-answer-v1": ["runs/{run_id}/actions/kb_lookup/answer.yaml"],
+    # kb-answer-v1: dialogue contract (Task/stdout body); no disk payload.
+    "kb-answer-v1": [],
     "code-review-v1": [],
     "ce-kb-check-v1": [],
     "intent-grill-v1": [],

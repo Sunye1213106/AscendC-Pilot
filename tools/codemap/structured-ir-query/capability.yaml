@@ -1,14 +1,14 @@
 id: structured-ir-query
 version: 1
 name_zh: 结构化 IR 查询
-description: 通过受控 acp inspect 对 tasks/yaml/duplicates/evidence-window 做筛选与计数，避免整文件人工扫读。
+description: 通过受控 pilot_cli inspect 对 tasks/yaml/duplicates/evidence-window 做筛选与计数，避免整文件人工扫读。
 applies_when:
   - 需要枚举当前 run 的 task_id 或 YAML 键计数
   - 需要 duplicate target 检查
   - 需要 pad=0 磁盘证据窗口
 requires:
   inputs: [project_root, filters]
-  tools: [acp_inspect]
+  tools: [pilot_cli]
   context: [project_root, run_id, action_id]
 produces: [query_result]
 compatible_roles: [producer, readonly_analyst]

@@ -101,10 +101,13 @@ _RECOVERY_CORE = (
 CONTAINMENT_COMMAND_PREFIXES = _RECOVERY_CORE + (
     "acp retry-after-environment-fix",
     "acp debug",
+    "acp interpret-user-turn",
     "python -m ascendc_pilot retry-after-environment-fix",
     "python -m ascendc_pilot debug",
+    "python -m ascendc_pilot interpret-user-turn",
     "python3 -m ascendc_pilot retry-after-environment-fix",
     "python3 -m ascendc_pilot debug",
+    "python3 -m ascendc_pilot interpret-user-turn",
 )
 
 REWORK_COMMAND_PREFIXES = _RECOVERY_CORE + (

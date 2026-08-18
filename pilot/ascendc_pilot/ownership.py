@@ -46,12 +46,6 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/ir/gap_investigation.yaml",
         ],
     },
-    "uo-query": {
-        "kb_lookup": [
-            "runs/{run_id}/actions/kb_lookup/answer.yaml",
-            "runs/{run_id}/actions/kb_lookup/scratch/**",
-        ],
-    },
     "tg-init": {
         "bind_init": [
             "runs/{run_id}/actions/bind_init/parts/**",
@@ -152,12 +146,6 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/investigate/scratch/**",
             "runs/{run_id}/actions/investigate/report.yaml",
             "uo/ir/gap_investigation.yaml",
-        ],
-    },
-    "uo-query": {
-        "kb_lookup": [
-            "runs/{run_id}/actions/kb_lookup/answer.yaml",
-            "runs/{run_id}/actions/kb_lookup/scratch/**",
         ],
     },
     "tg-init": {
@@ -264,7 +252,6 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "kb_lookup": [
             "uo/**",
             "uo/*.uo",
-            "runs/{run_id}/actions/kb_lookup/**",
             "context/**",
         ],
     },

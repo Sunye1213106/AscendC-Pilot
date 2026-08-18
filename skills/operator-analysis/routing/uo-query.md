@@ -1,12 +1,12 @@
 # UO Query Router
 
-主控先向用户说明将如何查询，再执行。子代理查图用 `capabilities/uo-query/METHOD.md`。
+简单查询直接执行，禁止单独一轮只宣布路数。子代理查图用 `capabilities/uo-query/METHOD.md`。
 **禁止** `pilot_run` / `acp start uo-query`。禁止仅为问题分类而委派子代理。不要为确认协议调用 `--help` 或 Glob 查找 routing。失败用 `pilot_cli` `inspect-failure` / `uo-query --status-only`，不要对 `uo-query` / `start` / `run-action` 再调 `--help`。
 
 `host_driver=False` 只表示 Session Driver **不** auto start/drain，**不等于**没有 Action / METHOD / bundle。
 
-- **简单查询**：一个起始标识符或一种参数形态、一两轮调用能答完。主控直接调用 `pilot_cli` `uo-query`，根据 stdout 作答。不委派子代理，不调用 `kb_lookup`，不调用 `pilot_run` / `acp start`。
-- **复杂查询**：用户原话里有 ≥2 个可独立作为首次调用的起始点。主控先说明将委派的子代理数量及各自 FOCUS，然后在同一轮并行调用 `Task(agent=uo-query)`（上限 5）。子代不得 Write、不得自己 finalize。综合只在主控。
+- **简单查询**：一个起始标识符或一种参数形态、一两轮调用能答完。主控直接调用 `pilot_cli` `uo-query`，根据 stdout 作答。不委派子代理，不调用 `kb_lookup`，不调用 `pilot_run` / `acp start`。禁止先发「我将直接查询」挡住首屏答案。
+- **复杂查询**：用户原话里有 ≥2 个可独立作为首次调用的起始点。主控在同一轮并行调用 `Task(agent=uo-query)`（上限 5），可在派发时带一句 FOCUS；不要阻塞等确认。子代不得 Write、不得自己 finalize。综合只在主控。
 - **Delegated Task**（TG/CE 临时问图）：Task 正文即全部，不要另行查找 session `prompt.md`。
 
 缺 `.uo`：产物路径是 `<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`。

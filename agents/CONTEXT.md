@@ -10,7 +10,7 @@ CE grill 冒出跨 session 会用错的新词时才改本表；算子结构事�
 **两轴** — Spec（有计划则对照 `{slug}_plan.md`；无计划则只陈述变更理解）与 Standards（是不是仓规范）。`/ce-review` 并行两个子代理，禁止合成 LGTM。结论留在对话，不落盘。
 **简单查询** — 一个起始标识符或一种参数形态、一两轮调用；主控当前会话插件 `pilot_cli`（command=`uo-query …`，不要前导 acp），stdout 即答案。
 **复杂查询** — 多个可独立查询的目标；同一轮并行 `Task(agent=uo-query)`，每路一个起始标识符或 `Dim=V`。综合只在主控。禁止因「要交叉综合」而合并 Task。
-**查询方式说明** — 查询不是 Host workflow：先向用户说明直接调用还是委派几路，再执行。见 `routing/uo-query.md`。四种形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。禁止 `acp uo impact`、`explain-*`、`search`、`locate`。
+**查询方式说明** — 查询不是 Host workflow。简单查询直接 `pilot_cli` `uo-query`，禁止单独一轮只宣布路数；复杂查询同一轮并行 `Task(agent=uo-query)`。见 `routing/uo-query.md`。四种形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。禁止 `acp uo impact`、`explain-*`、`search`、`locate`。
 **Open** — TG worklog 文首 `open:` 里尚未闭合的义务 id。CE 不维护账本。
 **replay / derived** — TG 给 solve 的指标只有两类，都先 root 到 CSV/XLS 列。`replay`：Host tiling（无 NPU）看 key / TD / OP_CHECK / 分支。`derived`：这行输入 + 代码逻辑可推。`Replay reject ≠ E`。
 **init.yaml / plan.md / worklog.md** — TG 正式产物只这三份（外加脚本可吃的 cases 表）。草稿只留 `runs/`。

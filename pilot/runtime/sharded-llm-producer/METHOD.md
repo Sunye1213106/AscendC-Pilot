@@ -8,7 +8,7 @@ Map worker 只处理本 shard；分片算法与全局计数在 Host/Runtime，�
 
 1. 只读本 `batch_*.yaml` 与本 part（rework）。
 2. 逐项裁决，写本 `part_*.yaml`。
-3. 运行 shard validator（`acp inspect` / producer-self-check）。
+3. 运行 shard validator（`pilot_cli inspect` / producer-self-check）。
 4. 停止；禁止 finalize / next / advance。
 
 ## Hard Constraints

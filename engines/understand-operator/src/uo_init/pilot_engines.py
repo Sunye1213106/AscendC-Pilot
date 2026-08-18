@@ -159,7 +159,11 @@ def _cann_root(ctx: dict[str, Any]) -> str:
 
 
 def _cann_env_block(engine: str, ctx: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """Fail closed before any clang parse when extracted CANN is incomplete."""
+    """Fail closed only when cann_root is missing or not a CANN tree.
+
+    Official toolkit/install packages are complete. Do not block prepare on a
+    hardcoded file inventory; clang + include_heal align -I to the real tree.
+    """
     root, issues = paths.require_cann_ready((ctx or {}).get("cann_root"))
     if not issues:
         return None
@@ -171,11 +175,12 @@ def _cann_env_block(engine: str, ctx: dict[str, Any] | None = None) -> dict[str,
         "cann_root": str(root) if root else None,
         "issues": issues,
         "message_zh": (
-            "UO 解析前 CANN 环境未就绪。"
+            "UO 解析前未找到 CANN 根目录。"
             f"{detail}。"
-            "请把 toolkit 解到当前仓库 _cann/pkg（自动发现，无需环境变量），"
-            "或设置用户级 UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH。"
-            "若缺 asc/impl/include：python scripts/cann_extract.py --fixup --dest <pkg>。"
+            "把 toolkit 解到当前仓库 _cann/pkg（自动发现），"
+            "或设置 UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH 指向解包后的 cann-* 根，"
+            "或官方安装的 ASCEND_HOME_PATH。"
+            "官方 CANN 包不缺头文件；配好 cann_root 后 prepare 不再按单个相对路径失败。"
             "可先执行: acp doctor / python -m ascendc_pilot doctor"
         ),
     }
@@ -995,9 +1000,10 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             healed_n = len((cand.get("include_heal") or {}).get("healed") or [])
             if unresolved:
                 detail_zh = (
-                    f"{detail_zh}。include-heal 已搜 CANN/ops 仍找不到: "
+                    f"{detail_zh}。include-heal 在当前 cann_root 下仍找不到: "
                     + ", ".join(unresolved[:4])
-                    + "。仅当头文件确实不在解包树时才改 engines/understand-operator/spec/build_context.yaml"
+                    + "。对照真实 CANN 树补 -I（uo/summary/build_context_extras.yaml "
+                    "或 spec/build_context.yaml），官方包不缺文件，不要按硬编码相对路径判失败"
                 )
             elif healed_n:
                 detail_zh = (

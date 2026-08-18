@@ -61,7 +61,6 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/operator-analysis/references/cpp-semantics.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="unresolved_blockers", limit=12),
             QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
             QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
         ),
@@ -77,8 +76,8 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/operator-analysis/references/evidence-quality.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
             QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
+            QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
         ),
         token_budget=3500,
     ),
@@ -90,7 +89,7 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/testcase-generation/references/gotchas.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="open_keys", limit=8),
+            QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
         ),
         token_budget=3500,
     ),
@@ -155,8 +154,8 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-review/references/finding-format.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
             QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
+            QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
         ),
         token_budget=4500,
     ),
@@ -176,7 +175,7 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-engineering/examples/deter-band-schedule_plan.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
         ),
         token_budget=3500,
     ),
@@ -195,8 +194,8 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-engineering/examples/deter-band-schedule_plan.md",
         ),
         query_slices=(
-            QuerySlice(method="search", seed_from="unresolved_blockers", limit=8),
             QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
+            QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
         ),
         token_budget=4000,
     ),

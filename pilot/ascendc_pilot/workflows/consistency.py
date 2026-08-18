@@ -8,7 +8,8 @@ from typing import Any
 
 _ACTION_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 # Contracts that only assert pre-existing readiness (no producer write_scopes).
-# kb-answer-v1 is a real Action payload (runs/.../answer.yaml), not a precondition.
+# Dialogue contracts such as kb-answer-v1 / code-review-v1 are registered with
+# empty OUTPUT_CONTRACT_PATHS and are not listed here.
 _PRECONDITION_CONTRACTS = frozenset(
     {
         "plan-precheck-v1",
@@ -618,7 +619,7 @@ def check_all(
                     scopes = _effective_write_scopes(agent_id, aid, root)
                     output_mode = str(action.get("output_mode") or "direct").strip().lower()
                     if output_mode == "return_value":
-                        # Explorer may have write_scopes: []; Runtime materializes.
+                        # Dialogue contracts: Explorer write_scopes may be empty.
                         if role in {"producer", "referee"} and not scopes:
                             errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
                         # readonly_analyst + return_value: empty scopes are intentional.

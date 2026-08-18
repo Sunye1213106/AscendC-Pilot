@@ -47,7 +47,7 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 1. **把帮助当成协议。** `acp --help` 列出的是全部 CLI，包括 Host 内部命令。Agent 接着对 `start`、`run-action`、`uo` 再调一次 `--help`，不再推进用户任务。
 2. **Windows 上用 bash 调 `acp`。** OpenCode 1.18 的 bash 可能把整行 `acp …` 当成可执行文件，出现 `NotFound: ChildProcess.spawn`，或 120s 杀掉 uo-init。工作流必须用 `pilot_run`；短命令必须用插件 `pilot_cli`（内部 `spawnSync(acp.exe, shell:false)`），不要 bash。
 3. **绝对路径触发权限等待。** 写成 `C:\…\Scripts\acp.exe --help` 对不上 frontmatter 白名单，OpenCode 会变成 ask/deny，界面像卡死、其实在等人点允许。不要搜 `acp.exe`。
-4. **有待回答问题时继续 `--help`。** 插件在 pending AskQuestion 期间仍放行 `--help`，但帮助不会消费这个问题。正确动作是把 `ask_question` 的选项原样交给用户，而不是再摸一遍 CLI。
+4. **有待回答问题时继续 `--help`。** 插件在 pending AskQuestion 期间仍放行 `--help`，但帮助不会消费这个问题。若用户已经在对话里回复（而不是点选框），用 `interpret-user-turn` 消化本轮原文，不要再弹同一题。点选框仍在等时，才把 `ask_question` 的选项原样交给用户。
 5. **管道缓冲。** `acp … | Select-Object -Last` / `Out-String` / `tail` 会被 authorize 拒绝；Agent 换写法重试，看起来也在空转。
 
 插件 `pilot_cli` 收到 `--help` / `-h` / `help` 时会返回本页的短用法卡，**不会**再 spawn argparse。收到 `start` / `run-action auto` 时直接拒绝并要求改用 `pilot_run`。人类在自己的终端里仍可直接运行 `acp --help`。
@@ -65,6 +65,7 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 | `scan-architectures --project <abs>` | 启动前列出 `arch*` 选项，供 AskQuestion |
 | `status --project <abs>` | 当前 workflow / run 状态 |
 | `inspect-failure --project <abs>` | `pilot_run` 或确定性 Action 失败后的失败卡 |
+| `interpret-user-turn --project <abs> --text <本轮原文>` | 用户打断确认框后：把对话回复映射到原选项，或取消上一问 |
 | `next --project <abs>` | 调试：看下一步允许的 Action（正常路径由 `pilot_run` 持有） |
 
 查询四种参数形态（禁止 `--mode`）：
@@ -86,7 +87,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 | `intent` | 用户原话里的产品意图；不要编造 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
 
-`pilot_run` 返回 `host_step.kind=dispatch_subagent` 时，用原生 `Task`，`prompt` 必须是 `task_prompt_stub` 原文。返回 `ask_question` / `host_owned_ask` 时，选项必须原样使用。
+`pilot_run` 返回 `host_step.kind=dispatch_subagent` 时，用原生 `Task`，`prompt` 必须是 `task_prompt_stub` 原文。返回 `ask_question` / `host_owned_ask` 时，选项必须原样使用。用户打断确认并在对话里回复时，用 `interpret-user-turn`，不要重问上一题。
 
 ---
 

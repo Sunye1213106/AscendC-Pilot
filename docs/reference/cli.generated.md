@@ -24,6 +24,7 @@
 | `acp host-context` | 解析 arch 作用域的 Host 适配器上下文 |
 | `acp inspect` | 查询结构化 IR / 证据窗口（tasks、YAML 计数、evidence-window） |
 | `acp inspect-failure` | 查看结构化 failure 信息 |
+| `acp interpret-user-turn` | 把用户本轮回复映射到待确认选项，或因打断而取消该确认 |
 | `acp next` | 查看可执行的下一动作与 obligations |
 | `acp retry-after-environment-fix` | 环境修复后恢复失败动作的 rework 状态 |
 | `acp rework` | 沿声明的 rework edge 恢复 |

@@ -10,7 +10,7 @@ The Host (OpenCode plugin) must surface the question UI and call
 from __future__ import annotations
 
 import hashlib
-import hmac
+import re
 import secrets
 import time
 from pathlib import Path
@@ -58,9 +58,18 @@ def load_pending(project_root: Path) -> dict[str, Any]:
     return _load(pending_path(Path(project_root).expanduser().resolve()))
 
 
+def pending_is_open(pending: dict[str, Any] | None) -> bool:
+    """True when a pending AskQuestion is still waiting (not answered/superseded)."""
+    if not pending:
+        return False
+    if not str(pending.get("request_id") or "").strip():
+        return False
+    return str(pending.get("status") or "pending").strip().lower() == "pending"
+
+
 def pending_is_intake(pending: dict[str, Any] | None) -> bool:
     """True when pending is pre-start intake (architecture / project / uo product)."""
-    if not pending:
+    if not pending_is_open(pending):
         return False
     kind = str(pending.get("kind") or "").strip().lower()
     dkind = str(pending.get("decision_kind") or "").strip().lower()
@@ -110,7 +119,7 @@ def issue_interaction_request(
                     values.append(v)
     decision = decision_kind or kind
     existing = _load(pending_path(project_root))
-    if str(existing.get("status") or "") == "pending":
+    if pending_is_open(existing):
         same_kind = str(existing.get("kind") or "") == kind
         same_decision = str(existing.get("decision_kind") or "") == decision
         if same_kind and same_decision:
@@ -124,6 +133,7 @@ def issue_interaction_request(
                 "allowed_values": list(existing.get("allowed_values") or values),
                 "ask_question": existing.get("ask_question") or ask_question,
             }
+    _clear_superseded_flag(project_root)
     req = {
         "schema": "human-interaction-request/v1",
         "request_id": request_id,
@@ -182,9 +192,11 @@ def attach_interaction_request(
     payload["human_interaction_request"] = env
     payload["primary_instruction_zh"] = (
         str(payload.get("primary_instruction_zh") or "")
-        + " Host 必须弹出 question UI；回答后由 Host 调用 "
+        + " Host 弹出 question UI；点选后调用 "
         f"`acp answer --request-id {env['request_id']} --value <选中> --project …`。"
-        " 无 HumanDecisionReceipt 不得 finalize / resume / retry。"
+        " 若用户打断确认框并在对话里回复：用 `acp interpret-user-turn --text <本轮原文>`，"
+        "能对应原选项则记为答复，否则取消上一问并跟新消息。不要重问上一题。"
+        "未点选不等于批准删除/重开。无收据不得 finalize / resume / 破坏性 reinit。"
     ).strip()
     return payload
 
@@ -419,3 +431,209 @@ def consume_intake_architecture(
         "request_id": rid,
         "kind": pending.get("kind"),
     }
+
+
+_DESTRUCTIVE_VALUES = frozenset(
+    {
+        "reinit",
+        "force_new",
+        "force-new",
+        "abort_run",
+        "abort",
+        "wipe",
+    }
+)
+
+_ARCH_TOKEN = re.compile(r"\barch[0-9A-Za-z._-]+\b", re.I)
+
+
+def _compact(text: str) -> str:
+    return re.sub(r"\s+", "", str(text or "")).strip().lower()
+
+
+def _option_catalog(pending: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """Canonical value → labels that count as that value."""
+    rows: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
+    ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
+    for opt in ask.get("options") or []:
+        if not isinstance(opt, dict):
+            continue
+        value = str(opt.get("value") or "").strip()
+        label = str(opt.get("label") or "").strip()
+        if not value and not label:
+            continue
+        canon = value or label
+        labels = [x for x in (value, label) if x]
+        if canon in seen:
+            for i, (v, labs) in enumerate(rows):
+                if v == canon:
+                    rows[i] = (v, list(dict.fromkeys([*labs, *labels])))
+                    break
+            continue
+        seen.add(canon)
+        rows.append((canon, labels))
+    for raw in pending.get("allowed_values") or []:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        rows.append((value, [value]))
+    return rows
+
+
+def match_pending_option(pending: dict[str, Any] | None, text: str) -> str | None:
+    """Map a free-text reply onto one pending option. None if it is not a choice.
+
+    Conservative: exact value/label, resume-decision aliases, unique arch* token.
+    Short messages may uniquely contain one option token. Long new requests do not
+    silently confirm, and wipe/reinit never match a long off-topic message.
+    """
+    if not pending_is_open(pending):
+        return None
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    catalog = _option_catalog(pending or {})
+    if not catalog:
+        return None
+    compact = _compact(raw)
+    allowed = {v for v, _ in catalog}
+    allowed_l = {v.lower(): v for v in allowed}
+
+    for value, labels in catalog:
+        if raw == value or compact == _compact(value):
+            return value
+        for lab in labels:
+            if raw == lab or compact == _compact(lab):
+                return value
+
+    try:
+        from ascendc_pilot.run_resume import normalize_decision
+
+        canon = normalize_decision(raw)
+    except Exception:  # noqa: BLE001
+        canon = None
+    if canon:
+        if canon in allowed:
+            return canon
+        mapped = allowed_l.get(canon.lower())
+        if mapped:
+            return mapped
+
+    arches = [v for v in allowed if re.fullmatch(r"arch[0-9A-Za-z._-]+", v, re.I)]
+    if arches:
+        found: list[str] = []
+        for token in _ARCH_TOKEN.findall(raw):
+            hit = allowed_l.get(token.lower())
+            if hit and hit not in found:
+                found.append(hit)
+        if len(found) == 1:
+            return found[0]
+
+    if len(raw) <= 24:
+        hits: list[str] = []
+        for value, labels in catalog:
+            tokens = [value, *labels]
+            if any(_compact(t) and _compact(t) in compact for t in tokens):
+                hits.append(value)
+        uniq = list(dict.fromkeys(hits))
+        if len(uniq) == 1:
+            return uniq[0]
+    return None
+
+
+def _clear_superseded_flag(project_root: Path) -> None:
+    from ascendc_pilot.state import load_state, save_state
+
+    st = load_state(project_root)
+    if not st:
+        return
+    if not st.get("human_decision_superseded"):
+        return
+    st.pop("human_decision_superseded", None)
+    st.pop("human_decision_superseded_reason", None)
+    save_state(project_root, st)
+
+
+def supersede_pending(
+    project_root: Path,
+    *,
+    reason: str = "user_interrupted",
+    user_text: str = "",
+) -> dict[str, Any]:
+    """Drop a pending AskQuestion because the user moved on. Never auto-confirms."""
+    root = Path(project_root).expanduser().resolve()
+    pending = _load(pending_path(root))
+    if not pending_is_open(pending):
+        return {
+            "ok": True,
+            "disposition": "idle",
+            "needs_human_decision": False,
+            "message_zh": "没有待确认的问题",
+        }
+    ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
+    header = str(ask.get("header") or ask.get("question") or pending.get("kind") or "")
+    pending["status"] = "superseded"
+    pending["supersede_reason"] = str(reason or "user_interrupted")
+    pending["user_text"] = str(user_text or "")[:500]
+    pending["superseded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    _dump(pending_path(root), pending)
+
+    from ascendc_pilot.state import load_state, save_state
+
+    st = load_state(root)
+    if st:
+        st["human_decision_superseded"] = True
+        st["human_decision_superseded_reason"] = str(reason or "user_interrupted")
+        save_state(root, st)
+
+    return {
+        "ok": True,
+        "disposition": "superseded",
+        "ask_interrupted": True,
+        "needs_human_decision": False,
+        "previous_kind": str(pending.get("kind") or ""),
+        "previous_header": header,
+        "request_id": str(pending.get("request_id") or ""),
+        "message_zh": (
+            "上一问确认已被本轮新消息打断，已解除卡住。"
+            "请按本轮用户消息继续，不要重问上一题。"
+            "未点选不等于批准删除/重开。"
+        ),
+    }
+
+
+def interpret_user_turn(
+    project_root: Path,
+    *,
+    text: str = "",
+    reason: str = "user_message",
+) -> dict[str, Any]:
+    """Latest user turn vs pending AskQuestion: map to an option, or supersede."""
+    root = Path(project_root).expanduser().resolve()
+    pending = load_pending(root)
+    if not pending_is_open(pending):
+        return {
+            "ok": True,
+            "disposition": "idle",
+            "needs_human_decision": False,
+            "message_zh": "没有待确认的问题",
+        }
+    mapped = match_pending_option(pending, text)
+    if mapped and mapped.lower() in _DESTRUCTIVE_VALUES and len(str(text or "").strip()) > 24:
+        mapped = None
+    if mapped:
+        rec = record_answer(
+            root,
+            request_id=str(pending.get("request_id") or ""),
+            value=mapped,
+        )
+        if rec.get("ok"):
+            _clear_superseded_flag(root)
+            rec["disposition"] = "answered"
+            rec["needs_human_decision"] = False
+            rec["message_zh"] = f"已把本轮回复记为选项「{mapped}」"
+            return rec
+        # Value rejected — treat as a new request rather than deadlock.
+    return supersede_pending(root, reason=reason, user_text=text)

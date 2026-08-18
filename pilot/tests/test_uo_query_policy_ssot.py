@@ -56,6 +56,8 @@ def test_uo_query_router_owned_by_method() -> None:
     assert "委派" in router
     assert "分别委派" in router
     assert "综合只在主控" in router
+    assert "先向用户说明" not in router
+    assert "禁止单独一轮" in router
     assert "数量由主控判断" not in router
     assert "host_step.tasks" not in router
     assert "每轮最多" in router

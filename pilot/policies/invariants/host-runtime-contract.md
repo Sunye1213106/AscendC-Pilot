@@ -18,10 +18,10 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 - Do not write `.ascendc-pilot/**` via bash / `>` / `Set-Content` / `tee`.
 - Children must not use OpenCode `skill` (read session `method.md`). Primary may use OpenCode native skills and Pilot workflow skills.
 - Read of any directory is allow in AscendC-Pilot mode. Primary Write/edit is ask. Children: empty `write_scopes` → `edit`/`write` deny; otherwise ask (ACP lease still fences).
-- Containment (`human_required` / `blocked` / `failed`) and pending AskQuestion: Primary may `Read` / `Glob` / `Grep`, `ls` / `dir` / `Get-ChildItem`, and diagnostic python (`check_cann.py` / `check_env.py` / `doctor` / `cann_extract.py --fixup`). Still deny Write, Task, engine scripts, and `acp start` / `run-action auto`. Prefer `pilot_cli` `inspect-failure` / `status`. Children stay contained.
+- Containment (`human_required` / `blocked` / `failed`) and pending AskQuestion: Primary may `Read` / `Glob` / `Grep`, `ls` / `dir` / `Get-ChildItem`, and diagnostic python (`check_cann.py` / `check_env.py` / `doctor` / `cann_extract.py --fixup`). Still deny Write, Task, engine scripts, and `acp start` / `run-action auto` **while the confirm UI is waiting**. If the user interrupts and replies in chat, pending is superseded (`interpret-user-turn`); follow that message and do not re-ask. Interrupt is not wipe/reinit. Prefer `pilot_cli` `inspect-failure` / `status`. Children stay contained.
 
 ## uo-query lifecycle
 
-- **简单查询**：主控直接调用 `pilot_cli` `uo-query`；stdout 即答案。无 prepare / Task / finalize。
+- **简单查询**：主控直接调用 `pilot_cli` `uo-query`；stdout 即答案。禁止单独一轮只宣布路数。无 prepare / Task / finalize。
 - **复杂查询**：主控按独立查询目标同一轮并行 `Task(agent=uo-query)`，主控综合。Task 正文的建议首次调用只能是四种参数形态之一，禁止 `--mode`。无 `kb_lookup` prepare / finalize。子代不得 Write `answer.yaml`，不得自己 finalize。
 - **Delegated Task**（TG/CE）：Task 正文是 `task_prompt_stub`. Follow its `prompt` / `method` / `bundle` pointers; do not search additional session files.

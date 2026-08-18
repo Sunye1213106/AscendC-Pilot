@@ -22,9 +22,10 @@ GENERIC_FAILURE_TOKENS = frozenset(
 )
 
 _CANN_HINT_ZH = (
-    "请设置环境变量 UO_CANN_ROOT 或 ASCEND_CANN_PACKAGE_PATH 为已解包的 CANN package 根目录"
-    "（目录下应有 cann-asc-devkit/ 或 cann-metadef/），"
+    "请设置环境变量 UO_CANN_ROOT 或 ASCEND_CANN_PACKAGE_PATH 为 CANN 根目录"
+    "（解包后的 cann-asc-devkit/ 或官方安装的 ASCEND_HOME_PATH），"
     "或运行 scripts/cann_extract.py。"
+    "官方包不缺头文件；配好 cann_root 后不要按单个相对路径判失败。"
     "修好后告诉我，再重试当前 workflow。"
 )
 

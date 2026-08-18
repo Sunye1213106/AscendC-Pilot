@@ -154,3 +154,15 @@ def test_open_keys_seeds_from_worklog(tmp_path: Path) -> None:
     seeds = _seed_ids(tmp_path, "open_keys", limit=20)
     assert "KEY_A" in seeds
     assert "KEY_B" in seeds
+
+
+def test_profiles_and_compiler_drop_search_and_impact_of_slices() -> None:
+    compiler = (REPO / "pilot" / "ascendc_pilot" / "context" / "compiler.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'method == "search"' not in compiler
+    assert 'method == "impact_of"' not in compiler
+    for pid, prof in PROFILES.items():
+        methods = [qs.method for qs in prof.query_slices]
+        assert "search" not in methods, (pid, methods)
+        assert "impact_of" not in methods, (pid, methods)

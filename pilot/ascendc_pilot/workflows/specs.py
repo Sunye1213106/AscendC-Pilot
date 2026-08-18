@@ -605,10 +605,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 # Ephemeral Q&A: child answers in the Task message; primary synthesizes.
                 output_mode="return_value",
                 execution_variant="delegated_query",
-                allowed_write_paths=[
-                    "runs/{run_id}/actions/kb_lookup/answer.yaml",
-                    "runs/{run_id}/actions/kb_lookup/scratch/**",
-                ],
             ),
         ],
         "agents": [{"id": "uo-query", "role": "readonly_analyst"}],

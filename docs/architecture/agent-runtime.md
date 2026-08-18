@@ -1,5 +1,7 @@
 # Agent Runtime
 
+本文是 Host 传输协议（Driver 内部仍可调用 `acp start` / `run-action auto`）。模型在 OpenCode 上不要照抄这些命令，只用 `pilot_run` / `pilot_cli`。
+
 ## 为什么需要 Agent Runtime
 
 在复杂工程任务中，一个 Agent 不应该同时承担源码理解、方案生成、文件修改、结果验证以及状态推进。
@@ -78,7 +80,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 | Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
 | Skill | 定义领域能力地图与公共认知原则 | `skills/*/SKILL.md` |
 | METHOD | 一次 LLM Action 的推理 playbook | `skills/*/capabilities/*/METHOD.md` |
-| Router | 主控查询方式说明（不是 Action METHOD） | `skills/*/routing/*.md` |
+| Router | 主控查询路由（不是 Action METHOD） | `skills/*/routing/*.md` |
 | Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |
 | Policy | 定义运行约束和行为规则 | `pilot/policies/` |
 | Capability | 定义 Agent 或 Engine 可以调用的能力 | runtime capability registry |
@@ -95,7 +97,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 ```text
 确定性计算                    -> Engine
 领域推理方法                  -> METHOD.md（一次 LLM Action；Skill 是领域地图）
-主控查询方式说明              -> routing/*.md（不是 METHOD）
+主控查询路由                  -> routing/*.md（不是 METHOD）
 一次任务目标                  -> Prompt
 状态迁移                      -> Workflow
 需要独立身份、权限或隔离上下文 -> Agent
@@ -120,7 +122,7 @@ User intent -> pilot_run / acp start
             -> acp dispatch-result   # finalize + 继续 drive
 ```
 
-**只读查询是例外**：`uo-query` 不是 Session Driver 工作流。主控在当前会话说明查询方式：简单查询自行调用插件 `pilot_cli` `uo-query`，复杂查询原生 `Task(agent=uo-query)`，可独立查询的目标分别委派。Host 不 `start`、不发 ticket、不 `finalize`。
+**只读查询是例外**：`uo-query` 不是 Session Driver 工作流。简单查询直接调用插件 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数），复杂查询同一轮原生 `Task(agent=uo-query)`，可独立查询的目标分别委派。Host 不 `start`、不发 ticket、不 `finalize`。
 
 ---
 
@@ -154,7 +156,7 @@ Workflow 允许的根目录
 * **prepare 静态闭合（读）**：`task_prompt_stub` 引用的路径必须存在且落在 lease 可读集合内，否则 `BUNDLE_NOT_READABLE` 当场失败。Action METHOD 与点名的 references 在 prepare 时物化进 session 的 `method.md` / `refs/`；确认 Action 不装载认知 Skill。子代理只读自己的 session dir。
 * **scope 命名空间**：`agents/*.yaml` 的 `read_scopes` / `write_scopes` 支持前缀 `pilot:`（`.ascendc-pilot/<arch>/` 相对）、`method:`（host cognitive-skills / skills 树）、`source:`（算子仓源码根）。无前缀旧值按现行语义兼容。
 * **run 级 source scope**：`acp start` 解析一次 `allowed_source_roots` 写入 `runs/<run_id>/source_scope.yaml`，后续 action lease 继承；探查性只读不再表现为「没有仓库权限」。
-* **containment 只读白名单**：`failed` / `blocked` / `human_required` 下仍禁止推进与写入。主控可以 `Read` / `Glob` / `Grep` 以及 `ls` / `dir` / `Get-ChildItem` 做诊断；仍禁止写、派 Task、读引擎脚本、直调领域 CLI。所有人仍可读取 session `method.md` / `prompt.md` / skill 文本，避免 abort 后连方法都读不了。
+* **containment 只读白名单**：`failed` / `blocked` / `human_required` 下仍禁止推进与写入。主控可以 `Read` / `Glob` / `Grep` 以及 `ls` / `dir` / `Get-ChildItem` 做诊断；仍禁止写、派 Task、读引擎脚本、直调领域 CLI。用户打断确认框并在对话里另作回复时，pending 被 `interpret-user-turn` 取消，跟新消息、不要重问上一题。所有人仍可读取 session `method.md` / `prompt.md` / skill 文本，避免 abort 后连方法都读不了。
 
 Agent YAML 里 `forbidden` 标签的确定含义：
 
@@ -269,7 +271,7 @@ Agent 侧怎么调用（不要 `--help`、不要 bash 管道）见 [ACP 工具�
 
 **面向用户的表述与 Goal**：Primary 对用户的总结 / AskQuestion / 进度必须带意图与动作（见 `human-voice-invariants.md`）；禁止把 referee 内部术语贴给用户。全量 tilingkey case 产品目标串联 init→plan→solve，不把 NL 塞进 `acp route`。Todo 同步与 `return_value` finalize 由 Driver 持有，不要求模型再实现一遍。
 
-Host 侧（以 OpenCode 为例）在工具真正执行前走 `serve-authorize`（或 `authorize`）。常见拒绝：直调领域脚本、用 bash 擅自写入 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了**当前 Host 阶段未声明**的子代理（`uo-query` 除外：它不是 Host 工作流，主控说明查询方式后随时可 Task）、子代理调用 OpenCode `skill`。默认 bash 仅只读探查（ls / Get-ChildItem）与主控诊断 python（check_cann / check_env / doctor / cann_extract --fixup）；禁止 bash `acp start` / `acp run-action auto`。MCP 不拦截。子会话身份靠 session ticket（childSessionID↔actor↔action↔lease），不靠猜环境变量。OpenCode 原生 `skill` 依赖 rg 抽样 skill 目录。Pilot **不覆盖**原生 `skill`（否则 Build/Plan 也会换成 Pilot 实现）；workflow skill 只装在插件目录 `ascendc-pilot-plugin/skills/`，不进入全局 `~/.config/opencode/skills/`。Pilot Tab 的 after-hook 在缺 rg 时从插件目录恢复 `SKILL.md`。安装程序把 `rg.exe` 种到 OpenCode 的 **cache** bin（`%LOCALAPPDATA%/opencode/bin` 与 `~/.cache/opencode/bin`），Pilot 的 `shell.env` 才 prepend PATH。OpenCode 1.18 Windows bash 会选裸 `cmd.exe`，Effect spawn 把整行 `acp …` 当成可执行文件 → `NotFound: ChildProcess.spawn`。子代不要走 bash：插件暴露 `pilot_cli` 工具，内部 `spawnSync(绝对路径 acp.exe, shell:false)`；工作流走 `pilot_run`。不要注册名为 `acp` 的插件工具（撞 OpenCode ACP 协议）。`host_driver=False` 只表示 Driver **不** auto start/drain，**不等于**没有 method bundle。复杂查询的 Task 若 stub 点名 session `method.md` 则按指针读；Delegated Task（TG/CE 临时问图）的 Task 正文即全部，不要 hunt `prompt.md`。直接用插件 `pilot_cli` 工具 `command=uo-query --project …`。**AscendC-Pilot 模式（主控与子代）对任意目录 Read 不弹 OpenCode 确认**：`permission.read` / `external_directory` 均为 `allow`。Host 工作区是 Pilot 仓、算子包在仓外。Write/edit 仍 ask。主控权限袋显式放行 `read` / `grep` / `glob` / `pilot_run` / `pilot_cli`，**不要**顶层 `*: deny`（OpenCode 把 `*` 当工具名通配，会把 `read` 一起否掉）。**不继承** OpenCode 内置 Build/Plan 默认规则。Build/Plan Tab 保持原生权限、原生 skill、原生 shell；插件会拒绝这两个 Tab 使用 `pilot_run` / `pilot_cli`，并按名字拒绝 Pilot workflow skill。
+Host 侧（以 OpenCode 为例）在工具真正执行前走 `serve-authorize`（或 `authorize`）。常见拒绝：直调领域脚本、用 bash 擅自写入 `.ascendc-pilot/`、超出本步通行证允许的路径、主控去写正式 IR、派了**当前 Host 阶段未声明**的子代理（`uo-query` 除外：它不是 Host 工作流，主控随时可 Task）、子代理调用 OpenCode `skill`。默认 bash 仅只读探查（ls / Get-ChildItem）与主控诊断 python（check_cann / check_env / doctor / cann_extract --fixup）；禁止 bash `acp start` / `acp run-action auto`。MCP 不拦截。子会话身份靠 session ticket（childSessionID↔actor↔action↔lease），不靠猜环境变量。OpenCode 原生 `skill` 依赖 rg 抽样 skill 目录。Pilot **不覆盖**原生 `skill`（否则 Build/Plan 也会换成 Pilot 实现）；workflow skill 只装在插件目录 `ascendc-pilot-plugin/skills/`，不进入全局 `~/.config/opencode/skills/`。Pilot Tab 的 after-hook 在缺 rg 时从插件目录恢复 `SKILL.md`。安装程序把 `rg.exe` 种到 OpenCode 的 **cache** bin（`%LOCALAPPDATA%/opencode/bin` 与 `~/.cache/opencode/bin`），Pilot 的 `shell.env` 才 prepend PATH。OpenCode 1.18 Windows bash 会选裸 `cmd.exe`，Effect spawn 把整行 `acp …` 当成可执行文件 → `NotFound: ChildProcess.spawn`。子代不要走 bash：插件暴露 `pilot_cli` 工具，内部 `spawnSync(绝对路径 acp.exe, shell:false)`；工作流走 `pilot_run`。不要注册名为 `acp` 的插件工具（撞 OpenCode ACP 协议）。`host_driver=False` 只表示 Driver **不** auto start/drain，**不等于**没有 method bundle。复杂查询的 Task 若 stub 点名 session `method.md` 则按指针读；Delegated Task（TG/CE 临时问图）的 Task 正文即全部，不要 hunt `prompt.md`。直接用插件 `pilot_cli` 工具 `command=uo-query --project …`。**AscendC-Pilot 模式（主控与子代）对任意目录 Read 不弹 OpenCode 确认**：`permission.read` / `external_directory` 均为 `allow`。Host 工作区是 Pilot 仓、算子包在仓外。Write/edit 仍 ask。主控权限袋显式放行 `read` / `grep` / `glob` / `pilot_run` / `pilot_cli`，**不要**顶层 `*: deny`（OpenCode 把 `*` 当工具名通配，会把 `read` 一起否掉）。**不继承** OpenCode 内置 Build/Plan 默认规则。Build/Plan Tab 保持原生权限、原生 skill、原生 shell；插件会拒绝这两个 Tab 使用 `pilot_run` / `pilot_cli`，并按名字拒绝 Pilot workflow skill。
 
 LLM Action 端到端：
 
@@ -284,10 +286,10 @@ prepare（物化 method.md / refs + Bundle 读闭合）
 
 子代理（若派了）最终消息用完整自然语言作答（结论 + file:line + snippet）。OpenCode Task 把全文交回主控；主控综合后向用户陈述。**子代不要 Write `answer.yaml`**，不要自己 finalize。复杂查询由主控综合，不调用 `kb_lookup --finalize`。YAML 不是 primary↔subagent 的传递通道。Domain 正式产物仍禁止 LLM 直写。
 
-### 查询：向用户说明查询方式（不是 Host workflow）
+### 查询：直接执行或同一轮委派（不是 Host workflow）
 
 ```text
-主控 ——先说明将直接调用还是委派（见 routing/uo-query.md）
+主控 ——简单查询直接 `pilot_cli`；复杂查询同一轮 Task（见 routing/uo-query.md）
 ├── 简单查询：当前会话 `pilot_cli` `uo-query`，将 stdout 向用户陈述（无 prepare / Task / finalize）
 └── 复杂查询：同一轮 Task(agent=uo-query) → Primary 综合（无 kb_lookup prepare / finalize）
 ```

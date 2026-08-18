@@ -13,7 +13,7 @@ Wave 3 抽取（PIPE `kernel_phase`、`definition_sites`、registry PREDICATE、
 
 Cursor：复杂查询由 **主控** 按独立查询目标拆路。同一条消息里并行多个 Task；子代理隔离上下文；全部返回后 **主控综合**，不发明子代理没引用的事实。
 
-uo-query **禁止** `pilot_run`。主控必须先说明将直接调用还是委派，再执行。刚跑完 `/uo-init` 后 leftover 阶段不含 `uo-query` **不得**拦 `Task(agent=uo-query)`。
+uo-query **禁止** `pilot_run`。简单查询直接执行，复杂查询同一轮委派。刚跑完 `/uo-init` 后 leftover 阶段不含 `uo-query` **不得**拦 `Task(agent=uo-query)`。
 
 | 问法 | 谁查 |
 | --- | --- |

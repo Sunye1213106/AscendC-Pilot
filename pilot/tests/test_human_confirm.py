@@ -9,6 +9,8 @@ import yaml
 
 from ascendc_pilot.human_confirm import (
     build_ask,
+    grill_should_ask,
+    hosted_confirm_should_ask,
     is_hosted_confirm,
     materialize_primary_decision,
 )
@@ -16,6 +18,7 @@ from ascendc_pilot.human_interaction import issue_interaction_request, record_an
 from ascendc_pilot.human_voice import build_human_confirm_ask
 from ascendc_pilot.paths import ce_root, runs_root, tg_root
 from ascendc_pilot.state import load_state, start_workflow
+from ascendc_pilot.user_goal import create_tilingkey_full_coverage_goal
 
 
 @pytest.fixture(autouse=True)
@@ -122,3 +125,94 @@ def test_plan_approve_unique_without_workflow(tmp_path: Path) -> None:
     assert "规划" in header or "求解" in header
     values = [str(o.get("value") or "") for o in ask.get("options") or []]
     assert "approve" in values
+
+
+def _write_grill_staging(tmp_path: Path, body: str) -> None:
+    state = load_state(tmp_path) or {}
+    run_id = str(state.get("run_id") or "")
+    assert run_id
+    sdir = runs_root(tmp_path) / run_id / "actions" / "intent_grill"
+    sdir.mkdir(parents=True, exist_ok=True)
+    (sdir / "staging.md").write_text(body, encoding="utf-8")
+
+
+def test_grill_should_ask_skips_when_authorized_and_no_forks(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "ce-plan",
+        phase="confirm",
+        force_phase=True,
+        architecture="arch35",
+        intent="按这个写，直接出计划",
+    )
+    _write_grill_staging(
+        tmp_path,
+        "# 范围\n- kernel\n\n## 未决决策\n- 无\n",
+    )
+    state = load_state(tmp_path) or {}
+    assert grill_should_ask(tmp_path, state, action_id="grill_confirm") is False
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is False
+
+
+def test_grill_should_ask_when_open_forks(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "ce-plan",
+        phase="confirm",
+        force_phase=True,
+        architecture="arch35",
+        intent="按这个写",
+    )
+    _write_grill_staging(
+        tmp_path,
+        "## 未决决策\n- 改 kernel 还是 tiling？推荐 kernel\n",
+    )
+    state = load_state(tmp_path) or {}
+    assert grill_should_ask(tmp_path, state, action_id="grill_confirm") is True
+
+
+def test_grill_should_ask_default_still_asks(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "ce-plan",
+        phase="confirm",
+        force_phase=True,
+        architecture="arch35",
+        intent="帮我整理一下需求",
+    )
+    state = load_state(tmp_path) or {}
+    assert grill_should_ask(tmp_path, state, action_id="grill_confirm") is True
+
+
+def test_hosted_confirm_skips_tg_on_full_coverage_goal(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "tg-init",
+        phase="confirm",
+        force_phase=True,
+        architecture="arch35",
+        intent="补全量 TilingKey 覆盖测试",
+    )
+    create_tilingkey_full_coverage_goal(
+        tmp_path,
+        architecture="arch35",
+        intent_text="补全量 TilingKey 覆盖测试",
+        current_step="tg_init",
+    )
+    state = load_state(tmp_path) or {}
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is False
+    state["workflow_id"] = "tg-plan"
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="plan_approve") is False
+
+
+def test_hosted_confirm_asks_tg_without_goal(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "tg-init",
+        phase="confirm",
+        force_phase=True,
+        architecture="arch35",
+        intent="只绑定测试脚本",
+    )
+    state = load_state(tmp_path) or {}
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is True

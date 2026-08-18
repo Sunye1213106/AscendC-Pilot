@@ -319,9 +319,11 @@ def make_dir_link(link: Path, target: Path, *, copy_fallback: bool = False) -> s
 
 
 def detect_toolkit_host(pkg: Path) -> str:
-    """Host tuple under extracted packages; do not import uo_init here."""
-    for name in ("cann-asc-devkit", "cann-metadef", "cann-opbase", "cann-npu-runtime"):
-        base = pkg / name
+    """Host tuple under extracted packages or an official install prefix."""
+    if pkg.name.endswith("-linux") and (pkg / "asc").is_dir():
+        return pkg.name
+    for name in ("cann-asc-devkit", "cann-metadef", "cann-opbase", "cann-npu-runtime", ""):
+        base = pkg if not name else pkg / name
         if not base.is_dir():
             continue
         for host in ("x86_64-linux", "aarch64-linux"):
@@ -370,28 +372,47 @@ def replay_links(plan: LinkPlan) -> None:
             plan.skipped.append(f"{link_path} -> {target}: {type(exc).__name__}: {exc}")
 
 
+def iter_asc_dirs(pkg: Path) -> list[Path]:
+    host = detect_toolkit_host(pkg)
+    cands = [
+        pkg / "cann-asc-devkit" / host / "asc",
+        pkg / host / "asc",
+        pkg / "asc",
+    ]
+    out: list[Path] = []
+    seen: set[str] = set()
+    for path in cands:
+        if not path.is_dir():
+            continue
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
 def apply_known_fixups(pkg: Path, plan: LinkPlan) -> None:
     """Layout repairs the toolkit assumes a POSIX filesystem provides.
 
-    Declared in spec/build_context.yaml as `post_extract_fixups`; kept here so
-    extraction alone leaves a tree clang can traverse. On Linux the .run tar
-    usually already has this symlink; on Windows it must be a junction.
+    Official CANN does not ship ``asc/impl/include``; vanilla clang needs that
+    junction so relative includes from ``asc/impl/...`` resolve. Missing it is
+    not "the package is incomplete".
     """
-    host = detect_toolkit_host(pkg)
-    asc = pkg / "cann-asc-devkit" / host / "asc"
-    shim = asc / "impl" / "include"
-    include = asc / "include"
-    if not asc.is_dir() or not include.is_dir():
-        return
-    try:
-        kind = make_dir_link(shim, include, copy_fallback=True)
-        if kind in {"junction", "symlink", "copy"}:
-            plan.made += 1
-            print(f"  fixup ({kind}): {shim} -> {include}")
-        elif kind == "exists":
-            print(f"  fixup already present: {shim}")
-    except Exception as exc:  # noqa: BLE001
-        plan.skipped.append(f"fixup {shim}: {exc}")
+    for asc in iter_asc_dirs(pkg):
+        include = asc / "include"
+        shim = asc / "impl" / "include"
+        if not include.is_dir():
+            continue
+        try:
+            kind = make_dir_link(shim, include, copy_fallback=True)
+            if kind in {"junction", "symlink", "copy"}:
+                plan.made += 1
+                print(f"  fixup ({kind}): {shim} -> {include}")
+            elif kind == "exists":
+                print(f"  fixup already present: {shim}")
+        except Exception as exc:  # noqa: BLE001
+            plan.skipped.append(f"fixup {shim}: {exc}")
 
 
 def main() -> int:

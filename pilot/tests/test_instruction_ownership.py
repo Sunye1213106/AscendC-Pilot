@@ -345,6 +345,27 @@ def test_docs_do_not_claim_query_has_no_method_bundle() -> None:
     assert hits == []
 
 
+def test_agent_playbooks_do_not_teach_acp_inspect_or_scan_steps() -> None:
+    rels = (
+        "docs/getting-started/quickstart.md",
+        "tools/codemap/structured-ir-query/METHOD.md",
+        "pilot/gates/producer-self-check/METHOD.md",
+        "pilot/runtime/sharded-llm-producer/METHOD.md",
+    )
+    hits: list[str] = []
+    for rel in rels:
+        text = (REPO / rel).read_text(encoding="utf-8")
+        for phrase in ("acp scan-architectures", "acp inspect ", "acp inspect-failure"):
+            if phrase in text:
+                hits.append(f"{rel}: {phrase}")
+    tools = (REPO / "docs/getting-started/acp-tools.md").read_text(encoding="utf-8")
+    agent_half = tools.split("## 人类在终端里", 1)[0]
+    for phrase in ("acp scan-architectures", "acp inspect ", "acp inspect-failure"):
+        if phrase in agent_half:
+            hits.append(f"docs/getting-started/acp-tools.md (agent steps): {phrase}")
+    assert hits == []
+
+
 def test_producer_referee_write_scopes_do_not_overlap() -> None:
     from ascendc_pilot.workflows import WORKFLOWS
 

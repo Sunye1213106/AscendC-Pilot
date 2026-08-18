@@ -75,8 +75,6 @@ def test_uo_query_start_does_not_take_exclusive_lock(tmp_path: Path) -> None:
 
 
 def test_finalize_kb_lookup_releases_ephemeral_query(tmp_path: Path) -> None:
-    from ascendc_pilot.paths import agent_root
-
     op = tmp_path / "demo_op"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
@@ -86,29 +84,12 @@ def test_finalize_kb_lookup_releases_ephemeral_query(tmp_path: Path) -> None:
     started = start_workflow(op, "uo-query", architecture="arch35", intent="q?")
     prep = prepare_action(op, "kb_lookup")
     assert prep.get("ok"), prep
-    result_path = tmp_path / "kb-answer.yaml"
-    _write(
-        result_path,
-        {
-            "schema": "kb-answer-v1",
-            "status": "ANSWERED",
-            "question": "q?",
-            "answer_zh": "合法（有条件）。",
-            "citations": [{"path": "op_host/x.cpp", "lines": "1-2"}],
-            "adequacy": "ANSWERED",
-        },
-    )
-    fin = finalize_action(op, "kb_lookup", result_file=result_path)
+    fin = finalize_action(op, "kb_lookup")
     assert fin.get("ok") is True, fin
     assert (fin.get("complete") or {}).get("ok") is True
     assert not load_state(op, workflow_id="uo-query")
     live = shared_live_state_path(op, started["run_id"], arch="arch35")
     assert not live.is_file()
-    answer = (
-        agent_root(op, "arch35")
-        / f"runs/{prep['run_id']}/actions/kb_lookup/answer.yaml"
-    )
-    assert answer.is_file()
 
 
 def test_two_query_runs_can_coexist(tmp_path: Path, monkeypatch) -> None:

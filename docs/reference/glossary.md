@@ -16,7 +16,7 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 | Gate | 推进状态前的确定性 pass/fail 条件。 |
 | Harness | Pilot + authorize 钩子 + Lease 组成的软控制面；见 [Agent Runtime](../architecture/agent-runtime.md)。 |
 | Host adapter | OpenCode、Cursor、Codex 的 host-specific 投影：**安装期** compose + **运行时** Session Driver。 |
-| Host Session Driver | Host 侧传输角色：消费 `host_step`、派发 Task / AskQuestion、调用 `dispatch-result`；不写 canonical、不 advance。**不驱动** `uo-query`（由主控向用户说明查询方式）。 |
+| Host Session Driver | Host 侧传输角色：消费 `host_step`、派发 Task / AskQuestion、调用 `dispatch-result`；不写 canonical、不 advance。**不驱动** `uo-query`（主控直接查询或同一轮委派）。 |
 | `host_step` | ACP drive 返回的结构化下一步：`dispatch_subagent` / `ask_human` / `done` / `failed` / `primary_router`（查询拒走 Driver）。 |
 | L0 | TG 覆盖梯子的默认档：每维一次。写在 `plan.md` 义务的 `cover` 上，不是 `tg/plan/levels/L0/`。 |
 | L2 | TG 覆盖梯子：有界笛卡尔。全量 tilingkey 只在意图点名时做，不是默认 T=D。 |

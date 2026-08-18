@@ -94,6 +94,7 @@ def main() -> int:
         "await reporter.flushAsync()",
         "isHumanDecision",
         "isAcpStartSuccess",
+        "ask_interrupted",
         "normalizeResumeDecision",
         "answer_from_source",
         "primary_router",

@@ -170,12 +170,22 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         payload["message_zh"] = str(recommended.get("hint_zh") or payload["message_zh"])
     if human_required is not None:
         payload["human_required"] = human_required
-        if human_required.get("ask_question"):
+        superseded = bool(state.get("human_decision_superseded"))
+        if superseded:
+            payload["needs_human_decision"] = False
+            payload["ask_interrupted"] = True
+            payload["message_zh"] = (
+                "上一问确认已被用户打断，不要重问上一题。请按本轮新消息继续。"
+                "未点选不等于批准删除/重开。"
+            )
+            payload["primary_instruction_zh"] = payload["message_zh"]
+        elif human_required.get("ask_question"):
             payload["needs_human_decision"] = True
             payload["ask_question"] = human_required["ask_question"]
             payload["primary_instruction_zh"] = (
-                "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options，"
-                "禁止静默重试或自动 abort。"
+                "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options。"
+                "若用户已在本轮对话里回复（打断确认框），改为 interpret-user-turn，不要重问上一题。"
+                "未点选不等于批准删除/重开。"
             )
             from ascendc_pilot.human_interaction import (
                 KIND_HUMAN_REQUIRED,

@@ -125,18 +125,20 @@ def architecture_has_vf(architecture: str) -> bool:
 
 
 def _header_roots(cann: Path) -> list[Path]:
+    from uo_init.paths import resolve_cann_relative
+
     rels = (
-        Path("cann-asc-devkit/x86_64-linux/tikcpp/tikcfw/interface/reg_compute"),
-        Path("cann-asc-devkit/x86_64-linux/tikcpp/tikcfw/interface"),
-        Path("cann-asc-devkit/x86_64-linux/ascendc/include/basic_api/interface/reg_compute"),
-        Path("cann-asc-devkit/x86_64-linux/asc/include/basic_api/reg_compute"),
-        Path("cann-asc-devkit/x86_64-linux/asc/include/basic_api"),
-        Path("cann-asc-devkit/x86_64-linux/include/ascendc/basic_api/interface/reg_compute"),
+        "cann-asc-devkit/x86_64-linux/tikcpp/tikcfw/interface/reg_compute",
+        "cann-asc-devkit/x86_64-linux/tikcpp/tikcfw/interface",
+        "cann-asc-devkit/x86_64-linux/ascendc/include/basic_api/interface/reg_compute",
+        "cann-asc-devkit/x86_64-linux/asc/include/basic_api/reg_compute",
+        "cann-asc-devkit/x86_64-linux/asc/include/basic_api",
+        "cann-asc-devkit/x86_64-linux/include/ascendc/basic_api/interface/reg_compute",
     )
     out: list[Path] = []
     seen: set[Path] = set()
     for rel in rels:
-        d = cann / rel
+        d = resolve_cann_relative(cann, rel)
         if d.is_dir() and d not in seen:
             seen.add(d)
             out.append(d)

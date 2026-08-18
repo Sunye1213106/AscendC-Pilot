@@ -10,6 +10,35 @@ from typing import Any
 
 from ascendc_pilot.io import configure_stdio, print_json
 
+_UO_REMOVED_CMDS = frozenset(
+    {
+        "impact",
+        "search",
+        "explain-host-value",
+        "explain-tiling-field",
+        "explain-key-dimension",
+        "locate",
+        "query",
+    }
+)
+
+
+def _uo_removed_payload(sub: str) -> dict[str, Any]:
+    if sub == "query":
+        return {
+            "ok": False,
+            "error": "use_uo_query",
+            "message_zh": "acp uo query 不是合法命令。请使用: acp uo-query",
+        }
+    return {
+        "ok": False,
+        "error": "use_uo_query",
+        "message_zh": (
+            "已删除 acp uo impact / search / explain-* / locate。"
+            "请使用 uo-query 四种形态：标识符、Dim=V、--file --line、无参数索引。"
+        ),
+    }
+
 
 def _cli_project_default() -> Path:
     """Prefer remembered operator root over AscendC-Pilot checkout cwd."""
@@ -40,15 +69,11 @@ def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     configure_stdio()
     raw = list(argv if argv is not None else sys.argv[1:])
-    if raw[:2] == ["uo", "query"]:
-        print_json(
-            {
-                "ok": False,
-                "error": "use_uo_query",
-                "message_zh": "acp uo query 不是合法命令。请使用: acp uo-query",
-            }
-        )
-        return 2
+    if raw[:1] == ["uo"] and len(raw) >= 2 and not str(raw[1]).startswith("-"):
+        sub = str(raw[1])
+        if sub in _UO_REMOVED_CMDS:
+            print_json(_uo_removed_payload(sub))
+            return 2
     parser = argparse.ArgumentParser(prog="acp", description="AscendC-Pilot")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -147,10 +172,7 @@ def main(argv: list[str] | None = None) -> int:
         "--result-file",
         type=Path,
         default=None,
-        help=(
-            "For return_value actions (e.g. kb_lookup): path to kb-answer-v1 YAML "
-            "from subagent Task return; finalize materializes answer.yaml"
-        ),
+        help="Optional Host payload path for finalize (not a kb-answer disk contract)",
     )
 
     p_dres = sub.add_parser(
@@ -260,6 +282,22 @@ def main(argv: list[str] | None = None) -> int:
     p_answer.add_argument("--request-id", required=True, help="request_id from human_interaction_request")
     p_answer.add_argument("--value", required=True, help="Selected option value")
 
+    p_interpret = sub.add_parser(
+        "interpret-user-turn",
+        help="Map the latest user message onto a pending AskQuestion, or supersede it",
+    )
+    p_interpret.add_argument("--project", type=Path, default=None)
+    p_interpret.add_argument(
+        "--text",
+        default="",
+        help="Latest user message. Empty text supersedes (user interrupted).",
+    )
+    p_interpret.add_argument(
+        "--reason",
+        default="user_message",
+        help="Why this turn is being interpreted (user_message / ask_ui_interrupted)",
+    )
+
     p_hashes = sub.add_parser("spec-hashes", help="Print four Spec Hash digests")
     p_hashes.add_argument("--project", type=Path, default=None)
     p_hashes.add_argument("--workflow", default="")
@@ -358,24 +396,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Architecture pin for .uo product lookup (arch35, arch22, …)",
     )
 
-    p_uo = sub.add_parser("uo", help="UO Host contract 查询与解释")
+    p_uo = sub.add_parser("uo", help="UO Host dump / product-handle（查询请用 uo-query）")
     p_uo_sub = p_uo.add_subparsers(dest="uo_cmd", required=True)
-    for explain_name, help_zh in (
-        ("explain-host-value", "解释 HostValue 推导路径"),
-        ("explain-tiling-field", "解释 TilingField 写入/读点与影响范围"),
-        ("explain-key-dimension", "解释 KeyDimension 组成"),
-        ("impact", "按源码位置查影响子图"),
-        ("search", "KB 全文/子串检索"),
-    ):
-        p_ex = p_uo_sub.add_parser(explain_name, help=help_zh)
-        p_ex.add_argument("entity_id", nargs="?", default="", help="实体 id / 字段名 / 检索词")
-        p_ex.add_argument("--project", type=Path, default=None)
-        p_ex.add_argument("--op-name", default="")
-        p_ex.add_argument("--architecture", default="")
-        p_ex.add_argument("--file", default="")
-        p_ex.add_argument("--line", type=int, default=0)
-        p_ex.add_argument("--line-end", type=int, default=0)
-        p_ex.add_argument("--limit", type=int, default=50)
     p_uo_query_alias = p_uo_sub.add_parser(
         "query",
         help="已移除；请用 acp uo-query",
@@ -393,18 +415,6 @@ def main(argv: list[str] | None = None) -> int:
     p_dump.add_argument("--architecture", default="")
     p_dump.add_argument("--out", type=Path, default=None, help="输出路径（省略则打印 YAML）")
     p_dump.add_argument("--list", action="store_true", help="列出 .uo 中可用 view")
-    p_loc = p_uo_sub.add_parser("locate", help="定位实体源码 file:line")
-    p_loc.add_argument("query", help="实体 id / 维名 / 字段名 / 分支 id")
-    p_loc.add_argument("--project", type=Path, default=None)
-    p_loc.add_argument("--op-name", default="")
-    p_loc.add_argument("--architecture", default="")
-    p_loc.add_argument("--kind", default="", help="逗号分隔 node kinds")
-    p_loc.add_argument(
-        "--mode",
-        choices=("search", "dim", "branch", "field"),
-        default="search",
-    )
-    p_loc.add_argument("--limit", type=int, default=20)
     p_handle = p_uo_sub.add_parser(
         "product-handle",
         help="Emit UO Product Handle for Task(actor=uo-query) delegation",
@@ -625,6 +635,27 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print_json(result)
         return 0 if result.get("ok") else 1
+    if args.cmd == "interpret-user-turn":
+        from ascendc_pilot.human_interaction import interpret_user_turn
+
+        try:
+            result = interpret_user_turn(
+                args.project,
+                text=str(getattr(args, "text", "") or ""),
+                reason=str(getattr(args, "reason", "") or "user_message"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            print_json(
+                {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:800],
+                    "message_zh": f"acp interpret-user-turn 失败：{exc}"[:400],
+                }
+            )
+            return 1
+        print_json(result)
+        return 0 if result.get("ok") else 1
     if args.cmd == "context":
         from ascendc_pilot.context import build_context_pack
 
@@ -713,6 +744,7 @@ def main(argv: list[str] | None = None) -> int:
                     workflow_id=args.workflow_id,
                     architecture=arch,
                     project_explicit=project_explicit,
+                    intent=str(start_kwargs.get("intent") or ""),
                 )
                 if not prep.get("ok"):
                     print_json(prep)
@@ -776,6 +808,7 @@ def main(argv: list[str] | None = None) -> int:
             workflow_id=args.workflow_id,
             architecture=arch,
             project_explicit=project_explicit,
+            intent=str(start_kwargs.get("intent") or ""),
         )
         if not prep.get("ok"):
             print_json(prep)
@@ -843,12 +876,15 @@ def main(argv: list[str] | None = None) -> int:
                 if isinstance(state, dict):
                     state["user_goal"] = goal
                     state["user_summary_zh"] = progress_line_zh(goal)
-                    state["message_zh"] = (
-                        progress_line_zh(goal)
-                        + " 向用户说明意图与当前动作；完成后按 Goal 串联下一步。"
-                    )
+                    state["message_zh"] = progress_line_zh(goal)
         except Exception:  # noqa: BLE001
             pass
+        if str(prep.get("resolved_from") or "") == "intent" and isinstance(state, dict):
+            state = dict(state)
+            echo = str(prep.get("message_zh") or f"按 {arch} 启动。").strip()
+            prev = str(state.get("message_zh") or "").strip()
+            state["architecture_resolved_from"] = "intent"
+            state["message_zh"] = f"{echo} {prev}".strip() if echo not in prev else prev
         print_json(state)
         return 0
     if args.cmd == "run-action":
@@ -1005,15 +1041,18 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.human_interaction import pending_path
 
         if pending_path(args.project).is_file():
-            receipt = require_decision_receipt(
-                args.project,
-                expected_values=["abort_run", "abort"],
-                expected_kind=KIND_HUMAN_REQUIRED,
-                consume=True,
-            )
-            if not receipt.get("ok"):
-                print_json(receipt)
-                return 1
+            from ascendc_pilot.human_interaction import load_pending, pending_is_open
+
+            if pending_is_open(load_pending(args.project)):
+                receipt = require_decision_receipt(
+                    args.project,
+                    expected_values=["abort_run", "abort"],
+                    expected_kind=KIND_HUMAN_REQUIRED,
+                    consume=True,
+                )
+                if not receipt.get("ok"):
+                    print_json(receipt)
+                    return 1
         revoke_active_lease(args.project, reason="abort")
         st = mark_terminal(args.project, "failed", reason=args.reason or "aborted_by_operator")
         released = release_live_execution(
@@ -1181,16 +1220,9 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.cmd == "uo":
         if getattr(args, "uo_cmd", "") == "query":
-            print_json(
-                {
-                    "ok": False,
-                    "error": "use_uo_query",
-                    "message_zh": "acp uo query 不是合法命令。请使用: acp uo-query",
-                }
-            )
+            print_json(_uo_removed_payload("query"))
             return 2
         from uo_init.store.reader import find_uo_product, list_views
-        from uo_init.uo_query import open_query
 
         project = Path(args.project).resolve()
         op_name = str(getattr(args, "op_name", "") or "")
@@ -1241,35 +1273,6 @@ def main(argv: list[str] | None = None) -> int:
             except Exception as exc:  # noqa: BLE001
                 print_json({"ok": False, "error": str(exc)[:300]})
                 return 1
-        if args.uo_cmd == "locate":
-            from uo_init.source_locator import open_locator
-
-            try:
-                loc = open_locator(product if product is not None else project)
-                kinds = [k for k in str(getattr(args, "kind", "") or "").split(",") if k.strip()]
-                mode = str(getattr(args, "mode", "search") or "search")
-                query = str(args.query or "")
-                limit = int(getattr(args, "limit", 20) or 20)
-                if mode == "dim":
-                    rows = loc.locate_dim(query, limit=limit)
-                elif mode == "branch":
-                    rows = loc.locate_branch(query, limit=limit)
-                elif mode == "field":
-                    rows = loc.locate_field(query, limit=limit)
-                else:
-                    rows = loc.locate(query, kinds=kinds or None, limit=limit)
-                print_json(
-                    {
-                        "ok": True,
-                        "mode": mode,
-                        "count": len(rows),
-                        "locations": [r.to_dict() for r in rows],
-                    }
-                )
-                return 0
-            except Exception as exc:  # noqa: BLE001
-                print_json({"ok": False, "error": str(exc)[:300]})
-                return 1
         if args.uo_cmd == "product-handle":
             from ascendc_pilot.uo_product_handle import (
                 build_uo_product_handle,
@@ -1286,49 +1289,8 @@ def main(argv: list[str] | None = None) -> int:
             print_json(handle)
             return 0 if handle.get("ok") else 1
 
-        eid = str(args.entity_id or "")
-        try:
-            q = open_query(project, op_name=op_name, architecture=architecture)
-            if args.uo_cmd == "explain-host-value":
-                result = {"ok": True, "entity_id": eid, "constraints": q.constraints_for(eid)}
-            elif args.uo_cmd == "explain-tiling-field":
-                result = q.field_impact(eid)
-                result["entity_id"] = eid
-            elif args.uo_cmd == "explain-key-dimension":
-                result = {
-                    "ok": True,
-                    "entity_id": eid,
-                    "branches": q.branches_for_key(eid) if hasattr(q, "branches_for_key") else [],
-                    "templates": q.templates_for_key(eid) if hasattr(q, "templates_for_key") else [],
-                }
-            elif args.uo_cmd == "impact":
-                f = str(getattr(args, "file", "") or "")
-                line = int(getattr(args, "line", 0) or 0)
-                line_end = int(getattr(args, "line_end", 0) or line or 0)
-                if not f or not line:
-                    result = {"ok": False, "error": "impact_needs_file_line"}
-                else:
-                    result = q.impact_of(f, (line, line_end or line))
-                    if isinstance(result, dict):
-                        result = {"ok": True, "file": f, "line": line, **result}
-                    else:
-                        result = {
-                            "ok": True,
-                            "file": f,
-                            "line": line,
-                            "count": len(result),
-                            "rows": result[: int(getattr(args, "limit", 50) or 50)],
-                        }
-            elif args.uo_cmd == "search":
-                rows = q.search(eid, limit=int(getattr(args, "limit", 50) or 50))
-                result = {"ok": True, "pattern": eid, "count": len(rows), "rows": rows}
-            else:
-                print_json({"ok": False, "error": f"未知 uo 子命令: {args.uo_cmd}"})
-                return 2
-        except Exception as exc:  # noqa: BLE001
-            result = {"ok": False, "error": str(exc)[:300]}
-        print_json(result, default=str)
-        return 0 if result.get("ok") else 1
+        print_json(_uo_removed_payload(str(args.uo_cmd or "")))
+        return 2
     if args.cmd == "debug":
         return _cmd_debug(args)
     return 2
@@ -1764,7 +1726,7 @@ def _doctor(project: Path | None) -> int:
             "pass --test-script-root to bind an existing runner (scripts + CSV)"
         )
 
-    # UO clang parse needs extracted CANN packages (not just ASCEND_HOME_PATH).
+    # UO clang parse needs a CANN root (extracted cann-* or official install).
     try:
         from uo_init import paths as uo_paths
 
@@ -1782,17 +1744,11 @@ def _doctor(project: Path | None) -> int:
                 warnings.append(f"cann: {item}")
             default_pkg = uo_paths.repo_root() / "_cann" / "pkg"
             warnings.append(
-                "UO prepare/scope_scan needs extracted CANN packages (not just "
-                "ASCEND_HOME_PATH). Default dest is auto-discovered: "
-                f"{default_pkg} — python scripts/cann_extract.py <toolkit.run> "
-                f"--dest {default_pkg}"
-            )
-            warnings.append(
-                "If impl/include is missing (Windows junction): "
-                "python scripts/cann_extract.py --fixup --dest <pkg>. "
-                "Session-only $env:UO_CANN_ROOT is lost when the terminal closes; "
-                "persist with [Environment]::SetEnvironmentVariable("
-                "'UO_CANN_ROOT', '<abs>', 'User')."
+                "Set UO_CANN_ROOT to an extracted cann-* package root "
+                f"(default dest {default_pkg}) or an official ASCEND_HOME_PATH. "
+                "python scripts/cann_extract.py <toolkit.run> --dest "
+                f"{default_pkg}. Persist User-level UO_CANN_ROOT; session-only "
+                "$env:UO_CANN_ROOT is lost when the terminal closes."
             )
         else:
             print("cann_layout=ok")

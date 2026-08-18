@@ -15,13 +15,13 @@ if str(PILOT) not in sys.path:
 
 def _command_body(workflow_id: str) -> str:
     if workflow_id == "uo-query":
-        return """查询已有 Operator CodeMap。主控先向用户说明查询方式，不要 `pilot_run`，禁止仅为问题分类而委派子代理。
+        return """查询已有 Operator CodeMap。简单查询直接 `pilot_cli` `uo-query`，禁止单独一轮只宣布路数；不要 `pilot_run`，禁止仅为问题分类而委派子代理。
 
 User arguments: $ARGUMENTS
 
 1. 先阅读 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
-2. **先向用户说明**将直接调用还是委派几路，再执行。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。
-3. **简单查询**：主控直接调用 `pilot_cli`（标识符 / Dim=V / --file --line / 无参数索引），将 stdout 向用户陈述。
+2. 怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`：简单查询直接调用，复杂查询同一轮委派几路。
+3. **简单查询**：主控直接调用 `pilot_cli`（标识符 / Dim=V / --file --line / 无参数索引），将 stdout 向用户陈述。禁止先发「我将直接查询」。
 4. **复杂查询**：用户原话里几个可独立作为首次调用的起始点，就同一轮并行几路 `Task(agent=uo-query)`（上限 5）。「要交叉综合」不是合并的理由。每路 Task 正文：
    FOCUS: <本路唯一查询目标>
    建议的首次调用: pilot_cli command=`uo-query --project <绝对路径> [--architecture arch35] <标识符或 Dim=V>`

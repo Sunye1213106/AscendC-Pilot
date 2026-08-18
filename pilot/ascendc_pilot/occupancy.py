@@ -810,7 +810,7 @@ def apply_stale_confidence(
 
 
 def cap_confidence_fields(obj: Any) -> None:
-    """Public alias used when rewriting materialized answer.yaml."""
+    """Public alias for capping confidence fields on stale UO bindings."""
     _cap_confidence_fields(obj)
 
 

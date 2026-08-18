@@ -318,6 +318,21 @@ def test_cli_uo_query_alias_with_project_flag_hints_uo_query(capsys):
     assert "请使用: acp uo-query" in out["message_zh"]
 
 
+def test_cli_removed_uo_bypass_commands_use_uo_query(capsys):
+    for argv in (
+        ["uo", "impact", "x"],
+        ["uo", "search", "SplitAxis"],
+        ["uo", "locate", "SetTiling"],
+        ["uo", "explain-host-value", "hv1"],
+    ):
+        code = main(argv)
+        assert code == 2, argv
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is False, argv
+        assert out["error"] == "use_uo_query", argv
+        assert "四种形态" in out["message_zh"], argv
+
+
 def test_cli_uo_query_missing_product_asks_human(tmp_path: Path, capsys, monkeypatch):
     monkeypatch.delenv("UO_ARCH", raising=False)
     monkeypatch.delenv("ASCENDC_ARCH", raising=False)
@@ -382,3 +397,70 @@ def test_prepare_workflow_start_inherits_arch_from_uo(tmp_path: Path, monkeypatc
     assert prep.get("ok") is True
     assert prep.get("architecture") == "arch35"
     assert prep.get("resolved_from") == "uo_product"
+
+
+def test_architecture_from_intent_unique_and_ambiguous():
+    assert intake.architecture_from_intent("对 arch35 建库", ["arch22", "arch35"]) == "arch35"
+    assert intake.architecture_from_intent("ARCH35", ["arch35"]) == "arch35"
+    assert intake.architecture_from_intent("arch35 和 arch22", ["arch22", "arch35"]) == ""
+    assert intake.architecture_from_intent("arch36 建库", ["arch35"]) == ""
+    assert intake.architecture_from_intent("", ["arch35"]) == ""
+
+
+def test_prepare_workflow_start_adopts_unique_arch_from_intent(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch22").mkdir(parents=True)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    prep = intake.prepare_workflow_start(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="",
+        project_explicit=True,
+        intent="帮我为这个算子的 arch35 建库",
+    )
+    assert prep.get("ok") is True
+    assert prep.get("architecture") == "arch35"
+    assert prep.get("resolved_from") == "intent"
+    assert "arch35" in str(prep.get("message_zh") or "")
+
+
+def test_prepare_workflow_start_still_asks_when_intent_names_two_archs(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host" / "arch22").mkdir(parents=True)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    prep = intake.prepare_workflow_start(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="",
+        project_explicit=True,
+        intent="arch22 还是 arch35？",
+    )
+    assert prep.get("ok") is False
+    assert prep.get("reason_code") == "ARCHITECTURE_REQUIRED"
+
+
+def test_cli_start_adopts_unique_arch_from_intent(tmp_path: Path, monkeypatch, capsys):
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", tmp_path / "last-project")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    code = main(
+        [
+            "start",
+            "uo-init",
+            "--project",
+            str(tmp_path),
+            "--intent",
+            "对 arch35 建库",
+        ]
+    )
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("architecture") == "arch35"
+    assert out.get("architecture_resolved_from") == "intent"
+    assert "按 arch35 启动" in str(out.get("message_zh") or "")

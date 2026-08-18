@@ -22,11 +22,11 @@ AscendC-Pilot
 > 由 Host（OpenCode / Cursor 等）注册，**不是**终端里的 shell 命令；安装后会出现在补全列表里，并由 `ascendc-pilot` 主控接管。
 > 也可以不敲 `/`，直接用自然语言描述目标。
 
-Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。Agent 侧优先跑 `acp scan-architectures --project <算子目录>` 读目录摘要与选项，再 AskQuestion——不要 Glob 仓根或翻 cmake 猜架构。
+Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。Agent 侧优先用 `pilot_cli` `scan-architectures --project <算子目录>` 读目录摘要与选项，再 AskQuestion——不要 Glob 仓根或翻 cmake 猜架构。
 
 第一次启动不要传 `force_new` / `--force-new`。那是「删除重开」逃生口，会按策略 wipe 已有 `.uo`。已有未完成 run 时由 Host AskQuestion 选「继续上次」或「删除重开」，不要为了「确保能跑」先 wipe。
 
-`acp doctor` 是环境预检（Python 包、CANN、Host 契约），**不需要** `--architecture`，也不会创建 `.ascendc-pilot/<arch>/`。建树是 `acp start` 的事。
+`acp doctor` 是环境预检（Python 包、CANN、Host 契约），**不需要** `--architecture`，也不会创建 `.ascendc-pilot/<arch>/`。建树由 Host `pilot_run` 启动工作流时完成。
 
 TG / CE / 查询 **不以源码目录另选架构**：以已有 `.uo` 为准。没有 CodeMap 就直接跑 `/tg-init` 等，会提示先 `/uo-init`。
 
@@ -63,9 +63,9 @@ operator + architecture → source scope → Clang CompilerFacts
 
 失败时先看：
 
-```bash
-acp status --project <算子目录>
-acp inspect-failure --project <算子目录>
+```text
+pilot_cli command=`status --project <算子目录>`
+pilot_cli command=`inspect-failure --project <算子目录>`
 ```
 
 外部环境修好后可用 `acp retry-after-environment-fix`。不要在 UO 失败时直接开始 TG。
@@ -176,7 +176,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 | --- | --- |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
-| `/uo-query` | 只读提问：主控向用户说明查询方式后自行查询或派 `uo-query` 子代理（需已有 `.uo`；不走 `pilot_run`） |
+| `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
 | `/ce-plan` | 自己有需求：grill 并写出 `{slug}_plan.md` |

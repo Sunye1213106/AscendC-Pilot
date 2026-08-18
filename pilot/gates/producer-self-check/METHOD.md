@@ -6,7 +6,7 @@
 
 ## Method
 
-1. `acp inspect validate --what extract-plan-staging`（或对应 Action）。
+1. `pilot_cli` `inspect validate --what extract-plan-staging --project <算子绝对路径>`（或对应 Action）。
 2. 结果写入 `scratch/{shard_id}/self_check.yaml`。
 3. 失败则修本 part，禁止改其他 shard。
 

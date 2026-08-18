@@ -40,6 +40,7 @@ CLI_HELP_ZH = {
     "validate": "执行当前 workflow 的全部 gate",
     "validate-key-gates": "执行关键硬 gate",
     "answer": "把 Host 问答结果记为已签名的 HumanDecisionReceipt",
+    "interpret-user-turn": "把用户本轮回复映射到待确认选项，或因打断而取消该确认",
     "dispatch-result": "Host Session Driver：消费 dispatch ticket、finalize 并继续驱动",
     "host-context": "解析 arch 作用域的 Host 适配器上下文",
     "serve-authorize": "长驻 authorize 守护进程（stdio JSON-lines）",

@@ -237,7 +237,6 @@ $pkg = Join-Path (Get-Location) "_cann\pkg"
 python scripts/cann_extract.py `
   "D:\Downloads\Ascend-cann-toolkit_<version>_linux-x86_64.run" `
   --dest $pkg
-# 若 doctor 报缺 impl/include（junction 失败或悬空），只补链接、不解包：
 python scripts/cann_extract.py --fixup --dest $pkg
 ```
 
@@ -251,7 +250,7 @@ python scripts/cann_extract.py \
 python scripts/cann_extract.py --fixup --dest "$pkg"
 ```
 
-也支持 `~/ascendc/cann/pkg`（自动发现）。若必须解到别处，再设**用户级**环境变量；只写 `$env:UO_CANN_ROOT=...` 关掉终端就会丢。
+也支持 `~/ascendc/cann/pkg`（自动发现），或把 `UO_CANN_ROOT` 指到官方安装的 `ASCEND_HOME_PATH`。prepare 只检查根目录是否像 CANN，**不会**因为缺 `asc/impl/include` 这类硬编码相对路径而失败（官方包不缺头文件）。若必须解到别处，再设**用户级**环境变量；只写 `$env:UO_CANN_ROOT=...` 关掉终端就会丢。
 
 Windows 持久化：
 
@@ -293,7 +292,7 @@ UO_CANN_ROOT=/path/to/cann/pkg
 UO_CANN_ROOT=/path/to/cann/pkg/cann-asc-devkit/.../include
 ```
 
-检查 UO 是否正确找到 CANN（会打印 candidates 和 layout，缺 `impl/include` 时提示 `--fixup`）：
+检查 UO 是否正确找到 CANN（只要求根目录形状，不按单个头文件清单失败）：
 
 ```bash id="vzw9ke"
 python scripts/dev/check_cann.py

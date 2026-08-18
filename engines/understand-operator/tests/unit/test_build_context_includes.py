@@ -112,4 +112,21 @@ def test_cann_layout_issues_reports_missing(tmp_path: Path):
 
     issues = paths.cann_layout_issues(tmp_path)
     assert issues
-    assert any("does not look like" in x or "missing" in x for x in issues)
+    assert any("does not look like" in x or "not found" in x for x in issues)
+
+
+def test_build_context_maps_installed_cann_includes(tmp_path: Path):
+    cann = tmp_path / "latest"
+    (cann / "x86_64-linux" / "include").mkdir(parents=True)
+    (cann / "x86_64-linux" / "asc" / "include").mkdir(parents=True)
+    ctx = BuildContext.load(
+        cann_root=str(cann),
+        ops_root=str(tmp_path / "ops"),
+        op_dir=str(tmp_path / "op"),
+        arch_dir="arch35",
+        apply_saved_extras=False,
+    )
+    host = [p.replace("\\", "/") for p in ctx.host_includes()]
+    kernel = [p.replace("\\", "/") for p in ctx.kernel_includes()]
+    assert any(p.endswith("/x86_64-linux/include") and "cann-metadef" not in p for p in host)
+    assert any(p.endswith("/x86_64-linux/asc/include") and "cann-asc-devkit" not in p for p in kernel)

@@ -19,6 +19,7 @@ from uo_init.include_heal import (
     reset_index_cache,
     aliased_include_name,
     MissingInclude,
+    search_roots,
 )
 
 
@@ -45,6 +46,24 @@ def test_include_dir_for_strips_quoted_prefix(tmp_path: Path):
 def test_forbidden_ascendc_basic_api():
     assert is_forbidden_include_dir("/cann/cann-asc-devkit/x86_64-linux/ascendc/include/basic_api")
     assert not is_forbidden_include_dir("/cann/cann-asc-devkit/x86_64-linux/asc/include/basic_api")
+
+
+def test_search_roots_follow_aarch64_and_install_layout(tmp_path: Path):
+    reset_index_cache()
+    cann = tmp_path / "cann"
+    (cann / "cann-asc-devkit" / "aarch64-linux" / "asc" / "include").mkdir(parents=True)
+    (cann / "cann-asc-devkit" / "aarch64-linux" / "asc" / "impl").mkdir(parents=True)
+    ctx = _ctx(tmp_path)
+    ctx.cann_root = str(cann)
+    roots = [str(p).replace("\\", "/") for p in search_roots(ctx)]
+    assert any("/aarch64-linux/" in r for r in roots)
+    assert not any("/x86_64-linux/" in r for r in roots)
+
+    installed = tmp_path / "latest"
+    (installed / "x86_64-linux" / "asc" / "include").mkdir(parents=True)
+    ctx.cann_root = str(installed)
+    roots = [str(p).replace("\\", "/") for p in search_roots(ctx)]
+    assert any(r.endswith("/x86_64-linux/asc/include") for r in roots)
 
 
 def _ctx(tmp_path: Path, *, op_rel: str = "mc2/matmul_all_reduce") -> BuildContext:

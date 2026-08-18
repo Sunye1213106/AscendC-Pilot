@@ -240,7 +240,7 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     bundle = yaml.safe_load((session / "bundle.yaml").read_text(encoding="utf-8"))
     assert bundle.get("output_mode") == "return_value"
     writes = [str(p).replace("\\", "/") for p in (bundle.get("allowed_write_paths") or [])]
-    assert any(p.endswith("kb_lookup/answer.yaml") for p in writes)
+    assert not any("answer.yaml" in p for p in writes)
     prompt = Path(str(result["prompt_path"])).read_text(encoding="utf-8")
     assert "## User question" in prompt
     assert "SplitAxis=1" in prompt
@@ -275,55 +275,9 @@ def test_prepare_kb_lookup_does_not_fanout_on_keywords(tmp_path: Path) -> None:
 
 
 def test_uo_query_agent_has_empty_write_scopes() -> None:
-    """A2: Explorer does not Write; Runtime materializes kb-answer."""
+    """A2: Explorer does not Write; kb-answer-v1 is a dialogue contract."""
     from ascendc_pilot.agents_registry import agent_write_scopes
 
     root = Path(__file__).resolve().parents[2]
     scopes = agent_write_scopes("uo-query", root)
     assert scopes == []
-
-
-def test_finalize_kb_lookup_from_result_file(tmp_path: Path) -> None:
-    """return_value: finalize materializes answer.yaml from --result-file."""
-    import yaml
-
-    from ascendc_pilot.actions.runtime import finalize_action
-    from ascendc_pilot.paths import agent_root
-
-    op = tmp_path / "demo_op"
-    op.mkdir()
-    ensure_agent_layout(op, arch="arch35")
-    uo_prod = op / ".ascendc-pilot" / "arch35" / "uo"
-    uo_prod.mkdir(parents=True, exist_ok=True)
-    (uo_prod / "Demo.arch35.uo").write_bytes(b"SQLite format 3\x00")
-    start_workflow(op, "uo-query", architecture="arch35", intent="q?")
-    prep = prepare_action(op, "kb_lookup")
-    assert prep.get("ok"), prep
-    result_path = tmp_path / "kb-answer.yaml"
-    result_path.write_text(
-        yaml.safe_dump(
-            {
-                "schema": "kb-answer-v1",
-                "status": "ANSWERED",
-                "question": "q?",
-                "answer_zh": "合法（有条件）。",
-                "citations": [{"path": "op_host/x.cpp", "lines": "1-2"}],
-                "adequacy": "ANSWERED",
-            },
-            allow_unicode=True,
-        ),
-        encoding="utf-8",
-    )
-    fin = finalize_action(op, "kb_lookup", result_file=result_path)
-    assert fin.get("ok") is True, fin
-    answer = (
-        agent_root(op, "arch35")
-        / f"runs/{prep['run_id']}/actions/kb_lookup/answer.yaml"
-    )
-    assert answer.is_file()
-    body = yaml.safe_load(answer.read_text(encoding="utf-8"))
-    assert body.get("schema") == "kb-answer-v1"
-    assert "合法" in str(body.get("answer_zh") or "")
-    assert body.get("_transport") == "native_task"
-    # Trusted stamp is injected by finalize after contract check.
-    assert (body.get("artifact_identity") or {}).get("produced_by") == "pilot-finalizer"

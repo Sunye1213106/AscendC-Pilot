@@ -15,6 +15,7 @@ from typing import Any
 from ascendc_pilot.authorize.lease import (
     CONTAINMENT_COMMAND_PREFIXES,
     MODE_CONTAINMENT,
+    MODE_NORMAL,
     MODE_REWORK,
     REWORK_COMMAND_PREFIXES,
     authorization_mode_for_status,
@@ -961,7 +962,10 @@ def _authorize_impl(
     lease = ctx.get("lease") or {}
     role = _agent_role(meta, agent_l) if agent_l else None
     status = str(state.get("status") or "")
-    auth_mode = authorization_mode_for_status(status) if state else "normal"
+    auth_mode = authorization_mode_for_status(status) if state else MODE_NORMAL
+    if state.get("human_decision_superseded") and auth_mode == MODE_CONTAINMENT:
+        # User walked away from the confirm UI. Do not jail the next turn.
+        auth_mode = MODE_NORMAL
 
     # Non-Pilot tabs (Build / Plan / …): full pass-through even if a leftover
     # human_required run exists under .ascendc-pilot.
@@ -1254,14 +1258,10 @@ def _authorize_impl(
                     status=status,
                     command=cmd[:200],
                     allowed_actions=[
-                        "acp next",
-                        "acp status",
-                        "acp inspect-failure",
-                        f"acp run-action {failed_action}" if failed_action else "acp run-action <failed>",
-                        *[f"acp run-action {r}" for r in recovery_actions[:3]],
-                        "acp uo-scope …",
-                        "acp abort",
-                        "acp start",
+                        "pilot_cli next --project <abs>",
+                        "pilot_cli status --project <abs>",
+                        "pilot_cli inspect-failure --project <abs>",
+                        "Host `pilot_run`",
                     ],
                 )
             for pat in _DENY_BASH:

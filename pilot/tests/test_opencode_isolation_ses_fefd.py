@@ -21,7 +21,10 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     assert ").acp = create" not in plugin
     assert "bag.pilot_cli = createPilotCliTool()" in plugin
     assert "isPilotCliLongCommand" in plugin
+    assert "isPilotCliAllowedCommand" in plugin
+    assert "PILOT_CLI_ALLOWED_HEADS" in plugin
     assert "USE_PILOT_RUN" in plugin
+    assert "USE_UO_QUERY" in plugin
     assert "formatPilotCliOutput" in plugin
     assert "FAIL ${code}" in plugin or "FAIL " in plugin
     assert "tools.pilot_run = true" in plugin
@@ -35,6 +38,31 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     assert "uo-query" not in driver.split("args: {")[1].split("project:")[0] or (
         "Never uo-query" in driver
     )
+
+
+def test_plugin_pilot_cli_allowlist_blocks_uo_bypass_without_spawn() -> None:
+    plugin = (ROOT / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
+    start = plugin.index("const PILOT_CLI_ALLOWED_HEADS")
+    end = plugin.index("])", start)
+    block = plugin[start:end]
+    for allowed in (
+        "uo-query",
+        "status",
+        "inspect",
+        "inspect-failure",
+        "ro-search",
+        "next",
+        "scan-architectures",
+        "abort",
+        "answer",
+    ):
+        assert f'"{allowed}"' in block, allowed
+    for forbidden in ("impact", "search", "locate", "explain-host-value", "start", "run-action"):
+        assert f'"{forbidden}"' not in block, forbidden
+    fn = plugin.split("function createPilotCliTool")[1].split("\nfunction ")[0]
+    assert "USE_UO_QUERY" in fn
+    assert fn.index("isPilotCliAllowedCommand") < fn.index("spawnSync")
+    assert fn.index("USE_UO_QUERY") < fn.index("spawnSync")
 
 
 def test_plugin_ts_parses_for_opencode() -> None:

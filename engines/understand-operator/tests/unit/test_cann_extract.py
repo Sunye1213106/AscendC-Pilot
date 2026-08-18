@@ -66,6 +66,26 @@ def test_apply_fixup_uses_detected_host(ce, tmp_path: Path, monkeypatch) -> None
     assert plan.made >= 1
 
 
+def test_apply_fixup_installed_layout(ce, tmp_path: Path, monkeypatch) -> None:
+    pkg = tmp_path / "latest"
+    include = pkg / "x86_64-linux" / "asc" / "include"
+    include.mkdir(parents=True)
+    called: list[tuple[Path, Path, bool]] = []
+
+    def fake_make(link: Path, target: Path, *, copy_fallback: bool = False) -> str:
+        called.append((link, target, copy_fallback))
+        return "junction"
+
+    monkeypatch.setattr(ce, "make_dir_link", fake_make)
+    plan = ce.LinkPlan()
+    ce.apply_known_fixups(pkg, plan)
+    assert called
+    link, target, _ = called[0]
+    assert "cann-asc-devkit" not in str(link).replace("\\", "/")
+    assert str(link).replace("\\", "/").endswith("asc/impl/include")
+    assert target == include.resolve()
+
+
 def test_replay_links_skips_live_paths(ce, tmp_path: Path, monkeypatch) -> None:
     dest = tmp_path / "pkg"
     target = dest / "real"

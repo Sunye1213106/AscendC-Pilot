@@ -100,7 +100,7 @@ function isReadonlyInspectBash(command: string): boolean {
 }
 
 function isAcpDiagnosticCommand(command: string): boolean {
-  return /\b(inspect-failure|next|status|run-summary|scan-architectures|abort|answer)\b/i.test(
+  return /\b(inspect-failure|next|status|run-summary|scan-architectures|abort|answer|interpret-user-turn)\b/i.test(
     String(command || ""),
   )
 }
@@ -123,9 +123,10 @@ const ACP_HELP_USAGE_CARD = [
   "  inspect evidence-window --project <operator-abs> --path <rel> --lines A-B",
   "  ro-search --pattern <pat> --paths <already-cited-file>",
   "  next --project <operator-abs>",
+  "  interpret-user-turn --project <operator-abs> --text <latest user message>",
   "",
   "On failure: inspect-failure / status, not another --help.",
-  "Pending AskQuestion: use the options verbatim; --help does not consume the question.",
+  "Pending AskQuestion: if the user typed a new message instead of clicking, interpret that turn; do not re-ask. --help does not consume the question.",
   "Do not bash-pipe acp. Do not pass an absolute acp.exe path. Do not search for acp.exe.",
 ].join("\n")
 
@@ -318,6 +319,63 @@ function runAcpAnswer(project: string, requestId: string, value: string): { ok: 
     if (r.status === 0) return { ok: true, detail: stdout.slice(0, 500) }
     return { ok: false, detail: (stderr || stdout || `exit ${r.status}`).slice(0, 800) }
   }
+}
+
+function runAcpInterpretUserTurn(
+  project: string,
+  text: string,
+  reason = "user_message",
+): { ok: boolean; disposition: string; messageZh: string } {
+  const bin = resolveAcpBin()
+  const r = spawnSync(
+    bin,
+    [
+      "interpret-user-turn",
+      "--project",
+      project,
+      "--text",
+      String(text || ""),
+      "--reason",
+      reason,
+    ],
+    { encoding: "utf8", timeout: 60_000 },
+  )
+  const stdout = String(r.stdout || "")
+  const stderr = String(r.stderr || "")
+  try {
+    const obj = JSON.parse(stdout) as Record<string, unknown>
+    return {
+      ok: obj.ok !== false,
+      disposition: String(obj.disposition || ""),
+      messageZh: String(obj.message_zh || obj.message || "").slice(0, 400),
+    }
+  } catch {
+    return {
+      ok: r.status === 0,
+      disposition: "",
+      messageZh: (stderr || stdout || `exit ${r.status}`).slice(0, 400),
+    }
+  }
+}
+
+const lastUserTurnNote = new Map<string, string>()
+
+function extractUserTurnText(output: { message?: unknown; parts?: unknown } | undefined): string {
+  if (!output || typeof output !== "object") return ""
+  const chunks: string[] = []
+  const parts = Array.isArray(output.parts) ? output.parts : []
+  for (const part of parts) {
+    if (!part || typeof part !== "object") continue
+    const row = part as Record<string, unknown>
+    const t = row.text ?? row.content
+    if (typeof t === "string" && t.trim()) chunks.push(t.trim())
+  }
+  const msg = output.message
+  if (msg && typeof msg === "object") {
+    const content = (msg as Record<string, unknown>).content
+    if (typeof content === "string" && content.trim()) chunks.push(content.trim())
+  }
+  return chunks.join("\n").trim()
 }
 
 type AuthorizeResult = {
@@ -1523,12 +1581,30 @@ function childSpawnEnv(project?: string): NodeJS.ProcessEnv {
   return env
 }
 
+const PILOT_CLI_ALLOWED_HEADS = new Set([
+  "uo-query",
+  "status",
+  "inspect",
+  "inspect-failure",
+  "ro-search",
+  "next",
+  "scan-architectures",
+  "abort",
+  "answer",
+  "interpret-user-turn",
+])
+
 function isPilotCliLongCommand(argv: string[]): boolean {
   const head = String(argv[0] || "").trim().toLowerCase()
   if (head === "start") return true
   if (head === "run-action") return true
   if (head === "drive") return true
   return false
+}
+
+function isPilotCliAllowedCommand(argv: string[]): boolean {
+  const head = String(argv[0] || "").trim().toLowerCase()
+  return PILOT_CLI_ALLOWED_HEADS.has(head)
 }
 
 function formatPilotCliOutput(opts: {
@@ -1630,7 +1706,7 @@ function createPilotCliTool(): {
         type: "string",
         description:
           "CLI argv after the binary (example: `uo-query --project <operator-abs> s1Inner`). " +
-          "Do not prefix with acp. Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run). Allowed: uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures.",
+          "Do not prefix with acp. Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run). Allowed: uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn.",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
@@ -1668,9 +1744,21 @@ function createPilotCliTool(): {
           title: `pilot_cli ${argv[0]}`,
           output:
             "[ascendc-pilot] start / run-action 必须用 Host 工具 `pilot_run(workflow, project, architecture)`。\n" +
-            "`pilot_cli` 可做 uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures。\n" +
+            "`pilot_cli` 可做 uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / interpret-user-turn。\n" +
             "不要 bash `acp start`（OpenCode 默认 120s 会杀掉 uo-init analyze）。",
           metadata: { ok: false, error: "USE_PILOT_RUN" },
+        }
+      }
+      if (!isPilotCliAllowedCommand(argv)) {
+        const head = String(argv[0] || "").trim()
+        return {
+          title: `pilot_cli ${head}`,
+          output:
+            `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询只用四种 \`uo-query\` 形态` +
+            "（标识符 / Dim=V / --file --line / 无参数索引）。\n" +
+            "允许：uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn。\n" +
+            "工作流用 Host `pilot_run`。不要 `uo impact` / `search` / `locate` / `explain-*`。",
+          metadata: { ok: false, error: "USE_UO_QUERY" },
         }
       }
       const project =
@@ -2673,8 +2761,39 @@ export const AscendCHarnessPlugin = async (ctx?: {
       if (root) bag.ASCENDC_PROJECT_ROOT = root
       output.env = bag
     },
-    "chat.message": async (input: { sessionID?: string; agent?: string }) => {
+    "chat.message": async (
+      input: { sessionID?: string; agent?: string },
+      output?: { message?: unknown; parts?: unknown },
+    ) => {
       rememberSessionAgent(String(input.sessionID || ""), String(input.agent || ""))
+      const agent = String(input.agent || "").trim()
+      if (agent && !isPrimaryPilotAgent(agent) && !isPrimaryPilotAgent(resolveAgent({ sessionID: input.sessionID || "" }))) {
+        return
+      }
+      const project = detectProjectRoot() || readRememberedProjectRoot()
+      if (!project || !getPending(project)) return
+      const text = extractUserTurnText(output)
+      const interpreted = runAcpInterpretUserTurn(project, text, "user_message")
+      if (
+        interpreted.ok &&
+        (interpreted.disposition === "answered" || interpreted.disposition === "superseded")
+      ) {
+        clearPending(project)
+        const sid = String(input.sessionID || "").trim()
+        if (sid && interpreted.messageZh) lastUserTurnNote.set(sid, interpreted.messageZh)
+      }
+    },
+    "experimental.chat.system.transform": async (
+      input: { sessionID?: string },
+      output: { system?: string[] },
+    ) => {
+      const sid = String(input.sessionID || "").trim()
+      const note = sid ? lastUserTurnNote.get(sid) : ""
+      if (!note) return
+      lastUserTurnNote.delete(sid)
+      const system = Array.isArray(output.system) ? output.system : []
+      system.push(note)
+      output.system = system
     },
     "chat.params": async (input: { sessionID?: string; agent?: string }) => {
       rememberSessionAgent(String(input.sessionID || ""), String(input.agent || ""))
@@ -2812,6 +2931,8 @@ export const AscendCHarnessPlugin = async (ctx?: {
           tool.includes("question")
         const isAnswerCli =
           tool === "pilot_cli" && /\banswer\b/i.test(command)
+        const isInterpretCli =
+          tool === "pilot_cli" && /\binterpret-user-turn\b/i.test(command)
         const isInspectCli =
           tool === "pilot_cli" && isAcpDiagnosticCommand(command)
         const isHelpBash =
@@ -2836,6 +2957,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
         if (
           !isQuestion &&
           !isAnswerCli &&
+          !isInterpretCli &&
           !isInspectCli &&
           !isHelpBash &&
           !isResumeStartBash &&
@@ -2850,9 +2972,10 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
-              `Answer the question UI (or acp answer / start --decision). ` +
+              `If the user already replied in chat, call interpret-user-turn with that text — do not re-ask. ` +
+              `Clicking the question UI or acp answer / start --decision also works. ` +
               `Primary may Read / Glob / Get-ChildItem / inspect-failure / status while the prompt is open. ` +
-              `Do not Write, Task, or run domain CLI until the user answers.`,
+              `Do not Write, Task, or run domain CLI until the pending question is answered or superseded.`,
           )
         }
       }

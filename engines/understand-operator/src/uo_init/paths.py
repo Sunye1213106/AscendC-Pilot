@@ -32,8 +32,10 @@ CANN_ENV_VARS = ("UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT")
 OPS_ENV_VARS = ("UO_OPS_ROOT", "OPS_ROOT", "OPS_TRANSFORMER_ROOT")
 OP_DIR_ENV_VARS = ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR")
 
-# Minimum layout for UO clang probes (extracted packages under cann_root).
-# Aligned with engines/understand-operator/spec/build_context.yaml kernel -I.
+# Typical extracted-package relatives (host tuple is a placeholder). Used as
+# a fixture helper and by include-heal search, NOT as a prepare fail-closed
+# inventory. Official CANN .run trees are complete; ``asc/impl/include`` is a
+# clang shim we create, not a file the vendor ships.
 REQUIRED_CANN_RELATIVE = (
     "cann-asc-devkit/x86_64-linux/asc/include",
     "cann-asc-devkit/x86_64-linux/asc/include/basic_api",
@@ -44,6 +46,15 @@ REQUIRED_CANN_RELATIVE = (
     "cann-metadef/x86_64-linux/include",
     "cann-npu-runtime/x86_64-linux/include/base/alog_pub.h",
     "cann-opbase/x86_64-linux/include/op_common/op_host/util/math_util.h",
+)
+
+EXTRACTED_CANN_PACKAGES = (
+    "cann-asc-devkit",
+    "cann-metadef",
+    "cann-opbase",
+    "cann-npu-runtime",
+    "cann-ge-compiler",
+    "cann-tbe-tik",
 )
 
 
@@ -66,21 +77,33 @@ CANN_HOST_DIRS = ("x86_64-linux", "aarch64-linux")
 
 
 def cann_host_dir(root: Path | None) -> str | None:
-    """Return ``x86_64-linux`` / ``aarch64-linux`` (or any ``*-linux``) under a tree."""
+    """Return ``x86_64-linux`` / ``aarch64-linux`` (or any ``*-linux``) under a tree.
+
+    Understands both ``cann_extract.py`` package layout and an official install
+    (``$ASCEND_HOME_PATH/{host}/asc``), including a root that *is* the host dir.
+    """
     if root is None or not root.is_dir():
         return None
-    for pkg in ("cann-asc-devkit", "cann-metadef", "cann-opbase", "cann-npu-runtime"):
-        base = root / pkg
+    if root.name.endswith("-linux") and (
+        (root / "asc").is_dir() or (root / "include").is_dir()
+    ):
+        return root.name
+    search = [root / name for name in EXTRACTED_CANN_PACKAGES]
+    search.append(root)
+    for base in search:
         if not base.is_dir():
             continue
         named = [name for name in CANN_HOST_DIRS if (base / name).is_dir()]
         if named:
             return named[0]
-        found = sorted(
-            child.name
-            for child in base.iterdir()
-            if child.is_dir() and child.name.endswith("-linux")
-        )
+        try:
+            found = sorted(
+                child.name
+                for child in base.iterdir()
+                if child.is_dir() and child.name.endswith("-linux")
+            )
+        except OSError:
+            found = []
         if found:
             return found[0]
     return None
@@ -163,10 +186,17 @@ def slim_status(path: Path) -> str | None:
 
 
 def _looks_like_cann(path: Path) -> bool:
-    """A CANN root holds the sub-packages side by side, not a single include/."""
+    """Extracted ``cann-*`` packages *or* an official toolkit/install prefix."""
     if not path.is_dir():
         return False
-    return any((path / name).is_dir() for name in ("cann-metadef", "cann-asc-devkit"))
+    if any((path / name).is_dir() for name in ("cann-metadef", "cann-asc-devkit")):
+        return True
+    if (path / "asc" / "include").is_dir() or (path / "asc" / "impl").is_dir():
+        return True
+    for host in CANN_HOST_DIRS:
+        if (path / host / "asc").is_dir():
+            return True
+    return path.name.endswith("-linux") and (path / "asc").is_dir()
 
 
 def _looks_like_ops(path: Path) -> bool:
@@ -190,10 +220,121 @@ def cann_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
     return None
 
 
-def cann_layout_issues(root: Path | None = None) -> list[str]:
-    """Missing pieces that block UO kernel/host clang probes.
+def adapt_cann_fs_path(path: str, root: Path | None) -> str:
+    """Map yaml ``cann-*/{host}/...`` onto an official install if needed.
 
-    Empty list means the extracted CANN tree is ready for prepare/scope_scan.
+    Extracted layout keeps the package prefix. Installed toolkit merges
+    packages under ``{root}/{host}/...`` (and ``{root}/asc``). Missing
+    individual files are not rewritten — clang / include_heal handle those.
+    """
+    posix = str(path or "").replace("\\", "/")
+    if not posix or root is None:
+        return posix
+    try:
+        if Path(posix).exists():
+            return posix
+    except OSError:
+        pass
+    root_s = str(root).replace("\\", "/").rstrip("/")
+    if not root_s:
+        return posix
+    prefix = root_s.lower() + "/"
+    if not posix.lower().startswith(prefix):
+        return posix
+    rest = posix[len(root_s) + 1 :]
+    parts = rest.split("/")
+    if parts and parts[0].startswith("cann-"):
+        alt = root.joinpath(*parts[1:])
+        try:
+            if alt.exists():
+                return alt.as_posix()
+        except OSError:
+            pass
+    return posix
+
+
+def resolve_cann_relative(root: Path, rel: str) -> Path:
+    """``root / rel`` with host substitution and install-layout fallback."""
+    host = cann_host_dir(root) or "x86_64-linux"
+    rel_h = rel.replace("x86_64-linux", host)
+    mapped = adapt_cann_fs_path(str(root / rel_h).replace("\\", "/"), root)
+    return Path(mapped)
+
+
+def iter_asc_dirs(root: Path) -> list[Path]:
+    host = cann_host_dir(root)
+    cands: list[Path] = []
+    if host:
+        cands.append(root / "cann-asc-devkit" / host / "asc")
+        cands.append(root / host / "asc")
+    cands.append(root / "asc")
+    out: list[Path] = []
+    seen: set[str] = set()
+    for path in cands:
+        try:
+            if not path.is_dir():
+                continue
+        except OSError:
+            continue
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(path)
+    return out
+
+
+def _load_cann_extract():  # pragma: no cover - import plumbing
+    import importlib.util
+
+    path = repo_root() / "scripts" / "cann_extract.py"
+    spec = importlib.util.spec_from_file_location("_pilot_cann_extract", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(str(path))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def ensure_impl_include_shim(root: Path) -> None:
+    """Best-effort ``asc/impl/include`` → ``asc/include`` for vanilla clang.
+
+    Official CANN never ships this directory. Relative includes from
+    ``asc/impl/...`` need it; missing it must not fail prepare.
+    """
+    pairs = [(asc / "impl" / "include", asc / "include") for asc in iter_asc_dirs(root)]
+    if not pairs:
+        return
+    try:
+        ce = _load_cann_extract()
+    except Exception:  # noqa: BLE001
+        ce = None
+    for shim, include in pairs:
+        if not include.is_dir():
+            continue
+        try:
+            if shim.exists():
+                continue
+        except OSError:
+            pass
+        try:
+            if ce is not None:
+                ce.make_dir_link(shim, include, copy_fallback=True)
+                continue
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            shim.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(include, shim, target_is_directory=True)
+        except OSError:
+            continue
+
+
+def cann_layout_issues(root: Path | None = None) -> list[str]:
+    """Blockers for prepare/scope_scan: cann_root missing or not a CANN tree.
+
+    Official packages are complete. Do not fail closed on a hardcoded file
+    inventory (``tuple.h``, ``alog_pub.h``, ``asc/impl/include``, …).
     """
     path = root if root is not None else cann_root()
     if path is None:
@@ -206,20 +347,10 @@ def cann_layout_issues(root: Path | None = None) -> list[str]:
         ]
     if not _looks_like_cann(path):
         return [
-            f"{path} does not look like an extracted CANN root "
-            "(need cann-asc-devkit/ or cann-metadef/)."
+            f"{path} does not look like a CANN root "
+            "(need cann-asc-devkit/, cann-metadef/, or <host>/asc from an official install)."
         ]
-    issues: list[str] = []
-    for rel in required_cann_relative(path):
-        if not (path / rel).exists():
-            note = f"missing: {(path / rel).as_posix()}"
-            if rel.endswith("impl/include"):
-                note += (
-                    " (Windows extract junction; repair with "
-                    f"python scripts/cann_extract.py --fixup --dest {path})"
-                )
-            issues.append(note)
-    return issues
+    return []
 
 
 def require_cann_ready(
@@ -227,6 +358,8 @@ def require_cann_ready(
 ) -> tuple[Path | None, list[str]]:
     """Resolve cann_root and report layout issues (empty issues => ready)."""
     root = cann_root(explicit)
+    if root is not None:
+        ensure_impl_include_shim(root)
     return root, cann_layout_issues(root)
 
 

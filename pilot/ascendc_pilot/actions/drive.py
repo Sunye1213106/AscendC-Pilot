@@ -201,8 +201,8 @@ def drive_until_interaction(
                     payload["stop_reason"] = "interaction_required"
                     payload["message_zh"] = (
                         f"workflow `{workflow_id}` 状态为 `{status}`；"
-                        "请先对本返回做 AskQuestion（选项必须原样使用 ask_question.options），"
-                        "再按所选合法恢复动作继续。"
+                        "请先对本返回做 AskQuestion（选项必须原样使用 ask_question.options）。"
+                        "若用户已打断并在对话里回复，改为 interpret-user-turn，不要重问上一题。"
                     )
             return _done(payload)
 

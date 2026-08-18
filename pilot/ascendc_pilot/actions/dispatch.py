@@ -417,8 +417,6 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
     run_id = str(st.get("run_id") or "").strip()
     hint: dict[str, Any] = {"workflow_id": wid}
     try:
-        from ascendc_pilot.paths import agent_root
-
         if wid in {"uo-init", "uo-update"}:
             quality = _existing_quality_yaml(Path(project_root), arch=arch)
             unresolved = quality.parent.parent / "ir" / "unresolved.yaml"
@@ -435,39 +433,10 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
                 "禁止读 `.ascendc-pilot/uo/`（无 arch 段的旧路径）。"
             )
         elif wid == "uo-query" and run_id:
-            ans = (
-                agent_root(project_root, arch)
-                / "runs"
-                / run_id
-                / "actions"
-                / "kb_lookup"
-                / "answer.yaml"
+            hint["message_zh"] = (
+                "查询完成。请将本次子代理返回的答案正文向用户陈述。"
+                "禁止再 Glob/Read yaml。"
             )
-            answer_zh = ""
-            status = ""
-            if ans.is_file() and yaml is not None:
-                try:
-                    body = yaml.safe_load(ans.read_text(encoding="utf-8")) or {}
-                    if isinstance(body, dict):
-                        answer_zh = str(
-                            body.get("answer_zh") or body.get("answer") or ""
-                        ).strip()
-                        status = str(body.get("status") or "")
-                except Exception:  # noqa: BLE001
-                    answer_zh = ""
-            if answer_zh:
-                hint["answer_zh"] = answer_zh
-                hint["answer_status"] = status
-                hint["message_zh"] = (
-                    "查询完成。以下为答案正文（含 path:line），请向用户陈述。"
-                    "禁止再 Glob/Read answer.yaml 或其它 yaml。\n\n"
-                    f"{answer_zh}"
-                )
-            else:
-                hint["message_zh"] = (
-                    "查询完成。请将本次子代理返回的答案正文向用户陈述。"
-                    "禁止再 Glob/Read yaml。"
-                )
     except Exception:  # noqa: BLE001
         pass
     return hint

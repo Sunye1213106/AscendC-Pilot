@@ -9,6 +9,7 @@ and never writes the canonical YAML itself.
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -126,9 +127,144 @@ def _ask_plan_approve(project_root: Path, state: dict[str, Any]) -> dict[str, An
     )
 
 
+_PROCEED_PHRASES = (
+    "按这个写",
+    "直接出计划",
+    "去改码",
+    "不用再确认",
+    "直接改码",
+    "开始改码",
+    "不用问了",
+    "直接写计划",
+    "去 /ce-apply",
+    "去ce-apply",
+)
+
+_EMPTY_FORK_ITEM = re.compile(
+    r"^(无|无未决|暂无|none|n/a|—|–|-|无。|暂无。)$",
+    re.I,
+)
+
+
+def _intent_blob(project_root: Path, state: dict[str, Any]) -> str:
+    parts = [str((state or {}).get("intent") or "")]
+    try:
+        from ascendc_pilot.user_goal import load_user_goal
+
+        goal = load_user_goal(project_root) or {}
+        parts.append(str(goal.get("intent_text") or ""))
+        parts.append(str(goal.get("label_zh") or ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return " ".join(parts)
+
+
+def _user_authorized_proceed(text: str) -> bool:
+    s = str(text or "")
+    if not s:
+        return False
+    low = s.lower()
+    for phrase in _PROCEED_PHRASES:
+        if phrase.lower() in low or phrase in s:
+            return True
+    return False
+
+
+def _confirm_quality_blocked(state: dict[str, Any]) -> bool:
+    return str((state or {}).get("status") or "") in {
+        "rework_required",
+        "human_required",
+        "blocked",
+        "failed",
+    }
+
+
+def _staging_has_open_forks(project_root: Path, state: dict[str, Any]) -> bool:
+    """True when intent_grill staging.md has a non-empty 未决决策 section."""
+    run_id = str((state or {}).get("run_id") or "").strip()
+    if not run_id:
+        return False
+    staging = runs_root(project_root) / run_id / "actions" / "intent_grill" / "staging.md"
+    if not staging.is_file():
+        return False
+    try:
+        text = staging.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    match = re.search(
+        r"(?ims)^#{1,6}\s*[^\n]*未决[^\n]*\n(.*?)(?=^#{1,6}\s|\Z)",
+        text,
+    )
+    if not match:
+        return False
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if stripped.startswith(("- ", "* ")):
+            item = stripped[2:].strip()
+            if item and not _EMPTY_FORK_ITEM.match(item):
+                return True
+    return False
+
+
+def _ce_goal_going_to_apply(project_root: Path, state: dict[str, Any]) -> bool:
+    try:
+        from ascendc_pilot.user_goal import GOAL_CE_CHANGE, load_user_goal
+    except Exception:  # noqa: BLE001
+        return False
+    del state
+    goal = load_user_goal(project_root) or {}
+    if str(goal.get("status") or "") != "active":
+        return False
+    if str(goal.get("goal_id") or "") != GOAL_CE_CHANGE:
+        return False
+    return str(goal.get("current_step") or "") in {"ce_apply", "ce_verify", "tg_plan"}
+
+
+def _full_coverage_once_authorized(project_root: Path, state: dict[str, Any]) -> bool:
+    if _confirm_quality_blocked(state):
+        return False
+    try:
+        from ascendc_pilot.user_goal import (
+            GOAL_TILINGKEY_FULL,
+            load_user_goal,
+            matches_full_coverage_intent,
+        )
+    except Exception:  # noqa: BLE001
+        return False
+    goal = load_user_goal(project_root) or {}
+    if str(goal.get("status") or "") != "active":
+        return False
+    if str(goal.get("goal_id") or "") != GOAL_TILINGKEY_FULL:
+        return False
+    return matches_full_coverage_intent(_intent_blob(project_root, state))
+
+
 def grill_should_ask(project_root: Path, state: dict[str, Any], *, action_id: str = "") -> bool:
-    """CE-plan always asks; hosted confirms are never auto-skipped."""
-    del project_root, state, action_id
+    """Ask CE-plan grill/plan confirms unless the user already authorized and there is no fork."""
+    del action_id
+    if _confirm_quality_blocked(state):
+        return True
+    if _staging_has_open_forks(project_root, state):
+        return True
+    if _ce_goal_going_to_apply(project_root, state):
+        return False
+    if _user_authorized_proceed(_intent_blob(project_root, state)):
+        return False
+    return True
+
+
+def hosted_confirm_should_ask(
+    project_root: Path, state: dict[str, Any], *, action_id: str = ""
+) -> bool:
+    """Whether a hosted confirm gate should surface AskQuestion."""
+    wid = str((state or {}).get("workflow_id") or "")
+    aid = str(action_id or "")
+    if aid in {"apply_report", "review_report"}:
+        return True
+    if wid in {"tg-init", "tg-plan"} and aid in {"human_confirm", "plan_approve"}:
+        return not _full_coverage_once_authorized(project_root, state)
+    if wid == "ce-plan" and aid in {"grill_confirm", "human_confirm"}:
+        return grill_should_ask(project_root, state, action_id=aid)
     return True
 
 
@@ -599,7 +735,11 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
     if scenario is None:
         return {"ok": False, "error": "NOT_HOSTED_CONFIRM_ACTION", "action_id": action_id}
 
-    skip_gate = action_id in {"grill_confirm", "human_confirm"} and not grill_should_ask(
+    skip_gate = action_id in {
+        "grill_confirm",
+        "human_confirm",
+        "plan_approve",
+    } and not hosted_confirm_should_ask(
         project_root, state, action_id=action_id
     )
     if skip_gate:

@@ -13,11 +13,14 @@ Two start modes (Spec SSOT):
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 from ascendc_pilot.paths import is_under_pilot_checkout, opencode_home, pilot_checkout_root
 from uo_init.source_layout import ARCH_DIR_RE
+
+_ARCH_TOKEN = re.compile(r"\barch[0-9A-Za-z._-]+\b", re.I)
 
 LAST_PROJECT_CACHE = opencode_home() / "ascendc-last-project"
 HARNESS_BIN_CACHE = opencode_home() / "ascendc-harness-bin"
@@ -172,6 +175,33 @@ def discover_architectures(root: Path | str | None) -> list[str]:
                 if name not in found:
                     found.append(name)
     return found
+
+
+def architecture_from_intent(intent: str, known_archs: list[str] | tuple[str, ...]) -> str:
+    """Return the unique on-disk ``arch*`` named in ``intent``, else ``""``.
+
+    Never invents an architecture: tokens must uniquely match ``known_archs``.
+    Two hits or zero hits → empty (caller AskQuestion). Does not Glob the tree.
+    """
+    names = [str(a).strip() for a in known_archs if str(a).strip()]
+    if not names:
+        return ""
+    raw = str(intent or "").strip()
+    if not raw:
+        return ""
+    allowed_l = {a.lower(): a for a in names}
+    compact = re.sub(r"\s+", "", raw).strip().lower()
+    exact = allowed_l.get(compact)
+    if exact:
+        return exact
+    found: list[str] = []
+    for token in _ARCH_TOKEN.findall(raw):
+        hit = allowed_l.get(token.lower())
+        if hit and hit not in found:
+            found.append(hit)
+    if len(found) == 1:
+        return found[0]
+    return ""
 
 
 def describe_architectures(root: Path | str | None) -> list[dict[str, str]]:
@@ -564,6 +594,7 @@ def missing_uo_product_payload(
         ),
         "primary_instruction_zh": (
             "立刻用 question/AskQuestion 弹出可点选框，选项必须原样使用。"
+            "若用户打断并在对话里回复，改为 interpret-user-turn，不要重问上一题。"
             "禁止 Glob/dir/tree 找 `.uo`，禁止猜 `--op-name`。"
             + (
                 "选 uo-init → `pilot_run` workflow=uo-init；"
@@ -710,6 +741,7 @@ def prepare_workflow_start(
     workflow_id: str,
     architecture: str = "",
     project_explicit: bool = False,
+    intent: str = "",
 ) -> dict[str, Any]:
     """Validate start inputs and resolve architecture.
 
@@ -720,6 +752,8 @@ def prepare_workflow_start(
     wf = (workflow_id or "").strip()
     root = Path(project).expanduser().resolve()
     arch = (architecture or "").strip() or architecture_from_env()
+    intent_text = str(intent or "").strip()
+    resolved_from_intent = False
 
     need_op = wf in _workflows_need_operator()
     need_arch = wf in _workflows_need_arch()
@@ -776,7 +810,11 @@ def prepare_workflow_start(
     if need_arch and not arch:
         options = describe_architectures(root)
         labels = [o["label"] for o in options]
-        if not options:
+        from_intent = architecture_from_intent(intent_text, labels)
+        if from_intent:
+            arch = from_intent
+            resolved_from_intent = True
+        elif not options:
             return _attach_intake_request(
                 {
                     "ok": False,
@@ -799,47 +837,49 @@ def prepare_workflow_start(
                 },
                 root,
             )
-        ask_opts = [
-            {
-                "label": o["label"],
-                "value": o["label"],
-                "description": o.get("description") or "",
-            }
-            for o in options
-        ]
-        return _attach_intake_request(
-            {
-                "ok": False,
-                "needs_human_decision": True,
-                "decision_kind": "architecture",
-                "reason_code": "ARCHITECTURE_REQUIRED",
-                "workflow_id": wf,
-                "project": str(root),
-                "architecture_options": labels,
-                "architecture_option_details": options,
-                "message_zh": (
-                    f"缺少 architecture，不能启动。已扫描到: {', '.join(labels)}。\n"
-                    "AskQuestion 选完后，用 Host "
-                    f'`pilot_run workflow={wf} project="{root}" architecture=<选中>` '
-                    "一次启动（此前不会创建 run）。"
-                ),
-                "ask_question": {
-                    "prompt_zh": "请选择目标 architecture（选项来自算子仓 arch* 目录）",
-                    "options": ask_opts,
-                    "allow_free_text": False,
-                    "field": "architecture",
+        else:
+            ask_opts = [
+                {
+                    "label": o["label"],
+                    "value": o["label"],
+                    "description": o.get("description") or "",
+                }
+                for o in options
+            ]
+            return _attach_intake_request(
+                {
+                    "ok": False,
+                    "needs_human_decision": True,
+                    "decision_kind": "architecture",
+                    "reason_code": "ARCHITECTURE_REQUIRED",
+                    "workflow_id": wf,
+                    "project": str(root),
+                    "architecture_options": labels,
+                    "architecture_option_details": options,
+                    "message_zh": (
+                        f"缺少 architecture，不能启动。已扫描到: {', '.join(labels)}。\n"
+                        "AskQuestion 选完后，用 Host "
+                        f'`pilot_run workflow={wf} project="{root}" architecture=<选中>` '
+                        "一次启动（此前不会创建 run）。"
+                    ),
+                    "ask_question": {
+                        "prompt_zh": "请选择目标 architecture（选项来自算子仓 arch* 目录）",
+                        "options": ask_opts,
+                        "allow_free_text": False,
+                        "field": "architecture",
+                    },
+                    "suggested_command": (
+                        f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(labels)}>'
+                    ),
+                    "primary_instruction_zh": (
+                        "先 AskQuestion；选项必须原样使用 architecture_option_details。"
+                        "若用户已在对话里写出 arch* 或换了话题，改为 interpret-user-turn，不要重问。"
+                        "选完后调用 Host `pilot_run`（带齐 project 与 architecture）。"
+                        "禁止编造仓内不存在的 arch。"
+                    ),
                 },
-                "suggested_command": (
-                    f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(labels)}>'
-                ),
-                "primary_instruction_zh": (
-                    "先 AskQuestion；选项必须原样使用 architecture_option_details。"
-                    "选完后调用 Host `pilot_run`（带齐 project 与 architecture）。"
-                    "禁止编造仓内不存在的 arch。"
-                ),
-            },
-            root,
-        )
+                root,
+            )
 
     if need_arch and arch and looks_like_operator_package(root):
         known = discover_architectures(root)
@@ -881,7 +921,16 @@ def prepare_workflow_start(
                 root,
             )
 
-    return {"ok": True, "architecture": arch, "workflow_id": wf, "project": str(root)}
+    out: dict[str, Any] = {
+        "ok": True,
+        "architecture": arch,
+        "workflow_id": wf,
+        "project": str(root),
+    }
+    if resolved_from_intent:
+        out["resolved_from"] = "intent"
+        out["message_zh"] = f"按 {arch} 启动。"
+    return out
 
 
 def start_intake_gate(
@@ -890,6 +939,7 @@ def start_intake_gate(
     workflow_id: str,
     architecture: str = "",
     project_explicit: bool = False,
+    intent: str = "",
 ) -> dict[str, Any] | None:
     """Compatibility wrapper: None when start may proceed, else AskQuestion payload.
 
@@ -900,6 +950,7 @@ def start_intake_gate(
         workflow_id=workflow_id,
         architecture=architecture,
         project_explicit=project_explicit,
+        intent=intent,
     )
     if result.get("ok"):
         return None

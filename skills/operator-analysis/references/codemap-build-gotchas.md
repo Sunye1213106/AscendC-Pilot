@@ -15,9 +15,12 @@ Agent 规则。假编译环境、补头、prelude 由 engine 做，不要在本�
 
 ## 探针 / include 失败时
 
-出现 `CANN_ENV_NOT_READY`、`clang_probe_unclean`、`SCOPE_VALIDATE_BLOCKED`，或探针报缺头文件时：这是编译环境问题，不是算子图上的 `unknown`。
+出现 `clang_probe_unclean`、`SCOPE_VALIDATE_BLOCKED`，或探针报缺头文件时：这是 **include 路径与当前 CANN 树没对齐**，不是官方包缺文件，也不是算子图上的 `unknown`。
 
-1. **等 prepare 自动补路径**。不要手改 `-I`、不要改 prelude、不要假造缺失头文件。
-2. **仍失败**：跑 `acp doctor`。头不在 CANN/ops 解包树里就记缺口，禁止问用户「要不要跳过」。
-3. **不要把 CANN / 共享头残差当成算子错误**；不要把 `RegTensor` / `VecReg` 再 stub 一遍。
-4. **不要把 `ascendc/include/basic_api` 加成 kernel 主 include**（会把相对路径解析到错误目录）。
+`CANN_ENV_NOT_READY` 只表示 **cann_root 没配上或目录不像 CANN**（没有 `cann-asc-devkit/` / `cann-metadef/` / `{host}/asc`）。配好根目录后，prepare **不得**再因某个硬编码相对路径（例如 `asc/impl/include`、`tuple.h`）失败。官方 `.run` 不缺这些头；`asc/impl/include` 是 clang shim，engine 会尽量自动建。
+
+1. **先确认 cann_root**。`UO_CANN_ROOT` / `_cann/pkg` / 官方 `ASCEND_HOME_PATH` 指向真实 CANN 即可。
+2. **等 prepare 的 include_heal** 自动补 `-I`，写入 `uo/summary/build_context_extras.yaml`。不要手改算子源码、不要假造缺失头。
+3. **仍失败**：对照 cann_root 真实目录（`asc/include`、`asc/impl`、`{host}/include`）更新 extras 或 `spec/build_context.yaml` 的 `-I`。这是布局对齐，不是「包缺文件」。
+4. **不要**把 `ascendc/include/basic_api` 加成 kernel 主 include（相对路径会解析错）。
+5. **不要**把 CANN / 共享头残差当成算子错误；不要把 `RegTensor` / `VecReg` 再 stub 一遍。

@@ -378,11 +378,9 @@ def build_task_stub(
         lines.append("read: " + ", ".join(_abs_under_agent(str(x)) for x in dt["read"]))
     write_list = list(dt.get("write") or []) or list(write_paths or [])
     if action_id == "kb_lookup":
-        # return_value: Explorer must not Write. Do not advertise answer.yaml /
-        # scratch as subagent write targets (Runtime materializes on finalize).
+        # return_value: Explorer must not Write. Dialogue contract only.
         lines.append(
-            "write: (none — Explorer return_value only; "
-            "Runtime materializes answer.yaml on Primary finalize)"
+            "write: (none — Explorer return_value only; do not Write answer.yaml)"
         )
     elif write_list:
         lines.append("write: " + ", ".join(_abs_under_agent(str(x)) for x in write_list))
@@ -406,13 +404,7 @@ def build_task_stub(
 
     read_list = [str(x) for x in (dt.get("read") or [])]
     lines.extend(large_ir_must_read_order_lines(read_list))
-    answer_rels = [
-        str(p).replace("\\", "/")
-        for p in write_list
-        if str(p).replace("\\", "/").endswith("/answer.yaml")
-        or str(p).replace("\\", "/").endswith("answer.yaml")
-    ]
-    if action_id == "kb_lookup" or answer_rels:
+    if action_id == "kb_lookup":
         lines.append(
             "Final message is the native Task return (Cursor Explore style): "
             "complete answer with file:line evidence in the body. "
@@ -420,8 +412,7 @@ def build_task_stub(
             "Optional trailing `schema: kb-answer-v1` fence is status-only "
             "(status/adequacy/citations). "
             "OpenCode Task delivers the full message to Primary; "
-            "do not Write answer.yaml or scratch — Runtime materializes a receipt "
-            "from this native return (plugin injects ASCENDC_ACTION_RESULT)."
+            "do not Write answer.yaml or scratch."
         )
         lines.append(
             "Do NOT write uo/checks/* or modify the `.uo` product; those are not this Action's outputs."
@@ -932,8 +923,8 @@ def _check_required_outputs_writable(
 ) -> dict[str, Any]:
     """Fail-closed prepare: contract outputs must be materializable.
 
-    ``return_value`` / ``output_transport=return_value``: finalizer materializes
-    from Task result — agent write_scopes may be empty (Explorer does not Write).
+    ``return_value`` / ``output_transport=return_value``: dialogue contract
+    with no disk payload — agent write_scopes may be empty (Explorer does not Write).
     ``direct`` / default: each required output must match
     ``agent.write_scopes ∩ action.allowed_write_paths``.
     """
@@ -978,71 +969,6 @@ def _check_required_outputs_writable(
             ),
         }
     return {"ok": True, "required": required}
-
-
-def _parse_kb_answer_payload(data: Any) -> dict[str, Any] | None:
-    """Accept kb-answer-v1 dict (optionally nested under ``answer`` / ``payload``)."""
-    if not isinstance(data, dict):
-        return None
-    row = data
-    for key in ("answer", "payload", "action_result"):
-        nested = data.get(key)
-        if isinstance(nested, dict) and (
-            str(nested.get("schema") or "") == "kb-answer-v1"
-            or "answer_zh" in nested
-            or "adequacy" in nested
-        ):
-            row = nested
-            break
-    schema = str(row.get("schema") or "").strip()
-    if schema and schema != "kb-answer-v1":
-        return None
-    if not (row.get("answer_zh") or row.get("answer") or row.get("status") or row.get("adequacy")):
-        return None
-    out = dict(row)
-    out.setdefault("schema", "kb-answer-v1")
-    if "adequacy" not in out and out.get("status"):
-        out["adequacy"] = out.get("status")
-    return out
-
-
-def _materialize_kb_answer(
-    project_root: Path,
-    *,
-    run_id: str,
-    action_id: str,
-    payload: dict[str, Any],
-    session: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Write action-local answer.yaml from return_value payload (pre-identity).
-
-    Do not stamp ``artifact_identity`` here — finalize's
-    ``_finalize_inject_artifact_identity`` owns the trusted stamp.
-    """
-    from ascendc_pilot.ownership import expand_path_template
-
-    del session  # reserved for future provenance notes
-    rel = expand_path_template(
-        f"runs/{{run_id}}/actions/{action_id}/answer.yaml",
-        run_id=run_id,
-    )
-    root = agent_root(project_root, _arch_for(project_root))
-    path = root / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    body = {
-        k: v
-        for k, v in dict(payload).items()
-        if k not in {"artifact_identity", "produced_by"}
-    }
-    body.setdefault("schema", "kb-answer-v1")
-    body["_transport"] = str(payload.get("_transport") or "native_task")
-    if yaml is None:
-        return {"ok": False, "error": "yaml_unavailable"}
-    path.write_text(
-        yaml.safe_dump(body, allow_unicode=True, sort_keys=False),
-        encoding="utf-8",
-    )
-    return {"ok": True, "path": path.as_posix(), "rel": rel}
 
 
 def _check_output_contract(
@@ -2042,7 +1968,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
         from ascendc_pilot.human_confirm import (
             build_ask,
-            grill_should_ask,
+            hosted_confirm_should_ask,
             interaction_kind,
             materialize_primary_decision,
             primary_interactive_steps,
@@ -2057,8 +1983,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         voice_state = dict(_load_state_for_voice(project_root) or state or {})
         if not voice_state.get("workflow_id"):
             voice_state["workflow_id"] = wid
-        if action_id in {"grill_confirm", "human_confirm"} and wid == "ce-plan":
-            if not grill_should_ask(project_root, voice_state, action_id=action_id):
+        if action_id in {"grill_confirm", "human_confirm", "plan_approve"}:
+            if not hosted_confirm_should_ask(project_root, voice_state, action_id=action_id):
                 materialized = materialize_primary_decision(project_root, action_id)
                 fin = finalize_action(project_root, action_id, engine_result=materialized)
                 result["auto_skip_human_gate"] = True
@@ -2066,7 +1992,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 result["auto_finalize"] = True
                 result["finalize"] = fin
                 result["ok"] = bool(fin.get("ok"))
-                result["message_zh"] = "无实现分叉，已跳过人机确认。"
+                result["message_zh"] = "已按你的授权跳过中间确认。"
                 return result
         ask = build_ask(
             project_root,
@@ -2550,6 +2476,7 @@ def _attach_finalize_observation(
             out["human_required"] = nxt.get("human_required")
             out["primary_instruction_zh"] = nxt.get("primary_instruction_zh") or (
                 "先对本命令的返回做 AskQuestion；选项必须原样使用 ask_question.options。"
+                "若用户已打断并在对话里回复，改为 interpret-user-turn，不要重问上一题。"
             )
     return out
 
@@ -2626,83 +2553,9 @@ def finalize_action(
     action_sid = str(session.get("action_session_id") or "")
     lease_id = str(session.get("lease_id") or "")
     prepare_nonce = str(session.get("prepare_nonce") or "")
-
-    # return_value: materialize kb-answer from Task result before contract check.
-    materialize: dict[str, Any] | None = None
-    payload = _parse_kb_answer_payload(action_result) if action_result else None
-    if payload is None and engine_result and isinstance(engine_result, dict):
-        payload = _parse_kb_answer_payload(engine_result)
-    if payload is None and result_file:
-        rf = Path(str(result_file)).expanduser()
-        if not rf.is_file():
-            return {
-                "ok": False,
-                "error": "RESULT_FILE_MISSING",
-                "reason_code": "RESULT_FILE_MISSING",
-                "message_zh": f"找不到 --result-file: {rf}",
-            }
-        try:
-            raw = yaml.safe_load(rf.read_text(encoding="utf-8")) if yaml else None
-        except Exception as exc:  # noqa: BLE001
-            return {
-                "ok": False,
-                "error": "RESULT_FILE_INVALID",
-                "message_zh": f"无法解析 result-file: {exc}",
-            }
-        payload = _parse_kb_answer_payload(raw)
-        if payload is None:
-            return {
-                "ok": False,
-                "error": "RESULT_NOT_KB_ANSWER",
-                "reason_code": "RESULT_NOT_KB_ANSWER",
-                "message_zh": "result-file 不是合法 kb-answer-v1 payload",
-            }
-    if payload is None:
-        # Optional: Primary dropped Task return into session action_result.yaml
-        for cand in (
-            sdir / "action_result.yaml",
-            sdir / "staging" / "action_result.yaml",
-        ):
-            if cand.is_file() and yaml is not None:
-                try:
-                    payload = _parse_kb_answer_payload(
-                        yaml.safe_load(cand.read_text(encoding="utf-8"))
-                    )
-                except Exception:  # noqa: BLE001
-                    payload = None
-                if payload:
-                    break
-    if payload and contract_id == "kb-answer-v1":
-        materialize = _materialize_kb_answer(
-            project_root,
-            run_id=run_id,
-            action_id=action_id,
-            payload=payload,
-            session=session,
-        )
-        if not materialize.get("ok"):
-            return {
-                "ok": False,
-                "error": str(materialize.get("error") or "MATERIALIZE_FAILED"),
-                "materialize": materialize,
-                "message_zh": "无法从 return_value 物化 answer.yaml",
-            }
-        # Stamp trusted identity before contract check (runs/** requires it).
-        early_stamp = _finalize_inject_artifact_identity(
-            project_root,
-            session=session,
-            action_id=action_id,
-            contract_id=contract_id,
-        )
-        if not early_stamp.get("ok"):
-            return {
-                "ok": False,
-                "error": str(early_stamp.get("error") or "IDENTITY_INJECTION_FAILED"),
-                "materialize": materialize,
-                "identity_injection": early_stamp,
-                "message_zh": "return_value 物化后 identity 注入失败",
-            }
-        materialize["identity_injection"] = early_stamp
+    # Dialogue contract: Host may still pass result_file / action_result;
+    # kb-answer-v1 no longer materializes a disk payload.
+    _ = (result_file, action_result)
 
     producer_identity = _validate_producer_declared_identity(
         project_root,
@@ -2735,22 +2588,6 @@ def finalize_action(
                 producer_identity.get("message")
                 or "producer-declared artifact identity conflicts with prepared Action session"
             ),
-        }
-    if (
-        not contract.get("ok")
-        and output_mode == "return_value"
-        and contract_id == "kb-answer-v1"
-        and not payload
-    ):
-        contract = {
-            **contract,
-            "message": (
-                str(contract.get("message") or "")
-                + "; return_value 模式：优先依赖 ASCENDC_ACTION_RESULT / "
-                "session action_result.yaml；无注入时再用 "
-                "--result-file <kb-answer.yaml> fallback"
-            ).lstrip("; "),
-            "hint": "Host tool pilot_run finalizes kb_lookup",
         }
 
     # apply_result was previously set by the removed semantic-parts reduce path;
@@ -2802,7 +2639,6 @@ def finalize_action(
         "engine": engine_result or {},
         "apply": apply_result or {},
         "target_violation": target_violation or {},
-        "materialize": materialize or {},
         "output_mode": output_mode,
     }
 
@@ -2937,7 +2773,6 @@ def finalize_action(
                 from ascendc_pilot.occupancy import (
                     WORKFLOW_ENV,
                     apply_stale_confidence,
-                    cap_confidence_fields,
                 )
                 from ascendc_pilot.state import complete_workflow
 
@@ -2951,28 +2786,6 @@ def finalize_action(
                     pinned_digest=str(live.get("pinned_digest") or ""),
                     session_id=str(live.get("session_id") or ""),
                 )
-                answer_path = (
-                    agent_root(project_root, _arch_for(project_root))
-                    / "runs"
-                    / run_id
-                    / "actions"
-                    / "kb_lookup"
-                    / "answer.yaml"
-                )
-                if answer_path.is_file() and (result.get("uo_freshness") or {}).get("stale"):
-                    try:
-                        import yaml as _yaml
-
-                        body = _yaml.safe_load(answer_path.read_text(encoding="utf-8")) or {}
-                        if isinstance(body, dict):
-                            cap_confidence_fields(body)
-                            body["reason_code"] = "UO_DIGEST_CHANGED"
-                            answer_path.write_text(
-                                _yaml.safe_dump(body, allow_unicode=True, sort_keys=False),
-                                encoding="utf-8",
-                            )
-                    except Exception:  # noqa: BLE001
-                        pass
                 meta = get_workflow(wid) if wid else {}
                 ready = set(meta.get("terminal_ready_states") or [])
                 phase = str(live.get("phase") or "")
@@ -3038,13 +2851,11 @@ def _finalize_owned_artifact_path(
         / "scope"
         / "scope_validated.yaml"
     )
-    root = agent_root(project_root, _arch_for(project_root))
     owned: dict[str, Path] = {
         "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
         # prepare owns the machine scope receipt; gate stamp is scope_validated.
         "prepare": scope_validated,
         "scope_validated": scope_validated,
-        "kb_lookup": root / "runs" / run_id / "actions" / "kb_lookup" / "answer.yaml",
     }
     return owned.get(action_id)
 

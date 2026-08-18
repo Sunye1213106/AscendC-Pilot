@@ -7,7 +7,7 @@ applies_when:
   - adjudicate_llm_tasks Map worker
 requires:
   inputs: [part_path, batch_path]
-  tools: [acp inspect]
+  tools: [pilot_cli]
   context: [shard_id]
 produces: [scratch_self_check]
 compatible_roles: [producer]
