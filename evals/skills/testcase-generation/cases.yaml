@@ -15,7 +15,7 @@ cases:
       - references/plan-heuristics.md
 
   - id: solve_worklog
-    query: 构造脚本可吃的 cases 表，Host tiling 回放，worklog 四段直到 open 为空
+    query: 构造脚本可读的 cases 表，Host tiling 回放，worklog 四段直到 open 为空
     expect_skill: testcase-generation
     expect_references:
       - references/oracle.md

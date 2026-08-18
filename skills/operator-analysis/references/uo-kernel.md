@@ -16,7 +16,7 @@ uo-query --project <op> <branch_or_key>
 uo-query --project <op>
 ```
 
-OpenCode：插件 `pilot_cli`，command 即上列 argv（不要前导 acp）。
+OpenCode：插件 `pilot_cli`，command 即上列 argv。
 
 同名 `if constexpr` 返回 `functions` 计数目录，每个 function 一条样例（snippet 从命中行向后盖住 if 体）。第二 ident 当 function 过滤。不要把「文件里第一次出现」当唯一路径。
 

@@ -66,7 +66,7 @@ python scripts/dev/check_install.py
 python -m ascendc_pilot doctor
 ```
 
-`acp doctor` 与 `python -m ascendc_pilot doctor` 等价；若 `Scripts` / `~/.local/bin` 不在 PATH 上，请用后者。缺 CANN / Clang 在这一步只是警告，不会让预检失败。
+`acp doctor` 与 `python -m ascendc_pilot doctor` 等价；若 `Scripts` / `~/.local/bin` 不在 PATH 上，请用后者。`doctor` 与 `python scripts/dev/check_cann.py`、prepare 共用 `require_cann_ready()`：CANN 未就绪时预检失败（`check_install.py` 仍把 CANN 标为可选）。
 
 如果需要查看 Python、Clang 等本机工具状态：
 
@@ -404,7 +404,7 @@ Host Replay driver、Host UT 构建和 testcase 执行由 TG workflow 在运行�
 
 ## 8. 验证安装
 
-Python 包与 Host 契约（缺 CANN 只警告，不失败）：
+Python 包与 Host 契约（`doctor` 的 CANN 检查与 prepare 同一套，未就绪则失败）：
 
 ```bash id="gz1vae"
 python scripts/dev/check_install.py

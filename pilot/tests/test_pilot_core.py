@@ -406,7 +406,7 @@ def test_compile_skills_smoke():
 
     result = compose_all(repo, hosts=["opencode"])
     assert result["ok"]
-    assert (repo / "generated" / "opencode" / "skills" / "operator" / "SKILL.md").is_file()
+    assert not (repo / "generated" / "opencode" / "skills" / "operator" / "SKILL.md").exists()
     assert (repo / "generated" / "opencode" / "agents" / "ascendc-pilot.md").is_file()
     text = (repo / "generated" / "opencode" / "skills" / "uo-init" / "SKILL.md").read_text(encoding="utf-8")
     assert "pilot-control" in text
@@ -594,7 +594,6 @@ def test_install_skill_lists_symmetric():
         "tg-init",
         "tg-plan",
         "tg-solve",
-        "operator",
     )
     wf_ps1 = next(line for line in ps1.splitlines() if line.startswith("$workflowSkills"))
     wf_sh_start = sh.index("WORKFLOW_SKILLS=(")
@@ -604,6 +603,7 @@ def test_install_skill_lists_symmetric():
         assert name in wf_sh, name
         assert name in ps1 and name in sh
     for retired in (
+        "operator",
         "uo-diff",
         "tg-domain-review",
         "tg-contract",

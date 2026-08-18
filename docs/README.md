@@ -7,7 +7,7 @@
 ```text
 安装
   -> Quick Start
-  -> ACP 工具（pilot_run / 插件 pilot_cli；不要 --help）
+  -> Host 工具（pilot_run / 插件 pilot_cli）
   -> UO：建立并查询 CodeMap
   -> TG：建立覆盖闭环
   -> CE：审查改动影响
@@ -15,7 +15,7 @@
 
 - [安装](getting-started/installation.md)
 - [Quick Start](getting-started/quickstart.md)
-- [ACP 工具使用](getting-started/acp-tools.md)（`pilot_run` / 插件 `pilot_cli`；不要用 `--help` 摸协议）
+- [Host 工具使用](getting-started/acp-tools.md)（`pilot_run` / 插件 `pilot_cli`）
 - [UO - Understand Operator](modules/uo.md)
 - [当前版本 UO benchmark（FAG arch35 冷启动 119s、查询与未闭合项）](benchmark.md)
 - [TG - Testcase Generation](modules/tg.md)

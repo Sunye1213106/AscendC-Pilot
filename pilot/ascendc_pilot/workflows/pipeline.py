@@ -135,11 +135,11 @@ def recommend_next_action(
             next_phase = ""
         if next_phase:
             hint = (
-                f"本阶段首选流水线已齐；请执行 `acp advance {next_phase}`"
-                f"（禁止再 run-action 本阶段 Action）"
+                f"本阶段首选流水线已齐；请 Host `pilot_run` 推进到 `{next_phase}`"
+                f"（禁止再 prepare 本阶段 Action）"
             )
         else:
-            hint = "本阶段首选流水线已齐；请 `acp advance <next_phase>` 或 `acp complete`"
+            hint = "本阶段首选流水线已齐；请 Host `pilot_run` 推进下一阶段或结束工作流"
         return {
             "id": None,
             "label_zh": "",
@@ -190,11 +190,11 @@ def recommend_next_action(
         next_phase = ""
     if next_phase:
         hint = (
-            f"本阶段首选流水线已齐；请执行 `acp advance {next_phase}`"
-            f"（禁止再 run-action 本阶段 Action）"
+            f"本阶段首选流水线已齐；请 Host `pilot_run` 推进到 `{next_phase}`"
+            f"（禁止再 prepare 本阶段 Action）"
         )
     else:
-        hint = "本阶段首选流水线已齐；请 `acp advance <next_phase>` 或 `acp complete`"
+        hint = "本阶段首选流水线已齐；请 Host `pilot_run` 推进下一阶段或结束工作流"
     return {
         "id": None,
         "label_zh": "",
@@ -202,5 +202,5 @@ def recommend_next_action(
         "pipeline": pipe,
         "next_phase": next_phase or None,
         "hint_zh": hint,
-        "recommended_command": f"acp advance {next_phase}" if next_phase else "acp complete",
+        "recommended_command": "pilot_run",
     }

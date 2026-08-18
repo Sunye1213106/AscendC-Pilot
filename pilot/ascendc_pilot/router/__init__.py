@@ -54,9 +54,8 @@ def _skill_candidates() -> list[dict[str, str]]:
 
 
 _UNMATCHED_MSG_ZH = (
-    "自然语言意图请由 Agent 按 workflow skill 的 description 自行加载对应 Skill，"
-    "然后执行 acp start <workflow_id>。"
-    "acp route 仅支持 slash（如 /uo-init）。"
+    "自然语言意图请由 Agent 按 workflow skill 的 description 自行加载对应 Skill。"
+    "slash 仅支持 /uo-init 等入口，不要用 --help 发现协议。"
 )
 
 
@@ -72,7 +71,7 @@ def route(text: str) -> dict[str, Any]:
             "message_zh": _UNMATCHED_MSG_ZH,
         }
 
-    # /operator is an optional alias for acp route — strip and re-route
+    # /operator remains a CLI alias for slash routing — strip and re-route
     first = raw.split()[0]
     if first in {"/operator", "operator"}:
         rest = raw[len(first) :].strip()

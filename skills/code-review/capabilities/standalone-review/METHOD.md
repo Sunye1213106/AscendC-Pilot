@@ -8,7 +8,7 @@ review 阶段由 Host 并行派两个隔离子代理（`spec-review` / `standard
 
 ## 输入
 
-- GitCode / GitHub 风格 PR URL（引擎 fetch：匹配已有 remote，或允许列表内 HTTPS patch）
+- GitCode / GitHub 风格 PR URL（须在对应算子仓打开且该 arch 已有 `.uo`；引擎先匹配已有 remote，否则允许列表内 HTTPS patch，后者需要 `GITHUB_TOKEN` / `GITCODE_TOKEN`）
 - `/ce-apply` 后的工作区 diff
 - 用户给的 `base...head`（无 PR URL 时）
 
@@ -18,7 +18,7 @@ review 阶段由 Host 并行派两个隔离子代理（`spec-review` / `standard
 
 ## 语义
 
-先 `uo-query --file PATH --line N`，再对 FOCUS 名做标识符查询。禁止 `acp uo impact` / `explain-*` / Grep 通读。
+先 `uo-query --file PATH --line N`，再对 FOCUS 名做标识符查询。不要传 `--mode`。禁止 `explain-*` / Grep 通读。
 
 - **Spec**：有 `{slug}_plan.md` 对照计划；没有则只陈述变更理解。
 - **Standards**：对照 `references/ascendc-checks.md`、跨层契约、H0/H1。

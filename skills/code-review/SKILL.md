@@ -9,7 +9,7 @@ description: >
 
 # 代码审查
 
-`/ce-review` 的输入只有代码改动：GitCode/GitHub PR URL（引擎 fetch）、`/ce-apply` 后的工作区 diff、或 `base...head`。贴 PR 链接即审该 PR，不审本地脏树。无 diff 则停。
+`/ce-review` 的输入只有代码改动：GitCode/GitHub PR URL（引擎 fetch）、`/ce-apply` 后的工作区 diff、或 `base...head`。贴 PR URL 会路由到本入口，但必须在对应算子仓打开、该 arch 已有 `.uo`；远程 fetch 失败时 HTTPS 回退需要 `GITHUB_TOKEN` 或 `GITCODE_TOKEN`。无 diff 则停。
 
 侧别：`op_kernel/` → Kernel；`op_host/` → Tiling。两侧都动则分侧陈述。
 
@@ -28,7 +28,7 @@ description: >
 3. 判定带 `path:line`。没有行号就不是 finding。
 4. 报告前尝试推翻 H1。
 
-证据顺序：**先插件 `pilot_cli` `uo-query`（形态 3 `--file --line`，再形态 1 跟 FOCUS 名）**，不够再开最小源码窗。禁止 `acp uo impact` / `explain-*` / Grep 通读。
+证据顺序：**先插件 `pilot_cli` `uo-query`（形态 3 `--file --line`，再形态 1 跟 FOCUS 名）**，不够再开最小源码窗。不要传 `--mode`。禁止 `explain-*` / Grep 通读。
 
 ## `/ce-review` 阶段
 

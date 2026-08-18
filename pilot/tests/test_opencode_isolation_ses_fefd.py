@@ -55,6 +55,7 @@ def test_plugin_pilot_cli_allowlist_blocks_uo_bypass_without_spawn() -> None:
         "scan-architectures",
         "abort",
         "answer",
+        "retry-after-environment-fix",
     ):
         assert f'"{allowed}"' in block, allowed
     for forbidden in ("impact", "search", "locate", "explain-host-value", "start", "run-action"):

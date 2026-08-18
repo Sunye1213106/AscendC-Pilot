@@ -172,7 +172,7 @@ def main() -> int:
         "createPilotSkillTool",
         "createPilotCliTool",
         "createPilotRunStub",
-        "ACP_HELP_USAGE_CARD",
+        "PILOT_CLI_HELP_USAGE_CARD",
         "Do not use --help to discover protocol",
         "isReadonlyInspectBash",
         "isPrimaryPilotAgent",

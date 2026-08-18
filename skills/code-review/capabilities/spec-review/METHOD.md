@@ -16,7 +16,7 @@ PR 入口必须有 diff。Finding 必须有 `path:line`。
 plan 或变更理解 → uo-query --file --line 再标识符 → H0/H1 → 最小源码窗 → 推翻 → FINDING
 ```
 
-1. 先插件 `pilot_cli` `uo-query`（形态 3 再形态 1）。禁止 `acp uo impact` / `explain-*`。
+1. 先插件 `pilot_cli` `uo-query`（形态 3 再形态 1）。不要传 `--mode`。禁止 `explain-*`。
 2. 报告：(a) 计划要但缺失或只做了一半；(b) 计划没要的行为；(c) 看起来做了但实现不对。
 3. 报告前尝试推翻 H1。
 

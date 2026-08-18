@@ -240,7 +240,7 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 ### `/uo-query`（可见 LLM 路由，禁止 Host Session Driver）
 
-查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控先阅读短地图，简单查询直接调用 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
+查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run workflow=uo-query`。主控先阅读短地图，简单查询直接调用 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 
@@ -260,7 +260,7 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 - `--file --line`：从位点走图
 - 无参数：算子索引（launch 阶段、维名、TilingData、gaps 计数）
 
-这四种形态是 CE / TG / 主控的**唯一查询面**。`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。禁止 `acp uo impact`、`explain-*`、`search`、`locate`。
+这四种形态是 CE / TG / 主控的**唯一查询面**。`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。
 
 与官方 cannbot 的适配（CodeMap 作为源码结构底座，含 FAG arch35 覆盖验证）见下文 [与官方 cannbot 的适配](#与官方-cannbot-的适配)。
 

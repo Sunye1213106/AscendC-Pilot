@@ -128,7 +128,6 @@ def build_environment_capabilities(
 ) -> dict[str, Any]:
     """Build a small deterministic capability document for producer sessions."""
     root = Path(project_root).resolve()
-    acp = _which("acp")
     rg = _which("rg") or _which("ripgrep")
     python = _which("python") or _which("python3")
     scope = _source_scope(root, run_id=run_id)
@@ -156,12 +155,11 @@ def build_environment_capabilities(
             "read": "available",
             "grep": "available",
             "bash": "available",
-            "acp": "available" if acp else "missing",
+            "pilot_cli": "available",
             "rg": "available" if rg else "missing",
             "python": "available" if python else "missing",
         },
         "paths": {
-            "acp": acp,
             "rg": rg,
             "python": python,
             "cann_root": cann_root,
@@ -174,13 +172,14 @@ def build_environment_capabilities(
                 "UO_CANN_ROOT",
                 "ASCEND_CANN_PACKAGE_PATH",
                 "CANN_ROOT",
+                "ASCEND_HOME_PATH",
                 "<repo>/_cann/pkg",
+                "~/.config/opencode/ascendc-cann-root",
             ],
         },
         "source_scope": scope,
         "commands": {
             "python": python,
-            "acp": acp,
             "rg": rg,
         },
         "note": (

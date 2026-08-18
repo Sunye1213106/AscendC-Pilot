@@ -31,7 +31,7 @@
 
 ## 启动（所有 workflow 共用）
 
-`/uo-query` **不是** Host Session Driver 工作流：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数），复杂查询同一轮派 `uo-query` 子代理，**禁止** `pilot_run` / `acp start uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
+`/uo-query` **不是** Host Session Driver 工作流：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数），复杂查询同一轮派 `uo-query` 子代理，**禁止** `pilot_run workflow=uo-query`。其余 slash（建库、TG、CE、investigate）走下面的 start 链。
 
 ```text
 用户意图（自然语言或 /slash）
@@ -67,7 +67,7 @@
         └── 参数齐（含不同族并行：uo 写与 tg-* / ce-* 可同时跑）
                   │
                   ▼
-            Host `pilot_run`（Driver 内部 start→auto；模型不要 bash `acp start`）
+            Host `pilot_run`（Driver 内部驱动 start→auto）
                   │
                   ├── host_step = dispatch_subagent  → Task(stub 原样) → dispatch-result
                   │     （`host_step.tasks` ≥2：同一轮并行多个 Task，Primary 综合后再 dispatch-result）
@@ -156,7 +156,7 @@ done        Primary 读 quality.yaml，向用户报告刷新后的节点/关系/
                   → 未闭合再开一轮 Task
 ```
 
-子代不写 `answer.yaml`、不自己 finalize。复杂查询直接委派 Task，主控综合。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。Delegated Task 的正文即全部，不要另行查找 session `prompt.md`；直接用插件 `pilot_cli` 工具（`command=uo-query --project …`），不要 bash。
+子代不写 `answer.yaml`、不自己 finalize。复杂查询直接委派 Task，主控综合。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `pilot_run workflow=uo-query`。Delegated Task 的正文即全部，不要另行查找 session `prompt.md`；直接用插件 `pilot_cli` 工具（`command=uo-query --project …`），不要 bash。
 
 ### `/uo-investigate` — 查 unresolved
 

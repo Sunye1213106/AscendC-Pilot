@@ -55,11 +55,11 @@ QUALITY_HUMAN_LEGAL_ACTIONS = (
     "abort_run",
 )
 CONTAINMENT_HARNESS_COMMANDS = (
-    "acp next",
-    "acp status",
-    "acp inspect-failure",
-    "acp retry-after-environment-fix",
-    "acp abort",
+    "pilot_cli next",
+    "pilot_cli status",
+    "pilot_cli inspect-failure",
+    "pilot_cli retry-after-environment-fix",
+    "pilot_cli abort",
 )
 
 # Stable error-code patterns → failure_class (English / machine tokens only)
@@ -662,7 +662,7 @@ def render_failure_card(state: dict[str, Any], observation: dict[str, Any] | Non
         [
             "",
             (
-                "已进入返工模式：仅可重试失败 Action 及相关 acp 命令。"
+                "已进入返工模式：仅可重试失败 Action 及相关恢复命令。"
                 if status == "rework_required"
                 else "自动执行已停止。当前 Action 权限已撤销。"
             ),

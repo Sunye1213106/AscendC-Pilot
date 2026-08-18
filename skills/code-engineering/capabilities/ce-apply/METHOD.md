@@ -16,4 +16,4 @@
 - 写 `.uo`、任何 CE yaml、或 `ce/review/`
 - 把审查叙述当成测量收据
 - 超出计划声明的文件集
-- 查图做语义（apply 不走 uo-query）
+- 查图做语义（apply 不查图；查图是 `/ce-plan` 与 `/ce-review`）

@@ -35,11 +35,11 @@ opencode_home() {
   echo "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 }
 
-# Install and uninstall share these names (compose slash workflows + operator).
+# Install and uninstall share these names (compose slash workflows).
 WORKFLOW_SKILLS=(
   uo-init uo-update uo-query uo-investigate
   ce-review ce-plan ce-apply handoff
-  tg-init tg-plan tg-solve operator
+  tg-init tg-plan tg-solve
 )
 COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
 OPENCODE_COMMANDS=(
@@ -51,7 +51,7 @@ CURRENT_AGENTS=(
   ascendc-pilot uo-query uo-heal-analyst uo-gap-investigator ce-reviewer tg-analyst
   ce-applier ce-analyst
 )
-LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies ce-intent ce-impact ce-verify ce-handoff)
+LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies ce-intent ce-impact ce-verify ce-handoff operator)
 LEGACY_AGENTS=(
   ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve
   uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer
@@ -362,7 +362,11 @@ else
   echo "  $PYTHON \"$BUNDLE_ROOT/scripts/cann_extract.py\" --fixup --dest \"$cann_pkg\""
   echo "If already extracted elsewhere: export UO_CANN_ROOT=<abs-pkg> (put it in your shell profile)"
 fi
-echo "Run: $PYTHON -m ascendc_pilot doctor --host $PLATFORM"
+if [[ "$PLATFORM" == "opencode" ]]; then
+  echo "Run: $PYTHON -m ascendc_pilot doctor --host opencode"
+else
+  echo "Run: $PYTHON -m ascendc_pilot doctor"
+fi
 echo "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 
 # optional native frontend (best-effort cmake/libclang). Missing source is a bug.

@@ -1,7 +1,7 @@
 # Code Review — Gotchas
 
 - **跨层合同优先于本地风格**：Host 改动必须对照 Tiling / Kernel 合同；只看 diff 行不够。
-- **影响面用 uo-query，不是全文搜索**：标识符 / `--file --line`；禁止 `acp uo impact` / `explain-*`。
+- **影响面用 uo-query，不是全文搜索**：标识符 / `--file --line`；不要传 `--mode`。禁止 `explain-*`。
 - **发现必须有 path:line**：无 span 的“可能有问题”降级或不报。
 - **TilingData 来源 ≠ 已校验**：必须能 locate 到 `OP_CHECK_IF` 且变量同一。
 - **PR 先有 diff**：没有可审查的代码改动则停。

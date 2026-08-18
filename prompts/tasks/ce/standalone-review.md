@@ -14,7 +14,7 @@
 
 <constraints>
 无 diff 则停。Spec / Standards 由并行隔离子代理做。结论写在 Task 回复（`path:line`）。不要写 `ce/**`。不要合成 LGTM。
-语义只用 `uo-query` 形态 3 再形态 1。不要 `acp uo impact` / `explain-*`。
+语义只用 `uo-query` 形态 3 再形态 1。不要传 `--mode`。禁止 `explain-*`。
 </constraints>
 
 <output>

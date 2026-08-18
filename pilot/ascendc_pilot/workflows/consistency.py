@@ -259,8 +259,10 @@ def _check_architecture_start_requirements(
             errors.append(
                 "agents/ascendc-pilot.yaml must not hardcode architecture start requirement lists"
             )
-        if "acp" not in desc.lower():
-            errors.append("agents/ascendc-pilot.yaml description must mention acp")
+        if "pilot_run" not in desc.lower() or "pilot_cli" not in desc.lower():
+            errors.append("agents/ascendc-pilot.yaml description must mention pilot_run and pilot_cli")
+        if re.search(r"\bacp\b", desc):
+            errors.append("agents/ascendc-pilot.yaml must not mention acp")
     else:
         errors.append("missing agents/ascendc-pilot.yaml")
 
@@ -706,6 +708,63 @@ def check_all(
                     if contract_paths and rel not in contract_paths:
                         errors.append(f"{wid}/{aid}: resume owned path {rel!r} not in contract {contract_id} paths")
 
+        errors.extend(_check_method_skill_docs_ssot(root, wf_map))
+
+    return errors
+
+
+def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]]) -> list[str]:
+    """METHOD files, cognitive SKILL.md, module docs, and user_goal stay aligned."""
+    errors: list[str] = []
+    for wid, meta in wf_map.items():
+        if meta.get("reserved"):
+            continue
+        for action in meta.get("actions") or []:
+            if not isinstance(action, dict):
+                continue
+            mid = str(action.get("action_method_id") or "").strip()
+            if not mid or "/" not in mid:
+                continue
+            skill_id, name = mid.split("/", 1)
+            method = root / "skills" / skill_id / "capabilities" / name / "METHOD.md"
+            if not method.is_file():
+                errors.append(
+                    f"{wid}/{action.get('id')}: missing METHOD skills/{skill_id}/capabilities/{name}/METHOD.md"
+                )
+    for sid in ("operator-analysis", "testcase-generation", "code-review", "code-engineering"):
+        if not (root / "skills" / sid / "SKILL.md").is_file():
+            errors.append(f"missing skills/{sid}/SKILL.md")
+    docs = {
+        "docs/modules/uo.md": ("uo-init", "uo-query"),
+        "docs/modules/tg.md": ("tg-init", "tg-plan", "tg-solve"),
+        "docs/modules/ce.md": ("ce-plan", "ce-apply", "ce-review"),
+    }
+    for rel, needles in docs.items():
+        path = root / rel
+        if not path.is_file():
+            errors.append(f"missing {rel}")
+            continue
+        text = path.read_text(encoding="utf-8")
+        for needle in needles:
+            if needle not in text and f"/{needle}" not in text:
+                errors.append(f"{rel} must mention {needle}")
+    apply_method = root / "skills" / "code-engineering" / "capabilities" / "ce-apply" / "METHOD.md"
+    if apply_method.is_file():
+        text = apply_method.read_text(encoding="utf-8")
+        if "不查图" not in text or "ce-plan" not in text or "ce-review" not in text:
+            errors.append("ce-apply METHOD must say apply 不查图；查图是 /ce-plan 与 /ce-review")
+    try:
+        from ascendc_pilot import user_goal as ug
+
+        for step in list(ug.DEFAULT_STEPS) + list(ug.CE_STEPS):
+            wid = str(step.get("workflow_id") or "")
+            if wid and wid not in wf_map:
+                errors.append(f"user_goal step {step.get('id')} unknown workflow {wid}")
+        hit = ug.route_natural_goal("审 https://gitcode.com/cann/ops-transformer/pulls/1")
+        if not hit or hit.get("workflow_id") != "ce-review":
+            errors.append("user_goal PR URL must route to ce-review")
+    except Exception as exc:  # noqa: BLE001
+        errors.append(f"user_goal SSOT check failed: {exc}")
     return errors
 
 

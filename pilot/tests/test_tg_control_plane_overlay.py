@@ -108,7 +108,8 @@ def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:
     assert "confirm" in joined
     assert "pilot_run" in joined
     assert "acp run-action" not in joined
-    assert "acp answer" in joined
+    assert "interpret-user-turn" in joined
+    assert "acp answer" not in joined
 
 
 def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Path) -> None:
@@ -131,7 +132,8 @@ def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Pa
     assert "approve" in joined
     assert "pilot_run" in joined
     assert "acp run-action" not in joined
-    assert "acp answer" in joined
+    assert "interpret-user-turn" in joined
+    assert "acp answer" not in joined
 
 
 def test_plan_draft_binds_ce_plan_method() -> None:

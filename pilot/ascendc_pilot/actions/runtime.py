@@ -1109,12 +1109,12 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "ok": False,
             "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
             "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
-            "message_zh": "缺少 architecture；请先 acp start --architecture …",
+            "message_zh": "缺少 architecture；请先 Host `pilot_run` 并带上 architecture",
         }
     ensure_control_layout(project_root, arch=arch)
     state = load_state(project_root, arch=arch)
     if not state:
-        return {"ok": False, "error": "no_active_workflow", "message_zh": "无活动 workflow；请先 acp start"}
+        return {"ok": False, "error": "no_active_workflow", "message_zh": "无活动 workflow；请先 Host `pilot_run`"}
     arch = require_architecture(str(state.get("architecture") or arch))
     wid = str(state.get("workflow_id") or "")
     if wid.startswith("tg-"):
@@ -1157,7 +1157,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 "error": "PIPELINE_COMPLETE_ADVANCE_REQUIRED",
                 "message_zh": (
                     "本阶段流水线已完成；禁止再 prepare 任意 Action。"
-                    "请 `acp advance` 进入下一阶段。"
+                    "请 Host `pilot_run` 进入下一阶段。"
                 ),
                 "recommended_next_action": recommended,
                 "requested_action": action_id,
@@ -1169,7 +1169,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 "error": "PIPELINE_SKIP_DENIED",
                 "message_zh": (
                     f"禁止跳步：当前 recommended_next_action=`{rec_id}`，"
-                    f"不可直接跑 `{action_id}`。缺少前置 Action；请先 `acp next`。"
+                    f"不可直接跑 `{action_id}`。缺少前置 Action；请先 `pilot_cli next`。"
                 ),
                 "recommended_next_action": recommended,
                 "requested_action": action_id,
@@ -2061,7 +2061,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result["finalize_hint"] = "pilot_run"
         result["finalize_hint_fallback"] = ""
     else:
-        result["message_zh"] += " 完成后由 Host `pilot_run` 完成本步，不要 bash `acp run-action --finalize`。"
+        result["message_zh"] += " 完成后由 Host `pilot_run` 完成本步。"
     result["task_prompt_stub"] = stub
     result["task_prompt_stub_path"] = (sdir / "task_prompt_stub.md").as_posix()
     result["dispatch_task"] = True
@@ -2741,8 +2741,8 @@ def finalize_action(
         "engine": engine_result or {},
         "checker_result": checker_result,
         "message_zh": (
-            "Action 已 finalize 并签发可信收据；下一步必须 `acp next`（取 recommended_next_action），"
-            "禁止跳步；仅 phase 门禁齐备时才 `acp advance`"
+            "Action 已 finalize 并签发可信收据；下一步必须 `pilot_cli next`（取 recommended_next_action），"
+            "禁止跳步；仅 phase 门禁齐备时才由 Host `pilot_run` 推进"
             if overall_ok
             else "Finalize 失败：Checker/Output Contract 未通过"
         ),

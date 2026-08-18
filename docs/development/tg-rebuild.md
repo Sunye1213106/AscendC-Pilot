@@ -22,7 +22,7 @@ Host replay 库（`HostOracle`、WSL replay、`tg-closure` CLI）保留，只作
 | --- | --- |
 | init | `tg/init.yaml`（含 `uo_digest`、列映射、跑测口径） |
 | plan | `tg/plan.md`（散文 + YAML 义务表） |
-| solve | `tg/worklog.md` + 脚本可吃的 cases 表 |
+| solve | `tg/worklog.md` + 脚本可读的 cases 表 |
 
 确定性引擎在 `actions/tg_product.py`。LLM 只有 `tg-analyst`，只写 `runs/` 草稿。人确认仍走 `human_confirm` / `plan_approve`；收据 `consume=False` 直到 finalize 成功。
 

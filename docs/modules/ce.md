@@ -1,6 +1,6 @@
 # CE：代码工程
 
-CE（Code Engineering）在已有 Operator CodeMap 上做两件互不串台的事：**自己有需求时写出命名计划并改码**，以及**已有代码改动时做只读审查**。验证不在 CE：引导 `/tg-plan`。CE **不写任何 yaml**；正式产物只有 markdown。
+CE（Code Engineering）在已有 Operator CodeMap 上做两件不要混用的事：**自己有需求时写出命名计划并改码**，以及**已有代码改动时做只读审查**。验证不在 CE：引导 `/tg-plan`。CE **不写任何 yaml**；正式产物只有 markdown。
 
 两条场景：
 
@@ -31,7 +31,7 @@ Grill 草稿只写 `runs/<run>/actions/intent_grill/` 下的 markdown。形状�
 | `/ce-plan`、`/ce-apply`、`/handoff` | `skills/code-engineering/` |
 | `/ce-review` | `skills/code-review/` |
 
-语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。禁止 `acp uo impact`、`explain-*`、`search`、`locate`。LLM 禁止写 `.uo`；apply 刷图由引擎嵌套 `uo-update`。
+语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。LLM 禁止写 `.uo`；apply 刷图由引擎嵌套 `uo-update`。apply 不查图；查图是 plan / review。
 
 ### `/ce-plan`
 
@@ -59,7 +59,7 @@ gate [D] 当前计划有未完成 - [ ]
 ### `/ce-review`
 
 ```text
-scope [D] 从 intent 抽出 GitCode/GitHub PR URL，向已配置且匹配的 remote fetch（禁止把用户 URL 加成 remote）；失败则在允许的主机上用 HTTPS 拉 patch。有 PR URL 时禁止退回工作区 dirty tree。无 diff 则停。
+scope [D] 从 intent 抽出 GitCode/GitHub PR URL。必须在对应算子仓打开且已有 `.uo`；向已配置且匹配的 remote fetch（禁止把用户 URL 加成 remote）；失败则在允许的主机上用 HTTPS 拉 patch（需 `GITHUB_TOKEN` / `GITCODE_TOKEN`），并按算子 pathspec 裁剪。有 PR URL 时禁止退回工作区 dirty tree。无 diff 则停。
   → review [S ce-reviewer ×2] Spec ∥ Standards
   → summary [H] 建议修改或建议测试
 ```

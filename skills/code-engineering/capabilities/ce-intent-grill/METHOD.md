@@ -26,5 +26,5 @@
 - 改写 canonical `{slug}_plan.md` 或声称已经 apply
 - 名称近似命中当成已定位
 - 写任何 `.yaml`
-- 调用 `acp uo impact` / `explain-*` / `search` / `locate`
+- 传 `--mode` 或调用 `explain-*` / `search` / `locate`
 - 对 Pilot 仓做目录遍历寻找契约文件

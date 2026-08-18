@@ -56,17 +56,17 @@ def describe_next(project_root: Path) -> dict[str, Any]:
             {
                 "label": "环境已修好，继续重试失败 Action",
                 "value": "retry_after_environment_fix",
-                "description": "acp retry-after-environment-fix --project <算子目录>",
+                "description": "pilot_cli retry-after-environment-fix --project <算子目录>",
             },
             {
                 "label": "查看结构化失败信息",
                 "value": "inspect_failure",
-                "description": "acp inspect-failure --project <算子目录>",
+                "description": "pilot_cli inspect-failure --project <算子目录>",
             },
             {
                 "label": "终止本次运行",
                 "value": "abort_run",
-                "description": "acp abort --project <算子目录>",
+                "description": "pilot_cli abort --project <算子目录>",
             },
         ]
         options = [row for row in option_catalog if row["value"] in legal]
@@ -115,7 +115,7 @@ def describe_next(project_root: Path) -> dict[str, Any]:
                 "action_id": aid,
                 "reason_codes": reason_codes,
                 "allowed_outputs": [],
-                "retry_command": f"acp run-action {aid}",
+                "retry_command": f"python -m ascendc_pilot run-action {aid}",
                 "phase_rework_targets": phase_rework,
             }
             for aid in action_ids
@@ -171,7 +171,7 @@ def describe_next(project_root: Path) -> dict[str, Any]:
     if recommended and recommended.get("id"):
         payload["message_zh"] = (
             f"下一步必须执行 recommended_next_action=`{recommended['id']}`；"
-            "禁止从 allowed_actions 任意跳步；完成后再次 `acp next`。"
+            "禁止从 allowed_actions 任意跳步；完成后再次 `pilot_cli next`。"
         )
     elif recommended and recommended.get("reason") == "pipeline_complete":
         payload["message_zh"] = str(recommended.get("hint_zh") or payload["message_zh"])
@@ -627,7 +627,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
                     "本阶段工作流已完成。"
                     + str(goal_adv.get("message_zh") or "")
                     + " 向用户仅说明意图/刚完成/下一步；禁止粘贴内部字段名。"
-                    + f" 下一步：acp start {goal_adv['next_workflow_id']} "
+                    + f" 下一步：Host `pilot_run` workflow={goal_adv['next_workflow_id']} "
                     f"--project <算子目录>（若需 architecture 则带上）。"
                 )
     except Exception:  # noqa: BLE001

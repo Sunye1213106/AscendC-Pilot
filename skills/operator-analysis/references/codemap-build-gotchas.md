@@ -17,7 +17,7 @@ Agent 规则。假编译环境、补头、prelude 由 engine 做，不要在本�
 
 出现 `clang_probe_unclean`、`SCOPE_VALIDATE_BLOCKED`，或探针报缺头文件时：这是 **include 路径与当前 CANN 树没对齐**，不是官方包缺文件，也不是算子图上的 `unknown`。
 
-`CANN_ENV_NOT_READY` 只表示 **cann_root 没配上或目录不像 CANN**（没有 `cann-asc-devkit/` / `cann-metadef/` / `{host}/asc`）。配好根目录后，prepare **不得**再因某个硬编码相对路径（例如 `asc/impl/include`、`tuple.h`）失败。官方 `.run` 不缺这些头；`asc/impl/include` 是 clang shim，engine 会尽量自动建。
+`CANN_ENV_NOT_READY` 只表示 **cann_root 没配上或目录不像 CANN**（没有 `cann-asc-devkit/` / `cann-metadef/` / `{host}/asc`）。配好根目录后，prepare **不得**再因某个硬编码相对路径（例如 `asc/impl/include`、`tuple.h`）失败。官方 `.run` 不缺这些头；`asc/impl/include` 是 clang shim，engine 会尽量自动建。`python -m ascendc_pilot doctor`、`python scripts/dev/check_cann.py` 和 prepare 走同一 `require_cann_ready()`：一边过、另一边不过是 bug。
 
 1. **先确认 cann_root**。`UO_CANN_ROOT` / `_cann/pkg` / 官方 `ASCEND_HOME_PATH` 指向真实 CANN 即可。
 2. **等 prepare 的 include_heal** 自动补 `-I`，写入 `uo/summary/build_context_extras.yaml`。不要手改算子源码、不要假造缺失头。

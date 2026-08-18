@@ -34,7 +34,6 @@ WORKFLOW_SKILLS: tuple[str, ...] = (
     "tg-init",
     "tg-plan",
     "tg-solve",
-    "operator",
 )
 COGNITIVE_SKILLS: tuple[str, ...] = (
     "operator-analysis",
@@ -100,6 +99,7 @@ LEGACY_OWNED: dict[str, list[str]] = {
         "ce-verify",
         "ce-handoff",
         "_policies",
+        "operator",
     ],
     "plugins": [
         "zz-uo-query-return-value.ts",

@@ -693,6 +693,19 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.workflows import get_workflow
 
         get_workflow(args.workflow_id)  # validate
+        if str(args.workflow_id or "").strip() == "uo-query":
+            print_json(
+                {
+                    "ok": False,
+                    "error": "UO_QUERY_NOT_HOST_DRIVEN",
+                    "reason_code": "UO_QUERY_NOT_HOST_DRIVEN",
+                    "message_zh": (
+                        "uo-query 不是 Host Session Driver 工作流。"
+                        "请用 /uo-query 或 plugin `pilot_cli` 的 `uo-query`。"
+                    ),
+                }
+            )
+            return 1
         arch_cli = str(getattr(args, "architecture", "") or "").strip()
         arch = arch_cli or architecture_from_env()
         argv_list = list(argv if argv is not None else sys.argv[1:])
@@ -961,8 +974,16 @@ def main(argv: list[str] | None = None) -> int:
         st = load_state(args.project) or {}
         lf = st.get("last_failure")
         card = st.get("failure_card") or (render_failure_card(st) if lf else "")
+        message_zh = ""
+        if isinstance(lf, dict):
+            message_zh = str(lf.get("message_zh") or lf.get("message") or "").strip()
+        if not message_zh and card:
+            message_zh = str(card).splitlines()[0].strip()[:240]
+        if not message_zh:
+            message_zh = "当前没有失败记录。" if not lf else "工作流失败，详见 failure_card。"
         payload = {
             "ok": True,
+            "message_zh": message_zh,
             "status": st.get("status"),
             "phase": st.get("phase"),
             "last_failure": lf,
@@ -994,7 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
                     "ok": False,
                     "error": "not_human_required",
                     "status": st.get("status"),
-                    "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请直接按 acp next 的 retry_command 重试",
+                    "message_zh": "仅 human_required/blocked 可在环境修复后重试；rework_required 请直接按 inspect-failure 给出的 retry_command 重试",
                 }
             )
             return 1
@@ -1726,34 +1747,37 @@ def _doctor(project: Path | None) -> int:
             "pass --test-script-root to bind an existing runner (scripts + CSV)"
         )
 
-    # UO clang parse needs a CANN root (extracted cann-* or official install).
+    # Same CANN gate as prepare / scripts/dev/check_cann.py (not a warning).
     try:
         from uo_init import paths as uo_paths
 
         cann_root, cann_issues = uo_paths.require_cann_ready()
         if cann_root is not None:
             print(f"cann_root={cann_root}")
-            try:
-                from ascendc_pilot.paths import write_opencode_cann_root
-
-                write_opencode_cann_root(cann_root)
-            except Exception:  # noqa: BLE001
-                pass
         if cann_issues:
             for item in cann_issues:
-                warnings.append(f"cann: {item}")
+                issues.append(f"cann: {item}")
             default_pkg = uo_paths.repo_root() / "_cann" / "pkg"
-            warnings.append(
-                "Set UO_CANN_ROOT to an extracted cann-* package root "
-                f"(default dest {default_pkg}) or an official ASCEND_HOME_PATH. "
-                "python scripts/cann_extract.py <toolkit.run> --dest "
-                f"{default_pkg}. Persist User-level UO_CANN_ROOT; session-only "
-                "$env:UO_CANN_ROOT is lost when the terminal closes."
+            issues.append(
+                "CANN not ready for prepare. Set UO_CANN_ROOT / "
+                "ASCEND_CANN_PACKAGE_PATH / ASCEND_HOME_PATH to a cann-* extract "
+                f"or official install (default dest {default_pkg}), or extract with "
+                f"python scripts/cann_extract.py <toolkit.run> --dest {default_pkg}. "
+                "Persist User-level UO_CANN_ROOT; session-only $env:UO_CANN_ROOT "
+                "is lost when the terminal closes. "
+                f"OpenCode cache: {uo_paths.opencode_cann_root_cache_path()}"
             )
         else:
             print("cann_layout=ok")
+            if cann_root is not None:
+                try:
+                    from ascendc_pilot.paths import write_opencode_cann_root
+
+                    write_opencode_cann_root(cann_root)
+                except Exception:  # noqa: BLE001
+                    pass
     except Exception as exc:  # noqa: BLE001
-        warnings.append(f"cann precheck skipped: {exc}")
+        issues.append(f"cann precheck failed: {exc}")
 
     if warnings:
         print("WARNINGS:")

@@ -23,4 +23,4 @@
 
 - 写 yaml、`todo.md`、`anchors.yaml`、`tg_plan_intent.yaml`
 - 以 PR / diff 当输入
-- `acp uo impact` / `explain-*`
+- `--mode` / `explain-*`

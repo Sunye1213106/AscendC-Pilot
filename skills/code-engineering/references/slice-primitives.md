@@ -9,4 +9,4 @@
 
 Hits 是投影后的卡片（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。
 
-禁止 `acp uo impact`、`explain-*`、`search`、`locate`，也禁止调用已删除的 `slice_forward` / `slice_backward`。预算截断不能证明「没有影响」——标未决，不要写成无义务。
+不要传 `--mode`。禁止 `explain-*`、`search`、`locate`，也禁止调用已删除的 `slice_forward` / `slice_backward`。预算截断不能证明「没有影响」——标未决，不要写成无义务。

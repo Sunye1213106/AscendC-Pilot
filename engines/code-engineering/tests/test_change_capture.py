@@ -154,3 +154,47 @@ def test_capture_pr_http_fallback(tmp_path: Path, monkeypatch) -> None:
     assert payload.get("ok") is True, payload
     assert payload.get("source") == "pr_http"
     assert "two" in payload.get("diff", "")
+
+
+def test_http_pr_diff_scopes_to_operator_pathspec(tmp_path: Path, monkeypatch) -> None:
+    from code_engineering import git as git_mod
+    from code_engineering.git import capture_change
+
+    repo = tmp_path / "ops-transformer"
+    op = repo / "attention" / "flash_attention_score"
+    host = op / "op_host"
+    host.mkdir(parents=True)
+    tracked = host / "kernel.cpp"
+    tracked.write_text("one\n", encoding="utf-8")
+    _git(repo, "init")
+    _git(repo, "add", "attention/flash_attention_score/op_host/kernel.cpp")
+    _git(
+        repo, "-c", "user.name=CE Test", "-c", "user.email=ce@example.invalid",
+        "commit", "-m", "initial",
+    )
+    _git(repo, "remote", "add", "origin", "https://github.com/other/place.git")
+
+    body = (
+        "diff --git a/unrelated/foo.cpp b/unrelated/foo.cpp\n"
+        "--- a/unrelated/foo.cpp\n"
+        "+++ b/unrelated/foo.cpp\n"
+        "@@ -1 +1,2 @@\n one\n+leak\n"
+        "diff --git a/attention/flash_attention_score/op_host/kernel.cpp "
+        "b/attention/flash_attention_score/op_host/kernel.cpp\n"
+        "--- a/attention/flash_attention_score/op_host/kernel.cpp\n"
+        "+++ b/attention/flash_attention_score/op_host/kernel.cpp\n"
+        "@@ -1 +1,2 @@\n one\n+two\n"
+    )
+
+    def fake_http(url: str, headers: dict[str, str]) -> tuple[int, str, str]:
+        del url, headers
+        return 200, body, ""
+
+    monkeypatch.setattr(git_mod, "_http_get", fake_http)
+    payload = capture_change(op, pr_url="https://github.com/org/repo/pull/9")
+    assert payload.get("ok") is True, payload
+    diff = payload.get("diff") or ""
+    assert "op_host/kernel.cpp" in diff
+    assert "two" in diff
+    assert "unrelated/foo.cpp" not in diff
+    assert "leak" not in diff

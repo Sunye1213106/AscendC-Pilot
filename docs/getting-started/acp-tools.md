@@ -1,8 +1,8 @@
-# ACP 工具使用说明
+# Host 工具使用说明
 
-OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pilot_cli`。日常任务按本页选工具即可。这两个工具只属于 **AscendC-Pilot Tab**；Build / Plan 保持 OpenCode 原生权限、原生 skill、原生 shell，不会套用 Pilot harness，也看不到 Pilot workflow skill。不要注册名为 `acp` 的插件工具（会撞上 OpenCode ACP 协议）。
+OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pilot_cli`。日常任务按本页选工具即可。这两个工具只属于 **AscendC-Pilot Tab**；Build / Plan 保持 OpenCode 原生权限、原生 skill、原生 shell，不会套用 Pilot harness，也看不到 Pilot workflow skill。
 
-**不要用 `--help` 来摸协议。** argparse 帮助会列出三十多个内部子命令（`authorize`、`debug`、`serve-authorize` 等），那不是 Session Driver 合同，也不是查询路由。Agent 跟着帮助文字去编排 `start` → `run-action` → `finalize`，或在 Windows 上改走 bash，就会表现为卡住（ses_fefd：120s bash 杀掉 uo-init analyze）。
+不要用 `--help` 当用法卡。argparse 会列出大量内部子命令，那不是 Session Driver 合同，也不是查询路由。工作流用 `pilot_run`；短命令用 `pilot_cli`。
 
 命令清单见 [CLI Reference](../reference/cli.generated.md)。协议与权限见 [Agent Runtime](../architecture/agent-runtime.md)。查询怎么走见 [UO Query Router](../../skills/operator-analysis/routing/uo-query.md)。
 
@@ -14,43 +14,42 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 用户目标
   ├─ 建库 / 更新 / TG / CE / 调查 unresolved
   │     → Host 工具 pilot_run（workflow + project + architecture）
-  └─ 只读问 CodeMap / 看状态 / 看失败卡
-        → 插件工具 pilot_cli（command 里不要带前导 acp）
+  └─ 只读问 CodeMap / 看状态 / 看失败卡 / 环境修好后恢复
+        → 插件工具 pilot_cli
 ```
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run` | 手工 `acp start` / `acp next` / `acp run-action auto` 串环 |
-| 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query`；`acp start uo-query` |
+| `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run` | 手工串 `start` / `next` / `run-action auto` |
+| 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
 | 缺 architecture、要列 `arch*` 选项 | 插件 `pilot_cli`：`scan-architectures --project <算子绝对路径>` | 在仓库根目录 Glob / 翻 cmake |
 | `pilot_run` 失败、要看原因 | 插件 `pilot_cli`：`inspect-failure` / `status` / `next`（都要 `--project`） | `--help`、读 Pilot 源码、bash 管道 |
-| 证据窗 / 已 citation 文件内搜索 | 插件 `pilot_cli`：`inspect evidence-window`；`ro-search --pattern … --paths …` | 仓级 grep / 名为 `acp` 的工具 |
+| 环境修好后恢复 | 插件 `pilot_cli`：`retry-after-environment-fix --project <算子绝对路径>` | 直接开始 TG |
+| 证据窗 / 已 citation 文件内搜索 | 插件 `pilot_cli`：`inspect evidence-window`；`ro-search --pattern … --paths …` | 仓级 grep |
 
-插件 `pilot_cli` 的 `command` 是 **二进制后面的 argv**，不要再写一遍 `acp`，也不要找 `acp.exe`：
+插件 `pilot_cli` 的 `command` 是 **二进制后面的 argv**：
 
 ```text
 uo-query --project D:\ops\attention\flash_attention_score_grad --architecture arch35 s1Inner
 status --project D:\ops\attention\flash_attention_score_grad
 inspect-failure --project D:\ops\attention\flash_attention_score_grad
 scan-architectures --project D:\ops\attention\flash_attention_score_grad
+retry-after-environment-fix --project D:\ops\attention\flash_attention_score_grad
 ```
 
-`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。
+`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。贴 GitCode PR URL 走 `/ce-review` 时同样要在算子仓打开，且该 arch 已有 `.uo`。
 
 ---
 
-## 为什么 `--help` 会卡住
+## 不要把 `--help` 当用法
 
-这是运行时最常见的空转，不是 argparse 本身算得慢。
+1. 帮助列出的是全部 CLI，包括 Host 内部命令。跟着 `start` / `run-action` 再查帮助不会推进用户任务。
+2. 工作流必须用 `pilot_run`；短命令必须用插件 `pilot_cli`。
+3. 有待回答问题时继续 `--help` 不会消费这个问题。用户已经在对话里回复时，用 `interpret-user-turn`。
+4. 管道缓冲（`Select-Object -Last` / `Out-String` / `tail`）会被 authorize 拒绝。
 
-1. **把帮助当成协议。** `acp --help` 列出的是全部 CLI，包括 Host 内部命令。Agent 接着对 `start`、`run-action`、`uo` 再调一次 `--help`，不再推进用户任务。
-2. **Windows 上用 bash 调 `acp`。** OpenCode 1.18 的 bash 可能把整行 `acp …` 当成可执行文件，出现 `NotFound: ChildProcess.spawn`，或 120s 杀掉 uo-init。工作流必须用 `pilot_run`；短命令必须用插件 `pilot_cli`（内部 `spawnSync(acp.exe, shell:false)`），不要 bash。
-3. **绝对路径触发权限等待。** 写成 `C:\…\Scripts\acp.exe --help` 对不上 frontmatter 白名单，OpenCode 会变成 ask/deny，界面像卡死、其实在等人点允许。不要搜 `acp.exe`。
-4. **有待回答问题时继续 `--help`。** 插件在 pending AskQuestion 期间仍放行 `--help`，但帮助不会消费这个问题。若用户已经在对话里回复（而不是点选框），用 `interpret-user-turn` 消化本轮原文，不要再弹同一题。点选框仍在等时，才把 `ask_question` 的选项原样交给用户。
-5. **管道缓冲。** `acp … | Select-Object -Last` / `Out-String` / `tail` 会被 authorize 拒绝；Agent 换写法重试，看起来也在空转。
-
-插件 `pilot_cli` 收到 `--help` / `-h` / `help` 时会返回本页的短用法卡，**不会**再 spawn argparse。收到 `start` / `run-action auto` 时直接拒绝并要求改用 `pilot_run`。人类在自己的终端里仍可直接运行 `acp --help`。
+插件 `pilot_cli` 收到 `--help` / `-h` / `help` 时会返回本页的短用法卡。收到 `start` / `run-action auto` 时直接拒绝并要求改用 `pilot_run`。
 
 ---
 
@@ -65,6 +64,7 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 | `scan-architectures --project <abs>` | 启动前列出 `arch*` 选项，供 AskQuestion |
 | `status --project <abs>` | 当前 workflow / run 状态 |
 | `inspect-failure --project <abs>` | `pilot_run` 或确定性 Action 失败后的失败卡 |
+| `retry-after-environment-fix --project <abs>` | 外部环境修好后恢复 `human_required` / `blocked` |
 | `interpret-user-turn --project <abs> --text <本轮原文>` | 用户打断确认框后：把对话回复映射到原选项，或取消上一问 |
 | `next --project <abs>` | 调试：看下一步允许的 Action（正常路径由 `pilot_run` 持有） |
 
@@ -100,10 +100,11 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 ```text
 插件 pilot_cli：inspect-failure --project <abs>
 插件 pilot_cli：status --project <abs>
+插件 pilot_cli：retry-after-environment-fix --project <abs>
 缺 architecture：scan-architectures，然后 AskQuestion
 主控只读：Read / Glob / Get-ChildItem / ls / dir / pwd
 诊断：python scripts/dev/check_cann.py / check_env.py / python -m ascendc_pilot doctor / cann_extract.py --fixup
-不要：--help、读引擎脚本、bash acp start、Write / Task
+不要：--help、读引擎脚本、Write / Task
 ```
 
 `inspect-failure` 的 `message_zh` 面向用户；不要把 `reason_code` 当成唯一解释。外部环境修好后才用 `retry-after-environment-fix`（这是恢复命令，不是日常路径）。
@@ -119,10 +120,11 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 ```bash
 python -m ascendc_pilot doctor
 python -m ascendc_pilot doctor --host opencode
-acp status --project <算子目录>
-acp inspect-failure --project <算子目录>
-acp scan-architectures --project <算子目录>
-acp uo-query --project <算子目录> --architecture arch35 s1Inner
+python -m ascendc_pilot status --project <算子目录>
+python -m ascendc_pilot inspect-failure --project <算子目录>
+python -m ascendc_pilot scan-architectures --project <算子目录>
+python -m ascendc_pilot retry-after-environment-fix --project <算子目录>
+python -m ascendc_pilot uo-query --project <算子目录> --architecture arch35 s1Inner
 ```
 
-终端里的 `acp --help` 给开发者看命令清单。Agent 在 OpenCode 里不要学这个入口。
+终端里的 `python -m ascendc_pilot --help` 给开发者看命令清单。Agent 在 OpenCode 里不要学这个入口。

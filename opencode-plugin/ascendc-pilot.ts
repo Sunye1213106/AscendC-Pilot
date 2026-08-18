@@ -105,16 +105,15 @@ function isAcpDiagnosticCommand(command: string): boolean {
   )
 }
 
-/** Returned by the plugin `acp` tool instead of argparse --help (ses_ff08 discovery trap). */
-const ACP_HELP_USAGE_CARD = [
+/** Returned by plugin `pilot_cli` instead of argparse --help. */
+const PILOT_CLI_HELP_USAGE_CARD = [
   "[ascendc-pilot] Do not use --help to discover protocol.",
   "argparse lists internal commands (authorize / debug / serve-authorize) and is not the Session Driver contract.",
   "",
   "Workflows (uo-init / uo-update / tg-* / ce-* / uo-investigate): Host tool pilot_run(workflow, project, architecture).",
-  "Never bash `acp start` / `acp run-action auto`. Never a plugin tool named `acp` (OpenCode ACP protocol).",
   "If pilot_run is missing: tell the user to fully quit OpenCode and rerun refresh-opencode.ps1.",
   "",
-  "Plugin `pilot_cli` command examples (no leading acp):",
+  "Plugin `pilot_cli` command examples:",
   "  uo-query --project <operator-abs> [--architecture arch] <identifier|Dim=V>",
   "  uo-query --project <operator-abs> --status-only",
   "  scan-architectures --project <operator-abs>",
@@ -123,11 +122,11 @@ const ACP_HELP_USAGE_CARD = [
   "  inspect evidence-window --project <operator-abs> --path <rel> --lines A-B",
   "  ro-search --pattern <pat> --paths <already-cited-file>",
   "  next --project <operator-abs>",
+  "  retry-after-environment-fix --project <operator-abs>",
   "  interpret-user-turn --project <operator-abs> --text <latest user message>",
   "",
   "On failure: inspect-failure / status, not another --help.",
   "Pending AskQuestion: if the user typed a new message instead of clicking, interpret that turn; do not re-ask. --help does not consume the question.",
-  "Do not bash-pipe acp. Do not pass an absolute acp.exe path. Do not search for acp.exe.",
 ].join("\n")
 
 function readPendingFromDisk(project: string): PendingHumanInteraction | null {
@@ -1343,7 +1342,7 @@ function runAuthorize(args: {
       ok: false,
       decision: "ask",
       reason_code: "HARNESS_MISSING",
-      reason_zh: `未找到 acp CLI (${acpBin}): ${String(result.error || result.status)}`,
+      reason_zh: `未找到 Pilot CLI (${acpBin}): ${String(result.error || result.status)}`,
     }
   }
   try {
@@ -1592,6 +1591,7 @@ const PILOT_CLI_ALLOWED_HEADS = new Set([
   "abort",
   "answer",
   "interpret-user-turn",
+  "retry-after-environment-fix",
 ])
 
 function isPilotCliLongCommand(argv: string[]): boolean {
@@ -1647,7 +1647,7 @@ function formatPilotCliOutput(opts: {
   if (/cann|UO_CANN_ROOT|ASCEND_CANN|impl\/include/i.test(blob)) {
     parts.push(
       "查 ~/.config/opencode/ascendc-cann-root；跑 python scripts/dev/check_cann.py；" +
-        "必要时 python scripts/cann_extract.py --fixup --dest <pkg>。不要找 acp.exe。",
+        "必要时 python scripts/cann_extract.py --fixup --dest <pkg>。",
     )
   }
   return parts.join("\n").trim() || `(pilot_cli exited ${opts.status})`
@@ -1673,8 +1673,7 @@ function createPilotRunStub(err: unknown): Record<string, unknown> {
           output:
             "[ascendc-pilot] pilot-driver 加载失败，pilot_run 不可用。\n" +
             detail +
-            "\n请完全退出 OpenCode，运行 .\\refresh-opencode.ps1 或 SKIP_PIP=1 ./install.sh opencode 后重开。\n" +
-            "不要 bash acp start / acp run-action auto，不要找 acp.exe。",
+            "\n请完全退出 OpenCode，运行 .\\refresh-opencode.ps1 或 SKIP_PIP=1 ./install.sh opencode 后重开。",
           metadata: { ok: false, error: "PILOT_DRIVER_LOAD_FAILED" },
         }
       },
@@ -1697,16 +1696,16 @@ function createPilotCliTool(): {
 } {
   return {
     description:
-      "Short AscendC-Pilot CLI (plugin tool `pilot_cli`, not bash, not a tool named acp). " +
-      "Pass command without a leading 'acp' (example: " +
+      "Short AscendC-Pilot CLI (plugin tool `pilot_cli`, not bash). " +
+      "Pass command as argv after the binary (example: " +
       "`uo-query --project <operator-abs> s1Inner`). Never `--mode`. " +
-      "Workflows: use Host tool `pilot_run`. Do not call `--help`. Do not search for acp.exe.",
+      "Workflows: use Host tool `pilot_run`. Do not call `--help`.",
     args: {
       command: {
         type: "string",
         description:
           "CLI argv after the binary (example: `uo-query --project <operator-abs> s1Inner`). " +
-          "Do not prefix with acp. Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run). Allowed: uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn.",
+          "Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run). Allowed: uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn, retry-after-environment-fix.",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
@@ -1725,7 +1724,7 @@ function createPilotCliTool(): {
       if (isAcpHelpCommand(full) || raw === "-h" || raw === "--help" || raw === "help") {
         return {
           title: "pilot_cli help",
-          output: ACP_HELP_USAGE_CARD,
+          output: PILOT_CLI_HELP_USAGE_CARD,
           metadata: { ok: false, error: "help_usage_card" },
         }
       }
@@ -1744,8 +1743,7 @@ function createPilotCliTool(): {
           title: `pilot_cli ${argv[0]}`,
           output:
             "[ascendc-pilot] start / run-action 必须用 Host 工具 `pilot_run(workflow, project, architecture)`。\n" +
-            "`pilot_cli` 可做 uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / interpret-user-turn。\n" +
-            "不要 bash `acp start`（OpenCode 默认 120s 会杀掉 uo-init analyze）。",
+            "`pilot_cli` 可做 uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / interpret-user-turn / retry-after-environment-fix。",
           metadata: { ok: false, error: "USE_PILOT_RUN" },
         }
       }
@@ -1756,7 +1754,7 @@ function createPilotCliTool(): {
           output:
             `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询只用四种 \`uo-query\` 形态` +
             "（标识符 / Dim=V / --file --line / 无参数索引）。\n" +
-            "允许：uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn。\n" +
+            "允许：uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn / retry-after-environment-fix。\n" +
             "工作流用 Host `pilot_run`。不要 `uo impact` / `search` / `locate` / `explain-*`。",
           metadata: { ok: false, error: "USE_UO_QUERY" },
         }
@@ -2973,7 +2971,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
               `If the user already replied in chat, call interpret-user-turn with that text — do not re-ask. ` +
-              `Clicking the question UI or acp answer / start --decision also works. ` +
+              `Clicking the question UI also works. ` +
               `Primary may Read / Glob / Get-ChildItem / inspect-failure / status while the prompt is open. ` +
               `Do not Write, Task, or run domain CLI until the pending question is answered or superseded.`,
           )
@@ -3000,7 +2998,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
         }
         if (verdict.decision === "ask") {
           throw new Error(
-            `[ascendc-pilot] bash 仅允许 acp *：${verdict.reason_zh || ""}`.trim(),
+            `[ascendc-pilot] bash 仅允许只读探查；工作流用 pilot_run，短命令用 pilot_cli：${verdict.reason_zh || ""}`.trim(),
           )
         }
       }
@@ -3268,7 +3266,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
                 clearPending(project)
               } else {
                 throw new Error(
-                  `[ascendc-pilot] acp answer failed: ${answered.detail}`.slice(0, 1500),
+                  `[ascendc-pilot] record answer failed: ${answered.detail}`.slice(0, 1500),
                 )
               }
             }

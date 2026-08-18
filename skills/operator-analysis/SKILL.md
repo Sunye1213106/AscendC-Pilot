@@ -18,7 +18,7 @@ build           → 下方「构建」+ references/codemap-build-gotchas.md
 investigate     → capabilities/uo-investigate/METHOD.md
 ```
 
-OpenCode 查询走插件 `pilot_cli`（command=`uo-query --project …`，不要前导 acp、不要 `--mode`）。禁止找 `acp.exe`，禁止名为 `acp` 的工具。
+OpenCode 查询走插件 `pilot_cli`（command=`uo-query --project …`，不要 `--mode`）。
 
 目标：把 AscendC 源码与 architecture 编译成可查询的源码语义图。
 

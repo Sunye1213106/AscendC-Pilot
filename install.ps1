@@ -24,12 +24,12 @@ function Get-OpenCodeHome {
   return (Join-Path $HOME ".config\opencode")
 }
 
-# Keep install and uninstall on the same names (compose slash workflows + operator).
-$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve","operator")
+# Keep install and uninstall on the same names (compose slash workflows).
+$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
 $cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
 $openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
 $currentAgents = @("ascendc-pilot","uo-query","uo-heal-analyst","uo-gap-investigator","ce-reviewer","tg-analyst","ce-applier","ce-analyst")
-$legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies","ce-intent","ce-impact","ce-verify","ce-handoff")
+$legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies","ce-intent","ce-impact","ce-verify","ce-handoff","operator")
 $legacyAgents = @("ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","tg-lemma-producer","tg-closure-referee","deterministic-uo-engine","deterministic-tg-engine","deterministic-ce-engine","ce-change-referee","README")
 $legacyPlugins = @("ascendc-pilot.ts","zz-uo-query-return-value.ts","uo-query-return-value.ts","ascendc-harness.ts","pilot-driver.ts")
 
@@ -349,18 +349,16 @@ function Write-CannHint {
 function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$agents, [string]$plugins) {
   # Remove previous or deterministic-only entries that would otherwise appear
   # as selectable OpenCode/Cursor agents after an upgrade.
-  foreach ($name in @("uo-code-review", "understand-operator", "uo-diff")) {
+  foreach ($name in $legacySkills) {
     $p = Join-Path $skills $name
     if (Test-Path -LiteralPath $p) {
       Remove-ReparseOrItem $p
       Write-Host "Removed legacy skill → $p"
     }
   }
-  foreach ($name in @(
-    "ascendc-agent", "uo-code-reviewer", "deterministic-uo-engine", "deterministic-tg-engine",
-    "uo-semantic-resolve", "uo-gap-resolve", "uo-key-resolve", "uo-confidence-review", "uo-kb-review", "README"
-  )) {
-    $p = Join-Path $agents "$name.md"
+  foreach ($name in $legacyAgents) {
+    $file = if ($name -like "*.md") { $name } else { "$name.md" }
+    $p = Join-Path $agents $file
     if (Test-Path -LiteralPath $p) {
       Remove-ReparseOrItem $p
       Write-Host "Removed legacy agent → $p"
@@ -659,7 +657,11 @@ foreach ($cand in $cannCandidates) {
 
 Write-Host "Installed AscendC-Pilot → $Dest"
 Write-CannHint
-Write-Host "Run: python -m ascendc_pilot doctor --host $Platform"
+if ($Platform -eq "opencode") {
+  Write-Host "Run: python -m ascendc_pilot doctor --host opencode"
+} else {
+  Write-Host "Run: python -m ascendc_pilot doctor"
+}
 Write-Host "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 
 # optional native frontend (best-effort cmake/libclang). Missing source is a bug.

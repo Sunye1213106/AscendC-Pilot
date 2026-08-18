@@ -29,9 +29,9 @@ Use this skill for `/ce-plan`, `/ce-apply`, and `/handoff`.
 ## Non-negotiable rules
 
 1. CE 正式产物只有 markdown：`{slug}_plan.md` 与 `session_handoff.md`。禁止写任何 CE yaml。
-2. 语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。禁止 `acp uo impact`、`explain-*`、`search`、`locate`。
+2. 语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。
 3. `/ce-plan` 不以 PR 为输入。`/ce-review` 无 diff 则停。
-4. `/ce-apply` 不审、不另造测试意图文件。验证去 `/tg-plan`，TG 自己读计划 md 或审查对话。
+4. `/ce-apply` 不审、不查图、不另造测试意图文件。查图是 `/ce-plan` 与 `/ce-review`。验证去 `/tg-plan`，TG 自己读计划 md 或审查对话。
 5. LLM 禁止写 `.uo`。apply 刷图由引擎嵌套 `uo-update`。
 
 ## Capability routing

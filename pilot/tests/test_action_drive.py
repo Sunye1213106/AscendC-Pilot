@@ -143,7 +143,7 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
     assert result["stop_reason"] == "interaction_required"
     assert result["next"]["actor_id"] == "tg-analyst"
     assert result["next"]["execution_kind"] == "subagent"
-    assert result["recommended_command"] == "acp run-action construct_cases"
+    assert result["recommended_command"] == "pilot_run"
     assert called is False
 
 

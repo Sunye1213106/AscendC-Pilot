@@ -4,9 +4,13 @@
 Neither tree ships with this repository, and their location differs per
 checkout. Previously each caller hard-coded one developer's layout, so on any
 other machine the CANN-dependent tests skipped silently and the suite still
-reported green. Resolution now goes explicit argument, then environment, then a
-short list of layouts relative to the repository -- and when nothing matches,
-`explain()` says what was tried so the failure is actionable instead of silent.
+reported green. Resolution now goes explicit argument, then environment, then
+the OpenCode cache file, then a short list of layouts relative to the
+repository -- and when nothing matches, `explain()` says what was tried so the
+failure is actionable instead of silent.
+
+``doctor``, ``scripts/dev/check_cann.py`` and prepare all call
+``require_cann_ready()``; a green check must mean prepare's CANN gate would pass.
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ from pathlib import Path
 SLIM_MARKER = ".slim-verified"
 
 CANN_ENV_VARS = ("UO_CANN_ROOT", "ASCEND_CANN_PACKAGE_PATH", "CANN_ROOT")
+#: Official ``source set_env.sh`` install prefix. Used only when the directory
+#: looks like a toolkit/install tree (``{host}/asc``).
+CANN_HOME_ENV_VARS = ("ASCEND_HOME_PATH",)
+CANN_DISCOVERY_ENV_VARS = CANN_ENV_VARS + CANN_HOME_ENV_VARS
 OPS_ENV_VARS = ("UO_OPS_ROOT", "OPS_ROOT", "OPS_TRANSFORMER_ROOT")
 OP_DIR_ENV_VARS = ("ASCENDC_PROJECT_ROOT", "UO_OP_DIR")
 
@@ -69,6 +77,58 @@ def _env(names: tuple[str, ...]) -> Path | None:
         raw = os.environ.get(name)
         if raw:
             return Path(raw).expanduser()
+    return None
+
+
+def _first_existing_dir(names: tuple[str, ...]) -> Path | None:
+    """First env var that names an existing directory; skip stale missing paths."""
+    for name in names:
+        raw = (os.environ.get(name) or "").strip()
+        if not raw:
+            continue
+        got = Path(raw).expanduser()
+        try:
+            if got.is_dir():
+                return got
+        except OSError:
+            continue
+    return None
+
+
+def opencode_cann_root_cache_path() -> Path:
+    """Same file ``write_opencode_cann_root`` / the OpenCode plugin read.
+
+    Must stay aligned with ``ascendc_pilot.paths.opencode_home() / ascendc-cann-root``.
+    """
+    xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg:
+        return Path(xdg).expanduser() / "opencode" / "ascendc-cann-root"
+    return Path.home() / ".config" / "opencode" / "ascendc-cann-root"
+
+
+def read_cached_cann_root() -> Path | None:
+    cache = opencode_cann_root_cache_path()
+    try:
+        raw = cache.read_text(encoding="utf-8").lstrip("\ufeff").strip()
+    except OSError:
+        return None
+    if not raw:
+        return None
+    got = Path(raw).expanduser()
+    try:
+        return got if got.is_dir() else None
+    except OSError:
+        return None
+
+
+def _usable_cann(path: Path | None) -> Path | None:
+    if path is None:
+        return None
+    try:
+        if path.is_dir() and _looks_like_cann(path):
+            return path
+    except OSError:
+        return None
     return None
 
 
@@ -203,14 +263,20 @@ def _looks_like_ops(path: Path) -> bool:
     return path.is_dir() and (path / "common" / "include").is_dir()
 
 
-def cann_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
-    """The extracted CANN tree, or None when it cannot be located."""
-    if explicit:
-        got = Path(explicit).expanduser()
-        return got if got.is_dir() else None
-    got = _env(CANN_ENV_VARS)
-    if got is not None:
-        return got if got.is_dir() else None
+def _discover_cann_root() -> Path | None:
+    """Env → official home → OpenCode cache → checkout candidates.
+
+    A set-but-missing env path, or a directory that is not a CANN tree, is
+    skipped so a leftover ``UO_CANN_ROOT`` / cache cannot hide ``_cann/pkg``.
+    """
+    for got in (
+        _first_existing_dir(CANN_ENV_VARS),
+        _first_existing_dir(CANN_HOME_ENV_VARS),
+        read_cached_cann_root(),
+    ):
+        usable = _usable_cann(got)
+        if usable is not None:
+            return usable
     for cand in _cann_candidates():
         if not _looks_like_cann(cand):
             continue
@@ -218,6 +284,20 @@ def cann_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
             continue
         return cand
     return None
+
+
+def cann_root(explicit: str | os.PathLike[str] | None = None) -> Path | None:
+    """The extracted or installed CANN tree, or None when it cannot be located.
+
+    Explicit / ``UO_CANN_ROOT`` paths that exist but are not a CANN tree are
+    ignored so prepare can still find the tree doctor already resolved.
+    """
+    text = "" if explicit is None else str(explicit).strip()
+    if text:
+        got = _usable_cann(Path(text).expanduser())
+        if got is not None:
+            return got
+    return _discover_cann_root()
 
 
 def adapt_cann_fs_path(path: str, root: Path | None) -> str:
@@ -339,11 +419,14 @@ def cann_layout_issues(root: Path | None = None) -> list[str]:
     path = root if root is not None else cann_root()
     if path is None:
         repo = repo_root()
+        looked = [str(p) for p in _cann_candidates()]
+        looked.append(f"cache {opencode_cann_root_cache_path()}")
         return [
             "CANN packages not found. Set UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH "
+            "/ ASCEND_HOME_PATH "
             f"or run: python scripts/cann_extract.py <toolkit.run> --dest {repo / '_cann' / 'pkg'}"
             "\nLooked in:\n"
-            + "\n".join(f"  {p}" for p in _cann_candidates())
+            + "\n".join(f"  {p}" for p in looked)
         ]
     if not _looks_like_cann(path):
         return [
@@ -356,7 +439,7 @@ def cann_layout_issues(root: Path | None = None) -> list[str]:
 def require_cann_ready(
     explicit: str | os.PathLike[str] | None = None,
 ) -> tuple[Path | None, list[str]]:
-    """Resolve cann_root and report layout issues (empty issues => ready)."""
+    """Single CANN gate for doctor, check_cann, and prepare (empty issues => ready)."""
     root = cann_root(explicit)
     if root is not None:
         ensure_impl_include_shim(root)
@@ -418,7 +501,12 @@ class Resolution:
 def resolve_all() -> list[Resolution]:
     """Everything this repository needs from outside, for diagnostics."""
     return [
-        Resolution("cann_root", cann_root(), CANN_ENV_VARS, tuple(_cann_candidates())),
+        Resolution(
+            "cann_root",
+            cann_root(),
+            CANN_DISCOVERY_ENV_VARS,
+            tuple(_cann_candidates()) + (opencode_cann_root_cache_path(),),
+        ),
         Resolution("ops_root", ops_root(), OPS_ENV_VARS, tuple(_ops_candidates())),
     ]
 

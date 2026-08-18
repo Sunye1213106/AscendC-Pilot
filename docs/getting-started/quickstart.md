@@ -4,9 +4,9 @@
 
 内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)；各 workflow 阶段图见 [工作流流程图](../architecture/workflows.md)。
 
-> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有），不必让主控手工编排 `acp start` / `auto` / `finalize`。详情见 Runtime 文档。
+> 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有）。详情见 Runtime 文档。
 >
-> Agent 不要用 `acp --help` 发现协议：Windows bash 和权限弹窗都会让会话看起来卡住。工具怎么选、失败怎么查，见 [ACP 工具使用](acp-tools.md)。
+> 工具怎么选、失败怎么查，见 [ACP 工具使用](acp-tools.md)。
 
 ## 1. 打开目标算子
 
@@ -68,7 +68,7 @@ pilot_cli command=`status --project <算子目录>`
 pilot_cli command=`inspect-failure --project <算子目录>`
 ```
 
-外部环境修好后可用 `acp retry-after-environment-fix`。不要在 UO 失败时直接开始 TG。
+外部环境修好后，Agent 用 `pilot_cli retry-after-environment-fix`；人类终端用 `python -m ascendc_pilot retry-after-environment-fix`。不要在 UO 失败时直接开始 TG。
 
 ---
 
@@ -136,7 +136,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 
 对用户可见说明会交代「目标 / 刚完成 / 下一步或请你决定」；不会用内部字段名当作唯一解释。
 
-`/tg-solve` 按已批准 `plan.md` 构造脚本可吃的 cases 表，跑 Host tiling 回放（无 NPU），把每条 case 写进 `worklog.md`，直到文首 `open: []`。详细算法见 [TG](../modules/tg.md)。
+`/tg-solve` 按已批准 `plan.md` 构造脚本可读的 cases 表，跑 Host tiling 回放（无 NPU），把每条 case 写进 `worklog.md`，直到文首 `open: []`。详细算法见 [TG](../modules/tg.md)。无 WSL/CANN 时 `replay_round` 失败停住，不进入 analyze。
 
 义务关闭方式：Host replay 命中，或 derived 公式成立。`Replay reject ≠ E`。
 
@@ -154,7 +154,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 
 问清范围后写出 `ce/plan/{slug}_plan.md`，再 `/ce-apply` 按未完成 todo 改码。验证不在 CE，接着 `/tg-plan`。
 
-已有 PR 或工作区 diff：
+已有 PR 或工作区 diff（须在对应算子仓、该 arch 已有 `.uo`；贴 GitCode PR URL 会走 `/ce-review`；HTTPS 回退需 `GITCODE_TOKEN` / `GITHUB_TOKEN`）：
 
 ```text
 /ce-review --project <算子目录>
@@ -183,11 +183,11 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 | `/ce-apply` | 按当前计划未完成 todo 改码（需已有 `.uo`） |
 | `/ce-review` | 已有 diff / PR：只读双轴审查，不落盘 |
 | `/handoff` | 会话交接：写 `session_handoff.md` |
-| `acp doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
+| `python -m ascendc_pilot doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
 | `pilot_cli`：`inspect` / `ro-search` / `next` / `inspect-failure` / `status` | 证据窗、只读搜索、下一步、失败卡 |
 | `pilot_cli`：`scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
 | `pilot_run`（OpenCode 工具） | Host Session Driver：启动并驱动 workflow |
-| 插件 `pilot_cli`（OpenCode 工具） | 查询与诊断；`command` 不要带前导 `acp`，不要 `--help`，不要 `start`/`run-action auto`。用法见 [ACP 工具使用](acp-tools.md) |
+| 插件 `pilot_cli`（OpenCode 工具） | 查询与诊断；`command` 不要 `--help`，不要 `start`/`run-action auto`。用法见 [ACP 工具使用](acp-tools.md) |
 
 正常使用时优先向 `AscendC-Pilot` 描述目标，或使用带参数的 Slash Command。
 

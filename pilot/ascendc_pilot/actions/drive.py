@@ -236,7 +236,7 @@ def drive_until_interaction(
                         "phase": phase,
                         "status": status,
                         "next": descriptor,
-                        "recommended_command": f"acp run-action {action_id}",
+                        "recommended_command": "pilot_run",
                         "executed": executed,
                         "message_zh": (
                             f"确定性步骤已自动执行到交互边界；下一步 `{action_id}` "

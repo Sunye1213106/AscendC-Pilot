@@ -6,7 +6,7 @@
 
 ## Tools
 
-- 插件 `pilot_cli` `uo-query`：先查已导出的 UO 图（command 不要前导 acp）
+- 插件 `pilot_cli` `uo-query`：先查已导出的 UO 图（command ）
 - `readonly-source-search` / 有界 `Read`：图不足时取证据窗
 - 宏、模板、注册和构建条件：在已确认范围内做确定性源码闭包
 

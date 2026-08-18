@@ -186,8 +186,8 @@ def _resume_summary_without_arch_tree(root: Path, workflow_id: str) -> dict[str,
         },
         "decision_values": {o["label"]: o["value"] for o in ask_opts},
         "commands": {
-            "continue": f"acp start {workflow_id} --project . --decision continue",
-            "reinit": f"acp start {workflow_id} --project . --decision reinit",
+            "continue": f"pilot_run workflow={workflow_id} decision=continue",
+            "reinit": f"pilot_run workflow={workflow_id} decision=reinit",
         },
     }
 
@@ -611,7 +611,7 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
         "message_zh": (
             (
                 f"已清理残缺步骤 {', '.join(dirty)}（删除 {len(removed)} 项产物），"
-                f"回退到最近完整状态；下一步：{resume_next or 'acp next'}"
+                f"回退到最近完整状态；下一步：{resume_next or 'pilot_run'}"
             )
             if dirty
             else "无残缺产物，可直接从最近完整状态继续"
@@ -860,7 +860,7 @@ def build_run_resume_summary(
         lines.append(
             "失败 gates: " + ", ".join(f"{g.get('id')}({g.get('message') or ''})" for g in failed_gates)
         )
-    lines.append(f"继续时下一步: {next_hint or 'acp next'}")
+    lines.append(f"继续时下一步: {next_hint or 'pilot_run'}")
 
     cross = _cross_workflow_conflict(state, workflow_id, project_root=root)
     same_workflow_running = (
@@ -953,8 +953,8 @@ def build_run_resume_summary(
         },
         "decision_values": {o["label"]: o["value"] for o in ask_opts},
         "commands": {
-            "continue": f"acp start {workflow_id} --project . --decision continue",
-            "reinit": f"acp start {workflow_id} --project . --decision reinit",
+            "continue": f"pilot_run workflow={workflow_id} decision=continue",
+            "reinit": f"pilot_run workflow={workflow_id} decision=reinit",
         },
     }
 
@@ -998,7 +998,7 @@ def architecture_decision_payload(
         for arch in arches
     ]
     commands = {
-        arch: f"acp start {workflow_id} --project . --architecture {arch}"
+        arch: f"pilot_run workflow={workflow_id} architecture={arch}"
         for arch in arches
     }
     return {
@@ -1008,7 +1008,7 @@ def architecture_decision_payload(
         "message_zh": (
             f"算子存在多个架构目录（{', '.join(arches)}），且未指定 --architecture。"
             "必须用 OpenCode `question`（AskQuestion）弹出可点选框，等人选择后执行对应 "
-            "`acp start … --architecture <arch>`。禁止静默默认 arch35。"
+            "`pilot_run` 并带 `--architecture <arch>`。禁止静默默认 arch35。"
         ),
         "ask_question": {
             "header": "选择目标架构",
@@ -1232,7 +1232,7 @@ def apply_resume_decision(
             "skipped_reinit": True,
             "already_ready": True,
             "message_zh": (
-                "CodeMap 已就绪，产物锁已释放。不要重建，也不要 acp start / pilot_run uo-query。"
+                "CodeMap 已就绪，产物锁已释放。不要重建，也不要 `pilot_run workflow=uo-query`。"
                 "等人提问后由主控路由查询。"
             ),
             "run_summary": summary,
@@ -1295,7 +1295,7 @@ def apply_resume_decision(
                 "message_zh": (
                     f"已复用 run {state.get('run_id')}；"
                     f"{scrub.get('message_zh') or '从最近完整状态之后继续'}"
-                    f"（下一步建议：{next_action or 'acp next'}）"
+                    f"（下一步建议：{next_action or 'pilot_run'}）"
                 ),
             },
             root,

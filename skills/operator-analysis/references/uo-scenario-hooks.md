@@ -2,7 +2,7 @@
 
 **When to load**：给 CE / TG 从 CodeMap 找结构事实时。查询面只有 `pilot_cli uo-query` 四种形态。场景 id 若出现在计划「测试内容」里，TG 自己对照 `scenario-catalog.md` 总结；CE 不写场景 yaml。
 
-禁止 `--mode`、`acp uo impact`、`explain-*`、`search`、`locate`。
+不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。
 
 UO 只定位结构。不判断 golden、happens-before、profiler。
 

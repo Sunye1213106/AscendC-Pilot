@@ -709,7 +709,7 @@ def primary_interactive_steps(
     steps.extend(
         [
             f"Host must surface AskQuestion ({option_hint}) from ask_question.options verbatim.",
-            f"Host records answer: acp answer --request-id {rid} --value <选中> --project {root.as_posix()}",
+            f"Host records the click via the question UI (or `pilot_cli` interpret-user-turn if the user typed in chat). request_id={rid} project={root.as_posix()}",
             f"Only after HumanDecisionReceipt for `{kind_label}`, Host `pilot_run` finalizes `{action_id}`.",
             "For `rework` or `stop`, do not finalize. Primary must not Write canonical confirmation YAML.",
         ]

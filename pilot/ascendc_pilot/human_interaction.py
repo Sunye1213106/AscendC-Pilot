@@ -192,9 +192,8 @@ def attach_interaction_request(
     payload["human_interaction_request"] = env
     payload["primary_instruction_zh"] = (
         str(payload.get("primary_instruction_zh") or "")
-        + " Host 弹出 question UI；点选后调用 "
-        f"`acp answer --request-id {env['request_id']} --value <选中> --project …`。"
-        " 若用户打断确认框并在对话里回复：用 `acp interpret-user-turn --text <本轮原文>`，"
+        + " Host 弹出 question UI；点选即写入收据。"
+        " 若用户打断确认框并在对话里回复：用 `pilot_cli` `interpret-user-turn --text <本轮原文>`，"
         "能对应原选项则记为答复，否则取消上一问并跟新消息。不要重问上一题。"
         "未点选不等于批准删除/重开。无收据不得 finalize / resume / 破坏性 reinit。"
     ).strip()
@@ -305,7 +304,7 @@ def require_decision_receipt(
             "error": "HUMAN_DECISION_RECEIPT_REQUIRED",
             "message_zh": (
                 "缺少 HumanDecisionReceipt。Host 必须先弹出 question UI，"
-                "再用 `acp answer` 写入签名收据后才能继续。"
+                "点选写入签名收据后才能继续。"
             ),
         }
     path = decisions_dir(project_root) / f"{request_id}.yaml"
@@ -315,7 +314,7 @@ def require_decision_receipt(
             "ok": False,
             "error": "HUMAN_DECISION_RECEIPT_REQUIRED",
             "request_id": request_id,
-            "message_zh": "pending interaction 尚未通过 acp answer 产生收据",
+            "message_zh": "pending interaction 尚未通过 question UI 产生收据",
         }
     if not _verify(project_root, receipt):
         return {

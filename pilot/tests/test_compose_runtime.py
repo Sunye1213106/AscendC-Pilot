@@ -183,6 +183,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "read: allow" in uo_query_agent
         assert "uo-query: allow" in pilot_agent
         assert "ce-reviewer: allow" in pilot_agent
+        assert "name: AscendC-Pilot" in pilot_agent
         assert "task: allow" not in pilot_agent
         fm = pilot_agent.split("---")[1]
         assert "pilot_run: allow" in fm
@@ -212,7 +213,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         if _yaml is not None:
             perm = _yaml.safe_load(fm)["permission"]
             assert perm.get("pilot_cli") == "allow"
-            assert perm.get("acp") == "deny"
+            assert "acp" not in perm
         assert "skill: false" in uo_query_agent
         assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" not in uo_query_agent

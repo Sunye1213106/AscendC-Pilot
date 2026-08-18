@@ -143,7 +143,7 @@ def check_uo(reporter: Reporter) -> None:
         cann is not None,
         str(cann) if cann else (
             "not found; extract to <repo>/_cann/pkg or set UO_CANN_ROOT / "
-            "ASCEND_CANN_PACKAGE_PATH / CANN_ROOT"
+            "ASCEND_CANN_PACKAGE_PATH / CANN_ROOT / ASCEND_HOME_PATH"
         ),
         required=False,
     )

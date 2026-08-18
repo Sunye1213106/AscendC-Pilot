@@ -155,7 +155,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "（标识符 / Dim=V / --file --line / 无参数索引），禁止单独一轮只宣布路数；"
             "复杂查询必须同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
             "Task 正文不要写 `--mode`。禁止把复杂查询改成主控自行连续查询。"
-            "**禁止** `pilot_run` / `acp start uo-query`。"
+            "**禁止** `pilot_run workflow=uo-query`。"
             "禁止仅为问题分类而委派子代理。子代 PARTIAL / 未闭合 / 互相矛盾且图上还能查时再开一轮 Task（FOCUS=缺口），"
             "禁止用无实质内容的确认（例如「要不要继续」）代替第 2 轮。多路已有结论但结案仍不清时 AskQuestion 给出选项（带推荐答案），请用户选择探查路径或 PARTIAL 停止。"
         ),
@@ -221,16 +221,9 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "tg-solve": {
         "command_description": 'Construct cases, Host-replay, write worklog until Open is empty',
         "description": (
-            "求解并生成用例：构造脚本可吃的 cases 表，Host tiling 回放（无 NPU），"
+            "求解并生成用例：构造脚本可读的 cases 表，Host tiling 回放（无 NPU），"
             "按 case 写 worklog 四段，直到 open 为空。harness_intent 未落地禁止开始。"
             "TG 永不改算子仓。向用户报告求解进度。"
-        ),
-    },
-    "operator": {
-        "command_description": 'AscendC-Pilot operator skill entry',
-        "description": (
-            "可选助手：列出可用 Pilot workflow entry，或把 /uo-init 等 slash 转给 acp route。"
-            "自然语言意图请直接加载对应 entry，不要依赖本入口做意图分类。"
         ),
     },
 }
@@ -533,11 +526,10 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
         lines.append("")
     if wid == "uo-query":
         run_via = (
-            "Not a Host workflow. Tell the user the query plan first "
-            "(direct `pilot_cli` `uo-query` vs delegated Tasks), then execute. "
+            "Not a Host workflow. Do not spend a turn only announcing the route. "
             "Simple: primary calls `pilot_cli` `uo-query`. Complex: N native Tasks agent=`uo-query` same turn — "
             "never demote a complex query to primary Read. Never `--mode` in a Task stub. "
-            "Never `pilot_run` / `acp start` for uo-query. Do not spawn a routing-only subagent. "
+            "Never `pilot_run` for uo-query. Do not spawn a routing-only subagent. "
             "If any child is PARTIAL / 未闭合 / contradicts another, launch another Task round "
             "(FOCUS=the gap) before closing; do not replace round 2 with a content-free confirmation. "
             "After children have conclusions but the remaining choice is which gap to explore, "
@@ -545,8 +537,7 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
         )
     else:
         run_via = (
-            "Run via Host tool `pilot_run` (workflow + project + architecture). "
-            "Do not bash `acp start` / `acp next`."
+            "Run via Host tool `pilot_run` (workflow + project + architecture)."
         )
     lines.extend(
         [
@@ -636,8 +627,6 @@ def check_skill_action_markers(repo: Path) -> list[str]:
         expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
         if not expected:
             errors.append(f"SKILL_ACTION_SET_DRIFT {wid}: Spec has no actions")
-    if "operator" not in WORKFLOW_ENTRIES:
-        errors.append("SKILL_ENTRY_MISSING operator: add WORKFLOW_ENTRIES description")
     return errors
 
 
@@ -787,9 +776,6 @@ def validate(repo: Path) -> list[str]:
             # Primary must not be declared as subagent execution.
             if action.get("execution_mode") == "subagent" and agent_id == "ascendc-pilot":
                 errors.append(f"{wid}/{aid}: primary agent cannot use subagent execution_mode")
-
-    if "operator" not in WORKFLOW_ENTRIES:
-        errors.append("missing WORKFLOW_ENTRIES for operator")
 
     return errors
 
@@ -1018,8 +1004,7 @@ def _opencode_bash_permission(
     """OpenCode frontmatter bash rules (last match wins: deny-all first, then allows).
 
     Do **not** allowlist the harness binary, PATH discovery, or ``*.exe`` probes. Workflows
-    use Host ``pilot_run``; short CLI uses plugin ``pilot_cli``. Bash ``acp start``
-    is the ses_fefd 120s timeout trap.
+    use Host ``pilot_run``; short CLI uses plugin ``pilot_cli``.
     ``uo-query`` omits repo-wide search so agents must use ``pilot_cli``.
     """
     perm = {
@@ -1187,7 +1172,9 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     desc = _project_primary_description(
         repo, str(agent_meta.get("description") or aid), host=host
     )
-    display_name = str(agent_meta.get("name_zh") or aid).strip() or aid
+    display_name = aid
+    if host == "opencode":
+        display_name = str(agent_meta.get("name_zh") or aid).strip() or aid
     front: dict[str, Any] = {
         "name": display_name,
         "description": desc,
@@ -1393,7 +1380,6 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         for wid, m in WORKFLOWS.items()
         if m.get("slash") and not m.get("reserved") and not m.get("alias_of")
     ]
-    workflow_ids.append("operator")
     for wid in workflow_ids:
         entry = WORKFLOW_ENTRIES.get(wid) or {}
         desc = str(entry.get("description") or "").strip() or wid
@@ -1408,12 +1394,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             meta.pop("disable-model-invocation", None)
             meta.pop("disable_model_invocation", None)
         wf_meta = WORKFLOWS.get(wid) or {}
-        if wid == "operator":
-            body = _entry_skill_shell(wid, skill_id="", host=host)
-            hc = _read_policy(repo, "pilot-control")
-            body = body.rstrip() + "\n\n## Composed: pilot-control\n\n" + hc + "\n"
-        else:
-            body = _compose_skill_body(repo, wid, wf_meta, host=host)
+        body = _compose_skill_body(repo, wid, wf_meta, host=host)
         dest = out_skills / wid
         dest.mkdir(parents=True, exist_ok=True)
         skill_out = dest / "SKILL.md"
@@ -1422,7 +1403,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         if not out_text.startswith("---\n"):
             raise ValueError(f"composed skill must start with ---: {skill_out}")
         skill_out.write_text(out_text, encoding="utf-8")
-        expected_n = len(wf_meta.get("actions") or []) if wid != "operator" else None
+        expected_n = len(wf_meta.get("actions") or [])
         _assert_generated_skill(skill_out, expected_actions=expected_n)
         # Emit Spec-derived Action Bundle sidecars (identity only).
         for a in wf_meta.get("actions") or []:
@@ -1692,7 +1673,7 @@ def check_generated_drift(repo: Path, *, hosts: list[str] | None = None) -> list
     if src_errors:
         return [f"GENERATED_DRIFT: compose sources invalid: {e}" for e in src_errors[:8]]
 
-    with tempfile.TemporaryDirectory(prefix="acp-gen-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="pilot-gen-") as tmp:
         tmp_path = Path(tmp)
         for host in host_list:
             candidate_root = tmp_path / host

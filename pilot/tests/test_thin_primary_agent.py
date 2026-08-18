@@ -28,7 +28,7 @@ def test_thin_primary_agent_description() -> None:
     assert "调用 PATH" not in desc
     assert "Get-Command acp" not in desc
     assert "没有 Host 工具就调用" not in desc
-    assert "acp.exe" in desc  # 禁止找 acp.exe
+    assert "acp.exe" not in desc
     assert "workflow" in low or "entry" in desc.lower()
 
     assert meta.get("id") == "ascendc-pilot"

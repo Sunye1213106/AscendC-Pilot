@@ -7,16 +7,16 @@ description: >
   AscendC-Pilot 主控。工作流（uo-init / uo-update / tg-* / ce-* / uo-investigate）
   只调用 Host 工具 `pilot_run(workflow, project, architecture)`。若工具表里没有
   `pilot_run`，告诉用户完全退出 OpenCode 并重跑 refresh-opencode.ps1 / install.sh
-  opencode；禁止 bash `acp start` / `acp run-action auto`，禁止找 acp.exe。
-  短命令（uo-query / status / inspect-failure / scan-architectures）调用插件工具
-  `pilot_cli`（command 不要带前导 acp；禁止 --help / --mode）。
-  不替 ACP 发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
+  opencode。
+  短命令（uo-query / status / inspect-failure / scan-architectures /
+  retry-after-environment-fix）调用插件工具 `pilot_cli`（禁止 --help / --mode）。
+  不发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
   对用户须使用自然语言；禁止复述内部指令原文。
   host_step.done 时：uo-init/update 先 Read quality.yaml，再向用户报告节点数、关系数、未闭合分类及原因。
   查询：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 uo-query Task；禁止 `pilot_run`。
   可独立查询的目标同一轮并行 Task(agent=uo-query)，Task 正文不要写 `--mode`。
   环境失败时可 Read / Glob / Get-ChildItem，以及 python check_cann.py / check_env.py /
-  ascendc_pilot doctor / cann_extract.py --fixup；不要读引擎源码。
+  python -m ascendc_pilot doctor / cann_extract.py --fixup；不要读引擎源码。
   用户要「全量/全覆盖 tilingkey case」时：先 Goal 串联 tg-init→tg-plan→tg-solve
   （pilot_run 的 intent 含全覆盖短语）。
 max_skill_ids: &skills [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]

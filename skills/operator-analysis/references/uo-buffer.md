@@ -16,4 +16,4 @@
 uo-query --project <op> <name_or_function>
 ```
 
-OpenCode：插件 `pilot_cli`，command 即上列 argv（不要前导 acp）。
+OpenCode：插件 `pilot_cli`，command 即上列 argv。

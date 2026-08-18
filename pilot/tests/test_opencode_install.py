@@ -7,10 +7,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_doctor_treats_missing_cann_as_warning() -> None:
+def test_doctor_treats_missing_cann_as_issue() -> None:
     text = (ROOT / "pilot" / "ascendc_pilot" / "cli.py").read_text(encoding="utf-8")
-    assert 'warnings.append(f"cann: {item}")' in text
-    assert 'issues.append(f"cann: {item}")' not in text
+    assert 'issues.append(f"cann: {item}")' in text
+    assert 'warnings.append(f"cann: {item}")' not in text
+    assert "require_cann_ready" in text
 
 
 def test_opencode_home_respects_xdg(tmp_path, monkeypatch) -> None:
@@ -94,8 +95,9 @@ def test_plugin_resolve_acp_uses_opencode_home() -> None:
     assert "replace(/^\\uFEFF/" in plugin or "\\uFEFF" in plugin
 
 
-def test_doctor_cann_warning_mentions_fixup_and_repo_pkg() -> None:
+def test_doctor_cann_issue_mentions_repo_pkg_and_home() -> None:
     text = (ROOT / "pilot" / "ascendc_pilot" / "cli.py").read_text(encoding="utf-8")
-    assert "--fixup" in text
     assert "_cann" in text
-    assert "SetEnvironmentVariable" in text
+    assert "ASCEND_HOME_PATH" in text
+    assert "require_cann_ready" in text
+    assert "opencode_cann_root_cache_path" in text

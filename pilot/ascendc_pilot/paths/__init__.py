@@ -54,9 +54,13 @@ def opencode_plugin_root() -> Path:
 def write_opencode_cann_root(root: str | os.PathLike[str] | Path) -> Path:
     """Persist extracted CANN root so OpenCode GUI spawn can find headers."""
     path = Path(root).expanduser().resolve()
-    home = opencode_home()
-    home.mkdir(parents=True, exist_ok=True)
-    cache = home / "ascendc-cann-root"
+    try:
+        from uo_init.paths import opencode_cann_root_cache_path
+
+        cache = opencode_cann_root_cache_path()
+    except Exception:  # noqa: BLE001
+        cache = opencode_home() / "ascendc-cann-root"
+    cache.parent.mkdir(parents=True, exist_ok=True)
     cache.write_text(str(path) + "\n", encoding="utf-8")
     return cache
 

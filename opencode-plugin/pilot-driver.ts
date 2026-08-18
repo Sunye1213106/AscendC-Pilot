@@ -689,11 +689,11 @@ function runAcpJson(
       const minutes = Math.round(timeoutMs / 60_000)
       const messageZh =
         `工作流仍可能在跑，但 Host 已等待 ${minutes} 分钟并停止等待（ACP_TIMEOUT）。` +
-        `请用 pilot_cli inspect-failure / status 查看，不要立刻再 bash acp start / run-action auto。`
+        `请用 pilot_cli inspect-failure / status 查看，不要立刻再 pilot_run。`
       finish({
         ok: false,
         error: "ACP_TIMEOUT",
-        message: `acp ${argv[0] || ""} timed out after ${timeoutMs}ms`,
+        message: `pilot_run ${argv[0] || ""} timed out after ${timeoutMs}ms`,
         message_zh: messageZh,
         host_step: { kind: "failed", message_zh: messageZh },
         stdout: stdout.slice(0, 400),
@@ -1226,7 +1226,7 @@ async function handleAskHumanStep(args: {
       architecture_choice: archChoice,
       action_id: String(step.action_id || ""),
       log,
-      message_zh: "Host Driver 已收集答复并写入 acp answer。",
+      message_zh: "Host Driver 已收集答复并写入收据。",
       todo,
     }
   }
@@ -1300,7 +1300,7 @@ async function dispatchSubagentOnce(args: {
 
   const child = await client.session.create({
     body: {
-      title: `acp:${workflow}:${step.action_id}:${actor}`,
+      title: `pilot:${workflow}:${step.action_id}:${actor}`,
       agent: actor,
       location: { directory: project },
     },
@@ -1513,7 +1513,7 @@ export async function runPilotDriver(
       const messageZh =
         "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
         "直接 `pilot_cli` `uo-query` 或同一轮 Task(agent=`uo-query`)。禁止单独一轮只宣布路数。" +
-        "不要 pilot_run / acp start uo-query。"
+        "不要 `pilot_run workflow=uo-query`。"
       return {
         ok: true,
         reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
@@ -1543,7 +1543,7 @@ export async function runPilotDriver(
         step: {
           kind: "ask_human",
           ask_question: ask,
-          message_zh: String(payload.message_zh || payload.error || "acp start needs human"),
+          message_zh: String(payload.message_zh || payload.error || "start needs human"),
         },
         ask,
         log: logAcc,
@@ -1556,7 +1556,7 @@ export async function runPilotDriver(
         const messageZh =
           "上一场建库已经完成，产物锁已释放。新会话直接查询即可，不是卡住。" +
           "直接 `pilot_cli` `uo-query` 或同一轮 Task(agent=`uo-query`)。禁止单独一轮只宣布路数。" +
-          "不要 pilot_run / acp start uo-query。"
+          "不要 `pilot_run workflow=uo-query`。"
         return {
           ok: true,
           reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
@@ -1636,7 +1636,7 @@ export async function runPilotDriver(
   if (!isAcpStartSuccess(started)) {
     reporter?.setStatus("fail")
     const failMsg = String(
-      started.message_zh || started.message || started.error || "acp start failed",
+      started.message_zh || started.message || started.error || "start failed",
     )
     return {
       ok: false,
@@ -1909,7 +1909,6 @@ export function createPilotRunTool(
     pilot_run: {
       description:
         "Run an AscendC-Pilot workflow via Host Session Driver (start→auto). " +
-        "Prefer this over manually chaining acp start / run-action. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
         "(agent=actor_id, prompt=task_prompt_stub verbatim) so the user can jump into the child and see thinking. " +
         "If host_step.tasks has two or more entries, launch ALL of them in the same turn " +

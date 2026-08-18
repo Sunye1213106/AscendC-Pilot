@@ -87,7 +87,7 @@ plugins_dest() {
 WORKFLOW_SKILLS=(
   uo-init uo-update uo-query uo-investigate
   ce-review ce-plan ce-apply handoff
-  tg-init tg-plan tg-solve operator
+  tg-init tg-plan tg-solve
 )
 COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
 OPENCODE_COMMANDS=(
@@ -99,7 +99,7 @@ CURRENT_AGENTS=(
   ascendc-pilot uo-query uo-heal-analyst uo-gap-investigator ce-reviewer tg-analyst
   ce-applier ce-analyst
 )
-LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies ce-intent ce-impact ce-verify ce-handoff)
+LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies ce-intent ce-impact ce-verify ce-handoff operator)
 LEGACY_AGENTS=(
   ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve
   uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer

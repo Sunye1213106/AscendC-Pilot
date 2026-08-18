@@ -2,7 +2,7 @@
 name: testcase-generation
 description: >
   AscendC 测试生成：一份 init.yaml 绑定脚本列与 CodeMap，一份 plan.md
-  把意图融成可 root 到列的义务，solve 写出脚本可吃的 cases 表与 worklog.md。
+  把意图融成可 root 到列的义务，solve 写出脚本可读的 cases 表与 worklog.md。
   指标只有 Host replay（无 NPU）和 derived 公式。Replay reject ≠ E。
 ---
 

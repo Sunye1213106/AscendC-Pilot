@@ -14,7 +14,7 @@ cases:
     forbid_skill: ce-review
 
   - id: apply_confirmed_intent
-    query: 已确认意图按 plan.md 与 todo.md 一次一个切片改算子源码，自动双轴审查，不签发证书
+    query: 已确认意图按 {slug}_plan.md 一次一个 todo 改算子源码，不内嵌双轴审查
     expect_skill: code-engineering
     forbid_skill: ce-review
 

@@ -5,7 +5,7 @@ AscendC-Pilot 是面向 **AscendC 算子开发的 AI Agent Harness 与代码知�
 它通过 Clang 和 CANN 编译环境分析 AscendC 源码，构建 **Operator CodeMap**，并在此基础上支持测试覆盖、代码审查和影响分析。
 
 * **UO**：构建和查询 Operator CodeMap
-* **TG**：把 CodeMap 变成 `init.yaml` / `plan.md` / `worklog.md` 与脚本可吃的 cases 表
+* **TG**：把 CodeMap 变成 `init.yaml` / `plan.md` / `worklog.md` 与脚本可读的 cases 表
 * **CE**：基于跨层关系做代码审查与影响分析
 
 ```text

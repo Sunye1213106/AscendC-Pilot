@@ -1025,7 +1025,7 @@ def _authorize_impl(
         return _ok(
             "deny",
             "USE_PILOT_RUN",
-            "uo-init/start/auto 必须用 Host 工具 pilot_run，禁止 bash acp start / run-action auto",
+            "uo-init/start/auto 必须用 Host 工具 pilot_run，不要 bash start / run-action auto",
             status=status or None,
             command=cmd[:200],
         )
@@ -1114,14 +1114,14 @@ def _authorize_impl(
                 return _ok(
                     "allow",
                     "CONTAINMENT_HARNESS",
-                    f"失败收敛模式（status={status}）仅允许恢复类 acp 命令",
+                    f"失败收敛模式（status={status}）仅允许恢复类短命令",
                     status=status,
                     command=cmd[:200],
                     allowed_actions=allowed_cmds[:8],
                 )
             if _is_acp_cli(cmd):
                 return _deny_not_authorized(
-                    f"Current run is {status}; acp domain steps are revoked",
+                    f"Current run is {status}; domain steps are revoked",
                     status=status,
                     command=cmd[:200],
                     allowed_actions=allowed_cmds[:8],
@@ -1254,7 +1254,7 @@ def _authorize_impl(
                 )
             if _is_acp_cli(cmd):
                 return _deny_not_authorized(
-                    "rework_required: only retry of failed action / recovery acp commands allowed",
+                    "rework_required: only retry of failed action / recovery commands allowed",
                     status=status,
                     command=cmd[:200],
                     allowed_actions=[
@@ -1292,7 +1292,7 @@ def _authorize_impl(
                 return _ok(
                     "ask",
                     "BASH_NOT_HARNESS",
-                    "返工模式默认仅允许 acp * 与只读探查；其他 bash 需人工确认",
+                    "返工模式默认仅允许只读探查；其他 bash 需人工确认",
                     command=cmd[:200],
                 )
             return _ok(
@@ -1341,7 +1341,7 @@ def _authorize_impl(
             return _ok(
                 "deny",
                 "ACP_PIPE_BUFFER",
-                "禁止把 acp 管道给 Select-Object / Out-String / tail；直接跑 acp，不要缓冲 stdout",
+                "禁止把 CLI 管道给 Select-Object / Out-String / tail；不要缓冲 stdout",
                 error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                 command=(cmd_raw or cmd)[:200],
             )
@@ -1365,7 +1365,7 @@ def _authorize_impl(
                 return _ok(
                     "allow",
                     "HARNESS_CLI",
-                    "允许 acp CLI",
+                    "允许 Pilot CLI",
                     workflow_id=ctx.get("workflow_id"),
                     phase=ctx.get("phase"),
                 )
@@ -1376,7 +1376,7 @@ def _authorize_impl(
             return _ok(
                 "deny",
                 "BASH_PROTECTED_WRITE",
-                "禁止用 bash 写入 .ascendc-pilot 正式产物以绕过 Write 围栏；请由声明 actor 用 Write 或 acp run-action",
+                "禁止用 bash 写入 .ascendc-pilot 正式产物以绕过 Write 围栏；请由声明 actor 用 Write 或 Host `pilot_run`",
                 error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                 command=cmd[:200],
             )
@@ -1385,7 +1385,7 @@ def _authorize_impl(
                 return _ok(
                     "deny",
                     "DOMAIN_CLI_BYPASS",
-                    "禁止直调领域脚本/CLI；请经 acp run-action 执行",
+                    "禁止直调领域脚本/CLI；请用 Host 工具 `pilot_run`",
                     error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     command=cmd[:200],
                 )
@@ -1413,13 +1413,13 @@ def _authorize_impl(
             return _ok(
                 "ask",
                 "BASH_NOT_HARNESS",
-                "AscendC-Pilot 默认仅允许 acp * 与只读探查（ls/Get-ChildItem/…）；其他 bash 需人工确认",
+                "AscendC-Pilot 默认仅允许只读探查（ls/Get-ChildItem/…）；其他 bash 需人工确认",
                 command=cmd[:200],
             )
         return _ok(
             "ask",
             "NON_PRIMARY_BASH",
-            "非 primary 代理 bash 需确认；领域执行请用 acp run-action",
+            "非 primary 代理 bash 需确认；领域执行请用 Host `pilot_run`",
             command=cmd[:200],
         )
 
@@ -1450,7 +1450,7 @@ def _authorize_impl(
                 return _ok(
                     "deny",
                     "ENGINE_SOURCE_DENIED",
-                    "禁止读取领域引擎脚本以手工绕过 acp；请使用 acp 包装命令",
+                    "禁止读取领域引擎脚本以手工绕过控制面；请用 Host 工具 `pilot_run`",
                     error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     path=path_s,
                 )
@@ -1668,7 +1668,7 @@ def _authorize_impl(
 
         if _is_formal_artifact(norm) and auth_mode == MODE_CONTAINMENT:
             return _deny_not_authorized(
-                "Writing formal acp artifacts not authorized in failure state",
+                "Writing formal Pilot artifacts not authorized in failure state",
                 status=status,
                 path=path_s,
             )

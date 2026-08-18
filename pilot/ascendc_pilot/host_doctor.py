@@ -215,6 +215,29 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
     harness_bin = home / "ascendc-harness-bin"
     add("harness_bin_cache", harness_bin.is_file(), str(harness_bin))
 
+    expected_cmds = (
+        "uo-init",
+        "uo-update",
+        "uo-query",
+        "uo-investigate",
+        "ce-review",
+        "ce-plan",
+        "ce-apply",
+        "handoff",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+    )
+    cmd_dir = home / "commands"
+    missing_cmds = [n for n in expected_cmds if not (cmd_dir / f"{n}.md").is_file()]
+    add(
+        "opencode_commands",
+        len(missing_cmds) == 0,
+        "ok" if not missing_cmds else "missing: " + ",".join(missing_cmds),
+    )
+    primary_md = home / "agents" / "ascendc-pilot.md"
+    add("opencode_primary_agent", primary_md.is_file(), str(primary_md))
+
     # serve-authorize importable
     try:
         from ascendc_pilot.authorize.serve import handle_request

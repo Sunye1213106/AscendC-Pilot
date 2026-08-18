@@ -464,3 +464,33 @@ def test_cli_start_adopts_unique_arch_from_intent(tmp_path: Path, monkeypatch, c
     assert out.get("architecture") == "arch35"
     assert out.get("architecture_resolved_from") == "intent"
     assert "按 arch35 启动" in str(out.get("message_zh") or "")
+
+
+def test_cli_start_rejects_uo_query(tmp_path: Path, capsys):
+    (tmp_path / "op_host").mkdir()
+    code = main(["start", "uo-query", "--project", str(tmp_path)])
+    assert code == 1
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("ok") is False
+    assert out.get("error") == "UO_QUERY_NOT_HOST_DRIVEN"
+    assert "pilot_cli" in str(out.get("message_zh") or "")
+
+
+def test_cli_inspect_failure_has_top_level_message_zh(tmp_path: Path, capsys):
+    from ascendc_pilot.paths import ensure_agent_layout
+    from ascendc_pilot.state import load_state, save_state, start_workflow
+
+    (tmp_path / "op_host").mkdir()
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "uo-init", architecture="arch35")
+    st = load_state(tmp_path) or {}
+    st["last_failure"] = {
+        "error": "CANN_ENV_NOT_READY",
+        "message_zh": "CANN 环境未就绪，请设置 UO_CANN_ROOT。",
+    }
+    save_state(tmp_path, st)
+    code = main(["inspect-failure", "--project", str(tmp_path)])
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("ok") is True
+    assert "CANN" in str(out.get("message_zh") or "")
