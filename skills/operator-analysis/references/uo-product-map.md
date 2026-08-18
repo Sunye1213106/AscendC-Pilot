@@ -1,6 +1,6 @@
 # UO Product Map（progressive）
 
-短地图：认清权威 → 调用 `pilot_cli` `uo-query` → 查询完成后立即作答。主控先说明将直接调用还是委派。禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
+短地图：认清权威 → 调用 `pilot_cli` `uo-query` → 查询完成后立即作答。简单查询直接调用；复杂查询同一轮委派。禁止 `pilot_run`。怎么查见 `capabilities/uo-query/METHOD.md`。
 
 同一查询目标可沿图继续调用（跟卡片 `next`）。是否并行委派见 `routing/uo-query.md`。
 

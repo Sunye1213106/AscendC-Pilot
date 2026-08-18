@@ -742,7 +742,8 @@ def _cross_workflow_conflict(
         "requested_workflow_id": workflow_id,
         "occupancy_group": req_group or active_group,
         "message_zh": (
-            f"资源事务冲突：{active_wid} 与 {workflow_id} 的读写集合相交；禁止并行。"
+            f"{active_wid} 正在写相交资源，暂时不能并行启动 {workflow_id}。"
+            f"推荐：等 {active_wid} 结束，或换一个不冲突的问题。"
         ),
     }
 
@@ -1382,9 +1383,9 @@ def existing_run_decision_payload(
     else:
         error = "EXISTING_RUN_NEEDS_DECISION"
         message_zh = (
-            f"检测到未完成的 {wf_label} run 或同族写锁冲突。"
-            "请等待 Host 弹出选项；选定后 Host 会继续执行。"
-            "不要自己 bash `acp answer` 或 `acp start`。"
+            f"检测到未完成的 {wf_label}。"
+            "推荐：继续上次。换话题可直接说新问题。"
+            "删除重开必须点选。"
         )
     payload = {
         "ok": False,

@@ -72,13 +72,18 @@ def describe_next(project_root: Path) -> dict[str, Any]:
         options = [row for row in option_catalog if row["value"] in legal]
         if not options:
             options = [row for row in option_catalog if row["value"] in {"inspect_failure", "abort_run"}]
+        error = str(lf.get("error_code") or lf.get("reason_code") or "unknown")
+        detail = str(lf.get("message_zh") or "").strip()
+        if "retry_after_environment_fix" in legal:
+            recommended_zh = "修好环境后重试"
+        else:
+            recommended_zh = "查看失败原因"
         ask = {
             "header": f"{wid or 'workflow'} 需要人工介入",
             "question": (
-                f"当前 workflow `{wid or 'unknown'}` 已进入 human_required，自动执行已停止。\n"
-                f"失败：{lf.get('error_code') or lf.get('reason_code') or 'unknown'}\n"
-                f"{lf.get('message_zh') or ''}\n\n"
-                "请选择下一步："
+                f"{wid or 'workflow'} 已停止：{error}"
+                + (f"。{detail}" if detail else "")
+                + f"\n推荐：{recommended_zh}。换话题可直接说新问题（不重问上一题）。"
             ).strip(),
             "options": options,
         }
@@ -86,11 +91,10 @@ def describe_next(project_root: Path) -> dict[str, Any]:
             "required_actor": "maintainer",
             "legal_actions": legal,
             "message_zh": (
-                "自动执行已停止。必须用 question/AskQuestion 让用户选择："
-                "查看失败 / 终止运行"
-                + (" / 环境修好后重试" if "retry_after_environment_fix" in legal else "")
-                + "。"
-            ),
+                f"{wid or 'workflow'} 已停止：{error}"
+                + (f"。{detail}" if detail else "")
+                + f" 推荐：{recommended_zh}。换话题可直接说新问题。"
+            ).strip(),
             "ask_question": ask,
         }
     elif status == "rework_required":
@@ -133,7 +137,10 @@ def describe_next(project_root: Path) -> dict[str, Any]:
             human_required = {
                 "required_actor": "maintainer",
                 "legal_actions": ["inspect_failure", "abort_run"],
-                "message_zh": f"工作流状态为 {status}，自动执行已停止。",
+                "message_zh": (
+                    f"工作流已{status}。"
+                    "推荐：查看失败原因。换话题可直接说新问题。"
+                ),
             }
 
     recommended = None

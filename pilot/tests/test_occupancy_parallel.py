@@ -206,7 +206,7 @@ def test_ce_apply_can_run_parallel_with_tg_solve_on_snapshot(tmp_path: Path) -> 
 def test_ce_apply_conflicts_with_uo_update(tmp_path: Path) -> None:
     ensure_agent_layout(tmp_path, arch="arch35")
     start_workflow(tmp_path, "uo-update", architecture="arch35")
-    with pytest.raises(RuntimeError, match="资源事务冲突"):
+    with pytest.raises(RuntimeError, match="正在写相交资源"):
         start_workflow(tmp_path, "ce-apply", architecture="arch35")
 
 

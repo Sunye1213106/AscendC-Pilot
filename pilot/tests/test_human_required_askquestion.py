@@ -24,6 +24,10 @@ def test_describe_next_header_uses_workflow_id(tmp_path: Path) -> None:
     assert "uo-init" not in str(ask.get("header") or "")
     values = {o.get("value") for o in (ask.get("options") or []) if isinstance(o, dict)}
     assert "retry_after_environment_fix" in values
+    msg = str(nxt.get("human_required", {}).get("message_zh") or nxt.get("message_zh") or "")
+    assert "推荐" in msg
+    assert "换话题" in msg
+    assert "ORACLE_SUSPECT" in msg or "需要人工介入" in msg
 
 
 def test_auto_drive_surfaces_ask_question_on_human_required(tmp_path: Path) -> None:

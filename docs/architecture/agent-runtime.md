@@ -282,7 +282,7 @@ prepare（物化 method.md / refs + Bundle 读闭合）
   -> dispatch-result / finalize -> Gate -> advance
 ```
 
-查询路由在主控，且**必须对用户可见**。算法正文在 `skills/operator-analysis/routing/uo-query.md`。主控判断复杂度后直接调用 `pilot_cli` `uo-query` 或委派 `Task`。不要 `pilot_run workflow=uo-query`，禁止仅为问题分类而委派子代理。
+查询路由在主控。简单查询直接调用 `pilot_cli` `uo-query`，首屏即答案；复杂查询同一轮委派 `Task`。算法正文在 `skills/operator-analysis/routing/uo-query.md`。不要 `pilot_run workflow=uo-query`，禁止仅为问题分类而委派子代理。
 
 子代理（若派了）最终消息用完整自然语言作答（结论 + file:line + snippet）。OpenCode Task 把全文交回主控；主控综合后向用户陈述。**子代不要 Write `answer.yaml`**，不要自己 finalize。复杂查询由主控综合，不调用 `kb_lookup --finalize`。YAML 不是 primary↔subagent 的传递通道。Domain 正式产物仍禁止 LLM 直写。
 

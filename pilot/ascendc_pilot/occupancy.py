@@ -237,8 +237,8 @@ def live_resource_conflict(
             "occupancy_group": group,
             "active_run_id": other_run,
             "message_zh": (
-                f"资源事务冲突：{other} (run {other_run}) 与 {workflow_id} "
-                "的读写集合相交；禁止并行。"
+                f"{other} 正在写相交资源，暂时不能并行启动 {workflow_id}。"
+                f"推荐：等 {other} 结束，或换一个不冲突的问题。"
             ),
         }
     return None
