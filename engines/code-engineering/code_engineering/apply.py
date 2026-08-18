@@ -1,83 +1,49 @@
 # -*- coding: utf-8 -*-
-"""CE apply gates: confirmed intent + anchors, then diff ⊆ anchor files."""
+"""CE apply gates: current {slug}_plan.md has open todos; diff ⊆ plan files."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-import yaml
+from code_engineering.change.capture import capture
+from code_engineering.plan_md import declared_source_files, resolve_active_plan, unfinished_todos
 
 
-def _load(path: Path) -> dict[str, Any]:
-    if not path.is_file():
-        return {}
-    try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
-        return {}
-    return doc if isinstance(doc, dict) else {}
-
-
-def _scope(project_root: Path | str, architecture: str) -> Path:
-    return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / architecture
-
-
-def apply_gate(project_root: Path | str, *, architecture: str) -> dict[str, Any]:
-    """Fail closed unless intent is confirmed, anchors exist, and plan/todo is present."""
+def apply_gate(
+    project_root: Path | str,
+    *,
+    architecture: str,
+    state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Fail closed unless the active named plan exists and has unfinished todos."""
     arch = str(architecture or "").strip()
     if not arch:
         return {"ok": False, "engine": "apply_gate", "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
-    ce = _scope(project_root, arch) / "ce"
-    confirm = _load(ce / "intent" / "confirmation.yaml")
-    anchors = _load(ce / "intent" / "anchors.yaml")
-    status = str(confirm.get("status") or confirm.get("decision") or "").strip().lower()
-    rows = anchors.get("anchors") if isinstance(anchors.get("anchors"), list) else []
-    plan_path = ce / "intent" / "plan.md"
-    from code_engineering.intent import seed_apply_todo
-
-    seed_apply_todo(project_root, architecture=arch)
-    todo_path = ce / "apply" / "todo.md"
-    has_plan = plan_path.is_file() and bool(plan_path.read_text(encoding="utf-8").strip())
-    has_todo = todo_path.is_file() and bool(todo_path.read_text(encoding="utf-8").strip())
-    ok = status in {"confirmed", "confirm", "ok"} and bool(rows) and (has_plan or has_todo)
-    doc = {
-        "schema": "ce-apply-gate/v1",
-        "ok": ok,
-        "intent_confirmed": status in {"confirmed", "confirm", "ok"},
-        "anchor_count": len(rows),
-        "plan_present": has_plan,
-        "todo_present": has_todo,
-        "reason_code": ""
-        if ok
-        else (
-            "APPLY_PLAN_OR_TODO_MISSING"
-            if not (has_plan or has_todo)
-            else ("ANCHORS_MISSING" if not rows else "INTENT_NOT_CONFIRMED")
-        ),
+    plan = resolve_active_plan(project_root, architecture=arch, state=state)
+    if plan is None:
+        return {
+            "ok": False,
+            "engine": "apply_gate",
+            "reason_code": "APPLY_PLAN_MISSING",
+            "message_zh": "没有当前 {slug}_plan.md。请先 /ce-plan。",
+        }
+    todos = unfinished_todos(plan)
+    if not todos:
+        return {
+            "ok": False,
+            "engine": "apply_gate",
+            "reason_code": "APPLY_TODOS_DONE",
+            "plan": plan.as_posix(),
+            "message_zh": "当前计划没有未完成 todo。请 /ce-plan 改计划，或去 /tg-plan / /ce-review。",
+        }
+    return {
+        "ok": True,
+        "engine": "apply_gate",
+        "plan": plan.as_posix(),
+        "open_todo_count": len(todos),
+        "open_todos": todos[:20],
     }
-    out = ce / "apply" / "gate.yaml"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return {"ok": ok, "engine": "apply_gate", "artifact": out.as_posix(), **doc}
-
-
-def _anchor_files(anchors: dict[str, Any]) -> set[str]:
-    files: set[str] = set()
-    rows = anchors.get("anchors") if isinstance(anchors.get("anchors"), list) else []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        for key in ("file", "path", "relpath"):
-            raw = str(row.get(key) or "").replace("\\", "/").strip()
-            if raw:
-                files.add(raw.lstrip("./"))
-        for span in row.get("spans") or []:
-            if isinstance(span, dict):
-                raw = str(span.get("file") or span.get("path") or "").replace("\\", "/").strip()
-                if raw:
-                    files.add(raw.lstrip("./"))
-    return files
 
 
 def _path_allowed(path: str, allowed: set[str]) -> bool:
@@ -91,27 +57,30 @@ def _path_allowed(path: str, allowed: set[str]) -> bool:
     return False
 
 
-def patch_guard(project_root: Path | str, *, architecture: str) -> dict[str, Any]:
-    """Changed files from capture must sit in the located anchor file set."""
+def patch_guard(
+    project_root: Path | str,
+    *,
+    architecture: str,
+    state: dict[str, Any] | None = None,
+    capture_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Changed files must sit in the file set declared by the active plan markdown."""
     arch = str(architecture or "").strip()
     if not arch:
         return {"ok": False, "engine": "patch_guard", "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
-    ce = _scope(project_root, arch) / "ce"
-    capture = _load(ce / "apply" / "change_capture.yaml") or _load(ce / "impact" / "change_capture.yaml")
-    anchors = _load(ce / "intent" / "anchors.yaml")
-    allowed = _anchor_files(anchors)
-    changed = sorted(str(p).replace("\\", "/").lstrip("./") for p in (capture.get("diff_spans") or {}))
-    extra = [p for p in changed if not _path_allowed(p, allowed)]
-    ok = bool(changed) and bool(allowed) and not extra
-    doc = {
-        "schema": "ce-apply-patch-guard/v1",
+    plan = resolve_active_plan(project_root, architecture=arch, state=state)
+    if plan is None:
+        return {"ok": False, "engine": "patch_guard", "reason_code": "APPLY_PLAN_MISSING"}
+    allowed = declared_source_files(plan)
+    payload = capture_payload or capture(project_root, architecture=arch, output=None)
+    changed = sorted(str(p).replace("\\", "/").lstrip("./") for p in (payload.get("diff_spans") or {}))
+    extra = [p for p in changed if allowed and not _path_allowed(p, allowed)]
+    ok = bool(changed) and (not allowed or not extra)
+    return {
         "ok": ok,
+        "engine": "patch_guard",
         "changed_files": changed,
         "extra_files": extra,
-        "anchor_file_count": len(allowed),
+        "plan_file_count": len(allowed),
         "reason_code": "" if ok else ("PATCH_OUT_OF_ANCHORS" if extra else "PATCH_EMPTY_OR_UNANCHORED"),
     }
-    out = ce / "apply" / "patch_report.yaml"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
-    return {"ok": ok, "engine": "patch_guard", "artifact": out.as_posix(), **doc}

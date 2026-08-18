@@ -85,7 +85,7 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     assert "H0" in method and "H1" in method
     assert "Open = O - V - X" not in method
     assert "Open = O - V - X" not in prompt
-    assert "quick" in method.lower()
+    assert "ce/review" in method.lower() or "不写" in method
     skill_ids = list(load_agent_meta("ce-reviewer", str(REPO)).get("skill_ids") or [])
     assert "code-engineering" in skill_ids
     from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
@@ -121,21 +121,21 @@ def test_method_skill_ids_intersect_profile_and_ceiling() -> None:
     from ascendc_pilot.context.profiles import get_profile
 
     ceiling = ["code-review", "operator-analysis", "code-engineering", "testcase-generation"]
-    fd = get_profile("ce-intent-feature-decompose")
+    draft = get_profile("ce-plan-draft")
     assert method_skill_ids_for_action(
-        {"action_method_id": "code-engineering/ce-feature-decompose"},
+        {"action_method_id": "code-engineering/ce-plan-draft"},
         agent_skill_ids=ceiling,
-        extra_ref_paths=list(fd.references) if fd else [],
+        extra_ref_paths=list(draft.references) if draft else [],
     ) == ["code-engineering"]
-    knobs = get_profile("ce-impact-scenario-knobs")
+    apply_prof = get_profile("ce-apply-patch")
     assert method_skill_ids_for_action(
-        {"action_method_id": "code-engineering/ce-scenario-knobs"},
+        {"action_method_id": "code-engineering/ce-apply"},
         agent_skill_ids=ceiling,
-        extra_ref_paths=list(knobs.references) if knobs else [],
-    ) == ["code-engineering", "testcase-generation"]
+        extra_ref_paths=list(apply_prof.references) if apply_prof else [],
+    ) == ["code-engineering"]
 
 
-def test_verify_review_session_is_obligation_method_not_standalone(tmp_path: Path) -> None:
+def test_deleted_verify_review_method_is_gone() -> None:
     method, prompt = _load_method_and_prompt(
         REPO,
         {
@@ -143,25 +143,19 @@ def test_verify_review_session_is_obligation_method_not_standalone(tmp_path: Pat
             "task_prompt_id": "ce/code-review",
         },
     )
-    assert "VERIFIED" in method
-    assert "excepted_obligations" in method or "不签发" in method
-    assert "三种入口" not in method
-    assert "**quick**" not in method
-    assert "Open = O - V - X" not in method
-    skill_ids = list(load_agent_meta("ce-reviewer", str(REPO)).get("skill_ids") or [])
-    sdir = tmp_path / "ce-verify"
-    mat = materialize_method_bundle(
-        sdir,
-        skill_ids=skill_ids,
-        existing_method=method,
-        project_root=REPO,
-        prompt=prompt,
+    assert method == ""
+    assert prompt == ""
+    standalone, standalone_prompt = _load_method_and_prompt(
+        REPO,
+        {
+            "action_method_id": "code-review/standalone-review",
+            "task_prompt_id": "ce/standalone-review",
+        },
     )
-    assert mat.get("ok") is True, mat
-    packed = (sdir / "method.md").read_text(encoding="utf-8")
-    assert "三种入口" not in packed
-    assert "Open = O - V - X" not in packed
-    assert "Materialized skill:" not in packed
+    assert "H0" in standalone and "H1" in standalone
+    assert "excepted_obligations" not in standalone
+    assert "不写" in standalone or "ce/review" in standalone
+    assert standalone_prompt.strip()
 
 
 def test_confirm_prepare_skips_cognitive_skills(tmp_path: Path) -> None:
@@ -235,11 +229,11 @@ def test_shared_reference_projections_match_ssot() -> None:
     ce = REPO / "skills" / "code-engineering" / "references" / "finding-format.md"
     assert not ce.is_file()
     oracle_ssot = (REPO / "knowledge" / "shared-references" / "harness-oracle.md").read_bytes()
-    for skill in ("testcase-generation", "code-engineering"):
+    for skill in ("testcase-generation",):
         dest = REPO / "skills" / skill / "references" / "harness-oracle.md"
         assert dest.is_file()
         assert dest.read_bytes() == oracle_ssot
-    for skill in ("operator-analysis", "source-proof", "code-review"):
+    for skill in ("operator-analysis", "source-proof", "code-review", "code-engineering"):
         leaked = REPO / "skills" / skill / "references" / "harness-oracle.md"
         assert not leaked.is_file()
 

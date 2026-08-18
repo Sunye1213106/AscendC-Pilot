@@ -1,18 +1,19 @@
-# CE apply — 按已锁定 plan 改算子源码
+# CE apply — 按当前计划 todo 改算子源码
 
-对照 `ce/intent/plan.md`（或简单需求的 `ce/apply/todo.md`）修改 `op_host/` / `op_kernel/`。一次一个垂直切片。改完立刻停；审查和刷 CodeMap 由后续步骤做。
+对照当前 `{slug}_plan.md` 的未完成 `- [ ]` 修改 `op_host/` / `op_kernel/` / `common/` / `test_script/`。一次一个 todo。改完立刻停；审查和测试由后续 slash 做。
 
-详见 `references/gotchas.md`、`references/risk-classes.md`。
+详见 `references/gotchas.md`、`examples/deter-band-schedule_plan.md`。
 
 ## 方法
 
-1. 先读 `ce/intent/plan.md` 与 `ce/apply/todo.md`，再开最小源码窗。只改本次切片覆盖到的文件。
-2. 验收先行：当前切片的验收条件必须能在 plan / todo 里找到，再动代码。一次只做一个未勾选的 todo 项。
-3. 每个改动点留下 `path:line`，并写明对齐了 plan / todo 的哪一条。
-4. 写完列出改了哪些路径，勾选 `ce/apply/todo.md` 对应项，并写入 `ce/apply/patch_notes.yaml`；不要宣布义务已关闭。不要读 intent.yaml / feature_decomposition / anchors YAML。
+1. 先读当前 `ce/plan/{slug}_plan.md`，再开最小源码窗。只改本次 todo 覆盖到的文件。
+2. 一次只做一个未勾选的 todo 项。做完把该文件里对应项改成 `- [x]`。
+3. 每个改动点留下 `path:line`，并写明对齐了计划的哪一条。
+4. 不要宣布测试已覆盖。不要写 patch_notes.yaml / change_capture.yaml。
 
 ## 禁止
 
-- 写 `.uo`、写 `ce/intent/plan.md`、或签发 CE 证书
+- 写 `.uo`、任何 CE yaml、或 `ce/review/`
 - 把审查叙述当成测量收据
-- 用通用实现流程绕过已定位锚点或未勾选切片
+- 超出计划声明的文件集
+- 查图做语义（apply 不走 uo-query）

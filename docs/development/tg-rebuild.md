@@ -34,7 +34,7 @@ plan 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cov
 
 `/ce-apply` 的 `write_roots` 含 `test_script`。路径在 run-state `test_script_root` 下时映射为 `source:test_script/<rel>`，允许改算子仓外的测试脚本仓。TG 自己仍禁止写算子源码。
 
-`ce/impact/tg_plan_intent.yaml` 仍由 CE 写出；TG 只读融合进 `plan.md`，不另写 TG 意图 YAML。
+CE 不写、不投影、不传任何 yaml。`/tg-plan` 自己从 `ce/plan/{slug}_plan.md` 的「测试内容」节、同一会话的 review 对话、或 `session_handoff.md` 总结义务，写入 `tg/plan.md`。禁止读 `tg_plan_intent.yaml`。
 
 ## 怎么验证
 

@@ -86,26 +86,26 @@ plugins_dest() {
 
 WORKFLOW_SKILLS=(
   uo-init uo-update uo-query uo-investigate
-  ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify
+  ce-review ce-plan ce-apply handoff
   tg-init tg-plan tg-solve operator
 )
 COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
 OPENCODE_COMMANDS=(
   uo-init uo-update uo-query uo-investigate
-  ce-review ce-intent ce-apply ce-handoff ce-impact ce-verify
+  ce-review ce-plan ce-apply handoff
   tg-init tg-plan tg-solve
 )
 CURRENT_AGENTS=(
   ascendc-pilot uo-query uo-gap-investigator ce-reviewer tg-analyst
-  ce-change-referee ce-applier ce-analyst
+  ce-applier ce-analyst
 )
-LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies)
+LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies ce-intent ce-impact ce-verify ce-handoff)
 LEGACY_AGENTS=(
   ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve
   uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer
   tg-csv-contract tg-semantic-bind tg-init-audit tg-lemma-producer
   tg-closure-referee deterministic-uo-engine deterministic-tg-engine
-  deterministic-ce-engine README
+  deterministic-ce-engine ce-change-referee README
 )
 LEGACY_PLUGINS=(ascendc-pilot.ts zz-uo-query-return-value.ts uo-query-return-value.ts ascendc-harness.ts pilot-driver.ts)
 

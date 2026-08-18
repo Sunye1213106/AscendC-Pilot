@@ -13,6 +13,17 @@ _PRECONDITION_CONTRACTS = frozenset(
     {
         "plan-precheck-v1",
         "solve-precheck-v1",
+        "ce-kb-check-v1",
+        "intent-grill-v1",
+        "ce-plan-grilled-v1",
+        "ce-plan-confirmed-v1",
+        "apply-gate-v1",
+        "apply-patch-guard-v1",
+        "codemap-refresh-v1",
+        "apply-report-v1",
+        "review-capture-v1",
+        "code-review-v1",
+        "review-report-v1",
     }
 )
 _HARDCODED_WORKFLOW_IN_PROMPT = re.compile(
@@ -209,9 +220,9 @@ def _check_architecture_start_requirements(
         "tg-plan",
         "tg-solve",
         "ce-review",
-        "ce-intent",
-        "ce-impact",
-        "ce-verify",
+        "ce-plan",
+        "ce-apply",
+        "handoff",
         "uo-query",
         "uo-investigate",
     ):

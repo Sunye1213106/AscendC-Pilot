@@ -1,47 +1,34 @@
 # -*- coding: utf-8 -*-
 """Code Engineering (CE) engine for AscendC-Pilot.
 
-PR → impact (via codemap) → regression cases (via TG closure corpus).
+Named markdown plans, apply gates, in-memory git capture, session handoff.
 """
 
-from code_engineering.analyzability import file_analyzability
-from code_engineering.bridge_tg import bridge_tg
-from code_engineering.certificate import certificate, write_certificate
-from code_engineering.change.capture import capture
-from code_engineering.change.freshness import check_freshness
-from code_engineering.evidence_tier import classify_entity, classify_relation, path_tier
-from code_engineering.harness import load_adapter
-from code_engineering.impact import ImpactReport, impact_from_diff
-from code_engineering.ledger import Ledger, load_ledger, save_ledger
-from code_engineering.scenarios import (
-    anchors_from_slice,
-    infer_scenario_set,
-    merge_knobs,
-    write_scenario_set,
+from code_engineering.apply import apply_gate, patch_guard
+from code_engineering.change.capture import capture, parse_diff_ranges, parse_two_sided_spans
+from code_engineering.git import capture_change, extract_pr_url, parse_pr_url
+from code_engineering.handoff import write_session_handoff
+from code_engineering.plan_md import (
+    declared_source_files,
+    list_plan_files,
+    resolve_active_plan,
+    test_section,
+    unfinished_todos,
 )
-from code_engineering.obligations import expand_obligations
-from code_engineering.regress import regress_cases
 
 __all__ = [
-    "ImpactReport",
-    "Ledger",
-    "anchors_from_slice",
-    "bridge_tg",
+    "apply_gate",
     "capture",
-    "certificate",
-    "check_freshness",
-    "classify_entity",
-    "classify_relation",
-    "expand_obligations",
-    "file_analyzability",
-    "impact_from_diff",
-    "infer_scenario_set",
-    "load_adapter",
-    "load_ledger",
-    "merge_knobs",
-    "path_tier",
-    "regress_cases",
-    "save_ledger",
-    "write_certificate",
-    "write_scenario_set",
+    "capture_change",
+    "declared_source_files",
+    "list_plan_files",
+    "extract_pr_url",
+    "parse_diff_ranges",
+    "parse_pr_url",
+    "parse_two_sided_spans",
+    "patch_guard",
+    "resolve_active_plan",
+    "test_section",
+    "unfinished_todos",
+    "write_session_handoff",
 ]

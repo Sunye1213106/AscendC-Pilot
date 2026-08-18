@@ -30,7 +30,7 @@ Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子�
 
 TG / CE / 查询 **不以源码目录另选架构**：以已有 `.uo` 为准。没有 CodeMap 就直接跑 `/tg-init` 等，会提示先 `/uo-init`。
 
-> OpenCode 安装会生成原生 `/uo-init`、`/tg-init`、`/tg-plan`、`/tg-solve`、`/ce-review` 等 command，并固定由 `ascendc-pilot` Primary 接管。
+> OpenCode 安装会生成原生 `/uo-init`、`/tg-init`、`/tg-plan`、`/tg-solve`、`/ce-plan`、`/ce-apply`、`/ce-review`、`/handoff` 等 command，并固定由 `ascendc-pilot` Primary 接管。
 
 ---
 
@@ -144,7 +144,17 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 
 ---
 
-## 6. 审查代码修改
+## 6. 改码或审查修改
+
+自己有需求、还没改码：
+
+```text
+/ce-plan --project <算子目录>
+```
+
+问清范围后写出 `ce/plan/{slug}_plan.md`，再 `/ce-apply` 按未完成 todo 改码。验证不在 CE，接着 `/tg-plan`。
+
+已有 PR 或工作区 diff：
 
 ```text
 /ce-review --project <算子目录>
@@ -156,7 +166,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 帮我检查当前修改会影响哪些 Host、Tiling 和 Kernel 路径。
 ```
 
-CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三种入口：快速看风险、文件检视、PR 检视（PR 需要已有 diff）。无 diff 要定位改点用 `/ce-intent`；有 diff 要验证义务用 `/ce-impact` → `/ce-verify`。
+CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query` 四种形态。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
 
 ---
 
@@ -169,12 +179,13 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三�
 | `/uo-query` | 只读提问：主控向用户说明查询方式后自行查询或派 `uo-query` 子代理（需已有 `.uo`；不走 `pilot_run`） |
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
-| `/ce-review` | 只读检视（快速 / 文件 / PR；需已有 `.uo`） |
-| `/ce-intent` | 无 diff：定位改哪里 |
-| `/ce-impact` / `/ce-verify` | 有 diff：影响切片与验证证书 |
+| `/ce-plan` | 自己有需求：grill 并写出 `{slug}_plan.md` |
+| `/ce-apply` | 按当前计划未完成 todo 改码（需已有 `.uo`） |
+| `/ce-review` | 已有 diff / PR：只读双轴审查，不落盘 |
+| `/handoff` | 会话交接：写 `session_handoff.md` |
 | `acp doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
-| `acp status` / `next` / `inspect-failure` | 状态与失败诊断 |
-| `acp scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
+| `pilot_cli`：`inspect` / `ro-search` / `next` / `inspect-failure` / `status` | 证据窗、只读搜索、下一步、失败卡 |
+| `pilot_cli`：`scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
 | `pilot_run`（OpenCode 工具） | Host Session Driver：启动并驱动 workflow |
 | 插件 `pilot_cli`（OpenCode 工具） | 查询与诊断；`command` 不要带前导 `acp`，不要 `--help`，不要 `start`/`run-action auto`。用法见 [ACP 工具使用](acp-tools.md) |
 
@@ -188,8 +199,10 @@ CE 沿已有 CodeMap 做跨层影响分析，不重新建立源码权威。三�
 帮我为 sparse_flash_attention_grad 的 arch35 建立 CodeMap。
 告诉我 TilingKey 的生成逻辑，以及每个 TilingKey 对应的 Kernel 模板。
 帮我建立 TilingKey 全覆盖测试。
-我修改了当前算子，更新 CodeMap，并检查这次修改影响哪些执行路径。
+我修改了当前算子，更新 CodeMap，并审查这次修改。
 ```
+
+自己有需求时走 `/ce-plan` → `/ce-apply`；已有 diff 走 `/ce-review`。验证走 `/tg-plan`。
 
 主链：
 

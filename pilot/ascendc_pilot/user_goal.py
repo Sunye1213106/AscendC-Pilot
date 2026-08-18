@@ -81,21 +81,16 @@ CE_CHANGE_PHRASES: tuple[str, ...] = (
 )
 
 CE_STEPS: tuple[dict[str, str], ...] = (
-    {"id": "ce_intent", "workflow_id": "ce-intent", "summary_zh": "问清并分解变更", "optional": "false"},
-    {"id": "ce_apply", "workflow_id": "ce-apply", "summary_zh": "按锚点改码", "optional": "false"},
-    {"id": "uo_refresh", "workflow_id": "uo-update", "summary_zh": "刷新 CodeMap", "optional": "false"},
-    {"id": "ce_impact", "workflow_id": "ce-impact", "summary_zh": "影响分析并写出 ChangeTestIntent", "optional": "false"},
-    {"id": "tg_targeted", "workflow_id": "tg-solve", "summary_zh": "定向构造并 Host Replay", "optional": "false"},
-    {"id": "ce_verify", "workflow_id": "ce-verify", "summary_zh": "按 target_reached 关闭义务", "optional": "false"},
+    {"id": "ce_plan", "workflow_id": "ce-plan", "summary_zh": "问清需求并写出计划", "optional": "false"},
+    {"id": "ce_apply", "workflow_id": "ce-apply", "summary_zh": "按计划 todo 改码", "optional": "false"},
+    {"id": "tg_plan", "workflow_id": "tg-plan", "summary_zh": "从计划 md 总结测试义务", "optional": "false"},
 )
 
 _CE_WORKFLOW_TO_STEP = {
-    "ce-intent": "ce_intent",
+    "ce-plan": "ce_plan",
     "ce-apply": "ce_apply",
-    "uo-update": "uo_refresh",
-    "ce-impact": "ce_impact",
-    "tg-solve": "tg_targeted",
-    "ce-verify": "ce_verify",
+    "ce-review": "tg_plan",
+    "tg-plan": "tg_plan",
 }
 
 
@@ -148,10 +143,10 @@ def route_natural_goal(text: str) -> dict[str, Any] | None:
         return {
             "ok": True,
             "goal_id": GOAL_CE_CHANGE,
-            "workflow_id": "ce-intent",
-            "slash": "/ce-intent",
+            "workflow_id": "ce-plan",
+            "slash": "/ce-plan",
             "method": "goal_router",
-            "mode": "scenario_targeted",
+            "mode": "",
         }
     return None
 
@@ -272,13 +267,13 @@ def create_ce_change_goal(
     *,
     architecture: str = "",
     op_name: str = "",
-    current_step: str = "ce_intent",
+    current_step: str = "ce_plan",
     intent_text: str = "",
 ) -> dict[str, Any]:
     root = Path(project_root).expanduser().resolve()
     op = (op_name or root.name).strip()
     arch = str(architecture or "").strip()
-    label = "按改动验证（ChangeTestIntent → TG targeted → Replay）"
+    label = "按需求改码（plan → apply → tg-plan）"
     if op:
         label = f"{op} {label}"
     if arch:
@@ -313,7 +308,7 @@ def ensure_goal_for_intent(
         existing = load_user_goal(project_root)
         if existing and str(existing.get("goal_id")) == GOAL_CE_CHANGE and str(existing.get("status")) == "active":
             return existing
-        step = _CE_WORKFLOW_TO_STEP.get(str(workflow_id or "").strip(), "ce_intent")
+        step = _CE_WORKFLOW_TO_STEP.get(str(workflow_id or "").strip(), "ce_plan")
         return create_ce_change_goal(
             project_root,
             architecture=architecture,

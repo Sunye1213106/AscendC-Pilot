@@ -21,7 +21,19 @@ COGNITIVE_SKILLS = (
     "code-engineering",
 )
 
-DELETED_CAPS = ("tilingkey-closure", "structured-review", "obligation-analysis")
+DELETED_CAPS = (
+    "tilingkey-closure",
+    "structured-review",
+    "obligation-analysis",
+    "ce-impact-audit",
+    "ce-harness-evidence",
+    "ce-exclusion-review",
+    "ce-scenario-knobs",
+    "ce-handoff",
+    "ce-feature-decompose",
+    "ce-plan-review",
+    "verify-review",
+)
 
 PROMPT_BAD = re.compile(
     r"\b(workflow_id|action_id|run_id|finalize|staging|allowed_write|"

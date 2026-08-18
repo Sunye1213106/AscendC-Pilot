@@ -4,19 +4,15 @@ name_zh: CE 变更分析 producer
 role: producer
 mode: subagent
 description: >
-  Staged producer for feature decomposition, intent grill, session handoff,
-  and precision/perf scenario knobs. Read session prompt.md and method.md first.
-  Write only staged parts for independent review; do not mutate canonical CE
-  plans except the session handoff pointer file.
+  Staged producer for requirement grill, named plan markdown, and session
+  handoff. Read session prompt.md and method.md first. Write grill drafts as
+  markdown and ce/plan/{slug}_plan.md; do not write CE yaml.
 max_skill_ids: &skills [code-engineering, testcase-generation, operator-analysis]
 skill_ids: *skills
 read_scopes:
-- pilot:ce/intent/**
-- pilot:ce/impact/**
-- pilot:ce/scenarios/**
-- pilot:ce/review/**
-- pilot:ce/apply/**
-- pilot:ce/session_handoff.md
+- pilot:ce/plan/**
+- pilot:session_handoff.md
+- pilot:tg/**
 - pilot:uo/**
 - pilot:runs/**
 - pilot:context/**
@@ -24,16 +20,12 @@ read_scopes:
 - method:skills/code-engineering/**
 - method:skills/testcase-generation/**
 write_scopes:
-- pilot:runs/**/actions/feature_decompose/parts/**
-- pilot:runs/**/actions/feature_decompose/scratch/**
-- pilot:runs/**/actions/feature_decompose/staging.yaml
 - pilot:runs/**/actions/intent_grill/parts/**
 - pilot:runs/**/actions/intent_grill/scratch/**
-- pilot:runs/**/actions/intent_grill/staging.yaml
-- pilot:runs/**/actions/scenario_knobs/parts/**
-- pilot:runs/**/actions/scenario_knobs/scratch/**
-- pilot:runs/**/actions/scenario_knobs/staging.yaml
-- pilot:ce/session_handoff.md
+- pilot:runs/**/actions/intent_grill/staging.md
+- pilot:runs/**/actions/plan_draft/**
+- pilot:ce/plan/**
+- pilot:session_handoff.md
 machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed

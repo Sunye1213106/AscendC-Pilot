@@ -28,6 +28,20 @@ from uo_init.clang_walk import (
 )
 
 
+def _host_ir_pool_kind() -> str:
+    """Host TU parallelism. libclang releases the GIL during parse.
+
+    Windows spawn of ProcessPool is a true-cold tax; default to threads there.
+    Override with ``UO_HOST_IR_POOL=process`` or ``thread``.
+    """
+    import os
+
+    raw = str(os.environ.get("UO_HOST_IR_POOL") or "").strip().lower()
+    if raw in {"process", "thread"}:
+        return raw
+    return "thread" if os.name == "nt" else "process"
+
+
 def _walk_tu_worker(payload: dict) -> WalkResult:
     """ProcessPool entry: rebuild context and walk one TU (pickle-safe)."""
     import time as _time
@@ -941,7 +955,7 @@ def build_host_ir(
         from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
         max_workers = min(len(path_list), os.cpu_count() or 4)
-        use_proc = os.environ.get("UO_HOST_IR_POOL", "process").lower() != "thread"
+        use_proc = _host_ir_pool_kind() == "process"
         results = [None] * len(path_list)
         pool_kind = "process" if use_proc else "thread"
         _tlog(

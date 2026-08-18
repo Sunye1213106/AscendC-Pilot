@@ -65,7 +65,7 @@ python scripts/sync_shared_references.py --check
 | Agent YAML | identity / tools / `skill_ids` 上限 |
 | Docs | 解释性；测试不断言 docs 含某句 |
 
-认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。算子改码主流程接在现有 CE 上：grilling → `/ce-intent`（冻结 `ce/intent/plan.md`），implement/tdd → `/ce-apply`（对齐 plan / `ce/apply/todo.md`），双轴 review → 并行 spec/standards 子代理，交接 → `/ce-handoff`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
+认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。算子改码主流程：grilling → `/ce-plan`（写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴 review → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
 
 ## 新增 Engine、Capability 或 Host Adapter
 

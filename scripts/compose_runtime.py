@@ -70,7 +70,6 @@ OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
     "uo-gap-investigator",
     "tg-analyst",
     "ce-analyst",
-    "ce-change-referee",
     "ce-applier",
     "ce-reviewer",
 )
@@ -169,50 +168,35 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-review": {
-        "command_description": 'CodeMap-backed review: quick / file / PR',
+        "command_description": 'Dual-axis review of a git/PR diff; dialogue only',
         "description": (
-            "只读代码审查：快速看风险 / 文件检视 / PR 检视。"
-            "Spec 轴对照 `ce/intent/plan.md`（无则从 diff 推断意图），Standards 轴对照仓规范；"
-            "review 阶段并行两个子代理隔离上下文。结论默认在会话中陈述，用户要落盘才写 `ce/review`。"
-            "假设检验；证据先 CodeMap。Pilot 管 scope 到 summary；用 `pilot_run`。"
+            "只读审查已有代码改动：GitCode PR、工作区 diff 或 base...head。"
+            "无 diff 则停。Spec 轴对照当前 `{slug}_plan.md`（没有计划则只陈述变更）；"
+            "Standards 轴对照仓规范。两轴并行子代理。结论留在对话，不写 ce/review。"
+            "建议修改走 /ce-plan 或 /ce-apply；建议测试走 /tg-plan。用 `pilot_run`。"
         ),
     },
-    "ce-impact": {
-        "command_description": 'Change impact: slice + verification obligations / 变更影响面与验证义务',
+    "ce-plan": {
+        "command_description": 'Grill a requirement and write {slug}_plan.md',
         "description": (
-            "有 diff 时做变更影响面：切片并按 kind 挂验证义务。"
-            "用户要评估改动影响、回归面时使用；用 `pilot_run`。"
-        ),
-    },
-    "ce-verify": {
-        "command_description": 'Close CE obligations from measurement receipts / 用测量收据关闭验证义务',
-        "description": (
-            "验证闭环：gate / residual / 测量收据 / certificate。"
-            "V 只收 UT/ST/精度/profiling/复测通过的 ce-external-evidence/v1。"
-            "用户要验证覆盖或签发 CE 证书时使用；用 `pilot_run`。"
-        ),
-    },
-    "ce-intent": {
-        "command_description": 'Locate change targets without a diff / 无 diff 时定位改哪里',
-        "description": (
-            "无 diff 时定位改哪里：需求还没问清时先 grilling 问清范围、不做的事和验收，再分解特性，"
-            "然后查 CodeMap 下结论，冻结变更计划并写入 `ce/intent/plan.md`。"
-            "禁止仅凭一句需求推断改点。用户要明确改什么/测什么时使用；用 `pilot_run`。"
+            "自己有需求时使用：持续问清范围与验收，写出 "
+            "`.ascendc-pilot/<arch>/ce/plan/{slug}_plan.md`（实现分析 / 计划 / todo / 测试内容）。"
+            "不以 PR 为输入。正式产物只有 markdown。去改码用 /ce-apply。用 `pilot_run`。"
         ),
     },
     "ce-apply": {
-        "command_description": 'Apply confirmed intent to operator source / 按已确认意图改算子源码',
+        "command_description": 'Apply unfinished todos from the current plan markdown',
         "description": (
-            "意图已确认且锚点非空时，按 `ce/intent/plan.md` 与 `ce/apply/todo.md` 一次一个垂直切片改算子源码，"
-            "自动双轴审查（Spec / Standards 并行子代理）。"
-            "不签发证书；精度/性能仍走 /ce-impact → /ce-verify。用 `pilot_run`。"
+            "按当前 `{slug}_plan.md` 未完成 todo 改算子源码，一次一条。"
+            "没有未完成 todo 则先 /ce-plan。不内嵌双轴审查。改完可 /ce-review 或 /tg-plan。"
+            "用 `pilot_run`。"
         ),
     },
-    "ce-handoff": {
-        "command_description": 'Write CE session handoff / 写会话交接',
+    "handoff": {
+        "command_description": 'Write a portable session handoff markdown',
         "description": (
-            "将当前 CE 会话整理为 ce/session_handoff.md：只引用已有产物路径，写明后续 slash 命令。"
-            "上下文将满、换窗口或交给同事时使用。不占 CE 锁。用 `pilot_run`。"
+            "把当前会话整理为 `.ascendc-pilot/<arch>/session_handoff.md`："
+            "只引用已有产物路径，写明下一条 slash。换窗口或交给同事时使用。不占锁。用 `pilot_run`。"
         ),
     },
     "tg-init": {
@@ -775,7 +759,7 @@ def validate(repo: Path) -> list[str]:
                         skill, cap = mid.split("/", 1)
                         if (skill, cap) in {
                             ("code-engineering", "ce-intent-grill"),
-                            ("code-engineering", "ce-feature-decompose"),
+                            ("code-engineering", "ce-plan-draft"),
                         }:
                             mp = skills / skill / "capabilities" / cap / "METHOD.md"
                             if mp.is_file():

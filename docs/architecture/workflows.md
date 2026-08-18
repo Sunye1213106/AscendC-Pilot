@@ -20,11 +20,9 @@
         │
         ├── /tg-init ──► /tg-plan ──► /tg-solve     覆盖闭环
         │
-        ├── /ce-review                              只读检视
-        ├── /ce-intent                              无 diff：问清并定位改点
-        ├── /ce-apply                               按锚点改码 + 审查 + 刷图
-        ├── /ce-handoff                             会话交接（后续 slash 命令）
-        └── /ce-impact ──► /ce-verify               有 diff：影响 + 证书
+        ├── /ce-plan ──► /ce-apply                  自己有需求：计划 → 按 todo 改码
+        ├── /ce-review                              已有 diff / PR：只读双轴审查
+        └── /handoff                                会话交接（无 ce- 前缀）
 ```
 
 `uo-init` / `uo-update` 必须同时有 `--project` 与 `--architecture`（来自仓内 `arch*`）。其余 workflow 以已有 `.uo` 为准，不再另扫 `arch*`。
@@ -76,7 +74,7 @@
                   └── host_step = failed             → inspect-failure；不要翻 Pilot 源码
 ```
 
-控制面围着 **同一份 `.uo`（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-impact` / `ce-intent` / `ce-verify`）互斥；不同族并行。
+控制面围着 **同一份 `.uo`（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥；不同族并行。
 
 `complete` / `host_step.done` 之后 **释放本族锁**：`state/slots/{family}/workflow.yaml`（或 shared 的 `runs/{run_id}/live_state.yaml`）清掉，run 快照落到 `runs/{run_id}/final_state.yaml`。`uo-init` / `uo-update` 还会发布新 `canonical_graph_digest`，把钉在旧 digest 上的 session 标 STALE。正式产物（`.uo` / tg / ce）保留。`control/active_run.yaml` 只是最近一次 exclusive 指针，不是互斥权威。
 
@@ -228,117 +226,59 @@ certify   [D]  open: []           ──gate: worklog_closed
 
 ## CE
 
-intent / impact / verify 走变更闭环；`/ce-apply` 在 confirm 之后改码；`/ce-review` 只读，不签发证书。
+`/ce-plan` 问清需求并写出 `{slug}_plan.md`；`/ce-apply` 只按未完成 todo 改码；`/ce-review` 只审已有 diff，不落盘；验证走 `/tg-plan`。
 
-### `/ce-review` — 只读检视
-
-```text
-scope / review [S ce-reviewer] → summary [H] 只看结论 | 落盘报告
-                          scope 判定 quick / file / PR
-                          review 并行 Spec ∥ Standards 两个 Task（隔离上下文）
-                          ──gate: kb_ready, context_pack
-```
-
-### `/ce-intent` — 无 diff，定位改哪里
+### `/ce-plan` — 自己有需求
 
 ```text
-intent    [D]  捕获变更意图
-    │
-    ▼
 kb_ready  [D]  校验 .uo            ──gate: kb_ready
     │
     ▼
 grill     [S ce-analyst] + [D] grill_promote + [H] 确认问清
     │
     ▼
-decompose [S ce-analyst]  特性分解
+draft     [S ce-analyst]  写出 ce/plan/{slug}_plan.md
     │
     ▼
-review    [S ce-change-referee] + [D] feature_promote
-    │
-    ▼
-locate    [D]  锚点 + 场景推断
-    │
-    ▼
-confirm   [H]  人工确认 → 写入 ce/intent/plan.md
+confirm   [H]  去 /ce-apply 或继续改计划
 ```
 
-### `/ce-apply` — 按已锁定 spec 改码
+### `/ce-apply` — 按计划 todo 改码
 
 ```text
-gate      [D]  intent confirmed + anchors + plan.md/todo.md
+gate      [D]  当前计划有未完成 - [ ]
     │
     ▼
-patch     [S ce-applier]  对齐 plan.md，一次一个 todo 切片
+patch     [S ce-applier]  一次一条 todo
     │
     ▼
-capture   [D]  change_capture + patch_guard
+guard     [D]  改动 ⊆ 计划声明的文件
     │
     ▼
-review    [S ce-reviewer ×2]  Spec ∥ Standards 并行
+refresh   [D]  嵌套 uo-update（禁止 LLM 写 .uo）
     │
     ▼
-refresh   [D]  复用 uo-update 引擎（禁止 LLM 写 .uo）
-    │
-    ▼
-report    [H]  path:line 结论；可选落盘审查报告
+report    [H]  建议审查 / 建议测试 / 回计划 / 交接
 ```
 
-### `/ce-handoff` — 会话交接
+### `/ce-review` — 已有 diff，只读检视
 
 ```text
-session   [S ce-analyst]  写 ce/session_handoff.md（只引用路径，后续 slash 命令）
+scope     [D]  内存 git/PR diff；无 diff 则停
+    │
+    ▼
+review    [S ce-reviewer ×2]  Spec ∥ Standards
+                          ──gate: kb_ready, context_pack
+    │
+    ▼
+summary   [H]  建议修改或建议测试（不落盘）
 ```
 
-### `/ce-impact` — 有 diff，影响切片
+### `/handoff` — 会话交接
 
 ```text
-capture     [D]  捕获变更
-    │
-    ▼
-freshness   [D]  CodeMap 新鲜度     ──gate: kb_ready
-    │
-    ▼
-slice       [D]  影响切片
-    │
-    ▼
-classify    [D]  风险分类
-    │
-    ▼
-scenarios   [D] 推断场景骨架（默认只跑 `scenario_infer`）
-            overlay `scenario_targeted` 才走
-            [S ce-analyst] knobs → [D] apply → [H] 确认
-    ▼
-obligations [D]  验证义务 + 写出 tg_plan_intent.yaml（给 /tg-plan，不自动开跑）
-            ──gate: obligations_classified
-    │
-    ▼
-audit       [S ce-change-referee]  ──gate: impact_ledger_ready
+session   [S ce-analyst]  写 session_handoff.md（只引用路径，下一步 slash）
 ```
-
-### `/ce-verify` — 验证并签发证书
-
-```text
-gate     [D]  校验影响账本          ──gate: impact_ledger_ready
-    │
-    ▼
-review   [S ce-reviewer]  义务驱动审查
-    │
-    ▼
-coverage [D]  桥接 TG 覆盖证据
-    │
-    ▼
-residual [D]  剩余义务
-    │
-    ▼
-external [D]  harness 证据 + 闭清单核对
-    │         [D] 外部摄取
-    │         [S ce-change-referee] 排除审查
-    ▼
-certify  [D]  CE 证书              ──gate: ce_certificate_sound
-```
-
-账本恒等式：`Open = O - V - X`。`V` 只收可审计收据；`X` 只收 referee 的 Tier A 排除证明。
 
 ---
 
@@ -346,7 +286,7 @@ certify  [D]  CE 证书              ──gate: ce_certificate_sound
 
 | 权威 | 位置 |
 | --- | --- |
-| 阶段 / Action / gate | `pilot/ascendc_pilot/workflows/specs.py` |
-| 启动与 architecture | `acp start`、`acp scan-architectures` |
-| Host 传输环 | `pilot_run` → `acp run-action auto` → `dispatch-result` |
+| 阶段 / Action / gate | `pilot/ascendc_pilot/workflows/specs.py`、CE：`ce_specs.py` |
+| 启动与 architecture | Host `pilot_run`、`pilot_cli` `scan-architectures` |
+| Host 传输环 | `pilot_run` →（内部）`run-action auto` → `dispatch-result` |
 | 精确表 | [workflows.generated.md](../reference/workflows.generated.md) |

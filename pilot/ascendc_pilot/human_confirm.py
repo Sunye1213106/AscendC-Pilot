@@ -74,30 +74,6 @@ def _op_arch(project_root: Path, state: dict[str, Any]) -> tuple[str, str]:
     return op, arch
 
 
-def _scenario_ids(project_root: Path, state: dict[str, Any]) -> list[str]:
-    try:
-        doc = _load(ce_root(project_root, arch=_arch(state)) / "scenarios" / "scenario_set.yaml")
-    except Exception:  # noqa: BLE001
-        return []
-    ids: list[str] = []
-    for row in doc.get("items") or doc.get("scenarios") or []:
-        if isinstance(row, dict) and row.get("id"):
-            ids.append(str(row["id"]))
-        elif isinstance(row, str) and row.strip():
-            ids.append(row.strip())
-    for key in ("ids", "scenario_ids"):
-        val = doc.get(key)
-        if isinstance(val, list):
-            ids.extend(str(x) for x in val if x)
-    seen: set[str] = set()
-    out: list[str] = []
-    for sid in ids:
-        if sid not in seen:
-            seen.add(sid)
-            out.append(sid)
-    return out
-
-
 def _ask_tg_init(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     gctx = _goal_context(project_root)
@@ -150,110 +126,45 @@ def _ask_plan_approve(project_root: Path, state: dict[str, Any]) -> dict[str, An
     )
 
 
-def _ask_ce_intent(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    op, arch = _op_arch(project_root, state)
-    return decision_question(
-        header="变更计划已审阅，是否确认？",
-        goal=f"确认 {op}（{arch}）的改码范围、锚点与验收条件",
-        background="特性分解已经过审查。确认后冻结变更计划并写入 ce/intent/plan.md；返工则回到分解/审查。",
-        decide="是否确认这份变更计划？",
-        consequences={
-            "确认变更计划": "冻结范围与验收条件，后续可按计划改码/验证",
-            "返工": "不冻结，回到特性分解或审查",
-            "停止": "结束本次定位，不冻结计划",
-        },
-        options=[
-            {"label": "确认变更计划", "value": "confirm"},
-            {"label": "返工计划", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
-        ],
-    )
-
-
-def _ask_scenario_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    op, arch = _op_arch(project_root, state)
-    ids = _scenario_ids(project_root, state)
-    listed = "、".join(ids) if ids else "（尚未读到场景骨架）"
-    return decision_question(
-        header="是否确认这些精度/性能测试场景？",
-        goal=f"为 {op}（{arch}）的本次改动确定要测的精度/性能场景",
-        background=f"引擎已推断场景骨架：{listed}。确认后才会按这些场景挂验证义务；不是全量 TilingKey 闭环。",
-        decide="是否确认这组场景与条数预算？",
-        consequences={
-            "确认这些场景": "按已列场景继续建立验证义务",
-            "返工": "回到场景推断，增删场景后再确认",
-            "停止": "结束本次影响分析",
-        },
-        options=[
-            {"label": "确认这些场景", "value": "confirm"},
-            {"label": "返工场景", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
-        ],
-    )
-
-
-def _intent_doc(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    return _load(ce_root(project_root, arch=_arch(state)) / "intent" / "intent.yaml")
-
-
-def material_decisions(intent: dict[str, Any]) -> list[Any]:
-    """Questions that fork two legal implementation directions (not facts)."""
-    raw = intent.get("material_decisions")
-    if isinstance(raw, list) and raw:
-        return [row for row in raw if row]
-    open_q = intent.get("open_questions") or []
-    if not isinstance(open_q, list):
-        return []
-    out = []
-    for row in open_q:
-        if isinstance(row, dict) and str(row.get("kind") or "").lower() in {"fact", "lookup"}:
-            continue
-        if row:
-            out.append(row)
-    return out
-
-
 def grill_should_ask(project_root: Path, state: dict[str, Any], *, action_id: str = "") -> bool:
-    """False → 0 human grill turns (complete PR / no material fork). CE-intent only."""
-    if str(state.get("workflow_id") or "").strip() != "ce-intent":
-        return True
-    intent = _intent_doc(project_root, state)
-    decisions = material_decisions(intent)
-    complete = bool(
-        intent.get("in_scope") and intent.get("out_of_scope") and intent.get("acceptance")
-    )
-    if action_id == "human_confirm":
-        grilled = _load(ce_root(project_root, arch=_arch(state)) / "intent" / "grill_confirmation.yaml")
-        prior = grilled.get("material_decision_count")
-        if complete and not decisions:
-            return False
-        if prior is not None and int(prior or 0) == len(decisions):
-            return False
-        return bool(decisions)
-    if complete and not decisions:
-        return False
+    """CE-plan always asks; hosted confirms are never auto-skipped."""
+    del project_root, state, action_id
     return True
+
+
+def _ask_ce_plan(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    op, arch = _op_arch(project_root, state)
+    return decision_question(
+        header="需求计划已写出。下一步？",
+        goal=f"确认 {op}（{arch}）的当前计划 markdown 可以去改码",
+        background="计划里应有实现分析、可勾选 todo、测试内容。返工则继续 grill 或改计划。",
+        decide="去 /ce-apply，还是继续改计划？",
+        consequences={
+            "去改码": "进入 /ce-apply，按未完成 todo 改源码",
+            "继续改计划": "回到 grill 或草稿",
+            "交接": "写 session_handoff.md",
+            "停止": "结束本次规划",
+        },
+        options=[
+            {"label": "去 /ce-apply", "value": "confirm"},
+            {"label": "继续改计划", "value": "rework"},
+            {"label": "去 /handoff", "value": "handoff"},
+            {"label": "停止本次目标", "value": "stop"},
+        ],
+    )
 
 
 def _ask_grill_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
-    intent = _intent_doc(project_root, state)
-    decisions = material_decisions(intent)[:5]
-    n = len(decisions)
-    listed = "；".join(
-        str(row.get("question") or row.get("id") or row)[:80]
-        for row in decisions
-        if row
-    ) or "无分叉决策"
     return decision_question(
-        header="需求是否已经问清，可以分解特性？",
-        goal=f"一次确认 {op}（{arch}）的 3–5 个会分叉实现方向的决策",
-        background=f"本轮只问 material decision（{n} 题）：{listed}。事实类问题走 CodeMap / ro-search，不问人。",
-        decide="是否确认这组决策并进入分解？",
+        header="需求是否已经问清，可以写计划？",
+        goal=f"确认 {op}（{arch}）的范围、不做的事和测试内容已够写计划 markdown",
+        background="事实走 uo-query / 最小源码窗。未决分叉继续问。",
+        decide="是否开始写计划？",
         consequences={
-            "确认需求已问清": "进入特性分解；未决分叉必须为空",
-            "返工": "回到问需求，继续推进设计树",
-            "停止": "结束本次定位，不分解",
+            "确认已问清": "进入计划草稿",
+            "返工": "继续 grill",
+            "停止": "结束本次规划",
         },
         options=[
             {"label": "确认需求已问清", "value": "confirm"},
@@ -266,43 +177,41 @@ def _ask_grill_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, A
 def _ask_apply_report(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     return decision_question(
-        header="改码与审查已完成。结论已在对话里；是否落盘报告并继续影响分析？",
-        goal=f"确认 {op}（{arch}）本次改动与双轴审查结论",
-        background="源码已改、CodeMap 已刷新。审查结论默认在会话中陈述。精度/性能仍要 /ce-impact → /ce-verify。",
-        decide="只看结论，还是把审查报告写入 ce/review 后再进入 /ce-impact？",
+        header="改码已落地。下一步？",
+        goal=f"确认 {op}（{arch}）本次 todo 的源码改动",
+        background="CodeMap 已刷新。审查是可选的 /ce-review；测试走 /tg-plan（它会读当前计划 md）。",
+        decide="建议审查、建议测试、回计划，还是交接？",
         consequences={
-            "只看结论": "不填审查 YAML，写入交接，后续步骤 /ce-impact",
-            "落盘审查报告": "把 session 里的 findings 写入 ce/review，再进入 /ce-impact",
-            "返工": "不交接，回到改码",
-            "停止": "结束本次改码，不进入影响分析",
+            "建议审查": "去 /ce-review 审这次 git diff",
+            "建议测试": "去 /tg-plan，TG 自己从计划 md 总结义务",
+            "回计划": "回到 /ce-plan",
+            "交接": "写 /handoff",
         },
         options=[
-            {"label": "只看结论，进入影响分析", "value": "confirm"},
-            {"label": "落盘审查报告，进入影响分析", "value": "persist"},
-            {"label": "返工改码", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
+            {"label": "建议审查 /ce-review", "value": "review"},
+            {"label": "建议测试 /tg-plan", "value": "confirm"},
+            {"label": "回 /ce-plan", "value": "rework"},
+            {"label": "去 /handoff", "value": "handoff"},
         ],
     )
 
 
-def _ask_review_persist(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+def _ask_review_report(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     return decision_question(
-        header="审查结论已给出。是否把报告落到磁盘？",
-        goal=f"告诉你 {op}（{arch}）哪里有问题",
-        background="Spec / Standards 结论在对话里（path:line）。默认不写 ce/review YAML。",
-        decide="只看结论，还是落盘审查报告？",
+        header="审查结论已在对话里。下一步？",
+        goal=f"根据 {op}（{arch}）双轴结论决定改码还是测试",
+        background="不落盘 ce/review。建议测试时 TG 读本轮对话和若存在的计划 md。",
+        decide="建议修改还是建议测试？",
         consequences={
-            "只看结论": "保持 skeleton，结束本次检视",
-            "落盘审查报告": "把 session findings 写入 ce/review/*.yaml",
-            "返工": "回到审查",
-            "停止": "结束本次检视",
+            "建议修改": "去 /ce-plan 或 /ce-apply",
+            "建议测试": "去 /tg-plan",
+            "交接": "写 /handoff",
         },
         options=[
-            {"label": "只看结论", "value": "confirm"},
-            {"label": "落盘审查报告", "value": "persist"},
-            {"label": "返工审查", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
+            {"label": "建议修改", "value": "rework"},
+            {"label": "建议测试 /tg-plan", "value": "confirm"},
+            {"label": "去 /handoff", "value": "handoff"},
         ],
     )
 
@@ -413,67 +322,14 @@ def _materialize_plan_approve(
     return {"ok": True, "path": path, "backups": backups, "identity": identity}
 
 
-def _materialize_ce_intent(
+def _materialize_ce_decision(
     project_root: Path,
     state: dict[str, Any],
     identity: dict[str, str],
     now: str,
 ) -> dict[str, Any]:
-    path = ce_root(project_root, arch=_arch(state)) / "intent" / "confirmation.yaml"
-    doc = {
-        "schema": "ce-intent-confirmation/v1",
-        "status": "confirmed",
-        "confirmed_by": "human",
-        "confirmed_at": now,
-        "decision": "confirm",
-        **identity,
-        "artifact_identity": identity,
-    }
-    path, backups = _write_yaml_receipt(path, doc)
-    from code_engineering.intent import write_intent_plan
-
-    plan = write_intent_plan(project_root, architecture=_arch(state))
-    if not plan.get("ok"):
-        return {
-            "ok": False,
-            "error": str(plan.get("error") or "INTENT_PLAN_WRITE_FAILED"),
-            "message_zh": "变更计划 plan.md 未能写入，禁止确认。",
-            "plan": plan,
-        }
-    return {
-        "ok": True,
-        "path": path,
-        "plan_path": plan.get("artifact"),
-        "backups": backups,
-        "identity": identity,
-    }
-
-
-def _materialize_scenario_confirm(
-    project_root: Path,
-    state: dict[str, Any],
-    identity: dict[str, str],
-    now: str,
-) -> dict[str, Any]:
-    ids = _scenario_ids(project_root, state)
-    path = ce_root(project_root, arch=_arch(state)) / "scenarios" / "confirmation.yaml"
-    doc = {
-        "schema": "ce-scenario-confirm/v1",
-        "status": "confirmed",
-        "confirmed_by": "human",
-        "confirmed_at": now,
-        "scenario_ids": ids,
-        "decision": "confirm",
-        **identity,
-        "artifact_identity": identity,
-    }
-    path, backups = _write_yaml_receipt(path, doc)
-    return {"ok": True, "path": path, "backups": backups, "identity": identity}
-
-
-MaterializeFn = Callable[[Path, dict[str, Any], dict[str, str], str], dict[str, Any]]
-AskFn = Callable[[Path, dict[str, Any]], dict[str, Any]]
-HintsFn = Callable[[Path, dict[str, Any]], list[str]]
+    del project_root, state, now
+    return {"ok": True, "identity": identity, "backups": {}}
 
 
 def _hints_tg_init(project_root: Path, state: dict[str, Any]) -> list[str]:
@@ -494,139 +350,28 @@ def _hints_plan_approve(project_root: Path, state: dict[str, Any]) -> list[str]:
     return [f"Review {rel} (prose + YAML fence) before asking the user to start solving."]
 
 
-def _hints_ce_intent(project_root: Path, state: dict[str, Any]) -> list[str]:
+def _hints_ce_plan(project_root: Path, state: dict[str, Any]) -> list[str]:
     try:
-        root = ce_root(project_root, arch=_arch(state)) / "intent"
+        root = ce_root(project_root, arch=_arch(state)) / "plan"
         rel = root.relative_to(Path(project_root).resolve()).as_posix()
     except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/ce/intent/"
-    return [f"Review {rel}feature_decomposition.yaml and plan_review.yaml before asking to freeze the plan. Confirm writes ce/intent/plan.md."]
-
-
-def _hints_scenario_confirm(project_root: Path, state: dict[str, Any]) -> list[str]:
-    try:
-        path = ce_root(project_root, arch=_arch(state)) / "scenarios" / "scenario_set.yaml"
-        rel = path.relative_to(Path(project_root).resolve()).as_posix()
-    except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/ce/scenarios/scenario_set.yaml"
-    return [f"Review {rel} (ids, knobs, budget). This is not tilingkey full coverage."]
-
-
-def _materialize_grill_confirm(
-    project_root: Path,
-    state: dict[str, Any],
-    identity: dict[str, str],
-    now: str,
-) -> dict[str, Any]:
-    ce = ce_root(project_root, arch=_arch(state))
-    intent = _load(ce / "intent" / "intent.yaml")
-    decisions = material_decisions(intent)
-    open_q = intent.get("open_questions") or []
-    if isinstance(open_q, list) and open_q and decisions:
-        return {
-            "ok": False,
-            "error": "GRILL_OPEN",
-            "reason_code": "GRILL_OPEN",
-            "message_zh": "未决问题未闭合，不能进入特性分解",
-            "open_question_count": len(open_q),
-        }
-    path = ce / "intent" / "grill_confirmation.yaml"
-    doc = {
-        "schema": "ce-intent-grill-confirmation/v1",
-        "status": "confirmed",
-        "confirmed_by": "human" if decisions else "auto_skip",
-        "confirmed_at": now,
-        "decision": "confirm" if decisions else "skipped_no_material",
-        "material_decision_count": len(decisions),
-        **identity,
-        "artifact_identity": identity,
-    }
-    path, backups = _write_yaml_receipt(path, doc)
-    return {"ok": True, "path": path, "backups": backups, "identity": identity}
-
-
-def _materialize_apply_report(
-    project_root: Path,
-    state: dict[str, Any],
-    identity: dict[str, str],
-    now: str,
-) -> dict[str, Any]:
-    ce = ce_root(project_root, arch=_arch(state))
-    path = ce / "apply" / "report.yaml"
-    doc = {
-        "schema": "ce-apply-report/v1",
-        "status": "reported",
-        "confirmed_by": "human",
-        "confirmed_at": now,
-        "decision": "confirm",
-        "next_slash": "/ce-impact",
-        **identity,
-        "artifact_identity": identity,
-    }
-    path, backups = _write_yaml_receipt(path, doc)
-    try:
-        from code_engineering.handoff import write_session_handoff
-
-        from code_engineering.review_persist import persist_review_reports
-
-        persist_review_reports(
-            project_root,
-            architecture=_arch(state) or "",
-            run_id=str(state.get("run_id") or ""),
-            persist=str(identity.get("human_decision_value") or "") == "persist",
-        )
-        write_session_handoff(
-            project_root,
-            architecture=_arch(state),
-            next_slash="/ce-impact",
-            artifact_paths=[
-                "ce/intent/plan.md",
-                "ce/apply/todo.md",
-                "ce/apply/patch_report.yaml",
-                "ce/apply/codemap_refresh.yaml",
-            ],
-        )
-    except Exception:  # noqa: BLE001
-        pass
-    return {"ok": True, "path": path, "backups": backups, "identity": identity}
+        rel = ".ascendc-pilot/<arch>/ce/plan/"
+    return [f"Review {rel}*_plan.md (analysis / todos / 测试内容) before applying."]
 
 
 def _hints_grill_confirm(project_root: Path, state: dict[str, Any]) -> list[str]:
-    try:
-        path = ce_root(project_root, arch=_arch(state)) / "intent" / "intent.yaml"
-        rel = path.relative_to(Path(project_root).resolve()).as_posix()
-    except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/ce/intent/intent.yaml"
-    return [f"Review {rel} in_scope / out_of_scope / acceptance; open_questions must be empty."]
+    del project_root, state
+    return ["Grill staging is markdown under runs/.../intent_grill/. Do not write yaml."]
 
 
 def _hints_apply_report(project_root: Path, state: dict[str, Any]) -> list[str]:
     del project_root, state
-    return ["Speak path:line findings. Persist review YAML only if the user chose 落盘审查报告."]
+    return ["Source is already patched. Next is /ce-review or /tg-plan, not a yaml product."]
 
 
-def _materialize_review_persist(
-    project_root: Path,
-    state: dict[str, Any],
-    identity: dict[str, str],
-    now: str,
-) -> dict[str, Any]:
-    from code_engineering.review_persist import persist_review_reports
-
-    result = persist_review_reports(
-        project_root,
-        architecture=_arch(state) or "",
-        run_id=str(state.get("run_id") or ""),
-        persist=str(identity.get("human_decision_value") or "") == "persist",
-    )
-    path = Path(str(result.get("artifact") or ""))
-    backups = {path: path.read_bytes() if path.is_file() else None} if path else {}
-    return {"ok": bool(result.get("ok")), "path": path, "backups": backups, "identity": identity, **result}
-
-
-def _hints_review_persist(project_root: Path, state: dict[str, Any]) -> list[str]:
+def _hints_review_report(project_root: Path, state: dict[str, Any]) -> list[str]:
     del project_root, state
-    return ["Speak path:line findings. Persist ce/review/*.yaml only if the user chose 落盘审查报告."]
+    return ["Keep findings in the dialogue. Do not write ce/review."]
 
 
 SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
@@ -646,44 +391,36 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "hints": _hints_plan_approve,
         "compact": None,
     },
-    ("ce-intent", "human_confirm"): {
+    ("ce-plan", "human_confirm"): {
         "kind": "primary_confirm",
         "expected_values": ["confirm"],
-        "ask": _ask_ce_intent,
-        "materialize": _materialize_ce_intent,
-        "hints": _hints_ce_intent,
+        "ask": _ask_ce_plan,
+        "materialize": _materialize_ce_decision,
+        "hints": _hints_ce_plan,
         "compact": None,
     },
-    ("ce-impact", "scenario_confirm"): {
-        "kind": "primary_confirm",
-        "expected_values": ["confirm"],
-        "ask": _ask_scenario_confirm,
-        "materialize": _materialize_scenario_confirm,
-        "hints": _hints_scenario_confirm,
-        "compact": None,
-    },
-    ("ce-intent", "grill_confirm"): {
+    ("ce-plan", "grill_confirm"): {
         "kind": "primary_confirm",
         "expected_values": ["confirm"],
         "ask": _ask_grill_confirm,
-        "materialize": _materialize_grill_confirm,
+        "materialize": _materialize_ce_decision,
         "hints": _hints_grill_confirm,
         "compact": None,
     },
     ("ce-apply", "apply_report"): {
         "kind": "primary_confirm",
-        "expected_values": ["confirm", "persist"],
+        "expected_values": ["confirm", "review", "handoff"],
         "ask": _ask_apply_report,
-        "materialize": _materialize_apply_report,
+        "materialize": _materialize_ce_decision,
         "hints": _hints_apply_report,
         "compact": None,
     },
-    ("ce-review", "review_persist"): {
+    ("ce-review", "review_report"): {
         "kind": "primary_confirm",
-        "expected_values": ["confirm", "persist"],
-        "ask": _ask_review_persist,
-        "materialize": _materialize_review_persist,
-        "hints": _hints_review_persist,
+        "expected_values": ["confirm", "rework", "handoff"],
+        "ask": _ask_review_report,
+        "materialize": _materialize_ce_decision,
+        "hints": _hints_review_report,
         "compact": None,
     },
 }
@@ -837,8 +574,7 @@ def primary_interactive_steps(
         [
             f"Host must surface AskQuestion ({option_hint}) from ask_question.options verbatim.",
             f"Host records answer: acp answer --request-id {rid} --value <选中> --project {root.as_posix()}",
-            f"Only after HumanDecisionReceipt for `{kind_label}`, run: "
-            f"acp run-action {action_id} --finalize --project {root.as_posix()}",
+            f"Only after HumanDecisionReceipt for `{kind_label}`, Host `pilot_run` finalizes `{action_id}`.",
             "For `rework` or `stop`, do not finalize. Primary must not Write canonical confirmation YAML.",
         ]
     )

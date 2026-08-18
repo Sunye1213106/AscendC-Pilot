@@ -121,12 +121,12 @@ def test_splitaxis_example_is_non_normative() -> None:
 def test_ce_intent_grill_staging_in_bundle_profile() -> None:
     from ascendc_pilot.context.profiles import get_profile
 
-    profile = get_profile("ce-intent-intent-grill")
+    profile = get_profile("ce-plan-intent-grill")
     refs = list(profile.references) if profile is not None else []
     assert any("intent-grill-staging.md" in str(r) for r in refs)
     staging = _text("skills/code-engineering/references/intent-grill-staging.md")
     method = _text("skills/code-engineering/capabilities/ce-intent-grill/METHOD.md")
-    for field in ("in_scope", "out_of_scope", "acceptance", "open_questions", "side"):
-        assert field in staging
-        assert field in method
+    for token in ("范围", "不做的事", "测试内容", "未决", "staging.md"):
+        assert token in staging
+        assert token in method
     assert "目录遍历" in method

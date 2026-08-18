@@ -50,6 +50,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Install control-plane test dependencies
         run: python -m pip install --disable-pip-version-check PyYAML jsonschema pytest
       - name: Compile Python packages
@@ -132,7 +135,7 @@ jobs:
           PYTHONPATH: pilot
         run: |
           python scripts/check_host_driver_contract.py
-          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py pilot/tests/test_live_eval_skip.py
+          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py pilot/tests/test_live_eval_skip.py pilot/tests/test_opencode_isolation_ses_fefd.py
       - name: Validate deterministic drive
         env:
           PYTHONPATH: pilot

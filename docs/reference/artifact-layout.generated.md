@@ -6,8 +6,9 @@
 <operator-repo>/.ascendc-pilot/
   <arch>/uo/<op>.<arch>.uo     UO canonical product (uo_codemap_path)
   <arch>/uo/               UO projections and receipts
-  <arch>/tg/               TG contracts, plans, closure, replay
-  <arch>/ce/               CE review and impact products
+  <arch>/tg/               TG init.yaml, plan.md, worklog.md, cases
+  <arch>/ce/plan/          CE named plans ({slug}_plan.md)
+  <arch>/session_handoff.md         /handoff conversation summary
   <arch>/state/            Pilot state and leases
   <arch>/runs/             action bundles, staging and receipts
   <arch>/context/          compiled context packs

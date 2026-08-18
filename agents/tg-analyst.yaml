@@ -12,8 +12,8 @@ skill_ids: *skills
 read_scopes:
 - pilot:tg/**
 - pilot:uo/**
-- pilot:ce/impact/tg_plan_intent.yaml
-- pilot:ce/intent/plan.md
+- pilot:ce/plan/**
+- pilot:session_handoff.md
 - pilot:runs/**
 - pilot:context/**
 - source:test_script/**

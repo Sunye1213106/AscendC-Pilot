@@ -93,7 +93,8 @@ def test_kb_lookup_stub_requires_answer_yaml_not_integrity() -> None:
     write_line = next((ln for ln in stub.splitlines() if ln.startswith("write:")), "")
     assert write_line.startswith("write: (none")
     assert "runs/" not in write_line
-    assert "fallback" in stub.lower()
+    assert "pilot_run" in stub.lower()
+    assert "acp run-action" not in stub.lower()
 
 
 def test_task_prompt_stub_injects_must_read_order_for_summary() -> None:
@@ -228,14 +229,14 @@ def test_prepare_kb_lookup_writes_method_and_return_value_hint(tmp_path: Path) -
     assert "Do NOT write uo/checks" in stub
     assert "write: (none" in stub
     msg = str(result.get("message_zh") or "")
-    assert "finalize" in msg
-    assert result.get("finalize_hint") == "acp run-action kb_lookup --finalize"
-    assert "result-file" in str(result.get("finalize_hint_fallback") or "")
+    assert "pilot_run" in msg
+    assert "acp run-action" not in str(result.get("finalize_hint") or "")
+    assert result.get("finalize_hint") == "pilot_run"
     session = Path(str(result["session_dir"]))
     method = (session / "method.md").read_text(encoding="utf-8")
     assert "Explore" in method or "file:line" in method
     assert "dim_coverage" in method
-    assert "template_match" in method
+    assert "Dim=V" in method or "file:line" in method
     bundle = yaml.safe_load((session / "bundle.yaml").read_text(encoding="utf-8"))
     assert bundle.get("output_mode") == "return_value"
     writes = [str(p).replace("\\", "/") for p in (bundle.get("allowed_write_paths") or [])]

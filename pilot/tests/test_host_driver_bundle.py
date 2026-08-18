@@ -235,7 +235,7 @@ def test_extract_stub_paths_finds_typed_inputs_not_writes() -> None:
         "bundle: /s/bundle.yaml\n"
         "read: uo/summary/overview.yaml\n"
         "write: tg/init.yaml\n"
-        "acp --project /mnt/op/synthetic_cli\n"
+        "pilot_cli commands must pass --project /mnt/op/synthetic_cli\n"
         "See prose path tg/init/ignored.yaml\n"
     )
     paths = extract_stub_paths(stub)

@@ -1416,24 +1416,6 @@ def run_named_gate(
         "scenario_coverage_sound": lambda: gate_scenario_coverage_sound(
             project_root, architecture=arch
         ),
-        "impact_ledger_ready": lambda: _gate_ce_artifacts(
-            project_root,
-            "impact_ledger_ready",
-            ["ce/impact/obligations.yaml", "ce/impact/ledger.yaml"],
-            architecture=arch,
-        ),
-        "obligations_classified": lambda: _gate_ce_artifacts(
-            project_root,
-            "obligations_classified",
-            ["ce/impact/risk_classification.yaml", "ce/impact/obligations.yaml"],
-            architecture=arch,
-        ),
-        "ce_certificate_sound": lambda: _gate_ce_artifacts(
-            project_root,
-            "ce_certificate_sound",
-            ["ce/verify/certificate.yaml"],
-            architecture=arch,
-        ),
     }
     fn = mapping.get(gate_id)
     if fn is None:

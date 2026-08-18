@@ -783,7 +783,7 @@ def _maybe_deny_uo_query_repo_search(
     return _ok(
         "deny",
         "REPO_GREP_ESCAPE",
-        "uo-query 禁止仓级 findstr/grep/rg；用 acp uo-query 或 acp ro-search --paths <已 citation 文件>",
+                "uo-query 禁止仓级 findstr/grep/rg；用 pilot_cli `uo-query` 或 `ro-search --pattern … --paths <已 citation 文件>`",
         error_code="HARNESS_ACTION_NOT_AUTHORIZED",
         status=status,
         workflow_id=workflow_id or None,
@@ -1031,7 +1031,7 @@ def _authorize_impl(
             return _ok(
                 "deny",
                 "USE_PILOT_RUN",
-                "pilot_cli 只做 uo-query / status / inspect-failure / scan-architectures；start/auto 请用 pilot_run",
+                "pilot_cli 可做 uo-query / status / inspect / inspect-failure / ro-search / next；start/auto 请用 pilot_run",
                 status=status or None,
                 command=cmd[:200],
             )
@@ -1197,7 +1197,7 @@ def _authorize_impl(
                 return _ok(
                     "deny",
                     "REPO_GREP_ESCAPE",
-                    "uo-query 禁止 Grep 工具；用 acp uo-query 或 acp ro-search --paths <已 citation 文件>",
+                    "uo-query 禁止 Grep 工具；用 pilot_cli `uo-query` 或 `ro-search --pattern … --paths <已 citation 文件>`",
                     error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     tool=tool_l,
                     status=status,
@@ -1431,7 +1431,7 @@ def _authorize_impl(
             return _ok(
                 "deny",
                 "REPO_GREP_ESCAPE",
-                "uo-query 禁止 Grep 工具；用 acp uo-query 或 acp ro-search --paths <已 citation 文件>",
+                "uo-query 禁止 Grep 工具；用 pilot_cli `uo-query` 或 `ro-search --pattern … --paths <已 citation 文件>`",
                 error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                 tool=tool_l,
             )

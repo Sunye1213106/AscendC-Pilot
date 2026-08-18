@@ -1896,7 +1896,7 @@ export function createPilotRunTool(
         intent: {
           type: "string",
           description:
-            "User product intent verbatim (e.g. 建立全量 TilingKey 覆盖测试). Required for User Goal chaining.",
+            "User product intent verbatim. For /ce-review include the GitCode/GitHub PR URL when reviewing a pull request.",
         },
         force_new: {
           type: "boolean",

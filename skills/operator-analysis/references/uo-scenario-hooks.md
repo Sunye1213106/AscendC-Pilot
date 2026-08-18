@@ -1,22 +1,21 @@
 # UO query hooks for scenarios
 
-**When to load**：给 CE 推断场景之前选 `uo-query` mode。  
-场景 id 权威在 code-engineering `scenario-catalog.md`（由 CE Action Context Profile 物化），此处不复制 attach 表、不链到另一 skill 的 implementation。
+**When to load**：给 CE / TG 从 CodeMap 找结构事实时。查询面只有 `pilot_cli uo-query` 四种形态。场景 id 若出现在计划「测试内容」里，TG 自己对照 `scenario-catalog.md` 总结；CE 不写场景 yaml。
 
-UO 只定位结构。不判断 golden、happens-before、profiler。结构事实可以答完；根因仍 PARTIAL。
+禁止 `--mode`、`acp uo impact`、`explain-*`、`search`、`locate`。
 
-| 要找什么 | mode |
+UO 只定位结构。不判断 golden、happens-before、profiler。
+
+| 要找什么 | 形态 |
 | --- | --- |
-| Cast / DataCopy / DataCopyPad / EnQue / DeQue | `kernel_api` |
-| INPUT dtype | `search` INPUT/OUTPUT |
-| Buffer / queue / InitBuffer | `buffer`（看 `allocated` / WRAPS，不要搜 `3buff`/`LockProd`） |
-| 切分字段写点 / 公式 / 占核 | `field`（问句标识符；空则 `local_aliases`） / `tiling_data` |
-| kernel 找不到 / 561003 / 某维有没有编 | `template_match` → `legal_key`（必须看 `dim_coverage` / `total_matched`） |
-| Pre / Main / Post / 三相 launch | `kernel_launch`；第一刀禁止搜 `Process` / `*_apt.cpp` |
-| SetScheduleMode / Host TilingContext | `locate`；不是 `kernel_api` |
-| 同名函数 / virtual override | `locate` 短名（全部 `definition_sites`） |
-| diff 邻域 | `impact` |
-| tail / 运行时分支 | `kernel_branch` |
+| Cast / DataCopy / DataCopyPad / EnQue / DeQue | 标识符：API 名 |
+| INPUT dtype / 维名 | 标识符，或无参数索引看维 |
+| Buffer / queue / InitBuffer | 标识符：buffer 或 API 名 |
+| 切分字段写点 / 公式 / 占核 | 标识符：字段名；不够再 `--file --line` |
+| 某维有没有编进模板 | `Dim=V` |
+| Pre / Main / Post / 三相 launch | 无参数索引（看 launch 阶段） |
+| Host TilingContext / 同名函数 | 标识符；定义点跟卡片 `next` |
+| diff 邻域 | `--file --line`，再对 FOCUS 名做标识符查询 |
+| tail / 运行时分支 | `--file --line` 或标识符 |
 
-Flag 配对只是 identity 级出现；TQue 的 EnQue/DeQue 不走那条检查。
-空图命中按 `hint` 再查；禁止 `findstr /S`。最后才 `acp ro-search --paths <已 citation 文件>`。
+空图命中按卡片 `next` 再查；禁止 `findstr /S`。最后才 `pilot_cli` `ro-search --pattern <pat> --paths <已 citation 文件>`。

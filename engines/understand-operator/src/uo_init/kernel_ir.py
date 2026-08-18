@@ -457,3 +457,144 @@ def build_kernel_ir(
     if silent:
         ir.notes.append("no_branch_found_for: " + ", ".join(silent))
     return ir
+
+
+def kernel_ir_isolate() -> bool:
+    """Run KernelIR in a child process so host AST walks do not share the GIL.
+
+    Windows thread-pool host walks otherwise serialize against the kernel walk.
+    Override with ``UO_KERNEL_IR_ISOLATE=process`` or ``thread``.
+    """
+    import os
+
+    raw = str(os.environ.get("UO_KERNEL_IR_ISOLATE") or "").strip().lower()
+    if raw in {"process", "1", "true", "yes"}:
+        return True
+    if raw in {"thread", "0", "false", "no"}:
+        return False
+    return os.name == "nt"
+
+
+def kernel_ir_payload(spec, ctx, *, dimensions, max_variants) -> dict:
+    """Pickle-safe snapshot for a KernelIR child process."""
+    from uo_init.build_context import BuildContext
+
+    if isinstance(ctx, BuildContext):
+        ctx_payload = ctx.to_dict()
+    else:
+        ctx_payload = {
+            "raw": getattr(ctx, "raw", {}) or {},
+            "cann_root": getattr(ctx, "cann_root", ""),
+            "ops_root": getattr(ctx, "ops_root", ""),
+            "compat_root": getattr(ctx, "compat_root", ""),
+            "op_dir": getattr(ctx, "op_dir", ""),
+            "arch_dir": getattr(ctx, "arch_dir", "") or "",
+            "repo_root": getattr(ctx, "repo_root", ""),
+        }
+    scope = getattr(spec, "scope", None)
+    return {
+        "ctx": ctx_payload,
+        "spec": {
+            "kernel_targets": [
+                str(p) for p in (getattr(spec, "kernel_targets", None) or []) if p
+            ],
+            "kernel_entry": (
+                str(spec.kernel_entry) if getattr(spec, "kernel_entry", None) else ""
+            ),
+            "op_needle": getattr(spec, "op_needle", "") or "",
+            "scope": scope.to_dict() if scope is not None else None,
+            "op_dir": str(getattr(spec, "op_dir", "") or ""),
+            "arch_dir": str(getattr(spec, "arch_dir", "") or ""),
+        },
+        "dimensions": list(dimensions or []),
+        "max_variants": max_variants,
+    }
+
+
+def _kernel_ir_worker(payload: dict) -> KernelIR:
+    """Rebuild spec/context and build KernelIR (pickle-safe child entry)."""
+    from types import SimpleNamespace
+    from pathlib import Path
+
+    from uo_init.build_context import BuildContext
+    from uo_init.scope_scan import ScopeSet
+
+    ctx = BuildContext.from_dict(payload["ctx"])
+    spec_d = dict(payload.get("spec") or {})
+    scope = None
+    raw_scope = spec_d.get("scope")
+    if isinstance(raw_scope, dict):
+        scope = ScopeSet.from_dict(raw_scope)
+    entry = str(spec_d.get("kernel_entry") or "")
+    spec = SimpleNamespace(
+        kernel_targets=[Path(p) for p in (spec_d.get("kernel_targets") or [])],
+        kernel_entry=Path(entry) if entry else None,
+        op_needle=str(spec_d.get("op_needle") or ""),
+        scope=scope,
+        op_dir=Path(str(spec_d.get("op_dir") or "")),
+        arch_dir=str(spec_d.get("arch_dir") or ""),
+    )
+    return build_kernel_ir(
+        spec,
+        ctx,
+        dimensions=list(payload.get("dimensions") or []),
+        max_variants=payload.get("max_variants"),
+    )
+
+
+def start_kernel_ir_job(payload: dict):
+    """Spawn ``python -m uo_init.kernel_ir_job``; does not re-import caller ``__main__``."""
+    import os
+    import pickle
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    spec_d = dict(payload.get("spec") or {})
+    op_dir = Path(str(spec_d.get("op_dir") or "."))
+    arch = str(spec_d.get("arch_dir") or "arch")
+    job_dir = op_dir / ".ascendc-pilot" / arch / "uo" / "cache"
+    job_dir.mkdir(parents=True, exist_ok=True)
+    token = f"{os.getpid()}_{id(payload)}"
+    in_path = job_dir / f"kernel_ir_job_{token}.in.pkl"
+    out_path = job_dir / f"kernel_ir_job_{token}.out.pkl"
+    in_path.write_bytes(pickle.dumps(payload, protocol=pickle.HIGHEST_PROTOCOL))
+    env = os.environ.copy()
+    extra = [p for p in sys.path if p]
+    old = str(env.get("PYTHONPATH") or "")
+    env["PYTHONPATH"] = os.pathsep.join(extra + ([old] if old else []))
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "uo_init.kernel_ir_job", str(in_path), str(out_path)],
+        env=env,
+    )
+    return proc, in_path, out_path
+
+
+def finish_kernel_ir_job(proc, in_path, out_path) -> KernelIR:
+    import pickle
+    from pathlib import Path
+
+    rc = proc.wait()
+    try:
+        if rc != 0:
+            raise RuntimeError(f"kernel_ir worker exited {rc}")
+        blob = Path(out_path).read_bytes()
+        ir = pickle.loads(blob)
+        if not isinstance(ir, KernelIR):
+            raise TypeError(f"kernel_ir worker returned {type(ir).__name__}")
+        return ir
+    finally:
+        for p in (in_path, out_path):
+            try:
+                Path(p).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def run_kernel_ir_job(in_path: str, out_path: str) -> None:
+    import pickle
+    from pathlib import Path
+
+    payload = pickle.loads(Path(in_path).read_bytes())
+    ir = _kernel_ir_worker(payload)
+    Path(out_path).write_bytes(pickle.dumps(ir, protocol=pickle.HIGHEST_PROTOCOL))

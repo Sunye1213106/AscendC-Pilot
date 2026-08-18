@@ -399,19 +399,18 @@ def ensure_tg_layout(project_root: Path, *, arch: str | None = None) -> Path:
     return root / TG_SUBDIR
 
 
-def ensure_closure_layout(project_root: Path, *, arch: str | None = None) -> Path:
+def ensure_replay_layout(project_root: Path, *, arch: str | None = None) -> Path:
     tg = ensure_tg_layout(project_root, arch=arch)
-    for rel in ("closure", "replay"):
-        (tg / rel).mkdir(parents=True, exist_ok=True)
-    return tg / "closure"
+    replay = tg / "replay"
+    replay.mkdir(parents=True, exist_ok=True)
+    return replay
 
 
 def ensure_ce_layout(project_root: Path, *, arch: str | None = None) -> Path:
     root = ensure_control_layout(project_root, arch=arch)
     ce = root / CE_SUBDIR
     ce.mkdir(parents=True, exist_ok=True)
-    for rel in ("intent", "impact", "verify", "review"):
-        (ce / rel).mkdir(parents=True, exist_ok=True)
+    (ce / "plan").mkdir(parents=True, exist_ok=True)
     return ce
 
 
@@ -441,8 +440,8 @@ def ensure_agent_layout(project_root: Path, *, arch: str | None = None) -> Path:
         RUNS_SUBDIR,
         CONTEXT_SUBDIR,
         STATE_SUBDIR,
-        f"{TG_SUBDIR}/closure",
         f"{TG_SUBDIR}/replay",
+        f"{CE_SUBDIR}/plan",
     ):
         (root / rel).mkdir(parents=True, exist_ok=True)
     return root

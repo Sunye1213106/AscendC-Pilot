@@ -24,7 +24,8 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query`；`acp start uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
 | 缺 architecture、要列 `arch*` 选项 | 插件 `pilot_cli`：`scan-architectures --project <算子绝对路径>` | 在仓库根目录 Glob / 翻 cmake |
-| `pilot_run` 失败、要看原因 | 插件 `pilot_cli`：`inspect-failure` / `status`（都要 `--project`） | `--help`、读 Pilot 源码、bash 管道 |
+| `pilot_run` 失败、要看原因 | 插件 `pilot_cli`：`inspect-failure` / `status` / `next`（都要 `--project`） | `--help`、读 Pilot 源码、bash 管道 |
+| 证据窗 / 已 citation 文件内搜索 | 插件 `pilot_cli`：`inspect evidence-window`；`ro-search --pattern … --paths …` | 仓级 grep / 名为 `acp` 的工具 |
 
 插件 `pilot_cli` 的 `command` 是 **二进制后面的 argv**，不要再写一遍 `acp`，也不要找 `acp.exe`：
 
@@ -79,7 +80,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 
 | 参数 | 说明 |
 | --- | --- |
-| `workflow` | `uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-review` / `ce-intent` / `ce-impact` / `ce-verify` / `uo-investigate` 等。**不要**填 `uo-query` |
+| `workflow` | `uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。**不要**填 `uo-query` |
 | `project` | 算子包绝对路径 |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |

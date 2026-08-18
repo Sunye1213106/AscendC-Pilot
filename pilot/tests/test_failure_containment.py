@@ -244,7 +244,7 @@ def test_primary_readonly_inspect_during_containment(tmp_path: Path):
         agent="ascendc-pilot",
     )
     assert grep_ok.get("decision") == "allow", grep_ok
-    child_deny = authorize(tmp_path, tool="bash", command="dir", agent="uo-analyst")
+    child_deny = authorize(tmp_path, tool="bash", command="dir", agent="uo-gap-investigator")
     assert child_deny.get("decision") == "deny", child_deny
     write_deny = authorize(
         tmp_path,

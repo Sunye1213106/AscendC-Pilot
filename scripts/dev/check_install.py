@@ -183,39 +183,37 @@ def _run(cmd: list[str], *, timeout: int = 10) -> tuple[bool, str]:
     return proc.returncode == 0, text or f"exit={proc.returncode}"
 
 
-def _default_cann_set_env() -> Path:
-    return Path("/usr/local/Ascend/cann/set_env.sh")
-
-
 def check_replay(reporter: Reporter) -> None:
     print("\n== TG Host replay environment ==")
+    cann = None
+    try:
+        src = ROOT / "engines" / "understand-operator" / "src"
+        if str(src) not in sys.path:
+            sys.path.insert(0, str(src))
+        from uo_init.paths import cann_root
+
+        cann = cann_root()
+    except Exception:
+        cann = None
+    reporter.add(
+        "UO extracted CANN",
+        cann is not None and cann.is_dir(),
+        str(cann) if cann else "set UO_CANN_ROOT or extract to _cann/pkg",
+        required=True,
+    )
     if os.name == "nt":
         wsl = check_tool(reporter, "wsl", required=True)
         distro = os.environ.get("UO_REPLAY_DISTRO", "").strip()
         reporter.add(
             "UO_REPLAY_DISTRO",
-            bool(distro),
-            distro or "not set; set it to the WSL distro that has CANN",
+            True,
+            distro or "optional; required only when multiple WSL distros exist",
         )
         if wsl:
             ok, detail = _run(["wsl", "-l", "-q"])
             reporter.add("wsl distro list", ok, detail, required=True)
-        if wsl and distro:
-            script = 'p="${CANN_SET_ENV:-/usr/local/Ascend/cann/set_env.sh}"; test -f "$p" && echo "$p"'
-            ok, detail = _run(["wsl", "-d", distro, "--", "sh", "-lc", script])
-            reporter.add(
-                "WSL CANN set_env.sh",
-                ok,
-                detail if ok else "not found in WSL; install CANN or set CANN_SET_ENV inside the distro",
-                required=True,
-            )
     else:
-        set_env = Path(os.environ.get("CANN_SET_ENV") or _default_cann_set_env())
-        reporter.add(
-            "CANN set_env.sh",
-            set_env.is_file(),
-            str(set_env) if set_env.is_file() else "not found; set CANN_SET_ENV",
-        )
+        reporter.add("native linux/WSL replay", True, "bootstrap uses extracted CANN")
 
 
 def main(argv: list[str] | None = None) -> int:

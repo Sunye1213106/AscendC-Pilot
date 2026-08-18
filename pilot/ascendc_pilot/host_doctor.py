@@ -3,10 +3,79 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
 from ascendc_pilot.paths import opencode_home as _opencode_home
+
+
+def plugin_hook_redeclared_consts(src: str) -> list[str]:
+    """Catch the load-breaker: ``const sessionId`` twice in ``tool.execute.before``.
+
+    Nested ``if`` blocks may legally redeclare other names; Bun/Node only
+    reject same-scope bindings. ``sessionId`` must be extracted once at the
+    start of that hook and reused.
+    """
+    before_at = src.find('"tool.execute.before"')
+    after_at = src.find('"tool.execute.after"')
+    errors: list[str] = []
+    if before_at < 0:
+        errors.append("missing tool.execute.before")
+    if after_at < 0:
+        errors.append("missing tool.execute.after")
+    if errors:
+        return errors
+    n = len(re.findall(r"\bconst\s+sessionId\s*=", src[before_at:after_at]))
+    if n != 1:
+        errors.append(f"tool.execute.before declares const sessionId {n} time(s); expected 1")
+    return errors
+
+
+def parse_opencode_plugin_ts(path: Path, *, check_hooks: bool | None = None) -> dict[str, Any]:
+    """Parse-check an OpenCode plugin .ts so a syntax error cannot install silently."""
+    if not path.is_file():
+        return {"ok": False, "detail": f"missing {path}"}
+    src = path.read_text(encoding="utf-8")
+    if check_hooks is None:
+        check_hooks = path.name == "ascendc-pilot.ts"
+    if check_hooks:
+        dups = plugin_hook_redeclared_consts(src)
+        if dups:
+            return {"ok": False, "detail": "; ".join(dups)}
+    node = shutil.which("node")
+    if not node:
+        return {"ok": True, "detail": "hook consts unique; node not on PATH"}
+    commands = (
+        [node, "--experimental-strip-types", "--check", str(path)],
+        [node, "--check", str(path)],
+    )
+    last_err = "node --check failed"
+    for cmd in commands:
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=30,
+                check=False,
+            )
+        except OSError as exc:
+            return {"ok": False, "detail": str(exc)[:200]}
+        err = f"{proc.stderr or ''}{proc.stdout or ''}"
+        if proc.returncode == 0:
+            return {"ok": True, "detail": "parsed"}
+        if any("strip-types" in str(part) for part in cmd) and (
+            "bad option" in err.lower() or "unrecognized" in err.lower() or "unknown option" in err.lower()
+        ):
+            last_err = err.strip()[-800:] or last_err
+            continue
+        return {"ok": False, "detail": (err.strip() or f"exit {proc.returncode}")[-800:]}
+    return {"ok": False, "detail": last_err[-800:]}
 
 
 def doctor_host(host: str, *, project: Path | None = None) -> dict[str, Any]:
@@ -73,11 +142,9 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
         "uo-query",
         "uo-investigate",
         "ce-review",
-        "ce-intent",
+        "ce-plan",
         "ce-apply",
-        "ce-handoff",
-        "ce-impact",
-        "ce-verify",
+        "handoff",
         "tg-init",
         "tg-plan",
         "tg-solve",
@@ -98,6 +165,9 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
 
     plug_ts = plugins / "ascendc-pilot.ts"
     plug_text = plug_ts.read_text(encoding="utf-8") if plug_ts.is_file() else ""
+    if plug_ts.is_file():
+        parsed = parse_opencode_plugin_ts(plug_ts)
+        add("plugin_parses", bool(parsed.get("ok")), str(parsed.get("detail") or "")[:240])
     add(
         "plugin_does_not_override_native_skill",
         plug_ts.is_file()
@@ -121,9 +191,6 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
         and "args.location = { directory: projectRoot }" not in plug_text,
         "Task location stays Host workspace",
     )
-
-    import shutil
-    import subprocess
 
     acp_bin = shutil.which("acp")
     if acp_bin:
@@ -191,4 +258,4 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
     }
 
 
-__all__ = ["doctor_host"]
+__all__ = ["doctor_host", "parse_opencode_plugin_ts", "plugin_hook_redeclared_consts"]

@@ -50,6 +50,8 @@ def test_uninstall_scripts_exist_and_refresh_uninstalls_first() -> None:
     assert uninstall_idx < install_idx
     assert "Skip uninstall" not in refresh
     assert "$UninstallPs1" in refresh
+    assert "experimental-strip-types" in refresh
+    assert "installed plugin failed to parse" in refresh
 
 
 def test_install_manifest_does_not_claim_user_agents(tmp_path: Path) -> None:

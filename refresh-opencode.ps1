@@ -193,6 +193,19 @@ Assert-True ($pluginText -match 'return\s+"acp"') "installed plugin resolves acp
 Assert-True ($pluginText -notmatch 'return\s+"pilot"') "installed plugin no longer looks up pilot binary"
 Assert-True ($pluginText -notmatch '\["pilot"\]') "installed plugin has no pilot binary candidate list"
 
+# Syntax errors here make OpenCode swallow the plugin: no pilot_run / pilot_cli.
+$node = Get-Command node -ErrorAction SilentlyContinue
+if ($null -eq $node) {
+  throw "node not on PATH; cannot verify installed plugin parses"
+}
+& node --experimental-strip-types --check $pluginDst 2>$null
+if ($LASTEXITCODE -ne 0) {
+  & node --check $pluginDst
+  if ($LASTEXITCODE -ne 0) {
+    throw "installed plugin failed to parse: $pluginDst"
+  }
+}
+
 # Skills stay plugin-internal (not ~/.config/opencode/skills — that is Build/Plan discovery)
 $skillLink = Join-Path $ocHome "skills\uo-init"
 $skillInternal = Join-Path $ocHome "ascendc-pilot-plugin\skills\uo-init\SKILL.md"
@@ -219,7 +232,7 @@ Get-ChildItem -Path (Join-Path $ocHome "agents") -Filter "*.md" -File -ErrorActi
     throw "leftover OpenCode Tab $($_.FullName)"
   }
 }
-foreach ($name in @("uo-init", "uo-query", "tg-init", "tg-plan", "tg-solve", "ce-review", "ce-intent", "ce-apply", "ce-handoff", "ce-impact", "ce-verify")) {
+foreach ($name in @("uo-init", "uo-update", "uo-query", "uo-investigate", "tg-init", "tg-plan", "tg-solve", "ce-review", "ce-plan", "ce-apply", "handoff")) {
   $commandPath = Join-Path $commandsDir "$name.md"
   Assert-True (Test-Path -LiteralPath $commandPath) "native /$name command installed"
   $commandText = Get-Content -LiteralPath $commandPath -Raw -Encoding UTF8

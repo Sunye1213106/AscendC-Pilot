@@ -58,13 +58,10 @@ def test_explicit_missing_replay_entry_fails_closed(tmp_path, monkeypatch) -> No
 def test_windows_missing_entry_routes_to_wsl_bootstrap(tmp_path, monkeypatch) -> None:
     runner = _runner(tmp_path)
     monkeypatch.delenv("UO_REPLAY_SCRIPT", raising=False)
+    monkeypatch.delenv("UO_REPLAY_DISTRO", raising=False)
     monkeypatch.delenv("TG_CLOSURE_CI", raising=False)
     monkeypatch.setattr(bootstrap.sys, "platform", "win32")
-    monkeypatch.setattr(
-        bootstrap,
-        "_run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="Ubuntu-22.04\n", stderr=""),
-    )
+    monkeypatch.setattr(bootstrap, "_wsl_list_distros", lambda: ["Ubuntu-22.04"])
     monkeypatch.setattr(
         bootstrap,
         "_wsl",
@@ -85,17 +82,26 @@ def test_windows_missing_entry_routes_to_wsl_bootstrap(tmp_path, monkeypatch) ->
 
 def test_generated_wrapper_pins_runtime_inputs() -> None:
     text = bootstrap._wrapper_text(
-        cann_env="/usr/local/Ascend/cann-9.1.0/set_env.sh",
+        cann_env="/mnt/d/op/.ascendc-pilot/arch35/tg/replay/runtime/cann_env.sh",
         run_script="/mnt/d/pilot/scripts/replay/wsl/run_replay.sh",
         ops_root="/mnt/d/ops-transformer",
         replay_bin="/mnt/d/op/.ascendc-pilot/arch35/tg/replay/runtime/replay_main",
         replay_so="/mnt/d/ops-transformer/build/libophost_transformer_ut.so",
         op_name="FlashAttentionScoreGrad",
     )
-    assert "source '/usr/local/Ascend/cann-9.1.0/set_env.sh'" in text
+    assert "source '/mnt/d/op/.ascendc-pilot/arch35/tg/replay/runtime/cann_env.sh'" in text
+    assert "export REPLAY_CANN_ENV=" in text
+    assert "/usr/local/Ascend" not in text
     assert "export REPLAY_BIN='/mnt/d/op/.ascendc-pilot/arch35/tg/replay/runtime/replay_main'" in text
     assert "export OPS_ROOT='/mnt/d/ops-transformer'" in text
     assert "/work/wsl/setup" not in text
+
+
+def test_extract_cann_env_wrapper_uses_pkg_layout() -> None:
+    text = bootstrap._cann_env_wrapper_text("/mnt/d/_cann/pkg", "x86_64-linux")
+    assert "CANN_PKG_ROOT='/mnt/d/_cann/pkg'" in text
+    assert "cann-asc-devkit/$CANN_HOST" in text
+    assert "/usr/local/Ascend" not in text
 
 
 def test_ensure_runner_writes_environment_receipt(tmp_path, monkeypatch) -> None:
@@ -114,7 +120,8 @@ def test_ensure_runner_writes_environment_receipt(tmp_path, monkeypatch) -> None
             "bootstrapped": True,
             "controller": "wsl",
             "entry": str(tmp_path / "run_replay.sh"),
-            "cann_env": "/usr/local/Ascend/cann/set_env.sh",
+            "cann_env": "/mnt/d/op/.ascendc-pilot/arch35/tg/replay/runtime/cann_env.sh",
+            "cann_pkg": "/mnt/d/_cann/pkg",
             "ops_root": "/mnt/d/ops",
             "bin": str(tmp_path / "replay_main"),
         },
@@ -127,4 +134,38 @@ def test_ensure_runner_writes_environment_receipt(tmp_path, monkeypatch) -> None
     assert doc["schema"] == "tg-replay-environment/v1"
     assert doc["driver"]["status"] == "ready"
     assert doc["driver"]["bootstrapped"] is True
-    assert doc["cann"]["set_env"] == "/usr/local/Ascend/cann/set_env.sh"
+    assert doc["cann"]["set_env"] == "/mnt/d/op/.ascendc-pilot/arch35/tg/replay/runtime/cann_env.sh"
+    assert doc["cann"]["root"] == "/mnt/d/_cann/pkg"
+    assert doc["cann"]["layout"] == "extract"
+
+
+def test_wsl_distro_ambiguous_fails_closed(tmp_path, monkeypatch) -> None:
+    runner = _runner(tmp_path)
+    runner.manifest = _Manifest(distro="")
+    monkeypatch.delenv("UO_REPLAY_SCRIPT", raising=False)
+    monkeypatch.delenv("UO_REPLAY_DISTRO", raising=False)
+    monkeypatch.delenv("TG_CLOSURE_CI", raising=False)
+    monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+    monkeypatch.setattr(bootstrap, "_wsl_list_distros", lambda: ["Ubuntu-22.04", "Debian"])
+    out = bootstrap.ensure_runner(runner)
+    assert out["ok"] is False
+    assert out["error"] == "WSL_DISTRO_AMBIGUOUS"
+
+
+def test_wsl_unavailable_fails_closed(tmp_path, monkeypatch) -> None:
+    runner = _runner(tmp_path)
+    monkeypatch.delenv("UO_REPLAY_SCRIPT", raising=False)
+    monkeypatch.delenv("UO_REPLAY_DISTRO", raising=False)
+    monkeypatch.delenv("TG_CLOSURE_CI", raising=False)
+    monkeypatch.setattr(bootstrap.sys, "platform", "win32")
+    monkeypatch.setattr(bootstrap, "_wsl_list_distros", lambda: [])
+    out = bootstrap.ensure_runner(runner)
+    assert out["ok"] is False
+    assert out["error"] == "WSL_UNAVAILABLE"
+
+
+def test_decode_wsl_list_utf16() -> None:
+    raw = "Ubuntu-22.04\nDebian\n".encode("utf-16-le")
+    text = bootstrap._decode_wsl_list(raw).replace("\x00", "")
+    assert "Ubuntu-22.04" in text
+    assert "Debian" in text

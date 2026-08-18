@@ -101,7 +101,30 @@ def test_bind_init_method_file_exists() -> None:
 
 
 def test_ce_capability_methods_load_from_action_method_id() -> None:
-    impact, prompt = _load_method_and_prompt(
+    plan, prompt = _load_method_and_prompt(
+        ROOT,
+        {
+            "task_prompt_id": "ce/plan-draft",
+            "action_method_id": "code-engineering/ce-plan-draft",
+            "id": "plan_draft",
+        },
+    )
+    assert "plan.md" in plan or "{slug}" in plan
+    assert prompt.strip()
+    assert "Open = O - V - X" not in plan
+
+    apply_m, apply_prompt = _load_method_and_prompt(
+        ROOT,
+        {
+            "task_prompt_id": "ce/apply",
+            "action_method_id": "code-engineering/ce-apply",
+            "id": "patch",
+        },
+    )
+    assert apply_m.strip()
+    assert apply_prompt.strip()
+
+    missing, missing_prompt = _load_method_and_prompt(
         ROOT,
         {
             "task_prompt_id": "ce/impact-audit",
@@ -109,30 +132,8 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
             "id": "impact_audit",
         },
     )
-    assert "Open = O - V - X" in impact
-    assert prompt.strip()
-
-    excl, excl_prompt = _load_method_and_prompt(
-        ROOT,
-        {
-            "task_prompt_id": "ce/exclusion-review",
-            "action_method_id": "code-engineering/ce-exclusion-review",
-            "id": "exclusion_review",
-        },
-    )
-    assert "Open = O - V - X" in excl
-    assert excl_prompt.strip()
-
-    infer, infer_prompt = _load_method_and_prompt(
-        ROOT,
-        {
-            "task_prompt_id": None,
-            "action_method_id": None,
-            "id": "scenario_infer",
-        },
-    )
-    assert infer == ""
-    assert infer_prompt == ""
+    assert missing == ""
+    assert missing_prompt == ""
 
 
 def test_deterministic_plan_precheck_loads_no_prompt() -> None:

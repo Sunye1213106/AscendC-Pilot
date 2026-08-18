@@ -5,10 +5,9 @@
 | Agent | 类型 | 角色 | 模式 | 可读范围 | 可写范围 | 来源 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `ascendc-pilot` | `llm` | `controller` | `primary` | `pilot:*` |  | `agents/ascendc-pilot.yaml` |
-| `ce-analyst` | `llm` | `producer` | `subagent` | `pilot:ce/intent/**`, `pilot:ce/impact/**`, +10 | `pilot:runs/**/actions/feature_decompose/parts/**`, `pilot:runs/**/actions/feature_decompose/scratch/**`, +8 | `agents/ce-analyst.yaml` |
-| `ce-applier` | `llm` | `producer` | `subagent` | `pilot:ce/intent/**`, `pilot:ce/apply/**`, +11 | `source:op_host/**`, `source:op_kernel/**`, +4 | `agents/ce-applier.yaml` |
-| `ce-change-referee` | `llm` | `referee` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +4 | `pilot:ce/impact/audit_report.yaml`, `pilot:ce/verify/exclusion_review.yaml`, +1 | `agents/ce-change-referee.yaml` |
-| `ce-reviewer` | `llm` | `readonly_reviewer` | `subagent` | `pilot:uo/**`, `pilot:ce/**`, +8 | `pilot:ce/review/**`, `pilot:ce/verify/code_review.yaml`, +1 | `agents/ce-reviewer.yaml` |
+| `ce-analyst` | `llm` | `producer` | `subagent` | `pilot:ce/plan/**`, `pilot:session_handoff.md`, +7 | `pilot:runs/**/actions/intent_grill/parts/**`, `pilot:runs/**/actions/intent_grill/scratch/**`, +4 | `agents/ce-analyst.yaml` |
+| `ce-applier` | `llm` | `producer` | `subagent` | `pilot:ce/plan/**`, `pilot:uo/**`, +9 | `source:op_host/**`, `source:op_kernel/**`, +4 | `agents/ce-applier.yaml` |
+| `ce-reviewer` | `llm` | `readonly_reviewer` | `subagent` | `pilot:uo/**`, `pilot:ce/plan/**`, +8 | `pilot:runs/**/actions/code_review/**` | `agents/ce-reviewer.yaml` |
 | `deterministic-ce-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:ce/**`, `pilot:uo/**`, +8 | `pilot:ce/**`, `pilot:runs/**`, +1 | `agents/deterministic-ce-engine.yaml` |
 | `deterministic-tg-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:tg/**`, `pilot:uo/**`, +9 | `pilot:tg/**`, `pilot:runs/**`, +3 | `agents/deterministic-tg-engine.yaml` |
 | `deterministic-uo-engine` | `deterministic_engine` | `deterministic_engine` | `subagent` | `pilot:uo/**`, `pilot:runs/**`, +2 | `pilot:uo/**`, `pilot:runs/**/actions/**`, +1 | `agents/deterministic-uo-engine.yaml` |

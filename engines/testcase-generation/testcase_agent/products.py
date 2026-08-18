@@ -335,27 +335,17 @@ def dump_init(tg_root: Path, doc: dict[str, Any]) -> Path:
 
 
 def collect_intent_sources(project_root: Path, *, architecture: str = "") -> dict[str, Any]:
-    """Read optional intent files. Never writes a TG product."""
-    from .io import read_yaml
-
+    """Read optional CE markdown / handoff. Never writes a TG product. No CE yaml."""
     sources: list[dict[str, Any]] = []
     root = Path(project_root).expanduser().resolve()
     arch = str(architecture or "").strip()
     agent = root / ".ascendc-pilot" / arch if arch else root / ".ascendc-pilot"
-    candidates = [
-        ("ce_tg_plan_intent", agent / "ce" / "impact" / "tg_plan_intent.yaml"),
-        ("ce_scenario_set", agent / "ce" / "scenarios" / "scenario_set.yaml"),
-        ("user_goal", root / ".ascendc-pilot" / "control" / "user_goal.yaml"),
-    ]
-    for kind, path in candidates:
-        if not path.is_file():
-            continue
-        try:
-            doc = read_yaml(path)
-        except Exception:
-            doc = {"path": path.as_posix(), "error": "unreadable"}
-        sources.append({"kind": kind, "path": path.as_posix(), "doc": doc})
-    plan_md = agent / "ce" / "intent" / "plan.md"
-    if plan_md.is_file():
-        sources.append({"kind": "ce_intent_plan", "path": plan_md.as_posix()})
+    plan_dir = agent / "ce" / "plan"
+    if plan_dir.is_dir():
+        for plan_md in sorted(plan_dir.glob("*_plan.md")):
+            if plan_md.is_file():
+                sources.append({"kind": "ce_plan", "path": plan_md.as_posix()})
+    handoff = agent / "session_handoff.md"
+    if handoff.is_file():
+        sources.append({"kind": "session_handoff", "path": handoff.as_posix()})
     return {"schema": "tg-intent-sources/v1", "sources": sources}

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""CE session handoff: pointer-only next-slash note."""
+"""Portable session handoff markdown. Pointers only; no yaml; no copied bodies."""
 
 from __future__ import annotations
 
@@ -14,21 +14,26 @@ def write_session_handoff(
     next_slash: str,
     artifact_paths: list[str] | None = None,
     open_items: list[str] | None = None,
+    suggested_next: list[str] | None = None,
+    why: str = "",
 ) -> dict[str, Any]:
-    """Write ce/session_handoff.md. References paths; does not copy artifact bodies."""
+    """Write `.ascendc-pilot/<arch>/session_handoff.md`."""
     arch = str(architecture or "").strip()
     if not arch:
         return {"ok": False, "engine": "session_handoff", "error": "ARCHITECTURE_MISSING_IN_RUN_STATE"}
     root = Path(project_root).expanduser().resolve()
-    out = root / ".ascendc-pilot" / arch / "ce" / "session_handoff.md"
+    out = root / ".ascendc-pilot" / arch / "session_handoff.md"
     artifacts = [str(p).strip() for p in (artifact_paths or []) if str(p).strip()]
     opens = [str(p).strip() for p in (open_items or []) if str(p).strip()]
+    suggestions = [str(p).strip() for p in (suggested_next or []) if str(p).strip()]
     lines = [
-        "# CE session handoff",
+        "# Session handoff",
         "",
         f"- next: `{next_slash}`",
-        "- artifacts:",
     ]
+    if why.strip():
+        lines.append(f"- why: {why.strip()}")
+    lines.append("- artifacts:")
     if artifacts:
         lines.extend(f"  - `{path}`" for path in artifacts)
     else:
@@ -38,6 +43,9 @@ def write_session_handoff(
         lines.extend(f"  - {item}" for item in opens)
     else:
         lines.append("  - (none)")
+    if suggestions:
+        lines.append("- suggested:")
+        lines.extend(f"  - {item}" for item in suggestions)
     lines.append("")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines), encoding="utf-8")

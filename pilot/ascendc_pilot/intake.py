@@ -109,7 +109,7 @@ def _explicit_is_weak(explicit: Path | str | None, resolved: Path) -> bool:
     """True when --project is a Host-cwd artifact, not a chosen operator dir.
 
     Bare names and paths under the Pilot checkout are the lethal OpenCode case:
-    ``acp uo-query --project flash_attention_score_grad`` from the Host checkout
+    ``pilot_cli`` ``uo-query --project flash_attention_score_grad`` from the Host checkout
     resolves to ``<Pilot>/flash_attention_score_grad`` (missing / not an operator).
     Existing non-operator dirs outside the checkout stay explicit so intake can
     AskQuestion instead of silently swapping in last-project cache.
@@ -293,9 +293,9 @@ def scan_operator_directory(root: Path | str | None) -> dict[str, Any]:
             else "未扫到 arch* 目录；请确认算子包布局或手工提供 architecture。"
         ),
         "suggested_command": (
-            f'acp start uo-init --project "{path}" --architecture <arch*>'
+            f'pilot_run workflow=uo-init project="{path}" architecture=<arch*>'
             if arches
-            else f'acp start uo-init --project "{path}" --architecture <arch>'
+            else f'pilot_run workflow=uo-init project="{path}" architecture=<arch>'
         ),
     }
     if not arches:
@@ -560,14 +560,14 @@ def missing_uo_product_payload(
         "message_zh": question,
         "ask_question": ask,
         "suggested_command": (
-            f'acp start uo-init --project "{root_p}" --architecture <arch*>'
+            f'pilot_run workflow=uo-init project="{root_p}" architecture=<arch*>'
         ),
         "primary_instruction_zh": (
             "立刻用 question/AskQuestion 弹出可点选框，选项必须原样使用。"
             "禁止 Glob/dir/tree 找 `.uo`，禁止猜 `--op-name`。"
             + (
                 "选 uo-init → `pilot_run` workflow=uo-init；"
-                "选 source → 只读算子源码作答，不要再调 acp uo-query。"
+                "选 source → 只读算子源码作答，不要再调 `pilot_cli` `uo-query`。"
                 if allow_source
                 else "选 uo-init 后启动 `/uo-init`。"
             )
@@ -640,9 +640,9 @@ def _uo_product_gate(
                     "field": "architecture",
                 },
                 "suggested_command": (
-                    f'acp start {workflow_id} --project "{root}" --architecture <{",".join(arches)}>'
+                    f'pilot_run workflow={workflow_id} project="{root}" architecture=<{",".join(arches)}>'
                     if arches
-                    else f'acp start uo-init --project "{root}" --architecture <arch*>'
+                    else f'pilot_run workflow=uo-init project="{root}" architecture=<arch*>'
                 ),
             },
             root,
@@ -687,7 +687,7 @@ def _uo_product_gate(
                     "field": "architecture",
                 },
                 "suggested_command": (
-                    f'acp start {workflow_id} --project "{root}" --architecture <{",".join(arches)}>'
+                    f'pilot_run workflow={workflow_id} project="{root}" architecture=<{",".join(arches)}>'
                 ),
                 "primary_instruction_zh": (
                     "选项必须来自已有 `.uo`；禁止编造未建库的 arch。"
@@ -714,7 +714,7 @@ def prepare_workflow_start(
     """Validate start inputs and resolve architecture.
 
     Always returns a dict:
-    - ok True → ``architecture`` is ready for ``acp start``
+    - ok True → ``architecture`` is ready for Host ``pilot_run``
     - ok False → AskQuestion / needs_human_decision payload
     """
     wf = (workflow_id or "").strip()
@@ -730,8 +730,8 @@ def prepare_workflow_start(
         if bad is not None:
             bad["workflow_id"] = wf
             bad["suggested_command"] = (
-                f'acp start {wf} --project "<算子目录>"'
-                + (" --architecture <arch*>" if need_arch else "")
+                f'pilot_run workflow={wf} project="<算子目录>"'
+                + (' architecture=<arch*>' if need_arch else "")
             )
             return _attach_intake_request(bad, root)
         if not looks_like_operator_package(root) and not project_explicit:
@@ -818,9 +818,9 @@ def prepare_workflow_start(
                 "architecture_options": labels,
                 "architecture_option_details": options,
                 "message_zh": (
-                    f"缺少 --architecture，不能启动。已扫描到: {', '.join(labels)}。\n"
-                    "AskQuestion 选完后，用 "
-                    f'`acp start {wf} --project "{root}" --architecture <选中>` '
+                    f"缺少 architecture，不能启动。已扫描到: {', '.join(labels)}。\n"
+                    "AskQuestion 选完后，用 Host "
+                    f'`pilot_run workflow={wf} project="{root}" architecture=<选中>` '
                     "一次启动（此前不会创建 run）。"
                 ),
                 "ask_question": {
@@ -830,11 +830,11 @@ def prepare_workflow_start(
                     "field": "architecture",
                 },
                 "suggested_command": (
-                    f'acp start {wf} --project "{root}" --architecture <{",".join(labels)}>'
+                    f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(labels)}>'
                 ),
                 "primary_instruction_zh": (
                     "先 AskQuestion；选项必须原样使用 architecture_option_details。"
-                    "选完后执行 suggested_command（带齐 --project 与 --architecture 的一次 start）。"
+                    "选完后调用 Host `pilot_run`（带齐 project 与 architecture）。"
                     "禁止编造仓内不存在的 arch。"
                 ),
             },
@@ -866,7 +866,7 @@ def prepare_workflow_start(
                     "architecture_option_details": details,
                     "message_zh": (
                         f"指定的 architecture={arch} 不在算子仓 arch* 目录中。"
-                        f"仓内仅有: {', '.join(known)}。请重新选择后再 start。"
+                        f"仓内仅有: {', '.join(known)}。请重新选择后再 `pilot_run`。"
                     ),
                     "ask_question": {
                         "prompt_zh": "请从算子仓实际 arch* 中选择",
@@ -875,7 +875,7 @@ def prepare_workflow_start(
                         "field": "architecture",
                     },
                     "suggested_command": (
-                        f'acp start {wf} --project "{root}" --architecture <{",".join(known)}>'
+                        f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(known)}>'
                     ),
                 },
                 root,

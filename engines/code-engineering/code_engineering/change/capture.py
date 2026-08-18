@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Capture a reproducible Git change payload."""
+"""Capture a reproducible Git change payload (in memory; yaml write is optional)."""
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,7 +12,64 @@ from typing import Any
 
 import yaml
 
-from code_engineering.impact import parse_diff_ranges, parse_two_sided_spans
+_HUNK = re.compile(r"^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@")
+_DIFF_FILE = re.compile(r"^\+\+\+\s+b/(.+)$|^\+\+\+\s+(.+)$")
+_OLD_FILE = re.compile(r"^---\s+a/(.+)$|^---\s+(.+)$")
+
+
+def parse_diff_ranges(diff_text: str) -> dict[str, list[tuple[int, int]]]:
+    """Map path → list of (start_line, end_line) for new-file hunks."""
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    current: str | None = None
+    for line in diff_text.splitlines():
+        fm = _DIFF_FILE.match(line)
+        if fm:
+            current = (fm.group(1) or fm.group(2) or "").strip()
+            if current == "/dev/null":
+                current = None
+            continue
+        hm = _HUNK.match(line)
+        if hm and current:
+            start = int(hm.group(3))
+            count = int(hm.group(4) or "1")
+            end = start + max(count, 1) - 1
+            ranges.setdefault(current, []).append((start, end))
+    return ranges
+
+
+def parse_two_sided_spans(diff_text: str) -> list[dict[str, Any]]:
+    """Preserve both old/new hunk spans and add/delete/modify/rename status."""
+    rows: list[dict[str, Any]] = []
+    old_path = ""
+    new_path = ""
+    for line in diff_text.splitlines():
+        old = _OLD_FILE.match(line)
+        if old:
+            old_path = (old.group(1) or old.group(2) or "").strip()
+            continue
+        new = _DIFF_FILE.match(line)
+        if new:
+            new_path = (new.group(1) or new.group(2) or "").strip()
+            continue
+        hunk = _HUNK.match(line)
+        if not hunk:
+            continue
+        old_start, old_count = int(hunk.group(1)), int(hunk.group(2) or "1")
+        new_start, new_count = int(hunk.group(3)), int(hunk.group(4) or "1")
+        if old_path == "/dev/null":
+            status = "add"
+        elif new_path == "/dev/null":
+            status = "delete"
+        elif old_path and new_path and old_path != new_path:
+            status = "rename"
+        else:
+            status = "modify"
+        rows.append({
+            "status": status,
+            "old": {"file": old_path or None, "start": old_start, "end": old_start + max(old_count, 1) - 1},
+            "new": {"file": new_path or None, "start": new_start, "end": new_start + max(new_count, 1) - 1},
+        })
+    return rows
 
 _SOURCE_SUFFIXES = {".cpp", ".cc", ".c", ".h", ".hpp", ".cuh", ".cu", ".py"}
 _WIN_GIT_CANDIDATES = (

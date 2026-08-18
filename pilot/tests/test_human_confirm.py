@@ -59,11 +59,11 @@ def _write_session(tmp_path: Path, action_id: str, workflow_id: str) -> None:
     )
 
 
-def test_ce_intent_ask_is_not_tg_planning(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "ce-intent", phase="confirm", force_phase=True, architecture="arch35")
+def test_ce_plan_ask_is_not_tg_planning(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "ce-plan", phase="confirm", force_phase=True, architecture="arch35")
     ask = build_ask(
         tmp_path,
-        {"workflow_id": "ce-intent", "op_name": "DemoOp", "architecture": "arch35"},
+        {"workflow_id": "ce-plan", "op_name": "DemoOp", "architecture": "arch35"},
         action_id="human_confirm",
     )
     header = str(ask.get("header") or "")
@@ -71,8 +71,8 @@ def test_ce_intent_ask_is_not_tg_planning(tmp_path: Path) -> None:
     labels = [str(o.get("label") or "") for o in ask.get("options") or []]
     assert "覆盖合同" not in header
     assert "进入规划" not in header
-    assert "变更计划" in header or "变更计划" in question
-    assert any("确认变更计划" in lb for lb in labels)
+    assert "计划" in header or "计划" in question
+    assert any("ce-apply" in lb for lb in labels)
     assert not any("确认进入规划" in lb for lb in labels)
 
 
@@ -82,9 +82,9 @@ def test_legacy_human_confirm_ask_without_workflow_is_tg(tmp_path: Path) -> None
     assert any("规划" in lb for lb in labels)
 
 
-def test_ce_human_confirm_materialize_writes_ce_not_tg(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "ce-intent", phase="confirm", force_phase=True, architecture="arch35")
-    _write_session(tmp_path, "human_confirm", "ce-intent")
+def test_ce_human_confirm_materialize_does_not_write_yaml(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "ce-plan", phase="confirm", force_phase=True, architecture="arch35")
+    _write_session(tmp_path, "human_confirm", "ce-plan")
     env = issue_interaction_request(
         tmp_path,
         kind="primary_confirm",
@@ -99,22 +99,20 @@ def test_ce_human_confirm_materialize_writes_ce_not_tg(tmp_path: Path) -> None:
     assert out.get("ok") is True
     ce_confirm = ce_root(tmp_path, arch="arch35") / "intent" / "confirmation.yaml"
     tg_confirm = tg_root(tmp_path, arch="arch35") / "init" / "confirmation.yaml"
-    assert ce_confirm.is_file()
+    assert not ce_confirm.is_file()
     assert not tg_confirm.is_file()
-    doc = yaml.safe_load(ce_confirm.read_text(encoding="utf-8"))
-    assert doc.get("schema") == "ce-intent-confirmation/v1"
-    assert doc.get("status") == "confirmed"
-    plan = ce_root(tmp_path, arch="arch35") / "intent" / "plan.md"
-    assert plan.is_file()
-    assert "# 变更计划" in plan.read_text(encoding="utf-8")
+    yaml_hits = list(ce_root(tmp_path, arch="arch35").rglob("*.yaml")) if ce_root(tmp_path, arch="arch35").exists() else []
+    assert yaml_hits == []
 
 
-def test_scenario_confirm_is_hosted(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "ce-impact", phase="scenarios", force_phase=True, architecture="arch35")
-    assert is_hosted_confirm(tmp_path, "scenario_confirm")
-    ask = build_ask(tmp_path, action_id="scenario_confirm")
+def test_ce_apply_report_is_hosted(tmp_path: Path) -> None:
+    start_workflow(tmp_path, "ce-apply", phase="report", force_phase=True, architecture="arch35")
+    assert is_hosted_confirm(tmp_path, "apply_report")
+    ask = build_ask(tmp_path, action_id="apply_report")
     header = str(ask.get("header") or "")
-    assert "场景" in header
+    values = [str(o.get("value") or "") for o in ask.get("options") or []]
+    assert "改码" in header or "下一步" in header
+    assert "review" in values
     assert "覆盖合同" not in header
 
 

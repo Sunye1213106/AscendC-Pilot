@@ -1,24 +1,11 @@
 # Evidence Discipline
 
-For every CE conclusion record:
+CE 不维护账本，不签发证书。给人看的结论写在 `{slug}_plan.md`、审查对话或 `session_handoff.md`。
 
-1. claim or obligation id;
-2. source/version fingerprint;
-3. evidence references and Tier A/B/C;
-4. derivation parameters and scope boundary;
-5. result, uncertainty, and invalidation conditions.
+每条跨层结论应能追溯到：
 
-The ledger is append-preserving:
+1. `uo-query` 的一种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）；
+2. 源码 `path:line` 或卡片上的定义点；
+3. 失效条件（`.uo` digest 变了、计划 todo 改了、diff 范围变了）。
 
-```text
-Open = O - V - X
-```
-
-`O` keeps all identified obligations. `V` contains obligations closed by
-verification. `X` contains only referee-approved non-applicable obligations.
-Never erase an obligation to make `Open` smaller, and never use Tier C evidence
-to place an item in `V` or `X`.
-
-Report stale products, missing source, unsupported edges, truncated slices, and
-external-system dependencies as boundaries. Do not silently convert them into
-negative findings.
+验证走 `/tg-plan`。不要把审查叙述写成已闭合的测试义务 yaml。

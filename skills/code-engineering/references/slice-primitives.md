@@ -1,18 +1,12 @@
-# Slice Primitives
+# Query primitives
 
-Use UO's bounded directed primitives:
+语义只走 `pilot_cli uo-query` 四种形态，不要封装第二套图 walker：
 
-- `slice_forward(product, seeds, edge_kinds=..., depth=..., budget=...)`
-- `slice_backward(product, seeds, edge_kinds=..., depth=..., budget=...)`
+- 标识符：实体卡片（定义点 + 按边类型分组的邻居 + `next`）
+- `Dim=V`：模板覆盖
+- `--file --line`：从位点走图（审查 diff hunk 用这个）
+- 无参数：算子索引
 
-When `edge_kinds` is empty, engine uses the useful-edge default. Hits are
-projected (`id/kind/name/file/line` + 少量 `facts`)，不是整份 `entity.data`。
+Hits 是投影后的卡片（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。
 
-Forward slices expose possible downstream impact; backward slices expose
-producers, guards, callers, and prerequisites. Always retain the seed set,
-direction, edge-kind filter, depth, budget, evidence-tier hints, and
-`truncated` flag with the result.
-
-A slice is a Tier B derivation only to the extent that its included graph facts
-are Tier A and its parameters are reproducible. A budget/depth boundary cannot
-prove non-reachability. Expand selectively or create an open obligation.
+禁止 `acp uo impact`、`explain-*`、`search`、`locate`，也禁止调用已删除的 `slice_forward` / `slice_backward`。预算截断不能证明「没有影响」——标未决，不要写成无义务。

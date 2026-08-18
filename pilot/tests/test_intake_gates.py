@@ -92,8 +92,8 @@ def test_start_intake_gate_requires_architecture_from_tree(tmp_path: Path, monke
     assert labels == ["arch22", "arch35"]
     assert "arch36" not in labels
     assert "pending_start" not in gate
-    assert "acp start" in gate["suggested_command"]
-    assert "--architecture" in gate["suggested_command"]
+    assert "pilot_run" in gate["suggested_command"]
+    assert "architecture" in gate["suggested_command"]
 
 
 def test_start_intake_gate_rejects_unknown_arch(tmp_path: Path):
@@ -224,8 +224,8 @@ def test_cli_start_asks_for_architecture(tmp_path: Path, monkeypatch, capsys):
     assert out["needs_human_decision"] is True
     assert out["reason_code"] == "ARCHITECTURE_REQUIRED"
     assert out["ask_question"]["options"][0]["label"] == "arch35"
-    assert "acp start" in out["suggested_command"]
-    assert "--architecture" in out["suggested_command"]
+    assert "pilot_run" in out["suggested_command"]
+    assert "architecture" in out["suggested_command"]
 
 
 def test_cli_start_with_project_and_arch(tmp_path: Path, monkeypatch, capsys):

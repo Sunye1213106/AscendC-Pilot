@@ -109,6 +109,7 @@ def extract_host_bundle(
                     ),
                     host_tus=layout_hosts,
                     kernel_tu=kernel_tu,
+                    walk_ctx=ctx,
                 )
                 spec.scope = enrichment.scope
                 _targets_from_scope(spec)
@@ -192,15 +193,57 @@ def extract_host_bundle(
         return out
 
     with timer.span("host||kernel", tus=len(targets)):
-        if with_kernel:
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                fut_host = pool.submit(_run_host)
-                fut_kernel = pool.submit(_run_kernel_early)
-                ir = fut_host.result()
-                kernel = fut_kernel.result()
-        else:
+        if not with_kernel:
             ir = _run_host()
             kernel = None
+        else:
+            from uo_init.kernel_ir import (
+                finish_kernel_ir_job,
+                kernel_ir_isolate,
+                kernel_ir_payload,
+                start_kernel_ir_job,
+            )
+
+            kernel_job = None
+            if kernel_ir_isolate():
+                try:
+                    payload = kernel_ir_payload(
+                        spec,
+                        ctx,
+                        dimensions=kernel_dims,
+                        max_variants=kernel_max_variants,
+                    )
+                    kernel_job = start_kernel_ir_job(payload)
+                    _tlog("kernel_ir.isolate process")
+                except Exception as exc:  # noqa: BLE001
+                    _tlog(f"kernel_ir.isolate_fallback  reason={type(exc).__name__}")
+                    kernel_job = None
+            if kernel_job is not None:
+                ir = _run_host()
+                try:
+                    t0 = _time.perf_counter()
+                    kernel = finish_kernel_ir_job(*kernel_job)
+                    dt = _time.perf_counter() - t0
+                    _tlog(
+                        f"{dt:7.3f}s  kernel_ir.done  isolate=process "
+                        f"branches={len(getattr(kernel, 'branches', []) or [])}"
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _tlog(
+                        f"kernel_ir.isolate_failed  reason={type(exc).__name__}; "
+                        "rebuilding in-process"
+                    )
+                    try:
+                        kernel_job[0].kill()
+                    except Exception:
+                        pass
+                    kernel = _run_kernel_early()
+            else:
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    fut_host = pool.submit(_run_host)
+                    fut_kernel = pool.submit(_run_kernel_early)
+                    ir = fut_host.result()
+                    kernel = fut_kernel.result()
     _tlog(
         f"  host_ir controls={len(ir.controls)} writes={len(ir.writes)} "
         f"kernel_branches={len(getattr(kernel, 'branches', []) or [])}"

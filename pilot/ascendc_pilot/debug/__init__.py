@@ -1809,7 +1809,7 @@ def hook_handle(event: str, payload: dict[str, Any]) -> dict[str, Any]:
                 out["followup_message"] = (
                     f"[ascendc-debug] 子代理 `{sub or '?'}` 已结束；"
                     f"会话已导出到 `{meta.get('export_dir')}`。"
-                    f"请按 Bundle 继续（通常是 `acp run-action <action_id> --finalize`），"
+                    f"请按 Bundle 继续（由 Host `pilot_run` 完成本步），"
                     f"不要复述 METHOD。"
                 )
 

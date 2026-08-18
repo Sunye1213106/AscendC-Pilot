@@ -343,18 +343,17 @@ ASCENDC_ARCH
 
 # TG Host Replay 环境
 
-UO 的 CANN Headers 和 TG Replay 使用的 CANN 环境需要区分：
+TG Replay **复用 UO 已经解包的 CANN**（`UO_CANN_ROOT` / `ASCEND_CANN_PACKAGE_PATH` / `_cann/pkg`，含 `cann-asc-devkit`）。不要在 WSL 里再装一份 toolkit，也不要再找 `/usr/local/Ascend/cann/set_env.sh`。
 
 ```text id="0w66ad"
-UO → CANN Header Package
-TG → Linux / WSL 中可运行的 CANN Environment
+人侧只需 WSL。CANN 用 UO 解包树。/tg-solve 会自动配工作区。
 ```
 
 ## 6. 准备 Linux / WSL
 
 Linux 用户可以直接使用当前环境。
 
-Windows 用户需要 WSL。
+Windows 用户需要 WSL。有可用发行版即可；`/tg-solve` 会解析发行版、映射或拷贝工作区、补齐 `g++`/`cmake`。
 
 检查：
 
@@ -368,59 +367,34 @@ wsl -l -v
 wsl --install
 ```
 
-安装完成后准备一个可正常使用的 Linux 发行版。
-
----
-
-## 7. 安装 TG 使用的 CANN
-
-在 Linux 或 WSL 中，从华为昇腾社区下载与目标环境匹配的 CANN Toolkit / Runtime。
-
-安装包通常类似：
-
-```text id="zuwytq"
-Ascend-cann-toolkit_<version>_linux-<arch>.run
-```
-
-按照对应 CANN 版本的官方安装说明完成安装。
-
-安装后找到：
-
-```text id="tupdiv"
-set_env.sh
-```
-
-可以搜索：
-
-```bash id="rye6vs"
-find /usr/local/Ascend "$HOME/Ascend" -name set_env.sh 2>/dev/null
-```
-
-加载环境：
-
-```bash id="ocxic0"
-source /path/to/set_env.sh
-```
-
-如果 CANN 不在默认位置，可以设置：
-
-```bash id="hh3jhg"
-export CANN_SET_ENV=/path/to/set_env.sh
-```
-
-Windows 使用 WSL Replay 时，可以指定发行版：
+一台发行版会自动选用。多台时设置：
 
 ```powershell id="dj2cu1"
 $env:UO_REPLAY_DISTRO = "Ubuntu-22.04"
 ```
 
-Replay 环境还需要基本 C++ 构建工具：
+---
 
-```bash id="u3yxsm"
-sudo apt-get install -y build-essential cmake
+## 7. CANN：沿用 UO 解包
+
+先按上文完成 `scripts/cann_extract.py`（Windows 上解 `linux-x86_64.run` 到 `_cann/pkg`）。TG bootstrap 会生成 extract 布局的 `cann_env.sh`，并在 WSL 里 `wslpath` 映射。
+
+```text id="zuwytq"
+UO_CANN_ROOT 或仓库旁 _cann/pkg
+  cann-asc-devkit/x86_64-linux/
+  cann-metadef/
+  bisheng/   （若解包包含）
 ```
 
-Host Replay driver、Host UT 构建和 testcase 执行由 TG workflow 在运行过程中处理，不需要在安装阶段逐个配置。
+不要再执行：
+
+```text id="tupdiv"
+source /usr/local/Ascend/cann/set_env.sh
+```
+
+`g++` / `cmake` 缺失时，`/tg-solve` 会非交互 `apt-get`；失败码 `WSL_BUILD_DEPS_MISSING`。不要在安装阶段手工配 `/work/.../run_replay.sh`。
+
+Host Replay driver、Host UT 构建和 testcase 执行由 TG workflow 在运行过程中处理。
 
 ---
 

@@ -25,7 +25,6 @@ from ascendc_pilot.user_goal import (
     route_natural_goal,
 )
 from ascendc_pilot.workflows.specs import resource_sets_conflict, WORKFLOWS
-from code_engineering.change_test_intent import build_change_test_intent
 
 
 def _dump(path: Path, data: object) -> None:
@@ -34,7 +33,8 @@ def _dump(path: Path, data: object) -> None:
 
 
 def test_two_session_families_do_not_share_lease_slot() -> None:
-    assert resource_sets_conflict("tg-solve", "ce-impact") is False
+    assert resource_sets_conflict("tg-solve", "ce-plan") is False
+    assert resource_sets_conflict("tg-solve", "ce-apply") is False
 
 
 def test_snapshot_isolates_tg_solve_from_ce_apply(tmp_path: Path, monkeypatch) -> None:
@@ -69,18 +69,6 @@ def test_source_snapshot_copies_uncommitted_overlay(tmp_path: Path, monkeypatch)
     ident = materialize_source_snapshot(tmp_path)
     copied = Path(ident["workspace_path"]) / "op_host" / "a.cpp"
     assert copied.read_text(encoding="utf-8") == "int x = 1;\n"
-
-
-def test_host_branch_obligation_needs_target_reached() -> None:
-    doc = build_change_test_intent(
-        impact={"affected_keys": [], "head": "abc"},
-        obligations=[{"id": "CE-OBL-17", "kind": "host_branch", "symbol": "ScatterAdd"}],
-        uo_digest="d1",
-        source_fingerprint="s1",
-        change_revision="abc",
-    )
-    assert doc["targets"][0]["obligation_id"] == "CE-OBL-17"
-    assert doc["targets"][0]["kind"] == "host_branch"
 
 
 def test_harness_failure_certificate_must_fail(tmp_path: Path) -> None:
@@ -131,17 +119,17 @@ def test_ro_search_refuses_repo_root(tmp_path: Path) -> None:
 
 def test_goal_router_ce_chain(tmp_path: Path) -> None:
     hit = route_natural_goal("验证这次改动")
-    assert hit and hit["workflow_id"] == "ce-intent"
+    assert hit and hit["workflow_id"] == "ce-plan"
     assert route("验证这次改动").get("method") == "goal_router"
     goal = ensure_goal_for_intent(
         tmp_path,
         intent_text="验证这次改动",
         architecture="arch35",
-        workflow_id="ce-intent",
+        workflow_id="ce-plan",
         op_name="DemoOp",
     )
     assert goal and goal["goal_id"] == GOAL_CE_CHANGE
-    adv = mark_workflow_passed(tmp_path, "ce-intent")
+    adv = mark_workflow_passed(tmp_path, "ce-plan")
     assert adv and adv["next_workflow_id"] == "ce-apply"
 
 

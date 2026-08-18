@@ -242,7 +242,7 @@ def forbidden_blocks_write(
         if norm.startswith("uo/ir/") and "gap_investigation" not in norm:
             return "FORBIDDEN_WRITE_CANONICAL_UO_IR"
     if "write_canonical_ce_plan" in tags:
-        if any(norm.startswith(p) for p in ("ce/intent/", "ce/impact/", "ce/scenarios/", "ce/verify/")):
+        if any(norm.startswith(p) for p in ("ce/plan/", "ce/intent/", "ce/impact/", "ce/scenarios/", "ce/verify/")):
             return "FORBIDDEN_WRITE_CANONICAL_CE_PLAN"
     if "write_excluded_set" in tags:
         if "excluded" in Path(norm).name.lower() or "/excluded" in f"/{norm}":

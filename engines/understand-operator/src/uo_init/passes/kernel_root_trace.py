@@ -1146,6 +1146,13 @@ def _purge_root_trace_entities(codemap: CodeMap) -> None:
                     codemap.relations.pop(rid, None)
 
 
+_LINK_SITE_SEEN: dict[str, set[tuple[str, int, int, str, str]]] = {}
+
+
+def _reset_link_site_seen() -> None:
+    _LINK_SITE_SEEN.clear()
+
+
 def _link(
     codemap: CodeMap,
     kind: RelationKind,
@@ -1189,22 +1196,39 @@ def _link(
         rel = codemap.link(kind, src, dst, attrs=payload, status=status)
     if site is None:
         return
-    sites = list(rel.attrs.get("sites") or [])
-    key = (site["file"], site["line"], site["column"], site["receiver"], site["via"])
-    seen = {
-        (
-            str(s.get("file") or ""),
-            int(s.get("line") or 0),
-            int(s.get("column") or 0),
-            str(s.get("receiver") or ""),
-            str(s.get("via") or ""),
-        )
-        for s in sites
-        if isinstance(s, dict)
-    }
-    if key not in seen:
-        sites.append(site)
+    key = (
+        site["file"],
+        site["line"],
+        site["column"],
+        site["receiver"],
+        site["via"],
+    )
+    seen = _LINK_SITE_SEEN.get(rel.id)
+    if seen is None:
+        existing_sites = rel.attrs.get("sites")
+        if not isinstance(existing_sites, list):
+            existing_sites = []
+            rel.attrs["sites"] = existing_sites
+        seen = {
+            (
+                str(s.get("file") or ""),
+                int(s.get("line") or 0),
+                int(s.get("column") or 0),
+                str(s.get("receiver") or ""),
+                str(s.get("via") or ""),
+            )
+            for s in existing_sites
+            if isinstance(s, dict)
+        }
+        _LINK_SITE_SEEN[rel.id] = seen
+    if key in seen:
+        return
+    seen.add(key)
+    sites = rel.attrs.get("sites")
+    if not isinstance(sites, list):
+        sites = []
         rel.attrs["sites"] = sites
+    sites.append(site)
     # Keep first-seen file/line as the primary display site; do not overwrite.
 
 
@@ -1478,6 +1502,7 @@ def finalize_kernel_root_trace(
     walk_confirm = 0
 
     _purge_root_trace_entities(codemap)
+    _reset_link_site_seen()
 
     try:
         from uo_init import tu_cache as _tu_cache

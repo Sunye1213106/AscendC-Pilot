@@ -89,17 +89,15 @@ def test_tk_cover_is_removed() -> None:
     assert routed.get("ok") is False
 
 
-def test_ce_impact_scenarios_unchanged() -> None:
-    from ascendc_pilot.workflows import get_workflow, phase_pipeline
+def test_ce_plan_has_no_scenario_overlay() -> None:
+    from ascendc_pilot.workflows import get_workflow
 
-    ce = get_workflow("ce-impact", mode="scenario_targeted")
-    assert (ce.get("pipelines") or {}).get("scenarios") == [
-        "scenario_infer",
-        "scenario_knobs",
-        "scenario_apply",
-        "scenario_confirm",
-    ]
-    assert phase_pipeline("ce-impact", "scenarios") == ["scenario_infer"]
+    plan = get_workflow("ce-plan")
+    apply = get_workflow("ce-apply")
+    assert not (plan.get("mode_overlays") or {})
+    assert not (apply.get("mode_overlays") or {})
+    assert "scenario_knobs" not in [a["id"] for a in plan["actions"]]
+    assert "scenario_knobs" not in [a["id"] for a in apply["actions"]]
 
 
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:
@@ -108,7 +106,8 @@ def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:
     assert "uo-scope" not in joined
     assert "AskQuestion" in joined or "question UI" in joined.lower()
     assert "confirm" in joined
-    assert "human_confirm --finalize" in joined
+    assert "pilot_run" in joined
+    assert "acp run-action" not in joined
     assert "acp answer" in joined
 
 
@@ -130,17 +129,18 @@ def test_actions_facade_replaces_generic_primary_steps(monkeypatch, tmp_path: Pa
     joined = "\n".join(result["interactive_steps"])
     assert "uo-scope" not in joined
     assert "approve" in joined
-    assert "plan_approve --finalize" in joined
+    assert "pilot_run" in joined
+    assert "acp run-action" not in joined
     assert "acp answer" in joined
 
 
-def test_scenario_knobs_binds_knobs_method() -> None:
+def test_plan_draft_binds_ce_plan_method() -> None:
     from ascendc_pilot.actions.runtime import _resolve_capability_method
 
     repo = Path(__file__).resolve().parents[2]
-    action = action_by_id("ce-impact", "scenario_knobs")
+    action = action_by_id("ce-plan", "plan_draft")
     assert action is not None
     path = _resolve_capability_method(repo, action)
     assert path is not None
     assert path.name == "METHOD.md"
-    assert "ce-scenario-knobs" in path.as_posix().replace("\\", "/")
+    assert "ce-plan-draft" in path.as_posix().replace("\\", "/")

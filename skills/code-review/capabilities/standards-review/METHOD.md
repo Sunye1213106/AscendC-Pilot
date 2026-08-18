@@ -1,6 +1,6 @@
 # Standards 轴审查（隔离子代理）
 
-只做 **Standards** 轴：对照仓规范，判断改动是否安全、是否符合跨层契约。不要做 Spec 轴，不要读 `ce/review/functional_report.yaml`。
+只做 **Standards** 轴：对照仓规范，判断改动是否安全、是否符合跨层契约。不要做 Spec 轴。
 
 详见 `references/ascendc-checks.md`、`references/cross-layer-contracts.md`、`references/finding-format.md`、`references/gotchas.md`。
 
@@ -22,4 +22,4 @@
 
 ## 产物
 
-默认把 `path:line` 结论写在 **Task 回复**里。可写 session part（stub 给出的路径）。**不要填** `ce/review/bug_report.yaml`。不要写 `functional_report.yaml` 或 `index.yaml`。禁止合成 LGTM。
+默认把 `path:line` 结论写在 **Task 回复**里。可写 session part（stub 给出的 md 路径）。禁止 Write `ce/**`。禁止合成 LGTM。

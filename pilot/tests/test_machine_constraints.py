@@ -36,7 +36,7 @@ def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:
     assert (
         forbidden_blocks_write(
             "ce-analyst",
-            "ce/intent/feature_decomposition.yaml",
+            "ce/plan/op_plan.md",
             project_root=REPO,
         )
         == "FORBIDDEN_WRITE_CANONICAL_CE_PLAN"
@@ -60,7 +60,7 @@ def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:
     assert (
         forbidden_blocks_write(
             "ce-analyst",
-            "runs/r1/actions/feature_decompose/staging.yaml",
+            "runs/r1/actions/intent_grill/staging.md",
             project_root=REPO,
         )
         is None

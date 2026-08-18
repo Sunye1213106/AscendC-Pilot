@@ -358,8 +358,8 @@ def build_task_stub(
     ]
     if project_root:
         lines.append(
-            f"acp --project {project_root}  "
-            "(Host cwd is the Pilot checkout; always pass this absolute operator path, not the op name alone)"
+            f"pilot_cli commands must pass --project {project_root} "
+            "(Host cwd is the Pilot checkout; always this absolute operator path, not the op name alone)"
         )
     dt = dispatch_targets or {}
     root = str(agent_root_path or "").rstrip("/\\")
@@ -431,7 +431,7 @@ def build_task_stub(
         )
         lines.append(
             "After a directed source Read for high confidence, run "
-            "`acp inspect evidence-window --project <op> --path <rel> --lines A-B` "
+            "`pilot_cli` command=`inspect evidence-window --project <op> --path <rel> --lines A-B` "
             "for evidence_window_sha256 + snippet; do not invent hashes or "
             "self-downgrade to medium when the window proof is available."
         )
@@ -439,19 +439,16 @@ def build_task_stub(
         lines.extend(
             [
                 "Final message is the complete native Task return to Primary.",
-                "Do NOT finalize; Primary runs "
-                "`acp run-action kb_lookup --finalize` "
-                "(plugin/env native Task text preferred; "
-                "`--result-file` only as manual fallback).",
+                "Do NOT finalize; Host `pilot_run` holds finalize after the Task returns.",
             ]
         )
     else:
         lines.extend(
             [
                 "Return a short summary when done.",
-                "Do NOT finalize; primary runs `acp run-action "
+                "Do NOT finalize; Host `pilot_run` holds finalize for `"
                 + action_id
-                + " --finalize` (optionally `--result-file <kb-answer.yaml>`).",
+                + "`.",
             ]
         )
     write_for_ptr = [] if action_id == "kb_lookup" else list(write_list)
@@ -534,22 +531,22 @@ def _review_axis_fanout_tasks(
         (
             "spec",
             "spec-review",
-            f"runs/{run_id}/actions/code_review/parts/spec.yaml",
-            "ce/review/bug_report.yaml",
+            f"runs/{run_id}/actions/code_review/parts/spec.md",
+            "runs/{run_id}/actions/code_review/parts/standards.md",
             (
-                "Spec — 对照 ce/intent/plan.md；没有则从 diff / change capture 推断意图，"
-                "检查 diff 是否满足该预期。结论写在 Task 回复（path:line）。"
-                "不要填 ce/review/*.yaml。"
+                "Spec — 若有当前 `{slug}_plan.md` 则对照该计划（todo 是否做完、有无超范围）；"
+                "纯 PR 无计划时只陈述变更理解，不假装有计划。"
+                "结论写在 Task 回复（path:line）。不要写 ce/review 或任何 yaml。"
             ),
         ),
         (
             "standards",
             "standards-review",
-            f"runs/{run_id}/actions/code_review/parts/standards.yaml",
-            "ce/review/functional_report.yaml",
+            f"runs/{run_id}/actions/code_review/parts/standards.md",
+            "runs/{run_id}/actions/code_review/parts/spec.md",
             (
                 "Standards — 对照 ascendc-checks 与跨层契约。"
-                "结论写在 Task 回复（path:line）。不要填 ce/review/*.yaml。"
+                "结论写在 Task 回复（path:line）。不要写 ce/review 或任何 yaml。"
             ),
         ),
     )
@@ -569,6 +566,7 @@ def _review_axis_fanout_tasks(
             "ce/review/functional_report.yaml",
             "ce/review/bug_report.yaml",
             "ce/review/index.yaml",
+            "ce/review/**",
         ):
             if blocked not in forbid:
                 forbid.append(blocked)
@@ -578,7 +576,7 @@ def _review_axis_fanout_tasks(
             f"FOCUS: {focus}\n"
             f"SLICE_ID={axis}\n"
             "Read only the method path in this stub. "
-            f"Optional session part: {artifact}. Do not Write ce/review/*.yaml. "
+            f"Optional session part: {artifact}. Do not Write ce/**. "
             f"Do not Read {other}."
         )
         axis_kwargs = {
@@ -602,7 +600,6 @@ def _review_axis_fanout_tasks(
         (sdir / f"task_prompt_stub_{axis}.md").write_text(slice_stub, encoding="utf-8")
     if len(tasks) < 2:
         return []
-    _ensure_review_report_skeletons(project_root, architecture)
     _dump(
         sdir / "review_axes.yaml",
         {
@@ -2060,7 +2057,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         voice_state = dict(_load_state_for_voice(project_root) or state or {})
         if not voice_state.get("workflow_id"):
             voice_state["workflow_id"] = wid
-        if action_id in {"grill_confirm", "human_confirm"} and wid == "ce-intent":
+        if action_id in {"grill_confirm", "human_confirm"} and wid == "ce-plan":
             if not grill_should_ask(project_root, voice_state, action_id=action_id):
                 materialized = materialize_primary_decision(project_root, action_id)
                 fin = finalize_action(project_root, action_id, engine_result=materialized)
@@ -2117,8 +2114,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "禁止用父 `task_prompt_stub` 再开一个。"
             "全部返回后 Primary 按各 Task 原生全文综合，禁止只转述某一个，"
             "禁止发明子代理没引用的事实。"
-            "切片子代理禁止自动 finalize；综合后再 "
-            f"`acp run-action {action_id} --finalize`。"
+            "切片子代理禁止自动 finalize；综合后由 Host `pilot_run` 完成本步。"
         )
     else:
         result["message_zh"] = (
@@ -2132,24 +2128,20 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         if len(fanout_tasks) >= 2:
             result["message_zh"] += (
                 " 每个子代理最终消息用完整自然语言交回（OpenCode 原生 Task，像 Cursor Explore）；"
-                " 不要把证据压进 yaml。切片 Task 不会注入 return_value；Primary 综合原生返回后再 finalize，"
-                f" 优先 `acp run-action {action_id} --finalize --result-file <综合.yaml>`。"
+                " 不要把证据压进 yaml。切片 Task 不会注入 return_value；Primary 综合原生返回后由 Host `pilot_run` 完成本步。"
             )
         else:
             result["message_zh"] += (
                 f" 子代理最终消息用完整自然语言交回（原生 Task / Explore）；"
                 f" 禁止 Write answer.yaml/scratch。"
                 f" Task 结束后若 metadata 含 `ascendc_uo_query_return_value.captured=true`，"
-                f" Primary 直接 `acp run-action {action_id} --finalize`（插件注入全文）；"
-                f" 禁止再手写 scratch yaml。仅无插件/环境时才用 "
-                f"`--result-file <kb-answer.yaml>` fallback。"
+                f" Host `pilot_run` 完成本步（插件注入全文）；"
+                f" 禁止再手写 scratch yaml。"
             )
-        result["finalize_hint"] = f"acp run-action {action_id} --finalize"
-        result["finalize_hint_fallback"] = (
-            f"acp run-action {action_id} --finalize --result-file <kb-answer.yaml>"
-        )
+        result["finalize_hint"] = "pilot_run"
+        result["finalize_hint_fallback"] = ""
     else:
-        result["message_zh"] += f" 完成后 acp run-action {action_id} --finalize"
+        result["message_zh"] += " 完成后由 Host `pilot_run` 完成本步，不要 bash `acp run-action --finalize`。"
     result["task_prompt_stub"] = stub
     result["task_prompt_stub_path"] = (sdir / "task_prompt_stub.md").as_posix()
     result["dispatch_task"] = True
@@ -2339,7 +2331,7 @@ def _finalize_bind_session_lease(
         return {
             "ok": False,
             "error": "no_session",
-            "message_zh": "缺少 prepare session；请先 acp run-action <action_id>",
+            "message_zh": "缺少 prepare session；请由 Host `pilot_run` 重新准备本步",
         }
 
     session_lease = str(session.get("lease_id") or "").strip()
@@ -2590,7 +2582,7 @@ def finalize_action(
         return {
             "ok": False,
             "error": "no_session",
-            "message_zh": "缺少 prepare session；请先 acp run-action <action_id>",
+            "message_zh": "缺少 prepare session；请由 Host `pilot_run` 重新准备本步",
         }
 
     bind_err = _finalize_bind_session_lease(
@@ -2758,7 +2750,7 @@ def finalize_action(
                 "session action_result.yaml；无注入时再用 "
                 "--result-file <kb-answer.yaml> fallback"
             ).lstrip("; "),
-            "hint": "acp run-action kb_lookup --finalize",
+            "hint": "Host tool pilot_run finalizes kb_lookup",
         }
 
     # apply_result was previously set by the removed semantic-parts reduce path;

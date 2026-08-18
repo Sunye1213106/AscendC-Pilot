@@ -238,11 +238,9 @@ def audit(repo: Path = REPO) -> list[str]:
         "tg-plan",
         "tg-solve",
         "ce-review",
-        "ce-impact",
-        "ce-intent",
+        "ce-plan",
         "ce-apply",
-        "ce-handoff",
-        "ce-verify",
+        "handoff",
     )
     for workflow_id in required:
         if workflow_id not in WORKFLOWS:

@@ -23,10 +23,10 @@ _REQUIRED_PROFILES = (
     "tg-solve-construct-cases",
     "tg-solve-analyze-round",
     "ce-review-code-review",
-    "ce-intent-feature-decompose",
-    "ce-impact-impact-audit",
-    "ce-impact-scenario-knobs",
-    "ce-verify-exclusion-review",
+    "ce-plan-intent-grill",
+    "ce-plan-draft",
+    "ce-apply-patch",
+    "handoff-session",
 )
 
 _LLM_ROLES = {
@@ -142,18 +142,15 @@ def test_legacy_pack_unchanged_shape(tmp_path: Path) -> None:
     assert "context_slice" not in pack
 
 
-def test_ce_review_seeds_from_arch_scoped_impact_slice(tmp_path: Path) -> None:
+def test_open_keys_seeds_from_worklog(tmp_path: Path) -> None:
     from ascendc_pilot.context.compiler import _seed_ids
-    from ascendc_pilot.paths import agent_root
+    from ascendc_pilot.paths import tg_root
 
     ensure_agent_layout(tmp_path, arch="arch35")
-    start_workflow(tmp_path, "ce-review", architecture="arch35")
-    slice_path = agent_root(tmp_path, "arch35") / "ce" / "impact" / "impact_slice.yaml"
-    slice_path.parent.mkdir(parents=True, exist_ok=True)
-    slice_path.write_text(
-        yaml.safe_dump({"files": ["op_host/tiling.cpp"], "affected_keys": [12]}),
-        encoding="utf-8",
-    )
-    seeds = _seed_ids(tmp_path, "impact_files", limit=20)
-    assert "op_host/tiling.cpp" in seeds
-    assert "12" in seeds
+    start_workflow(tmp_path, "tg-solve", architecture="arch35")
+    worklog = tg_root(tmp_path, "arch35") / "worklog.md"
+    worklog.parent.mkdir(parents=True, exist_ok=True)
+    worklog.write_text("open: [KEY_A, KEY_B]\n\n## KEY_A\n", encoding="utf-8")
+    seeds = _seed_ids(tmp_path, "open_keys", limit=20)
+    assert "KEY_A" in seeds
+    assert "KEY_B" in seeds

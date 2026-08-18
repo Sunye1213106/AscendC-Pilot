@@ -65,8 +65,18 @@ def _uo_root(project_root: Path, *, arch: str | None = None) -> Path:
 
 def _dump(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from yaml import CSafeDumper as _Dumper
+    except ImportError:
+        from yaml import SafeDumper as _Dumper
     path.write_text(
-        yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False),
+        yaml.dump(
+            payload,
+            Dumper=_Dumper,
+            allow_unicode=True,
+            sort_keys=True,
+            default_flow_style=False,
+        ),
         encoding="utf-8",
     )
 
@@ -1107,10 +1117,15 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         import pickle
 
         hir = bundle.get("host_ir")
+        kir = bundle.get("kernel_ir")
+        (uo / "ir").mkdir(parents=True, exist_ok=True)
         if hir is not None:
-            (uo / "ir").mkdir(parents=True, exist_ok=True)
             (uo / "ir" / "host_ir.pkl").write_bytes(
                 pickle.dumps(hir, protocol=pickle.HIGHEST_PROTOCOL)
+            )
+        if kir is not None:
+            (uo / "ir" / "kernel_ir.pkl").write_bytes(
+                pickle.dumps(kir, protocol=pickle.HIGHEST_PROTOCOL)
             )
     except Exception:  # noqa: BLE001
         pass
@@ -1165,6 +1180,7 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     persisted_kir = _load(uo / "ir" / "kernel_ir.yaml")
     has_persist = isinstance(persisted_kir, dict) and bool(persisted_kir.get("branches"))
     host_pkl = uo / "ir" / "host_ir.pkl"
+    kir_pkl = uo / "ir" / "kernel_ir.pkl"
     if cached_meta and host_pkl.is_file():
         try:
             import pickle
@@ -1173,7 +1189,12 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
             hir = pickle.loads(host_pkl.read_bytes())
             kir = None
-            if has_persist:
+            if kir_pkl.is_file():
+                try:
+                    kir = pickle.loads(kir_pkl.read_bytes())
+                except Exception:  # noqa: BLE001
+                    kir = None
+            if kir is None and has_persist:
                 kir = kernel_ir_from_dict(persisted_kir)
             bundle = {
                 "spec": discover(root, arch_dir=ctx.get("arch_dir")),

@@ -252,7 +252,7 @@ _IDENTITY_LINE_RE = re.compile(
     r"^\s*(action_id|actor_id|run_id)\s*=\s*(.+)$",
     re.I,
 )
-_ACP_PROJECT_RE = re.compile(r"acp\s+--project\s+(\S+)", re.I)
+_PROJECT_ROOT_RE = re.compile(r"(?:acp\s+--project|--project)\s+(\S+)", re.I)
 
 
 def _tokens_from_pointer_value(value: str) -> list[str]:
@@ -318,7 +318,7 @@ class TaskStubPointers:
 
 
 def parse_stub_pointers(stub: str) -> TaskStubPointers:
-    """Parse typed pointer lines only. Never scan prose / ``acp --project`` as inputs."""
+    """Parse typed pointer lines only. Never scan prose project paths as inputs."""
     ptr = TaskStubPointers()
     in_question = False
     for line in str(stub or "").splitlines():
@@ -342,7 +342,7 @@ def parse_stub_pointers(stub: str) -> TaskStubPointers:
             elif key == "run_id":
                 ptr.run_id = val
             continue
-        acp = _ACP_PROJECT_RE.search(stripped)
+        acp = _PROJECT_ROOT_RE.search(stripped)
         if acp and not ptr.project_root:
             ptr.project_root = acp.group(1)
             continue
@@ -587,7 +587,7 @@ def check_metadata_identity(
             "reason_code": "PROJECT_ROOT_MISMATCH",
             "declared": got.as_posix(),
             "expected": expected.as_posix(),
-            "message_zh": "stub ``acp --project`` 与当前 resolved project 不一致；禁止派发。",
+            "message_zh": "stub ``--project`` 与当前 resolved project 不一致；禁止派发。",
         }
     return {"ok": True}
 

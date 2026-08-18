@@ -27,8 +27,13 @@ class _FakeCtx:
     def host_args(self):
         return ["-std=c++17"]
 
-    def kernel_args(self, dtype_variant=None):
-        return ["-std=c++17"]
+    def kernel_args(self, dtype_variant=None, source_path=None, orig_assignment=None):
+        args = ["-std=c++17"]
+        if dtype_variant:
+            args.append(f"-DDTYPE={dtype_variant}")
+        if orig_assignment:
+            args.extend(f"-D{k}={v}" for k, v in orig_assignment.items())
+        return args
 
 
 def _seed_scope(uo: Path, rels: list[str]) -> None:
@@ -133,3 +138,33 @@ def test_warm_walk_reuses_tu_cache_without_cold_parse(tmp_path, monkeypatch):
     assert first.path == primed.path
     assert second.path == primed.path
     assert tu_cache.stats()["hit"] >= 2
+
+
+def test_parse_cache_key_ignores_walker_flags(tmp_path):
+    source = tmp_path / "tiny.cpp"
+    source.write_text("int f(int x) { return x; }\n", encoding="utf-8")
+    ctx = _FakeCtx()
+    ctx.op_dir = str(tmp_path)
+    parse = tu_cache.parse_cache_key(source, ctx, side="host")
+    parse_again = tu_cache.parse_cache_key(source, ctx, side="host")
+    walk = tu_cache.walk_cache_key(
+        source, ctx, side="host", op_needle="flash", collect_writes=False
+    )
+    assert parse == parse_again
+    assert parse != walk
+
+
+def test_parse_cache_key_changes_with_orig_assignment(tmp_path):
+    source = tmp_path / "k.cpp"
+    source.write_text("void kernel() {}\n", encoding="utf-8")
+    ctx = _FakeCtx()
+    ctx.op_dir = str(tmp_path)
+    plain = tu_cache.parse_cache_key(source, ctx, side="kernel", dtype_variant="DT_FLOAT16")
+    mixed = tu_cache.parse_cache_key(
+        source,
+        ctx,
+        side="kernel",
+        dtype_variant="DT_FLOAT16",
+        orig_assignment={"ORIG_DTYPE_QUERY": "DT_INT8"},
+    )
+    assert plain != mixed

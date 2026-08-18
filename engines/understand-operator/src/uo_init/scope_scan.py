@@ -789,6 +789,24 @@ def clang_include_paths(
             bump("clang_tu_parse")
         except Exception:  # noqa: BLE001
             pass
+        if walk_ctx is not None:
+            try:
+                from uo_init import tu_cache as _tu_cache
+
+                ast_key = _tu_cache.parse_cache_key(
+                    path_s,
+                    walk_ctx,
+                    side=side,
+                    dtype_variant="DT_FLOAT16",
+                )
+                _tu_cache.store_ast(
+                    ast_key,
+                    tu,
+                    op_dir=op_dir or getattr(walk_ctx, "op_dir", None),
+                    arch=getattr(walk_ctx, "arch_dir", None),
+                )
+            except Exception:  # noqa: BLE001
+                pass
     except Exception as exc:  # noqa: BLE001
         return ClangIncludeResult(
             ok=False, error=f"clang_parse_failed:{Path(tu_path).name}:{str(exc)[:160]}"
@@ -818,9 +836,8 @@ def clang_include_paths(
         seen.add(key)
         out.append(Path(name))
     probe = _probe_from_parsed_tu(tu, path_s, str(op_dir or ""))
-    # Do not full-walk here. Prepare include-parse uses a thread pool; AST
-    # walks under the GIL made true-cold slower than extract's process pool.
-    del walk_ctx
+    # Do not full-walk here. Serialize the TU so extract can skip a second
+    # cold parse; walking stays in extract (process/thread pool).
     return ClangIncludeResult(ok=True, paths=out, probe=probe)
 
 

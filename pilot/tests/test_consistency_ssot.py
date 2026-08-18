@@ -166,7 +166,7 @@ def test_direct_action_empty_write_paths_fail_closed(repo_root: Path) -> None:
                 "policy_ids": [],
                 "capability_ids": [],
                 "task_prompt_id": None,
-                "output_contract_id": "code-review-v1",
+                "output_contract_id": "ce-plan-v1",
                 "allowed_write_paths": [],
                 "actors": ["ce-reviewer"],
             }

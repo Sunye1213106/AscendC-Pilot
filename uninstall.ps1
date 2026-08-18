@@ -66,12 +66,12 @@ function Get-PluginsDest([string]$plat) {
   }
 }
 
-$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
+$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve","operator")
 $cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
-$openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve")
-$currentAgents = @("ascendc-pilot","uo-query","uo-gap-investigator","ce-reviewer","tg-analyst","ce-change-referee","ce-applier","ce-analyst")
-$legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies")
-$legacyAgents = @("ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","tg-lemma-producer","tg-closure-referee","deterministic-uo-engine","deterministic-tg-engine","deterministic-ce-engine","README")
+$openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
+$currentAgents = @("ascendc-pilot","uo-query","uo-gap-investigator","ce-reviewer","tg-analyst","ce-applier","ce-analyst")
+$legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies","ce-intent","ce-impact","ce-verify","ce-handoff")
+$legacyAgents = @("ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","tg-lemma-producer","tg-closure-referee","deterministic-uo-engine","deterministic-tg-engine","deterministic-ce-engine","ce-change-referee","README")
 $legacyPlugins = @("ascendc-pilot.ts","zz-uo-query-return-value.ts","uo-query-return-value.ts","ascendc-harness.ts","pilot-driver.ts")
 
 function Invoke-CmdQuiet([string]$Line) {

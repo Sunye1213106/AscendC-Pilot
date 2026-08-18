@@ -170,7 +170,7 @@ def save_state(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
         mirror_legacy = True
     elif wid and is_shared(wid):
         group_locks = False
-        for group in ("uo", "tg", "ce-impact", "ce-intent", "ce-verify"):
+        for group in ("uo", "tg", "ce-plan", "ce-apply"):
             if live_exclusive_lock(project_root, group):
                 group_locks = True
                 break
@@ -307,8 +307,8 @@ def start_workflow(
     from ascendc_pilot.runs import append_event
     from ascendc_pilot.paths import (
         ensure_ce_layout,
-        ensure_closure_layout,
         ensure_control_layout,
+        ensure_replay_layout,
         ensure_tg_layout,
         ensure_uo_layout,
     )
@@ -348,7 +348,7 @@ def start_workflow(
     elif engine == "tg" or workflow_id.startswith("tg-"):
         ensure_tg_layout(project_root, arch=arch)
         if workflow_id == "tg-solve":
-            ensure_closure_layout(project_root, arch=arch)
+            ensure_replay_layout(project_root, arch=arch)
     elif engine == "ce" or workflow_id.startswith("ce-"):
         ensure_ce_layout(project_root, arch=arch)
     entry = entry_state(workflow_id)
@@ -386,6 +386,7 @@ def start_workflow(
         "phase_label_zh": label_zh_for(workflow_id, start_phase),
         "status": "running",
         "intent": intent or "",
+        "pr_url": "",
         "op_name": (op_name or "").strip(),
         "architecture": arch,
         "test_script_root": consumer,
@@ -407,6 +408,13 @@ def start_workflow(
         "uo_stale": False,
         **{k: v for k, v in hashes.items()},
     }
+    if workflow_id == "ce-review":
+        try:
+            from code_engineering.git import extract_pr_url
+        except ImportError:
+            extract_pr_url = None  # type: ignore[assignment]
+        if extract_pr_url is not None:
+            state["pr_url"] = extract_pr_url(intent)
     state = _apply_progress(project_root, state)
     save_state(project_root, state)
     from ascendc_pilot.active_run import write_active_run
@@ -422,7 +430,7 @@ def start_workflow(
         )
         exclusive_live = any(
             live_exclusive_lock(project_root, group)
-            for group in ("uo", "tg", "ce-impact", "ce-intent", "ce-verify", "ce-apply")
+            for group in ("uo", "tg", "ce-plan", "ce-apply")
         )
         if not exclusive_live:
             write_active_run(

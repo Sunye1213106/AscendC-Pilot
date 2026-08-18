@@ -268,7 +268,7 @@ def issue_receipt(
     """
     if not _internal:
         raise RuntimeError(
-            "issue_receipt is private; use `acp run-action <action_id> --finalize`"
+            "issue_receipt is private; Host `pilot_run` holds finalize"
         )
     state = _load_state(project_root)
     run_id = str(state.get("run_id") or "NO_RUN")

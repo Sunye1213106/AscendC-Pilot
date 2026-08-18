@@ -1,17 +1,15 @@
 id: ce-applier
 version: 1
-name_zh: CE 按锚点改码 producer
+name_zh: CE 按计划 todo 改码 producer
 role: producer
 mode: subagent
 description: >
-  Apply an already-confirmed CE intent to operator source at located anchors.
-  Read session prompt.md and method.md first. Do not write .uo or CE certificates.
+  Apply one unfinished todo from the current {slug}_plan.md to operator source.
+  Read session prompt.md and method.md first. Do not write .uo or CE yaml.
 max_skill_ids: &skills [code-engineering, operator-analysis, code-review]
 skill_ids: *skills
 read_scopes:
-- pilot:ce/intent/**
-- pilot:ce/apply/**
-- pilot:ce/review/**
+- pilot:ce/plan/**
 - pilot:uo/**
 - pilot:runs/**
 - pilot:context/**
@@ -27,7 +25,7 @@ write_scopes:
 - source:op_kernel/**
 - source:common/**
 - source:test_script/**
-- pilot:ce/apply/**
+- pilot:ce/plan/**
 - pilot:runs/**/actions/patch/**
 machine_constraints:
 - modify_pilot_state

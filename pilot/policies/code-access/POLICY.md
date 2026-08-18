@@ -8,7 +8,7 @@
 
 1. 理解普通函数/类/调用关系时优先使用 UO KB 图查询。
 2. 已有明确 `file_path` 时可直接打开目标源码窗口。
-3. Grep / rg / `Select-String` **只用于定位**（OpenCode Grep 或 bash 只读搜索均允许），不可单独作为复杂语义结论 / high / `source_verified` 的唯一证据。Windows `findstr` 路径须用反斜杠（`D:\…\file`）；正斜杠 `D:/…` 会被当成开关导致「无法打开」。**`uo-query` / `kb_lookup` 禁止仓级 grep/findstr/rg**；用插件 `pilot_cli` `uo-query`，最后才 `pilot_cli` `ro-search --paths <已 citation 文件>`。
+3. Grep / rg / `Select-String` **只用于定位**（OpenCode Grep 或 bash 只读搜索均允许），不可单独作为复杂语义结论 / high / `source_verified` 的唯一证据。Windows `findstr` 路径须用反斜杠（`D:\…\file`）；正斜杠 `D:/…` 会被当成开关导致「无法打开」。**`uo-query` / `kb_lookup` 禁止仓级 grep/findstr/rg**；用插件 `pilot_cli` `uo-query`，最后才 `pilot_cli` `ro-search --pattern <pat> --paths <已 citation 文件>`。
 4. 不允许无边界扫描整个仓库或父仓。**大 IR 公共模式**：prepare 须写 `*.summary.yaml`（`section_lines` + `must` + 本步导航字段如 `source_window_sha256` / `non_sink_root_names`；共享 `uo.scripts.ir_summary`）；dispatch `read` 把 summary（及 `*.rework_hints.yaml`）排在全量 IR 前；Host stub 见 `*.summary.yaml` 即注入 `MUST_READ_ORDER`。禁止先 Grep/offset 扫整份 candidates。
 5. UO 图空结果不代表符号不存在；须回退定向源码阅读或受控 source_closure。
 6. 禁止无边界探索父仓；读取必须位于 confirmed scope。

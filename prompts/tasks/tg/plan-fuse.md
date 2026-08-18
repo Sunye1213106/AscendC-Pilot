@@ -4,7 +4,7 @@
 
 <input>
 - Init: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/tg/init.yaml`
-- Intent: `--intent` / 对话 / CE md / `ce/impact/tg_plan_intent.yaml`（有则融合，不做文件强制）
+- Intent: `--intent` / 对话 / `ce/plan/*_plan.md` / `session_handoff.md`（有则融合；TG 自己总结，不做 CE yaml 强制）
 - UO: `<UO_ROOT>`
 - Draft: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/runs/<RUN_ID>/actions/plan_fuse`
 </input>

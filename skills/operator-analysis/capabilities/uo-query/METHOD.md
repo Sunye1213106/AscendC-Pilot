@@ -4,7 +4,7 @@
 
 用户问题在 stub「USER QUESTION」。只调用插件工具 `pilot_cli`（command=`uo-query --project …`）。禁止 bash / Grep / findstr / Glob 替代图查询。禁止 OpenCode `skill` 工具（方法已在 session `method.md` / `refs/`）。禁止名为 `acp` 的工具。
 
-Host cwd 是 Pilot 仓，`--project` 必须是算子绝对路径。一次一个标识符；图检索不是 regex。不要传 `--mode`。
+Host cwd 是 Pilot 仓，`--project` 必须是算子绝对路径。一次一个标识符；图检索不是 regex。不要传 `--mode`。禁止 `acp uo impact`、`explain-*`、`search`、`locate`；只有这一条 `uo-query` 命令的四种形态。
 
 若 stub 含 `FOCUS`：只答这一片。建议的首次调用先执行，再根据返回的 `edges` / `next` / `hint` 继续调用，直到本 FOCUS 可引用 `file:line`，或只能 PARTIAL。不要沿用其它查询目标的假设。
 
@@ -31,7 +31,7 @@ pilot_cli command=`uo-query --project <算子绝对路径> [--architecture arch3
 
 卡片已带 `file` + 行号 + snippet：该 span **视为已 Read**，不要再 Read 同一文件同一段。仅当 snippet 标明截断、且本 FOCUS 需要截断之外的行，才按卡片给出的 `file` 做窗口 Read（offset 用卡片行号）。`--file` 与 Read 路径只从卡片 `file` / `next` 复制，禁止猜测相对路径。
 
-`count:0` 不是「图里没有」：按 `hint` 换短名再调用。仍空才 `pilot_cli` command=`ro-search --paths <已 citation 的文件>`。禁止 `findstr /S`、仓级 `grep`/`rg`、`dir /B`。
+`count:0` 不是「图里没有」：按 `hint` 换短名再调用。仍空才 `pilot_cli` command=`ro-search --pattern <pat> --paths <已 citation 的文件>`。禁止 `findstr /S`、仓级 `grep`/`rg`、`dir /B`。
 
 列表型结论看覆盖字段全集（`dim_coverage` / `definition_sites` / 卡片 `edges` 的 `count`）。不要用第一页 snippet 代表全集。声称某维没注册必须引用 `dim_coverage` 或 `total_matched`。
 

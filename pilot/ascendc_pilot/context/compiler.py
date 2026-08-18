@@ -29,33 +29,16 @@ def _load_yaml(path: Path) -> Any:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _impact_doc_seeds(doc: dict[str, Any]) -> list[str]:
-    """Collect changed files and tiling keys from CE impact artifacts."""
-    seeds: list[str] = []
-    files = list(doc.get("files") or doc.get("changed_files") or [])
-    if not files and isinstance(doc.get("diff_spans"), dict):
-        files = list(doc["diff_spans"].keys())
-    if not files:
-        for span in doc.get("two_sided_spans") or []:
-            if not isinstance(span, dict):
-                continue
-            for side in ("new", "old"):
-                node = span.get(side) if isinstance(span.get(side), dict) else {}
-                path = str((node or {}).get("file") or "").strip()
-                if path and path != "/dev/null":
-                    files.append(path)
-    for item in files:
-        if isinstance(item, dict):
-            path = str(item.get("path") or item.get("file") or "").strip()
-        else:
-            path = str(item).strip()
-        if path and path not in seeds:
-            seeds.append(path)
-    for key in list(doc.get("affected_keys") or []) + list(doc.get("affected_keys_sample") or []):
-        text = str(key).strip()
-        if text and text not in seeds:
-            seeds.append(text)
-    return seeds
+def _worklog_seeds(tg: Path) -> list[str]:
+    path = tg / "worklog.md"
+    if not path.is_file():
+        return []
+    try:
+        from testcase_agent.products import worklog_open_ids
+
+        return list(worklog_open_ids(path.read_text(encoding="utf-8")))
+    except Exception:
+        return []
 
 
 def _estimate_tokens(obj: Any) -> int:
@@ -274,44 +257,10 @@ def _seed_ids(
                     seeds.append(v)
 
     elif seed_from == "lemma_leads":
-        path = tg / "worklog.md"
-        if path.is_file():
-            try:
-                from testcase_agent.products import worklog_open_ids
-
-                seeds.extend(worklog_open_ids(path.read_text(encoding="utf-8")))
-            except Exception:
-                pass
+        seeds.extend(_worklog_seeds(tg))
 
     elif seed_from == "open_keys":
-        open_path = tg / "closure" / "open.txt"
-        if open_path.is_file():
-            for line in open_path.read_text(encoding="utf-8").splitlines():
-                key = line.strip().split(",")[0].strip()
-                if key and not key.startswith("#"):
-                    seeds.append(key)
-
-    elif seed_from == "impact_files":
-        from ascendc_pilot.paths import agent_root
-
-        state = load_state(project_root)
-        arch = str(state.get("architecture") or "").strip() or None
-        ce_root = agent_root(project_root, arch) / "ce"
-        candidates = [
-            ce_root / "impact" / "impact_slice.yaml",
-            ce_root / "impact" / "change_capture.yaml",
-            ce_root / "impact.json",
-            project_root / ".ascendc-pilot" / "ce" / "impact.json",
-        ]
-        for path in candidates:
-            impact = _load_yaml(path)
-            if not isinstance(impact, dict) or not impact:
-                continue
-            for seed in _impact_doc_seeds(impact):
-                if seed not in seeds:
-                    seeds.append(seed)
-            if seeds:
-                break
+        seeds.extend(_worklog_seeds(tg))
 
     return seeds[: max(1, limit)]
 

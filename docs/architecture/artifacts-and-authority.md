@@ -24,7 +24,8 @@ Source → UO CodeMap → TG / CE
     │   ├── checks/                # verify receipts (work tree)
     │   └── ir/ …                  # transient UO work (compacted after review)
     ├── tg/                        # init.yaml / plan.md / worklog.md / cases.*
-    ├── ce/                        # review / impact
+    ├── ce/plan/                   # {slug}_plan.md
+    ├── session_handoff.md         # /handoff 对话总结
     ├── state/
     │   ├── slots/<family>/workflow.yaml   # exclusive live state (uo / tg / ce-*)
     │   ├── workflow.yaml          # legacy / last-exclusive mirror
@@ -45,7 +46,7 @@ Source → UO CodeMap → TG / CE
 
 ### Canonical
 
-系统当前认可的正式结果：已验证 CodeMap、TG `init.yaml` / `plan.md` / `worklog.md`、workflow state。须有明确 producer 与写入路径；LLM 不能因“认为正确”直接修改。
+系统当前认可的正式结果：已验证 CodeMap、TG `init.yaml` / `plan.md` / `worklog.md`、CE `{slug}_plan.md` / `session_handoff.md`、workflow state。须有明确 producer 与写入路径；LLM 不能因“认为正确”直接修改。CE 不写 yaml。
 
 ### Staging / Evidence
 
@@ -74,7 +75,9 @@ Producer → Staging → Check / Review → Finalize → Canonical
 | 区域 | 主要写入者 | 消费者 |
 | --- | --- | --- |
 | `<arch>/uo/<op>.<arch>.uo` | UO deterministic commit | Query / TG / CE |
-| `<arch>/tg/init.yaml` `plan.md` `worklog.md` `cases.*` | TG promote / 人确认 | TG / CE verify |
+| `<arch>/tg/init.yaml` `plan.md` `worklog.md` `cases.*` | TG promote / 人确认 | TG（`/tg-plan` 自己从 CE md / 对话总结） |
+| `<arch>/ce/plan/{slug}_plan.md` | `/ce-plan`（LLM）；`/ce-apply` 可勾 todo | apply / tg-plan |
+| `<arch>/session_handoff.md` | `/handoff` | 下一会话 / tg-plan |
 | `<arch>/state/**` | Pilot Runtime | Pilot |
 | `<arch>/runs/**` | 当前 Action | Checker / recovery |
 | `<arch>/cache/**` | Engine / Pilot | Runtime（可重建） |

@@ -44,6 +44,40 @@ def _only(tmp_path, body: str):
     return loops[0][1]
 
 
+def test_text_of_extent_matches_tokens_for_a_simple_condition(tmp_path):
+    """Call/condition text used in kernel walks prefers source extent."""
+    from uo_init.clang_walk import _extent_tls_clear, _extent_tls_set, _text_of, _tokens, normalize_expr_text
+
+    src = tmp_path / "c.cpp"
+    src.write_text(
+        "void f(int n) { for (int i = 0; i < n; ++i) { (void)n; } }\n",
+        encoding="utf-8",
+    )
+    tu = cindex.TranslationUnit.from_source(str(src), args=["-std=c++17"])
+    cond = None
+
+    def visit(cur):
+        nonlocal cond
+        if cur.kind.name == "FOR_STMT":
+            children = list(cur.get_children())
+            from uo_init.clang_walk import _loop_header
+
+            cond, _ind, _init, _step = _loop_header(children, "for")
+            return
+        for ch in cur.get_children():
+            visit(ch)
+
+    visit(tu.cursor)
+    assert cond is not None
+    _extent_tls_set([])
+    try:
+        extent_text = _text_of(cond, 200)
+        token_text = normalize_expr_text(" ".join(_tokens(cond, 200)))
+        assert extent_text == token_text == "i<n"
+    finally:
+        _extent_tls_clear()
+
+
 def test_a_counted_loop_yields_its_initial_value_and_step(tmp_path):
     cond, induction, init, step = _only(
         tmp_path, "for (unsigned int coreId = 0; coreId < 36; coreId++) { acc++; }"

@@ -8,7 +8,7 @@ Cognitive skills（五个，缺一不可——闭合集合，不是起点）：
 | 2 | `testcase-generation` | TG 覆盖规划与闭环 |
 | 3 | `source-proof` | 源码引理 / 不可达证明 |
 | 4 | `code-review` | `/ce-review` 只读检视（Spec / Standards 两轴） |
-| 5 | `code-engineering` | `/ce-intent` `/ce-apply` `/ce-impact` `/ce-verify` `/ce-handoff` 变更闭环 |
+| 5 | `code-engineering` | `/ce-plan` `/ce-apply` `/handoff`：命名计划、按 todo 改码、会话交接 |
 
 | Kind | Path | Notes |
 |------|------|-------|
@@ -17,7 +17,7 @@ Cognitive skills（五个，缺一不可——闭合集合，不是起点）：
 | Router | `skills/<id>/routing/*.md` | Primary-visible routing. Not an Action METHOD. |
 | Shared language | `agents/CONTEXT.md` | Compose 进 invariant pack；跨 UO/TG/CE 同名词表 |
 | Templates | `skills/testcase-generation/templates/` | Structure-only snippets (not worked examples) |
-| Authoring shared refs | `knowledge/shared-references/` | SSOT；默认五份投影到四个 skill（**不要**塞进 `code-engineering`）。`harness-oracle.md` 只投影到 `testcase-generation` 与 `code-engineering` |
+| Authoring shared refs | `knowledge/shared-references/` | SSOT；默认五份投影到四个 skill（**不要**塞进 `code-engineering`）。`harness-oracle.md` **只**投影到 `testcase-generation` |
 | Shared | `skills/_shared/` | **已删除，勿再添加。** 运行时不要复活；authoring SSOT 在 `knowledge/` |
 
 Each cognitive skill must ship ≥2 worked example case directories under `examples/<case>/` with `README.md`, `input/`, `expected/`.
@@ -32,7 +32,7 @@ Cognitive skills 是 **method bundle**，不是 Host 发现的 slash：
 - Action prepare 把该 Action 的 **METHOD.md** 物化进 lease bundle；`Agent.skill_ids` 只是 refs 授权上限，不拼接 SKILL 正文
 - 纯确认（`primary_interactive`）不装载认知 Skill
 
-不要把通用 `/implement`、`/tdd`、第二份 `code-review` 写进 `skill_ids`。工程主流程已经嵌进现有 CE：grilling → `/ce-intent`（冻结 `ce/intent/plan.md`），改码 → `/ce-apply`（对齐 plan / `ce/apply/todo.md`），双轴审查 → 并行 spec/standards 子代理（结论默认在会话中陈述，用户要落盘才写报告），交接 → `/ce-handoff`。`/ce-impact` 写出 `tg_plan_intent.yaml` 给 `/tg-plan` 融进 `plan.md`。
+不要把通用 `/implement`、`/tdd`、第二份 `code-review` 写进 `skill_ids`。工程主流程：grilling → `/ce-plan`（写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴审查 → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`：TG 自己从计划 md、审查对话或 `session_handoff.md` 总结义务。CE 不写 yaml。
 
 ## Writing
 

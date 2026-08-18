@@ -48,5 +48,4 @@
 | --- | --- |
 | `uo-init`、`uo-dump` | `engines/understand-operator` |
 | `tg-closure` | `engines/testcase-generation` |
-| `ce-impact` | `engines/code-engineering` |
 

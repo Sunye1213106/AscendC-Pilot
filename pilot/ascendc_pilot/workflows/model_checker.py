@@ -19,11 +19,9 @@ MATRIX_WORKFLOWS: tuple[str, ...] = (
     "tg-plan",
     "tg-solve",
     "ce-review",
-    "ce-intent",
+    "ce-plan",
     "ce-apply",
-    "ce-handoff",
-    "ce-impact",
-    "ce-verify",
+    "handoff",
 )
 
 # tg-solve rework codes after the product-model rebuild.

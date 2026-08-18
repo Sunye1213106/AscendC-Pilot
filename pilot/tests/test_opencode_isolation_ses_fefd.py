@@ -37,6 +37,25 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     )
 
 
+def test_plugin_ts_parses_for_opencode() -> None:
+    from ascendc_pilot.host_doctor import parse_opencode_plugin_ts, plugin_hook_redeclared_consts
+
+    broken = (
+        '"tool.execute.before": async () => {\n'
+        "  const sessionId = 'a'\n"
+        "  const sessionId = 'b'\n"
+        "},\n"
+        '"tool.execute.after": async () => { const x = 1 }\n'
+    )
+    hits = plugin_hook_redeclared_consts(broken)
+    assert any("sessionId" in item for item in hits)
+
+    root = ROOT / "opencode-plugin"
+    for name in ("ascendc-pilot.ts", "pilot-driver.ts"):
+        parsed = parse_opencode_plugin_ts(root / name)
+        assert parsed.get("ok"), f"{name}: {parsed.get('detail')}"
+
+
 def test_installers_expose_only_primary_opencode_tab() -> None:
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")

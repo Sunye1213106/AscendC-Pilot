@@ -6,7 +6,7 @@
 
 ## Tools
 
-1. `acp ro-search --pattern ... --paths ...`
+1. `pilot_cli` command=`ro-search --pattern ... --paths ...`
 2. 命中后用 `source-reading` 取连续证据窗
 
 ## Output shape

@@ -112,44 +112,37 @@ def test_tg_kb_check_finalize_issues_receipt_and_advance(tmp_path: Path, monkeyp
     assert load_state(root)["phase"] == "scan"
 
 
-def test_ce_intent_capture_reads_run_state_intent(tmp_path: Path, monkeypatch) -> None:
+def test_ce_apply_gate_fails_without_plan(tmp_path: Path, monkeypatch) -> None:
     from ascendc_pilot.actions import prepare_action
-    from ascendc_pilot.paths import agent_root
     from ascendc_pilot.state import start_workflow
-    from ascendc_pilot.workflows.pipeline import action_receipt_ok
 
     root = _setup_op(tmp_path, monkeypatch)
     start_workflow(
         root,
-        "ce-intent",
+        "ce-apply",
         architecture="arch0",
         op_name="_synthetic_toy",
-        intent="audit change",
     )
-    captured = prepare_action(root, "intent_capture")
+    captured = prepare_action(root, "apply_gate")
+    blob = str(captured)
+    assert captured.get("ok") is False or "APPLY_PLAN_MISSING" in blob
+    assert "APPLY_PLAN_MISSING" in blob
+
+
+def test_ce_plan_kb_check_reads_uo_product(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import prepare_action
+    from ascendc_pilot.workflows.pipeline import action_receipt_ok
+    from ascendc_pilot.state import start_workflow
+
+    root = _setup_op(tmp_path, monkeypatch)
+    start_workflow(
+        root,
+        "ce-plan",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+    )
+    captured = prepare_action(root, "kb_check")
     assert captured.get("ok") is True, captured
     fin = captured.get("finalize") or {}
     assert fin.get("ok") is True, fin
-    path = agent_root(root, "arch0") / "ce" / "intent" / "intent.yaml"
-    assert path.is_file(), path
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    assert doc.get("intent") == "audit change"
-    assert action_receipt_ok(root, "intent_capture") is True
-
-
-def test_ce_intent_capture_fails_closed_without_intent(tmp_path: Path, monkeypatch) -> None:
-    from ascendc_pilot.actions import prepare_action
-    from ascendc_pilot.state import start_workflow
-
-    root = _setup_op(tmp_path, monkeypatch)
-    start_workflow(
-        root,
-        "ce-intent",
-        architecture="arch0",
-        op_name="_synthetic_toy",
-        intent="",
-    )
-    captured = prepare_action(root, "intent_capture")
-    assert captured.get("ok") is False, captured
-    blob = str(captured.get("reason_code") or "") + str(captured.get("error") or "")
-    assert "INTENT_MISSING_IN_RUN_STATE" in blob
+    assert action_receipt_ok(root, "kb_check") is True

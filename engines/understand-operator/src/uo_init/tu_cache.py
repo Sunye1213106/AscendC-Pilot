@@ -34,7 +34,11 @@ _STATS = {
     "bypass": 0,
     "load_failures": 0,
     "pickle_load": 0,
+    "ast_hit": 0,
+    "ast_store": 0,
+    "ast_miss": 0,
 }
+AST_CACHE_VERSION = 1
 _LOCK = threading.Lock()
 _WALK_BUNDLE: dict[str, list[Any]] = {}
 
@@ -167,6 +171,41 @@ def walk_cache_key(
             f"writes={int(bool(collect_writes))}",
             f"reject={int(bool(logs_rejections))}",
             f"scope={scope_fingerprint(scope)}",
+            Path(path).name,
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def parse_cache_key(
+    path: str | Path,
+    ctx: Any,
+    *,
+    side: str = "host",
+    dtype_variant: str | None = "DT_FLOAT16",
+    orig_assignment: dict[str, str] | None = None,
+    source_sha: str | None = None,
+) -> str:
+    """Fingerprint for a serialized clang TranslationUnit (parse only).
+
+    Must not include walker flags (``op_needle`` / ``collect_writes`` / scope):
+    prepare's include-parse and extract's AST walk share one TU.
+    """
+    src_sha = source_sha or sha256_file(path)
+    ctx_fp = build_context_fingerprint(
+        ctx,
+        side=side,
+        dtype_variant=dtype_variant,
+        source_path=path,
+        orig_assignment=orig_assignment,
+    )
+    payload = "\0".join(
+        [
+            f"ast-v{AST_CACHE_VERSION}",
+            src_sha,
+            ctx_fp,
+            f"side={side}",
+            "opts=DETAILED_PROCESSING_RECORD",
             Path(path).name,
         ]
     )
@@ -613,6 +652,80 @@ def store_probe(
         _bump("store")
         return path
     except Exception:  # noqa: BLE001
+        return None
+
+
+def _ast_path(op_dir: str | Path | None, arch: str | None, key: str) -> Path:
+    return tu_cache_dir(op_dir, arch) / f"{key}.ast"
+
+
+def store_ast(
+    key: str,
+    tu: Any,
+    *,
+    op_dir: str | Path | None,
+    arch: str | None = None,
+) -> Path | None:
+    """Persist a parsed TranslationUnit for the next process (prepare → extract)."""
+    if not cache_enabled() or tu is None or not key:
+        _bump("bypass")
+        return None
+    path = _ast_path(op_dir, arch, key)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".ast.tmp")
+        if tmp.exists():
+            tmp.unlink()
+        save = getattr(tu, "save", None)
+        if save is None:
+            return None
+        err = save(str(tmp))
+        if err not in (0, None):
+            if tmp.exists():
+                tmp.unlink()
+            return None
+        tmp.replace(path)
+        _bump("ast_store")
+        return path
+    except Exception:  # noqa: BLE001
+        try:
+            tmp = path.with_suffix(".ast.tmp")
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        return None
+
+
+def load_ast(
+    key: str,
+    *,
+    op_dir: str | Path | None,
+    arch: str | None = None,
+    index: Any = None,
+) -> Any | None:
+    """Load a TranslationUnit saved by :func:`store_ast`. ``index`` must stay alive."""
+    if not cache_enabled() or not key:
+        _bump("bypass")
+        return None
+    path = _ast_path(op_dir, arch, key)
+    if not path.is_file():
+        _bump("ast_miss")
+        return None
+    try:
+        from clang import cindex
+    except ImportError:
+        _bump("ast_miss")
+        return None
+    try:
+        idx = index
+        if idx is None:
+            idx = cindex.Index.create()
+        tu = cindex.TranslationUnit.from_ast_file(str(path), idx)
+        _bump("ast_hit")
+        return tu
+    except Exception:  # noqa: BLE001
+        _bump("ast_miss")
         return None
 
 

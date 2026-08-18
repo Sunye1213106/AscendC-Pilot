@@ -67,7 +67,7 @@ Input -> Host Condition -> Tiling Field -> TilingKey -> Template Instance -> Ker
 AscendC Source → UO → Operator CodeMap
                          ├→ Query
                          ├→ TG → Coverage
-                         └→ CE → Review / Impact
+                         └→ CE → Plan / Apply / Review
 
 User
     ↓
@@ -82,7 +82,7 @@ Engine（事实）或 LLM Agent（推理）
 | --- | --- |
 | UO | 知识构建：compiler-aware CodeMap |
 | TG | 证据闭环：Replay + 经审查的 exclusion |
-| CE | 变更分析：沿 CodeMap 做跨层影响 |
+| CE | 命名计划、按 todo 改码、只读审查 |
 | ACP | 执行控制：约束 Agent / Engine 边界 |
 | Host Adapter | 安装期投影 + **运行时传输**（Session Driver） |
 

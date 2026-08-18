@@ -85,31 +85,23 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert ce["actors"] == ["ce-reviewer"]
     assert ce["task_prompt_id"] == "ce/standalone-review"
     assert ce["action_method_id"] == "code-review/standalone-review"
-    verify = next(a for a in WORKFLOWS["ce-verify"]["actions"] if a["id"] == "code_review")
-    assert verify["task_prompt_id"] == "ce/code-review"
-    assert verify["action_method_id"] == "code-review/verify-review"
+    assert "ce-verify" not in WORKFLOWS
+    assert "ce-intent" not in WORKFLOWS
+    assert "ce-impact" not in WORKFLOWS
+    assert "ce-handoff" not in WORKFLOWS
 
-    intent = WORKFLOWS["ce-intent"]
-    assert intent["cognitive_skill_id"] == "code-engineering"
-    assert WORKFLOWS["ce-impact"]["cognitive_skill_id"] == "code-engineering"
-    assert WORKFLOWS["ce-verify"]["cognitive_skill_id"] == "code-engineering"
+    plan = WORKFLOWS["ce-plan"]
+    assert plan["cognitive_skill_id"] == "code-engineering"
+    assert plan["slash"] == "/ce-plan"
+    assert plan["phases"] == ["kb_ready", "grill", "draft", "confirm"]
     assert WORKFLOWS["ce-review"]["cognitive_skill_id"] == "code-review"
     assert "code-edit" not in WORKFLOWS
     assert "git-ops" not in WORKFLOWS
     assert "perf-analyze" not in WORKFLOWS
-    assert intent["phases"] == [
-        "intent",
-        "kb_ready",
-        "grill",
-        "decompose",
-        "review",
-        "locate",
-        "confirm",
-    ]
     assert WORKFLOWS["ce-apply"]["cognitive_skill_id"] == "code-engineering"
-    assert WORKFLOWS["ce-handoff"]["cognitive_skill_id"] == "code-engineering"
+    assert WORKFLOWS["handoff"]["cognitive_skill_id"] == "code-engineering"
     assert WORKFLOWS["ce-apply"]["slash"] == "/ce-apply"
-    assert WORKFLOWS["ce-handoff"]["slash"] == "/ce-handoff"
+    assert WORKFLOWS["handoff"]["slash"] == "/handoff"
 
 
 def test_compose_and_prune_runtime_context(tmp_path: Path):
@@ -276,11 +268,9 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
         "tg-plan",
         "tg-solve",
         "ce-review",
-        "ce-impact",
-        "ce-intent",
+        "ce-plan",
         "ce-apply",
-        "ce-handoff",
-        "ce-verify",
+        "handoff",
     ):
         path = commands / f"{name}.md"
         assert path.is_file(), name

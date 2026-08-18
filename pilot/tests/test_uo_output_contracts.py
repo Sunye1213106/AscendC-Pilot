@@ -105,7 +105,8 @@ def test_detect_changes_outputs_writable(tmp_path) -> None:
 def test_uo_query_review_ready_contracts_not_bare_dirs() -> None:
     # kb-answer is the Action payload under lease, not a uo/checks readiness gate.
     assert _joined("kb-answer-v1") == "runs/{run_id}/actions/kb_lookup/answer.yaml"
-    assert "ce/review/index.yaml" in _joined("code-review-v1")
+    assert OUTPUT_CONTRACT_PATHS["code-review-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["session-handoff-v1"] == ["session_handoff.md"]
     assert _joined("uo-ready-v1") == "runs/{run_id}/receipts/uo_ready.yaml"
     assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_PATHS
     assert "cover-confirm-v1" not in OUTPUT_CONTRACT_PATHS
@@ -120,11 +121,13 @@ def test_no_legacy_uo_summary_stub_contracts() -> None:
 
 
 def test_no_bare_single_segment_contracts_without_nonempty() -> None:
+    bare_ok = {"session_handoff.md"}
     bare_ok_with_nonempty: set[str] = set()
     for cid, paths in OUTPUT_CONTRACT_PATHS.items():
         for rel in paths:
             if "/" not in rel and "*" not in rel:
-                assert False, f"{cid} still uses bare segment {rel!r}"
+                assert rel in bare_ok, f"{cid} still uses bare segment {rel!r}"
+                continue
             if rel in {"uo", "tg"} or rel.endswith("/"):
                 assert False, f"{cid} uses bare/trailing-slash path {rel!r}"
             looks_dir = "*" not in rel and not Path(rel).suffix

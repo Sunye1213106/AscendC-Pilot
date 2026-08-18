@@ -155,7 +155,7 @@ def require_init_confirmed(project_root: Path, op_name: str) -> dict[str, Any]:
             payload={
                 "output_root": out_root.as_posix(),
                 "init_status": "missing" if not doc else "unconfirmed",
-                "next": f"/uo-init then /tg-init (op={op_name}) → AskQuestion → acp run-action human_confirm --finalize",
+                "next": f"/uo-init then /tg-init (op={op_name}) → AskQuestion → Host `pilot_run` finalizes `human_confirm`",
             },
         )
     require_kb_fingerprint_fresh(project_root, op_name, out_root=out_root, status_doc=doc)
@@ -189,7 +189,7 @@ def require_kb_fingerprint_fresh(
             payload={
                 "output_root": root.as_posix(),
                 "understand_root": uo_path.as_posix(),
-                "next": f"/tg-init (op={op_name}) → AskQuestion → acp run-action human_confirm --finalize",
+                "next": f"/tg-init (op={op_name}) → AskQuestion → Host `pilot_run` finalizes `human_confirm`",
             },
         )
     ok, detail = kb_fingerprint_matches(root, uo_path)
@@ -203,7 +203,7 @@ def require_kb_fingerprint_fresh(
             "understand_root": uo_path.as_posix(),
             "stored_digest": stored_digest,
             "current_digest": (detail.get("current") or {}).get("digest") if isinstance(detail, dict) else "",
-            "next": f"/uo-init then /tg-init (op={op_name}) → AskQuestion → acp run-action human_confirm --finalize",
+            "next": f"/uo-init then /tg-init (op={op_name}) → AskQuestion → Host `pilot_run` finalizes `human_confirm`",
         },
     )
 

@@ -303,7 +303,7 @@ def test_ce_reinit_keeps_uo_and_tg(tmp_path: Path) -> None:
     tg = tg_root(tmp_path, arch="arch35")
     ce = ce_root(tmp_path, arch="arch35")
     _write(tg / "plan.md", "# plan\n")
-    _write(ce / "review" / "index.yaml", {"reviews": []})
+    _write(ce / "plan" / "sync_plan.md", "# sync\n")
 
     start_workflow(tmp_path, "ce-review", architecture="arch35")
     result = apply_resume_decision(
@@ -316,7 +316,7 @@ def test_ce_reinit_keeps_uo_and_tg(tmp_path: Path) -> None:
     assert result["ok"] is True
     assert product.is_file()
     assert (tg / "plan.md").is_file()
-    assert not (ce / "review" / "index.yaml").is_file()
+    assert (ce / "plan" / "sync_plan.md").is_file()
 
 
 def test_uo_update_reinit_keeps_committed_uo_product(tmp_path: Path) -> None:

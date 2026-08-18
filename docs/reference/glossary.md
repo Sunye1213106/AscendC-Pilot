@@ -9,7 +9,7 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 | Action Bundle | 为 action 准备的 runtime packet（含 stub、method 物化、context）。 |
 | Action Lease | 单个 action 的 runtime authorization token。 |
 | `BUNDLE_NOT_READABLE` | prepare 读闭合失败：stub 引用路径不存在或不在 lease 可读集合内。 |
-| CE | Code Engineering。 |
+| CE | Code Engineering。入口：`/ce-plan` `/ce-apply` `/ce-review`；交接 `/handoff`。正式产物只有 markdown。 |
 | CodeMap | UO 生成的结构化算子知识产物。 |
 | Deterministic engine | 生产 canonical 或 checked artifacts 的 Python 实现。 |
 | `dispatch_ticket` | Host Session Driver 一次性票据；`acp dispatch-result` 凭此 finalize 并继续 drive。 |
@@ -29,8 +29,8 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 | Scope 命名空间 | Agent YAML 路径前缀：`pilot:` / `method:` / `source:`（无前缀旧值兼容）。 |
 | TG | Testcase Generation。 |
 | UO | Understand Operator。 |
-| Workflow Spec | `pilot/ascendc_pilot/workflows/specs.py`，workflow 权威。 |
-| occupancy / occupancy_group | Spec 字段：`shared` 永不占锁；`exclusive` 按产物族（`uo` / `tg` / `ce-impact` / `ce-intent` / `ce-verify`）互斥。 |
+| Workflow Spec | `pilot/ascendc_pilot/workflows/specs.py`（CE 在 `ce_specs.py`），workflow 权威。 |
+| occupancy / occupancy_group | Spec 字段：`shared` 永不占锁；`exclusive` 按产物族（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥。`ce-review` 与 `handoff` 为 shared。 |
 | product lock | `.ascendc-pilot/control/product_locks.yaml`：family → 持有该族写锁的 run。 |
 | session binding | `.ascendc-pilot/control/session_bindings.yaml`：Host session 钉住的 `.uo` 路径与 `canonical_graph_digest`。 |
 | `UO_DIGEST_CHANGED` | 绑定/pinned digest 与当前 CodeMap digest 不一致；query/TG/CE 不得再标 high / fresh。 |
@@ -41,8 +41,8 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 
 | 名字 | UO | TG | CE |
 | --- | --- | --- | --- |
-| TilingKey / TILING_KEY | CodeMap **维实体**（名字 + span + packing 位点） | 声明域来自 `product_uo.legal_key_rows`；不是默认 T | risk dispatch 的锚点 kind |
+| TilingKey / TILING_KEY | CodeMap **维实体**（名字 + span + packing 位点） | 声明域来自 `product_uo.legal_key_rows`；不是默认 T | 查询锚点，不是默认全量覆盖 |
 | legal_key | 模板可接纳的组合 | 声明域大小，供规划参考 | 基本不直接查 |
-| obligation | `key_field_obligations`（legacy YAML） | `plan.md` YAML 义务 | `ce-{risk_class}-{digest}` / 账本 `O-V-X` |
-| fingerprint | graph 直方图 digest | `init.yaml` 的 `uo_digest` | `cm_graph_fingerprint` 或 git revision。新鲜度比 **handle.digest**（`canonical_graph_digest`），禁止用当前图和自己比来宣称 fresh |
-| kind | `EntityKind`（含 FIELD 与 TILING_FIELD） | 列 mapping | risk 路由；不认 FIELD/VARIABLE 当 TILING_FIELD |
+| obligation | `key_field_obligations`（legacy YAML） | `plan.md` YAML 义务 | `{slug}_plan.md`「测试内容」散文；CE 不写义务 yaml |
+| fingerprint | graph 直方图 digest | `init.yaml` 的 `uo_digest` | git revision。新鲜度比 **handle.digest**（`canonical_graph_digest`），禁止用当前图和自己比来宣称 fresh |
+| kind | `EntityKind`（含 FIELD 与 TILING_FIELD） | 列 mapping | 不按 risk 路由写账本 |

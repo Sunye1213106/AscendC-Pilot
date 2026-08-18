@@ -5,7 +5,7 @@
 ## 顺序
 
 1. 读 `tg/init.yaml`（强制）和 `.uo`。
-2. 有则读意图（`--intent` / 对话 / CE md / `tg_plan_intent`），拆成精度考虑和性能考虑（可重叠）。
+2. 有则读意图（`--intent` / 对话 / `ce/plan/*_plan.md` / `session_handoff.md`），拆成精度考虑和性能考虑（可重叠）。禁止读 `tg_plan_intent.yaml`。
 3. 对每条做 **uo-query**，root 到 CSV/XLS 列，有限覆盖后写出义务。
 4. 没有意图时默认 L0，仍要有能 root 的精度/性能义务。禁止空表，禁止 T=D。
 

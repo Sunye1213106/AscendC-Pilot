@@ -9,7 +9,7 @@
  * Soft control plane only — not OS-level security.
  *
  * Platform limits: OpenCode may not expose subagent identity on every hook;
- * receipts are issued only by `acp run-action <action_id> --finalize`.
+ * receipts are issued by Host `pilot_run` (internal transport may call run-action --finalize).
  *
  * Action context propagation:
  * 1. ASCENDC_ACTION env
@@ -120,6 +120,9 @@ const ACP_HELP_USAGE_CARD = [
   "  scan-architectures --project <operator-abs>",
   "  status --project <operator-abs>",
   "  inspect-failure --project <operator-abs>",
+  "  inspect evidence-window --project <operator-abs> --path <rel> --lines A-B",
+  "  ro-search --pattern <pat> --paths <already-cited-file>",
+  "  next --project <operator-abs>",
   "",
   "On failure: inspect-failure / status, not another --help.",
   "Pending AskQuestion: use the options verbatim; --help does not consume the question.",
@@ -668,11 +671,9 @@ const PILOT_WORKFLOW_SKILLS = [
   "uo-query",
   "uo-investigate",
   "ce-review",
-  "ce-intent",
+  "ce-plan",
   "ce-apply",
-  "ce-handoff",
-  "ce-impact",
-  "ce-verify",
+  "handoff",
   "tg-init",
   "tg-plan",
   "tg-solve",
@@ -1629,7 +1630,7 @@ function createPilotCliTool(): {
         type: "string",
         description:
           "CLI argv after the binary (example: `uo-query --project <operator-abs> s1Inner`). " +
-          "Do not prefix with acp. Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run).",
+          "Do not prefix with acp. Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run). Allowed: uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures.",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
@@ -1667,7 +1668,7 @@ function createPilotCliTool(): {
           title: `pilot_cli ${argv[0]}`,
           output:
             "[ascendc-pilot] start / run-action 必须用 Host 工具 `pilot_run(workflow, project, architecture)`。\n" +
-            "`pilot_cli` 只做 uo-query / status / inspect-failure / scan-architectures。\n" +
+            "`pilot_cli` 可做 uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures。\n" +
             "不要 bash `acp start`（OpenCode 默认 120s 会杀掉 uo-init analyze）。",
           metadata: { ok: false, error: "USE_PILOT_RUN" },
         }
@@ -2791,7 +2792,6 @@ export const AscendCHarnessPlugin = async (ctx?: {
       }
 
       const action = resolveAction(args, project)
-      const sessionId = extractHostSessionId(input as Record<string, unknown>)
       const taskAgent = String(
         args.agent ||
           args.subagent ||

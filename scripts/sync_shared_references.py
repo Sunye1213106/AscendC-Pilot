@@ -4,7 +4,7 @@
 Source: knowledge/shared-references/*.md
 Default five files project to operator-analysis / testcase-generation /
 source-proof / code-review. harness-oracle.md projects only to
-testcase-generation and code-engineering (a CE METHOD names it).
+testcase-generation.
 Do not dump the default five into code-engineering.
 """
 
@@ -31,7 +31,7 @@ DEFAULT_NAMES = (
 )
 # Named by a CE METHOD; do not grant ce-reviewer the whole TG skill tree.
 SPECIAL_PROJECTIONS: dict[str, tuple[str, ...]] = {
-    "harness-oracle.md": ("testcase-generation", "code-engineering"),
+    "harness-oracle.md": ("testcase-generation",),
 }
 # Back-compat aliases for tests.
 SKILLS = DEFAULT_SKILLS

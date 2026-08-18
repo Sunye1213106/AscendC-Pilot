@@ -109,10 +109,15 @@ def test_scan_includes_xls(tmp_path: Path) -> None:
     assert "xlsx" in kinds
 
 
-def test_collect_intent_does_not_write(tmp_path: Path) -> None:
-    (tmp_path / ".ascendc-pilot" / "arch35" / "ce" / "impact").mkdir(parents=True)
-    intent = tmp_path / ".ascendc-pilot" / "arch35" / "ce" / "impact" / "tg_plan_intent.yaml"
-    intent.write_text("mode: ce_change_scoped\ntarget_keys: [1]\n", encoding="utf-8")
+def test_collect_intent_reads_plan_markdown_not_yaml(tmp_path: Path) -> None:
+    plan = tmp_path / ".ascendc-pilot" / "arch35" / "ce" / "plan" / "sync_plan.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("# sync\n\n## 测试内容\n\n- 覆盖 deterBand\n", encoding="utf-8")
+    yaml_bridge = tmp_path / ".ascendc-pilot" / "arch35" / "ce" / "impact" / "tg_plan_intent.yaml"
+    yaml_bridge.parent.mkdir(parents=True)
+    yaml_bridge.write_text("mode: ce_change_scoped\ntarget_keys: [1]\n", encoding="utf-8")
     doc = products.collect_intent_sources(tmp_path, architecture="arch35")
-    assert doc["sources"]
+    kinds = [row.get("kind") for row in doc.get("sources") or []]
+    assert "ce_plan" in kinds
+    assert "ce_tg_plan_intent" not in kinds
     assert not (tmp_path / ".ascendc-pilot" / "arch35" / "tg" / "plan" / "plan_intent.yaml").exists()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from uo_init.paths import require_architecture
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -435,6 +436,78 @@ def _tokens(cursor, limit: int = 64) -> list[str]:
     return out
 
 
+# Extent slices skip clang_tokenize. Snippets stay on the token path so a
+# whole `if` statement is not dumped as a 16-token "snippet".
+_EXTENT_TEXT_MIN_LIMIT = 32
+_EXTENT_TLS = threading.local()
+_EXTENT_MAX_BYTES = 12_000
+
+
+def _extent_tls_set(unsaved_files: list | None) -> None:
+    """Bind rewritten unsaved_files so extent offsets match the parsed buffer."""
+    mapping: dict[str, bytes] = {}
+    for row in unsaved_files or ():
+        if not row or len(row) < 2:
+            continue
+        path, text = str(row[0] or ""), row[1]
+        raw = text.encode("utf-8") if isinstance(text, str) else bytes(text or b"")
+        if not path or not raw:
+            continue
+        mapping[path] = raw
+        mapping[path.replace("\\", "/")] = raw
+        mapping[path.replace("/", "\\")] = raw
+    _EXTENT_TLS.unsaved = mapping
+    _EXTENT_TLS.disk = {}
+
+
+def _extent_tls_clear() -> None:
+    _EXTENT_TLS.unsaved = {}
+    _EXTENT_TLS.disk = {}
+
+
+def _source_bytes(path: str) -> bytes | None:
+    unsaved = getattr(_EXTENT_TLS, "unsaved", None) or {}
+    hit = unsaved.get(path) or unsaved.get(path.replace("\\", "/"))
+    if hit is not None:
+        return hit
+    cache = getattr(_EXTENT_TLS, "disk", None)
+    if cache is None:
+        cache = {}
+        _EXTENT_TLS.disk = cache
+    cached = cache.get(path)
+    if cached is not None:
+        return cached
+    try:
+        data = Path(path).read_bytes()
+    except OSError:
+        return None
+    cache[path] = data
+    return data
+
+
+def _extent_text(cursor) -> str | None:
+    """Source slice for ``cursor.extent``; None when tokens must be used."""
+    try:
+        ext = cursor.extent
+        start, end = ext.start, ext.end
+        if start.file is None or end.file is None:
+            return None
+        if start.file.name != end.file.name:
+            return None
+        a, b = int(start.offset), int(end.offset)
+        if b <= a or (b - a) > _EXTENT_MAX_BYTES:
+            return None
+        data = _source_bytes(start.file.name)
+        if data is None or b > len(data):
+            return None
+        frag = data[a:b].decode("utf-8", "replace")
+        if "//" in frag or "/*" in frag:
+            return None
+        return frag
+    except Exception:
+        return None
+
+
 _SPACE_AROUND_OP = (
     (re.compile(r"\s*\.\s*"), "."),
     (re.compile(r"\s*->\s*"), "->"),
@@ -460,6 +533,13 @@ def normalize_expr_text(text: str) -> str:
 
 
 def _text_of(cursor, limit: int = 64) -> str:
+    """Expression text. Large limits prefer the source extent over tokenize."""
+    if cursor is None:
+        return ""
+    if limit >= _EXTENT_TEXT_MIN_LIMIT:
+        raw = _extent_text(cursor)
+        if raw is not None:
+            return normalize_expr_text(raw)
     return normalize_expr_text(" ".join(_tokens(cursor, limit)))
 
 
@@ -486,6 +566,10 @@ def _compound_op(cursor) -> str:
 
 
 def _is_constexpr_if(cursor) -> bool:
+    raw = _extent_text(cursor)
+    if raw is not None:
+        before_paren = raw.lstrip()[:32].split("(", 1)[0]
+        return before_paren.startswith("if") and "constexpr" in before_paren
     toks = _tokens(cursor, 3)
     return len(toks) >= 2 and toks[0] == "if" and toks[1] == "constexpr"
 
@@ -837,10 +921,27 @@ class _Walker:
         self._pending_bases: list = []
         self._base_seen: set[str] = set()
         self._frame_candidates: set[str] = set()
+        self._scope_memo: dict[str, bool] = {}
+        self._foreign_memo: dict[str, bool] = {}
 
     # -- helpers -----------------------------------------------------------
     def _in_scope(self, file: str | None) -> bool:
-        return _in_scope(file, self.needle, self.op_root, self.scope)
+        if not file:
+            return False
+        hit = self._scope_memo.get(file)
+        if hit is None:
+            hit = _in_scope(file, self.needle, self.op_root, self.scope)
+            self._scope_memo[file] = hit
+        return hit
+
+    def _is_foreign(self, file: str | None) -> bool:
+        if not file:
+            return False
+        hit = self._foreign_memo.get(file)
+        if hit is None:
+            hit = _is_foreign_file(file)
+            self._foreign_memo[file] = hit
+        return hit
 
     def _in_frame(self, file: str | None) -> bool:
         """Scope for who-calls-whom, which reaches one step past the operator.
@@ -857,7 +958,7 @@ class _Walker:
 
     def _should_prune(self, cursor, kind_name: str, file: str | None, func: str) -> bool:
         """Phase A/B: skip subtrees that cannot contribute HostIR facts."""
-        if _is_foreign_file(file):
+        if self._is_foreign(file):
             return True
         # Phase A: out-of-frame top-level declarations (not inside a function).
         if (
@@ -1244,6 +1345,7 @@ class _Walker:
             return
         if any(args):
             self.functions[func].calls.append((callee, args))
+        receiver = _receiver_path(cursor, callee)
         # Recorded for every call, including argument-less ones: reachability
         # is about whether the call happens, not about what is passed. The
         # receiver matters for the same reason — `v.clear()` passes nothing and
@@ -1283,7 +1385,7 @@ class _Walker:
             pass
         try:
             # Member calls expose the object type on the first child / type.
-            recv = _receiver_path(cursor, callee)
+            recv = receiver
             if recv:
                 # Prefer the type of the member expression's base.
                 for ch in cursor.get_children():
@@ -1314,7 +1416,7 @@ class _Walker:
                 # CXX_MEMBER_CALL_EXPR in `CursorKind` at all, so gating on it
                 # left every receiver empty. `_receiver_path` returns "" for a
                 # free function, which is the only distinction needed.
-                receiver=_receiver_path(cursor, callee),
+                receiver=receiver,
                 column=cursor.location.column,
                 caller_usr=caller_usr,
                 caller_qualified=caller_qualified,
@@ -2422,25 +2524,103 @@ def walk_file(
     )
     from uo_init.bisheng_attrs import parse_unsaved_kwargs
 
-    # Native walker is not a product path: one Python frontend only.
+    unsaved_kw = parse_unsaved_kwargs(op_root, side=side)
+    _extent_tls_set(unsaved_kw.get("unsaved_files") or [])
+    try:
+        return _walk_parsed_tu(
+            path=path,
+            side=side,
+            dtype_variant=dtype_variant,
+            orig_assignment=orig_assignment,
+            args=args,
+            unsaved_kw=unsaved_kw,
+            cache_key=cache_key,
+            op_dir=op_dir,
+            arch=arch,
+            op_root=op_root,
+            op_needle=op_needle,
+            collect_writes=collect_writes,
+            scope=scope,
+            logs_rejections=logs_rejections,
+            name=name,
+            t_all=t_all,
+            ctx=ctx,
+        )
+    finally:
+        _extent_tls_clear()
+
+
+def _walk_parsed_tu(
+    *,
+    path: str,
+    side: str,
+    dtype_variant: str | None,
+    orig_assignment: dict[str, str] | None,
+    args: list[str],
+    unsaved_kw: dict,
+    cache_key: str,
+    op_dir: str,
+    arch: str,
+    op_root: str,
+    op_needle: str,
+    collect_writes: bool,
+    scope,
+    logs_rejections: bool,
+    name: str,
+    t_all: float,
+    ctx,
+) -> WalkResult:
+    import time as _time
+
+    from uo_init.timing import log as _tlog, phase_budget_s
+    from uo_init import tu_cache
     from uo_init.perf import bump as _perf_bump
 
     injected = getattr(_INJECTED, "tu", None)
     _require_clang()
     idx = cindex.Index.create()
     t0 = _time.perf_counter()
+    ast_loaded = False
     if injected is not None:
         tu = injected
         t_parse = 0.0
     else:
-        tu = idx.parse(
-            path,
-            args=args,
-            options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
-            **parse_unsaved_kwargs(op_root, side=side),
-        )
-        _perf_bump("clang_tu_parse")
-        t_parse = _time.perf_counter() - t0
+        tu = None
+        ast_key = ""
+        if tu_cache.cache_enabled():
+            try:
+                ast_key = tu_cache.parse_cache_key(
+                    path,
+                    ctx,
+                    side=side,
+                    dtype_variant=dtype_variant,
+                    orig_assignment=orig_assignment,
+                )
+                tu = tu_cache.load_ast(
+                    ast_key, op_dir=op_dir or None, arch=arch, index=idx
+                )
+            except Exception:  # noqa: BLE001
+                tu = None
+                ast_key = ""
+        if tu is not None:
+            ast_loaded = True
+            t_parse = 0.0
+        else:
+            tu = idx.parse(
+                path,
+                args=args,
+                options=cindex.TranslationUnit.PARSE_DETAILED_PROCESSING_RECORD,
+                **unsaved_kw,
+            )
+            _perf_bump("clang_tu_parse")
+            t_parse = _time.perf_counter() - t0
+            if ast_key:
+                try:
+                    tu_cache.store_ast(
+                        ast_key, tu, op_dir=op_dir or None, arch=arch
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
     diags = [
         (int(d.severity), _norm(d.location.file.name) if d.location.file else "?", d.spelling)
         for d in tu.diagnostics
@@ -2567,7 +2747,7 @@ def walk_file(
     _tlog(
         f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
         f"parse={t_parse:.3f}s frame={frame_label} index={t_index:.3f}s "
-        f"ast_walk={t_walk:.3f}s cache={'store' if cache_key else 'off'} "
+        f"ast_walk={t_walk:.3f}s cache={'ast' if ast_loaded else ('store' if cache_key else 'off')} "
         f"reachable={len(reachable)} controls={len(w.controls)} "
         f"writes={len(w.writes)} calls={len(w.call_sites)} "
         f"diags={len(diags)} frames={len(frame_files)}"

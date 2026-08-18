@@ -2,18 +2,8 @@
 # The entry point `runner.py` invokes for one batch.
 #
 # Called as: bash run_replay.sh <in.csv> <out.csv> <log.txt> <with_log>
-# and the driver underneath wants a different shape:
-#           fag_replay <in.csv> <out.csv> <libophost_transformer_ut.so> [op]
-#
-# Two streams have to end up in one file. The driver prints `###CASE` and
-# `###DONE` on stdout; the tiling's own OP_LOGD lines -- which is where
-# splitAxis, isExceedL2Cache and sparseType actually come from -- only reach
-# stdout when slog is told to print there. `log_protocol.yaml` scrapes both out
-# of the same text, so both are redirected into <log.txt> together.
-#
-# `BATCH_DONE` goes to this script's stdout, not into the log: that is the
-# marker runner.py checks to tell a finished batch from a driver that never
-# started.
+# CANN comes from the generated extract wrapper (REPLAY_CANN_ENV), not
+# /usr/local/Ascend/cann/set_env.sh.
 set -uo pipefail
 
 IN=${1:?usage: run_replay.sh <in.csv> <out.csv> <log.txt> [with_log]}
@@ -21,7 +11,10 @@ OUT=${2:?missing out.csv}
 LOG=${3:?missing log.txt}
 WITH_LOG=${4:-1}
 
-source /usr/local/Ascend/cann/set_env.sh >/dev/null 2>&1 || true
+if [ -n "${REPLAY_CANN_ENV:-}" ] && [ -f "$REPLAY_CANN_ENV" ]; then
+  # shellcheck disable=SC1090
+  source "$REPLAY_CANN_ENV" >/dev/null 2>&1 || true
+fi
 
 OPS=${OPS_ROOT:-/work/ops-transformer}
 BIN=${REPLAY_BIN:-/work/replay/build/fag_replay}
@@ -37,23 +30,13 @@ for f in "$BIN" "$SO"; do
   fi
 done
 
-# The unit tests hand tiling 4096 bytes. The TND swizzle path stores 129 prefix
-# sums twice and InitTilingData fails at that size, so every key behind it went
-# missing rather than reported unreachable.
 export REPLAY_TILING_DATA_SIZE=${REPLAY_TILING_DATA_SIZE:-65536}
-
-# A run that produced a key also produced that key's TilingData. Dumping it here
-# is what lets branch/field coverage read a key sweep's witnesses instead of
-# replaying the same inputs again; set REPLAY_DUMP_TD=0 for a key-only sweep
-# where the extra base64 per case is not wanted.
 export REPLAY_DUMP_TD=${REPLAY_DUMP_TD:-1}
 
 if [ "$WITH_LOG" = "1" ]; then
   export ASCEND_SLOG_PRINT_TO_STDOUT=1
   export ASCEND_GLOBAL_LOG_LEVEL=1
 else
-  # The marks still have to come through; only the operator's own logging is
-  # silenced, which is what makes a no-log batch faster.
   export ASCEND_SLOG_PRINT_TO_STDOUT=1
   export ASCEND_GLOBAL_LOG_LEVEL=3
 fi

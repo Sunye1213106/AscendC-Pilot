@@ -8,7 +8,18 @@ import pytest
 
 from uo_init.build_context import BuildContext
 from uo_init.clang_walk import WalkResult
-from uo_init.host_ir import _walk_tu_payload, _walk_tu_worker, build_host_ir
+from uo_init.host_ir import _host_ir_pool_kind, _walk_tu_payload, _walk_tu_worker, build_host_ir
+
+
+def test_host_ir_pool_defaults_to_thread_on_windows(monkeypatch):
+    monkeypatch.delenv("UO_HOST_IR_POOL", raising=False)
+    monkeypatch.setattr("os.name", "nt")
+    assert _host_ir_pool_kind() == "thread"
+    monkeypatch.setenv("UO_HOST_IR_POOL", "process")
+    assert _host_ir_pool_kind() == "process"
+    monkeypatch.setenv("UO_HOST_IR_POOL", "thread")
+    monkeypatch.setattr("os.name", "posix")
+    assert _host_ir_pool_kind() == "thread"
 
 
 def test_build_context_roundtrip_for_worker():

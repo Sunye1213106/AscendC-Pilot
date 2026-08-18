@@ -5,13 +5,13 @@ role: readonly_reviewer
 mode: subagent
 description: >
   Code review analyst. Read session prompt.md and method.md first
-  (method is materialized into the action session). Writes only the declared
-  review report; never edits operator source.
+  (method is materialized into the action session). Writes only optional
+  run drafts; never edits operator source or ce/** products.
 max_skill_ids: &skills [code-review, code-engineering]
 skill_ids: *skills
 read_scopes:
 - pilot:uo/**
-- pilot:ce/**
+- pilot:ce/plan/**
 - pilot:tg/**
 - pilot:runs/**
 - pilot:context/**
@@ -21,8 +21,6 @@ read_scopes:
 - method:skills/code-review/**
 - method:skills/code-engineering/**
 write_scopes:
-- pilot:ce/review/**
-- pilot:ce/verify/code_review.yaml
 - pilot:runs/**/actions/code_review/**
 machine_constraints:
 - modify_pilot_state

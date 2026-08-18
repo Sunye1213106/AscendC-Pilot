@@ -15,7 +15,7 @@ TG 把 UO 的 Operator CodeMap 变成**脚本仓能直接跑的用例表**，再
 ```text
 无 .uo            → /uo-init
 无 init.yaml      → /tg-init     （plan 强制这份）
-意图              → 有则融合，不做文件强制
+意图              → 有则从 ce/plan/*_plan.md / 对话 / session_handoff.md 自己总结，不做文件强制
 无批准 plan.md    → /tg-plan
 harness_intent 未落地 → 禁止 start solve
 TG 永不改算子仓
@@ -29,7 +29,7 @@ TG 永不改算子仓
 
 `id, why, uo{query,span}, control{columns,recipe}, class, hit, cover`
 
-`class` 只有 `replay`（Host tiling）和 `derived`（公式）。root 不到的另列 `untestable.reason`。覆盖 L0–L3 写在 `cover` 上。全量 tilingkey 只在意图点名时做，**不是默认 T=D**。
+`class` 只有 `replay`（Host tiling）和 `derived`（公式）。root 不到的另列 `untestable.reason`。覆盖 L0–L3 写在 `cover` 上。全量 tilingkey 只在意图点名时做，**不是默认 T=D**。CE 不传 yaml 意图。
 
 缺列或缺 `generate_inputs` → `harness_intent`，先 `/ce-apply` 改**测试脚本仓**，再 `/tg-init`。
 

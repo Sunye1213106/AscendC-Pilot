@@ -51,19 +51,16 @@ def test_review_axis_fanout_writes_isolated_stubs(tmp_path: Path) -> None:
     std = next(t for t in tasks if t["slice_id"] == "standards")
     assert "AXIS=spec" in spec["task_prompt_stub"]
     assert "plan.md" in spec["task_prompt_stub"]
-    assert "diff" in spec["task_prompt_stub"]
-    assert "推断" in spec["task_prompt_stub"]
-    assert "不要填 ce/review" in spec["task_prompt_stub"]
+    assert "不要写 ce/review" in spec["task_prompt_stub"]
     assert "AXIS=standards" in std["task_prompt_stub"]
-    assert "Do not Write ce/review" in spec["task_prompt_stub"]
+    assert "Do not Write ce/**" in spec["task_prompt_stub"]
     assert (sdir / "method_spec.md").is_file()
     assert (sdir / "method_standards.md").is_file()
     spec_method = (sdir / "method_spec.md").read_text(encoding="utf-8")
     std_method = (sdir / "method_standards.md").read_text(encoding="utf-8")
     assert "只做 **Spec** 轴" in spec_method
     assert "只做 **Standards** 轴" in std_method
-    assert "bug_report.yaml" not in spec_method or "不要读 `ce/review/bug_report.yaml`" in spec_method
-    assert (tmp_path / ".ascendc-pilot" / "arch0" / "ce" / "review" / "index.yaml").is_file()
+    assert not (tmp_path / ".ascendc-pilot" / "arch0" / "ce" / "review" / "index.yaml").is_file()
 
 
 def test_review_axis_fanout_skips_scope_phase(tmp_path: Path) -> None:

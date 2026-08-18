@@ -87,8 +87,9 @@ Architecture **对 `/uo-init` 和 `/uo-update` 强制**：选项从当前算子�
 | 建立 / 更新 CodeMap | `/uo-init`、`/uo-update` |
 | 查询或调查 gap | `/uo-query`、`/uo-investigate` |
 | 生成测试覆盖 | `/tg-init` → `/tg-plan` → `/tg-solve` |
-| 代码审查 | `/ce-review` |
-| 变更意图 / 影响 / 验证 | `/ce-intent`、`/ce-impact`、`/ce-verify` |
+| 自己有需求：计划并改码 | `/ce-plan` → `/ce-apply` |
+| 已有 diff / PR：只读审查 | `/ce-review` |
+| 会话交接 | `/handoff` |
 
 自然语言示例：
 

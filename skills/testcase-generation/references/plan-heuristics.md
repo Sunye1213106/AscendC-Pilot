@@ -5,7 +5,7 @@
 ## 融合顺序
 
 1. 读强制产物 `tg/init.yaml`。没有就停，去 `/tg-init`。
-2. 有意图就拆：精度考虑 / 性能考虑（可重叠）。来源可以是 `--intent`、对话、`ce/intent/plan.md`、`ce/impact/tg_plan_intent.yaml`。都没有 → 默认 L0，仍要写出能 root 的精度/性能义务。
+2. 有意图就拆：精度考虑 / 性能考虑（可重叠）。来源可以是 `--intent`、对话、`ce/plan/*_plan.md`、`session_handoff.md`。禁止 `tg_plan_intent.yaml`。都没有 → 默认 L0，仍要写出能 root 的精度/性能义务。
 3. 每条义务做 uo-query，root 到列，写 `cover`（L0 每维一次 / L1 成对 / L2 有界笛卡尔 / L3 异常）。
 4. 全量 tilingkey 只在意图点名时做。禁止默认 T=D。
 

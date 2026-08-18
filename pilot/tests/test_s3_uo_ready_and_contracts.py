@@ -21,60 +21,45 @@ def test_named_gate_uo_ready_is_tg_not_sqlite() -> None:
     assert "architecture" in named.parameters
 
 
-def test_intent_confirmed_contract_includes_plan() -> None:
-    paths = OUTPUT_CONTRACT_PATHS["intent-confirmed-v1"]
-    assert "ce/intent/confirmation.yaml" in paths
-    assert "ce/intent/plan.md" in paths
+def test_ce_plan_contract_is_named_markdown() -> None:
+    assert OUTPUT_CONTRACT_PATHS["ce-plan-v1"] == ["ce/plan/*_plan.md"]
+    assert OUTPUT_CONTRACT_PATHS["session-handoff-v1"] == ["session_handoff.md"]
+    assert "intent-confirmed-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "plan-review-v1" not in OUTPUT_CONTRACT_PATHS
+    for cid, paths in OUTPUT_CONTRACT_PATHS.items():
+        for path in paths:
+            p = str(path).replace("\\", "/")
+            if p.startswith("ce/"):
+                assert not p.endswith(".yaml"), (cid, path)
 
 
-def test_plan_review_contract_is_only_plan_review_yaml() -> None:
-    assert OUTPUT_CONTRACT_PATHS["plan-review-v1"] == ["ce/intent/plan_review.yaml"]
-
-
-def test_plan_review_prompt_only_writes_plan_review_yaml() -> None:
-    prompt = (
-        Path(__file__).resolve().parents[2] / "prompts" / "tasks" / "ce" / "plan-review.md"
-    ).read_text(encoding="utf-8")
-    assert "ce/intent/plan_review.yaml" in prompt
-    assert "写入 `ce/intent/feature_decomposition.yaml`" not in prompt
-    assert "提升为 `ce/intent/feature_decomposition.yaml`" not in prompt
-
-
-def test_feature_decomposition_unique_writer() -> None:
+def test_ce_yaml_products_have_no_writers() -> None:
     from ascendc_pilot.ownership import ACTION_PRODUCER_WRITE_PATHS, ACTION_WRITE_PATHS
 
+    banned = (
+        "feature_decomposition.yaml",
+        "scenario_set.yaml",
+        "tg_plan_intent.yaml",
+        "plan_review.yaml",
+        "ledger.yaml",
+        "confirmation.yaml",
+    )
     writers = [
-        (wid, aid)
+        (wid, aid, path)
         for wid, actions in ACTION_WRITE_PATHS.items()
         for aid, paths in actions.items()
-        if any("feature_decomposition.yaml" in str(p) for p in paths)
+        for path in paths
+        if any(token in str(path) for token in banned)
     ]
-    assert writers == [("ce-intent", "feature_promote")]
+    assert writers == []
     staged = [
-        (wid, aid)
+        (wid, aid, path)
         for wid, actions in ACTION_PRODUCER_WRITE_PATHS.items()
         for aid, paths in actions.items()
-        if any("feature_decomposition.yaml" in str(p) for p in paths)
+        for path in paths
+        if any(token in str(path) for token in banned)
     ]
     assert staged == []
-
-
-def test_scenario_set_not_written_by_knobs_producer() -> None:
-    from ascendc_pilot.ownership import ACTION_PRODUCER_WRITE_PATHS, ACTION_WRITE_PATHS
-
-    knobs_paths = (ACTION_PRODUCER_WRITE_PATHS.get("ce-impact") or {}).get("scenario_knobs") or []
-    assert all("scenario_set.yaml" not in str(p) for p in knobs_paths)
-    writers = {
-        (wid, aid)
-        for wid, actions in ACTION_WRITE_PATHS.items()
-        for aid, paths in actions.items()
-        if any(str(p).endswith("ce/scenarios/scenario_set.yaml") or str(p) == "ce/scenarios/scenario_set.yaml" for p in paths)
-    }
-    assert writers == {
-        ("ce-impact", "scenario_infer"),
-        ("ce-impact", "scenario_apply"),
-        ("ce-intent", "scenario_infer"),
-    }
 
 
 def test_kb_ready_uses_requested_architecture(tmp_path: Path) -> None:

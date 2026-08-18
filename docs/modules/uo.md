@@ -208,7 +208,7 @@ Canonical Kernel UO 提供的是 sync **facts**：operation、参数、pipe/even
 
 **关系（边）典型 kind**：日常查询默认走有用边 `WRITES` / `READS` / `CALLS` / `CONTROLS` / `DERIVES` / `SELECTS` / `LAUNCHES` / `SIGNALS` / `AWAITS` / `FLOWS_TO` / `BINDS`。图中还可有 `INSTANTIATES`、`WRAPS` / `ROOTED_AT`，以及同步相关的 `PRECEDES`。Host 条件、Tiling、Kernel、AscendC root 靠这些边串成可追溯图。
 
-Query 与 CE 读回的是按 kind 投影后的 evidence hit（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。`impact` 沿有向有用边 BFS，并按 skill 分桶（dispatch / layout / memory / sync / precision / contract）。`legal_key` 在磁盘上按维列存，读取时再展开成 `dims` 字典。
+Query 与 CE 读回的是按 kind 投影后的 evidence hit（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。跨层邻域由 `uo-query` 四种形态给出；`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。`legal_key` 在磁盘上按维列存，读取时再展开成 `dims` 字典。
 
 ```text
 meta + BuildVariant
@@ -260,6 +260,8 @@ Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo
 - `--file --line`：从位点走图
 - 无参数：算子索引（launch 阶段、维名、TilingData、gaps 计数）
 
+这四种形态是 CE / TG / 主控的**唯一查询面**。`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。禁止 `acp uo impact`、`explain-*`、`search`、`locate`。
+
 与官方 cannbot 的适配（CodeMap 作为源码结构底座，含 FAG arch35 覆盖验证）见下文 [与官方 cannbot 的适配](#与官方-cannbot-的适配)。
 
 `/uo-investigate` 调查 unresolved residual：分类根因、指出确定性引擎还缺什么能力，产出 bounded report。不修改 canonical `.uo`。
@@ -270,7 +272,7 @@ Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo
 
 ## 与 TG、CE 的衔接
 
-TG 消费 CodeMap、TilingKey domain、Host/Kernel projection 与 unresolved 来建立义务账本。CE 消费 relation view 分析改动对 Host 状态、TilingData、predicate 和 Kernel 分支的影响。二者都不应重新建立完整源码权威。
+TG 消费 CodeMap、TilingKey domain、Host/Kernel projection 与 unresolved 来写 `tg/plan.md` 义务。CE 用上述四种 `uo-query` 形态读图，不另走 impact API。二者都不应重新建立完整源码权威。
 
 UO 负责如实交付可证明关系及其未知部分；TG 决定哪些测试义务可通过 replay 或可靠排除关闭。
 
@@ -285,7 +287,7 @@ UO 不替代 cannbot。cannbot 的 code-review、runtime-debug、crash-debug、p
 现在：问题 → UO 一次查询（定位点 + 源码窗）→ cannbot 判断
 ```
 
-下表把 cannbot skill 要的源码点对齐到 **UO 已实现的查询与投影**（`query/evidence.py` 的 facts 与有用边；mode 见 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)）。
+下表把 cannbot skill 要的源码点对齐到 **CodeMap 已实现的投影**（`query/evidence.py` 的 facts 与有用边；内部桶名见 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)）。**Agent / CE 技能不得按表中的 `locate` / `search` / `impact` 去调 CLI**——对外只有 `uo-query` 四种形态。`impact` 列表示图邻域分桶，对应磁盘 `uo/diff/impact.yaml` 时也只是 uo-update 产物。
 
 | cannbot skill 要的源码点 | 典型 skill | UO 查询 | CodeMap 给出 |
 | --- | --- | --- | --- |

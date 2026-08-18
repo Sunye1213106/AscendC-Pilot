@@ -35,15 +35,6 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
     "plan_approved": ["tg/plan.md"],
     "harness_intent_cleared": ["tg/plan.md"],
     "worklog_closed": ["tg/worklog.md"],
-    "obligations_classified": [
-        "ce/impact/risk_classification.yaml",
-        "ce/impact/obligations.yaml",
-    ],
-    "impact_ledger_ready": [
-        "ce/impact/obligations.yaml",
-        "ce/impact/ledger.yaml",
-    ],
-    "ce_certificate_sound": ["ce/verify/certificate.yaml"],
     "scenario_coverage_sound": [
         "tg/plan.md",
         "tg/worklog.md",

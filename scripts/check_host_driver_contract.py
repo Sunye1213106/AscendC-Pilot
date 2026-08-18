@@ -293,6 +293,12 @@ def main() -> int:
         errors.append("plugin must not scan global ~/.config/opencode/agents")
     if "ownedPilotAgentIds" not in plugin_src or "install-manifest.json" not in plugin_src:
         errors.append("plugin must load owned agents from install-manifest.json")
+    from ascendc_pilot.host_doctor import parse_opencode_plugin_ts
+
+    for name in ("ascendc-pilot.ts", "pilot-driver.ts"):
+        parsed = parse_opencode_plugin_ts(plug / name)
+        if not parsed.get("ok"):
+            errors.append(f"{name} does not parse: {parsed.get('detail')}")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

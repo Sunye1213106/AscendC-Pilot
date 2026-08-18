@@ -30,6 +30,7 @@ IDENTITY_CTX_KEYS = frozenset(
 )
 STATE_CTX_KEYS = frozenset(
     {
+        "pr_url",
         "intent",
         "description",
         "targets",

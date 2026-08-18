@@ -56,7 +56,7 @@ def test_router_slash_only_no_nl_keywords():
     assert goal.get("ok") is True and goal.get("method") == "goal_router"
     assert goal.get("workflow_id") == "tg-init"
     ce = route("验证这次改动")
-    assert ce.get("ok") is True and ce.get("workflow_id") == "ce-intent"
+    assert ce.get("ok") is True and ce.get("workflow_id") == "ce-plan"
     op = route("/operator /uo-init")
     assert op.get("ok") is True and op.get("workflow_id") == "uo-init" and op.get("via") == "operator"
     assert route("/operator 帮我建库").get("ok") is False
@@ -588,11 +588,9 @@ def test_install_skill_lists_symmetric():
         "uo-query",
         "uo-investigate",
         "ce-review",
-        "ce-intent",
+        "ce-plan",
         "ce-apply",
-        "ce-handoff",
-        "ce-impact",
-        "ce-verify",
+        "handoff",
         "tg-init",
         "tg-plan",
         "tg-solve",
@@ -605,7 +603,15 @@ def test_install_skill_lists_symmetric():
         assert name in wf_ps1, name
         assert name in wf_sh, name
         assert name in ps1 and name in sh
-    for retired in ("uo-diff", "tg-domain-review", "tg-contract"):
+    for retired in (
+        "uo-diff",
+        "tg-domain-review",
+        "tg-contract",
+        "ce-intent",
+        "ce-impact",
+        "ce-verify",
+        "ce-handoff",
+    ):
         assert retired not in wf_ps1
         assert retired not in wf_sh
     cog_ps1 = next(line for line in ps1.splitlines() if line.startswith("$cognitiveSkills"))
@@ -621,17 +627,17 @@ def test_install_skill_lists_symmetric():
     assert "uo-gap-investigator" in ps1
     assert "uo-gap-investigator" in sh
     for extra in (
-        "ce-intent",
+        "ce-plan",
         "ce-apply",
-        "ce-handoff",
-        "ce-impact",
-        "ce-verify",
+        "handoff",
+        "ce-review",
         "tg-analyst",
-        "ce-change-referee",
         "ce-applier",
         "ce-analyst",
     ):
         assert extra in ps1 and extra in sh
+    assert "ce-change-referee" not in wf_ps1
+    assert "ce-change-referee" not in wf_sh
     assert "XDG_CONFIG_HOME" in ps1
     assert "XDG_CONFIG_HOME" in sh
     assert "Get-AcpExe" in ps1

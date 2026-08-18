@@ -80,23 +80,21 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/analyze_round/staging.yaml",
         ],
     },
-    "ce-intent": {
-        "feature_decompose": [
-            "runs/{run_id}/actions/feature_decompose/parts/**",
-            "runs/{run_id}/actions/feature_decompose/scratch/**",
-            "runs/{run_id}/actions/feature_decompose/staging.yaml",
-        ],
+    "ce-plan": {
         "intent_grill": [
             "runs/{run_id}/actions/intent_grill/parts/**",
             "runs/{run_id}/actions/intent_grill/scratch/**",
-            "runs/{run_id}/actions/intent_grill/staging.yaml",
+            "runs/{run_id}/actions/intent_grill/staging.md",
+        ],
+        "plan_draft": [
+            "ce/plan/*_plan.md",
+            "runs/{run_id}/actions/plan_draft/**",
         ],
     },
-    "ce-impact": {
-        "scenario_knobs": [
-            "runs/{run_id}/actions/scenario_knobs/parts/**",
-            "runs/{run_id}/actions/scenario_knobs/scratch/**",
-            "runs/{run_id}/actions/scenario_knobs/staging.yaml",
+    "handoff": {
+        "session_handoff": [
+            "session_handoff.md",
+            "runs/{run_id}/actions/session_handoff/**",
         ],
     },
 }
@@ -113,18 +111,13 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "construct_promote": ["tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"],
         "analyze_promote": ["tg/worklog.md"],
     },
-    "ce-intent": {
-        "feature_decompose": [
-            "ce/intent/feature_decomposition.yaml",
-        ],
-        "intent_grill": [
-            "ce/intent/intent.yaml",
+    "ce-plan": {
+        "plan_draft": [
+            "ce/plan/*_plan.md",
         ],
     },
-    "ce-impact": {
-        "scenario_knobs": [
-            "ce/scenarios/scenario_set.yaml",
-        ],
+    "handoff": {
+        "session_handoff": ["session_handoff.md"],
     },
 }
 ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
@@ -210,86 +203,36 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "solve_certify": ["runs/{run_id}/receipts/solve_certify.yaml"],
     },
     "ce-review": {
+        "change_capture": [
+            "runs/{run_id}/actions/change_capture/**",
+        ],
         "code_review": [
-            "ce/review/**",
-            "runs/**/actions/code_review/**",
+            "runs/{run_id}/actions/code_review/**",
         ],
-        "review_persist": ["ce/review/**"],
     },
-    "ce-impact": {
-        "change_capture": ["ce/impact/change_capture.yaml"],
-        "uo_freshness": ["ce/impact/freshness.yaml"],
-        "impact_slice": ["ce/impact/impact_slice.yaml"],
-        "risk_classify": ["ce/impact/risk_classification.yaml"],
-        "obligation_build": [
-            "ce/impact/obligations.yaml",
-            "ce/impact/ledger.yaml",
-            "ce/impact/change_test_intent.yaml",
-            "ce/impact/tg_plan_intent.yaml",
-        ],
-        "scenario_infer": [
-            "ce/impact/scenario_set.yaml",
-            "ce/impact/scenario_delta.yaml",
-            "ce/scenarios/scenario_set.yaml",
-        ],
-        "scenario_apply": ["ce/scenarios/scenario_set.yaml"],
-        "impact_audit": ["ce/impact/audit_report.yaml"],
-        "scenario_confirm": ["ce/scenarios/confirmation.yaml"],
-    },
-    "ce-verify": {
-        "verify_gate": ["ce/verify/gate.yaml"],
-        "code_review": ["ce/verify/code_review.yaml"],
-        "coverage_bridge": ["ce/verify/tg_handoff.yaml", "ce/verify/regress_cases.csv"],
-        "residual_analyse": ["ce/verify/residual.yaml", "ce/verify/ledger.yaml"],
-        "harness_evidence": ["ce/verify/harness_evidence.yaml"],
-        "harness_evidence_check": ["ce/verify/harness_evidence_check.yaml"],
-        "external_ingest": ["ce/verify/external_evidence.yaml", "ce/verify/ledger.yaml"],
-        "exclusion_review": ["ce/verify/exclusion_review.yaml"],
-        "ce_certify": ["ce/verify/certificate.yaml"],
-    },
-    "ce-intent": {
-        "intent_capture": ["ce/intent/intent.yaml"],
-        "kb_check": ["ce/intent/kb_check.yaml"],
+    "ce-plan": {
         "intent_grill": [
             "runs/{run_id}/actions/intent_grill/parts/**",
             "runs/{run_id}/actions/intent_grill/scratch/**",
-            "runs/{run_id}/actions/intent_grill/staging.yaml",
+            "runs/{run_id}/actions/intent_grill/staging.md",
         ],
-        "grill_promote": ["ce/intent/intent.yaml"],
-        "grill_confirm": ["ce/intent/grill_confirmation.yaml"],
-        "feature_decompose": [
-            "runs/{run_id}/actions/feature_decompose/parts/**",
-            "runs/{run_id}/actions/feature_decompose/scratch/**",
-            "runs/{run_id}/actions/feature_decompose/staging.yaml",
+        "plan_draft": [
+            "ce/plan/*_plan.md",
+            "runs/{run_id}/actions/plan_draft/**",
         ],
-        "anchor_locate": ["ce/intent/anchors.yaml"],
-        "scenario_infer": ["ce/intent/planned_scenarios.yaml", "ce/scenarios/scenario_set.yaml"],
-        "plan_review": ["ce/intent/plan_review.yaml"],
-        "feature_promote": ["ce/intent/feature_decomposition.yaml"],
-        "human_confirm": ["ce/intent/confirmation.yaml", "ce/intent/plan.md"],
     },
     "ce-apply": {
-        "apply_gate": ["ce/apply/gate.yaml", "ce/apply/todo.md"],
         "patch": [
             "source:op_host/**",
             "source:op_kernel/**",
             "source:common/**",
             "source:test_script/**",
-            "ce/apply/patch_notes.yaml",
-            "ce/apply/todo.md",
+            "ce/plan/*_plan.md",
             "runs/{run_id}/actions/patch/**",
         ],
-        "change_capture": ["ce/apply/change_capture.yaml"],
-        "patch_guard": ["ce/apply/patch_report.yaml"],
-        "code_review": [
-            "ce/review/**",
-            "runs/**/actions/code_review/**",
-        ],
-        "codemap_refresh": ["ce/apply/codemap_refresh.yaml"],
-        "apply_report": ["ce/apply/report.yaml", "ce/session_handoff.md", "ce/review/**"],
     },
-    "ce-handoff": {
-        "session_handoff": ["ce/session_handoff.md"],
+    "handoff": {
+        "session_handoff": ["session_handoff.md"],
     },
 }
 ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
@@ -350,8 +293,8 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "uo/*.uo",
             "tg/init.yaml",
             "tg/plan.md",
-            "ce/impact/tg_plan_intent.yaml",
-            "ce/intent/plan.md",
+            "ce/plan/*_plan.md",
+            "session_handoff.md",
             "runs/{run_id}/actions/plan_fuse/**",
             "context/**",
         ],
@@ -389,11 +332,10 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "solve_certify": ["tg/worklog.md", "tg/plan.md", "tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"],
     },
     "ce-review": {
+        "change_capture": ["context/**", "source/**"],
         "code_review": [
             "uo/*.uo",
-            "ce/intent/plan.md",
-            "ce/impact/change_capture.yaml",
-            "ce/apply/change_capture.yaml",
+            "ce/plan/**",
             "source:op_host/**",
             "source:op_kernel/**",
             "source:common/**",
@@ -401,84 +343,24 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "context/**",
             "skills/code-review/**",
         ],
-        "review_persist": [
-            "ce/intent/plan.md",
-            "ce/review/**",
+        "review_report": [
+            "ce/plan/**",
             "runs/{run_id}/actions/code_review/**",
         ],
     },
-    "ce-impact": {
-        "change_capture": ["context/**", "source/**"],
-        "uo_freshness": ["uo/*.uo", "ce/impact/change_capture.yaml"],
-        "impact_slice": ["uo/*.uo", "ce/impact/change_capture.yaml", "ce/impact/freshness.yaml"],
-        "risk_classify": ["ce/impact/impact_slice.yaml"],
-        "scenario_infer": [
-            "ce/impact/impact_slice.yaml",
-            "ce/impact/freshness.yaml",
-            "ce/intent/anchors.yaml",
-            "uo/*.uo",
-        ],
-        "scenario_knobs": [
-            "ce/scenarios/scenario_set.yaml",
-            "ce/impact/**",
-            "uo/*.uo",
-            "skills/code-engineering/**",
-            "skills/testcase-generation/**",
-        ],
-        "scenario_apply": [
-            "ce/scenarios/scenario_set.yaml",
-            "runs/{run_id}/actions/scenario_knobs/**",
-        ],
-        "scenario_confirm": ["ce/scenarios/**"],
-        "obligation_build": ["ce/impact/impact_slice.yaml", "ce/impact/risk_classification.yaml"],
-        "impact_audit": ["uo/*.uo", "ce/impact/**", "ce/scenarios/**", "runs/**", "context/**"],
-    },
-    "ce-verify": {
-        "verify_gate": ["uo/*.uo", "ce/impact/**"],
-        "code_review": ["uo/*.uo", "ce/impact/**", "ce/verify/**", "context/**"],
-        "coverage_bridge": ["ce/impact/**", "tg/plan.md", "tg/worklog.md", "tg/init.yaml"],
-        "residual_analyse": ["ce/impact/**", "ce/verify/**"],
-        "harness_evidence": [
-            "ce/impact/**",
-            "ce/scenarios/**",
-            "ce/verify/**",
-            "tg/plan.md",
-            "tg/worklog.md",
-            "tg/cases.csv",
-            "tg/cases.xls",
-            "tg/cases.xlsx",
-            "local/**",
-        ],
-        "harness_evidence_check": [
-            "ce/impact/**",
-            "ce/scenarios/**",
-            "ce/verify/**",
-            "tg/plan.md",
-            "tg/worklog.md",
-        ],
-        "external_ingest": ["ce/impact/**", "ce/verify/**", "context/**", "local/**"],
-        "exclusion_review": ["uo/*.uo", "ce/impact/**", "ce/verify/**", "runs/**"],
-        "ce_certify": ["ce/impact/**", "ce/verify/**"],
-    },
-    "ce-intent": {
-        "intent_capture": ["context/**"],
+    "ce-plan": {
         "kb_check": ["uo/*.uo"],
-        "intent_grill": ["uo/*.uo", "ce/intent/**", "context/**", "runs/**"],
-        "grill_promote": ["ce/intent/intent.yaml", "runs/**"],
-        "grill_confirm": ["ce/intent/**"],
-        "feature_decompose": ["uo/*.uo", "ce/intent/**", "context/**", "runs/**"],
-        "anchor_locate": ["uo/*.uo", "ce/intent/**", "runs/**"],
-        "scenario_infer": ["uo/*.uo", "ce/intent/**", "ce/impact/**"],
-        "plan_review": ["uo/*.uo", "ce/intent/**", "runs/**"],
-        "feature_promote": ["ce/intent/plan_review.yaml", "runs/**"],
-        "human_confirm": ["ce/intent/**"],
+        "intent_grill": ["uo/*.uo", "ce/plan/**", "context/**", "runs/**"],
+        "grill_promote": ["runs/{run_id}/actions/intent_grill/**"],
+        "grill_confirm": ["ce/plan/**", "runs/{run_id}/actions/intent_grill/**"],
+        "plan_draft": ["uo/*.uo", "ce/plan/**", "context/**", "runs/**"],
+        "human_confirm": ["ce/plan/**"],
     },
     "ce-apply": {
-        "apply_gate": ["ce/intent/**", "ce/apply/todo.md"],
+        "apply_gate": ["ce/plan/**"],
         "patch": [
             "uo/*.uo",
-            "ce/intent/plan.md",
-            "ce/apply/todo.md",
+            "ce/plan/**",
             "source:op_host/**",
             "source:op_kernel/**",
             "source:common/**",
@@ -486,28 +368,17 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/**",
             "context/**",
         ],
-        "change_capture": ["context/**", "source/**"],
-        "patch_guard": ["ce/apply/**", "ce/intent/anchors.yaml"],
-        "code_review": [
-            "uo/*.uo",
-            "ce/intent/plan.md",
-            "ce/apply/todo.md",
-            "ce/apply/change_capture.yaml",
-            "source:op_host/**",
-            "source:op_kernel/**",
-            "source:common/**",
-            "runs/**",
-            "context/**",
-            "skills/code-review/**",
-        ],
-        "codemap_refresh": ["uo/**", "ce/apply/**"],
-        "apply_report": ["ce/apply/**", "ce/review/**", "uo/checks/**", "ce/intent/**"],
+        "patch_guard": ["ce/plan/**", "source/**"],
+        "codemap_refresh": ["uo/**"],
+        "apply_report": ["ce/plan/**", "uo/checks/**"],
     },
-    "ce-handoff": {
+    "handoff": {
         "session_handoff": [
-            "ce/intent/plan.md",
-            "ce/apply/todo.md",
-            "ce/session_handoff.md",
+            "ce/plan/**",
+            "session_handoff.md",
+            "tg/init.yaml",
+            "tg/plan.md",
+            "tg/worklog.md",
             "uo/*.uo",
             "context/**",
         ],

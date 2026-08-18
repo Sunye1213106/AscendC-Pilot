@@ -1,37 +1,15 @@
 # Risk Classes
 
-Classify each impacted anchor by observable failure mode, not file name.
-Obligations attach from the anchor's CodeMap `kind` (and OPERATION callee).
+写 `{slug}_plan.md` 的「测试内容」或审查对话时，按可观察失败模式分类，不要按文件名。CE 不写义务 yaml，也不把精度/性能写进 `V`。
 
-Developer language maps onto these classes:
-
-| 失败怎么说 | class | 何时挂 |
+| 失败怎么说 | class | 何时想到 |
 | --- | --- | --- |
 | Tiling 失败、Kernel 找不到、dispatch 漏分支 | **dispatch** | TILING_KEY / TEMPLATE / PREDICATE |
 | 接口、字段布局、输入输出合同 | **contract** | INPUT/OUTPUT、TILING_FIELD/DATA |
-| 覆盖缺口、路径没跑到 | **coverage** | BRANCH / KERNEL / 未分类 OPERATION |
+| 覆盖缺口、路径没跑到 | **coverage** | BRANCH / KERNEL |
 | 越界、rank/dtype/tail、切分公式 | **shape** | TILING_FIELD/DATA |
-| 同步缺失、卡死、队列/Buffer 生命周期 | **sync** | BUFFER/REGISTER/QUEUE/PIPE/EVENT、SetFlag 族 |
-| 精度不对（Cast / DataCopy / 多 dtype） | **precision** | Cast / DataCopy 类 OPERATION；**V 需外部测量** |
-| 性能回退 | **perf** | BUFFER 等；**V 需 profiling 收据** |
+| 同步缺失、卡死、队列/Buffer 生命周期 | **sync** | BUFFER/REGISTER/QUEUE/PIPE/EVENT |
+| 精度不对（Cast / DataCopy / 多 dtype） | **precision** | Cast / DataCopy；测量在 TG |
+| 性能回退 | **perf** | BUFFER 等；profiling 在 TG |
 
-Kind routing:
-
-- **API/contract:** INPUT/OUTPUT, plus TilingData field layout.
-- **Control/selection:** TilingKey, template, predicate, or dispatch branch.
-- **Data/layout:** TilingData field, size, offset, alignment, or serialization.
-- **Kernel/memory:** bounds, address space, copy extent, buffer, queue, or register.
-- **Synchronization:** BUFFER/REGISTER/QUEUE/PIPE/EVENT, or SetFlag/WaitFlag family.
-- **Build/variant:** macro, include closure, specialization, or architecture.
-- **Quality:** correctness evidence, regression coverage, precision, or performance.
-
-A BUFFER-only slice does not create a dispatch obligation. Untyped anchors with
-an explicit `risk_classes` list still attach to those classes.
-
-Severity and likelihood must cite evidence separately. Flag APIs expose
-identity-level pair appearance (`flag_paired`); that is not happens-before.
-TQue EnQue/DeQue are outside the flag pair check. Precision and performance
-risks require external measurements (`ce-external-evidence/v1`) before they
-can enter `V`.
-
-精度 → `P-*`，性能 → `F-*`，dispatch 走全量 Key overlay 而不是场景子集。id 与挂载规则只认 `references/scenario-catalog.md`。
+精度若要点名用例，用 catalog 的 `P-*`；性能用 `F-*`。不要静默扩成全部合法 Key。id 只认 `references/scenario-catalog.md`。

@@ -81,12 +81,19 @@ def test_ce_review_prepare_dispatches_with_project_root(tmp_path: Path, monkeypa
     from ascendc_pilot.state import start_workflow
 
     root = _setup_op_with_sources(tmp_path, monkeypatch)
-    start_workflow(root, "ce-review", architecture="arch0", op_name="_synthetic_toy")
+    start_workflow(
+        root,
+        "ce-review",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        phase="review",
+        force_phase=True,
+    )
     prep = prepare_action(root, "code_review")
     assert prep.get("ok") is True, prep
     assert prep.get("reason_code") != "BUNDLE_NOT_READABLE"
     stub = str(prep.get("task_prompt_stub") or "")
-    assert "acp --project" in stub
+    assert "--project" in stub
     step = build_host_step(
         kind="dispatch_subagent",
         prepare=prep,
@@ -155,74 +162,16 @@ def test_prepare_bundle_check_exception_is_fail_closed(tmp_path: Path, monkeypat
     assert "checker exploded" in str(result.get("message_zh") or "")
 
 
-def test_harness_evidence_check_engine_closed_set(tmp_path: Path, monkeypatch) -> None:
-    from ascendc_pilot.actions.engines import _run_ce_harness_evidence_check
-    from ascendc_pilot.paths import ce_root, ensure_agent_layout
+def test_ce_apply_gate_prepare_fails_without_plan(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import prepare_action
+    from ascendc_pilot.paths import ensure_agent_layout
+    from ascendc_pilot.state import start_workflow
 
     monkeypatch.setenv("UO_ARCH", "arch0")
     monkeypatch.setenv("ASCENDC_PROJECT_ROOT", str(tmp_path))
     ensure_agent_layout(tmp_path, arch="arch0")
-    ce = ce_root(tmp_path, arch="arch0")
-    (ce / "impact").mkdir(parents=True, exist_ok=True)
-    (ce / "scenarios").mkdir(parents=True, exist_ok=True)
-    (ce / "verify").mkdir(parents=True, exist_ok=True)
-    (ce / "impact" / "obligations.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema": "ce-obligations/v1",
-                "obligations": [
-                    {"id": "ce-precision-1", "risk_class": "precision"},
-                    {"id": "ce-perf-1", "risk_class": "perf"},
-                    {"id": "ce-dispatch-1", "risk_class": "dispatch"},
-                ],
-            },
-            allow_unicode=True,
-        ),
-        encoding="utf-8",
-    )
-    (ce / "scenarios" / "scenario_set.yaml").write_text(
-        yaml.safe_dump({"schema": "ce-scenario-set/v1", "items": [{"id": "P-DTYPE"}]}, allow_unicode=True),
-        encoding="utf-8",
-    )
-    (ce / "verify" / "harness_evidence.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema": "ce-external-evidence/v1",
-                "kind": "host_replay",
-                "ok": False,
-                "reason": "harness_missing",
-                "verified_obligations": ["ce-precision-1"],
-            },
-            allow_unicode=True,
-        ),
-        encoding="utf-8",
-    )
-    (ce / "verify" / "external_evidence.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema": "ce-external-evidence-batch/v1",
-                "receipts": [
-                    {
-                        "kind": "precision_compare",
-                        "ok": True,
-                        "verified_obligations": ["ce-precision-1"],
-                        "artifact": "golden.csv",
-                    }
-                ],
-            },
-            allow_unicode=True,
-        ),
-        encoding="utf-8",
-    )
-    result = _run_ce_harness_evidence_check(tmp_path, {"architecture": "arch0"})
-    assert result.get("ok") is True, result
-    report = ce / "verify" / "harness_evidence_check.yaml"
-    assert report.is_file()
-    doc = yaml.safe_load(report.read_text(encoding="utf-8")) or {}
-    by_id = {row["obligation_id"]: row for row in doc.get("items") or []}
-    assert by_id["ce-precision-1"]["status"] == "covered"
-    assert by_id["ce-perf-1"]["status"] == "open"
-    assert by_id["ce-perf-1"]["reason"] == "harness_missing"
-    assert by_id["P-DTYPE"]["status"] == "open"
-    assert "ce-dispatch-1" not in by_id
-    assert doc.get("excepted_obligations") == []
+    write_synthetic_uo(tmp_path, op_name="_synthetic_toy", architecture="arch0")
+    start_workflow(tmp_path, "ce-apply", architecture="arch0", op_name="_synthetic_toy")
+    result = prepare_action(tmp_path, "apply_gate")
+    blob = str(result)
+    assert "APPLY_PLAN_MISSING" in blob
