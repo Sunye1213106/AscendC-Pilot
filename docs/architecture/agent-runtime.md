@@ -177,7 +177,7 @@ Agent YAML 里 `forbidden` 标签的确定含义：
 | `rework_required` | `rework` | 重试失败的那一步 / 声明的恢复动作；禁止 advance/complete |
 | `human_required` / `blocked` / `failed` | `containment` | 恢复类 `acp`；主控可 Read/Glob/Get-ChildItem 诊断；禁止 Write/Task/引擎脚本/领域 CLI |
 
-`acp start` 在各 mode 下始终允许。只有 Pilot 相关 Agent（`ascendc-pilot`、`uo-*` / `tg-*` / `ce-*` / `deterministic-*`）走这套约束；普通 Build / Plan / General Tab 不套用。
+`acp start` 在各 mode 下始终允许。只有 **install-manifest / Agent Registry 里登记的** Pilot Agent 走这套约束；普通 Build / Plan / General Tab，以及用户自己的 `ce-helper` / `tg-playground` 等 Tab，不套用。不按文件名前缀判断归属。
 
 ---
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,58 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:  # noqa: BLE001
         return {}
+
+
+@lru_cache(maxsize=8)
+def list_pilot_agent_ids() -> frozenset[str]:
+    """Owned Pilot agent ids: repo registry + installed manifest.
+
+    Never infer ownership from filename prefixes (``uo-`` / ``tg-`` / ``ce-``).
+    Does not scan ``~/.config/opencode/agents/`` — that directory is the user's.
+    """
+    ids: set[str] = {"ascendc-pilot", "ascendc_agent"}
+    repo_agents = Path(__file__).resolve().parents[2] / "agents"
+    if repo_agents.is_dir():
+        for path in repo_agents.glob("*.yaml"):
+            meta = _load_yaml(path)
+            aid = str(meta.get("id") or path.stem).strip()
+            if aid:
+                ids.add(aid)
+    try:
+        from ascendc_pilot.paths import opencode_plugin_root
+
+        plugin_roots = [
+            opencode_plugin_root(),
+            Path.home() / ".cursor" / "ascendc-pilot-plugin",
+            Path.home() / ".agents" / "ascendc-pilot-plugin",
+        ]
+    except Exception:  # noqa: BLE001
+        plugin_roots = [
+            Path.home() / ".config" / "opencode" / "ascendc-pilot-plugin",
+            Path.home() / ".cursor" / "ascendc-pilot-plugin",
+            Path.home() / ".agents" / "ascendc-pilot-plugin",
+        ]
+    for root in plugin_roots:
+        man = root / "install-manifest.json"
+        if man.is_file():
+            try:
+                data = json.loads(man.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                data = {}
+            if isinstance(data, dict):
+                for item in data.get("agents") or []:
+                    name = str(item or "").strip()
+                    if name.lower().endswith(".md"):
+                        name = name[:-3]
+                    if name and name.lower() != "readme":
+                        ids.add(name)
+            continue
+        bundled = root / "agents"
+        if bundled.is_dir():
+            for path in bundled.glob("*.md"):
+                if path.stem.lower() not in {"readme", "tg-init-audit"}:
+                    ids.add(path.stem)
+    return frozenset(ids)
 
 
 @lru_cache(maxsize=64)

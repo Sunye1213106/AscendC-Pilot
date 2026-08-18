@@ -279,6 +279,20 @@ def main() -> int:
         errors.append("install.sh must only link ascendc-pilot.md as OpenCode Tab")
     if "leftover OpenCode Tab" not in ps1:
         errors.append("install.ps1 must clean leftover OpenCode Tabs")
+    if '"$AGENTS"/tg-*.md' in sh or '"$agents"/tg-*.md' in sh:
+        errors.append("install.sh must not glob leftover OpenCode Tabs by prefix")
+    if "^(tg-|uo-|ce-|ascendc-)" in ps1:
+        errors.append("install.ps1 must not glob leftover OpenCode Tabs by prefix")
+    if "install-manifest.json" not in ps1:
+        errors.append("install.ps1 must install install-manifest.json")
+    if "install-manifest.json" not in sh:
+        errors.append("install.sh must install install-manifest.json")
+    if "PILOT_AGENT_PREFIXES" in plugin_src:
+        errors.append("plugin must not classify Pilot agents by filename prefix")
+    if 'resolve(openCodeHome(), "agents")' in plugin_src:
+        errors.append("plugin must not scan global ~/.config/opencode/agents")
+    if "ownedPilotAgentIds" not in plugin_src or "install-manifest.json" not in plugin_src:
+        errors.append("plugin must load owned agents from install-manifest.json")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(

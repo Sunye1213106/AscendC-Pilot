@@ -33,7 +33,7 @@
 | 修改 UO extraction | `engines/understand-operator/src/uo_init/` |
 | 修改 TG closure | `engines/testcase-generation/testcase_agent/closure/` |
 | 修改 CE impact | `engines/code-engineering/code_engineering/` |
-| 修改 host install | `adapters/`, `opencode-plugin/`, `install.*` |
+| 修改 host install | `adapters/`, `opencode-plugin/`, `install.*`, `uninstall.*`, `scripts/install_manifest.py` |
 | 修改 Host Session Driver | `opencode-plugin/pilot-driver.ts`、`pilot/ascendc_pilot/actions/dispatch.py`、`drive.py` |
 | 修改 runtime capability | `tools/source/`、`tools/codemap/` |
 | 修改 authorize 热路径 | `pilot/ascendc_pilot/authorize/`、`opencode-plugin/ascendc-pilot.ts` |

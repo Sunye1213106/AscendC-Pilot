@@ -16,6 +16,8 @@ on:
       - "scripts/**"
       - "install.sh"
       - "install.ps1"
+      - "uninstall.sh"
+      - "uninstall.ps1"
       - "refresh-opencode.ps1"
       - ".github/workflows/control-plane-contract.yml"
   push:
@@ -34,6 +36,8 @@ on:
       - "scripts/**"
       - "install.sh"
       - "install.ps1"
+      - "uninstall.sh"
+      - "uninstall.ps1"
       - "refresh-opencode.ps1"
       - ".github/workflows/control-plane-contract.yml"
 
@@ -151,7 +155,9 @@ jobs:
       - name: Validate shell installer syntax
         run: |
           bash -n install.sh
+          bash -n uninstall.sh
           python -c "import subprocess,sys; r=subprocess.check_output(['git','ls-files','--stage','install.sh'], text=True); assert r.split()[0]=='100755', r"
+          python -c "import subprocess,sys; r=subprocess.check_output(['git','ls-files','--stage','uninstall.sh'], text=True); assert r.split()[0]=='100755', r"
       - name: Eval smoke (dry; live skip without model)
         env:
           PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/pilot

@@ -64,6 +64,11 @@ def test_task_hook_uses_pending_dispatch_project() -> None:
     assert "rememberSessionAgent" in plugin
     assert "NATIVE_OPENCODE_AGENTS" in plugin
     assert "Never default unlabeled sessions to ascendc-pilot" in plugin
+    assert "ownedPilotAgentIds" in plugin
+    assert "install-manifest.json" in plugin
+    assert "PILOT_AGENT_PREFIXES" not in plugin
+    assert 'resolve(openCodeHome(), "agents")' not in plugin
+    assert "Never scan ~/.config/opencode/agents" in plugin
     assert '"chat.params"' in plugin
     assert 'perm.external_directory = "allow"' in plugin
     assert 'perm.task = "allow"' not in plugin

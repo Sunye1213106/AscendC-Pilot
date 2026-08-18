@@ -54,6 +54,10 @@ def check(repo: Path, *, host: str = "opencode") -> list[str]:
             ]
         if host == "opencode":
             compose_opencode_commands(repo, out_root=candidate)
+        else:
+            from install_manifest import write_install_manifest
+
+            write_install_manifest(candidate, host)
 
         expected_files = _files(candidate)
         actual_files = _files(actual)

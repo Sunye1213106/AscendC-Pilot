@@ -732,18 +732,66 @@ function isPilotOnlyTool(tool: string): boolean {
   return PILOT_ONLY_TOOLS.has(String(tool || "").trim().toLowerCase())
 }
 
-const PILOT_AGENT_PREFIXES = ["uo-", "tg-", "deterministic-", "ce-"]
+const PRIMARY_AGENT_IDS = new Set(["ascendc-pilot", "ascendc_agent"])
 
-/** Pilot primary + declared UO/TG/CE actors. Build/Plan/unknown → pass-through. */
+function pluginInstallManifestPath(): string {
+  return resolve(openCodeHome(), "ascendc-pilot-plugin", "install-manifest.json")
+}
+
+function pluginAgentsDir(): string {
+  return resolve(openCodeHome(), "ascendc-pilot-plugin", "agents")
+}
+
+function stemAgentName(name: string): string {
+  const n = String(name || "").trim()
+  return n.toLowerCase().endsWith(".md") ? n.slice(0, -3) : n
+}
+
+/**
+ * Owned Pilot agent ids. Source of truth is install-manifest.json written by
+ * compose from generated/<host>/agents. Fallback: plugin-internal agents/.
+ * Never scan ~/.config/opencode/agents and never use filename prefixes.
+ */
+function ownedPilotAgentIds(): Set<string> {
+  const ids = new Set<string>(PRIMARY_AGENT_IDS)
+  const skip = new Set(["readme", "tg-init-audit"])
+  try {
+    const manPath = pluginInstallManifestPath()
+    if (existsSync(manPath)) {
+      const raw = JSON.parse(
+        readFileSync(manPath, "utf-8").replace(/^\uFEFF/, ""),
+      ) as { agents?: unknown }
+      const agents = Array.isArray(raw?.agents) ? raw.agents : []
+      for (const item of agents) {
+        const id = stemAgentName(String(item || "")).toLowerCase()
+        if (id && !skip.has(id)) ids.add(id)
+      }
+      return ids
+    }
+  } catch {
+    /* fall through to plugin-internal agents/ */
+  }
+  try {
+    for (const f of readdirSync(pluginAgentsDir())) {
+      if (!f.endsWith(".md")) continue
+      const n = stemAgentName(f).toLowerCase()
+      if (n && !skip.has(n)) ids.add(n)
+    }
+  } catch {
+    /* ignore */
+  }
+  return ids
+}
+
+/** Pilot primary + owned actors from the install manifest. Build/Plan/user Tabs → pass-through. */
 function isPilotFamilyAgent(agent: string): boolean {
   const a = String(agent || "")
     .trim()
     .toLowerCase()
   if (!a) return false
-  if (a === "ascendc-pilot" || a === "ascendc_agent") return true
   if (PASS_THROUGH_AGENTS.has(a)) return false
-  if (PILOT_AGENT_PREFIXES.some((p) => a.startsWith(p))) return true
-  return false
+  if (PRIMARY_AGENT_IDS.has(a)) return true
+  return ownedPilotAgentIds().has(a)
 }
 
 /** Enforce harness only for Pilot-family agents (global plugin stays loaded). */
@@ -758,28 +806,9 @@ function shouldEnforceHarness(agent: string, tool = ""): boolean {
   return false
 }
 
-/** Installed Pilot agent ids (markdown names under ~/.config/opencode/agents). */
-/** Installed Pilot agent ids (markdown names under plugin-internal agents/). */
+/** Installed Pilot agent ids (plugin-internal / install-manifest only). */
 function listInstalledPilotAgentNames(): string[] {
-  const names = new Set<string>(["ascendc-pilot"])
-  const skip = new Set(["tg-init-audit", "readme"])
-  const dirs = [
-    resolve(openCodeHome(), "ascendc-pilot-plugin", "agents"),
-    resolve(openCodeHome(), "agents"),
-  ]
-  for (const dir of dirs) {
-    try {
-      for (const f of readdirSync(dir)) {
-        if (!f.endsWith(".md")) continue
-        const n = f.slice(0, -3)
-        if (skip.has(n.toLowerCase())) continue
-        names.add(n)
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  return [...names].filter((n) => isPilotFamilyAgent(n) && !PASS_THROUGH_AGENTS.has(n))
+  return [...ownedPilotAgentIds()].filter((n) => !PASS_THROUGH_AGENTS.has(n))
 }
 
 function isolateNativeOpenCodeAgents(agentBag: Record<string, unknown>): void {
@@ -1054,7 +1083,9 @@ function injectHiddenChildPrompts(agentBag: Record<string, unknown>): void {
   }
   for (const f of files) {
     const name = f.slice(0, -3)
-    if (name === "ascendc-pilot" || name.toLowerCase() === "tg-init-audit") continue
+    const owned = ownedPilotAgentIds()
+    if (!owned.has(name.toLowerCase())) continue
+    if (name === "ascendc-pilot") continue
     let text = ""
     try {
       text = readFileSync(join(dir, f), "utf-8")

@@ -139,6 +139,16 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert not (agents / "deterministic-tg-engine.md").exists()
         assert (agents / "uo-gap-investigator.md").is_file()
         assert (agents / "uo-query.md").is_file()
+        man_path = generated / "install-manifest.json"
+        assert man_path.is_file(), "prune must write install-manifest.json"
+        import json
+
+        man = json.loads(man_path.read_text(encoding="utf-8"))
+        assert man.get("owner") == "ascendc-pilot"
+        assert "uo-query.md" in man.get("agents")
+        assert "ascendc-pilot.md" in man.get("global_agents")
+        assert "ce-helper.md" not in man.get("agents")
+        assert "tg-playground.md" not in man.get("agents")
         assert (prompts / "codemap-query.md").is_file()
         assert (prompts / "investigate-gaps.md").is_file()
         assert not (prompts / "kb-review.md").exists()

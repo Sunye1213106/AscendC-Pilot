@@ -52,7 +52,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 opencode
 python -m ascendc_pilot doctor --host opencode
 ```
 
-完全退出再打开 OpenCode，Tab 切换到 **AscendC-Pilot**。也支持 `cursor` / `codex`。完整环境见 [Installation](docs/getting-started/installation.md)。开发迭代可用 `.\refresh-opencode.ps1`。
+完全退出再打开 OpenCode，Tab 切换到 **AscendC-Pilot**。也支持 `cursor` / `codex`。完整环境见 [Installation](docs/getting-started/installation.md)。开发迭代可用 `.\refresh-opencode.ps1`（先卸载再安装）。卸载：`.\uninstall.ps1` / `./uninstall.sh`。
 
 ---
 

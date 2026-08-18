@@ -108,7 +108,15 @@ def compose(repo: Path = REPO, *, out_root: Path | None = None) -> dict[str, obj
         path.write_text(text, encoding="utf-8")
         generated.append(path.name)
 
-    return {"ok": True, "out": out.as_posix(), "commands": generated}
+    from install_manifest import write_install_manifest
+
+    manifest_path = write_install_manifest(runtime_root, "opencode")
+    return {
+        "ok": True,
+        "out": out.as_posix(),
+        "commands": generated,
+        "install_manifest": manifest_path.as_posix(),
+    }
 
 
 def main() -> int:

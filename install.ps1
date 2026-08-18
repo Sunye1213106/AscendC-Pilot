@@ -3,6 +3,7 @@
 # Usage:
 #   .\install.ps1 opencode|cursor|codex
 #   .\install.ps1 uninstall-opencode
+#   .\uninstall.ps1 opencode
 #   $env:SKIP_PIP=1; .\install.ps1 cursor
 #   $env:ASCENDC_FAST_INSTALL=1; $env:SKIP_PIP=1; .\install.ps1 opencode
 param(
@@ -150,6 +151,86 @@ function Get-PluginDest([string]$plat) {
     default { throw "Unknown platform $plat" }
   }
 }
+
+function Get-InstallManifest([string]$Plat) {
+  $candidates = @(
+    (Join-Path (Get-PluginDest $Plat) "install-manifest.json"),
+    (Join-Path $BundleRoot "generated\$Plat\install-manifest.json")
+  )
+  foreach ($p in $candidates) {
+    if (Test-Path -LiteralPath $p) {
+      try {
+        return Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json
+      } catch {
+        Write-Host "WARN: could not parse $p : $_"
+      }
+    }
+  }
+  return $null
+}
+
+function Convert-ManifestNameList($Raw) {
+  $out = @()
+  foreach ($n in @($Raw)) {
+    if ($null -eq $n) { continue }
+    $s = [string]$n
+    if ([string]::IsNullOrWhiteSpace($s)) { continue }
+    $out += $s
+  }
+  return $out
+}
+
+function Get-OwnedAgentFileNames($Manifest) {
+  $names = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  if ($Manifest) {
+    foreach ($n in (Convert-ManifestNameList $Manifest.agents)) {
+      [void]$names.Add([IO.Path]::GetFileName($n))
+    }
+    foreach ($n in (Convert-ManifestNameList $Manifest.global_agents)) {
+      [void]$names.Add([IO.Path]::GetFileName($n))
+    }
+    if ($Manifest.legacy) {
+      foreach ($n in (Convert-ManifestNameList $Manifest.legacy.agents)) {
+        [void]$names.Add([IO.Path]::GetFileName($n))
+      }
+    }
+  } else {
+    foreach ($n in ($currentAgents + $legacyAgents)) { [void]$names.Add("$n.md") }
+  }
+  $normalized = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  foreach ($n in $names) {
+    if ($n -match '\.md$') { [void]$normalized.Add($n) } else { [void]$normalized.Add("$n.md") }
+  }
+  return $normalized
+}
+
+function Get-GlobalKeepAgentFileNames($Manifest) {
+  $keep = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+  if ($Manifest) {
+    foreach ($n in (Convert-ManifestNameList $Manifest.global_agents)) {
+      $leaf = [IO.Path]::GetFileName([string]$n)
+      if ($leaf -notmatch '\.md$') { $leaf = "$leaf.md" }
+      if ($leaf) { [void]$keep.Add($leaf) }
+    }
+  }
+  if ($keep.Count -eq 0) { [void]$keep.Add("ascendc-pilot.md") }
+  return $keep
+}
+
+function Remove-OwnedOpenCodeTabs([string]$AgentsDir, $Manifest) {
+  # Delete only agents this install owns. Never glob tg-* / uo-* / ce-*.
+  if ([string]::IsNullOrWhiteSpace($AgentsDir) -or -not (Test-Path -LiteralPath $AgentsDir)) { return }
+  $owned = Get-OwnedAgentFileNames $Manifest
+  $keep = Get-GlobalKeepAgentFileNames $Manifest
+  Get-ChildItem -Path $AgentsDir -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($keep.Contains($_.Name)) { return }
+    if ($owned.Contains($_.Name)) {
+      Remove-ReparseOrItem $_.FullName
+      Write-Host "Removed leftover OpenCode Tab → $($_.FullName)"
+    }
+  }
+}
+
 function Get-SkillsDest([string]$plat) {
   switch ($plat) {
     "opencode" { Join-Path (Get-OpenCodeHome) "skills" }
@@ -286,13 +367,7 @@ function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$
     }
   }
   if ($plat -eq "opencode") {
-    Get-ChildItem -Path $agents -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
-      if ($_.Name -ieq "ascendc-pilot.md") { return }
-      if ($_.Name -match '^(tg-|uo-|ce-|ascendc-)') {
-        Remove-ReparseOrItem $_.FullName
-        Write-Host "Removed leftover OpenCode Tab → $($_.FullName)"
-      }
-    }
+    Remove-OwnedOpenCodeTabs $agents (Get-InstallManifest $plat)
     $legacyPlug = Join-Path (Get-OpenCodeHome) "ascendc-agent-plugin"
     if (Test-Path -LiteralPath $legacyPlug) {
       Remove-Item -Recurse -Force -LiteralPath $legacyPlug
@@ -310,36 +385,10 @@ function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$
 
 if ($Platform -like "uninstall-*") {
   $plat = $Platform.Substring("uninstall-".Length)
-  $dest = Get-PluginDest $plat
-  $skills = Get-SkillsDest $plat
-  $agents = Get-AgentsDest $plat
-  $plugins = Get-PluginsDest $plat
-  $commands = Get-CommandsDest $plat
-  if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
-  foreach ($name in ($workflowSkills + $legacySkills + $cognitiveSkills + @("_shared"))) {
-    Remove-ReparseOrItem (Join-Path $skills $name)
-  }
-  foreach ($name in ($currentAgents + $legacyAgents)) {
-    Remove-ReparseOrItem (Join-Path $agents "$name.md")
-  }
-  if ($plat -eq "opencode") {
-    if ($commands) {
-      foreach ($name in $openCodeCommands) {
-        $p = Join-Path $commands "$name.md"
-        if (Test-Path -LiteralPath $p) { Remove-Item -Force -LiteralPath $p }
-      }
-    }
-    if ($plugins) {
-      foreach ($pluginName in $legacyPlugins) {
-        $pluginFile = Join-Path $plugins $pluginName
-        if (Test-Path $pluginFile) { Remove-Item -Force $pluginFile }
-      }
-    }
-    $legacyPlug = Join-Path (Get-OpenCodeHome) "ascendc-agent-plugin"
-    if (Test-Path -LiteralPath $legacyPlug) { Remove-Item -Recurse -Force -LiteralPath $legacyPlug }
-  }
-  Write-Host "Uninstalled $plat"
-  exit 0
+  $un = Join-Path $BundleRoot "uninstall.ps1"
+  if (-not (Test-Path -LiteralPath $un)) { throw "Missing uninstall.ps1 at $un" }
+  & $un $plat
+  exit $LASTEXITCODE
 }
 
 if ($SkipPip -ne "1") {
@@ -423,6 +472,10 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
 if (Test-Path (Join-Path $genRoot "commands")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "commands") (Join-Path $Dest "commands")
 }
+$manSrc = Join-Path $genRoot "install-manifest.json"
+if (Test-Path -LiteralPath $manSrc) {
+  Copy-Item -Force -LiteralPath $manSrc -Destination (Join-Path $Dest "install-manifest.json")
+}
 
 # Purge leftovers from earlier installs before linking the current closure.
 Remove-LegacyAscendcAgentBits -plat $Platform -skills $Skills -agents $Agents -plugins (Get-PluginsDest $Platform)
@@ -492,13 +545,7 @@ if ($Platform -eq "opencode") {
   if (-not (Test-Path -LiteralPath $primaryLink)) {
     throw "failed to install agent ascendc-pilot.md → $primaryLink"
   }
-  Get-ChildItem -Path $Agents -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
-    if ($_.Name -ieq "ascendc-pilot.md") { return }
-    if ($_.Name -match '^(tg-|uo-|ce-|ascendc-)') {
-      Remove-ReparseOrItem $_.FullName
-      Write-Host "Removed leftover OpenCode Tab → $($_.FullName)"
-    }
-  }
+  Remove-OwnedOpenCodeTabs $Agents (Get-InstallManifest $Platform)
 } else {
   foreach ($agentFile in $agentFiles) {
     $link = Join-Path $Agents $agentFile.Name

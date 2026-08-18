@@ -1,8 +1,8 @@
 # Refresh AscendC-Pilot for OpenCode.
 #
-# Default (testing): skip pip, skip uninstall, skip engines/pilot copy.
+# Always uninstalls the previous OpenCode Host bits first, then reinstalls.
+# Default (testing): skip pip; FAST install skips cmake / contract audit.
 # Recompose generated skills/agents/commands and copy plugin + Host links.
-# Python engines already live via editable install.
 #
 # Use after plugin / skill / agent changes, before re-testing in OpenCode:
 #   1. Fully quit OpenCode (not just close a chat tab)
@@ -13,7 +13,7 @@
 # Options:
 #   -SkipPip     (default) Skip pip reinstall
 #   -ForcePip    Reinstall editable acp / uo / tg
-#   -Full        Uninstall + recopy engines/pilot/scripts
+#   -Full        Recopy engines/pilot/scripts + contract audit + cmake
 #   -WhatIf      Show plan only
 #
 param(
@@ -27,6 +27,7 @@ $ErrorActionPreference = "Stop"
 $BundleRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $BundleRoot
 $InstallPs1 = Join-Path $BundleRoot "install.ps1"
+$UninstallPs1 = Join-Path $BundleRoot "uninstall.ps1"
 
 function Get-OpenCodeHome {
   $xdg = [string]$env:XDG_CONFIG_HOME
@@ -40,38 +41,44 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 $doPip = [bool]$ForcePip -and -not $SkipPip
 $fast = -not $Full
 
-function Invoke-InstallPs1 {
+function Invoke-RepoScript {
   param(
-    [Parameter(Mandatory = $true)][string]$Arg,
+    [Parameter(Mandatory = $true)][string]$Script,
+    [string]$Arg = "",
     [hashtable]$EnvExtra = @{}
   )
-  # install.ps1 uses `exit` — must run in a child process so parent refresh continues.
+  # install.ps1 / uninstall.ps1 use `exit` — must run in a child process.
   $envAssign = ""
   foreach ($k in $EnvExtra.Keys) {
     $val = [string]$EnvExtra[$k]
     $envAssign += "`$env:$k='$val'; "
   }
   if ($envAssign) {
-    $cmd = "$envAssign & `"$InstallPs1`" $Arg; exit `$LASTEXITCODE"
+    $cmd = if ($Arg) { "$envAssign & `"$Script`" $Arg; exit `$LASTEXITCODE" } else { "$envAssign & `"$Script`"; exit `$LASTEXITCODE" }
     $p = Start-Process -FilePath "powershell.exe" `
       -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $cmd) `
       -WorkingDirectory $BundleRoot `
       -Wait -PassThru -NoNewWindow
   } else {
+    $fileArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Script)
+    if ($Arg) { $fileArgs += $Arg }
     $p = Start-Process -FilePath "powershell.exe" `
-      -ArgumentList @(
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
-        "-File", $InstallPs1,
-        $Arg
-      ) `
+      -ArgumentList $fileArgs `
       -WorkingDirectory $BundleRoot `
       -Wait -PassThru -NoNewWindow
   }
   if ($null -eq $p -or $p.ExitCode -ne 0) {
     $code = if ($null -eq $p) { "null" } else { $p.ExitCode }
-    throw "install.ps1 $Arg failed with exit $code"
+    throw "$(Split-Path $Script -Leaf) $Arg failed with exit $code"
   }
+}
+
+function Invoke-InstallPs1 {
+  param(
+    [Parameter(Mandatory = $true)][string]$Arg,
+    [hashtable]$EnvExtra = @{}
+  )
+  Invoke-RepoScript -Script $InstallPs1 -Arg $Arg -EnvExtra $EnvExtra
 }
 
 function Get-FileSha256([string]$Path) {
@@ -115,11 +122,10 @@ Write-Host ""
 
 if ($WhatIf) {
   Write-Host "[WhatIf] Would run:"
+  Write-Host "  1. uninstall.ps1 opencode"
   if ($fast) {
-    Write-Host "  1. skip uninstall"
     Write-Host "  2. install.ps1 opencode  (SKIP_PIP + FAST: compose + plugin/skills/agents/commands)"
   } else {
-    Write-Host "  1. install.ps1 uninstall-opencode"
     Write-Host "  2. install.ps1 opencode   (contract audit + compose + full runtime copy)"
   }
   Write-Host ("  pip: " + $(if ($doPip) { "reinstall" } else { "skip" }))
@@ -130,19 +136,18 @@ if ($WhatIf) {
 if (-not (Test-Path -LiteralPath $InstallPs1)) {
   throw "Missing install.ps1 at $InstallPs1"
 }
+if (-not (Test-Path -LiteralPath $UninstallPs1)) {
+  throw "Missing uninstall.ps1 at $UninstallPs1"
+}
 
 $envExtra = @{}
 if (-not $doPip) {
   $envExtra["SKIP_PIP"] = "1"
 }
 
-# --- 1) Uninstall (full only) ---
-if ($fast) {
-  Write-Host "[1/3] Skip uninstall (fast refresh keeps engines/pilot/scripts)"
-} else {
-  Write-Host "[1/3] Uninstall OpenCode AscendC bits..."
-  Invoke-InstallPs1 -Arg "uninstall-opencode"
-}
+# --- 1) Uninstall (always) ---
+Write-Host "[1/3] Uninstall OpenCode AscendC bits..."
+Invoke-RepoScript -Script $UninstallPs1 -Arg "opencode"
 
 # --- 2) Reinstall ---
 Write-Host ""
@@ -193,12 +198,24 @@ $skillLink = Join-Path $ocHome "skills\uo-init"
 $skillInternal = Join-Path $ocHome "ascendc-pilot-plugin\skills\uo-init\SKILL.md"
 $agentLink = Join-Path $ocHome "agents\ascendc-pilot.md"
 $commandsDir = Join-Path $ocHome "commands"
+$manifestPath = Join-Path $ocHome "ascendc-pilot-plugin\install-manifest.json"
 Assert-True (-not (Test-Path -LiteralPath $skillLink)) "uo-init must not be in global OpenCode skills/"
 Assert-True (Test-Path -LiteralPath $skillInternal) "uo-init skill installed plugin-internal"
 Assert-True (Test-Path -LiteralPath $agentLink) "ascendc-pilot.md installed"
+Assert-True (Test-Path -LiteralPath $manifestPath) "install-manifest.json installed"
+$ownedChildren = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+$keepGlobal = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+[void]$keepGlobal.Add("ascendc-pilot.md")
+$man = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($n in @($man.agents)) {
+  if ($n) { [void]$ownedChildren.Add([IO.Path]::GetFileName([string]$n)) }
+}
+foreach ($n in @($man.global_agents)) {
+  if ($n) { [void]$keepGlobal.Add([IO.Path]::GetFileName([string]$n)) }
+}
 Get-ChildItem -Path (Join-Path $ocHome "agents") -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
-  if ($_.Name -ieq "ascendc-pilot.md") { return }
-  if ($_.Name -match '^(tg-|uo-|ce-)') {
+  if ($keepGlobal.Contains($_.Name)) { return }
+  if ($ownedChildren.Contains($_.Name)) {
     throw "leftover OpenCode Tab $($_.FullName)"
   }
 }

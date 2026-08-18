@@ -102,6 +102,7 @@ SKIP_PIP=1 ./install.sh opencode
 
 - 把 plugin 拷到 `~/.config/opencode/plugins/ascendc-pilot.ts`（不修改现有 `opencode.json`）
 - 把 Session Driver 库放在 `~/.config/opencode/ascendc-pilot-plugin/opencode-plugin/`（不要把 `pilot-driver.ts` 放进 `plugins/` 自动加载目录）
+- 写入 `install-manifest.json`（安装/卸载/插件识别 **只**认这份名单，不按 `tg-*` / `uo-*` / `ce-*` 前缀删改用户 Agent）
 - 写入 `ascendc-harness-bin`（`acp.exe` 的绝对路径；即使 `acp` 不在 PATH 也会从 Python `Scripts` 目录回退查找）
 - 发现 CANN 时写入 `ascendc-cann-root`（OpenCode 从开始菜单启动也能找到包）
 - 全局 `agents/` **只**安装 `ascendc-pilot.md`（一个 Tab）；子代理在插件内部且 `hidden`
@@ -119,7 +120,7 @@ python -m ascendc_pilot doctor --host opencode
 AscendC-Pilot
 ```
 
-日常改 plugin / skill 后，Windows 可用仓库根目录的 `.\refresh-opencode.ps1`（默认跳过 pip、复用 engines 拷贝）。Linux 重新跑 `SKIP_PIP=1 ./install.sh opencode`。
+日常改 plugin / skill 后，Windows 可用仓库根目录的 `.\refresh-opencode.ps1`（**先卸载再安装**；默认跳过 pip 和 cmake）。Linux 可先 `./uninstall.sh opencode`，再 `SKIP_PIP=1 ./install.sh opencode`。
 
 OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序会把 `rg.exe` 种到 cache/data 两套目录。AscendC-Pilot 的 workflow skill **只**放在 `~/.config/opencode/ascendc-pilot-plugin/skills/`，不链进全局 `~/.config/opencode/skills/`，也不覆盖 OpenCode 原生 `skill` 工具。Pilot Tab 的 after-hook 在缺 rg 时从插件目录恢复 `SKILL.md`。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。**Build / Plan Tab 保持 OpenCode 原生权限、原生 skill、原生 shell**，看不到 `pilot_run` / `pilot_cli` / Pilot workflow skill，也不走 Pilot harness。全局 `agents/` 只安装 `ascendc-pilot.md`（一个 Tab）；子代理 hidden 或放在插件内部。
 
@@ -482,9 +483,9 @@ python -m pip install -r requirements.txt
 OpenCode：
 
 ```text id="kp3isw"
-Windows:  .\refresh-opencode.ps1          （日常；改 plugin/skill）
+Windows:  .\refresh-opencode.ps1          （日常；先卸载再安装）
           .\install.ps1 opencode          （完整重装）
-Linux:    SKIP_PIP=1 ./install.sh opencode
+Linux:    ./uninstall.sh opencode && SKIP_PIP=1 ./install.sh opencode
 ```
 
 装完后完全退出再打开 OpenCode。
@@ -509,30 +510,36 @@ Linux:    ./install.sh codex
 
 # 卸载
 
+卸载只删除 **install-manifest.json 里登记的** AscendC-Pilot 文件（以及一份显式的历史 leftover 名单）。不会按 `tg-*` / `uo-*` / `ce-*` / `ascendc-*` 前缀扫描，因此用户自己的 `ce-helper.md`、`tg-playground.md` 等 Agent 不会被删掉。
+
 ## 卸载 Host 接入
 
 OpenCode：
 
 ```text id="qkwge2"
-Windows:  .\install.ps1 uninstall-opencode
-Linux:    ./install.sh uninstall-opencode
+Windows:  .\uninstall.ps1
+          .\uninstall.ps1 opencode
+Linux:    ./uninstall.sh
+          ./uninstall.sh opencode
 ```
+
+仍可用 `.\install.ps1 uninstall-opencode` / `./install.sh uninstall-opencode`（会转调上面的卸载脚本）。
 
 Cursor：
 
 ```text id="9nqvsz"
-Windows:  .\install.ps1 uninstall-cursor
-Linux:    ./install.sh uninstall-cursor
+Windows:  .\uninstall.ps1 cursor
+Linux:    ./uninstall.sh cursor
 ```
 
 Codex：
 
 ```text id="9hqlrf"
-Windows:  .\install.ps1 uninstall-codex
-Linux:    ./install.sh uninstall-codex
+Windows:  .\uninstall.ps1 codex
+Linux:    ./uninstall.sh codex
 ```
 
-这只删除 AscendC-Pilot 安装的 Agent、Skill 和 Plugin，不会修改用户原有 Host 配置。
+这只删除 AscendC-Pilot **manifest 里拥有的** Agent、Skill 和 Plugin，不会修改用户原有 Host 配置，也不会删除用户自己的 OpenCode Agent。
 
 ## 卸载 Python 包
 

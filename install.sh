@@ -3,6 +3,7 @@
 # Usage:
 #   ./install.sh opencode|cursor|codex
 #   ./install.sh uninstall-opencode|uninstall-cursor|uninstall-codex
+#   ./uninstall.sh opencode
 #   SKIP_PIP=1 ./install.sh opencode
 #   PYTHON=python3.12 ./install.sh opencode
 set -euo pipefail
@@ -99,6 +100,21 @@ plugins_dest() {
   esac
 }
 
+remove_owned_opencode_tabs() {
+  local agents_dir="$1"
+  local man="${2:-}"
+  if [[ -n "$man" ]]; then
+    "$PYTHON" "$BUNDLE_ROOT/scripts/install_manifest.py" \
+      --host opencode \
+      --prune-global-agents "$agents_dir" \
+      --manifest "$man"
+  else
+    "$PYTHON" "$BUNDLE_ROOT/scripts/install_manifest.py" \
+      --host opencode \
+      --prune-global-agents "$agents_dir"
+  fi
+}
+
 purge_legacy_ascendc_agent() {
   local plat="$1" skills="$2" agents="$3" plugins="$4"
   local name
@@ -115,13 +131,13 @@ purge_legacy_ascendc_agent() {
     fi
   done
   if [[ "$plat" == "opencode" ]]; then
-    shopt -s nullglob
-    for f in "$agents"/tg-*.md "$agents"/uo-*.md "$agents"/ce-*.md "$agents"/ascendc-*.md; do
-      [[ "$(basename "$f")" == "ascendc-pilot.md" ]] && continue
-      rm -f "$f"
-      echo "Removed leftover OpenCode Tab → $f"
-    done
-    shopt -u nullglob
+    local man=""
+    if [[ -f "$BUNDLE_ROOT/generated/opencode/install-manifest.json" ]]; then
+      man="$BUNDLE_ROOT/generated/opencode/install-manifest.json"
+    elif [[ -f "$(plugin_dest opencode)/install-manifest.json" ]]; then
+      man="$(plugin_dest opencode)/install-manifest.json"
+    fi
+    remove_owned_opencode_tabs "$agents" "$man"
     rm -rf "$(opencode_home)/ascendc-agent-plugin"
     if [[ -n "$plugins" ]]; then
       rm -f "$plugins/ascendc-harness.ts"
@@ -131,33 +147,7 @@ purge_legacy_ascendc_agent() {
 
 uninstall() {
   local plat="$1"
-  local plug skills agents plugins commands name
-  plug="$(plugin_dest "$plat")"
-  skills="$(skills_dest "$plat")"
-  agents="$(agents_dest "$plat")"
-  plugins="$(plugins_dest "$plat")"
-  commands="$(commands_dest "$plat")"
-  rm -rf "$plug"
-  for name in "${WORKFLOW_SKILLS[@]}" "${LEGACY_SKILLS[@]}" "${COGNITIVE_SKILLS[@]}" _shared; do
-    rm -rf "$skills/$name"
-  done
-  for name in "${CURRENT_AGENTS[@]}" "${LEGACY_AGENTS[@]}"; do
-    rm -f "$agents/$name.md"
-  done
-  if [[ "$plat" == "opencode" ]]; then
-    if [[ -n "$commands" ]]; then
-      for name in "${OPENCODE_COMMANDS[@]}"; do
-        rm -f "$commands/$name.md"
-      done
-    fi
-    if [[ -n "$plugins" ]]; then
-      for name in "${LEGACY_PLUGINS[@]}"; do
-        rm -f "$plugins/$name"
-      done
-    fi
-    rm -rf "$(opencode_home)/ascendc-agent-plugin"
-  fi
-  echo "Uninstalled $plat ascendc-pilot plugin"
+  exec "$BUNDLE_ROOT/uninstall.sh" "$plat"
 }
 
 resolve_acp_bin() {
@@ -235,6 +225,9 @@ fi
 if [[ -d "$GEN/commands" ]]; then
   cp -R "$GEN/commands" "$DEST/commands"
 fi
+if [[ -f "$GEN/install-manifest.json" ]]; then
+  cp "$GEN/install-manifest.json" "$DEST/install-manifest.json"
+fi
 
 # Purge leftovers from earlier installs before linking the current closure.
 purge_legacy_ascendc_agent "$PLATFORM" "$SKILLS" "$AGENTS" "$(plugins_dest "$PLATFORM")"
@@ -270,13 +263,7 @@ fi
 # OpenCode treats every .md under agents/ as a Tab. Only expose AscendC-Pilot.
 if [[ "$PLATFORM" == "opencode" ]]; then
   ln -sfn "$DEST/agents/ascendc-pilot.md" "$AGENTS/ascendc-pilot.md" 2>/dev/null || cp "$DEST/agents/ascendc-pilot.md" "$AGENTS/ascendc-pilot.md"
-  shopt -s nullglob
-  for f in "$AGENTS"/tg-*.md "$AGENTS"/uo-*.md "$AGENTS"/ce-*.md "$AGENTS"/ascendc-*.md; do
-    [[ "$(basename "$f")" == "ascendc-pilot.md" ]] && continue
-    rm -f "$f"
-    echo "Removed leftover OpenCode Tab → $f"
-  done
-  shopt -u nullglob
+  remove_owned_opencode_tabs "$AGENTS" "$DEST/install-manifest.json"
 else
   for f in "$DEST/agents"/*.md; do
     [[ -f "$f" ]] || continue

@@ -171,6 +171,22 @@ def test_glob_read_denied_after_human_required(tmp_path: Path):
     assert glob_ok.get("reason_code") == "CONTAINMENT_PRIMARY_READ"
 
 
+def test_user_prefixed_agents_are_not_pilot_family(tmp_path: Path):
+    """User Tabs named ce-helper / tg-playground / uo-personal must not get harness."""
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
+    for agent in ("ce-helper", "tg-playground", "uo-personal", "ascendc-debug-local"):
+        v = authorize(tmp_path, tool="bash", command="dir", agent=agent)
+        assert v.get("decision") == "allow", (agent, v)
+        assert v.get("reason_code") == "HARNESS_INACTIVE", (agent, v)
+        v2 = authorize(
+            tmp_path,
+            tool="write",
+            path=str(tmp_path / "notes.txt"),
+            agent=agent,
+        )
+        assert v2.get("decision") == "allow", (agent, v2)
+
+
 def test_build_agent_passthrough_during_containment(tmp_path: Path):
     """Tab→Build must escape harness even with human_required leftover run."""
     start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")

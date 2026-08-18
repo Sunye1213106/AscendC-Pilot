@@ -40,6 +40,45 @@ def test_host_doctor_requires_installed_bundle_not_source_tree(tmp_path, monkeyp
     assert by_name["workflow_skills_not_in_global_discovery"]["ok"] is True
 
 
+def test_uninstall_scripts_exist_and_refresh_uninstalls_first() -> None:
+    assert (ROOT / "uninstall.ps1").is_file()
+    assert (ROOT / "uninstall.sh").is_file()
+    refresh = (ROOT / "refresh-opencode.ps1").read_text(encoding="utf-8")
+    uninstall_idx = refresh.find("Uninstall OpenCode AscendC bits")
+    install_idx = refresh.find("Reinstall OpenCode AscendC bits")
+    assert uninstall_idx != -1 and install_idx != -1
+    assert uninstall_idx < install_idx
+    assert "Skip uninstall" not in refresh
+    assert "$UninstallPs1" in refresh
+
+
+def test_install_manifest_does_not_claim_user_agents(tmp_path: Path) -> None:
+    sys_path_scripts = str(ROOT / "scripts")
+    import sys
+
+    if sys_path_scripts not in sys.path:
+        sys.path.insert(0, sys_path_scripts)
+    from install_manifest import builtin_manifest, prune_global_agents
+
+    agents = tmp_path / "agents"
+    agents.mkdir()
+    (agents / "ce-helper.md").write_text("user", encoding="utf-8")
+    (agents / "tg-playground.md").write_text("user", encoding="utf-8")
+    (agents / "uo-personal.md").write_text("user", encoding="utf-8")
+    (agents / "ascendc-debug-local.md").write_text("user", encoding="utf-8")
+    (agents / "uo-query.md").write_text("ours leftover", encoding="utf-8")
+    (agents / "ascendc-pilot.md").write_text("primary", encoding="utf-8")
+    removed = prune_global_agents(agents, builtin_manifest("opencode"))
+    names = {p.name for p in agents.glob("*.md")}
+    assert "ce-helper.md" in names
+    assert "tg-playground.md" in names
+    assert "uo-personal.md" in names
+    assert "ascendc-debug-local.md" in names
+    assert "ascendc-pilot.md" in names
+    assert "uo-query.md" not in names
+    assert any(p.endswith("uo-query.md") for p in removed)
+
+
 def test_plugin_resolve_acp_uses_opencode_home() -> None:
     plugin = (ROOT / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
     driver = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")

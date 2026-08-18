@@ -40,9 +40,22 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
 def test_installers_expose_only_primary_opencode_tab() -> None:
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
+    un_sh = (ROOT / "uninstall.sh").read_text(encoding="utf-8")
+    un_ps1 = (ROOT / "uninstall.ps1").read_text(encoding="utf-8")
+    refresh = (ROOT / "refresh-opencode.ps1").read_text(encoding="utf-8")
     assert "Only expose AscendC-Pilot" in sh
-    assert "leftover OpenCode Tab" in sh
     assert "leftover OpenCode Tab" in ps1
+    assert '"$AGENTS"/tg-*.md' not in sh
+    assert '"$agents"/tg-*.md' not in sh
+    assert '"$AGENTS"/tg-*.md' not in un_sh
+    assert "^(tg-|uo-|ce-|ascendc-)" not in ps1
+    assert "^(tg-|uo-|ce-|ascendc-)" not in un_ps1
+    assert "^(tg-|uo-|ce-)" not in refresh
+    assert "install-manifest.json" in sh
+    assert "install-manifest.json" in ps1
+    assert "install-manifest.json" in un_ps1
+    assert "uninstall.ps1" in refresh
+    assert "Skip uninstall" not in refresh
     assert "ascendc-cann-root" in sh
     assert "ascendc-cann-root" in ps1
     assert "Cached CANN root" in ps1

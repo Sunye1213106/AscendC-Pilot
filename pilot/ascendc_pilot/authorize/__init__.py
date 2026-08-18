@@ -150,9 +150,6 @@ _PASS_THROUGH_AGENTS = frozenset(
         "debug",
     }
 )
-_PILOT_AGENT_PREFIXES = ("uo-", "tg-", "deterministic-", "ce-")
-
-
 def _project_root_for_path(project_root: Path | None, path_s: str) -> Path | None:
     """Prefer operator package that owns ``path`` when it embeds ``.ascendc-pilot``."""
     norm = (path_s or "").replace("\\", "/")
@@ -284,14 +281,24 @@ def _fill_action_from_active(project_root: Path | None, action_id: str) -> str:
 
 
 def _is_pilot_family_agent(agent_l: str, meta: dict[str, Any] | None = None) -> bool:
-    """True for ascendc-pilot and declared UO/TG/CE actors; False for Build/Plan/etc."""
+    """True for owned Pilot actors only; False for Build/Plan/user Tabs.
+
+    Ownership comes from the Pilot Agent Registry (``agents/*.yaml``) and the
+    installed ``install-manifest.json``. Filename prefixes such as ``ce-`` are
+    not ownership.
+    """
     a = (agent_l or "").strip().lower()
     if a in _PRIMARY_AGENTS:
         return True
     if a in _PASS_THROUGH_AGENTS:
         return False
-    if a.startswith(_PILOT_AGENT_PREFIXES):
-        return True
+    try:
+        from ascendc_pilot.agents_registry import list_pilot_agent_ids
+
+        if a in {x.lower() for x in list_pilot_agent_ids()}:
+            return True
+    except Exception:  # noqa: BLE001
+        pass
     meta = meta or {}
     for act in meta.get("actions") or []:
         if not isinstance(act, dict):

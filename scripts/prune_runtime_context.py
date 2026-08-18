@@ -195,6 +195,12 @@ def prune(
     missing_prompts = sorted(
         prompt_id for prompt_id in prompt_ids if not _prompt_path(prompts_dir, prompt_id).is_file()
     )
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from install_manifest import write_install_manifest
+
+    manifest_path = write_install_manifest(generated, host)
     return {
         "ok": not missing_agents and not missing_prompts,
         "host": host,
@@ -206,6 +212,7 @@ def prune(
         "rewritten_skills": rewritten_skills,
         "missing_agents": missing_agents,
         "missing_prompts": missing_prompts,
+        "install_manifest": manifest_path.as_posix(),
     }
 
 
