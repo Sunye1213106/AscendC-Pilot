@@ -2,22 +2,24 @@
 """Isolated PR workspace adapter.
 
 A PR URL is an explicit remote source identity. It must never silently reuse
-whatever local fork happens to be open in the Host. The existing git_workspace
-module owns provider/mirror/worktree mechanics; this adapter only enforces
-isolation and structure-only operator scope resolution.
+whatever local fork happens to be open in the Host. ``git_workspace_legacy``
+owns provider/mirror/worktree mechanics; this adapter enforces isolation and
+structure-only operator scope resolution.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
-import git_workspace as _git
+import git_workspace_legacy as _git
 
 extract_pr_url = _git.extract_pr_url
 parse_pr_ref = _git.parse_pr_ref
 
 _SHARED_DIR_NAMES = frozenset({"common", "shared"})
+_ARCH_RE = re.compile(r"^arch[0-9A-Za-z._-]+$", re.I)
 
 
 def _is_operator_root(path: Path) -> bool:
@@ -60,12 +62,7 @@ def _shared_family_operators(worktree: Path, rel: str) -> list[Path]:
 
 
 def detect_operator_roots(worktree: Path, changed_files: list[str]) -> list[Path]:
-    """Resolve operator candidates from changed paths and structural roots only.
-
-    No operator-name, filename-basename, identifier or source-text heuristic is
-    allowed here. A shared/common change may legitimately return multiple roots;
-    Intake must ask the user in that case.
-    """
+    """Resolve candidates from changed paths and structural roots only."""
     wt = Path(worktree)
     roots: list[Path] = []
     seen: set[Path] = set()
@@ -89,6 +86,26 @@ def detect_operator_roots(worktree: Path, changed_files: list[str]) -> list[Path
     return roots
 
 
+def changed_architectures(operator_root: Path, changed_files: list[str]) -> list[str]:
+    """Architecture tokens explicitly present in changed paths under one operator."""
+    root = Path(operator_root)
+    out: list[str] = []
+    for rel in changed_files:
+        path = Path(rel)
+        try:
+            abs_path = (root.parents[0] / path).resolve()
+        except OSError:
+            abs_path = root / path
+        # Use path tokens, not source text or operator names.
+        for token in path.parts:
+            if _ARCH_RE.fullmatch(token) and token not in out:
+                out.append(token)
+        # ``rel`` may be repository-relative while root is nested; token scan is
+        # intentionally sufficient and deterministic.
+        del abs_path
+    return out
+
+
 def acquire_pull_request(
     url: str,
     *,
@@ -98,9 +115,8 @@ def acquire_pull_request(
 ) -> dict[str, Any]:
     """Fetch exact PR head into an isolated cache worktree.
 
-    ``workspace_root`` is accepted only for API compatibility and deliberately
-    ignored as a source checkout target. Local mode is selected by absence of a
-    PR URL, not by inspecting/remapping the user's current git checkout.
+    ``workspace_root`` is accepted only for compatibility and deliberately
+    ignored as a checkout target. Local mode is selected by absence of a PR URL.
     """
     del workspace_root
     parsed = _git.parse_pr_ref(url)
@@ -156,6 +172,7 @@ def acquire_pull_request(
 
     head_path = Path(materialized["path"])
     roots = detect_operator_roots(head_path, changed)
+    changed_arches = changed_architectures(roots[0], changed) if len(roots) == 1 else []
     return {
         "ok": True,
         "error": "",
@@ -173,6 +190,7 @@ def acquire_pull_request(
         "run_id": instance,
         "skipped_checkout": False,
         "operator_roots": [str(path) for path in roots],
+        "changed_architectures": changed_arches,
         "architectures": _git.detect_architectures(roots[0]) if len(roots) == 1 else [],
         "changeset": {
             "schema": "pilot-changeset/v1",
