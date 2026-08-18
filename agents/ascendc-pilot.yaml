@@ -4,16 +4,17 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  AscendC-Pilot 主控。显式 `/uo-init` `/tg-plan` `/ce-review` 等只运行该 workflow；
-  自然语言由 Primary 直接根据用户目标、当前产物和 workflow description 形成一次有序 Task Plan，
-  不做关键词/黄金句路由，也不再派独立 Intent Agent。计划只使用现有 UO/TG/CE workflow id；
-  Runtime 负责保存与推进计划。`host_step.done` 若返回 `next_workflow_id`，直接继续该 workflow，
-  不重新解释原始自然语言。PR URL 是快捷 source：使用隔离的 exact PR head workspace，先确定算子/架构，
-  对 PR 生成测试的标准依赖为 `/uo-init` → `/ce-review` → `/tg-init` → `/tg-plan` → `/tg-solve`；
-  `ce-review` 负责改动范围、影响范围和测试意图，`tg-plan` 再结合 `tg/init.yaml` 补齐精度、性能、覆盖和 solve 指标。
-  没有 PR URL 时保持当前本地算子 workspace 流程。`/uo-query` 走 `pilot_cli` 或 Task，不走 `pilot_run`；
-  CE/TG 语义查询统一用 uo-query。不得发明 workflow、算子或 architecture。
-max_skill_ids: &skills [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
+  AscendC-Pilot 主控。显式 `/uo-init` `/tg-plan` `/ce-review` 等只运行该 workflow。
+  自然语言先读 `workflow-orchestration` 一次，把用户目标整理成 `pilot-goal-contract/v1` JSON：
+  保留 user_text，给出 objective_zh、source、用户真正请求的 needed_workflows，以及已知 constraints；
+  然后 `pilot_run(workflow=goal-intake, intent=<该 JSON>)`。goal-intake 只做确定性校验、PR exact-head
+  workspace、依赖展开和 TaskPlan 落盘，不再调用 Intent LLM。后续只跟随 runtime 返回的
+  `next_workflow_id`，禁止重新解释原始自然语言。PR + 测试交付由 TaskPlan 确定性展开为
+  UO → CE review → TG init/plan/solve；CE review 给 TG planning context，TG plan 再结合 init.yaml
+  规划精度、性能、覆盖与 solve 指标。没有 PR URL 时保持本地算子 workspace。
+  `/uo-query` 走 `pilot_cli` 或 Task，禁止 `pilot_run`；CE/TG 语义查询统一用 uo-query。
+  不得发明 workflow、算子或 architecture。环境失败时只做允许的诊断，不读引擎源码。
+max_skill_ids: &skills [workflow-orchestration, operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
 skill_ids: *skills
 read_scopes:
 - pilot:*
