@@ -17,9 +17,17 @@ def test_pr_test_generation_expands_review_before_tg():
     plan = plan_for(
         {
             "needed_workflows": ["tg-solve"],
-            "source": {"kind": "pull_request", "ref": "https://example.invalid/pull/1"},
+            "source": {"kind": "pull_request", "url": "https://github.com/acme/ops/pull/1"},
         }
     )
+    assert [step["id"] for step in plan["steps"]] == [
+        "workspace_acquire",
+        "uo-init",
+        "ce-review",
+        "tg-init",
+        "tg-plan",
+        "tg-solve",
+    ]
     assert _workflow_steps(plan) == [
         "uo-init",
         "ce-review",
@@ -29,19 +37,27 @@ def test_pr_test_generation_expands_review_before_tg():
     ]
 
 
-def test_task_plan_next_workflow_is_stable_after_completion():
+def test_task_plan_next_workflow_is_stable_after_each_completion():
     plan = plan_for(
         {
             "needed_workflows": ["tg-solve"],
-            "source": {"kind": "pull_request", "ref": "https://example.invalid/pull/1"},
+            "source": {"kind": "pull_request", "url": "https://github.com/acme/ops/pull/1"},
         }
     )
+    # workspace_acquire is a deterministic goal-intake harness action, not a workflow.
     assert current_workflow_id(plan) == "uo-init"
-    plan = mark_step_passed(plan, "uo-init")
-    assert current_workflow_id(plan) == "ce-review"
-    plan = mark_step_passed(plan, "ce-review")
-    assert current_workflow_id(plan) == "tg-init"
-    plan = mark_step_passed(plan, "tg-init")
-    assert current_workflow_id(plan) == "tg-plan"
-    plan = mark_step_passed(plan, "tg-plan")
-    assert current_workflow_id(plan) == "tg-solve"
+    plan = mark_step_passed(plan, "workspace_acquire")
+    assert current_workflow_id(plan) == "uo-init"
+
+    expected = [
+        ("uo-init", "ce-review"),
+        ("ce-review", "tg-init"),
+        ("tg-init", "tg-plan"),
+        ("tg-plan", "tg-solve"),
+        ("tg-solve", ""),
+    ]
+    for just_done, next_wf in expected:
+        plan = mark_step_passed(plan, just_done)
+        assert current_workflow_id(plan) == next_wf
+
+    assert plan["status"] == "steps_complete"
