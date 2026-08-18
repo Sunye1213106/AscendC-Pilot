@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""User Goal control plane — product intent above Spec/Workflow.
+"""User Goal v2 — product intent above internal workflows.
 
-Persists under ``.ascendc-pilot/control/user_goal.yaml``. Does not replace
-Spec FSM; Primary uses it to chain tg-init → tg-plan → tg-solve for full
-coverage NL intents, with human-voice progress at each step.
+Persists under ``.ascendc-pilot/control/user_goal.yaml``. Natural-language
+intake does not live here: the LLM Intent Action understands the user text;
+this module only loads, saves, and advances the Goal after a Task Plan exists.
 """
 
 from __future__ import annotations
@@ -16,83 +16,15 @@ import yaml
 
 from ascendc_pilot.paths import AGENT_DIR
 
-USER_GOAL_SCHEMA = "pilot-user-goal/v1"
+USER_GOAL_SCHEMA = "pilot-user-goal/v2"
+# Kept as kind labels only; no phrase router and no hardcoded workflow chain.
+GOAL_GENERATE_CHANGE_TESTS = "generate_change_tests"
 GOAL_TILINGKEY_FULL = "tilingkey_full_coverage_cases"
 GOAL_CE_CHANGE = "ce_change_verify_chain"
 GOAL_CE_REVIEW = "ce_review_pr"
 
-# Phrases that mean "full tilingkey cases" product goal (not a single slash).
-FULL_COVERAGE_PHRASES: tuple[str, ...] = (
-    "全量",
-    "全覆盖",
-    "tilingkey case",
-    "TilingKey case",
-    "tilingkey 全覆盖",
-    "TilingKey 全覆盖",
-    "建立 TilingKey 全覆盖测试",
-    "全量 tilingkey",
-    "全量 TilingKey",
-    "全量覆盖",
-)
-
-DEFAULT_STEPS: tuple[dict[str, str], ...] = (
-    {
-        "id": "ensure_uo",
-        "workflow_id": "uo-init",
-        "summary_zh": "建立知识库（若尚无 CodeMap）",
-        "optional": "true",
-    },
-    {
-        "id": "tg_init",
-        "workflow_id": "tg-init",
-        "summary_zh": "写出 init.yaml",
-        "optional": "false",
-    },
-    {
-        "id": "tg_plan",
-        "workflow_id": "tg-plan",
-        "summary_zh": "规划测试义务",
-        "optional": "false",
-    },
-    {
-        "id": "tg_solve",
-        "workflow_id": "tg-solve",
-        "summary_zh": "求解并生成用例",
-        "optional": "false",
-    },
-)
-
-_WORKFLOW_TO_STEP = {
-    "uo-init": "ensure_uo",
-    "uo-update": "ensure_uo",
-    "tg-init": "tg_init",
-    "tg-plan": "tg_plan",
-    "tg-solve": "tg_solve",
-}
-
-CE_CHANGE_PHRASES: tuple[str, ...] = (
-    "验证这次改动",
-    "按 PR 定向",
-    "影响分析并验证",
-    "ChangeTestIntent",
-    "定向生成 case",
-    "ce change",
-    "修这个 PR",
-    "这次改动怎么测",
-)
-
-CE_STEPS: tuple[dict[str, str], ...] = (
-    {"id": "ce_plan", "workflow_id": "ce-plan", "summary_zh": "问清需求并写出计划", "optional": "false"},
-    {"id": "ce_apply", "workflow_id": "ce-apply", "summary_zh": "按计划 todo 改码", "optional": "false"},
-    {"id": "tg_plan", "workflow_id": "tg-plan", "summary_zh": "从计划 md 总结测试义务", "optional": "false"},
-)
-
-_CE_WORKFLOW_TO_STEP = {
-    "ce-plan": "ce_plan",
-    "ce-apply": "ce_apply",
-    "ce-review": "tg_plan",
-    "tg-plan": "tg_plan",
-}
+SESSION_AUTO = "auto"
+SESSION_EXPERT = "expert"
 
 
 def _now() -> str:
@@ -107,71 +39,6 @@ def user_goal_path(project_root: Path | str) -> Path:
     return control_root(project_root) / "user_goal.yaml"
 
 
-def matches_full_coverage_intent(text: str) -> bool:
-    s = str(text or "").strip()
-    if not s:
-        return False
-    low = s.lower()
-    for phrase in FULL_COVERAGE_PHRASES:
-        if phrase.lower() in low or phrase in s:
-            return True
-    return False
-
-
-def matches_ce_change_intent(text: str) -> bool:
-    s = str(text or "").strip()
-    if not s:
-        return False
-    low = s.lower()
-    for phrase in CE_CHANGE_PHRASES:
-        if phrase.lower() in low or phrase in s:
-            return True
-    return False
-
-
-def extract_allowlisted_pr_url(text: str) -> str:
-    """First gitcode.com / github.com / gitcode.net PR URL, or empty."""
-    try:
-        from code_engineering.git import extract_pr_url
-    except Exception:  # noqa: BLE001
-        return ""
-    return str(extract_pr_url(text) or "").strip()
-
-
-def route_natural_goal(text: str) -> dict[str, Any] | None:
-    """Map natural language to a predefined Goal Router chain (slash stays expert API)."""
-    pr_url = extract_allowlisted_pr_url(text)
-    if pr_url:
-        return {
-            "ok": True,
-            "goal_id": GOAL_CE_REVIEW,
-            "workflow_id": "ce-review",
-            "slash": "/ce-review",
-            "method": "goal_router",
-            "mode": "",
-            "pr_url": pr_url,
-        }
-    if matches_full_coverage_intent(text):
-        return {
-            "ok": True,
-            "goal_id": GOAL_TILINGKEY_FULL,
-            "workflow_id": "tg-init",
-            "slash": "/tg-init",
-            "method": "goal_router",
-            "mode": "",
-        }
-    if matches_ce_change_intent(text):
-        return {
-            "ok": True,
-            "goal_id": GOAL_CE_CHANGE,
-            "workflow_id": "ce-plan",
-            "slash": "/ce-plan",
-            "method": "goal_router",
-            "mode": "",
-        }
-    return None
-
-
 def load_user_goal(project_root: Path | str) -> dict[str, Any] | None:
     path = user_goal_path(project_root)
     if not path.is_file():
@@ -180,12 +47,7 @@ def load_user_goal(project_root: Path | str) -> dict[str, Any] | None:
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:  # noqa: BLE001
         return None
-    if not isinstance(doc, dict):
-        return None
-    if str(doc.get("goal_id") or "").strip() != GOAL_TILINGKEY_FULL:
-        # Still return unknown goals for inspection; progress helpers no-op.
-        return doc
-    return doc
+    return doc if isinstance(doc, dict) else None
 
 
 def write_user_goal(project_root: Path | str, doc: dict[str, Any]) -> dict[str, Any]:
@@ -203,257 +65,195 @@ def write_user_goal(project_root: Path | str, doc: dict[str, Any]) -> dict[str, 
     return payload
 
 
-def create_tilingkey_full_coverage_goal(
-    project_root: Path | str,
-    *,
-    architecture: str = "",
-    mode: str = "",
-    op_name: str = "",
-    current_step: str = "tg_init",
-    intent_text: str = "",
-) -> dict[str, Any]:
-    """Materialize the default full-coverage product goal."""
-    root = Path(project_root).expanduser().resolve()
-    op = (op_name or root.name).strip()
-    arch = str(architecture or "").strip()
-    label = f"全量 TilingKey 覆盖测试"
-    if op:
-        label = f"{op} 全量 TilingKey 覆盖测试"
-    if arch:
-        label = f"{op}（{arch}）全量 TilingKey 覆盖测试"
-    steps = []
-    for s in DEFAULT_STEPS:
-        steps.append(
-            {
-                "id": s["id"],
-                "workflow_id": s["workflow_id"],
-                "summary_zh": s["summary_zh"],
-                "optional": s["optional"] == "true",
-                "status": "pending",
-            }
-        )
-    # Mark steps before current as skipped/passed appropriately.
-    reached = False
-    for step in steps:
-        if step["id"] == current_step:
-            step["status"] = "in_progress"
-            reached = True
-        elif not reached and step["id"] == "ensure_uo" and current_step != "ensure_uo":
-            step["status"] = "skipped"
-        elif not reached:
-            step["status"] = "pending"
-    doc = {
-        "schema": USER_GOAL_SCHEMA,
-        "goal_id": GOAL_TILINGKEY_FULL,
-        "label_zh": label,
-        "intent_text": str(intent_text or label).strip(),
-        "project": root.as_posix(),
-        "architecture": arch,
-        "op_name": op,
-        "mode": mode,
-        "steps": steps,
-        "current_step": current_step,
-        "status": "active",
-        "goal_version": 1,
-        "intent_history": [
-            {"version": 1, "text": str(intent_text or label).strip(), "at": _now()}
-        ],
-        "created_at": _now(),
-    }
-    return write_user_goal(root, doc)
+def is_auto_session(goal: dict[str, Any] | None) -> bool:
+    if not goal:
+        return False
+    if str(goal.get("session_kind") or "") == SESSION_AUTO:
+        return True
+    return str(goal.get("schema") or "") == USER_GOAL_SCHEMA and bool(
+        goal.get("needed_capabilities") or (goal.get("intent") or {}).get("needed_capabilities")
+    )
 
 
-def _materialize_steps(spec: tuple[dict[str, str], ...], current_step: str) -> list[dict[str, Any]]:
-    steps = []
-    for s in spec:
-        steps.append(
-            {
-                "id": s["id"],
-                "workflow_id": s["workflow_id"],
-                "summary_zh": s["summary_zh"],
-                "optional": s["optional"] == "true",
-                "status": "pending",
-            }
-        )
-    reached = False
-    for step in steps:
-        if step["id"] == current_step:
-            step["status"] = "in_progress"
-            reached = True
-        elif not reached and step.get("optional"):
-            step["status"] = "skipped"
-        elif not reached:
-            step["status"] = "pending"
-    return steps
-
-
-def create_ce_change_goal(
-    project_root: Path | str,
-    *,
-    architecture: str = "",
-    op_name: str = "",
-    current_step: str = "ce_plan",
-    intent_text: str = "",
-) -> dict[str, Any]:
-    root = Path(project_root).expanduser().resolve()
-    op = (op_name or root.name).strip()
-    arch = str(architecture or "").strip()
-    label = "按需求改码（plan → apply → tg-plan）"
-    if op:
-        label = f"{op} {label}"
-    if arch:
-        label = f"{op}（{arch}）按改动验证"
-    doc = {
-        "schema": USER_GOAL_SCHEMA,
-        "goal_id": GOAL_CE_CHANGE,
-        "label_zh": label,
-        "intent_text": str(intent_text or label).strip(),
-        "project": root.as_posix(),
-        "architecture": arch,
-        "op_name": op,
-        "mode": "scenario_targeted",
-        "steps": _materialize_steps(CE_STEPS, current_step),
-        "current_step": current_step,
-        "status": "active",
-        "goal_version": 1,
-        "intent_history": [
-            {"version": 1, "text": str(intent_text or label).strip(), "at": _now()}
-        ],
-        "created_at": _now(),
-    }
-    return write_user_goal(root, doc)
-
-
-def ensure_goal_for_intent(
+def create_user_goal(
     project_root: Path | str,
     *,
     intent_text: str,
+    llm_intent: dict[str, Any],
+    public_plan: list[dict[str, Any]] | None = None,
     architecture: str = "",
-    workflow_id: str = "",
     op_name: str = "",
-) -> dict[str, Any] | None:
-    """If NL matches a Goal Router chain, create or refresh goal; else None."""
-    if extract_allowlisted_pr_url(intent_text):
-        return None
-    if matches_ce_change_intent(intent_text):
-        existing = load_user_goal(project_root)
-        if existing and str(existing.get("goal_id")) == GOAL_CE_CHANGE and str(existing.get("status")) == "active":
-            return existing
-        step = _CE_WORKFLOW_TO_STEP.get(str(workflow_id or "").strip(), "ce_plan")
-        return create_ce_change_goal(
-            project_root,
-            architecture=architecture,
-            op_name=op_name,
-            current_step=step,
-            intent_text=intent_text,
-        )
-    if not matches_full_coverage_intent(intent_text):
-        # Explicit tg-* start under an existing goal still advances via complete.
-        existing = load_user_goal(project_root)
-        if existing and str(existing.get("status")) == "active":
-            return existing
-        return None
-    existing = load_user_goal(project_root)
-    if (
-        existing
-        and str(existing.get("goal_id")) == GOAL_TILINGKEY_FULL
-        and str(existing.get("status")) == "active"
-    ):
-        # Keep architecture/op/intent if newly known.
-        changed = False
-        if architecture and not str(existing.get("architecture") or "").strip():
-            existing["architecture"] = architecture
-            changed = True
-        if intent_text and not str(existing.get("intent_text") or "").strip():
-            existing["intent_text"] = intent_text
-            changed = True
-        if changed:
-            return write_user_goal(project_root, existing)
-        return existing
-    step = _WORKFLOW_TO_STEP.get(str(workflow_id or "").strip(), "tg_init")
-    return create_tilingkey_full_coverage_goal(
-        project_root,
-        architecture=architecture,
-        op_name=op_name,
-        current_step=step if step != "ensure_uo" else "tg_init",
-        intent_text=intent_text,
-    )
+    session_kind: str = SESSION_AUTO,
+    kind: str = "",
+) -> dict[str, Any]:
+    """Materialize a v2 Goal from LLM Intent staging (already validated)."""
+    from ascendc_pilot.planning.task_plan import plan_kind, public_plan_for
+
+    root = Path(project_root).expanduser().resolve()
+    caps = [
+        str(c).strip()
+        for c in (llm_intent.get("needed_capabilities") or [])
+        if str(c).strip()
+    ]
+    source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
+    objective = str(llm_intent.get("objective_zh") or intent_text or "").strip()
+    plan = public_plan if public_plan is not None else public_plan_for(caps)
+    goal_kind = str(kind or plan_kind(caps) or GOAL_GENERATE_CHANGE_TESTS)
+    op = (op_name or root.name).strip()
+    arch = str(architecture or "").strip()
+    label = objective or "用户目标"
+    if op and op not in label:
+        label = f"{op}：{label}" if label else op
+    doc = {
+        "schema": USER_GOAL_SCHEMA,
+        "goal_id": goal_kind,
+        "session_kind": session_kind,
+        "kind": goal_kind,
+        "label_zh": label,
+        "intent": {
+            "text": str(intent_text or "").strip(),
+            "needed_capabilities": caps,
+            "objective_zh": objective,
+        },
+        "source": dict(source),
+        "constraints": dict(llm_intent.get("constraints") or {})
+        if isinstance(llm_intent.get("constraints"), dict)
+        else {},
+        "public_plan": list(plan),
+        "decisions": [],
+        "findings": [],
+        "artifacts": {},
+        "project": root.as_posix(),
+        "architecture": arch,
+        "op_name": op,
+        "status": "active",
+        "goal_version": 1,
+        "intent_history": [
+            {"version": 1, "text": str(intent_text or "").strip(), "at": _now()}
+        ],
+        "created_at": _now(),
+    }
+    return write_user_goal(root, doc)
 
 
 def progress_line_zh(goal: dict[str, Any] | None) -> str:
     if not goal:
         return ""
-    steps = [s for s in (goal.get("steps") or []) if isinstance(s, dict)]
+    steps = [s for s in (goal.get("public_plan") or []) if isinstance(s, dict)]
     if not steps:
         return str(goal.get("label_zh") or "")
-    # Count required steps only for N.
-    required = [s for s in steps if not s.get("optional")]
-    done = sum(1 for s in required if str(s.get("status")) in {"passed", "skipped"})
-    total = len(required) or len(steps)
-    cur_id = str(goal.get("current_step") or "")
-    cur = next((s for s in steps if str(s.get("id")) == cur_id), None)
-    cur_summary = str((cur or {}).get("summary_zh") or cur_id or "进行中")
-    label = str(goal.get("label_zh") or "全量覆盖")
-    # 1-based index of current required step.
-    idx = done + 1 if done < total else total
+    done = sum(1 for s in steps if str(s.get("status")) in {"passed", "skipped"})
+    total = len(steps)
+    cur = next(
+        (s for s in steps if str(s.get("status")) == "in_progress"),
+        None,
+    )
+    if cur is None:
+        cur = next(
+            (s for s in steps if str(s.get("status")) not in {"passed", "skipped"}),
+            None,
+        )
+    cur_summary = str((cur or {}).get("summary_zh") or "进行中")
+    label = str(goal.get("label_zh") or "当前目标")
+    idx = min(done + 1, total) if total else 1
     return f"{label} {idx}/{total}：正在{cur_summary}…"
 
 
+def _sync_public_plan(goal: dict[str, Any], workflow_id: str) -> dict[str, Any]:
+    from ascendc_pilot.planning.task_plan import public_id_for_workflow
+
+    pub_id = public_id_for_workflow(workflow_id)
+    steps = [dict(s) for s in (goal.get("public_plan") or []) if isinstance(s, dict)]
+    if not steps:
+        return goal
+    if pub_id:
+        reached = False
+        for step in steps:
+            sid = str(step.get("id") or "")
+            if sid == pub_id:
+                reached = True
+                # Keep in_progress until a later public step starts, except
+                # terminal deliver which is marked passed when the goal completes.
+                if sid in {"deliver"}:
+                    step["status"] = "passed"
+                elif str(step.get("status")) != "passed":
+                    step["status"] = "in_progress"
+            elif not reached:
+                if str(step.get("status")) != "skipped":
+                    step["status"] = "passed"
+            elif str(step.get("status")) == "in_progress":
+                step["status"] = "pending"
+        # If this workflow maps to a public step that should close (tg-solve
+        # closes generate + validate), mark prior generate_cases passed.
+        if workflow_id == "tg-solve":
+            for step in steps:
+                if str(step.get("id")) in {"generate_cases", "validate_cases"}:
+                    step["status"] = "passed"
+                elif str(step.get("id")) == "deliver":
+                    step["status"] = "in_progress"
+        if workflow_id == "goal-impact":
+            for step in steps:
+                if str(step.get("id")) in {"understand_change", "choose_scope"}:
+                    if str(step.get("id")) == "understand_change":
+                        step["status"] = "passed"
+                    else:
+                        step["status"] = "in_progress"
+    goal = dict(goal)
+    goal["public_plan"] = steps
+    return goal
+
+
 def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str, Any] | None:
-    """Advance goal when a workflow completes; return updated goal + next hint."""
+    """Advance an auto Goal via Task Plan. Expert slash does not chain."""
     goal = load_user_goal(project_root)
     if not goal or str(goal.get("status")) != "active":
         return None
-    goal_id = str(goal.get("goal_id") or "")
-    if goal_id == GOAL_CE_CHANGE:
-        step_id = _CE_WORKFLOW_TO_STEP.get(str(workflow_id or "").strip())
-    elif goal_id == GOAL_TILINGKEY_FULL:
-        step_id = _WORKFLOW_TO_STEP.get(str(workflow_id or "").strip())
-    else:
+    if not is_auto_session(goal):
         return None
-    if not step_id:
-        return None
-    steps = [dict(s) for s in (goal.get("steps") or []) if isinstance(s, dict)]
-    next_workflow = ""
-    next_summary = ""
-    found = False
-    for i, step in enumerate(steps):
-        if str(step.get("id")) != step_id:
-            continue
-        found = True
-        step["status"] = "passed"
-        # Find next non-optional pending / in_progress
-        for j in range(i + 1, len(steps)):
-            nxt = steps[j]
-            if nxt.get("optional") and str(nxt.get("status")) == "skipped":
-                continue
-            if str(nxt.get("status")) in {"passed", "skipped"}:
-                continue
-            nxt["status"] = "in_progress"
-            goal["current_step"] = str(nxt.get("id"))
-            next_workflow = str(nxt.get("workflow_id") or "")
-            next_summary = str(nxt.get("summary_zh") or "")
-            break
-        else:
-            goal["current_step"] = step_id
-            goal["status"] = "completed"
-        break
-    if not found:
-        return None
-    goal["steps"] = steps
-    write_user_goal(project_root, goal)
-    from ascendc_pilot.human_voice import progress_zh
 
-    just = ""
-    for s in steps:
-        if str(s.get("id")) == step_id:
-            just = str(s.get("summary_zh") or step_id)
+    from ascendc_pilot.human_voice import progress_zh
+    from ascendc_pilot.planning.task_plan import (
+        acceptance_satisfied,
+        current_workflow_id,
+        load_task_plan,
+        mark_step_passed,
+        write_task_plan,
+    )
+
+    plan = load_task_plan(project_root)
+    if not plan:
+        return None
+    wid = str(workflow_id or "").strip()
+    plan = mark_step_passed(plan, wid)
+    # goal-intake itself is the intake workflow, not a plan step; ignore miss.
+    write_task_plan(project_root, plan)
+    goal = _sync_public_plan(goal, wid)
+
+    next_workflow = current_workflow_id(plan)
+    completed = acceptance_satisfied(plan) and not next_workflow
+    if completed:
+        goal["status"] = "completed"
+        for step in goal.get("public_plan") or []:
+            if isinstance(step, dict) and str(step.get("status")) != "skipped":
+                step["status"] = "passed"
+    write_user_goal(project_root, goal)
+
+    next_summary = ""
+    for step in plan.get("steps") or []:
+        if isinstance(step, dict) and str(step.get("workflow_id") or step.get("id")) == next_workflow:
+            next_summary = str(step.get("summary_zh") or next_workflow)
             break
+    if not next_summary:
+        for step in goal.get("public_plan") or []:
+            if isinstance(step, dict) and str(step.get("status")) == "in_progress":
+                next_summary = str(step.get("summary_zh") or "")
+                break
+
     voice = progress_zh(
         goal=str(goal.get("label_zh") or ""),
-        just_done=f"「{just}」已完成",
+        just_done=f"「{wid}」已完成" if wid else "本阶段已完成",
         next_step=(
-            f"请启动「{next_summary}」（{next_workflow}）"
+            f"继续「{next_summary}」"
             if next_workflow
             else "目标已完成"
         ),
@@ -461,11 +261,11 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     )
     return {
         "goal": goal,
-        "next_workflow_id": next_workflow,
-        "next_summary_zh": next_summary,
+        "next_workflow_id": next_workflow if not completed else "",
+        "next_summary_zh": next_summary if not completed else "目标已完成",
         "message_zh": voice,
         "progress_line": progress_line_zh(goal),
-        "completed": str(goal.get("status")) == "completed",
+        "completed": completed,
     }
 
 
@@ -475,22 +275,21 @@ def conflict_ask(
     existing_step: str,
     incoming_workflow: str,
 ) -> dict[str, Any]:
-    """Human-voice AskQuestion when a conflicting run would clobber the goal."""
     from ascendc_pilot.human_voice import decision_question
 
     return decision_question(
-        header="已有全覆盖目标进行中，如何处理？",
-        goal=existing_label or "全量 TilingKey 覆盖测试",
+        header="已有目标进行中，如何处理？",
+        goal=existing_label or "当前目标",
         background=f"当前目标停在「{existing_step}」。你又请求启动 {incoming_workflow}。",
         decide="继续当前目标，还是放弃并重新开始？",
         consequences={
             "继续当前目标": "不新建冲突运行，按当前步骤推进",
-            "重新开始全覆盖": "结束旧目标并按新请求重开串联",
+            "重新开始": "结束旧目标并按新请求重开",
             "停止": "不做变更",
         },
         options=[
             {"label": "继续当前目标", "value": "continue"},
-            {"label": "重新开始全覆盖", "value": "reinit"},
+            {"label": "重新开始", "value": "reinit"},
             {"label": "停止", "value": "stop"},
         ],
     )
@@ -515,7 +314,7 @@ def resume_user_goal(project_root: Path | str) -> dict[str, Any] | None:
 
 
 def request_goal_revision(project_root: Path | str, delta_text: str) -> dict[str, Any]:
-    """First-class plan revision: keep completed todos, rework ce-apply into revise."""
+    """First-class plan revision: update constraints and invalidate downstream."""
     from ascendc_pilot.paths import runs_root
     from ascendc_pilot.state import load_state, save_state
 
@@ -529,10 +328,20 @@ def request_goal_revision(project_root: Path | str, delta_text: str) -> dict[str
         goal["goal_version"] = version
         goal["intent_history"] = history
         if delta:
-            prev = str(goal.get("intent_text") or "").strip()
-            goal["intent_text"] = (prev + "\n" + delta).strip() if prev else delta
+            intent = dict(goal.get("intent") or {})
+            prev = str(intent.get("text") or goal.get("intent_text") or "").strip()
+            intent["text"] = (prev + "\n" + delta).strip() if prev else delta
+            goal["intent"] = intent
+            goal["intent_text"] = intent["text"]
         goal["status"] = "revising"
         write_user_goal(root, goal)
+
+    try:
+        from ascendc_pilot.planning.reconcile import apply_revision
+
+        apply_revision(root, delta_text=delta)
+    except Exception:  # noqa: BLE001
+        pass
 
     st = load_state(root) or {}
     wid = str(st.get("workflow_id") or "")
@@ -540,7 +349,7 @@ def request_goal_revision(project_root: Path | str, delta_text: str) -> dict[str
         "revise_requested": True,
         "workflow_id": wid,
         "paused": False,
-        "message_zh": "已记下补充需求，将在当前计划上修订，不会整段重走 grill。",
+        "message_zh": "已记下补充需求，将在当前计划上修订，不会整段重走。",
     }
     if delta:
         st["pending_goal_revision"] = delta

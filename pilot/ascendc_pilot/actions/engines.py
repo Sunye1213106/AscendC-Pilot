@@ -177,6 +177,9 @@ def _run_ce_plan_revise_check(project_root: Path, ctx: dict[str, Any]) -> dict[s
     checked["engine"] = "plan_revise_check"
     checked["plan"] = plan.as_posix()
     return checked
+
+
+def _run_ce_patch_guard(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from code_engineering.apply import patch_guard
 
     arch = _resolve_ce_arch(project_root, ctx)
