@@ -12,6 +12,7 @@
  */
 
 import { spawn } from "node:child_process"
+import { homedir } from "node:os"
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { openCodeHome, readCachedCannRoot, resolveAcpBin } from "./opencode-home.mjs"
@@ -916,6 +917,7 @@ type HostStep = {
   next_workflow_id?: string
   architecture?: string
   intent?: string
+  project?: string
 }
 
 export type PilotRunArgs = {
@@ -1446,10 +1448,20 @@ export async function runPilotDriver(
   if (!args || typeof args !== "object") {
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
   }
-  const project = resolve(String(args.project || "").trim())
   let workflow = String(args.workflow || "").trim()
-  if (!project || !workflow) {
+  let project = String(args.project || "").trim()
+    ? resolve(String(args.project || "").trim())
+    : ""
+  if (!workflow) {
+    return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow" }
+  }
+  if (!project && workflow !== "auto") {
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
+  }
+  if (!project && workflow === "auto") {
+    const scratch = resolve(homedir(), ".cache", "ascendc-pilot", "sessions", "auto")
+    mkdirSync(scratch, { recursive: true })
+    project = scratch
   }
   if (workflow === "uo-query") {
     reporter?.setStatus("done")
@@ -1841,8 +1853,10 @@ export async function runPilotDriver(
       }
       const nextArch = String(step.architecture || architecture || "").trim()
       const nextIntent = String(step.intent || intent || "").trim()
+      const nextProject = String(step.project || project || "").trim()
       architecture = nextArch || architecture
       intent = nextIntent || intent
+      if (nextProject) project = resolve(nextProject)
       workflow = nextWf
       reporter?.setWorkflow(nextWf)
       reporter?.note(`continue ${nextWf}`)
@@ -1908,16 +1922,23 @@ export function createPilotRunTool(
   return {
     pilot_run: {
       description:
-        "Run an AscendC-Pilot workflow via Host Session Driver (start→auto). " +
+        "Run AscendC-Pilot via Host Session Driver. " +
+        "Natural language: workflow=auto and intent=the user's original text (do not invent slash). " +
+        "Expert slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
-        "(agent=actor_id, prompt=task_prompt_stub verbatim) so the user can jump into the child and see thinking. " +
-        "If host_step.tasks has two or more entries, launch ALL of them in the same turn " +
-        "(each prompt=tasks[i].task_prompt_stub verbatim), wait, then synthesize one kb-answer-v1. " +
-        "Host Driver syncs Todo and owns AskQuestion when the UI is available. " +
-        "Args: workflow (e.g. uo-init / tg-init / ce-review), project (operator dir), optional architecture. Never uo-query.",
+        "(agent=actor_id, prompt=task_prompt_stub verbatim). " +
+        "Host Driver syncs Todo and owns AskQuestion when the UI is available. Never uo-query.",
       args: {
-        workflow: { type: "string", description: "Workflow id (uo-init, tg-init, ce-review, …). Never uo-query." },
-        project: { type: "string", description: "Operator package absolute path" },
+        workflow: {
+          type: "string",
+          description:
+            "auto for natural-language tasks, or an existing workflow id (uo-init, tg-plan, ce-review, …). Never uo-query.",
+        },
+        project: {
+          type: "string",
+          description:
+            "Operator package absolute path. Optional for workflow=auto when the user gave an allowlisted PR URL.",
+        },
         architecture: {
           type: "string",
           description: "Optional arch* (required for uo-init/uo-update)",

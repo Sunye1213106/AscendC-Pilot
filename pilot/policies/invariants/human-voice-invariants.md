@@ -18,7 +18,7 @@
 | AskQuestion | 标题使用自然语言；正文含背景 + 决定 + 选项后果；选项为自然语言动词短语 |
 | ACP `message_zh` / `user_summary_zh`（面向用户） | 自然语言；机器字段留在 payload |
 | Todo / phase `label_zh` | 名实一致（勿叫「意图确认」却不问） |
-| Goal 进度 | 「全量覆盖 i/n：正在…」 |
+| Goal 进度 | 自然语言会话用 Goal `public_plan` 投影（如「获取 PR 与代码 / 分析改动影响 / …」）；不要把内部 `tg-plan/fuse` 文案甩给用户 |
 | failure_card | 先 `【摘要】` 自然语言摘要，再保留结构化细节 |
 
 Subagent → Primary 的机器回执可保留结构；**Primary 转述给用户时必须转写为自然语言**。  

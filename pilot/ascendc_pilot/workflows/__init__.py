@@ -16,6 +16,7 @@ _DETERMINISTIC_ENGINE_BY_DOMAIN = {
     "uo": "deterministic-uo-engine",
     "tg": "deterministic-tg-engine",
     "ce": "deterministic-ce-engine",
+    "goal": "deterministic-tg-engine",
 }
 
 

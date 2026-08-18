@@ -101,7 +101,9 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
     """Return model-checker errors for one workflow meta dict."""
     errors: list[str] = []
     wid = workflow_id
-    if meta.get("reserved") or not meta.get("slash"):
+    if meta.get("alias_of"):
+        return errors
+    if (meta.get("reserved") or not meta.get("slash")) and not (meta.get("actions") or []):
         return errors
 
     phases = _phase_ids(meta)

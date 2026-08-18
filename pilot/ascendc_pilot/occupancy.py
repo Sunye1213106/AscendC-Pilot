@@ -118,19 +118,35 @@ def occupancy_of(workflow_id: str) -> str:
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
     wid = str(workflow_id or "").strip()
-    meta = WORKFLOWS.get(wid) or {}
-    occ = str(meta.get("occupancy") or "").strip().lower()
-    return occ if occ in OCCUPANCY_VALUES else OCCUPANCY_EXCLUSIVE
+    seen: set[str] = set()
+    while wid and wid not in seen:
+        seen.add(wid)
+        meta = WORKFLOWS.get(wid) or {}
+        alias = str(meta.get("alias_of") or "").strip()
+        if alias:
+            wid = alias
+            continue
+        occ = str(meta.get("occupancy") or "").strip().lower()
+        return occ if occ in OCCUPANCY_VALUES else OCCUPANCY_EXCLUSIVE
+    return OCCUPANCY_EXCLUSIVE
 
 
 def occupancy_group_of(workflow_id: str) -> str:
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
     wid = str(workflow_id or "").strip()
-    meta = WORKFLOWS.get(wid) or {}
-    if occupancy_of(wid) != OCCUPANCY_EXCLUSIVE:
-        return ""
-    return str(meta.get("occupancy_group") or "").strip()
+    seen: set[str] = set()
+    while wid and wid not in seen:
+        seen.add(wid)
+        meta = WORKFLOWS.get(wid) or {}
+        alias = str(meta.get("alias_of") or "").strip()
+        if alias:
+            wid = alias
+            continue
+        if occupancy_of(wid) != OCCUPANCY_EXCLUSIVE:
+            return ""
+        return str(meta.get("occupancy_group") or "").strip()
+    return ""
 
 
 def is_shared(workflow_id: str) -> bool:

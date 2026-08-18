@@ -104,6 +104,25 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/session_handoff/**",
         ],
     },
+    "goal-intake": {
+        "parse_intent": [
+            "runs/{run_id}/actions/parse_intent/parts/**",
+            "runs/{run_id}/actions/parse_intent/scratch/**",
+            "runs/{run_id}/actions/parse_intent/staging.yaml",
+        ],
+    },
+    "goal-impact": {
+        "change_impact": [
+            "runs/{run_id}/actions/change_impact/parts/**",
+            "runs/{run_id}/actions/change_impact/scratch/**",
+            "runs/{run_id}/actions/change_impact/staging.yaml",
+        ],
+        "derive_obligations": [
+            "runs/{run_id}/actions/derive_obligations/parts/**",
+            "runs/{run_id}/actions/derive_obligations/scratch/**",
+            "runs/{run_id}/actions/derive_obligations/staging.yaml",
+        ],
+    },
 }
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     "uo-init": {
@@ -133,6 +152,14 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "handoff": {
         "session_handoff": ["session_handoff.md"],
+    },
+    "goal-intake": {
+        "intent_promote": ["runs/{run_id}/receipts/intent_promoted.yaml"],
+    },
+    "goal-impact": {
+        "impact_promote": ["runs/{run_id}/receipts/change_impact.yaml"],
+        "obligations_promote": ["runs/{run_id}/receipts/test_obligations.yaml"],
+        "test_scope": ["runs/{run_id}/receipts/scope_decision.yaml"],
     },
 }
 ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
@@ -216,6 +243,29 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         ],
         "analyze_promote": ["tg/worklog.md"],
         "solve_certify": ["runs/{run_id}/receipts/solve_certify.yaml"],
+    },
+    "goal-intake": {
+        "parse_intent": [
+            "runs/{run_id}/actions/parse_intent/parts/**",
+            "runs/{run_id}/actions/parse_intent/scratch/**",
+            "runs/{run_id}/actions/parse_intent/staging.yaml",
+        ],
+        "intent_promote": ["runs/{run_id}/receipts/intent_promoted.yaml"],
+    },
+    "goal-impact": {
+        "change_impact": [
+            "runs/{run_id}/actions/change_impact/parts/**",
+            "runs/{run_id}/actions/change_impact/scratch/**",
+            "runs/{run_id}/actions/change_impact/staging.yaml",
+        ],
+        "impact_promote": ["runs/{run_id}/receipts/change_impact.yaml"],
+        "derive_obligations": [
+            "runs/{run_id}/actions/derive_obligations/parts/**",
+            "runs/{run_id}/actions/derive_obligations/scratch/**",
+            "runs/{run_id}/actions/derive_obligations/staging.yaml",
+        ],
+        "obligations_promote": ["runs/{run_id}/receipts/test_obligations.yaml"],
+        "test_scope": ["runs/{run_id}/receipts/scope_decision.yaml"],
     },
     "ce-review": {
         "change_capture": [
@@ -314,6 +364,41 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         ],
         "validate_init": ["tg/init.yaml"],
         "human_confirm": ["tg/init.yaml", "uo/*.uo"],
+    },
+    "goal-intake": {
+        "parse_intent": [
+            "runs/{run_id}/actions/parse_intent/**",
+            "context/**",
+        ],
+        "intent_promote": [
+            "runs/{run_id}/actions/parse_intent/**",
+            "runs/{run_id}/receipts/intent_promoted.yaml",
+        ],
+    },
+    "goal-impact": {
+        "change_impact": [
+            "uo/*.uo",
+            "runs/{run_id}/actions/change_impact/**",
+            "context/**",
+        ],
+        "impact_promote": [
+            "runs/{run_id}/actions/change_impact/**",
+            "runs/{run_id}/receipts/change_impact.yaml",
+        ],
+        "derive_obligations": [
+            "uo/*.uo",
+            "runs/{run_id}/actions/derive_obligations/**",
+            "runs/{run_id}/receipts/change_impact.yaml",
+            "context/**",
+        ],
+        "obligations_promote": [
+            "runs/{run_id}/actions/derive_obligations/**",
+            "runs/{run_id}/receipts/test_obligations.yaml",
+        ],
+        "test_scope": [
+            "runs/{run_id}/receipts/test_obligations.yaml",
+            "runs/{run_id}/receipts/scope_decision.yaml",
+        ],
     },
     "tg-plan": {
         "plan_precheck": ["uo/*.uo", "tg/init.yaml"],

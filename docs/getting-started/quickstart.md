@@ -1,12 +1,31 @@
 # Quick Start
 
-本页假设 AscendC-Pilot 已完成安装。所有操作都应在**目标 AscendC 算子仓或算子目录**中进行，而不是在 AscendC-Pilot 自身仓库中。
+本页假设 AscendC-Pilot 已完成安装。自然语言任务可以只给 **PR URL**（系统会自行获取代码）；显式 Slash 工作流仍应在**目标算子目录**中启动。
 
-内部机制（Lease、Engine、Producer/Referee、Host Session Driver）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)；各 workflow 阶段图见 [工作流流程图](../architecture/workflows.md)。
+内部机制（Lease、Engine、Producer/Referee、Host Session Driver、Task Harness）见 [Agent Runtime](../architecture/agent-runtime.md)；覆盖算法见 [TG](../modules/tg.md)；各 workflow 阶段图见 [工作流流程图](../architecture/workflows.md)。
 
 > 每执行一步任务时，Pilot 会发一张短时通行证（Action Lease），限定「谁能读写哪些路径」；本步结束或失败后作废。OpenCode 上优先走 Host 工具 `pilot_run`（传输环路由 Host 持有）。详情见 Runtime 文档。
 >
 > 工具怎么选、失败怎么查，见 [ACP 工具使用](acp-tools.md)。
+
+## 0. 两条入口
+
+```text
+自然语言     →  直接说目标。主控调用 pilot_run(workflow="auto", intent=原文)
+Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
+查询         →  仍走 pilot_cli / uo-query，不进 Harness
+```
+
+自然语言路径上，用户不必知道模块名，也不必手串 `/uo-init → /tg-*`。专家路径上，现有 workflow **全部保留**。
+
+主示例：在 OpenCode 里对 `AscendC-Pilot` 说：
+
+```text
+帮我给这个 PR 生成针对 case
+https://github.com/<org>/<repo>/pull/<id>
+```
+
+系统会：获取 PR → 识别算子 / architecture → 建立或复用 CodeMap → 分析改动 → **只问一次测试范围** → 生成并回放用例。不要自己猜下一跳 slash。
 
 ## 1. 打开目标算子
 
@@ -154,17 +173,14 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 
 问清范围后写出 `ce/plan/{slug}_plan.md`，再 `/ce-apply` 按未完成 todo 改码。验证不在 CE，接着 `/tg-plan`。
 
-已有 PR 或工作区 diff（须在对应算子仓、该 arch 已有 `.uo`；贴 GitCode PR URL 会走 `/ce-review`；HTTPS 回退需 `GITCODE_TOKEN` / `GITHUB_TOKEN`）：
+已有 PR 或工作区 diff、只要**审查**时（须在对应算子仓、该 arch 已有 `.uo`；HTTPS 回退需 `GITCODE_TOKEN` / `GITHUB_TOKEN`）：
 
 ```text
 /ce-review --project <算子目录>
 ```
 
-或：
+自然语言「帮我给这个 PR 生成针对 case」+ URL 走 `pilot_run(auto)`，**不会**默认进 `/ce-review`。只要审查才显式 `/ce-review`。
 
-```text
-帮我检查当前修改会影响哪些 Host、Tiling 和 Kernel 路径。
-```
 
 CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query` 四种形态。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
 
@@ -174,6 +190,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 
 | 入口 | 用途 |
 | --- | --- |
+| 自然语言 + PR URL | `pilot_run(workflow=auto, intent=原文)`：生成针对 case，不必知道 slash |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
 | `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |
@@ -186,7 +203,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 | `python -m ascendc_pilot doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
 | `pilot_cli`：`inspect` / `ro-search` / `next` / `inspect-failure` / `status` | 证据窗、只读搜索、下一步、失败卡 |
 | `pilot_cli`：`scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
-| `pilot_run`（OpenCode 工具） | Host Session Driver：启动并驱动 workflow |
+| `pilot_run`（OpenCode 工具） | Host Session Driver：`workflow=auto` 跑自然语言任务；`workflow=<id>` 跑现有工作流 |
 | 插件 `pilot_cli`（OpenCode 工具） | 查询与诊断；`command` 不要 `--help`，不要 `start`/`run-action auto`。用法见 [ACP 工具使用](acp-tools.md) |
 
 正常使用时优先向 `AscendC-Pilot` 描述目标，或使用带参数的 Slash Command。
@@ -195,14 +212,23 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 
 ## 一次完整使用示例
 
+自然语言（不必知道模块名）：
+
+```text
+帮我给这个 PR 生成针对 case
+https://github.com/<org>/<repo>/pull/<id>
+```
+
+专家 Slash 仍可用：
+
 ```text
 帮我为 sparse_flash_attention_grad 的 arch35 建立 CodeMap。
 告诉我 TilingKey 的生成逻辑，以及每个 TilingKey 对应的 Kernel 模板。
-帮我建立 TilingKey 全覆盖测试。
-我修改了当前算子，更新 CodeMap，并审查这次修改。
+/tg-plan
+/ce-review
 ```
 
-自己有需求时走 `/ce-plan` → `/ce-apply`；已有 diff 走 `/ce-review`。验证走 `/tg-plan`。
+自己有需求时走 `/ce-plan` → `/ce-apply`；已有 diff 且只要审查走 `/ce-review`。验证走 `/tg-plan` 或自然语言生成 case。
 
 主链：
 

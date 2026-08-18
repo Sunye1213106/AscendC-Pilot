@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ascendc_pilot.obligations import collect_obligations
+from ascendc_pilot.obligations import collect_obligations, open_obligations
 from ascendc_pilot.obligations.ledger import (
     can_transition,
     ledger_path,
     load_ledger,
+    save_ledger,
     upsert_item,
     validate_ledger,
 )
 from ascendc_pilot.paths import ensure_agent_layout
+from ascendc_pilot.run_resume import apply_reinit_wipe
 from ascendc_pilot.state import record_gate, start_workflow
 
 
@@ -85,3 +87,33 @@ def test_refuse_silent_downgrade(tmp_path: Path) -> None:
     upsert_item(ledger, oid="X", status="open", reason="bad", allow_revert=False)
     assert ledger["items"]["X"]["status"] == "verified"
     assert validate_ledger(ledger) == []
+
+
+def test_foreign_ledger_items_do_not_block_collect(tmp_path: Path) -> None:
+    """Leftover uo-update rows must not reopen uo-init complete (ses_febd)."""
+    ensure_agent_layout(tmp_path, arch="arch0")
+    start_workflow(tmp_path, "uo-init", intent="t", op_name="toy", architecture="arch0")
+    ledger = load_ledger(tmp_path)
+    upsert_item(
+        ledger,
+        oid="stale_from_other_workflow",
+        status="open",
+        kind="static",
+        settled_by_gate="integrity",
+        reason="seed",
+    )
+    save_ledger(tmp_path, ledger)
+    items = collect_obligations(tmp_path, "uo-init")
+    ids = {str(it.get("id") or "") for it in items}
+    assert "stale_from_other_workflow" not in ids
+    open_ids = {str(it.get("id") or "") for it in open_obligations(items)}
+    assert "stale_from_other_workflow" not in open_ids
+
+
+def test_reinit_wipes_obligation_ledger(tmp_path: Path) -> None:
+    ensure_agent_layout(tmp_path, arch="arch0")
+    start_workflow(tmp_path, "uo-init", intent="t", op_name="toy", architecture="arch0")
+    collect_obligations(tmp_path, "uo-init")
+    assert ledger_path(tmp_path).is_file()
+    apply_reinit_wipe(tmp_path, "uo-init", architecture="arch0")
+    assert not ledger_path(tmp_path).is_file()

@@ -232,6 +232,8 @@ WORKFLOW_RESOURCES: dict[str, dict[str, list[str]]] = {
     "ce-plan": {"read": ["uo_product"], "write": ["ce_plan"]},
     "ce-apply": {"read": ["uo_product", "ce_plan"], "write": ["operator_source"]},
     "handoff": {"read": ["uo_product", "ce_plan", "tg_plan", "tg_init"], "write": []},
+    "goal-intake": {"read": [], "write": []},
+    "goal-impact": {"read": ["uo_product"], "write": []},
 }
 
 
@@ -334,7 +336,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "extract": ["extract_receipt"],
             "analyze": [],
             "commit": ["uo_product_ready"],
-            "verify": [],
+            "verify": ["integrity"],
         },
         "pipelines": {
             "prepare": ["prepare"],
@@ -344,7 +346,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "commit": ["commit"],
             "verify": ["verify"],
         },
-        "complete_gates": ["scope_receipt", "uo_product_ready"],
+        "complete_gates": ["scope_receipt", "uo_product_ready", "integrity"],
         "meta": {
             "product": "codemap-uo",
             "canonical_policy": "compiler_plus_deterministic_only",
@@ -468,6 +470,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id=None,
                 role_id="deterministic_engine",
                 referee_required=False,
+                post_gates=["integrity"],
                 capability_ids=[],
                 task_prompt_id=None,
                 output_contract_id="uo-verify-v1",
@@ -480,12 +483,13 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "static_obligations": [
             {"id": "scope_validated", "label_zh": "范围已校验"},
             {"id": "uo_product_ready", "label_zh": ".uo CodeMap 已写入"},
+            {"id": "kb_integrity_passed", "label_zh": "完整性通过"},
         ],
         "dynamic_obligation_sources": ["ir/unresolved.yaml"],
         "write_roots": ["uo", "runs", "state", "context"],
         "reset_policy": {
             "reinit_delete": ["uo"],
-            "reinit_preserve": [],
+            "reinit_preserve": ["uo/cache"],
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
@@ -495,6 +499,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "scope_receipt",
             "extract_receipt",
             "uo_product_ready",
+            "integrity",
         ],
     },
     "uo-update": {
@@ -762,6 +767,8 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
 
 from ascendc_pilot.workflows.tg_specs import attach_tg_workflows
 from ascendc_pilot.workflows.ce_specs import attach_ce_workflows
+from ascendc_pilot.workflows.goal_specs import attach_goal_workflows
 
 attach_tg_workflows(WORKFLOWS, _act=_act, _st=_st, _tr=_tr)
 attach_ce_workflows(WORKFLOWS, _act=_act, _st=_st, _tr=_tr)
+attach_goal_workflows(WORKFLOWS, _act=_act, _st=_st, _tr=_tr)

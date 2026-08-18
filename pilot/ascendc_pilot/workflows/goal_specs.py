@@ -207,7 +207,7 @@ def _build(
                     human_interaction="confirm",
                     capability_ids=[],
                     task_prompt_id=None,
-                    context_profile_id=None,
+                    context_profile_id="goal-impact-test-scope",
                     output_contract_id="test-scope-v1",
                 ),
             ],

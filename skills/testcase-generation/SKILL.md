@@ -39,10 +39,12 @@ description: >
 ## 核心循环
 
 ```text
-init.yaml → plan.md（融合意图）→ 人批准
+init.yaml → plan.md（融合意图）→ 规划门禁
   → 构造 cases 表 → Host Replay → worklog 四段
   → open: [] 才签发
 ```
+
+自然语言 Harness 会自动签发「确认进入规划 / 批准规划」；用户只在 Goal 级 `test_scope` 选范围。专家单独跑 `/tg-init` / `/tg-plan` 同样不再弹这两问。
 
 `Replay reject ≠ E`。查语义与 uo-query 同一套，禁止 Grep 算子仓。
 
@@ -51,6 +53,9 @@ init.yaml → plan.md（融合意图）→ 人批准
 | 需要 | 读取 |
 |---|---|
 | 绑定列与跑测口径 | `capabilities/bind-init/METHOD.md` |
+| 理解用户原文要做什么 | `capabilities/parse-intent/METHOD.md` |
+| 分析改动影响 | `capabilities/change-impact/METHOD.md` |
+| 推导测试义务 | `capabilities/change-obligations/METHOD.md` |
 | 融合义务 | `capabilities/plan-fuse/METHOD.md` |
 | 构造用例 | `capabilities/construct-cases/METHOD.md` |
 | 写 worklog | `capabilities/analyze-round/METHOD.md` |

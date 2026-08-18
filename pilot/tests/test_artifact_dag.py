@@ -183,6 +183,18 @@ def test_prepare_post_gates_do_not_self_consume() -> None:
     assert not (set(published) & set(consumes))
 
 
+def test_verify_post_gates_do_not_self_consume() -> None:
+    from ascendc_pilot.workflows.artifact_dag import normalize_consumes, normalize_published
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    verify = next(a for a in WORKFLOWS["uo-init"]["actions"] if a["id"] == "verify")
+    assert "integrity" in (verify.get("post_gates") or [])
+    published = set(normalize_published(verify))
+    consumes = set(normalize_consumes(verify))
+    assert "uo/checks/integrity.yaml" in published
+    assert not (published & consumes)
+
+
 def test_precheck_actions_publish_nothing() -> None:
     from ascendc_pilot.workflows.artifact_dag import normalize_published
     from ascendc_pilot.workflows.specs import WORKFLOWS

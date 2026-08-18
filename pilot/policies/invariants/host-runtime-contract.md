@@ -5,7 +5,7 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 
 ## Transport
 
-- Workflows: Host tool `pilot_run` only (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged.
+- Workflows: Host tool `pilot_run` only (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged. Natural language: `workflow=auto` and `intent=` the user's original text; do not invent slash chains. Explicit slash: `workflow=<existing id>`. Driver must not invent Todo steps.
 - If `pilot_run` is missing from the tool list: tell the user to fully quit OpenCode and reinstall the plugin.
 - Exception: **never** `pilot_run` for `uo-query`.
 - When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If a Host-driver `host_step.tasks` ≥2 (review dual-axis, not uo-query keyword fanout), launch all in the same turn, then Primary synthesizes each child's **native Task text**.

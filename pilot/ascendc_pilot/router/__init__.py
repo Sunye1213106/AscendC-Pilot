@@ -54,8 +54,8 @@ def _skill_candidates() -> list[dict[str, str]]:
 
 
 _UNMATCHED_MSG_ZH = (
-    "自然语言意图请由 Agent 按 workflow skill 的 description 自行加载对应 Skill。"
-    "slash 仅支持 /uo-init 等入口，不要用 --help 发现协议。"
+    "自然语言请用 `pilot_run(workflow=auto, intent=原文)`。"
+    "slash 仅支持 /uo-init 等专家入口。"
 )
 
 
@@ -115,17 +115,15 @@ def route(text: str) -> dict[str, Any]:
             "method": "workflow_id",
         }
 
-    from ascendc_pilot.user_goal import route_natural_goal
-
-    goal = route_natural_goal(raw)
-    if goal:
-        return goal
-
     return {
         "ok": False,
-        "workflow_id": None,
-        "error": "unmatched",
+        "workflow_id": "auto",
+        "error": "use_auto",
+        "use_auto": True,
         "candidates": list_user_workflows(),
         "skill_candidates": _skill_candidates(),
-        "message_zh": _UNMATCHED_MSG_ZH,
+        "message_zh": (
+            "自然语言请用 Host 工具 `pilot_run(workflow=auto, intent=原文)`。"
+            "不要猜测 slash。专家入口仍是 /uo-init /tg-plan /ce-review 等。"
+        ),
     }

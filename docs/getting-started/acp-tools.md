@@ -12,15 +12,18 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 
 ```text
 用户目标
-  ├─ 建库 / 更新 / TG / CE / 调查 unresolved
-  │     → Host 工具 pilot_run（workflow + project + architecture）
+  ├─ 自然语言说目标（不必知道模块名）
+  │     → Host 工具 pilot_run（workflow=auto, intent=原文；project 可后补）
+  ├─ 显式 Slash：建库 / 更新 / TG / CE / 调查 unresolved
+  │     → Host 工具 pilot_run（workflow=<现有 id> + project + architecture）
   └─ 只读问 CodeMap / 看状态 / 看失败卡 / 环境修好后恢复
         → 插件工具 pilot_cli
 ```
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run` | 手工串 `start` / `next` / `run-action auto` |
+| 自然语言：「帮我给这个 PR 生成针对 case」+ URL | `pilot_run(workflow=auto, intent=原文)` | 自己猜 `/ce-review` 或手串 `tg-init→tg-plan` |
+| `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run(workflow=<id>)` | 手工串 `start` / `next` / `run-action auto` |
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
 | 缺 architecture、要列 `arch*` 选项 | 插件 `pilot_cli`：`scan-architectures --project <算子绝对路径>` | 在仓库根目录 Glob / 翻 cmake |
@@ -38,7 +41,7 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 retry-after-environment-fix --project D:\ops\attention\flash_attention_score_grad
 ```
 
-`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。贴 GitCode PR URL 走 `/ce-review` 时同样要在算子仓打开，且该 arch 已有 `.uo`。
+`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。自然语言贴 PR URL 并要求生成 case 时走 `workflow=auto`（系统自行 fetch/worktree），**不要**默认当成 `/ce-review`。专家若只要审查，才显式 `/ce-review`。
 
 ---
 
@@ -81,8 +84,8 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 
 | 参数 | 说明 |
 | --- | --- |
-| `workflow` | `uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。**不要**填 `uo-query` |
-| `project` | 算子包绝对路径 |
+| `workflow` | `auto`（自然语言任务）或全部现有 id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。**不要**填 `uo-query` |
+| `project` | 算子包绝对路径。`workflow=auto` 且 Intent 给出 allowlisted PR URL 时可暂缺，由 Workspace Manager 钉到 worktree |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |

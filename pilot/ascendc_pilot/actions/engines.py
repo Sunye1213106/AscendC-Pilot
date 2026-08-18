@@ -711,6 +711,10 @@ from ascendc_pilot.actions.tg_product import install as _install_tg_product
 
 _install_tg_product(ENGINE_REGISTRY)
 
+from ascendc_pilot.actions.goal_engines import install as _install_goal
+
+_install_goal(ENGINE_REGISTRY)
+
 
 
 # Output contract id → relative paths under .ascendc-pilot (existence + nonempty where applicable)
@@ -808,6 +812,22 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
         "runs/{run_id}/actions/analyze_round/staging.yaml",
     ],
     "tg-certify-v1": ["runs/{run_id}/receipts/solve_certify.yaml"],
+    "intent-staging-v1": [
+        "runs/{run_id}/actions/parse_intent/parts/**",
+        "runs/{run_id}/actions/parse_intent/staging.yaml",
+    ],
+    "intent-promoted-v1": ["runs/{run_id}/receipts/intent_promoted.yaml"],
+    "change-impact-staging-v1": [
+        "runs/{run_id}/actions/change_impact/parts/**",
+        "runs/{run_id}/actions/change_impact/staging.yaml",
+    ],
+    "change-impact-v1": ["runs/{run_id}/receipts/change_impact.yaml"],
+    "change-obligations-staging-v1": [
+        "runs/{run_id}/actions/derive_obligations/parts/**",
+        "runs/{run_id}/actions/derive_obligations/staging.yaml",
+    ],
+    "change-obligations-v1": ["runs/{run_id}/receipts/test_obligations.yaml"],
+    "test-scope-v1": ["runs/{run_id}/receipts/scope_decision.yaml"],
 
 }
 

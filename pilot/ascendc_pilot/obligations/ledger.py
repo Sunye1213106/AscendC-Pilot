@@ -315,7 +315,28 @@ def sync_from_collected(
     from ascendc_pilot.state import load_state
 
     ledger = load_ledger(project_root)
+    prev_wid = str(ledger.get("workflow_id") or "").strip()
     ledger["workflow_id"] = workflow_id
+    derived_ids = {str(row.get("id") or "") for row in collected if row.get("id")}
+    if prev_wid and prev_wid != workflow_id:
+        items = ledger.get("items") or {}
+        if isinstance(items, dict):
+            for oid in list(items):
+                if oid in derived_ids:
+                    continue
+                prev = items.pop(oid)
+                st = ""
+                if isinstance(prev, dict):
+                    st = str(prev.get("status") or "")
+                ledger.setdefault("history", []).append(
+                    {
+                        "at": _now(),
+                        "id": oid,
+                        "from": st or "(item)",
+                        "to": "(dropped)",
+                        "reason": "workflow_switch",
+                    }
+                )
     state = load_state(project_root) if project_root else {}
     passed_gates = set(state.get("passed_gates") or []) if isinstance(state, dict) else set()
 

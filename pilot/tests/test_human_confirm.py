@@ -18,7 +18,7 @@ from ascendc_pilot.human_interaction import issue_interaction_request, record_an
 from ascendc_pilot.human_voice import build_human_confirm_ask
 from ascendc_pilot.paths import ce_root, runs_root, tg_root
 from ascendc_pilot.state import load_state, start_workflow
-from ascendc_pilot.user_goal import create_tilingkey_full_coverage_goal
+from ascendc_pilot.user_goal import create_user_goal
 
 
 @pytest.fixture(autouse=True)
@@ -193,11 +193,15 @@ def test_hosted_confirm_skips_tg_on_full_coverage_goal(tmp_path: Path) -> None:
         architecture="arch35",
         intent="补全量 TilingKey 覆盖测试",
     )
-    create_tilingkey_full_coverage_goal(
+    create_user_goal(
         tmp_path,
-        architecture="arch35",
         intent_text="补全量 TilingKey 覆盖测试",
-        current_step="tg_init",
+        llm_intent={
+            "objective_zh": "全量覆盖测试",
+            "needed_capabilities": ["knowledge", "test_generation"],
+            "source": {"kind": "local"},
+        },
+        architecture="arch35",
     )
     state = load_state(tmp_path) or {}
     assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is False
@@ -215,4 +219,4 @@ def test_hosted_confirm_asks_tg_without_goal(tmp_path: Path) -> None:
         intent="只绑定测试脚本",
     )
     state = load_state(tmp_path) or {}
-    assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is True
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is False

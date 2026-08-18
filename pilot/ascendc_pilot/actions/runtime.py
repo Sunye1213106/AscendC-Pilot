@@ -1980,14 +1980,19 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         if action_id in {"grill_confirm", "human_confirm", "plan_approve"}:
             if not hosted_confirm_should_ask(project_root, voice_state, action_id=action_id):
                 materialized = materialize_primary_decision(project_root, action_id)
-                fin = finalize_action(project_root, action_id, engine_result=materialized)
-                result["auto_skip_human_gate"] = True
-                result["needs_human_decision"] = False
-                result["auto_finalize"] = True
-                result["finalize"] = fin
-                result["ok"] = bool(fin.get("ok"))
-                result["message_zh"] = "已按你的授权跳过中间确认。"
-                return result
+                if materialized.get("ok"):
+                    fin = finalize_action(project_root, action_id, engine_result=materialized)
+                    if fin.get("ok"):
+                        result["auto_skip_human_gate"] = True
+                        result["needs_human_decision"] = False
+                        result["auto_finalize"] = True
+                        result["finalize"] = fin
+                        result["ok"] = True
+                        result["message_zh"] = "已自动完成本步确认。"
+                        return result
+                # Keep the prepared session (method.md already written). Real
+                # runs have init/plan products so auto-issue succeeds; unit
+                # prepares without those products still return a Host session.
         ask = build_ask(
             project_root,
             voice_state,

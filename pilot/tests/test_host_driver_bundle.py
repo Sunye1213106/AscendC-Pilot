@@ -381,16 +381,24 @@ def test_path_within_scopes_namespace_aware() -> None:
 
 def test_attach_host_step_continue_goal(tmp_path: Path) -> None:
     from ascendc_pilot.actions.dispatch import attach_host_step
-    from ascendc_pilot.user_goal import create_tilingkey_full_coverage_goal
+    from ascendc_pilot.planning.task_plan import plan_for, write_task_plan
+    from ascendc_pilot.user_goal import create_user_goal
 
     ensure_agent_layout(tmp_path, arch="arch0")
     start_workflow(tmp_path, "tg-init", force_phase=True, architecture="arch0")
-    create_tilingkey_full_coverage_goal(
+    llm_intent = {
+        "objective_zh": "生成针对性测试用例",
+        "needed_capabilities": ["knowledge", "test_generation"],
+        "source": {"kind": "local"},
+        "intent_text": "帮我生成对应 case",
+    }
+    create_user_goal(
         tmp_path,
+        intent_text="帮我生成对应 case",
+        llm_intent=llm_intent,
         architecture="arch0",
-        intent_text="建立全量 TilingKey 覆盖测试",
-        current_step="tg_init",
     )
+    write_task_plan(tmp_path, plan_for(llm_intent, {"has_uo": True}))
     out = attach_host_step(
         tmp_path,
         {

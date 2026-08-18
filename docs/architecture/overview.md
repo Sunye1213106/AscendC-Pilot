@@ -70,13 +70,17 @@ AscendC Source → UO → Operator CodeMap
                          └→ CE → Plan / Apply / Review
 
 User
+  ├─ 自然语言 → Primary → pilot_run(workflow=auto, intent=原文)
+  └─ Slash /uo /tg /ce → Primary → pilot_run(workflow=<现有 id>)
     ↓
 Host Adapter（安装期 compose + 运行时 Session Driver）
     ↓
-ACP Harness (Pilot Runtime：Workflow / Lease / Gate)
+ACP Harness（Intent LLM 理解任务 → Task Plan 合法展开 → Workflow / Lease / Gate）
     ↓
-Engine（事实）或 LLM Agent（推理）
+Engine（事实：clone / Clang / replay）或 LLM Agent（推理；不推进状态）
 ```
+
+自然语言 Intake **不走脚本预解析**：用户原文原样进 Intent LLM，由它产出 `needed_capabilities` 与 SourceRef；Harness 再按现有 UO/TG/CE 前置条件展开。Slash 路径不经 Intent，直接跑对应工作流。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。
 
 | 模块 | 一句话 |
 | --- | --- |

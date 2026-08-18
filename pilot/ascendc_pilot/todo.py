@@ -63,6 +63,61 @@ def build_todo(
     wid = str(st.get("workflow_id") or "")
     phase = str(st.get("phase") or "")
     status = str(st.get("status") or "")
+
+    try:
+        from ascendc_pilot.user_goal import is_auto_session, load_user_goal
+
+        goal = load_user_goal(project_root)
+        auto = is_auto_session(goal)
+    except Exception:  # noqa: BLE001
+        goal = None
+        auto = False
+    if auto and str((goal or {}).get("status") or "") in {"active", "revising"}:
+        native_items: list[dict[str, str]] = []
+        phases: list[dict[str, str]] = []
+        for item in goal.get("public_plan") or []:
+            if not isinstance(item, dict):
+                continue
+            pid = str(item.get("id") or "")
+            label = str(item.get("summary_zh") or pid)
+            raw = str(item.get("status") or "pending")
+            if raw in {"passed", "skipped", "done"}:
+                mark = "done"
+                status_native = "completed"
+            elif raw == "in_progress":
+                mark = "current"
+                status_native = "in_progress"
+            else:
+                mark = "pending"
+                status_native = "pending"
+            phases.append({"id": pid, "label_zh": label, "status": mark})
+            native_items.append(
+                {
+                    "id": pid,
+                    "content": label,
+                    "status": status_native,
+                    "priority": _NATIVE_PRIORITY.get(status_native, "medium"),
+                }
+            )
+        in_prog = [it for it in native_items if it["status"] == "in_progress"]
+        if len(in_prog) > 1:
+            keep = in_prog[0]["id"]
+            for it in native_items:
+                if it["status"] == "in_progress" and it["id"] != keep:
+                    it["status"] = "pending"
+        return {
+            "workflow_id": wid,
+            "run_id": st.get("run_id") or "",
+            "phase": phase,
+            "phase_label_zh": "",
+            "status": status,
+            "sync": "opencode_native_todowrite",
+            "phases": phases,
+            "native_items": native_items,
+            "open_items": [],
+            "next_actions": [],
+        }
+
     if not wid:
         return {
             "workflow_id": "",
@@ -96,6 +151,8 @@ def build_todo(
         pid = row["id"]
         mark = row["status"]
         label = label_zh_for(wid, pid)
+        if label in {"确认进入规划", "批准规划"}:
+            label = "完成当前步骤" if mark != "done" else "已完成"
         phases.append({"id": pid, "label_zh": label, "status": mark})
         status_native = _NATIVE_STATUS.get(mark, "pending")
         native_items.append(

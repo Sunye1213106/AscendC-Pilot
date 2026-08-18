@@ -140,7 +140,9 @@ def _check_no_unreferenced_actions(
     spec_actions: set[tuple[str, str]] = set()
     used_contracts: set[str] = set()
     for wid, meta in workflows.items():
-        if meta.get("reserved") or not meta.get("slash"):
+        if meta.get("alias_of"):
+            continue
+        if not (meta.get("actions") or []):
             continue
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
@@ -754,17 +756,49 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
         if "不查图" not in text or "ce-plan" not in text or "ce-review" not in text:
             errors.append("ce-apply METHOD must say apply 不查图；查图是 /ce-plan 与 /ce-review")
     try:
-        from ascendc_pilot import user_goal as ug
+        from ascendc_pilot.harness.intent import validate_intent_staging
+        from ascendc_pilot.planning.task_plan import plan_for
+        from ascendc_pilot.router import route
+        from ascendc_pilot.workflows import list_user_workflows
 
-        for step in list(ug.DEFAULT_STEPS) + list(ug.CE_STEPS):
-            wid = str(step.get("workflow_id") or "")
-            if wid and wid not in wf_map:
-                errors.append(f"user_goal step {step.get('id')} unknown workflow {wid}")
-        hit = ug.route_natural_goal("审 https://gitcode.com/cann/ops-transformer/pulls/1")
-        if not hit or hit.get("workflow_id") != "ce-review":
-            errors.append("user_goal PR URL must route to ce-review")
+        hit = route("审 https://gitcode.com/cann/ops-transformer/pulls/1")
+        if hit.get("ok") and hit.get("method") in {"slash", "workflow_id", "goal_router"}:
+            errors.append("NL PR URL must not be script-routed to a workflow before LLM intake")
+        if hit.get("workflow_id") == "ce-review":
+            errors.append("NL PR URL must not map to ce-review; that is LLM SourceRef + capabilities")
+        if str(hit.get("error") or "") != "use_auto":
+            errors.append("unmatched NL must tell the caller to use workflow=auto")
+        for slash_id in ("uo-init", "tg-plan", "ce-review", "ce-plan", "tg-solve"):
+            if slash_id not in list_user_workflows():
+                errors.append(f"user slash workflow {slash_id} missing from list_user_workflows()")
+        checked = validate_intent_staging(
+            {
+                "objective_zh": "为这个 PR 生成针对性测试用例",
+                "source": {
+                    "kind": "pull_request",
+                    "url": "https://gitcode.com/cann/ops-transformer/pulls/1",
+                },
+                "needed_capabilities": [
+                    "knowledge",
+                    "change_analysis",
+                    "test_generation",
+                ],
+            }
+        )
+        if not checked.get("ok"):
+            errors.append(f"intent staging contract failed: {checked}")
+        planned = plan_for(checked.get("intent") or {}, {"has_uo": False, "uo_stale": False})
+        wids = [
+            str(s.get("workflow_id") or s.get("id"))
+            for s in (planned.get("steps") or [])
+            if isinstance(s, dict)
+        ]
+        if "ce-review" in wids:
+            errors.append("test_generation plan must not default to ce-review")
+        if "tg-plan" not in wids or "uo-init" not in wids:
+            errors.append("test_generation plan must expand to uo-init and tg-*")
     except Exception as exc:  # noqa: BLE001
-        errors.append(f"user_goal SSOT check failed: {exc}")
+        errors.append(f"task harness SSOT check failed: {exc}")
     return errors
 
 

@@ -458,7 +458,9 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
         if next_wf:
             arch = ""
             intent = ""
+            project_from_goal = ""
             try:
+                from ascendc_pilot.public_progress import message_zh_for_host
                 from ascendc_pilot.user_goal import load_user_goal
 
                 complete_st = (
@@ -472,22 +474,41 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                 goal = load_user_goal(project_root) or {}
                 if not arch:
                     arch = str(goal.get("architecture") or "").strip()
-                intent = str(goal.get("intent_text") or goal.get("label_zh") or "").strip()
+                if arch == "goal":
+                    arch = ""
+                intent_doc = goal.get("intent") if isinstance(goal.get("intent"), dict) else {}
+                intent = str(
+                    intent_doc.get("text")
+                    or goal.get("intent_text")
+                    or goal.get("label_zh")
+                    or ""
+                ).strip()
+                project_from_goal = str(goal.get("project") or "").strip()
+            except Exception:  # noqa: BLE001
+                pass
+            msg = str(
+                complete.get("user_goal_next_summary_zh")
+                or complete.get("message_zh")
+                or ""
+            )
+            try:
+                from ascendc_pilot.public_progress import message_zh_for_host
+
+                pub = message_zh_for_host(project_root)
+                if pub:
+                    msg = pub
             except Exception:  # noqa: BLE001
                 pass
             out["host_step"] = build_host_step(
                 kind="continue_goal",
                 project_root=project_root,
-                message_zh=str(
-                    complete.get("user_goal_next_summary_zh")
-                    or complete.get("message_zh")
-                    or f"continue goal → {next_wf}"
-                ),
+                message_zh=msg or f"continue goal → {next_wf}",
                 extra={
                     "status": status or "passed",
                     "next_workflow_id": next_wf,
                     "architecture": arch,
                     "intent": intent,
+                    "project": str(project_from_goal or ""),
                     "completed_workflow_id": str(
                         (complete.get("state") or {}).get("workflow_id")
                         if isinstance(complete.get("state"), dict)
@@ -590,6 +611,11 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             )
             out["prepare"] = prep
             return out
+
+        if prep.get("auto_skip_human_gate") and prep.get("auto_finalize"):
+            from ascendc_pilot.actions.drive import drive_until_interaction
+
+            return drive_until_interaction(project_root, prepare=prepare_action)
 
         if kind == "primary_interactive" or prep.get("needs_human_decision"):
             out["host_step"] = build_host_step(

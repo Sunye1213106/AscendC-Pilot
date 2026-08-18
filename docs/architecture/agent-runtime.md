@@ -53,7 +53,9 @@ Host (OpenCode / Cursor / Codex)
                  |- LLM actions (prepare -> Task -> finalize)
 ```
 
-**Host Session Driver**（运行时传输角色）：把 `start → auto → Task → finalize → auto` 从 Primary LLM 挪到 Host Adapter。OpenCode 暴露自定义工具 `pilot_run`；ACP 返回结构化 `host_step`（`dispatch_subagent` / `ask_human` / `done` / `failed`）与一次性 `dispatch_ticket`。Driver 不获得 advance/complete/写 canonical 的权力。
+**Host Session Driver**（运行时传输角色）：把 `start → auto → Task → finalize → auto` 从 Primary LLM 挪到 Host Adapter。OpenCode 暴露自定义工具 `pilot_run`；ACP 返回结构化 `host_step`（`dispatch_subagent` / `ask_human` / `done` / `failed` / `continue_goal`）与一次性 `dispatch_ticket`。Driver 不获得 advance/complete/写 canonical 的权力，也不做领域判断。
+
+自然语言任务走 `pilot_run(workflow=auto, intent=用户原文)`：Harness 先把原文交给 Intent LLM，再编合法 Task Plan 并串联现有 UO/TG/CE。显式 `workflow=<id>` 仍一次只跑该工作流。查询不进该环。
 
 `authorize` 热路径：`acp serve-authorize --ipc-dir …` 常驻进程 + 短 TTL verdict 缓存；失败时回退 `spawnSync acp authorize`。
 
@@ -256,7 +258,7 @@ acp start
 
 | 命令 | 作用 |
 | --- | --- |
-| `acp start` | 启动或复用 **本产物族** run；不同族并行；`--architecture` 在写路径之前就会钉住；`--force-new` 只在已有同族 run/产物时 wipe，处女项目是 no-op；失败态逃生口；全覆盖 NL 可写入 `control/user_goal.yaml`；解析 run 级 `source_scope.yaml`；Host 注入 `ASCENDC_SESSION_ID` / `ASCENDC_WORKFLOW_ID` |
+| `acp start` | 启动或复用 **本产物族** run；不同族并行；`--architecture` 在写路径之前就会钉住；`--force-new` 只在已有同族 run/产物时 wipe，处女项目是 no-op；失败态逃生口；`workflow=auto` 先 Intent LLM 再写 `control/user_goal.yaml` + `control/task_plan.yaml`；解析 run 级 `source_scope.yaml`；Host 注入 `ASCENDC_SESSION_ID` / `ASCENDC_WORKFLOW_ID` |
 | `acp next` | 下一 Action / 恢复提示 |
 | `acp run-action` | **workflow run 内**唯一正式执行入口：prepare / `--finalize` / `auto`（drive + `host_step`） |
 | `acp dispatch-result` | 消费一次性 `dispatch_ticket`，finalize 后继续 drive |

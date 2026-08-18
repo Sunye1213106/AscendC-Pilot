@@ -311,8 +311,17 @@ def start_workflow(
         ensure_replay_layout,
         ensure_tg_layout,
         ensure_uo_layout,
+        require_architecture,
     )
-    from ascendc_pilot.workflows import entry_state, get_workflow, label_zh_for, state_ids
+    from ascendc_pilot.workflows import (
+        entry_state,
+        get_workflow,
+        label_zh_for,
+        resolve_workflow_id,
+        state_ids,
+        workflow_requires_architecture,
+        workflow_requires_uo_product,
+    )
 
     import os
 
@@ -331,7 +340,13 @@ def start_workflow(
     )
 
     clear_pending(project_root)
-    arch = require_architecture(architecture)
+    workflow_id = resolve_workflow_id(workflow_id)
+    if workflow_requires_architecture(workflow_id) or workflow_requires_uo_product(
+        workflow_id
+    ):
+        arch = require_architecture(architecture)
+    else:
+        arch = str(architecture or "").strip() or "goal"
     # Pin process env so path helpers (uo_root/agent_root) resolve without
     # inventing a default architecture for the rest of this process.
     os.environ["UO_ARCH"] = arch

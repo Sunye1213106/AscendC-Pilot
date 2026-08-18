@@ -9,16 +9,6 @@ description: >
   Never write operator source, .uo, or canonical tg/init.yaml / plan.md / worklog.md.
 max_skill_ids: &skills [testcase-generation, operator-analysis]
 skill_ids: *skills
-read_scopes:
-- pilot:tg/**
-- pilot:uo/**
-- pilot:ce/plan/**
-- pilot:session_handoff.md
-- pilot:runs/**
-- pilot:context/**
-- source:test_script/**
-- method:skills/testcase-generation/**
-- method:skills/operator-analysis/**
 write_scopes:
 - pilot:runs/**/actions/bind_init/parts/**
 - pilot:runs/**/actions/bind_init/scratch/**
@@ -34,6 +24,26 @@ write_scopes:
 - pilot:runs/**/actions/analyze_round/scratch/**
 - pilot:runs/**/actions/analyze_round/staging.md
 - pilot:runs/**/actions/analyze_round/staging.yaml
+- pilot:runs/**/actions/parse_intent/parts/**
+- pilot:runs/**/actions/parse_intent/scratch/**
+- pilot:runs/**/actions/parse_intent/staging.yaml
+- pilot:runs/**/actions/change_impact/parts/**
+- pilot:runs/**/actions/change_impact/scratch/**
+- pilot:runs/**/actions/change_impact/staging.yaml
+- pilot:runs/**/actions/derive_obligations/parts/**
+- pilot:runs/**/actions/derive_obligations/scratch/**
+- pilot:runs/**/actions/derive_obligations/staging.yaml
+read_scopes:
+- pilot:tg/**
+- pilot:uo/**
+- pilot:ce/plan/**
+- pilot:session_handoff.md
+- pilot:runs/**
+- pilot:context/**
+- source:test_script/**
+- method:skills/testcase-generation/**
+- method:skills/operator-analysis/**
+- pilot:control/**
 machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed

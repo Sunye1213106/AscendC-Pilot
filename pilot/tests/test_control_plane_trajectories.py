@@ -19,10 +19,7 @@ from ascendc_pilot.router import route
 from ascendc_pilot.source_snapshot import materialize_source_snapshot
 from ascendc_pilot.state import start_workflow
 from ascendc_pilot.user_goal import (
-    GOAL_CE_CHANGE,
-    ensure_goal_for_intent,
     mark_workflow_passed,
-    route_natural_goal,
 )
 from ascendc_pilot.workflows.specs import resource_sets_conflict, WORKFLOWS
 
@@ -117,34 +114,34 @@ def test_ro_search_refuses_repo_root(tmp_path: Path) -> None:
     assert tmp_path.resolve() not in {p.resolve() for p in roots}
 
 
-def test_goal_router_pr_url_goes_to_ce_review() -> None:
-    from ascendc_pilot.user_goal import GOAL_CE_REVIEW, route_natural_goal
+def test_nl_pr_url_does_not_script_route_to_ce_review() -> None:
+    from ascendc_pilot.harness.intent import validate_intent_staging
+    from ascendc_pilot.planning.task_plan import plan_for
     from ascendc_pilot.router import route
 
     url = "https://gitcode.com/cann/ops-transformer/pulls/9851"
-    hit = route_natural_goal(f"帮我审一下 {url}")
-    assert hit and hit["workflow_id"] == "ce-review"
-    assert hit["goal_id"] == GOAL_CE_REVIEW
-    assert hit.get("pr_url") == url
-    routed = route(f"帮我审一下 {url}")
-    assert routed.get("ok") is True
-    assert routed.get("workflow_id") == "ce-review"
-
-
-def test_goal_router_ce_chain(tmp_path: Path) -> None:
-    hit = route_natural_goal("验证这次改动")
-    assert hit and hit["workflow_id"] == "ce-plan"
-    assert route("验证这次改动").get("method") == "goal_router"
-    goal = ensure_goal_for_intent(
-        tmp_path,
-        intent_text="验证这次改动",
-        architecture="arch35",
-        workflow_id="ce-plan",
-        op_name="DemoOp",
+    routed = route(f"帮我给这个 PR 生成 case {url}")
+    assert routed.get("error") == "use_auto"
+    assert routed.get("workflow_id") == "auto"
+    checked = validate_intent_staging(
+        {
+            "objective_zh": "为这个 PR 生成针对性测试用例",
+            "source": {"kind": "pull_request", "url": url},
+            "needed_capabilities": ["knowledge", "change_analysis", "test_generation"],
+        }
     )
-    assert goal and goal["goal_id"] == GOAL_CE_CHANGE
-    adv = mark_workflow_passed(tmp_path, "ce-plan")
-    assert adv and adv["next_workflow_id"] == "ce-apply"
+    assert checked.get("ok") is True
+    planned = plan_for(checked["intent"], {"has_uo": False})
+    wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
+    assert "ce-review" not in wids
+    assert "uo-init" in wids
+    assert "tg-plan" in wids
+
+
+def test_slash_workflows_still_route() -> None:
+    assert route("/tg-plan").get("workflow_id") == "tg-plan"
+    assert route("/ce-review").get("workflow_id") == "ce-review"
+    assert route("uo-init").get("workflow_id") == "uo-init"
 
 
 def test_local_capability_bootstrap_writes_stub(tmp_path: Path) -> None:

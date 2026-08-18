@@ -6,16 +6,17 @@
 
 ```text
 安装
-  -> Quick Start
-  -> Host 工具（pilot_run / 插件 pilot_cli）
-  -> UO：建立并查询 CodeMap
-  -> TG：建立覆盖闭环
-  -> CE：审查改动影响
+  -> Quick Start（自然语言说目标，或 Slash 专家命令）
+    -> Host 工具（pilot_run auto / 显式 workflow；插件 pilot_cli）
+    -> UO：建立并查询 CodeMap
+    -> TG：建立覆盖闭环
+    -> CE：审查改动影响
 ```
 
 - [安装](getting-started/installation.md)
-- [Quick Start](getting-started/quickstart.md)
+- [Quick Start](getting-started/quickstart.md)（自然语言 `pilot_run(auto)` 与 `/uo-*` `/tg-*` `/ce-*` 双路径）
 - [Host 工具使用](getting-started/acp-tools.md)（`pilot_run` / 插件 `pilot_cli`）
+- [PR → 定向 cases 手工 E2E](test/golden-e2e-pr-cases.md)（真仓清单，不进默认 pytest）
 - [UO - Understand Operator](modules/uo.md)
 - [当前版本 UO benchmark（FAG arch35 冷启动 119s、查询与未闭合项）](benchmark.md)
 - [TG - Testcase Generation](modules/tg.md)

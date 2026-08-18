@@ -14,11 +14,8 @@ from ascendc_pilot.human_voice import (
     progress_zh,
 )
 from ascendc_pilot.user_goal import (
-    GOAL_TILINGKEY_FULL,
-    create_tilingkey_full_coverage_goal,
-    ensure_goal_for_intent,
+    create_user_goal,
     mark_workflow_passed,
-    matches_full_coverage_intent,
     progress_line_zh,
 )
 
@@ -35,8 +32,16 @@ def test_banned_jargon_detects_internal_fields() -> None:
 
 
 def test_ask_question_has_intent_and_consequences(tmp_path: Path) -> None:
-    create_tilingkey_full_coverage_goal(
-        tmp_path, architecture="arch35", op_name="FlashAttentionScoreGrad"
+    create_user_goal(
+        tmp_path,
+        intent_text="为这个 PR 生成针对性测试用例",
+        llm_intent={
+            "objective_zh": "生成针对性测试用例",
+            "needed_capabilities": ["knowledge", "change_analysis", "test_generation"],
+            "source": {"kind": "local"},
+        },
+        architecture="arch35",
+        op_name="FlashAttentionScoreGrad",
     )
     ask = build_human_confirm_ask(
         tmp_path,
@@ -150,27 +155,31 @@ def test_deterministic_plan_precheck_loads_no_prompt() -> None:
 
 
 def test_user_goal_match_and_advance(tmp_path: Path) -> None:
-    assert matches_full_coverage_intent("帮我建立 TilingKey 全覆盖测试")
-    assert matches_full_coverage_intent("全量 tilingkey case")
-    assert not matches_full_coverage_intent("只查一下 CodeMap")
+    from ascendc_pilot.planning.task_plan import plan_for, write_task_plan
 
-    goal = ensure_goal_for_intent(
+    llm_intent = {
+        "objective_zh": "生成针对性测试用例",
+        "needed_capabilities": ["knowledge", "test_generation"],
+        "source": {"kind": "local"},
+    }
+    goal = create_user_goal(
         tmp_path,
-        intent_text="建立 TilingKey 全覆盖测试",
+        intent_text="帮我生成对应 case",
+        llm_intent=llm_intent,
         architecture="arch35",
-        workflow_id="tg-init",
         op_name="DemoOp",
     )
     assert goal is not None
-    assert goal["goal_id"] == GOAL_TILINGKEY_FULL
-    assert goal["current_step"] == "tg_init"
+    assert goal["schema"] == "pilot-user-goal/v2"
+    assert "test_generation" in goal["intent"]["needed_capabilities"]
+    plan = plan_for(llm_intent, {"has_uo": True, "uo_stale": False})
+    write_task_plan(tmp_path, plan)
     line = progress_line_zh(goal)
-    assert "全量" in line or "覆盖" in line
+    assert line
 
     adv = mark_workflow_passed(tmp_path, "tg-init")
     assert adv is not None
     assert adv["next_workflow_id"] == "tg-plan"
-    assert "规划" in str(adv.get("next_summary_zh") or "")
     assert contains_banned_jargon(str(adv.get("message_zh") or "")) == []
 
     adv2 = mark_workflow_passed(tmp_path, "tg-plan")

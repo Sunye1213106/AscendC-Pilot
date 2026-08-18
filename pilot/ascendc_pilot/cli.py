@@ -858,38 +858,18 @@ def main(argv: list[str] | None = None) -> int:
             out.write_text(yaml.safe_dump(params, allow_unicode=True, sort_keys=False), encoding="utf-8")
         except Exception:  # noqa: BLE001
             pass
-        # User Goal: NL full-coverage phrases (or active goal) → control/user_goal.yaml
         try:
-            from ascendc_pilot.user_goal import (
-                ensure_goal_for_intent,
-                progress_line_zh,
-            )
+            from ascendc_pilot.public_progress import message_zh_for_host
+            from ascendc_pilot.user_goal import load_user_goal, progress_line_zh
 
-            intent_bits = " ".join(
-                x
-                for x in (
-                    str(start_kwargs.get("intent") or ""),
-                    str(getattr(args, "intent", "") or ""),
-                    str(args.workflow_id or ""),
-                )
-                if x
-            )
-            # Treat explicit tg-* slash as part of full-coverage chain when
-            # Primary already created / will create the product goal via phrases
-            # in --intent; also accept bare "全量/全覆盖/tilingkey case".
-            goal = ensure_goal_for_intent(
-                args.project,
-                intent_text=intent_bits,
-                architecture=str(state.get("architecture") or arch or ""),
-                workflow_id=str(args.workflow_id or ""),
-                op_name=str(state.get("op_name") or start_kwargs.get("op_name") or ""),
-            )
-            if goal:
-                state = dict(state) if isinstance(state, dict) else state
-                if isinstance(state, dict):
-                    state["user_goal"] = goal
-                    state["user_summary_zh"] = progress_line_zh(goal)
-                    state["message_zh"] = progress_line_zh(goal)
+            goal = load_user_goal(args.project)
+            if goal and isinstance(state, dict):
+                state = dict(state)
+                state["user_goal"] = goal
+                line = progress_line_zh(goal) or message_zh_for_host(args.project, state=state)
+                if line:
+                    state["user_summary_zh"] = line
+                    state["message_zh"] = line
         except Exception:  # noqa: BLE001
             pass
         if str(prep.get("resolved_from") or "") == "intent" and isinstance(state, dict):

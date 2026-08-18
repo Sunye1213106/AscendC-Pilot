@@ -206,7 +206,15 @@ def collect_obligations(project_root: Path, workflow_id: str) -> list[dict[str, 
         ledger = sync_from_collected(
             project_root, workflow_id, derived, run_id=run_id
         )
-        projected = view_as_collect_items(ledger)
+        derived_ids = {str(r.get("id") or "") for r in derived if r.get("id")}
+        # Only current-workflow derived ids may block complete. Leftover rows
+        # from a previous workflow (e.g. uo-update kb_integrity_passed after
+        # /uo-init force_new) stay in history but must not reopen the gate.
+        projected = [
+            row
+            for row in view_as_collect_items(ledger)
+            if str(row.get("id") or "") in derived_ids
+        ]
         if not projected:
             return derived
         # Preserve any brand-new derived ids that race ahead of ledger write.

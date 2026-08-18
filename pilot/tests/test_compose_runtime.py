@@ -159,6 +159,10 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "tg-playground.md" not in man.get("agents")
         assert (prompts / "codemap-query.md").is_file()
         assert (prompts / "investigate-gaps.md").is_file()
+        tg_prompts = generated / "prompts" / "tasks" / "tg"
+        assert (tg_prompts / "parse-intent.md").is_file()
+        assert (tg_prompts / "change-impact.md").is_file()
+        assert (tg_prompts / "change-obligations.md").is_file()
         assert not (prompts / "kb-review.md").exists()
         assert not (prompts / "kb-lookup.md").exists()
 

@@ -249,6 +249,38 @@ PROFILES: dict[str, ContextProfile] = {
         query_slices=(),
         token_budget=1200,
     ),
+    "goal-intake-parse-intent": ContextProfile(
+        id="goal-intake-parse-intent",
+        description="Read the user prompt verbatim; output capabilities and SourceRef only.",
+        references=(),
+        query_slices=(),
+        token_budget=1500,
+    ),
+    "goal-impact-change-impact": ContextProfile(
+        id="goal-impact-change-impact",
+        description="PR/ChangeSet + CodeMap → affected paths and contrast; staging only.",
+        references=(
+            "skills/testcase-generation/references/gotchas.md",
+        ),
+        query_slices=(),
+        token_budget=4000,
+    ),
+    "goal-impact-change-obligations": ContextProfile(
+        id="goal-impact-change-obligations",
+        description="Impact → structured test obligations; staging only.",
+        references=(
+            "skills/testcase-generation/references/gotchas.md",
+        ),
+        query_slices=(),
+        token_budget=3500,
+    ),
+    "goal-impact-test-scope": ContextProfile(
+        id="goal-impact-test-scope",
+        description="Ask the user to choose PR-targeted vs neighborhood vs full coverage.",
+        references=(),
+        query_slices=(),
+        token_budget=800,
+    ),
 }
 
 

@@ -62,6 +62,7 @@ jobs:
           engines/understand-operator/src
           engines/testcase-generation
           engines/code-engineering
+          engines/workspace
       - name: Validate execution ownership and prompts
         env:
           PYTHONPATH: pilot

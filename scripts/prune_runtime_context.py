@@ -64,7 +64,10 @@ def referenced_runtime_assets(workflows: dict[str, dict[str, Any]]) -> tuple[set
     agents: set[str] = set()
     prompts: set[str] = set()
     for meta in workflows.values():
-        if not isinstance(meta, dict) or meta.get("reserved") or not meta.get("slash"):
+        if not isinstance(meta, dict) or meta.get("alias_of"):
+            continue
+        # Slash user workflows, plus reserved Harness workflows that still have LLM Actions.
+        if (meta.get("reserved") or not meta.get("slash")) and not (meta.get("actions") or []):
             continue
         for action in _action_variants(meta):
             if str(action.get("execution_mode") or "") == "deterministic":

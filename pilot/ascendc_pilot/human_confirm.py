@@ -208,35 +208,31 @@ def _staging_has_open_forks(project_root: Path, state: dict[str, Any]) -> bool:
 
 def _ce_goal_going_to_apply(project_root: Path, state: dict[str, Any]) -> bool:
     try:
-        from ascendc_pilot.user_goal import GOAL_CE_CHANGE, load_user_goal
+        from ascendc_pilot.user_goal import is_auto_session, load_user_goal
     except Exception:  # noqa: BLE001
         return False
     del state
     goal = load_user_goal(project_root) or {}
-    if str(goal.get("status") or "") != "active":
+    if str(goal.get("status") or "") != "active" or not is_auto_session(goal):
         return False
-    if str(goal.get("goal_id") or "") != GOAL_CE_CHANGE:
-        return False
-    return str(goal.get("current_step") or "") in {"ce_apply", "ce_verify", "tg_plan"}
+    caps = list((goal.get("intent") or {}).get("needed_capabilities") or goal.get("needed_capabilities") or [])
+    return "implement" in caps
 
 
-def _full_coverage_once_authorized(project_root: Path, state: dict[str, Any]) -> bool:
-    if _confirm_quality_blocked(state):
-        return False
+def _auto_goal_needs_tests(project_root: Path) -> bool:
     try:
-        from ascendc_pilot.user_goal import (
-            GOAL_TILINGKEY_FULL,
-            load_user_goal,
-            matches_full_coverage_intent,
-        )
+        from ascendc_pilot.planning.task_plan import current_workflow_id, load_task_plan
+        from ascendc_pilot.user_goal import is_auto_session, load_user_goal
     except Exception:  # noqa: BLE001
         return False
     goal = load_user_goal(project_root) or {}
-    if str(goal.get("status") or "") != "active":
+    if not is_auto_session(goal) or str(goal.get("status") or "") != "active":
         return False
-    if str(goal.get("goal_id") or "") != GOAL_TILINGKEY_FULL:
+    caps = list((goal.get("intent") or {}).get("needed_capabilities") or [])
+    if "test_generation" not in caps:
         return False
-    return matches_full_coverage_intent(_intent_blob(project_root, state))
+    nxt = current_workflow_id(load_task_plan(project_root))
+    return bool(nxt) and str(nxt).startswith("tg-")
 
 
 def grill_should_ask(project_root: Path, state: dict[str, Any], *, action_id: str = "") -> bool:
@@ -259,10 +255,16 @@ def hosted_confirm_should_ask(
     """Whether a hosted confirm gate should surface AskQuestion."""
     wid = str((state or {}).get("workflow_id") or "")
     aid = str(action_id or "")
-    if aid in {"apply_report", "review_report"}:
-        return True
     if wid in {"tg-init", "tg-plan"} and aid in {"human_confirm", "plan_approve"}:
-        return not _full_coverage_once_authorized(project_root, state)
+        return False
+    if aid == "apply_report" and _auto_goal_needs_tests(project_root):
+        return False
+    if aid == "review_report":
+        return True
+    if aid == "apply_report":
+        return True
+    if wid == "goal-impact" and aid == "test_scope":
+        return True
     if wid == "ce-plan" and aid in {"grill_confirm", "human_confirm"}:
         return grill_should_ask(project_root, state, action_id=aid)
     return True
@@ -510,6 +512,72 @@ def _hints_review_report(project_root: Path, state: dict[str, Any]) -> list[str]
     return ["Keep findings in the dialogue. Do not write ce/review."]
 
 
+def _ask_test_scope(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
+    op, arch = _op_arch(project_root, state)
+    return decision_question(
+        header="这次测试覆盖多大范围？",
+        goal=f"为 {op}（{arch}）选定测试范围",
+        background="定向覆盖这次改动和对照；邻域再扩一跳关系；全覆盖走当前算子全部相关义务。",
+        decide="选哪一种范围？",
+        consequences={
+            "PR 定向（推荐）": "直接改动 + contrast + boundary",
+            "定向 + 邻域回归": "再扩一跳关系",
+            "当前算子全覆盖": "全 TilingKey / 全相关义务",
+        },
+        options=[
+            {"label": "PR 定向（推荐）", "value": "pr_targeted"},
+            {"label": "定向 + 邻域回归", "value": "neighborhood"},
+            {"label": "当前算子全覆盖", "value": "full_coverage"},
+        ],
+    )
+
+
+def _materialize_test_scope(
+    project_root: Path,
+    state: dict[str, Any],
+    identity: dict[str, str],
+    now: str,
+) -> dict[str, Any]:
+    from ascendc_pilot.runs import receipts_dir
+    from ascendc_pilot.user_goal import load_user_goal, write_user_goal
+
+    value = str(identity.get("human_decision_value") or "pr_targeted").strip() or "pr_targeted"
+    flags = {
+        "pr_targeted": value in {"pr_targeted", "neighborhood", "full_coverage"},
+        "neighborhood": value == "neighborhood",
+        "full_coverage": value == "full_coverage",
+    }
+    body = {
+        "schema": "pilot-scope-decision/v1",
+        "value": value,
+        "accepted": flags,
+        "decided_at": now,
+        **{k: v for k, v in identity.items() if v},
+    }
+    digest = hashlib.sha256(
+        yaml.safe_dump(flags, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    body["digest"] = digest
+    rid = str(state.get("run_id") or "").strip()
+    path = receipts_dir(project_root, rid or None) / "scope_decision.yaml"
+    written, backups = _write_yaml_receipt(path, body)
+    goal = load_user_goal(project_root)
+    if goal:
+        arts = dict(goal.get("artifacts") or {})
+        arts["scope_decision"] = body
+        goal["artifacts"] = arts
+        decisions = list(goal.get("decisions") or [])
+        decisions.append({"kind": "test_scope", "value": value, "digest": digest, "at": now})
+        goal["decisions"] = decisions
+        write_user_goal(project_root, goal)
+    return {"ok": True, "path": written, "backups": backups, "identity": identity}
+
+
+def _hints_test_scope(project_root: Path, state: dict[str, Any]) -> list[str]:
+    del project_root, state
+    return ["Choose coverage for this change. This is the only Goal-level question."]
+
+
 SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
     ("tg-init", "human_confirm"): {
         "kind": "primary_confirm",
@@ -557,6 +625,14 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "ask": _ask_review_report,
         "materialize": _materialize_ce_decision,
         "hints": _hints_review_report,
+        "compact": None,
+    },
+    ("goal-impact", "test_scope"): {
+        "kind": "primary_confirm",
+        "expected_values": ["pr_targeted", "neighborhood", "full_coverage"],
+        "ask": _ask_test_scope,
+        "materialize": _materialize_test_scope,
+        "hints": _hints_test_scope,
         "compact": None,
     },
 }
@@ -739,6 +815,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
         "grill_confirm",
         "human_confirm",
         "plan_approve",
+        "apply_report",
     } and not hosted_confirm_should_ask(
         project_root, state, action_id=action_id
     )

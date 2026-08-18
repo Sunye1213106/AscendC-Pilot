@@ -50,6 +50,7 @@ _STATE_FILES_ON_REINIT = (
     "active_action.yaml",
     "action_lease.yaml",
     "resume.yaml",
+    "obligation_ledger.yaml",
 )
 
 # Staging inputs kept on continue-scrub retry (not re-produced by upstream receipts).
@@ -619,6 +620,68 @@ def scrub_incomplete_on_continue(project_root: Path) -> dict[str, Any]:
     }
 
 
+def _norm_policy_rel(rel: str) -> str:
+    return str(rel or "").strip().replace("\\", "/").strip("/")
+
+
+def _rel_is_under(child: str, parent: str) -> bool:
+    c, p = _norm_policy_rel(child), _norm_policy_rel(parent)
+    if not c or not p:
+        return False
+    return c == p or c.startswith(p + "/")
+
+
+def _stash_reinit_preserves(
+    agent: Path,
+    *,
+    preserve_rels: list[str],
+    delete_rels: set[str],
+) -> list[tuple[Path, Path]]:
+    """Move nested preserve paths aside before a parent directory is deleted.
+
+    ``uo-init`` wipes ``uo/`` but must keep ``uo/cache`` (clang TU cache is
+    keyed by source bytes + parse flags; restoring it does not change extract
+    facts).
+    """
+    stashed: list[tuple[Path, Path]] = []
+    stash_root = agent / ".reinit-stash"
+    for raw in preserve_rels:
+        rel = _norm_policy_rel(raw)
+        if not rel:
+            continue
+        if not any(_rel_is_under(rel, d) and rel != _norm_policy_rel(d) for d in delete_rels):
+            continue
+        src = agent / rel
+        if not src.exists():
+            continue
+        dest = stash_root / rel.replace("/", "__")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists():
+            if dest.is_dir():
+                shutil.rmtree(dest, ignore_errors=True)
+            else:
+                dest.unlink(missing_ok=True)
+        shutil.move(str(src), str(dest))
+        stashed.append((dest, src))
+    return stashed
+
+
+def _restore_reinit_preserves(stashed: list[tuple[Path, Path]]) -> None:
+    for dest, src in stashed:
+        src.parent.mkdir(parents=True, exist_ok=True)
+        if src.exists():
+            if src.is_dir():
+                shutil.rmtree(src, ignore_errors=True)
+            else:
+                src.unlink(missing_ok=True)
+        if dest.exists():
+            shutil.move(str(dest), str(src))
+    if stashed:
+        stash_root = stashed[0][0].parent
+        if stash_root.is_dir() and not any(stash_root.iterdir()):
+            stash_root.rmdir()
+
+
 def apply_reinit_wipe(
     project_root: Path,
     workflow_id: str,
@@ -648,21 +711,25 @@ def apply_reinit_wipe(
     run_id = str(state.get("run_id") or "")
     removed: list[str] = []
     preserve_roots = [str(x) for x in (policy.get("reinit_preserve") or [])]
-    explicit_deletes = {str(x).strip().replace("\\", "/") for x in (policy.get("reinit_delete") or [])}
+    explicit_deletes = {_norm_policy_rel(x) for x in (policy.get("reinit_delete") or [])}
+    explicit_deletes.discard("")
 
-    for item in explicit_deletes:
-        rel = str(item).strip().replace("\\", "/")
-        if not rel:
-            continue
-        target = agent / rel
-        if target.is_dir():
-            shutil.rmtree(target, ignore_errors=True)
-            removed.append(target.as_posix())
-        elif target.is_file():
-            target.unlink(missing_ok=True)
-            removed.append(target.as_posix())
-        elif "*" in rel:
-            removed.extend(_remove_contract_paths(agent, (rel,)))
+    stashed = _stash_reinit_preserves(
+        agent, preserve_rels=preserve_roots, delete_rels=explicit_deletes
+    )
+    try:
+        for rel in explicit_deletes:
+            target = agent / rel
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+                removed.append(target.as_posix())
+            elif target.is_file():
+                target.unlink(missing_ok=True)
+                removed.append(target.as_posix())
+            elif "*" in rel:
+                removed.extend(_remove_contract_paths(agent, (rel,)))
+    finally:
+        _restore_reinit_preserves(stashed)
 
     wipe_runs = str(policy.get("reinit_wipe_runs") or "current")
     runs = runs_root(root, arch=arch)

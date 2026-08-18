@@ -257,6 +257,8 @@ def test_uo_init_reinit_wipes_current_uo_products_but_keeps_historical_runs(tmp_
     _write(legacy_uo / "manifest.yaml", {"op_name": "foo"})
     product = agent_root(tmp_path, arch="arch35") / "uo" / "foo.arch35.uo"
     _write(product, "sqlite-placeholder")
+    cache_hit = legacy_uo / "cache" / "tu" / "src-hash.pkl"
+    _write(cache_hit, "clang-tu-cache")
     historical = runs_root(tmp_path) / "historical-run-keep"
     _write(historical / "marker.yaml", {"keep": True})
 
@@ -271,6 +273,7 @@ def test_uo_init_reinit_wipes_current_uo_products_but_keeps_historical_runs(tmp_
     assert result.get("fresh_start") is True
     assert not (legacy_uo / "manifest.yaml").is_file()
     assert not product.is_file()
+    assert cache_hit.is_file()
     assert historical.is_dir()
     current = load_state(tmp_path)
     assert current["phase"] == "prepare"
