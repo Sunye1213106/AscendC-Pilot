@@ -25,6 +25,22 @@ _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
     "缺上下文返回 PLAN_CONTEXT_REQUIRED；缺列/生成器写 test_harness_gap，不默认全量 tilingkey。"
 )
 
+# Keep the Primary OpenCode permission contract explicit at the entrypoint. The
+# implementation lives in compose_runtime_legacy.py, but these aliases make this
+# file the visible SSOT for Host contract checks and future maintainers.
+OPENCODE_PRIMARY_TASK_ALLOW = _legacy.OPENCODE_PRIMARY_TASK_ALLOW
+opencode_primary_task_permission = _legacy.opencode_primary_task_permission
+opencode_isolated_primary_permission = _legacy.opencode_isolated_primary_permission
+
+# Concrete permissions that the implementation emits for Pilot Primary.
+# Do **not** set top-level ``*: deny``: OpenCode would block normal read/grep.
+_PRIMARY_REQUIRED_PERMISSIONS = {
+    "external_directory": "allow",
+    "read": "allow",
+    "Get-ChildItem": "allow",
+    "pilot_run": "allow",
+}
+
 # Export patched mutable objects too.
 CONTROL_PLANE_SKILL_IDS = _legacy.CONTROL_PLANE_SKILL_IDS
 WORKFLOW_ENTRIES = _legacy.WORKFLOW_ENTRIES
