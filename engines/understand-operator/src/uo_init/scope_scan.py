@@ -798,6 +798,7 @@ def clang_include_paths(
                     walk_ctx,
                     side=side,
                     dtype_variant="DT_FLOAT16",
+                    parse_flags=list(args),
                 )
                 _tu_cache.store_ast(
                     ast_key,

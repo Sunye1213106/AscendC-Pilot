@@ -185,17 +185,21 @@ def parse_cache_key(
     dtype_variant: str | None = "DT_FLOAT16",
     orig_assignment: dict[str, str] | None = None,
     source_sha: str | None = None,
+    parse_flags: Iterable[str] | None = None,
 ) -> str:
     """Fingerprint for a serialized clang TranslationUnit (parse only).
 
     Must not include walker flags (``op_needle`` / ``collect_writes`` / scope):
     prepare's include-parse and extract's AST walk share one TU.
+    Pass ``parse_flags`` when the caller already has the exact clang argv so
+    the key matches the TU that was actually parsed, not a recomputed ctx.
     """
     src_sha = source_sha or sha256_file(path)
     ctx_fp = build_context_fingerprint(
         ctx,
         side=side,
         dtype_variant=dtype_variant,
+        parse_flags=parse_flags,
         source_path=path,
         orig_assignment=orig_assignment,
     )

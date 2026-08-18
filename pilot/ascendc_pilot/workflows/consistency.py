@@ -778,10 +778,9 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
                     "kind": "pull_request",
                     "url": "https://gitcode.com/cann/ops-transformer/pulls/1",
                 },
-                "needed_capabilities": [
-                    "knowledge",
-                    "change_analysis",
-                    "test_generation",
+                "needed_workflows": [
+                    "tg-plan",
+                    "tg-solve",
                 ],
             }
         )
@@ -794,9 +793,9 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
             if isinstance(s, dict)
         ]
         if "ce-review" in wids:
-            errors.append("test_generation plan must not default to ce-review")
+            errors.append("tg-plan/tg-solve staging must not default to ce-review")
         if "tg-plan" not in wids or "uo-init" not in wids:
-            errors.append("test_generation plan must expand to uo-init and tg-*")
+            errors.append("tg-plan/tg-solve plan must expand to uo-init and tg-*")
     except Exception as exc:  # noqa: BLE001
         errors.append(f"task harness SSOT check failed: {exc}")
     return errors

@@ -188,7 +188,8 @@ def test_user_goal_match_and_advance(tmp_path: Path) -> None:
 
     adv3 = mark_workflow_passed(tmp_path, "tg-solve")
     assert adv3 is not None
-    assert adv3.get("completed") is True
+    assert adv3.get("completed") is False
+    assert adv3.get("acceptance_failed") is True
 
 
 def test_tg_init_phase_labels_honest() -> None:

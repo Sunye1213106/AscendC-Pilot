@@ -182,6 +182,26 @@ def test_default_cli_project_ignores_path_under_pilot_checkout(
     assert intake.default_cli_project("flash_attention_score_grad") == op.resolve()
     assert intake.default_cli_project(ghost) == op.resolve()
     assert intake.default_cli_project(harness) == op.resolve()
+    assert intake.default_cli_project(harness, allow_last_project=False) == harness.resolve()
+
+
+def test_cli_start_auto_does_not_write_last_project(tmp_path: Path, monkeypatch, capsys):
+    op = tmp_path / "old_op"
+    op.mkdir()
+    (op / "op_host").mkdir()
+    host = tmp_path / "host_cwd"
+    host.mkdir()
+    cache = tmp_path / "last-project"
+    monkeypatch.setattr(intake, "LAST_PROJECT_CACHE", cache)
+    intake.write_last_project_cache(op)
+    monkeypatch.chdir(host)
+    monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
+    monkeypatch.delenv("UO_OP_DIR", raising=False)
+    code = main(["start", "auto", "--project", str(host), "--intent", "生成用例"])
+    assert code == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("workflow_id") in {"auto", "goal-intake"}
+    assert cache.read_text(encoding="utf-8").strip() == str(op.resolve())
 
 
 def test_default_cli_project_keeps_explicit_operator(tmp_path: Path, monkeypatch):
@@ -266,6 +286,45 @@ def test_cli_prepare_rejects_pilot_checkout(capsys, tmp_path: Path, monkeypatch)
     assert code == 2
     out = json.loads(capsys.readouterr().out)
     assert out["reason_code"] == "OPERATOR_PROJECT_REQUIRED"
+
+
+def test_cli_start_auto_allows_non_operator(tmp_path: Path, capsys):
+    code = main(
+        [
+            "start",
+            "auto",
+            "--project",
+            str(tmp_path),
+            "--intent",
+            "帮我给这个 PR 生成针对 case",
+            "--force-new",
+        ]
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("reason_code") != "OPERATOR_PROJECT_REQUIRED"
+    assert code == 0 or out.get("ok") is True or out.get("needs_human_decision")
+
+
+def test_cli_run_action_auto_skips_operator_assert(tmp_path: Path, capsys):
+    start = main(
+        [
+            "start",
+            "auto",
+            "--project",
+            str(tmp_path),
+            "--intent",
+            "生成 case",
+            "--force-new",
+        ]
+    )
+    start_out = json.loads(capsys.readouterr().out)
+    assert start_out.get("reason_code") != "OPERATOR_PROJECT_REQUIRED"
+    if start != 0 and not start_out.get("ok"):
+        return
+    code = main(["run-action", "auto", "--project", str(tmp_path)])
+    out = json.loads(capsys.readouterr().out)
+    assert out.get("reason_code") != "OPERATOR_PROJECT_REQUIRED"
+    assert code != 2 or out.get("reason_code") != "OPERATOR_PROJECT_REQUIRED"
 
 
 def test_start_intake_gate_tg_requires_uo_product(tmp_path: Path, monkeypatch):

@@ -85,7 +85,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 | 参数 | 说明 |
 | --- | --- |
 | `workflow` | `auto`（自然语言任务）或全部现有 id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。**不要**填 `uo-query` |
-| `project` | 算子包绝对路径。`workflow=auto` 且 Intent 给出 allowlisted PR URL 时可暂缺，由 Workspace Manager 钉到 worktree |
+| `project` | 控制面目录。`workflow=auto` 空 project 时钉当前 OpenCode 打开目录（Host directory），**不是** `~/.cache/ascendc-pilot/sessions/auto`。算子根由 Workspace Manager 在 Intent 给出 allowlisted PR URL 后 pin 到 worktree；模型禁止 bash `git clone` |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
@@ -97,6 +97,8 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 ## 失败时怎么做
 
 `pilot_run` 失败时，返回的 JSON **必须带** `message_zh`（以及可能的 `error` / `hint_zh` / `error_detail`）。环境问题（例如没配 CANN package 目录）会直接写在 `message_zh` 里，告诉你设置 `UO_CANN_ROOT` / `ASCEND_CANN_PACKAGE_PATH`。把这段话转述给用户即可。
+
+常见人话失败（不是 UX 失败）：缺 `GITHUB_TOKEN` / `GITCODE_TOKEN`、PR 落到多个算子、改动未落到任何 `op_host`/`op_kernel`、只能用默认分支当 PR base 的 fallback。多算子 / 架构歧义 / 用户改目标时问人；**单算子、单架构、workspace 成功时只问一次 test_scope**。
 
 失败后 workflow 可能进入 `human_required`。写、派 Task、直调领域脚本、读引擎实现仍然会被挡住。主控可以 `Read` / `Glob` / `Get-ChildItem` 看算子目录和失败产物，方便核对环境。优先用：
 

@@ -496,6 +496,108 @@ def _is_engine_source(norm: str) -> bool:
     return any(m.lower() in n for m in _ENGINE_SOURCE_MARKERS)
 
 
+_OPERATOR_SOURCE_SEGS = ("/op_host/", "/op_kernel/", "/op_graph/", "/common/")
+
+
+def _is_diff_or_changeset_path(path_s: str) -> bool:
+    norm = "/" + (path_s or "").replace("\\", "/").lower().lstrip("/")
+    if _is_review_path(norm):
+        return True
+    base = norm.rsplit("/", 1)[-1]
+    return (
+        "/changeset/" in norm
+        or base.endswith(".diff")
+        or base.endswith(".patch")
+        or "changeset" in base
+    )
+
+
+def _is_operator_source_path(path_s: str, command: str = "") -> bool:
+    """True for operator Host/Kernel/common source, not tests or Pilot artifacts."""
+    blob = f"{path_s or ''} {command or ''}"
+    if not blob.strip():
+        return False
+    norm = "/" + blob.replace("\\", "/").lower().lstrip("/")
+    if "/.ascendc-pilot/" in "/" + (path_s or "").replace("\\", "/").lower().lstrip("/"):
+        return False
+    path_norm = "/" + (path_s or "").replace("\\", "/").lower().lstrip("/")
+    if "/tests/" in path_norm or "/examples/" in path_norm:
+        return False
+    if _is_diff_or_changeset_path(path_s):
+        return False
+    return any(seg in norm for seg in _OPERATOR_SOURCE_SEGS)
+
+
+def _has_uo_product(project_root: Path | None) -> bool:
+    if project_root is None:
+        return False
+    try:
+        from ascendc_pilot.planning.prerequisites import available_state
+
+        return bool(available_state(project_root).get("has_uo"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _current_action_has_kb_query(workflow_id: str, action_id: str) -> bool:
+    if not workflow_id or not action_id:
+        return False
+    try:
+        from ascendc_pilot.workflows import get_workflow
+
+        meta = get_workflow(workflow_id)
+        for act in meta.get("actions") or []:
+            if not isinstance(act, dict):
+                continue
+            if str(act.get("id") or "") != action_id:
+                continue
+            return "kb-query" in (act.get("capability_ids") or [])
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def _deny_uncited_operator_source(
+    *,
+    path_s: str,
+    project_root: Path | None,
+    agent_l: str,
+    action_id: str,
+    workflow_id: str,
+    tool: str = "read",
+    command: str = "",
+) -> dict[str, Any] | None:
+    """Force CodeMap query instead of scanning operator source when a graph exists."""
+    tool_l = (tool or "read").strip().lower()
+    if not _is_operator_source_path(path_s, command):
+        return None
+    if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
+        return None
+    if not _has_uo_product(project_root):
+        return None
+    kb = _current_action_has_kb_query(str(workflow_id or ""), action_id)
+    if agent_l not in _PRIMARY_AGENTS and not kb:
+        return None
+    if tool_l == "read":
+        try:
+            from ascendc_pilot.authorize.citations import cited_window_allows
+
+            if cited_window_allows(project_root, path_s, command=command):
+                return None
+        except Exception:  # noqa: BLE001
+            pass
+    return _ok(
+        "deny",
+        "SOURCE_READ_USE_UO_QUERY",
+        "算子源码语义走 uo-query 路由：简单问题用 pilot_cli `uo-query`，"
+        "复杂或 CE/TG 问图用同一轮 Task(agent=uo-query)。未 citation 的 op_host/op_kernel 不可 Read/Grep/Glob。"
+        "卡片 snippet 视为已读；仅截断后的窗口可读。",
+        error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+        path=path_s,
+        tool=tool_l,
+    )
+
+
 def _declared_phase_actors(
     allowed: list[dict[str, Any]],
     meta: dict[str, Any],
@@ -741,6 +843,45 @@ def _is_repo_search_bash(command: str) -> bool:
     if not segments:
         return False
     return bool(_REPO_SEARCH_HEAD.search(segments[0]))
+
+
+def _is_git_cli(command: str) -> bool:
+    """True when the first pipeline segment is git."""
+    segments = _split_shell_segments(command or "")
+    if not segments:
+        return False
+    return bool(re.match(r"^\s*git(?:\.exe)?\b", segments[0], re.I))
+
+
+def _verdict_for_git_cli(
+    command: str,
+    *,
+    agent_l: str,
+    action_id: str,
+    workflow_id: str,
+    status: str | None = None,
+) -> dict[str, Any] | None:
+    """Primary may use git. uo-query must not. Non-primary falls through."""
+    if not _is_git_cli(command):
+        return None
+    if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
+        return _ok(
+            "deny",
+            "GIT_NOT_FOR_UO_QUERY",
+            "uo-query 禁止 bash git；查图用 pilot_cli `uo-query`。",
+            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            status=status,
+            command=(command or "")[:200],
+        )
+    if agent_l in _PRIMARY_AGENTS:
+        return _ok(
+            "allow",
+            "GIT_CLI_ALLOWED",
+            "允许主控 bash git。PR worktree 身份仍由 Workspace Manager 建立，勿拆他人 lock。",
+            status=status,
+            command=(command or "")[:200],
+        )
+    return None
 
 
 def _is_readonly_inspect_bash(command: str) -> bool:
@@ -1126,6 +1267,15 @@ def _authorize_impl(
                     command=cmd[:200],
                     allowed_actions=allowed_cmds[:8],
                 )
+            git_v = _verdict_for_git_cli(
+                cmd_raw if cmd_raw else cmd,
+                agent_l=agent_l,
+                action_id=action_id,
+                workflow_id=str(ctx.get("workflow_id") or wid),
+                status=status,
+            )
+            if git_v is not None:
+                return git_v
             if agent_l in _PRIMARY_AGENTS and _is_readonly_inspect_bash(
                 cmd_raw if cmd_raw else cmd
             ):
@@ -1206,6 +1356,17 @@ def _authorize_impl(
                     tool=tool_l,
                     status=status,
                 )
+            fenced = _deny_uncited_operator_source(
+                path_s=path_s,
+                project_root=project_root,
+                agent_l=agent_l,
+                action_id=action_id,
+                workflow_id=str(ctx.get("workflow_id") or wid),
+                tool=tool_l,
+                command=cmd_raw if cmd_raw else cmd,
+            )
+            if fenced:
+                return fenced
             if path_s and _is_engine_source(path_s):
                 return _deny_not_authorized(
                     f"Current run is {status}; reading engine source not authorized",
@@ -1271,6 +1432,15 @@ def _authorize_impl(
                         status=status,
                         command=cmd[:200],
                     )
+            git_v = _verdict_for_git_cli(
+                cmd_raw if cmd_raw else cmd,
+                agent_l=agent_l,
+                action_id=action_id,
+                workflow_id=str(ctx.get("workflow_id") or wid_state or ""),
+                status=status,
+            )
+            if git_v is not None:
+                return git_v
             if _is_readonly_inspect_bash(cmd_raw if cmd_raw else cmd):
                 denied = _maybe_deny_uo_query_repo_search(
                     command=cmd_raw if cmd_raw else cmd,
@@ -1290,15 +1460,17 @@ def _authorize_impl(
                 )
             if agent_l in _PRIMARY_AGENTS:
                 return _ok(
-                    "ask",
+                    "deny",
                     "BASH_NOT_HARNESS",
-                    "返工模式默认仅允许只读探查；其他 bash 需人工确认",
+                    "返工模式仅允许只读探查（ls/Get-ChildItem/…）；其他 bash 禁止。工作流用 pilot_run，短命令用 pilot_cli。",
+                    error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     command=cmd[:200],
                 )
             return _ok(
-                "ask",
+                "deny",
                 "NON_PRIMARY_BASH",
-                "非 primary 代理 bash 需确认",
+                "非 primary 代理禁止该 bash；领域执行请用 Host `pilot_run`",
+                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                 command=cmd[:200],
             )
 
@@ -1389,6 +1561,15 @@ def _authorize_impl(
                     error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                     command=cmd[:200],
                 )
+        git_v = _verdict_for_git_cli(
+            cmd_raw if cmd_raw else cmd,
+            agent_l=agent_l,
+            action_id=action_id,
+            workflow_id=str(ctx.get("workflow_id") or ""),
+            status=status,
+        )
+        if git_v is not None:
+            return git_v
         # Structure probes: ls / Get-ChildItem / pwd / cd … (no writes / no domain CLI).
         if _is_readonly_inspect_bash(cmd_raw if cmd_raw else cmd):
             denied = _maybe_deny_uo_query_repo_search(
@@ -1411,15 +1592,17 @@ def _authorize_impl(
             )
         if agent_l in _PRIMARY_AGENTS:
             return _ok(
-                "ask",
+                "deny",
                 "BASH_NOT_HARNESS",
-                "AscendC-Pilot 默认仅允许只读探查（ls/Get-ChildItem/…）；其他 bash 需人工确认",
+                "AscendC-Pilot 仅允许只读探查（ls/Get-ChildItem/…）与主控 git。工作流用 Host 工具 `pilot_run`，短命令用 `pilot_cli`。",
+                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                 command=cmd[:200],
             )
         return _ok(
-            "ask",
+            "deny",
             "NON_PRIMARY_BASH",
-            "非 primary 代理 bash 需确认；领域执行请用 Host `pilot_run`",
+            "非 primary 代理禁止该 bash；领域执行请用 Host `pilot_run`",
+            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
             command=cmd[:200],
         )
 
@@ -1435,6 +1618,17 @@ def _authorize_impl(
                 error_code="HARNESS_ACTION_NOT_AUTHORIZED",
                 tool=tool_l,
             )
+        fenced = _deny_uncited_operator_source(
+            path_s=path_s,
+            project_root=project_root,
+            agent_l=agent_l,
+            action_id=action_id,
+            workflow_id=str(ctx.get("workflow_id") or state.get("workflow_id") or ""),
+            tool=tool_l,
+            command=cmd_raw if cmd_raw else cmd,
+        )
+        if fenced:
+            return fenced
         norm = path_s.replace("\\", "/")
         if state and status == "running" and _is_engine_source(norm) and "engines/" in norm.lower():
             base = norm.rsplit("/", 1)[-1].lower()

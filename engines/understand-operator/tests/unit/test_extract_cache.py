@@ -168,3 +168,19 @@ def test_parse_cache_key_changes_with_orig_assignment(tmp_path):
         orig_assignment={"ORIG_DTYPE_QUERY": "DT_INT8"},
     )
     assert plain != mixed
+
+
+def test_parse_cache_key_honors_explicit_parse_flags(tmp_path):
+    source = tmp_path / "tiny.cpp"
+    source.write_text("int f(int x) { return x; }\n", encoding="utf-8")
+    ctx = _FakeCtx()
+    ctx.op_dir = str(tmp_path)
+    via_ctx = tu_cache.parse_cache_key(source, ctx, side="host")
+    via_flags = tu_cache.parse_cache_key(
+        source, ctx, side="host", parse_flags=ctx.host_args()
+    )
+    other = tu_cache.parse_cache_key(
+        source, ctx, side="host", parse_flags=["-std=c++17", "-DFOO=1"]
+    )
+    assert via_ctx == via_flags
+    assert via_ctx != other

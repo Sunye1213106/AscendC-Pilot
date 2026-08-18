@@ -94,11 +94,90 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         }
     llm_intent = dict(checked["intent"])
     llm_intent["intent_text"] = intent_text
-    avail = available_state(project_root, architecture=str(ctx.get("architecture") or ""))
-    plan = plan_for(llm_intent, avail)
-
     source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
-    if str(source.get("kind") or "") != "pull_request":
+
+    acquire: dict[str, Any] = {}
+    project_pin = Path(project_root).expanduser().resolve()
+    arch_pin = str(ctx.get("architecture") or "").strip()
+    run_id = str(ctx.get("run_id") or "").strip()
+    if str(source.get("kind") or "") == "pull_request" and source.get("url"):
+        try:
+            gw = _git_workspace()
+            acquire = gw.acquire_pull_request(str(source["url"]), run_id=run_id)
+        except Exception as exc:  # noqa: BLE001
+            acquire = {"ok": False, "error": "WORKSPACE_ACQUIRE_FAILED", "message_zh": str(exc)[:400]}
+        if not acquire.get("ok"):
+            return {
+                "ok": False,
+                "error": str(acquire.get("error") or "WORKSPACE_ACQUIRE_FAILED"),
+                "message_zh": str(
+                    acquire.get("message_zh")
+                    or "无法获取 PR 代码。请检查鉴权（GITHUB_TOKEN / GITCODE_TOKEN），或改用本地算子目录。"
+                ),
+                "needs_human_decision": True,
+                "decision_kind": "project",
+                "ask_question": {
+                    "prompt_zh": "获取 PR 失败。请重试或改用本地代码。",
+                    "options": [
+                        {"label": "重试获取 PR", "value": "retry"},
+                        {"label": "改用本地代码", "value": "local"},
+                    ],
+                    "allow_free_text": True,
+                    "field": "project",
+                },
+            }
+        roots = [Path(p) for p in (acquire.get("operator_roots") or []) if str(p).strip()]
+        if len(roots) == 0:
+            return {
+                "ok": False,
+                "error": "OPERATOR_ROOTS_EMPTY",
+                "message_zh": (
+                    "这次 PR 改动没有落到含 op_host/ 或 op_kernel/ 的算子目录"
+                    "（common/shared 也未能反推出受影响算子）。请选择算子，或改用本地代码。"
+                ),
+                "needs_human_decision": True,
+                "decision_kind": "project",
+                "changed_files": list(acquire.get("changed_files") or []),
+                "ask_question": {
+                    "prompt_zh": "请选择要生成用例的算子目录（含 op_host/ 或 op_kernel/）",
+                    "options": [],
+                    "allow_free_text": True,
+                    "field": "project",
+                },
+            }
+        if len(roots) > 1:
+            return {
+                "ok": False,
+                "error": "MULTI_OPERATOR",
+                "message_zh": "这次改动跨多个算子目录，请选择要生成用例的算子。",
+                "needs_human_decision": True,
+                "decision_kind": "project",
+                "operator_roots": [str(p) for p in roots],
+                "ask_question": {
+                    "prompt_zh": "请选择要生成用例的算子",
+                    "options": [
+                        {"label": p.name, "value": str(p), "description": str(p)} for p in roots
+                    ],
+                    "allow_free_text": True,
+                    "field": "project",
+                },
+            }
+        project_pin = roots[0]
+        arches = list(acquire.get("architectures") or [])
+        if len(arches) == 1:
+            arch_pin = str(arches[0])
+
+    avail = available_state(project_pin, architecture=arch_pin)
+    plan = plan_for(llm_intent, avail)
+    if str(source.get("kind") or "") == "pull_request":
+        for step in plan.get("steps") or []:
+            if isinstance(step, dict) and str(step.get("id")) == "workspace_acquire":
+                step["status"] = "passed"
+        for step in plan.get("steps") or []:
+            if isinstance(step, dict) and str(step.get("status")) == "pending":
+                step["status"] = "in_progress"
+                break
+    else:
         for step in plan.get("steps") or []:
             if isinstance(step, dict) and str(step.get("id")) == "workspace_acquire":
                 step["status"] = "skipped"
@@ -106,98 +185,58 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             if isinstance(step, dict) and str(step.get("status")) == "pending":
                 step["status"] = "in_progress"
                 break
-    acquire: dict[str, Any] = {}
-    project_pin = Path(project_root).expanduser().resolve()
-    arch_pin = str(ctx.get("architecture") or "").strip()
-    if str(source.get("kind") or "") == "pull_request" and source.get("url"):
-        try:
-            gw = _git_workspace()
-            acquire = gw.acquire_pull_request(
-                str(source["url"]),
-                goal_id=str(plan.get("kind") or "goal"),
-            )
-        except Exception as exc:  # noqa: BLE001
-            acquire = {"ok": False, "error": "WORKSPACE_ACQUIRE_FAILED", "message_zh": str(exc)[:400]}
-        if acquire.get("ok"):
-            roots = list(acquire.get("operator_roots") or [])
-            if len(roots) == 1:
-                project_pin = Path(str(roots[0]))
-                arches = list(acquire.get("architectures") or [])
-                if len(arches) == 1:
-                    arch_pin = str(arches[0])
-            for step in plan.get("steps") or []:
-                if isinstance(step, dict) and str(step.get("id")) == "workspace_acquire":
-                    step["status"] = "passed"
-            # Next pending becomes in_progress.
-            for step in plan.get("steps") or []:
-                if isinstance(step, dict) and str(step.get("status")) == "pending":
-                    step["status"] = "in_progress"
-                    break
-        elif not avail.get("has_project"):
-            return {
-                "ok": False,
-                "error": str(acquire.get("error") or "WORKSPACE_ACQUIRE_FAILED"),
-                "message_zh": str(
-                    acquire.get("message_zh")
-                    or "无法获取 PR 代码。请检查鉴权，或提供本地算子目录。"
-                ),
-                "needs_human_decision": True,
-                "decision_kind": "project",
-            }
 
+    goal_root = project_pin if project_pin.exists() else Path(project_root)
     goal = create_user_goal(
-        project_pin if project_pin.exists() else project_root,
+        goal_root,
         intent_text=intent_text,
         llm_intent=llm_intent,
         architecture=arch_pin,
         op_name=str(ctx.get("op_name") or ""),
         kind=str(plan.get("kind") or ""),
     )
+    if project_pin.exists():
+        goal["project"] = project_pin.as_posix()
+        try:
+            from ascendc_pilot.intake import write_last_project_cache
+
+            write_last_project_cache(project_pin)
+        except Exception:  # noqa: BLE001
+            pass
+    if arch_pin:
+        goal["architecture"] = arch_pin
     if acquire.get("changeset"):
         arts = dict(goal.get("artifacts") or {})
         arts["changeset"] = acquire["changeset"]
         arts["worktree_head"] = acquire.get("worktree_head") or ""
+        arts["base_source"] = str((acquire.get("changeset") or {}).get("base_source") or "")
         goal["artifacts"] = arts
-        if project_pin.exists():
-            goal["project"] = project_pin.as_posix()
-        if arch_pin:
-            goal["architecture"] = arch_pin
-        write_user_goal(project_pin if project_pin.exists() else project_root, goal)
+    write_user_goal(goal_root, goal)
 
     write_task_plan(project_root, plan)
-    if project_pin != Path(project_root).resolve() and project_pin.exists():
+    if project_pin != Path(project_root).expanduser().resolve() and project_pin.exists():
         write_task_plan(project_pin, plan)
-        # Mirror goal onto the original start root so Driver continue_goal can read it
-        # before switching project.
-        from ascendc_pilot.user_goal import write_user_goal as _write_goal
-
-        _write_goal(project_root, goal)
+        # Mirror onto the original Host root so Driver continue_goal can switch project.
+        write_user_goal(project_root, goal)
 
     receipt = {
         "ok": True,
         "engine": "intent_promote",
         "kind": plan.get("kind"),
+        "needed_workflows": list(plan.get("needed_workflows") or []),
         "needed_capabilities": list(plan.get("needed_capabilities") or []),
         "next_workflow_id": "",
         "project": str(goal.get("project") or project_root),
         "architecture": str(goal.get("architecture") or arch_pin),
         "operator_roots": list(acquire.get("operator_roots") or []),
-        "multi_operator": len(list(acquire.get("operator_roots") or [])) > 1,
+        "multi_operator": False,
     }
     from ascendc_pilot.planning.task_plan import current_workflow_id
 
     receipt["next_workflow_id"] = current_workflow_id(plan)
     _receipt(project_root, ctx, "intent_promoted.yaml", receipt)
-    if len(list(acquire.get("operator_roots") or [])) > 1:
-        return {
-            "ok": False,
-            "error": "MULTI_OPERATOR",
-            "message_zh": "这次改动跨多个算子目录，请选择要生成用例的算子。",
-            "needs_human_decision": True,
-            "decision_kind": "project",
-            "operator_roots": acquire.get("operator_roots"),
-            **receipt,
-        }
+    if project_pin.exists() and project_pin != Path(project_root).expanduser().resolve():
+        _receipt(project_pin, ctx, "intent_promoted.yaml", receipt)
     return receipt
 
 

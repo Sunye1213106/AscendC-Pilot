@@ -12,7 +12,6 @@
  */
 
 import { spawn } from "node:child_process"
-import { homedir } from "node:os"
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 import { openCodeHome, readCachedCannRoot, resolveAcpBin } from "./opencode-home.mjs"
@@ -926,6 +925,8 @@ export type PilotRunArgs = {
   architecture?: string
   intent?: string
   forceNew?: boolean
+  /** OpenCode workspace directory (pluginInput.directory). Staging home for workflow=auto. */
+  hostDirectory?: string
 }
 
 export type PilotToolContext = {
@@ -1459,9 +1460,16 @@ export async function runPilotDriver(
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
   }
   if (!project && workflow === "auto") {
-    const scratch = resolve(homedir(), ".cache", "ascendc-pilot", "sessions", "auto")
-    mkdirSync(scratch, { recursive: true })
-    project = scratch
+    const hostDir = String(args.hostDirectory || "").trim()
+    if (!hostDir) {
+      return {
+        ok: false,
+        error: "AUTO_HOST_DIRECTORY",
+        message_zh:
+          "自然语言 auto 需要当前 OpenCode 打开的目录作为控制面。请在算子仓或 Pilot 工作区里启动，不要另开 cache tmp。",
+      }
+    }
+    project = resolve(hostDir)
   }
   if (workflow === "uo-query") {
     reporter?.setStatus("done")
@@ -1498,9 +1506,7 @@ export async function runPilotDriver(
     const cache = resolve(openCodeHome(), "ascendc-last-project")
     mkdirSync(openCodeHome(), { recursive: true })
     const looksLikeOperator =
-      existsSync(resolve(project, ".ascendc-pilot")) ||
-      existsSync(resolve(project, "op_kernel")) ||
-      existsSync(resolve(project, "op_host"))
+      existsSync(resolve(project, "op_kernel")) || existsSync(resolve(project, "op_host"))
     if (looksLikeOperator) writeFileSync(cache, project, "utf-8")
   } catch {
     // best-effort
@@ -1692,6 +1698,16 @@ export async function runPilotDriver(
         acpOpts(3_600_000),
       )
       step = (driven.host_step || {}) as HostStep
+      if (!step.kind && isHumanDecision(driven)) {
+        step = {
+          kind: "ask_human",
+          ask_question:
+            (driven.ask_question as Record<string, unknown>) ||
+            ((driven.human_interaction_request as Record<string, unknown>) || {}).ask_question ||
+            {},
+          message_zh: String(driven.message_zh || driven.error || ""),
+        } as HostStep
+      }
       todoPayload = driven.todo
       pendingTodo = driven.todo
       lastStep = step
@@ -1995,6 +2011,7 @@ export function createPilotRunTool(
               architecture: toolArgs.architecture ? String(toolArgs.architecture) : undefined,
               intent: toolArgs.intent ? String(toolArgs.intent) : undefined,
               forceNew: Boolean(toolArgs.force_new),
+              hostDirectory: pluginInput?.directory ? String(pluginInput.directory) : undefined,
             },
             toolCtx,
             reporter,

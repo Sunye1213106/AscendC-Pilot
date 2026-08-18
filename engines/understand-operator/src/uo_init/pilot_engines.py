@@ -133,7 +133,12 @@ def _load_yaml_scalar(path: Path, key: str) -> str:
 
 
 def _ctx(payload: dict[str, Any] | None) -> dict[str, Any]:
-    return dict(payload or {})
+    ctx = dict(payload or {})
+    arch = _payload_arch(ctx)
+    if arch:
+        ctx.setdefault("arch_dir", arch)
+        ctx.setdefault("architecture", arch)
+    return ctx
 
 
 def _flag(value: Any, default: bool = False) -> bool:
@@ -1086,6 +1091,93 @@ def _bundle_cache(uo: Path) -> Path:
     return uo / "ir" / "_host_bundle_meta.yaml"
 
 
+def _dump_ir_pickle(path: Path, obj: Any) -> None:
+    """Stream pickle to disk. ``dumps`` + ``write_bytes`` doubles FAG HostIR in RAM."""
+    import pickle
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with tmp.open("wb") as fh:
+            pickle.dump(obj, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp.replace(path)
+    except Exception:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
+def _load_ir_pickle(path: Path) -> Any:
+    import pickle
+
+    with path.open("rb") as fh:
+        return pickle.load(fh)
+
+
+def _persist_bundle_ir(uo: Path, bundle: dict[str, Any]) -> dict[str, str]:
+    from uo_init.timing import log as _tlog
+
+    written: dict[str, str] = {}
+    ir = uo / "ir"
+    hir = bundle.get("host_ir")
+    kir = bundle.get("kernel_ir")
+    if hir is not None:
+        try:
+            _dump_ir_pickle(ir / "host_ir.pkl", hir)
+            written["host_ir"] = "pkl"
+        except Exception as exc:  # noqa: BLE001
+            _tlog(f"persist.host_ir_pkl_failed  {type(exc).__name__}: {exc}")
+    if kir is not None:
+        try:
+            _dump_ir_pickle(ir / "kernel_ir.pkl", kir)
+            written["kernel_ir"] = "pkl"
+        except Exception as exc:  # noqa: BLE001
+            _tlog(f"persist.kernel_ir_pkl_failed  {type(exc).__name__}: {exc}")
+    return written
+
+
+def _restore_extracted_bundle(
+    project_root: Path, uo: Path, ctx: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reload extract's HostIR/KernelIR. Missing host pickle means no reuse."""
+    from uo_init.kernel_ir import kernel_ir_from_dict
+    from uo_init.op_spec import discover
+    from uo_init.timing import log as _tlog
+
+    host_pkl = uo / "ir" / "host_ir.pkl"
+    if not host_pkl.is_file():
+        return None
+    try:
+        hir = _load_ir_pickle(host_pkl)
+    except Exception as exc:  # noqa: BLE001
+        _tlog(f"restore.host_ir_pkl_failed  {type(exc).__name__}: {exc}")
+        return None
+    kir = None
+    kir_pkl = uo / "ir" / "kernel_ir.pkl"
+    if kir_pkl.is_file():
+        try:
+            kir = _load_ir_pickle(kir_pkl)
+        except Exception as exc:  # noqa: BLE001
+            _tlog(f"restore.kernel_ir_pkl_failed  {type(exc).__name__}: {exc}")
+            kir = None
+    if kir is None:
+        persisted = _load(uo / "ir" / "kernel_ir.yaml")
+        if isinstance(persisted, dict) and persisted.get("branches"):
+            kir = kernel_ir_from_dict(persisted)
+    arch = _payload_arch(ctx)
+    bundle = {
+        "spec": discover(project_root, arch_dir=arch),
+        "host_ir": hir,
+        "kernel_ir": kir,
+        "restored_from": "host_ir.pkl",
+    }
+    _tlog("restore.extracted_bundle  host_ir.pkl")
+    return bundle
+
+
 def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build host IR ∥ uninstantiated kernel IR (one product path)."""
     from uo_init.extract_bundle import extract_host_bundle
@@ -1096,58 +1188,53 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     )
     from uo_init.init_profile import default_kernel_max_variants, default_with_kernel
     from uo_init.progress import emit as _progress
+    from uo_init.timing import log as _tlog
 
     _progress("extract_host: building host/kernel IR bundle …")
 
     ctx = _ctx(payload)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root, arch=ctx.get("arch_dir"))
+    arch = _payload_arch(ctx)
+    uo = _uo_root(root, arch=arch)
     with_kernel = default_with_kernel(ctx)
     kernel_max_variants = default_kernel_max_variants(ctx)
-    skip_plan = skip_reextract_for_unchanged_tus(
-        root, uo_root=uo, arch=ctx.get("arch_dir") or ctx.get("architecture")
-    )
-    try:
-        bundle = extract_host_bundle(
-            op_dir=root,
-            cann_root=_cann_root(ctx),
-            ops_root=_ops_root(ctx, root),
-            arch_dir=ctx.get("arch_dir"),
-            with_kernel=with_kernel,
-            kernel_max_variants=kernel_max_variants,
-        )
-    except Exception as exc:  # noqa: BLE001
-        import traceback
+    skip_plan = skip_reextract_for_unchanged_tus(root, uo_root=uo, arch=arch)
+    restored = None
+    if skip_plan.get("skip_reextract"):
+        restored = _restore_extracted_bundle(root, uo, ctx)
+        if restored is None:
+            _tlog("extract_host.skip_reextract_miss  fingerprint matched but host_ir.pkl missing")
+    if restored is not None:
+        bundle = restored
+        _tlog("extract_host.reused_pickle  skip_reextract=true")
+    else:
+        try:
+            bundle = extract_host_bundle(
+                op_dir=root,
+                cann_root=_cann_root(ctx),
+                ops_root=_ops_root(ctx, root),
+                arch_dir=arch,
+                with_kernel=with_kernel,
+                kernel_max_variants=kernel_max_variants,
+            )
+        except Exception as exc:  # noqa: BLE001
+            import traceback
 
-        tb = traceback.format_exc()
-        return {
-            "ok": False,
-            "engine": "extract_host",
-            "error": str(exc)[:400],
-            "traceback": tb[-1200:],
-        }
+            tb = traceback.format_exc()
+            return {
+                "ok": False,
+                "engine": "extract_host",
+                "error": str(exc)[:400],
+                "traceback": tb[-1200:],
+            }
 
+    spec = bundle.get("spec")
+    arch = str(getattr(spec, "arch_dir", "") or arch or "")
+    uo = _uo_root(root, arch=arch)
     _STORE["bundle"] = bundle
-    try:
-        import pickle
+    persisted = _persist_bundle_ir(uo, bundle)
 
-        hir = bundle.get("host_ir")
-        kir = bundle.get("kernel_ir")
-        (uo / "ir").mkdir(parents=True, exist_ok=True)
-        if hir is not None:
-            (uo / "ir" / "host_ir.pkl").write_bytes(
-                pickle.dumps(hir, protocol=pickle.HIGHEST_PROTOCOL)
-            )
-        if kir is not None:
-            (uo / "ir" / "kernel_ir.pkl").write_bytes(
-                pickle.dumps(kir, protocol=pickle.HIGHEST_PROTOCOL)
-            )
-    except Exception:  # noqa: BLE001
-        pass
-
-    fp_meta = compute_extract_fingerprint(
-        root, uo_root=uo, arch=getattr(bundle["spec"], "arch_dir", None)
-    )
+    fp_meta = compute_extract_fingerprint(root, uo_root=uo, arch=arch)
     store_extract_fingerprint(uo, fp_meta)
     kir = bundle.get("kernel_ir")
     kernel_branches = len(getattr(kir, "branches", []) or [])
@@ -1156,13 +1243,15 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     meta = {
         "version": 1,
         "status": "extracted",
-        "op_name": bundle["spec"].op_name,
-        "architecture": bundle["spec"].arch_dir,
+        "op_name": getattr(spec, "op_name", ""),
+        "architecture": arch,
         "with_kernel": bool(with_kernel),
         "kernel_max_variants": int(kernel_max_variants or 0),
         "kernel_branches": kernel_branches,
         "extract_fingerprint": fp_meta.get("extract_fingerprint"),
         "sources_unchanged_at_start": bool(skip_plan.get("skip_reextract")),
+        "restored_from": bundle.get("restored_from") or "",
+        "persisted_ir": persisted,
     }
     _dump(_bundle_cache(uo), meta)
     _dump(
@@ -1176,6 +1265,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         "kernel_branches": meta["kernel_branches"],
         "extract_fingerprint": meta["extract_fingerprint"],
         "sources_unchanged_at_start": meta["sources_unchanged_at_start"],
+        "restored_from": meta["restored_from"],
     }
 
 
@@ -1188,39 +1278,24 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from uo_init.extract_bundle import extract_host_bundle
     from uo_init.kernel_ir import kernel_ir_from_dict
     from uo_init.init_profile import default_kernel_max_variants, default_with_kernel
+    from uo_init.timing import log as _tlog
 
+    ctx = _ctx(ctx)
     root = Path(project_root).expanduser().resolve()
-    uo = _uo_root(root, arch=ctx.get("arch_dir"))
+    arch = _payload_arch(ctx)
+    uo = _uo_root(root, arch=arch)
+    restored = _restore_extracted_bundle(root, uo, ctx)
+    if restored is not None:
+        _STORE["bundle"] = restored
+        return restored
+
     cached_meta = _load(_bundle_cache(uo))
     persisted_kir = _load(uo / "ir" / "kernel_ir.yaml")
     has_persist = isinstance(persisted_kir, dict) and bool(persisted_kir.get("branches"))
-    host_pkl = uo / "ir" / "host_ir.pkl"
-    kir_pkl = uo / "ir" / "kernel_ir.pkl"
-    if cached_meta and host_pkl.is_file():
-        try:
-            import pickle
-
-            from uo_init.op_spec import discover
-
-            hir = pickle.loads(host_pkl.read_bytes())
-            kir = None
-            if kir_pkl.is_file():
-                try:
-                    kir = pickle.loads(kir_pkl.read_bytes())
-                except Exception:  # noqa: BLE001
-                    kir = None
-            if kir is None and has_persist:
-                kir = kernel_ir_from_dict(persisted_kir)
-            bundle = {
-                "spec": discover(root, arch_dir=ctx.get("arch_dir")),
-                "host_ir": hir,
-                "kernel_ir": kir,
-                "restored_from": "host_ir.pkl",
-            }
-            _STORE["bundle"] = bundle
-            return bundle
-        except Exception:  # noqa: BLE001
-            pass
+    _tlog(
+        "ensure_bundle.reextract  "
+        f"reason={'no_host_ir_pkl' if not (uo / 'ir' / 'host_ir.pkl').is_file() else 'restore_failed'}"
+    )
 
     with_kernel = False if (cached_meta and has_persist) else default_with_kernel(ctx)
     kernel_max_variants = default_kernel_max_variants(ctx)
@@ -1235,7 +1310,7 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         op_dir=root,
         cann_root=_cann_root(ctx),
         ops_root=_ops_root(ctx, root),
-        arch_dir=ctx.get("arch_dir"),
+        arch_dir=arch,
         with_kernel=with_kernel,
         kernel_max_variants=kernel_max_variants,
     )
@@ -1247,6 +1322,7 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         bundle["kernel_ir"], "to_persist_dict"
     ):
         _dump(uo / "ir" / "kernel_ir.yaml", bundle["kernel_ir"].to_persist_dict())
+    _persist_bundle_ir(uo, bundle)
     _STORE["bundle"] = bundle
     return bundle
 

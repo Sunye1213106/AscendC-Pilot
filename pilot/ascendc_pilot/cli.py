@@ -54,8 +54,9 @@ def _normalize_project_arg(args: argparse.Namespace) -> None:
     from ascendc_pilot.intake import default_cli_project
 
     raw = getattr(args, "project", None)
-    # argparse default may already be Path.cwd(); re-resolve via intake.
-    args.project = default_cli_project(raw)
+    wf = str(getattr(args, "workflow_id", None) or getattr(args, "workflow", "") or "").strip()
+    allow_last = wf not in {"auto", "goal-intake"}
+    args.project = default_cli_project(raw, allow_last_project=allow_last)
 
 
 def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
@@ -841,7 +842,8 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 1
-        write_last_project_cache(args.project)
+        if str(args.workflow_id or "").strip() not in {"auto", "goal-intake"}:
+            write_last_project_cache(args.project)
         try:
             from ascendc_pilot.paths import context_root
             import yaml
@@ -882,10 +884,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.cmd == "run-action":
         from ascendc_pilot.actions import run_action
-        from ascendc_pilot.intake import assert_operator_project, write_last_project_cache
+        from ascendc_pilot.intake import assert_operator_if_required, write_last_project_cache
 
-        # Never create/use .ascendc-pilot under OpenCode cwd / monorepo parent.
-        bad = assert_operator_project(args.project, action=str(args.action_id or ""))
+        # Goal-intake may stage under the Host directory (no op_host yet).
+        bad = assert_operator_if_required(args.project, action=str(args.action_id or ""))
         if bad is not None:
             bad["action_id"] = args.action_id
             print_json(bad)
@@ -907,9 +909,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if result.get("ok") else 1
     if args.cmd == "dispatch-result":
         from ascendc_pilot.actions.dispatch import dispatch_result
-        from ascendc_pilot.intake import assert_operator_project, write_last_project_cache
+        from ascendc_pilot.intake import assert_operator_if_required, write_last_project_cache
 
-        bad = assert_operator_project(args.project, action="dispatch-result")
+        bad = assert_operator_if_required(args.project, action="dispatch-result")
         if bad is not None:
             print_json(bad)
             return 2
@@ -1211,6 +1213,18 @@ def main(argv: list[str] | None = None) -> int:
                     project,
                     architecture=str(pin.get("architecture") or architecture),
                     session_id=sid,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                from ascendc_pilot.authorize.citations import record_from_payload
+
+                record_from_payload(
+                    project,
+                    payload,
+                    file=str(getattr(args, "file", "") or ""),
+                    line=int(getattr(args, "line", 0) or 0),
+                    arch=architecture or None,
                 )
             except Exception:  # noqa: BLE001
                 pass

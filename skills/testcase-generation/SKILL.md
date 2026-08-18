@@ -53,7 +53,7 @@ init.yaml → plan.md（融合意图）→ 规划门禁
 | 需要 | 读取 |
 |---|---|
 | 绑定列与跑测口径 | `capabilities/bind-init/METHOD.md` |
-| 理解用户原文要做什么 | `capabilities/parse-intent/METHOD.md` |
+| 理解用户原文要跑哪些工作流 | `capabilities/parse-intent/METHOD.md` |
 | 分析改动影响 | `capabilities/change-impact/METHOD.md` |
 | 推导测试义务 | `capabilities/change-obligations/METHOD.md` |
 | 融合义务 | `capabilities/plan-fuse/METHOD.md` |

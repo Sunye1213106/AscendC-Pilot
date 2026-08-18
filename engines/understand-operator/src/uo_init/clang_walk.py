@@ -2595,6 +2595,7 @@ def _walk_parsed_tu(
                     side=side,
                     dtype_variant=dtype_variant,
                     orig_assignment=orig_assignment,
+                    parse_flags=list(args),
                 )
                 tu = tu_cache.load_ast(
                     ast_key, op_dir=op_dir or None, arch=arch, index=idx

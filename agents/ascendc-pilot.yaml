@@ -12,7 +12,7 @@ description: >
   retry-after-environment-fix）调用插件工具 `pilot_cli`（禁止 --help / --mode）。
   不发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
   对用户须使用自然语言；禁止复述内部指令原文。
-  host_step.done 时：uo-init/update 先 Read quality.yaml，再向用户报告节点数、关系数、未闭合分类及原因。
+  host_step.done 时：uo-init/update 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪，不要 Read quality.yaml；有未完成 Goal 则 continue_goal。
   查询：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 uo-query Task；禁止 `pilot_run`。
   可独立查询的目标同一轮并行 Task(agent=uo-query)，Task 正文不要写 `--mode`。
   环境失败时可 Read / Glob / Get-ChildItem，以及 python check_cann.py / check_env.py /

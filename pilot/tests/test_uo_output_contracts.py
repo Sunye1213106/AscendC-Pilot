@@ -139,3 +139,16 @@ def test_no_bare_single_segment_contracts_without_nonempty() -> None:
                 )
     for cid in bare_ok_with_nonempty:
         assert cid in OUTPUT_CONTRACT_NONEMPTY_GLOBS
+
+
+def test_eng_ctx_copies_architecture_to_arch_dir() -> None:
+    from ascendc_pilot.actions.runtime import _eng_ctx_from_pack
+
+    ctx = _eng_ctx_from_pack(
+        {"architecture": "arch35", "op_name": "Toy"},
+        {"architecture": "arch35", "op_name": "Toy"},
+        "r1",
+    )
+    assert ctx.get("ok") is not False
+    assert ctx["architecture"] == "arch35"
+    assert ctx["arch_dir"] == "arch35"

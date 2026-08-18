@@ -49,10 +49,19 @@ def available_state(project_root: Path | str, *, architecture: str = "") -> dict
     except Exception:  # noqa: BLE001
         pass
 
+    has_tg_init = False
+    try:
+        from ascendc_pilot.paths import tg_root
+
+        has_tg_init = (tg_root(root, arch=arch or None) / "init.yaml").is_file()
+    except Exception:  # noqa: BLE001
+        has_tg_init = False
+
     return {
         "has_project": has_project,
         "has_uo": has_uo,
         "uo_stale": uo_stale,
+        "has_tg_init": has_tg_init,
         "architecture": arch,
         "scope_decided": scope_decided,
         "project": str(root),

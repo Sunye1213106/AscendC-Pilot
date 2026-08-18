@@ -45,12 +45,12 @@ prepare → extract → analyze → commit → verify
 
 ## 构建
 
-Clang / include / 写入由 engine 执行。完成条件：读 `uo/checks/quality.yaml`，向用户报告 graph 计数与 unresolved 分类。
+Clang / include / 写入由 engine 执行。完成条件：`pilot_cli` `uo-query --status-only` 看产物是否就绪，向用户报告 graph 计数与 unresolved 分类。
 
 1. 缺 architecture：必须先得到合法 architecture，再启动建库。
 2. operator + arch 给定后，Source Scope 以 Clang include closure 为准。
 3. 探针失败见 `references/codemap-build-gotchas.md`。
-4. 建库结束读 `uo/checks/quality.yaml`（`grade` / `locate_blocking`）。桶含义见 `references/uo-gaps.md`。
+4. 建库结束用 `pilot_cli` `uo-query --status-only`（`grade` / `locate_blocking`）。桶含义见 `references/uo-gaps.md`。
 
 ## 按需参考
 

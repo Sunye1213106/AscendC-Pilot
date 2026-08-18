@@ -124,6 +124,12 @@ def main() -> int:
         errors.append("pilot-driver.ts must stream acp via spawn (not spawnSync) so progress can update")
     if "invokeToolMetadata" in driver_src:
         errors.append("pilot-driver.ts must not call ctx.metadata (it resets GenericTool input)")
+    if "sessions/auto" in driver_src or "sessions\\\\auto" in driver_src:
+        errors.append("pilot-driver.ts must not mkdir ~/.cache/.../sessions/auto for workflow=auto")
+    if "hostDirectory" not in driver_src or "AUTO_HOST_DIRECTORY" not in driver_src:
+        errors.append("pilot-driver.ts auto empty project must use OpenCode hostDirectory")
+    if "existsSync(resolve(project, \".ascendc-pilot\"))" in driver_src:
+        errors.append("pilot-driver.ts last-project cache must require op_host/op_kernel, not .ascendc-pilot")
     progress_src = (plug / "pilot-progress.mjs").read_text(encoding="utf-8")
     for marker in (
         "buildToolPartProgressPatch",

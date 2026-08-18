@@ -120,9 +120,10 @@ def _compiler_inputs(
     from uo_init.op_spec import discover
 
     root = project_root.expanduser().resolve()
-    spec = discover(root, arch_dir=ctx.get("arch_dir"))
+    ctx = pe._ctx(ctx)
+    spec = discover(root, arch_dir=pe._payload_arch(ctx))
     op_name = str(ctx.get("op_name") or spec.op_name)
-    arch = require_architecture(ctx.get("arch_dir") or ctx.get("architecture") or spec.arch_dir)
+    arch = require_architecture(pe._payload_arch(ctx) or spec.arch_dir)
     uo = pe._uo_root(root, arch=arch)
 
     host_ir = None
@@ -159,7 +160,7 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     from uo_init.build import compile_codemap, store_compile_cache
     from uo_init.progress import step
 
-    ctx = dict(payload or {})
+    ctx = pe._ctx(payload)
     root = Path(project_root).expanduser().resolve()
     try:
         with step("analyze.resolve_inputs"):

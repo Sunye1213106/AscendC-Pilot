@@ -110,7 +110,7 @@ commit  [D]  写入 <op>.<arch>.uo
 verify  [D]  结构合法性 → uo/checks/integrity.yaml + quality.yaml
     │
     ▼
-done        Primary 读 quality.yaml，向用户报告节点/关系/未闭合及原因
+done        Primary 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；有未完成 Goal 则 continue_goal
 ```
 
 Rework（失败才走，不画进主链）：prepare→heal（`INCLUDE_HEAL_UNRESOLVED`）；heal→prepare；extract→prepare；analyze→extract；commit→analyze；verify→analyze / commit / prepare。不要手改 extras 或共享 `spec/build_context.yaml`。
@@ -133,7 +133,7 @@ export [D]  完整性校验  ──gate: integrity
 diff   [D]  差异摘要
     │
     ▼
-done        Primary 读 quality.yaml，向用户报告刷新后的节点/关系/未闭合
+done        Primary 用 `pilot_cli` `uo-query --status-only` 看刷新后产物是否就绪
 ```
 
 `intent=diff_only` 可 detect → diff，跳过中间更新链。

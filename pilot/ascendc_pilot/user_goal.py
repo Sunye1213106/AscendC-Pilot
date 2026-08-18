@@ -71,7 +71,9 @@ def is_auto_session(goal: dict[str, Any] | None) -> bool:
     if str(goal.get("session_kind") or "") == SESSION_AUTO:
         return True
     return str(goal.get("schema") or "") == USER_GOAL_SCHEMA and bool(
-        goal.get("needed_capabilities") or (goal.get("intent") or {}).get("needed_capabilities")
+        goal.get("needed_capabilities")
+        or (goal.get("intent") or {}).get("needed_capabilities")
+        or (goal.get("intent") or {}).get("needed_workflows")
     )
 
 
@@ -90,15 +92,28 @@ def create_user_goal(
     from ascendc_pilot.planning.task_plan import plan_kind, public_plan_for
 
     root = Path(project_root).expanduser().resolve()
+    wfs = [
+        str(w).strip()
+        for w in (llm_intent.get("needed_workflows") or [])
+        if str(w).strip()
+    ]
     caps = [
         str(c).strip()
         for c in (llm_intent.get("needed_capabilities") or [])
         if str(c).strip()
     ]
+    if not wfs and caps:
+        from ascendc_pilot.harness.intent import workflows_from_capabilities
+
+        wfs = workflows_from_capabilities(caps)
+    if not caps and wfs:
+        from ascendc_pilot.harness.intent import capabilities_from_workflows
+
+        caps = capabilities_from_workflows(wfs)
     source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
     objective = str(llm_intent.get("objective_zh") or intent_text or "").strip()
-    plan = public_plan if public_plan is not None else public_plan_for(caps)
-    goal_kind = str(kind or plan_kind(caps) or GOAL_GENERATE_CHANGE_TESTS)
+    plan = public_plan if public_plan is not None else public_plan_for(caps, workflows=wfs)
+    goal_kind = str(kind or plan_kind(caps, workflows=wfs) or GOAL_GENERATE_CHANGE_TESTS)
     op = (op_name or root.name).strip()
     arch = str(architecture or "").strip()
     label = objective or "用户目标"
@@ -112,6 +127,7 @@ def create_user_goal(
         "label_zh": label,
         "intent": {
             "text": str(intent_text or "").strip(),
+            "needed_workflows": wfs,
             "needed_capabilities": caps,
             "objective_zh": objective,
         },
@@ -159,10 +175,13 @@ def progress_line_zh(goal: dict[str, Any] | None) -> str:
     return f"{label} {idx}/{total}：正在{cur_summary}…"
 
 
-def _sync_public_plan(goal: dict[str, Any], workflow_id: str) -> dict[str, Any]:
-    from ascendc_pilot.planning.task_plan import public_id_for_workflow
+def _sync_public_plan(goal: dict[str, Any], workflow_id: str, plan: dict[str, Any] | None = None) -> dict[str, Any]:
+    from ascendc_pilot.planning.task_plan import executed_public_ids, public_id_for_workflow
 
     pub_id = public_id_for_workflow(workflow_id)
+    executed = executed_public_ids(plan)
+    if pub_id:
+        executed.add(pub_id)
     steps = [dict(s) for s in (goal.get("public_plan") or []) if isinstance(s, dict)]
     if not steps:
         return goal
@@ -179,12 +198,11 @@ def _sync_public_plan(goal: dict[str, Any], workflow_id: str) -> dict[str, Any]:
                 elif str(step.get("status")) != "passed":
                     step["status"] = "in_progress"
             elif not reached:
-                if str(step.get("status")) != "skipped":
+                # Prefix passed only for public steps that have already executed.
+                if sid in executed and str(step.get("status")) != "skipped":
                     step["status"] = "passed"
             elif str(step.get("status")) == "in_progress":
                 step["status"] = "pending"
-        # If this workflow maps to a public step that should close (tg-solve
-        # closes generate + validate), mark prior generate_cases passed.
         if workflow_id == "tg-solve":
             for step in steps:
                 if str(step.get("id")) in {"generate_cases", "validate_cases"}:
@@ -194,10 +212,9 @@ def _sync_public_plan(goal: dict[str, Any], workflow_id: str) -> dict[str, Any]:
         if workflow_id == "goal-impact":
             for step in steps:
                 if str(step.get("id")) in {"understand_change", "choose_scope"}:
-                    if str(step.get("id")) == "understand_change":
-                        step["status"] = "passed"
-                    else:
-                        step["status"] = "in_progress"
+                    step["status"] = "passed"
+                elif str(step.get("id")) == "generate_cases" and str(step.get("status")) != "passed":
+                    step["status"] = "in_progress"
     goal = dict(goal)
     goal["public_plan"] = steps
     return goal
@@ -213,8 +230,10 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
 
     from ascendc_pilot.human_voice import progress_zh
     from ascendc_pilot.planning.task_plan import (
+        acceptance_failure_zh,
         acceptance_satisfied,
         current_workflow_id,
+        evaluate_acceptance,
         load_task_plan,
         mark_step_passed,
         write_task_plan,
@@ -225,12 +244,23 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
         return None
     wid = str(workflow_id or "").strip()
     plan = mark_step_passed(plan, wid)
-    # goal-intake itself is the intake workflow, not a plan step; ignore miss.
+    arch = str(goal.get("architecture") or "")
+    acc = evaluate_acceptance(plan, project_root, architecture=arch)
+    plan["acceptance_status"] = acc
+    remaining = [
+        s
+        for s in (plan.get("steps") or [])
+        if isinstance(s, dict) and str(s.get("status") or "") not in {"passed", "skipped"}
+    ]
+    accepted = acceptance_satisfied(plan, project_root, architecture=arch)
+    if not remaining and accepted:
+        plan["status"] = "completed"
     write_task_plan(project_root, plan)
-    goal = _sync_public_plan(goal, wid)
+    goal = _sync_public_plan(goal, wid, plan)
 
     next_workflow = current_workflow_id(plan)
-    completed = acceptance_satisfied(plan) and not next_workflow
+    completed = bool(accepted and not next_workflow)
+    acceptance_failed = bool(not remaining and not accepted)
     if completed:
         goal["status"] = "completed"
         for step in goal.get("public_plan") or []:
@@ -249,23 +279,30 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
                 next_summary = str(step.get("summary_zh") or "")
                 break
 
+    fail_zh = acceptance_failure_zh(plan, acc) if acceptance_failed else ""
     voice = progress_zh(
         goal=str(goal.get("label_zh") or ""),
         just_done=f"「{wid}」已完成" if wid else "本阶段已完成",
         next_step=(
-            f"继续「{next_summary}」"
-            if next_workflow
-            else "目标已完成"
+            fail_zh
+            if acceptance_failed
+            else (f"继续「{next_summary}」" if next_workflow else "目标已完成")
         ),
         need_you="",
     )
     return {
         "goal": goal,
         "next_workflow_id": next_workflow if not completed else "",
-        "next_summary_zh": next_summary if not completed else "目标已完成",
+        "next_summary_zh": (
+            fail_zh
+            if acceptance_failed
+            else (next_summary if not completed else "目标已完成")
+        ),
         "message_zh": voice,
         "progress_line": progress_line_zh(goal),
         "completed": completed,
+        "acceptance_failed": acceptance_failed,
+        "acceptance_status": acc,
     }
 
 

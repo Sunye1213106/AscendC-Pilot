@@ -377,31 +377,6 @@ def _posix_abs(path: Path) -> str:
     return Path(path).expanduser().resolve().as_posix()
 
 
-def _existing_quality_yaml(project_root: Path, *, arch: str | None) -> Path:
-    """On-disk verify receipt under ``.ascendc-pilot/<arch>/uo/``, never the unscoped tree."""
-    from ascendc_pilot.paths import AGENT_DIR, uo_root
-
-    root = Path(project_root).expanduser().resolve()
-    expected: Path | None = None
-    if arch:
-        expected = uo_root(root, arch=arch) / "checks" / "quality.yaml"
-        if expected.is_file():
-            return expected
-    hits: list[Path] = []
-    pilot = root / AGENT_DIR
-    if pilot.is_dir():
-        hits = sorted(p for p in pilot.glob("arch*/uo/checks/quality.yaml") if p.is_file())
-    if arch:
-        for hit in hits:
-            if hit.parent.parent.parent.name == arch:
-                return hit
-    if hits:
-        return hits[0]
-    if expected is not None:
-        return expected
-    raise FileNotFoundError("quality.yaml")
-
-
 def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, Any]:
     """Point Primary at verify/query artifacts. Do not synthesize a summary here."""
     st = complete.get("state") if isinstance(complete.get("state"), dict) else {}
@@ -418,19 +393,10 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
     hint: dict[str, Any] = {"workflow_id": wid}
     try:
         if wid in {"uo-init", "uo-update"}:
-            quality = _existing_quality_yaml(Path(project_root), arch=arch)
-            unresolved = quality.parent.parent / "ir" / "unresolved.yaml"
-            q_abs = _posix_abs(quality)
-            u_abs = _posix_abs(unresolved)
-            hint["quality_path"] = q_abs
-            hint["unresolved_path"] = u_abs
-            hint["read_after_done"] = [q_abs, u_abs]
             hint["message_zh"] = (
-                f"建库已完成。请 Read `{q_abs}`（quality.yaml），"
-                "向用户报告节点数、关系数、未闭合分类及原因；"
-                f"如需未闭合清单，再读 `{u_abs}`。"
-                "禁止打开 .uo 二进制，禁止仅回复「完成」。"
-                "禁止读 `.ascendc-pilot/uo/`（无 arch 段的旧路径）。"
+                "建库已完成。用 `pilot_cli` `uo-query --status-only` 查看产物是否就绪"
+                "（节点/关系/未闭合）。禁止打开 .uo 二进制，禁止仅回复「完成」。"
+                "有未完成 Goal 时继续下一步工作流，不要把建库结束当成整个目标完成。"
             )
         elif wid == "uo-query" and run_id:
             hint["message_zh"] = (
@@ -455,6 +421,29 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             or out.get("user_goal_next_workflow_id")
             or ""
         ).strip()
+        acceptance_failed = bool(
+            complete.get("user_goal_acceptance_failed")
+            or out.get("user_goal_acceptance_failed")
+        )
+        if acceptance_failed and not next_wf:
+            fail_zh = str(
+                complete.get("user_goal_next_summary_zh")
+                or complete.get("message_zh")
+                or out.get("message_zh")
+                or "目标尚未完成：缺少回放验证收据，或测试义务未闭合。"
+            )
+            out["host_step"] = build_host_step(
+                kind="failed",
+                project_root=project_root,
+                message_zh=fail_zh,
+                extra={
+                    "status": "failed",
+                    "reason_code": "GOAL_ACCEPTANCE_FAILED",
+                    "acceptance_failed": True,
+                },
+            )
+            out["message_zh"] = fail_zh
+            return out
         if next_wf:
             arch = ""
             intent = ""

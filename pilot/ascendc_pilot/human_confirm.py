@@ -216,7 +216,8 @@ def _ce_goal_going_to_apply(project_root: Path, state: dict[str, Any]) -> bool:
     if str(goal.get("status") or "") != "active" or not is_auto_session(goal):
         return False
     caps = list((goal.get("intent") or {}).get("needed_capabilities") or goal.get("needed_capabilities") or [])
-    return "implement" in caps
+    wfs = list((goal.get("intent") or {}).get("needed_workflows") or [])
+    return "implement" in caps or any(w in {"ce-plan", "ce-apply"} for w in wfs)
 
 
 def _auto_goal_needs_tests(project_root: Path) -> bool:
@@ -229,7 +230,8 @@ def _auto_goal_needs_tests(project_root: Path) -> bool:
     if not is_auto_session(goal) or str(goal.get("status") or "") != "active":
         return False
     caps = list((goal.get("intent") or {}).get("needed_capabilities") or [])
-    if "test_generation" not in caps:
+    wfs = list((goal.get("intent") or {}).get("needed_workflows") or [])
+    if "test_generation" not in caps and not any(str(w).startswith("tg-") for w in wfs):
         return False
     nxt = current_workflow_id(load_task_plan(project_root))
     return bool(nxt) and str(nxt).startswith("tg-")

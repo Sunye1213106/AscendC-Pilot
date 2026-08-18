@@ -2997,9 +2997,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(denyMessage(verdict, "bash", commandNow))
         }
         if (verdict.decision === "ask") {
-          throw new Error(
-            `[ascendc-pilot] bash 仅允许只读探查；工作流用 pilot_run，短命令用 pilot_cli：${verdict.reason_zh || ""}`.trim(),
-          )
+          throw new Error(denyMessage(verdict, "bash", commandNow))
         }
       }
 
@@ -3029,10 +3027,16 @@ export const AscendCHarnessPlugin = async (ctx?: {
       }
 
       if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list" || tool === "search") {
+        const offset = args.offset ?? args.startLine ?? args.line
+        const limit = args.limit ?? args.count
+        const rangeCmd =
+          tool === "read" && (offset != null || limit != null)
+            ? `offset=${Number(offset || 1)} limit=${Number(limit || 0)}`
+            : String(args.pattern || args.query || "")
         const verdict = runAuthorize({
           tool: tool === "list" || tool === "search" ? "glob" : tool,
           path,
-          command: String(args.pattern || args.query || ""),
+          command: rangeCmd,
           agent,
           action,
           project,

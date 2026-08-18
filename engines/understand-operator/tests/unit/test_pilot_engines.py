@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from uo_init.pilot_engines import (
     prepare_layout,
@@ -275,3 +276,70 @@ def test_scope_validate_soft_tiling_key_header_not_found(tmp_path: Path):
     out = scope_validate(tmp_path, {"run_id": "r1", "arch_dir": "arch35"})
     assert out["ok"] is True
     assert "tiling_key_header_not_found" not in str(out.get("blockers") or [])
+
+
+def test_ctx_aliases_architecture_to_arch_dir():
+    from uo_init.pilot_engines import _ctx
+
+    ctx = _ctx({"architecture": "arch35", "run_id": "r1"})
+    assert ctx["arch_dir"] == "arch35"
+    assert ctx["architecture"] == "arch35"
+
+
+def test_ensure_bundle_restores_pickle_without_reextract(tmp_path, monkeypatch):
+    from uo_init import pilot_engines as pe
+    from uo_init.host_ir import HostIR
+
+    pe._STORE.clear()
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    (uo / "ir").mkdir(parents=True)
+    pe._dump_ir_pickle(uo / "ir" / "host_ir.pkl", HostIR(backend="clang"))
+    monkeypatch.setattr(
+        "uo_init.op_spec.discover",
+        lambda root, arch_dir=None: SimpleNamespace(op_name="Toy", arch_dir="arch35"),
+    )
+
+    def boom(*_a, **_k):
+        raise AssertionError("must not re-extract when host_ir.pkl exists")
+
+    monkeypatch.setattr("uo_init.extract_bundle.extract_host_bundle", boom)
+    bundle = pe._ensure_bundle(tmp_path, {"architecture": "arch35"})
+    assert bundle["restored_from"] == "host_ir.pkl"
+    assert bundle["host_ir"].backend == "clang"
+    pe._STORE.clear()
+
+
+def test_extract_host_skips_clang_when_fingerprint_and_pkl_match(tmp_path, monkeypatch):
+    from uo_init import pilot_engines as pe
+    from uo_init.host_ir import HostIR
+
+    pe._STORE.clear()
+    uo = tmp_path / ".ascendc-pilot" / "arch35" / "uo"
+    (uo / "ir").mkdir(parents=True)
+    pe._dump_ir_pickle(uo / "ir" / "host_ir.pkl", HostIR(backend="clang"))
+    monkeypatch.setattr(
+        "uo_init.extract_cache.skip_reextract_for_unchanged_tus",
+        lambda *_a, **_k: {"skip_reextract": True, "unchanged_tus": ["a.cpp"]},
+    )
+    monkeypatch.setattr(
+        "uo_init.extract_cache.compute_extract_fingerprint",
+        lambda *_a, **_k: {"extract_fingerprint": "abc"},
+    )
+    monkeypatch.setattr(
+        "uo_init.extract_cache.store_extract_fingerprint",
+        lambda *_a, **_k: None,
+    )
+    monkeypatch.setattr(
+        "uo_init.op_spec.discover",
+        lambda root, arch_dir=None: SimpleNamespace(op_name="Toy", arch_dir="arch35"),
+    )
+
+    def boom(*_a, **_k):
+        raise AssertionError("extract_host_bundle must not run on skip_reextract")
+
+    monkeypatch.setattr("uo_init.extract_bundle.extract_host_bundle", boom)
+    out = pe.extract_host(tmp_path, {"architecture": "arch35", "run_id": "r1"})
+    assert out["ok"] is True
+    assert out["restored_from"] == "host_ir.pkl"
+    assert out["sources_unchanged_at_start"] is True
+    pe._STORE.clear()

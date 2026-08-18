@@ -80,7 +80,7 @@ ACP Harness（Intent LLM 理解任务 → Task Plan 合法展开 → Workflow / 
 Engine（事实：clone / Clang / replay）或 LLM Agent（推理；不推进状态）
 ```
 
-自然语言 Intake **不走脚本预解析**：用户原文原样进 Intent LLM，由它产出 `needed_capabilities` 与 SourceRef；Harness 再按现有 UO/TG/CE 前置条件展开。Slash 路径不经 Intent，直接跑对应工作流。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。
+自然语言 Intake **不走脚本预解析**：用户原文原样进 Intent LLM，由它产出 `needed_workflows` 与 SourceRef；Harness 再按现有工作流前置条件补全并排序。Slash 路径不经 Intent，直接跑对应工作流。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。
 
 | 模块 | 一句话 |
 | --- | --- |

@@ -13,12 +13,12 @@
 | 出口 | 要求 |
 | --- | --- |
 | Primary 阶段总结 | 三句式：目标 / 刚完成 / 下一步或需要你 |
-| `uo-init` / `uo-update` 完成 | 读 `host_step.quality_path`（`.ascendc-pilot/<arch>/uo/checks/quality.yaml`）后报告节点/关系/未闭合及原因（定位缺口 vs Host 运行时叶子 vs 目录未证根）；禁止仅回复「完成」 |
+| `uo-init` / `uo-update` 完成 | 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；有未完成 Goal 则 continue_goal。禁止仅回复「完成」 |
 | `uo-query` 完成 | 将答案正文（含 path:line）向用户陈述，禁止仅回复 workflow complete |
 | AskQuestion | 标题使用自然语言；正文含背景 + 决定 + 选项后果；选项为自然语言动词短语 |
 | ACP `message_zh` / `user_summary_zh`（面向用户） | 自然语言；机器字段留在 payload |
 | Todo / phase `label_zh` | 名实一致（勿叫「意图确认」却不问） |
-| Goal 进度 | 自然语言会话用 Goal `public_plan` 投影（如「获取 PR 与代码 / 分析改动影响 / …」）；不要把内部 `tg-plan/fuse` 文案甩给用户 |
+| Goal 进度 | 自然语言会话用 Goal `public_plan` 投影（「获取 PR 与代码 / 建立算子理解 / 分析改动影响 / …」）；不要把内部 `tg-plan/fuse` 文案甩给用户 |
 | failure_card | 先 `【摘要】` 自然语言摘要，再保留结构化细节 |
 
 Subagent → Primary 的机器回执可保留结构；**Primary 转述给用户时必须转写为自然语言**。  

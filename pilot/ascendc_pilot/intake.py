@@ -133,8 +133,12 @@ def _explicit_is_weak(explicit: Path | str | None, resolved: Path) -> bool:
     return not resolved.exists()
 
 
-def _fallback_operator(*, explicit: Path | str | None = None) -> Path | None:
-    cached = read_last_project_cache()
+def _fallback_operator(
+    *,
+    explicit: Path | str | None = None,
+    allow_last_project: bool = True,
+) -> Path | None:
+    cached = read_last_project_cache() if allow_last_project else None
     name = _explicit_basename(explicit)
     if cached is not None and name and name.lower() == cached.name.lower():
         return cached
@@ -439,7 +443,11 @@ def architecture_from_env() -> str:
     return ""
 
 
-def default_cli_project(explicit: Path | str | None = None) -> Path:
+def default_cli_project(
+    explicit: Path | str | None = None,
+    *,
+    allow_last_project: bool = True,
+) -> Path:
     """Resolve --project so OpenCode cwd ≠ artifact root.
 
     Order:
@@ -452,6 +460,9 @@ def default_cli_project(explicit: Path | str | None = None) -> Path:
        (monorepo parent, Pilot checkout, random folder)
     6. cwd (will fail intake if not an operator)
 
+    ``allow_last_project=False`` for ``workflow=auto`` / ``goal-intake`` so a
+    previous conversation cannot hijack this Goal's operator identity.
+
     Never returns the Pilot checkout as a successful operator root. A bare
     ``--project flash_attention_score_grad`` issued from the Host checkout must
     not resolve to ``<Pilot>/flash_attention_score_grad``.
@@ -461,7 +472,9 @@ def default_cli_project(explicit: Path | str | None = None) -> Path:
         if _is_usable_operator(path):
             return path
         if _explicit_is_weak(explicit, path):
-            fallback = _fallback_operator(explicit=explicit)
+            fallback = _fallback_operator(
+                explicit=explicit, allow_last_project=allow_last_project
+            )
             if fallback is not None:
                 return fallback
         else:
@@ -469,7 +482,7 @@ def default_cli_project(explicit: Path | str | None = None) -> Path:
             if env_path is not None:
                 return env_path
         return path
-    fallback = _fallback_operator()
+    fallback = _fallback_operator(allow_last_project=allow_last_project)
     if fallback is not None:
         return fallback
     return Path.cwd().resolve()
@@ -500,6 +513,26 @@ def assert_operator_project(root: Path | str, *, action: str = "") -> dict[str, 
             "field": "project",
         },
     }
+
+
+def assert_operator_if_required(root: Path | str, *, action: str = "") -> dict[str, Any] | None:
+    """Skip the operator fence for live workflows that declare ``requires_project=False``.
+
+    Empty / unknown state still asserts so ``run-action prepare`` cannot land
+    ``.ascendc-pilot`` on a random cwd.
+    """
+    from ascendc_pilot.state import load_state
+    from ascendc_pilot.workflows import workflow_requires_project
+
+    path = Path(root).expanduser().resolve()
+    try:
+        st = load_state(path) or {}
+    except Exception:  # noqa: BLE001
+        st = {}
+    wid = str(st.get("workflow_id") or "").strip()
+    if wid and not workflow_requires_project(wid):
+        return None
+    return assert_operator_project(path, action=action)
 
 
 def _attach_intake_request(payload: dict[str, Any], root: Path) -> dict[str, Any]:

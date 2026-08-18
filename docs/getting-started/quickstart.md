@@ -25,7 +25,7 @@ Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
 https://github.com/<org>/<repo>/pull/<id>
 ```
 
-系统会：获取 PR → 识别算子 / architecture → 建立或复用 CodeMap → 分析改动 → **只问一次测试范围** → 生成并回放用例。不要自己猜下一跳 slash。
+系统会：在当前 OpenCode 打开目录上启动控制面 → Workspace Manager 获取 PR（模型不得 bash git）→ 识别并 pin 算子 / architecture → 建立或复用 CodeMap → 分析改动 → **单算子、单架构、workspace 成功时只问一次测试范围** → 生成并回放用例。凭证失败 / 多算子 / 空算子根 / 非 PR 默认分支 fallback 会问人，这不是 UX 失败。不要自己猜下一跳 slash。
 
 ## 1. 打开目标算子
 

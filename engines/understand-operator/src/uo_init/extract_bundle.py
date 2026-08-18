@@ -47,6 +47,11 @@ def extract_host_bundle(
             op_dir=str(spec.op_dir),
             arch_dir=spec.arch_dir,
         )
+        from uo_init.kernel_tiling_view import install_kernel_tiling_view
+
+        # Same force-include as prepare's scope_scan, otherwise kernel AST
+        # cache keys diverge and extract re-parses the TU prepare already stored.
+        install_kernel_tiling_view(spec, ctx)
 
     with timer.span("scope_clang_enrich"):
         import os

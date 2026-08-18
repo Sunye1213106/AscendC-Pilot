@@ -619,6 +619,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
             payload["user_goal"] = goal_adv.get("goal")
             payload["user_goal_next_workflow_id"] = goal_adv.get("next_workflow_id") or ""
             payload["user_goal_next_summary_zh"] = goal_adv.get("next_summary_zh") or ""
+            payload["user_goal_acceptance_failed"] = bool(goal_adv.get("acceptance_failed"))
             payload["user_summary_zh"] = str(goal_adv.get("message_zh") or "")
             payload["message_zh"] = str(goal_adv.get("message_zh") or "")
             if goal_adv.get("next_workflow_id"):

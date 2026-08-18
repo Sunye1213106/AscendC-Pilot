@@ -473,13 +473,10 @@ def test_attach_host_step_failed_keeps_nested_cann_message(tmp_path: Path) -> No
     assert str(step.get("message_zh") or "") != "deterministic_action_failed"
 
 
-def test_done_read_hint_uses_arch_scoped_quality_path(tmp_path: Path) -> None:
+def test_done_read_hint_uses_status_query_not_quality_read(tmp_path: Path) -> None:
     from ascendc_pilot.actions.dispatch import attach_host_step
 
     ensure_agent_layout(tmp_path, arch="arch35")
-    quality = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "checks" / "quality.yaml"
-    quality.parent.mkdir(parents=True, exist_ok=True)
-    quality.write_text("graph: {}\n", encoding="utf-8")
     out = attach_host_step(
         tmp_path,
         {
@@ -492,22 +489,16 @@ def test_done_read_hint_uses_arch_scoped_quality_path(tmp_path: Path) -> None:
         },
     )
     step = out.get("host_step") or {}
-    q = str(step.get("quality_path") or "").replace("\\", "/")
     msg = str(step.get("message_zh") or "")
     assert step.get("kind") == "done"
-    assert "/arch35/uo/checks/quality.yaml" in q
-    assert "/.ascendc-pilot/uo/" not in q
-    assert q in msg.replace("\\", "/")
-    assert "请 Read uo/checks/quality.yaml" not in msg
+    assert "uo-query --status-only" in msg
+    assert "Read" not in msg or "quality.yaml" not in msg
     assert out.get("message_zh") == step.get("message_zh")
 
 
-def test_done_read_hint_globs_quality_when_arch_missing(tmp_path: Path) -> None:
+def test_done_read_hint_without_arch_still_status_query(tmp_path: Path) -> None:
     from ascendc_pilot.actions.dispatch import attach_host_step
 
-    quality = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "checks" / "quality.yaml"
-    quality.parent.mkdir(parents=True, exist_ok=True)
-    quality.write_text("graph: {}\n", encoding="utf-8")
     out = attach_host_step(
         tmp_path,
         {
@@ -517,9 +508,9 @@ def test_done_read_hint_globs_quality_when_arch_missing(tmp_path: Path) -> None:
             "complete": {"state": {"workflow_id": "uo-init"}},
         },
     )
-    q = str((out.get("host_step") or {}).get("quality_path") or "").replace("\\", "/")
-    assert "/arch35/uo/checks/quality.yaml" in q
-    assert "请 Read uo/checks/quality.yaml" not in str((out.get("host_step") or {}).get("message_zh") or "")
+    msg = str((out.get("host_step") or {}).get("message_zh") or "")
+    assert "uo-query --status-only" in msg
+    assert "请 Read uo/checks/quality.yaml" not in msg
 
 
 def test_method_bundle_fail_closed_without_placeholder(tmp_path: Path) -> None:
