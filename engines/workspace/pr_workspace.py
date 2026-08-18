@@ -2,8 +2,8 @@
 """Isolated PR workspace adapter.
 
 A PR URL is an explicit remote source identity. It must never silently reuse
-whatever local fork happens to be open in the Host. ``git_workspace_legacy``
-owns provider/mirror/worktree mechanics; this adapter enforces isolation and
+whatever local fork happens to be open in the Host. ``git_workspace`` owns
+provider/mirror/worktree mechanics; this adapter enforces isolation and
 structure-only operator scope resolution.
 """
 
@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-import git_workspace_legacy as _git
+import git_workspace as _git
 
 extract_pr_url = _git.extract_pr_url
 parse_pr_ref = _git.parse_pr_ref
@@ -88,21 +88,12 @@ def detect_operator_roots(worktree: Path, changed_files: list[str]) -> list[Path
 
 def changed_architectures(operator_root: Path, changed_files: list[str]) -> list[str]:
     """Architecture tokens explicitly present in changed paths under one operator."""
-    root = Path(operator_root)
+    del operator_root
     out: list[str] = []
     for rel in changed_files:
-        path = Path(rel)
-        try:
-            abs_path = (root.parents[0] / path).resolve()
-        except OSError:
-            abs_path = root / path
-        # Use path tokens, not source text or operator names.
-        for token in path.parts:
+        for token in Path(rel).parts:
             if _ARCH_RE.fullmatch(token) and token not in out:
                 out.append(token)
-        # ``rel`` may be repository-relative while root is nested; token scan is
-        # intentionally sufficient and deterministic.
-        del abs_path
     return out
 
 
@@ -151,11 +142,18 @@ def acquire_pull_request(
 
     exact_head = head_sha or _git._resolve_sha(mirror, "HEAD")
     if not exact_head:
-        return {"ok": False, "error": "EMPTY_SHA", "message_zh": "PR head SHA 为空，无法建立隔离 workspace。"}
+        return {
+            "ok": False,
+            "error": "EMPTY_SHA",
+            "message_zh": "PR head SHA 为空，无法建立隔离 workspace。",
+        }
 
     changed = _git.changed_files(mirror, base_sha, head_sha)
-    diff = _git._run_git(["diff", f"{base_sha}...{head_sha}"], cwd=mirror)
-    digest = _git._diff_digest(diff.stdout or "")
+    diff_text = ""
+    if base_sha and head_sha:
+        diff = _git._run_git(["diff", f"{base_sha}...{head_sha}"], cwd=mirror)
+        diff_text = diff.stdout or ""
+    digest = _git._diff_digest(diff_text)
 
     ws_home = _git.worktree_home(
         host=str(parsed["host"]),
