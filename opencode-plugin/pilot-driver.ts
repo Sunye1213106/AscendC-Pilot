@@ -14,7 +14,7 @@
 import { spawn } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { openCodeHome, resolveAcpBin } from "./opencode-home.mjs"
+import { openCodeHome, readCachedCannRoot, resolveAcpBin } from "./opencode-home.mjs"
 import {
   createToolRowProgressReporter,
   formatPilotElapsed,
@@ -296,7 +296,7 @@ export function normalizeResumeDecision(raw: string): string {
 function sourceFallbackPayload(log: Array<Record<string, unknown>>, todo?: unknown): Record<string, unknown> {
   const messageZh =
     "开发者选择本次不建 CodeMap。请只读算子源码回答当前问题。" +
-    "禁止再 Glob/dir/tree 找 .uo，禁止再调 acp uo-query。"
+    "禁止再 Glob/dir/tree 找 .uo，禁止再调 pilot_cli uo-query。"
   return {
     ok: true,
     answered: true,
@@ -653,6 +653,7 @@ function runAcpJson(
     }
 
     let proc: ReturnType<typeof spawn>
+    const cann = readCachedCannRoot()
     try {
       proc = spawn(acpBin, argv, {
         shell: false,
@@ -663,6 +664,7 @@ function runAcpJson(
           PYTHONUNBUFFERED: "1",
           PYTHONIOENCODING: "utf-8",
           ASCENDC_PROJECT_ROOT: project,
+          ...(cann && !process.env.UO_CANN_ROOT ? { UO_CANN_ROOT: cann } : {}),
           ...(opts?.env || {}),
         },
       })
@@ -675,17 +677,23 @@ function runAcpJson(
       return
     }
 
-    const timeoutMs = opts?.timeoutMs ?? 600_000
+    const timeoutMs = opts?.timeoutMs ?? 3_600_000
     const timer = setTimeout(() => {
       try {
         proc.kill()
       } catch {
         /* ignore */
       }
+      const minutes = Math.round(timeoutMs / 60_000)
+      const messageZh =
+        `工作流仍可能在跑，但 Host 已等待 ${minutes} 分钟并停止等待（ACP_TIMEOUT）。` +
+        `请用 pilot_cli inspect-failure / status 查看，不要立刻再 bash acp start / run-action auto。`
       finish({
         ok: false,
         error: "ACP_TIMEOUT",
         message: `acp ${argv[0] || ""} timed out after ${timeoutMs}ms`,
+        message_zh: messageZh,
+        host_step: { kind: "failed", message_zh: messageZh },
         stdout: stdout.slice(0, 400),
         stderr: stderr.slice(0, 400),
       })
@@ -1420,8 +1428,8 @@ export async function runPilotDriver(
     reporter?.setStatus("done")
     const messageZh =
       "查询不是 Host 工作流，不要再用 pilot_run。先对人说出路由（短问自查 / 几个 uo-query 子代理），" +
-      "再自己跑 `acp uo-query --project <算子绝对路径> --mode`，或同一轮原生 Task(agent=`uo-query`)。" +
-      "禁止为空转「问题路由」开子代理。"
+      "再自己跑插件工具 `pilot_cli` command=`uo-query --project <算子绝对路径> <identifier>`，" +
+      "或同一轮原生 Task(agent=`uo-query`)。禁止 `--mode`。禁止为空转「问题路由」开子代理。"
     return {
       ok: true,
       reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
@@ -1478,7 +1486,7 @@ export async function runPilotDriver(
     ) {
       const messageZh =
         "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
-        "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `acp uo-query` 或 Task(agent=`uo-query`)。" +
+        "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `pilot_cli` `uo-query` 或 Task(agent=`uo-query`)。" +
         "不要 pilot_run / acp start uo-query。"
       return {
         ok: true,
@@ -1521,7 +1529,7 @@ export async function runPilotDriver(
       if (decision === "query") {
         const messageZh =
           "上一场建库已经完成，产物锁已释放。新会话直接查询即可，不是卡住。" +
-          "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `acp uo-query` 或 Task(agent=`uo-query`)。" +
+          "先对人说出路由（短问自查 / 几个 uo-query 子代理），再 `pilot_cli` `uo-query` 或 Task(agent=`uo-query`)。" +
           "不要 pilot_run / acp start uo-query。"
         return {
           ok: true,
@@ -1639,7 +1647,7 @@ export async function runPilotDriver(
       const driven = await runAcpJson(
         ["run-action", "auto", "--project", project],
         project,
-        acpOpts(900_000),
+        acpOpts(3_600_000),
       )
       step = (driven.host_step || {}) as HostStep
       todoPayload = driven.todo
@@ -1729,7 +1737,7 @@ export async function runPilotDriver(
           reporter?.setStatus("done")
           const messageZh =
             "上一场建库已经完成，产物锁已释放。查询不是 Host 工作流。" +
-            "先对人说出路由，再 `acp uo-query` 或 Task(agent=`uo-query`)。不要 pilot_run uo-query。"
+            "先对人说出路由，再 `pilot_cli` `uo-query` 或 Task(agent=`uo-query`)。不要 pilot_run uo-query。"
           return {
             ok: true,
             reason_code: "UO_QUERY_NOT_HOST_DRIVEN",
@@ -1877,9 +1885,9 @@ export function createPilotRunTool(
         "If host_step.tasks has two or more entries, launch ALL of them in the same turn " +
         "(each prompt=tasks[i].task_prompt_stub verbatim), wait, then synthesize one kb-answer-v1. " +
         "Host Driver syncs Todo and owns AskQuestion when the UI is available. " +
-        "Args: workflow (e.g. uo-init), project (operator dir), optional architecture.",
+        "Args: workflow (e.g. uo-init / tg-init / ce-review), project (operator dir), optional architecture. Never uo-query.",
       args: {
-        workflow: { type: "string", description: "Workflow id (uo-init, tg-init, uo-query, …)" },
+        workflow: { type: "string", description: "Workflow id (uo-init, tg-init, ce-review, …). Never uo-query." },
         project: { type: "string", description: "Operator package absolute path" },
         architecture: {
           type: "string",

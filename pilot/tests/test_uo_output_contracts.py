@@ -120,7 +120,7 @@ def test_no_legacy_uo_summary_stub_contracts() -> None:
 
 
 def test_no_bare_single_segment_contracts_without_nonempty() -> None:
-    bare_ok_with_nonempty = {"plan-build-v1"}
+    bare_ok_with_nonempty: set[str] = set()
     for cid, paths in OUTPUT_CONTRACT_PATHS.items():
         for rel in paths:
             if "/" not in rel and "*" not in rel:

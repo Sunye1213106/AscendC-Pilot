@@ -858,7 +858,7 @@ def _contract_identity_ok(
             and {str(expected_value), str(actual)} <= _SCOPE_GATE_ACTION_IDS
         ):
             continue
-        # Shared / upstream IR (e.g. tg/init/status.yaml on tg-plan plan_precheck)
+        # Shared / upstream IR (e.g. tg/init.yaml on tg-plan plan_precheck)
         # keeps its originating run_id/workflow_id. Only action-owned writes must
         # match the current finalize identity.
         if not action_owned:
@@ -1516,9 +1516,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if eng_ctx.get("ok") is False:
         return eng_ctx
     prepare_engine: dict[str, Any] | None = None
-    # semantic_bind is deterministic-only (no LLM producer overlay).
-    # Subagent scaffolds in ENGINE_REGISTRY (e.g. lemma_mine hypotheses)
-    # run at prepare; never auto-finalize on engine ok.
+    # Staged LLM producers are not in ENGINE_REGISTRY. Deterministic promote
+    # actions run at finalize, never auto-finalize a subagent scaffold.
     if execution_mode == EXECUTION_SUBAGENT:
         from ascendc_pilot.actions.engines import ENGINE_REGISTRY
 

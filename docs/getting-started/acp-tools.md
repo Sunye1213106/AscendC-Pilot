@@ -1,8 +1,8 @@
 # ACP 工具使用说明
 
-OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `acp`。日常任务按本页选工具即可。这两个工具只属于 **AscendC-Pilot Tab**；Build / Plan 保持 OpenCode 原生权限、原生 skill、原生 shell，不会套用 Pilot harness，也看不到 Pilot workflow skill。
+OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pilot_cli`。日常任务按本页选工具即可。这两个工具只属于 **AscendC-Pilot Tab**；Build / Plan 保持 OpenCode 原生权限、原生 skill、原生 shell，不会套用 Pilot harness，也看不到 Pilot workflow skill。不要注册名为 `acp` 的插件工具（会撞上 OpenCode ACP 协议）。
 
-**不要用 `acp --help` / `acp <子命令> --help` 来摸协议。** argparse 帮助会列出三十多个内部子命令（`authorize`、`debug`、`serve-authorize` 等），那不是 Session Driver 合同，也不是查询路由。Agent 跟着帮助文字去编排 `start` → `run-action` → `finalize`，或在 Windows 上改走 bash，就会表现为卡住。
+**不要用 `--help` 来摸协议。** argparse 帮助会列出三十多个内部子命令（`authorize`、`debug`、`serve-authorize` 等），那不是 Session Driver 合同，也不是查询路由。Agent 跟着帮助文字去编排 `start` → `run-action` → `finalize`，或在 Windows 上改走 bash，就会表现为卡住（ses_fefd：120s bash 杀掉 uo-init analyze）。
 
 命令清单见 [CLI Reference](../reference/cli.generated.md)。协议与权限见 [Agent Runtime](../architecture/agent-runtime.md)。查询怎么走见 [UO Query Router](../../skills/operator-analysis/routing/uo-query.md)。
 
@@ -15,18 +15,18 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `acp
   ├─ 建库 / 更新 / TG / CE / 调查 unresolved
   │     → Host 工具 pilot_run（workflow + project + architecture）
   └─ 只读问 CodeMap / 看状态 / 看失败卡
-        → 插件工具 acp（command 里不要带前导 acp）
+        → 插件工具 pilot_cli（command 里不要带前导 acp）
 ```
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run` | 手工 `acp start` / `acp next` / `acp run-action` 串环 |
-| 简单查询（一个标识符或一种参数形态） | 插件 `acp`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query`；`acp start uo-query` |
-| 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `acp` | 主控自己把多路查完再假装委派 |
-| 缺 architecture、要列 `arch*` 选项 | 插件 `acp`：`scan-architectures --project <算子绝对路径>` | 在仓库根目录 Glob / 翻 cmake |
-| `pilot_run` 失败、要看原因 | 插件 `acp`：`inspect-failure` / `status`（都要 `--project`） | `--help`、读 Pilot 源码、bash 管道 |
+| `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run` | 手工 `acp start` / `acp next` / `acp run-action auto` 串环 |
+| 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query`；`acp start uo-query` |
+| 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
+| 缺 architecture、要列 `arch*` 选项 | 插件 `pilot_cli`：`scan-architectures --project <算子绝对路径>` | 在仓库根目录 Glob / 翻 cmake |
+| `pilot_run` 失败、要看原因 | 插件 `pilot_cli`：`inspect-failure` / `status`（都要 `--project`） | `--help`、读 Pilot 源码、bash 管道 |
 
-插件 `acp` 的 `command` 是 **二进制后面的 argv**，不要再写一遍 `acp`：
+插件 `pilot_cli` 的 `command` 是 **二进制后面的 argv**，不要再写一遍 `acp`，也不要找 `acp.exe`：
 
 ```text
 uo-query --project D:\ops\attention\flash_attention_score_grad --architecture arch35 s1Inner
@@ -44,18 +44,18 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 这是运行时最常见的空转，不是 argparse 本身算得慢。
 
 1. **把帮助当成协议。** `acp --help` 列出的是全部 CLI，包括 Host 内部命令。Agent 接着对 `start`、`run-action`、`uo` 再调一次 `--help`，不再推进用户任务。
-2. **Windows 上用 bash 调 `acp`。** OpenCode 1.18 的 bash 可能把整行 `acp …` 当成可执行文件，出现 `NotFound: ChildProcess.spawn`，或一直等到工具超时。子代必须用插件 `acp`（内部 `spawnSync(acp.exe, shell:false)`），不要 bash。
-3. **绝对路径触发权限等待。** 写成 `C:\…\Scripts\acp.exe --help` 对不上 frontmatter 的 `acp *` 白名单，OpenCode 会变成 ask/deny，界面像卡死、其实在等人点允许。
-4. **有待回答问题时继续 `--help`。** 插件在 pending AskQuestion 期间仍放行 `--help`，但帮助不会消费这个问题。正确动作是把 `ask_question` 的选项原样交给用户（或 `acp start --decision continue|reinit`），而不是再摸一遍 CLI。
+2. **Windows 上用 bash 调 `acp`。** OpenCode 1.18 的 bash 可能把整行 `acp …` 当成可执行文件，出现 `NotFound: ChildProcess.spawn`，或 120s 杀掉 uo-init。工作流必须用 `pilot_run`；短命令必须用插件 `pilot_cli`（内部 `spawnSync(acp.exe, shell:false)`），不要 bash。
+3. **绝对路径触发权限等待。** 写成 `C:\…\Scripts\acp.exe --help` 对不上 frontmatter 白名单，OpenCode 会变成 ask/deny，界面像卡死、其实在等人点允许。不要搜 `acp.exe`。
+4. **有待回答问题时继续 `--help`。** 插件在 pending AskQuestion 期间仍放行 `--help`，但帮助不会消费这个问题。正确动作是把 `ask_question` 的选项原样交给用户，而不是再摸一遍 CLI。
 5. **管道缓冲。** `acp … | Select-Object -Last` / `Out-String` / `tail` 会被 authorize 拒绝；Agent 换写法重试，看起来也在空转。
 
-插件 `acp` 收到 `--help` / `-h` / `help` 时会返回本页的短用法卡，**不会**再 spawn argparse。人类在自己的终端里仍可直接运行 `acp --help`。
+插件 `pilot_cli` 收到 `--help` / `-h` / `help` 时会返回本页的短用法卡，**不会**再 spawn argparse。收到 `start` / `run-action auto` 时直接拒绝并要求改用 `pilot_run`。人类在自己的终端里仍可直接运行 `acp --help`。
 
 ---
 
 ## Agent 允许的日常命令
 
-插件 `acp` 只应用下面这些；其余子命令是 Host / 开发者内部入口。
+插件 `pilot_cli` 只应用下面这些；`start` / `run-action auto` 必须走 `pilot_run`。
 
 | `command` | 何时用 |
 | --- | --- |
@@ -69,10 +69,10 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 查询四种参数形态（禁止 `--mode`）：
 
 ```text
-acp uo-query --project <abs> [--architecture arch35] s1Inner
-acp uo-query --project <abs> [--architecture arch35] SparseMode=3
-acp uo-query --project <abs> [--architecture arch35] --file op_host/arch35/foo.cpp --line 120
-acp uo-query --project <abs> [--architecture arch35]
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] s1Inner`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] SparseMode=3`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_host/arch35/foo.cpp --line 120`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 ```
 
 `pilot_run` 参数：
@@ -96,11 +96,12 @@ acp uo-query --project <abs> [--architecture arch35]
 失败后 workflow 可能进入 `human_required`。写、派 Task、直调领域脚本、读引擎实现仍然会被挡住。主控可以 `Read` / `Glob` / `Get-ChildItem` 看算子目录和失败产物，方便核对环境。优先用：
 
 ```text
-插件 acp：inspect-failure --project <abs>
-插件 acp：status --project <abs>
+插件 pilot_cli：inspect-failure --project <abs>
+插件 pilot_cli：status --project <abs>
 缺 architecture：scan-architectures，然后 AskQuestion
 主控只读：Read / Glob / Get-ChildItem / ls / dir / pwd
-不要：--help、读引擎脚本、bash 管道、第一次启动就 force_new、Write / Task
+诊断：python scripts/dev/check_cann.py / check_env.py / python -m ascendc_pilot doctor / cann_extract.py --fixup
+不要：--help、读引擎脚本、bash acp start、Write / Task
 ```
 
 `inspect-failure` 的 `message_zh` 面向用户；不要把 `reason_code` 当成唯一解释。外部环境修好后才用 `retry-after-environment-fix`（这是恢复命令，不是日常路径）。

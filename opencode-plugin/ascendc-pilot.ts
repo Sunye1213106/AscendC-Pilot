@@ -111,9 +111,10 @@ const ACP_HELP_USAGE_CARD = [
   "argparse lists internal commands (authorize / debug / serve-authorize) and is not the Session Driver contract.",
   "",
   "Workflows (uo-init / uo-update / tg-* / ce-* / uo-investigate): Host tool pilot_run(workflow, project, architecture).",
-  "Never bash `acp start` / `acp next`. Never pilot_run for uo-query.",
+  "Never bash `acp start` / `acp run-action auto`. Never a plugin tool named `acp` (OpenCode ACP protocol).",
+  "If pilot_run is missing: tell the user to fully quit OpenCode and rerun refresh-opencode.ps1.",
   "",
-  "Plugin `acp` command examples (no leading acp):",
+  "Plugin `pilot_cli` command examples (no leading acp):",
   "  uo-query --project <operator-abs> [--architecture arch] <identifier|Dim=V>",
   "  uo-query --project <operator-abs> --status-only",
   "  scan-architectures --project <operator-abs>",
@@ -122,7 +123,7 @@ const ACP_HELP_USAGE_CARD = [
   "",
   "On failure: inspect-failure / status, not another --help.",
   "Pending AskQuestion: use the options verbatim; --help does not consume the question.",
-  "Do not bash-pipe acp (Select-Object / Out-String / tail). Do not pass an absolute acp.exe path.",
+  "Do not bash-pipe acp. Do not pass an absolute acp.exe path. Do not search for acp.exe.",
 ].join("\n")
 
 function readPendingFromDisk(project: string): PendingHumanInteraction | null {
@@ -658,7 +659,7 @@ const PASS_THROUGH_AGENTS = new Set<string>([
   "generalpurpose",
 ])
 
-const PILOT_ONLY_TOOLS = new Set(["pilot_run", "pilotrun", "acp"])
+const PILOT_ONLY_TOOLS = new Set(["pilot_run", "pilotrun", "pilot_cli"])
 
 /** Workflow skills live plugin-internal only. Never install into global OpenCode skills/. */
 const PILOT_WORKFLOW_SKILLS = [
@@ -758,26 +759,25 @@ function shouldEnforceHarness(agent: string, tool = ""): boolean {
 }
 
 /** Installed Pilot agent ids (markdown names under ~/.config/opencode/agents). */
+/** Installed Pilot agent ids (markdown names under plugin-internal agents/). */
 function listInstalledPilotAgentNames(): string[] {
-  const names = new Set<string>([
-    "ascendc-pilot",
-    "uo-query",
-    "uo-gap-investigator",
-    "ce-analyst",
-    "ce-change-referee",
-    "ce-reviewer",
-    "ce-applier",
-    "tg-closure-referee",
-    "tg-init-audit",
-    "tg-lemma-producer",
-  ])
-  try {
-    const dir = resolve(openCodeHome(), "agents")
-    for (const f of readdirSync(dir)) {
-      if (f.endsWith(".md")) names.add(f.slice(0, -3))
+  const names = new Set<string>(["ascendc-pilot"])
+  const skip = new Set(["tg-init-audit", "readme"])
+  const dirs = [
+    resolve(openCodeHome(), "ascendc-pilot-plugin", "agents"),
+    resolve(openCodeHome(), "agents"),
+  ]
+  for (const dir of dirs) {
+    try {
+      for (const f of readdirSync(dir)) {
+        if (!f.endsWith(".md")) continue
+        const n = f.slice(0, -3)
+        if (skip.has(n.toLowerCase())) continue
+        names.add(n)
+      }
+    } catch {
+      /* ignore */
     }
-  } catch {
-    /* ignore */
   }
   return [...names].filter((n) => isPilotFamilyAgent(n) && !PASS_THROUGH_AGENTS.has(n))
 }
@@ -794,6 +794,7 @@ function isolateNativeOpenCodeAgents(agentBag: Record<string, unknown>): void {
         : {}
     perm.pilot_run = "deny"
     perm.pilotrun = "deny"
+    perm.pilot_cli = "deny"
     perm.acp = "deny"
     denyPilotWorkflowSkills(perm)
     const tools =
@@ -802,6 +803,7 @@ function isolateNativeOpenCodeAgents(agentBag: Record<string, unknown>): void {
         : {}
     tools.pilot_run = false
     tools.pilotrun = false
+    tools.pilot_cli = false
     tools.acp = false
     agentBag[name] = { ...cur, permission: perm, tools }
   }
@@ -847,8 +849,8 @@ function patchWindowsShell(cfg: Record<string, unknown>): Record<string, unknown
  * `external_directory` is an OpenCode worktree transport workaround — not the
  * Pilot write boundary (lease + allowed paths). Does not change Build/Plan
  * Does not change Build/Plan edit/bash/skill/shell rules; those tabs only
- * get Pilot tools (`pilot_run` / `acp`) and Pilot workflow skill names denied.
- * Does not relax write/edit. Must not widen `task` beyond compose ceiling.
+ * get Pilot tools (`pilot_run` / `pilot_cli`) and Pilot workflow skill names denied.
+ * Does not relax write/edit. Do not widen task beyond compose ceiling.
  * Mutates and returns cfg.
  */
 function patchPilotReadPermissions(
@@ -873,35 +875,49 @@ function patchPilotReadPermissions(
         : {}
     perm.read = "allow"
     perm.external_directory = "allow"
+    const tools =
+      cur.tools && typeof cur.tools === "object"
+        ? { ...(cur.tools as Record<string, unknown>) }
+        : {}
     if (name === "ascendc-pilot") {
-      // Do not widen task. Compose emits a Pilot-actor whitelist.
-      // Never set top-level `*`: OpenCode treats it as a tool glob and it
-      // matches read/glob/grep even when those keys are allow.
       delete perm["*"]
       perm.glob = "allow"
       perm.grep = "allow"
       perm.list = "allow"
-      perm.pilot_run = perm.pilot_run || "allow"
-      perm.acp = perm.acp || "allow"
+      perm.pilot_run = "allow"
+      perm.pilotrun = "allow"
+      perm.pilot_cli = "allow"
+      perm.acp = "deny"
       perm.skill = perm.skill || "allow"
       perm.question = perm.question || "allow"
       perm.todowrite = perm.todowrite || "allow"
+      tools.pilot_run = true
+      tools.pilotrun = true
+      tools.pilot_cli = true
+      tools.acp = false
     } else {
-      // Do not inherit the user's MCP servers on TG/CE/query children.
+      cur.hidden = true
+      cur.mode = cur.mode || "subagent"
       perm.webfetch = perm.webfetch || "deny"
       perm.websearch = perm.websearch || "deny"
       if (perm.task === undefined) perm.task = "deny"
       perm.skill = perm.skill || "deny"
-      // Do not set/overwrite edit: compose already emits deny (empty write_scopes)
-      // or ask (producers/reviewers). Overwriting undefined→deny would clobber
-      // OpenCode agent-md edit:ask when config.agent has no permission bag yet.
+      perm.pilot_run = "deny"
+      perm.pilotrun = "deny"
+      perm.acp = "deny"
+      perm.pilot_cli = perm.pilot_cli || "allow"
+      tools.pilot_run = false
+      tools.pilotrun = false
+      tools.acp = false
+      tools.pilot_cli = true
       for (const server of mcpServers) {
         perm[`${server}_*`] = "deny"
       }
     }
-    agentBag[name] = { ...cur, permission: perm }
+    agentBag[name] = { ...cur, permission: perm, tools }
   }
   isolateNativeOpenCodeAgents(agentBag)
+  injectHiddenChildPrompts(agentBag)
   out.agent = agentBag
   return out
 }
@@ -1012,6 +1028,53 @@ function resolveAction(args: Record<string, unknown>, project: string): string {
 
 function harnessBinCachePath(): string {
   return resolve(openCodeHome(), "ascendc-harness-bin")
+}
+
+function cannRootCachePath(): string {
+  return resolve(openCodeHome(), "ascendc-cann-root")
+}
+
+function readCachedCannRoot(): string {
+  try {
+    const cached = readFileSync(cannRootCachePath(), "utf-8").replace(/^\uFEFF/, "").trim()
+    if (cached && existsSync(cached)) return cached
+  } catch {
+    /* ignore */
+  }
+  return ""
+}
+
+function injectHiddenChildPrompts(agentBag: Record<string, unknown>): void {
+  const dir = resolve(openCodeHome(), "ascendc-pilot-plugin", "agents")
+  let files: string[] = []
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith(".md") && f.toLowerCase() !== "readme.md")
+  } catch {
+    return
+  }
+  for (const f of files) {
+    const name = f.slice(0, -3)
+    if (name === "ascendc-pilot" || name.toLowerCase() === "tg-init-audit") continue
+    let text = ""
+    try {
+      text = readFileSync(join(dir, f), "utf-8")
+    } catch {
+      continue
+    }
+    let body = text
+    if (text.startsWith("---")) {
+      const end = text.indexOf("\n---", 3)
+      if (end >= 0) body = text.slice(end + 4).replace(/^\s*\n/, "")
+    }
+    const cur =
+      agentBag[name] && typeof agentBag[name] === "object"
+        ? { ...(agentBag[name] as Record<string, unknown>) }
+        : {}
+    cur.hidden = true
+    cur.mode = cur.mode || "subagent"
+    if (body.trim()) cur.prompt = body
+    agentBag[name] = cur
+  }
 }
 
 function envPathOf(env?: Record<string, string | undefined> | NodeJS.ProcessEnv): string {
@@ -1423,15 +1486,100 @@ function childSpawnEnv(project?: string): NodeJS.ProcessEnv {
   if (project) env.ASCENDC_PROJECT_ROOT = project
   const bin = resolveAcpBin()
   if (bin && bin !== "acp") env.ASCENDC_HARNESS_BIN = bin
+  const cann = readCachedCannRoot()
+  if (cann && !env.UO_CANN_ROOT) env.UO_CANN_ROOT = cann
   return env
 }
 
+function isPilotCliLongCommand(argv: string[]): boolean {
+  const head = String(argv[0] || "").trim().toLowerCase()
+  if (head === "start") return true
+  if (head === "run-action") return true
+  if (head === "drive") return true
+  return false
+}
+
+function formatPilotCliOutput(opts: {
+  stdout: string
+  stderr: string
+  err: string
+  status: number | null
+  timeout?: boolean
+}): string {
+  const parts: string[] = []
+  const failed = Boolean(opts.err) || opts.status !== 0 || opts.timeout
+  if (failed) {
+    const code = opts.timeout ? "TIMEOUT" : `exit=${opts.status ?? "null"}`
+    parts.push(`FAIL ${code}`)
+  }
+  const stdout = String(opts.stdout || "").trim()
+  const stderr = String(opts.stderr || "").trim()
+  const err = String(opts.err || "").trim()
+  if (stdout) {
+    parts.push(stdout)
+    try {
+      const jsonStart = stdout.indexOf("{")
+      if (jsonStart >= 0) {
+        const obj = JSON.parse(stdout.slice(jsonStart)) as Record<string, unknown>
+        const zh = String(obj.message_zh || obj.hint_zh || "").trim()
+        if (zh && !stdout.includes(zh)) parts.push(zh)
+      }
+    } catch {
+      /* not json */
+    }
+  }
+  if (stderr && stderr !== stdout) parts.push(stderr)
+  if (err && err !== stderr) parts.push(err)
+  if (opts.timeout) {
+    parts.push(
+      "短命令工具不可用于 uo-init drain。请用 Host 工具 pilot_run(workflow, project, architecture)。",
+    )
+  }
+  const blob = parts.join("\n")
+  if (/cann|UO_CANN_ROOT|ASCEND_CANN|impl\/include/i.test(blob)) {
+    parts.push(
+      "查 ~/.config/opencode/ascendc-cann-root；跑 python scripts/dev/check_cann.py；" +
+        "必要时 python scripts/cann_extract.py --fixup --dest <pkg>。不要找 acp.exe。",
+    )
+  }
+  return parts.join("\n").trim() || `(pilot_cli exited ${opts.status})`
+}
+
+function createPilotRunStub(err: unknown): Record<string, unknown> {
+  const detail = String(err || "unknown").slice(0, 1200)
+  return {
+    pilot_run: {
+      description:
+        "Run an AscendC-Pilot workflow via Host Session Driver (start→auto). " +
+        "Always present even when the driver failed to load.",
+      args: {
+        workflow: { type: "string", description: "Workflow id (uo-init, tg-init, ce-review, …). Never uo-query." },
+        project: { type: "string", description: "Operator package absolute path" },
+        architecture: { type: "string", description: "Optional arch* (required for uo-init/uo-update)" },
+        intent: { type: "string", description: "User product intent verbatim" },
+        force_new: { type: "boolean", description: "Wipe only when the user asked to 删除重开" },
+      },
+      async execute() {
+        return {
+          title: "pilot_run unavailable",
+          output:
+            "[ascendc-pilot] pilot-driver 加载失败，pilot_run 不可用。\n" +
+            detail +
+            "\n请完全退出 OpenCode，运行 .\\refresh-opencode.ps1 或 SKIP_PIP=1 ./install.sh opencode 后重开。\n" +
+            "不要 bash acp start / acp run-action auto，不要找 acp.exe。",
+          metadata: { ok: false, error: "PILOT_DRIVER_LOAD_FAILED" },
+        }
+      },
+    },
+  }
+}
+
 /**
- * Native ACP CLI tool. Same spawn path as pilot_run: absolute acp.exe, shell:false.
- * Subagents must use this — OpenCode 1.18 Windows bash (cmd.exe + Effect spawn)
- * returns NotFound: ChildProcess.spawn for any `acp …` line (ses_ff6fe).
+ * Short ACP CLI. Not named `acp` — that collides with OpenCode ACP protocol
+ * and can drop the whole plugin tool bag (ses_fefd). Long start/auto is
+ * `pilot_run` only (streaming; no 120s/180s bash timeout).
  */
-function createAcpCliTool(): {
+function createPilotCliTool(): {
   description: string
   args: Record<string, { type: string; description: string }>
   execute: (
@@ -1441,27 +1589,26 @@ function createAcpCliTool(): {
 } {
   return {
     description:
-      "Run the AscendC-Pilot CLI (acp.exe). Prefer this over bash. " +
+      "Short AscendC-Pilot CLI (plugin tool `pilot_cli`, not bash, not a tool named acp). " +
       "Pass command without a leading 'acp' (example: " +
       "`uo-query --project <operator-abs> s1Inner`). Never `--mode`. " +
-      "Do not call `--help` to discover protocol; use status / inspect-failure / scan-architectures. " +
-      "Do not use bash/MCP/Grep as a substitute.",
+      "Workflows: use Host tool `pilot_run`. Do not call `--help`. Do not search for acp.exe.",
     args: {
       command: {
         type: "string",
         description:
-          "acp argv after the binary, or a full `acp …` line. Include --project <operator-abs>. " +
-          "Do not pass --help / -h; that returns a short usage card, not argparse.",
+          "CLI argv after the binary (example: `uo-query --project <operator-abs> s1Inner`). " +
+          "Do not prefix with acp. Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run).",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
       const raw = String(args.command || args.cmd || args.argv || "").trim()
       if (!raw) {
         return {
-          title: "acp",
+          title: "pilot_cli",
           output:
-            "[ascendc-pilot] acp tool requires command, e.g. " +
-            "`uo-query --project <operator-abs> <identifier>`.",
+            "[ascendc-pilot] pilot_cli requires command, e.g. " +
+            "`uo-query --project <operator-abs> <identifier>`. Workflows: use pilot_run.",
           metadata: { ok: false, error: "missing_command" },
         }
       }
@@ -1469,9 +1616,9 @@ function createAcpCliTool(): {
       const full = /^(?:acp(?:\.exe|\.cmd)?)(\s|$)/i.test(raw) ? raw : `acp ${raw}`
       if (isAcpHelpCommand(full) || raw === "-h" || raw === "--help" || raw === "help") {
         return {
-          title: "acp help",
+          title: "pilot_cli help",
           output: ACP_HELP_USAGE_CARD,
-          metadata: { ok: true, error: "help_usage_card" },
+          metadata: { ok: false, error: "help_usage_card" },
         }
       }
       const rewritten = projectHint ? rewriteAcpProjectFlag(full, projectHint) : full
@@ -1479,9 +1626,19 @@ function createAcpCliTool(): {
       const argv = tokenizeArgv(stripped)
       if (!argv.length) {
         return {
-          title: "acp",
-          output: "[ascendc-pilot] acp command parsed empty.",
+          title: "pilot_cli",
+          output: "[ascendc-pilot] pilot_cli command parsed empty.",
           metadata: { ok: false, error: "empty_argv" },
+        }
+      }
+      if (isPilotCliLongCommand(argv)) {
+        return {
+          title: `pilot_cli ${argv[0]}`,
+          output:
+            "[ascendc-pilot] start / run-action 必须用 Host 工具 `pilot_run(workflow, project, architecture)`。\n" +
+            "`pilot_cli` 只做 uo-query / status / inspect-failure / scan-architectures。\n" +
+            "不要 bash `acp start`（OpenCode 默认 120s 会杀掉 uo-init analyze）。",
+          metadata: { ok: false, error: "USE_PILOT_RUN" },
         }
       }
       const project =
@@ -1496,19 +1653,19 @@ function createAcpCliTool(): {
         sessionAgent: ctx?.sessionAgent as string | undefined,
         sessionID: sessionId,
       })
-      if (agent && !shouldEnforceHarness(agent, "acp")) {
+      if (agent && !shouldEnforceHarness(agent, "pilot_cli")) {
         return {
-          title: "acp",
+          title: "pilot_cli",
           output:
-            "[ascendc-pilot] acp 只在 AscendC-Pilot Tab 可用。Build / Plan 使用 OpenCode 原生权限，不走 Pilot harness。",
+            "[ascendc-pilot] pilot_cli 只在 AscendC-Pilot Tab 可用。Build / Plan 使用 OpenCode 原生权限，不走 Pilot harness。",
           metadata: { ok: false, error: "HARNESS_INACTIVE" },
         }
       }
       if (!agent) agent = "ascendc-pilot"
       const action = String(args.action || args.action_id || process.env.ASCENDC_ACTION || "")
       const verdict = runAuthorize({
-        tool: "bash",
-        command: `acp ${stripped}`,
+        tool: "pilot_cli",
+        command: stripped,
         agent,
         action,
         project,
@@ -1516,45 +1673,68 @@ function createAcpCliTool(): {
       })
       if (verdict.decision === "deny" || (verdict.ok === false && verdict.decision !== "ask")) {
         return {
-          title: `acp ${argv[0]}`,
-          output: denyMessage(verdict, "acp", stripped),
+          title: `pilot_cli ${argv[0]}`,
+          output: denyMessage(verdict, "pilot_cli", stripped),
           metadata: { ok: false, error: verdict.reason_code || "denied" },
         }
       }
       const acpBin = resolveAcpBin()
       if (!acpBin || (acpBin === "acp" && process.platform === "win32")) {
         return {
-          title: "acp",
+          title: "pilot_cli",
           output:
-            `[ascendc-pilot] acp.exe not found (resolveAcpBin=${acpBin}). ` +
-            `Run .\\refresh-opencode.ps1 so ~/.config/opencode/ascendc-harness-bin points at Scripts\\acp.exe.`,
+            `[ascendc-pilot] harness binary not found (resolveAcpBin=${acpBin}). ` +
+            `Run .\\refresh-opencode.ps1 so ~/.config/opencode/ascendc-harness-bin is rewritten. ` +
+            `Do not search PATH or bash for the binary.`,
           metadata: { ok: false, error: "HARNESS_MISSING", bin: acpBin },
         }
       }
       const cwd = project && existsSync(project) ? project : undefined
-      const res = spawnSync(acpBin, argv, {
-        encoding: "utf-8",
-        shell: false,
-        windowsHide: true,
-        cwd,
-        env: childSpawnEnv(project),
-        timeout: 180_000,
-        maxBuffer: 8 * 1024 * 1024,
-      })
-      const stdout = String(res.stdout || "")
-      const stderr = String(res.stderr || "")
-      const err = res.error ? String(res.error) : ""
-      const output = (stdout || stderr || err).trim() || `(acp exited ${res.status})`
-      return {
-        title: `acp ${argv[0]}`,
-        output,
-        metadata: {
-          ok: !res.error && res.status === 0,
-          exit: res.status,
-          bin: acpBin,
-          argv,
-          project,
-        },
+      try {
+        const res = spawnSync(acpBin, argv, {
+          encoding: "utf-8",
+          shell: false,
+          windowsHide: true,
+          cwd,
+          env: childSpawnEnv(project),
+          timeout: 180_000,
+          maxBuffer: 8 * 1024 * 1024,
+        })
+        const stdout = String(res.stdout || "")
+        const stderr = String(res.stderr || "")
+        const err = res.error ? String(res.error) : ""
+        const timedOut = /ETIMEDOUT|timed out/i.test(err)
+        const output = formatPilotCliOutput({
+          stdout,
+          stderr,
+          err,
+          status: typeof res.status === "number" ? res.status : 1,
+          timeout: timedOut,
+        })
+        return {
+          title: `pilot_cli ${argv[0]}`,
+          output,
+          metadata: {
+            ok: !res.error && res.status === 0,
+            error: res.status === 0 ? undefined : err || `exit_${res.status}`,
+            exit: res.status,
+            bin: acpBin,
+            argv,
+            project,
+          },
+        }
+      } catch (exc) {
+        return {
+          title: `pilot_cli ${argv[0]}`,
+          output: formatPilotCliOutput({
+            stdout: "",
+            stderr: "",
+            err: String(exc),
+            status: 1,
+            timeout: /timed out/i.test(String(exc)),
+          }),
+          metadata: { ok: false, error: "PILOT_CLI_THROW" },
+        }
       }
     },
   }
@@ -1678,9 +1858,15 @@ function ensureAcpOnPath(): void {
   if (patched.ASCENDC_HARNESS_BIN) process.env.ASCENDC_HARNESS_BIN = patched.ASCENDC_HARNESS_BIN
 }
 
+function injectCachedCannRoot(env: Record<string, string>): Record<string, string> {
+  const cann = readCachedCannRoot()
+  if (!cann || env.UO_CANN_ROOT) return env
+  return { ...env, UO_CANN_ROOT: cann }
+}
+
 function prependPilotToolPath(env: Record<string, string>): Record<string, string> {
   ensureOpenCodeRipgrep()
-  return prependAcpPath(prependOpenCodeRgPath(env || {}))
+  return injectCachedCannRoot(prependAcpPath(prependOpenCodeRgPath(env || {})))
 }
 
 function rgMissingRewrite(tool: string, skillName?: string): string {
@@ -1694,7 +1880,7 @@ function rgMissingRewrite(tool: string, skillName?: string): string {
   }
   return (
     `[ascendc-pilot] OpenCode 原生 ${tool} 需要 PATH 上的 rg（OpenCode 不使用 Cursor 自带的 rg）。` +
-    `请用 acp uo-query，空了按 hint 再查，或 acp ro-search --paths <已 citation 文件>，或 Read 已定位窗口。`
+    `请用 pilot_cli command=\`uo-query --project <abs>\`，空了按 hint 再查，或 Read 已定位窗口。`
   )
 }
 
@@ -2417,15 +2603,21 @@ export const AscendCHarnessPlugin = async (ctx?: {
     pilotTools = mod.createPilotRunTool(client, ctx) || {}
   } catch (err) {
     console.error("[ascendc-pilot] failed to load pilot-driver", err)
-    pilotTools = {}
+    pilotTools = createPilotRunStub(err) as Record<string, unknown>
   }
   // Do not assign plugin.tool.skill: that replaces native Skill globally and
   // leaks into Build/Plan. Pilot after-hook recovers plugin-internal SKILL.md.
-  if (pilotTools && typeof pilotTools === "object") {
-    // Last-write-wins with skill. Native `acp` bypasses OpenCode bash spawn
-    // (cmd.exe + Effect ChildProcess.make(command) → NotFound on Windows 1.18).
-    ;(pilotTools as Record<string, unknown>).acp = createAcpCliTool()
+  // Never register a tool named `acp` — OpenCode ACP protocol last-write-wins
+  // can drop the whole plugin tool bag (ses_fefd: no pilot_run, no CLI).
+  if (!pilotTools || typeof pilotTools !== "object") {
+    pilotTools = createPilotRunStub("createPilotRunTool returned empty") as Record<string, unknown>
   }
+  const bag = pilotTools as Record<string, unknown>
+  if (!bag.pilot_run && !bag.pilotrun) {
+    Object.assign(bag, createPilotRunStub("createPilotRunTool omitted pilot_run"))
+  }
+  bag.pilot_cli = createPilotCliTool()
+  delete bag.acp
 
   return {
     // OpenCode 1.18 calls N.config / N.dispose on every loaded plugin.
@@ -2548,14 +2740,14 @@ export const AscendCHarnessPlugin = async (ctx?: {
         "askquestion",
         "ask_question",
         "lsp",
-        "acp",
+        "pilot_cli",
         "pilot_run",
         "pilotrun",
       ])
       const isMcpTool = !nativeTools.has(tool) && tool.includes("_")
       if (isMcpTool && agent !== "ascendc-pilot") {
         throw new Error(
-          `[ascendc-pilot] MCP tool '${tool}' is denied for Pilot child '${agent}'. Use acp / session METHOD.`,
+          `[ascendc-pilot] MCP tool '${tool}' is denied for Pilot child '${agent}'. Use pilot_cli / session METHOD.`,
         )
       }
       if (
@@ -2587,14 +2779,10 @@ export const AscendCHarnessPlugin = async (ctx?: {
           tool === "askquestion" ||
           tool === "ask_question" ||
           tool.includes("question")
-        const isAnswerBash =
-          (tool === "bash" || tool === "shell" || tool === "terminal") &&
-          /\bacp(\.cmd|\.exe)?\s+answer\b/i.test(command)
-        const isInspectBash =
-          (tool === "bash" || tool === "shell" || tool === "terminal") &&
-          /\bacp(\.cmd|\.exe)?\s+(inspect-failure|next|status|run-summary|scan-architectures|abort)\b/i.test(
-            command,
-          )
+        const isAnswerCli =
+          tool === "pilot_cli" && /\banswer\b/i.test(command)
+        const isInspectCli =
+          tool === "pilot_cli" && isAcpDiagnosticCommand(command)
         const isHelpBash =
           (tool === "bash" || tool === "shell" || tool === "terminal") && isAcpHelpCommand(command)
         const isResumeStartBash =
@@ -2613,11 +2801,11 @@ export const AscendCHarnessPlugin = async (ctx?: {
             tool === "search" ||
             ((tool === "bash" || tool === "shell" || tool === "terminal") &&
               isReadonlyInspectBash(command)) ||
-            (tool === "acp" && isAcpDiagnosticCommand(command)))
+            (tool === "pilot_cli" && isAcpDiagnosticCommand(command)))
         if (
           !isQuestion &&
-          !isAnswerBash &&
-          !isInspectBash &&
+          !isAnswerCli &&
+          !isInspectCli &&
           !isHelpBash &&
           !isResumeStartBash &&
           !isPilotDriver &&

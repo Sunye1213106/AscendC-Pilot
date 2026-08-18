@@ -29,4 +29,4 @@ side: ""
 | `open_questions` | 未决决策（带推荐答案） |
 | `side` | `kernel` / `tiling` / `host` / `mixed` |
 
-超时或中止前，已用 `acp uo-query` 查到的结论仍须写进最终消息。
+超时或中止前，已用插件 `pilot_cli` `uo-query` 查到的结论仍须写进最终消息。

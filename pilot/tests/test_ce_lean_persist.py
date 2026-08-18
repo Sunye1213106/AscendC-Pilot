@@ -99,8 +99,8 @@ def test_build_tg_plan_intent_is_ce_change_scoped() -> None:
     assert doc["do_not_widen_to_declared_set"] is True
 
 
-def test_plan_intent_merges_ce_tg_plan_intent(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.tg_plan_targets import plan_intent
+def test_plan_fuse_reads_ce_intent_without_writing_plan_intent(tmp_path: Path) -> None:
+    from testcase_agent.products import collect_intent_sources
 
     ensure_agent_layout(tmp_path, arch="arch35")
     start_workflow(tmp_path, "tg-plan", architecture="arch35", op_name="DemoOp")
@@ -121,19 +121,14 @@ def test_plan_intent_merges_ce_tg_plan_intent(tmp_path: Path) -> None:
         ),
         encoding="utf-8",
     )
-    result = plan_intent(tmp_path, {"architecture": "arch35", "op_name": "DemoOp"})
-    assert result.get("ok") is True, result
-    assert result.get("mode") == "ce_change_scoped"
-    assert result.get("target_keys") == [10, 20]
-    written = yaml.safe_load(
-        (tg_root(tmp_path, arch="arch35") / "plan" / "plan_intent.yaml").read_text(encoding="utf-8")
-    )
-    assert written["mode"] == "ce_change_scoped"
-    assert written["target_keys"] == [10, 20]
+    doc = collect_intent_sources(tmp_path, architecture="arch35")
+    kinds = [row.get("kind") for row in doc.get("sources") or []]
+    assert "ce_tg_plan_intent" in kinds
+    assert not (tg_root(tmp_path, arch="arch35") / "plan" / "plan_intent.yaml").exists()
 
 
-def test_plan_intent_merges_empty_ce_keys_without_widening(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.tg_plan_targets import plan_intent
+def test_empty_ce_keys_still_surface_as_intent_source(tmp_path: Path) -> None:
+    from testcase_agent.products import collect_intent_sources
 
     ensure_agent_layout(tmp_path, arch="arch35")
     start_workflow(tmp_path, "tg-plan", architecture="arch35", op_name="DemoOp")
@@ -154,29 +149,22 @@ def test_plan_intent_merges_empty_ce_keys_without_widening(tmp_path: Path) -> No
         ),
         encoding="utf-8",
     )
-    result = plan_intent(tmp_path, {"architecture": "arch35", "op_name": "DemoOp"})
-    assert result.get("ok") is True, result
-    assert result.get("mode") == "ce_change_scoped"
-    assert result.get("target_keys") == []
-    assert result.get("target_mode") == "explicit_keys"
-    assert result.get("do_not_widen_to_declared_set") is True
-    written = yaml.safe_load(
-        (tg_root(tmp_path, arch="arch35") / "plan" / "plan_intent.yaml").read_text(encoding="utf-8")
-    )
-    assert written["target_keys"] == []
-    assert written["target_mode"] == "explicit_keys"
+    doc = collect_intent_sources(tmp_path, architecture="arch35")
+    payload = next(row["doc"] for row in doc["sources"] if row["kind"] == "ce_tg_plan_intent")
+    assert payload.get("target_keys") == []
+    assert payload.get("do_not_widen_to_declared_set") is True
 
 
-def test_resolve_tg_mode_prefers_ce_intent(tmp_path: Path) -> None:
+def test_resolve_tg_mode_does_not_become_ce_overlay(tmp_path: Path) -> None:
     from ascendc_pilot.workflows import resolve_tg_mode
 
     ensure_agent_layout(tmp_path, arch="arch35")
     ce_intent = ce_root(tmp_path, arch="arch35") / "impact" / "tg_plan_intent.yaml"
     ce_intent.parent.mkdir(parents=True, exist_ok=True)
     ce_intent.write_text("schema: tg-plan-intent/v1\nmode: ce_change_scoped\n", encoding="utf-8")
-    assert resolve_tg_mode(tmp_path) == "ce_change_scoped"
+    assert resolve_tg_mode(tmp_path) == ""
     overlay = get_workflow("tg-plan", project_root=tmp_path, mode=None)
-    assert overlay.get("_active_mode") == "ce_change_scoped"
+    assert not overlay.get("_active_mode")
 
 
 def test_obligation_ledger_contract_includes_tg_plan_intent() -> None:

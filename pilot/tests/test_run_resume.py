@@ -282,7 +282,7 @@ def test_tg_reinit_preserves_committed_uo_product(tmp_path: Path) -> None:
     product = agent_root(tmp_path, arch="arch35") / "uo" / "foo.arch35.uo"
     _write(product, "sqlite-placeholder")
     tg = tg_root(tmp_path, arch="arch35")
-    _write(tg / "init" / "status.yaml", {"confirmed": False})
+    _write(tg / "init.yaml", {"schema": "tg-init/v1", "table_kind": "csv", "confirmed": False})
 
     start_workflow(tmp_path, "tg-init", architecture="arch35")
     result = apply_resume_decision(
@@ -294,7 +294,7 @@ def test_tg_reinit_preserves_committed_uo_product(tmp_path: Path) -> None:
     )
     assert result["ok"] is True
     assert product.is_file()
-    assert not (tg / "init" / "status.yaml").is_file()
+    assert not (tg / "init.yaml").is_file()
 
 
 def test_ce_reinit_keeps_uo_and_tg(tmp_path: Path) -> None:
@@ -302,7 +302,7 @@ def test_ce_reinit_keeps_uo_and_tg(tmp_path: Path) -> None:
     _write(product, "sqlite-placeholder")
     tg = tg_root(tmp_path, arch="arch35")
     ce = ce_root(tmp_path, arch="arch35")
-    _write(tg / "plan" / "levels" / "L0" / "plan_scope.yaml", {"level": "L0"})
+    _write(tg / "plan.md", "# plan\n")
     _write(ce / "review" / "index.yaml", {"reviews": []})
 
     start_workflow(tmp_path, "ce-review", architecture="arch35")
@@ -315,7 +315,7 @@ def test_ce_reinit_keeps_uo_and_tg(tmp_path: Path) -> None:
     )
     assert result["ok"] is True
     assert product.is_file()
-    assert (tg / "plan" / "levels" / "L0" / "plan_scope.yaml").is_file()
+    assert (tg / "plan.md").is_file()
     assert not (ce / "review" / "index.yaml").is_file()
 
 

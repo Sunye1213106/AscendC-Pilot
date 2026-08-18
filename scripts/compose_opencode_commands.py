@@ -21,13 +21,13 @@ User arguments: $ARGUMENTS
 
 1. 先阅读 `cognitive-skills/operator-analysis/references/uo-product-map.md`。
 2. **先向用户说明**将直接调用还是委派几路，再执行。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。
-3. **简单查询**：主控直接调用 `acp uo-query --project <算子绝对路径>`（标识符 / Dim=V / --file --line / 无参数索引），将 stdout 向用户陈述。
+3. **简单查询**：主控直接调用 `pilot_cli`（标识符 / Dim=V / --file --line / 无参数索引），将 stdout 向用户陈述。
 4. **复杂查询**：用户原话里几个可独立作为首次调用的起始点，就同一轮并行几路 `Task(agent=uo-query)`（上限 5）。「要交叉综合」不是合并的理由。每路 Task 正文：
    FOCUS: <本路唯一查询目标>
-   建议的首次调用: acp uo-query --project <绝对路径> [--architecture arch35] <标识符或 Dim=V>
+   建议的首次调用: pilot_cli command=`uo-query --project <绝对路径> [--architecture arch35] <标识符或 Dim=V>`
    本片那一句: <这一路要回答的那一句>
    禁止在 Task 正文写 `--mode`。
-5. 子代按卡片 `next` / `hint` 继续调用 `acp uo-query`。图上还能查的独立缺口必须开第 2 轮（路数=缺口数，≤5），禁止用无实质内容的确认（例如「是否继续」）代替。多路已有结论但结案仍不清时 AskQuestion 给出选项。不要 `pilot_run`。
+5. 子代按卡片 `next` / `hint` 继续调用 `pilot_cli`。图上还能查的独立缺口必须开第 2 轮（路数=缺口数，≤5），禁止用无实质内容的确认（例如「是否继续」）代替。多路已有结论但结案仍不清时 AskQuestion 给出选项。不要 `pilot_run`。
 """
     if workflow_id == "uo-init":
         return """Run the AscendC-Pilot workflow `uo-init` for the current operator project.
@@ -37,9 +37,9 @@ User arguments: $ARGUMENTS
 Execution contract:
 1. Treat Workflow Spec / ACP as orchestration authority. Prefer Host `pilot_run` to start `uo-init` when it is not already the active workflow; do not call domain CLIs directly.
 2. If ACP returns `UO_ALREADY_READY` (CodeMap already exists, lock released): this is not an unfinished run. Present options verbatim. 「去查询」means stop Host drive and wait for a question — do not auto-drive, do not `pilot_run uo-query`, do not read quality.yaml as if you just built.
-3. After a real start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Fallback: `acp run-action auto` to drain consecutive deterministic Actions. Do not dispatch deterministic engine identities as OpenCode Tasks. Run `acp` directly with `--project`; never pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
+3. After a real start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Do not bash `acp start` / `acp run-action auto`. Do not dispatch deterministic engine identities as OpenCode Tasks.
 4. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
-5. Finalize the interactive Action through ACP, then call `acp run-action auto` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.
+5. Finalize the interactive Action through ACP, then call Host tool `pilot_run` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.
 6. Canonical UO/TG/CE artifacts and workflow state are written only through the declared actor + ACP finalizer/gates.
 """
     return f"""Run the AscendC-Pilot workflow `{workflow_id}` for the current operator project.
@@ -48,9 +48,9 @@ User arguments: $ARGUMENTS
 
 Execution contract:
 1. Treat Workflow Spec / ACP as orchestration authority. Prefer Host `pilot_run` to start `{workflow_id}` when it is not already the active workflow; do not call domain CLIs directly.
-2. After start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Fallback: `acp run-action auto` to drain consecutive deterministic Actions. Do not dispatch deterministic engine identities as OpenCode Tasks. Run `acp` directly with `--project`; never pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
+2. After start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Do not bash `acp start` / `acp run-action auto`. Do not dispatch deterministic engine identities as OpenCode Tasks.
 3. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
-4. Finalize the interactive Action through ACP, then call `acp run-action auto` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.
+4. Finalize the interactive Action through ACP, then call Host tool `pilot_run` again. Never choose a later Action from `allowed_actions` when ACP recommends a different one.
 5. Canonical UO/TG/CE artifacts and workflow state are written only through the declared actor + ACP finalizer/gates.
 """
 

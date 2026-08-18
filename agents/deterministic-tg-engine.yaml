@@ -16,6 +16,7 @@ read_scopes:
 - pilot:local/**
 - pilot:runs/**
 - pilot:context/**
+- source:test_script/**
 - method:skills/testcase-generation/**
 - method:skills/operator-analysis/**
 - method:skills/source-proof/**

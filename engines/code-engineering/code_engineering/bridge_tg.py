@@ -21,7 +21,7 @@ def bridge_tg(
     root = Path(project_root).expanduser().resolve()
     pilot = root / ".ascendc-pilot"
     scoped = pilot / architecture if architecture else pilot
-    source = scoped / "tg" / "closure" / "closure.csv"
+    source = scoped / "tg" / "cases.csv"
     if isinstance(impacted_keys, dict):
         keys = impacted_keys.get("affected_keys") or impacted_keys.get("affected_keys_sample") or []
         fields = impacted_keys.get("key_dims") or impacted_keys.get("fields") or []
@@ -36,7 +36,7 @@ def bridge_tg(
     if source.is_file():
         with source.open(encoding="utf-8", newline="") as handle:
             for row in csv.DictReader(handle):
-                raw = row.get("tiling_key") or row.get("key") or row.get("key_id")
+                raw = row.get("tiling_key") or row.get("TilingKey") or row.get("key") or row.get("key_id")
                 by_key = bool(wanted) and raw is not None and _normal_key(raw) in wanted
                 by_field = bool(field_names) and any(
                     row.get(name) not in (None, "") or row.get(f"dim_{name}") not in (None, "")
@@ -65,7 +65,7 @@ def bridge_tg(
         "architecture": architecture,
         "impacted_keys": sorted(numeric_keys),
         "fields": sorted(set(field_names)),
-        "closure_source": str(source),
+        "cases_source": str(source),
         "regress_cases": str(cases_path),
         "case_count": len(selected),
         "filter": "keys" if wanted else ("fields" if field_names else "none"),

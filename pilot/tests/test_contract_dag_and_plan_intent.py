@@ -3,15 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def test_plan_intent_not_primary_interactive() -> None:
+def test_plan_intent_action_removed() -> None:
     from ascendc_pilot.actions.tg_primary import PRIMARY_TG_ACTIONS
     from ascendc_pilot.workflows import action_by_id
 
     assert "plan_intent" not in PRIMARY_TG_ACTIONS
-    intent = action_by_id("tg-plan", "plan_intent")
-    assert intent is not None
-    assert intent.get("execution_mode") == "deterministic"
-    assert intent.get("agent_id") == "deterministic-tg-engine"
+    assert action_by_id("tg-plan", "plan_intent") is None
+    fuse = action_by_id("tg-plan", "plan_fuse")
+    assert fuse is not None
+    assert fuse.get("execution_mode") == "subagent"
+    assert fuse.get("output_mode") == "staged"
+    pre = action_by_id("tg-plan", "plan_precheck")
+    assert pre is not None
+    assert pre.get("execution_mode") == "deterministic"
 
 
 def test_contract_dag_checker_passes(repo_root: Path | None = None) -> None:

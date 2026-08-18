@@ -36,3 +36,15 @@ export function resolveAcpBin() {
   }
   return "acp"
 }
+
+export function readCachedCannRoot() {
+  try {
+    const cached = readFileSync(resolve(openCodeHome(), "ascendc-cann-root"), "utf-8")
+      .replace(/^\uFEFF/, "")
+      .trim()
+    if (cached && existsSync(cached)) return cached
+  } catch {
+    /* ignore */
+  }
+  return ""
+}

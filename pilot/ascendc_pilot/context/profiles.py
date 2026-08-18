@@ -82,50 +82,32 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         token_budget=3500,
     ),
-    "tg-solve-lemma-mine": ContextProfile(
-        id="tg-solve-lemma-mine",
-        description="Lemma mining: open keys / leads + branch/template locality + proof gotchas.",
+    "tg-init-bind-init": ContextProfile(
+        id="tg-init-bind-init",
+        description="Bind test-script columns to UO identifiers; write init.yaml draft.",
         references=(
-            "skills/source-proof/references/proof-obligations.md",
-            "skills/source-proof/references/failure-patterns.md",
-            "skills/source-proof/references/static-evidence.md",
-            "skills/source-proof/references/gotchas.md",
-            "skills/testcase-generation/references/closure-safety.md",
+            "skills/testcase-generation/references/test-script-repo.md",
+            "skills/testcase-generation/references/gotchas.md",
         ),
         query_slices=(
-            QuerySlice(method="branches_for_key", seed_from="lemma_leads", limit=8),
-            QuerySlice(method="templates_for_key", seed_from="lemma_leads", limit=8),
-            QuerySlice(method="locate_dim", seed_from="lemma_leads", limit=6),
-            QuerySlice(method="neighbors", seed_from="open_keys", limit=6),
+            QuerySlice(method="search", seed_from="open_keys", limit=8),
         ),
-        token_budget=5000,
+        token_budget=3500,
     ),
-    "tg-solve-lemma-review": ContextProfile(
-        id="tg-solve-lemma-review",
-        description="Lemma qualification: replay proof obligations against leads and open keys.",
-        references=(
-            "skills/source-proof/references/proof-obligations.md",
-            "skills/source-proof/references/referee-replay.md",
-            "skills/source-proof/references/static-evidence.md",
-            "skills/source-proof/references/failure-patterns.md",
-            "skills/source-proof/references/gotchas.md",
-            "skills/testcase-generation/references/closure-safety.md",
-        ),
-        query_slices=(
-            QuerySlice(method="branches_for_key", seed_from="lemma_leads", limit=6),
-            QuerySlice(method="constraints_for", seed_from="lemma_leads", limit=6),
-            QuerySlice(method="neighbors", seed_from="open_keys", limit=6),
-        ),
-        token_budget=4500,
+    "tg-init-human-confirm": ContextProfile(
+        id="tg-init-human-confirm",
+        description="Host-owned confirm of init.yaml to enter planning.",
+        references=(),
+        query_slices=(),
+        token_budget=800,
     ),
-    "tg-solve-closure-audit": ContextProfile(
-        id="tg-solve-closure-audit",
-        description="Closure invariant audit: open keys + certificate/safety gotchas.",
+    "tg-plan-plan-fuse": ContextProfile(
+        id="tg-plan-plan-fuse",
+        description="Fuse intent into plan.md obligations rooted at CSV columns.",
         references=(
-            "skills/testcase-generation/references/closure-safety.md",
-            "skills/testcase-generation/references/closure-gotchas.md",
-            "skills/testcase-generation/references/certificate.md",
-            "skills/testcase-generation/references/failure-patterns.md",
+            "skills/testcase-generation/references/planning.md",
+            "skills/testcase-generation/references/plan-heuristics.md",
+            "skills/testcase-generation/references/gotchas.md",
         ),
         query_slices=(
             QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
@@ -133,37 +115,35 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         token_budget=4000,
     ),
-    "tg-init-init-audit": ContextProfile(
-        id="tg-init-init-audit",
-        description="Coverage-contract audit after Host view bind.",
-        references=(
-            "skills/testcase-generation/references/construction-contract.md",
-            "skills/testcase-generation/references/planning.md",
-            "skills/testcase-generation/references/gotchas.md",
-        ),
-        query_slices=(),
-        token_budget=2500,
-    ),
-    "tg-init-human-confirm": ContextProfile(
-        id="tg-init-human-confirm",
-        description="Host-owned confirm to enter planning; no domain skill load.",
-        references=(),
-        query_slices=(),
-        token_budget=800,
-    ),
-    "tg-plan-scenario-plan": ContextProfile(
-        id="tg-plan-scenario-plan",
-        description="Host-owned freeze of ScenarioSet as the TG plan target.",
-        references=(),
-        query_slices=(),
-        token_budget=800,
-    ),
     "tg-plan-plan-approve": ContextProfile(
         id="tg-plan-plan-approve",
-        description="Host-owned approve of the generated test-obligation plan.",
+        description="Host-owned approve of plan.md.",
         references=(),
         query_slices=(),
         token_budget=800,
+    ),
+    "tg-solve-construct-cases": ContextProfile(
+        id="tg-solve-construct-cases",
+        description="Construct case rows for approved obligations.",
+        references=(
+            "skills/testcase-generation/references/construction-contract.md",
+            "skills/testcase-generation/references/gotchas.md",
+        ),
+        query_slices=(
+            QuerySlice(method="constraints_for", seed_from="open_keys", limit=8),
+        ),
+        token_budget=3500,
+    ),
+    "tg-solve-analyze-round": ContextProfile(
+        id="tg-solve-analyze-round",
+        description="Write per-case worklog: scene, construction, narrowing, lemmas.",
+        references=(
+            "skills/testcase-generation/references/gotchas.md",
+        ),
+        query_slices=(
+            QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
+        ),
+        token_budget=4000,
     ),
     "ce-review-code-review": ContextProfile(
         id="ce-review-code-review",

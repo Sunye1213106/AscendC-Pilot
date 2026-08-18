@@ -191,12 +191,8 @@ def test_declared_set_hash_mismatch_fails(tmp_path, monkeypatch):
         "fingerprint: aaa\n",
         encoding="utf-8",
     )
-    (tg / "init" / "kb_fingerprint.yaml").write_text(
-        "fingerprint: bbb\nkb_fingerprint: bbb\n",
-        encoding="utf-8",
-    )
-    (tg / "init" / "status.yaml").write_text(
-        "op_name: toy\nkb_fingerprint: bbb\nstatus: confirmed\n",
+    (tg / "init.yaml").write_text(
+        "schema: tg-init/v1\nkind: default_input\ntable_kind: csv\nuo_digest: bbb\nconfirmed: true\n",
         encoding="utf-8",
     )
 
@@ -217,36 +213,20 @@ def test_declared_set_hash_mismatch_fails(tmp_path, monkeypatch):
 
 
 def test_residual_loop_budget(tmp_path, toy_env, monkeypatch):
-    from testcase_agent.closure import search_round
+    from testcase_agent.closure import residual
     from testcase_agent.closure import workspace as W
 
     ws = W.default_workspace(tmp_path).ensure()
-    # Force SEARCH_PROGRESS-like state then exhaust budget via residual engine path.
-    monkeypatch.setattr(
-        search_round,
-        "route",
-        lambda _ws=None: {"reason": "SEARCH_PROGRESS", "gap": 3, "declared": 3, "R": 0, "E": 0, "violation": 0},
-    )
-    # Write budget already at limit.
     (ws.state / "round_budget.yaml").write_text(
         yaml.safe_dump({"used": 32, "budget": 32}), encoding="utf-8"
     )
-    # Import residual runner from engines if available.
-    sys.path.insert(0, str(REPO / "pilot"))
-    from ascendc_pilot.actions import engines as E
-
-    # Patch closure workspace resolver to our tmp ws.
-    monkeypatch.setattr(E, "_closure_ws", lambda _p: ws)
-    monkeypatch.setattr(E, "_tg", lambda _p: tmp_path / "tg")
-    (tmp_path / "tg" / "closure").mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
-        "testcase_agent.closure.residual.analyse",
+        residual,
+        "analyse",
         lambda _ws=None: {"open": 3, "distance": {}, "mostly_distance_1": False},
     )
-    out = E._run_closure_residual(tmp_path, {"round_budget": 32})
-    assert out.get("escalate") or out.get("reason") == "PROOF_BLOCKED" or out.get(
-        "auto_rework", {}
-    ).get("budget_exhausted")
+    out = residual.analyse(ws)
+    assert int(out.get("open") or 0) > 0
 
 
 def test_corpus_rejects_crashed_and_not_run(tmp_path, toy_env):

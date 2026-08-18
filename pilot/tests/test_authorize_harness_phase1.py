@@ -54,21 +54,21 @@ def test_producer_write_outside_lease_denied(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
-    start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
+    start_workflow(op, "tg-solve", phase="construct", force_phase=True, architecture="arch35")
     issue_action_lease(
         op,
-        action_id="lemma_mine",
-        actor_id="tg-lemma-producer",
-        allowed_write_paths=["runs/{run_id}/actions/lemma_mine/parts/**"],
+        action_id="construct_cases",
+        actor_id="tg-analyst",
+        allowed_write_paths=["runs/{run_id}/actions/construct_cases/parts/**"],
     )
-    outside = agent_root(op) / "tg" / "closure" / "lemmas" / "active_rules.yaml"
+    outside = agent_root(op) / "tg" / "init.yaml"
     outside.parent.mkdir(parents=True, exist_ok=True)
     verdict = authorize(
         op,
         tool="write",
         path=str(outside),
-        agent="tg-lemma-producer",
-        action="lemma_mine",
+        agent="tg-analyst",
+        action="construct_cases",
     )
     assert verdict.get("decision") == "deny"
     assert verdict.get("reason_code") in {
@@ -83,30 +83,30 @@ def test_producer_write_inside_lease_allowed(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
-    start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
-    rel = "runs/x/actions/lemma_mine/parts/part_001.yaml"
+    start_workflow(op, "tg-solve", phase="construct", force_phase=True, architecture="arch35")
+    rel = "runs/x/actions/construct_cases/parts/part_001.yaml"
     issue_action_lease(
         op,
-        action_id="lemma_mine",
-        actor_id="tg-lemma-producer",
+        action_id="construct_cases",
+        actor_id="tg-analyst",
         allowed_write_paths=[rel],
     )
     target = agent_root(op) / Path(rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     # Ensure agent YAML is discoverable from the repo under test.
-    agents_src = Path(__file__).resolve().parents[2] / "agents" / "tg-lemma-producer.yaml"
+    agents_src = Path(__file__).resolve().parents[2] / "agents" / "tg-analyst.yaml"
     if agents_src.is_file():
         dest = op / "agents"
         dest.mkdir(exist_ok=True)
-        (dest / "tg-lemma-producer.yaml").write_text(
+        (dest / "tg-analyst.yaml").write_text(
             agents_src.read_text(encoding="utf-8"), encoding="utf-8"
         )
     verdict = authorize(
         op,
         tool="write",
         path=str(target),
-        agent="tg-lemma-producer",
-        action="lemma_mine",
+        agent="tg-analyst",
+        action="construct_cases",
     )
     assert verdict.get("decision") == "allow", verdict
 
@@ -115,21 +115,22 @@ def test_referee_cannot_write_producer_path(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
-    start_workflow(op, "tg-solve", phase="audit", force_phase=True, architecture="arch35")
-    target = agent_root(op) / "runs" / "x" / "actions" / "lemma_mine" / "parts" / "part_001.yaml"
+    start_workflow(op, "tg-solve", phase="analyze", force_phase=True, architecture="arch35")
+    target = agent_root(op) / "runs" / "x" / "actions" / "construct_cases" / "parts" / "part_001.yaml"
     target.parent.mkdir(parents=True, exist_ok=True)
     verdict = authorize(
         op,
         tool="write",
         path=str(target),
-        agent="tg-closure-referee",
-        action="closure_audit",
+        agent="ce-reviewer",
+        action="code_review",
     )
     assert verdict.get("decision") == "deny"
     assert verdict.get("reason_code") in {
         "AGENT_WRITE_SCOPE",
         "REFEREE_WRITE_SCOPE",
         "ACTION_WRITE_SCOPE_DENIED",
+        "ACTION_NOT_ALLOWED",
     }
 
 
@@ -152,27 +153,27 @@ def test_stale_lease_run_mismatch_denied(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
-    start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture="arch35")
+    start_workflow(op, "tg-solve", phase="construct", force_phase=True, architecture="arch35")
     issue_action_lease(
         op,
-        action_id="lemma_mine",
-        actor_id="tg-lemma-producer",
-        allowed_write_paths=["runs/**/actions/lemma_mine/**"],
+        action_id="construct_cases",
+        actor_id="tg-analyst",
+        allowed_write_paths=["runs/**/actions/construct_cases/**"],
     )
     lp = lease_path(op)
     lease = yaml.safe_load(lp.read_text(encoding="utf-8"))
     lease["run_id"] = "STALE_RUN"
     lp.write_text(yaml.safe_dump(lease, allow_unicode=True), encoding="utf-8")
     target = (
-        agent_root(op) / "runs" / "x" / "actions" / "lemma_mine" / "parts" / "part_001.yaml"
+        agent_root(op) / "runs" / "x" / "actions" / "construct_cases" / "parts" / "part_001.yaml"
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     verdict = authorize(
         op,
         tool="write",
         path=str(target),
-        agent="tg-lemma-producer",
-        action="lemma_mine",
+        agent="tg-analyst",
+        action="construct_cases",
     )
     assert verdict.get("decision") == "deny"
     assert verdict.get("reason_code") == "ACTION_RUN_MISMATCH"

@@ -100,9 +100,17 @@ def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
             top = f.split("/", 1)[0]
             if top and top not in roots and not top.startswith("."):
                 roots.append(top)
-        for d in ("op_host", "op_kernel", "common", "op_graph"):
+        for d in ("op_host", "op_kernel", "common", "op_graph", "test_script"):
             if (project_root / d).is_dir() and d not in roots:
                 roots.append(d)
+        try:
+            from ascendc_pilot.state import load_state
+
+            tsr = str((load_state(project_root) or {}).get("test_script_root") or "").strip()
+            if tsr and "test_script" not in roots:
+                roots.append("test_script")
+        except Exception:
+            pass
     return {
         "confirmed": confirmed,
         "files": len(files),

@@ -21,7 +21,7 @@ Engine 写骨架。Agent 只填 knobs staging；Host `scenario_apply` 合并后�
 
 **Diff**：确认 change capture SHA 与 UO `source_revision` / fingerprint；锚点覆盖 OPERATION / BUFFER / BRANCH / KERNEL（不只 Host writers）；切片保留 `truncated`；截断进 `blind_spots`，不是空影响；每场景一项义务；精度/性能保持 `external` 直到 `ce-external-evidence/v1` 收据。
 
-Forbidden：用审查叙述关闭精度/性能；把 Host-only impact 当成 kernel-only diff 的完整影响；从 scenario overlay 扩成 `tilingkey_full_coverage`。
+Forbidden：用审查叙述关闭精度/性能；把 Host-only impact 当成 kernel-only diff 的完整影响；从 scenario overlay 扩成全部合法 Key。
 
 ## Output shape
 

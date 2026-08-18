@@ -12,9 +12,11 @@
 ## 推荐接口
 
 ```text
-acp uo-query --project <op> <name_or_key>
-acp uo-query --project <op> Dim=V
+uo-query --project <op> <name_or_key>
+uo-query --project <op> Dim=V
 ```
+
+OpenCode：插件 `pilot_cli`，command 即上列 argv（不要前导 acp）。
 
 ## Claim 提示
 

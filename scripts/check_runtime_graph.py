@@ -247,7 +247,7 @@ def _main() -> int:
 
     # Agents: every production agent yaml must be used (allow primary + known)
     # Production agents that are checklist specs, not spawnable actors.
-    agent_allow = {"ascendc-pilot", "tg-init-audit"}
+    agent_allow = {"ascendc-pilot"}
     if agents_dir.is_dir():
         for yml in agents_dir.glob("*.yaml"):
             aid = yml.stem

@@ -144,12 +144,8 @@ def test_route_unexpected_growth_goes_to_construct(tmp_path: Path, monkeypatch):
     assert routed.get("construct_trigger") == "unexpected_growth"
 
 
-def test_tg_solve_search_stalled_recovers_to_construct():
+def test_tg_solve_open_rework_returns_to_construct():
     from ascendc_pilot.workflows.specs import WORKFLOWS
-
-    meta = WORKFLOWS["tg-solve"]["meta"]["recovery_by_reason"]
-    assert meta["SEARCH_STALLED"]["phase"] == "construct"
-    assert meta["NEED_LEMMA"]["phase"] == "lemma"
 
     construct_rework = [
         tr
@@ -160,16 +156,11 @@ def test_tg_solve_search_stalled_recovers_to_construct():
     codes = set()
     for tr in construct_rework:
         codes.update(tr.get("reason_codes") or [])
-    assert "CONSTRUCT_TARGETS" in codes
-    assert "SEARCH_STALLED" in codes
-
-    lemma_rework = [
-        tr
+    assert "REWORK_CONSTRUCT" in codes
+    assert "OPEN_REMAINING" in codes
+    assert "OPEN_NONEMPTY" in codes
+    assert not any(
+        tr.get("to") == "lemma"
         for tr in WORKFLOWS["tg-solve"]["transitions"]
-        if tr.get("to") == "lemma" and tr.get("kind") == "rework"
-    ]
-    lemma_codes = set()
-    for tr in lemma_rework:
-        lemma_codes.update(tr.get("reason_codes") or [])
-    assert "NEED_LEMMA" in lemma_codes
-    assert "SEARCH_STALLED" not in lemma_codes
+        if isinstance(tr, dict)
+    )

@@ -47,14 +47,15 @@ OPENCODE_COMMANDS=(
   tg-init tg-plan tg-solve
 )
 CURRENT_AGENTS=(
-  ascendc-pilot uo-query uo-gap-investigator ce-reviewer tg-init-audit
-  tg-lemma-producer tg-closure-referee ce-change-referee ce-applier ce-analyst
+  ascendc-pilot uo-query uo-gap-investigator ce-reviewer tg-analyst
+  ce-change-referee ce-applier ce-analyst
 )
 LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies)
 LEGACY_AGENTS=(
   ascendc-agent uo-semantic-resolve uo-semantic-resolver uo-gap-resolve
   uo-key-resolve uo-confidence-review uo-kb-review uo-code-reviewer
-  tg-csv-contract tg-semantic-bind deterministic-uo-engine deterministic-tg-engine
+  tg-csv-contract tg-semantic-bind tg-init-audit tg-lemma-producer
+  tg-closure-referee deterministic-uo-engine deterministic-tg-engine
   deterministic-ce-engine README
 )
 LEGACY_PLUGINS=(ascendc-pilot.ts zz-uo-query-return-value.ts uo-query-return-value.ts ascendc-harness.ts pilot-driver.ts)
@@ -114,6 +115,13 @@ purge_legacy_ascendc_agent() {
     fi
   done
   if [[ "$plat" == "opencode" ]]; then
+    shopt -s nullglob
+    for f in "$agents"/tg-*.md "$agents"/uo-*.md "$agents"/ce-*.md "$agents"/ascendc-*.md; do
+      [[ "$(basename "$f")" == "ascendc-pilot.md" ]] && continue
+      rm -f "$f"
+      echo "Removed leftover OpenCode Tab → $f"
+    done
+    shopt -u nullglob
     rm -rf "$(opencode_home)/ascendc-agent-plugin"
     if [[ -n "$plugins" ]]; then
       rm -f "$plugins/ascendc-harness.ts"
@@ -259,13 +267,24 @@ else
   rm -rf "$SKILLS/_shared"
 fi
 
-# Every installed agent is reachable from a non-deterministic Action.
-for f in "$DEST/agents"/*.md; do
-  [[ -f "$f" ]] || continue
-  base="$(basename "$f")"
-  [[ "$base" == "README.md" ]] && continue
-  ln -sfn "$f" "$AGENTS/$base" 2>/dev/null || cp "$f" "$AGENTS/$base"
-done
+# OpenCode treats every .md under agents/ as a Tab. Only expose AscendC-Pilot.
+if [[ "$PLATFORM" == "opencode" ]]; then
+  ln -sfn "$DEST/agents/ascendc-pilot.md" "$AGENTS/ascendc-pilot.md" 2>/dev/null || cp "$DEST/agents/ascendc-pilot.md" "$AGENTS/ascendc-pilot.md"
+  shopt -s nullglob
+  for f in "$AGENTS"/tg-*.md "$AGENTS"/uo-*.md "$AGENTS"/ce-*.md "$AGENTS"/ascendc-*.md; do
+    [[ "$(basename "$f")" == "ascendc-pilot.md" ]] && continue
+    rm -f "$f"
+    echo "Removed leftover OpenCode Tab → $f"
+  done
+  shopt -u nullglob
+else
+  for f in "$DEST/agents"/*.md; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+    [[ "$base" == "README.md" ]] && continue
+    ln -sfn "$f" "$AGENTS/$base" 2>/dev/null || cp "$f" "$AGENTS/$base"
+  done
+fi
 
 if [[ "$PLATFORM" == "opencode" ]]; then
   PLUGINS="$(plugins_dest opencode)"
@@ -330,6 +349,18 @@ if [[ -n "${ACP_BIN:-}" && -e "$ACP_BIN" ]]; then
   echo "Cached acp bin → $ACP_BIN"
 else
   echo "WARN: acp not on PATH after pip install; OpenCode may fail to find harness"
+fi
+
+cann_pkg="$BUNDLE_ROOT/_cann/pkg"
+cann_root_to_cache=""
+if [[ -n "${UO_CANN_ROOT:-}" && -d "$UO_CANN_ROOT" ]]; then
+  cann_root_to_cache="$UO_CANN_ROOT"
+elif [[ -d "$cann_pkg/cann-asc-devkit" || -d "$cann_pkg/cann-metadef" ]]; then
+  cann_root_to_cache="$cann_pkg"
+fi
+if [[ -n "$cann_root_to_cache" ]]; then
+  printf '%s\n' "$cann_root_to_cache" > "$OC_HOME/ascendc-cann-root"
+  echo "Cached CANN root → $cann_root_to_cache"
 fi
 
 echo "Installed AscendC-Pilot → $DEST"

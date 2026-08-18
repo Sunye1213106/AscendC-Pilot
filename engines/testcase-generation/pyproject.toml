@@ -23,9 +23,9 @@ closure = [
 ]
 
 [project.scripts]
-# tg-contract / tg-plan / tg-solve / tg-init (testcase_agent.cli) removed with the
-# csv_consumer stack — the pilot's tilingkey_full_coverage flow now owns
-# contract_build / plan / solve via `acp run-action` (ascendc_pilot.actions.engines).
+# tg-contract / tg-plan / tg-solve / tg-init (testcase_agent.cli) removed.
+# Public TG surface is /tg-init /tg-plan /tg-solve via acp.
+# Host replay CLI remains for local oracle use.
 tg-closure = "testcase_agent.closure.cli:main"
 
 [tool.setuptools.packages.find]

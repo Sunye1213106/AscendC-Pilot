@@ -13,8 +13,8 @@ TND 布局下，`SplitAxis=1` 是否合法？
 ## Suggested hops
 
 1. `uo-product-map` → claim = host-produced for SplitAxis under TND  
-2. `acp uo-query --project <op> SplitAxis`（卡片含 packing / 边）  
-3. `acp uo-query --project <op> SplitAxis=1,IsTnd=1` 看覆盖  
+2. `pilot_cli` `uo-query --project <op> SplitAxis`（卡片含 packing / 边）  
+3. `pilot_cli` `uo-query --project <op> SplitAxis=1,IsTnd=1` 看覆盖  
 4. Stop when verdict + path:line citations sufficient
 
 ## Snapshot notes（FAG arch35，illustrative）

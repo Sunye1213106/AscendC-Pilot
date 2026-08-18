@@ -44,5 +44,5 @@ scenarios:
   - id: subagent_failure
     description: LLM/subagent failure stays rework_required with typed retry (no free phase jump).
   - id: tg_solve_routing
-    description: SEARCH_PROGRESS / CONSTRUCT_TARGETS / SEARCH_STALLED / NEED_LEMMA residual routes.
+    description: REWORK_CONSTRUCT / OPEN_REMAINING / OPEN_NONEMPTY route analyze|certify back to construct.
     only_workflows: [tg-solve]

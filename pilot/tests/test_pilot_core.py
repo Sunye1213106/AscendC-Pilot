@@ -284,37 +284,19 @@ def test_complete_workflow_rework_on_key_gates(tmp_path: Path):
     assert load_state(tmp_path)["phase"] == "verify"
 
 
-def test_plan_approved_reads_human_supplement(tmp_path: Path):
+def test_plan_approved_reads_plan_md(tmp_path: Path):
     from ascendc_pilot.gates.tg_adapters import gate_plan_approved
-    from ascendc_pilot.paths import tg_root
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
 
-    tg = tg_root(tmp_path)
-    level = tg / "plan" / "levels" / "L0"
-    level.mkdir(parents=True)
-    _write(tg / "plan" / "latest_level.yaml", {"level": "L0"})
-    _write(level / "coverage_obligations.yaml", {"obligations": []})
-    _write(level / "plan.yaml", {"snapshot_hash": "abc", "plan_hash": "def"})
-    _write(
-        level / "human_supplement.yaml",
-        {
-            "status": "approved",
-            "decision": "approve",
-            "approved_snapshot_hash": "abc",
-            "approved_plan_hash": "def",
-            "approved_at": "2026-01-01T00:00:00Z",
-            "supplements": [],
-            "notes": "ok",
-        },
-    )
-    _write(
-        level / "unresolved.yaml",
-        {
-            "status": "ready_for_manual_review",
-            "allow_solve": True,
-            "allow_solve_reason": "ok",
-            "blocking_hard_obligations": [],
-            "contract_gaps": [],
-        },
+    ensure_agent_layout(tmp_path, arch="arch35")
+    tg = tg_root(tmp_path, arch="arch35")
+    tg.mkdir(parents=True, exist_ok=True)
+    (tg / "plan.md").write_text(
+        "# plan\n\n```yaml\nschema: tg-plan/v1\napproved: true\ndecision: approve\n"
+        "obligations:\n  - id: o1\n    why: x\n    class: replay\n"
+        "    control:\n      columns: [B]\n      recipe: set\n"
+        "    hit:\n      pred: key\n    uo:\n      query: q\n    cover: L0\n```\n",
+        encoding="utf-8",
     )
     r = gate_plan_approved(tmp_path)
     assert r["ok"] is True
@@ -634,8 +616,8 @@ def test_install_skill_lists_symmetric():
     assert "ascendc-pilot" in ps1
     assert "ascendc-pilot.ts" in ps1
     assert "ascendc-pilot.ts" in sh
-    assert "tg-semantic-bind" in ps1
-    assert "tg-semantic-bind" in sh
+    assert "tg-analyst" in ps1
+    assert "tg-analyst" in sh
     assert "uo-gap-investigator" in ps1
     assert "uo-gap-investigator" in sh
     for extra in (
@@ -644,8 +626,7 @@ def test_install_skill_lists_symmetric():
         "ce-handoff",
         "ce-impact",
         "ce-verify",
-        "tg-lemma-producer",
-        "tg-closure-referee",
+        "tg-analyst",
         "ce-change-referee",
         "ce-applier",
         "ce-analyst",

@@ -26,12 +26,11 @@ MATRIX_WORKFLOWS: tuple[str, ...] = (
     "ce-verify",
 )
 
-# tg-solve residual / audit routing codes that Session Replay must also cover.
+# tg-solve rework codes after the product-model rebuild.
 TG_SOLVE_REWORK_CODES: tuple[str, ...] = (
-    "SEARCH_PROGRESS",
-    "CONSTRUCT_TARGETS",
-    "SEARCH_STALLED",
-    "NEED_LEMMA",
+    "REWORK_CONSTRUCT",
+    "OPEN_REMAINING",
+    "OPEN_NONEMPTY",
 )
 
 
@@ -300,7 +299,7 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
 
 
 def check_tg_solve_routing(meta: dict[str, Any] | None = None) -> list[str]:
-    """Ensure tg-solve declares the residual routing reason codes."""
+    """Ensure tg-solve declares the worklog/construct rework reason codes."""
     from ascendc_pilot.workflows import get_workflow
 
     wf = meta if meta is not None else get_workflow("tg-solve")
@@ -313,10 +312,9 @@ def check_tg_solve_routing(meta: dict[str, Any] | None = None) -> list[str]:
             errors.append(f"tg-solve: missing rework reason_code {code!r}")
     # Expected residual targets (contract from audit).
     expected = {
-        "SEARCH_PROGRESS": "search",
-        "CONSTRUCT_TARGETS": "construct",
-        "SEARCH_STALLED": "construct",
-        "NEED_LEMMA": "lemma",
+        "REWORK_CONSTRUCT": "construct",
+        "OPEN_REMAINING": "construct",
+        "OPEN_NONEMPTY": "construct",
     }
     for code, want in expected.items():
         targets = {to for _frm, to in reason_map.get(code, [])}

@@ -1,4 +1,4 @@
-"""TG workflow ordering and primary-interactive control-plane regressions."""
+"""TG workflow ordering after the product-model rebuild."""
 
 from __future__ import annotations
 
@@ -9,126 +9,74 @@ from ascendc_pilot.actions.tg_primary import primary_interactive_steps
 from ascendc_pilot.workflows import WORKFLOWS, action_by_id, phase_pipeline
 
 
-def test_tg_pipelines_are_explicit_and_fail_closed() -> None:
-    assert phase_pipeline("tg-init", "gate") == ["integrity_gate", "init_audit"]
+def test_tg_pipelines_are_explicit() -> None:
+    assert phase_pipeline("tg-init", "kb_ready") == ["kb_check"]
+    assert phase_pipeline("tg-init", "scan") == ["repo_scan"]
+    assert phase_pipeline("tg-init", "bind") == ["bind_init", "bind_promote"]
+    assert phase_pipeline("tg-init", "validate") == ["validate_init"]
     assert phase_pipeline("tg-init", "confirm") == ["human_confirm"]
-    assert phase_pipeline("tg-plan", "intent") == ["plan_intent"]
-    assert phase_pipeline("tg-plan", "build") == ["plan_build"]
+    assert phase_pipeline("tg-plan", "gate") == ["plan_precheck"]
+    assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_promote"]
+    assert phase_pipeline("tg-plan", "validate") == ["plan_validate"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
-    # Default tilingkey_full_coverage closure loop
-    assert phase_pipeline("tg-solve", "oracle") == ["oracle_probe"]
-    assert phase_pipeline("tg-solve", "ledger") == ["closure_ledger"]
-    assert phase_pipeline("tg-solve", "search") == ["closure_search"]
-    assert phase_pipeline("tg-solve", "residual") == ["closure_residual"]
-    assert phase_pipeline("tg-solve", "lemma") == [
-        "lemma_leads",
-        "lemma_evidence",
-        "lemma_mine",
-        "lemma_verify",
-        "lemma_review",
-        "lemma_apply",
-        "lemma_loop",
-    ]
-    assert phase_pipeline("tg-solve", "audit") == ["closure_audit"]
-    assert phase_pipeline("tg-solve", "certify") == ["closure_certify"]
-    # Default mode is tilingkey_full_coverage; csv_consumer overlay removed.
-    assert "csv_consumer" not in (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
-    assert "csv_consumer" not in (WORKFLOWS["tg-init"].get("mode_overlays") or {})
-    assert phase_pipeline("tg-solve", "encode") == []
-    assert phase_pipeline("tg-solve", "cover") == []
+    assert phase_pipeline("tg-solve", "gate") == ["solve_precheck"]
+    assert phase_pipeline("tg-solve", "construct") == ["construct_cases", "construct_promote"]
+    assert phase_pipeline("tg-solve", "replay") == ["replay_round"]
+    assert phase_pipeline("tg-solve", "analyze") == ["analyze_round", "analyze_promote"]
+    assert phase_pipeline("tg-solve", "certify") == ["solve_certify"]
+    assert not (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
+    assert "lemma_mine" not in [a["id"] for a in WORKFLOWS["tg-solve"]["actions"]]
 
 
-def test_tg_solve_closure_actions_registered() -> None:
+def test_tg_engines_registered() -> None:
     from ascendc_pilot.actions.engines import ENGINE_REGISTRY
 
-    for action_id in (
-        "oracle_probe",
-        "closure_ledger",
-        "closure_search",
-        "closure_residual",
-        "closure_construct",
-        "closure_explain",
-        "targeted_construct",
-        "harness_run",
-        "scenario_certify",
-        "lemma_leads",
-        "lemma_evidence",
-        "lemma_mine",
-        "lemma_verify",
-        "lemma_review",
-        "lemma_apply",
-        "lemma_loop",
-        "closure_audit",
-        "closure_certify",
+    for key in (
+        ("tg-init", "kb_check"),
+        ("tg-init", "repo_scan"),
+        ("tg-init", "bind_promote"),
+        ("tg-init", "validate_init"),
+        ("tg-plan", "plan_precheck"),
+        ("tg-plan", "plan_promote"),
+        ("tg-plan", "plan_validate"),
+        ("tg-solve", "solve_precheck"),
+        ("tg-solve", "construct_promote"),
+        ("tg-solve", "replay_round"),
+        ("tg-solve", "analyze_promote"),
+        ("tg-solve", "solve_certify"),
     ):
-        assert ("tg-solve", action_id) in ENGINE_REGISTRY
-        row = action_by_id("tg-solve", action_id) or {}
-        assert row.get("id") == action_id
-        # Domain cognition lives in skills/{operator-analysis,testcase-generation,source-proof,code-review,code-engineering}; capability_ids are retrieval-only.
-        caps = set(row.get("capability_ids") or [])
-        assert "tilingkey-closure" not in caps
-        assert "structured-review" not in caps
+        assert key in ENGINE_REGISTRY, key
+    assert ("tg-solve", "lemma_mine") not in ENGINE_REGISTRY
+    assert ("tg-init", "semantic_bind") not in ENGINE_REGISTRY
 
 
-def test_tg_primary_actions_have_named_controller_identity_and_precise_writes() -> None:
+def test_tg_primary_actions_write_canonical_products() -> None:
     init_action = action_by_id("tg-init", "human_confirm") or {}
     plan_action = action_by_id("tg-plan", "plan_approve") or {}
-
     assert init_action["execution_mode"] == "primary_interactive"
     assert init_action["agent_id"] == "ascendc-pilot"
-    assert init_action["role_id"] == "controller"
-    assert init_action["allowed_write_paths"] == [
-        "tg/init/status.yaml",
-        "tg/init/kb_fingerprint.yaml",
-        "tg/init/confirmation.yaml",
-    ]
-
+    assert "tg/init.yaml" in (init_action.get("allowed_write_paths") or [])
     assert plan_action["execution_mode"] == "primary_interactive"
-    assert plan_action["agent_id"] == "ascendc-pilot"
-    assert plan_action["role_id"] == "controller"
-    assert plan_action["allowed_write_paths"] == ["tg/plan/levels/*/human_supplement.yaml"]
-
-    intent = action_by_id("tg-plan", "plan_intent") or {}
-    assert intent["execution_mode"] == "deterministic"
-    # Deterministic engines prune Host task prompts at registry normalize time.
-    assert intent.get("task_prompt_id") in {None, ""}
-    assert "tg/plan/plan_intent.yaml" in (intent.get("allowed_write_paths") or [])
+    assert "tg/plan.md" in (plan_action.get("allowed_write_paths") or [])
 
 
-def test_deterministic_tg_leases_cover_domain_engine_outputs() -> None:
-    contract = action_by_id("tg-init", "contract_build") or {}
-    plan = action_by_id("tg-plan", "plan_build") or {}
-    solve = action_by_id("tg-solve", "closure_certify") or {}
-
-    assert "tg/contract/**" in contract["allowed_write_paths"]
-    assert "tg/plan/coverage_obligations.yaml" in contract["allowed_write_paths"]
-    assert "context/pilot_params.yaml" in contract["allowed_write_paths"]
-    assert "tg/extract/**" in plan["allowed_write_paths"]
-    assert "tg/realization/**" in plan["allowed_write_paths"]
-    assert any("tg/closure" in p for p in (solve.get("allowed_write_paths") or []))
+def test_staged_analyst_does_not_publish_canonical() -> None:
+    bind = action_by_id("tg-init", "bind_init") or {}
+    fuse = action_by_id("tg-plan", "plan_fuse") or {}
+    construct = action_by_id("tg-solve", "construct_cases") or {}
+    for row in (bind, fuse, construct):
+        assert row.get("agent_id") == "tg-analyst"
+        assert row.get("output_mode") == "staged"
+        writes = row.get("allowed_write_paths") or []
+        assert all("tg/init.yaml" not in p and "tg/plan.md" not in p for p in writes)
 
 
-def test_downstream_reinit_preserves_upstream_tg_contracts() -> None:
+def test_reset_policy_only_touches_three_products() -> None:
     plan = WORKFLOWS["tg-plan"]["reset_policy"]
     solve = WORKFLOWS["tg-solve"]["reset_policy"]
-    assert plan["reinit_delete"] == ["tg/plan", "tg/solve", "tg/cases", "tg/extract"]
-    assert "tg/init" in plan["reinit_preserve"]
-    assert "tg/contract" in plan["reinit_preserve"]
-    assert solve["reinit_delete"] == ["tg/solve", "tg/cases", "tg/closure"]
-    assert "tg/plan" in solve["reinit_preserve"]
-    assert "tg/extract" in solve["reinit_preserve"]
-
-
-def test_tg_solve_lemma_mine_is_staged_producer() -> None:
-    mine = action_by_id("tg-solve", "lemma_mine") or {}
-    review = action_by_id("tg-solve", "lemma_review") or {}
-    assert mine.get("execution_mode") == "subagent"
-    assert mine.get("agent_id") == "tg-lemma-producer"
-    assert mine.get("output_mode") == "staged"
-    assert mine.get("merge_action_id") == "lemma_review"
-    assert any("lemma_mine/parts" in p for p in (mine.get("allowed_write_paths") or []))
-    assert review.get("agent_id") == "tg-closure-referee"
-    assert review.get("referee_required") is True
+    assert "tg/init.yaml" in plan["reinit_preserve"]
+    assert "tg/plan.md" in solve["reinit_preserve"]
+    assert "tg/worklog.md" in solve["reinit_delete"]
 
 
 def test_tk_cover_is_removed() -> None:
@@ -136,37 +84,14 @@ def test_tk_cover_is_removed() -> None:
     from ascendc_pilot.workflows import list_user_workflows
 
     assert "tk-cover" not in WORKFLOWS
-    assert "tk-cover" not in list_user_workflows()
     assert "tg-solve" in list_user_workflows()
     routed = route("/tk-cover")
     assert routed.get("ok") is False
 
 
-def test_plan_intent_is_deterministic() -> None:
-    intent = action_by_id("tg-plan", "plan_intent")
-    assert intent is not None
-    assert intent.get("execution_mode") == "deterministic"
-    assert intent.get("task_prompt_id") in {None, ""}
-    assert intent.get("agent_id") == "deterministic-tg-engine"
-
-
-def test_scenario_targeted_overlay_does_not_change_default_plan_intent() -> None:
+def test_ce_impact_scenarios_unchanged() -> None:
     from ascendc_pilot.workflows import get_workflow, phase_pipeline
 
-    default_intent = action_by_id("tg-plan", "plan_intent") or {}
-    assert default_intent.get("execution_mode") == "deterministic"
-    overlay = get_workflow("tg-plan", mode="scenario_targeted")
-    pipes = overlay.get("pipelines") or {}
-    assert pipes.get("intent") == ["plan_intent", "scenario_plan"]
-    assert phase_pipeline("tg-plan", "intent") == ["plan_intent"]
-    solve = get_workflow("tg-solve", mode="scenario_targeted")
-    assert (solve.get("pipelines") or {}).get("construct") == [
-        "targeted_construct",
-        "harness_run",
-    ]
-    assert (solve.get("pipelines") or {}).get("certify") == ["scenario_certify"]
-    assert phase_pipeline("tg-solve", "construct") == ["closure_construct", "closure_explain"]
-    assert "tilingkey_full_coverage" in (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
     ce = get_workflow("ce-impact", mode="scenario_targeted")
     assert (ce.get("pipelines") or {}).get("scenarios") == [
         "scenario_infer",
@@ -175,7 +100,6 @@ def test_scenario_targeted_overlay_does_not_change_default_plan_intent() -> None
         "scenario_confirm",
     ]
     assert phase_pipeline("ce-impact", "scenarios") == ["scenario_infer"]
-    assert phase_pipeline("ce-intent", "review") == ["plan_review", "feature_promote"]
 
 
 def test_primary_steps_do_not_inherit_uo_scope_recipe(tmp_path: Path) -> None:

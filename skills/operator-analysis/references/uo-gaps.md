@@ -13,8 +13,10 @@
 ## 推荐接口
 
 ```text
-acp uo-query --project <op>
+uo-query --project <op>
 ```
+
+OpenCode：插件 `pilot_cli`，command 即上列 argv（不要前导 acp）。
 
 无参数索引含 `gaps_count`。细节交给 `/uo-investigate`。
 

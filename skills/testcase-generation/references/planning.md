@@ -1,12 +1,13 @@
 # 覆盖义务
 
-**何时加载**：plan-build / plan-scope / cover 确认，处理声明 levels 与 uncovered 集合时。
+**何时加载**：`plan-fuse` 写出 `plan.md` YAML 义务表时。
 
 ## 要点
 
-1. 按声明 levels / scope 生成或读取义务集合（L0–L3）
-2. 过滤与对称性约束由确定性规则执行
-3. uncovered 必须显式输出，不得伪造覆盖
-4. 未批准 plan 时不得宣称 solve 完成
-5. **L3**：义务元素为 steerable branch 的 True/False 结局（可附 key 轴）；闭环引擎为 `testcase_agent.closure.branch_outcome`，与 L2 共用 solve 相位机，禁止平行 td-* skill 树
-6. **Overlay `scenario_targeted`**：`T` 是批准的 ScenarioSet（`P-*`/`F-*`），允许 `T` 远小于声明 Key 域 `D`。不得把场景证书写成 tilingkey 闭环。全覆盖仍用 `tilingkey_full_coverage`（默认 `T=D`）。构造纪律见 `references/targeted-construct.md`。
+1. 控制面是 `init.yaml` 的列，不是计划目录 `tg/plan/levels/`。
+2. 覆盖梯子 L0–L3 写在每条义务的 `cover` 上，不是平行 workflow overlay。
+3. 意图有则融合；没有意图默认 L0，仍要有能 root 的精度/性能义务。
+4. 未批准 `plan.md` 时不得宣称 solve 完成。
+5. 全量 tilingkey 只在意图点名时做。禁止默认 T=D / `tilingkey_full_coverage` 模式。
+6. CE 的 `tg_plan_intent` 有则消费，不做文件强制，也不要静默扩成全部合法 Key。
+

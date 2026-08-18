@@ -17,5 +17,5 @@ skeleton. Do not invent scenario ids or rewrite the skeleton.
 
 - Adding ids that are not already in the skeleton / catalog.
 - Closing precision or perf with review text.
-- Expanding into `tilingkey_full_coverage`.
+- Expanding into all legal TilingKeys.
 - Writing canonical `ce/scenarios/scenario_set.yaml` yourself.

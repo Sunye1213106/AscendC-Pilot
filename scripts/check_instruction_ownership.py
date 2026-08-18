@@ -55,7 +55,22 @@ STALE_CLI_PHRASES = (
     "旧 mode",
     "**短问**",
     "**深问**",
+    "调用 PATH 上的",
+    "Get-Command acp",
+    "立即调用 acp 工具",
+    "主控当前会话 `acp uo-query`",
 )
+
+# Model-facing trees: teaching `acp uo-query` as the tool to call (OpenCode spinning).
+MODEL_FACING_ROOTS = (
+    "agents",
+    "skills",
+    "prompts",
+    "tools",
+    "pilot/policies/invariants",
+)
+_TEACH_ACP_QUERY = "acp uo-query"
+_TEACH_SKIP = ("禁止", "Never", "不要", "不得", "勿", "must not", "MUST NOT", "Do not", "do not")
 
 
 def errors(repo: Path | None = None) -> list[str]:
@@ -104,6 +119,20 @@ def errors(repo: Path | None = None) -> list[str]:
         for phrase in STALE_CLI_PHRASES:
             if phrase in text:
                 out.append(f"STALE_CLI {rel}: {phrase!r}")
+    for rel_root in MODEL_FACING_ROOTS:
+        base = root / rel_root
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".md", ".yaml", ".yml"}:
+                continue
+            rel = path.relative_to(root).as_posix()
+            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if _TEACH_ACP_QUERY not in line:
+                    continue
+                if any(tok in line for tok in _TEACH_SKIP):
+                    continue
+                out.append(f"TEACH_ACP_TOOL {rel}:{i}: {line.strip()[:160]}")
     return out
 
 

@@ -10,12 +10,8 @@ from typing import Any
 from ascendc_pilot.actions import engines as _engines
 from ascendc_pilot.actions import runtime as _runtime
 from ascendc_pilot.actions.fast_uo_engines import invoke_fast_uo_engine
-from ascendc_pilot.actions.tg_compaction import compact_after_plan_approve
-from ascendc_pilot.actions.tg_full_precheck import install as _install_tg_full_precheck
-from ascendc_pilot.actions.tg_plan_targets import install as _install_tg_plan_targets
 from ascendc_pilot.actions.uo_product_compaction import install as _install_uo_product_compaction
 from ascendc_pilot.human_confirm import (
-    compact_key,
     is_hosted_confirm,
     materialize_primary_decision,
     primary_interactive_steps,
@@ -45,16 +41,9 @@ _UO_COMPOSITE_OUTPUT_CONTRACTS: dict[str, list[str]] = {
         "runs/{run_id}/actions/investigate/report.yaml",
     ],
 }
-_TG_LOOP_OUTPUT_CONTRACTS: dict[str, list[str]] = {
-    "lemma-loop-v1": ["tg/closure/lemma_loop.yaml"],
-}
 _engines.OUTPUT_CONTRACT_PATHS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
-_engines.OUTPUT_CONTRACT_PATHS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
-_engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_TG_LOOP_OUTPUT_CONTRACTS)
 
-_install_tg_plan_targets(_engines.ENGINE_REGISTRY)
-_install_tg_full_precheck(_engines.ENGINE_REGISTRY)
 _install_uo_product_compaction(_engines.ENGINE_REGISTRY)
 
 
@@ -216,12 +205,16 @@ def finalize_action(
         rollback_primary_decision(materialized)
         result["primary_decision_rolled_back"] = True
         return result
+    try:
+        from ascendc_pilot.human_interaction import require_decision_receipt
 
-    if compact_key(root, action_id) == "plan_approve":
-        compact = compact_after_plan_approve(root)
-        result["compaction"] = compact
-        if not compact.get("ok"):
-            result["compaction_warning"] = "TG_COMPACTION_INCOMPLETE"
+        require_decision_receipt(
+            root,
+            expected_action_id=action_id,
+            consume=True,
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return result
 
 

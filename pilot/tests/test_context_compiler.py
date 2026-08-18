@@ -18,9 +18,10 @@ REPO = Path(__file__).resolve().parents[2]
 _REQUIRED_PROFILES = (
     "uo-investigate-investigate",
     "uo-query-kb-lookup",
-    "tg-solve-lemma-mine",
-    "tg-solve-lemma-review",
-    "tg-solve-closure-audit",
+    "tg-init-bind-init",
+    "tg-plan-plan-fuse",
+    "tg-solve-construct-cases",
+    "tg-solve-analyze-round",
     "ce-review-code-review",
     "ce-intent-feature-decompose",
     "ce-impact-impact-audit",

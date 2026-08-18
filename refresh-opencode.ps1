@@ -180,7 +180,9 @@ Assert-True ($pluginText -match 'shell:\s*false') "installed plugin uses shell:f
 Assert-True ($pluginText -match 'resolveAcpBin|never use shell:true') "installed plugin documents Windows spawn fix"
 # Current resolveAcpBin() returns bare "acp" (or cached ASCENDC_HARNESS_BIN path).
 # Older builds used a candidates loop like ["acp"] / ["pilot"] — do not require that shape.
-Assert-True ($pluginText -match 'function createAcpCliTool') "installed plugin exposes native acp tool"
+Assert-True ($pluginText -match 'function createPilotCliTool') "installed plugin exposes pilot_cli"
+Assert-True ($pluginText -match 'function createPilotRunStub') "installed plugin stubs pilot_run on driver load failure"
+Assert-True ($pluginText -notmatch 'function createAcpCliTool') "installed plugin must not name a tool acp"
 Assert-True ($pluginText -match 'function patchWindowsShell') "installed plugin pins Windows PowerShell for bash"
 Assert-True ($pluginText -match 'return\s+"acp"') "installed plugin resolves acp (not legacy pilot)"
 Assert-True ($pluginText -notmatch 'return\s+"pilot"') "installed plugin no longer looks up pilot binary"
@@ -194,13 +196,20 @@ $commandsDir = Join-Path $ocHome "commands"
 Assert-True (-not (Test-Path -LiteralPath $skillLink)) "uo-init must not be in global OpenCode skills/"
 Assert-True (Test-Path -LiteralPath $skillInternal) "uo-init skill installed plugin-internal"
 Assert-True (Test-Path -LiteralPath $agentLink) "ascendc-pilot.md installed"
+Get-ChildItem -Path (Join-Path $ocHome "agents") -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+  if ($_.Name -ieq "ascendc-pilot.md") { return }
+  if ($_.Name -match '^(tg-|uo-|ce-)') {
+    throw "leftover OpenCode Tab $($_.FullName)"
+  }
+}
 foreach ($name in @("uo-init", "uo-query", "tg-init", "tg-plan", "tg-solve", "ce-review", "ce-intent", "ce-apply", "ce-handoff", "ce-impact", "ce-verify")) {
   $commandPath = Join-Path $commandsDir "$name.md"
   Assert-True (Test-Path -LiteralPath $commandPath) "native /$name command installed"
   $commandText = Get-Content -LiteralPath $commandPath -Raw -Encoding UTF8
   Assert-True ($commandText -match 'agent:\s*ascendc-pilot') "/$name command binds primary controller"
   if ($name -ne "uo-query") {
-    Assert-True ($commandText -match 'acp run-action auto') "/$name command uses deterministic auto-dispatch"
+    Assert-True ($commandText -match 'pilot_run') "/$name command uses Host pilot_run"
+    Assert-True ($commandText -notmatch 'acp run-action auto') "/$name must not bash-drain auto"
   }
 }
 

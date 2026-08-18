@@ -1,42 +1,32 @@
 # Test-script repository
 
-**When to load**: `/tg-init` bind, `/tg-solve` targeted construct, or any
-precision/perf overlay. Complements `references/harness-oracle.md`.
+**何时加载**：`/tg-init` bind。测试脚本仓常在算子仓外。
 
-A test-script repository is optional. It is the operator's existing runner
-(scripts + CSV/table), not a second CodeMap and not a Pilot `operators/` tree.
+脚本仓是算子已有的 runner（脚本 + csv/xls/xlsx），不是第二份 CodeMap。
 
 ```text
-no --test-script-root
+无 --test-script-root
   → kind: default_input
-  → emit knob defaults from InputSemantics / CodeMap construct
+  → 用 InputSemantics / CodeMap 默认输入
 
---test-script-root <repo>
-  → engine scans entry scripts, argparse, CSV headers
-  → writes tg/init/test_repo_inventory.yaml (facts)
-  → writes tg/init/test_repo_contract.yaml (how to emit/run)
-  → generated rows MUST fill that schema so the repo runner can use them
+有 --test-script-root
+  → engine 只扫描入口、argparse、表头（含 xls/xlsx）
+  → Agent 把列 mapping / 精度性能口径写进 init.yaml
+  → 生成行必须填满该表，现有 runner 才能直接吃
 ```
 
-## Agent job (do not skip)
+## Agent 必须做
 
-The engine does not understand the runner. You must read the repo:
+引擎不懂 runner。要读脚本仓：
 
-1. Open the entry script (`run_*.py` / `main.py`) and argparse. Confirm
-   `--case` (or equivalent) and which flags mean precision vs performance.
-2. Open the case table. Map columns to UO host fields / TilingKey dims.
-   Write those maps into `test_repo_contract.yaml` `mapping`.
-3. Compare scripts with CodeMap: illegal combos the table allows, missing
-   required inputs, columns that invent tensors UO never produces. Record
-   them under `findings`. Later CE PRs may patch the test scripts; do not
-   silently rewrite the runner during TG init.
-4. Fill missing columns with documented defaults, never invented tensors.
+1. 打开入口（`run_*.py`）和 argparse。确认 `--case`，以及哪些 flag 是精度、哪些是性能。
+2. 打开用例表。每列 mapping：脚本读点（如 `get_case` / `CaseConfig.xxx`）+ UO 标识符。
+3. 对照 CodeMap：表允许但算子非法的组合、缺的 INPUT、发明的张量。记进 `findings`。
+4. 缺列或缺 `generate_inputs` → `harness_intent`，由 `/ce-apply` 改**测试脚本仓**，不要在 TG 里改算子仓。
 
-## Rules
+## 规则
 
-1. Do not hard-code one operator's columns or runner flags into the engine.
-2. Host replay still closes dispatch / key `R`. Precision/perf stay on the
-   repo's own modes.
-3. Missing repo → default input. Missing runner after a repo was named →
-   `harness_missing`, not unreachable.
-4. `P-ILLEGAL` rows stay disabled; do not send them to NPU.
+1. 不要把某一个算子的列名写进引擎。
+2. Host replay 只关 dispatch / key。精度/性能看脚本自己的 modes。
+3. 点了脚本仓却扫不到目录 → init 失败，不是 default_input。
+4. FAG：精度 `only_grad`，性能 `profiler`；禁止把精度记成 `--golden-only`。

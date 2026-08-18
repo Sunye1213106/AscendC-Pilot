@@ -18,13 +18,12 @@ from ascendc_pilot.agents_registry import (
 
 
 def test_agent_yaml_uses_machine_constraints_not_only_forbidden() -> None:
-    meta = load_agent_meta("tg-lemma-producer", str(REPO))
+    meta = load_agent_meta("tg-analyst", str(REPO))
     assert meta.get("machine_constraints")
     assert "write_uo_formal_products" in meta["machine_constraints"]
-    assert "forbidden" not in meta or not meta.get("forbidden")
-    ceiling = agent_skill_ceiling("tg-lemma-producer", REPO)
-    assert ceiling == ["source-proof", "testcase-generation"]
-    assert "operator-analysis" not in ceiling
+    ceiling = agent_skill_ceiling("tg-analyst", REPO)
+    assert "testcase-generation" in ceiling
+    assert "code-review" not in ceiling
 
 
 def test_ce_analyst_ceiling_excludes_code_review() -> None:
@@ -44,16 +43,16 @@ def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:
     )
     assert (
         forbidden_blocks_write(
-            "tg-lemma-producer",
-            "tg/closure/excluded.txt",
+            "tg-analyst",
+            "tg/init.yaml",
             project_root=REPO,
         )
-        == "FORBIDDEN_WRITE_EXCLUDED_SET"
+        == "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS"
     )
     assert (
         forbidden_blocks_write(
-            "tg-lemma-producer",
-            "tg/closure/lemmas/evidence.yaml",
+            "tg-analyst",
+            "tg/plan.md",
             project_root=REPO,
         )
         == "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS"

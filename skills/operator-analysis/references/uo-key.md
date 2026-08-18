@@ -12,9 +12,11 @@
 ## 推荐接口
 
 ```text
-acp uo-query --project <op> Dim=V,Other=V
-acp uo-query --project <op> <DimName>
+uo-query --project <op> Dim=V,Other=V
+uo-query --project <op> <DimName>
 ```
+
+OpenCode：插件 `pilot_cli`，command 即上列 argv（不要前导 acp）。
 
 「某维有没有编进 SEL」先看 `dim_coverage`（覆盖形态），不要 grep 第一块 ARGS_SEL。
 「这组能不能编过」看 `total_matched`。

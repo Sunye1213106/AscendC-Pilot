@@ -134,11 +134,10 @@ def test_hint_family_without_live_source_ref_cannot_promote(tmp_path: Path):
     assert "hint_requires_live_source_ref" not in got2["errors"]
 
 
-def test_lemma_loop_is_registered():
+def test_lemma_loop_is_not_registered():
     from ascendc_pilot.actions.engines import ENGINE_REGISTRY
-    from ascendc_pilot.workflows import action_by_id, phase_pipeline
+    from ascendc_pilot.workflows import WORKFLOWS, action_by_id
 
-    assert ("tg-solve", "lemma_loop") in ENGINE_REGISTRY
-    assert "lemma_loop" in phase_pipeline("tg-solve", "lemma")
-    row = action_by_id("tg-solve", "lemma_loop") or {}
-    assert row.get("id") == "lemma_loop"
+    assert ("tg-solve", "lemma_loop") not in ENGINE_REGISTRY
+    assert action_by_id("tg-solve", "lemma_loop") is None
+    assert "lemma" not in [s["id"] for s in WORKFLOWS["tg-solve"]["states"]]

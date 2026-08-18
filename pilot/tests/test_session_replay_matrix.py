@@ -29,10 +29,9 @@ def test_tg_solve_routing_codes_declared() -> None:
     errors = check_tg_solve_routing()
     assert errors == [], "\n".join(errors)
     assert set(TG_SOLVE_REWORK_CODES) == {
-        "SEARCH_PROGRESS",
-        "CONSTRUCT_TARGETS",
-        "SEARCH_STALLED",
-        "NEED_LEMMA",
+        "REWORK_CONSTRUCT",
+        "OPEN_REMAINING",
+        "OPEN_NONEMPTY",
     }
 
 

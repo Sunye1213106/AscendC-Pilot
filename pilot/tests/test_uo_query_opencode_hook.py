@@ -38,7 +38,9 @@ def test_task_hook_uses_pending_dispatch_project() -> None:
     assert "resolveInstalledSkillPath" in plugin
     assert "recoverSkillToolOutput" in plugin
     assert "createPilotSkillTool" in plugin
-    assert "createAcpCliTool" in plugin
+    assert "createPilotCliTool" in plugin
+    assert "createPilotRunStub" in plugin
+    assert "createAcpCliTool" not in plugin
     assert "patchWindowsShell" in plugin
     assert "Do NOT set args.env" in plugin
     assert "ensureOpenCodeRipgrep" in plugin

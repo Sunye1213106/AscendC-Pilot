@@ -274,18 +274,14 @@ def _seed_ids(
                     seeds.append(v)
 
     elif seed_from == "lemma_leads":
-        data = _load_yaml(tg / "closure" / "lemmas" / "leads.yaml") or {}
-        leads = []
-        if isinstance(data, dict):
-            leads = list(data.get("leads") or data.get("items") or [])
-        for row in leads:
-            if isinstance(row, dict):
-                for key in ("key", "key_id", "dim", "id", "target"):
-                    v = str(row.get(key) or "").strip()
-                    if v and v not in seeds:
-                        seeds.append(v)
-            elif row:
-                seeds.append(str(row))
+        path = tg / "worklog.md"
+        if path.is_file():
+            try:
+                from testcase_agent.products import worklog_open_ids
+
+                seeds.extend(worklog_open_ids(path.read_text(encoding="utf-8")))
+            except Exception:
+                pass
 
     elif seed_from == "open_keys":
         open_path = tg / "closure" / "open.txt"

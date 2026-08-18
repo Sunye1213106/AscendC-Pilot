@@ -103,6 +103,8 @@ SKIP_PIP=1 ./install.sh opencode
 - 把 plugin 拷到 `~/.config/opencode/plugins/ascendc-pilot.ts`（不修改现有 `opencode.json`）
 - 把 Session Driver 库放在 `~/.config/opencode/ascendc-pilot-plugin/opencode-plugin/`（不要把 `pilot-driver.ts` 放进 `plugins/` 自动加载目录）
 - 写入 `ascendc-harness-bin`（`acp.exe` 的绝对路径；即使 `acp` 不在 PATH 也会从 Python `Scripts` 目录回退查找）
+- 发现 CANN 时写入 `ascendc-cann-root`（OpenCode 从开始菜单启动也能找到包）
+- 全局 `agents/` **只**安装 `ascendc-pilot.md`（一个 Tab）；子代理在插件内部且 `hidden`
 - 安装 `/uo-*`、`/tg-*`、`/ce-*` slash command，Tab 主控为 **AscendC-Pilot**
 
 校验 Host 契约：
@@ -119,7 +121,7 @@ AscendC-Pilot
 
 日常改 plugin / skill 后，Windows 可用仓库根目录的 `.\refresh-opencode.ps1`（默认跳过 pip、复用 engines 拷贝）。Linux 重新跑 `SKIP_PIP=1 ./install.sh opencode`。
 
-OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序会把 `rg.exe` 种到 cache/data 两套目录。AscendC-Pilot 的 workflow skill **只**放在 `~/.config/opencode/ascendc-pilot-plugin/skills/`，不链进全局 `~/.config/opencode/skills/`，也不覆盖 OpenCode 原生 `skill` 工具。Pilot Tab 的 after-hook 在缺 rg 时从插件目录恢复 `SKILL.md`。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。**Build / Plan Tab 保持 OpenCode 原生权限、原生 skill、原生 shell**，看不到 `pilot_run` / `acp` / Pilot workflow skill，也不走 Pilot harness。
+OpenCode 进程通常没有 Cursor 自带的 `rg`，且 1.18 把 bundled rg 放在 **cache** bin（Windows：`%LOCALAPPDATA%\opencode\bin`），不是 `~/.local/share/opencode/bin`。安装程序会把 `rg.exe` 种到 cache/data 两套目录。AscendC-Pilot 的 workflow skill **只**放在 `~/.config/opencode/ascendc-pilot-plugin/skills/`，不链进全局 `~/.config/opencode/skills/`，也不覆盖 OpenCode 原生 `skill` 工具。Pilot Tab 的 after-hook 在缺 rg 时从插件目录恢复 `SKILL.md`。子代理读 session `method.md`，不要走 OpenCode skill 发现。AscendC-Pilot 模式对任意目录 Read 直接放行（不弹 `external_directory` 确认）；Write 仍要确认。**Build / Plan Tab 保持 OpenCode 原生权限、原生 skill、原生 shell**，看不到 `pilot_run` / `pilot_cli` / Pilot workflow skill，也不走 Pilot harness。全局 `agents/` 只安装 `ascendc-pilot.md`（一个 Tab）；子代理 hidden 或放在插件内部。
 
 MCP 保持放行。
 

@@ -70,7 +70,10 @@ def test_install_skips_retired_tg_domain_review_agent() -> None:
     assert "tg-domain-review" not in sh
 
 
-def test_tg_dispatch_mentions_runtime_control_plane() -> None:
+def test_tg_skill_describes_three_products() -> None:
     skill = TG_SKILL.read_text(encoding="utf-8")
     assert "testcase-generation" in skill
-    assert all(name in skill for name in ("D", "T", "R", "E"))
+    assert "init.yaml" in skill
+    assert "plan.md" in skill
+    assert "worklog.md" in skill
+    assert "replay" in skill.lower()

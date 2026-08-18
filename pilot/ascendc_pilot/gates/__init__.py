@@ -1401,10 +1401,10 @@ def run_named_gate(
         "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(
             project_root, op_name=op_name, architecture=arch
         ),
-        "tilingkey_binding_ready": lambda: tg_adapters.gate_tilingkey_binding_ready(
+        "harness_intent_cleared": lambda: tg_adapters.gate_harness_intent_cleared(
             project_root, architecture=arch
         ),
-        "audit_pass": lambda: tg_adapters.gate_audit_pass(
+        "worklog_closed": lambda: tg_adapters.gate_worklog_closed(
             project_root, architecture=arch
         ),
         "uo_product_ready": lambda: gate_uo_product_ready(

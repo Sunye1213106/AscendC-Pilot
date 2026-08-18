@@ -1,7 +1,9 @@
 # TG Plan — Gotchas
 
-- **Plan 只冻结 T**：不构造 case、不 Host、不证明不可达、不扩大声明集合 D。
-- **默认 T=D**：用户未指定时计划全部源码声明 Key；指定 packed keys / 过滤时不得偷偷加回全量。
-- **L3 元素是 (key, site, outcome)**：不要把 L0 Key 集合直接当成 L3 目标。
-- **approve 前目标可变，approve 后不可变**：solve 不得自行改 `target_set.yaml`。
-- **不可达证明属于 solve/lemma**：plan 阶段写“此 Key 不可达”无效。
+- **控制面是列**：义务必须 root 到 `init.yaml` 的 CSV/XLS 列，不是全部合法 Key。
+- **禁止默认 T=D / `tilingkey_full_coverage`**：全量 tilingkey 只在意图点名时做。
+- **融合，不是先套覆盖再贴标签**：有意图就拆精度/性能考虑；没有意图默认 L0，仍要能 root 的精度/性能义务。
+- **指标只有 `replay` 和 `derived`**：没有第三类上板误差/耗时。
+- **root 不到另列 `untestable.reason`**：不要写成 `class: untestable`。
+- **缺列或缺 `generate_inputs` → `harness_intent`**：先 `/ce-apply` 改测试脚本仓，禁止 start solve。
+- **批准前可变，批准后冻结**：`approved` 写在 `plan.md` YAML 围栏里。

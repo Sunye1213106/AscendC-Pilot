@@ -159,7 +159,7 @@ def render_cli() -> str:
         "",
         "本文件从 `pilot/ascendc_pilot/cli.py` 和 engine package metadata 生成，请不要手工编辑。",
         "",
-        "本页是命令清单，不是协议。OpenCode 上如何调用 `pilot_run` / 插件 `acp`、为什么不要 `--help`，见 [ACP 工具使用](../getting-started/acp-tools.md)。",
+        "本页是命令清单，不是协议。OpenCode 上如何调用 `pilot_run` / 插件 `pilot_cli`、为什么不要 `--help`，见 [ACP 工具使用](../getting-started/acp-tools.md)。",
         "",
         "主 CLI：`acp <command>`；安装 package 后也可使用 `ascendc-pilot <command>`。",
         "",

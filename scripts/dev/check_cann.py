@@ -48,6 +48,13 @@ def main() -> int:
     issues = cann_layout_issues(root)
     if root is not None and not issues:
         print("cann_layout=ok")
+        try:
+            sys.path.insert(0, str(ROOT / "pilot"))
+            from ascendc_pilot.paths import write_opencode_cann_root
+
+            write_opencode_cann_root(root)
+        except Exception:  # noqa: BLE001
+            pass
     else:
         print("cann_layout_issues:")
         for item in issues:

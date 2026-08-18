@@ -6,7 +6,7 @@
 | --- | --- |
 | `pilot/tests/` | workflow、lease、gate、state、local extension、运行时集成 |
 | `engines/understand-operator/tests/` | 源码范围、Clang extraction、CodeMap 与 UO contract |
-| `engines/testcase-generation/tests/` | plan、solve、ledger、replay、closure 与证据合同 |
+| `engines/testcase-generation/tests/` | init.yaml、plan.md、worklog、replay 与隔离门 |
 | `engines/code-engineering/tests/` | impact 与 review 行为 |
 | `scripts/tests/` | replay 和 script-level contract |
 | `evals/` | routing、skill、harness 与可复用 fixture |

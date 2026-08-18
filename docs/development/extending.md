@@ -17,6 +17,8 @@
 控制面传输与派发        -> Host Session Driver（Host Adapter 运行时）
 ```
 
+TG 正式产物模型（`init.yaml` / `plan.md` / `worklog.md`）见 [tg-rebuild.md](tg-rebuild.md)。不要再加 `tg/init/**` 或 `tg/closure/**` 旁路 YAML。
+
 ## 新增或修改 Workflow / Action
 
 Workflow 权威在 `pilot/ascendc_pilot/workflows/specs.py`。新增状态时要同时定义 forward 和 rework transition、phase gate、完成条件及 `write_roots`。每个 action 还需要明确 `agent_id`、`role_id`、`execution_mode`、prompt、capability、输入输出合同和允许读写路径。

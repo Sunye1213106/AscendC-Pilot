@@ -29,19 +29,12 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
     "uo_ready": ["uo/*.uo"],
     # EXTERNAL rebuildable context pack.
     "context_pack": ["context/**"],
-    "init_confirmed": ["tg/init/status.yaml"],
-    "tg_init_confirmed": ["tg/init/status.yaml"],
-    "kb_fingerprint_fresh": ["tg/init/kb_fingerprint.yaml"],
-    # Also reads .uo view blobs (covered by uo/*.uo logical producer).
-    "tilingkey_binding_ready": ["tg/realization/binding_inventory.yaml"],
-    "audit_pass": ["tg/init/audit_report.yaml"],
-    "plan_approved": ["tg/plan/levels/*/human_supplement.yaml"],
-    # Ledger soundness (certificate is written by certify after this gate).
-    "closure_soundness": [
-        "tg/closure/R.txt",
-        "tg/closure/open.txt",
-        "tg/closure/excluded.txt",
-    ],
+    "init_confirmed": ["tg/init.yaml"],
+    "tg_init_confirmed": ["tg/init.yaml"],
+    "kb_fingerprint_fresh": ["tg/init.yaml"],
+    "plan_approved": ["tg/plan.md"],
+    "harness_intent_cleared": ["tg/plan.md"],
+    "worklog_closed": ["tg/worklog.md"],
     "obligations_classified": [
         "ce/impact/risk_classification.yaml",
         "ce/impact/obligations.yaml",
@@ -52,9 +45,9 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
     ],
     "ce_certificate_sound": ["ce/verify/certificate.yaml"],
     "scenario_coverage_sound": [
-        "tg/closure/scenario_certificate.yaml",
-        "tg/closure/scenarios/construct.yaml",
-        "tg/closure/scenarios/harness_results.yaml",
+        "tg/plan.md",
+        "tg/worklog.md",
+        "tg/init.yaml",
     ],
 }
 
@@ -491,7 +484,6 @@ def check_artifact_dag(
 RECEIPT_ARTIFACTS = frozenset(
     {
         "runs/{run_id}/receipts/uo_ready.yaml",
-        "runs/{run_id}/receipts/integrity_gate.yaml",
     }
 )
 

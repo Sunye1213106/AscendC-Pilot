@@ -109,55 +109,8 @@ def resolve_workflow_id(workflow_id: str) -> str:
     return wid
 
 
-def resolve_tg_mode(project_root: Any | None = None, *, default: str = "tilingkey_full_coverage") -> str:
-    if project_root is None:
-        return default
-    try:
-        from pathlib import Path
-        from ascendc_pilot.paths import ce_root, tg_root
-
-        root = Path(project_root)
-        tg = tg_root(root)
-        planned = tg / "plan" / "plan_intent.yaml"
-        if planned.is_file():
-            try:
-                import yaml
-
-                doc = yaml.safe_load(planned.read_text(encoding="utf-8")) or {}
-            except Exception:
-                doc = {}
-            mode = str((doc or {}).get("mode") or "").strip()
-            if mode:
-                return mode
-        ce_candidates = [ce_root(root) / "impact" / "tg_plan_intent.yaml"]
-        agent = root / ".ascendc-pilot"
-        if agent.is_dir():
-            ce_candidates.extend(sorted(agent.glob("*/ce/impact/tg_plan_intent.yaml")))
-        for path in ce_candidates:
-            if not path.is_file():
-                continue
-            try:
-                import yaml
-
-                doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            except Exception:
-                continue
-            mode = str((doc or {}).get("mode") or "").strip()
-            if mode:
-                return mode
-        init = tg / "init" / "init_intent.yaml"
-        if init.is_file():
-            try:
-                import yaml
-
-                doc = yaml.safe_load(init.read_text(encoding="utf-8")) or {}
-            except Exception:
-                doc = {}
-            mode = str((doc or {}).get("mode") or "").strip()
-            if mode:
-                return mode
-    except Exception:
-        return default
+def resolve_tg_mode(project_root: Any | None = None, *, default: str = "") -> str:
+    del project_root
     return default
 
 
@@ -186,7 +139,7 @@ def _apply_mode_overlay(meta: dict[str, Any], mode: str | None) -> dict[str, Any
     overlays = meta.get("mode_overlays") if isinstance(meta.get("mode_overlays"), dict) else {}
     if not overlays:
         return meta
-    default = str((meta.get("meta") or {}).get("default_mode") or "tilingkey_full_coverage")
+    default = str((meta.get("meta") or {}).get("default_mode") or "")
     chosen = mode or default
     overlay = overlays.get(chosen) or overlays.get(default) or {}
     if not isinstance(overlay, dict):

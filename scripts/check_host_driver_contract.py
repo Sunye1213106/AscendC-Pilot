@@ -169,7 +169,8 @@ def main() -> int:
         "recoverSkillToolOutput",
         "lastSkillName",
         "createPilotSkillTool",
-        "createAcpCliTool",
+        "createPilotCliTool",
+        "createPilotRunStub",
         "ACP_HELP_USAGE_CARD",
         "Do not use --help to discover protocol",
         "isReadonlyInspectBash",
@@ -195,6 +196,10 @@ def main() -> int:
         errors.append("ascendc-pilot.ts must not pin Task location.directory to operator package")
     if ").skill = createPilotSkillTool" in plugin_src or "pilotTools as Record<string, unknown>).skill" in plugin_src:
         errors.append("ascendc-pilot.ts must not override native OpenCode skill (Build/Plan isolation)")
+    if "createAcpCliTool" in plugin_src or ").acp = createPilotCliTool" in plugin_src:
+        errors.append("ascendc-pilot.ts must not register a plugin tool named acp")
+    if "pilotTools = {}" in plugin_src and "createPilotRunStub" not in plugin_src:
+        errors.append("ascendc-pilot.ts must stub pilot_run when driver load fails")
     if "createPilotSkillTool" not in plugin_src:
         errors.append("ascendc-pilot.ts must keep createPilotSkillTool for Pilot SKILL.md recovery")
     if 'if (perm["*"] === undefined) perm["*"] = "deny"' in plugin_src:
@@ -217,6 +222,21 @@ def main() -> int:
         errors.append("pilot-driver.ts missing NATIVE_TASK_RESULT_CAP")
     if "UO_QUERY_NOT_HOST_DRIVEN" not in driver_src:
         errors.append("pilot-driver.ts must reject pilot_run for uo-query")
+    uo_query_reject = driver_src.split('if (workflow === "uo-query")')[1].split("const parentSessionId")[0]
+    if "acp uo-query" in uo_query_reject and "--mode" in uo_query_reject:
+        errors.append("pilot-driver.ts uo-query reject must not teach acp uo-query --mode")
+    if "3_600_000" not in driver_src:
+        errors.append("pilot-driver.ts auto drain must use hour-level timeout")
+    if "ACP_TIMEOUT" not in driver_src:
+        errors.append("pilot-driver.ts must return ACP_TIMEOUT on drain timeout")
+    if "USE_PILOT_RUN" not in auth_src:
+        errors.append("authorize must deny bash acp start / run-action auto (USE_PILOT_RUN)")
+    if "PRIMARY_DIAGNOSTIC" not in auth_src:
+        errors.append("authorize must allow primary diagnostic python")
+    if "write_opencode_cann_root" not in (repo / "pilot" / "ascendc_pilot" / "paths" / "__init__.py").read_text(
+        encoding="utf-8"
+    ):
+        errors.append("paths must persist OpenCode CANN root cache")
     compose_src = (repo / "scripts" / "compose_runtime.py").read_text(encoding="utf-8")
     if '"external_directory": "allow"' not in compose_src:
         errors.append("compose_runtime.py must allow OpenCode external_directory for Pilot agents")
@@ -255,6 +275,10 @@ def main() -> int:
         errors.append("install.ps1 must not link workflow skills into global OpenCode skills/")
     if "plugin-internal only. Global skills/" not in sh:
         errors.append("install.sh must not link workflow skills into global OpenCode skills/")
+    if "Only expose AscendC-Pilot" not in sh:
+        errors.append("install.sh must only link ascendc-pilot.md as OpenCode Tab")
+    if "leftover OpenCode Tab" not in ps1:
+        errors.append("install.ps1 must clean leftover OpenCode Tabs")
 
     # control invariants slimmed
     inv = (repo / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(
@@ -272,7 +296,7 @@ def main() -> int:
 
     # Agents migrated to scope namespaces
     agents_dir = repo / "agents"
-    for name in ("uo-query.yaml", "tg-init-audit.yaml", "ce-reviewer.yaml"):
+    for name in ("uo-query.yaml", "tg-analyst.yaml", "ce-reviewer.yaml"):
         text = (agents_dir / name).read_text(encoding="utf-8")
         if "method:skills/" not in text and "pilot:" not in text:
             errors.append(f"{name} missing pilot:/method: namespaces")

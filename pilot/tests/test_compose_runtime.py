@@ -184,6 +184,17 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
             assert perm["glob"] == "allow"
             assert perm["list"] == "allow"
             assert perm["pilot_run"] == "allow"
+        assert (generated / "agents" / "tg-analyst.md").exists()
+        assert not (generated / "agents" / "tg-init-audit.md").exists()
+        assert "Get-Command acp" not in pilot_agent
+        assert "where acp" not in pilot_agent
+        assert "主控当前会话 `acp uo-query`" not in pilot_agent
+        assert "grep *" in fm
+        assert "pilot_cli: allow" in fm
+        if _yaml is not None:
+            perm = _yaml.safe_load(fm)["permission"]
+            assert perm.get("pilot_cli") == "allow"
+            assert perm.get("acp") == "deny"
         assert "skill: false" in uo_query_agent
         assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" not in uo_query_agent
@@ -194,24 +205,26 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "webfetch: deny" in uo_query_agent
         assert "task: deny" in uo_query_agent
         assert "glob: deny" in uo_query_agent
-        lemma = (generated / "agents" / "tg-lemma-producer.md").read_text(encoding="utf-8")
-        assert "edit:" in lemma
-        assert "host-runtime-contract" not in lemma.lower()
-        assert "force_new" not in lemma
-        assert "todo_sync" not in lemma
-        assert "短问" not in lemma
-        assert "深问" not in lemma
-        assert "简单查询" not in lemma
-        assert "复杂查询" not in lemma
-        assert "查询方式说明" not in lemma
-        assert "可见 LLM 路由" not in lemma
-        lemma_bytes = len(lemma.encode("utf-8"))
-        lemma_lines = lemma.count("\n") + 1
-        assert lemma_bytes < 10000, f"child agent pack regressed: {lemma_bytes} bytes"
-        assert lemma_lines < 200, f"child agent pack regressed: {lemma_lines} lines"
-        assert "*: deny" in lemma or "'*': deny" in lemma
-        assert "acp: allow" in lemma
-        assert "lsp: deny" in lemma
+        tg_agent = (generated / "agents" / "tg-analyst.md").read_text(encoding="utf-8")
+        assert "edit:" in tg_agent
+        assert "host-runtime-contract" not in tg_agent.lower()
+        assert "force_new" not in tg_agent
+        assert "todo_sync" not in tg_agent
+        assert "短问" not in tg_agent
+        assert "深问" not in tg_agent
+        assert "简单查询" not in tg_agent
+        assert "复杂查询" not in tg_agent
+        assert "查询方式说明" not in tg_agent
+        assert "可见 LLM 路由" not in tg_agent
+        tg_bytes = len(tg_agent.encode("utf-8"))
+        tg_lines = tg_agent.count("\n") + 1
+        assert tg_bytes < 10000, f"child agent pack regressed: {tg_bytes} bytes"
+        assert tg_lines < 200, f"child agent pack regressed: {tg_lines} lines"
+        assert "hidden: true" in tg_agent
+        assert "*: deny" in tg_agent or "'*': deny" in tg_agent
+        assert "pilot_cli: allow" in tg_agent
+        assert "acp: allow" not in tg_agent
+        assert "lsp: deny" in tg_agent
         analyst = (generated / "agents" / "ce-analyst.md").read_text(encoding="utf-8")
         assert "grep: deny" in analyst or "grep: false" in analyst
         assert "glob: deny" in analyst or "glob: false" in analyst
@@ -271,12 +284,15 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
             assert "委派" in text
             assert "禁止在 Task 正文写 `--mode`" in text
             assert "丢掉" not in text
-            assert "acp run-action auto" not in text
+            assert "then call `acp run-action auto` again" not in text
+            assert "call Host tool `pilot_run` again" in text or "pilot_run" in text
         elif name == "uo-init":
             assert "UO_ALREADY_READY" in text
-            assert "acp run-action auto" in text
+            assert "then call `acp run-action auto` again" not in text
+            assert "pilot_run" in text
         else:
-            assert "acp run-action auto" in text
+            assert "then call `acp run-action auto` again" not in text
+            assert "pilot_run" in text
 
 
 def test_cognitive_skill_ids_include_code_engineering():
@@ -350,7 +366,7 @@ def test_policy_ids_follow_execution_mode() -> None:
     assert "source-authority" in review["policy_ids"]
     assert "pilot-control" not in review["policy_ids"]
 
-    mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "lemma_mine")
+    mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "construct_cases")
     assert mine.get("output_mode") == "staged"
     assert "pilot-control" not in mine["policy_ids"]
     assert "language" not in mine["policy_ids"]

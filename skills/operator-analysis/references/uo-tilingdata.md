@@ -14,9 +14,11 @@
 ## 推荐接口
 
 ```text
-acp uo-query --project <op> <FieldOrStruct>
-acp uo-query --project <op> --file <path> --line <n>
+uo-query --project <op> <FieldOrStruct>
+uo-query --project <op> --file <path> --line <n>
 ```
+
+OpenCode：插件 `pilot_cli`，command 即上列 argv（不要前导 acp）。
 
 ## Claim 提示
 

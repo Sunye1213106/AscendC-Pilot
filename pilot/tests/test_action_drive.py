@@ -104,7 +104,7 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
     import ascendc_pilot.workflows as workflows_mod
     from ascendc_pilot.actions.drive import drive_until_interaction
 
-    state = {"workflow_id": "tg-solve", "phase": "lemma", "status": "running"}
+    state = {"workflow_id": "tg-solve", "phase": "construct", "status": "running"}
     monkeypatch.setattr(state_mod, "load_state", lambda _root: dict(state))
     monkeypatch.setattr(
         state_mod,
@@ -112,7 +112,7 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
         lambda _root: {
             "ok": True,
             "recommended_next_action": {
-                "id": "lemma_mine",
+                "id": "construct_cases",
                 "reason": "pipeline_incomplete",
             },
         },
@@ -121,12 +121,12 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
         workflows_mod,
         "action_by_id",
         lambda *_args, **_kwargs: {
-            "id": "lemma_mine",
+            "id": "construct_cases",
             "execution_mode": "subagent",
-            "agent_id": "tg-lemma-producer",
+            "agent_id": "tg-analyst",
             "role_id": "producer",
-            "task_prompt_id": "tg/lemma-mine",
-            "output_contract_id": "lemma-mine-v1",
+            "task_prompt_id": "tg/construct-cases",
+            "output_contract_id": "tg-construct-staging-v1",
         },
     )
 
@@ -141,9 +141,9 @@ def test_drive_stops_before_tg_llm_actor(monkeypatch, tmp_path: Path):
 
     assert result["ok"] is True
     assert result["stop_reason"] == "interaction_required"
-    assert result["next"]["actor_id"] == "tg-lemma-producer"
+    assert result["next"]["actor_id"] == "tg-analyst"
     assert result["next"]["execution_kind"] == "subagent"
-    assert result["recommended_command"] == "acp run-action lemma_mine"
+    assert result["recommended_command"] == "acp run-action construct_cases"
     assert called is False
 
 

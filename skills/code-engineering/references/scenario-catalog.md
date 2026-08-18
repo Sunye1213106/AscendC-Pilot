@@ -27,5 +27,5 @@ the same set.
 | `F-DTYPE` | compute dtype path | fp16 vs fp32, same shape | ≤2 |
 | `F-BALANCE` | usedCoreNum / multi-core predicate | single-core vs full-core | ≤2 |
 
-Do not treat `|D|` (all legal keys) as a precision or perf matrix.
-`tilingkey_full_coverage` is a separate overlay.
+Do not treat all legal keys as a precision or perf matrix.
+Full tilingkey coverage is a TG intent on `plan.md`, not a CE overlay.

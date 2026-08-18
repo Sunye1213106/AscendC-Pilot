@@ -5,8 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .io import read_yaml, write_yaml
-
 
 class IsolationError(PermissionError):
     """Raised when TG attempts to write into either UO namespace."""
@@ -106,18 +104,34 @@ def compute_kb_fingerprint(uo_root: Path) -> dict[str, Any]:
 
 def write_kb_fingerprint(out_root: Path, uo_root: Path) -> dict[str, Any]:
     fp = compute_kb_fingerprint(uo_root)
-    path = Path(out_root) / "init" / "kb_fingerprint.yaml"
-    assert_tg_write_path(path, out_root=out_root)
-    write_yaml(path, fp)
+    from .products import dump_init, load_init
+
+    try:
+        doc = load_init(out_root)
+    except Exception:
+        doc = {"schema": "tg-init/v1"}
+    doc["uo_digest"] = str(fp.get("digest") or "")
+    if fp.get("uo_product"):
+        doc["uo_product"] = str(fp.get("uo_product"))
+    dump_init(out_root, doc)
     return fp
 
 
 def read_kb_fingerprint(out_root: Path) -> dict[str, Any]:
-    path = Path(out_root) / "init" / "kb_fingerprint.yaml"
-    if not path.is_file():
+    from .products import load_init
+
+    try:
+        doc = load_init(out_root)
+    except Exception:
         return {}
-    data = read_yaml(path)
-    return data if isinstance(data, dict) else {}
+    digest = str(doc.get("uo_digest") or "").strip()
+    if not digest:
+        return {}
+    return {
+        "digest": digest,
+        "uo_product": str(doc.get("uo_product") or ""),
+        "authority": "init.yaml",
+    }
 
 
 def kb_fingerprint_matches(out_root: Path, uo_root: Path) -> tuple[bool, dict[str, Any]]:

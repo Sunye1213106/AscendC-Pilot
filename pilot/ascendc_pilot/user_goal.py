@@ -44,7 +44,7 @@ DEFAULT_STEPS: tuple[dict[str, str], ...] = (
     {
         "id": "tg_init",
         "workflow_id": "tg-init",
-        "summary_zh": "建立覆盖合同",
+        "summary_zh": "写出 init.yaml",
         "optional": "false",
     },
     {
@@ -142,7 +142,7 @@ def route_natural_goal(text: str) -> dict[str, Any] | None:
             "workflow_id": "tg-init",
             "slash": "/tg-init",
             "method": "goal_router",
-            "mode": "tilingkey_full_coverage",
+            "mode": "",
         }
     if matches_ce_change_intent(text):
         return {
@@ -191,7 +191,7 @@ def create_tilingkey_full_coverage_goal(
     project_root: Path | str,
     *,
     architecture: str = "",
-    mode: str = "tilingkey_full_coverage",
+    mode: str = "",
     op_name: str = "",
     current_step: str = "tg_init",
     intent_text: str = "",

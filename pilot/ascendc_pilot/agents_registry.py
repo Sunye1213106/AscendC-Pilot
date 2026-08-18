@@ -195,7 +195,7 @@ def forbidden_blocks_write(
         if "excluded" in Path(norm).name.lower() or "/excluded" in f"/{norm}":
             return "FORBIDDEN_WRITE_EXCLUDED_SET"
     if "write_uo_formal_products" in tags:
-        if norm.startswith("tg/") and not norm.startswith("tg/init/audit_report"):
+        if norm.startswith("tg/"):
             return "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS"
     if "rewrite_deterministic_ledger" in tags:
         name = Path(norm).name.lower()
@@ -252,6 +252,7 @@ def split_scope_ns(scope: str) -> tuple[str, str]:
         "op_graph",
         "framework",
         "include",
+        "test_script",
     }:
         return "source", s
     return "pilot", s.lstrip("/")
@@ -292,6 +293,25 @@ def path_matches_scope(rel_under_agent: str, scopes: list[str]) -> bool:
     return False
 
 
+def test_script_source_rel(abs_path: str | Path, project_root: Path | None) -> str | None:
+    """Map a path under run-state test_script_root to ``test_script/<rel>``."""
+    if project_root is None:
+        return None
+    try:
+        from ascendc_pilot.state import load_state
+
+        tsr = str((load_state(project_root) or {}).get("test_script_root") or "").strip()
+    except Exception:
+        tsr = ""
+    if not tsr:
+        return None
+    try:
+        rel = Path(abs_path).expanduser().resolve().relative_to(Path(tsr).expanduser().resolve()).as_posix()
+    except (ValueError, OSError):
+        return None
+    return f"test_script/{rel}" if rel != "." else "test_script"
+
+
 def scope_allows_path(
     abs_path: str | Path,
     scopes: list[str],
@@ -323,9 +343,12 @@ def scope_allows_path(
         if ns == "source":
             if project_root is None:
                 continue
+            rel = None
             try:
                 rel = resolved.relative_to(Path(project_root).resolve()).as_posix()
             except ValueError:
+                rel = test_script_source_rel(resolved, project_root)
+            if not rel:
                 continue
             if pattern.endswith("/**"):
                 prefix = pattern[:-3]

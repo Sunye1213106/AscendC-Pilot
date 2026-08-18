@@ -87,6 +87,13 @@ def scan(root: str | Path | None) -> dict[str, Any]:
             header, sample = _csv_header(file)
             if header:
                 tables.append({"path": rel, "columns": header, "sample": sample, "kind": "csv"})
+        elif file.suffix.lower() in {".xls", ".xlsx"}:
+            header, sample, kind, err = _xls_header(file)
+            row = {"path": rel, "columns": header, "sample": sample, "kind": kind}
+            if err:
+                row["error"] = err
+            if header or err:
+                tables.append(row)
     return {
         "schema": "tg-test-repo-inventory/v1",
         "kind": "script_repo",
@@ -132,7 +139,7 @@ def contract_from_inventory(
     if not entry:
         findings.append({"code": "missing_entry", "detail": "no runnable Python entry with argparse"})
     if not columns:
-        findings.append({"code": "missing_schema", "detail": "no CSV case table with a header"})
+        findings.append({"code": "missing_schema", "detail": "no CSV/XLS case table with a header"})
     if inventory.get("error"):
         findings.append({"code": "scan_error", "detail": str(inventory["error"])})
 
@@ -200,7 +207,7 @@ def _iter_files(root: Path) -> list[Path]:
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIR and not d.startswith(".")]
         for name in filenames:
             path = Path(dirpath) / name
-            if path.suffix.lower() in {".py", ".csv", ".tsv"}:
+            if path.suffix.lower() in {".py", ".csv", ".tsv", ".xls", ".xlsx"}:
                 out.append(path)
     return out
 
@@ -279,6 +286,45 @@ def _csv_header(path: Path) -> tuple[list[str], dict[str, str]]:
             return header, sample
     except OSError:
         return [], {}
+
+
+def _xls_header(path: Path) -> tuple[list[str], dict[str, str], str, str]:
+    suffix = path.suffix.lower()
+    kind = "xlsx" if suffix == ".xlsx" else "xls"
+    if suffix == ".xlsx":
+        try:
+            from openpyxl import load_workbook
+        except ImportError:
+            return [], {}, kind, "xlsx_reader_missing"
+        try:
+            wb = load_workbook(path, read_only=True, data_only=True)
+            ws = wb.active
+            it = ws.iter_rows(values_only=True)
+            raw_header = next(it, ())
+            header = [str(c).strip() for c in raw_header if str(c or "").strip()]
+            sample_row = next(it, ())
+            sample = {
+                header[i]: _cell(sample_row[i] if i < len(sample_row) else "")
+                for i in range(len(header))
+            }
+            return header, sample, kind, ""
+        except Exception as exc:  # noqa: BLE001
+            return [], {}, kind, f"xlsx_read_failed:{type(exc).__name__}"
+    try:
+        import xlrd
+    except ImportError:
+        return [], {}, kind, "xls_reader_missing"
+    try:
+        book = xlrd.open_workbook(str(path))
+        sheet = book.sheet_by_index(0)
+        header = [str(sheet.cell_value(0, c)).strip() for c in range(sheet.ncols) if str(sheet.cell_value(0, c)).strip()]
+        sample = {
+            header[c]: _cell(sheet.cell_value(1, c) if sheet.nrows > 1 else "")
+            for c in range(min(len(header), sheet.ncols))
+        } if header else {}
+        return header, sample, kind, ""
+    except Exception as exc:  # noqa: BLE001
+        return [], {}, kind, f"xls_read_failed:{type(exc).__name__}"
 
 
 def _pick_table(tables: list[dict[str, Any]]) -> dict[str, Any]:

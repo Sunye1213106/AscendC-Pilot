@@ -27,9 +27,9 @@ function Get-OpenCodeHome {
 $workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve","operator")
 $cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
 $openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-intent","ce-apply","ce-handoff","ce-impact","ce-verify","tg-init","tg-plan","tg-solve")
-$currentAgents = @("ascendc-pilot","uo-query","uo-gap-investigator","ce-reviewer","tg-init-audit","tg-lemma-producer","tg-closure-referee","ce-change-referee","ce-applier","ce-analyst")
+$currentAgents = @("ascendc-pilot","uo-query","uo-gap-investigator","ce-reviewer","tg-analyst","ce-change-referee","ce-applier","ce-analyst")
 $legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies")
-$legacyAgents = @("ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","deterministic-uo-engine","deterministic-tg-engine","deterministic-ce-engine","README")
+$legacyAgents = @("ascendc-agent","uo-semantic-resolve","uo-semantic-resolver","uo-gap-resolve","uo-key-resolve","uo-confidence-review","uo-kb-review","uo-code-reviewer","tg-csv-contract","tg-semantic-bind","tg-init-audit","tg-lemma-producer","tg-closure-referee","deterministic-uo-engine","deterministic-tg-engine","deterministic-ce-engine","README")
 $legacyPlugins = @("ascendc-pilot.ts","zz-uo-query-return-value.ts","uo-query-return-value.ts","ascendc-harness.ts","pilot-driver.ts")
 
 function Get-PythonScriptsDir {
@@ -286,6 +286,13 @@ function Remove-LegacyAscendcAgentBits([string]$plat, [string]$skills, [string]$
     }
   }
   if ($plat -eq "opencode") {
+    Get-ChildItem -Path $agents -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+      if ($_.Name -ieq "ascendc-pilot.md") { return }
+      if ($_.Name -match '^(tg-|uo-|ce-|ascendc-)') {
+        Remove-ReparseOrItem $_.FullName
+        Write-Host "Removed leftover OpenCode Tab → $($_.FullName)"
+      }
+    }
     $legacyPlug = Join-Path (Get-OpenCodeHome) "ascendc-agent-plugin"
     if (Test-Path -LiteralPath $legacyPlug) {
       Remove-Item -Recurse -Force -LiteralPath $legacyPlug
@@ -475,12 +482,31 @@ $agentFiles = @(Get-ChildItem -Path $agentDir -Filter "*.md" -File | Where-Objec
 if ($agentFiles.Count -eq 0) {
   throw "no agent .md files under $agentDir"
 }
-foreach ($agentFile in $agentFiles) {
-  $link = Join-Path $Agents $agentFile.Name
-  if (-not $link) { throw "Agents dest unresolved: Agents=$Agents" }
-  Install-FileLink $link $agentFile.FullName
-  if (-not (Test-Path -LiteralPath $link)) {
-    throw "failed to install agent $($agentFile.Name) → $link"
+if ($Platform -eq "opencode") {
+  $primarySrc = Join-Path $agentDir "ascendc-pilot.md"
+  if (-not (Test-Path -LiteralPath $primarySrc)) {
+    throw "generated ascendc-pilot.md missing under $agentDir"
+  }
+  $primaryLink = Join-Path $Agents "ascendc-pilot.md"
+  Install-FileLink $primaryLink $primarySrc
+  if (-not (Test-Path -LiteralPath $primaryLink)) {
+    throw "failed to install agent ascendc-pilot.md → $primaryLink"
+  }
+  Get-ChildItem -Path $Agents -Filter "*.md" -File -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($_.Name -ieq "ascendc-pilot.md") { return }
+    if ($_.Name -match '^(tg-|uo-|ce-|ascendc-)') {
+      Remove-ReparseOrItem $_.FullName
+      Write-Host "Removed leftover OpenCode Tab → $($_.FullName)"
+    }
+  }
+} else {
+  foreach ($agentFile in $agentFiles) {
+    $link = Join-Path $Agents $agentFile.Name
+    if (-not $link) { throw "Agents dest unresolved: Agents=$Agents" }
+    Install-FileLink $link $agentFile.FullName
+    if (-not (Test-Path -LiteralPath $link)) {
+      throw "failed to install agent $($agentFile.Name) → $link"
+    }
   }
 }
 
@@ -565,6 +591,23 @@ if ($acpExe) {
   Write-Host "Cached acp bin → $acpExe"
 } else {
   Write-Host "WARN: acp not on PATH after pip install; OpenCode may fail to find harness"
+}
+
+$cannCandidates = @()
+$userCann = [Environment]::GetEnvironmentVariable("UO_CANN_ROOT", "User")
+if (-not [string]::IsNullOrWhiteSpace($userCann)) { $cannCandidates += $userCann }
+if (-not [string]::IsNullOrWhiteSpace($env:UO_CANN_ROOT)) { $cannCandidates += $env:UO_CANN_ROOT }
+$cannCandidates += (Join-Path $BundleRoot "_cann\pkg")
+foreach ($cand in $cannCandidates) {
+  if (-not $cand) { continue }
+  if ((Test-Path -LiteralPath (Join-Path $cand "cann-asc-devkit")) -or (Test-Path -LiteralPath (Join-Path $cand "cann-metadef"))) {
+    $cannCache = Join-Path $cacheDir "ascendc-cann-root"
+    $resolved = (Resolve-Path -LiteralPath $cand).Path.Trim()
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($cannCache, ($resolved + "`n"), $utf8)
+    Write-Host "Cached CANN root → $resolved"
+    break
+  }
 }
 
 Write-Host "Installed AscendC-Pilot → $Dest"

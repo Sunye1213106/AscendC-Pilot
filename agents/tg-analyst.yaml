@@ -1,0 +1,48 @@
+id: tg-analyst
+version: 1
+name_zh: TG 分析 producer
+role: producer
+mode: subagent
+description: >
+  Staged producer for TG bind, plan fusion, case construction, and worklog.
+  Read session prompt.md and method.md first. Write only runs/ drafts.
+  Never write operator source, .uo, or canonical tg/init.yaml / plan.md / worklog.md.
+max_skill_ids: &skills [testcase-generation, operator-analysis]
+skill_ids: *skills
+read_scopes:
+- pilot:tg/**
+- pilot:uo/**
+- pilot:ce/impact/tg_plan_intent.yaml
+- pilot:ce/intent/plan.md
+- pilot:runs/**
+- pilot:context/**
+- source:test_script/**
+- method:skills/testcase-generation/**
+- method:skills/operator-analysis/**
+write_scopes:
+- pilot:runs/**/actions/bind_init/parts/**
+- pilot:runs/**/actions/bind_init/scratch/**
+- pilot:runs/**/actions/bind_init/staging.yaml
+- pilot:runs/**/actions/plan_fuse/parts/**
+- pilot:runs/**/actions/plan_fuse/scratch/**
+- pilot:runs/**/actions/plan_fuse/staging.md
+- pilot:runs/**/actions/plan_fuse/staging.yaml
+- pilot:runs/**/actions/construct_cases/parts/**
+- pilot:runs/**/actions/construct_cases/scratch/**
+- pilot:runs/**/actions/construct_cases/staging.yaml
+- pilot:runs/**/actions/analyze_round/parts/**
+- pilot:runs/**/actions/analyze_round/scratch/**
+- pilot:runs/**/actions/analyze_round/staging.md
+- pilot:runs/**/actions/analyze_round/staging.yaml
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_uo_formal_products
+- free_repo_search
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_uo_formal_products
+- free_repo_search

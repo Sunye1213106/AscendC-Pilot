@@ -51,6 +51,16 @@ def opencode_plugin_root() -> Path:
     return opencode_home() / "ascendc-pilot-plugin"
 
 
+def write_opencode_cann_root(root: str | os.PathLike[str] | Path) -> Path:
+    """Persist extracted CANN root so OpenCode GUI spawn can find headers."""
+    path = Path(root).expanduser().resolve()
+    home = opencode_home()
+    home.mkdir(parents=True, exist_ok=True)
+    cache = home / "ascendc-cann-root"
+    cache.write_text(str(path) + "\n", encoding="utf-8")
+    return cache
+
+
 def resolve_operator_root(
     explicit: str | os.PathLike[str] | Path | None = None,
     *,

@@ -25,7 +25,7 @@ side: ""              # kernel | tiling | host | mixed
 
 ## 方法
 
-1. 先读已记录意图，再 `acp uo-query` / 最小源码窗。不问人「这段代码在哪」。
+1. 先读已记录意图，再插件 `pilot_cli` `uo-query` / 最小源码窗。不问人「这段代码在哪」。
 2. 设计树只推进当前可问的决策：范围、不做的事、Kernel vs Tiling、验收用哪种可关闭收据（UT / ST / 精度 / profiling / 复测）。
 3. 每个验收条件必须能被后续 `/ce-verify` 用收据关闭，不要写「主观判断通过」。
 4. 不确定标 `UNRESOLVED`，写入 `open_questions`（带推荐答案）。写入本步草稿。

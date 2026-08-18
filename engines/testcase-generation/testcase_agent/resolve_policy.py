@@ -1,16 +1,8 @@
-"""Audit checklist ids for tg-init.
+"""Retired: init audit checklists no longer exist.
 
-Only the tilingkey_full_coverage audit checklist remains. It is consumed by
-``init_status.require_audit_pass`` to validate ``init/audit_report.yaml``.
+Bind quality is enforced by ``products.validate_init`` on ``tg/init.yaml``.
 """
 
 from __future__ import annotations
 
-TILINGKEY_AUDIT_CHECKLIST_IDS: tuple[str, ...] = (
-    "tilingkey_contract",
-    "declared_set_nonempty",
-    "binding_inventory",
-    "host_view_aligned",
-    "graph_fingerprint",
-    "integrity_gate",
-)
+TILINGKEY_AUDIT_CHECKLIST_IDS: tuple[str, ...] = ()

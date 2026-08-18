@@ -4,7 +4,7 @@
 
 <input>
 先读 session `method.md`（若 stub 点名了）。用户问题见 stub「USER QUESTION」。
-用 `acp uo-query --project <算子绝对路径>` 查图，查询完成后立即作答。Host cwd 是 Pilot 仓，不要只写算子名。
+用 `pilot_cli` command=`uo-query --project <算子绝对路径>` 查图，查询完成后立即作答。Host cwd 是 Pilot 仓，不要只写算子名。
 </input>
 
 <delta_constraints>

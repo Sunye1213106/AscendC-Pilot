@@ -42,19 +42,18 @@ def test_composer_rejects_type_subagent_in_generated(tmp_path: Path):
     out = tmp_path / "opencode"
     result = compose_host(REPO, "opencode", out_root=out)
     assert result["ok"]
-    md = (out / "agents" / "tg-lemma-producer.md").read_text(encoding="utf-8")
+    md = (out / "agents" / "tg-analyst.md").read_text(encoding="utf-8")
     assert "mode: subagent" in md
     assert "type: subagent" not in md
 
 
-def test_semantic_bind_is_deterministic_under_default_mode():
-    """semantic_bind lost its csv_consumer LLM-producer overlay; it is always deterministic now."""
+def test_bind_promote_is_deterministic():
     from ascendc_pilot.workflows import get_workflow
 
-    default = get_workflow("tg-init", mode="tilingkey_full_coverage")
-    default_action = next(row for row in default["actions"] if row["id"] == "semantic_bind")
-    assert default_action["execution_mode"] == "deterministic"
-    assert default_action["agent_id"] == "deterministic-tg-engine"
+    default = get_workflow("tg-init")
+    promote = next(row for row in default["actions"] if row["id"] == "bind_promote")
+    assert promote["execution_mode"] == "deterministic"
+    assert promote["agent_id"] == "deterministic-tg-engine"
 
 
 def test_nondeterministic_actions_have_agents_and_prompts():
@@ -81,9 +80,7 @@ def test_nondeterministic_actions_have_agents_and_prompts():
                 assert (prompts / f"{prompt_id}.md").is_file()
 
 
-def test_semantic_bind_action_scoped_to_deterministic_engine(tmp_path: Path):
-    """The csv_consumer LLM producer loop (tg-semantic-bind patch/apply) is gone;
-    semantic_bind now runs only as the deterministic-tg-engine host-view inventory action."""
+def test_analyst_cannot_write_canonical_init(tmp_path: Path):
     from ascendc_pilot.authorize import authorize
     from ascendc_pilot.state import start_workflow
     from ascendc_pilot.paths import agent_root, ensure_agent_layout
@@ -93,21 +90,11 @@ def test_semantic_bind_action_scoped_to_deterministic_engine(tmp_path: Path):
     denied = authorize(
         tmp_path,
         tool="write",
-        path=str(agent_root(tmp_path) / "tg" / "realization" / "binding_inventory.yaml"),
-        agent="tg-semantic-bind",
-        action="semantic_bind",
+        path=str(agent_root(tmp_path) / "tg" / "init.yaml"),
+        agent="tg-analyst",
+        action="bind_init",
     )
-    # tg-semantic-bind is no longer a registered agent/actor for this action.
     assert denied.get("decision") == "deny"
-
-    allowed = authorize(
-        tmp_path,
-        tool="write",
-        path=str(agent_root(tmp_path) / "tg" / "realization" / "binding_inventory.yaml"),
-        agent="deterministic-tg-engine",
-        action="semantic_bind",
-    )
-    assert allowed.get("decision") == "allow", allowed
 
 
 def test_doctor_flags_missing_prerequisites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -141,17 +128,12 @@ def test_field_provenance_removed_with_csv_stack():
         importlib.import_module("testcase_agent.field_provenance")
 
 
-def test_unresolved_not_auto_completed(tmp_path: Path):
-    """csv_consumer's gate_bind_progress/binding_gaps flow was removed; the full-TK
-    binding gate now requires a real host-view inventory instead of an empty one."""
-    from ascendc_pilot.gates.tg_adapters import gate_tilingkey_binding_ready
-    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+def test_validate_init_fails_without_init_yaml(tmp_path: Path):
+    from ascendc_pilot.gates.tg_adapters import gate_init_confirmed
+    from ascendc_pilot.paths import ensure_agent_layout
 
     ensure_agent_layout(tmp_path, arch="arch35")
-    real = tg_root(tmp_path) / "realization"
-    real.mkdir(parents=True)
-    _write(real / "binding_inventory.yaml", {"version": 1, "fields": []})
-    assert gate_tilingkey_binding_ready(tmp_path).get("ok") is False
+    assert gate_init_confirmed(tmp_path, architecture="arch35").get("ok") is False
 
 
 def test_plugin_reads_active_action_helpers():

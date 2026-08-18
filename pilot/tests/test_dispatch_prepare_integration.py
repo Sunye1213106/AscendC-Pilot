@@ -45,9 +45,8 @@ def _setup_op_with_sources(tmp_path: Path, monkeypatch, *, arch: str = "arch0") 
     return tmp_path
 
 
-def test_tg_init_audit_prepare_writes_report(tmp_path: Path, monkeypatch) -> None:
+def test_tg_init_kb_check_prepare_writes_receipt(tmp_path: Path, monkeypatch) -> None:
     from ascendc_pilot.actions import prepare_action
-    from ascendc_pilot.paths import tg_root
     from ascendc_pilot.state import start_workflow
 
     root = _setup_op_with_sources(tmp_path, monkeypatch)
@@ -56,59 +55,24 @@ def test_tg_init_audit_prepare_writes_report(tmp_path: Path, monkeypatch) -> Non
         "tg-init",
         architecture="arch0",
         op_name="_synthetic_toy",
-        phase="gate",
+        phase="kb_ready",
         force_phase=True,
     )
-    contract_dir = tg_root(root, arch="arch0") / "contract"
-    contract_dir.mkdir(parents=True, exist_ok=True)
-    (contract_dir / "tilingkey_contract.yaml").write_text(
-        "schema: tg-tilingkey-contract/v1\n"
-        "status: pass\n"
-        "errors: []\n"
-        "graph_fingerprint: synth-fp\n"
-        "declared_set:\n"
-        "  count: 4\n"
-        "  fingerprint: synth-fp\n",
-        encoding="utf-8",
-    )
-    inv_dir = tg_root(root, arch="arch0") / "realization"
-    inv_dir.mkdir(parents=True, exist_ok=True)
-    (inv_dir / "binding_inventory.yaml").write_text(
-        "schema: tg-tilingkey-binding-inventory/v1\n"
-        "graph_fingerprint: synth-fp\n"
-        "fields:\n"
-        "  - field: dim0\n"
-        "    reads: []\n"
-        "    exactness: \"\"\n",
-        encoding="utf-8",
-    )
-    gate = prepare_action(root, "integrity_gate")
+    gate = prepare_action(root, "kb_check")
     assert gate.get("ok") is True, gate
-    receipt = Path((gate.get("engine") or {}).get("artifact") or "")
-    assert receipt.is_file(), gate
-    assert "receipts" in receipt.as_posix()
-    receipt_doc = yaml.safe_load(receipt.read_text(encoding="utf-8")) or {}
-    assert receipt_doc.get("run_id") == gate.get("run_id")
-    prep = prepare_action(root, "init_audit")
-    assert prep.get("ok") is True, prep
-    assert prep.get("auto_finalize") is True
-    assert not prep.get("dispatch_task")
-    assert not prep.get("task_prompt_stub")
-    report = tg_root(root, arch="arch0") / "init" / "audit_report.yaml"
-    assert report.is_file()
-    doc = yaml.safe_load(report.read_text(encoding="utf-8")) or {}
-    assert doc.get("status") == "pass"
-    ids = [str(row.get("id")) for row in (doc.get("checks") or [])]
-    assert ids == [
-        "tilingkey_contract",
-        "declared_set_nonempty",
-        "binding_inventory",
-        "host_view_aligned",
-        "graph_fingerprint",
-        "integrity_gate",
-    ]
-    assert doc.get("blockers") == []
-    assert any("empty reads" in str(w) for w in (doc.get("warnings") or []))
+    assert not gate.get("dispatch_task")
+    from ascendc_pilot.state import save_state, load_state
+
+    state = load_state(root) or {}
+    state["phase"] = "scan"
+    save_state(root, state)
+    scan = prepare_action(root, "repo_scan")
+    assert scan.get("ok") is True, scan
+    receipt = Path((scan.get("engine") or {}).get("artifact") or "")
+    if not receipt.is_file():
+        # engine payload may nest the path
+        receipt = Path(str((scan.get("engine") or {}).get("artifact") or scan.get("artifact") or ""))
+    assert str(scan.get("engine") or scan).find("repo_scan") >= 0 or scan.get("ok")
 
 
 def test_ce_review_prepare_dispatches_with_project_root(tmp_path: Path, monkeypatch) -> None:

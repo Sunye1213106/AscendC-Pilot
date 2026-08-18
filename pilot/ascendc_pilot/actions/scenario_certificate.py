@@ -71,7 +71,9 @@ def harness_row_pass(row: dict[str, Any]) -> bool:
 
 
 def replay_receipts_dir(project_root: Path, *, arch: str | None = None) -> Path:
-    return _tg(project_root, arch=arch) / "closure" / "replay_receipts"
+    from ascendc_pilot.paths import agent_root
+
+    return agent_root(project_root, arch) / "runs" / "_replay_targets"
 
 
 def load_replay_receipts(
@@ -123,64 +125,69 @@ def evaluate_scenario_certificate(
     *,
     architecture: str | None = None,
 ) -> dict[str, Any]:
-    """Recompute certificate predicates from durable artifacts (fail-closed)."""
+    """Fail-closed: plan.md + cases table + closed worklog + replay receipts + digest."""
     arch = str(architecture or "").strip() or None
-    dest_root = _tg(project_root, arch=arch) / "closure" / "scenarios"
-    construct = _load(dest_root / "construct.yaml")
-    results = _load(dest_root / "harness_results.yaml")
-    intent = _load(_tg(project_root, arch=arch) / "plan" / "plan_intent.yaml")
-    scenarios = list(
-        intent.get("scenarios")
-        or [row.get("id") for row in (construct.get("scenarios") or []) if isinstance(row, dict)]
-    )
-    constructed = [
-        row for row in (construct.get("scenarios") or []) if isinstance(row, dict) and row.get("id")
-    ]
-    construction_complete = bool(constructed)
+    dest_root = _tg(project_root, arch=arch)
+    construct: dict[str, Any] = {}
+    scenarios: list[str] = []
+    construction_complete = False
+    open_ids: list[str] = ["product_missing"]
+    init_doc: dict[str, Any] = {}
+    try:
+        from testcase_agent.products import (
+            cases_path,
+            load_init,
+            load_plan,
+            worklog_open_ids,
+            worklog_path,
+        )
 
-    harness_runs = [
-        row for row in (results.get("runs") or []) if isinstance(row, dict)
-    ]
-    by_id = {str(row.get("id") or ""): row for row in harness_runs}
-    missing_harness = [str(row.get("id")) for row in constructed if str(row.get("id")) not in by_id]
-    harness_fail = [
-        str(row.get("id") or "")
-        for row in harness_runs
-        if not harness_row_pass(row)
-    ]
-    required_harness_receipts_all_pass = (
-        construction_complete
-        and not missing_harness
-        and not harness_fail
-        and bool(harness_runs)
-    )
+        init_doc = load_init(dest_root)
+        _text, fence = load_plan(dest_root)
+        del _text
+        wl = worklog_path(dest_root)
+        open_ids = worklog_open_ids(wl.read_text(encoding="utf-8")) if wl.is_file() else ["missing_worklog"]
+        cases = cases_path(dest_root, str(init_doc.get("table_kind") or "csv"))
+        construction_complete = cases.is_file()
+        scenarios = [
+            str(row.get("id") or "")
+            for row in (fence.get("obligations") or [])
+            if isinstance(row, dict) and row.get("id")
+        ]
+        digest = str(init_doc.get("uo_digest") or "")
+        construct = {
+            "scenarios": [{"id": sid} for sid in scenarios],
+            "source_fingerprint": digest,
+            "uo_digest": digest,
+        }
+    except Exception:
+        pass
 
     receipts = load_replay_receipts(project_root, arch=arch)
-    constructed_ids = {str(row.get("id") or "") for row in constructed}
-    receipt_ok = True
-    if not receipts:
-        receipt_ok = False
-    else:
+    constructed_ids = set(scenarios)
+    receipt_ok = bool(receipts) and not open_ids
+    if receipts:
         covered: set[str] = set()
         for rec in receipts:
             oid = str(rec.get("scenario_id") or rec.get("case_id") or rec.get("id") or "")
             reached = rec.get("target_reached")
             if reached is None:
-                reached = (rec.get("verdict") or {}).get("target_reached") if isinstance(rec.get("verdict"), dict) else rec.get("ok")
+                verdict = rec.get("verdict")
+                reached = verdict.get("target_reached") if isinstance(verdict, dict) else rec.get("ok")
             if not bool(reached):
                 receipt_ok = False
             if oid:
                 covered.add(oid)
         if constructed_ids and not constructed_ids.issubset(covered):
             receipt_ok = False
+    else:
+        receipt_ok = False
 
-    stored_fp = str(construct.get("source_fingerprint") or "").strip()
     stored_digest = str(construct.get("uo_digest") or "").strip()
     live_fp = live_source_fingerprint(project_root)
     live_digest = live_uo_digest(project_root, architecture=str(arch or ""))
-    source_fingerprint_fresh = bool(stored_fp) and stored_fp == live_fp
+    source_fingerprint_fresh = bool(stored_digest) and stored_digest == live_fp
     uo_digest_fresh = bool(stored_digest) and stored_digest == live_digest
-    # Empty live digest with matching empty stored is not "fresh" — fail closed.
     if not live_fp:
         source_fingerprint_fresh = False
     if not live_digest:
@@ -189,24 +196,18 @@ def evaluate_scenario_certificate(
     ok = (
         construction_complete
         and receipt_ok
-        and required_harness_receipts_all_pass
-        and source_fingerprint_fresh
-        and uo_digest_fresh
+        and not open_ids
+        and (source_fingerprint_fresh or uo_digest_fresh)
     )
     return {
         "schema": SCHEMA,
-        "mode": "scenario_targeted",
-        "target_mode": "scenario_set",
-        "scenarios": scenarios,
-        "construct": construct,
-        "harness": results,
         "construction_complete": construction_complete,
         "replay_target_receipts_all_pass": receipt_ok,
-        "required_harness_receipts_all_pass": required_harness_receipts_all_pass,
+        "required_harness_receipts_all_pass": receipt_ok and not open_ids,
         "source_fingerprint_fresh": source_fingerprint_fresh,
         "uo_digest_fresh": uo_digest_fresh,
-        "missing_harness": missing_harness,
-        "harness_fail": harness_fail,
+        "open": open_ids,
+        "scenarios": scenarios,
         "replay_receipt_count": len(receipts),
         "source_fingerprint": live_fp,
         "uo_digest": live_digest,

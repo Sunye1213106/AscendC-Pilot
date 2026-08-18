@@ -23,7 +23,7 @@ Source → UO CodeMap → TG / CE
     │   ├── <op_name>.<arch>.uo    # Canonical Operator CodeMap (durable)
     │   ├── checks/                # verify receipts (work tree)
     │   └── ir/ …                  # transient UO work (compacted after review)
-    ├── tg/                        # contract / plan / closure / replay
+    ├── tg/                        # init.yaml / plan.md / worklog.md / cases.*
     ├── ce/                        # review / impact
     ├── state/
     │   ├── slots/<family>/workflow.yaml   # exclusive live state (uo / tg / ce-*)
@@ -45,11 +45,11 @@ Source → UO CodeMap → TG / CE
 
 ### Canonical
 
-系统当前认可的正式结果：已验证 CodeMap、TG contract / closure、workflow state。须有明确 producer 与写入路径；LLM 不能因“认为正确”直接修改。
+系统当前认可的正式结果：已验证 CodeMap、TG `init.yaml` / `plan.md` / `worklog.md`、workflow state。须有明确 producer 与写入路径；LLM 不能因“认为正确”直接修改。
 
 ### Staging / Evidence
 
-尚未被系统接受的候选：lemma proposal、testcase candidate、review draft、source evidence。只说明“有人产出了这个结果”，不说明已成立。
+尚未被系统接受的候选：worklog 草稿、testcase 行草稿、review draft、source evidence。只说明“有人产出了这个结果”，不说明已成立。
 
 ```text
 Producer → Staging → Check / Review → Finalize → Canonical
@@ -74,7 +74,7 @@ Producer → Staging → Check / Review → Finalize → Canonical
 | 区域 | 主要写入者 | 消费者 |
 | --- | --- | --- |
 | `<arch>/uo/<op>.<arch>.uo` | UO deterministic commit | Query / TG / CE |
-| `<arch>/tg/closure/**` | TG finalizer | TG / regression |
+| `<arch>/tg/init.yaml` `plan.md` `worklog.md` `cases.*` | TG promote / 人确认 | TG / CE verify |
 | `<arch>/state/**` | Pilot Runtime | Pilot |
 | `<arch>/runs/**` | 当前 Action | Checker / recovery |
 | `<arch>/cache/**` | Engine / Pilot | Runtime（可重建） |

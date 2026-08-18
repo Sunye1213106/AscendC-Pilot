@@ -381,15 +381,15 @@ def scenario_tg_solve_routing(workflow_id: str, project: Path) -> dict[str, Any]
     from ascendc_pilot.state import load_state, rework_phase, save_state
     from ascendc_pilot.workflows import rework_targets
 
-    _start(project, workflow_id, phase="residual", force_phase=True)
+    _start(project, workflow_id, phase="analyze", force_phase=True)
     expected = {
-        "SEARCH_PROGRESS": "search",
-        "CONSTRUCT_TARGETS": "construct",
-        "SEARCH_STALLED": "construct",
-        "NEED_LEMMA": "lemma",
+        "REWORK_CONSTRUCT": "construct",
+        "OPEN_REMAINING": "construct",
+        "OPEN_NONEMPTY": "construct",
     }
     for code in TG_SOLVE_REWORK_CODES:
-        targets = rework_targets("tg-solve", "residual", reason_code=code)
+        from_phase = "analyze" if code != "OPEN_NONEMPTY" else "certify"
+        targets = rework_targets("tg-solve", from_phase, reason_code=code)
         want = expected[code]
         if want not in targets:
             return {
@@ -399,12 +399,11 @@ def scenario_tg_solve_routing(workflow_id: str, project: Path) -> dict[str, Any]
                 "targets": targets,
                 "want": want,
             }
-        # Reset to residual before each rework_phase drive.
         state = load_state(project) or {}
-        state["phase"] = "residual"
+        state["phase"] = from_phase
         state["status"] = "rework_required"
         state["last_failure"] = {
-            "action_id": "closure_residual",
+            "action_id": "analyze_promote" if from_phase == "analyze" else "solve_certify",
             "reason_code": code,
             "error_code": code,
         }

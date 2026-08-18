@@ -250,35 +250,6 @@ def test_instruction_ownership_lint_clean() -> None:
     assert errors(REPO) == []
 
 
-def test_scenario_targeted_plan_intent_does_not_widen_to_declared(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.tg_plan_targets import plan_intent
-
-    ensure_agent_layout(tmp_path, arch="arch35")
-    start_workflow(tmp_path, "tg-plan", architecture="arch35", op_name="DemoOp")
-    scenarios = ce_root(tmp_path, arch="arch35") / "scenarios" / "scenario_set.yaml"
-    scenarios.parent.mkdir(parents=True, exist_ok=True)
-    scenarios.write_text(
-        "schema: ce-scenario-set/v1\nitems:\n  - id: P-cast\n  - id: F-pipe\n",
-        encoding="utf-8",
-    )
-    result = plan_intent(tmp_path, {"mode": "scenario_targeted"})
-    assert result.get("ok") is True, result
-    assert result.get("target_mode") == "scenario_set"
-    assert result.get("forbid_cartesian_over_declared") is True
-    assert result.get("do_not_widen_to_declared_set") is True
-    assert result.get("scenarios") == ["P-cast", "F-pipe"]
-
-
-def test_scenario_targeted_empty_set_fail_closed(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.tg_plan_targets import plan_intent
-
-    ensure_agent_layout(tmp_path, arch="arch35")
-    start_workflow(tmp_path, "tg-plan", architecture="arch35", op_name="DemoOp")
-    result = plan_intent(tmp_path, {"mode": "scenario_targeted"})
-    assert result.get("ok") is False
-    assert result.get("reason_code") == "SCENARIO_SET_EMPTY"
-
-
 def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> None:
     from ascendc_pilot.context.profiles import get_profile
     from ascendc_pilot.workflows import WORKFLOWS

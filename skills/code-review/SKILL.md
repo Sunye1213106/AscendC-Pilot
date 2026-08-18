@@ -35,7 +35,7 @@ description: >
 4. 「来源 = TilingData」仍待校验：上游必须能 `locate` 到 `OP_CHECK_IF`（`facts.check_sites`）且保护**同一个变量**。
 5. 报告前尝试推翻 H1；partial 索引不能证伪「没有其他调用者」。
 
-证据顺序：**先 `acp uo-query`（impact / locate / field / buffer / kernel_api）**，不够再开最小源码窗。结构事实走 CodeMap，不走全文 Grep。
+证据顺序：**先插件 `pilot_cli` `uo-query`（标识符 / `Dim=V` / `--file --line`；不要 `--mode`）**，不够再开最小源码窗。结构事实走 CodeMap，不走全文 Grep。
 
 跨层与 AscendC 检查用本仓库 `references/cross-layer-contracts.md` 与 `references/ascendc-checks.md`。条例级 API 细则不在本 skill。
 

@@ -147,7 +147,7 @@ def test_bundle_readable_future_write_and_project_root(tmp_path: Path) -> None:
     (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
     (sdir / "method.md").write_text("# m\n", encoding="utf-8")
     (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
-    future = agent_root(tmp_path, "arch0") / "tg" / "init" / "audit_report.yaml"
+    future = agent_root(tmp_path, "arch0") / "tg" / "init.yaml"
     ptr = TaskStubPointers(
         prompt=str(sdir / "prompt.md"),
         method=str(sdir / "method.md"),
@@ -161,7 +161,7 @@ def test_bundle_readable_future_write_and_project_root(tmp_path: Path) -> None:
         session_dir=sdir,
         project_root=tmp_path,
         allowed_read_paths=["runs/**", "tg/**"],
-        allowed_write_paths=["tg/init/audit_report.yaml"],
+        allowed_write_paths=["tg/init.yaml"],
         allowed_source_roots=["op_host", "op_kernel"],
     )
     assert br.get("ok") is True, br
@@ -234,14 +234,14 @@ def test_extract_stub_paths_finds_typed_inputs_not_writes() -> None:
         "method: /s/method.md\n"
         "bundle: /s/bundle.yaml\n"
         "read: uo/summary/overview.yaml\n"
-        "write: tg/init/audit_report.yaml\n"
+        "write: tg/init.yaml\n"
         "acp --project /mnt/op/synthetic_cli\n"
         "See prose path tg/init/ignored.yaml\n"
     )
     paths = extract_stub_paths(stub)
     assert any("uo/summary" in p for p in paths)
     assert any("prompt.md" in p for p in paths)
-    assert not any("audit_report" in p for p in paths)
+    assert not any("ignored.yaml" in p for p in paths)
     assert not any("synthetic_cli" in p for p in paths)
     assert not any("ignored.yaml" in p for p in paths)
 
@@ -350,8 +350,7 @@ def test_agent_yaml_uses_scope_namespaces() -> None:
     agents = REPO / "agents"
     for name in (
         "uo-query.yaml",
-        "tg-init-audit.yaml",
-        "tg-lemma-producer.yaml",
+        "tg-analyst.yaml",
         "ce-reviewer.yaml",
     ):
         doc = yaml.safe_load((agents / name).read_text(encoding="utf-8"))

@@ -92,7 +92,7 @@ Control Plane：`User → Host Adapter (Driver) → Pilot Workflow → Engine �
 
 核心原则：
 
-> Deterministic Engine 负责事实，LLM Agent 负责推理，Harness 负责约束两者之间的边界，**Host Adapter 负责传输与派发**（建库 / TG / CE 不再由 Primary LLM 手工编排 ACP 协议环）。**只读查询例外**：主控在当前会话说明查询方式，再 `acp uo-query` 或原生 Task，不走 `pilot_run`。
+> Deterministic Engine 负责事实，LLM Agent 负责推理，Harness 负责约束两者之间的边界，**Host Adapter 负责传输与派发**（建库 / TG / CE 不再由 Primary LLM 手工编排 ACP 协议环）。**只读查询例外**：主控在当前会话说明查询方式，再 `pilot_cli` `uo-query` 或原生 Task，不走 `pilot_run`。
 
 覆盖如何闭环见 [TG](../modules/tg.md)；Agent 如何受约束见 [Agent Runtime](agent-runtime.md)；各 workflow 阶段图见 [工作流流程图](workflows.md)；文件放哪见 [产物与权威](artifacts-and-authority.md)。
 

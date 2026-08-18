@@ -73,43 +73,31 @@ def test_progress_template_structure() -> None:
     assert "【下一步】" in text
 
 
-def test_tg_init_audit_is_deterministic_and_method_documents_checklist() -> None:
+def test_bind_init_is_staged_analyst_with_method() -> None:
     from ascendc_pilot.workflows import WORKFLOWS
 
-    action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "init_audit")
-    assert action["execution_mode"] == "deterministic"
-    assert action["agent_id"] == "deterministic-tg-engine"
-    assert not action.get("task_prompt_id")
-    assert not action.get("action_method_id")
-    assert not action.get("referee_required")
-    method, prompt = _load_method_and_prompt(
-        ROOT,
-        {
-            "task_prompt_id": None,
-            "action_method_id": "testcase-generation/tg-init-audit",
-            "id": "init_audit",
-        },
-    )
+    action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_init")
+    assert action["execution_mode"] == "subagent"
+    assert action["agent_id"] == "tg-analyst"
+    assert action.get("action_method_id") == "testcase-generation/bind-init"
+    method, prompt = _load_method_and_prompt(ROOT, action)
     assert method.strip(), "METHOD.md must be non-empty"
-    assert "status: pass" in method or "status` 只能是 `pass" in method or "pass` 或 `fail" in method
-    assert "conditional_pass" in method  # banned instruction present
-    assert "reads" in method and "不是 blocker" in method
-    assert prompt == ""
+    assert "init.yaml" in method
+    assert prompt.strip()
 
 
-def test_init_audit_method_file_exists() -> None:
+def test_bind_init_method_file_exists() -> None:
     path = (
         ROOT
         / "skills"
         / "testcase-generation"
         / "capabilities"
-        / "tg-init-audit"
+        / "bind-init"
         / "METHOD.md"
     )
     assert path.is_file()
     text = path.read_text(encoding="utf-8")
-    assert "TILINGKEY_AUDIT_CHECKLIST_IDS" in text or "tilingkey_contract" in text
-    assert "conditional_pass" in text
+    assert "mapping" in text.lower() or "列" in text
 
 
 def test_ce_capability_methods_load_from_action_method_id() -> None:
@@ -147,13 +135,13 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
     assert infer_prompt == ""
 
 
-def test_deterministic_plan_intent_loads_no_prompt() -> None:
+def test_deterministic_plan_precheck_loads_no_prompt() -> None:
     method, prompt = _load_method_and_prompt(
         ROOT,
         {
             "task_prompt_id": None,
-            "action_method_id": "tg-plan/plan-intent",
-            "id": "plan_intent",
+            "action_method_id": None,
+            "id": "plan_precheck",
         },
     )
     assert prompt == ""
@@ -199,10 +187,10 @@ def test_tg_init_phase_labels_honest() -> None:
     tg = get_workflow("tg-init")
     states = {s["id"]: s["label_zh"] for s in tg["states"]}
     assert "意图确认" not in states.values()
-    assert states["intent"] == "记录全覆盖模式"
+    assert states["kb_ready"] == "校验知识库"
     assert states["confirm"] == "确认进入规划"
     acts = {a["id"]: a["label_zh"] for a in tg["actions"]}
-    assert acts["init_intent"] == "采用默认全覆盖模式"
+    assert acts["repo_scan"] == "扫描测试脚本仓（含 xls/xlsx）"
     assert acts["human_confirm"] == "确认进入规划"
 
 

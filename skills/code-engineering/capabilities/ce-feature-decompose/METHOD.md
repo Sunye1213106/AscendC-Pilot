@@ -6,7 +6,7 @@
 
 ## 方法
 
-1. 先读已记录意图里问清后的字段（`in_scope` / `out_of_scope` / `acceptance`），再 `acp uo-query` / 最小源码窗。没有 diff 时不要假设改动已经存在。
+1. 先读已记录意图里问清后的字段（`in_scope` / `out_of_scope` / `acceptance`），再插件 `pilot_cli` `uo-query` / 最小源码窗。没有 diff 时不要假设改动已经存在。
 2. 每个特性给出目标、约束、候选锚点（符号/实体名即可）、验收条件和未知项。一张特性就是一张垂直切片：有阻塞边就写出来。
 3. 验收条件要能在后续 `/ce-verify` 用 UT/ST/精度对比/profiling/复测收据关闭，不要写「主观判断通过」。
 4. 不确定标 `UNRESOLVED`。写入本步 `parts/` 草稿，字段保持完整。

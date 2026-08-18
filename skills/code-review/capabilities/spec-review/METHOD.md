@@ -20,7 +20,7 @@ PR 入口必须有 diff / change capture。Finding 必须有 `path:line`。
 plan 或从 diff 推断的意图 → 变更范围内的 CodeMap 邻域 → H0/H1（相对需求）→ 最小源码窗 → 推翻 → FINDING
 ```
 
-1. 先 `acp uo-query`（`impact` / `locate` / `field`）。不够再开最小源码窗。
+1. 先插件 `pilot_cli` `uo-query`（标识符 / `Dim=V` / `--file --line`；不要 `--mode`）。不够再开最小源码窗。
 2. 报告：(a) 需求要但缺失或只做了一半；(b) 需求没要的行为（scope creep）；(c) 看起来做了但实现不对。每条引用 plan 句子，或写明「由 diff 推断：…」。
 3. 报告前尝试推翻 H1。
 

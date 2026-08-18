@@ -566,6 +566,55 @@ def _is_acp_start(command: str) -> bool:
     )
 
 
+_PILOT_CLI_TOOLS = frozenset({"pilot_cli"})
+_ENGINE_PYTHON_C = re.compile(
+    r"\b(uo_init|testcase_agent|build_layered_kb|prepare_operator|"
+    r"export_kb_graph|check_final_confidence|macro_scope_scan|"
+    r"source_closure|stage_cbm_scope|finalize_scope)\b",
+    re.I,
+)
+_DIAGNOSTIC_PY = (
+    re.compile(r"\bpython(?:3)?\b.*\bcheck_cann\.py\b", re.I),
+    re.compile(r"\bpython(?:3)?\b.*\bcheck_env\.py\b", re.I),
+    re.compile(r"\bpython(?:3)?\b.*\bcheck_install\.py\b", re.I),
+    re.compile(r"\bpython(?:3)?\b.*\bcann_extract\.py\b.*--fixup\b", re.I),
+    re.compile(r"^\s*python(?:3)?\s+-m\s+ascendc_pilot\s+doctor(\s|$)", re.I),
+)
+
+
+def _is_workflow_drain_command(command: str) -> bool:
+    """bash `acp start` / `run-action auto` is the ses_fefd 120s trap."""
+    cmd_l = _normalize_cmd(command).lower()
+    if _is_acp_start(command):
+        return True
+    return bool(re.search(r"\brun-action\s+auto\b", cmd_l))
+
+
+def _pilot_cli_argv_head(command: str) -> str:
+    cmd = extract_pilot_command(command) or (command or "")
+    cmd = re.sub(r"^(?:acp(?:\.exe|\.cmd)?)\s+", "", cmd.strip(), flags=re.I)
+    parts = cmd.split()
+    return parts[0].lower() if parts else ""
+
+
+def _is_pilot_cli_long_command(command: str) -> bool:
+    head = _pilot_cli_argv_head(command)
+    return head in {"start", "drive", "run-action"}
+
+
+def _is_primary_diagnostic_python(command: str, agent_l: str) -> bool:
+    if agent_l not in _PRIMARY_AGENTS:
+        return False
+    cmd = _normalize_cmd(command)
+    if not cmd:
+        return False
+    if any(pat.search(cmd) for pat in _DIAGNOSTIC_PY):
+        return True
+    if re.match(r"^\s*python(?:3)?\s+-c\s+", cmd, re.I):
+        return not bool(_ENGINE_PYTHON_C.search(cmd))
+    return False
+
+
 def _split_shell_segments(command: str) -> list[str]:
     """Split on ``&&`` / ``;`` / ``|`` only outside quotes.
 
@@ -960,6 +1009,42 @@ def _authorize_impl(
             agent=agent_l or None,
         )
 
+    # Workflow drain is Host `pilot_run` only (ses_fefd: bash 120s / CLI 180s).
+    if tool_l in _BASH_TOOLS and _is_workflow_drain_command(cmd):
+        return _ok(
+            "deny",
+            "USE_PILOT_RUN",
+            "uo-init/start/auto 必须用 Host 工具 pilot_run，禁止 bash acp start / run-action auto",
+            status=status or None,
+            command=cmd[:200],
+        )
+
+    if tool_l in _PILOT_CLI_TOOLS:
+        if _is_pilot_cli_long_command(cmd):
+            return _ok(
+                "deny",
+                "USE_PILOT_RUN",
+                "pilot_cli 只做 uo-query / status / inspect-failure / scan-architectures；start/auto 请用 pilot_run",
+                status=status or None,
+                command=cmd[:200],
+            )
+        return _ok(
+            "allow",
+            "PILOT_CLI_OK",
+            "允许短命令插件 CLI",
+            status=status or None,
+            command=cmd[:200],
+        )
+
+    if tool_l in _BASH_TOOLS and _is_primary_diagnostic_python(cmd, agent_l):
+        return _ok(
+            "allow",
+            "PRIMARY_DIAGNOSTIC",
+            "主控允许 CANN/环境诊断与 cann_extract --fixup",
+            status=status or None,
+            command=cmd[:200],
+        )
+
     # --- uo-query exploration budget (claim-driven Explore) ---
     wid_state = str(state.get("workflow_id") or "")
     if (
@@ -997,16 +1082,6 @@ def _authorize_impl(
                     exploration_budget=budget.get("budget"),
                 )
             # Soft warning is advisory; fall through to normal allow path.
-
-    # --- Always allow starting a new run (escape hatch from failed/human/rework) ---
-    if tool_l in _BASH_TOOLS and _is_acp_start(cmd):
-        return _ok(
-            "allow",
-            "HARNESS_START",
-            "允许 acp start（新建或复用 run）",
-            status=status or None,
-            command=cmd[:200],
-        )
 
     lf = state.get("last_failure") if isinstance(state.get("last_failure"), dict) else {}
     failed_action = str(lf.get("action_id") or lease.get("action_id") or "")
@@ -1481,10 +1556,14 @@ def _authorize_impl(
                             except Exception:  # noqa: BLE001
                                 src_rel = None
                         if src_rel is None:
+                            from ascendc_pilot.agents_registry import test_script_source_rel
+
+                            src_rel = test_script_source_rel(path_s, project_root)
+                        if src_rel is None:
                             return _ok(
                                 "deny",
                                 "ACTION_SOURCE_SCOPE_DENIED",
-                                "禁止读取算子 project_root / method root / confirmed scope 之外的路径",
+                                "禁止读取算子 project_root / test_script_root 之外的源码路径",
                                 path=path_s,
                             )
                         src_check = lease_allows_source_path(lease, src_rel)
@@ -1661,10 +1740,14 @@ def _authorize_impl(
                     except Exception:  # noqa: BLE001
                         src_rel = None
                 if src_rel is None:
+                    from ascendc_pilot.agents_registry import test_script_source_rel
+
+                    src_rel = test_script_source_rel(path_s or norm, project_root)
+                if src_rel is None:
                     return _ok(
                         "deny",
                         "ACTION_SOURCE_WRITE_DENIED",
-                        "禁止写入算子 project_root 之外的源码路径",
+                        "禁止写入算子 project_root / test_script_root 之外的源码路径",
                         path=path_s,
                     )
                 if lease and str(lease.get("status") or "") == "active":

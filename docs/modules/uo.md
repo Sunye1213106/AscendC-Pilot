@@ -240,7 +240,7 @@ Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo
 
 ### `/uo-query`（可见 LLM 路由，禁止 Host Session Driver）
 
-查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控先阅读短地图，**先说明**将直接调用还是委派，再执行。简单查询主控直接调用 `acp uo-query`；复杂查询委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
+查询不是 Host Driver 工作流（`host_driver=False` ≠ 没有 bundle）：不要 `pilot_run` / `acp start uo-query`。主控先阅读短地图，**先说明**将直接调用还是委派，再执行。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询委派 `Task(agent=uo-query)`。禁止仅为问题分类而委派子代理。建库 leftover 不能拦 `Task(agent=uo-query)`：查询子代不是当前 Host 阶段的 declared actor。
 
 身份一律 `uo-query`。推理入口：
 
@@ -251,9 +251,9 @@ Source -> CodeMap -> {/uo-query 只读提问（主控说明查询方式） | /uo
 
 `readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物。
 
-高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `acp inspect evidence-window --project … --path … --lines A-B`。
+高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `pilot_cli` `inspect evidence-window --project … --path … --lines A-B`。
 
-结构化查询（`acp uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图：
+结构化查询（`pilot_cli` `uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图：
 
 - 标识符：实体卡片（定义点 + 按边类型分组的邻居 + `next`）
 - `Dim=V`：模板覆盖（`dim_coverage` / `matching_block_count` / `total_matched`）

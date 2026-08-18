@@ -1771,6 +1771,12 @@ def _doctor(project: Path | None) -> int:
         cann_root, cann_issues = uo_paths.require_cann_ready()
         if cann_root is not None:
             print(f"cann_root={cann_root}")
+            try:
+                from ascendc_pilot.paths import write_opencode_cann_root
+
+                write_opencode_cann_root(cann_root)
+            except Exception:  # noqa: BLE001
+                pass
         if cann_issues:
             for item in cann_issues:
                 warnings.append(f"cann: {item}")

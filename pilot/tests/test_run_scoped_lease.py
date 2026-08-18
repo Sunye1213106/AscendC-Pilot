@@ -25,7 +25,7 @@ def _session(op: Path, run_id: str, action_id: str, *, lease_id: str, nonce: str
         "run_id": run_id,
         "action_id": action_id,
         "workflow_id": wid,
-        "phase": "lemma" if wid == "tg-solve" else "audit",
+        "phase": "construct" if wid == "tg-solve" else "audit",
         "session_dir": sdir.as_posix(),
     }
     import yaml
@@ -44,11 +44,11 @@ def test_tg_and_ce_prepare_do_not_clobber_leases(tmp_path: Path, monkeypatch) ->
 
     monkeypatch.setenv(SESSION_ENV, "ses_tg")
     monkeypatch.setenv("ASCENDC_WORKFLOW_ID", "tg-solve")
-    tg = start_workflow(op, "tg-solve", architecture="arch35", phase="lemma", force_phase=True)
+    tg = start_workflow(op, "tg-solve", architecture="arch35", phase="construct", force_phase=True)
     tg_run = str(tg["run_id"])
     tg_state = load_state(op, workflow_id="tg-solve")
     tg_lease = issue_action_lease(
-        op, state=tg_state, action_id="lemma_mine", actor_id="tg-lemma-producer"
+        op, state=tg_state, action_id="construct_cases", actor_id="tg-analyst"
     )
     tg_nonce = "nonce_tg_aaaaaaaa"
     _write_active_action(
@@ -57,19 +57,19 @@ def test_tg_and_ce_prepare_do_not_clobber_leases(tmp_path: Path, monkeypatch) ->
             "run_id": tg_run,
             "architecture": "arch35",
             "workflow_id": "tg-solve",
-            "action_id": "lemma_mine",
+            "action_id": "construct_cases",
             "prepare_nonce": tg_nonce,
             "lease_id": tg_lease["lease_id"],
             "status": "prepared",
             "session_dir": str(
-                runs_root(op, arch="arch35") / tg_run / "actions" / "lemma_mine"
+                runs_root(op, arch="arch35") / tg_run / "actions" / "construct_cases"
             ),
         },
     )
     tg_sdir = _session(
         op,
         tg_run,
-        "lemma_mine",
+        "construct_cases",
         lease_id=str(tg_lease["lease_id"]),
         nonce=tg_nonce,
         wid="tg-solve",
@@ -122,15 +122,15 @@ def test_tg_and_ce_prepare_do_not_clobber_leases(tmp_path: Path, monkeypatch) ->
             "prepare_nonce": tg_nonce,
             "lease_id": tg_lease["lease_id"],
             "run_id": tg_run,
-            "action_id": "lemma_mine",
+            "action_id": "construct_cases",
             "workflow_id": "tg-solve",
-            "phase": "lemma",
+            "phase": "construct",
             "session_dir": tg_sdir.as_posix(),
         },
-        action_id="lemma_mine",
+        action_id="construct_cases",
         run_id=tg_run,
         wid="tg-solve",
-        phase="lemma",
+        phase="construct",
         sdir=tg_sdir,
     )
     assert tg_bind is None, tg_bind

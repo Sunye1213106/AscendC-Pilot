@@ -32,18 +32,18 @@ def main() -> int:
         intent.parent.mkdir(parents=True, exist_ok=True)
         intent.write_text(
             yaml.safe_dump(
-                {"schema": "tg-init-intent/v1", "mode": "tilingkey_full_coverage"}
+                {"schema": "tg-init/v1", "table_kind": "csv", "confirmed": True}
             ),
             encoding="utf-8",
         )
-        start_workflow(op, "tg-solve", phase="lemma", force_phase=True, architecture=arch)
+        start_workflow(op, "tg-solve", phase="construct", force_phase=True, architecture=arch)
 
         # Unknown tool
         v = authorize(
             op,
             tool="filesystem_write_v2",
             path=str(agent_root(op, arch) / "x"),
-            agent="tg-lemma-producer",
+            agent="tg-analyst",
         )
         if v.get("reason_code") != "TOOL_UNKNOWN":
             failures.append(f"unknown tool: {v}")
@@ -51,22 +51,23 @@ def main() -> int:
         # Producer outside lease
         issue_action_lease(
             op,
-            action_id="lemma_mine",
-            actor_id="tg-lemma-producer",
-            allowed_write_paths=["runs/x/actions/lemma_mine/parts/part_001.yaml"],
+            action_id="construct_cases",
+            actor_id="tg-analyst",
+            allowed_write_paths=["runs/x/actions/construct_cases/parts/part_001.yaml"],
         )
-        outside = agent_root(op, arch) / "tg" / "closure" / "lemmas" / "active_rules.yaml"
+        outside = agent_root(op, arch) / "tg" / "init.yaml"
         outside.parent.mkdir(parents=True, exist_ok=True)
         v = authorize(
             op,
             tool="write",
             path=str(outside),
-            agent="tg-lemma-producer",
-            action="lemma_mine",
+            agent="tg-analyst",
+            action="construct_cases",
         )
         if v.get("reason_code") not in {
             "ACTION_WRITE_SCOPE_DENIED",
             "AGENT_WRITE_SCOPE",
+            "FORBIDDEN_WRITE_UO_FORMAL_PRODUCTS",
         }:
             failures.append(f"outside lease: {v}")
 
@@ -80,7 +81,7 @@ def main() -> int:
             / "runs"
             / "x"
             / "actions"
-            / "lemma_mine"
+            / "construct_cases"
             / "parts"
             / "part_001.yaml"
         )
@@ -89,23 +90,23 @@ def main() -> int:
             op,
             tool="write",
             path=str(target),
-            agent="tg-lemma-producer",
-            action="lemma_mine",
+            agent="tg-analyst",
+            action="construct_cases",
         )
         if v.get("reason_code") != "ACTION_RUN_MISMATCH":
             failures.append(f"stale lease: {v}")
 
-        # Referee cannot write producer path
-        start_workflow(op, "tg-solve", phase="audit", force_phase=True, architecture=arch)
+        # Reviewer cannot write producer path
+        start_workflow(op, "ce-review", phase="review", force_phase=True, architecture=arch)
         v = authorize(
             op,
             tool="write",
             path=str(target),
-            agent="tg-closure-referee",
-            action="closure_audit",
+            agent="ce-reviewer",
+            action="code_review",
         )
         if v.get("decision") != "deny":
-            failures.append(f"referee producer write: {v}")
+            failures.append(f"reviewer producer write: {v}")
 
     ok = not failures
     print(json.dumps({"ok": ok, "failures": failures}, indent=2))

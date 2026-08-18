@@ -101,14 +101,14 @@ def _scenario_ids(project_root: Path, state: dict[str, Any]) -> list[str]:
 def _ask_tg_init(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     gctx = _goal_context(project_root)
-    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）建立 TilingKey 全覆盖测试"
+    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）绑定测试脚本并规划义务"
     n = _declared_key_count(project_root)
-    scale = f"（约 {n} 个合法 Key）" if n else ""
-    background = f"覆盖合同已建立{scale}，检查已通过。"
+    scale = f"（声明域约 {n} 个合法 Key，不是默认 T）" if n else ""
+    background = f"init.yaml 已写出{scale}。"
     if gctx.get("progress_line"):
         background = f"{gctx['progress_line']} {background}"
     return decision_question(
-        header="覆盖合同已就绪，是否进入规划？",
+        header="init.yaml 已写出，是否进入规划？",
         goal=goal,
         background=background,
         decide="是否进入「规划测试义务」阶段？",
@@ -128,7 +128,7 @@ def _ask_tg_init(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
 def _ask_plan_approve(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     gctx = _goal_context(project_root)
-    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）建立 TilingKey 全覆盖测试"
+    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）按列规划测试义务"
     background = "测试义务规划已生成，等待你批准后才能开始求解与生成用例。"
     if gctx.get("progress_line"):
         background = f"{gctx['progress_line']} {background}"
@@ -145,28 +145,6 @@ def _ask_plan_approve(project_root: Path, state: dict[str, Any]) -> dict[str, An
         options=[
             {"label": "批准并开始求解", "value": "approve"},
             {"label": "返工规划", "value": "rework"},
-            {"label": "停止本次目标", "value": "stop"},
-        ],
-    )
-
-
-def _ask_scenario_plan(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    op, arch = _op_arch(project_root, state)
-    ids = _scenario_ids(project_root, state)
-    listed = "、".join(ids) if ids else "（尚未读到已确认场景列表）"
-    return decision_question(
-        header="是否把精度/性能场景冻结为规划目标？",
-        goal=f"为 {op}（{arch}）按场景构造少量用例，而不是覆盖全部合法 Key",
-        background=f"将把已确认的 ScenarioSet 冻成规划目标：{listed}。这一步不构造用例、不跑 Host。",
-        decide="是否按这些场景进入规划？",
-        consequences={
-            "确认按场景规划": "只针对这些场景规划测试义务",
-            "返工": "回到场景确认，增删场景后再规划",
-            "停止": "结束本次目标",
-        },
-        options=[
-            {"label": "确认按场景规划", "value": "confirm"},
-            {"label": "返工场景", "value": "rework"},
             {"label": "停止本次目标", "value": "stop"},
         ],
     )
@@ -329,45 +307,6 @@ def _ask_review_persist(project_root: Path, state: dict[str, Any]) -> dict[str, 
     )
 
 
-def _find_plan_dir(tg: Path, level: str) -> Path | None:
-    preferred = tg / "plan" / "levels" / (level or "L0")
-    if preferred.is_dir():
-        return preferred
-    levels = tg / "plan" / "levels"
-    if not levels.is_dir():
-        return None
-    candidates = sorted(
-        (
-            path
-            for path in levels.iterdir()
-            if path.is_dir()
-            and any(
-                (path / name).is_file()
-                for name in ("coverage_obligations.yaml", "coverage_matrix.yaml", "unresolved.yaml")
-            )
-        ),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
-    return candidates[0] if candidates else None
-
-
-def _plan_hashes(plan_dir: Path) -> tuple[str, str]:
-    snapshot_hash = ""
-    plan_hash = ""
-    for name in (
-        "coverage_obligations.yaml",
-        "plan.yaml",
-        "snapshot.yaml",
-        "coverage_matrix.yaml",
-        "unresolved.yaml",
-    ):
-        doc = _load(plan_dir / name)
-        snapshot_hash = snapshot_hash or str(doc.get("snapshot_hash") or "")
-        plan_hash = plan_hash or str(doc.get("plan_hash") or "")
-    return snapshot_hash, plan_hash
-
-
 def _write_yaml_receipt(
     path: Path,
     doc: dict[str, Any],
@@ -384,19 +323,15 @@ def _materialize_tg_init(
     now: str,
 ) -> dict[str, Any]:
     tg = tg_root(project_root, arch=_arch(state))
-    watched = [
-        tg / "init" / "status.yaml",
-        tg / "init" / "kb_fingerprint.yaml",
-        tg / "init" / "confirmation.yaml",
-    ]
-    backups = {candidate: candidate.read_bytes() if candidate.is_file() else None for candidate in watched}
+    path = tg / "init.yaml"
+    backups = {path: path.read_bytes() if path.is_file() else None}
     try:
         from testcase_agent.init_status import mark_init_confirmed
 
         mark_init_confirmed(
             tg,
             notes="Confirmed by Pilot primary_interactive Action",
-            require_merge=False,
+            project_root=project_root,
         )
     except Exception as exc:  # noqa: BLE001
         rollback_primary_decision({"backups": backups})
@@ -405,31 +340,21 @@ def _materialize_tg_init(
             "error": "INIT_CONFIRM_DOMAIN_GATE_FAILED",
             "message_zh": str(exc)[:400],
         }
-    confirm_path = tg / "init" / "confirmation.yaml"
-    _dump(
-        confirm_path,
-        {
-            "schema": "tg-init-confirmation/v1",
-            "status": "confirmed",
-            "mode": "tilingkey_full_coverage",
-            "confirmed_at": now,
-            **identity,
-        },
-    )
-    path = tg / "init" / "status.yaml"
     doc = _load(path)
+    if not isinstance(doc, dict):
+        rollback_primary_decision({"backups": backups})
+        return {
+            "ok": False,
+            "error": "INIT_YAML_MISSING",
+            "message_zh": "确认后仍缺少 tg/init.yaml",
+        }
     doc.update(
         {
-            "version": int(doc.get("version") or 1),
-            "status": "confirmed",
             "confirmed": True,
-            "init_confirmed": True,
-            "human_confirmed": True,
+            "status": "confirmed",
             "decision": "confirm",
             "confirmed_at": str(doc.get("confirmed_at") or now),
-            "op_name": str(state.get("op_name") or doc.get("op_name") or project_root.name),
             **identity,
-            "artifact_identity": identity,
         }
     )
     _dump(path, doc)
@@ -443,66 +368,48 @@ def _materialize_plan_approve(
     now: str,
 ) -> dict[str, Any]:
     tg = tg_root(project_root, arch=_arch(state))
-    level = str(state.get("level") or "L0")
-    plan_dir = _find_plan_dir(tg, level)
-    if plan_dir is None:
+    path = tg / "plan.md"
+    if not path.is_file():
         return {
             "ok": False,
-            "error": "PLAN_DIR_MISSING",
-            "message_zh": "未找到当前 level 的规划目录，禁止生成批准文件",
+            "error": "PLAN_MD_MISSING",
+            "message_zh": "未找到 tg/plan.md，禁止批准",
         }
-    snapshot_hash, plan_hash = _plan_hashes(plan_dir)
-    if not snapshot_hash or not plan_hash:
-        return {
-            "ok": False,
-            "error": "PLAN_HASH_MISSING",
-            "plan_dir": plan_dir.as_posix(),
-            "snapshot_hash_present": bool(snapshot_hash),
-            "plan_hash_present": bool(plan_hash),
-            "message_zh": "规划产物缺少 snapshot_hash/plan_hash，禁止批准陈旧或无身份计划",
-        }
-    path = plan_dir / "human_supplement.yaml"
     backups = {path: path.read_bytes() if path.is_file() else None}
-    doc = _load(path)
-    doc.update(
-        {
-            "version": int(doc.get("version") or 1),
-            "status": "approved",
-            "approved": True,
-            "decision": "approve",
-            "allow_solve": True,
-            "approved_at": now,
-            "approved_snapshot_hash": snapshot_hash,
-            "approved_plan_hash": plan_hash,
-            "supplements": list(doc.get("supplements") or []),
-            "notes": str(doc.get("notes") or "Approved by Pilot primary_interactive Action"),
-            "level": plan_dir.name,
-            **identity,
-            "artifact_identity": identity,
+    try:
+        from testcase_agent.products import parse_plan_fence, pending_harness_intent
+
+        text = path.read_text(encoding="utf-8")
+        fence = parse_plan_fence(text)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "PLAN_FENCE_INVALID",
+            "message_zh": str(exc)[:400],
         }
-    )
-    _dump(path, doc)
-    return {"ok": True, "path": path, "backups": backups, "identity": identity}
+    if pending_harness_intent(text, fence):
+        return {
+            "ok": False,
+            "error": "HARNESS_INTENT_PENDING",
+            "message_zh": "harness_intent 未落地，禁止批准规划。先 CE apply 测试脚本仓再 /tg-init。",
+        }
+    fence["approved"] = True
+    fence["decision"] = "approve"
+    fence["approved_at"] = now
+    fence.update({k: v for k, v in identity.items() if v})
+    import re as _re
 
-
-def _materialize_scenario_plan(
-    project_root: Path,
-    state: dict[str, Any],
-    identity: dict[str, str],
-    now: str,
-) -> dict[str, Any]:
-    ids = _scenario_ids(project_root, state)
-    path = tg_root(project_root, arch=_arch(state)) / "plan" / "scenario_plan.yaml"
-    doc = {
-        "schema": "tg-scenario-plan/v1",
-        "status": "confirmed",
-        "mode": "scenario_targeted",
-        "scenario_ids": ids,
-        "confirmed_at": now,
-        **identity,
-        "artifact_identity": identity,
-    }
-    path, backups = _write_yaml_receipt(path, doc)
+    body = yaml.safe_dump(fence, allow_unicode=True, sort_keys=False).rstrip() + "\n"
+    matches = list(_re.finditer(r"```ya?ml\s*\n(.*?)```", text, _re.DOTALL | _re.IGNORECASE))
+    if not matches:
+        return {
+            "ok": False,
+            "error": "PLAN_FENCE_MISSING",
+            "message_zh": "plan.md 没有 yaml 围栏，禁止批准",
+        }
+    start, end = matches[-1].span()
+    new_text = text[: start] + "```yaml\n" + body + "```" + text[end:]
+    path.write_text(new_text, encoding="utf-8")
     return {"ok": True, "path": path, "backups": backups, "identity": identity}
 
 
@@ -571,29 +478,20 @@ HintsFn = Callable[[Path, dict[str, Any]], list[str]]
 
 def _hints_tg_init(project_root: Path, state: dict[str, Any]) -> list[str]:
     try:
-        audit = tg_root(project_root, arch=_arch(state)) / "init" / "audit_report.yaml"
-        rel = audit.relative_to(Path(project_root).resolve()).as_posix()
+        path = tg_root(project_root, arch=_arch(state)) / "init.yaml"
+        rel = path.relative_to(Path(project_root).resolve()).as_posix()
     except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/tg/init/audit_report.yaml"
+        rel = ".ascendc-pilot/<arch>/tg/init.yaml"
     return [f"Review {rel} before asking the user to enter planning."]
 
 
 def _hints_plan_approve(project_root: Path, state: dict[str, Any]) -> list[str]:
     try:
-        levels = tg_root(project_root, arch=_arch(state)) / "plan" / "levels"
-        rel = levels.relative_to(Path(project_root).resolve()).as_posix()
-    except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/tg/plan/levels/"
-    return [f"Review the current level under {rel} before asking the user to start solving."]
-
-
-def _hints_scenario_plan(project_root: Path, state: dict[str, Any]) -> list[str]:
-    try:
-        path = ce_root(project_root, arch=_arch(state)) / "scenarios" / "scenario_set.yaml"
+        path = tg_root(project_root, arch=_arch(state)) / "plan.md"
         rel = path.relative_to(Path(project_root).resolve()).as_posix()
     except Exception:  # noqa: BLE001
-        rel = ".ascendc-pilot/<arch>/ce/scenarios/scenario_set.yaml"
-    return [f"Review {rel}; freeze those scenario ids as the plan target, not all legal keys."]
+        rel = ".ascendc-pilot/<arch>/tg/plan.md"
+    return [f"Review {rel} (prose + YAML fence) before asking the user to start solving."]
 
 
 def _hints_ce_intent(project_root: Path, state: dict[str, Any]) -> list[str]:
@@ -746,14 +644,6 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "ask": _ask_plan_approve,
         "materialize": _materialize_plan_approve,
         "hints": _hints_plan_approve,
-        "compact": "plan_approve",
-    },
-    ("tg-plan", "scenario_plan"): {
-        "kind": "primary_confirm",
-        "expected_values": ["confirm"],
-        "ask": _ask_scenario_plan,
-        "materialize": _materialize_scenario_plan,
-        "hints": _hints_scenario_plan,
         "compact": None,
     },
     ("ce-intent", "human_confirm"): {
@@ -990,7 +880,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
         expected_values=list(scenario["expected_values"]),
         expected_action_id=action_id,
         expected_kind=str(scenario["kind"]),
-        consume=True,
+        consume=False,
     )
     if not receipt.get("ok"):
         return receipt

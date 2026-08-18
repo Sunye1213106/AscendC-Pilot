@@ -13,10 +13,9 @@ from testcase_agent.init_status import (
     mark_init_confirmed,
     require_kb,
     require_kb_fingerprint_fresh,
-    write_init_status,
 )
-from testcase_agent.io import output_root, write_yaml
-from testcase_agent.resolve_policy import TILINGKEY_AUDIT_CHECKLIST_IDS
+from testcase_agent.io import output_root
+from testcase_agent.products import dump_init, INIT_SCHEMA
 
 
 def _write_product_uo(path: Path, *, op_name: str = "DemoOp", arch: str = "arch35", views: dict | None = None) -> None:
@@ -31,17 +30,17 @@ def _write_product_uo(path: Path, *, op_name: str = "DemoOp", arch: str = "arch3
     write_codemap(cm, path, views=extra or None)
 
 
-def _seed_audit(out_root: Path) -> None:
-    path = out_root / "init" / "audit_report.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_yaml(
-        path,
+def _seed_init(out_root: Path, project: Path) -> None:
+    dump_init(
+        out_root,
         {
-            "version": 1,
-            "status": "pass",
-            "checklist": "tilingkey",
-            "checks": [{"id": cid, "status": "pass"} for cid in TILINGKEY_AUDIT_CHECKLIST_IDS],
-            "blockers": [],
+            "schema": INIT_SCHEMA,
+            "kind": "default_input",
+            "table_kind": "csv",
+            "uo_digest": "pending",
+            "confirmed": False,
+            "project_root": project.as_posix(),
+            "op_name": "DemoOp",
         },
     )
 
@@ -63,22 +62,10 @@ def test_mark_init_confirmed_fingerprints_product_without_yaml_worktree(tmp_path
     product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
     out = output_root(project, "DemoOp", arch="arch35")
-    write_init_status(
-        out,
-        {
-            "version": 1,
-            "op_name": "DemoOp",
-            "status": "pending_confirm",
-            "project_root": project.as_posix(),
-            "understand_root": product.parent.as_posix(),
-        },
-    )
-    _seed_audit(out)
-    doc = mark_init_confirmed(out, notes="product-only", require_merge=False)
+    _seed_init(out, project)
+    doc = mark_init_confirmed(out, notes="product-only", require_merge=False, project_root=project)
     assert doc["status"] == "confirmed"
-    fp_path = out / "init" / "kb_fingerprint.yaml"
-    assert fp_path.is_file()
-    assert doc.get("kb_fingerprint_digest")
+    assert doc.get("uo_digest")
     fresh = require_kb_fingerprint_fresh(project, "DemoOp", out_root=out, status_doc=doc)
     assert fresh["ok"] is True
 
@@ -88,18 +75,8 @@ def test_product_mutation_invalidates_fingerprint(tmp_path: Path) -> None:
     product = project / ".ascendc-pilot" / "arch35" / "uo" / "DemoOp.arch35.uo"
     _write_product_uo(product)
     out = output_root(project, "DemoOp", arch="arch35")
-    write_init_status(
-        out,
-        {
-            "version": 1,
-            "op_name": "DemoOp",
-            "status": "pending_confirm",
-            "project_root": project.as_posix(),
-            "understand_root": product.parent.as_posix(),
-        },
-    )
-    _seed_audit(out)
-    doc = mark_init_confirmed(out, require_merge=False)
+    _seed_init(out, project)
+    doc = mark_init_confirmed(out, require_merge=False, project_root=project)
     assert doc["status"] == "confirmed"
     # Mutate product bytes.
     with product.open("ab") as fh:
@@ -113,19 +90,9 @@ def test_confirm_fails_closed_without_any_uo_authority(tmp_path: Path) -> None:
     project = tmp_path / "op"
     project.mkdir()
     out = output_root(project, "DemoOp", arch="arch35")
-    write_init_status(
-        out,
-        {
-            "version": 1,
-            "op_name": "DemoOp",
-            "status": "pending_confirm",
-            "project_root": project.as_posix(),
-            "understand_root": (project / ".ascendc-pilot" / "arch35" / "uo").as_posix(),
-        },
-    )
-    _seed_audit(out)
+    _seed_init(out, project)
     with pytest.raises(InitGateError) as exc:
-        mark_init_confirmed(out, require_merge=False)
+        mark_init_confirmed(out, require_merge=False, project_root=project)
     assert exc.value.ask == "kb_fingerprint_unavailable"
 
 

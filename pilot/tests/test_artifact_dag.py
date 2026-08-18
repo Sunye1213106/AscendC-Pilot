@@ -167,7 +167,6 @@ def test_artifact_usage_receipts_are_run_scoped(repo_root: Path) -> None:
     assert errors == [], errors
     assert RECEIPT_ARTIFACTS == {
         "runs/{run_id}/receipts/uo_ready.yaml",
-        "runs/{run_id}/receipts/integrity_gate.yaml",
     }
 
 
@@ -196,15 +195,14 @@ def test_precheck_actions_publish_nothing() -> None:
     assert normalize_published(solve_pc) == []
 
 
-def test_lemma_mine_write_allow_forbid_disjoint() -> None:
+def test_construct_cases_write_allow_forbid_disjoint() -> None:
     from ascendc_pilot.ownership import write_paths_overlap
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
-    mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "lemma_mine")
+    mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "construct_cases")
     allow = list(mine.get("allowed_write_paths") or [])
     forbid = list(mine.get("forbidden_write_paths") or [])
-    assert any(p.endswith("parts/**") for p in allow)
-    assert any(p.endswith("staging.yaml") for p in forbid)
+    assert any("construct_cases" in p for p in allow)
     for a in allow:
         for b in forbid:
             assert not write_paths_overlap(a, b), (a, b)

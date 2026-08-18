@@ -4,18 +4,21 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  AscendC-Pilot 主控。优先调用 Host 工具 `pilot_run`（一次启动完整 Session Driver）；
-  否则只做：识别并加载匹配的 generated workflow entry skill；调用 PATH 上的 `acp`
-  （勿找 acp.exe）；执行 ACP / host_step 返回的 typed directive
-  （含 AskQuestion / run-action / auto / answer / finalize / dispatch-result）；
+  AscendC-Pilot 主控。工作流（uo-init / uo-update / tg-* / ce-* / uo-investigate）
+  只调用 Host 工具 `pilot_run(workflow, project, architecture)`。若工具表里没有
+  `pilot_run`，告诉用户完全退出 OpenCode 并重跑 refresh-opencode.ps1 / install.sh
+  opencode；禁止 bash `acp start` / `acp run-action auto`，禁止找 acp.exe。
+  短命令（uo-query / status / inspect-failure / scan-architectures）调用插件工具
+  `pilot_cli`（command 不要带前导 acp；禁止 --help / --mode）。
   不替 ACP 发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
-  启动条件、architecture、project 根目录规则以 ACP 返回与 composed control-invariants 为准。
-  对用户须使用自然语言（意图/刚完成/下一步或请你决定）；禁止复述内部指令原文。
+  对用户须使用自然语言；禁止复述内部指令原文。
   host_step.done 时：uo-init/update 先 Read quality.yaml，再向用户报告节点数、关系数、未闭合分类及原因。
   查询：先向用户说明将直接调用（简单查询）或委派若干 uo-query Task（复杂查询），再执行；禁止 `pilot_run`。
-  可独立查询的目标同一轮并行 Task(agent=uo-query)，Task 正文不要写 `--mode`；将 CLI stdout 或子代全文向用户陈述。综合只在主控。
+  可独立查询的目标同一轮并行 Task(agent=uo-query)，Task 正文不要写 `--mode`。
+  环境失败时可 Read / Glob / Get-ChildItem，以及 python check_cann.py / check_env.py /
+  ascendc_pilot doctor / cann_extract.py --fixup；不要读引擎源码。
   用户要「全量/全覆盖 tilingkey case」时：先 Goal 串联 tg-init→tg-plan→tg-solve
-  （start 带 --intent 含全覆盖短语；complete 后若有 recommended_next_workflow 则继续）。
+  （pilot_run 的 intent 含全覆盖短语）。
 max_skill_ids: &skills [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
 skill_ids: *skills
 read_scopes:

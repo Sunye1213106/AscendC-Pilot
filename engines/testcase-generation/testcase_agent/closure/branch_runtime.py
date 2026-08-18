@@ -61,13 +61,21 @@ def active_mode(ws: W.Workspace | None = None) -> tuple[str, str]:
     except Exception:
         tg = ws.state.parent
         params = {}
-    plan = _load_yaml(tg / "plan" / "plan_intent.yaml")
-    init = _load_yaml(tg / "init" / "init_intent.yaml")
+    plan: dict[str, Any] = {}
+    plan_md = tg / "plan.md"
+    if plan_md.is_file():
+        try:
+            from testcase_agent.products import parse_plan_fence
+
+            plan = parse_plan_fence(plan_md.read_text(encoding="utf-8"))
+        except Exception:
+            plan = {}
+    init = _load_yaml(tg / "init.yaml")
     mode = str(
         plan.get("mode")
         or params.get("mode")
         or init.get("mode")
-        or "tilingkey_full_coverage"
+        or ""
     ).strip()
     level = str(plan.get("level") or params.get("level") or "").strip().upper()
     return mode, level

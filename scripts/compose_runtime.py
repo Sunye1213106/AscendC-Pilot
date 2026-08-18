@@ -68,8 +68,7 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
     "uo-query",
     "uo-gap-investigator",
-    "tg-lemma-producer",
-    "tg-closure-referee",
+    "tg-analyst",
     "ce-analyst",
     "ce-change-referee",
     "ce-applier",
@@ -95,8 +94,9 @@ def opencode_isolated_primary_permission(
     Do **not** set top-level ``*: deny``. OpenCode treats ``*`` as a tool glob;
     it matches ``read`` / ``glob`` / ``grep`` and can deny Primary reads even
     when those keys are ``allow``. Isolation from Build/Plan is a separate
-    agent bag (plugin denies ``pilot_run`` / ``acp`` on native tabs), not a
+    agent bag (plugin denies ``pilot_run`` / ``pilot_cli`` on native tabs), not a
     shared wildcard. Grep/Read/Glob stay allow so the controller can inspect.
+    Tool name ``acp`` is reserved by OpenCode ACP protocol — never register it.
     """
     return {
         "bash": bash_perm,
@@ -106,7 +106,8 @@ def opencode_isolated_primary_permission(
         "read": "allow",
         "external_directory": "allow",
         "task": opencode_primary_task_permission(),
-        "acp": "allow",
+        "acp": "deny",
+        "pilot_cli": "allow",
         "pilot_run": "allow",
         "skill": "allow",
         "question": "allow",
@@ -117,6 +118,10 @@ def opencode_isolated_primary_permission(
         "websearch": "deny",
         "lsp": "deny",
     }
+
+
+# Checklist spec for the TG engine — not an LLM Tab / Task actor.
+OPENCODE_SKIP_HOST_AGENT_IDS: frozenset[str] = frozenset()
 
 # Slash / discovery entry metadata. Body is generated from Spec; no skills/workflows source.
 # Editorial discovery prose only. cognitive_skill_id / requires_* live on Workflow Spec.
@@ -147,7 +152,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "description": (
             "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
             "TilingData、Kernel、字段、路径）。主控先向用户说明查询方式："
-            "简单查询由主控自行调用 `acp uo-query`（标识符 / Dim=V / --file --line / 无参数索引）；"
+            "简单查询由主控自行调用 `pilot_cli` `uo-query`（标识符 / Dim=V / --file --line / 无参数索引）；"
             "复杂查询必须同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
             "Task 正文不要写 `--mode`。禁止把复杂查询改成主控自行连续查询。"
             "**禁止** `pilot_run` / `acp start uo-query`。"
@@ -211,32 +216,29 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "tg-init": {
-        "command_description": 'Initialize the TG contract and TilingKey binding',
+        "command_description": 'Initialize TG: one init.yaml binding test scripts to CodeMap',
         "description": (
-            "建立覆盖合同（测例契约与绑定）。用户说 tg-init、建测例契约、tilingkey 绑定、"
-            "全量/全覆盖/tilingkey case/建立 TilingKey 全覆盖测试时加载。"
-            "全覆盖产品目标：写入 control/user_goal 后串联 init→plan→solve；"
-            "start 时 --intent 带全覆盖短语。默认 tilingkey_full_coverage（无需 CSV）。"
-            "向用户仅说明「建立覆盖合同」进度与确认后果；机器 id 留在 payload。"
+            "建立测试生成契约，只落一份 `tg/init.yaml`：列、映射、值域、golden、精度/性能怎么跑。"
+            "扫描测试脚本仓（含 xls/xlsx）。有仓但 mapping 空则失败。"
+            "无 `.uo` 时先 /uo-init。向用户说明「确认 init.yaml」与进入规划的后果。"
             "Pilot 管阶段；加载后用 `pilot_run`。"
         ),
     },
     "tg-plan": {
-        "command_description": 'Freeze the TG coverage target set',
+        "command_description": 'Fuse intent into plan.md obligations rooted at CSV columns',
         "description": (
-            "规划测试义务并冻结目标集（全覆盖 Goal 的第二步）。"
-            "用户未指定目标时默认计划全部合法 TilingKey（覆盖全部合法 Key）；"
-            "指定 packed keys 或维度过滤时只计划该子集。Plan 不构造 case、不做可达性求解。"
-            "向用户说明「规划测试义务」与批准后进入求解的后果。"
+            "规划测试义务，只落一份 `tg/plan.md`（散文 + YAML 义务表）。"
+            "强制 `init.yaml`；意图有则融合。控制面是 CSV/XLS 列，不是 T=D。"
+            "指标只有 Host replay 与 derived 公式。缺列则 harness_intent，先改测试仓。"
+            "向用户说明批准后进入求解的后果。"
         ),
     },
     "tg-solve": {
-        "command_description": 'Close T via per-round replay analysis: lemma rejects or directed construct',
+        "command_description": 'Construct cases, Host-replay, write worklog until Open is empty',
         "description": (
-            "求解并生成用例（全覆盖 Goal 的第三步）：按轮构造→Replay→Round Analysis。"
-            "增长符合预期则轮内对 reject 证源码引理扩 E；不符合则基于已发现 key+源码定向再构造；"
-            "直到覆盖义务关闭。未指定目标由 tg-plan 默认覆盖全部合法 Key。"
-            "向用户报告求解进度与实际需要用户确认的步骤，禁止粘贴内部 reason_code 当唯一说明。"
+            "求解并生成用例：构造脚本可吃的 cases 表，Host tiling 回放（无 NPU），"
+            "按 case 写 worklog 四段，直到 open 为空。harness_intent 未落地禁止开始。"
+            "TG 永不改算子仓。向用户报告求解进度。"
         ),
     },
     "operator": {
@@ -260,7 +262,6 @@ CAPABILITY_DIRS: dict[str, str] = {
     "sharded-llm-producer": "pilot/runtime/sharded-llm-producer",
     "sharded-semantic-producer": "pilot/runtime/sharded-semantic-producer",
     "producer-self-check": "pilot/gates/producer-self-check",
-    "contract-building": "pilot/gates/contract-building",
 }
 
 
@@ -548,9 +549,9 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     if wid == "uo-query":
         run_via = (
             "Not a Host workflow. Tell the user the query plan first "
-            "(direct `acp uo-query` vs delegated Tasks), then execute. "
-            "Simple: primary calls `acp uo-query`. Complex: N native Tasks agent=`uo-query` same turn — "
-            "never demote a complex query to primary Read/acp. Never `--mode` in a Task stub. "
+            "(direct `pilot_cli` `uo-query` vs delegated Tasks), then execute. "
+            "Simple: primary calls `pilot_cli` `uo-query`. Complex: N native Tasks agent=`uo-query` same turn — "
+            "never demote a complex query to primary Read. Never `--mode` in a Task stub. "
             "Never `pilot_run` / `acp start` for uo-query. Do not spawn a routing-only subagent. "
             "If any child is PARTIAL / 未闭合 / contradicts another, launch another Task round "
             "(FOCUS=the gap) before closing; do not replace round 2 with a content-free confirmation. "
@@ -1024,23 +1025,20 @@ _REPO_SEARCH_BASH_ALLOWS: dict[str, str] = {
 _SEARCH_CAPABILITIES = frozenset({"source-navigation", "readonly-source-search"})
 
 
-def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, str]:
+def _opencode_bash_permission(
+    *,
+    allow_repo_search: bool = True,
+    primary: bool = False,
+) -> dict[str, str]:
     """OpenCode frontmatter bash rules (last match wins: deny-all first, then allows).
 
-    Aligns with ``authorize`` ``BASH_READONLY_INSPECT`` + ``acp *``.
-    Without these, primary ``bash: *: deny`` blocks `grep`/`rg` before Pilot authorize runs.
-    ``uo-query`` omits repo-wide search so agents must use ``acp uo-query`` / ``acp ro-search``.
+    Do **not** allowlist the harness binary, PATH discovery, or ``*.exe`` probes. Workflows
+    use Host ``pilot_run``; short CLI uses plugin ``pilot_cli``. Bash ``acp start``
+    is the ses_fefd 120s timeout trap.
+    ``uo-query`` omits repo-wide search so agents must use ``pilot_cli``.
     """
     perm = {
         "*": "deny",
-        # Exact + prefixed; agent must invoke bare `acp` (not absolute acp.exe path).
-        "acp": "allow",
-        "acp *": "allow",
-        # Absolute Scripts path sometimes appears if Host expands PATH; keep allowlisted.
-        "*\\Scripts\\acp.exe": "allow",
-        "*\\Scripts\\acp.exe *": "allow",
-        "*/bin/acp": "allow",
-        "*/bin/acp *": "allow",
         # Path / listing probes
         "ls": "allow",
         "ls *": "allow",
@@ -1062,15 +1060,6 @@ def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, st
         "Test-Path *": "allow",
         "Resolve-Path": "allow",
         "Resolve-Path *": "allow",
-        # acp discovery only (ses_00c4: Get-Command was denied by frontmatter)
-        "Get-Command acp": "allow",
-        "Get-Command acp *": "allow",
-        "gcm acp": "allow",
-        "gcm acp *": "allow",
-        "where acp": "allow",
-        "where acp *": "allow",
-        "where.exe acp": "allow",
-        "where.exe acp *": "allow",
         "cd *": "allow",
         "Set-Location *": "allow",
         "sl *": "allow",
@@ -1092,7 +1081,26 @@ def _opencode_bash_permission(*, allow_repo_search: bool = True) -> dict[str, st
         "Group-Object *": "allow",
         "ForEach-Object *": "allow",
     }
-    if allow_repo_search:
+    if primary:
+        perm.update(
+            {
+                "python *check_cann.py*": "allow",
+                "python3 *check_cann.py*": "allow",
+                "python *check_env.py*": "allow",
+                "python3 *check_env.py*": "allow",
+                "python *check_install.py*": "allow",
+                "python3 *check_install.py*": "allow",
+                "python *cann_extract.py* --fixup*": "allow",
+                "python3 *cann_extract.py* --fixup*": "allow",
+                "python -m ascendc_pilot doctor": "allow",
+                "python -m ascendc_pilot doctor *": "allow",
+                "python3 -m ascendc_pilot doctor": "allow",
+                "python3 -m ascendc_pilot doctor *": "allow",
+                "python -c *": "allow",
+                "python3 -c *": "allow",
+            }
+        )
+    if allow_repo_search or primary:
         perm.update(_REPO_SEARCH_BASH_ALLOWS)
     return perm
 
@@ -1199,7 +1207,9 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         "description": desc,
     }
     allow_repo_search = _agent_allow_repo_search(repo, agent_meta)
-    bash_perm = _opencode_bash_permission(allow_repo_search=allow_repo_search)
+    bash_perm = _opencode_bash_permission(
+        allow_repo_search=allow_repo_search, primary=is_primary
+    )
     grep_perm = "allow" if allow_repo_search else "deny"
     write_scopes = list(agent_meta.get("write_scopes") or [])
     # OpenCode defaults most tools to allow. Always emit edit/write explicitly.
@@ -1225,24 +1235,34 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
                 edit_perm=edit_perm if write_scopes else {"*": "ask"},
                 write_perm=write_perm if write_scopes else {"*": "ask"},
             )
+            front["tools"] = {
+                "pilot_run": True,
+                "pilot_cli": True,
+                "acp": False,
+            }
         else:
             front["permission"] = {
                 "bash": bash_perm,
                 "grep": grep_perm,
                 **host_read_perm,
                 "task": opencode_primary_task_permission(),
-                "acp": "allow",
+                "pilot_cli": "allow",
+                "pilot_run": "allow",
+                "acp": "deny",
                 "edit": edit_perm if write_scopes else {"*": "ask"},
                 "write": write_perm if write_scopes else {"*": "ask"},
             }
     else:
         # Fail-closed: `*` denies MCP `{server}_{tool}` names and unknown natives.
         front["mode"] = "subagent"
+        if host == "opencode":
+            front["hidden"] = True
         child_bash: Any = {"*": "deny"} if aid == "uo-query" else bash_perm
         front["permission"] = {
             "*": "deny",
             "bash": child_bash,
-            "acp": "allow",
+            "acp": "deny",
+            "pilot_cli": "allow",
             "pilot_run": "deny",
             "grep": grep_perm,
             "glob": "allow" if allow_repo_search else "deny",
@@ -1256,7 +1276,12 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "lsp": "deny",
             "todowrite": "deny",
         }
-        tools: dict[str, Any] = {"skill": False, "pilot_run": False}
+        tools: dict[str, Any] = {
+            "skill": False,
+            "pilot_run": False,
+            "acp": False,
+            "pilot_cli": True,
+        }
         if not allow_repo_search:
             tools["grep"] = False
             tools["glob"] = False
@@ -1271,12 +1296,20 @@ execution_variant = delegated_query. Simple queries never spawn this agent.
 
 If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not search additional session files.
 
-1. **First**: call the `acp` tool (not bash). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not call `--help` to discover CLI. Do not prefix with bash; the plugin spawns acp.exe.
+1. **First**: call the `pilot_cli` tool (not bash, not a tool named `acp`). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not call `--help`. Do not prefix with bash.
 2. Follow card `next` / `hint`. A card with `file:line` + snippet is already Read — do not Read the same span. Copy `file` from the card; do not guess paths.
 3. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
 4. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
 
-Simple query is Primary-only (`acp uo-query` stdout).
+Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
+"""
+    elif is_primary:
+        runtime = """## Runtime Contract
+
+1. Workflows (`uo-init` / `uo-update` / `tg-*` / `ce-*` / `uo-investigate`): call Host tool `pilot_run(workflow, project, architecture)`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`. Never bash `acp start` / `acp run-action auto`. Never search for `acp.exe`.
+2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures`): call plugin tool `pilot_cli` with `command` as argv after the binary (no leading `acp`). Never `--help`. Never `--mode`.
+3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture.
+4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`.
 """
     else:
         runtime = """## Runtime Contract
@@ -1495,6 +1528,8 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         kind = str(meta.get("kind") or "").strip().lower()
         if kind == "deterministic_engine":
             continue
+        if str(meta.get("id") or "") in OPENCODE_SKIP_HOST_AGENT_IDS:
+            continue
         md = _compose_agent_md(repo, meta, host=host)
         (out_agents / f"{meta['id']}.md").write_text(md, encoding="utf-8")
         compiled.append(f"{host}/agents/{meta['id']}")
@@ -1537,6 +1572,8 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
         for ag in agents_src.glob("*.yaml"):
             meta = _load_yaml(ag)
             if str(meta.get("kind") or "").strip() == "deterministic_engine":
+                engine_ids.add(str(meta.get("id") or ag.stem))
+            if str(meta.get("id") or ag.stem) in OPENCODE_SKIP_HOST_AGENT_IDS:
                 engine_ids.add(str(meta.get("id") or ag.stem))
 
     # Every referenced non-primary LLM agent must have a generated md

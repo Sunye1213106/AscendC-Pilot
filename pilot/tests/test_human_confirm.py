@@ -118,9 +118,9 @@ def test_scenario_confirm_is_hosted(tmp_path: Path) -> None:
     assert "覆盖合同" not in header
 
 
-def test_scenario_plan_unique_without_workflow(tmp_path: Path) -> None:
-    ask = build_ask(tmp_path, action_id="scenario_plan")
+def test_plan_approve_unique_without_workflow(tmp_path: Path) -> None:
+    ask = build_ask(tmp_path, action_id="plan_approve")
     header = str(ask.get("header") or "")
-    assert "场景" in header
+    assert "规划" in header or "求解" in header
     values = [str(o.get("value") or "") for o in ask.get("options") or []]
-    assert "confirm" in values
+    assert "approve" in values

@@ -16,7 +16,7 @@
 入口 + 侧别 → CodeMap 邻域 → H0/H1（相对规范）→ 最小源码窗 → 推翻 → FINDING
 ```
 
-1. 先 `acp uo-query`（`impact` / `locate` / `field` / `buffer` / `kernel_api`）。校验点看 `facts.check_sites`。
+1. 先插件 `pilot_cli` `uo-query`（标识符 / `Dim=V` / `--file --line`；不要 `--mode`）。校验点看 `facts.check_sites`。
 2. 「来源 = TilingData」不是已校验；必须指到 `OP_CHECK_IF` 的 `path:line` 且变量同一。
 3. H0 = 该段符合规范；H1 = 可观察风险（越界、除零、同步缺失、跨层断裂）。报告前尝试推翻 H1。
 

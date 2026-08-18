@@ -43,7 +43,7 @@
         │         ▼
         │   主控向用户说明将直接调用还是委派
         │         │
-        │         ├── 简单查询：当前会话 `acp uo-query`
+        │         ├── 简单查询：当前会话 `pilot_cli` `uo-query`
         │         └── 复杂查询：同一轮 Task(agent=uo-query) × N → 主控综合
         │                   图上缺口自动第 2 轮；方向选择则 AskQuestion 选项
         │
@@ -53,7 +53,7 @@
         ├── 缺 project / architecture
         │         │
         │         ▼
-        │   acp scan-architectures（仅 uo-init/update）
+        │   `pilot_cli` scan-architectures（仅 uo-init/update）
         │         │
         │         ▼
         │   AskQuestion（选项原样）──► 再 start 一次
@@ -67,7 +67,7 @@
         └── 参数齐（含不同族并行：uo 写与 tg-* / ce-* 可同时跑）
                   │
                   ▼
-            acp start  ──►  acp run-action auto
+            Host `pilot_run`（Driver 内部 start→auto；模型不要 bash `acp start`）
                   │
                   ├── host_step = dispatch_subagent  → Task(stub 原样) → dispatch-result
                   │     （`host_step.tasks` ≥2：同一轮并行多个 Task，Primary 综合后再 dispatch-result）
@@ -143,7 +143,7 @@ done        Primary 读 quality.yaml，向用户报告刷新后的节点/关系/
 ```text
 用户问题
   └── 主控向用户说明查询方式（写在当前会话消息中）
-        ├── 简单查询：主控直接调用 acp uo-query
+        ├── 简单查询：主控直接调用 `pilot_cli` `uo-query`
         │         → stdout 向用户陈述
         ├── 复杂查询、一个独立查询目标
         │         → 一个 Task(agent=uo-query)
@@ -154,7 +154,7 @@ done        Primary 读 quality.yaml，向用户报告刷新后的节点/关系/
                   → 未闭合再开一轮 Task
 ```
 
-子代不写 `answer.yaml`、不自己 finalize。复杂查询直接委派 Task，主控综合。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。Delegated Task 的正文即全部，不要另行查找 session `prompt.md`；直接用插件 `acp` 工具（`command=uo-query --project …`），不要 bash。
+子代不写 `answer.yaml`、不自己 finalize。复杂查询直接委派 Task，主控综合。`authorize` 把 `uo-query` 当作非 Host 驱动 actor：即使刚跑完 `uo-init`（阶段 leftover 不含 `uo-query`），主控仍可 `Task(agent=uo-query)`。不要为此 `acp start uo-query`。Delegated Task 的正文即全部，不要另行查找 session `prompt.md`；直接用插件 `pilot_cli` 工具（`command=uo-query --project …`），不要 bash。
 
 ### `/uo-investigate` — 查 unresolved
 
@@ -168,84 +168,61 @@ investigate [S uo-gap-investigator]  →  report
 
 ## TG
 
-消费已有 CodeMap。产品目标「全量 / 全覆盖 tilingkey case」会按 init → plan → solve 串联。
+消费已有 CodeMap。正式产物只有 `init.yaml` / `plan.md` / `worklog.md` + cases 表。用户说「全量覆盖」会串联 init → plan → solve，但那是意图，不是 T=D 默认模式。根本改动见 [tg-rebuild.md](../development/tg-rebuild.md)。
 
-### `/tg-init` — 建立覆盖合同
+### `/tg-init` — 绑定脚本列
 
 ```text
-intent    [D]  记录全覆盖模式
-    │
-    ▼
 kb_ready  [D]  校验 .uo          ──gate: uo_ready
     │
     ▼
-contract  [D]  覆盖合同骨架
+scan      [D]  扫描测试仓（含 xls）
     │
     ▼
-bind      [D]  Host 视图绑定      ──gate: tilingkey_binding_ready
+bind      [S tg-analyst] → promote [D]  写出 init.yaml
     │
     ▼
-gate      [D] 完整性 + init_audit
-    │                              ──gate: audit_pass
+validate  [D]  mapping 空则失败
+    │
     ▼
-confirm   [H]  向用户确认是否进入规划  ──gate: init_confirmed
+confirm   [H]  进入规划            ──gate: init_confirmed
 ```
 
-### `/tg-plan` — 规划测试义务
+### `/tg-plan` — 融合义务
 
 ```text
-intent   [D]  记录规划目标
-    │         overlay scenario_targeted 才有 [H] scenario_plan
-    ▼
-scope    [D]  规划范围
+gate     [D]  强制 init.yaml      ──gate: tg_init_confirmed
     │
     ▼
-gate     [D]  前置检查            ──gate: tg_init_confirmed
+fuse     [S tg-analyst] → promote [D]  一份 plan.md
     │
     ▼
-build / filter / review  [D]  同一 Action `plan_build`
+validate [D]  列 root 闸门
     │
     ▼
-approve  [H]  批准开始求解        ──gate: plan_approved
+approve  [H]  开始求解            ──gate: plan_approved
 ```
 
-### `/tg-solve` — 构造、Replay、闭环
+### `/tg-solve` — 构造、Replay、worklog
 
 ```text
-gate     [D]  求解前置            ──gate: plan_approved
+gate      [D]  已批准 + harness 落地
     │
     ▼
-oracle   [D]  Oracle 探测
+construct [S] → promote [D]  cases 表
     │
     ▼
-ledger   [D]  重建覆盖账本
+replay    [D]  Host tiling（无 NPU）
     │
     ▼
-search   [D]  构造候选 + Host Replay
+analyze   [S] → promote [D]  worklog 四段
     │
+    ├── open 非空 ──► construct
     ▼
-residual [D]  本轮分析
-    │
-    ├── 还有进展 ──────────────► search
-    ├── 需要定向再构造 ────────► construct [D] ──► residual
-    ├── 需要引理 ──────────────► lemma
-    │                              lemma_leads / evidence [D]
-    │                              lemma_mine [S tg-lemma-producer]
-    │                              lemma_verify [D]
-    │                              lemma_review [S tg-closure-referee]
-    │                              lemma_apply / loop [D]
-    │                              └── 回到 ledger
-    └── 进入审查
-            │
-            ▼
-         audit [S tg-closure-referee]
-            │
-            ├── 要补引理 ──► lemma
-            ▼
-         certify [D]  签发证书     ──gate: closure_soundness
+certify   [D]  open: []           ──gate: worklog_closed
 ```
 
-义务关闭只有两种：Replay confirmed，或经审查的 exclusion proof。
+`Replay reject ≠ E`。TG 永不改算子仓；缺列走 CE apply 测试脚本仓。
 
 ---
 

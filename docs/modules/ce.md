@@ -65,13 +65,13 @@ reproducible change -> freshness -> forward/backward UO slices -> risk classes
 
 `evaluate_risks` 按锚点 `kind` 挂义务，并且**每个锚点单独成条**：BUFFER 只进 sync/perf，不会单独产生 dispatch；一条 Tier C 锚点不得把其它锚点的义务打成 `open_only`。无 kind 的锚点默认不挂类；只有调用方**显式**传入 `risk_classes` 时才按所选类挂上，这不是静默默认。
 
-`obligation_build` 同时写出 `ce/impact/tg_plan_intent.yaml`（`tg-plan-intent/v1`，mode=`ce_change_scoped`）。`/tg-plan` 若见到这份文件就合并进 `tg/plan/plan_intent.yaml`，用 affected keys / dims 作为 T，禁止静默扩成全部合法 Key。不自动 `pilot_run` tg-plan。
+`obligation_build` 同时写出 `ce/impact/tg_plan_intent.yaml`（`tg-plan-intent/v1`）。`/tg-plan` 若见到这份文件就**融进** `tg/plan.md` 义务表，用 affected keys / dims 约束范围，禁止静默扩成全部合法 Key，也不再写 `tg/plan/plan_intent.yaml`。不自动 `pilot_run` tg-plan。
 
 风险用开发者语言理解：Tiling 失败 / Kernel 找不到 → dispatch；越界与同步 → sync；精度 / 性能 → 外部测量才能进 `V`。
 
 ### 场景 overlay 与 harness
 
-日常精度/性能不默认跑全量 TilingKey。`/ce-impact` 与 `/ce-intent` 会写出 `ce/scenarios/scenario_set.yaml`（`ce-scenario-set/v1`），场景 id 只能来自目录（`P-*` / `F-*`）。`scenario_targeted` overlay 由引擎写骨架，Agent 只写 knobs staging，Host `scenario_apply` 合并后再向用户确认。测试仓适配器把少量 CSV 的跑测译成 `ce-external-evidence/v1`；没有适配器时精度/性能保持 Open，并记录 `harness_missing`。Host replay 不能关闭 `P-*` / `F-*`。全量覆盖仍走独立的 `tilingkey_full_coverage` overlay。
+日常精度/性能不默认跑全量 TilingKey。`/ce-impact` 与 `/ce-intent` 会写出 `ce/scenarios/scenario_set.yaml`（`ce-scenario-set/v1`），场景 id 只能来自目录（`P-*` / `F-*`）。`scenario_targeted` overlay 由引擎写骨架，Agent 只写 knobs staging，Host `scenario_apply` 合并后再向用户确认。测试仓适配器把少量 CSV 的跑测译成 `ce-external-evidence/v1`；没有适配器时精度/性能保持 Open，并记录 `harness_missing`。Host replay 不能关闭 `P-*` / `F-*`。全量 tilingkey 是 TG `plan.md` 上的意图，不是 CE overlay。
 
 ### `/ce-verify`
 

@@ -71,6 +71,9 @@ def test_uo_query_router_owned_by_method() -> None:
     assert "--file" in method and "--line" in method
     assert "视为已 Read" in method
     assert "routing/uo-query.md" in skill
+    ctx = _text("agents/CONTEXT.md")
+    assert "主控当前会话 `acp uo-query`" not in ctx
+    assert "pilot_cli" in ctx
     assert "uo-query-router/METHOD.md" not in skill
     assert "相关 ≠ 单域" not in skill
     assert "相关 ≠ 单域" in router
