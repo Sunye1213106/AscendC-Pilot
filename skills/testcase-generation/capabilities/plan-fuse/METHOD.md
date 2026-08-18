@@ -1,13 +1,31 @@
 # TG plan-fuse
 
-把 test_request 融进 **一份** `plan.md`。上半散文，下半 YAML 义务表。正式文件由 `plan_promote` 写入。
+把 **`tg/init.yaml` + Planning Context** 融成一份 `plan.md`。上半散文，下半 YAML 义务表。正式文件由 `plan_promote` 写入。
+
+## 两项核心输入
+
+1. **Harness contract**：`tg/init.yaml`（强制）。提供测试表列、值域、生成器、golden/compare、precision/performance 跑测入口等可执行控制面。
+2. **Planning Context**（强制）。说明这次为什么测、改了什么、影响什么、哪些风险必须证明。来源可以是：
+   - PR flow 的 `/ce-review` `TG Planning Context`（changed_scope / affected_scope / risks / test_intent / validation_targets）；
+   - `/ce-plan` 的计划上下文；
+   - 用户显式给出的测试计划/目标；
+   - session handoff 中等价的明确测试意图。
+
+`.uo` 不是第三份“意图输入”，而是后续用 `uo-query` 给 Planning Context 做语义落根和可达性证明的事实权威。
+
+缺 Planning Context 时不要默认猜一个 L0 目标，应返回 `PLAN_CONTEXT_REQUIRED`；缺 `tg/init.yaml` 则由 workflow gate 阻断。
 
 ## 顺序
 
-1. 读 `tg/init.yaml`（强制）和 `.uo`。
-2. 有则读 test_request（`--intent` / 对话 / `ce/plan/*_plan.md` / 审查结论 / `session_handoff.md`），拆成精度考虑和性能考虑（可重叠）。禁止读 `tg_plan_intent.yaml`。
-3. 对每条做 **uo-query**，root 到 CSV/XLS 列，有限覆盖后写出义务。
-4. 没有意图时默认 L0，仍要有能 root 的精度/性能义务。禁止空表，禁止 T=D。
+1. 读取 `tg/init.yaml`，确认可以控制的列、生成器与现有精度/性能入口。
+2. 读取本次 Planning Context，拆出 changed/affected scope、风险和 validation targets；不要重新审查 PR，也不要重新解释原始用户 NL。
+3. 对每条目标用 **uo-query** 求证涉及的输入、分支、tiling/kernel 契约和可观测行为，并 root 到 `init.yaml` 的列。
+4. 将目标展开成计划义务：
+   - **coverage**：改动直接路径、影响路径、边界/反例、必要组合；
+   - **precision**：结合 init.yaml 的 compare/golden 能力说明输入、期望和判定；
+   - **performance**：只有 init.yaml 暴露了可执行性能入口时才规划性能 case/阈值；否则明确 gap，不发明 NPU 指标；
+   - **solve metric**：每条义务必须给可执行的 replay 或 derived 命中判据，以及 solve 是否完成的闭合条件。
+5. root 不到的目标列入 `untestable`（带 reason）；缺列或生成器能力写 `test_harness_gap`，不得伪造成已覆盖。
 
 ## 控制面 = 列
 
@@ -15,17 +33,19 @@
 - 列有但 `generate_inputs` 造不出 → `test_harness_gap` 改生成器。
 - root 不到 → 列入 `untestable`（带 `reason`），不进义务表。
 
-## 指标只有两类
+## 自动判定指标
 
 - `replay`：Host tiling（无 NPU）看 key / TD / OP_CHECK / 分支；写 `hit.pred`。
 - `derived`：这行输入 + 代码逻辑可推；写 `hit.formula`。
 
-没有第三类「上板误差/耗时」。YAML 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cover`。
+精度/性能执行入口来自 `init.yaml`，但不要把尚未实际执行的上板误差/耗时伪造成 Host replay receipt。YAML 义务字段保持 `id, why, uo{query,span}, control{columns,recipe}, class, hit, cover`。
 
-覆盖：L0 每维一次 / L1 成对 / L2 有界笛卡尔 / L3 异常。全量 tilingkey 只在 intent 点名时做。
+覆盖：L0 每维一次 / L1 成对 / L2 有界笛卡尔 / L3 异常。全量 tilingkey 只在 Planning Context 明确要求时做。
 
 ## 禁止
 
 - 写正式 `tg/plan.md`
+- 重新做 PR review 或重新解析原始 NL
+- 没有 Planning Context 就静默生成默认计划
 - 默认 T=D / `tilingkey_full_coverage`
 - 义务不 root 到 init.yaml 列
