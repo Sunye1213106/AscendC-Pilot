@@ -59,6 +59,7 @@ OPENCODE_COMMANDS: tuple[str, ...] = (
 CURRENT_AGENTS: tuple[str, ...] = (
     "ascendc-pilot",
     "uo-query",
+    "uo-heal-analyst",
     "uo-gap-investigator",
     "ce-reviewer",
     "tg-analyst",

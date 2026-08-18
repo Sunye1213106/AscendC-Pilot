@@ -181,7 +181,7 @@ def _cann_env_block(engine: str, ctx: dict[str, Any] | None = None) -> dict[str,
             "或设置 UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH 指向解包后的 cann-* 根，"
             "或官方安装的 ASCEND_HOME_PATH。"
             "官方 CANN 包不缺头文件；配好 cann_root 后 prepare 不再按单个相对路径失败。"
-            "可先执行: acp doctor / python -m ascendc_pilot doctor"
+            "可先执行: python -m ascendc_pilot doctor"
         ),
     }
 
@@ -444,10 +444,14 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
             apply_saved_extras=False,
         )
         from uo_init.kernel_tiling_view import install_kernel_tiling_view
-        from uo_init.include_heal import HealReport, save_extras
+        from uo_init.include_heal import HealReport, apply_saved_extras, clear_saved_extras, save_extras
 
+        run_id = str(ctx.get("run_id") or "").strip() or None
+        # Script extras are per-prepare; heal_promote -I must survive the rerun.
+        clear_saved_extras(spec.op_dir, spec.arch_dir, run_id=run_id)
+        apply_saved_extras(bctx)
         install_kernel_tiling_view(spec, bctx)
-        save_extras(bctx, HealReport(enabled=True))
+        save_extras(bctx, HealReport(enabled=True), run_id=run_id)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "engine": "scope_scan", "error": str(exc)[:400]}
 
@@ -490,14 +494,10 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     scope = spec.scope
     if scope is not None:
         try:
-            from uo_init.include_heal import (
-                clear_saved_extras,
-                enrich_scope_with_heal,
-            )
+            from uo_init.include_heal import enrich_scope_with_heal
 
             base_scope = scope
             run_id = str(ctx.get("run_id") or "").strip() or None
-            clear_saved_extras(spec.op_dir, spec.arch_dir, run_id=run_id)
 
             def _enrich():
                 return sscan.enrich_with_clang(
@@ -1002,8 +1002,8 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
                 detail_zh = (
                     f"{detail_zh}。include-heal 在当前 cann_root 下仍找不到: "
                     + ", ".join(unresolved[:4])
-                    + "。对照真实 CANN 树补 -I（uo/summary/build_context_extras.yaml "
-                    "或 spec/build_context.yaml），官方包不缺文件，不要按硬编码相对路径判失败"
+                    + "。进入 heal：propose_include_heal 对照真实 CANN/ops 树写 staging，"
+                    "heal_promote 校验后写入 extras；不要手改 extras 或 spec/build_context.yaml"
                 )
             elif healed_n:
                 detail_zh = (
@@ -1016,6 +1016,12 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
                     "若仍失败，到解包树确认头文件是否存在，不要当算子噪声，"
                     "也不要用 UO_TEST_ALLOW_UNVERIFIED_SCOPE 走产品路径"
                 )
+        heal_unresolved = [
+            str(x.get("include") or x)
+            for x in ((cand.get("include_heal") or {}).get("unresolved") or [])
+        ]
+        if heal_unresolved:
+            err = "INCLUDE_HEAL_UNRESOLVED"
         return {
             "ok": False,
             "engine": "scope_validate",
@@ -1027,6 +1033,8 @@ def scope_validate(project_root: Path, payload: dict[str, Any] | None = None) ->
             "clang_scope_status": clang_scope_status,
             "probe_samples": probe_samples,
             "dirty_probes": dirty_probes,
+            "unresolved": heal_unresolved,
+            "reason_code": err,
             "message_zh": detail_zh,
             "error": err,
         }
@@ -1542,9 +1550,96 @@ def _codemap_engine(name: str):
 
 
 # Stable names for ENGINE_REGISTRY adapters.
-# Public CodeMap surface: prepare / extract / analyze / commit / verify.
+# Public CodeMap surface: prepare / extract / analyze / commit / verify,
+# plus failure-only heal_promote (LLM writes staging; this engine promotes extras).
 # Fine-grained names remain for internal chaining. LLM gap resolve is gone;
 # residuals go to /uo-investigate.
+
+
+def heal_promote(project_root: Path, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Validate staged include dirs and append heal_promote extras."""
+    import yaml
+
+    from uo_init.build_context import BuildContext
+    from uo_init.include_heal import promote_include_dirs
+    from uo_init.op_spec import discover
+
+    ctx = _ctx(payload)
+    root = Path(project_root).expanduser().resolve()
+    blocked = _cann_env_block("heal_promote", ctx)
+    if blocked is not None:
+        return blocked
+    try:
+        spec = discover(root, arch_dir=ctx.get("arch_dir"))
+        bctx = BuildContext.load(
+            cann_root=_cann_root(ctx),
+            ops_root=_ops_root(ctx, root),
+            op_dir=str(spec.op_dir),
+            arch_dir=spec.arch_dir,
+            apply_saved_extras=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "engine": "heal_promote", "error": str(exc)[:400]}
+    run_id = str(ctx.get("run_id") or "").strip()
+    if not run_id:
+        return {
+            "ok": False,
+            "engine": "heal_promote",
+            "error": "INCLUDE_HEAL_STAGING_MISSING",
+            "reason_code": "INCLUDE_HEAL_STAGING_MISSING",
+            "message_zh": "缺少 run_id，无法读取 propose_include_heal/staging.yaml",
+        }
+    try:
+        from ascendc_pilot.paths import agent_root as _agent_root
+
+        staging_path = (
+            _agent_root(root, spec.arch_dir)
+            / "runs"
+            / run_id
+            / "actions"
+            / "propose_include_heal"
+            / "staging.yaml"
+        )
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "engine": "heal_promote",
+            "error": str(exc)[:400],
+            "reason_code": "INCLUDE_HEAL_STAGING_MISSING",
+        }
+    if not staging_path.is_file():
+        return {
+            "ok": False,
+            "engine": "heal_promote",
+            "error": "INCLUDE_HEAL_STAGING_MISSING",
+            "reason_code": "INCLUDE_HEAL_STAGING_MISSING",
+            "staging_path": staging_path.as_posix(),
+            "message_zh": "缺少 propose_include_heal/staging.yaml；LLM 只写 staging，不得直接改 extras",
+        }
+    try:
+        staging = yaml.safe_load(staging_path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        return {
+            "ok": False,
+            "engine": "heal_promote",
+            "error": "INCLUDE_HEAL_STAGING_INVALID",
+            "reason_code": "INCLUDE_HEAL_STAGING_INVALID",
+            "message_zh": f"staging.yaml 无法解析: {exc}",
+        }
+    if not isinstance(staging, dict):
+        return {
+            "ok": False,
+            "engine": "heal_promote",
+            "error": "INCLUDE_HEAL_STAGING_INVALID",
+            "reason_code": "INCLUDE_HEAL_STAGING_INVALID",
+            "message_zh": "staging.yaml 必须是 mapping（host/kernel 列表）",
+        }
+    out = promote_include_dirs(bctx, staging, run_id=run_id)
+    out.setdefault("engine", "heal_promote")
+    out["staging_path"] = staging_path.as_posix()
+    return out
+
+
 ENGINES: dict[str, Any] = {
     "prepare": lambda project_root, payload=None: _codemap_engine("prepare")(
         project_root, payload
@@ -1561,6 +1656,7 @@ ENGINES: dict[str, Any] = {
     "verify": lambda project_root, payload=None: _codemap_engine("verify")(
         project_root, payload
     ),
+    "heal_promote": heal_promote,
     # Compatibility aliases (not in default /uo-init pipeline).
     "review": lambda project_root, payload=None: _codemap_engine("review")(
         project_root, payload

@@ -624,6 +624,8 @@ def test_install_skill_lists_symmetric():
     assert "ascendc-pilot.ts" in sh
     assert "tg-analyst" in ps1
     assert "tg-analyst" in sh
+    assert "uo-heal-analyst" in ps1
+    assert "uo-heal-analyst" in sh
     assert "uo-gap-investigator" in ps1
     assert "uo-gap-investigator" in sh
     for extra in (

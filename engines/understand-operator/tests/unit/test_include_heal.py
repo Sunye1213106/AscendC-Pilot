@@ -20,6 +20,10 @@ from uo_init.include_heal import (
     aliased_include_name,
     MissingInclude,
     search_roots,
+    clear_saved_extras,
+    load_extras_payload,
+    promote_include_dirs,
+    SOURCE_HEAL_PROMOTE,
 )
 
 
@@ -516,5 +520,49 @@ def test_basename_ambiguous_does_not_score_pick(tmp_path: Path):
 def test_hcom_header_aliases_to_hccl_h():
     assert aliased_include_name("hccl/hcom.h") == "hccl/hccl.h"
     assert aliased_include_name("lib/matrix/matmul/foo.h") == "lib/matmul/foo.h"
+
+
+def test_heal_promote_writes_extras_and_survives_clear(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    extra = tmp_path / "cann" / "extra_inc"
+    extra.mkdir(parents=True)
+    posix = str(extra).replace("\\", "/")
+    out = promote_include_dirs(ctx, {"host": [posix], "kernel": []})
+    assert out.get("ok") is True
+    payload = load_extras_payload(ctx.op_dir, ctx.arch_dir)
+    assert posix in [str(x).replace("\\", "/") for x in (payload.get("promoted_host") or [])]
+    assert payload.get("source") == SOURCE_HEAL_PROMOTE
+
+    script_dir = tmp_path / "cann" / "script_inc"
+    script_dir.mkdir()
+    ctx.add_include(str(script_dir), side="host")
+    from uo_init.include_heal import HealReport, save_extras
+
+    save_extras(ctx, HealReport(enabled=True))
+    clear_saved_extras(ctx.op_dir, ctx.arch_dir, run_id="r1")
+    kept = load_extras_payload(ctx.op_dir, ctx.arch_dir)
+    promoted = [str(x).replace("\\", "/") for x in (kept.get("promoted_host") or kept.get("host") or [])]
+    assert posix in promoted
+    assert str(script_dir).replace("\\", "/") not in promoted
+
+    loaded = BuildContext.load(
+        cann_root=str(tmp_path / "cann"),
+        ops_root=str(tmp_path / "ops"),
+        op_dir=ctx.op_dir,
+        arch_dir=ctx.arch_dir,
+        apply_saved_extras=True,
+    )
+    args = " ".join(loaded.host_args())
+    assert posix in args.replace("\\", "/")
+
+
+def test_heal_promote_rejects_outside_tree(tmp_path: Path):
+    ctx = _ctx(tmp_path)
+    outside = tmp_path / "not_cann"
+    outside.mkdir()
+    out = promote_include_dirs(ctx, {"host": [str(outside)]})
+    assert out.get("ok") is False
+    assert out.get("error") == "INCLUDE_HEAL_PROMOTE_REJECTED"
+    assert not extras_summary_path(ctx.op_dir, ctx.arch_dir).is_file()
 
 

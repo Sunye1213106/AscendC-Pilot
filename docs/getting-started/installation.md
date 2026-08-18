@@ -345,7 +345,12 @@ ASCENDC_ARCH
 TG Replay **复用 UO 已经解包的 CANN**（`UO_CANN_ROOT` / `ASCEND_CANN_PACKAGE_PATH` / `_cann/pkg`，含 `cann-asc-devkit`）。不要在 WSL 里再装一份 toolkit，也不要再找 `/usr/local/Ascend/cann/set_env.sh`。
 
 ```text id="0w66ad"
-人侧只需 WSL。CANN 用 UO 解包树。/tg-solve 会自动配工作区。
+/tg-solve Host replay 真实环境清单（缺一则 replay_round 失败，不进入 analyze）：
+- Windows：已安装并可 `wsl -l -v` 列出的发行版（多发行版设 UO_REPLAY_DISTRO）
+- Linux：本机即可，不必再套一层 WSL
+- CANN：UO 已解包树（UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH / 仓库旁 _cann/pkg，含 cann-asc-devkit）
+- WSL 内 g++ 与 cmake（缺失时 /tg-solve 会尝试非交互 apt-get；失败码 WSL_BUILD_DEPS_MISSING）
+- 算子仓可被 WSL 访问（wslpath 映射或拷贝工作区）
 ```
 
 ## 6. 准备 Linux / WSL

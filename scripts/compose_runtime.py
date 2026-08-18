@@ -67,6 +67,7 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 # are not in this set. Plugin must not widen this ceiling to task: allow.
 OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
     "uo-query",
+    "uo-heal-analyst",
     "uo-gap-investigator",
     "tg-analyst",
     "ce-analyst",
@@ -95,7 +96,8 @@ def opencode_isolated_primary_permission(
     when those keys are ``allow``. Isolation from Build/Plan is a separate
     agent bag (plugin denies ``pilot_run`` / ``pilot_cli`` on native tabs), not a
     shared wildcard. Grep/Read/Glob stay allow so the controller can inspect.
-    Tool name ``acp`` is reserved by OpenCode ACP protocol — never register it.
+    Tool name collision with OpenCode protocol is handled by not registering a
+    plugin tool of that name; do not mention the protocol CLI in this bag.
     """
     return {
         "bash": bash_perm,
@@ -105,7 +107,6 @@ def opencode_isolated_primary_permission(
         "read": "allow",
         "external_directory": "allow",
         "task": opencode_primary_task_permission(),
-        "acp": "deny",
         "pilot_cli": "allow",
         "pilot_run": "allow",
         "skill": "allow",
@@ -1186,8 +1187,9 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     desc = _project_primary_description(
         repo, str(agent_meta.get("description") or aid), host=host
     )
+    display_name = str(agent_meta.get("name_zh") or aid).strip() or aid
     front: dict[str, Any] = {
-        "name": aid,
+        "name": display_name,
         "description": desc,
     }
     allow_repo_search = _agent_allow_repo_search(repo, agent_meta)
@@ -1222,7 +1224,6 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             front["tools"] = {
                 "pilot_run": True,
                 "pilot_cli": True,
-                "acp": False,
             }
         else:
             front["permission"] = {
@@ -1232,7 +1233,6 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
                 "task": opencode_primary_task_permission(),
                 "pilot_cli": "allow",
                 "pilot_run": "allow",
-                "acp": "deny",
                 "edit": edit_perm if write_scopes else {"*": "ask"},
                 "write": write_perm if write_scopes else {"*": "ask"},
             }
@@ -1245,7 +1245,6 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         front["permission"] = {
             "*": "deny",
             "bash": child_bash,
-            "acp": "deny",
             "pilot_cli": "allow",
             "pilot_run": "deny",
             "grep": grep_perm,
@@ -1263,7 +1262,6 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         tools: dict[str, Any] = {
             "skill": False,
             "pilot_run": False,
-            "acp": False,
             "pilot_cli": True,
         }
         if not allow_repo_search:
@@ -1280,7 +1278,7 @@ execution_variant = delegated_query. Simple queries never spawn this agent.
 
 If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not search additional session files.
 
-1. **First**: call the `pilot_cli` tool (not bash, not a tool named `acp`). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not call `--help`. Do not prefix with bash.
+1. **First**: call the `pilot_cli` tool (not bash). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not call `--help`. Do not prefix with bash.
 2. Follow card `next` / `hint`. A card with `file:line` + snippet is already Read — do not Read the same span. Copy `file` from the card; do not guess paths.
 3. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
 4. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
@@ -1290,8 +1288,8 @@ Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
     elif is_primary:
         runtime = """## Runtime Contract
 
-1. Workflows (`uo-init` / `uo-update` / `tg-*` / `ce-*` / `uo-investigate`): call Host tool `pilot_run(workflow, project, architecture)`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`. Never bash `acp start` / `acp run-action auto`. Never search for `acp.exe`.
-2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures`): call plugin tool `pilot_cli` with `command` as argv after the binary (no leading `acp`). Never `--help`. Never `--mode`.
+1. Workflows (`uo-init` / `uo-update` / `tg-*` / `ce-*` / `uo-investigate`): call Host tool `pilot_run(workflow, project, architecture)`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
+2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures` / `retry-after-environment-fix`): call plugin tool `pilot_cli` with `command` as argv after the binary. Never `--help`. Never `--mode`.
 3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture.
 4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`.
 """

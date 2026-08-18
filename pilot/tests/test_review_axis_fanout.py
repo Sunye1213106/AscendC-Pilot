@@ -14,6 +14,7 @@ def test_review_axis_fanout_writes_isolated_stubs(tmp_path: Path) -> None:
     if str(REPO / "pilot") not in sys.path:
         sys.path.insert(0, str(REPO / "pilot"))
     from ascendc_pilot.actions.runtime import _review_axis_fanout_tasks
+    from ascendc_pilot.workflows.specs import WORKFLOWS
 
     sdir = tmp_path / "session"
     sdir.mkdir()
@@ -32,7 +33,10 @@ def test_review_axis_fanout_writes_isolated_stubs(tmp_path: Path) -> None:
         "write_paths": ["ce/review/**"],
         "user_question": "review the patch",
     }
+    action = next(a for a in WORKFLOWS["ce-review"]["actions"] if a["id"] == "code_review")
+    assert action.get("execution_variant") == "review_axis_fanout"
     tasks = _review_axis_fanout_tasks(
+        action=action,
         action_id="code_review",
         actor_id="ce-reviewer",
         phase="review",
@@ -69,10 +73,13 @@ def test_review_axis_fanout_skips_scope_phase(tmp_path: Path) -> None:
     if str(REPO / "pilot") not in sys.path:
         sys.path.insert(0, str(REPO / "pilot"))
     from ascendc_pilot.actions.runtime import _review_axis_fanout_tasks
+    from ascendc_pilot.workflows.specs import WORKFLOWS
 
     sdir = tmp_path / "session"
     sdir.mkdir()
+    action = next(a for a in WORKFLOWS["ce-review"]["actions"] if a["id"] == "code_review")
     tasks = _review_axis_fanout_tasks(
+        action=action,
         action_id="code_review",
         actor_id="ce-reviewer",
         phase="scope",

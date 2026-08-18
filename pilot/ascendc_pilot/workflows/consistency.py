@@ -20,6 +20,7 @@ _PRECONDITION_CONTRACTS = frozenset(
         "ce-plan-confirmed-v1",
         "apply-gate-v1",
         "apply-patch-guard-v1",
+        "apply-plan-revise-check-v1",
         "codemap-refresh-v1",
         "apply-report-v1",
         "review-capture-v1",

@@ -20,7 +20,9 @@ def test_uo_init_contracts_aligned() -> None:
         "uo/checks/integrity.yaml",
         "uo/checks/quality.yaml",
     ]
-    assert "input-derivable-patch-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "include-heal-staging-v1" in OUTPUT_CONTRACT_PATHS
+    assert "include-heal-extras-v1" in OUTPUT_CONTRACT_PATHS
+    assert "uo/summary/build_context_extras.yaml" in OUTPUT_CONTRACT_PATHS["include-heal-extras-v1"]
     assert "key-triage-v1" not in OUTPUT_CONTRACT_PATHS
     assert "extract-plan-v1" not in OUTPUT_CONTRACT_PATHS
 

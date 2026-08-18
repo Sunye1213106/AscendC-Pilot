@@ -178,16 +178,20 @@ def discover_architectures(root: Path | str | None) -> list[str]:
 
 
 def architecture_from_intent(intent: str, known_archs: list[str] | tuple[str, ...]) -> str:
-    """Return the unique on-disk ``arch*`` named in ``intent``, else ``""``.
+    """Return the unique on-disk ``arch*`` named in an answer/init turn, else ``""``.
 
-    Never invents an architecture: tokens must uniquely match ``known_archs``.
-    Two hits or zero hits → empty (caller AskQuestion). Does not Glob the tree.
+    Never invents an architecture. Long side questions that mention arch35
+    (「先别建库，问 arch35…」) must not silently pin.
     """
+    from ascendc_pilot.goal_turn import is_architecture_pin_turn
+
     names = [str(a).strip() for a in known_archs if str(a).strip()]
     if not names:
         return ""
     raw = str(intent or "").strip()
     if not raw:
+        return ""
+    if not is_architecture_pin_turn(raw):
         return ""
     allowed_l = {a.lower(): a for a in names}
     compact = re.sub(r"\s+", "", raw).strip().lower()
@@ -814,7 +818,17 @@ def prepare_workflow_start(
         if from_intent:
             arch = from_intent
             resolved_from_intent = True
-        elif not options:
+        else:
+            try:
+                from ascendc_pilot.occupancy import get_session_binding
+
+                pinned = str((get_session_binding(root) or {}).get("architecture") or "").strip()
+            except Exception:  # noqa: BLE001
+                pinned = ""
+            if pinned and pinned in labels:
+                arch = pinned
+                resolved_from_intent = True
+        if not arch and not options:
             return _attach_intake_request(
                 {
                     "ok": False,
@@ -837,7 +851,7 @@ def prepare_workflow_start(
                 },
                 root,
             )
-        else:
+        if not arch:
             ask_opts = [
                 {
                     "label": o["label"],
@@ -863,19 +877,17 @@ def prepare_workflow_start(
                         "一次启动（此前不会创建 run）。"
                     ),
                     "ask_question": {
-                        "prompt_zh": "请选择目标 architecture（选项来自算子仓 arch* 目录）",
+                        "prompt_zh": "请选择 architecture",
                         "options": ask_opts,
                         "allow_free_text": False,
                         "field": "architecture",
                     },
                     "suggested_command": (
-                        f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(labels)}>'
+                        f'pilot_run workflow={wf} project="{root}" architecture=<arch*>'
                     ),
                     "primary_instruction_zh": (
-                        "先 AskQuestion；选项必须原样使用 architecture_option_details。"
+                        "阅读 layout 后用 AskQuestion 选项原样提问；禁止 Glob 仓根或翻 cmake/classify_rule。"
                         "若用户已在对话里写出 arch* 或换了话题，改为 interpret-user-turn，不要重问。"
-                        "选完后调用 Host `pilot_run`（带齐 project 与 architecture）。"
-                        "禁止编造仓内不存在的 arch。"
                     ),
                 },
                 root,

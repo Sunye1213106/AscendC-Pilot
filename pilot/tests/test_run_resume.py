@@ -344,7 +344,15 @@ def test_summary_uses_public_actions_and_resume_hint(tmp_path: Path) -> None:
     start_workflow(tmp_path, "uo-init", architecture="arch35")
     summary = build_run_resume_summary(tmp_path, workflow_id="uo-init")
     assert summary["has_existing_run"] is True
-    public = {"prepare", "extract", "analyze", "commit", "verify"}
+    public = {
+        "prepare",
+        "propose_include_heal",
+        "heal_promote",
+        "extract",
+        "analyze",
+        "commit",
+        "verify",
+    }
     artifact_ids = {str(item.get("action_id") or "") for item in summary["artifacts"]}
     assert artifact_ids
     assert artifact_ids.issubset(public)
@@ -362,7 +370,15 @@ def test_ask_question_uses_current_workflow_name_for_tg_init(tmp_path: Path) -> 
 
 def test_owned_artifact_map_uses_public_uo_actions() -> None:
     owned = action_owned_artifacts("uo-init")
-    for action_id in ("prepare", "extract", "analyze", "commit", "verify"):
+    for action_id in (
+        "prepare",
+        "propose_include_heal",
+        "heal_promote",
+        "extract",
+        "analyze",
+        "commit",
+        "verify",
+    ):
         assert action_id in owned
     for retired in (
         "derive_key_fields",

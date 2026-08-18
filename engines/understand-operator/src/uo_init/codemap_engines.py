@@ -49,6 +49,8 @@ def _chain(
                 "engine": engine,
                 "failed_step": name,
                 "error": out.get("error") or out.get("message_zh") or f"{name} failed",
+                "reason_code": out.get("reason_code") or out.get("error") or "",
+                "message_zh": out.get("message_zh") or "",
                 "steps": results,
                 "detail": out,
             }

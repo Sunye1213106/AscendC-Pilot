@@ -431,6 +431,42 @@ def _live_replay(ctx: dict[str, Any]) -> bool:
     return True
 
 
+_REPLAY_FAIL_ZH = {
+    "WSL_UNAVAILABLE": "未检测到可用的 WSL 发行版，Host replay 无法启动，不能进入 analyze。",
+    "WSL_DISTRO_AMBIGUOUS": "存在多个 WSL 发行版，请设置 UO_REPLAY_DISTRO 后再跑 /tg-solve。",
+    "WSL_DISTRO_UNRESOLVED": "指定的 WSL 发行版不在 `wsl -l -q` 列表中。",
+    "WSL_BUILD_DEPS_MISSING": "WSL 缺少 g++/cmake，非交互 apt-get 失败。",
+    "WSL_PATH_FAILED": "无法把 Windows 路径映射进 WSL（wslpath 失败）。",
+    "CANN_ENV_NOT_FOUND": "未找到 UO 解包的 CANN 树（UO_CANN_ROOT / _cann/pkg），Host replay 不能开始。",
+    "CANN_ENV_NOT_READY": "CANN 环境未就绪，Host replay 不能开始。",
+}
+
+
+def _replay_bootstrap_failure(exc: BaseException) -> tuple[str, str]:
+    text = str(exc or "")
+    code = "REPLAY_BOOTSTRAP_FAILED"
+    blob = text.replace("\\", "/")
+    for token in (
+        "WSL_UNAVAILABLE",
+        "WSL_DISTRO_AMBIGUOUS",
+        "WSL_DISTRO_UNRESOLVED",
+        "WSL_BUILD_DEPS_MISSING",
+        "WSL_PATH_FAILED",
+        "CANN_ENV_NOT_FOUND",
+        "CANN_ENV_NOT_READY",
+    ):
+        if token in blob:
+            code = token
+            break
+    else:
+        if blob.startswith("REPLAY_BOOTSTRAP_FAILED:"):
+            inner = blob.split(":", 2)[1].strip()
+            if inner:
+                code = inner.split("/")[0].split(":")[0] or code
+    message_zh = _REPLAY_FAIL_ZH.get(code, f"Host replay 环境未就绪（{code}），不能进入 analyze。")
+    return code, message_zh
+
+
 def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
     init_doc = products.load_init(tg)
@@ -439,6 +475,7 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     verdicts: list[dict[str, Any]] = []
     replayed = False
     error = ""
+    message_zh = ""
     if rows and _live_replay(ctx):
         try:
             from testcase_agent.closure.oracle import HostOracle
@@ -464,7 +501,29 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
                     }
                 )
         except Exception as exc:  # noqa: BLE001
-            error = str(exc)[:400]
+            error, message_zh = _replay_bootstrap_failure(exc)
+            doc = {
+                "schema": "tg-replay-round/v1",
+                "ok": False,
+                "replayed": False,
+                "error": error,
+                "message_zh": message_zh,
+                "detail": str(exc)[:400],
+                "cases": path.as_posix() if path.is_file() else "",
+                "count": len(rows),
+                "verdicts": [],
+            }
+            out = _receipt(project_root, ctx, "replay_round.yaml", doc)
+            return {
+                "ok": False,
+                "engine": "replay_round",
+                "error": error,
+                "reason_code": error,
+                "message_zh": message_zh,
+                "artifact": out.as_posix(),
+                "replayed": False,
+                "count": len(rows),
+            }
     if not verdicts:
         for i, row in enumerate(rows):
             verdicts.append(

@@ -24,6 +24,7 @@ write_scopes:
 - pilot:runs/**/actions/intent_grill/scratch/**
 - pilot:runs/**/actions/intent_grill/staging.md
 - pilot:runs/**/actions/plan_draft/**
+- pilot:runs/**/actions/plan_revise/**
 - pilot:ce/plan/**
 - pilot:session_handoff.md
 machine_constraints:

@@ -1567,12 +1567,34 @@ def _authorize_impl(
 
                             src_rel = test_script_source_rel(path_s, project_root)
                         if src_rel is None:
-                            return _ok(
-                                "deny",
-                                "ACTION_SOURCE_SCOPE_DENIED",
-                                "禁止读取算子 project_root / test_script_root 之外的源码路径",
-                                path=path_s,
-                            )
+                            heal_ok = False
+                            if str(action_id or "") == "propose_include_heal":
+                                try:
+                                    from uo_init import paths as uo_paths
+
+                                    target = Path(path_s).resolve()
+                                    cann, _issues = uo_paths.require_cann_ready()
+                                    ops = uo_paths.ops_root()
+                                    for tree in (cann, ops):
+                                        if tree is None:
+                                            continue
+                                        try:
+                                            target.relative_to(Path(tree).resolve())
+                                            heal_ok = True
+                                            break
+                                        except ValueError:
+                                            continue
+                                except Exception:  # noqa: BLE001
+                                    heal_ok = False
+                            if heal_ok:
+                                pass
+                            else:
+                                return _ok(
+                                    "deny",
+                                    "ACTION_SOURCE_SCOPE_DENIED",
+                                    "禁止读取算子 project_root / test_script_root 之外的源码路径",
+                                    path=path_s,
+                                )
                         src_check = lease_allows_source_path(lease, src_rel)
                         if not src_check.get("ok"):
                             return _ok(

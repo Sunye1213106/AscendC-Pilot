@@ -16,6 +16,7 @@ from ascendc_pilot.workflows.specs import WORKFLOWS as SPEC_WORKFLOWS
 REPO = Path(__file__).resolve().parents[2]
 
 _REQUIRED_PROFILES = (
+    "uo-init-propose-include-heal",
     "uo-investigate-investigate",
     "uo-query-kb-lookup",
     "tg-init-bind-init",

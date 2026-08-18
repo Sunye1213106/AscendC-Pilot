@@ -38,6 +38,13 @@ PRIMARY_AGENT_ID = "ascendc-pilot"
 # - ACTION_FINALIZER_WRITE_PATHS: deterministic finalize / reduce canonical IR
 # - ACTION_WRITE_PATHS: union fallback for engines that do not yet split roles
 ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "propose_include_heal": [
+            "runs/{run_id}/actions/propose_include_heal/parts/**",
+            "runs/{run_id}/actions/propose_include_heal/scratch/**",
+            "runs/{run_id}/actions/propose_include_heal/staging.yaml",
+        ],
+    },
     "uo-investigate": {
         "investigate": [
             "runs/{run_id}/actions/investigate/parts/**",
@@ -85,6 +92,12 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/plan_draft/**",
         ],
     },
+    "ce-apply": {
+        "plan_revise": [
+            "ce/plan/*_plan.md",
+            "runs/{run_id}/actions/plan_revise/**",
+        ],
+    },
     "handoff": {
         "session_handoff": [
             "session_handoff.md",
@@ -93,6 +106,9 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
 }
 ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
+    "uo-init": {
+        "heal_promote": ["uo/summary/build_context_extras.yaml"],
+    },
     "tg-init": {
         "bind_promote": ["tg/init.yaml"],
         "human_confirm": ["tg/init.yaml"],
@@ -107,6 +123,11 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "ce-plan": {
         "plan_draft": [
+            "ce/plan/*_plan.md",
+        ],
+    },
+    "ce-apply": {
+        "plan_revise": [
             "ce/plan/*_plan.md",
         ],
     },
@@ -128,6 +149,12 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "analyze": ["uo/ir/**", "uo/tiling/**", "uo/kernel/**", "uo/checks/**"],
         "commit": ["uo/*.uo", "uo/checks/**"],
         "verify": ["uo/checks/**"],
+        "propose_include_heal": [
+            "runs/{run_id}/actions/propose_include_heal/parts/**",
+            "runs/{run_id}/actions/propose_include_heal/scratch/**",
+            "runs/{run_id}/actions/propose_include_heal/staging.yaml",
+        ],
+        "heal_promote": ["uo/summary/build_context_extras.yaml"],
     },
     "uo-update": {
         "detect_changes": ["uo/diff/**"],
@@ -218,6 +245,10 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "ce/plan/*_plan.md",
             "runs/{run_id}/actions/patch/**",
         ],
+        "plan_revise": [
+            "ce/plan/*_plan.md",
+            "runs/{run_id}/actions/plan_revise/**",
+        ],
     },
     "handoff": {
         "session_handoff": ["session_handoff.md"],
@@ -230,6 +261,16 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "analyze": ["uo/**"],
         "commit": ["uo/**", "uo/*.uo"],
         "verify": ["uo/**", "uo/*.uo"],
+        "propose_include_heal": [
+            "uo/summary/scope_candidates.yaml",
+            "uo/runs/{run_id}/scope/**",
+            "uo/summary/build_context_extras.yaml",
+            "runs/{run_id}/actions/propose_include_heal/**",
+        ],
+        "heal_promote": [
+            "uo/summary/build_context_extras.yaml",
+            "runs/{run_id}/actions/propose_include_heal/**",
+        ],
     },
     "uo-update": {
         "detect_changes": ["uo/**", "uo/*.uo"],
@@ -358,6 +399,8 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
         "patch_guard": ["ce/plan/**", "source/**"],
         "codemap_refresh": ["uo/**"],
         "apply_report": ["ce/plan/**", "uo/checks/**"],
+        "plan_revise": ["uo/*.uo", "ce/plan/**", "context/**", "runs/**"],
+        "plan_revise_check": ["ce/plan/**", "runs/{run_id}/actions/plan_revise/**"],
     },
     "handoff": {
         "session_handoff": [

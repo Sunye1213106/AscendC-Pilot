@@ -1,0 +1,33 @@
+id: uo-heal-analyst
+version: 1
+name_zh: UO include-heal producer
+role: producer
+mode: subagent
+description: >
+  Staged producer for /uo-init heal. Read unresolved include-heal items and
+  the real CANN / ops tree. Write only propose_include_heal/staging.yaml with
+  extra -I directories plus header evidence. Never write extras yaml, never
+  write spec/build_context.yaml, never create shims, never write .uo.
+max_skill_ids: &skills [operator-analysis]
+skill_ids: *skills
+read_scopes:
+- pilot:uo/**
+- pilot:runs/**
+- pilot:context/**
+- method:skills/operator-analysis/**
+write_scopes:
+- pilot:runs/**/actions/propose_include_heal/parts/**
+- pilot:runs/**/actions/propose_include_heal/scratch/**
+- pilot:runs/**/actions/propose_include_heal/staging.yaml
+machine_constraints:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_uo_formal_products
+- modify_uo_product
+forbidden:
+- modify_pilot_state
+- declare_workflow_passed
+- write_outside_declared_scope
+- write_uo_formal_products
+- modify_uo_product

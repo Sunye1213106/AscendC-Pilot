@@ -49,6 +49,15 @@ class ContextProfile:
 
 # High-value Action profiles. Ids are declared explicitly on LLM Actions in specs.py.
 PROFILES: dict[str, ContextProfile] = {
+    "uo-init-propose-include-heal": ContextProfile(
+        id="uo-init-propose-include-heal",
+        description="Propose extra -I dirs for unresolved include-heal; staging only.",
+        references=(
+            "skills/operator-analysis/references/codemap-build-gotchas.md",
+        ),
+        query_slices=(),
+        token_budget=2500,
+    ),
     "uo-investigate-investigate": ContextProfile(
         id="uo-investigate-investigate",
         description="Bounded unresolved residual investigation: blockers + nearby graph + gotchas.",
@@ -215,6 +224,16 @@ PROFILES: dict[str, ContextProfile] = {
         ),
         query_slices=(),
         token_budget=4000,
+    ),
+    "ce-apply-revise": ContextProfile(
+        id="ce-apply-revise",
+        description="Revise the current {slug}_plan.md from a goal delta; keep completed todos.",
+        references=(
+            "skills/code-engineering/references/gotchas.md",
+            "skills/code-engineering/examples/deter-band-schedule_plan.md",
+        ),
+        query_slices=(),
+        token_budget=3500,
     ),
     "ce-apply-report": ContextProfile(
         id="ce-apply-report",

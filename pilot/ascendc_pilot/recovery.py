@@ -1,10 +1,9 @@
 """Structured recovery routing for the public UO CodeMap workflow.
 
-Engines emit stable reason codes.  Recovery may only target the five public
-uo-init Actions; internal compiler helpers are implementation details and must
-never be surfaced to OpenCode/Cursor as runnable recovery actions.
-LLM gap-patching is not part of the default `/uo-init` path — use
-`/uo-investigate` for residual analysis without mutating canonical `.uo`.
+Engines emit stable reason codes.  Recovery may only target registered
+uo-init Actions (the five success-path steps plus failure-only include-heal).
+Internal compiler helpers are implementation details and must never be
+surfaced to OpenCode/Cursor as runnable recovery actions.
 """
 
 from __future__ import annotations
@@ -21,6 +20,8 @@ NO_PROGRESS_RECHECK = "NO_PROGRESS_RECHECK"
 MACRO_MATERIALIZE_REWORK = "MACRO_MATERIALIZE_REWORK"
 KEY_DERIVATION_REWORK = "KEY_DERIVATION_REWORK"
 SCOPE_EXPANSION_REWORK = "SCOPE_EXPANSION_REWORK"
+INCLUDE_HEAL_UNRESOLVED = "INCLUDE_HEAL_UNRESOLVED"
+INCLUDE_HEAL_PROMOTED = "INCLUDE_HEAL_PROMOTED"
 
 KNOWN_REASON_CODES = frozenset(
     {
@@ -34,6 +35,8 @@ KNOWN_REASON_CODES = frozenset(
         MACRO_MATERIALIZE_REWORK,
         KEY_DERIVATION_REWORK,
         SCOPE_EXPANSION_REWORK,
+        INCLUDE_HEAL_UNRESOLVED,
+        INCLUDE_HEAL_PROMOTED,
     }
 )
 
@@ -100,6 +103,18 @@ _DEFAULT_ROUTES: dict[str, dict[str, Any]] = {
         "type": "human_required",
         "reason_code": NO_PROGRESS_RECHECK,
         "diagnosis": "deadlock_no_progress",
+    },
+    INCLUDE_HEAL_UNRESOLVED: {
+        "type": "transition",
+        "target_phase": "heal",
+        "next_action": "propose_include_heal",
+        "reason_code": INCLUDE_HEAL_UNRESOLVED,
+    },
+    INCLUDE_HEAL_PROMOTED: {
+        "type": "transition",
+        "target_phase": "prepare",
+        "next_action": "prepare",
+        "reason_code": INCLUDE_HEAL_PROMOTED,
     },
 }
 

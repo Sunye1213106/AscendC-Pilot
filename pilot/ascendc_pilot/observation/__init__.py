@@ -174,6 +174,7 @@ def _apply_execution_rework_policy(
     workflow_id: str = "",
     action_id: str = "",
     phase: str = "",
+    reason_code: str = "",
 ) -> dict[str, Any]:
     """Deterministic quality failures are not reworkable; only LLM producers are."""
     fc = str(result.get("failure_class") or "")
@@ -193,7 +194,7 @@ def _apply_execution_rework_policy(
         workflow_id,
         failed_action_id=action_id,
         phase=phase,
-        reason_code=str(result.get("failure_class") or ""),
+        reason_code=str(reason_code or result.get("failure_class") or ""),
     )
     mode = str(execution_mode or "").strip().lower()
     if not llm_ids and _is_llm_action({"execution_mode": mode, "role_id": ""}):
@@ -239,6 +240,7 @@ def classify_failure(
             workflow_id=workflow_id,
             action_id=action_id,
             phase=phase,
+            reason_code=str(error_code or explicit_class or ""),
         )
 
     blob = " ".join(
@@ -345,6 +347,7 @@ def classify_failure(
         workflow_id=workflow_id,
         action_id=action_id,
         phase=phase,
+        reason_code=str(error_code or ""),
     )
 
 

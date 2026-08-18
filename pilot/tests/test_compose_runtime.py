@@ -41,14 +41,29 @@ def test_uo_actions_match_engine_and_prompt_boundary():
     assert "resolve" not in actions
     assert "apply_gap_patch" not in actions
     assert "review" not in actions
-    assert set(actions) == {"prepare", "extract", "analyze", "commit", "verify"}
+    assert set(actions) == {
+        "prepare",
+        "propose_include_heal",
+        "heal_promote",
+        "extract",
+        "analyze",
+        "commit",
+        "verify",
+    }
 
-    for action_id in ("prepare", "extract", "analyze", "commit", "verify"):
+    for action_id in ("prepare", "extract", "analyze", "commit", "verify", "heal_promote"):
         action = actions[action_id]
         assert action["execution_mode"] == "deterministic"
         assert action["agent_id"] == "deterministic-uo-engine"
         assert not action.get("task_prompt_id")
         assert action.get("actors") == ["deterministic-uo-engine"]
+
+    propose = actions["propose_include_heal"]
+    assert propose["execution_mode"] == "subagent"
+    assert propose["agent_id"] == "uo-heal-analyst"
+    assert propose["task_prompt_id"] == "uo/propose-include-heal"
+    assert propose.get("output_mode") == "staged"
+    assert propose.get("merge_action_id") == "heal_promote"
 
     for action in WORKFLOWS["uo-update"]["actions"]:
         assert action["execution_mode"] == "deterministic"
@@ -130,6 +145,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert not (agents / "deterministic-uo-engine.md").exists()
         assert not (agents / "deterministic-tg-engine.md").exists()
         assert (agents / "uo-gap-investigator.md").is_file()
+        assert (agents / "uo-heal-analyst.md").is_file()
         assert (agents / "uo-query.md").is_file()
         man_path = generated / "install-manifest.json"
         assert man_path.is_file(), "prune must write install-manifest.json"

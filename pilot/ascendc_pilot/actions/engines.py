@@ -143,7 +143,40 @@ def _run_ce_apply_gate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     return apply_gate(project_root, architecture=arch, state=_ce_state(project_root, ctx))
 
 
-def _run_ce_patch_guard(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+def _run_ce_plan_revise_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.paths import runs_root
+    from code_engineering.plan_md import resolve_active_plan, validate_plan_revision
+
+    arch = _resolve_ce_arch(project_root, ctx)
+    state = _ce_state(project_root, ctx)
+    plan = resolve_active_plan(project_root, architecture=arch, state=state)
+    run_id = str((state or {}).get("run_id") or ctx.get("run_id") or "")
+    before: list[dict[str, Any]] = []
+    if run_id:
+        baseline_path = (
+            runs_root(project_root, arch=arch or None)
+            / run_id
+            / "actions"
+            / "plan_revise"
+            / "baseline.yaml"
+        )
+        if baseline_path.is_file():
+            import yaml
+
+            doc = yaml.safe_load(baseline_path.read_text(encoding="utf-8")) or {}
+            if isinstance(doc, dict):
+                before = [row for row in (doc.get("todos") or []) if isinstance(row, dict)]
+    if plan is None:
+        return {
+            "ok": False,
+            "engine": "plan_revise_check",
+            "reason_code": "APPLY_PLAN_MISSING",
+            "message_zh": "修订后仍没有当前计划 markdown。",
+        }
+    checked = validate_plan_revision(before=before, after_path=plan)
+    checked["engine"] = "plan_revise_check"
+    checked["plan"] = plan.as_posix()
+    return checked
     from code_engineering.apply import patch_guard
 
     arch = _resolve_ce_arch(project_root, ctx)
@@ -654,6 +687,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-init", "analyze"): _uo_init_engine("analyze"),
     ("uo-init", "commit"): _uo_init_engine("commit"),
     ("uo-init", "verify"): _uo_init_engine("verify"),
+    ("uo-init", "heal_promote"): _uo_init_engine("heal_promote"),
     ("uo-update", "detect_changes"): _run_detect_changes,
     ("uo-update", "plan_update"): _run_plan_update,
     ("uo-update", "apply_update"): _run_apply_update,
@@ -664,6 +698,7 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("ce-plan", "grill_promote"): _run_ce_grill_promote,
     ("ce-apply", "apply_gate"): _run_ce_apply_gate,
     ("ce-apply", "patch_guard"): _run_ce_patch_guard,
+    ("ce-apply", "plan_revise_check"): _run_ce_plan_revise_check,
     ("ce-apply", "codemap_refresh"): _run_ce_codemap_refresh,
     ("ce-review", "change_capture"): _run_ce_review_capture,
     ("tg-init", "kb_check"): _run_tg_kb_check,
@@ -696,6 +731,11 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "uo-commit-v1": ["uo/*.uo"],
     # verify audits the committed .uo; receipts live under uo/checks/
     "uo-verify-v1": ["uo/checks/integrity.yaml", "uo/checks/quality.yaml"],
+    "include-heal-staging-v1": [
+        "runs/{run_id}/actions/propose_include_heal/parts/**",
+        "runs/{run_id}/actions/propose_include_heal/staging.yaml",
+    ],
+    "include-heal-extras-v1": ["uo/summary/build_context_extras.yaml"],
     "integrity-v1": ["uo/checks/integrity.yaml"],
     "change-detect-v1": ["uo/diff/change_set.yaml"],
     "update-plan-v1": ["uo/summary/update_plan.yaml"],
@@ -724,6 +764,8 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "ce-plan-confirmed-v1": [],
     "apply-gate-v1": [],
     "apply-patch-v1": ["ce/plan/*_plan.md"],
+    "apply-plan-revise-v1": ["ce/plan/*_plan.md"],
+    "apply-plan-revise-check-v1": [],
     "apply-patch-guard-v1": [],
     "codemap-refresh-v1": [],
     "apply-report-v1": [],

@@ -365,9 +365,17 @@ def advance_phase(
         explicit = None
         error_code = "GATE_FAILED"
         if any(g.get("gate") == "scope_receipt" for g in failed):
-            preferred = "blocked"
-            error_code = "SCOPE_VALIDATE_BLOCKED"
-            explicit = "environment_invariant"
+            if any(
+                str(g.get("error") or g.get("reason_code") or "") == "INCLUDE_HEAL_UNRESOLVED"
+                for g in failed
+            ):
+                preferred = "rework_required"
+                error_code = "INCLUDE_HEAL_UNRESOLVED"
+                explicit = None
+            else:
+                preferred = "blocked"
+                error_code = "SCOPE_VALIDATE_BLOCKED"
+                explicit = "environment_invariant"
         from ascendc_pilot.observation import record_pilot_result
 
         recorded = record_pilot_result(

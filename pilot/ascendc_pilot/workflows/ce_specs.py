@@ -176,6 +176,7 @@ def _build(
             _st("guard", "校验改动落在计划文件内"),
             _st("refresh", "刷新 CodeMap"),
             _st("report", "汇报改动并选择下一步"),
+            _st("revise", "按补充需求修订当前计划"),
         ],
         "transitions": [
             _tr("gate", "patch"),
@@ -183,6 +184,12 @@ def _build(
             _tr("guard", "refresh"),
             _tr("refresh", "report"),
             _tr("guard", "patch", kind="rework", reason_codes=["PATCH_OUT_OF_ANCHORS"]),
+            _tr("gate", "revise", kind="rework", reason_codes=["GOAL_REVISED"]),
+            _tr("patch", "revise", kind="rework", reason_codes=["GOAL_REVISED"]),
+            _tr("guard", "revise", kind="rework", reason_codes=["GOAL_REVISED"]),
+            _tr("refresh", "revise", kind="rework", reason_codes=["GOAL_REVISED"]),
+            _tr("report", "revise", kind="rework", reason_codes=["GOAL_REVISED"]),
+            _tr("revise", "gate"),
         ],
         "phase_gates": {},
         "complete_gates": [],
@@ -192,6 +199,7 @@ def _build(
             "guard": ["patch_guard"],
             "refresh": ["codemap_refresh"],
             "report": ["apply_report"],
+            "revise": ["plan_revise", "plan_revise_check"],
         },
         "actions": [
             _act(
@@ -251,10 +259,34 @@ def _build(
                 context_profile_id="ce-apply-report",
                 output_contract_id="apply-report-v1",
             ),
+            _act(
+                "plan_revise",
+                label_zh="按补充需求修订 {slug}_plan.md",
+                phases=["revise"],
+                workflow_id="ce-apply",
+                agent_id="ce-analyst",
+                role_id="producer",
+                capability_ids=["kb-query", "source-navigation", "source-reading"],
+                action_method_id="code-engineering/ce-plan-revise",
+                task_prompt_id="ce/plan-revise",
+                context_profile_id="ce-apply-revise",
+                output_contract_id="apply-plan-revise-v1",
+            ),
+            _act(
+                "plan_revise_check",
+                label_zh="校验修订保留已完成 todo",
+                phases=["revise"],
+                workflow_id="ce-apply",
+                agent_id="deterministic-ce-engine",
+                role_id="deterministic_engine",
+                capability_ids=[],
+                output_contract_id="apply-plan-revise-check-v1",
+            ),
         ],
         "agents": [
             {"id": "deterministic-ce-engine", "role": "deterministic_engine"},
             {"id": "ce-applier", "role": "producer"},
+            {"id": "ce-analyst", "role": "producer"},
             {"id": "ascendc-pilot", "role": "controller"},
         ],
         "static_obligations": [],
@@ -266,7 +298,7 @@ def _build(
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
-        "phases": ["gate", "patch", "guard", "refresh", "report"],
+        "phases": ["gate", "patch", "guard", "refresh", "report", "revise"],
         "gates": [],
     },
     "ce-review": {
@@ -322,6 +354,30 @@ def _build(
                 context_profile_id="ce-review-code-review",
                 output_contract_id="code-review-v1",
                 pre_gates=["kb_ready", "context_pack"],
+                execution_variant="review_axis_fanout",
+                fanout_axes=[
+                    {
+                        "id": "spec",
+                        "capability_id": "spec-review",
+                        "artifact": "runs/{run_id}/actions/code_review/parts/spec.md",
+                        "other": "runs/{run_id}/actions/code_review/parts/standards.md",
+                        "focus": (
+                            "Spec — 若有当前 `{slug}_plan.md` 则对照该计划（todo 是否做完、有无超范围）；"
+                            "纯 PR 无计划时只陈述变更理解，不假装有计划。"
+                            "结论写在 Task 回复（path:line）。不要写 ce/review 或任何 yaml。"
+                        ),
+                    },
+                    {
+                        "id": "standards",
+                        "capability_id": "standards-review",
+                        "artifact": "runs/{run_id}/actions/code_review/parts/standards.md",
+                        "other": "runs/{run_id}/actions/code_review/parts/spec.md",
+                        "focus": (
+                            "Standards — 对照 ascendc-checks 与跨层契约。"
+                            "结论写在 Task 回复（path:line）。不要写 ce/review 或任何 yaml。"
+                        ),
+                    },
+                ],
             ),
             _act(
                 "review_report",

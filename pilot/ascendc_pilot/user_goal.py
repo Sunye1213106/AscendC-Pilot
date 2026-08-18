@@ -19,6 +19,7 @@ from ascendc_pilot.paths import AGENT_DIR
 USER_GOAL_SCHEMA = "pilot-user-goal/v1"
 GOAL_TILINGKEY_FULL = "tilingkey_full_coverage_cases"
 GOAL_CE_CHANGE = "ce_change_verify_chain"
+GOAL_CE_REVIEW = "ce_review_pr"
 
 # Phrases that mean "full tilingkey cases" product goal (not a single slash).
 FULL_COVERAGE_PHRASES: tuple[str, ...] = (
@@ -128,8 +129,28 @@ def matches_ce_change_intent(text: str) -> bool:
     return False
 
 
+def extract_allowlisted_pr_url(text: str) -> str:
+    """First gitcode.com / github.com / gitcode.net PR URL, or empty."""
+    try:
+        from code_engineering.git import extract_pr_url
+    except Exception:  # noqa: BLE001
+        return ""
+    return str(extract_pr_url(text) or "").strip()
+
+
 def route_natural_goal(text: str) -> dict[str, Any] | None:
     """Map natural language to a predefined Goal Router chain (slash stays expert API)."""
+    pr_url = extract_allowlisted_pr_url(text)
+    if pr_url:
+        return {
+            "ok": True,
+            "goal_id": GOAL_CE_REVIEW,
+            "workflow_id": "ce-review",
+            "slash": "/ce-review",
+            "method": "goal_router",
+            "mode": "",
+            "pr_url": pr_url,
+        }
     if matches_full_coverage_intent(text):
         return {
             "ok": True,
@@ -233,6 +254,10 @@ def create_tilingkey_full_coverage_goal(
         "steps": steps,
         "current_step": current_step,
         "status": "active",
+        "goal_version": 1,
+        "intent_history": [
+            {"version": 1, "text": str(intent_text or label).strip(), "at": _now()}
+        ],
         "created_at": _now(),
     }
     return write_user_goal(root, doc)
@@ -290,6 +315,10 @@ def create_ce_change_goal(
         "steps": _materialize_steps(CE_STEPS, current_step),
         "current_step": current_step,
         "status": "active",
+        "goal_version": 1,
+        "intent_history": [
+            {"version": 1, "text": str(intent_text or label).strip(), "at": _now()}
+        ],
         "created_at": _now(),
     }
     return write_user_goal(root, doc)
@@ -304,6 +333,8 @@ def ensure_goal_for_intent(
     op_name: str = "",
 ) -> dict[str, Any] | None:
     """If NL matches a Goal Router chain, create or refresh goal; else None."""
+    if extract_allowlisted_pr_url(intent_text):
+        return None
     if matches_ce_change_intent(intent_text):
         existing = load_user_goal(project_root)
         if existing and str(existing.get("goal_id")) == GOAL_CE_CHANGE and str(existing.get("status")) == "active":
@@ -463,3 +494,89 @@ def conflict_ask(
             {"label": "停止", "value": "stop"},
         ],
     )
+
+
+def pause_user_goal(project_root: Path | str, *, reason: str = "switch") -> dict[str, Any] | None:
+    goal = load_user_goal(project_root)
+    if not goal or str(goal.get("status") or "") not in {"active", "revising"}:
+        return goal
+    goal["status"] = "paused"
+    goal["paused_reason"] = str(reason or "switch")
+    return write_user_goal(project_root, goal)
+
+
+def resume_user_goal(project_root: Path | str) -> dict[str, Any] | None:
+    goal = load_user_goal(project_root)
+    if not goal or str(goal.get("status") or "") != "paused":
+        return goal
+    goal["status"] = "active"
+    goal.pop("paused_reason", None)
+    return write_user_goal(project_root, goal)
+
+
+def request_goal_revision(project_root: Path | str, delta_text: str) -> dict[str, Any]:
+    """First-class plan revision: keep completed todos, rework ce-apply into revise."""
+    from ascendc_pilot.paths import runs_root
+    from ascendc_pilot.state import load_state, save_state
+
+    root = Path(project_root).expanduser().resolve()
+    delta = str(delta_text or "").strip()
+    goal = load_user_goal(root)
+    if goal:
+        history = list(goal.get("intent_history") or [])
+        version = int(goal.get("goal_version") or 1) + 1
+        history.append({"version": version, "text": delta, "at": _now()})
+        goal["goal_version"] = version
+        goal["intent_history"] = history
+        if delta:
+            prev = str(goal.get("intent_text") or "").strip()
+            goal["intent_text"] = (prev + "\n" + delta).strip() if prev else delta
+        goal["status"] = "revising"
+        write_user_goal(root, goal)
+
+    st = load_state(root) or {}
+    wid = str(st.get("workflow_id") or "")
+    out: dict[str, Any] = {
+        "revise_requested": True,
+        "workflow_id": wid,
+        "paused": False,
+        "message_zh": "已记下补充需求，将在当前计划上修订，不会整段重走 grill。",
+    }
+    if delta:
+        st["pending_goal_revision"] = delta
+        if wid == "ce-plan":
+            prev_intent = str(st.get("intent") or "")
+            st["intent"] = (prev_intent + "\n" + delta).strip() if prev_intent else delta
+        save_state(root, st)
+
+    if wid == "ce-apply":
+        arch = str(st.get("architecture") or "")
+        run_id = str(st.get("run_id") or "")
+        try:
+            from code_engineering.plan_md import all_todos, resolve_active_plan
+
+            plan = resolve_active_plan(root, architecture=arch, state=st)
+            baseline = {
+                "schema": "ce-plan-revise-baseline/v1",
+                "delta_text": delta,
+                "plan": str(plan) if plan else "",
+                "todos": all_todos(plan) if plan else [],
+            }
+            if run_id:
+                dest = runs_root(root, arch=arch or None) / run_id / "actions" / "plan_revise"
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / "delta.md").write_text(delta + "\n", encoding="utf-8")
+                (dest / "baseline.yaml").write_text(
+                    yaml.safe_dump(baseline, allow_unicode=True, sort_keys=False),
+                    encoding="utf-8",
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from ascendc_pilot.state.machine import rework_phase
+
+            rework = rework_phase(root, to="revise", reason_code="GOAL_REVISED")
+            out["rework"] = {"from": rework.get("from"), "to": rework.get("to")}
+        except Exception as exc:  # noqa: BLE001
+            out["rework_error"] = str(exc)[:200]
+    return out

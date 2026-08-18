@@ -38,6 +38,12 @@ _BANNED_WORD_RE = re.compile(
 
 _STATUS_NONE_RE = re.compile(r"(?i)status\s*=\s*None")
 
+# Stale AskQuestion / topic change: do not promise the old run is gone.
+FOLLOW_NEW_TURN_ZH = (
+    "你也可以直接说新的问题；我会保留当前进度。"
+    "若新任务与当前修改冲突，我会先让你选择暂停还是继续当前任务。"
+)
+
 
 def contains_banned_jargon(text: str) -> list[str]:
     """Return list of banned tokens found in ``text`` (empty if clean)."""

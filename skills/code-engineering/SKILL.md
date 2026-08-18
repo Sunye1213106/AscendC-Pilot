@@ -38,6 +38,7 @@ Use this skill for `/ce-plan`, `/ce-apply`, and `/handoff`.
 
 - Grill：`capabilities/ce-intent-grill/METHOD.md`
 - 写出计划：`capabilities/ce-plan-draft/METHOD.md`
+- 中途改需求：`capabilities/ce-plan-revise/METHOD.md`
 - 按 todo 改码：`capabilities/ce-apply/METHOD.md`
 - 会话交接：`capabilities/session-handoff/METHOD.md`
 - 形状参考：`examples/deter-band-schedule_plan.md`

@@ -94,6 +94,7 @@ def _act(
     consumes: list[str] | None = None,
     consumes_state: list[str] | None = None,
     execution_variant: str | None = None,
+    fanout_axes: list[dict[str, Any]] | None = None,
     schema_version: str = "1",
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
@@ -193,6 +194,8 @@ def _act(
         row["merge_action_id"] = merge_action_id
     if execution_variant:
         row["execution_variant"] = str(execution_variant)
+    if fanout_axes:
+        row["fanout_axes"] = [dict(axis) for axis in fanout_axes]
     return row
 
 
@@ -294,6 +297,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "retry_budget": 3,
         "states": [
             _st("prepare", "准备 BuildVariant / 范围"),
+            _st("heal", "补 include 路径（脚本失败才进入）"),
             _st("extract", "Clang 抽取 CompilerFacts"),
             _st("analyze", "确定性 CodeMap Pass"),
             _st("commit", "写入 <op>.<arch>.uo"),
@@ -304,6 +308,19 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             _tr("extract", "analyze"),
             _tr("analyze", "commit"),
             _tr("commit", "verify"),
+            _tr(
+                "prepare",
+                "heal",
+                kind="rework",
+                reason_codes=["INCLUDE_HEAL_UNRESOLVED"],
+            ),
+            _tr("heal", "prepare"),
+            _tr(
+                "heal",
+                "prepare",
+                kind="rework",
+                reason_codes=["INCLUDE_HEAL_PROMOTED"],
+            ),
             _tr("extract", "prepare", kind="rework", reason_codes=["SCOPE_REWORK", "SCOPE_FAILED"]),
             _tr("analyze", "extract", kind="rework", reason_codes=["EXTRACT_REWORK"]),
             _tr("commit", "analyze", kind="rework", reason_codes=["INTEGRITY_REWORK", "GAP_REWORK"]),
@@ -313,6 +330,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         ],
         "phase_gates": {
             "prepare": ["layout_receipt", "scope_receipt"],
+            "heal": [],
             "extract": ["extract_receipt"],
             "analyze": [],
             "commit": ["uo_product_ready"],
@@ -320,6 +338,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         },
         "pipelines": {
             "prepare": ["prepare"],
+            "heal": ["propose_include_heal", "heal_promote"],
             "extract": ["extract"],
             "analyze": ["analyze"],
             "commit": ["commit"],
@@ -343,6 +362,16 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     "type": "human_required",
                     "diagnosis": "deterministic_verify_failed",
                 },
+                "INCLUDE_HEAL_UNRESOLVED": {
+                    "type": "transition",
+                    "target_phase": "heal",
+                    "next_action": "propose_include_heal",
+                },
+                "INCLUDE_HEAL_PROMOTED": {
+                    "type": "transition",
+                    "target_phase": "prepare",
+                    "next_action": "prepare",
+                },
             },
         },
         "actions": [
@@ -358,6 +387,43 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=[],
                 task_prompt_id=None,
                 output_contract_id="uo-prepare-v1",
+            ),
+            _act(
+                "propose_include_heal",
+                label_zh="建议补 -I（仅写 staging）",
+                phases=["heal"],
+                workflow_id="uo-init",
+                agent_id="uo-heal-analyst",
+                role_id="producer",
+                capability_ids=[
+                    "source-reading",
+                    "source-navigation",
+                    "readonly-source-search",
+                    "action-scratch",
+                ],
+                action_method_id="operator-analysis/propose-include-heal",
+                task_prompt_id="uo/propose-include-heal",
+                context_profile_id="uo-init-propose-include-heal",
+                output_contract_id="include-heal-extras-v1",
+                output_mode="staged",
+                staging_contract_id="include-heal-staging-v1",
+                merge_action_id="heal_promote",
+                forbidden_write_paths=[
+                    "uo/summary/build_context_extras.yaml",
+                    "spec/build_context.yaml",
+                ],
+            ),
+            _act(
+                "heal_promote",
+                label_zh="校验并写入 extras -I",
+                phases=["heal"],
+                workflow_id="uo-init",
+                agent_id=None,
+                role_id="deterministic_engine",
+                execution_mode="deterministic",
+                capability_ids=[],
+                task_prompt_id=None,
+                output_contract_id="include-heal-extras-v1",
             ),
             _act(
                 "extract",
@@ -407,7 +473,10 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 output_contract_id="uo-verify-v1",
             ),
         ],
-        "agents": [{"id": "ascendc-pilot", "role": "controller"}],
+        "agents": [
+            {"id": "ascendc-pilot", "role": "controller"},
+            {"id": "uo-heal-analyst", "role": "producer"},
+        ],
         "static_obligations": [
             {"id": "scope_validated", "label_zh": "范围已校验"},
             {"id": "uo_product_ready", "label_zh": ".uo CodeMap 已写入"},
@@ -420,7 +489,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
-        "phases": ["prepare", "extract", "analyze", "commit", "verify"],
+        "phases": ["prepare", "heal", "extract", "analyze", "commit", "verify"],
         "gates": [
             "layout_receipt",
             "scope_receipt",

@@ -622,6 +622,24 @@ def gate_scope_receipt(project_root: Path, uo: Path) -> dict[str, Any]:
                     "一次会话必须共用同一个 run id（prepare_layout 须传 --run-id）"
                 ),
             }
+        cand = _load(scope_dir / "candidates.yaml") or {}
+        unresolved = [
+            str(x.get("include") or x)
+            for x in ((cand.get("include_heal") or {}).get("unresolved") or [])
+        ]
+        if unresolved:
+            return {
+                "gate": "scope_receipt",
+                "ok": False,
+                "error": "INCLUDE_HEAL_UNRESOLVED",
+                "reason_code": "INCLUDE_HEAL_UNRESOLVED",
+                "scope_path": validated_path.as_posix(),
+                "unresolved": unresolved[:8],
+                "message": (
+                    "include-heal 仍找不到头文件，进入 heal 相位补 -I；"
+                    f" unresolved={unresolved[:4]}"
+                ),
+            }
         return {
             "gate": "scope_receipt",
             "ok": False,

@@ -500,6 +500,7 @@ def _build_task_prompt_stub(
 
 def _review_axis_fanout_tasks(
     *,
+    action: dict[str, Any],
     action_id: str,
     actor_id: str,
     phase: str,
@@ -511,39 +512,30 @@ def _review_axis_fanout_tasks(
     project_root: str,
     architecture: str,
 ) -> list[dict[str, str]]:
-    """Parallel Spec / Standards Tasks so the two axes do not share context."""
+    """Parallel Spec / Standards Tasks so the two axes do not share context.
+
+    Axes come from Workflow Spec ``execution_variant=review_axis_fanout`` +
+    ``fanout_axes`` — runtime does not invent a second graph.
+    """
     del write_paths
-    if action_id != "code_review":
+    if str(action.get("execution_variant") or "") != "review_axis_fanout":
         return []
-    if str(phase or "").strip() != "review":
+    if str(phase or "").strip() not in {str(p) for p in (action.get("phases") or [])}:
+        return []
+    axes_spec = list(action.get("fanout_axes") or [])
+    if len(axes_spec) < 2:
         return []
     run_id = str(stub_kwargs.get("run_id") or "").strip() or "current"
-    axes = (
-        (
-            "spec",
-            "spec-review",
-            f"runs/{run_id}/actions/code_review/parts/spec.md",
-            "runs/{run_id}/actions/code_review/parts/standards.md",
-            (
-                "Spec — 若有当前 `{slug}_plan.md` 则对照该计划（todo 是否做完、有无超范围）；"
-                "纯 PR 无计划时只陈述变更理解，不假装有计划。"
-                "结论写在 Task 回复（path:line）。不要写 ce/review 或任何 yaml。"
-            ),
-        ),
-        (
-            "standards",
-            "standards-review",
-            f"runs/{run_id}/actions/code_review/parts/standards.md",
-            "runs/{run_id}/actions/code_review/parts/spec.md",
-            (
-                "Standards — 对照 ascendc-checks 与跨层契约。"
-                "结论写在 Task 回复（path:line）。不要写 ce/review 或任何 yaml。"
-            ),
-        ),
-    )
     dt = dict(dispatch_targets or {})
     tasks: list[dict[str, str]] = []
-    for axis, cap, artifact, other, focus in axes:
+    for axis_row in axes_spec:
+        axis = str(axis_row.get("id") or "").strip()
+        cap = str(axis_row.get("capability_id") or "").strip()
+        artifact = str(axis_row.get("artifact") or "").replace("{run_id}", run_id)
+        other = str(axis_row.get("other") or "").replace("{run_id}", run_id)
+        focus = str(axis_row.get("focus") or "").strip()
+        if not axis or not cap or not artifact:
+            return []
         mp = _capability_method_path(repo, "code-review", cap)
         if not mp.is_file():
             return []
@@ -559,7 +551,7 @@ def _review_axis_fanout_tasks(
             "ce/review/index.yaml",
             "ce/review/**",
         ):
-            if blocked not in forbid:
+            if blocked and blocked not in forbid:
                 forbid.append(blocked)
         axis_dt["forbid_read"] = forbid
         question = (
@@ -1697,6 +1689,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         bundle["task_prompt_stub"] = stub
         bundle["stub_pointers"] = stub_pointers.as_dict()
         fanout = _review_axis_fanout_tasks(
+                action=action,
                 action_id=action_id,
                 actor_id=actor_id,
                 phase=phase,
@@ -1943,6 +1936,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint
 
             result["error"] = str(eng.get("error") or "ENGINE_FAILED")
+            result["reason_code"] = str(eng.get("reason_code") or eng.get("error") or "ENGINE_FAILED")
             result["message_zh"] = with_failure_hint(
                 str(eng.get("message_zh") or preferred_failure_text(eng)),
                 eng,
@@ -2431,6 +2425,16 @@ def _attach_finalize_observation(
         ok=False,
         action_id=action_id,
         step_id="action_finalize",
+        error_code=str(
+            payload.get("reason_code")
+            or payload.get("error")
+            or eng.get("reason_code")
+            or eng.get("error")
+            or eng2.get("reason_code")
+            or eng2.get("error")
+            or ""
+        )
+        or None,
         messages=[m for m in messages if m],
         findings=finding_rows or None,
         source="finalize_action",

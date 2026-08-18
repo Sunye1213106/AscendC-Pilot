@@ -24,6 +24,7 @@ OpenCode 查询走插件 `pilot_cli`（command=`uo-query --project …`，不要
 
 ```text
 prepare → extract → analyze → commit → verify
+   ↘ heal (脚本 include-heal 失败才进入；staging → promote extras)
                   ↘ query (readonly)
                   ↘ investigate (optional; no .uo mutation)
 ```
@@ -59,6 +60,7 @@ Clang / include / 写入由 engine 执行。完成条件：读 `uo/checks/qualit
 | 查询 METHOD | `capabilities/uo-query/METHOD.md` |
 | 主控路由 | `routing/uo-query.md` |
 | 调查 METHOD | `capabilities/uo-investigate/METHOD.md` |
+| include-heal staging | `capabilities/propose-include-heal/METHOD.md` |
 | 查询踩坑 | `references/codemap-query-gotchas.md` |
 | 场景 hooks | `references/uo-scenario-hooks.md` |
 | authority / 完整性 | `references/codemap-authority.md` / `references/codemap-completeness.md` |

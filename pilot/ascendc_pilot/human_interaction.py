@@ -521,8 +521,10 @@ def match_pending_option(pending: dict[str, Any] | None, text: str) -> str | Non
         if mapped:
             return mapped
 
+    from ascendc_pilot.goal_turn import is_answer_shaped
+
     arches = [v for v in allowed if re.fullmatch(r"arch[0-9A-Za-z._-]+", v, re.I)]
-    if arches:
+    if arches and is_answer_shaped(raw, pending=pending):
         found: list[str] = []
         for token in _ARCH_TOKEN.findall(raw):
             hit = allowed_l.get(token.lower())
@@ -531,7 +533,7 @@ def match_pending_option(pending: dict[str, Any] | None, text: str) -> str | Non
         if len(found) == 1:
             return found[0]
 
-    if len(raw) <= 24:
+    if len(raw) <= 24 and is_answer_shaped(raw, pending=pending):
         hits: list[str] = []
         for value, labels in catalog:
             tokens = [value, *labels]
@@ -561,6 +563,7 @@ def supersede_pending(
     *,
     reason: str = "user_interrupted",
     user_text: str = "",
+    relation: str = "",
 ) -> dict[str, Any]:
     """Drop a pending AskQuestion because the user moved on. Never auto-confirms."""
     root = Path(project_root).expanduser().resolve()
@@ -577,6 +580,7 @@ def supersede_pending(
     pending["status"] = "superseded"
     pending["supersede_reason"] = str(reason or "user_interrupted")
     pending["user_text"] = str(user_text or "")[:500]
+    pending["relation"] = str(relation or "")
     pending["superseded_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
     _dump(pending_path(root), pending)
 
@@ -586,22 +590,61 @@ def supersede_pending(
     if st:
         st["human_decision_superseded"] = True
         st["human_decision_superseded_reason"] = str(reason or "user_interrupted")
+        if relation:
+            st["last_goal_relation"] = relation
         save_state(root, st)
 
+    from ascendc_pilot.human_voice import FOLLOW_NEW_TURN_ZH
+
+    effects = apply_goal_relation(root, relation or "side_question", user_text)
+    paused = bool(effects.get("paused"))
     return {
         "ok": True,
         "disposition": "superseded",
+        "relation": relation or effects.get("relation") or "side_question",
         "ask_interrupted": True,
+        "paused": paused,
         "needs_human_decision": False,
         "previous_kind": str(pending.get("kind") or ""),
         "previous_header": header,
         "request_id": str(pending.get("request_id") or ""),
+        **{k: v for k, v in effects.items() if k not in {"ok"}},
         "message_zh": (
             "上一问确认已被本轮新消息打断，已解除卡住。"
             "请按本轮用户消息继续，不要重问上一题。"
             "未点选不等于批准删除/重开。"
+            + FOLLOW_NEW_TURN_ZH
         ),
     }
+
+
+def apply_goal_relation(
+    project_root: Path,
+    relation: str,
+    user_text: str = "",
+) -> dict[str, Any]:
+    """Apply Goal Relation side effects (pause lock / revise plan)."""
+    from ascendc_pilot.goal_turn import REL_CANCEL, REL_REVISE, REL_SIDE, REL_SWITCH
+    from ascendc_pilot.occupancy import LIVENESS_PAUSED, set_lock_lifecycle
+    from ascendc_pilot.state import load_state
+    from ascendc_pilot.user_goal import pause_user_goal, request_goal_revision
+
+    root = Path(project_root).expanduser().resolve()
+    rel = str(relation or "").strip() or REL_SIDE
+    st = load_state(root) or {}
+    out: dict[str, Any] = {"relation": rel, "paused": False}
+    if rel == REL_SIDE:
+        return out
+    if rel in {REL_SWITCH, REL_CANCEL}:
+        set_lock_lifecycle(root, LIVENESS_PAUSED, run_id=str(st.get("run_id") or ""))
+        pause_user_goal(root, reason=rel)
+        out["paused"] = True
+        return out
+    if rel == REL_REVISE:
+        revised = request_goal_revision(root, user_text)
+        out.update(revised)
+        return out
+    return out
 
 
 def interpret_user_turn(
@@ -610,30 +653,50 @@ def interpret_user_turn(
     text: str = "",
     reason: str = "user_message",
 ) -> dict[str, Any]:
-    """Latest user turn vs pending AskQuestion: map to an option, or supersede."""
+    """Latest user turn vs pending AskQuestion and the active Goal."""
+    from ascendc_pilot.goal_turn import REL_ANSWER, classify_goal_turn
+    from ascendc_pilot.state import load_state
+    from ascendc_pilot.user_goal import load_user_goal
+
     root = Path(project_root).expanduser().resolve()
     pending = load_pending(root)
-    if not pending_is_open(pending):
-        return {
-            "ok": True,
-            "disposition": "idle",
-            "needs_human_decision": False,
-            "message_zh": "没有待确认的问题",
-        }
-    mapped = match_pending_option(pending, text)
-    if mapped and mapped.lower() in _DESTRUCTIVE_VALUES and len(str(text or "").strip()) > 24:
-        mapped = None
-    if mapped:
-        rec = record_answer(
-            root,
-            request_id=str(pending.get("request_id") or ""),
-            value=mapped,
+    st = load_state(root) or {}
+    relation = classify_goal_turn(
+        text,
+        pending=pending,
+        workflow_id=str(st.get("workflow_id") or ""),
+        goal=load_user_goal(root),
+    )
+    if pending_is_open(pending) and relation == REL_ANSWER:
+        mapped = match_pending_option(pending, text)
+        if mapped and mapped.lower() in _DESTRUCTIVE_VALUES and len(str(text or "").strip()) > 24:
+            mapped = None
+        if mapped:
+            rec = record_answer(
+                root,
+                request_id=str(pending.get("request_id") or ""),
+                value=mapped,
+            )
+            if rec.get("ok"):
+                _clear_superseded_flag(root)
+                rec["disposition"] = "answered"
+                rec["relation"] = REL_ANSWER
+                rec["needs_human_decision"] = False
+                rec["message_zh"] = f"已把本轮回复记为选项「{mapped}」"
+                return rec
+    if pending_is_open(pending):
+        return supersede_pending(
+            root, reason=reason, user_text=text, relation=relation
         )
-        if rec.get("ok"):
-            _clear_superseded_flag(root)
-            rec["disposition"] = "answered"
-            rec["needs_human_decision"] = False
-            rec["message_zh"] = f"已把本轮回复记为选项「{mapped}」"
-            return rec
-        # Value rejected — treat as a new request rather than deadlock.
-    return supersede_pending(root, reason=reason, user_text=text)
+    effects = apply_goal_relation(root, relation, text)
+    from ascendc_pilot.human_voice import FOLLOW_NEW_TURN_ZH
+
+    return {
+        "ok": True,
+        "disposition": relation,
+        "relation": relation,
+        "needs_human_decision": False,
+        "paused": bool(effects.get("paused")),
+        "message_zh": FOLLOW_NEW_TURN_ZH,
+        **effects,
+    }

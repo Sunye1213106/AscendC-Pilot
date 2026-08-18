@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 
 from code_engineering.change.capture import (
     _operator_scope,
+    _rewrite_diff_prefix,
     _run_git,
     capture,
     parse_diff_ranges,
@@ -154,6 +155,79 @@ def _default_base(git_cwd) -> str:
     return "HEAD"
 
 
+def _git_paths_from_diff_header(line: str) -> list[str]:
+    text = str(line or "").strip()
+    if not text.startswith("diff --git "):
+        return []
+    rest = text[len("diff --git ") :]
+    parts = rest.split()
+    out: list[str] = []
+    for part in parts:
+        path = part
+        if path.startswith("a/") or path.startswith("b/"):
+            path = path[2:]
+        if path and path not in {"/dev/null", "dev/null"}:
+            out.append(path.replace("\\", "/"))
+    return out
+
+
+def _path_in_operator_prefix(path: str, prefix: str) -> bool:
+    pref = str(prefix or "").replace("\\", "/")
+    rel = str(path or "").replace("\\", "/").lstrip("/")
+    if not pref or not rel:
+        return False
+    if pref.endswith("/"):
+        return rel == pref.rstrip("/") or rel.startswith(pref)
+    return rel == pref or rel.startswith(pref + "/")
+
+
+def _filter_diff_by_prefix(diff_text: str, prefix: str) -> str:
+    """Keep unified-diff file chunks whose paths fall under the operator prefix."""
+    pref = str(prefix or "").replace("\\", "/")
+    if not pref or not diff_text:
+        return diff_text
+    chunks: list[str] = []
+    current: list[str] = []
+    keep = False
+
+    def flush() -> None:
+        nonlocal current, keep
+        if current and keep:
+            chunks.extend(current)
+        current = []
+        keep = False
+
+    for line in diff_text.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            flush()
+            current = [line]
+            keep = any(_path_in_operator_prefix(p, pref) for p in _git_paths_from_diff_header(line))
+            continue
+        if not current:
+            continue
+        current.append(line)
+        if line.startswith("--- ") or line.startswith("+++ "):
+            path = line[4:].strip()
+            if path.startswith("a/") or path.startswith("b/"):
+                path = path[2:]
+            if path not in {"/dev/null", "dev/null"} and _path_in_operator_prefix(path, pref):
+                keep = True
+    flush()
+    return "".join(chunks)
+
+
+def _scope_http_diff(diff_text: str, project_root: Any) -> tuple[str, str]:
+    """Restrict an HTTP PR patch to the operator pathspec and rewrite a/b prefixes."""
+    if not project_root:
+        return str(diff_text or ""), ""
+    _cwd, _pathspec, prefix = _operator_scope(project_root)
+    del _cwd, _pathspec
+    if not prefix:
+        return str(diff_text or ""), ""
+    scoped = _filter_diff_by_prefix(diff_text, prefix)
+    return _rewrite_diff_prefix(scoped, prefix), prefix
+
+
 def _payload_from_diff(
     *,
     diff_text: str,
@@ -270,7 +344,7 @@ def _http_get(url: str, headers: dict[str, str]) -> tuple[int, str, str]:
         return 0, "", str(exc.reason or exc)
 
 
-def _http_pr_diff(pr_url: str) -> dict[str, Any]:
+def _http_pr_diff(pr_url: str, project_root: Any = None) -> dict[str, Any]:
     owner, repo, number = parse_pr_url(pr_url)
     host = _norm_host(urlparse(pr_url).netloc)
     headers = _auth_headers(host)
@@ -296,13 +370,20 @@ def _http_pr_diff(pr_url: str) -> dict[str, Any]:
         if status == 200 and body.strip():
             if body.lstrip().startswith("{") and "diff --git" not in body:
                 continue
-            return _payload_from_diff(
-                diff_text=body,
+            scoped, prefix = _scope_http_diff(body, project_root)
+            payload = _payload_from_diff(
+                diff_text=scoped,
                 base_sha="",
                 head_sha="",
                 pr={"owner": owner, "repo": repo, "number": number, "url": pr_url},
                 source="pr_http",
             )
+            if prefix and not payload.get("ok"):
+                payload["message_zh"] = (
+                    "已取得 PR，但按当前算子目录裁剪后 diff 为空。"
+                    "请在对应算子仓打开后再审。"
+                )
+            return payload
     return {
         "ok": False,
         "reason_code": "PR_FETCH_FAILED",
@@ -330,12 +411,12 @@ def fetch_pr_diff(
     if fetched.get("ok") or fetched.get("reason_code") in {"PR_EMPTY_DIFF"}:
         return fetched
     if fetched.get("reason_code") == "PR_REMOTE_MISMATCH":
-        http = _http_pr_diff(pr_url)
+        http = _http_pr_diff(pr_url, project_root)
         if http.get("ok") or http.get("reason_code") == "PR_FETCH_AUTH_REQUIRED":
             return http
         fetched["http_fallback"] = http.get("reason_code")
         return fetched
-    http = _http_pr_diff(pr_url)
+    http = _http_pr_diff(pr_url, project_root)
     if http.get("ok"):
         return http
     return fetched if fetched.get("reason_code") else http

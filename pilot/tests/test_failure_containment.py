@@ -58,6 +58,21 @@ def test_classify_cann_env_not_ready_is_environment_invariant():
     assert c["recommended_transition"] == "human_required"
 
 
+def test_classify_include_heal_unresolved_reworks_to_propose():
+    c = classify_failure(
+        error_code="INCLUDE_HEAL_UNRESOLVED",
+        action_id="prepare",
+        source="finalize_action",
+        execution_mode="deterministic",
+        workflow_id="uo-init",
+        phase="prepare",
+        messages=["include-heal 在当前 cann_root 下仍找不到"],
+    )
+    assert c["recommended_transition"] == "rework_required"
+    assert c["retryable"] is True
+    assert "propose_include_heal" in (c.get("rework_action_ids") or [])
+
+
 def test_finalize_failure_updates_state(tmp_path: Path):
     start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
     issue_action_lease(tmp_path, action_id="prepare", mode="normal")

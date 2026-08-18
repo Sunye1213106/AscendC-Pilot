@@ -40,7 +40,7 @@ UO **不跑**算子仓自己的 CMake/Ninja，也**不用** `compile_commands.js
 | ----------------------------------- | ------------------------------------------------------------------------ |
 | **clang 可执行文件**（必选）                 | 真正按编译参数解析；并用 `-ast-dump` 看到模板实例、`if constexpr` 折叠后的结果（仅靠 libclang 看不到这些） |
 | **libclang**（Python 绑定，必选）          | 走 AST、算 include 闭包、抽出函数/调用/写点等 `CompilerFacts`                           |
-| `build_context.yaml` + CANN Headers | 提供基线 `-I/-D` 与 AscendC 类型/API 语义。Kernel `-D`（`__NPU_ARCH__` / `__DAV_*` / `__CCE_AICORE__`）按 `arch_dir` 表注入，不在 yaml 里冻一份。prepare 的 **include-heal** 按缺头文件在 CANN/ops 树补 runtime `-I`（并把 `lib/matrix/matmul/` 映射到现存的 `lib/matmul/`），写入 `uo/summary/build_context_extras.yaml`；extract 自动合并。prepare 还会生成 kernel tiling stub（packed POD + `GET_TILING_DATA*`）并 force-include，使未手写专用 tiling 头的算子 TU 也能看见类型。 |
+| `build_context.yaml` + CANN Headers | 提供基线 `-I/-D` 与 AscendC 类型/API 语义。Kernel `-D`（`__NPU_ARCH__` / `__DAV_*` / `__CCE_AICORE__`）按 `arch_dir` 表注入，不在 yaml 里冻一份。prepare 的 **include-heal** 按缺头文件在 CANN/ops 树补 runtime `-I`（并把 `lib/matrix/matmul/` 映射到现存的 `lib/matmul/`），写入 `uo/summary/build_context_extras.yaml`；extract 经 `apply_saved_extras` 合并进 clang `-I`。脚本仍找不到时才进入 `heal`：LLM 只写 staging，`heal_promote` 校验后追加 extras（`source: heal_promote`）。不要手改 extras 或共享 `spec/build_context.yaml`。prepare 还会生成 kernel tiling stub（packed POD + `GET_TILING_DATA*`）并 force-include，使未手写专用 tiling 头的算子 TU 也能看见类型。 |
 | 仓内 `compat/`                        | 少量 shim，免去拖入整套工程构建系统。prelude **不** stub `RegTensor`/`VecReg`（与 CANN 撞车）；Host 另 force-include `host_prelude.h`（`using std::string`），kernel 不加。 |
 
 

@@ -96,7 +96,7 @@ OPENCODE_COMMANDS=(
   tg-init tg-plan tg-solve
 )
 CURRENT_AGENTS=(
-  ascendc-pilot uo-query uo-gap-investigator ce-reviewer tg-analyst
+  ascendc-pilot uo-query uo-heal-analyst uo-gap-investigator ce-reviewer tg-analyst
   ce-applier ce-analyst
 )
 LEGACY_SKILLS=(uo-code-review understand-operator uo-diff _policies ce-intent ce-impact ce-verify ce-handoff)

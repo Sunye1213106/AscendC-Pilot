@@ -6,10 +6,11 @@ CANN / family headers from directories that yaml never listed. Prepare used to
 fail as ``clang_probe_unclean`` / ``SCOPE_VALIDATE_BLOCKED``; this module finds
 the header in the CANN tree (extracted ``cann-*`` or official install) or ops
 repo, adds the matching include directory, and retries. Per-operator extras are
-persisted so extract uses the same flags. The shared yaml is not rewritten
-unless include-heal cannot see the file at all — then the agent updates extras
-or the yaml include list against the real tree. Official CANN packages are
-complete; do not treat a hardcoded relative path as a missing vendor file.
+persisted so extract uses the same flags. The shared yaml is never rewritten.
+When the script still cannot resolve a header, a staged LLM Action writes
+``staging.yaml``; deterministic ``heal_promote`` appends validated ``-I`` dirs
+to extras (``source: heal_promote``). Official CANN packages are complete; do
+not treat a hardcoded relative path as a missing vendor file.
 
 Disable with ``UO_INCLUDE_HEAL=0``. Round cap: ``UO_INCLUDE_HEAL_ROUNDS`` (8).
 """
@@ -342,12 +343,32 @@ def extras_run_path(op_dir: str | Path, arch_dir: str | None, run_id: str) -> Pa
     )
 
 
+SOURCE_SCRIPT = "uo_init.include_heal"
+SOURCE_HEAL_PROMOTE = "heal_promote"
+SOURCE_MIXED = "mixed"
+
+
 def _posix(path: str | Path) -> str:
     return str(path).replace("\\", "/").rstrip("/")
 
 
 def _norm_key(path: str | Path) -> str:
     return _posix(path).lower()
+
+
+def _unique_dirs(items: Iterable[Any]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in items or []:
+        p = _posix(raw)
+        if not p:
+            continue
+        key = p.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
 
 
 def _dump_yaml(path: Path, payload: dict[str, Any]) -> None:
@@ -358,14 +379,78 @@ def _dump_yaml(path: Path, payload: dict[str, Any]) -> None:
     )
 
 
-def clear_saved_extras(op_dir: str | Path, arch_dir: str | None, *, run_id: str | None = None) -> None:
-    for path in (extras_summary_path(op_dir, arch_dir),):
-        if path.is_file():
-            path.unlink()
+def load_extras_payload(op_dir: str | Path, arch_dir: str | None) -> dict[str, Any]:
+    path = extras_summary_path(op_dir, arch_dir)
+    if not path.is_file():
+        return {}
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _str_list(data: dict[str, Any], *keys: str) -> list[str]:
+    for key in keys:
+        raw = data.get(key)
+        if isinstance(raw, list) and raw:
+            return _unique_dirs(raw)
+    return []
+
+
+def promoted_include_dirs(data: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    payload = data if isinstance(data, dict) else {}
+    host = _str_list(payload, "promoted_host", "promoted_host_include_dirs")
+    kernel = _str_list(payload, "promoted_kernel", "promoted_kernel_include_dirs")
+    if not host and not kernel and str(payload.get("source") or "") == SOURCE_HEAL_PROMOTE:
+        host = _str_list(payload, "host")
+        kernel = _str_list(payload, "kernel")
+    return host, kernel
+
+
+def _write_extras_payload(
+    op_dir: str | Path,
+    arch_dir: str | None,
+    payload: dict[str, Any],
+    *,
+    run_id: str | None = None,
+) -> Path:
+    summary = extras_summary_path(op_dir, arch_dir)
+    _dump_yaml(summary, payload)
     if run_id:
-        run_p = extras_run_path(op_dir, arch_dir, run_id)
-        if run_p.is_file():
-            run_p.unlink()
+        _dump_yaml(extras_run_path(op_dir, arch_dir, run_id), payload)
+    return summary
+
+
+def _unlink_if_file(path: Path) -> None:
+    if path.is_file():
+        path.unlink()
+
+
+def clear_saved_extras(op_dir: str | Path, arch_dir: str | None, *, run_id: str | None = None) -> None:
+    """Drop script-healed extras. Keep ``heal_promote`` ``-I`` dirs across prepare reruns."""
+    payload = load_extras_payload(op_dir, arch_dir)
+    host, kernel = promoted_include_dirs(payload)
+    fi_host = _str_list(payload, "promoted_host_force_include")
+    fi_kernel = _str_list(payload, "promoted_kernel_force_include")
+    if not host and not kernel and not fi_host and not fi_kernel:
+        _unlink_if_file(extras_summary_path(op_dir, arch_dir))
+        if run_id:
+            _unlink_if_file(extras_run_path(op_dir, arch_dir, run_id))
+        return
+    kept = {
+        "version": 2,
+        "source": SOURCE_HEAL_PROMOTE,
+        "host": list(host),
+        "kernel": list(kernel),
+        "promoted_host": list(host),
+        "promoted_kernel": list(kernel),
+        "host_force_include": list(fi_host),
+        "kernel_force_include": list(fi_kernel),
+        "promoted_host_force_include": list(fi_host),
+        "promoted_kernel_force_include": list(fi_kernel),
+    }
+    _write_extras_payload(op_dir, arch_dir, kept, run_id=run_id)
 
 
 def save_extras(
@@ -373,26 +458,68 @@ def save_extras(
     report: HealReport,
     *,
     run_id: str | None = None,
+    source: str = SOURCE_SCRIPT,
 ) -> Path | None:
     """Persist extra -I so extract_host reloads the same BuildContext."""
     op_dir = getattr(ctx, "op_dir", "") or ""
     arch_dir = getattr(ctx, "arch_dir", "") or ""
     if not op_dir or not arch_dir:
         return None
+    existing = load_extras_payload(op_dir, arch_dir)
+    p_host, p_kernel = promoted_include_dirs(existing)
+    p_fi_host = _str_list(existing, "promoted_host_force_include")
+    p_fi_kernel = _str_list(existing, "promoted_kernel_force_include")
+    extra_h = _unique_dirs(getattr(ctx, "extra_host_includes", None) or [])
+    extra_k = _unique_dirs(getattr(ctx, "extra_kernel_includes", None) or [])
+    extra_fi_h = _unique_dirs(getattr(ctx, "extra_host_force_includes", None) or [])
+    extra_fi_k = _unique_dirs(getattr(ctx, "extra_kernel_force_includes", None) or [])
+    src = str(source or SOURCE_SCRIPT).strip() or SOURCE_SCRIPT
+    if src == SOURCE_HEAL_PROMOTE:
+        p_host = _unique_dirs([*p_host, *extra_h])
+        p_kernel = _unique_dirs([*p_kernel, *extra_k])
+        p_fi_host = _unique_dirs([*p_fi_host, *extra_fi_h])
+        p_fi_kernel = _unique_dirs([*p_fi_kernel, *extra_fi_k])
+        extra_h = _unique_dirs([*p_host, *extra_h])
+        extra_k = _unique_dirs([*p_kernel, *extra_k])
+        extra_fi_h = _unique_dirs([*p_fi_host, *extra_fi_h])
+        extra_fi_k = _unique_dirs([*p_fi_kernel, *extra_fi_k])
+    else:
+        extra_h = _unique_dirs([*p_host, *extra_h])
+        extra_k = _unique_dirs([*p_kernel, *extra_k])
+        extra_fi_h = _unique_dirs([*p_fi_host, *extra_fi_h])
+        extra_fi_k = _unique_dirs([*p_fi_kernel, *extra_fi_k])
+        for item in p_host:
+            ctx.add_include(item, side="host")
+        for item in p_kernel:
+            ctx.add_include(item, side="kernel")
+        add_fi = getattr(ctx, "add_force_include", None)
+        if callable(add_fi):
+            for item in p_fi_host:
+                add_fi(item, side="host")
+            for item in p_fi_kernel:
+                add_fi(item, side="kernel")
+    out_source = src
+    if p_host or p_kernel:
+        if src == SOURCE_HEAL_PROMOTE:
+            out_source = SOURCE_HEAL_PROMOTE
+        elif src == SOURCE_SCRIPT:
+            out_source = SOURCE_MIXED if (p_host or p_kernel) else SOURCE_SCRIPT
+        else:
+            out_source = SOURCE_MIXED
     payload = {
-        "version": 1,
-        "source": "uo_init.include_heal",
-        "host": list(getattr(ctx, "extra_host_includes", None) or []),
-        "kernel": list(getattr(ctx, "extra_kernel_includes", None) or []),
-        "host_force_include": list(getattr(ctx, "extra_host_force_includes", None) or []),
-        "kernel_force_include": list(getattr(ctx, "extra_kernel_force_includes", None) or []),
+        "version": 2,
+        "source": out_source,
+        "host": extra_h,
+        "kernel": extra_k,
+        "promoted_host": p_host,
+        "promoted_kernel": p_kernel,
+        "host_force_include": extra_fi_h,
+        "kernel_force_include": extra_fi_k,
+        "promoted_host_force_include": p_fi_host,
+        "promoted_kernel_force_include": p_fi_kernel,
         **report.to_dict(),
     }
-    summary = extras_summary_path(op_dir, arch_dir)
-    _dump_yaml(summary, payload)
-    if run_id:
-        _dump_yaml(extras_run_path(op_dir, arch_dir, run_id), payload)
-    return summary
+    return _write_extras_payload(op_dir, arch_dir, payload, run_id=run_id)
 
 
 def apply_saved_extras(ctx: Any) -> list[str]:
@@ -401,24 +528,176 @@ def apply_saved_extras(ctx: Any) -> list[str]:
     arch_dir = getattr(ctx, "arch_dir", "") or ""
     if not op_dir or not arch_dir:
         return []
-    path = extras_summary_path(op_dir, arch_dir)
-    if not path.is_file():
-        return []
-    try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except (OSError, yaml.YAMLError):
+    data = load_extras_payload(op_dir, arch_dir)
+    if not data:
         return []
     applied: list[str] = []
-    for side, key in (("host", "host"), ("kernel", "kernel")):
-        for item in data.get(key) or []:
-            if ctx.add_include(str(item), side=side):
-                applied.append(str(item))
+    host_dirs = _unique_dirs(
+        [*_str_list(data, "host"), *_str_list(data, "promoted_host", "promoted_host_include_dirs")]
+    )
+    kernel_dirs = _unique_dirs(
+        [
+            *_str_list(data, "kernel"),
+            *_str_list(data, "promoted_kernel", "promoted_kernel_include_dirs"),
+        ]
+    )
+    for item in host_dirs:
+        if ctx.add_include(str(item), side="host"):
+            applied.append(str(item))
+    for item in kernel_dirs:
+        if ctx.add_include(str(item), side="kernel"):
+            applied.append(str(item))
     for side, key in (("host", "host_force_include"), ("kernel", "kernel_force_include")):
-        for item in data.get(key) or []:
+        extra_keys = (
+            ("promoted_host_force_include",)
+            if side == "host"
+            else ("promoted_kernel_force_include",)
+        )
+        for item in _unique_dirs([*(data.get(key) or []), *_str_list(data, *extra_keys)]):
             add_fi = getattr(ctx, "add_force_include", None)
             if callable(add_fi) and add_fi(str(item), side=side):
                 applied.append(str(item))
     return applied
+
+
+def _path_under(child: Path, parent: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def allowed_include_dir(
+    path: str | Path,
+    *,
+    cann_root: str = "",
+    ops_root: str | None = None,
+    op_dir: str | None = None,
+) -> bool:
+    """True when ``path`` exists and sits under cann_root / ops_root / op_dir."""
+    raw = Path(str(path or "").strip())
+    if not str(raw):
+        return False
+    try:
+        resolved = raw.resolve()
+    except OSError:
+        return False
+    if not resolved.is_dir():
+        return False
+    if is_forbidden_include_dir(str(resolved)):
+        return False
+    roots: list[Path] = []
+    for item in (cann_root, ops_root, op_dir):
+        text = str(item or "").strip()
+        if text:
+            roots.append(Path(text))
+    return any(_path_under(resolved, root) for root in roots)
+
+
+def _staging_dirs(staging: dict[str, Any], *keys: str) -> list[str]:
+    out: list[str] = []
+    for key in keys:
+        raw = staging.get(key)
+        if isinstance(raw, list):
+            out.extend(str(x) for x in raw)
+        elif isinstance(raw, str) and raw.strip():
+            out.append(raw)
+    for row in staging.get("evidence") or []:
+        if not isinstance(row, dict):
+            continue
+        d = str(row.get("dir") or row.get("include_dir") or "").strip()
+        if d:
+            out.append(d)
+    return _unique_dirs(out)
+
+
+def promote_include_dirs(
+    ctx: Any,
+    staging: dict[str, Any] | None,
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Validate staged ``-I`` dirs and append them as ``heal_promote`` extras.
+
+    Does not rewrite shared ``spec/build_context.yaml``.
+    """
+    data = staging if isinstance(staging, dict) else {}
+    host_dirs = _staging_dirs(data, "host", "host_include_dirs")
+    kernel_dirs = _staging_dirs(data, "kernel", "kernel_include_dirs")
+    # evidence rows may name a side
+    evidence_host: list[str] = []
+    evidence_kernel: list[str] = []
+    for row in data.get("evidence") or []:
+        if not isinstance(row, dict):
+            continue
+        d = str(row.get("dir") or row.get("include_dir") or "").strip()
+        if not d:
+            continue
+        side = str(row.get("side") or "").strip().lower()
+        if side == "kernel":
+            evidence_kernel.append(d)
+        elif side == "host":
+            evidence_host.append(d)
+    host_dirs = _unique_dirs([*host_dirs, *evidence_host])
+    kernel_dirs = _unique_dirs([*kernel_dirs, *evidence_kernel])
+    if not host_dirs and not kernel_dirs:
+        return {
+            "ok": False,
+            "error": "INCLUDE_HEAL_STAGING_EMPTY",
+            "reason_code": "INCLUDE_HEAL_STAGING_EMPTY",
+            "message_zh": "staging.yaml 没有可 promote 的 host/kernel -I 目录",
+        }
+    cann = str(getattr(ctx, "cann_root", "") or "")
+    ops = str(getattr(ctx, "ops_root", "") or "") or None
+    op_dir = str(getattr(ctx, "op_dir", "") or "") or None
+    rejected: list[dict[str, str]] = []
+    accepted_host: list[str] = []
+    accepted_kernel: list[str] = []
+
+    def _accept(raw: str, side: str) -> None:
+        p = Path(str(raw).strip())
+        if not allowed_include_dir(p, cann_root=cann, ops_root=ops, op_dir=op_dir):
+            rejected.append({"dir": _posix(raw), "side": side, "reason": "outside_cann_or_ops_or_missing"})
+            return
+        posix = _posix(p.resolve())
+        if ctx.add_include(posix, side=side):
+            bucket = accepted_kernel if side == "kernel" else accepted_host
+            if posix not in bucket:
+                bucket.append(posix)
+        else:
+            bucket = accepted_kernel if side == "kernel" else accepted_host
+            if posix not in bucket:
+                bucket.append(posix)
+
+    for item in host_dirs:
+        _accept(item, "host")
+    for item in kernel_dirs:
+        _accept(item, "kernel")
+    if rejected and not accepted_host and not accepted_kernel:
+        return {
+            "ok": False,
+            "error": "INCLUDE_HEAL_PROMOTE_REJECTED",
+            "reason_code": "INCLUDE_HEAL_PROMOTE_REJECTED",
+            "rejected": rejected,
+            "message_zh": "staging 里的 -I 不在 cann_root / ops 树内，或目录不存在；未写入 extras",
+        }
+    extras = save_extras(
+        ctx,
+        HealReport(enabled=True, rounds=1),
+        run_id=run_id,
+        source=SOURCE_HEAL_PROMOTE,
+    )
+    return {
+        "ok": True,
+        "engine": "heal_promote",
+        "reason_code": "INCLUDE_HEAL_PROMOTED",
+        "accepted_host": accepted_host,
+        "accepted_kernel": accepted_kernel,
+        "rejected": rejected,
+        "extras_path": extras.as_posix() if extras else None,
+        "message_zh": "已把校验通过的 -I 写入 build_context_extras.yaml；下一轮 prepare/extract 会带上",
+    }
 
 
 def parse_missing_includes(text: str) -> list[str]:
@@ -1131,6 +1410,9 @@ def main(argv: list[str] | None = None) -> int:
     hosts = [p for p in spec.host_targets if p.exists()]
     kernel = spec.kernel_entry if spec.kernel_entry and spec.kernel_entry.exists() else None
     clear_saved_extras(spec.op_dir, spec.arch_dir, run_id=args.run_id)
+    from uo_init.include_heal import apply_saved_extras as _apply_extras
+
+    _apply_extras(ctx)
     if args.probe:
         from uo_init import scope_scan as sscan
 

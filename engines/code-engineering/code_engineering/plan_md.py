@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-_TODO_OPEN = re.compile(r"^(\s*[-*]\s+\[ )\](.*)$")
+_TODO_OPEN = re.compile(r"^(\s*[-*]\s+\[ \])(.*)$")
+_TODO_DONE = re.compile(r"^(\s*[-*]\s+\[[xX]\])(.*)$")
 _TODO_ANY = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+")
 _PATH_TICK = re.compile(r"`([^`]+)`")
 _SOURCE_HINT = re.compile(
@@ -32,14 +33,35 @@ def list_plan_files(project_root: Path | str, architecture: str) -> list[Path]:
 
 
 def unfinished_todos(plan_path: Path | str) -> list[str]:
+    return [row["text"] for row in all_todos(plan_path) if not row.get("done")]
+
+
+def all_todos(plan_path: Path | str) -> list[dict[str, Any]]:
+    """Parse checklist rows: ``{text, done, raw}``."""
     path = Path(plan_path)
     if not path.is_file():
         return []
-    rows: list[str] = []
+    rows: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        m = _TODO_OPEN.match(line)
-        if m:
-            rows.append(m.group(2).strip())
+        m_done = _TODO_DONE.match(line)
+        if m_done:
+            rows.append(
+                {
+                    "text": m_done.group(2).strip(),
+                    "done": True,
+                    "raw": line,
+                }
+            )
+            continue
+        m_open = _TODO_OPEN.match(line)
+        if m_open:
+            rows.append(
+                {
+                    "text": m_open.group(2).strip(),
+                    "done": False,
+                    "raw": line,
+                }
+            )
     return rows
 
 
@@ -85,6 +107,34 @@ def resolve_active_plan(
     if files:
         return max(files, key=lambda p: p.stat().st_mtime)
     return None
+
+
+def validate_plan_revision(
+    *,
+    before: list[dict[str, Any]],
+    after_path: Path | str,
+) -> dict[str, Any]:
+    """Completed todos must still appear; new open todos are allowed."""
+    after = all_todos(after_path)
+    after_texts = {str(r.get("text") or "").strip() for r in after if r.get("text")}
+    dropped: list[str] = []
+    for row in before:
+        text = str(row.get("text") or "").strip()
+        if row.get("done") and text and text not in after_texts:
+            dropped.append(text)
+    ok = not dropped
+    return {
+        "ok": ok,
+        "dropped_completed": dropped,
+        "before_count": len(before),
+        "after_count": len(after),
+        "reason_code": "" if ok else "REVISE_DROPPED_COMPLETED_TODO",
+        "message_zh": (
+            "计划修订已保留已完成 todo。"
+            if ok
+            else f"修订丢掉了已完成 todo：{dropped[:5]}"
+        ),
+    }
 
 
 def test_section(plan_path: Path | str) -> str:

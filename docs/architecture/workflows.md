@@ -90,13 +90,15 @@
 
 ### `/uo-init` — 建立 CodeMap
 
-全部 `[D]`。闭合标准：verify pass，写出 `<op>.<arch>.uo`。
+全部 `[D]`，脚本能补头时零 LLM。闭合标准：verify pass，写出 `<op>.<arch>.uo`。
 
 ```text
-prepare [D]  准备范围 / BuildVariant / Clang 探针
+prepare [D]  准备范围 / BuildVariant / Clang 探针 / 脚本 include-heal
+    │
+    ├── 脚本仍缺头 → heal：propose_include_heal [S] → heal_promote [D] → 重跑 prepare
     │
     ▼
-extract [D]  Clang 抽 CompilerFacts
+extract [D]  Clang 抽 CompilerFacts（`apply_saved_extras` 把 extras 变成 `-I`）
     │
     ▼
 analyze [D]  确定性 Pass 串跨层边；证不全记 unresolved
@@ -111,7 +113,7 @@ verify  [D]  结构合法性 → uo/checks/integrity.yaml + quality.yaml
 done        Primary 读 quality.yaml，向用户报告节点/关系/未闭合及原因
 ```
 
-Rework（失败才走，不画进主链）：extract→prepare；analyze→extract；commit→analyze；verify→analyze / commit / prepare。
+Rework（失败才走，不画进主链）：prepare→heal（`INCLUDE_HEAL_UNRESOLVED`）；heal→prepare；extract→prepare；analyze→extract；commit→analyze；verify→analyze / commit / prepare。不要手改 extras 或共享 `spec/build_context.yaml`。
 
 ### `/uo-update` — 源码变了刷新
 

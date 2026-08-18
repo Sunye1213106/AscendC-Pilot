@@ -25,6 +25,18 @@ OCCUPANCY_SHARED = "shared"
 OCCUPANCY_VALUES = frozenset({OCCUPANCY_EXCLUSIVE, OCCUPANCY_SHARED})
 _RUNNING_LIKE = frozenset({"running", "rework_required", "human_required"})
 
+LIVENESS_ACTIVE = "active"
+LIVENESS_WAITING_USER = "waiting_user"
+LIVENESS_INTERRUPTED = "interrupted"
+LIVENESS_STALE = "stale"
+LIVENESS_PAUSED = "paused"
+LIVENESS_TERMINAL = "terminal"
+_PERSISTED_LIFECYCLES = frozenset(
+    {LIVENESS_INTERRUPTED, LIVENESS_PAUSED, LIVENESS_STALE}
+)
+# Heartbeat every ~8s during engines; 45s with no touch ⇒ zombie.
+LOCK_STALE_TTL_S = 45.0
+
 PRODUCT_LOCKS_SCHEMA = "pilot-product-locks/v1"
 SESSION_BINDINGS_SCHEMA = "pilot-session-bindings/v1"
 
@@ -36,6 +48,40 @@ _SESSION_KEY_RE = re.compile(r"[^\w.-]+")
 
 def _now() -> str:
     return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_ts(raw: str) -> datetime | None:
+    s = str(raw or "").strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return datetime.fromisoformat(s)
+    except ValueError:
+        return None
+
+
+def lock_age_seconds(lock: dict[str, Any] | None, *, now: datetime | None = None) -> float | None:
+    if not isinstance(lock, dict):
+        return None
+    ts = _parse_ts(str(lock.get("updated_at") or ""))
+    if ts is None:
+        return None
+    current = now or datetime.now(tz=timezone.utc)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return max(0.0, (current - ts).total_seconds())
+
+
+def format_age_zh(age_s: float | None) -> str:
+    if age_s is None:
+        return "未知"
+    if age_s < 60:
+        return f"{int(age_s)} 秒前"
+    if age_s < 3600:
+        return f"{int(age_s // 60)} 分钟前"
+    return f"{int(age_s // 3600)} 小时前"
 
 
 def _load(path: Path) -> dict[str, Any]:
@@ -181,6 +227,48 @@ def _session_key(session_id: str) -> str:
     return _SESSION_KEY_RE.sub("_", raw)[:120]
 
 
+def classify_lock_liveness(
+    project_root: Path | str,
+    lock: dict[str, Any] | None,
+    *,
+    ttl_s: float = LOCK_STALE_TTL_S,
+) -> str:
+    """Product liveness on top of workflow status. Does not mutate the lock."""
+    if not isinstance(lock, dict) or not str(lock.get("run_id") or "").strip():
+        return LIVENESS_TERMINAL
+    status = str(lock.get("status") or "").strip()
+    persisted = str(lock.get("lifecycle") or "").strip().lower()
+    if persisted in _PERSISTED_LIFECYCLES:
+        return persisted
+    if status and status not in _RUNNING_LIKE:
+        return LIVENESS_TERMINAL
+    try:
+        from ascendc_pilot.human_interaction import load_pending, pending_is_open
+
+        pending = load_pending(project_root)
+        if pending_is_open(pending):
+            prid = str(pending.get("run_id") or "").strip()
+            if not prid or prid == str(lock.get("run_id") or ""):
+                return LIVENESS_WAITING_USER
+    except Exception:  # noqa: BLE001
+        pass
+    age = lock_age_seconds(lock)
+    if status == "running" and age is not None and age > float(ttl_s):
+        return LIVENESS_STALE
+    return LIVENESS_ACTIVE
+
+
+def _annotate_lock(
+    project_root: Path | str, lock: dict[str, Any]
+) -> dict[str, Any]:
+    out = dict(lock)
+    age = lock_age_seconds(out)
+    out["liveness"] = classify_lock_liveness(project_root, out)
+    out["age_s"] = age
+    out["age_zh"] = format_age_zh(age)
+    return out
+
+
 def live_exclusive_lock(
     project_root: Path | str,
     occupancy_group: str,
@@ -197,7 +285,41 @@ def live_exclusive_lock(
         return None
     if not str(lock.get("run_id") or "").strip():
         return None
-    return dict(lock)
+    return _annotate_lock(project_root, lock)
+
+
+def _conflict_message_zh(
+    *,
+    other: str,
+    workflow_id: str,
+    liveness: str,
+    lock: dict[str, Any],
+) -> str:
+    age_zh = str(lock.get("age_zh") or format_age_zh(lock_age_seconds(lock)))
+    session = str(lock.get("session_id") or "").strip()
+    session_bit = f"会话 {session[:12]}，" if session else ""
+    phase = str(lock.get("phase") or "").strip()
+    phase_bit = f"阶段 {phase}，" if phase else ""
+    if liveness == LIVENESS_ACTIVE:
+        return (
+            f"{other} 正在写相交资源（{session_bit}{phase_bit}最近活动 {age_zh}），"
+            f"暂时不能并行启动 {workflow_id}。"
+            f"推荐：等 {other} 结束，或换一个不冲突的问题。"
+        )
+    if liveness == LIVENESS_WAITING_USER:
+        return (
+            f"另一个会话的 {other} 正在等你确认（{session_bit}最近 {age_zh}）。"
+            "推荐：去完成那个确认，或暂停该任务后再开始当前任务。"
+        )
+    label = {
+        LIVENESS_STALE: "已失去心跳",
+        LIVENESS_INTERRUPTED: "已被中断",
+        LIVENESS_PAUSED: "已暂停",
+    }.get(liveness, "未在执行")
+    return (
+        f"上一次 {other} {label}（{phase_bit}最近完整活动 {age_zh}），并没有人在跑。"
+        "推荐继续上次；也可以结束上次并开始当前任务。不要干等。"
+    )
 
 
 def live_resource_conflict(
@@ -230,18 +352,159 @@ def live_resource_conflict(
             continue
         if not resource_sets_conflict(workflow_id, other):
             continue
+        annotated = _annotate_lock(project_root, lock)
+        liveness = str(annotated.get("liveness") or LIVENESS_ACTIVE)
+        recoverable = liveness not in {LIVENESS_ACTIVE, LIVENESS_WAITING_USER}
         return {
             "error": "resource_lock_conflict",
             "active_workflow_id": other,
             "requested_workflow_id": workflow_id,
             "occupancy_group": group,
             "active_run_id": other_run,
-            "message_zh": (
-                f"{other} 正在写相交资源，暂时不能并行启动 {workflow_id}。"
-                f"推荐：等 {other} 结束，或换一个不冲突的问题。"
+            "session_id": str(annotated.get("session_id") or ""),
+            "liveness": liveness,
+            "recoverable": recoverable,
+            "age_s": annotated.get("age_s"),
+            "age_zh": annotated.get("age_zh"),
+            "message_zh": _conflict_message_zh(
+                other=other,
+                workflow_id=workflow_id,
+                liveness=liveness,
+                lock=annotated,
             ),
         }
     return None
+
+
+def _patch_lock(
+    project_root: Path | str,
+    *,
+    occupancy_group: str = "",
+    run_id: str = "",
+    fields: dict[str, Any],
+) -> dict[str, Any] | None:
+    group = str(occupancy_group or "").strip()
+    rid = str(run_id or "").strip()
+    doc = read_product_locks(project_root)
+    locks = dict(doc.get("locks") or {})
+    target_group = group
+    if not target_group:
+        for g, lock in locks.items():
+            if isinstance(lock, dict) and (not rid or str(lock.get("run_id") or "") == rid):
+                target_group = g
+                break
+    current = locks.get(target_group) if target_group else None
+    if not isinstance(current, dict):
+        return None
+    if rid and str(current.get("run_id") or "") not in {"", rid}:
+        return None
+    updated = dict(current)
+    updated.update(fields)
+    updated["updated_at"] = _now()
+    locks[target_group] = updated
+    doc["locks"] = locks
+    write_product_locks(project_root, doc)
+    return updated
+
+
+def touch_exclusive_lock(
+    project_root: Path | str,
+    *,
+    occupancy_group: str = "",
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    """Heartbeat: refresh updated_at. Clears computed stale if an actor is alive."""
+    patched = _patch_lock(
+        project_root,
+        occupancy_group=occupancy_group,
+        run_id=run_id,
+        fields={},
+    )
+    if not patched:
+        return None
+    if str(patched.get("lifecycle") or "") == LIVENESS_STALE:
+        return _patch_lock(
+            project_root,
+            occupancy_group=occupancy_group,
+            run_id=run_id,
+            fields={"lifecycle": LIVENESS_ACTIVE},
+        )
+    return patched
+
+
+def set_lock_lifecycle(
+    project_root: Path | str,
+    lifecycle: str,
+    *,
+    occupancy_group: str = "",
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    life = str(lifecycle or "").strip().lower()
+    if life not in {
+        LIVENESS_ACTIVE,
+        LIVENESS_WAITING_USER,
+        LIVENESS_INTERRUPTED,
+        LIVENESS_STALE,
+        LIVENESS_PAUSED,
+        LIVENESS_TERMINAL,
+    }:
+        raise ValueError(f"unknown lock lifecycle {lifecycle!r}")
+    fields: dict[str, Any] = {"lifecycle": life}
+    if life == LIVENESS_TERMINAL:
+        fields["status"] = str(
+            (read_product_locks(project_root).get("locks") or {})
+            .get(occupancy_group, {})
+            .get("status")
+            or "failed"
+        )
+    return _patch_lock(
+        project_root,
+        occupancy_group=occupancy_group,
+        run_id=run_id,
+        fields=fields,
+    )
+
+
+def mark_run_lifecycle(
+    project_root: Path | str,
+    lifecycle: str,
+    *,
+    run_id: str = "",
+    occupancy_group: str = "",
+) -> dict[str, Any]:
+    """Host abort / pause / stale: persist lock lifecycle without wiping products."""
+    from ascendc_pilot.state import load_state
+
+    root = Path(project_root).expanduser().resolve()
+    st = load_state(root) or {}
+    rid = str(run_id or st.get("run_id") or "").strip()
+    group = str(occupancy_group or st.get("occupancy_group") or "").strip()
+    if not group:
+        try:
+            group = occupancy_group_of(str(st.get("workflow_id") or ""))
+        except Exception:  # noqa: BLE001
+            group = ""
+    patched = set_lock_lifecycle(
+        root, lifecycle, occupancy_group=group, run_id=rid
+    )
+    if st and lifecycle in {LIVENESS_INTERRUPTED, LIVENESS_PAUSED}:
+        try:
+            from ascendc_pilot.state import save_state
+
+            st["lock_lifecycle"] = lifecycle
+            save_state(root, st)
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "ok": patched is not None,
+        "lifecycle": lifecycle,
+        "run_id": rid,
+        "occupancy_group": group,
+        "lock": patched or {},
+        "message_zh": (
+            f"已将当前任务标记为{lifecycle}。不会自动结束；可继续上次或开始当前任务。"
+        ),
+    }
 
 
 def acquire_exclusive_lock(
@@ -270,6 +533,7 @@ def acquire_exclusive_lock(
         "status": str(status or "running").strip(),
         "state_path": rel,
         "pinned_digest": str(pinned_digest or "").strip(),
+        "lifecycle": LIVENESS_ACTIVE,
         "updated_at": _now(),
     }
     doc["locks"] = locks
@@ -834,18 +1098,53 @@ def occupancy_status_payload(project_root: Path | str) -> dict[str, Any]:
     locks = read_product_locks(project_root)
     binding = get_session_binding(project_root)
     families = {}
+    primary_liveness = ""
     for group, lock in (locks.get("locks") or {}).items():
         if isinstance(lock, dict):
+            annotated = _annotate_lock(project_root, lock)
             families[str(group)] = {
-                "workflow_id": lock.get("workflow_id"),
-                "run_id": lock.get("run_id"),
-                "status": lock.get("status"),
-                "architecture": lock.get("architecture"),
-                "uo_stale": bool(lock.get("uo_stale")),
+                "workflow_id": annotated.get("workflow_id"),
+                "run_id": annotated.get("run_id"),
+                "status": annotated.get("status"),
+                "architecture": annotated.get("architecture"),
+                "session_id": annotated.get("session_id"),
+                "lifecycle": annotated.get("lifecycle") or annotated.get("liveness"),
+                "liveness": annotated.get("liveness"),
+                "age_s": annotated.get("age_s"),
+                "age_zh": annotated.get("age_zh"),
+                "uo_stale": bool(annotated.get("uo_stale")),
             }
+            if not primary_liveness:
+                primary_liveness = str(annotated.get("liveness") or "")
     handle_stale = binding_is_stale(project_root) if binding else {"stale": False}
+    arch = str((binding or {}).get("architecture") or "").strip()
+    if not arch:
+        for row in families.values():
+            arch = str(row.get("architecture") or "").strip()
+            if arch:
+                break
+    op_name = ""
+    try:
+        from ascendc_pilot.state import load_state
+
+        st = load_state(project_root) or {}
+        op_name = str(st.get("op_name") or "").strip()
+        if not primary_liveness:
+            primary_liveness = str(st.get("lock_lifecycle") or "")
+    except Exception:  # noqa: BLE001
+        st = {}
+    if not op_name:
+        op_name = Path(project_root).expanduser().resolve().name
+    uo_path = str((binding or {}).get("uo_path") or "").strip()
+    if handle_stale.get("stale"):
+        codemap = "stale"
+    elif uo_path:
+        codemap = "ready"
+    else:
+        codemap = "missing"
     return {
         "product_locks": families,
+        "lock_liveness": primary_liveness,
         "shared_runs": [
             {
                 "workflow_id": row.get("workflow_id"),
@@ -865,6 +1164,12 @@ def occupancy_status_payload(project_root: Path | str) -> dict[str, Any]:
         }
         if binding
         else {},
+        "product_context": {
+            "operator": op_name,
+            "architecture": arch,
+            "codemap": codemap,
+            "source": "pinned" if arch else "unpinned",
+        },
         "uo_stale": bool(handle_stale.get("stale")),
         "reason_code": str(handle_stale.get("reason_code") or ""),
     }
