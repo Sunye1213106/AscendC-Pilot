@@ -179,12 +179,12 @@ def test_user_goal_match_and_advance(tmp_path: Path) -> None:
 
     adv = mark_workflow_passed(tmp_path, "tg-init")
     assert adv is not None
-    assert adv["next_workflow_id"] == "tg-plan"
+    assert not str(adv.get("next_workflow_id") or "").strip()
     assert contains_banned_jargon(str(adv.get("message_zh") or "")) == []
 
     adv2 = mark_workflow_passed(tmp_path, "tg-plan")
     assert adv2 is not None
-    assert adv2["next_workflow_id"] == "tg-solve"
+    assert not str(adv2.get("next_workflow_id") or "").strip()
 
     adv3 = mark_workflow_passed(tmp_path, "tg-solve")
     assert adv3 is not None

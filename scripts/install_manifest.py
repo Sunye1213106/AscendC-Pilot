@@ -34,6 +34,7 @@ WORKFLOW_SKILLS: tuple[str, ...] = (
     "tg-init",
     "tg-plan",
     "tg-solve",
+    "workflow-orchestration",
 )
 COGNITIVE_SKILLS: tuple[str, ...] = (
     "operator-analysis",

@@ -24,15 +24,6 @@ write_scopes:
 - pilot:runs/**/actions/analyze_round/scratch/**
 - pilot:runs/**/actions/analyze_round/staging.md
 - pilot:runs/**/actions/analyze_round/staging.yaml
-- pilot:runs/**/actions/parse_intent/parts/**
-- pilot:runs/**/actions/parse_intent/scratch/**
-- pilot:runs/**/actions/parse_intent/staging.yaml
-- pilot:runs/**/actions/change_impact/parts/**
-- pilot:runs/**/actions/change_impact/scratch/**
-- pilot:runs/**/actions/change_impact/staging.yaml
-- pilot:runs/**/actions/derive_obligations/parts/**
-- pilot:runs/**/actions/derive_obligations/scratch/**
-- pilot:runs/**/actions/derive_obligations/staging.yaml
 read_scopes:
 - pilot:tg/**
 - pilot:uo/**
@@ -43,7 +34,6 @@ read_scopes:
 - source:test_script/**
 - method:skills/testcase-generation/**
 - method:skills/operator-analysis/**
-- pilot:control/**
 machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed

@@ -734,6 +734,7 @@ const PILOT_WORKFLOW_SKILLS = [
   "tg-init",
   "tg-plan",
   "tg-solve",
+  "workflow-orchestration",
   "operator",
 ] as const
 

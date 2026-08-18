@@ -38,6 +38,14 @@ def test_pick_arch_prefers_discovered_arch35(tmp_path: Path, gen):
     assert gen._pick_arch(op) == "arch35"
 
 
+def test_pick_arch_newest_wins_over_arch35(tmp_path: Path, gen):
+    op = tmp_path / "toy"
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
+    (op / "op_host" / "arch-920r1").mkdir(parents=True)
+    assert gen._pick_arch(op) == "arch-920r1"
+    assert gen._list_archs(op)[-1] == "arch-920r1"
+
+
 def test_list_archs_includes_hyphenated_920r1(tmp_path: Path, gen):
     op = tmp_path / "toy"
     (op / "op_kernel" / "arch22").mkdir(parents=True)

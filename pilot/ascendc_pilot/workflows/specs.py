@@ -233,7 +233,6 @@ WORKFLOW_RESOURCES: dict[str, dict[str, list[str]]] = {
     "ce-apply": {"read": ["uo_product", "ce_plan"], "write": ["operator_source"]},
     "handoff": {"read": ["uo_product", "ce_plan", "tg_plan", "tg_init"], "write": []},
     "goal-intake": {"read": [], "write": []},
-    "goal-impact": {"read": ["uo_product"], "write": []},
 }
 
 

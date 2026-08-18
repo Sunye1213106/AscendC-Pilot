@@ -34,7 +34,9 @@ def test_thin_primary_agent_description() -> None:
     assert meta.get("id") == "ascendc-pilot"
     assert meta.get("role") == "controller"
     assert meta.get("mode") == "primary"
-    assert meta.get("skill_ids") or meta.get("max_skill_ids")
+    skills = meta.get("skill_ids") or meta.get("max_skill_ids") or []
+    assert "workflow-orchestration" in skills
+    assert "operator-analysis" in skills
     assert "read_scopes" in meta
     assert "write_scopes" in meta
     assert meta.get("machine_constraints") or meta.get("forbidden")

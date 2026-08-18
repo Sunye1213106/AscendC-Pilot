@@ -63,6 +63,10 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
     "code-engineering",
 )
 
+# Control-plane skill: Primary-invocable map of slash I/O + pipelines.
+# Not a sixth cognitive skill. Never disable-model-invocation.
+CONTROL_PLANE_SKILL_IDS: tuple[str, ...] = ("workflow-orchestration",)
+
 # LLM child agents Primary may spawn via OpenCode Task. Deterministic engines
 # are not in this set. Plugin must not widen this ceiling to task: allow.
 OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
@@ -204,8 +208,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'Initialize TG: one init.yaml binding test scripts to CodeMap',
         "description": (
             "建立测试生成契约，只落一份 `tg/init.yaml`：列、映射、值域、golden、精度/性能怎么跑。"
-            "扫描测试脚本仓（含 xls/xlsx）。有仓但 mapping 空则失败。"
-            "无 `.uo` 时先 /uo-init。向用户说明「确认 init.yaml」与进入规划的后果。"
+            "测试脚本仓可选：有仓则扫描（含 xls/xlsx）并绑定列映射，mapping 空则失败；"
+            "无仓则用 /uo-query 读算子输入 API 设计控制面。无 `.uo` 时先 /uo-init。"
             "Pilot 管阶段；加载后用 `pilot_run`。"
         ),
     },
@@ -214,7 +218,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "description": (
             "规划测试义务，只落一份 `tg/plan.md`（散文 + YAML 义务表）。"
             "强制 `init.yaml`；意图有则融合。控制面是 CSV/XLS 列，不是 T=D。"
-            "指标只有 Host replay 与 derived 公式。缺列则 harness_intent，先改测试仓。"
+            "指标只有 Host replay 与 derived 公式。缺列则 test_harness_gap，先改测试仓。"
             "向用户说明批准后进入求解的后果。"
         ),
     },
@@ -222,7 +226,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'Construct cases, Host-replay, write worklog until Open is empty',
         "description": (
             "求解并生成用例：构造脚本可读的 cases 表，Host tiling 回放（无 NPU），"
-            "按 case 写 worklog 四段，直到 open 为空。harness_intent 未落地禁止开始。"
+            "按 case 写 worklog 四段，直到 open 为空。test_harness_gap 未落地禁止开始。"
             "TG 永不改算子仓。向用户报告求解进度。"
         ),
     },
@@ -477,10 +481,17 @@ def validate_domain_skills(repo: Path) -> list[str]:
     """Lint model-facing cognitive skills: frontmatter, line budget, no harness leakage."""
     errors: list[str] = []
     skills_root = repo / "skills"
-    for skill_id in COGNITIVE_SKILL_IDS:
+    errors.extend(_lint_skill_bundle(skills_root, COGNITIVE_SKILL_IDS, kind="cognitive"))
+    errors.extend(_lint_skill_bundle(skills_root, CONTROL_PLANE_SKILL_IDS, kind="control-plane"))
+    return errors
+
+
+def _lint_skill_bundle(skills_root: Path, skill_ids: tuple[str, ...], *, kind: str) -> list[str]:
+    errors: list[str] = []
+    for skill_id in skill_ids:
         skill_md = skills_root / skill_id / "SKILL.md"
         if not skill_md.is_file():
-            errors.append(f"missing cognitive skill: skills/{skill_id}/SKILL.md")
+            errors.append(f"missing {kind} skill: skills/{skill_id}/SKILL.md")
             continue
         text = skill_md.read_text(encoding="utf-8")
         try:
@@ -515,7 +526,7 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     lines = [
         f"# {wid}",
         "",
-        "Pilot workflow entry. Orchestration authority: `pilot/.../workflows/specs.py`.",
+        "Pilot workflow entry. Orchestration authority: `skills/workflow-orchestration/` (slash I/O + pipelines). Spec owns phase and lease.",
         "",
     ]
     if skill_id:
@@ -1275,7 +1286,7 @@ Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
     elif is_primary:
         runtime = """## Runtime Contract
 
-1. Workflows (`uo-init` / `uo-update` / `tg-*` / `ce-*` / `uo-investigate`): call Host tool `pilot_run(workflow, project, architecture)`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
+        1. Workflows: read `skills/workflow-orchestration/` then call Host tool `pilot_run(workflow=<one slash id>, project, architecture)`. Never `workflow=auto`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
 2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures` / `retry-after-environment-fix`): call plugin tool `pilot_cli` with `command` as argv after the binary. Never `--help`. Never `--mode`.
 3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture.
 4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`.
@@ -1465,6 +1476,20 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
             if host == "opencode"
             else f"{host}/skills/{skill_id}"
         )
+    for skill_id in CONTROL_PLANE_SKILL_IDS:
+        src = skills / skill_id
+        if not (src / "SKILL.md").is_file():
+            continue
+        dst = out_skills / skill_id
+        if dst.exists():
+            _rmtree(dst)
+        shutil.copytree(src, dst, ignore=shutil.ignore_patterns("README.md"))
+        skill_md = dst / "SKILL.md"
+        text = skill_md.read_text(encoding="utf-8")
+        meta, body = _require_skill_frontmatter(text, path=skill_md)
+        meta.pop("disable-model-invocation", None)
+        skill_md.write_text(_dump_frontmatter(meta) + "\n" + body.lstrip("\n"), encoding="utf-8")
+        compiled.append(f"{host}/skills/{skill_id}")
     shared_src = skills / "_shared"
     if shared_src.is_dir() and any(shared_src.glob("*.md")):
         # Legacy leftover: cognitive skills must be self-contained under references/.

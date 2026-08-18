@@ -11,6 +11,8 @@ from uo_init.source_layout import (
     KERNEL_ENTRY_NAME_RE,
     arch_number,
     entry_include_architecture,
+    include_root_owned_architecture,
+    is_foreign_arch_entry_tu,
     is_other_arch_path,
     path_owned_architecture,
     selected_host_files,
@@ -84,7 +86,7 @@ def test_confirmed_set_is_the_scan_universe(tmp_path: Path) -> None:
     kernel = {p.resolve() for p in selected_kernel_files(op, "arch35")}
     assert apt.resolve() in kernel
     assert extra.resolve() not in kernel
-    assert foreign.resolve() not in kernel
+    assert foreign.resolve() in kernel
     assert stub.resolve() not in kernel
 
     host_files = {p.resolve() for p in selected_host_files(op, "arch35")}
@@ -92,7 +94,7 @@ def test_confirmed_set_is_the_scan_universe(tmp_path: Path) -> None:
     assert unused_host.resolve() not in host_files
 
     tiling = {p.resolve() for p in selected_tiling_headers(op, "arch35")}
-    assert foreign.resolve() not in tiling
+    assert foreign.resolve() in tiling
     assert stub.resolve() not in tiling
 
 
@@ -302,4 +304,31 @@ def test_hyphenated_arch_920r1_is_a_distinct_owned_path(tmp_path: Path) -> None:
     assert arch_number("arch-920r1") == 920
     assert arch_number("arch35") == 35
     assert entry_include_architecture('#include "arch-920r1/tiling.h"\n') == "arch-920r1"
+    assert include_root_owned_architecture(own.parent) == "arch-920r1"
+    assert include_root_owned_architecture(own.parent.parent) == ""
+    assert is_foreign_arch_entry_tu(foreign, "arch-920r1") is True
+    assert is_foreign_arch_entry_tu(tmp_path / "op_kernel" / "arch35" / "old.h", "arch-920r1") is False
+
+
+def test_confirmed_keeps_clang_included_other_arch_header(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    header = op / "op_kernel" / "arch35" / "foo.h"
+    entry = op / "op_kernel" / "arch-920r1" / "k.cpp"
+    foreign_entry = op / "op_kernel" / "arch35" / "old.cpp"
+    _write(header, "struct Foo {};\n")
+    _write(entry, '#include "arch35/foo.h"\n__global__ __aicore__ void k() {}\n')
+    _write(foreign_entry, "__global__ __aicore__ void old() {}\n")
+    _seed_scope(
+        op,
+        "arch-920r1",
+        [
+            "op_kernel/arch-920r1/k.cpp",
+            "op_kernel/arch35/foo.h",
+        ],
+    )
+    kernel = {p.resolve() for p in selected_kernel_files(op, "arch-920r1")}
+    assert header.resolve() in kernel
+    assert entry.resolve() in kernel
+    assert foreign_entry.resolve() not in kernel
+
 

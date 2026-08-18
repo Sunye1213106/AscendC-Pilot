@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Validate LLM Intent staging. Does not parse the user prompt.
+"""Validate structured intake staging. Does not parse the user prompt.
 
-The user ``intent`` text goes to the LLM Action unchanged. This module only
-checks the staging the LLM wrote: known workflows, SourceRef shape, and
-allowlisted PR hosts. It must not extract URLs or classify phrases itself.
+Primary selects the next slash via the orchestration skill. This module only
+checks already-structured SourceRef / workflow ids / allowlisted PR hosts.
+It must not extract URLs or classify phrases itself. ``needed_capabilities``
+is a legacy label expander, not the intake ontology.
 """
 
 from __future__ import annotations
@@ -94,7 +95,7 @@ def render_workflow_catalog() -> str:
         "# 用户工作流目录",
         "",
         "从下面选出用户要交付的工作流 id（并集、无序）。",
-        "不要发明目录外的 id，不要写执行顺序。前置与排序由 Harness 处理。",
+        "不要发明目录外的 id，不要写执行顺序。下一步由主控对照编排 skill 的 I/O 决定。",
         "",
     ]
     for row in workflow_catalog():

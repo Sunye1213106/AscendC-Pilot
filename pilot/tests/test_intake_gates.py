@@ -553,3 +553,64 @@ def test_cli_inspect_failure_has_top_level_message_zh(tmp_path: Path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out.get("ok") is True
     assert "CANN" in str(out.get("message_zh") or "")
+
+
+def test_prepare_pins_operator_from_pr_then_uo_gate(tmp_path: Path, monkeypatch):
+    import sys
+
+    workspace = tmp_path / "opencode-ws"
+    workspace.mkdir()
+    op = tmp_path / "FlashAttention"
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    (op / "op_kernel").mkdir()
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: WPS433
+
+    monkeypatch.setattr(
+        gw,
+        "acquire_pull_request",
+        lambda *a, **k: {
+            "ok": True,
+            "operator_roots": [str(op)],
+            "worktree_head": str(workspace),
+            "changed_files": ["op_host/a.cpp"],
+        },
+    )
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    prep = intake.prepare_workflow_start(
+        project=workspace,
+        workflow_id="ce-review",
+        intent="分析这个 PR https://github.com/org/repo/pull/12",
+        project_explicit=True,
+    )
+    assert Path(str(prep.get("project") or "")).resolve() == op.resolve()
+    assert prep.get("reason_code") == "UO_PRODUCT_REQUIRED"
+
+
+def test_prepare_without_pr_still_requires_operator(tmp_path: Path):
+    workspace = tmp_path / "opencode-ws"
+    workspace.mkdir()
+    prep = intake.prepare_workflow_start(
+        project=workspace,
+        workflow_id="uo-init",
+        intent="帮我建库",
+        project_explicit=True,
+    )
+    assert prep.get("ok") is False
+    assert prep.get("reason_code") == "OPERATOR_PROJECT_REQUIRED"
+
+
+def test_prepare_pr_on_pilot_checkout_forbidden():
+    harness = pilot_checkout_root()
+    prep = intake.prepare_workflow_start(
+        project=harness,
+        workflow_id="ce-review",
+        intent="分析 https://github.com/org/repo/pull/12",
+        project_explicit=True,
+    )
+    assert prep.get("ok") is False
+    assert prep.get("reason_code") == "PILOT_CHECKOUT_FORBIDDEN"

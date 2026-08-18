@@ -99,7 +99,13 @@ def test_require_without_receipt_and_materialize(tmp_path: Path) -> None:
     )
     out = materialize_primary_decision(tmp_path, "human_confirm")
     assert out.get("ok") is False
-    assert out.get("error") == "HUMAN_DECISION_RECEIPT_REQUIRED"
+    # Expert /tg-init skips AskQuestion, so finalize goes to the domain gate.
+    # Without init.yaml the confirm still fails closed.
+    assert out.get("error") in {
+        "HUMAN_DECISION_RECEIPT_REQUIRED",
+        "INIT_CONFIRM_DOMAIN_GATE_FAILED",
+        "INIT_YAML_MISSING",
+    }
 
 
 def test_require_expected_values_retry_mismatch(tmp_path: Path) -> None:

@@ -121,8 +121,8 @@ def test_nl_pr_url_does_not_script_route_to_ce_review() -> None:
 
     url = "https://gitcode.com/cann/ops-transformer/pulls/9851"
     routed = route(f"帮我给这个 PR 生成 case {url}")
-    assert routed.get("error") == "use_auto"
-    assert routed.get("workflow_id") == "auto"
+    assert routed.get("error") == "use_orchestration_skill"
+    assert not routed.get("workflow_id")
     checked = validate_intent_staging(
         {
             "objective_zh": "为这个 PR 生成针对性测试用例",
@@ -134,7 +134,7 @@ def test_nl_pr_url_does_not_script_route_to_ce_review() -> None:
     planned = plan_for(checked["intent"], {"has_uo": False})
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
     assert "ce-review" not in wids
-    assert "uo-init" in wids
+    assert "goal-impact" not in wids
     assert "tg-plan" in wids
 
 

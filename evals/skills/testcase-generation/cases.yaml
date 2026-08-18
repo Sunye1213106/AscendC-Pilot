@@ -20,7 +20,7 @@ cases:
     expect_references:
       - references/oracle.md
 
-  - id: harness_intent
+  - id: test_harness_gap
     query: 算子有 INPUT 但 CSV 缺列，先 CE apply 测试脚本仓再 tg-init，禁止 start solve
     expect_skill: testcase-generation
     expect_references:

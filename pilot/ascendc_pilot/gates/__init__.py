@@ -1419,7 +1419,7 @@ def run_named_gate(
         "kb_fingerprint_fresh": lambda: tg_adapters.gate_kb_fingerprint_fresh(
             project_root, op_name=op_name, architecture=arch
         ),
-        "harness_intent_cleared": lambda: tg_adapters.gate_harness_intent_cleared(
+        "test_harness_gap_cleared": lambda: tg_adapters.gate_test_harness_gap_cleared(
             project_root, architecture=arch
         ),
         "worklog_closed": lambda: tg_adapters.gate_worklog_closed(

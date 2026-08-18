@@ -33,7 +33,7 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
     "tg_init_confirmed": ["tg/init.yaml"],
     "kb_fingerprint_fresh": ["tg/init.yaml"],
     "plan_approved": ["tg/plan.md"],
-    "harness_intent_cleared": ["tg/plan.md"],
+    "test_harness_gap_cleared": ["tg/plan.md"],
     "worklog_closed": ["tg/worklog.md"],
     "scenario_coverage_sound": [
         "tg/plan.md",

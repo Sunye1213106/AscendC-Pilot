@@ -1,6 +1,6 @@
 # Golden E2E：PR → 定向 cases（手工清单）
 
-真仓路径，**不进默认 pytest**。CI 用最小 git fixture + 假 PR URL 覆盖 Intent≠SourceRef、auto 规划、Todo 投影、scope receipt、不弹 TG 两问。本页只记录 fresh OpenCode 上的手工验收。
+真仓路径，**不进默认 pytest**。CI 用最小 git fixture + 假 PR URL 覆盖 SourceRef、Todo 投影、不弹 TG 两问。本页只记录 fresh OpenCode 上的手工验收。
 
 ## 前置
 
@@ -13,20 +13,22 @@
 在对话里只贴：
 
 ```text
-帮我给这个 PR 生成针对 case
+分析这个 PR 并生成对应测试用例
 https://github.com/<org>/<repo>/pull/<id>
 ```
 
 验收：
 
-1. Primary **只**调用 `pilot_run(workflow=auto, intent=原文)`，不猜 `/ce-review`，不手串 `/uo-init → /tg-*`
+1. Primary **对照编排 skill** 选下一步，一次一个 `pilot_run(workflow=<id>)`。不要 `workflow=auto` 再解析原文。交付节点是 `/ce-review` + `/tg-plan` + `/tg-solve`。缺 `.uo` 先 `/uo-init` 或有 diff 则 `/uo-update`；TG 前补 `/tg-init`
 2. 系统 clone/fetch/worktree，不要求用户先打开算子目录
-3. 识别 operator / architecture；无 CodeMap 时自动 `uo-init` / `uo-update`
-4. 分析 PR（ChangeSet + CodeMap → obligations），**不是** `ce-review` 的 code_review 输出
-5. 用户可见 Todo 来自 Goal `public_plan`（获取 PR 与代码 → 建立算子理解 → 分析改动影响 → 确定测试范围 → 生成测试用例 → 回放验证 → 输出结果），不见「确认进入规划」「批准规划」
-6. **单算子、单架构、workspace 成功时只出现一次** `test_scope` 选择（PR 定向 / 邻域回归 / 当前算子全覆盖）。多算子 / 架构歧义 / 凭证失败 / 用户改目标问人不是 UX 失败
-7. 生成 cases + replay / rework；`host_step.done` 以 Goal acceptance（ledger 闭合 + replay receipt PASS）为准，workflow 跑完不等于 Goal 完成
+3. 识别 operator / architecture
+4. 变更影响用 `/uo-query`（可带 diff）问 CodeMap，**不是**独立 `goal-impact`，也不是把「只要生成 case」发明成 `/ce-review`
+5. 语义只走 `/uo-query`，禁止 Grep 算子仓
+6. `/ce-apply` 产出的 diff 走 `/uo-update`
+7. 生成 cases + replay / rework；`host_step.done` 后回到 skill 图看缺什么
 8. 交付 cases 表 + 覆盖说明
+
+「只要给我生成针对 case」且没说 review 时，Planner **不得**发明 `/ce-review`。
 
 ## 专家路径（必须仍可用）
 
@@ -38,7 +40,7 @@ https://github.com/<org>/<repo>/pull/<id>
 /ce-review
 ```
 
-`/tg-init` / `/tg-plan` 不再弹「确认进入规划」「批准规划」。
+`/tg-init` 先问有没有测试脚本仓。`/tg-init` / `/tg-plan` 不再弹「确认进入规划」「批准规划」。
 
 ## 打断
 

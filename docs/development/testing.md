@@ -9,7 +9,7 @@
 | `engines/testcase-generation/tests/` | init.yaml、plan.md、worklog、replay 与隔离门 |
 | `engines/code-engineering/tests/` | plan md、apply todo、内存 diff、handoff |
 | `scripts/tests/` | replay 和 script-level contract |
-| `evals/` | routing、skill、harness 与可复用 fixture |
+| `evals/` | routing、五个认知 skill + `workflow-orchestration`、harness 与可复用 fixture |
 
 常用检查：
 

@@ -1,18 +1,18 @@
 # TG plan-fuse
 
-把意图融进 **一份** `plan.md`。上半散文，下半 YAML 义务表。正式文件由 `plan_promote` 写入。
+把 test_request 融进 **一份** `plan.md`。上半散文，下半 YAML 义务表。正式文件由 `plan_promote` 写入。
 
 ## 顺序
 
 1. 读 `tg/init.yaml`（强制）和 `.uo`。
-2. 有则读意图（`--intent` / 对话 / `ce/plan/*_plan.md` / `session_handoff.md`），拆成精度考虑和性能考虑（可重叠）。禁止读 `tg_plan_intent.yaml`。
+2. 有则读 test_request（`--intent` / 对话 / `ce/plan/*_plan.md` / 审查结论 / `session_handoff.md`），拆成精度考虑和性能考虑（可重叠）。禁止读 `tg_plan_intent.yaml`。
 3. 对每条做 **uo-query**，root 到 CSV/XLS 列，有限覆盖后写出义务。
 4. 没有意图时默认 L0，仍要有能 root 的精度/性能义务。禁止空表，禁止 T=D。
 
 ## 控制面 = 列
 
-- 算子真实有的 INPUT 缺列 → `harness_intent` 补列，先 CE 改测试仓。
-- 列有但 `generate_inputs` 造不出 → `harness_intent` 改生成器。
+- 算子真实有的 INPUT 缺列 → `test_harness_gap` 补列，先 CE 改测试仓。
+- 列有但 `generate_inputs` 造不出 → `test_harness_gap` 改生成器。
 - root 不到 → 列入 `untestable`（带 `reason`），不进义务表。
 
 ## 指标只有两类

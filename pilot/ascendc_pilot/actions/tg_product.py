@@ -324,7 +324,7 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             "ok": ok,
             "errors": errors,
             "plan_hash": products.plan_hash(text),
-            "harness_intent_pending": products.pending_harness_intent(text, fence),
+            "test_harness_gap_pending": products.pending_test_harness_gap(text, fence),
         },
     )
     return {"ok": ok, "engine": "plan_validate", "errors": errors, "receipt": receipt.as_posix()}
@@ -345,12 +345,12 @@ def run_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             "ask": "plan_required",
             "next": "/tg-plan",
         }
-    if products.pending_harness_intent(text, fence):
+    if products.pending_test_harness_gap(text, fence):
         return {
             "ok": False,
             "engine": "solve_precheck",
-            "error": "harness_intent is pending; CE-apply the test-script repo then /tg-init",
-            "ask": "harness_intent_pending",
+            "error": "test_harness_gap is pending; CE-apply the test-script repo then /tg-init",
+            "ask": "test_harness_gap_pending",
         }
     receipt = _receipt(project_root, ctx, "solve_precheck.yaml", {"ok": True, "plan_hash": products.plan_hash(text)})
     return {"ok": True, "engine": "solve_precheck", "receipt": receipt.as_posix()}

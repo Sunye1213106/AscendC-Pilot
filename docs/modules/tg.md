@@ -14,14 +14,14 @@ TG 把 UO 的 Operator CodeMap 变成**脚本仓能直接跑的用例表**，再
 
 ```text
 无 .uo            → /uo-init
-无 init.yaml      → /tg-init     （plan 强制这份）
+无 init.yaml      → /tg-init     （plan 强制这份；测试脚本仓可选，先问）
 意图              → 有则从 ce/plan/*_plan.md / 对话 / session_handoff.md 自己总结，不做文件强制
 无批准 plan.md    → /tg-plan
-harness_intent 未落地 → 禁止 start solve
+test_harness_gap 未落地 → 禁止 start solve
 TG 永不改算子仓
 ```
 
-`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射（脚本读点 + UO 标识符）、值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。有脚本仓但 mapping 空 → init 失败。扫描必须含 xls/xlsx。FAG 精度写 `only_grad`，性能写 `profiler`，禁止把精度记成 `--golden-only`。
+`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射（脚本读点 + UO 标识符）、值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。有脚本仓但 mapping 空 → init 失败。无脚本仓时用 `/uo-query` 读输入 API 设计控制面。扫描必须含 xls/xlsx。FAG 精度写 `only_grad`，性能写 `profiler`，禁止把精度记成 `--golden-only`。
 
 ## 规划是融合，不是套覆盖
 
@@ -31,7 +31,7 @@ TG 永不改算子仓
 
 `class` 只有 `replay`（Host tiling）和 `derived`（公式）。root 不到的另列 `untestable.reason`。覆盖 L0–L3 写在 `cover` 上。全量 tilingkey 只在意图点名时做，**不是默认 T=D**。CE 不传 yaml 意图。
 
-缺列或缺 `generate_inputs` → `harness_intent`，先 `/ce-apply` 改**测试脚本仓**，再 `/tg-init`。
+缺列或缺 `generate_inputs` → `test_harness_gap`，先 `/ce-apply` 改**测试脚本仓**，再 `/tg-init`。
 
 ## 求解
 

@@ -22,6 +22,15 @@ Cognitive skills（五个，缺一不可——闭合集合，不是起点）：
 
 Each cognitive skill must ship ≥2 worked example case directories under `examples/<case>/` with `README.md`, `input/`, `expected/`.
 
+## Control-plane skill
+
+编排权威是 `skills/workflow-orchestration/`（**不是**第六个 cognitive skill）：
+
+- Primary `skill_ids` 包含它；compose **不要**加 `disable-model-invocation`
+- OpenCode 投影到 `generated/<host>/skills/workflow-orchestration/`（与 slash 入口同树，可被模型调用）
+- 内容：每个 slash 的输入输出、交叉流水线（含 `.uo` → `/tg-init`）、主控怎么选下一步
+- 认知 skill 仍是闭合五个；CE/TG 语义一律 `/uo-query`
+
 ## Invocation
 
 Cognitive skills 是 **method bundle**，不是 Host 发现的 slash：

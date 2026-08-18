@@ -45,7 +45,7 @@ from uo_init.passes.symbol_identity import normalize_symbol
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
-    is_other_arch_path,
+    is_foreign_arch_entry_tu,
     iter_cpp,
     selected_host_files,
     selected_kernel_files,
@@ -473,7 +473,11 @@ def _purge_broad_kernel_facts(codemap: CodeMap, allowed_kernel_files: set[str]) 
         if provenance in _KEEP_REL_PROVENANCE:
             continue
         foreign_source = file and "/op_kernel/" in file and file not in allowed_kernel_files and provenance.startswith("source_")
-        foreign_arch = bool(file and codemap.architecture and is_other_arch_path(Path(file), codemap.architecture))
+        foreign_arch = bool(
+            file
+            and codemap.architecture
+            and is_foreign_arch_entry_tu(Path(file), codemap.architecture)
+        )
         if broad or old_template or foreign_arch or (foreign_source and ent.kind_name() != EntityKind.KERNEL.value):
             remove_ent.add(eid)
 

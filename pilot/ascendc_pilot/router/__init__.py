@@ -1,4 +1,4 @@
-"""Slash → workflow_id. Natural-language intent is agent + skill description, not this module."""
+"""Slash → workflow_id. Natural-language next step is the orchestration skill, not this module."""
 
 from __future__ import annotations
 
@@ -54,7 +54,8 @@ def _skill_candidates() -> list[dict[str, str]]:
 
 
 _UNMATCHED_MSG_ZH = (
-    "自然语言请用 `pilot_run(workflow=auto, intent=原文)`。"
+    "自然语言请对照 `skills/workflow-orchestration/` 的 slash I/O 与产物，"
+    "`pilot_run(workflow=<当前缺的那一步>)`。不要 `workflow=auto` 再解析原文。"
     "slash 仅支持 /uo-init 等专家入口。"
 )
 
@@ -117,13 +118,10 @@ def route(text: str) -> dict[str, Any]:
 
     return {
         "ok": False,
-        "workflow_id": "auto",
-        "error": "use_auto",
-        "use_auto": True,
+        "workflow_id": None,
+        "error": "use_orchestration_skill",
+        "use_orchestration_skill": True,
         "candidates": list_user_workflows(),
         "skill_candidates": _skill_candidates(),
-        "message_zh": (
-            "自然语言请用 Host 工具 `pilot_run(workflow=auto, intent=原文)`。"
-            "不要猜测 slash。专家入口仍是 /uo-init /tg-plan /ce-review 等。"
-        ),
+        "message_zh": _UNMATCHED_MSG_ZH,
     }

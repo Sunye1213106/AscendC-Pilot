@@ -275,7 +275,7 @@ def _quoted_include_targets(path: Path, search_roots: list[Path]) -> list[Path]:
 
 def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
     """Files named by cached Clang walks (the TU Clang actually saw)."""
-    from uo_init.source_layout import is_other_arch_path
+    from uo_init.source_layout import is_foreign_arch_entry_tu
 
     try:
         from uo_init import tu_cache
@@ -298,7 +298,7 @@ def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
         path = _resolve_cited_file(text, root)
         if path is None:
             continue
-        if is_other_arch_path(path, arch):
+        if is_foreign_arch_entry_tu(path, arch):
             continue
         try:
             key = path.resolve()
@@ -375,7 +375,7 @@ def kernel_corpus(
     one hop. Walk-cited this-op / sibling files are unioned so fusion wrappers
     still see IFA/PFA call sites. CANN headers stay out of the lexical corpus.
     """
-    from uo_init.source_layout import is_other_arch_path
+    from uo_init.source_layout import is_foreign_arch_entry_tu
 
     arch = require_architecture(architecture)
     root = Path(source_root)
@@ -390,7 +390,7 @@ def kernel_corpus(
     for path in extras:
         if not path.is_file():
             continue
-        if is_other_arch_path(path, arch):
+        if is_foreign_arch_entry_tu(path, arch):
             continue
         # Walk-cited CANN / cube-template headers are already Clang CallExprs.
         # Union only this-op and sibling files so FIA locate still sees IFA.
@@ -413,7 +413,7 @@ def kernel_corpus(
             break
         path = pending.pop(0)
         for resolved in _quoted_include_targets(path, search_roots):
-            if is_other_arch_path(resolved, arch):
+            if is_foreign_arch_entry_tu(resolved, arch):
                 continue
             owner = _corpus_should_follow(resolved, root)
             if not owner:

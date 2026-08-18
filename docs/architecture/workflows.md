@@ -36,6 +36,8 @@
 ```text
 用户意图（自然语言或 /slash）
         │
+        ├── 自然语言：Primary 读 `skills/workflow-orchestration/`，对照产物选当前缺的 slash
+        │
         ├── /uo-query 或只读提问
         │         │
         │         ▼
@@ -110,7 +112,7 @@ commit  [D]  写入 <op>.<arch>.uo
 verify  [D]  结构合法性 → uo/checks/integrity.yaml + quality.yaml
     │
     ▼
-done        Primary 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；有未完成 Goal 则 continue_goal
+done        Primary 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；对照编排 skill 选择下一步
 ```
 
 Rework（失败才走，不画进主链）：prepare→heal（`INCLUDE_HEAL_UNRESOLVED`）；heal→prepare；extract→prepare；analyze→extract；commit→analyze；verify→analyze / commit / prepare。不要手改 extras 或共享 `spec/build_context.yaml`。

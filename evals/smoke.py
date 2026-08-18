@@ -4,7 +4,7 @@
 L0 entry:
 1. harness metric self-check
 2. routing dry eval
-3. skill dry eval (all five cognitive skills)
+3. skill dry eval (five cognitive skills + workflow-orchestration)
 4. closure acceptance harness (1 dry run)
 5. skill architecture + operator independence lints
    (repo must not contain operators/; fixtures live under tests/fixtures/)
@@ -29,6 +29,7 @@ _COGNITIVE_SKILLS = (
     "code-review",
     "code-engineering",
 )
+_CONTROL_PLANE_SKILLS = ("workflow-orchestration",)
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> dict:
@@ -72,7 +73,7 @@ def main() -> int:
     results.append(
         _run([sys.executable, str(REPO / "evals" / "routing" / "run_routing_eval.py"), "--repo", str(REPO)])
     )
-    for skill in _COGNITIVE_SKILLS:
+    for skill in _COGNITIVE_SKILLS + _CONTROL_PLANE_SKILLS:
         results.append(
             _run(
                 [

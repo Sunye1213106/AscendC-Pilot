@@ -74,6 +74,25 @@ def is_other_arch_path(path: Path, architecture: str) -> bool:
     return False
 
 
+def include_root_owned_architecture(path: Path | str) -> str:
+    """Arch folder a ``-I`` root sits in. Empty when the directory is arch-neutral.
+
+    ``op_kernel/arch35`` → ``arch35``; ``op_kernel`` → ``""``.
+    """
+    return path_owned_architecture(Path(path))
+
+
+_ENTRY_TU_SUFFIXES = {".cpp", ".cc", ".cxx"}
+
+
+def is_foreign_arch_entry_tu(path: Path | str, architecture: str) -> bool:
+    """True for another architecture's compile unit, not an included header."""
+    p = Path(path)
+    if p.suffix.lower() not in _ENTRY_TU_SUFFIXES:
+        return False
+    return is_other_arch_path(p, architecture)
+
+
 def includes_architecture(text: str, architecture: str) -> bool:
     """True when the TU pulls the current arch, including ``./arch35/``."""
     arch = str(architecture or "").strip()
@@ -334,8 +353,6 @@ def _confirmed_subset(
         rel = _posix_rel(root, path)
         if _is_generated_rel(rel):
             continue
-        if is_other_arch_path(path, architecture):
-            continue
         if not predicate(rel, path):
             continue
         key = path.resolve()
@@ -354,8 +371,9 @@ def selected_kernel_files(
 ) -> list[Path]:
     """Kernel files for this architecture.
 
-    After prepare, this is the kernel-side Clang set (other-arch paths dropped).
-    Before that, layout heuristics bootstrap entry TUs and the arch folder.
+    After prepare, this is the kernel-side Clang set (included headers from
+    another ``arch*`` folder stay when Clang confirmed them). Before that,
+    layout heuristics bootstrap entry TUs and the current arch folder.
     """
     confirmed = _confirmed_subset(
         root,

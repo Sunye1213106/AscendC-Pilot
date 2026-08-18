@@ -13,16 +13,16 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 ```text
 用户目标
   ├─ 自然语言说目标（不必知道模块名）
-  │     → Host 工具 pilot_run（workflow=auto, intent=原文；project 可后补）
+  │     → 对照编排 skill，Host 工具 `pilot_run(workflow=<当前缺的 slash id>)`
   ├─ 显式 Slash：建库 / 更新 / TG / CE / 调查 unresolved
-  │     → Host 工具 pilot_run（workflow=<现有 id> + project + architecture）
+  │     → Host 工具 pilot_run（workflow=<该 id> + project + architecture）
   └─ 只读问 CodeMap / 看状态 / 看失败卡 / 环境修好后恢复
         → 插件工具 pilot_cli
 ```
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| 自然语言：「帮我给这个 PR 生成针对 case」+ URL | `pilot_run(workflow=auto, intent=原文)` | 自己猜 `/ce-review` 或手串 `tg-init→tg-plan` |
+| 自然语言：「分析这个 PR 并生成对应测试用例」+ URL | `pilot_run(workflow=<缺的那一步>)`：先补 UO，交付 ce-review + tg-plan + tg-solve | `workflow=auto` 再解析原文，或把「只要生成 case」发明成 `/ce-review` |
 | `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run(workflow=<id>)` | 手工串 `start` / `next` / `run-action auto` |
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
@@ -41,7 +41,7 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 retry-after-environment-fix --project D:\ops\attention\flash_attention_score_grad
 ```
 
-`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。自然语言贴 PR URL 并要求生成 case 时走 `workflow=auto`（系统自行 fetch/worktree），**不要**默认当成 `/ce-review`。专家若只要审查，才显式 `/ce-review`。
+`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。自然语言贴 PR URL 时对照编排 skill 选下一步；「只要生成 case」不要默认 `/ce-review`。专家若只要审查，才显式 `/ce-review`。
 
 ---
 
@@ -84,8 +84,8 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 
 | 参数 | 说明 |
 | --- | --- |
-| `workflow` | `auto`（自然语言任务）或全部现有 id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。**不要**填 `uo-query` |
-| `project` | 控制面目录。`workflow=auto` 空 project 时钉当前 OpenCode 打开目录（Host directory），**不是** `~/.cache/ascendc-pilot/sessions/auto`。算子根由 Workspace Manager 在 Intent 给出 allowlisted PR URL 后 pin 到 worktree；模型禁止 bash `git clone` |
+| `workflow` | 现有 slash id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
+| `project` | 控制面目录。空 project 时钉当前 OpenCode 打开目录（Host directory），**不是** `~/.cache/ascendc-pilot/sessions/auto`。算子根由 Workspace Manager 在 allowlisted PR URL 后 pin 到 worktree；模型禁止 bash `git clone` |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
@@ -98,7 +98,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 
 `pilot_run` 失败时，返回的 JSON **必须带** `message_zh`（以及可能的 `error` / `hint_zh` / `error_detail`）。环境问题（例如没配 CANN package 目录）会直接写在 `message_zh` 里，告诉你设置 `UO_CANN_ROOT` / `ASCEND_CANN_PACKAGE_PATH`。把这段话转述给用户即可。
 
-常见人话失败（不是 UX 失败）：缺 `GITHUB_TOKEN` / `GITCODE_TOKEN`、PR 落到多个算子、改动未落到任何 `op_host`/`op_kernel`、只能用默认分支当 PR base 的 fallback。多算子 / 架构歧义 / 用户改目标时问人；**单算子、单架构、workspace 成功时只问一次 test_scope**。
+常见人话失败（不是 UX 失败）：缺 `GITHUB_TOKEN` / `GITCODE_TOKEN`、PR 落到多个算子、改动未落到任何 `op_host`/`op_kernel`、只能用默认分支当 PR base 的 fallback。多算子 / 架构歧义 / 用户改目标时问人。变更影响用 `/uo-query`（可带 diff），不要单独问 test_scope。
 
 失败后 workflow 可能进入 `human_required`。写、派 Task、直调领域脚本、读引擎实现仍然会被挡住。主控可以 `Read` / `Glob` / `Get-ChildItem` 看算子目录和失败产物，方便核对环境。优先用：
 

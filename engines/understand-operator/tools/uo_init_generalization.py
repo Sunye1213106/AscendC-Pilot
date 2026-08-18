@@ -73,18 +73,15 @@ def _list_archs(op: Path) -> list[str]:
 
 
 def _pick_arch(op: Path) -> str | None:
-    """Prefer arch35 when discovered; else newest numeric arch*.
+    """Newest numeric arch* when folders exist; else arch35 for arch-agnostic trees.
 
     Operators whose host/kernel trees have no ``archNN`` folders still run
-    as the preferred architecture: the source is arch-agnostic, not missing.
+    as arch35: the source is arch-agnostic, not missing.
     """
     archs = _list_archs(op)
-    preferred = "arch35"
-    if preferred in archs:
-        return preferred
     if archs:
         return max(archs, key=_arch_sort_key)
-    return preferred
+    return "arch35"
 
 
 def discover_ops(ops_root: Path | None = None) -> list[dict[str, Any]]:

@@ -69,9 +69,9 @@ def test_plan_for_test_generation_not_ce_review() -> None:
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
     assert "ce-review" not in wids
-    assert "uo-init" in wids
     assert "goal-impact" not in wids
-    assert "tg-init" in wids and "tg-plan" in wids and "tg-solve" in wids
+    assert "tg-plan" in wids and "tg-solve" in wids
+    assert "uo-init" not in wids
 
 
 def test_plan_for_review_and_tg_union() -> None:
@@ -83,9 +83,11 @@ def test_plan_for_review_and_tg_union() -> None:
         {"has_uo": False, "uo_stale": False, "has_tg_init": False},
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
-    assert wids.index("uo-init") < wids.index("ce-review")
+    assert "ce-review" in wids
+    assert "tg-plan" in wids
     assert wids.index("ce-review") < wids.index("tg-plan")
-    assert "tg-init" in wids and "tg-solve" in wids
+    assert "goal-impact" not in wids
+    assert "uo-init" not in wids
 
 
 def test_workflow_catalog_lists_slash_not_skills() -> None:
@@ -143,7 +145,7 @@ def test_todo_uses_public_plan(tmp_path: Path) -> None:
     start_workflow(tmp_path, "auto", intent="帮我生成对应 case")
     board = build_todo(tmp_path)
     contents = [it["content"] for it in board["native_items"]]
-    assert "获取 PR 与代码" in contents or "分析改动影响" in contents or "建立算子理解" in contents
+    assert "获取 PR 与代码" in contents or "审查改动" in contents or "建立算子理解" in contents
     assert all("确认进入规划" not in c for c in contents)
     in_prog = [it for it in board["native_items"] if it["status"] == "in_progress"]
     assert len(in_prog) <= 1
@@ -166,41 +168,10 @@ def test_tg_confirms_do_not_ask(tmp_path: Path) -> None:
     assert hosted_confirm_should_ask(tmp_path, state, action_id="plan_approve") is False
 
 
-def test_scope_receipt_roundtrip(tmp_path: Path) -> None:
-    from ascendc_pilot.human_confirm import _identity, _materialize_test_scope
-    from ascendc_pilot.paths import ensure_agent_layout
-    from ascendc_pilot.user_goal import load_user_goal
+def test_scope_receipt_roundtrip_removed() -> None:
+    from ascendc_pilot.workflows import WORKFLOWS
 
-    ensure_agent_layout(tmp_path, arch="arch35")
-    start_workflow(tmp_path, "goal-impact", architecture="arch35", intent="scope")
-    create_user_goal(
-        tmp_path,
-        intent_text="生成 case",
-        llm_intent={
-            "objective_zh": "生成 case",
-            "needed_capabilities": ["test_generation"],
-            "source": {"kind": "local"},
-        },
-        architecture="arch35",
-    )
-    from ascendc_pilot.state import load_state
-
-    state = load_state(tmp_path) or {}
-    identity = _identity(
-        {
-            "run_id": state.get("run_id"),
-            "workflow_id": "goal-impact",
-            "action_id": "test_scope",
-            "human_decision_value": "pr_targeted",
-        }
-    )
-    identity["human_decision_value"] = "pr_targeted"
-    out = _materialize_test_scope(tmp_path, state, identity, "2026-01-01T00:00:00Z")
-    assert out.get("ok") is True
-    goal = load_user_goal(tmp_path) or {}
-    receipt = (goal.get("artifacts") or {}).get("scope_decision") or {}
-    assert receipt.get("value") == "pr_targeted"
-    assert receipt.get("digest")
+    assert "goal-impact" not in WORKFLOWS
 
 
 def test_git_workspace_local_mirror(tmp_path: Path, monkeypatch) -> None:
@@ -243,7 +214,7 @@ def test_reconcile_drops_dtype(tmp_path: Path) -> None:
 
     llm = {
         "objective_zh": "生成 case",
-        "needed_capabilities": ["knowledge", "test_generation"],
+        "needed_workflows": ["uo-init", "tg-plan", "tg-solve"],
         "source": {"kind": "local"},
         "constraints": {},
     }
@@ -333,7 +304,6 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
 
     from ascendc_pilot.actions.goal_engines import run_intent_promote
     from ascendc_pilot.paths import agent_root
-    from ascendc_pilot.planning.task_plan import load_task_plan
     from ascendc_pilot.state import start_workflow
 
     repo = Path(__file__).resolve().parents[2]
@@ -353,7 +323,7 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
     (pinned / "op_host").mkdir()
     (pinned / "op_kernel").mkdir()
 
-    def _acquire(url: str, *, run_id: str = "", goal_id: str = "") -> dict:
+    def _acquire(url: str, *, run_id: str = "", goal_id: str = "", **_kw) -> dict:
         del url, goal_id
         return {
             "ok": True,
@@ -373,7 +343,7 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
     state = start_workflow(host, "auto", intent="生成 case", architecture="arch35")
     rid = str(state.get("run_id") or "")
     staging = (
-        agent_root(host, "arch35") / "runs" / rid / "actions" / "parse_intent" / "staging.yaml"
+        agent_root(host, "arch35") / "runs" / rid / "actions" / "intent_promote" / "staging.yaml"
     )
     staging.parent.mkdir(parents=True, exist_ok=True)
     staging.write_text(
@@ -394,9 +364,7 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
     out = run_intent_promote(host, {"run_id": rid, "architecture": "arch35", "intent": "生成 case"})
     assert out.get("ok") is True
     assert Path(str(out.get("project"))).resolve() == pinned.resolve()
-    plan = load_task_plan(pinned) or load_task_plan(host) or {}
-    wids = [str(s.get("workflow_id") or s.get("id")) for s in plan.get("steps") or []]
-    assert "uo-init" in wids
+    assert not str(out.get("next_workflow_id") or "").strip()
 
 
 def test_intent_promote_empty_roots_asks(tmp_path: Path, monkeypatch) -> None:
@@ -429,7 +397,7 @@ def test_intent_promote_empty_roots_asks(tmp_path: Path, monkeypatch) -> None:
     state = start_workflow(host, "auto", intent="生成 case", architecture="arch35")
     rid = str(state.get("run_id") or "")
     staging = (
-        agent_root(host, "arch35") / "runs" / rid / "actions" / "parse_intent" / "staging.yaml"
+        agent_root(host, "arch35") / "runs" / rid / "actions" / "intent_promote" / "staging.yaml"
     )
     staging.parent.mkdir(parents=True, exist_ok=True)
     staging.write_text(
@@ -525,6 +493,145 @@ def test_pr_base_uses_provider_metadata(tmp_path: Path, monkeypatch) -> None:
     del mirror_path
 
 
+def _seed_local_pr_mirror(tmp_path: Path, monkeypatch, gw):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "op_host").mkdir()
+    (src / "op_kernel").mkdir()
+    (src / "op_host" / "a.cpp").write_text("one\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "c1"], cwd=src, check=True, capture_output=True)
+    base = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    (src / "op_host" / "a.cpp").write_text("two\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=src, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "c2"], cwd=src, check=True, capture_output=True)
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=src, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("ASCENDC_WORKSPACE_CACHE", str(cache))
+    mirror = gw.ensure_bare_mirror(str(src), host="github.com", owner="org", repo="repo")
+    assert mirror.get("ok") is True
+    monkeypatch.setattr(
+        gw,
+        "fetch_pr_metadata",
+        lambda url: {
+            "ok": True,
+            "head_sha": head,
+            "base_sha": base,
+            "base_ref": "main",
+            "base_source": "provider",
+        },
+    )
+    monkeypatch.setattr(
+        gw,
+        "fetch_pr_refs",
+        lambda *_a, **_k: {
+            "head_sha": head,
+            "base_sha": base,
+            "base_ref": "main",
+            "base_source": "default_branch_fallback",
+        },
+    )
+    return src, head, base
+
+
+def test_acquire_into_opencode_workspace_not_cache(tmp_path: Path, monkeypatch) -> None:
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: WPS433
+
+    _seed_local_pr_mirror(tmp_path, monkeypatch, gw)
+    workspace = tmp_path / "opencode-ws"
+    workspace.mkdir()
+    out = gw.acquire_pull_request(
+        "https://github.com/org/repo/pull/12",
+        run_id="run-ws",
+        workspace_root=workspace,
+    )
+    assert out.get("ok") is True
+    head = Path(str(out.get("worktree_head") or ""))
+    assert head.resolve() == workspace.resolve()
+    assert (workspace / "op_host" / "a.cpp").is_file()
+    assert "workspaces" not in str(out.get("workspace_home") or "").replace("\\", "/")
+    assert any(
+        Path(p).resolve() == workspace.resolve() for p in (out.get("operator_roots") or [])
+    )
+
+
+def test_acquire_skips_clone_when_workspace_is_operator(tmp_path: Path, monkeypatch) -> None:
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: WPS433
+
+    _seed_local_pr_mirror(tmp_path, monkeypatch, gw)
+    op = tmp_path / "local-op"
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir()
+    marker = op / "keep-me.txt"
+    marker.write_text("local", encoding="utf-8")
+    out = gw.acquire_pull_request(
+        "https://github.com/org/repo/pull/12",
+        run_id="run-local",
+        workspace_root=op,
+    )
+    assert out.get("ok") is True
+    assert out.get("skipped_checkout") is True
+    assert marker.read_text(encoding="utf-8") == "local"
+    assert Path(str(out.get("worktree_head"))).resolve() == op.resolve()
+
+
+def test_acquire_refuses_pilot_checkout_workspace(tmp_path: Path, monkeypatch) -> None:
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: WPS433
+
+    _seed_local_pr_mirror(tmp_path, monkeypatch, gw)
+    fake = tmp_path / "AscendC-Pilot"
+    (fake / "pilot" / "ascendc_pilot").mkdir(parents=True)
+    (fake / "engines").mkdir()
+    out = gw.acquire_pull_request(
+        "https://github.com/org/repo/pull/12",
+        workspace_root=fake,
+    )
+    assert out.get("ok") is False
+    assert out.get("error") == "PILOT_CHECKOUT_FORBIDDEN"
+    assert not any(fake.rglob("op_host"))
+
+
+def test_extract_pr_url_allowlist() -> None:
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: WPS433
+
+    assert (
+        gw.extract_pr_url("看这个 https://gitcode.com/cann/ops-transformer/pull/9851 谢谢")
+        == "https://gitcode.com/cann/ops-transformer/pull/9851"
+    )
+    assert gw.extract_pr_url("https://evil.example/org/repo/pull/1") == ""
+
+
 def test_public_plan_uo_init_does_not_pass_impact(tmp_path: Path) -> None:
     from ascendc_pilot.planning.task_plan import (
         PUBLIC_PLAN_TEST_GENERATION,
@@ -535,7 +642,7 @@ def test_public_plan_uo_init_does_not_pass_impact(tmp_path: Path) -> None:
     from ascendc_pilot.user_goal import load_user_goal, mark_workflow_passed
 
     ids = [row["id"] for row in PUBLIC_PLAN_TEST_GENERATION]
-    assert ids[:3] == ["acquire_change", "ensure_knowledge", "understand_change"]
+    assert ids[:3] == ["acquire_change", "ensure_knowledge", "review_change"]
     llm = {
         "objective_zh": "生成针对性测试用例",
         "needed_capabilities": ["knowledge", "change_analysis", "test_generation"],
@@ -551,7 +658,7 @@ def test_public_plan_uo_init_does_not_pass_impact(tmp_path: Path) -> None:
         str(s.get("id")): str(s.get("status"))
         for s in (load_user_goal(tmp_path) or {}).get("public_plan") or []
     }
-    assert by_id.get("understand_change") != "passed"
+    assert by_id.get("review_change") != "passed"
 
 
 def test_acceptance_not_passed_without_replay(tmp_path: Path) -> None:
@@ -570,8 +677,7 @@ def test_acceptance_not_passed_without_replay(tmp_path: Path) -> None:
     }
     create_user_goal(tmp_path, intent_text="生成 case", llm_intent=llm, architecture="arch35")
     plan = plan_for(llm, {"has_uo": True, "uo_stale": False})
-    for sid in ("tg-init", "tg-plan"):
-        plan = mark_step_passed(plan, sid)
+    plan = mark_step_passed(plan, "tg-plan")
     write_task_plan(tmp_path, plan)
     assert acceptance_satisfied(plan, tmp_path, architecture="arch35") is False
     adv = mark_workflow_passed(tmp_path, "tg-solve")

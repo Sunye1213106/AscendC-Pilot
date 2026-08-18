@@ -128,6 +128,10 @@ def main() -> int:
         errors.append("pilot-driver.ts must not mkdir ~/.cache/.../sessions/auto for workflow=auto")
     if "hostDirectory" not in driver_src or "AUTO_HOST_DIRECTORY" not in driver_src:
         errors.append("pilot-driver.ts auto empty project must use OpenCode hostDirectory")
+    if 'if (!project && workflow !== "auto")' in driver_src:
+        errors.append(
+            "pilot-driver.ts empty project must use hostDirectory for every workflow, not only auto"
+        )
     if "existsSync(resolve(project, \".ascendc-pilot\"))" in driver_src:
         errors.append("pilot-driver.ts last-project cache must require op_host/op_kernel, not .ascendc-pilot")
     progress_src = (plug / "pilot-progress.mjs").read_text(encoding="utf-8")

@@ -265,8 +265,6 @@ def hosted_confirm_should_ask(
         return True
     if aid == "apply_report":
         return True
-    if wid == "goal-impact" and aid == "test_scope":
-        return True
     if wid == "ce-plan" and aid in {"grill_confirm", "human_confirm"}:
         return grill_should_ask(project_root, state, action_id=aid)
     return True
@@ -426,7 +424,7 @@ def _materialize_plan_approve(
         }
     backups = {path: path.read_bytes() if path.is_file() else None}
     try:
-        from testcase_agent.products import parse_plan_fence, pending_harness_intent
+        from testcase_agent.products import parse_plan_fence, pending_test_harness_gap
 
         text = path.read_text(encoding="utf-8")
         fence = parse_plan_fence(text)
@@ -436,11 +434,11 @@ def _materialize_plan_approve(
             "error": "PLAN_FENCE_INVALID",
             "message_zh": str(exc)[:400],
         }
-    if pending_harness_intent(text, fence):
+    if pending_test_harness_gap(text, fence):
         return {
             "ok": False,
-            "error": "HARNESS_INTENT_PENDING",
-            "message_zh": "harness_intent 未落地，禁止批准规划。先 CE apply 测试脚本仓再 /tg-init。",
+            "error": "TEST_HARNESS_GAP_PENDING",
+            "message_zh": "test_harness_gap 未落地，禁止批准规划。先 CE apply 测试脚本仓再 /tg-init。",
         }
     fence["approved"] = True
     fence["decision"] = "approve"
@@ -514,72 +512,6 @@ def _hints_review_report(project_root: Path, state: dict[str, Any]) -> list[str]
     return ["Keep findings in the dialogue. Do not write ce/review."]
 
 
-def _ask_test_scope(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    op, arch = _op_arch(project_root, state)
-    return decision_question(
-        header="这次测试覆盖多大范围？",
-        goal=f"为 {op}（{arch}）选定测试范围",
-        background="定向覆盖这次改动和对照；邻域再扩一跳关系；全覆盖走当前算子全部相关义务。",
-        decide="选哪一种范围？",
-        consequences={
-            "PR 定向（推荐）": "直接改动 + contrast + boundary",
-            "定向 + 邻域回归": "再扩一跳关系",
-            "当前算子全覆盖": "全 TilingKey / 全相关义务",
-        },
-        options=[
-            {"label": "PR 定向（推荐）", "value": "pr_targeted"},
-            {"label": "定向 + 邻域回归", "value": "neighborhood"},
-            {"label": "当前算子全覆盖", "value": "full_coverage"},
-        ],
-    )
-
-
-def _materialize_test_scope(
-    project_root: Path,
-    state: dict[str, Any],
-    identity: dict[str, str],
-    now: str,
-) -> dict[str, Any]:
-    from ascendc_pilot.runs import receipts_dir
-    from ascendc_pilot.user_goal import load_user_goal, write_user_goal
-
-    value = str(identity.get("human_decision_value") or "pr_targeted").strip() or "pr_targeted"
-    flags = {
-        "pr_targeted": value in {"pr_targeted", "neighborhood", "full_coverage"},
-        "neighborhood": value == "neighborhood",
-        "full_coverage": value == "full_coverage",
-    }
-    body = {
-        "schema": "pilot-scope-decision/v1",
-        "value": value,
-        "accepted": flags,
-        "decided_at": now,
-        **{k: v for k, v in identity.items() if v},
-    }
-    digest = hashlib.sha256(
-        yaml.safe_dump(flags, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:16]
-    body["digest"] = digest
-    rid = str(state.get("run_id") or "").strip()
-    path = receipts_dir(project_root, rid or None) / "scope_decision.yaml"
-    written, backups = _write_yaml_receipt(path, body)
-    goal = load_user_goal(project_root)
-    if goal:
-        arts = dict(goal.get("artifacts") or {})
-        arts["scope_decision"] = body
-        goal["artifacts"] = arts
-        decisions = list(goal.get("decisions") or [])
-        decisions.append({"kind": "test_scope", "value": value, "digest": digest, "at": now})
-        goal["decisions"] = decisions
-        write_user_goal(project_root, goal)
-    return {"ok": True, "path": written, "backups": backups, "identity": identity}
-
-
-def _hints_test_scope(project_root: Path, state: dict[str, Any]) -> list[str]:
-    del project_root, state
-    return ["Choose coverage for this change. This is the only Goal-level question."]
-
-
 SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
     ("tg-init", "human_confirm"): {
         "kind": "primary_confirm",
@@ -627,14 +559,6 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "ask": _ask_review_report,
         "materialize": _materialize_ce_decision,
         "hints": _hints_review_report,
-        "compact": None,
-    },
-    ("goal-impact", "test_scope"): {
-        "kind": "primary_confirm",
-        "expected_values": ["pr_targeted", "neighborhood", "full_coverage"],
-        "ask": _ask_test_scope,
-        "materialize": _materialize_test_scope,
-        "hints": _hints_test_scope,
         "compact": None,
     },
 }

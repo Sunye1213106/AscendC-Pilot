@@ -146,18 +146,27 @@ def load_plan(tg_root: Path) -> tuple[str, dict[str, Any]]:
     return text, parse_plan_fence(text)
 
 
-def pending_harness_intent(text: str, fence: dict[str, Any]) -> bool:
-    if fence.get("harness_intent_pending") is True:
+def pending_test_harness_gap(text: str, fence: dict[str, Any]) -> bool:
+    if fence.get("test_harness_gap_pending") is True or fence.get("harness_intent_pending") is True:
         return True
-    heading = re.search(r"^#\s*harness_intent\b", text, re.MULTILINE | re.IGNORECASE)
+    heading = re.search(
+        r"^#\s*(test_harness_gap|harness_intent)\b", text, re.MULTILINE | re.IGNORECASE
+    )
     if not heading:
         return False
-    if fence.get("harness_intent_done") is True:
+    if fence.get("test_harness_gap_done") is True or fence.get("harness_intent_done") is True:
         return False
-    block = fence.get("harness_intent")
+    block = fence.get("test_harness_gap")
+    if not isinstance(block, dict) or not block:
+        block = fence.get("harness_intent")
     if isinstance(block, dict) and block:
         return not bool(block.get("done"))
     return True
+
+
+def pending_harness_intent(text: str, fence: dict[str, Any]) -> bool:
+    """Deprecated alias of pending_test_harness_gap."""
+    return pending_test_harness_gap(text, fence)
 
 
 def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> list[str]:

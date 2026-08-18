@@ -35,7 +35,7 @@ def check_case(case_dir: Path) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("path", nargs="?", help="skills/<id>/examples/<case> or examples root")
-    ap.add_argument("--all", action="store_true", help="Scan all cognitive skill examples")
+    ap.add_argument("--all", action="store_true", help="Scan cognitive + control-plane skill examples")
     args = ap.parse_args()
 
     cases: list[Path] = []
@@ -45,6 +45,8 @@ def main() -> int:
             "testcase-generation",
             "source-proof",
             "code-review",
+            "code-engineering",
+            "workflow-orchestration",
         ):
             root = REPO / "skills" / skill / "examples"
             if root.is_dir():

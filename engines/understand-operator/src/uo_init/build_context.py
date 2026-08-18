@@ -191,9 +191,19 @@ class BuildContext:
         ]
 
     def add_include(self, path: str, *, side: str) -> bool:
-        """Append a runtime extra -I. Returns False when already present or empty."""
+        """Append a runtime extra -I. Returns False when already present or empty.
+
+        Refuse another architecture's folder (``op_kernel/arch35`` while
+        ``arch_dir`` is ``arch-920r1``). Neutral roots such as ``op_kernel`` stay.
+        """
         p = str(path or "").replace("\\", "/").rstrip("/")
         if not p:
+            return False
+        from uo_init.source_layout import include_root_owned_architecture
+
+        owned = include_root_owned_architecture(p)
+        arch = str(self.arch_dir or "").strip()
+        if owned and arch and owned != arch:
             return False
         current = self.kernel_includes() if side == "kernel" else self.host_includes()
         if p.lower() in {x.replace("\\", "/").rstrip("/").lower() for x in current}:

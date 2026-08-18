@@ -56,7 +56,22 @@ def _normalize_project_arg(args: argparse.Namespace) -> None:
     raw = getattr(args, "project", None)
     wf = str(getattr(args, "workflow_id", None) or getattr(args, "workflow", "") or "").strip()
     allow_last = wf not in {"auto", "goal-intake"}
+    intent = str(getattr(args, "intent", "") or "").strip()
+    if allow_last and intent:
+        try:
+            from ascendc_pilot.intake import extract_pr_url_from_intent
+
+            if extract_pr_url_from_intent(intent):
+                allow_last = False
+        except Exception:  # noqa: BLE001
+            pass
     args.project = default_cli_project(raw, allow_last_project=allow_last)
+
+
+def _adopt_prep_project(args: argparse.Namespace, prep: dict[str, Any]) -> None:
+    pinned = str(prep.get("project") or "").strip()
+    if pinned:
+        args.project = Path(pinned).expanduser()
 
 
 def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
@@ -763,6 +778,7 @@ def main(argv: list[str] | None = None) -> int:
                 if not prep.get("ok"):
                     print_json(prep)
                     return 2
+                _adopt_prep_project(args, prep)
                 arch = str(prep.get("architecture") or arch)
                 start_kwargs["architecture"] = arch
             try:
@@ -827,6 +843,7 @@ def main(argv: list[str] | None = None) -> int:
         if not prep.get("ok"):
             print_json(prep)
             return 2
+        _adopt_prep_project(args, prep)
         arch = str(prep.get("architecture") or arch)
         start_kwargs["architecture"] = arch
 
@@ -880,6 +897,12 @@ def main(argv: list[str] | None = None) -> int:
             prev = str(state.get("message_zh") or "").strip()
             state["architecture_resolved_from"] = "intent"
             state["message_zh"] = f"{echo} {prev}".strip() if echo not in prev else prev
+        if isinstance(state, dict):
+            state = dict(state)
+            try:
+                state["project"] = str(Path(args.project).expanduser().resolve())
+            except OSError:
+                state["project"] = str(args.project)
         print_json(state)
         return 0
     if args.cmd == "run-action":

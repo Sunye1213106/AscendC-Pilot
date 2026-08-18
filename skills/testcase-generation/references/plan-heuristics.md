@@ -11,7 +11,7 @@
 
 ## 闸门
 
-- 算子真实有的 INPUT 缺列 → `harness_intent` 补列，先 CE 改测试仓，禁止 start solve。
-- 列有但 `generate_inputs` 造不出 → `harness_intent` 改生成器。
+- 算子真实有的 INPUT 缺列 → `test_harness_gap` 补列，先 CE 改测试仓，禁止 start solve。
+- 列有但 `generate_inputs` 造不出 → `test_harness_gap` 改生成器。
 - root 不到 → `untestable` + `reason`，不进义务表。
 - YAML 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cover`。

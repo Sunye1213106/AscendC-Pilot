@@ -30,7 +30,7 @@ from typing import Any
 import yaml
 
 from uo_init import scope_scan as sscan
-from uo_init.source_layout import ARCH_DIR_RE, is_other_arch_path
+from uo_init.source_layout import ARCH_DIR_RE, arch_number, is_other_arch_path
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 OVERRIDE_DIR = SPEC_DIR / "operators"
@@ -184,7 +184,7 @@ def _discover_archs(op_dir: Path) -> list[str]:
         for child in parent.iterdir():
             if child.is_dir() and ARCH_DIR_RE.match(child.name):
                 seen.add(child.name)
-    return sorted(seen)
+    return sorted(seen, key=lambda name: (arch_number(name), name))
 
 
 def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:

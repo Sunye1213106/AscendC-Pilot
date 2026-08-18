@@ -122,3 +122,23 @@ def test_discover_skips_sibling_when_local_host_already_packs(tmp_path: Path) ->
     names = [p.name for p in spec.host_targets]
     assert "fused_infer_attention_score_tiling.cpp" in names
     assert "prompt_flash_attention_tiling.cpp" not in names
+
+
+def test_discover_defaults_to_newest_hyphenated_arch(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_host" / "arch35").mkdir(parents=True)
+    (op / "op_host" / "arch-920r1").mkdir(parents=True)
+    (op / "op_kernel" / "arch-920r1").mkdir(parents=True)
+    (op / "op_host" / "toy_def.cpp").write_text(
+        "class Toy : public OpDef {};\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "arch-920r1" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy() {}\n",
+        encoding="utf-8",
+    )
+    spec = discover(op)
+    assert spec.arch_dir == "arch-920r1"
+    assert spec.available_archs[-1] == "arch-920r1"
+    spec_pin = discover(op, arch_dir="arch-920r1")
+    assert spec_pin.arch_dir == "arch-920r1"

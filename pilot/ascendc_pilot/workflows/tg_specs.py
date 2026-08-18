@@ -309,7 +309,7 @@ def _build(
             _tr("certify", "construct", kind="rework", reason_codes=["OPEN_NONEMPTY"]),
         ],
         "phase_gates": {
-            "gate": ["plan_approved", "kb_fingerprint_fresh", "harness_intent_cleared"],
+            "gate": ["plan_approved", "kb_fingerprint_fresh", "test_harness_gap_cleared"],
             "certify": ["worklog_closed"],
         },
         "complete_gates": ["plan_approved", "worklog_closed"],
@@ -323,12 +323,12 @@ def _build(
         "actions": [
             _act(
                 "solve_precheck",
-                label_zh="禁止未落地 harness_intent 开求解",
+                label_zh="禁止未落地 test_harness_gap 开求解",
                 phases=["gate"],
                 workflow_id="tg-solve",
                 agent_id="deterministic-tg-engine",
                 role_id="deterministic_engine",
-                pre_gates=["plan_approved", "kb_fingerprint_fresh", "harness_intent_cleared"],
+                pre_gates=["plan_approved", "kb_fingerprint_fresh", "test_harness_gap_cleared"],
                 capability_ids=[],
                 output_contract_id="solve-precheck-v1",
             ),
@@ -421,6 +421,6 @@ def _build(
             "continue_scrub": "from_contracts",
         },
         "phases": ["gate", "construct", "replay", "analyze", "certify"],
-        "gates": ["plan_approved", "kb_fingerprint_fresh", "harness_intent_cleared", "worklog_closed"],
+        "gates": ["plan_approved", "kb_fingerprint_fresh", "test_harness_gap_cleared", "worklog_closed"],
     },
 }

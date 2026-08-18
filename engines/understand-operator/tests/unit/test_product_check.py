@@ -81,3 +81,46 @@ def test_product_check_fails_when_graph_drops(tmp_path: Path) -> None:
     facts = check_cannbot_product(cm, source_root=op, architecture="arch35")
     assert facts["expected"]["needles_graph_ge_source"] is False
     assert facts["ok"] is False
+
+
+def test_product_check_allows_included_other_arch_header(tmp_path: Path) -> None:
+    op = tmp_path / "op"
+    (op / "op_kernel" / "arch-920r1").mkdir(parents=True)
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
+    (op / "op_kernel" / "arch35" / "shared.h").write_text("struct Shared {};\n", encoding="utf-8")
+    cm = CodeMap(op_name="toy", architecture="arch-920r1")
+    cm.upsert(
+        EntityKind.KERNEL,
+        "toy_kernel",
+        attrs={"source_signature": True},
+        file="op_kernel/arch-920r1/k.cpp",
+        line=1,
+        status="extracted",
+    )
+    cm.upsert(
+        EntityKind.OTHER,
+        "Shared",
+        file="op_kernel/arch35/shared.h",
+        line=1,
+        status="extracted",
+    )
+    facts = check_cannbot_product(cm, source_root=op, architecture="arch-920r1")
+    assert facts["expected"]["no_foreign_arch"] is True
+    assert facts["counts"]["foreign_arch"] == 0
+
+
+def test_product_check_flags_foreign_entry_tu(tmp_path: Path) -> None:
+    op = tmp_path / "op"
+    (op / "op_kernel" / "arch-920r1").mkdir(parents=True)
+    cm = CodeMap(op_name="toy", architecture="arch-920r1")
+    cm.upsert(
+        EntityKind.KERNEL,
+        "old_kernel",
+        attrs={"source_signature": True},
+        file="op_kernel/arch35/old.cpp",
+        line=1,
+        status="extracted",
+    )
+    facts = check_cannbot_product(cm, source_root=op, architecture="arch-920r1")
+    assert facts["expected"]["no_foreign_arch"] is False
+    assert facts["counts"]["foreign_arch"] == 1

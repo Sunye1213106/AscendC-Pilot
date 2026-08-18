@@ -20,6 +20,7 @@ COGNITIVE_SKILLS = (
     "code-review",
     "code-engineering",
 )
+CONTROL_PLANE_SKILLS = ("workflow-orchestration",)
 
 DELETED_CAPS = (
     "tilingkey-closure",
@@ -106,7 +107,7 @@ def _errors() -> list[str]:
     if (SKILLS / "actions").exists():
         errors.append("skills/actions/ must not exist; Action identity lives in Spec")
 
-    for skill_id in COGNITIVE_SKILLS:
+    for skill_id in COGNITIVE_SKILLS + CONTROL_PLANE_SKILLS:
         skill_md = SKILLS / skill_id / "SKILL.md"
         if not skill_md.is_file():
             errors.append(f"missing cognitive skill: {skill_md.as_posix()}")

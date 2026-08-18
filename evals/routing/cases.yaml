@@ -86,3 +86,8 @@ cases:
     query: Grill a named markdown plan and apply unfinished todos for an AscendC operator
     should_trigger: [code-engineering]
     should_not_trigger: [tg-solve]
+
+  - id: route_orchestration_pr_cases
+    query: 分析这个 PR 并生成对应测试用例，对照 slash 输入输出走 ce-review tg-plan tg-solve
+    should_trigger: [workflow-orchestration]
+    should_not_trigger: [source-proof]

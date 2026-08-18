@@ -17,7 +17,7 @@ from uo_init.diagnostics.source_api import (
 )
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
-from uo_init.source_layout import is_other_arch_path
+from uo_init.source_layout import is_foreign_arch_entry_tu, is_other_arch_path
 
 _TPL_HINT_RE = re.compile(r"\b(?:ASCENDC_TPL_|GET_TPL_TILING_KEY|TILING_KEY_IS)\b")
 
@@ -155,7 +155,7 @@ def check_cannbot_product(
     foreign = [
         str(e.file)
         for e in codemap.entities.values()
-        if e.file and is_other_arch_path(Path(str(e.file)), arch)
+        if e.file and is_foreign_arch_entry_tu(Path(str(e.file)), arch)
     ]
 
     expected = {

@@ -62,20 +62,6 @@ def extract_host_bundle(
         reused = sscan.load_prepared_scope(spec.op_dir, spec.arch_dir)
         if reused is not None:
             spec.scope = reused
-            arch = (spec.arch_dir or "").strip().lower()
-            if arch:
-                kept = []
-                for item in spec.scope.files:
-                    others = [
-                        p
-                        for p in (s.lower() for s in item.path.parts)
-                        if sscan.ARCH_SEGMENT_RE.match(p) and p != arch
-                    ]
-                    if others:
-                        continue
-                    kept.append(item)
-                spec.scope.files = kept
-                spec.scope.__post_init__()
             _targets_from_scope(spec)
             if spec.kernel_targets:
                 from uo_init.source_layout import pick_kernel_entry

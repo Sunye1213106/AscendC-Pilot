@@ -1218,6 +1218,17 @@ async function handleAskHumanStep(args: {
     }
     const decision = normalizeResumeDecision(label)
     const archChoice = /^arch[0-9A-Za-z._-]+$/i.test(label) ? label : ""
+    const field = String(ask.field || "").trim().toLowerCase()
+    const reservedProject = new Set(["local", "retry", "uo-init", "source", "query"])
+    const looksLikePath = /[\\/]/.test(label) || (label.length > 1 && existsSync(label))
+    const projectChoice =
+      field === "project" &&
+      !decision &&
+      Boolean(label) &&
+      !reservedProject.has(label.toLowerCase()) &&
+      looksLikePath
+        ? label
+        : ""
     return {
       ok: true,
       answered: true,
@@ -1227,6 +1238,7 @@ async function handleAskHumanStep(args: {
       resume_decision: decision,
       choice: label,
       architecture_choice: archChoice,
+      project_choice: projectChoice,
       action_id: String(step.action_id || ""),
       log,
       message_zh: "Host Driver 已收集答复并写入收据。",
@@ -1456,17 +1468,14 @@ export async function runPilotDriver(
   if (!workflow) {
     return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow" }
   }
-  if (!project && workflow !== "auto") {
-    return { ok: false, error: "PILOT_RUN_ARGS", message_zh: "pilot_run 需要 workflow + project" }
-  }
-  if (!project && workflow === "auto") {
+  if (!project) {
     const hostDir = String(args.hostDirectory || "").trim()
     if (!hostDir) {
       return {
         ok: false,
         error: "AUTO_HOST_DIRECTORY",
         message_zh:
-          "自然语言 auto 需要当前 OpenCode 打开的目录作为控制面。请在算子仓或 Pilot 工作区里启动，不要另开 cache tmp。",
+          "pilot_run 需要当前 OpenCode 打开的目录作为工作区。请打开算子目录、算子仓或空目录后再启动。",
       }
     }
     project = resolve(hostDir)
@@ -1511,6 +1520,24 @@ export async function runPilotDriver(
   } catch {
     // best-effort
   }
+  const adoptPinnedProject = (payload: Record<string, unknown> | undefined | null) => {
+    const pinned = String(payload?.project || "").trim()
+    if (!pinned) return
+    try {
+      project = resolve(pinned)
+    } catch {
+      project = pinned
+    }
+    try {
+      const cache = resolve(openCodeHome(), "ascendc-last-project")
+      mkdirSync(openCodeHome(), { recursive: true })
+      const looksLikeOperator =
+        existsSync(resolve(project, "op_kernel")) || existsSync(resolve(project, "op_host"))
+      if (looksLikeOperator) writeFileSync(cache, project, "utf-8")
+    } catch {
+      // best-effort
+    }
+  }
   const startOnce = (extra: string[] = []) => {
     const argv = ["start", workflow, "--project", project, ...extra]
     if (architecture) argv.push("--architecture", architecture)
@@ -1524,6 +1551,7 @@ export async function runPilotDriver(
     initial: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
     let payload = initial
+    adoptPinnedProject(payload)
     if (
       String(payload.decision || "") === "query" ||
       String(payload.next_workflow_id || "") === "uo-query"
@@ -1543,6 +1571,7 @@ export async function runPilotDriver(
       { event: "start", ok: isAcpStartSuccess(payload), workflow },
     ]
     for (let i = 0; i < 4 && isHumanDecision(payload); i++) {
+      adoptPinnedProject(payload)
       reporter?.setStatus("ask")
       const req =
         payload.human_interaction_request && typeof payload.human_interaction_request === "object"
@@ -1570,6 +1599,16 @@ export async function runPilotDriver(
       if (!asked.answered) return asked
       const decision = String(asked.resume_decision || asked.choice || "")
       const archChoice = String(asked.architecture_choice || "")
+      const projectChoice = String(asked.project_choice || "")
+      if (projectChoice) {
+        try {
+          project = resolve(projectChoice)
+        } catch {
+          project = projectChoice
+        }
+        payload = await startOnce()
+        continue
+      }
       if (decision === "query") {
         const messageZh =
           "上一场建库已经完成，产物锁已释放。新会话直接查询即可，不是卡住。" +
@@ -1631,6 +1670,7 @@ export async function runPilotDriver(
         todo: (live as Record<string, unknown>).todo,
       }
     : await consumeStartAsks(await startOnce())
+  adoptPinnedProject(started)
   const startedKind = String((started.host_step as HostStep | undefined)?.kind || "")
   if (started.answer_from_source === true || startedKind === "answer_from_source") {
     return started
@@ -1939,8 +1979,8 @@ export function createPilotRunTool(
     pilot_run: {
       description:
         "Run AscendC-Pilot via Host Session Driver. " +
-        "Natural language: workflow=auto and intent=the user's original text (do not invent slash). " +
-        "Expert slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
+        "Natural language: read workflow-orchestration skill, then workflow=<the missing slash id>. " +
+        "Never workflow=auto. Expert slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
         "(agent=actor_id, prompt=task_prompt_stub verbatim). " +
         "Host Driver syncs Todo and owns AskQuestion when the UI is available. Never uo-query.",
@@ -1948,12 +1988,12 @@ export function createPilotRunTool(
         workflow: {
           type: "string",
           description:
-            "auto for natural-language tasks, or an existing workflow id (uo-init, tg-plan, ce-review, …). Never uo-query.",
+            "auto for reserved workspace bootstrap only, or an existing workflow id (uo-init, tg-plan, ce-review, …). Natural language must pass a concrete slash id. Never uo-query.",
         },
         project: {
           type: "string",
           description:
-            "Operator package absolute path. Optional for workflow=auto when the user gave an allowlisted PR URL.",
+            "Operator package absolute path. Optional when the user gave an allowlisted PR URL.",
         },
         architecture: {
           type: "string",

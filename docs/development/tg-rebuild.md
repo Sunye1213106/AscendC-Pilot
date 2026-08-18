@@ -26,7 +26,7 @@ Host replay 库（`HostOracle`、WSL replay、`tg-closure` CLI）保留，只作
 
 确定性引擎在 `actions/tg_product.py`。LLM 只有 `tg-analyst`，只写 `runs/` 草稿。人确认仍走 `human_confirm` / `plan_approve`；收据 `consume=False` 直到 finalize 成功。
 
-`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射、值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。有仓但 mapping 空 → init 失败。扫描含 xls/xlsx。
+`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射、值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。测试脚本仓可选：有仓但 mapping 空 → init 失败；无仓则 `/uo-query` 读输入 API 设计控制面。扫描含 xls/xlsx。
 
 plan 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cover`。`class` 只有 `replay` / `derived`。root 不到另列 `untestable.reason`。
 

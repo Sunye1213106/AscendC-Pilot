@@ -55,14 +55,14 @@ def apply_revision(project_root: Path | str, *, delta_text: str) -> dict[str, An
 
     if plan:
         # Keep acquire / UO; invalidate obligations and TG if constraints changed.
-        from_id = "goal-impact"
+        from_id = "tg-plan"
         steps = [str(s.get("id") or "") for s in (plan.get("steps") or []) if isinstance(s, dict)]
         if "tg-plan" in steps:
             from_id = "tg-plan"
         elif "tg-init" in steps:
             from_id = "tg-init"
-        elif "goal-impact" not in steps:
-            from_id = steps[-1] if steps else ""
+        elif steps:
+            from_id = steps[-1]
         if from_id:
             plan = invalidate_from(plan, from_step_id=from_id)
             write_task_plan(root, plan)

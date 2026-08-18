@@ -162,11 +162,11 @@ def gate_plan_approved(
     out = tg_root(project_root, arch=architecture)
 
     def _run() -> Any:
-        from testcase_agent.products import is_plan_approved, load_plan, pending_harness_intent
+        from testcase_agent.products import is_plan_approved, load_plan, pending_test_harness_gap
 
         text, fence = load_plan(out)
-        if pending_harness_intent(text, fence):
-            raise RuntimeError("HARNESS_INTENT_PENDING: CE-apply the test-script repo then /tg-init before solve")
+        if pending_test_harness_gap(text, fence):
+            raise RuntimeError("TEST_HARNESS_GAP_PENDING: CE-apply the test-script repo then /tg-init before solve")
         if not is_plan_approved(fence):
             raise RuntimeError("APPROVAL_REQUIRED: plan.md is not approved")
         return {
@@ -178,20 +178,26 @@ def gate_plan_approved(
     return _wrap_exc("plan_approved", _run)
 
 
-def gate_harness_intent_cleared(
+def gate_test_harness_gap_cleared(
     project_root: Path, *, architecture: str | None = None
 ) -> dict[str, Any]:
     out = tg_root(project_root, arch=architecture)
 
     def _run() -> Any:
-        from testcase_agent.products import load_plan, pending_harness_intent
+        from testcase_agent.products import load_plan, pending_test_harness_gap
 
         text, fence = load_plan(out)
-        if pending_harness_intent(text, fence):
-            raise RuntimeError("HARNESS_INTENT_PENDING")
-        return {"ok": True, "harness_intent_pending": False}
+        if pending_test_harness_gap(text, fence):
+            raise RuntimeError("TEST_HARNESS_GAP_PENDING")
+        return {"ok": True, "test_harness_gap_pending": False}
 
-    return _wrap_exc("harness_intent_cleared", _run)
+    return _wrap_exc("test_harness_gap_cleared", _run)
+
+
+def gate_harness_intent_cleared(
+    project_root: Path, *, architecture: str | None = None
+) -> dict[str, Any]:
+    return gate_test_harness_gap_cleared(project_root, architecture=architecture)
 
 
 def gate_worklog_closed(

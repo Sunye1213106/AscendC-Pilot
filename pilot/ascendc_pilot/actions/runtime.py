@@ -1709,17 +1709,6 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     if execution_mode != EXECUTION_DETERMINISTIC:
         (sdir / "method.md").write_text(method_r, encoding="utf-8")
         (sdir / "prompt.md").write_text(prompt_r, encoding="utf-8")
-        if action_id == "parse_intent":
-            try:
-                from ascendc_pilot.harness.intent import render_workflow_catalog
-
-                refs = sdir / "refs"
-                refs.mkdir(parents=True, exist_ok=True)
-                (refs / "workflow-catalog.md").write_text(
-                    render_workflow_catalog(), encoding="utf-8"
-                )
-            except Exception:  # noqa: BLE001
-                pass
 
     # Materialize Action METHOD + named refs. Never concatenate Agent SKILL.md.
     # Host-owned confirmations skip skill trees entirely.

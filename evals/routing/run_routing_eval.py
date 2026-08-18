@@ -31,6 +31,7 @@ def _load_skill_descriptions(repo: Path) -> dict[str, str]:
         "source-proof",
         "code-review",
         "code-engineering",
+        "workflow-orchestration",
     ):
         skill = repo / "skills" / name / "SKILL.md"
         if not skill.is_file() or yaml is None:

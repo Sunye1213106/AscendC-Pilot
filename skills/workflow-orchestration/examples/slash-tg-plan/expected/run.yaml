@@ -1,0 +1,6 @@
+pilot_run:
+  workflow: tg-plan
+do_not:
+  - rewrite to another slash
+  - chain tg-init or tg-solve
+  - call workflow=auto

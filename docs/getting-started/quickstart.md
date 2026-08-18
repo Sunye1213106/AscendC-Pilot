@@ -179,7 +179,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 /ce-review --project <算子目录>
 ```
 
-自然语言「帮我给这个 PR 生成针对 case」+ URL 走 `pilot_run(auto)`，**不会**默认进 `/ce-review`。只要审查才显式 `/ce-review`。
+自然语言「分析这个 PR 并生成对应测试用例」+ URL 对照编排 skill 走 `/ce-review` + `/tg-plan` + `/tg-solve`（先补 UO / `tg-init`）。只要生成 case、没说 review，不要发明 `/ce-review`。只要审查才显式 `/ce-review`。
 
 
 CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query` 四种形态。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
@@ -190,7 +190,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 
 | 入口 | 用途 |
 | --- | --- |
-| 自然语言 + PR URL | `pilot_run(workflow=auto, intent=原文)`：生成针对 case，不必知道 slash |
+| 自然语言 + PR URL | 对照编排 skill `pilot_run(workflow=<缺的那一步>)`：分析并生成针对 case |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
 | `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |
@@ -203,7 +203,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 | `python -m ascendc_pilot doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
 | `pilot_cli`：`inspect` / `ro-search` / `next` / `inspect-failure` / `status` | 证据窗、只读搜索、下一步、失败卡 |
 | `pilot_cli`：`scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
-| `pilot_run`（OpenCode 工具） | Host Session Driver：`workflow=auto` 跑自然语言任务；`workflow=<id>` 跑现有工作流 |
+| `pilot_run`（OpenCode 工具） | Host Session Driver：自然语言对照编排 skill 跑当前缺的 slash；`workflow=<id>` 跑现有工作流 |
 | 插件 `pilot_cli`（OpenCode 工具） | 查询与诊断；`command` 不要 `--help`，不要 `start`/`run-action auto`。用法见 [ACP 工具使用](acp-tools.md) |
 
 正常使用时优先向 `AscendC-Pilot` 描述目标，或使用带参数的 Slash Command。

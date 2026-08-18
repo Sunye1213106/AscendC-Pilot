@@ -35,7 +35,7 @@ User arguments: $ARGUMENTS
 User arguments: $ARGUMENTS
 
 Execution contract:
-1. Treat Workflow Spec as orchestration authority. Prefer Host `pilot_run` to start `uo-init` when it is not already the active workflow; do not call domain CLIs directly.
+1. Slash I/O lives in `skills/workflow-orchestration/`. Spec owns phase and lease. Prefer Host `pilot_run` to start `uo-init` when it is not already the active workflow; do not call domain CLIs directly.
 2. If the Host returns `UO_ALREADY_READY` (CodeMap already exists, lock released): this is not an unfinished run. Present options verbatim. 「去查询」means stop Host drive and wait for a question — do not auto-drive, do not `pilot_run workflow=uo-query`, do not read quality.yaml as if you just built.
 3. After a real start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Do not dispatch deterministic engine identities as OpenCode Tasks.
 4. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
@@ -47,7 +47,7 @@ Execution contract:
 User arguments: $ARGUMENTS
 
 Execution contract:
-1. Treat Workflow Spec as orchestration authority. Prefer Host `pilot_run` to start `{workflow_id}` when it is not already the active workflow; do not call domain CLIs directly.
+1. Slash I/O lives in `skills/workflow-orchestration/`. Spec owns phase and lease. Prefer Host `pilot_run` to start `{workflow_id}` when it is not already the active workflow; do not call domain CLIs directly.
 2. After start, prefer Host tool `pilot_run` (OpenCode shows a live progress bar on the tool row). Do not dispatch deterministic engine identities as OpenCode Tasks.
 3. When auto stops with `interaction_required`, execute exactly the returned Action/actor. For a subagent, use the prepared `task_prompt_stub` unchanged; for `primary_interactive`, collect the required user decision in the Primary session.
 4. Finalize the interactive Action through Host `pilot_run` / `dispatch-result`, then call Host tool `pilot_run` again. Never choose a later Action from `allowed_actions` when the Driver recommends a different one.

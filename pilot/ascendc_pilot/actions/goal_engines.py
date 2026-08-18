@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deterministic Harness engines: Intent promote, impact/obligations, workspace."""
+"""Deterministic Harness engines: workspace pin + Goal record. No Intent LLM."""
 
 from __future__ import annotations
 
@@ -69,32 +69,52 @@ def _load_staging(project_root: Path, ctx: dict[str, Any], producer_action: str)
     return _load_yaml(staging)
 
 
+def _intake_source(ctx: dict[str, Any], staging: dict[str, Any]) -> dict[str, Any]:
+    raw = ctx.get("source") if isinstance(ctx.get("source"), dict) else {}
+    if not raw:
+        raw = staging.get("source") if isinstance(staging.get("source"), dict) else {}
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Pin a PR worktree when SourceRef is already structured. Do not parse NL."""
     from ascendc_pilot.harness.intent import validate_intent_staging
-    from ascendc_pilot.planning.prerequisites import available_state
-    from ascendc_pilot.planning.task_plan import plan_for, write_task_plan
     from ascendc_pilot.user_goal import create_user_goal, write_user_goal
 
-    staging = _load_staging(project_root, ctx, "parse_intent")
-    if not staging:
-        return {
-            "ok": False,
-            "error": "INTENT_STAGING_EMPTY",
-            "message_zh": "意图解析没有写出 staging.yaml",
-        }
+    staging = _load_staging(project_root, ctx, "intent_promote")
     intent_text = str(ctx.get("intent") or staging.get("intent_text") or "").strip()
-    staging.setdefault("intent_text", intent_text)
-    checked = validate_intent_staging(staging)
-    if not checked.get("ok"):
-        return {
-            "ok": False,
-            "error": str(checked.get("error") or "INTENT_INVALID"),
-            "message_zh": str(checked.get("message_zh") or "意图校验失败"),
-            "reason_code": "INTENT_INVALID",
-        }
-    llm_intent = dict(checked["intent"])
-    llm_intent["intent_text"] = intent_text
-    source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
+    source = _intake_source(ctx, staging)
+    llm_intent = {
+        "intent_text": intent_text,
+        "objective_zh": str(staging.get("objective_zh") or intent_text or "完成用户目标"),
+        "source": source or {"kind": "local"},
+        "needed_workflows": list(staging.get("needed_workflows") or ctx.get("needed_workflows") or []),
+        "needed_capabilities": list(
+            staging.get("needed_capabilities") or ctx.get("needed_capabilities") or []
+        ),
+        "constraints": staging.get("constraints") if isinstance(staging.get("constraints"), dict) else {},
+    }
+    if llm_intent["needed_workflows"] or llm_intent["needed_capabilities"] or source.get("kind") == "pull_request":
+        checked = validate_intent_staging(
+            {
+                "objective_zh": llm_intent["objective_zh"],
+                "intent_text": intent_text,
+                "source": llm_intent["source"],
+                "needed_workflows": llm_intent["needed_workflows"],
+                "needed_capabilities": llm_intent["needed_capabilities"] or ["knowledge"],
+                "constraints": llm_intent["constraints"],
+            }
+        )
+        if not checked.get("ok"):
+            return {
+                "ok": False,
+                "error": str(checked.get("error") or "INTENT_INVALID"),
+                "message_zh": str(checked.get("message_zh") or "来源校验失败"),
+                "reason_code": "INTENT_INVALID",
+            }
+        llm_intent = dict(checked["intent"])
+        llm_intent["intent_text"] = intent_text
+        source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
 
     acquire: dict[str, Any] = {}
     project_pin = Path(project_root).expanduser().resolve()
@@ -103,7 +123,11 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     if str(source.get("kind") or "") == "pull_request" and source.get("url"):
         try:
             gw = _git_workspace()
-            acquire = gw.acquire_pull_request(str(source["url"]), run_id=run_id)
+            acquire = gw.acquire_pull_request(
+                str(source["url"]),
+                run_id=run_id,
+                workspace_root=str(Path(project_root).expanduser().resolve()),
+            )
         except Exception as exc:  # noqa: BLE001
             acquire = {"ok": False, "error": "WORKSPACE_ACQUIRE_FAILED", "message_zh": str(exc)[:400]}
         if not acquire.get("ok"):
@@ -167,25 +191,6 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         if len(arches) == 1:
             arch_pin = str(arches[0])
 
-    avail = available_state(project_pin, architecture=arch_pin)
-    plan = plan_for(llm_intent, avail)
-    if str(source.get("kind") or "") == "pull_request":
-        for step in plan.get("steps") or []:
-            if isinstance(step, dict) and str(step.get("id")) == "workspace_acquire":
-                step["status"] = "passed"
-        for step in plan.get("steps") or []:
-            if isinstance(step, dict) and str(step.get("status")) == "pending":
-                step["status"] = "in_progress"
-                break
-    else:
-        for step in plan.get("steps") or []:
-            if isinstance(step, dict) and str(step.get("id")) == "workspace_acquire":
-                step["status"] = "skipped"
-        for step in plan.get("steps") or []:
-            if isinstance(step, dict) and str(step.get("status")) == "pending":
-                step["status"] = "in_progress"
-                break
-
     goal_root = project_pin if project_pin.exists() else Path(project_root)
     goal = create_user_goal(
         goal_root,
@@ -193,7 +198,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         llm_intent=llm_intent,
         architecture=arch_pin,
         op_name=str(ctx.get("op_name") or ""),
-        kind=str(plan.get("kind") or ""),
+        kind=str(llm_intent.get("kind") or ""),
     )
     if project_pin.exists():
         goal["project"] = project_pin.as_posix()
@@ -212,104 +217,27 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         arts["base_source"] = str((acquire.get("changeset") or {}).get("base_source") or "")
         goal["artifacts"] = arts
     write_user_goal(goal_root, goal)
-
-    write_task_plan(project_root, plan)
     if project_pin != Path(project_root).expanduser().resolve() and project_pin.exists():
-        write_task_plan(project_pin, plan)
-        # Mirror onto the original Host root so Driver continue_goal can switch project.
         write_user_goal(project_root, goal)
 
     receipt = {
         "ok": True,
         "engine": "intent_promote",
-        "kind": plan.get("kind"),
-        "needed_workflows": list(plan.get("needed_workflows") or []),
-        "needed_capabilities": list(plan.get("needed_capabilities") or []),
+        "kind": goal.get("kind") or "",
+        "needed_workflows": list((goal.get("intent") or {}).get("needed_workflows") or []),
+        "needed_capabilities": list((goal.get("intent") or {}).get("needed_capabilities") or []),
         "next_workflow_id": "",
         "project": str(goal.get("project") or project_root),
         "architecture": str(goal.get("architecture") or arch_pin),
         "operator_roots": list(acquire.get("operator_roots") or []),
         "multi_operator": False,
+        "message_zh": "工作区已就绪。对照编排 skill 的 slash I/O 选择下一步，不要再用 workflow=auto 解析原文。",
     }
-    from ascendc_pilot.planning.task_plan import current_workflow_id
-
-    receipt["next_workflow_id"] = current_workflow_id(plan)
     _receipt(project_root, ctx, "intent_promoted.yaml", receipt)
     if project_pin.exists() and project_pin != Path(project_root).expanduser().resolve():
         _receipt(project_pin, ctx, "intent_promoted.yaml", receipt)
     return receipt
 
 
-def run_impact_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from ascendc_pilot.user_goal import load_user_goal, write_user_goal
-
-    staging = _load_staging(project_root, ctx, "change_impact")
-    if not staging:
-        return {"ok": False, "error": "IMPACT_STAGING_EMPTY", "reason_code": "IMPACT_INVALID"}
-    affected = staging.get("affected") or staging.get("affected_symbols") or []
-    goal = load_user_goal(project_root) or {}
-    findings = list(goal.get("findings") or [])
-    summary = str(staging.get("summary_zh") or staging.get("finding") or "").strip()
-    if summary:
-        findings.append({"summary_zh": summary, "at": _now()})
-    arts = dict(goal.get("artifacts") or {})
-    arts["impact"] = {
-        "affected": affected,
-        "changed_paths": list(staging.get("changed_paths") or []),
-        "contrast": staging.get("contrast") or [],
-    }
-    if goal:
-        goal["findings"] = findings
-        goal["artifacts"] = arts
-        write_user_goal(project_root, goal)
-    _dump_yaml(_action_dir(project_root, ctx, "impact_promote") / "impact.yaml", arts["impact"])
-    _receipt(project_root, ctx, "change_impact.yaml", {"ok": True, "affected": affected})
-    return {"ok": True, "engine": "impact_promote", "affected_count": len(list(affected))}
-
-
-def run_obligations_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from ascendc_pilot.user_goal import load_user_goal, write_user_goal
-
-    staging = _load_staging(project_root, ctx, "derive_obligations")
-    items = staging.get("obligations") or staging.get("items") or []
-    if not isinstance(items, list) or not items:
-        return {
-            "ok": False,
-            "error": "OBLIGATION_STAGING_EMPTY",
-            "reason_code": "OBLIGATION_INVALID",
-            "message_zh": "没有推导出测试义务。",
-        }
-    cleaned = []
-    for raw in items:
-        if not isinstance(raw, dict):
-            continue
-        cleaned.append(
-            {
-                "change": str(raw.get("change") or "").strip(),
-                "condition": str(raw.get("condition") or "").strip(),
-                "affected": raw.get("affected") or [],
-                "contrast": raw.get("contrast") or [],
-                "boundaries": raw.get("boundaries") or [],
-                "required_hits": raw.get("required_hits") or [],
-            }
-        )
-    if not cleaned:
-        return {"ok": False, "error": "OBLIGATION_INVALID", "reason_code": "OBLIGATION_INVALID"}
-    goal = load_user_goal(project_root) or {}
-    arts = dict(goal.get("artifacts") or {})
-    arts["obligations"] = cleaned
-    if goal:
-        goal["artifacts"] = arts
-        write_user_goal(project_root, goal)
-    _dump_yaml(
-        _action_dir(project_root, ctx, "obligations_promote") / "obligations.yaml",
-        {"obligations": cleaned},
-    )
-    _receipt(project_root, ctx, "test_obligations.yaml", {"ok": True, "count": len(cleaned)})
-    return {"ok": True, "engine": "obligations_promote", "count": len(cleaned)}
-
-
 def install(registry: dict[tuple[str, str], EngineFn]) -> None:
     registry[("goal-intake", "intent_promote")] = run_intent_promote
-    registry[("goal-impact", "impact_promote")] = run_impact_promote
-    registry[("goal-impact", "obligations_promote")] = run_obligations_promote

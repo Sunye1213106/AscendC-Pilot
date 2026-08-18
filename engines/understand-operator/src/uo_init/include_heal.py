@@ -25,6 +25,11 @@ from typing import Any, Callable, Iterable
 import yaml
 
 from uo_init.paths import require_architecture
+from uo_init.source_layout import (
+    arch_tokens_in_include,
+    include_root_owned_architecture,
+    path_owned_architecture,
+)
 
 MISSING_RE = re.compile(
     r"""['"<]([^'"><\s]+?\.(?:h|hpp|hh|inc|cuh))['">]\s+file not found""",
@@ -371,6 +376,18 @@ def _unique_dirs(items: Iterable[Any]) -> list[str]:
     return out
 
 
+def _identity_include_dirs(items: Iterable[Any], arch_dir: str | None) -> list[str]:
+    """Drop ``-I`` roots that belong to another ``arch*`` folder."""
+    arch = str(arch_dir or "").strip()
+    out: list[str] = []
+    for raw in _unique_dirs(items):
+        owned = include_root_owned_architecture(raw)
+        if owned and arch and owned != arch:
+            continue
+        out.append(raw)
+    return out
+
+
 def _dump_yaml(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -467,10 +484,12 @@ def save_extras(
         return None
     existing = load_extras_payload(op_dir, arch_dir)
     p_host, p_kernel = promoted_include_dirs(existing)
+    p_host = _identity_include_dirs(p_host, arch_dir)
+    p_kernel = _identity_include_dirs(p_kernel, arch_dir)
     p_fi_host = _str_list(existing, "promoted_host_force_include")
     p_fi_kernel = _str_list(existing, "promoted_kernel_force_include")
-    extra_h = _unique_dirs(getattr(ctx, "extra_host_includes", None) or [])
-    extra_k = _unique_dirs(getattr(ctx, "extra_kernel_includes", None) or [])
+    extra_h = _identity_include_dirs(getattr(ctx, "extra_host_includes", None) or [], arch_dir)
+    extra_k = _identity_include_dirs(getattr(ctx, "extra_kernel_includes", None) or [], arch_dir)
     extra_fi_h = _unique_dirs(getattr(ctx, "extra_host_force_includes", None) or [])
     extra_fi_k = _unique_dirs(getattr(ctx, "extra_kernel_force_includes", None) or [])
     src = str(source or SOURCE_SCRIPT).strip() or SOURCE_SCRIPT
@@ -874,7 +893,12 @@ def find_type_header(ctx: Any, type_name: str, *, side: str) -> HealHit | None:
         if is_forbidden_include_dir(path):
             continue
         ranked.append(path)
-    status, viable = _pick_unique_header(ranked, roots=roots, rel=name)
+    status, viable = _pick_unique_header(
+        ranked,
+        roots=roots,
+        rel=name,
+        arch_dir=str(getattr(ctx, "arch_dir", "") or ""),
+    )
     _set_include_resolution(status, viable)
     if status != INCLUDE_UNIQUE or not viable:
         return None
@@ -1202,13 +1226,48 @@ def _basename_hits(roots: list[Path], rel: str) -> list[Path]:
 
 
 def _pick_unique_header(
-    hits: list[Path], *, roots: list[Path], rel: str
+    hits: list[Path], *, roots: list[Path], rel: str, arch_dir: str = ""
 ) -> tuple[str, list[Path]]:
     viable = [p for p in _dedupe_paths(hits) if _viable_header(p, roots=roots)]
     if not viable:
         return INCLUDE_UNRESOLVED, []
+    arch = str(arch_dir or "").strip().lower()
+    tokens = {t.lower() for t in arch_tokens_in_include(rel)}
+    if arch and len(viable) > 1:
+        current = [p for p in viable if path_owned_architecture(p) == arch]
+        if len(current) == 1:
+            return INCLUDE_UNIQUE, current
+        if current:
+            return INCLUDE_AMBIGUOUS, current
+        other = [
+            p
+            for p in viable
+            if path_owned_architecture(p)
+            and path_owned_architecture(p) != arch
+        ]
+        if other and len(other) == len(viable):
+            # Every hit is another arch* folder. Bare ``foo.h`` must not put
+            # that folder on -I; an explicit ``arch35/foo.h`` spelling is ok.
+            if not tokens:
+                return INCLUDE_UNRESOLVED, viable
+            named = [p for p in other if path_owned_architecture(p) in tokens]
+            if len(named) == 1:
+                return INCLUDE_UNIQUE, named
+            if named:
+                return INCLUDE_AMBIGUOUS, named
+            return INCLUDE_UNRESOLVED, viable
+        return INCLUDE_AMBIGUOUS, viable
     if len(viable) > 1:
         return INCLUDE_AMBIGUOUS, viable
+    owned = path_owned_architecture(viable[0])
+    if (
+        arch
+        and owned
+        and owned != arch
+        and arch not in tokens
+        and owned not in tokens
+    ):
+        return INCLUDE_UNRESOLVED, viable
     return INCLUDE_UNIQUE, viable
 
 
@@ -1231,7 +1290,12 @@ def find_include_dir(ctx: Any, include_name: str, *, side: str) -> HealHit | Non
         source = "unique_basename"
         if aliased:
             hits = _dedupe_paths(hits + _basename_hits(roots, aliased))
-    status, viable = _pick_unique_header(hits, roots=roots, rel=aliased or rel)
+    status, viable = _pick_unique_header(
+        hits,
+        roots=roots,
+        rel=aliased or rel,
+        arch_dir=str(getattr(ctx, "arch_dir", "") or ""),
+    )
     _set_include_resolution(status, viable)
     if status != INCLUDE_UNIQUE or not viable:
         return None
@@ -1243,6 +1307,11 @@ def find_include_dir(ctx: Any, include_name: str, *, side: str) -> HealHit | Non
             return hit
     include_dir = include_dir_for(found, rel)
     if is_forbidden_include_dir(include_dir) or not include_dir.is_dir():
+        _set_include_resolution(INCLUDE_UNRESOLVED, viable)
+        return None
+    owned_root = include_root_owned_architecture(include_dir)
+    arch = str(getattr(ctx, "arch_dir", "") or "").strip()
+    if owned_root and arch and owned_root != arch:
         _set_include_resolution(INCLUDE_UNRESOLVED, viable)
         return None
     return HealHit(

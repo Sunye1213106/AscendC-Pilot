@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Expand LLM needed_workflows into a legal internal Task Plan.
+"""Record requested workflows for Goal/Todo display.
 
-The planner validates workflow ids, injects prerequisites, and orders steps.
-LLM staging must not invent workflow order. Users never see this file.
+Orchestration authority is ``skills/workflow-orchestration/``. This module
+must not inject a parallel DAG or ``goal-impact``.
 """
 
 from __future__ import annotations
@@ -18,12 +18,11 @@ from ascendc_pilot.paths import AGENT_DIR
 TASK_PLAN_SCHEMA = "pilot-task-plan/v1"
 
 # Public Todo copy for the golden NL path (test_generation).
-# Order matches Task Plan: workspace → UO → impact/scope → TG → replay.
+# Display order only; slash order lives in skills/workflow-orchestration/.
 PUBLIC_PLAN_TEST_GENERATION: tuple[dict[str, str], ...] = (
     {"id": "acquire_change", "summary_zh": "获取 PR 与代码"},
     {"id": "ensure_knowledge", "summary_zh": "建立算子理解"},
-    {"id": "understand_change", "summary_zh": "分析改动影响"},
-    {"id": "choose_scope", "summary_zh": "确定测试范围"},
+    {"id": "review_change", "summary_zh": "审查改动"},
     {"id": "generate_cases", "summary_zh": "生成测试用例"},
     {"id": "validate_cases", "summary_zh": "回放验证"},
     {"id": "deliver", "summary_zh": "输出结果"},
@@ -51,7 +50,6 @@ PUBLIC_PLAN_KNOWLEDGE: tuple[dict[str, str], ...] = (
 _WORKFLOW_TO_PUBLIC = {
     "workspace_acquire": "acquire_change",
     "goal-intake": "acquire_change",
-    "goal-impact": "understand_change",
     "uo-init": "ensure_knowledge",
     "uo-update": "ensure_knowledge",
     "ce-review": "review_change",
@@ -168,14 +166,14 @@ def plan_for(
     llm_intent: dict[str, Any],
     available: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Expand needed_workflows + on-disk facts into legal existing workflows."""
+    """Record requested workflows. Do not inject a parallel DAG; Primary + skill own order."""
     from ascendc_pilot.harness.intent import (
         WORKFLOW_SUMMARY_ZH,
         capabilities_from_workflows,
         workflows_from_capabilities,
     )
-    from ascendc_pilot.workflows import workflow_requires_uo_product
 
+    del available
     raw_wfs = [
         str(w).strip()
         for w in (llm_intent.get("needed_workflows") or [])
@@ -188,12 +186,7 @@ def plan_for(
     ]
     if not raw_wfs:
         raw_wfs = workflows_from_capabilities(caps)
-    selected = [w for w in raw_wfs if w != "uo-query"]
-
-    state = dict(available or {})
-    has_uo = bool(state.get("has_uo"))
-    uo_stale = bool(state.get("uo_stale"))
-    has_tg_init = bool(state.get("has_tg_init"))
+    selected = [w for w in raw_wfs if w not in {"uo-query", "goal-impact"}]
 
     steps: list[dict[str, Any]] = []
 
@@ -213,16 +206,6 @@ def plan_for(
     source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
     if str(source.get("kind") or "") == "pull_request":
         _add("workspace_acquire", kind="harness_action", summary_zh="获取 PR 与代码")
-
-    needs_uo = any(workflow_requires_uo_product(w) for w in selected)
-    if needs_uo:
-        if has_uo and uo_stale:
-            _add("uo-update")
-        elif not has_uo:
-            _add("uo-init")
-
-    if any(w in {"tg-plan", "tg-solve"} for w in selected) and not has_tg_init:
-        _add("tg-init")
 
     ordered = [w for w in _STEP_ORDER if w in selected]
     ordered.extend([w for w in selected if w not in _STEP_ORDER and w != "workspace_acquire"])
@@ -495,9 +478,6 @@ def executed_public_ids(plan: dict[str, Any] | None) -> set[str]:
         pid = public_id_for_workflow(sid)
         if pid:
             out.add(pid)
-        if sid == "goal-impact":
-            out.add("understand_change")
-            out.add("choose_scope")
         if sid == "workspace_acquire":
             out.add("acquire_change")
         if sid in {"uo-init", "uo-update"}:

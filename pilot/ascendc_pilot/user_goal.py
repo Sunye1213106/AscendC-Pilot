@@ -2,8 +2,8 @@
 """User Goal v2 — product intent above internal workflows.
 
 Persists under ``.ascendc-pilot/control/user_goal.yaml``. Natural-language
-intake does not live here: the LLM Intent Action understands the user text;
-this module only loads, saves, and advances the Goal after a Task Plan exists.
+next step lives in the orchestration skill; this module records Goal progress
+after a slash finishes.
 """
 
 from __future__ import annotations
@@ -209,19 +209,13 @@ def _sync_public_plan(goal: dict[str, Any], workflow_id: str, plan: dict[str, An
                     step["status"] = "passed"
                 elif str(step.get("id")) == "deliver":
                     step["status"] = "in_progress"
-        if workflow_id == "goal-impact":
-            for step in steps:
-                if str(step.get("id")) in {"understand_change", "choose_scope"}:
-                    step["status"] = "passed"
-                elif str(step.get("id")) == "generate_cases" and str(step.get("status")) != "passed":
-                    step["status"] = "in_progress"
     goal = dict(goal)
     goal["public_plan"] = steps
     return goal
 
 
 def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str, Any] | None:
-    """Advance an auto Goal via Task Plan. Expert slash does not chain."""
+    """Record a finished slash on the Goal. Next hop is Primary + orchestration skill."""
     goal = load_user_goal(project_root)
     if not goal or str(goal.get("status")) != "active":
         return None
@@ -232,7 +226,6 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     from ascendc_pilot.planning.task_plan import (
         acceptance_failure_zh,
         acceptance_satisfied,
-        current_workflow_id,
         evaluate_acceptance,
         load_task_plan,
         mark_step_passed,
@@ -258,8 +251,8 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     write_task_plan(project_root, plan)
     goal = _sync_public_plan(goal, wid, plan)
 
-    next_workflow = current_workflow_id(plan)
-    completed = bool(accepted and not next_workflow)
+    next_workflow = ""
+    completed = bool(accepted and not remaining)
     acceptance_failed = bool(not remaining and not accepted)
     if completed:
         goal["status"] = "completed"
@@ -286,7 +279,7 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
         next_step=(
             fail_zh
             if acceptance_failed
-            else (f"继续「{next_summary}」" if next_workflow else "目标已完成")
+            else ("对照编排 skill 选择下一步" if not completed else "目标已完成")
         ),
         need_you="",
     )

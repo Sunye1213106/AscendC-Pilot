@@ -2,7 +2,7 @@
 name: testcase-generation
 description: >
   AscendC 测试生成：一份 init.yaml 绑定脚本列与 CodeMap，一份 plan.md
-  把意图融成可 root 到列的义务，solve 写出脚本可读的 cases 表与 worklog.md。
+  把 test_request 融成可 root 到列的义务，solve 写出脚本可读的 cases 表与 worklog.md。
   指标只有 Host replay（无 NPU）和 derived 公式。Replay reject ≠ E。
 ---
 
@@ -21,10 +21,10 @@ description: >
 ## 门禁
 
 - 无 `.uo` → `/uo-init`
-- 无 `init.yaml` → `/tg-init`；plan **强制** init 产物
+- 无 `init.yaml` → `/tg-init`；plan **强制** init 产物。测试脚本仓可选：有仓则列映射绑到 CodeMap（mapping 空则失败）；无仓则用 `/uo-query` 读输入 API 设计控制面
 - 意图有则融合，不做文件强制
 - 无批准的 `plan.md` → `/tg-plan`
-- `harness_intent` 未落地 → **禁止 start solve**
+- `test_harness_gap` 未落地 → **禁止 start solve**
 - TG **永不改算子仓**；缺列或缺生成器走 CE apply **测试脚本仓**
 
 ## 控制面 = 列
@@ -39,12 +39,12 @@ description: >
 ## 核心循环
 
 ```text
-init.yaml → plan.md（融合意图）→ 规划门禁
+init.yaml → plan.md（融合 test_request）→ 规划门禁
   → 构造 cases 表 → Host Replay → worklog 四段
   → open: [] 才签发
 ```
 
-自然语言 Harness 会自动签发「确认进入规划 / 批准规划」；用户只在 Goal 级 `test_scope` 选范围。专家单独跑 `/tg-init` / `/tg-plan` 同样不再弹这两问。
+自然语言由主控对照编排 skill 选下一步；用户只在缺输入时被问（例如有没有测试脚本仓）。专家单独跑 `/tg-init` / `/tg-plan` 不再弹「确认进入规划 / 批准规划」。
 
 `Replay reject ≠ E`。查语义与 uo-query 同一套，禁止 Grep 算子仓。
 
@@ -53,9 +53,6 @@ init.yaml → plan.md（融合意图）→ 规划门禁
 | 需要 | 读取 |
 |---|---|
 | 绑定列与跑测口径 | `capabilities/bind-init/METHOD.md` |
-| 理解用户原文要跑哪些工作流 | `capabilities/parse-intent/METHOD.md` |
-| 分析改动影响 | `capabilities/change-impact/METHOD.md` |
-| 推导测试义务 | `capabilities/change-obligations/METHOD.md` |
 | 融合义务 | `capabilities/plan-fuse/METHOD.md` |
 | 构造用例 | `capabilities/construct-cases/METHOD.md` |
 | 写 worklog | `capabilities/analyze-round/METHOD.md` |

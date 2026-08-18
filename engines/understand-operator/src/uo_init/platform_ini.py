@@ -18,37 +18,28 @@ ARCH_TO_NPU_ARCH = {
     "arch22": 2201,
     "arch32": 3202,
     "arch50": 5001,
-    "arch-920r1": 9201,  # DAV_9201 unpublished; distinct identity, ISA family arch35
-}
-
-# Programming-model family for clang/VF. Identity stays on ARCH_TO_NPU_ARCH.
-# DAV_9201 adds no new ISA vs DAV_3510; CANN headers do not list 9201 yet, so
-# kernel parse reuses the family's header-enable -D set. Not a silent 3510 fallback:
-# only explicit family members are redirected, and a real ARCH_KERNEL_MACROS
-# entry for the child wins when the chip is published.
-ARCH_PARSE_FAMILY = {
-    "arch-920r1": "arch35",
+    "arch-920r1": 9201,  # DAV_9201 unpublished; first-class identity
 }
 
 # Default SKU when the run only names an arch.
+# arch-920r1 has no published NpuArch=9201 INI yet; lock the same SKU name
+# as arch35 so load_platform_profile can resolve a concrete profile.
 DEFAULT_SKU_BY_ARCH = {
     "arch35": "Ascend950PR_9589",  # Server, cube_core_cnt=32
+    "arch-920r1": "Ascend950PR_9589",
     "arch22": "Ascend910B2",
 }
 
 # Kernel -D set for a BuildVariant. Never silently fall back to 3510.
+# arch-920r1 is a first-class row (values currently match DAV_3510 header
+# enablement because CANN does not yet ship a 9201-only -D set).
 ARCH_KERNEL_MACROS: dict[str, dict[str, str]] = {
     "arch35": {"__NPU_ARCH__": "3510", "__DAV_C310__": "", "__CCE_AICORE__": "310"},
+    "arch-920r1": {"__NPU_ARCH__": "3510", "__DAV_C310__": "", "__CCE_AICORE__": "310"},
     "arch22": {"__NPU_ARCH__": "2201", "__DAV_C220__": "", "__CCE_AICORE__": "220"},
     "arch32": {"__NPU_ARCH__": "3202"},
     "arch50": {"__NPU_ARCH__": "5001"},
 }
-
-
-def parse_family_for_arch(arch_dir: str | None) -> str:
-    """Published ISA family used for clang/VF. Identity is still ``arch_dir``."""
-    arch = str(arch_dir or "").strip()
-    return ARCH_PARSE_FAMILY.get(arch, arch)
 
 
 def dav_name_for_arch(arch_dir: str | None) -> str | None:
@@ -65,11 +56,6 @@ def kernel_macros_for_arch(arch_dir: str | None) -> dict[str, str]:
     known = ARCH_KERNEL_MACROS.get(arch)
     if known is not None:
         return dict(known)
-    family = ARCH_PARSE_FAMILY.get(arch)
-    if family:
-        fam = ARCH_KERNEL_MACROS.get(family)
-        if fam is not None:
-            return dict(fam)
     npu = ARCH_TO_NPU_ARCH.get(arch)
     if npu is not None:
         return {"__NPU_ARCH__": str(npu)}
@@ -185,6 +171,15 @@ def load_platform_profile(
     npu = ARCH_TO_NPU_ARCH.get(arch_dir)
     sku = platform_sku or DEFAULT_SKU_BY_ARCH.get(arch_dir)
     profiles = list_profiles(cann_root, npu_arch=npu)
+    if not profiles and sku:
+        # Unpublished NpuArch (e.g. 9201) has no INI; resolve the named SKU.
+        profiles = [
+            p
+            for p in list_profiles(cann_root)
+            if p.soc_version == sku
+            or p.soc_version.startswith(sku)
+            or Path(p.ini_path).stem == sku
+        ]
     if sku:
         for p in profiles:
             if p.soc_version == sku or p.soc_version.startswith(sku):

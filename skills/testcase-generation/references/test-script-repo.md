@@ -22,7 +22,7 @@
 1. 打开入口（`run_*.py`）和 argparse。确认 `--case`，以及哪些 flag 是精度、哪些是性能。
 2. 打开用例表。每列 mapping：脚本读点（如 `get_case` / `CaseConfig.xxx`）+ UO 标识符。
 3. 对照 CodeMap：表允许但算子非法的组合、缺的 INPUT、发明的张量。记进 `findings`。
-4. 缺列或缺 `generate_inputs` → `harness_intent`，由 `/ce-apply` 改**测试脚本仓**，不要在 TG 里改算子仓。
+4. 缺列或缺 `generate_inputs` → `test_harness_gap`，由 `/ce-apply` 改**测试脚本仓**，不要在 TG 里改算子仓。
 
 ## 规则
 

@@ -160,9 +160,14 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert (prompts / "codemap-query.md").is_file()
         assert (prompts / "investigate-gaps.md").is_file()
         tg_prompts = generated / "prompts" / "tasks" / "tg"
-        assert (tg_prompts / "parse-intent.md").is_file()
-        assert (tg_prompts / "change-impact.md").is_file()
-        assert (tg_prompts / "change-obligations.md").is_file()
+        assert (generated / "skills" / "workflow-orchestration" / "SKILL.md").is_file()
+        orch = (generated / "skills" / "workflow-orchestration" / "SKILL.md").read_text(encoding="utf-8")
+        assert "disable-model-invocation" not in orch
+        assert (tg_prompts / "bind-init.md").is_file()
+        assert (tg_prompts / "plan-fuse.md").is_file()
+        assert not (tg_prompts / "parse-intent.md").exists()
+        assert not (tg_prompts / "change-impact.md").exists()
+        assert not (tg_prompts / "change-obligations.md").exists()
         assert not (prompts / "kb-review.md").exists()
         assert not (prompts / "kb-lookup.md").exists()
 
@@ -330,7 +335,7 @@ def test_cognitive_skill_ids_include_code_engineering():
 
 
 def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
-    from compose_runtime import COGNITIVE_SKILL_IDS, _read_invariant_pack
+    from compose_runtime import COGNITIVE_SKILL_IDS, CONTROL_PLANE_SKILL_IDS, _read_invariant_pack
 
     pack = _read_invariant_pack(REPO)
     assert "简单查询" in pack
@@ -345,6 +350,8 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
         "code-review",
         "code-engineering",
     )
+    assert CONTROL_PLANE_SKILL_IDS == ("workflow-orchestration",)
+    assert set(CONTROL_PLANE_SKILL_IDS).isdisjoint(set(COGNITIVE_SKILL_IDS))
     maintainer = {
         "writing-for-pilot-skills",
         "diagnosing-pilot",
@@ -374,6 +381,9 @@ def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
     assert "同名不可互换" in primary
     oa = (out / "skills" / "operator-analysis" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in oa
+    orch = (out / "skills" / "workflow-orchestration" / "SKILL.md").read_text(encoding="utf-8")
+    assert "disable-model-invocation" not in orch
+    assert "slash-io.md" in orch or "编排" in orch
 
 
 def test_policy_ids_follow_execution_mode() -> None:

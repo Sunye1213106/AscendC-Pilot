@@ -105,20 +105,13 @@ def architecture_npu_arch(architecture: str) -> int | None:
 def architecture_has_vf(architecture: str) -> bool:
     """False on arch22 (DAV_2201). Unknown arch fails open (do not hide APIs).
 
-    ISA-family members (``ARCH_PARSE_FAMILY``) inherit the family's VF gate.
+    ``arch-920r1`` is first-class: ``architecture_npu_arch`` maps it to 9201,
+    which is listed in ``VF_NPU_ARCHS``.
     """
-    from uo_init.platform_ini import parse_family_for_arch
-
     raw = str(architecture or "").strip()
     npu = architecture_npu_arch(raw)
     if npu is not None and npu in VF_NPU_ARCHS:
         return True
-    family = parse_family_for_arch(raw)
-    if family and family != raw:
-        fam_npu = architecture_npu_arch(family)
-        if fam_npu is None:
-            return True
-        return fam_npu in VF_NPU_ARCHS
     if npu is None:
         return True
     return False

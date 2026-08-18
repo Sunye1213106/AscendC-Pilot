@@ -503,8 +503,8 @@ def assert_operator_project(root: Path | str, *, action: str = "") -> dict[str, 
         "message_zh": (
             f"拒绝在非算子目录创建/使用 .ascendc-pilot/{label}。\n"
             f"当前路径: {path}\n"
-            "请把 --project 指到含 op_host/ 或 op_kernel/ 的算子目录"
-            "（对话一开始指定的那个），不要用 OpenCode 启动目录或 monorepo 父目录。"
+            "请把 --project 指到含 op_host/ 或 op_kernel/ 的算子目录；"
+            "若只有 PR 链接，请在 OpenCode 打开算子仓或空工作区后再启动。"
         ),
         "ask_question": {
             "prompt_zh": "请确认算子源码目录（含 op_host/ 或 op_kernel/）",
@@ -772,6 +772,148 @@ def _uo_product_gate(
     }
 
 
+def _workspace_engine():
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    ws = root / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # type: ignore[import-not-found]
+
+    return gw
+
+
+def extract_pr_url_from_intent(text: str) -> str:
+    """First allowlisted PR URL in the user turn, or empty."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    try:
+        return str(_workspace_engine().extract_pr_url(raw) or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _pilot_workspace_forbidden(root: Path) -> bool:
+    if is_pilot_harness_root(root):
+        return True
+    try:
+        return is_under_pilot_checkout(root)
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _resolve_operator_from_pr_workspace(
+    root: Path, intent: str, workflow_id: str
+) -> dict[str, Any] | None:
+    """Checkout PR into OpenCode workspace and pin an operator, or AskQuestion.
+
+    Returns None when intent has no PR URL (caller keeps the original operator gate).
+    """
+    url = extract_pr_url_from_intent(intent)
+    if not url:
+        return None
+    if _pilot_workspace_forbidden(root):
+        return {
+            "ok": False,
+            "needs_human_decision": True,
+            "decision_kind": "project",
+            "reason_code": "PILOT_CHECKOUT_FORBIDDEN",
+            "workflow_id": workflow_id,
+            "project": str(root),
+            "pr_url": url,
+            "message_zh": (
+                "当前 OpenCode 工作区是 AscendC-Pilot 仓，禁止把算子源码 clone 进来。"
+                "请打开算子目录、算子仓根目录，或空目录后再贴 PR。"
+            ),
+            "ask_question": {
+                "prompt_zh": "请换到算子目录、算子仓或空工作区",
+                "options": [],
+                "allow_free_text": True,
+                "field": "project",
+            },
+        }
+    try:
+        acquire = _workspace_engine().acquire_pull_request(url, workspace_root=root)
+    except Exception as exc:  # noqa: BLE001
+        acquire = {
+            "ok": False,
+            "error": "WORKSPACE_ACQUIRE_FAILED",
+            "message_zh": str(exc)[:400],
+        }
+    if not acquire.get("ok"):
+        return {
+            "ok": False,
+            "needs_human_decision": True,
+            "decision_kind": "project",
+            "reason_code": str(acquire.get("error") or "WORKSPACE_ACQUIRE_FAILED"),
+            "workflow_id": workflow_id,
+            "project": str(root),
+            "pr_url": url,
+            "message_zh": str(
+                acquire.get("message_zh")
+                or "无法在当前工作区获取 PR 源码。请检查鉴权，或改用本地算子目录。"
+            ),
+            "ask_question": {
+                "prompt_zh": "获取 PR 失败。请重试、改用本地算子目录，或换空工作区。",
+                "options": [
+                    {"label": "改用本地算子目录", "value": "local"},
+                ],
+                "allow_free_text": True,
+                "field": "project",
+            },
+        }
+    roots = [Path(p) for p in (acquire.get("operator_roots") or []) if str(p).strip()]
+    if len(roots) == 1:
+        return {
+            "ok": True,
+            "project": str(roots[0]),
+            "pr_url": url,
+            "worktree_head": acquire.get("worktree_head") or str(root),
+        }
+    if not roots:
+        return {
+            "ok": False,
+            "needs_human_decision": True,
+            "decision_kind": "project",
+            "reason_code": "OPERATOR_ROOTS_EMPTY",
+            "workflow_id": workflow_id,
+            "project": str(root),
+            "pr_url": url,
+            "changed_files": list(acquire.get("changed_files") or []),
+            "message_zh": (
+                "这次 PR 改动没有落到含 op_host/ 或 op_kernel/ 的算子目录。"
+                "请选择算子，或改用本地代码。"
+            ),
+            "ask_question": {
+                "prompt_zh": "请选择要使用的算子目录（含 op_host/ 或 op_kernel/）",
+                "options": [],
+                "allow_free_text": True,
+                "field": "project",
+            },
+        }
+    return {
+        "ok": False,
+        "needs_human_decision": True,
+        "decision_kind": "project",
+        "reason_code": "MULTI_OPERATOR",
+        "workflow_id": workflow_id,
+        "project": str(root),
+        "pr_url": url,
+        "operator_roots": [str(p) for p in roots],
+        "message_zh": "这次改动跨多个算子目录，请选择要使用的算子。",
+        "ask_question": {
+            "prompt_zh": "请选择要使用的算子",
+            "options": [
+                {"label": p.name, "value": str(p), "description": str(p)} for p in roots
+            ],
+            "allow_free_text": True,
+            "field": "project",
+        },
+    }
+
+
 def prepare_workflow_start(
     *,
     project: Path | str,
@@ -797,14 +939,21 @@ def prepare_workflow_start(
     need_uo = wf in _workflows_need_uo()
 
     if need_op:
-        bad = assert_operator_project(root)
-        if bad is not None:
-            bad["workflow_id"] = wf
-            bad["suggested_command"] = (
-                f'pilot_run workflow={wf} project="<算子目录>"'
-                + (' architecture=<arch*>' if need_arch else "")
-            )
-            return _attach_intake_request(bad, root)
+        if not _is_usable_operator(root):
+            resolved = _resolve_operator_from_pr_workspace(root, intent_text, wf)
+            if resolved is not None:
+                if not resolved.get("ok"):
+                    return _attach_intake_request(resolved, root)
+                root = Path(str(resolved["project"])).expanduser().resolve()
+            else:
+                bad = assert_operator_project(root)
+                if bad is not None:
+                    bad["workflow_id"] = wf
+                    bad["suggested_command"] = (
+                        f'pilot_run workflow={wf} project="<算子目录>"'
+                        + (" architecture=<arch*>" if need_arch else "")
+                    )
+                    return _attach_intake_request(bad, root)
         if not looks_like_operator_package(root) and not project_explicit:
             return _attach_intake_request(
                 {

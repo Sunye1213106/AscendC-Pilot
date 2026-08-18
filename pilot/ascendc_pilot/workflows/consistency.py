@@ -759,18 +759,42 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
         from ascendc_pilot.harness.intent import validate_intent_staging
         from ascendc_pilot.planning.task_plan import plan_for
         from ascendc_pilot.router import route
-        from ascendc_pilot.workflows import list_user_workflows
+        from ascendc_pilot.workflows import WORKFLOWS, list_user_workflows
 
         hit = route("审 https://gitcode.com/cann/ops-transformer/pulls/1")
         if hit.get("ok") and hit.get("method") in {"slash", "workflow_id", "goal_router"}:
-            errors.append("NL PR URL must not be script-routed to a workflow before LLM intake")
+            errors.append("NL PR URL must not be script-routed to a workflow")
         if hit.get("workflow_id") == "ce-review":
-            errors.append("NL PR URL must not map to ce-review; that is LLM SourceRef + capabilities")
-        if str(hit.get("error") or "") != "use_auto":
-            errors.append("unmatched NL must tell the caller to use workflow=auto")
+            errors.append("NL PR URL must not map to ce-review")
+        if str(hit.get("error") or "") != "use_orchestration_skill":
+            errors.append("unmatched NL must tell the caller to use the orchestration skill")
         for slash_id in ("uo-init", "tg-plan", "ce-review", "ce-plan", "tg-solve"):
             if slash_id not in list_user_workflows():
                 errors.append(f"user slash workflow {slash_id} missing from list_user_workflows()")
+        if "goal-impact" in WORKFLOWS:
+            errors.append("reserved goal-impact must not remain as a live workflow")
+        orch = root / "skills" / "workflow-orchestration"
+        io_text = (orch / "references" / "slash-io.md").read_text(encoding="utf-8") if (orch / "references" / "slash-io.md").is_file() else ""
+        pipe = (orch / "references" / "product-pipelines.md").read_text(encoding="utf-8") if (orch / "references" / "product-pipelines.md").is_file() else ""
+        for slash in (
+            "/uo-init",
+            "/uo-update",
+            "/uo-query",
+            "/uo-investigate",
+            "/ce-plan",
+            "/ce-apply",
+            "/ce-review",
+            "/tg-init",
+            "/tg-plan",
+            "/tg-solve",
+            "/handoff",
+        ):
+            if slash not in io_text:
+                errors.append(f"orchestration slash-io.md missing {slash}")
+        if "/tg-init" not in pipe or ".uo" not in pipe:
+            errors.append("orchestration pipelines must include .uo → /tg-init")
+        if "goal-impact" in io_text or "goal-impact" in pipe:
+            errors.append("orchestration skill must not name goal-impact")
         checked = validate_intent_staging(
             {
                 "objective_zh": "为这个 PR 生成针对性测试用例",
@@ -794,8 +818,10 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
         ]
         if "ce-review" in wids:
             errors.append("tg-plan/tg-solve staging must not default to ce-review")
-        if "tg-plan" not in wids or "uo-init" not in wids:
-            errors.append("tg-plan/tg-solve plan must expand to uo-init and tg-*")
+        if "goal-impact" in wids:
+            errors.append("plan_for must not insert goal-impact")
+        if "tg-plan" not in wids or "tg-solve" not in wids:
+            errors.append("listed tg-plan/tg-solve must remain in the recorded plan")
     except Exception as exc:  # noqa: BLE001
         errors.append(f"task harness SSOT check failed: {exc}")
     return errors
