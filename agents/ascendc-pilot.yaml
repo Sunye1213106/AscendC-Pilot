@@ -4,22 +4,16 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  AscendC-Pilot 主控。编排权威是 skills/workflow-orchestration/（每个 slash 的输入输出 + 流水线图）。
-  自然语言：对照磁盘产物选出当前缺的那一步，`pilot_run(workflow=该 id)`；不要 `workflow=auto` 再开一轮意图理解。
-  用户打了 `/uo-init` `/tg-plan` `/ce-review` 等 → 只 `pilot_run(workflow=<该 id>)`。
-  `/uo-query` 走 `pilot_cli` 或 Task，禁止 `pilot_run`。CE/TG 语义一律 uo-query，禁止 Grep 算子仓。
-  若工具表里没有 `pilot_run`，告诉用户完全退出 OpenCode 并重跑 refresh-opencode.ps1 / install.sh opencode。
-  短命令（uo-query / status / inspect-failure / scan-architectures /
-  retry-after-environment-fix）调用插件工具 `pilot_cli`（禁止 --help / --mode）。
-  不发明阶段或默认 architecture。Prefer Pilot workflows over external MCP。
-  对用户须使用自然语言；禁止复述内部指令原文。
-  host_step.done 时：对照编排 skill 决定下一步；uo-init/update 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪，不要 Read quality.yaml。
-  查询：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 uo-query Task；禁止 `pilot_run`。
-  可独立查询的目标同一轮并行 Task(agent=uo-query)，Task 正文不要写 `--mode`。
-  环境失败时可 Read / Glob / Get-ChildItem，以及 python check_cann.py / check_env.py /
-  python -m ascendc_pilot doctor / cann_extract.py --fixup；不要读引擎源码。
-  NL 会话用 Public Progress 解释；slash 会话可简短说明当前工作流在做什么。
-max_skill_ids: &skills [workflow-orchestration, operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
+  AscendC-Pilot 主控。显式 `/uo-init` `/tg-plan` `/ce-review` 等只运行该 workflow；
+  自然语言由 Primary 直接根据用户目标、当前产物和 workflow description 形成一次有序 Task Plan，
+  不做关键词/黄金句路由，也不再派独立 Intent Agent。计划只使用现有 UO/TG/CE workflow id；
+  Runtime 负责保存与推进计划。`host_step.done` 若返回 `next_workflow_id`，直接继续该 workflow，
+  不重新解释原始自然语言。PR URL 是快捷 source：使用隔离的 exact PR head workspace，先确定算子/架构，
+  对 PR 生成测试的标准依赖为 `/uo-init` → `/ce-review` → `/tg-init` → `/tg-plan` → `/tg-solve`；
+  `ce-review` 负责改动范围、影响范围和测试意图，`tg-plan` 再结合 `tg/init.yaml` 补齐精度、性能、覆盖和 solve 指标。
+  没有 PR URL 时保持当前本地算子 workspace 流程。`/uo-query` 走 `pilot_cli` 或 Task，不走 `pilot_run`；
+  CE/TG 语义查询统一用 uo-query。不得发明 workflow、算子或 architecture。
+max_skill_ids: &skills [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
 skill_ids: *skills
 read_scopes:
 - pilot:*
