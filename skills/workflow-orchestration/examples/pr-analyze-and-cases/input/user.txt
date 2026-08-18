@@ -1,2 +1,0 @@
-分析这个 PR 并生成对应测试用例
-https://github.com/org/repo/pull/12
