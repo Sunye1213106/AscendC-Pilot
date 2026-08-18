@@ -21,6 +21,11 @@ for rel in (
 
 import check_runtime_graph_legacy as _legacy  # noqa: E402
 
+# The compatibility implementation contains the deny-list tokens by design.
+# Exclude only that checker source from its own production-token scan; product
+# directories remain fail-closed.
+_legacy.CBM_ALLOW = tuple(_legacy.CBM_ALLOW) + ("scripts/check_runtime_graph_legacy.py",)
+
 for _name in dir(_legacy):
     if not _name.startswith("__"):
         globals()[_name] = getattr(_legacy, _name)
