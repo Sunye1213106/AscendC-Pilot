@@ -226,7 +226,9 @@ foreach ($name in @("uo-init", "uo-query", "tg-init", "tg-plan", "tg-solve", "ce
   Assert-True ($commandText -match 'agent:\s*ascendc-pilot') "/$name command binds primary controller"
   if ($name -ne "uo-query") {
     Assert-True ($commandText -match 'pilot_run') "/$name command uses Host pilot_run"
-    Assert-True ($commandText -notmatch 'acp run-action auto') "/$name must not bash-drain auto"
+    # Prohibit instructing a bash drain. The command body may still say
+    # "Do not bash `acp start` / `acp run-action auto`".
+    Assert-True ($commandText -notmatch 'then call [`'']?acp run-action auto') "/$name must not bash-drain auto"
   }
 }
 
