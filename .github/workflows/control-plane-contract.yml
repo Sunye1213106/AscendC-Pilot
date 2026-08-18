@@ -45,6 +45,8 @@ jobs:
   execution-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      ACP_PYTHONPATH: pilot:engines/understand-operator/src:engines/testcase-generation:engines/code-engineering:engines/common
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -65,45 +67,45 @@ jobs:
           engines/workspace
       - name: Validate execution ownership and prompts
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_execution_contracts.py
       - name: Validate existing runtime graph
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_runtime_graph.py
       - name: Validate existing ownership contracts
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_ownership_contracts.py --repo .
       - name: Validate artifact producer/consumer DAG
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_contract_dag.py --repo .
       - name: Validate workflow model (phases/transitions/routing)
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_workflow_model.py --repo .
       - name: Validate session replay matrix
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: pytest -q pilot/tests/test_session_replay_matrix.py
       - name: Validate engine consumes_state contract
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_engine_context.py
       - name: Validate skill architecture
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_skill_architecture.py
       - name: Validate instruction ownership
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_instruction_ownership.py
       - name: Validate shared reference projections
         run: python scripts/sync_shared_references.py --check --repo .
       - name: Validate uo-query Explore control plane
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: >-
           pytest -q
           pilot/tests/test_exploration_budget.py
@@ -122,28 +124,28 @@ jobs:
           engines/understand-operator/tests/unit/test_uo_query_aggregate_modes.py
       - name: Compose the real OpenCode runtime
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: |
           python scripts/compose_runtime.py --repo . --host opencode
           python scripts/prune_runtime_context.py --repo . --host opencode
           python scripts/compose_opencode_commands.py
       - name: Validate composed OpenCode runtime closure
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_generated_runtime_closure.py --repo . --host opencode
       - name: Validate Host Session Driver + Bundle closure
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: |
           python scripts/check_host_driver_contract.py
           pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py pilot/tests/test_live_eval_skip.py pilot/tests/test_opencode_isolation_ses_fefd.py
       - name: Validate deterministic drive
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: pytest -q pilot/tests/test_action_drive.py
       - name: Validate UO TG CE bindings and OpenCode commands
         env:
-          PYTHONPATH: pilot
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: >-
           pytest -q pilot/tests/test_compose_runtime.py::test_execution_contract_audit_clean
           pilot/tests/test_compose_runtime.py::test_uo_actions_match_engine_and_prompt_boundary
@@ -151,7 +153,7 @@ jobs:
           pilot/tests/test_compose_runtime.py::test_native_opencode_commands_are_generated
       - name: Validate runtime handoff closure
         env:
-          PYTHONPATH: pilot:engines/understand-operator/src:engines/testcase-generation:engines/code-engineering:engines/common
+          PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: >-
           pytest -q
           pilot/tests/test_workflow_handoff_contract.py
