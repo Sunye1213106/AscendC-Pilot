@@ -82,7 +82,7 @@ def test_deliver_requires_taskplan_terminal_and_acceptance() -> None:
     assert rows["deliver"]["status"] == "passed"
 
 
-def test_solve_only_plan_does_not_leave_generation_pending() -> None:
+def test_solve_only_plan_projects_generation_done_and_validation_current() -> None:
     plan = {
         "steps": [
             {"id": "tg-solve", "workflow_id": "tg-solve", "status": "in_progress"},
@@ -91,7 +91,7 @@ def test_solve_only_plan_does_not_leave_generation_pending() -> None:
         "acceptance_status": {"cases_validated": "pending"},
     }
     rows = _by_id(project_public_plan(plan, _template()))
-    assert rows["generate_cases"]["status"] == "in_progress"
+    assert rows["generate_cases"]["status"] == "passed"
     assert rows["validate_cases"]["status"] == "in_progress"
 
 

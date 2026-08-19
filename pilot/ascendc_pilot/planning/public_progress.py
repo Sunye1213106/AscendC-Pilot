@@ -55,8 +55,8 @@ def project_public_plan(
         grouped.setdefault(public_id, []).append(str(step.get("status") or "pending"))
 
     # A narrowly requested non-PR ``tg-solve`` plan may omit tg-init/tg-plan.
-    # Preserve the historical public meaning that solve implies case generation
-    # rather than leaving ``generate_cases`` permanently pending.
+    # Once solve is active, case generation is necessarily upstream work; mark
+    # that public row complete so validation is the single visible current item.
     if "generate_cases" not in grouped:
         solve_states = [
             str(step.get("status") or "pending")
@@ -64,7 +64,10 @@ def project_public_plan(
             if str(step.get("workflow_id") or step.get("id") or "") == "tg-solve"
         ]
         if solve_states:
-            grouped["generate_cases"] = solve_states
+            if any(state in {"in_progress", "passed", "skipped"} for state in solve_states):
+                grouped["generate_cases"] = ["passed"]
+            else:
+                grouped["generate_cases"] = ["pending"]
 
     all_steps_terminal = bool(task_steps) and all(
         str(step.get("status") or "") in _TERMINAL for step in task_steps
