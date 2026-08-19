@@ -339,7 +339,7 @@ def _build(
                 role_id="deterministic_engine",
                 capability_ids=[],
                 output_contract_id="review-capture-v1",
-                consumes_state=["pr_url"],
+                consumes_state=["pr_url", "intent"],
             ),
             _act(
                 "code_review",
