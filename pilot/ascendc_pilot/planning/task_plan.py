@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Record requested workflows for Goal/Todo display.
+"""Persist a Primary-owned workflow Task Plan.
 
-Orchestration authority is ``skills/workflow-orchestration/``. This module
-must not inject a parallel DAG or ``goal-impact``.
+Primary decides what the user means. This module does not parse natural
+language; it validates workflow ids, applies product/source dependencies, keeps
+stable execution order, records progress, and evaluates acceptance.
 """
 
 from __future__ import annotations
@@ -17,13 +18,11 @@ from ascendc_pilot.paths import AGENT_DIR
 
 TASK_PLAN_SCHEMA = "pilot-task-plan/v1"
 
-# Public Todo copy for the golden NL path (test_generation).
-# Display order only; slash order lives in skills/workflow-orchestration/.
 PUBLIC_PLAN_TEST_GENERATION: tuple[dict[str, str], ...] = (
     {"id": "acquire_change", "summary_zh": "获取 PR 与代码"},
     {"id": "ensure_knowledge", "summary_zh": "建立算子理解"},
-    {"id": "review_change", "summary_zh": "审查改动"},
-    {"id": "generate_cases", "summary_zh": "生成测试用例"},
+    {"id": "review_change", "summary_zh": "审查改动并确定影响范围"},
+    {"id": "generate_cases", "summary_zh": "规划并生成测试用例"},
     {"id": "validate_cases", "summary_zh": "回放验证"},
     {"id": "deliver", "summary_zh": "输出结果"},
 )
@@ -59,6 +58,20 @@ _WORKFLOW_TO_PUBLIC = {
     "tg-plan": "generate_cases",
     "tg-solve": "validate_cases",
 }
+
+_STEP_ORDER = (
+    "workspace_acquire",
+    "uo-init",
+    "uo-update",
+    "uo-investigate",
+    "ce-plan",
+    "ce-apply",
+    "ce-review",
+    "tg-init",
+    "tg-plan",
+    "tg-solve",
+    "handoff",
+)
 
 
 def _now() -> str:
@@ -113,15 +126,10 @@ def public_plan_for(
         spec = PUBLIC_PLAN_REVIEW
     else:
         spec = PUBLIC_PLAN_KNOWLEDGE
-    rows = []
-    for item in spec:
-        rows.append(
-            {
-                "id": item["id"],
-                "summary_zh": item["summary_zh"],
-                "status": "pending",
-            }
-        )
+    rows = [
+        {"id": item["id"], "summary_zh": item["summary_zh"], "status": "pending"}
+        for item in spec
+    ]
     if rows:
         rows[0]["status"] = "in_progress"
     return rows
@@ -147,26 +155,51 @@ def plan_kind(
     return "ensure_knowledge"
 
 
-_STEP_ORDER = (
-    "workspace_acquire",
-    "uo-init",
-    "uo-update",
-    "uo-investigate",
-    "ce-plan",
-    "ce-apply",
-    "ce-review",
-    "tg-init",
-    "tg-plan",
-    "tg-solve",
-    "handoff",
-)
+def _expand_source_dependencies(selected: list[str], source: dict[str, Any]) -> list[str]:
+    """Apply workflow prerequisites without interpreting user text.
+
+    A pull request is a concrete source type, not a linguistic intent. PR tasks
+    build UO from the isolated PR workspace. If the requested deliverable enters
+    TG, CE review must first establish changed/affected scope and planning intent;
+    TG then binds the harness, plans metrics, and finally materializes cases.
+    """
+    out: list[str] = []
+
+    def add(wid: str) -> None:
+        if wid and wid not in out:
+            out.append(wid)
+
+    source_kind = str(source.get("kind") or "").strip().lower()
+    requested = [w for w in selected if w and w not in {"uo-query", "goal-impact"}]
+    is_pr = source_kind in {"pull_request", "pr"}
+    has_tg = any(w in {"tg-init", "tg-plan", "tg-solve"} for w in requested)
+
+    if is_pr:
+        add("uo-init")
+        if has_tg:
+            add("ce-review")
+            add("tg-init")
+            if any(w in {"tg-plan", "tg-solve"} for w in requested):
+                add("tg-plan")
+            if "tg-solve" in requested:
+                add("tg-solve")
+        for wid in requested:
+            add(wid)
+        return out
+
+    for wid in requested:
+        add(wid)
+    return out
 
 
 def plan_for(
     llm_intent: dict[str, Any],
     available: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Record requested workflows. Do not inject a parallel DAG; Primary + skill own order."""
+    """Persist Primary-selected workflows and deterministic prerequisites.
+
+    ``llm_intent`` is a compatibility API name. No NL parsing happens here.
+    """
     from ascendc_pilot.harness.intent import (
         WORKFLOW_SUMMARY_ZH,
         capabilities_from_workflows,
@@ -186,7 +219,9 @@ def plan_for(
     ]
     if not raw_wfs:
         raw_wfs = workflows_from_capabilities(caps)
-    selected = [w for w in raw_wfs if w not in {"uo-query", "goal-impact"}]
+
+    source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
+    selected = _expand_source_dependencies(raw_wfs, source)
 
     steps: list[dict[str, Any]] = []
 
@@ -203,9 +238,8 @@ def plan_for(
             }
         )
 
-    source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
-    if str(source.get("kind") or "") == "pull_request":
-        _add("workspace_acquire", kind="harness_action", summary_zh="获取 PR 与代码")
+    if str(source.get("kind") or "").strip().lower() in {"pull_request", "pr"}:
+        _add("workspace_acquire", kind="harness_action", summary_zh="获取隔离 PR workspace")
 
     ordered = [w for w in _STEP_ORDER if w in selected]
     ordered.extend([w for w in selected if w not in _STEP_ORDER and w != "workspace_acquire"])
@@ -225,7 +259,7 @@ def plan_for(
     ]
     derived_caps = capabilities_from_workflows(wids_in_plan) or caps
     kind = plan_kind(derived_caps, workflows=wids_in_plan)
-    acceptance = []
+    acceptance: list[str]
     if "test_generation" in derived_caps or any(w.startswith("tg-") for w in wids_in_plan):
         acceptance = ["required_obligations_covered", "cases_validated"]
     elif "ce-review" in wids_in_plan or "code_review" in derived_caps:
@@ -277,7 +311,6 @@ def mark_step_passed(plan: dict[str, Any], step_id: str) -> dict[str, Any]:
             break
         break
     if not found:
-        # Also match workflow_id when step id differs.
         for i, step in enumerate(steps):
             if str(step.get("workflow_id") or "") != str(step_id):
                 continue
@@ -296,7 +329,6 @@ def mark_step_passed(plan: dict[str, Any], step_id: str) -> dict[str, Any]:
         for s in steps
         if str(s.get("status") or "") not in {"passed", "skipped"}
     ]
-    # Workflow steps finishing is not Goal acceptance. Predicates run separately.
     plan["status"] = "active" if remaining else "steps_complete"
     return plan
 

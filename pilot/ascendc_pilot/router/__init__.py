@@ -1,4 +1,4 @@
-"""Slash → workflow_id. Natural-language next step is the orchestration skill, not this module."""
+"""Deterministic slash dispatch. Free-form natural language stays with Primary."""
 
 from __future__ import annotations
 
@@ -25,21 +25,21 @@ CE_NOT_IMPLEMENTED = {
     ),
 }
 
-# Built from WORKFLOWS so slash map stays in sync with specs.
+
 def _slash_map() -> dict[str, str]:
+    """Build exact slash → workflow mapping from the workflow spec SSOT."""
     out: dict[str, str] = {}
     for wid, meta in WORKFLOWS.items():
         if meta.get("reserved"):
             continue
         slash = str(meta.get("slash") or "").strip()
         if slash:
-            # Alias entries keep their slash but resolve to the target workflow.
             out[slash] = str(meta.get("alias_of") or wid)
     return out
 
 
-def _skill_candidates() -> list[dict[str, str]]:
-    """Name + short hint for agent skill selection (not keyword routing)."""
+def _workflow_candidates() -> list[dict[str, str]]:
+    """Expose workflow ids + descriptions to Primary; never keyword-route them here."""
     items: list[dict[str, str]] = []
     for wid in list_user_workflows():
         meta = WORKFLOWS.get(wid) or {}
@@ -47,16 +47,20 @@ def _skill_candidates() -> list[dict[str, str]]:
             {
                 "workflow_id": wid,
                 "slash": str(meta.get("slash") or f"/{wid}"),
-                "hint_zh": str(meta.get("label_zh") or meta.get("description") or wid),
+                "description": str(
+                    meta.get("when_to_use")
+                    or meta.get("description")
+                    or meta.get("label_zh")
+                    or wid
+                ),
             }
         )
     return items
 
 
 _UNMATCHED_MSG_ZH = (
-    "自然语言请对照 `skills/workflow-orchestration/` 的 slash I/O 与产物，"
-    "`pilot_run(workflow=<当前缺的那一步>)`。不要 `workflow=auto` 再解析原文。"
-    "slash 仅支持 /uo-init 等专家入口。"
+    "这是自然语言请求：由 Primary 根据用户目标、当前产物和 workflow description 形成/更新 Task Plan，"
+    "再调用 `pilot_run(workflow=<next_workflow_id>)`。本 Router 不做业务意图分类、关键词路由或黄金句匹配。"
 )
 
 
@@ -68,11 +72,10 @@ def route(text: str) -> dict[str, Any]:
             "workflow_id": None,
             "error": "empty_input",
             "candidates": list_user_workflows(),
-            "skill_candidates": _skill_candidates(),
+            "workflow_candidates": _workflow_candidates(),
             "message_zh": _UNMATCHED_MSG_ZH,
         }
 
-    # /operator remains a CLI alias for slash routing — strip and re-route
     first = raw.split()[0]
     if first in {"/operator", "operator"}:
         rest = raw[len(first) :].strip()
@@ -81,9 +84,9 @@ def route(text: str) -> dict[str, Any]:
                 "ok": False,
                 "workflow_id": None,
                 "error": "operator_needs_intent",
-                "message_zh": "请加载对应 workflow skill，或使用 slash（例如 /operator /uo-init）",
+                "message_zh": "请给出自然语言目标，或使用显式 slash（例如 /operator /uo-init）",
                 "candidates": list_user_workflows(),
-                "skill_candidates": _skill_candidates(),
+                "workflow_candidates": _workflow_candidates(),
             }
         inner = route(rest)
         if inner.get("ok"):
@@ -95,7 +98,6 @@ def route(text: str) -> dict[str, Any]:
         return dict(CE_NOT_IMPLEMENTED)
 
     slash_map = _slash_map()
-    # Exact slash (first token)
     if first in slash_map:
         wid = slash_map[first]
         return {
@@ -105,7 +107,6 @@ def route(text: str) -> dict[str, Any]:
             "method": "slash",
         }
 
-    # Also accept bare workflow id as first token (uo-init)
     if first in WORKFLOWS and (WORKFLOWS[first].get("slash") and not WORKFLOWS[first].get("reserved")):
         meta = WORKFLOWS[first]
         wid = str(meta.get("alias_of") or first)
@@ -119,9 +120,12 @@ def route(text: str) -> dict[str, Any]:
     return {
         "ok": False,
         "workflow_id": None,
-        "error": "use_orchestration_skill",
-        "use_orchestration_skill": True,
+        "error": "primary_agent_route_required",
+        "agent_route_required": True,
         "candidates": list_user_workflows(),
-        "skill_candidates": _skill_candidates(),
+        "workflow_candidates": _workflow_candidates(),
+        # Compatibility alias for older Host adapters. It contains the same
+        # workflow descriptions, not skill ids and not a semantic router.
+        "skill_candidates": _workflow_candidates(),
         "message_zh": _UNMATCHED_MSG_ZH,
     }

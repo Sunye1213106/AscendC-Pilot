@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""CI smoke for evals (dry only, no LLM / NPU).
+"""CI smoke for deterministic/runtime evals (dry only, no LLM / NPU).
+
+Natural-language routing/skill-ranking evals are intentionally not part of
+this smoke suite. Free-form NL belongs to Primary; CI validates deterministic
+workflow contracts, product closure, examples and harness behavior instead.
 
 L0 entry:
 1. harness metric self-check
-2. routing dry eval
-3. skill dry eval (five cognitive skills + workflow-orchestration)
-4. closure acceptance harness (1 dry run)
-5. skill architecture + operator independence lints
-   (repo must not contain operators/; fixtures live under tests/fixtures/)
-6. worked-example layout check
-7. harness E2E authorize scenarios (no LLM)
-8. live eval skip contract (no model → skip, never fake pass@k)
+2. closure acceptance harness (1 dry run)
+3. skill architecture + instruction ownership + operator independence lints
+4. shared-reference projection check
+5. worked-example layout check
+6. harness E2E authorize scenarios (no LLM)
+7. live eval skip contract (no model → skip, never fake pass@k)
 """
 from __future__ import annotations
 
@@ -21,15 +23,6 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-
-_COGNITIVE_SKILLS = (
-    "operator-analysis",
-    "testcase-generation",
-    "source-proof",
-    "code-review",
-    "code-engineering",
-)
-_CONTROL_PLANE_SKILLS = ("workflow-orchestration",)
 
 
 def _run(cmd: list[str], *, env: dict[str, str] | None = None) -> dict:
@@ -70,22 +63,6 @@ def main() -> int:
     assert s["pass_rate"] == 1.0
 
     results = []
-    results.append(
-        _run([sys.executable, str(REPO / "evals" / "routing" / "run_routing_eval.py"), "--repo", str(REPO)])
-    )
-    for skill in _COGNITIVE_SKILLS + _CONTROL_PLANE_SKILLS:
-        results.append(
-            _run(
-                [
-                    sys.executable,
-                    str(REPO / "evals" / "skills" / "run_skill_eval.py"),
-                    "--repo",
-                    str(REPO),
-                    "--skill",
-                    skill,
-                ]
-            )
-        )
     env = os.environ.copy()
     sep = ";" if os.name == "nt" else ":"
     env["PYTHONPATH"] = sep.join(

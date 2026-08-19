@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""User Goal v2 — product intent above internal workflows.
+"""Persist the Primary-owned user goal and Task Plan progress.
 
-Persists under ``.ascendc-pilot/control/user_goal.yaml``. Natural-language
-next step lives in the orchestration skill; this module records Goal progress
-after a slash finishes.
+Natural-language understanding belongs to the Primary Agent. This module does
+not reclassify the original request after each workflow; it records progress
+and returns the next workflow already present in the persisted Task Plan.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import yaml
 from ascendc_pilot.paths import AGENT_DIR
 
 USER_GOAL_SCHEMA = "pilot-user-goal/v2"
-# Kept as kind labels only; no phrase router and no hardcoded workflow chain.
+# Compatibility labels only. They are not phrase routers.
 GOAL_GENERATE_CHANGE_TESTS = "generate_change_tests"
 GOAL_TILINGKEY_FULL = "tilingkey_full_coverage_cases"
 GOAL_CE_CHANGE = "ce_change_verify_chain"
@@ -88,7 +88,7 @@ def create_user_goal(
     session_kind: str = SESSION_AUTO,
     kind: str = "",
 ) -> dict[str, Any]:
-    """Materialize a v2 Goal from LLM Intent staging (already validated)."""
+    """Materialize a Goal from a Primary-produced structured plan request."""
     from ascendc_pilot.planning.task_plan import plan_kind, public_plan_for
 
     root = Path(project_root).expanduser().resolve()
@@ -191,14 +191,11 @@ def _sync_public_plan(goal: dict[str, Any], workflow_id: str, plan: dict[str, An
             sid = str(step.get("id") or "")
             if sid == pub_id:
                 reached = True
-                # Keep in_progress until a later public step starts, except
-                # terminal deliver which is marked passed when the goal completes.
                 if sid in {"deliver"}:
                     step["status"] = "passed"
                 elif str(step.get("status")) != "passed":
                     step["status"] = "in_progress"
             elif not reached:
-                # Prefix passed only for public steps that have already executed.
                 if sid in executed and str(step.get("status")) != "skipped":
                     step["status"] = "passed"
             elif str(step.get("status")) == "in_progress":
@@ -214,9 +211,126 @@ def _sync_public_plan(goal: dict[str, Any], workflow_id: str, plan: dict[str, An
     return goal
 
 
+def _runtime_state(project_root: Path, workflow_id: str) -> dict[str, Any]:
+    try:
+        from ascendc_pilot.state import load_state
+
+        return load_state(project_root, workflow_id=workflow_id) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _sync_goal_runtime_params(
+    project_root: Path, goal: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """Carry Goal constraints into the existing TG context resolver."""
+    arch = str(state.get("architecture") or goal.get("architecture") or "").strip()
+    if not arch or arch == "goal":
+        return goal
+    constraints = goal.get("constraints") if isinstance(goal.get("constraints"), dict) else {}
+    test_root = str(
+        constraints.get("test_script_root")
+        or constraints.get("test_repo")
+        or constraints.get("test_repo_root")
+        or ""
+    ).strip()
+    try:
+        from ascendc_pilot.paths import context_root
+
+        out = context_root(project_root, arch=arch) / "pilot_params.yaml"
+        current: dict[str, Any] = {}
+        if out.is_file():
+            loaded = yaml.safe_load(out.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                current = loaded
+        params = {
+            **current,
+            "op_name": str(state.get("op_name") or goal.get("op_name") or project_root.name),
+            "architecture": arch,
+            "test_script_root": test_root or str(current.get("test_script_root") or ""),
+            "level": str(constraints.get("level") or current.get("level") or "L0"),
+            "focus": str(constraints.get("focus") or current.get("focus") or ""),
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(
+            yaml.safe_dump(params, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+        goal = dict(goal)
+        goal["architecture"] = arch
+        goal["op_name"] = params["op_name"]
+        arts = dict(goal.get("artifacts") or {})
+        arts["pilot_params"] = out.as_posix()
+        goal["artifacts"] = arts
+    except Exception:  # noqa: BLE001
+        pass
+    return goal
+
+
+def _capture_review_planning_context(
+    project_root: Path, goal: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """Promote review evidence into control context for the following TG plan.
+
+    This is not a CE product and not a review YAML. It is a deterministic context
+    bridge containing the two review axes exactly as produced in this run.
+    """
+    arch = str(state.get("architecture") or goal.get("architecture") or "").strip()
+    run_id = str(state.get("run_id") or "").strip()
+    goal = dict(goal)
+    arts = dict(goal.get("artifacts") or {})
+    arts["review_report"] = {"status": "delivered", "run_id": run_id}
+    if not arch or arch == "goal" or not run_id:
+        goal["artifacts"] = arts
+        return goal
+    try:
+        from ascendc_pilot.paths import agent_root, context_root
+
+        review_root = agent_root(project_root, arch) / "runs" / run_id / "actions" / "code_review"
+        candidates: list[Path] = []
+        parts = review_root / "parts"
+        if parts.is_dir():
+            candidates.extend(sorted(p for p in parts.glob("*.md") if p.is_file()))
+        staging = review_root / "staging.md"
+        if staging.is_file():
+            candidates.append(staging)
+        if not candidates:
+            goal["artifacts"] = arts
+            return goal
+        chunks = [
+            "# PR Review Planning Context",
+            "",
+            f"source_run: `{run_id}`",
+            "",
+            "This context is generated from the completed CE review axes and is an input to TG planning.",
+        ]
+        seen: set[str] = set()
+        for path in candidates:
+            key = path.as_posix()
+            if key in seen:
+                continue
+            seen.add(key)
+            chunks.extend(
+                [
+                    "",
+                    f"## {path.stem}",
+                    "",
+                    path.read_text(encoding="utf-8", errors="replace").strip(),
+                ]
+            )
+        out = context_root(project_root, arch=arch) / "review_planning_context.md"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("\n".join(chunks).rstrip() + "\n", encoding="utf-8")
+        arts["review_planning_context"] = out.as_posix()
+    except Exception:  # noqa: BLE001
+        pass
+    goal["artifacts"] = arts
+    return goal
+
+
 def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str, Any] | None:
-    """Record a finished slash on the Goal. Next hop is Primary + orchestration skill."""
-    goal = load_user_goal(project_root)
+    """Record a finished workflow and return the next persisted Task Plan step."""
+    root = Path(project_root).expanduser().resolve()
+    goal = load_user_goal(root)
     if not goal or str(goal.get("status")) != "active":
         return None
     if not is_auto_session(goal):
@@ -226,51 +340,55 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     from ascendc_pilot.planning.task_plan import (
         acceptance_failure_zh,
         acceptance_satisfied,
+        current_workflow_id,
         evaluate_acceptance,
         load_task_plan,
         mark_step_passed,
         write_task_plan,
     )
 
-    plan = load_task_plan(project_root)
+    plan = load_task_plan(root)
     if not plan:
         return None
     wid = str(workflow_id or "").strip()
+    state = _runtime_state(root, wid)
+    goal = _sync_goal_runtime_params(root, goal, state)
+    if wid == "ce-review":
+        goal = _capture_review_planning_context(root, goal, state)
+    write_user_goal(root, goal)
+
     plan = mark_step_passed(plan, wid)
-    arch = str(goal.get("architecture") or "")
-    acc = evaluate_acceptance(plan, project_root, architecture=arch)
+    arch = str(state.get("architecture") or goal.get("architecture") or "")
+    acc = evaluate_acceptance(plan, root, architecture=arch)
     plan["acceptance_status"] = acc
     remaining = [
         s
         for s in (plan.get("steps") or [])
         if isinstance(s, dict) and str(s.get("status") or "") not in {"passed", "skipped"}
     ]
-    accepted = acceptance_satisfied(plan, project_root, architecture=arch)
+    accepted = acceptance_satisfied(plan, root, architecture=arch)
     if not remaining and accepted:
         plan["status"] = "completed"
-    write_task_plan(project_root, plan)
+    write_task_plan(root, plan)
     goal = _sync_public_plan(goal, wid, plan)
 
-    next_workflow = ""
     completed = bool(accepted and not remaining)
     acceptance_failed = bool(not remaining and not accepted)
+    next_workflow = "" if completed or acceptance_failed else current_workflow_id(plan)
     if completed:
         goal["status"] = "completed"
         for step in goal.get("public_plan") or []:
             if isinstance(step, dict) and str(step.get("status")) != "skipped":
                 step["status"] = "passed"
-    write_user_goal(project_root, goal)
+    write_user_goal(root, goal)
 
     next_summary = ""
     for step in plan.get("steps") or []:
         if isinstance(step, dict) and str(step.get("workflow_id") or step.get("id")) == next_workflow:
             next_summary = str(step.get("summary_zh") or next_workflow)
             break
-    if not next_summary:
-        for step in goal.get("public_plan") or []:
-            if isinstance(step, dict) and str(step.get("status")) == "in_progress":
-                next_summary = str(step.get("summary_zh") or "")
-                break
+    if next_workflow and not next_summary:
+        next_summary = next_workflow
 
     fail_zh = acceptance_failure_zh(plan, acc) if acceptance_failed else ""
     voice = progress_zh(
@@ -279,17 +397,21 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
         next_step=(
             fail_zh
             if acceptance_failed
-            else ("对照编排 skill 选择下一步" if not completed else "目标已完成")
+            else (
+                f"继续「{next_summary or next_workflow}」"
+                if next_workflow
+                else "目标已完成"
+            )
         ),
         need_you="",
     )
     return {
         "goal": goal,
-        "next_workflow_id": next_workflow if not completed else "",
+        "next_workflow_id": next_workflow,
         "next_summary_zh": (
             fail_zh
             if acceptance_failed
-            else (next_summary if not completed else "目标已完成")
+            else (next_summary if next_workflow else "目标已完成")
         ),
         "message_zh": voice,
         "progress_line": progress_line_zh(goal),

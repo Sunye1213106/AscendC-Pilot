@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Deterministic Harness engines: workspace pin + Goal record. No Intent LLM."""
+"""Deterministic Harness engines: workspace pin + Goal/TaskPlan record. No Intent LLM."""
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -10,6 +11,7 @@ from typing import Any, Callable
 import yaml
 
 EngineFn = Callable[[Path, dict[str, Any]], dict[str, Any]]
+GOAL_CONTRACT_SCHEMA = "pilot-goal-contract/v1"
 
 
 def _now() -> str:
@@ -53,13 +55,14 @@ def _receipt(project_root: Path, ctx: dict[str, Any], name: str, payload: dict[s
 
 
 def _git_workspace():
+    """PR-only adapter. Local workspace helpers keep using git_workspace.py unchanged."""
     import sys
 
     root = Path(__file__).resolve().parents[3]
     ws = root / "engines" / "workspace"
     if str(ws) not in sys.path:
         sys.path.insert(0, str(ws))
-    import git_workspace as gw  # type: ignore[import-not-found]
+    import pr_workspace as gw  # type: ignore[import-not-found]
 
     return gw
 
@@ -76,23 +79,135 @@ def _intake_source(ctx: dict[str, Any], staging: dict[str, Any]) -> dict[str, An
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def _parse_goal_contract(raw: str) -> dict[str, Any]:
+    """Parse Primary-produced JSON Goal Contract. Never infer fields from prose."""
+    text = str(raw or "").strip()
+    if not text.startswith("{"):
+        return {}
+    try:
+        doc = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(doc, dict) or str(doc.get("schema") or "") != GOAL_CONTRACT_SCHEMA:
+        return {}
+    return doc
+
+
+def _contract_inputs(
+    ctx: dict[str, Any], staging: dict[str, Any]
+) -> tuple[str, dict[str, Any], list[str], list[str], dict[str, Any], str]:
+    """Return user_text, source, workflows, capabilities, constraints, objective."""
+    raw_intent = str(ctx.get("intent") or staging.get("intent_text") or "").strip()
+    contract = _parse_goal_contract(raw_intent)
+    if contract:
+        source = contract.get("source") if isinstance(contract.get("source"), dict) else {}
+        workflows = [
+            str(w).strip()
+            for w in (contract.get("needed_workflows") or [])
+            if str(w).strip()
+        ]
+        capabilities = [
+            str(c).strip()
+            for c in (contract.get("needed_capabilities") or [])
+            if str(c).strip()
+        ]
+        constraints = (
+            dict(contract.get("constraints") or {})
+            if isinstance(contract.get("constraints"), dict)
+            else {}
+        )
+        user_text = str(
+            contract.get("user_text")
+            or contract.get("intent_text")
+            or contract.get("objective_zh")
+            or ""
+        ).strip()
+        objective = str(contract.get("objective_zh") or user_text or "完成用户目标").strip()
+        return user_text, dict(source), workflows, capabilities, constraints, objective
+
+    source = _intake_source(ctx, staging)
+    workflows = [
+        str(w).strip()
+        for w in (staging.get("needed_workflows") or ctx.get("needed_workflows") or [])
+        if str(w).strip()
+    ]
+    capabilities = [
+        str(c).strip()
+        for c in (staging.get("needed_capabilities") or ctx.get("needed_capabilities") or [])
+        if str(c).strip()
+    ]
+    constraints = (
+        dict(staging.get("constraints") or {})
+        if isinstance(staging.get("constraints"), dict)
+        else {}
+    )
+    objective = str(staging.get("objective_zh") or raw_intent or "完成用户目标").strip()
+    return raw_intent, source, workflows, capabilities, constraints, objective
+
+
+def _write_runtime_params(
+    project_root: Path,
+    *,
+    architecture: str,
+    op_name: str,
+    constraints: dict[str, Any],
+) -> str:
+    """Bridge Goal constraints to the existing TG context resolver."""
+    arch = str(architecture or "").strip()
+    if not arch or arch == "goal":
+        return ""
+    from ascendc_pilot.paths import context_root
+
+    params = {
+        "op_name": str(op_name or project_root.name).strip(),
+        "architecture": arch,
+        "test_script_root": str(
+            constraints.get("test_script_root")
+            or constraints.get("test_repo")
+            or constraints.get("test_repo_root")
+            or ""
+        ).strip(),
+        "level": str(constraints.get("level") or "L0").strip() or "L0",
+        "focus": str(constraints.get("focus") or "").strip(),
+    }
+    out = context_root(project_root, arch=arch) / "pilot_params.yaml"
+    _dump_yaml(out, params)
+    return out.as_posix()
+
+
 def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Pin a PR worktree when SourceRef is already structured. Do not parse NL."""
+    """Promote a Primary-produced Goal Contract; pin PR source; persist TaskPlan."""
     from ascendc_pilot.harness.intent import validate_intent_staging
+    from ascendc_pilot.planning.task_plan import (
+        current_workflow_id,
+        mark_step_passed,
+        plan_for,
+        public_plan_for,
+        write_task_plan,
+    )
     from ascendc_pilot.user_goal import create_user_goal, write_user_goal
 
     staging = _load_staging(project_root, ctx, "intent_promote")
-    intent_text = str(ctx.get("intent") or staging.get("intent_text") or "").strip()
-    source = _intake_source(ctx, staging)
+    (
+        intent_text,
+        source,
+        needed_workflows,
+        needed_capabilities,
+        constraints,
+        objective_zh,
+    ) = _contract_inputs(ctx, staging)
+
+    if str(source.get("kind") or "") == "pull_request" and not source.get("url"):
+        ref = str(source.get("ref") or "").strip()
+        if ref:
+            source["url"] = ref
     llm_intent = {
         "intent_text": intent_text,
-        "objective_zh": str(staging.get("objective_zh") or intent_text or "完成用户目标"),
+        "objective_zh": objective_zh,
         "source": source or {"kind": "local"},
-        "needed_workflows": list(staging.get("needed_workflows") or ctx.get("needed_workflows") or []),
-        "needed_capabilities": list(
-            staging.get("needed_capabilities") or ctx.get("needed_capabilities") or []
-        ),
-        "constraints": staging.get("constraints") if isinstance(staging.get("constraints"), dict) else {},
+        "needed_workflows": needed_workflows,
+        "needed_capabilities": needed_capabilities,
+        "constraints": constraints,
     }
     if llm_intent["needed_workflows"] or llm_intent["needed_capabilities"] or source.get("kind") == "pull_request":
         checked = validate_intent_staging(
@@ -108,13 +223,28 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         if not checked.get("ok"):
             return {
                 "ok": False,
-                "error": str(checked.get("error") or "INTENT_INVALID"),
-                "message_zh": str(checked.get("message_zh") or "来源校验失败"),
-                "reason_code": "INTENT_INVALID",
+                "error": str(checked.get("error") or "GOAL_CONTRACT_INVALID"),
+                "message_zh": str(checked.get("message_zh") or "Goal Contract 校验失败"),
+                "reason_code": "GOAL_CONTRACT_INVALID",
             }
         llm_intent = dict(checked["intent"])
         llm_intent["intent_text"] = intent_text
         source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
+        constraints = (
+            dict(llm_intent.get("constraints") or {})
+            if isinstance(llm_intent.get("constraints"), dict)
+            else constraints
+        )
+
+    if not list(llm_intent.get("needed_workflows") or []) and not list(
+        llm_intent.get("needed_capabilities") or []
+    ):
+        return {
+            "ok": False,
+            "error": "GOAL_CONTRACT_WORKFLOWS_REQUIRED",
+            "reason_code": "GOAL_CONTRACT_WORKFLOWS_REQUIRED",
+            "message_zh": "Goal Contract 没有 deliverable/workflow；Primary 必须先完成一次语义规划，不能把原始自然语言交给 runtime 猜。",
+        }
 
     acquire: dict[str, Any] = {}
     project_pin = Path(project_root).expanduser().resolve()
@@ -129,7 +259,11 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                 workspace_root=str(Path(project_root).expanduser().resolve()),
             )
         except Exception as exc:  # noqa: BLE001
-            acquire = {"ok": False, "error": "WORKSPACE_ACQUIRE_FAILED", "message_zh": str(exc)[:400]}
+            acquire = {
+                "ok": False,
+                "error": "WORKSPACE_ACQUIRE_FAILED",
+                "message_zh": str(exc)[:400],
+            }
         if not acquire.get("ok"):
             return {
                 "ok": False,
@@ -157,13 +291,13 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                 "error": "OPERATOR_ROOTS_EMPTY",
                 "message_zh": (
                     "这次 PR 改动没有落到含 op_host/ 或 op_kernel/ 的算子目录"
-                    "（common/shared 也未能反推出受影响算子）。请选择算子，或改用本地代码。"
+                    "（common/shared 也未能结构化定位受影响算子）。请选择算子，或改用本地代码。"
                 ),
                 "needs_human_decision": True,
                 "decision_kind": "project",
                 "changed_files": list(acquire.get("changed_files") or []),
                 "ask_question": {
-                    "prompt_zh": "请选择要生成用例的算子目录（含 op_host/ 或 op_kernel/）",
+                    "prompt_zh": "请选择要处理的算子目录（含 op_host/ 或 op_kernel/）",
                     "options": [],
                     "allow_free_text": True,
                     "field": "project",
@@ -173,12 +307,12 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             return {
                 "ok": False,
                 "error": "MULTI_OPERATOR",
-                "message_zh": "这次改动跨多个算子目录，请选择要生成用例的算子。",
+                "message_zh": "这次改动跨多个算子目录，请选择要处理的算子。",
                 "needs_human_decision": True,
                 "decision_kind": "project",
                 "operator_roots": [str(p) for p in roots],
                 "ask_question": {
-                    "prompt_zh": "请选择要生成用例的算子",
+                    "prompt_zh": "请选择要处理的算子",
                     "options": [
                         {"label": p.name, "value": str(p), "description": str(p)} for p in roots
                     ],
@@ -187,27 +321,51 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                 },
             }
         project_pin = roots[0]
-        arches = list(acquire.get("architectures") or [])
-        if len(arches) == 1:
-            arch_pin = str(arches[0])
+        changed_arches = [str(a) for a in (acquire.get("changed_architectures") or []) if str(a)]
+        arches = [str(a) for a in (acquire.get("architectures") or []) if str(a)]
+        if len(changed_arches) == 1 and changed_arches[0] in arches:
+            arch_pin = changed_arches[0]
+        elif len(arches) == 1:
+            arch_pin = arches[0]
+        source = dict(source)
+        source.update(
+            {
+                "base_sha": str(acquire.get("base_sha") or ""),
+                "head_sha": str(acquire.get("head_sha") or ""),
+                "diff_digest": str(acquire.get("diff_digest") or ""),
+                "materialization": "isolated_pr",
+            }
+        )
+        llm_intent["source"] = source
+
+    task_plan = plan_for(llm_intent)
+    # PR acquisition is completed by this deterministic action, not a future workflow.
+    if any(str(step.get("id") or "") == "workspace_acquire" for step in task_plan.get("steps") or [] if isinstance(step, dict)):
+        task_plan = mark_step_passed(task_plan, "workspace_acquire")
+    next_workflow = current_workflow_id(task_plan)
+    if not next_workflow:
+        return {
+            "ok": False,
+            "error": "GOAL_PLAN_EMPTY",
+            "reason_code": "GOAL_PLAN_EMPTY",
+            "message_zh": "Goal Contract 没有可执行 workflow step。",
+        }
 
     goal_root = project_pin if project_pin.exists() else Path(project_root)
+    public_plan = public_plan_for(
+        list(task_plan.get("needed_capabilities") or []),
+        workflows=list(task_plan.get("needed_workflows") or []),
+    )
     goal = create_user_goal(
         goal_root,
         intent_text=intent_text,
         llm_intent=llm_intent,
+        public_plan=public_plan,
         architecture=arch_pin,
-        op_name=str(ctx.get("op_name") or ""),
+        op_name=str(ctx.get("op_name") or project_pin.name or ""),
         kind=str(llm_intent.get("kind") or ""),
     )
-    if project_pin.exists():
-        goal["project"] = project_pin.as_posix()
-        try:
-            from ascendc_pilot.intake import write_last_project_cache
-
-            write_last_project_cache(project_pin)
-        except Exception:  # noqa: BLE001
-            pass
+    goal["project"] = project_pin.as_posix()
     if arch_pin:
         goal["architecture"] = arch_pin
     if acquire.get("changeset"):
@@ -216,26 +374,55 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         arts["worktree_head"] = acquire.get("worktree_head") or ""
         arts["base_source"] = str((acquire.get("changeset") or {}).get("base_source") or "")
         goal["artifacts"] = arts
+    params_path = _write_runtime_params(
+        goal_root,
+        architecture=arch_pin,
+        op_name=str(goal.get("op_name") or project_pin.name),
+        constraints=constraints,
+    )
+    if params_path:
+        goal.setdefault("artifacts", {})["pilot_params"] = params_path
     write_user_goal(goal_root, goal)
-    if project_pin != Path(project_root).expanduser().resolve() and project_pin.exists():
-        write_user_goal(project_root, goal)
+    write_task_plan(goal_root, task_plan)
+
+    launch_root = Path(project_root).expanduser().resolve()
+    if project_pin != launch_root:
+        # goal-intake completes under the Host staging root; keep a control-plane
+        # mirror there so complete_workflow can return the persisted next step.
+        write_user_goal(launch_root, goal)
+        write_task_plan(launch_root, task_plan)
+    else:
+        try:
+            from ascendc_pilot.intake import write_last_project_cache
+
+            write_last_project_cache(project_pin)
+        except Exception:  # noqa: BLE001
+            pass
 
     receipt = {
         "ok": True,
         "engine": "intent_promote",
         "kind": goal.get("kind") or "",
-        "needed_workflows": list((goal.get("intent") or {}).get("needed_workflows") or []),
-        "needed_capabilities": list((goal.get("intent") or {}).get("needed_capabilities") or []),
-        "next_workflow_id": "",
+        "needed_workflows": list(task_plan.get("needed_workflows") or []),
+        "needed_capabilities": list(task_plan.get("needed_capabilities") or []),
+        "next_workflow_id": next_workflow,
         "project": str(goal.get("project") or project_root),
         "architecture": str(goal.get("architecture") or arch_pin),
         "operator_roots": list(acquire.get("operator_roots") or []),
+        "workspace_mode": str(acquire.get("workspace_mode") or ("local" if not acquire else "")),
+        "head_sha": str(acquire.get("head_sha") or ""),
         "multi_operator": False,
-        "message_zh": "工作区已就绪。对照编排 skill 的 slash I/O 选择下一步，不要再用 workflow=auto 解析原文。",
+        "message_zh": (
+            f"Goal Contract 与 TaskPlan 已固定；下一步 {next_workflow}。"
+            "后续只推进持久化计划，不重新解释原始自然语言。"
+        ),
     }
-    _receipt(project_root, ctx, "intent_promoted.yaml", receipt)
-    if project_pin.exists() and project_pin != Path(project_root).expanduser().resolve():
-        _receipt(project_pin, ctx, "intent_promoted.yaml", receipt)
+    _receipt(launch_root, ctx, "intent_promoted.yaml", receipt)
+    if project_pin.exists() and project_pin != launch_root:
+        try:
+            _receipt(project_pin, ctx, "intent_promoted.yaml", receipt)
+        except Exception:  # noqa: BLE001
+            pass
     return receipt
 
 

@@ -1,0 +1,44 @@
+name: pr-flow-regression
+
+on:
+  pull_request:
+    paths:
+      - "agents/**"
+      - "pilot/**"
+      - "skills/**"
+      - "prompts/**"
+      - "engines/workspace/**"
+      - "engines/testcase-generation/**"
+      - "scripts/**"
+      - ".github/workflows/pr-flow-regression.yml"
+
+jobs:
+  pr-flow-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check PyYAML pytest
+      - name: Compile touched runtime
+        run: >-
+          python -m compileall -q
+          pilot/ascendc_pilot
+          engines/workspace
+          engines/testcase-generation
+          scripts
+      - name: Validate PR flow contracts
+        env:
+          PYTHONPATH: pilot:engines/understand-operator/src:engines/testcase-generation:engines/code-engineering:engines/common
+        run: >-
+          pytest -q
+          pilot/tests/test_pr_task_plan_contract.py
+          pilot/tests/test_pr_workspace_contract.py
+          pilot/tests/test_dispatch_circuit_breaker.py
+      - name: Validate skill architecture
+        env:
+          PYTHONPATH: pilot
+        run: python scripts/check_skill_architecture.py

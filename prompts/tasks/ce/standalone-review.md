@@ -1,5 +1,5 @@
 <task>
-对当前修改做只读代码审查。输入只有 git/PR diff。
+对当前绑定的 git/PR diff 做只读代码审查；除 findings 外，汇总后给后续 TG 一段可直接消费的 Planning Context。
 </task>
 
 <context>
@@ -9,14 +9,9 @@
 - Plan (if present): `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/ce/plan/*_plan.md`
 - Diff: 引擎内存捕获；可选 `runs/<RUN_ID>/actions/change_capture/diff.md`
 
-本入口不写 ce/review。方法见 session `method.md`（`code-review/standalone-review`）。
+本入口不写 ce/review。稳定审查方法见 session `method.md`（`code-review/standalone-review`）。
 </context>
 
-<constraints>
-无 diff 则停。Spec / Standards 由并行隔离子代理做。结论写在 Task 回复（`path:line`）。不要写 `ce/**`。不要合成 LGTM。
-语义只用 `uo-query` 形态 3 再形态 1。不要传 `--mode`。禁止 `explain-*`。
-</constraints>
-
 <output>
-在 Task 回复中给出 `path:line` 结论。不要写 yaml。
+在 Task 回复中给出 `path:line` findings。双轴汇总必须附一段 `TG Planning Context`，包含 changed_scope / affected_scope / risks / test_intent / validation_targets，供后续 `/tg-plan` 与 `tg/init.yaml` 合并。不要写 yaml 或新的 CE 正式产品。
 </output>

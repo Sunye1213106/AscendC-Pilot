@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -47,12 +46,3 @@ def test_live_eval_skips_without_product_when_enabled(monkeypatch, tmp_path: Pat
     assert doc["skipped"] is True
     assert doc["skip_reason"] == "no_product"
     assert doc["pass@k"] is None
-
-
-def test_run_skill_eval_live_cli_skips(monkeypatch) -> None:
-    from evals.skills.run_skill_eval import main
-
-    monkeypatch.delenv("ASCENDC_PILOT_LIVE_EVAL", raising=False)
-    monkeypatch.delenv("ASCENDC_LIVE_EVAL_CMD", raising=False)
-    code = main(["--repo", str(REPO), "--skill", "operator-analysis", "--live"])
-    assert code == 0

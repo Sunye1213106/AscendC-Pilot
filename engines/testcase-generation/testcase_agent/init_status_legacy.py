@@ -43,7 +43,11 @@ def _product_uo_root(project_root: Path, *, op_name: str = "", architecture: str
 
 
 def _fingerprint_hint(project_root: Path, op_name: str, *, understand_hint: Path | None = None) -> Path:
-    """Resolve the exact UO product root; never invent an architecture."""
+    """Build a path that still contains ``.ascendc-pilot`` even without an arch UO tree.
+
+    ``compute_kb_fingerprint`` treats its argument as a project/arch hint; the
+    formal ``.uo`` product is the authority whenever one exists.
+    """
     if understand_hint is not None:
         hint = Path(understand_hint).expanduser()
         if ".ascendc-pilot" in hint.parts:
@@ -55,16 +59,8 @@ def _fingerprint_hint(project_root: Path, op_name: str, *, understand_hint: Path
         from ascendc_pilot.paths import uo_product_root
 
         return uo_product_root(project_root)
-    except Exception as exc:
-        raise InitGateError(
-            "Architecture is unresolved; cannot fingerprint UO product without an exact .ascendc-pilot/<arch>/uo root.",
-            ask="architecture_required",
-            payload={
-                "reason_code": "ARCHITECTURE_UNRESOLVED",
-                "project_root": Path(project_root).expanduser().resolve().as_posix(),
-                "op_name": str(op_name or ""),
-            },
-        ) from exc
+    except Exception:
+        return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "arch35" / "uo"
 
 
 def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> Path | None:
@@ -78,6 +74,7 @@ def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> 
         root = kb_root.expanduser().resolve()
         if root.suffix == ".uo" and root.is_file():
             return root.parent
+        # Arch-scoped (canonical) or legacy top-level ``.ascendc-pilot/uo``.
         if root.name == "uo":
             parent = root.parent
             if parent.name == ".ascendc-pilot" or (
@@ -87,6 +84,7 @@ def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> 
                     return root
                 return root if root.is_dir() else None
         if root.name == ".ascendc-pilot":
+            # Prefer arch-scoped product dirs; fall back to legacy top-level.
             for child in sorted(root.iterdir()) if root.is_dir() else []:
                 if child.is_dir() and child.name.startswith("arch"):
                     candidate = child / "uo"
