@@ -88,7 +88,9 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     policy = _text("pilot/policies/pilot-control/POLICY.md")
     invariant = _text("pilot/policies/invariants/control-invariants.md")
     command_src = _text("scripts/compose_opencode_commands.py")
-    driver = _text("opencode-plugin/pilot-driver.ts")
+    driver_facade = _text("opencode-plugin/pilot-driver.ts")
+    driver_core = _text("opencode-plugin/pilot-driver-core.ts")
+    driver = driver_facade + "\n" + driver_core
     hook = _text("opencode-plugin/ascendc-pilot.ts")
     assert "禁止" in policy and "pilot_run" in policy
     assert "except `uo-query`" in invariant
@@ -109,6 +111,8 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     assert "Do not widen task" in hook
     assert '"tasks"' in driver
     assert "native_tasks" in driver
+    assert "readDispatchFor" in driver_facade
+    assert "currentHostSessionHint" in driver_facade
     assert "SLICE_ID=" in hook
     assert "fanout_slice" in hook
     assert "primary_synthesize" in hook
