@@ -14,7 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     plugin = (ROOT / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
-    driver = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")
+    driver_facade = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")
+    driver_core = (ROOT / "opencode-plugin" / "pilot-driver-core.ts").read_text(encoding="utf-8")
+    driver = driver_facade + "\n" + driver_core
     assert "function createPilotRunStub" in plugin
     assert "function createPilotCliTool" in plugin
     assert "createAcpCliTool" not in plugin
@@ -30,13 +32,15 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     assert "tools.pilot_run = true" in plugin
     assert "tools.pilot_cli = true" in plugin
     assert "NATIVE_OPENCODE_AGENTS" in plugin
-    assert "3_600_000" in driver
-    assert "ACP_TIMEOUT" in driver
-    reject = driver.split('if (workflow === "uo-query")')[1].split("const parentSessionId")[0]
+    assert "3_600_000" in driver_core
+    assert "ACP_TIMEOUT" in driver_core
+    reject = driver_core.split('if (workflow === "uo-query")')[1].split("const parentSessionId")[0]
     assert "acp uo-query --project" not in reject
     assert "pilot_cli" in reject
-    assert "uo-query" not in driver.split("args: {")[1].split("project:")[0] or (
-        "Never uo-query" in driver
+    assert "readDispatchFor" in driver_facade
+    assert "currentHostSessionHint" in driver_facade
+    assert "uo-query" not in driver_core.split("args: {")[1].split("project:")[0] or (
+        "Never uo-query" in driver_core
     )
 
 
@@ -80,7 +84,7 @@ def test_plugin_ts_parses_for_opencode() -> None:
     assert any("sessionId" in item for item in hits)
 
     root = ROOT / "opencode-plugin"
-    for name in ("ascendc-pilot.ts", "pilot-driver.ts"):
+    for name in ("ascendc-pilot.ts", "pilot-driver.ts", "pilot-driver-core.ts"):
         parsed = parse_opencode_plugin_ts(root / name)
         assert parsed.get("ok"), f"{name}: {parsed.get('detail')}"
 
