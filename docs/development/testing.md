@@ -9,7 +9,7 @@
 | `engines/testcase-generation/tests/` | init.yaml、plan.md、worklog、replay 与隔离门 |
 | `engines/code-engineering/tests/` | plan md、apply todo、内存 diff、handoff |
 | `scripts/tests/` | replay 和 script-level contract |
-| `evals/` | routing、五个认知 skill、NL→`auto`/`goal-intake`、harness 与可复用 fixture |
+| `evals/` | routing、五个认知 skill、NL 不得无 Todo 直进 `auto`、脚本不得补链、harness 与可复用 fixture |
 
 失败路径至少覆盖：PR URL 不得 `skipped_checkout` 到本地 fork；checkout 必须落在 Host 打开目录下的新子文件夹；无 URL 时不 clone。
 

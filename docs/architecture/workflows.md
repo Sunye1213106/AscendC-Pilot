@@ -36,7 +36,7 @@
 ```text
 用户意图（自然语言或 /slash）
         │
-        ├── 自然语言：第一次 `pilot_run(workflow=auto, intent=原文)`。无 active 目标才 intake；有则推进当前 todo
+        ├── 自然语言：先 Todo（have→want），再按格 `pilot_run`。只有获取代码才 `workflow=auto`
         │
         ├── /uo-query 或只读提问
         │         │
@@ -72,7 +72,7 @@
             Host `pilot_run`（Driver 内部驱动 start→auto）
                   │
                   ├── host_step = dispatch_subagent  → Task(stub 原样) → 插件用 Task 原文 dispatch-result
-                  │     （`host_step.tasks` ≥2：同一轮并行多个 Task；齐了 Host 继续下一格 todo，不要再 auto intake）
+                  │     （`host_step.tasks` ≥2：同一轮并行多个 Task；齐了 Host 返回 done，Primary 勾 Todo 再 `pilot_run` 下一格）
                   ├── host_step = ask_human          → 可点选框 → answer
                   ├── host_step = done               → 结束并释放本产物族锁
                   └── host_step = failed             → inspect-failure；不要翻 Pilot 源码

@@ -3,8 +3,9 @@ name: code-engineering
 description: >
   Plan and apply AscendC code changes with named markdown plans.
   Use when grilling a requirement into {slug}_plan.md, applying unfinished
-  todos, or writing a session handoff. Boundary: not readonly code review
-  (that is /ce-review); not TilingKey search. Validation is /tg-plan, not CE.
+  todos (including test-script gaps), or writing a session handoff. Boundary: not
+  readonly code review (that is /ce-review); not TilingKey search. Validation is
+  /tg-plan, not CE.
 ---
 
 # Code Engineering
@@ -12,24 +13,19 @@ description: >
 Use this skill for `/ce-plan`, `/ce-apply`, and `/handoff`.
 `/ce-review` is the code-review skill. Test obligations are summarized by `/tg-plan`.
 
-```text
-/ce-plan (grill → {slug}_plan.md) → /ce-apply (todos) → /tg-plan
-已有 diff / PR → /ce-review → 建议修改或建议测试
-```
-
 ## When to use which
 
-| 场景 | 入口 |
+| 入口 | 做什么 |
 | --- | --- |
-| 自己有需求，还没改码 | `/ce-plan`：持续 grill，写出 `ce/plan/{slug}_plan.md` |
-| 当前计划有未完成 todo | `/ce-apply`：一次一条 todo 改源码，可勾选该 md |
-| 已有 PR / 工作区 diff | `/ce-review`：双轴对话，不落盘 |
-| 换窗口 / 交给同事 | `/handoff`：只引用路径，写 `session_handoff.md` |
+| `/ce-plan` | 用户要改什么 / 实现什么：用 UO 语义 grill，写出带明确 todo 的 `{slug}_plan.md`。不以 PR 为输入 |
+| `/ce-apply` | 按未完成 todo 改 `op_host/` / `op_kernel/` / `common/` / `test_script/`。也可按 tg-plan 的 `test_harness_gap` 说明书生成或修改测试脚本（含随机数） |
+| `/ce-review` | 已有 PR / apply diff：只读双轴，结论在对话 |
+| `/handoff` | 换窗口 / 交给同事：只引用路径，写 `session_handoff.md` |
 
 ## Non-negotiable rules
 
 1. CE 正式产物只有 markdown：`{slug}_plan.md` 与 `session_handoff.md`。禁止写任何 CE yaml。
-2. 语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。
+2. 语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。producer 禁止再派 Task。
 3. `/ce-plan` 不以 PR 为输入。`/ce-review` 无 diff 则停。
 4. `/ce-apply` 不审、不查图、不另造测试意图文件。查图是 `/ce-plan` 与 `/ce-review`。验证去 `/tg-plan`，TG 自己读计划 md 或审查对话。
 5. LLM 禁止写 `.uo`。apply 刷图由引擎嵌套 `uo-update`。

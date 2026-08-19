@@ -183,7 +183,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "Select-Object *" in pilot_agent
         assert "Get-ChildItem: allow" in pilot_agent
         assert "glob: allow" in pilot_agent
-        assert "grep: deny" in uo_query_agent
+        assert "grep: ask" in uo_query_agent or "grep: false" in uo_query_agent
         assert "external_directory: allow" in pilot_agent
         assert "external_directory: allow" in uo_query_agent
         assert "read: allow" in pilot_agent
@@ -210,6 +210,11 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
             assert perm["glob"] == "allow"
             assert perm["list"] == "allow"
             assert perm["pilot_run"] == "allow"
+            bash = perm["bash"]
+            assert bash.get("*") == "ask"
+            assert bash.get("git *") == "allow"
+            assert bash.get("git clone *") == "ask"
+            assert bash.get("git worktree add *") == "ask"
         assert (generated / "agents" / "tg-analyst.md").exists()
         assert not (generated / "agents" / "tg-init-audit.md").exists()
         assert "Get-Command acp" not in pilot_agent
@@ -226,11 +231,11 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "There is no session `prompt.md`" not in uo_query_agent
         assert "If the Task stub names" in uo_query_agent
         assert "execution_variant = delegated_query" in uo_query_agent
-        assert "edit: deny" in uo_query_agent
-        assert "*: deny" in uo_query_agent or "'*': deny" in uo_query_agent
-        assert "webfetch: deny" in uo_query_agent
-        assert "task: deny" in uo_query_agent
-        assert "glob: deny" in uo_query_agent
+        assert "edit: ask" in uo_query_agent
+        assert "*: ask" in uo_query_agent or "'*': ask" in uo_query_agent
+        assert "webfetch: ask" in uo_query_agent
+        assert "task: ask" in uo_query_agent
+        assert "glob: ask" in uo_query_agent or "glob: false" in uo_query_agent
         tg_agent = (generated / "agents" / "tg-analyst.md").read_text(encoding="utf-8")
         assert "edit:" in tg_agent
         assert "host-runtime-contract" not in tg_agent.lower()
@@ -247,13 +252,13 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert tg_bytes < 10000, f"child agent pack regressed: {tg_bytes} bytes"
         assert tg_lines < 200, f"child agent pack regressed: {tg_lines} lines"
         assert "hidden: true" in tg_agent
-        assert "*: deny" in tg_agent or "'*': deny" in tg_agent
+        assert "*: ask" in tg_agent or "'*': ask" in tg_agent
         assert "pilot_cli: allow" in tg_agent
         assert "acp: allow" not in tg_agent
-        assert "lsp: deny" in tg_agent
+        assert "lsp: ask" in tg_agent
         analyst = (generated / "agents" / "ce-analyst.md").read_text(encoding="utf-8")
-        assert "grep: deny" in analyst or "grep: false" in analyst
-        assert "glob: deny" in analyst or "glob: false" in analyst
+        assert "grep: ask" in analyst or "grep: allow" in analyst or "grep: false" in analyst
+        assert "glob: ask" in analyst or "glob: allow" in analyst or "glob: false" in analyst
         primary = (generated / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
         assert "Host Session Driver" in primary or "host_driver=False" in primary
         assert "edit:" in primary

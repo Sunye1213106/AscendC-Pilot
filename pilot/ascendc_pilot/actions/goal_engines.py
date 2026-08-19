@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Deterministic Harness engines: workspace pin + Goal/TaskPlan record. No Intent LLM."""
+"""Deterministic Harness engines: workspace clone + optional explicit TaskPlan. No Intent LLM."""
 
 from __future__ import annotations
 
@@ -209,18 +209,174 @@ def _write_runtime_params(
     return out.as_posix()
 
 
+def _isolated_pr_tree(root: Path) -> bool:
+    try:
+        from ascendc_pilot.intake import _is_isolated_pr_path
+
+        return bool(_is_isolated_pr_path(root))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _unique_operator_arch_pair(resolved: dict[str, Any]) -> tuple[Path, str] | None:
+    pairs = [row for row in (resolved.get("operator_targets") or []) if isinstance(row, dict)]
+    if len(pairs) != 1:
+        return None
+    root = str(pairs[0].get("operator_root") or "").strip()
+    arch = str(pairs[0].get("architecture") or resolved.get("architecture") or "").strip()
+    if not root or not arch:
+        return None
+    return Path(root).expanduser().resolve(), arch
+
+
+def _clone_only_receipt(
+    *,
+    project: Path,
+    acquire: dict[str, Any],
+    skipped_nested: bool = False,
+    ctx: dict[str, Any] | None = None,
+    anchor_root: Path | None = None,
+) -> dict[str, Any]:
+    worktree = str(acquire.get("worktree_head") or acquire.get("project") or project)
+    resolved: dict[str, Any] = {}
+    if not skipped_nested or acquire.get("changed_files") or acquire.get("operator_targets"):
+        try:
+            gw = _git_workspace()
+            resolve_fn = getattr(gw, "resolve_targets_or_ask", None)
+            if callable(resolve_fn):
+                resolved = resolve_fn(acquire, host_root=str(anchor_root or project)) or {}
+        except Exception:  # noqa: BLE001
+            resolved = {}
+        if not isinstance(resolved, dict):
+            resolved = {}
+
+    unique = _unique_operator_arch_pair(resolved)
+    op_root = unique[0] if unique else Path(worktree)
+    arch = unique[1] if unique else ""
+    changed = list(acquire.get("changed_files") or resolved.get("changed_files") or [])
+    pairs = [row for row in (resolved.get("operator_targets") or []) if isinstance(row, dict)]
+    if unique:
+        try:
+            from ascendc_pilot.run_resume import save_pr_architecture_pin
+
+            save_pr_architecture_pin(op_root, arch)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from ascendc_pilot.intake import write_last_project_cache
+
+            if (op_root / "op_host").is_dir() or (op_root / "op_kernel").is_dir():
+                write_last_project_cache(op_root)
+        except Exception:  # noqa: BLE001
+            pass
+        message = (
+            f"已获取 PR 代码。changed-files 已唯一确定算子 `{op_root.name}`、"
+            f"architecture `{arch}`。后续 `pilot_run` 使用该 `--project` 与 `--architecture`。"
+            "不要为理解语义通读全量 git diff；不要把本回执当成自动开 `/uo-init` 的脚本链。"
+        )
+    elif resolved.get("needs_human_decision"):
+        message = (
+            "已获取 PR 代码。changed-files 无法唯一确定算子目录与 architecture，请按选项选择。"
+            "不要为理解语义通读全量 git diff。"
+        )
+    elif len(pairs) > 1:
+        message = (
+            "已获取 PR 代码。changed-files 对应多个 (算子, architecture)，请选择本次目标。"
+            "不要为理解语义通读全量 git diff。"
+        )
+    else:
+        message = (
+            "已获取 PR 代码。请根据回执中的 changed_files 与 operator_roots "
+            "选定算子目录和 architecture，再 `pilot_run(workflow=uo-init, project=..., architecture=...)`。"
+            "不要为理解语义通读全量 git diff。"
+        )
+
+    receipt: dict[str, Any] = {
+        "ok": True,
+        "engine": "intent_promote",
+        "clone_only": True,
+        "skipped_nested_clone": skipped_nested,
+        "next_workflow_id": "",
+        "project": str(op_root if unique else worktree),
+        "architecture": arch,
+        "operator_roots": list(
+            resolved.get("operator_roots") or acquire.get("operator_roots") or []
+        ),
+        "operator_targets": pairs or list(acquire.get("operator_targets") or []),
+        "changed_files": changed,
+        "changed_files_preview": changed[:40],
+        "changed_architectures": list(
+            resolved.get("changed_architectures") or acquire.get("changed_architectures") or []
+        ),
+        "head_sha": str(acquire.get("head_sha") or resolved.get("source_revision") or ""),
+        "workspace_mode": str(
+            acquire.get("workspace_mode") or resolved.get("workspace_mode") or "isolated_pr"
+        ),
+        "worktree_head": worktree,
+        "selected_by": "pr_changed_files" if unique else "",
+        "message_zh": message,
+    }
+    if unique:
+        receipt["next_project"] = str(op_root)
+        receipt["next_architecture"] = arch
+    elif len(pairs) > 1 and not resolved.get("ask_question"):
+        receipt["needs_human_decision"] = True
+        receipt["decision_kind"] = "architecture"
+        receipt["reason_code"] = "MULTI_PR_TARGET"
+        receipt["ask_question"] = {
+            "header": "选择算子与架构",
+            "question": "changed-files 对应多个 (算子, architecture)。请选择本次要建立 CodeMap 的目标。",
+            "prompt_zh": "请选择本次要建立 CodeMap 的算子与 architecture",
+            "options": [
+                {
+                    "label": f"{Path(str(row.get('operator_root') or '')).name}/{row.get('architecture')}",
+                    "value": f"{row.get('operator_root')}::{row.get('architecture')}",
+                }
+                for row in pairs
+            ],
+            "allow_free_text": False,
+            "field": "architecture",
+        }
+    elif resolved.get("needs_human_decision"):
+        receipt["needs_human_decision"] = True
+        receipt["decision_kind"] = str(resolved.get("decision_kind") or "architecture")
+        receipt["reason_code"] = str(resolved.get("reason_code") or "")
+        if isinstance(resolved.get("ask_question"), dict):
+            receipt["ask_question"] = resolved["ask_question"]
+
+    receipt_ctx = dict(ctx or {})
+    receipt_root = Path(anchor_root or project)
+    if receipt_ctx:
+        try:
+            _receipt(receipt_root, receipt_ctx, "intent_promoted.yaml", receipt)
+        except Exception:  # noqa: BLE001
+            pass
+        if unique and op_root.exists() and op_root != receipt_root:
+            pin_ctx = dict(receipt_ctx)
+            pin_ctx["architecture"] = arch
+            try:
+                _receipt(op_root, pin_ctx, "intent_promoted.yaml", receipt)
+            except Exception:  # noqa: BLE001
+                pass
+    return receipt
+
+
 def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    """Promote a Primary-produced Goal Contract; pin PR source; persist TaskPlan."""
+    """Clone PR worktrees (Engine) and optionally persist an explicit TaskPlan.
+
+    Natural-language auto does not invent needed_workflows. Unique changed-files
+    ``(operator, architecture)`` pairs are returned as facts; they do not start
+    ``uo-init``.
+    """
     from ascendc_pilot.harness.intent import validate_intent_staging
     from ascendc_pilot.planning.task_plan import (
         current_workflow_id,
-        load_task_plan,
         mark_step_passed,
         plan_for,
         public_plan_for,
         write_task_plan,
     )
-    from ascendc_pilot.user_goal import create_user_goal, load_user_goal, write_user_goal
+    from ascendc_pilot.user_goal import create_user_goal, write_user_goal
 
     staging = _load_staging(project_root, ctx, "intent_promote")
     (
@@ -239,14 +395,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             ref = str(source.get("ref") or "").strip()
             if ref:
                 source["url"] = ref
-    if (
-        str(source.get("kind") or "") == "pull_request"
-        and str(source.get("url") or "").strip()
-        and not needed_workflows
-        and not needed_capabilities
-    ):
-        # Reserved auto chain: PR URL without Goal Contract JSON → uo → ce-review → tg.
-        needed_workflows = ["tg-solve"]
+
     llm_intent = {
         "intent_text": intent_text,
         "objective_zh": objective_zh,
@@ -255,80 +404,25 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "needed_capabilities": needed_capabilities,
         "constraints": constraints,
     }
-    if llm_intent["needed_workflows"] or llm_intent["needed_capabilities"] or source.get("kind") == "pull_request":
-        checked = validate_intent_staging(
-            {
-                "objective_zh": llm_intent["objective_zh"],
-                "intent_text": intent_text,
-                "source": llm_intent["source"],
-                "needed_workflows": llm_intent["needed_workflows"],
-                "needed_capabilities": llm_intent["needed_capabilities"] or ["knowledge"],
-                "constraints": llm_intent["constraints"],
-            }
-        )
-        if not checked.get("ok"):
-            return {
-                "ok": False,
-                "error": str(checked.get("error") or "GOAL_CONTRACT_INVALID"),
-                "message_zh": str(checked.get("message_zh") or "Goal Contract 校验失败"),
-                "reason_code": "GOAL_CONTRACT_INVALID",
-            }
-        llm_intent = dict(checked["intent"])
-        llm_intent["intent_text"] = intent_text
-        source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
-        constraints = (
-            dict(llm_intent.get("constraints") or {})
-            if isinstance(llm_intent.get("constraints"), dict)
-            else constraints
-        )
-
-    if not list(llm_intent.get("needed_workflows") or []) and not list(
-        llm_intent.get("needed_capabilities") or []
-    ):
-        return {
-            "ok": False,
-            "error": "GOAL_CONTRACT_WORKFLOWS_REQUIRED",
-            "reason_code": "GOAL_CONTRACT_WORKFLOWS_REQUIRED",
-            "message_zh": "Goal Contract 没有 deliverable/workflow；Primary 必须先完成一次语义规划，不能把原始自然语言交给 runtime 猜。",
-        }
 
     acquire: dict[str, Any] = {}
     project_pin = Path(project_root).expanduser().resolve()
     arch_pin = str(ctx.get("architecture") or "").strip()
+    if arch_pin == "goal":
+        arch_pin = ""
     run_id = str(ctx.get("run_id") or "").strip()
     already_operator = (project_pin / "op_host").is_dir() or (project_pin / "op_kernel").is_dir()
-    if str(source.get("kind") or "") == "pull_request" and source.get("url") and already_operator:
-        acquire = {"ok": True, "skipped_nested_clone": True, "project": str(project_pin)}
-        try:
-            from ascendc_pilot.run_resume import load_pr_architecture_pin
+    is_pr = str(source.get("kind") or "") == "pull_request" and bool(str(source.get("url") or "").strip())
+    explicit_wfs = bool(needed_workflows)
 
-            pinned = load_pr_architecture_pin(project_pin)
-            if pinned:
-                arch_pin = str(pinned[0] or arch_pin).strip() or arch_pin
-        except Exception:  # noqa: BLE001
-            pass
-        existing_goal = load_user_goal(project_pin)
-        existing_plan = None
-        try:
-            existing_plan = load_task_plan(project_pin)
-        except Exception:  # noqa: BLE001
-            existing_plan = None
-        nxt_existing = current_workflow_id(existing_plan)
-        if (
-            existing_goal
-            and str(existing_goal.get("status") or "") == "active"
-            and nxt_existing not in {"", "auto", "goal-intake"}
-        ):
-            return {
-                "ok": True,
-                "skipped_repromote": True,
-                "skipped_nested_clone": True,
-                "project": str(existing_goal.get("project") or project_pin),
-                "architecture": str(existing_goal.get("architecture") or arch_pin),
-                "next_workflow_id": nxt_existing,
-                "message_zh": f"目标进行中，继续 {nxt_existing}",
-            }
-    elif str(source.get("kind") or "") == "pull_request" and source.get("url"):
+    if is_pr and (already_operator or _isolated_pr_tree(project_pin)):
+        acquire = {
+            "ok": True,
+            "skipped_nested_clone": True,
+            "project": str(project_pin),
+            "worktree_head": str(project_pin),
+        }
+    elif is_pr:
         try:
             gw = _git_workspace()
             acquire = gw.acquire_pull_request(
@@ -362,16 +456,9 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                     "field": "project",
                 },
             }
-        resolved = gw.resolve_targets_or_ask(
-            acquire, workflow_id="goal-intake", host_root=Path(project_root)
-        )
-        if not resolved.get("ok"):
-            payload = dict(resolved)
-            payload.setdefault("error", str(resolved.get("reason_code") or "WORKSPACE_RESOLVE_FAILED"))
-            return payload
-        project_pin = Path(str(resolved["project"])).expanduser().resolve()
-        arch_pin = str(resolved.get("architecture") or arch_pin).strip()
-        targets = [t for t in (resolved.get("operator_targets") or []) if isinstance(t, dict)]
+        worktree = str(acquire.get("worktree_head") or "").strip()
+        if worktree:
+            project_pin = Path(worktree).expanduser().resolve()
         source = dict(source)
         source.update(
             {
@@ -382,28 +469,59 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             }
         )
         llm_intent["source"] = source
-        if targets:
-            llm_intent["operator_targets"] = targets
-        try:
-            from ascendc_pilot.run_resume import save_pr_architecture_pin
+        if acquire.get("operator_targets"):
+            llm_intent["operator_targets"] = list(acquire.get("operator_targets") or [])
 
-            pin_arches = list(resolved.get("changed_architectures") or [])
-            if arch_pin and not pin_arches:
-                pin_arches = [arch_pin]
-            save_pr_architecture_pin(project_pin, pin_arches or arch_pin)
-            for extra in [project_pin, *[
-                Path(str(t.get("operator_root") or "")).expanduser()
-                for t in targets
-                if isinstance(t, dict)
-            ]]:
-                if extra.exists():
-                    save_pr_architecture_pin(extra, pin_arches or arch_pin)
-        except Exception:  # noqa: BLE001
-            pass
+    if is_pr and not explicit_wfs:
+        return _clone_only_receipt(
+            project=project_pin,
+            acquire=acquire,
+            skipped_nested=bool(acquire.get("skipped_nested_clone")),
+            ctx=ctx,
+            anchor_root=Path(project_root).expanduser().resolve(),
+        )
+
+    if llm_intent["needed_workflows"]:
+        checked = validate_intent_staging(
+            {
+                "objective_zh": llm_intent["objective_zh"],
+                "intent_text": intent_text,
+                "source": llm_intent["source"],
+                "needed_workflows": llm_intent["needed_workflows"],
+                "needed_capabilities": llm_intent["needed_capabilities"],
+                "constraints": llm_intent["constraints"],
+            }
+        )
+        if not checked.get("ok"):
+            return {
+                "ok": False,
+                "error": str(checked.get("error") or "GOAL_CONTRACT_INVALID"),
+                "message_zh": str(checked.get("message_zh") or "Goal Contract 校验失败"),
+                "reason_code": "GOAL_CONTRACT_INVALID",
+            }
+        llm_intent = dict(checked["intent"])
+        llm_intent["intent_text"] = intent_text
+        source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
+        constraints = (
+            dict(llm_intent.get("constraints") or {})
+            if isinstance(llm_intent.get("constraints"), dict)
+            else constraints
+        )
+
+    if not list(llm_intent.get("needed_workflows") or []):
+        return {
+            "ok": False,
+            "error": "GOAL_CONTRACT_WORKFLOWS_REQUIRED",
+            "reason_code": "GOAL_CONTRACT_WORKFLOWS_REQUIRED",
+            "message_zh": "没有可执行 workflow。自然语言应由 Primary 先写 Todo，再按格 pilot_run。",
+        }
 
     task_plan = plan_for(llm_intent)
-    # PR acquisition is completed by this deterministic action, not a future workflow.
-    if any(str(step.get("id") or "") == "workspace_acquire" for step in task_plan.get("steps") or [] if isinstance(step, dict)):
+    if any(
+        str(step.get("id") or "") == "workspace_acquire"
+        for step in task_plan.get("steps") or []
+        if isinstance(step, dict)
+    ):
         task_plan = mark_step_passed(task_plan, "workspace_acquire")
     next_workflow = current_workflow_id(task_plan)
     if not next_workflow:
@@ -411,7 +529,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             "ok": False,
             "error": "GOAL_PLAN_EMPTY",
             "reason_code": "GOAL_PLAN_EMPTY",
-            "message_zh": "Goal Contract 没有可执行 workflow step。",
+            "message_zh": "没有可执行 workflow step。",
         }
 
     goal_root = project_pin if project_pin.exists() else Path(project_root)
@@ -492,9 +610,10 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "multi_operator": len(list(llm_intent.get("operator_targets") or [])) > 1,
         "next_project": str(goal.get("project") or project_root),
         "next_architecture": str(goal.get("architecture") or arch_pin),
+        "changed_files": list(acquire.get("changed_files") or []),
         "message_zh": (
-            f"Goal Contract 与 TaskPlan 已固定；下一步 {next_workflow}。"
-            "后续只推进持久化计划，不重新解释原始自然语言。"
+            f"已记录显式 workflow 列表；下一步由 Primary Todo 发起 {next_workflow}。"
+            "Host 不得自动跨 slash。"
         ),
     }
     receipt_ctx = dict(ctx)
@@ -506,7 +625,6 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         except Exception:  # noqa: BLE001
             pass
     return receipt
-
 
 def install(registry: dict[tuple[str, str], EngineFn]) -> None:
     registry[("goal-intake", "intent_promote")] = run_intent_promote

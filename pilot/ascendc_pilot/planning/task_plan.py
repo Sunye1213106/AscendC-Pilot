@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Persist a Primary-owned workflow Task Plan.
+"""Persist an explicitly listed workflow Task Plan.
 
-Primary decides what the user means. This module does not parse natural
-language; it validates workflow ids, applies product/source dependencies, keeps
-stable execution order, records progress, and evaluates acceptance.
+Primary decides what the user means via OpenCode Todos. This module does not
+parse natural language or invent prerequisite slashes; it records the listed
+workflow ids, optional PR acquire tool-step, progress, and acceptance.
 """
 
 from __future__ import annotations
@@ -155,55 +155,17 @@ def plan_kind(
     return "ensure_knowledge"
 
 
-def _expand_source_dependencies(selected: list[str], source: dict[str, Any]) -> list[str]:
-    """Apply workflow prerequisites without interpreting user text.
-
-    A pull request is a concrete source type, not a linguistic intent. PR tasks
-    build UO from the isolated PR workspace. If the requested deliverable enters
-    TG, CE review must first establish changed/affected scope and planning intent;
-    TG then binds the harness, plans metrics, and finally materializes cases.
-    """
-    out: list[str] = []
-
-    def add(wid: str) -> None:
-        if wid and wid not in out:
-            out.append(wid)
-
-    source_kind = str(source.get("kind") or "").strip().lower()
-    requested = [w for w in selected if w and w not in {"uo-query", "goal-impact"}]
-    is_pr = source_kind in {"pull_request", "pr"}
-    has_tg = any(w in {"tg-init", "tg-plan", "tg-solve"} for w in requested)
-
-    if is_pr:
-        add("uo-init")
-        if has_tg:
-            add("ce-review")
-            add("tg-init")
-            if any(w in {"tg-plan", "tg-solve"} for w in requested):
-                add("tg-plan")
-            if "tg-solve" in requested:
-                add("tg-solve")
-        for wid in requested:
-            add(wid)
-        return out
-
-    for wid in requested:
-        add(wid)
-    return out
-
-
 def plan_for(
     llm_intent: dict[str, Any],
     available: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Persist Primary-selected workflows and deterministic prerequisites.
+    """Persist explicitly listed workflows. Do not invent prerequisite slashes.
 
     ``llm_intent`` is a compatibility API name. No NL parsing happens here.
     """
     from ascendc_pilot.harness.intent import (
         WORKFLOW_SUMMARY_ZH,
         capabilities_from_workflows,
-        workflows_from_capabilities,
     )
 
     del available
@@ -217,11 +179,14 @@ def plan_for(
         for c in (llm_intent.get("needed_capabilities") or [])
         if str(c).strip()
     ]
-    if not raw_wfs:
-        raw_wfs = workflows_from_capabilities(caps)
+    selected: list[str] = []
+    for wid in raw_wfs:
+        if not wid or wid in {"uo-query", "goal-impact"}:
+            continue
+        if wid not in selected:
+            selected.append(wid)
 
     source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
-    selected = _expand_source_dependencies(raw_wfs, source)
 
     targets: list[dict[str, Any]] = []
     for raw in llm_intent.get("operator_targets") or []:

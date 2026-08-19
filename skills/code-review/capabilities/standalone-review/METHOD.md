@@ -4,7 +4,7 @@
 
 详见 `references/cross-layer-contracts.md`、`references/ascendc-checks.md`、`references/finding-format.md`、`references/gotchas.md`。
 
-review 阶段由 Host 并行派两个隔离子代理（`spec-review` / `standards-review`）。本 METHOD 覆盖入口说明。stub 含 `AXIS=` 时不要用这份方法写那一轴。
+review 阶段由**主控**同一轮并行派两个隔离子代理（`spec-review` / `standards-review`）。本 METHOD 覆盖入口说明。stub 含 `AXIS=` 时不要用这份方法写那一轴。子代禁止再派 Task。
 
 ## 输入
 

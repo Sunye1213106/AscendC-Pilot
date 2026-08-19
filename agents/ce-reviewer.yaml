@@ -7,6 +7,7 @@ description: >
   Code review analyst. Read session prompt.md and method.md first
   (method is materialized into the action session). Writes only optional
   run drafts; never edits operator source or ce/** products.
+  Do not spawn Task. Query CodeMap with `pilot_cli` `uo-query` only.
 max_skill_ids: &skills [code-review, code-engineering]
 skill_ids: *skills
 read_scopes:

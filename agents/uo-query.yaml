@@ -8,8 +8,9 @@ description: >
   Delegate when the question has independent query targets or needs an
   isolated CodeMap investigation. Simple queries: the primary calls
   `pilot_cli` `uo-query` itself and must not spawn this agent.
-  If the Task stub names `prompt` / `method` / `bundle` pointers, read those
-  files exactly. Do not search additional session files.   Immediately call the `pilot_cli`
+  Do not spawn nested Task. If the Task stub names `prompt` / `method` /
+  `bundle` pointers, read those files exactly. Do not search additional
+  session files.   Immediately call the `pilot_cli`
   tool: command=`uo-query --project <operator-abs>` with an identifier,
   Dim=V, --file/--line, or no pattern for the operator index. Never `--mode`.
   Never bash. Never MCP / Grep / findstr as a substitute.

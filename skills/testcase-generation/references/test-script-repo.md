@@ -5,11 +5,12 @@
 脚本仓是算子已有的 runner（脚本 + csv/xls/xlsx），不是第二份 CodeMap。
 
 ```text
-无 --test-script-root
-  → kind: default_input
-  → 用 InputSemantics / CodeMap 默认输入
+无已确认的测试脚本根
+  → 先询问：外部脚本仓路径 / default_input / 是否使用已发现的仓内 tests/
+  → 未确认不得把算子仓 tests/、ut 当作 harness
+  → 选定 default_input 后用 InputSemantics / CodeMap 默认输入
 
-有 --test-script-root
+已确认 --test-script-root
   → engine 只扫描入口、argparse、表头（含 xls/xlsx）
   → Agent 把列 mapping / 精度性能口径写进 init.yaml
   → 生成行必须填满该表，现有 runner 才能直接吃

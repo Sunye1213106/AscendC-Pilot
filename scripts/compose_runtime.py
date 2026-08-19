@@ -15,15 +15,19 @@ _legacy.CONTROL_PLANE_SKILL_IDS = ()
 
 _legacy.WORKFLOW_ENTRIES["ce-review"]["description"] = (
     "只读审查已有代码改动：PR、工作区 diff 或 base...head。PR source 已由 Workspace Manager "
-    "固定到隔离 exact-head workspace，禁止用本地 fork 冒充。双轴结论在 Task 回复；插件用原文 ACK。"
-    "对人的汇总是：审查完成、PR 做什么、改了哪些文件、问题 1…、要测的变量。目标已含测例时 Host "
-    "continue_goal 进 tg-init，不要再 auto intake。"
+    "固定到隔离 exact-head workspace，禁止用本地 fork 冒充。双轴 Task 必须由主控同一轮派发"
+    "（子代不得再派 Task）；结论在 Task 回复，插件用原文 ACK。"
+    "对人的汇总是：审查完成、意图是什么、改了哪些文件、计划达成怎样、问题 1…、若测应重点测什么。"
+    "意图只是一次审查时留在主线，不要再包 coordinator。"
+    "审查结束后返回 Primary；勾掉 Todo 后再 `pilot_run` 下一格，不要再 auto intake。"
 )
 _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
     "规划测试义务，只落 tg/plan.md。两项核心输入都必须存在：tg/init.yaml + Planning Context。"
-    "PR 测试 flow 的 Planning Context 来自前置 ce-review；也可来自 ce-plan、用户显式计划或 handoff。"
-    "再用 uo-query 语义落根，并补齐 coverage、precision、可执行 performance 与 replay/derived solve 判据。"
-    "缺上下文返回 PLAN_CONTEXT_REQUIRED；缺列/生成器写 test_harness_gap，不默认全量 tilingkey。"
+    "Planning Context 来自 ce-review 结论、ce-plan「测试内容」、用户已陈述范围、handoff、"
+    "或用户明确只要用例时主控综合的 uo-query 结论；`/tg-plan` 不审查 diff。"
+    "把测试意图落到有限覆盖子集（CSV/XLS 列或代码变量）及精度/性能要求。"
+    "缺脚本/列/生成器（含随机数）写 test_harness_gap 说明书交 /ce-apply，不默认全量 tilingkey。"
+    "缺 Planning Context 返回 PLAN_CONTEXT_REQUIRED。"
 )
 
 # Keep the Primary OpenCode permission contract explicit at the entrypoint. The

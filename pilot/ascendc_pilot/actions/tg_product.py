@@ -71,11 +71,48 @@ def _receipt(project_root: Path, ctx: dict[str, Any], name: str, payload: dict[s
     return out
 
 
+_DEFAULT_INPUT_MARKERS = frozenset(
+    {
+        "no_repo_uo_query",
+        "default_input",
+        "none",
+        "null",
+        "-",
+        "__default_input__",
+    }
+)
+
+
 def _test_script_root(project_root: Path, ctx: dict[str, Any]) -> str:
     from ascendc_pilot.actions.engines import _resolve_tg_ctx
 
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
-    return str(tg_ctx.get("test_script_root") or ctx.get("test_script_root") or "").strip()
+    raw = str(tg_ctx.get("test_script_root") or ctx.get("test_script_root") or "").strip()
+    if raw.lower() in _DEFAULT_INPUT_MARKERS or raw.lower() == "have_repo":
+        return ""
+    return raw
+
+
+def _harness_choice(project_root: Path, ctx: dict[str, Any]) -> tuple[str, str]:
+    from ascendc_pilot.actions.engines import _resolve_tg_ctx
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    raw = str(tg_ctx.get("test_script_root") or ctx.get("test_script_root") or "").strip()
+    if raw.lower() in _DEFAULT_INPUT_MARKERS:
+        return "default_input", ""
+    if raw.lower() == "have_repo":
+        return "unset", ""
+    if raw:
+        return "script_repo", raw
+    return "unset", ""
+
+
+def _discover_in_tree_tests(project_root: Path) -> str:
+    for name in ("tests", "test"):
+        candidate = Path(project_root) / name
+        if candidate.is_dir():
+            return str(candidate.resolve())
+    return ""
 
 
 def _uo_identity(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -162,31 +199,44 @@ def _goal_wants_test_generation(project_root: Path) -> bool:
 
 
 def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    root = _test_script_root(project_root, ctx)
-    if not root and _goal_wants_test_generation(project_root):
+    kind, root = _harness_choice(project_root, ctx)
+    if kind == "unset":
+        discovered = _discover_in_tree_tests(project_root)
+        options: list[dict[str, str]] = [
+            {
+                "label": "使用外部测试脚本仓，填写绝对路径",
+                "value": "have_repo",
+                "description": "在回复里给出测试脚本仓库的绝对路径",
+            },
+            {
+                "label": "不使用测试脚本仓（default_input；不要用仓内 UT）",
+                "value": "no_repo_uo_query",
+                "description": "不扫描测试仓，按算子 UO 约束手写 init",
+            },
+        ]
+        if discovered:
+            options.insert(
+                1,
+                {
+                    "label": f"确认使用已发现的仓内目录 {discovered}",
+                    "value": discovered,
+                    "description": "未确认不得把算子仓 tests/ 写成 script_repo",
+                },
+            )
+        options.append({"label": "停止", "value": "stop"})
         ask = {
             "header": "选择测试仓",
             "question": (
-                "当前目标包含生成测试用例，但还没有 test_script_root。"
-                "请选择：已有测试仓并填写路径，或没有测试仓、改用 uo-query API 写 tg/init.yaml。"
+                "尚未确认 test_script_root。"
+                "请选择外部脚本仓路径、不使用测试脚本仓（default_input），"
+                "或确认使用已发现的仓内 tests/。未确认不得把仓内 UT 当作 harness。"
             ),
             "prompt": (
-                "当前目标包含生成测试用例，但还没有 test_script_root。"
-                "请选择：已有测试仓并填写路径，或没有测试仓、改用 uo-query API 写 tg/init.yaml。"
+                "尚未确认 test_script_root。"
+                "请选择外部脚本仓路径、不使用测试脚本仓（default_input），"
+                "或确认使用已发现的仓内 tests/。未确认不得把仓内 UT 当作 harness。"
             ),
-            "options": [
-                {
-                    "label": "已有测试仓，填写路径",
-                    "value": "have_repo",
-                    "description": "在回复里给出测试脚本仓库的绝对路径",
-                },
-                {
-                    "label": "没有测试仓，用 uo-query API 写 tg/init.yaml",
-                    "value": "no_repo_uo_query",
-                    "description": "不扫描测试仓，按算子 UO 约束手写 init",
-                },
-                {"label": "停止", "value": "stop"},
-            ],
+            "options": options,
             "allow_free_text": True,
             "field": "test_script_root",
         }
@@ -197,6 +247,7 @@ def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             "ask_question": ask,
             "message_zh": ask["question"],
             "test_script_root": "",
+            "discovered_in_tree_tests": discovered,
         }
     inventory = test_repo.scan(root or None)
     ident = {}

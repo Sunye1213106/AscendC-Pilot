@@ -1162,7 +1162,8 @@ def resolve_start_architecture(
     """Resolve architecture for a new start/reinit, or return AskQuestion payload.
 
     - Explicit --architecture: validate against discovered dirs when any exist.
-    - Unspecified + 2+ dirs: needs_human_decision (no silent arch35).
+    - Unspecified + unique changed-files pin in tree: use the pin.
+    - Unspecified + 2+ dirs and no unique pin: needs_human_decision (no silent arch35).
     - Unspecified + exactly 1 dir: auto-select that dir.
     - Unspecified + 0 dirs: ARCHITECTURE_NOT_FOUND (never silent arch35).
     """
@@ -1188,15 +1189,18 @@ def resolve_start_architecture(
             "available_architectures": available,
             "selected_by": "explicit",
         }
-    pin = load_pr_architecture_pin(root)
-    if len(pin) == 1 and (not available or pin[0] in available):
-        return {
-            "ok": True,
-            "architecture": pin[0],
-            "available_architectures": available,
-            "selected_by": "pr_changed_files",
-        }
     if len(available) >= 2:
+        try:
+            pin = load_pr_architecture_pin(root)
+        except Exception:  # noqa: BLE001
+            pin = []
+        if len(pin) == 1 and pin[0] in available:
+            return {
+                "ok": True,
+                "architecture": pin[0],
+                "available_architectures": available,
+                "selected_by": "pr_changed_files",
+            }
         return architecture_decision_payload(root, workflow_id, available=available)
     if len(available) == 1:
         return {

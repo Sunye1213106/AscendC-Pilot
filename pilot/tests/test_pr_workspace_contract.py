@@ -246,3 +246,69 @@ def test_create_worktree_reuses_matching_sha(tmp_path: Path, monkeypatch):
     assert second.get("ok") is True
     assert second.get("reused") is True
     assert marker.read_text(encoding="utf-8") == "local-note\n"
+
+
+def _git_init_commit(path: Path, body: str) -> str:
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "keep.txt").write_text(body, encoding="utf-8", newline="\n")
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "config", "core.autocrlf", "false"], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "c1"], cwd=path, check=True, capture_output=True)
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=path, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def test_create_worktree_wipes_isolated_sha_mismatch(tmp_path: Path, monkeypatch):
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: E402
+
+    monkeypatch.setenv("ASCENDC_WORKSPACE_CACHE", str(tmp_path / "cache"))
+    src = tmp_path / "src"
+    wanted = _git_init_commit(src, "wanted\n")
+    dest = tmp_path / ".ascendc-pr" / "gitcode.com--cann--ops--pr-1"
+    leftover = _git_init_commit(dest, "stale\n")
+    assert leftover != wanted
+    assert gw.is_isolated_pr_tree(dest)
+    result = gw.create_worktree(src, dest, wanted, run_id="run-wipe")
+    assert result.get("ok") is True, result
+    assert not result.get("reused")
+    got = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=dest, check=True, capture_output=True, text=True
+    ).stdout.strip()
+    assert (dest / "keep.txt").read_text(encoding="utf-8").replace("\r\n", "\n") == "wanted\n"
+
+
+def test_create_worktree_refuses_rmtree_on_operator_sha_mismatch(tmp_path: Path, monkeypatch):
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # noqa: E402
+
+    monkeypatch.setenv("ASCENDC_WORKSPACE_CACHE", str(tmp_path / "cache"))
+    src = tmp_path / "src"
+    wanted = _git_init_commit(src, "wanted\n")
+    dest = tmp_path / "operator"
+    stale = _git_init_commit(dest, "stale-operator\n")
+    (dest / "op_host").mkdir(exist_ok=True)
+    (dest / "op_kernel").mkdir(exist_ok=True)
+    assert stale != wanted
+    assert not gw.is_isolated_pr_tree(dest)
+    result = gw.create_worktree(src, dest, wanted, run_id="run-keep")
+    assert result.get("ok") is False
+    assert result.get("error") == "WORKTREE_SHA_MISMATCH"
+    assert (dest / "keep.txt").read_text(encoding="utf-8").replace("\r\n", "\n") == "stale-operator\n"

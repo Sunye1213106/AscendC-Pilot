@@ -2,7 +2,8 @@
 
 State / Workflow Spec / Action Lease aware. Soft control-plane only — not OS security.
 On human_required / containment, Write / Task / domain CLI stay denied. Primary may
-Read / Glob / Grep and readonly inspect bash (ls / Get-ChildItem / …) to diagnose.
+Read / Glob / Grep, readonly inspect bash, and (after OpenCode `ask`) other workspace
+bash. Domain CLI, `.ascendc-pilot` writes, and `uo-query` bash stay blocked.
 """
 
 from __future__ import annotations
@@ -225,6 +226,34 @@ def _resolve_task_project_root(project_root: Path | None) -> Path | None:
     if cached is not None:
         return cached
     return Path(project_root).resolve() if project_root is not None else None
+
+
+def _session_owns_live_containment(
+    project_root: Path | None,
+    state: dict[str, Any],
+) -> bool:
+    """True when failed/blocked/human_required belongs to this OpenCode session."""
+    status = str(state.get("status") or "")
+    if status not in {"human_required", "blocked", "failed"}:
+        return False
+    if project_root is None:
+        return True
+    try:
+        from ascendc_pilot.occupancy import current_session_id, get_session_binding
+
+        sid = current_session_id()
+        if not sid:
+            return True
+        binding = get_session_binding(project_root, sid)
+        if not binding or binding.get("released"):
+            return False
+        bound_run = str(binding.get("run_id") or "").strip()
+        live_run = str(state.get("run_id") or "").strip()
+        if bound_run and live_run and bound_run != live_run:
+            return False
+    except Exception:  # noqa: BLE001
+        return True
+    return True
 
 
 def _load_active_action(project_root: Path | None) -> dict[str, Any]:
@@ -695,6 +724,8 @@ def _deny_uncited_operator_source(
         return None
     if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
         return None
+    if tool_l in {"read", "glob", "list"}:
+        return None
     if not _has_uo_product(project_root):
         return None
     kb = _current_action_has_kb_query(str(workflow_id or ""), action_id)
@@ -711,8 +742,9 @@ def _deny_uncited_operator_source(
     return _ok(
         "deny",
         "SOURCE_READ_USE_UO_QUERY",
-        "算子源码语义走 uo-query 路由：简单问题用 pilot_cli `uo-query`，"
-        "复杂或 CE/TG 问图用同一轮 Task(agent=uo-query)。未 citation 的 op_host/op_kernel 不可 Read/Grep/Glob。"
+        "算子源码语义走 uo-query 路由：简单问题用 `pilot_cli` `uo-query`，"
+        "复杂或 CE/TG 问图用同一轮 Task(agent=uo-query)。"
+        "未 citation 的 op_host/op_kernel 不可 Grep。"
         "卡片 snippet 视为已读；仅截断后的窗口可读。",
         error_code="HARNESS_ACTION_NOT_AUTHORIZED",
         path=path_s,
@@ -975,6 +1007,51 @@ def _is_git_cli(command: str) -> bool:
     return bool(re.match(r"^\s*git(?:\.exe)?\b", segments[0], re.I))
 
 
+def _verdict_for_confirmed_bash(
+    command: str,
+    *,
+    agent_l: str,
+    action_id: str = "",
+    workflow_id: str = "",
+    status: str | None = None,
+) -> dict[str, Any] | None:
+    """OpenCode already asked. Allow remaining bash except uo-query / protected paths."""
+    if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
+        return _ok(
+            "deny",
+            "UO_QUERY_NO_BASH",
+            "uo-query 禁止 bash；查图用 pilot_cli `uo-query`。",
+            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            status=status,
+            command=(command or "")[:200],
+        )
+    cmd_n = (command or "").replace("\\", "/").lower()
+    if ".ascendc-pilot" in cmd_n or "/ascendc_pilot/" in cmd_n:
+        return _ok(
+            "deny",
+            "BASH_PROTECTED_WRITE",
+            "禁止用 bash 改写或删除 .ascendc-pilot。",
+            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            status=status,
+            command=(command or "")[:200],
+        )
+    if agent_l in _PRIMARY_AGENTS:
+        return _ok(
+            "allow",
+            "PRIMARY_BASH_ASK",
+            "主控 bash 由 OpenCode ask 确认后放行。",
+            status=status,
+            command=(command or "")[:200],
+        )
+    return _ok(
+        "allow",
+        "CHILD_BASH_ASK",
+        "子代理 bash 由 OpenCode ask 确认后放行。",
+        status=status,
+        command=(command or "")[:200],
+    )
+
+
 def _verdict_for_git_cli(
     command: str,
     *,
@@ -999,7 +1076,7 @@ def _verdict_for_git_cli(
         return _ok(
             "allow",
             "GIT_CLI_ALLOWED",
-            "允许主控 bash git。PR worktree 身份仍由 Workspace Manager 建立，勿拆他人 lock。",
+            "允许主控 bash git。隔离 PR checkout 仍由 Workspace Manager 建立；clone/worktree add 由 OpenCode ask 确认。",
             status=status,
             command=(command or "")[:200],
         )
@@ -1234,6 +1311,10 @@ def _authorize_impl(
     role = _agent_role(meta, agent_l) if agent_l else None
     status = str(state.get("status") or "")
     auth_mode = authorization_mode_for_status(status) if state else MODE_NORMAL
+    if auth_mode == MODE_CONTAINMENT and not _session_owns_live_containment(
+        project_root, state if isinstance(state, dict) else {}
+    ):
+        auth_mode = MODE_NORMAL
     if state.get("human_decision_superseded") and auth_mode == MODE_CONTAINMENT:
         # User walked away from the confirm UI. Do not jail the next turn.
         auth_mode = MODE_NORMAL
@@ -1379,6 +1460,21 @@ def _authorize_impl(
     # Mode comes from status. Lease mode must not escalate rework → containment.
 
     if auth_mode == MODE_CONTAINMENT:
+        if tool_l in _TASK_TOOLS and agent_l in _PRIMARY_AGENTS:
+            target = path_s or cmd
+            target_l = target.strip().lower()
+            from ascendc_pilot.workflows import workflow_uses_host_driver
+
+            if target_l and not workflow_uses_host_driver(target_l):
+                return _ok(
+                    "allow",
+                    "TASK_OK",
+                    "允许派发非 Host 驱动的只读查询子代理（不受 leftover containment 拦截）",
+                    agent=target,
+                    status=status,
+                    phase=ctx.get("phase"),
+                    workflow_id=ctx.get("workflow_id"),
+                )
         allowed_cmds = list(CONTAINMENT_COMMAND_PREFIXES)
         if tool_l in _BASH_TOOLS:
             if _is_containment_pilot_command(cmd):
@@ -1426,6 +1522,15 @@ def _authorize_impl(
                     status=status,
                     command=cmd[:200],
                 )
+            confirm_v = _verdict_for_confirmed_bash(
+                cmd_raw if cmd_raw else cmd,
+                agent_l=agent_l,
+                action_id=action_id,
+                workflow_id=str(ctx.get("workflow_id") or wid),
+                status=status,
+            )
+            if confirm_v is not None:
+                return confirm_v
             return _deny_not_authorized(
                 f"Current run is {status}; bash not authorized",
                 status=status,
@@ -1588,14 +1693,15 @@ def _authorize_impl(
                     status=status,
                     command=cmd[:200],
                 )
-            if agent_l in _PRIMARY_AGENTS:
-                return _ok(
-                    "deny",
-                    "BASH_NOT_HARNESS",
-                    "返工模式仅允许只读探查（ls/Get-ChildItem/…）；其他 bash 禁止。工作流用 pilot_run，短命令用 pilot_cli。",
-                    error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-                    command=cmd[:200],
-                )
+            confirm_v = _verdict_for_confirmed_bash(
+                cmd_raw if cmd_raw else cmd,
+                agent_l=agent_l,
+                action_id=action_id,
+                workflow_id=str(ctx.get("workflow_id") or wid_state or ""),
+                status=status,
+            )
+            if confirm_v is not None:
+                return confirm_v
             return _ok(
                 "deny",
                 "NON_PRIMARY_BASH",
@@ -1720,14 +1826,15 @@ def _authorize_impl(
                 phase=ctx.get("phase"),
                 command=cmd[:200],
             )
-        if agent_l in _PRIMARY_AGENTS:
-            return _ok(
-                "deny",
-                "BASH_NOT_HARNESS",
-                "AscendC-Pilot 仅允许只读探查（ls/Get-ChildItem/…）与主控 git。工作流用 Host 工具 `pilot_run`，短命令用 `pilot_cli`。",
-                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-                command=cmd[:200],
-            )
+        confirm_v = _verdict_for_confirmed_bash(
+            cmd_raw if cmd_raw else cmd,
+            agent_l=agent_l,
+            action_id=action_id,
+            workflow_id=str(ctx.get("workflow_id") or ""),
+            status=status,
+        )
+        if confirm_v is not None:
+            return confirm_v
         return _ok(
             "deny",
             "NON_PRIMARY_BASH",

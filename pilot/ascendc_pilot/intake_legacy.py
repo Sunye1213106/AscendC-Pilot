@@ -337,6 +337,14 @@ def scan_operator_directory(root: Path | str | None) -> dict[str, Any]:
         }
         for o in details
     ]
+    pinned: list[str] = []
+    try:
+        from ascendc_pilot.run_resume import load_pr_architecture_pin
+
+        pinned = load_pr_architecture_pin(path)
+    except Exception:  # noqa: BLE001
+        pinned = []
+    unique_pin = len(pinned) == 1 and pinned[0] in arches
     out: dict[str, Any] = {
         "ok": True,
         "project": str(path),
@@ -345,25 +353,41 @@ def scan_operator_directory(root: Path | str | None) -> dict[str, Any]:
         "architectures": arches,
         "architecture_options": arches,
         "architecture_option_details": details,
-        "ask_question": {
-            "header": "选择架构",
-            "question": "请选择要建立知识库的目标架构（选项来自算子目录 op_host|op_kernel/arch*）：",
-            "options": ask_options,
-        }
-        if arches
-        else None,
-        "message_zh": (
-            f"扫描到 {len(arches)} 个 architecture：{', '.join(arches)}。"
-            "阅读 layout 后用 AskQuestion 选项原样提问；禁止 Glob 仓根或翻 cmake/classify_rule。"
+        "ask_question": None
+        if unique_pin
+        else (
+            {
+                "header": "选择架构",
+                "question": "请选择要建立知识库的目标架构（选项来自算子目录 op_host|op_kernel/arch*）：",
+                "options": ask_options,
+            }
             if arches
-            else "未扫到 arch* 目录；请确认算子包布局或手工提供 architecture。"
+            else None
+        ),
+        "message_zh": (
+            f"changed-files 已唯一确定 architecture `{pinned[0]}`。"
+            "请将该值用于后续 `pilot_run`；不要再询问架构。"
+            if unique_pin
+            else (
+                f"扫描到 {len(arches)} 个 architecture：{', '.join(arches)}。"
+                "阅读 layout 后用 AskQuestion 选项原样提问；禁止 Glob 仓根或翻 cmake/classify_rule。"
+                if arches
+                else "未扫到 arch* 目录；请确认算子包布局或手工提供 architecture。"
+            )
         ),
         "suggested_command": (
-            f'pilot_run workflow=uo-init project="{path}" architecture=<arch*>'
-            if arches
-            else f'pilot_run workflow=uo-init project="{path}" architecture=<arch>'
+            f'pilot_run workflow=uo-init project="{path}" architecture={pinned[0]}'
+            if unique_pin
+            else (
+                f'pilot_run workflow=uo-init project="{path}" architecture=<arch*>'
+                if arches
+                else f'pilot_run workflow=uo-init project="{path}" architecture=<arch>'
+            )
         ),
     }
+    if unique_pin:
+        out["architecture"] = pinned[0]
+        out["selected_by"] = "pr_changed_files"
     if not arches:
         out["ok"] = False
         out["error"] = "ARCHITECTURE_NOT_FOUND"

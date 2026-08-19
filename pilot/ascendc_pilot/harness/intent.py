@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Validate structured intake staging. Does not parse the user prompt.
 
-Primary selects the next slash via the orchestration skill. This module only
-checks already-structured SourceRef / workflow ids / allowlisted PR hosts.
-It must not extract URLs or classify phrases itself. ``needed_capabilities``
-is a legacy label expander, not the intake ontology.
+Primary selects slashes via have→want Todos. This module only checks
+already-structured SourceRef / workflow ids / allowlisted PR hosts.
+It must not extract URLs, classify phrases, or invent workflows from
+capability labels. ``needed_capabilities`` is a legacy label, not intake.
 """
 
 from __future__ import annotations
@@ -29,16 +29,16 @@ ALLOWED_PR_HOSTS = frozenset({"gitcode.com", "github.com", "gitcode.net"})
 NON_GOAL_USER_WORKFLOWS = frozenset({"uo-query"})
 
 WORKFLOW_SUMMARY_ZH = {
-    "uo-init": "建立算子理解（CodeMap）",
-    "uo-update": "刷新算子理解",
-    "uo-query": "只读查询 CodeMap",
+    "uo-init": "按算子目录与架构建立 CodeMap",
+    "uo-update": "按变更增量更新已有 CodeMap",
+    "uo-query": "查询 CodeMap 语义",
     "uo-investigate": "调查 CodeMap 未闭合项",
-    "tg-init": "绑定测试脚本",
-    "tg-plan": "规划测试义务",
-    "tg-solve": "求解并生成用例",
-    "ce-plan": "问清需求并写出改码计划",
-    "ce-apply": "按计划改码",
-    "ce-review": "审查代码改动",
+    "tg-init": "绑定测试变量并写前置 yaml",
+    "tg-plan": "把测试意图收成有限覆盖计划",
+    "tg-solve": "定向构造并回放生成用例",
+    "ce-plan": "grill 需求并写出带 todo 的改码计划",
+    "ce-apply": "按计划改算子或测试脚本",
+    "ce-review": "审查 diff：意图、改动、问题与应测点",
     "handoff": "会话交接",
 }
 
@@ -95,7 +95,7 @@ def render_workflow_catalog() -> str:
         "# 用户工作流目录",
         "",
         "从下面选出用户要交付的工作流 id（并集、无序）。",
-        "不要发明目录外的 id，不要写执行顺序。下一步由 Goal Contract + goal-intake 的 TaskPlan 决定。",
+        "不要发明目录外的 id。执行顺序由 Primary Todo 决定，不由本目录脚本补链。",
         "",
     ]
     for row in workflow_catalog():
@@ -167,15 +167,11 @@ def validate_intent_staging(staging: dict[str, Any] | None) -> dict[str, Any]:
             }
         wfs = list(raw_wfs)
     else:
-        unknown_caps = [c for c in raw_caps if c not in KNOWN_CAPABILITIES]
-        if unknown_caps:
-            return {
-                "ok": False,
-                "error": "UNKNOWN_CAPABILITY",
-                "message_zh": "无法识别要做的事：" + "、".join(unknown_caps),
-                "unknown_capabilities": unknown_caps,
-            }
-        wfs = workflows_from_capabilities(raw_caps)
+        return {
+            "ok": False,
+            "error": "NO_WORKFLOWS",
+            "message_zh": "还没有判断出要跑哪些工作流。Intake 不得从 capability 标签补 slash。",
+        }
 
     query_requested = any(w in NON_GOAL_USER_WORKFLOWS for w in wfs)
     goal_wfs = [w for w in wfs if w not in NON_GOAL_USER_WORKFLOWS]

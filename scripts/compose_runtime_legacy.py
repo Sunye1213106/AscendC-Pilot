@@ -43,6 +43,7 @@ COMPOSE_POLICY_IDS: tuple[str, ...] = (
 COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("control", "control-invariants.md"),
     ("host-runtime", "host-runtime-contract.md"),
+    ("intent-reasoning", "intent-reasoning.md"),
     ("evidence", "evidence-invariants.md"),
     ("code-access", "code-access-invariants.md"),
     ("authority", "authority.md"),
@@ -81,7 +82,7 @@ OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
 
 
 def opencode_primary_task_permission() -> dict[str, str]:
-    perm: dict[str, str] = {"*": "deny"}
+    perm: dict[str, str] = {"*": "ask"}
     for name in OPENCODE_PRIMARY_TASK_ALLOW:
         perm[name] = "allow"
     return perm
@@ -118,9 +119,9 @@ def opencode_isolated_primary_permission(
         "todowrite": "allow",
         "edit": edit_perm,
         "write": write_perm,
-        "webfetch": "deny",
-        "websearch": "deny",
-        "lsp": "deny",
+        "webfetch": "ask",
+        "websearch": "ask",
+        "lsp": "ask",
     }
 
 
@@ -139,25 +140,28 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
             "用户要求建立知识库、建库、建 UO/CodeMap、索引/分析算子、首次理解算子或指定 "
             "architecture 建图时使用——上述用户说法一律走本 workflow，禁止改用外部 MCP/"
             "通用代码图谱索引。"
-            "缺 architecture 时由 Host `pilot_run` 弹出 AskQuestion；禁止在仓库根目录 Glob，禁止翻查 cmake/classify_rule 以猜测 architecture。"
+            "缺 architecture 且回执未给出唯一 `(算子, architecture)` 时由 Host `pilot_run` 弹出 AskQuestion；"
+            "Engine clone 已用 changed-files 唯一钉死的 architecture 直接使用。"
+            "禁止在仓库根目录 Glob，禁止翻查 cmake/classify_rule 以猜测 architecture。"
             "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
         ),
     },
     "uo-update": {
         "command_description": '刷新算子知识库 / Refresh existing AscendC Operator CodeMap',
         "description": (
-            "在已有算子知识库 / `.uo` CodeMap 上根据源码变更执行确定性增量刷新、重建受影响 "
-            "CodeMap 关系、校验完整性并输出差异摘要。用户要求刷新知识库、更新已有 UO/CodeMap "
-            "或查看源码变更对 CodeMap 的影响时使用；禁止改用外部 MCP 重新索引。"
+            "在已有 `.uo` 上按工作区 / diff / PR 变更做确定性增量更新：检测变更、按层 "
+            "（host / kernel / compile / commit）选择性重建，不是再跑一遍 `/uo-init`。"
+            "common / 头文件变更可能扩成全量抽取。没有 `.uo` 时先 `/uo-init`。"
+            "用户要求刷新知识库、增量更新已有 UO/CodeMap 时使用；禁止改用外部 MCP 重新索引。"
         ),
     },
     "uo-query": {
         "command_description": '查询算子知识库：直接查询或同一轮委派 / Query CodeMap',
         "description": (
-            "只读查询已有 AscendC 算子知识库 / `.uo` CodeMap（API、Host、TilingKey/"
-            "TilingData、Kernel、字段、路径）。简单查询由主控直接调用 `pilot_cli` `uo-query`"
+            "CodeMap 对外查询接口，给 TG / CE 补语义。简单查询由主控直接调用 `pilot_cli` `uo-query`"
             "（标识符 / Dim=V / --file --line / 无参数索引），禁止单独一轮只宣布路数；"
-            "复杂查询必须同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
+            "复杂查询必须由主控同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
+            "意图只是一次语义查询时留在主线，不要再包 coordinator。子代禁止再派 Task。"
             "Task 正文不要写 `--mode`。禁止把复杂查询改成主控自行连续查询。"
             "**禁止** `pilot_run workflow=uo-query`。"
             "禁止仅为问题分类而委派子代理。子代 PARTIAL / 未闭合 / 互相矛盾且图上还能查时再开一轮 Task（FOCUS=缺口），"
@@ -184,16 +188,17 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "ce-plan": {
         "command_description": 'Grill a requirement and write {slug}_plan.md',
         "description": (
-            "自己有需求时使用：持续问清范围与验收，写出 "
-            "`.ascendc-pilot/<arch>/ce/plan/{slug}_plan.md`（实现分析 / 计划 / todo / 测试内容）。"
+            "自己有需求时使用：用 UO 语义 + 用户「改什么 / 实现什么」，持续 grill，写出 "
+            "`.ascendc-pilot/<arch>/ce/plan/{slug}_plan.md`（实现分析 / 分步计划 / 明确 todo / 测试内容）。"
             "不以 PR 为输入。正式产物只有 markdown。去改码用 /ce-apply。用 `pilot_run`。"
         ),
     },
     "ce-apply": {
         "command_description": 'Apply unfinished todos from the current plan markdown',
         "description": (
-            "按当前 `{slug}_plan.md` 未完成 todo 改算子源码，一次一条。"
-            "没有未完成 todo 则先 /ce-plan。不内嵌双轴审查。改完可 /ce-review 或 /tg-plan。"
+            "按当前 `{slug}_plan.md` 未完成 todo 改 `op_host/` / `op_kernel/` / `common/` / `test_script/`，一次一条。"
+            "也可按 `/tg-plan` 的 `test_harness_gap` 说明书生成或修改测试脚本（含随机数生成器）。"
+            "没有未完成 todo 且没有 gap 说明书则先 /ce-plan。不内嵌双轴审查。apply 不查图。"
             "用 `pilot_run`。"
         ),
     },
@@ -207,9 +212,12 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "tg-init": {
         "command_description": 'Initialize TG: one init.yaml binding test scripts to CodeMap',
         "description": (
-            "建立测试生成契约，只落一份 `tg/init.yaml`：列、映射、值域、golden、精度/性能怎么跑。"
-            "测试脚本仓可选：有仓则扫描（含 xls/xlsx）并绑定列映射，mapping 空则失败；"
-            "无仓则用 /uo-query 读算子输入 API 设计控制面。无 `.uo` 时先 /uo-init。"
+            "测试前置：用 `.uo` + 可选测试脚本写出一份 `tg/init.yaml`。"
+            "有脚本仓：绑定脚本输入变量（CSV/XLS 列、生成器、代码读点）与算子/UO 变量，"
+            "并分析 golden 对照、精度条件、性能条件；mapping 空则失败。"
+            "无仓：用 uo-query 读输入 API 设计 `kind=default_input` 控制面；缺脚本先问人，不要假装已绑定。"
+            "算子仓内 tests/ 未确认不得当作 script_repo。"
+            "无 `.uo` 时先 /uo-init。本步 producer 查图只用 `pilot_cli`，禁止再派 Task。"
             "Pilot 管阶段；加载后用 `pilot_run`。"
         ),
     },
@@ -225,9 +233,8 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "tg-solve": {
         "command_description": 'Construct cases, Host-replay, write worklog until Open is empty',
         "description": (
-            "求解并生成用例：构造脚本可读的 cases 表，Host tiling 回放（无 NPU），"
-            "按 case 写 worklog 四段，直到 open 为空。test_harness_gap 未落地禁止开始。"
-            "TG 永不改算子仓。向用户报告求解进度。"
+            "按已批准 plan 定向构造可执行 cases，Host 动态回放（无 NPU），引理闭合，写 worklog，直到 open 为空。"
+            "test_harness_gap 未落地禁止开始。TG 永不改算子仓。向用户报告求解进度。"
         ),
     },
 }
@@ -426,6 +433,7 @@ _CHILD_CONTEXT_DROP_PREFIXES = (
     "**简单查询**",
     "**复杂查询**",
     "**查询方式说明**",
+    "**clone 事实**",
 )
 
 
@@ -526,7 +534,7 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     lines = [
         f"# {wid}",
         "",
-        "Pilot workflow entry. Goal Contract + `goal-intake` (`auto`) own orchestration. Spec owns phase and lease.",
+        "Pilot workflow entry. Primary Todos own orchestration. Spec owns phase and lease.",
         "",
     ]
     if skill_id:
@@ -1012,14 +1020,15 @@ def _opencode_bash_permission(
     allow_repo_search: bool = True,
     primary: bool = False,
 ) -> dict[str, str]:
-    """OpenCode frontmatter bash rules (last match wins: deny-all first, then allows).
+    """OpenCode frontmatter bash rules (last match wins: default ask, then allows).
 
-    Do **not** allowlist the harness binary, PATH discovery, or ``*.exe`` probes. Workflows
-    use Host ``pilot_run``; short CLI uses plugin ``pilot_cli``.
-    ``uo-query`` omits repo-wide search so agents must use ``pilot_cli``.
+    Safe probes auto-allow. Anything else (including clone / deletes) is OpenCode
+    ``ask`` so the user can confirm instead of a hard deny. Do **not** allowlist
+    the harness binary. Workflows use Host ``pilot_run``; short CLI uses plugin
+    ``pilot_cli``. ``uo-query`` omits repo-wide search so agents must use ``pilot_cli``.
     """
     perm = {
-        "*": "deny",
+        "*": "ask",
         # Path / listing probes
         "ls": "allow",
         "ls *": "allow",
@@ -1079,6 +1088,13 @@ def _opencode_bash_permission(
                 "python3 -m ascendc_pilot doctor *": "allow",
                 "python -c *": "allow",
                 "python3 -c *": "allow",
+                "git": "allow",
+                "git *": "allow",
+                # Override ``git *`` allow: clone/worktree identity stays a user confirm.
+                "git clone": "ask",
+                "git clone *": "ask",
+                "git worktree add": "ask",
+                "git worktree add *": "ask",
             }
         )
     if allow_repo_search or primary:
@@ -1194,16 +1210,16 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
     bash_perm = _opencode_bash_permission(
         allow_repo_search=allow_repo_search, primary=is_primary
     )
-    grep_perm = "allow" if allow_repo_search else "deny"
+    grep_perm = "allow" if allow_repo_search else "ask"
     write_scopes = list(agent_meta.get("write_scopes") or [])
     # OpenCode defaults most tools to allow. Always emit edit/write explicitly.
-    # edit covers write/apply_patch. Empty write_scopes → deny; else ask (ACP lease fences).
+    # edit covers write/apply_patch. Empty write_scopes → ask (lease still fences).
     if write_scopes:
         edit_perm: Any = {"*": "ask"}
         write_perm: Any = {"*": "ask"}
     else:
-        edit_perm = "deny"
-        write_perm = "deny"
+        edit_perm = "ask"
+        write_perm = "ask"
     host_read_perm = {
         # Host transport workaround: OpenCode child worktree vs operator root.
         # Real write boundary is Pilot lease, not this frontmatter.
@@ -1235,38 +1251,37 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
                 "write": write_perm if write_scopes else {"*": "ask"},
             }
     else:
-        # Fail-closed: `*` denies MCP `{server}_{tool}` names and unknown natives.
+        # Unknown natives / MCP default to OpenCode ask (user confirms).
         front["mode"] = "subagent"
         if host == "opencode":
             front["hidden"] = True
-        child_bash: Any = {"*": "deny"} if aid == "uo-query" else bash_perm
+        child_bash: Any = {"*": "ask"} if aid == "uo-query" else bash_perm
         front["permission"] = {
-            "*": "deny",
+            "*": "ask",
             "bash": child_bash,
             "pilot_cli": "allow",
-            "pilot_run": "deny",
+            "pilot_run": "ask",
             "grep": grep_perm,
-            "glob": "allow" if allow_repo_search else "deny",
+            "glob": "allow" if allow_repo_search else "ask",
             **host_read_perm,
             "edit": edit_perm,
             "write": write_perm,
-            "task": "deny",
-            "skill": "deny",
-            "webfetch": "deny",
-            "websearch": "deny",
-            "lsp": "deny",
-            "todowrite": "deny",
+            "task": "ask",
+            "skill": "ask",
+            "webfetch": "ask",
+            "websearch": "ask",
+            "lsp": "ask",
+            "todowrite": "ask",
         }
         tools: dict[str, Any] = {
             "skill": False,
             "pilot_run": False,
             "pilot_cli": True,
         }
-        if not allow_repo_search:
-            tools["grep"] = False
-            tools["glob"] = False
         if aid == "uo-query":
             tools["bash"] = False
+            tools["grep"] = False
+            tools["glob"] = False
         front["tools"] = tools
 
     if aid == "uo-query":
@@ -1280,16 +1295,17 @@ If the Task stub names `prompt` / `method` / `bundle` pointers, read those files
 2. Follow card `next` / `hint`. A card with `file:line` + snippet is already Read — do not Read the same span. Copy `file` from the card; do not guess paths.
 3. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
 4. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
+5. Do **not** spawn Task / nested subagents (authorize `TASK_NON_PRIMARY`).
 
 Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
 """
     elif is_primary:
         runtime = """## Runtime Contract
 
-        1. Workflows: first natural-language call is Host tool `pilot_run(workflow=auto, intent=<user text verbatim>, project=<OpenCode directory>)`. `auto` intakes a Goal Contract only when no active user_goal exists; otherwise it resumes `task_plan` (uo-init → ce-review → tg-init). Dual-axis review Tasks are ACKed from native Task text; Host continues the next todo. Do not call `auto` again to re-intake. Explicit slash: `workflow=<existing id>`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
+1. Workflows: 思考里按产物缺口选 slash（计划不是用例；词表写明的前置输入也是缺口）；对用户只陈述目标、现状与下一步，再 `todowrite` 后 Host tool `pilot_run(workflow=<that slash>, project=<OpenCode directory or operator package>)`. Only the acquire-code todo uses `workflow=auto` (Engine clone). After clone, use the unique `(operator, architecture)` from the Engine receipt when present; otherwise AskQuestion with on-disk `arch*` options. Do not default architecture without evidence, and do not read a full git diff for semantics. Then `pilot_run` the next missing slash. Dual-axis review Tasks are ACKed from native Task text; Primary checks off the todo and `pilot_run`s the next slash. Explicit slash: `workflow=<existing id>`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`. 非 primary 不得再派发 Task。`/ce-review` 双轴与复杂 uo-query 留在主线；意图只是一次审查或一次查询时不要再包 coordinator。派发前写清算子绝对路径、architecture、有无测试脚本。occupancy 不冲突可同一轮派发。
 2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures` / `retry-after-environment-fix`): call plugin tool `pilot_cli` with `command` as argv after the binary. Never `--help`. Never `--mode`.
-3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture.
-4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`.
+3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture. Isolation PR checkout is Engine-owned; other bash is OpenCode `ask`.
+4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`. If `host_step.tasks` ≥2, launch all in the same turn.
 """
     else:
         runtime = """## Runtime Contract
@@ -1299,6 +1315,7 @@ At runtime, follow:
 1. **First**: Read the session files named by Host `task_prompt_stub` pointers (`prompt`, `method`, `bundle`). Treat `prompt.md` as the sole task body.
 2. Work only on this Action / METHOD. Do not invent extra goals.
 3. Do **not** finalize (primary runs `--finalize`). Write only declared `write:` targets; otherwise return a short native summary.
+4. Do **not** spawn Task / nested subagents (authorize `TASK_NON_PRIMARY`). CodeMap lookup: plugin `pilot_cli` `uo-query` only.
 """
     body = f"""# Agent: {aid}
 

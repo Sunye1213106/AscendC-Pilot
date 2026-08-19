@@ -5,15 +5,16 @@
 ## 两项核心输入
 
 1. **Harness contract**：`tg/init.yaml`（强制）。提供测试表列、值域、生成器、golden/compare、precision/performance 跑测入口等可执行控制面。
-2. **Planning Context**（强制）。说明这次为什么测、改了什么、影响什么、哪些风险必须证明。来源按可用性读取：
-   - PR flow：`context/review_planning_context.md`（完成的 `/ce-review` 两轴被 runtime 确定性汇总）；
-   - `/ce-plan` 的计划上下文；
+2. **Planning Context**（强制）。说明这次为什么测、改了什么、影响什么、哪些风险必须证明。来源按可用性读取，不要假定必须先做过 PR review：
+   - 同一会话 `/ce-review` 结论（若 runtime 写了 `context/review_planning_context.md` 也可以读）；
+   - `/ce-plan` 的「测试内容」；
    - 用户显式给出的测试计划/目标；
-   - `session_handoff.md` 中等价的明确测试意图。
+   - `session_handoff.md` 中等价的明确测试意图；
+   - 用户明确只要用例、主控已综合的 `/uo-query` 结论（写在本步 stub 里）。
 
-`.uo` 不是第三份“意图输入”，而是后续用 `uo-query` 给 Planning Context 做语义落根和可达性证明的事实权威。
+`.uo` 不是第三份“意图输入”，而是后续用 `uo-query` 给 Planning Context 做语义落根和可达性证明的事实权威。本步查图只用 `pilot_cli`，禁止再派 Task。
 
-缺 Planning Context 时返回 `PLAN_CONTEXT_REQUIRED`；缺 `tg/init.yaml` 由 workflow gate 阻断。PR-backed Goal 明确包含 `ce-review` 时，不得绕过 review context 只看 PR URL 或重新猜影响范围。
+缺 Planning Context 时返回 `PLAN_CONTEXT_REQUIRED`；缺 `tg/init.yaml` 由 workflow gate 阻断。不要只看 PR URL 重新猜影响范围。
 
 ## 顺序
 
@@ -25,12 +26,13 @@
    - **precision**：结合 init.yaml 的 compare/golden 能力说明输入、期望和判定；
    - **performance**：只有 init.yaml 暴露了可执行性能入口时才规划性能 case/口径；否则明确 gap，不发明 NPU 指标；
    - **solve metric**：每条义务必须给可执行的 replay 或 derived 命中判据，以及 solve 完成的闭合条件。
-5. root 不到的目标列入 `untestable`（带 reason）；缺列或生成器能力写 `test_harness_gap`，不得伪造成已覆盖。
+5. root 不到的目标列入 `untestable`（带 reason）；缺列、缺脚本、或生成器造不出（含随机数）写 `test_harness_gap` **说明书**（缺什么、应改测试仓哪一段、期望接口），交 `/ce-apply`，不得伪造成已覆盖。
 
 ## 控制面 = 列
 
-- 算子真实 INPUT 缺列 → `test_harness_gap` 补列，先 CE 改测试仓。
-- 列有但 `generate_inputs` 造不出 → `test_harness_gap` 改生成器。
+- 算子真实 INPUT 缺列 → `test_harness_gap` 补列，先 `/ce-apply` 改测试仓。
+- 列有但 `generate_inputs` 造不出（含随机数分布/种子） → `test_harness_gap` 改生成器。
+- 没有测试脚本仓、但义务需要可执行 harness → `test_harness_gap` 说明书，让 `/ce-apply` 生成脚本仓。
 - root 不到 → `untestable`（带 `reason`），不进义务表。
 - UO 维度不要求和表头同名。允许确定性派生，例如 `IsNEqual := N1 == N2`、`IsTnd := Input_Layout == TND`；但 recipe 必须只依赖 `init.yaml` 可控列并能复算。
 

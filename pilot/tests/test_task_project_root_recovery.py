@@ -179,3 +179,30 @@ def test_primary_still_cannot_task_undeclared_producer_during_uo_init(tmp_path: 
     )
     assert verdict.get("decision") == "deny", verdict
     assert verdict.get("reason_code") == "TASK_AGENT_UNKNOWN", verdict
+
+
+def test_primary_may_task_uo_query_during_failed_auto(tmp_path: Path) -> None:
+    from ascendc_pilot.observation import record_pilot_result
+
+    op = tmp_path / "ops" / "flash_attention_score_grad"
+    op.mkdir(parents=True)
+    (op / "op_host").mkdir()
+    start_workflow(op, "auto", intent="获取 PR 代码", architecture="arch35")
+    record_pilot_result(
+        op,
+        ok=False,
+        action_id="intent_promote",
+        step_id="intent_promote",
+        messages=["ENGINE_FAILED"],
+        source="finalize_action",
+    )
+    verdict = authorize(
+        op,
+        tool="task",
+        path="uo-query",
+        command="uo-query",
+        agent="ascendc-pilot",
+        action="",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK", verdict

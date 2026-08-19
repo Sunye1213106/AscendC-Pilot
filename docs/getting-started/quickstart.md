@@ -11,7 +11,7 @@
 ## 0. 两条入口
 
 ```text
-自然语言     →  直接说目标。主控调用 pilot_run(workflow="auto", intent=原文)
+自然语言     →  先 Todo（有什么/要什么），再按格 pilot_run；获取代码才 workflow="auto"
 Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
 查询         →  仍走 pilot_cli / uo-query，不进 Harness
 ```
@@ -25,7 +25,7 @@ Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
 https://github.com/<org>/<repo>/pull/<id>
 ```
 
-系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ pin 到含 `op_host/` / `op_kernel/` 的算子工作目录后再建控制面 → 从 changed-files 解析算子 × architecture 矩阵（1×1 自动 pin；多对按对分析）→ 建立或复用 CodeMap → 分析改动 → 生成并回放用例。凭证失败 / 0 算子 / 路径无 `arch*` 会问人，这不是 UX 失败。不要自己猜下一跳 slash。
+主控应先写出 Todo（获取代码 / uo-init / 视产物缺口而定的后续格），再执行。系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ Engine 回执列出 changed-files；路径令牌唯一时直接使用该 `(算子, architecture)`，多个才 AskQuestion（禁止在没有证据时默认 arch35）→ 建立或复用 CodeMap。测试范围来自尚未理解的改动且用户未选定完整审查或只要用例时，主控 AskQuestion。无旧 TG 产物则 `/tg-init`（缺测试脚本仓会问人；仓内 `tests/` 未确认不得当 harness）→ 有 Planning Context 后再 `/tg-plan` / `/tg-solve`。凭证失败会问人，这不是 UX 失败。显式 slash 只跑该格。
 
 ## 1. 打开目标算子
 
@@ -41,7 +41,7 @@ AscendC-Pilot
 > 由 Host（OpenCode / Cursor 等）注册，**不是**终端里的 shell 命令；安装后会出现在补全列表里，并由 `ascendc-pilot` 主控接管。
 > 也可以不敲 `/`，直接用自然语言描述目标。
 
-Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture；缺一会要求从发现的架构中选择，不会静默默认。Agent 侧优先用 `pilot_cli` `scan-architectures --project <算子目录>` 读目录摘要与选项，再 AskQuestion——不要 Glob 仓根或翻 cmake 猜架构。
+Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture。Engine clone 已唯一钉死的 architecture 直接使用。否则从发现的架构中选择，不会在没有证据时默认。Agent 侧优先用 clone 回执与 `pilot_cli` `scan-architectures --project <算子目录>`；唯一 pin 在选项内时不要再 AskQuestion。不要 Glob 仓根或翻 cmake 猜架构。
 
 第一次启动不要传 `force_new` / `--force-new`。那是「删除重开」逃生口，会按策略 wipe 已有 `.uo`。已有未完成 run 时由 Host AskQuestion 选「继续上次」或「删除重开」，不要为了「确保能跑」先 wipe。
 
@@ -179,7 +179,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 /ce-review --project <算子目录>
 ```
 
-自然语言「分析这个 PR 并生成对应测试用例」+ URL 第一次 `pilot_run(workflow=auto, intent=原文)`。Host 按 TaskPlan 推进 `/uo-init` → `/ce-review` → `/tg-init` → `/tg-plan` → `/tg-solve`；审查双轴齐了之后不要再调 `auto` 做 intake。显式只要审查才打 `/ce-review`。
+自然语言「分析这个 PR 并生成对应测试用例」+ URL：先 Todo 再按格执行。获取代码走 Engine clone；随后主控选定算子/arch 再 `/uo-init`。审查结束后勾 Todo 再 `pilot_run` 下一格，不要再调 `auto` 做 intake。显式只要审查才打 `/ce-review`。`/tg-init` 缺测试仓会问人。
 
 
 CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query` 四种形态。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
@@ -190,7 +190,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 
 | 入口 | 用途 |
 | --- | --- |
-| 自然语言 + PR URL | `pilot_run(workflow=auto, intent=原文)`：打开目录下 clone，从 changed-files pin 算子×架构，按 TaskPlan 一直推进到真人门（空测试仓会问一次） |
+| 自然语言 + PR URL | 先 Todo 再执行。clone 仍是 Engine；主控 `git log` + `scan-architectures` 选算子/arch；`/tg-init` 缺测试仓会问人 |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
 | `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |

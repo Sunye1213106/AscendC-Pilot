@@ -68,6 +68,21 @@ def test_scan_operator_directory_returns_layout_and_arch_options(tmp_path: Path)
     assert "scan" in scanned["message_zh"].lower() or "architecture" in scanned["message_zh"].lower()
 
 
+def test_scan_operator_directory_omits_ask_when_pr_pin_unique(tmp_path: Path):
+    from ascendc_pilot.run_resume import save_pr_architecture_pin
+
+    (tmp_path / "op_host" / "arch22").mkdir(parents=True)
+    (tmp_path / "op_host" / "arch35").mkdir(parents=True)
+    (tmp_path / "op_kernel" / "arch35").mkdir(parents=True)
+    save_pr_architecture_pin(tmp_path, ["arch35"])
+    scanned = intake.scan_operator_directory(tmp_path)
+    assert scanned["ok"] is True
+    assert scanned.get("architecture") == "arch35"
+    assert scanned.get("selected_by") == "pr_changed_files"
+    assert not scanned.get("ask_question")
+    assert "arch35" in scanned["suggested_command"]
+
+
 def test_scan_operator_directory_rejects_non_operator(tmp_path: Path):
     (tmp_path / "src").mkdir()
     scanned = intake.scan_operator_directory(tmp_path)

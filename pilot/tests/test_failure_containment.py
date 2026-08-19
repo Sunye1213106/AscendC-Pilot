@@ -259,8 +259,16 @@ def test_primary_readonly_inspect_during_containment(tmp_path: Path):
         agent="ascendc-pilot",
     )
     assert grep_ok.get("decision") == "allow", grep_ok
-    child_deny = authorize(tmp_path, tool="bash", command="dir", agent="uo-gap-investigator")
-    assert child_deny.get("decision") == "deny", child_deny
+    delete_ok = authorize(
+        tmp_path,
+        tool="bash",
+        command=r"Remove-Item -Recurse -Force -LiteralPath 'D:\tmp\.ascendc-pr\pr-1'",
+        agent="ascendc-pilot",
+    )
+    assert delete_ok.get("decision") == "allow", delete_ok
+    assert delete_ok.get("reason_code") == "PRIMARY_BASH_ASK"
+    child_ok = authorize(tmp_path, tool="bash", command="dir", agent="uo-gap-investigator")
+    assert child_ok.get("decision") == "allow", child_ok
     write_deny = authorize(
         tmp_path,
         tool="write",
@@ -580,3 +588,64 @@ def test_observation_persisted_to_run_dir(tmp_path: Path):
     events = (run_dir / "events.jsonl").read_text(encoding="utf-8")
     assert "ObservationRecorded" in events
     assert "HumanRequired" in events
+
+
+def test_uo_query_task_allowed_during_containment(tmp_path: Path):
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="prepare",
+        step_id="uo_scope_finalize",
+        messages=["installed_skill_check.consistent is not true"],
+        source="uo_scope",
+    )
+    verdict = authorize(
+        tmp_path,
+        tool="task",
+        path="uo-query",
+        command="uo-query",
+        agent="ascendc-pilot",
+    )
+    assert verdict.get("decision") == "allow", verdict
+    assert verdict.get("reason_code") == "TASK_OK"
+
+
+def test_containment_does_not_follow_other_session(tmp_path: Path, monkeypatch):
+    from ascendc_pilot.occupancy import SESSION_ENV, bind_session
+
+    monkeypatch.setenv(SESSION_ENV, "ses_old")
+    start_workflow(tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35")
+    state = load_state(tmp_path) or {}
+    bind_session(
+        tmp_path,
+        session_id="ses_old",
+        run_id=str(state.get("run_id") or ""),
+        workflow_id="uo-init",
+        architecture="arch35",
+    )
+    record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="prepare",
+        step_id="uo_scope_finalize",
+        messages=["installed_skill_check.consistent is not true"],
+        source="uo_scope",
+    )
+    monkeypatch.setenv(SESSION_ENV, "ses_new")
+    producer = authorize(
+        tmp_path,
+        tool="task",
+        path="uo-semantic-resolve",
+        command="uo-semantic-resolve",
+        agent="ascendc-pilot",
+    )
+    assert producer.get("reason_code") != "HARNESS_ACTION_NOT_AUTHORIZED", producer
+    query = authorize(
+        tmp_path,
+        tool="task",
+        path="uo-query",
+        command="uo-query",
+        agent="ascendc-pilot",
+    )
+    assert query.get("decision") == "allow", query

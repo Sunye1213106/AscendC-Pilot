@@ -1027,7 +1027,7 @@ function patchWindowsShell(cfg: Record<string, unknown>): Record<string, unknown
  * Pilot write boundary (lease + allowed paths). Does not change Build/Plan
  * Does not change Build/Plan edit/bash/skill/shell rules; those tabs only
  * get Pilot tools (`pilot_run` / `pilot_cli`) and Pilot workflow skill names denied.
- * Does not relax write/edit. Do not widen task beyond compose ceiling.
+ * Does not relax write/edit. Unknown tools default to OpenCode ask.
  * Mutates and returns cfg.
  */
 function patchPilotReadPermissions(
@@ -1075,12 +1075,12 @@ function patchPilotReadPermissions(
     } else {
       cur.hidden = true
       cur.mode = cur.mode || "subagent"
-      perm.webfetch = perm.webfetch || "deny"
-      perm.websearch = perm.websearch || "deny"
-      if (perm.task === undefined) perm.task = "deny"
-      perm.skill = perm.skill || "deny"
-      perm.pilot_run = "deny"
-      perm.pilotrun = "deny"
+      perm.webfetch = perm.webfetch || "ask"
+      perm.websearch = perm.websearch || "ask"
+      if (perm.task === undefined) perm.task = "ask"
+      perm.skill = perm.skill || "ask"
+      perm.pilot_run = perm.pilot_run || "ask"
+      perm.pilotrun = perm.pilotrun || "ask"
       perm.acp = "deny"
       perm.pilot_cli = perm.pilot_cli || "allow"
       tools.pilot_run = false
@@ -1088,7 +1088,7 @@ function patchPilotReadPermissions(
       tools.acp = false
       tools.pilot_cli = true
       for (const server of mcpServers) {
-        perm[`${server}_*`] = "deny"
+        perm[`${server}_*`] = perm[`${server}_*`] || "ask"
       }
     }
     agentBag[name] = { ...cur, permission: perm, tools }
@@ -3618,7 +3618,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
                       (continued.host_step &&
                         typeof continued.host_step === "object" &&
                         (continued.host_step as Record<string, unknown>).message_zh))) ||
-                    "审查已收口，已继续 task_plan 下一格。",
+                    "审查已收口。勾掉当前 Todo 后按侧栏下一格 pilot_run。",
                 )
                 output.output += `\n\n${msg}`
               }

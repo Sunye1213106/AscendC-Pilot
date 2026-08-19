@@ -24,7 +24,7 @@ index 的 Added identifiers → 并行 form-1 新字段/新函数 → 字段 rea
 6. UT 不在 CodeMap：只读 `tests/**` 搜新字段名。本 PR 测试文件零次出现新字段 → Spec I5 是缺口。
 7. 报告前尝试推翻 H1。
 
-两轴 parts 收齐后 Primary 用字段卡裁定矛盾（例如 Host 已赋 BAND/DENSE/CAUSAL 则收回「枚举未用」），写 `runs/<RUN>/actions/code_review/parts/merged.md`。禁止再 prepare 同一对 spec/standards。
+本轴结论写在 Task 回复。两轴收齐后由主控综合，不要本子代理写 `merged.md`，也不要再派 Task。
 
 ## 产物
 

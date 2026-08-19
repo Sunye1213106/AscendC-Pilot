@@ -49,9 +49,14 @@ def _is_isolated_pr_path(root: Path) -> bool:
 
 
 def _resolve_operator_from_pr_workspace(
-    root: Path, intent: str, workflow_id: str
+    root: Path, intent: str, workflow_id: str, *, select_targets: bool = True
 ) -> dict[str, Any] | None:
-    """Materialize exact PR head under the Host open directory and pin (op, arch) pairs."""
+    """Materialize exact PR head under the Host open directory.
+
+    ``select_targets`` is for explicit slash workflows that still need an
+    operator package to start. ``auto`` / ``goal-intake`` only clone and return
+    facts; architecture is not a silent pin.
+    """
     url = extract_pr_url_from_intent(intent)
     if not url:
         return None
@@ -104,6 +109,22 @@ def _resolve_operator_from_pr_workspace(
                 "field": "project",
             },
         }
+    if not select_targets:
+        worktree = str(acquire.get("worktree_head") or root)
+        facts = dict(acquire)
+        facts.update(
+            {
+                "ok": True,
+                "pr_url": url,
+                "project": worktree,
+                "worktree_head": worktree,
+                "changed_files": list(acquire.get("changed_files") or []),
+                "operator_roots": list(acquire.get("operator_roots") or []),
+                "changed_architectures": list(acquire.get("changed_architectures") or []),
+                "workflow_id": workflow_id,
+            }
+        )
+        return facts
     resolved = gw.resolve_targets_or_ask(acquire, workflow_id=workflow_id, host_root=root)
     resolved["pr_url"] = url
     return resolved
@@ -113,7 +134,7 @@ _GOAL_INTAKE_IDS = frozenset({"auto", "goal-intake"})
 
 
 def _should_materialize_pr_before_start(wf: str, root: Path, pr_url: str) -> bool:
-    """Clone+pin before start so `.ascendc-pilot` never lands on an empty Host cwd."""
+    """Clone before start so `.ascendc-pilot` never lands on an empty Host cwd."""
     if not pr_url or _is_isolated_pr_path(root):
         return False
     if wf in _legacy._workflows_need_operator():
@@ -203,25 +224,17 @@ def prepare_workflow_start(
         )
 
     if _should_materialize_pr_before_start(wf, root, pr_url):
-        resolved = _resolve_operator_from_pr_workspace(root, intent_text, wf)
+        resolved = _resolve_operator_from_pr_workspace(
+            root,
+            intent_text,
+            wf,
+            select_targets=wf not in _GOAL_INTAKE_IDS,
+        )
         if resolved is not None:
             if not resolved.get("ok"):
                 return _legacy._attach_intake_request(resolved, original_root)
             root = Path(str(resolved["project"])).expanduser().resolve()
             pr_context = dict(resolved)
-            resolved_arch = str(resolved.get("architecture") or "").strip()
-            # goal-intake occupancy stays under goal/; arch* is pinned for later uo-init.
-            if wf not in _GOAL_INTAKE_IDS and not arch:
-                arch = resolved_arch
-            pin_arches = list(resolved.get("changed_architectures") or [])
-            if not pin_arches and (arch or resolved_arch):
-                pin_arches = [arch or resolved_arch]
-            try:
-                from ascendc_pilot.run_resume import save_pr_architecture_pin
-
-                save_pr_architecture_pin(root, pin_arches)
-            except Exception:  # noqa: BLE001
-                pass
             _mark_workspace_step(original_root, root)
             # PR has already been materialized. Do not let legacy intake inspect
             # the original Host cwd or acquire the PR a second time.
@@ -235,13 +248,6 @@ def prepare_workflow_start(
         project_explicit=project_explicit,
         intent=intent_text,
     )
-    if result.get("ok") and wf in _GOAL_INTAKE_IDS:
-        landed = Path(str(result.get("project") or root)).expanduser().resolve()
-        if not _legacy.looks_like_operator_package(landed):
-            return _legacy._attach_intake_request(
-                _operator_workdir_required(wf, landed),
-                original_root,
-            )
     if result.get("ok") and pr_context:
         result = dict(result)
         for key in (

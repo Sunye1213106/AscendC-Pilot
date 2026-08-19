@@ -3,20 +3,22 @@ name: code-review
 description: >
   基于 CodeMap、源码和 git/PR diff 做 AscendC 代码审查。输入只有代码改动。
   Spec 轴对照当前 `{slug}_plan.md`（无计划则从 PR/diff 索引推断粗意图并验收完成度），Standards 轴对照仓规范；
-  review 阶段并行两个子代理隔离上下文。结论留在对话，不落盘。
-  边界：不签发 CE 证书；建议测试走 /tg-plan。
+  两轴由主控同一轮并行派发，隔离子代理上下文。结论留在对话，不落盘。
+  边界：不签发 CE 证书；建议测试走 /tg-plan。意图只是一次审查时留在主线。
 ---
 
 # 代码审查
 
-`/ce-review` 的输入只有代码改动：GitCode/GitHub PR URL（引擎 fetch）、`/ce-apply` 后的工作区 diff、或 `base...head`。贴 PR URL 会作为审查的输入来源；自然语言第一次 `pilot_run(workflow=auto)`。`auto` 有进行中的 TaskPlan 就推进当前格，审查双轴 ACK 完 Host 继续 `tg-init`。只有用户打了 `/ce-review` 才直达本入口。远程 fetch 失败时 HTTPS 回退需要 `GITHUB_TOKEN` 或 `GITCODE_TOKEN`。无 diff 则停。
+`/ce-review` 的输入只有代码改动：GitCode/GitHub PR URL（引擎 fetch）、`/ce-apply` 后的工作区 diff、或 `base...head`。贴 PR URL 会作为审查的输入来源；需要隔离 worktree 时由主控 Todo 的「获取 PR 代码」格 `pilot_run(workflow=auto)`。只有用户打了 `/ce-review`、或主控 Todo 当前格就是审查时才进本入口。远程 fetch 失败时 HTTPS 回退需要 `GITHUB_TOKEN` 或 `GITCODE_TOKEN`。无 diff 则停。
+
+意图只是一次审查：主线 `pilot_run`，不要再包一层 coordinator。双轴 Task 必须由主控按 `host_step.tasks` 同一轮派发；`ce-reviewer` 禁止再派 Task，查图只用 `pilot_cli` `uo-query`。
 
 侧别：`op_kernel/` → Kernel；`op_host/` → Tiling。两侧都动则分侧陈述。
 
-完成条件：每条 FINDING 有 `path:line`；H1 在报告前被尝试推翻。
+完成条件：每条 FINDING 有 `path:line`；H1 在报告前被尝试推翻。对人汇总：审查完成 / 意图是什么 / 改了什么 / 计划达成怎样 / 问题 / 若测应重点测什么（Planning Context）。
 
 ```text
-取 diff → review（Spec 子代理 ∥ Standards 子代理）→ 建议修改或建议测试
+取 diff → review（主控：Spec 子代理 ∥ Standards 子代理）→ 返回 Primary
 ```
 
 ## 假设检验
@@ -35,12 +37,12 @@ description: >
 ## `/ce-review` 阶段
 
 ```text
-scope（内存取 diff）→ review（Spec ∥ Standards）→ summary
+scope（内存取 diff）→ review（Spec ∥ Standards）→ summary（主控综合，不落盘）
 ```
 
 - `scope`：没有可审查的代码改动则停。
-- `review`：Host 同一轮并行两个 `ce-reviewer` Task。禁止合成一个 LGTM，禁止一个子代理写两轴。禁止 Write `ce/**`。结论在 Task 回复；插件用原文 ACK。
-- `summary`：目标已含生成测例时 Host 跳过「审查下一步？」并继续 `tg-init`。单独 `/ce-review` 才问建议修改或建议测试。
+- `review`：主控同一轮并行两个 `ce-reviewer` Task。禁止合成一个 LGTM，禁止一个子代理写两轴。禁止 Write `ce/**`。结论在 Task 回复；插件用原文 ACK。
+- `summary`：主控把两轴正文转述给人。勾掉 Todo 后再 `pilot_run` 下一格。Host 不得自动继续 `tg-init`。
 
 Spec 轴：有 `active_plan` 则对照 `{slug}_plan.md`；纯 PR 无计划则从 PR 标题 + change_capture/index.md + uo-query 推断粗意图并验收完成度。禁止通读 `diff.md`。
 

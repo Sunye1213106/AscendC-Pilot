@@ -868,7 +868,7 @@ export function canonicalWorkflowId(wf: string): string {
   return w === "auto" ? "goal-intake" : w
 }
 
-/** `auto` with an active TaskPlan resumes the current workflow instead of re-intake. */
+/** `auto` only clones (goal-intake). Do not hijack onto a scripted TaskPlan slash. */
 export function resumeActiveGoal(args: {
   workflow: string
   project: string
@@ -876,27 +876,9 @@ export function resumeActiveGoal(args: {
   forceNew: boolean
   live: Record<string, unknown>
 }): { workflow: string; project: string; architecture: string } {
-  if (args.forceNew) return args
-  const requested = canonicalWorkflowId(args.workflow)
-  if (requested !== "goal-intake" && args.workflow !== "auto") return args
-  const goal =
-    args.live.user_goal && typeof args.live.user_goal === "object"
-      ? (args.live.user_goal as Record<string, unknown>)
-      : {}
-  if (String(goal.status || "") !== "active") return args
-  const nxt = String(args.live.task_plan_current_workflow_id || "").trim()
-  if (!nxt || nxt === "auto" || nxt === "goal-intake") return args
-  const pin = String(goal.project || "").trim()
-  const arch = String(goal.architecture || args.architecture || "").trim()
-  let project = args.project
-  if (pin) {
-    try {
-      project = resolve(pin)
-    } catch {
-      project = pin
-    }
-  }
-  return { workflow: nxt, project, architecture: arch || args.architecture }
+  void args.live.task_plan_current_workflow_id
+  void canonicalWorkflowId(args.workflow)
+  return args
 }
 
 export async function driveContinueGoalAfterAck(args: {
@@ -905,24 +887,24 @@ export async function driveContinueGoalAfterAck(args: {
   step: Record<string, unknown>
   sessionId?: string
 }): Promise<Record<string, unknown>> {
+  void args.client
+  void args.pluginInput
+  void args.sessionId
   const nextWf = String(args.step.next_workflow_id || "").trim()
-  if (!nextWf) {
-    return { ok: false, error: "CONTINUE_GOAL_MISSING_WORKFLOW" }
-  }
-  const continued = await runPilotDriver(
-    args.client,
-    {
-      workflow: nextWf,
-      project: String(args.step.project || ""),
-      architecture: String(args.step.architecture || "") || undefined,
-      intent: String(args.step.intent || "") || undefined,
-      hostDirectory: args.pluginInput?.directory
-        ? String(args.pluginInput.directory)
-        : undefined,
+  const project = String(args.step.project || "").trim()
+  const architecture = String(args.step.architecture || "").trim()
+  return {
+    ok: true,
+    host_step: {
+      kind: "done",
+      next_workflow_id: nextWf,
+      project,
+      architecture,
+      message_zh: nextWf
+        ? `当前工作流已结束。勾掉 Todo 后 pilot_run(workflow=${nextWf})。`
+        : "当前工作流已结束。按 Primary Todo 推进下一格。",
     },
-    { sessionID: String(args.sessionId || ""), sessionId: String(args.sessionId || "") },
-  )
-  return continued
+  }
 }
 
 function authIpcDir(): string {
@@ -1124,47 +1106,13 @@ function extractTodoItems(todoPayload: unknown): TodoItem[] {
   return out
 }
 
-/** Sync ACP todo_sync into OpenCode session sidebar (plugin-owned, not LLM). */
+/** Primary owns the OpenCode sidebar. Do not overwrite it with engine public_plan. */
 async function syncTodos(
-  client: any,
-  sessionId: string,
-  todoPayload: unknown,
+  _client: any,
+  _sessionId: string,
+  _todoPayload: unknown,
 ): Promise<{ ok: boolean; via?: string; error?: string }> {
-  const items = extractTodoItems(todoPayload)
-  if (!sessionId || !items.length) return { ok: true, via: "skip" }
-  const attempts: Array<() => Promise<void>> = [
-    async () => {
-      await client.session.todoUpdate({ sessionID: sessionId, todos: items })
-    },
-    async () => {
-      await client.session.todoUpdate({
-        path: { id: sessionId },
-        body: { todos: items },
-      })
-    },
-    async () => {
-      await client.session.todo({
-        path: { id: sessionId },
-        body: { todos: items },
-        method: "POST",
-      })
-    },
-    async () => {
-      await client.post({
-        url: `/session/${encodeURIComponent(sessionId)}/todo`,
-        body: { todos: items },
-      })
-    },
-  ]
-  for (const [i, fn] of attempts.entries()) {
-    try {
-      await fn()
-      return { ok: true, via: `todoUpdate#${i}` }
-    } catch {
-      /* try next shape */
-    }
-  }
-  return { ok: false, error: "TODO_SYNC_UNAVAILABLE" }
+  return { ok: true, via: "primary_owns_todos" }
 }
 
 function normalizeAskOptions(ask: Record<string, unknown>): Array<{
@@ -2001,51 +1949,29 @@ export async function runPilotDriver(
 
     if (step.kind === "continue_goal") {
       const nextWf = String(step.next_workflow_id || "").trim()
-      if (!nextWf) {
-        reporter?.setStatus("fail")
-        return {
-          ok: false,
-          error: "CONTINUE_GOAL_MISSING_WORKFLOW",
-          host_step: step,
-          log,
-        }
-      }
       const nextArch = String(step.architecture || architecture || "").trim()
-      const nextIntent = String(step.intent || intent || "").trim()
       const nextProject = String(step.project || project || "").trim()
-      architecture = nextArch || architecture
-      intent = nextIntent || intent
-      if (nextProject) project = resolve(nextProject)
-      workflow = nextWf
-      reporter?.setWorkflow(nextWf)
-      reporter?.note(`continue ${nextWf}`)
-      const continued = await consumeStartAsks(await startOnce())
+      reporter?.setStatus("done")
       log.push({
         event: "continue_goal",
         next_workflow_id: nextWf,
-        ok: isAcpStartSuccess(continued),
+        handed_to_primary: true,
       })
-      if (continued.answer_from_source === true) {
-        return continued
+      const messageZh = nextWf
+        ? `当前工作流已结束。勾掉 Todo 后 pilot_run(workflow=${nextWf})。`
+        : String(step.message_zh || "当前工作流已结束。按 Primary Todo 推进下一格。")
+      return {
+        ok: true,
+        host_step: {
+          kind: "done",
+          next_workflow_id: nextWf,
+          architecture: nextArch,
+          project: nextProject,
+          message_zh: messageZh,
+        },
+        log,
+        todo: todoPayload,
       }
-      if (isHumanDecision(continued)) {
-        return continued
-      }
-      if (!isAcpStartSuccess(continued)) {
-        reporter?.setStatus("fail")
-        return {
-          ok: false,
-          host_step: {
-            kind: "failed",
-            message_zh: continued.message_zh || continued.error || `start ${nextWf} failed`,
-          },
-          log,
-          start: continued,
-        }
-      }
-      reporter?.applyTodo(continued.todo)
-      pendingTodo = continued.todo
-      continue
     }
 
     lastStep = step
@@ -2082,24 +2008,24 @@ export function createPilotRunTool(
     pilot_run: {
       description:
         "Run AscendC-Pilot via Host Session Driver. " +
-        "Natural language: workflow=auto with intent=user text verbatim. " +
-        "auto intakes only when no active user_goal; otherwise it resumes task_plan (uo-init → ce-review → tg-init). " +
-        "Do not call auto again to re-intake after review Tasks return — Host ACKs native Task text and continues the next todo. " +
+        "Natural language: write OpenCode Todos (have→want), then pilot_run(workflow=<current slash>). " +
+        "Only the acquire-code todo uses workflow=auto (Engine clone). After clone, use a unique (operator, architecture) from the Engine receipt when present; otherwise AskQuestion. Do not default architecture without evidence. Then pilot_run the next Todo slash. " +
+        "host_step.done returns to Primary; do not Host-continue_goal the next user slash. " +
         "Explicit slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
         "(agent=actor_id, prompt=task_prompt_stub verbatim). " +
-        "Host Driver syncs Todo and owns AskQuestion when the UI is available. Never uo-query. " +
+        "Host Driver owns AskQuestion when the UI is available. Never uo-query. " +
         "Do not load a native skill for orchestration. With a PR URL, do not scan a local fork.",
       args: {
         workflow: {
           type: "string",
           description:
-            "auto: first call intakes a Goal Contract; later auto resumes the current task_plan step. Never uo-query. Explicit slash uses the existing id.",
+            "Current slash, or auto only for the acquire-PR-code todo. Never uo-query. Explicit slash uses the existing id.",
         },
         project: {
           type: "string",
           description:
-            "OpenCode open-directory is the clone anchor only. `.ascendc-pilot` lands on the operator package after a PR pin (`op_host`/`op_kernel`). With a PR URL this is where the clone folder is created, not the local fork to analyse.",
+            "OpenCode open-directory is the clone anchor only. `.ascendc-pilot` lands on the operator package after Primary selects it (`op_host`/`op_kernel`). With a PR URL this is where the clone folder is created, not the local fork to analyse.",
         },
         architecture: {
           type: "string",
@@ -2108,7 +2034,7 @@ export function createPilotRunTool(
         intent: {
           type: "string",
           description:
-            "User product intent verbatim. For /ce-review include the GitCode/GitHub PR URL when reviewing a pull request.",
+            "Optional product intent. For /ce-review include the GitCode/GitHub PR URL when reviewing a pull request. Do not pass the raw NL as the first auto call.",
         },
         force_new: {
           type: "boolean",

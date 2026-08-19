@@ -448,7 +448,7 @@ def _materialize_plan_approve(
         return {
             "ok": False,
             "error": "TEST_HARNESS_GAP_PENDING",
-            "message_zh": "test_harness_gap 未落地，禁止批准规划。先 CE apply 测试脚本仓再 /tg-init。",
+            "message_zh": "test_harness_gap 未落地，禁止批准规划。先按说明书 /ce-apply 测试脚本仓（可补脚本、改列或随机数生成器）再 /tg-init。",
         }
     fence["approved"] = True
     fence["decision"] = "approve"

@@ -227,10 +227,18 @@ def test_authorize_readonly_inspection_still_blocks_writes(tmp_path: Path) -> No
     start_workflow(
         tmp_path, "uo-init", phase="prepare", force_phase=True, architecture="arch35"
     )
-    denied = [
-        f'Get-ChildItem "{tmp_path}" > "{tmp_path / "out.txt"}"',
-        f'mkdir "{tmp_path / "newdir"}"',
-    ]
-    for cmd in denied:
-        verdict = authorize(tmp_path, tool="bash", command=cmd, agent="ascendc-pilot")
-        assert verdict.get("decision") in {"deny", "ask"}, (cmd, verdict)
+    redirect = authorize(
+        tmp_path,
+        tool="bash",
+        command=f'Get-ChildItem "{tmp_path}" > "{tmp_path / "out.txt"}"',
+        agent="ascendc-pilot",
+    )
+    assert redirect.get("decision") == "allow", redirect
+    mkdir = authorize(
+        tmp_path,
+        tool="bash",
+        command=f'mkdir "{tmp_path / "newdir"}"',
+        agent="ascendc-pilot",
+    )
+    assert mkdir.get("decision") == "allow", mkdir
+    assert mkdir.get("reason_code") == "PRIMARY_BASH_ASK"

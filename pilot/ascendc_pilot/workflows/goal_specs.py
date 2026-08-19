@@ -1,9 +1,10 @@
 """Reserved Harness workflows: optional workspace bootstrap.
 
 Not in list_user_workflows(), no slash. ``auto`` is an alias of goal-intake.
-Primary forms a Goal Contract; this reserved workflow only validates structure,
-materializes an isolated PR workspace, and expands TaskPlan. Do not send natural
-language here for a second Intent LLM pass.
+Used only for the Primary Todo「获取 PR 代码」: isolated clone and fact return
+(worktree / changed-files / operator_roots). Unique changed-files
+``(operator, architecture)`` pairs are returned as facts (and may be pinned).
+Does not invent deliverable workflows or start ``uo-init``.
 """
 
 from __future__ import annotations

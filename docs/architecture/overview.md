@@ -70,7 +70,7 @@ AscendC Source → UO → Operator CodeMap
                          └→ CE → Plan / Apply / Review
 
 User
-  ├─ 自然语言 → Primary 形成 Goal Contract → `pilot_run(workflow=auto)`（无目标则 intake；有则 resume TaskPlan）
+  ├─ 自然语言 → Primary 有什么/要什么 → `todowrite` → 按格 `pilot_run`（获取代码才 `auto`）
   └─ Slash /uo /tg /ce → Primary → `pilot_run(workflow=<该 id>)`
     ↓
 Host Adapter（安装期 compose + 运行时 Session Driver）
@@ -80,7 +80,7 @@ ACP Harness（单步 lease / 派领域子代理；下一步回 Primary + skill �
 Engine（事实：clone / Clang / replay）或 LLM Agent（推理；不推进状态）
 ```
 
-自然语言第一次 `pilot_run(workflow=auto, intent=原文)`。没有进行中的目标时 `auto` 是 reserved `goal-intake`（结构校验、PR exact-head workspace、TaskPlan）。已有 active 目标时恢复当前格，审查双轴 ACK 完继续 tg-init。Runtime 不二次解释自然语言。有 PR URL 时在打开目录下新建文件夹 clone，从 changed-files 解析算子×架构；已经是算子包则不嵌套 clone。空打开目录不落 `.ascendc-pilot`，控制面只写在算子工作目录。无 URL 才吃本地 diff。显式 slash 只跑该节点。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。没有独立 change-impact 角色：问变更影响 = 带着 diff 做 `/uo-query`。
+自然语言先写 OpenCode Todo（有什么 → 要什么 → 缺什么产物），再对当前格 `pilot_run`。只有「获取 PR 代码」才 `workflow=auto`（Engine 隔离 clone，返回 worktree 与 changed-files）。clone 后主控用只读 git 与 `pilot_cli scan-architectures` 选定算子包与 architecture，再 `pilot_run uo-init`。显式 slash 一次只跑该工作流。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。没有独立 change-impact 角色：问变更影响 = 带着 diff 做 `/uo-query`。有 PR URL 时在打开目录下新建文件夹 clone；已经是算子包则不嵌套 clone。空打开目录不落 `.ascendc-pilot`，控制面只写在算子工作目录。无 URL 才吃本地 diff。
 
 | 模块 | 一句话 |
 | --- | --- |

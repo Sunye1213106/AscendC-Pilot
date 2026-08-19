@@ -5,8 +5,8 @@
 
 `host_driver=False` 只表示 Session Driver **不** auto start/drain，**不等于**没有 Action / METHOD / bundle。
 
-- **简单查询**：一个起始标识符或一种参数形态、一两轮调用能答完。主控直接调用 `pilot_cli` `uo-query`，根据 stdout 作答。不委派子代理，不调用 `kb_lookup`，不调用 `pilot_run`。禁止先发「我将直接查询」挡住首屏答案。
-- **复杂查询**：用户原话里有 ≥2 个可独立作为首次调用的起始点。主控在同一轮并行调用 `Task(agent=uo-query)`（上限 5），可在派发时带一句 FOCUS；不要阻塞等确认。子代不得 Write、不得自己 finalize。综合只在主控。
+- **简单查询**：一个起始标识符或一种参数形态、一两轮调用能答完。主控直接调用 `pilot_cli` `uo-query`，根据 stdout 作答。不委派子代理，不调用 `kb_lookup`，不调用 `pilot_run`。禁止先发「我将直接查询」挡住首屏答案。意图只是一次语义查询时留在主线，不要再包 coordinator。
+- **复杂查询**：用户原话里有 ≥2 个可独立作为首次调用的起始点。必须由**主控**同一轮并行调用 `Task(agent=uo-query)`（上限 5），可在派发时带一句 FOCUS；不要阻塞等确认。子代不得 Write、不得自己 finalize、**不得再派 Task**。综合只在主控。禁止把这次查询再包进另一个子代理里去做 fanout。
 - **Delegated Task**（TG/CE 临时问图）：Task 正文即全部，不要另行查找 session `prompt.md`。
 
 缺 `.uo`：产物路径是 `<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`。

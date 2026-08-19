@@ -389,6 +389,7 @@ def test_attach_host_step_continue_goal(tmp_path: Path) -> None:
     llm_intent = {
         "objective_zh": "生成针对性测试用例",
         "needed_capabilities": ["knowledge", "test_generation"],
+        "needed_workflows": ["tg-init", "tg-plan", "tg-solve"],
         "source": {"kind": "local"},
         "intent_text": "帮我生成对应 case",
     }

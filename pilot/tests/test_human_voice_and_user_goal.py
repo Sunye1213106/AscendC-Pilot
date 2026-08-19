@@ -159,6 +159,7 @@ def test_user_goal_match_and_advance(tmp_path: Path) -> None:
 
     llm_intent = {
         "objective_zh": "生成针对性测试用例",
+        "needed_workflows": ["tg-plan", "tg-solve"],
         "needed_capabilities": ["knowledge", "test_generation"],
         "source": {"kind": "local"},
     }

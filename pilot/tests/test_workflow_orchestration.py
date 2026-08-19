@@ -1,4 +1,4 @@
-"""Primary Goal Contract + goal-intake own orchestration; no sixth skill."""
+"""Primary Todos own orchestration; no sixth skill; scripts must not invent slash chains."""
 
 from __future__ import annotations
 
@@ -33,14 +33,14 @@ def test_plan_for_never_inserts_goal_impact() -> None:
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
     assert "goal-impact" not in wids
     assert "goal-impact" not in WORKFLOWS
-    assert "uo-init" in wids
+    assert "uo-init" not in wids
+    assert "tg-init" not in wids
     assert "ce-review" in wids
-    assert "tg-init" in wids
     assert "tg-plan" in wids
     assert "tg-solve" in wids
 
 
-def test_plan_for_expands_multi_operator_targets() -> None:
+def test_plan_for_does_not_expand_multi_operator_from_one_slash() -> None:
     planned = plan_for(
         {
             "needed_workflows": ["tg-solve"],
@@ -60,8 +60,6 @@ def test_plan_for_expands_multi_operator_targets() -> None:
         }
     )
     ids = [str(s.get("id")) for s in planned["steps"] if str(s.get("kind")) == "workflow"]
-    assert "uo-init#0" in ids
-    assert "uo-init#1" in ids
-    assert "ce-review#0" in ids
-    assert "ce-review#1" in ids
-    assert ids.index("uo-init#1") > ids.index("tg-solve#0")
+    assert ids == ["tg-solve#0", "tg-solve#1"]
+    assert "uo-init#0" not in ids
+    assert "ce-review#0" not in ids

@@ -115,6 +115,32 @@ def test_repo_scan_asks_when_goal_wants_tests_and_root_empty(synthetic_root: Pat
     assert scan.get("ok") is False
 
 
+def test_repo_scan_asks_without_user_goal(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_repo_scan
+
+    scan = run_repo_scan(synthetic_root, {"architecture": "arch0", "run_id": "R1"})
+    assert scan.get("needs_human_decision") is True
+    values = {
+        str(o.get("value") or "")
+        for o in ((scan.get("ask_question") or {}).get("options") or [])
+        if isinstance(o, dict)
+    }
+    assert "have_repo" in values
+    assert "no_repo_uo_query" in values
+
+
+def test_repo_scan_default_input_sentinel_skips_ask(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_repo_scan
+
+    scan = run_repo_scan(
+        synthetic_root,
+        {"architecture": "arch0", "run_id": "R1", "test_script_root": "no_repo_uo_query"},
+    )
+    assert scan.get("needs_human_decision") is not True
+    assert scan.get("ok") is True
+    assert str((scan.get("inventory") or {}).get("kind") or "") == "default_input"
+
+
 def test_prepare_repo_scan_does_not_finalize_when_asking(synthetic_root: Path) -> None:
     from ascendc_pilot.actions import prepare_action
     from ascendc_pilot.state import load_state, save_state, start_workflow

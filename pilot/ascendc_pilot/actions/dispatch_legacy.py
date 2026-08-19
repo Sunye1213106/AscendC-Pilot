@@ -809,7 +809,7 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
             hint["message_zh"] = (
                 "建库已完成。用 `pilot_cli` `uo-query --status-only` 查看产物是否就绪"
                 "（节点/关系/未闭合）。禁止打开 .uo 二进制，禁止仅回复「完成」。"
-                "有未完成 Goal 时跟随 `next_workflow_id`，不要把建库结束当成整个目标完成。"
+                "勾掉当前 Todo 后由 Primary `pilot_run` 下一格，不要把建库结束当成整个目标完成。"
             )
         elif wid == "uo-query" and run_id:
             hint["message_zh"] = (

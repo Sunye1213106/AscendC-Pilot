@@ -130,13 +130,20 @@ def test_nl_pr_url_does_not_script_route_to_ce_review() -> None:
             "needed_capabilities": ["knowledge", "change_analysis", "test_generation"],
         }
     )
-    assert checked.get("ok") is True
-    planned = plan_for(checked["intent"], {"has_uo": False})
+    assert checked.get("ok") is False
+    assert checked.get("error") == "NO_WORKFLOWS"
+    planned = plan_for(
+        {
+            "needed_workflows": ["tg-solve"],
+            "source": {"kind": "pull_request", "url": url},
+        },
+        {"has_uo": False},
+    )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
-    assert "ce-review" in wids
-    assert "uo-init" in wids
+    assert "ce-review" not in wids
+    assert "uo-init" not in wids
     assert "goal-impact" not in wids
-    assert "tg-plan" in wids
+    assert "tg-solve" in wids
 
 
 def test_slash_workflows_still_route() -> None:

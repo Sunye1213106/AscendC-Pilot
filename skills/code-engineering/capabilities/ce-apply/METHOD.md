@@ -1,6 +1,6 @@
 # CE apply — 按当前计划 todo 改算子源码
 
-对照当前 `{slug}_plan.md` 的未完成 `- [ ]` 修改 `op_host/` / `op_kernel/` / `common/` / `test_script/`。一次一个 todo。改完立刻停；审查和测试由后续 slash 做。
+对照当前 `{slug}_plan.md` 的未完成 `- [ ]` 修改 `op_host/` / `op_kernel/` / `common/` / `test_script/`。一次一个 todo。也可以按 `/tg-plan` 写入计划或 stub 的 `test_harness_gap` 说明书生成测试脚本仓、补列、或改生成器（含随机数）。改完立刻停；审查和测试由后续 slash 做。本步不查图、不派 Task。
 
 详见 `references/gotchas.md`、`examples/deter-band-schedule_plan.md`。
 

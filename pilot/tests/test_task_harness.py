@@ -51,7 +51,7 @@ def test_disallowed_pr_host_rejected() -> None:
     checked = validate_intent_staging(
         {
             "objective_zh": "生成 case",
-            "needed_capabilities": ["test_generation"],
+            "needed_workflows": ["tg-solve"],
             "source": {"kind": "pull_request", "url": "https://evil.example/a/b/pull/1"},
         }
     )
@@ -59,7 +59,7 @@ def test_disallowed_pr_host_rejected() -> None:
     assert checked["error"] == "PR_HOST_NOT_ALLOWED"
 
 
-def test_plan_for_test_generation_includes_pr_dependencies() -> None:
+def test_plan_for_test_generation_does_not_insert_pr_dependencies() -> None:
     planned = plan_for(
         {
             "needed_workflows": ["tg-plan", "tg-solve"],
@@ -68,11 +68,10 @@ def test_plan_for_test_generation_includes_pr_dependencies() -> None:
         {"has_uo": False, "uo_stale": False},
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
-    assert "uo-init" in wids
-    assert "ce-review" in wids
+    assert "uo-init" not in wids
+    assert "ce-review" not in wids
     assert "goal-impact" not in wids
     assert "tg-plan" in wids and "tg-solve" in wids
-    assert wids.index("uo-init") < wids.index("ce-review") < wids.index("tg-plan")
 
 
 def test_plan_for_review_and_tg_union() -> None:
@@ -88,7 +87,7 @@ def test_plan_for_review_and_tg_union() -> None:
     assert "tg-plan" in wids
     assert wids.index("ce-review") < wids.index("tg-plan")
     assert "goal-impact" not in wids
-    assert "uo-init" in wids
+    assert "uo-init" not in wids
 
 
 def test_workflow_catalog_lists_slash_not_skills() -> None:
@@ -117,13 +116,14 @@ def test_validate_intent_staging_does_not_parse_user_text() -> None:
     assert "ce-review" not in checked["intent"]["needed_workflows"]
 
 
-def test_code_review_capability_still_expands_ce_review() -> None:
+def test_code_review_capability_does_not_invent_workflows() -> None:
     planned = plan_for(
         {"needed_capabilities": ["knowledge", "code_review"], "source": {"kind": "local"}},
         {"has_uo": True},
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
-    assert "ce-review" in wids
+    assert "ce-review" not in wids
+    assert wids == []
 
 
 def test_auto_alias_and_slash_preserved() -> None:
@@ -317,7 +317,7 @@ def test_detect_operator_roots_common_fanout_and_empty(tmp_path: Path) -> None:
     assert empty == []
 
 
-def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
+def test_intent_promote_clone_only_pins_unique_arch(tmp_path: Path, monkeypatch) -> None:
     import yaml
 
     from ascendc_pilot.actions import goal_engines
@@ -399,15 +399,20 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
     out = run_intent_promote(host, {"run_id": rid, "architecture": "arch35", "intent": "生成 case"})
     assert out.get("ok") is True
     assert Path(str(out.get("project"))).resolve() == pinned.resolve()
-    assert out.get("next_workflow_id") == "uo-init"
+    assert out.get("next_workflow_id") == ""
+    assert out.get("clone_only") is True
+    assert out.get("architecture") == "arch35"
     pin = pinned / ".ascendc-pilot" / "pr_arch_pin.yaml"
-    assert pin.is_file(), pin
+    assert pin.is_file()
     pin_doc = yaml.safe_load(pin.read_text(encoding="utf-8")) or {}
     assert pin_doc.get("architectures") == ["arch35"]
-    assert pin_doc.get("source") == "pr_changed_files"
+    receipt = agent_root(host, "arch35") / "runs" / rid / "receipts" / "intent_promoted.yaml"
+    assert receipt.is_file()
+    assert "op_host/arch35/x.cpp" in list(out.get("changed_files") or [])
+    assert "git show --stat" not in str(out.get("message_zh") or "")
 
 
-def test_intent_promote_empty_roots_asks(tmp_path: Path, monkeypatch) -> None:
+def test_intent_promote_empty_roots_returns_facts(tmp_path: Path, monkeypatch) -> None:
     import yaml
 
     from ascendc_pilot.actions import goal_engines
@@ -466,9 +471,11 @@ def test_intent_promote_empty_roots_asks(tmp_path: Path, monkeypatch) -> None:
         encoding="utf-8",
     )
     out = run_intent_promote(host, {"run_id": rid, "architecture": "arch35", "intent": "生成 case"})
-    assert out.get("ok") is False
-    assert out.get("error") == "OPERATOR_ROOTS_EMPTY"
-    assert out.get("needs_human_decision") is True
+    assert out.get("ok") is True
+    assert out.get("clone_only") is True
+    assert out.get("next_workflow_id") == ""
+    assert list(out.get("changed_files") or []) == ["docs/README.md"]
+    assert list(out.get("operator_roots") or []) == []
 
 
 def test_pr_base_uses_provider_metadata(tmp_path: Path, monkeypatch) -> None:
@@ -699,7 +706,7 @@ def test_public_plan_uo_init_does_not_pass_impact(tmp_path: Path) -> None:
     assert ids[:3] == ["acquire_change", "ensure_knowledge", "review_change"]
     llm = {
         "objective_zh": "生成针对性测试用例",
-        "needed_capabilities": ["knowledge", "change_analysis", "test_generation"],
+        "needed_workflows": ["uo-init", "ce-review", "tg-plan", "tg-solve"],
         "source": {"kind": "pull_request", "url": "https://github.com/org/repo/pull/1"},
     }
     create_user_goal(tmp_path, intent_text="生成 case", llm_intent=llm)
@@ -726,6 +733,7 @@ def test_acceptance_not_passed_without_replay(tmp_path: Path) -> None:
 
     llm = {
         "objective_zh": "生成针对性测试用例",
+        "needed_workflows": ["tg-plan", "tg-solve"],
         "needed_capabilities": ["knowledge", "test_generation"],
         "source": {"kind": "local"},
     }
@@ -753,6 +761,61 @@ def test_authorize_allows_primary_git_cli(tmp_path: Path) -> None:
     verdict = authorize(op, tool="bash", command="git remote -v", agent="ascendc-pilot")
     assert verdict.get("decision") == "allow"
     assert verdict.get("reason_code") == "GIT_CLI_ALLOWED"
+
+
+def test_authorize_allows_primary_git_clone(tmp_path: Path) -> None:
+    from ascendc_pilot.authorize import authorize
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    op = tmp_path / "op"
+    op.mkdir()
+    (op / "op_host").mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "auto", intent="生成 case", architecture="arch35")
+    clone = authorize(
+        op,
+        tool="bash",
+        command="git clone https://gitcode.com/cann/ops-transformer.git dest",
+        agent="ascendc-pilot",
+    )
+    assert clone.get("decision") == "allow"
+    assert clone.get("reason_code") == "GIT_CLI_ALLOWED"
+    worktree = authorize(
+        op,
+        tool="bash",
+        command="git worktree add --detach dest abcdef",
+        agent="ascendc-pilot",
+    )
+    assert worktree.get("decision") == "allow"
+    assert worktree.get("reason_code") == "GIT_CLI_ALLOWED"
+
+
+def test_authorize_allows_primary_workspace_delete(tmp_path: Path) -> None:
+    from ascendc_pilot.authorize import authorize
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    op = tmp_path / "op"
+    op.mkdir()
+    (op / "op_host").mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "auto", intent="生成 case", architecture="arch35")
+    leftover = r"D:\TEST\pr_workspace\.ascendc-pr\gitcode.com--cann--ops-transformer--pr-9851"
+    verdict = authorize(
+        op,
+        tool="bash",
+        command=f"Remove-Item -Recurse -Force -LiteralPath '{leftover}'",
+        agent="ascendc-pilot",
+    )
+    assert verdict.get("decision") == "allow"
+    assert verdict.get("reason_code") == "PRIMARY_BASH_ASK"
+    protected = authorize(
+        op,
+        tool="bash",
+        command="Remove-Item -Recurse -Force .ascendc-pilot",
+        agent="ascendc-pilot",
+    )
+    assert protected.get("decision") == "deny"
+    assert protected.get("reason_code") == "BASH_PROTECTED_WRITE"
 
 
 def test_authorize_denies_uo_query_git_cli(tmp_path: Path) -> None:
@@ -792,13 +855,11 @@ def test_authorize_denies_uncited_operator_source_when_uo_exists(tmp_path: Path)
     (uo / "op.arch35.uo").write_bytes(b"uo")
     start_workflow(op, "tg-plan", architecture="arch35")
     deny_p = authorize(op, tool="read", path=str(src), agent="ascendc-pilot")
-    assert deny_p.get("decision") == "deny"
-    assert deny_p.get("reason_code") == "SOURCE_READ_USE_UO_QUERY"
+    assert deny_p.get("decision") == "allow"
     deny_tg = authorize(
         op, tool="read", path=str(src), agent="tg-analyst", action="plan_fuse"
     )
-    assert deny_tg.get("decision") == "deny"
-    assert deny_tg.get("reason_code") == "SOURCE_READ_USE_UO_QUERY"
+    assert deny_tg.get("decision") == "allow"
     allow_q = authorize(
         op, tool="read", path=str(src), agent="uo-query", action="kb_lookup"
     )
@@ -862,9 +923,8 @@ def test_authorize_allows_cited_truncated_window_read(tmp_path: Path) -> None:
         agent="ascendc-pilot",
     )
     assert allow_w.get("decision") == "allow"
-    deny_full = authorize(op, tool="read", path=str(src), agent="ascendc-pilot")
-    assert deny_full.get("decision") == "deny"
-    assert deny_full.get("reason_code") == "SOURCE_READ_USE_UO_QUERY"
+    allow_full = authorize(op, tool="read", path=str(src), agent="ascendc-pilot")
+    assert allow_full.get("decision") == "allow"
 
 
 def test_authorize_allows_operator_source_without_uo(tmp_path: Path) -> None:

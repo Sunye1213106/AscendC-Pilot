@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import ssl
+import stat
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,7 +89,7 @@ def looks_like_pilot_checkout(path: Path | str | None) -> bool:
 
 def _run_git(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.longpaths=true", *args],
         cwd=str(cwd) if cwd else None,
         check=False,
         capture_output=True,
@@ -96,6 +97,54 @@ def _run_git(args: list[str], *, cwd: Path | None = None) -> subprocess.Complete
         encoding="utf-8",
         errors="replace",
     )
+
+
+def _safe_rmtree(path: Path) -> None:
+    """Best-effort recursive delete (Windows readonly files, leftover locks)."""
+
+    def _onerror(func: Any, p: str, _exc: Any) -> None:
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+
+    if not path.exists():
+        return
+    shutil.rmtree(path, onerror=_onerror)
+    if path.exists():
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def _clear_git_index_lock(dest: Path) -> None:
+    candidates = [dest / ".git" / "index.lock"]
+    gitfile = dest / ".git"
+    if gitfile.is_file():
+        try:
+            text = gitfile.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            if line.lower().startswith("gitdir:"):
+                gitdir = Path(line.split(":", 1)[1].strip())
+                if not gitdir.is_absolute():
+                    gitdir = dest / gitdir
+                candidates.append(gitdir / "index.lock")
+    for lock in candidates:
+        try:
+            if lock.is_file():
+                lock.unlink()
+        except OSError:
+            pass
+
+
+def _wipe_engine_checkout(dest: Path, *, mirror: Path | None = None) -> None:
+    """Drop an Engine-owned PR/cache checkout. Never call on a user operator tree."""
+    if mirror is not None and Path(mirror).is_dir():
+        _run_git(["worktree", "remove", "--force", str(dest)], cwd=mirror)
+        _run_git(["worktree", "prune"], cwd=mirror)
+    _clear_git_index_lock(dest)
+    _safe_rmtree(dest)
 
 
 def ensure_bare_mirror(clone_url: str, *, host: str, owner: str, repo: str) -> dict[str, Any]:
@@ -320,9 +369,21 @@ def acquire_workspace_lock(ws: Path, run_id: str) -> dict[str, Any]:
 
 
 def create_worktree(mirror: Path, dest: Path, sha: str, *, run_id: str = "") -> dict[str, Any]:
+    dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not sha:
         return {"ok": False, "error": "EMPTY_SHA"}
+    isolated = is_isolated_pr_tree(dest)
+    existed_before = dest.exists()
+
+    def _cleanup_failed_create() -> None:
+        if not dest.exists():
+            return
+        if isolated:
+            _wipe_engine_checkout(dest, mirror=mirror)
+        elif not existed_before:
+            _safe_rmtree(dest)
+
     if dest.exists():
         if run_id:
             held = acquire_workspace_lock(dest.parent, run_id)
@@ -332,48 +393,88 @@ def create_worktree(mirror: Path, dest: Path, sha: str, *, run_id: str = "") -> 
         if _sha_matches(existing, sha):
             return {"ok": True, "path": dest, "sha": existing or sha, "reused": True}
         if existing:
+            _clear_git_index_lock(dest)
             checked = _run_git(["checkout", "--detach", sha], cwd=dest)
             if checked.returncode == 0:
                 return {"ok": True, "path": dest, "sha": sha, "reused": True}
             fetched = _run_git(["fetch", "--all"], cwd=dest)
             if fetched.returncode == 0:
+                _clear_git_index_lock(dest)
                 checked = _run_git(["checkout", "--detach", sha], cwd=dest)
                 if checked.returncode == 0:
                     return {"ok": True, "path": dest, "sha": sha, "reused": True}
+            if isolated:
+                _wipe_engine_checkout(dest, mirror=mirror)
+            else:
+                return {
+                    "ok": False,
+                    "error": "WORKTREE_SHA_MISMATCH",
+                    "message_zh": (
+                        f"已有 checkout {dest} 的 HEAD={existing[:12]} 与目标 {sha[:12]} 不一致，"
+                        "且无法原地 checkout。禁止 rmtree 算子源码。"
+                    ),
+                }
+        else:
+            has_operator = (dest / "op_host").is_dir() or (dest / "op_kernel").is_dir()
+            if has_operator and not isolated:
+                return {
+                    "ok": False,
+                    "error": "WORKTREE_EXISTS_NOT_GIT",
+                    "message_zh": (
+                        f"{dest} 已有算子源码但不是可复用的 git checkout，拒绝 rmtree。"
+                    ),
+                }
+            if isolated:
+                _wipe_engine_checkout(dest, mirror=mirror)
+            else:
+                _safe_rmtree(dest)
+        if dest.exists() and isolated:
             return {
                 "ok": False,
-                "error": "WORKTREE_SHA_MISMATCH",
+                "error": "WORKTREE_WIPE_FAILED",
                 "message_zh": (
-                    f"已有 checkout {dest} 的 HEAD={existing[:12]} 与目标 {sha[:12]} 不一致，"
-                    "且无法原地 checkout。禁止 rmtree 算子源码。"
+                    f"无法清理隔离 worktree {dest}。请关闭占用该目录的进程后重试。"
                 ),
             }
-        has_operator = (dest / "op_host").is_dir() or (dest / "op_kernel").is_dir()
-        if has_operator:
-            return {
-                "ok": False,
-                "error": "WORKTREE_EXISTS_NOT_GIT",
-                "message_zh": (
-                    f"{dest} 已有算子源码但不是可复用的 git checkout，拒绝 rmtree。"
-                ),
-            }
-        # Leftover empty / metadata-only directory from a prior failed wipe.
-        shutil.rmtree(dest, ignore_errors=True)
     if run_id:
         held = acquire_workspace_lock(dest.parent, run_id)
         if not held.get("ok"):
             return held
-    added = _run_git(["worktree", "add", "--detach", str(dest), sha], cwd=mirror)
-    if added.returncode != 0:
+
+    def _materialize() -> dict[str, Any]:
+        added = _run_git(["worktree", "add", "--detach", str(dest), sha], cwd=mirror)
+        if added.returncode == 0:
+            return {"ok": True, "path": dest, "sha": sha}
         cloned = _run_git(["clone", str(mirror), str(dest)])
         if cloned.returncode != 0:
             return {
                 "ok": False,
                 "error": "WORKTREE_FAILED",
-                "message_zh": (added.stderr or cloned.stderr)[-400:],
+                "message_zh": (added.stderr or cloned.stderr or "")[-400:],
             }
-        _run_git(["checkout", "--detach", sha], cwd=dest)
-    return {"ok": True, "path": dest, "sha": sha}
+        _clear_git_index_lock(dest)
+        checked = _run_git(["checkout", "--detach", sha], cwd=dest)
+        if checked.returncode != 0:
+            return {
+                "ok": False,
+                "error": "WORKTREE_FAILED",
+                "message_zh": (checked.stderr or cloned.stderr or "")[-400:],
+            }
+        return {"ok": True, "path": dest, "sha": sha}
+
+    result = _materialize()
+    if result.get("ok"):
+        return result
+    if isolated:
+        _wipe_engine_checkout(dest, mirror=mirror)
+        if not dest.exists():
+            result = _materialize()
+            if result.get("ok"):
+                return result
+            _wipe_engine_checkout(dest, mirror=mirror)
+        return result
+    _cleanup_failed_create()
+    return result
 
 
 def _diff_digest(text: str) -> str:
