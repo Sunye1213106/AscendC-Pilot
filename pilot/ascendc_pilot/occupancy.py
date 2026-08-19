@@ -114,6 +114,18 @@ def current_workflow_id(explicit: str = "") -> str:
     return str(explicit or os.environ.get(WORKFLOW_ENV) or "").strip()
 
 
+def _canonical_workflow_id(workflow_id: str) -> str:
+    wid = str(workflow_id or "").strip()
+    if not wid:
+        return ""
+    try:
+        from ascendc_pilot.workflows import resolve_workflow_id
+
+        return str(resolve_workflow_id(wid) or wid)
+    except Exception:  # noqa: BLE001
+        return wid
+
+
 def occupancy_of(workflow_id: str) -> str:
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
@@ -974,12 +986,13 @@ def resolve_load_state_path(
     """Pick the live state file for this process (session / workflow / fallback)."""
     root = Path(project_root).expanduser().resolve()
     sid = current_session_id(session_id)
-    wid = current_workflow_id(workflow_id)
+    wid = _canonical_workflow_id(current_workflow_id(workflow_id))
     arch_name = str(arch or "").strip() or None
 
     binding = get_session_binding(root, sid) if sid else None
-    if binding and not wid:
-        wid = str(binding.get("workflow_id") or "").strip()
+    bound_wid = _canonical_workflow_id(str((binding or {}).get("workflow_id") or ""))
+    if binding and (not wid or wid == bound_wid):
+        wid = bound_wid or wid
         if not arch_name:
             arch_name = str(binding.get("architecture") or "").strip() or None
         run_id = str(binding.get("run_id") or "").strip()
@@ -1000,7 +1013,7 @@ def resolve_load_state_path(
                 for row in reversed(shared):
                     if str(row.get("session_id") or "") != sid:
                         continue
-                    if str(row.get("workflow_id") or "") != wid:
+                    if _canonical_workflow_id(str(row.get("workflow_id") or "")) != wid:
                         continue
                     row_arch = str(row.get("architecture") or "").strip()
                     if arch_name and row_arch and row_arch != arch_name:

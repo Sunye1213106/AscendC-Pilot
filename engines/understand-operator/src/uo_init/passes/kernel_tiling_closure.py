@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from uo_init.cpp_lex import method_identity
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
@@ -46,6 +47,7 @@ from uo_init.passes.tiling_gaps import record_unresolved_tiling
 from uo_init.source_layout import (
     GLOBAL_KERNEL_RE,
     is_foreign_arch_entry_tu,
+    is_other_arch_path,
     iter_cpp,
     selected_host_files,
     selected_kernel_files,
@@ -179,6 +181,7 @@ def finalize_kernel_tiling_closure(
     architecture: str = "",
     host_ir: Any = None,
     kernel_ir: Any = None,
+    rebuild_bodies: bool = True,
 ) -> CodeMap:
     root = Path(operator_root).expanduser().resolve()
     if not root.is_dir():
@@ -193,11 +196,26 @@ def finalize_kernel_tiling_closure(
         codemap, root, architecture, kernel_texts, kernel_ir=kernel_ir
     )
 
-    scopes, class_names = _rebuild_kernel_scopes(codemap, root, architecture, kernel_texts)
-    call_stats = _rebuild_kernel_calls(codemap, scopes, class_names)
+    # Production compile_codemap sets rebuild_bodies=False: the v2 refine pass
+    # is the call/read authority and would purge this v1 graph immediately.
+    if rebuild_bodies:
+        body_texts = {
+            path: text
+            for path, text in kernel_texts.items()
+            if not is_other_arch_path(path, architecture)
+        }
+        scopes, class_names = _rebuild_kernel_scopes(
+            codemap, root, architecture, body_texts
+        )
+        call_stats = _rebuild_kernel_calls(codemap, scopes, class_names)
+        td_index = _tiling_index(codemap)
+        read_stats = _rebuild_tiling_reads(codemap, scopes, td_index)
+    else:
+        scopes = []
+        call_stats = {"bound": 0, "external": 0, "unresolved_internal": 0}
+        td_index = _tiling_index(codemap)
+        read_stats = {"sites": 0, "resolved": 0, "ambiguous": 0}
 
-    td_index = _tiling_index(codemap)
-    read_stats = _rebuild_tiling_reads(codemap, scopes, td_index)
     field_branch_count = enrich_kernel_field_branches(
         codemap, root, architecture=architecture
     )
@@ -295,6 +313,8 @@ def _branch_scan_files(root: Path, architecture: str) -> list[Path]:
     seen: set[Path] = set()
     out: list[Path] = []
     for path in list(selected_kernel_files(root, architecture)):
+        if is_other_arch_path(path, architecture):
+            continue
         key = path.resolve()
         if key in seen:
             continue
@@ -434,21 +454,27 @@ def enrich_kernel_field_branches(
 
 
 def _selected_kernel_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
+    from uo_init.parallel import map_files
     from uo_init.passes.source_text_cache import masked_text, read_text
 
-    out: dict[Path, tuple[str, str]] = {}
-    for path in selected_kernel_files(root, architecture):
-        out[path.resolve()] = (read_text(path), masked_text(path))
-    return out
+    paths = [path.resolve() for path in selected_kernel_files(root, architecture)]
+
+    def _one(path: Path) -> tuple[Path, tuple[str, str]]:
+        return path, (read_text(path), masked_text(path))
+
+    return dict(map_files(paths, _one))
 
 
 def _host_texts(root: Path, architecture: str) -> dict[Path, tuple[str, str]]:
+    from uo_init.parallel import map_files
     from uo_init.passes.source_text_cache import masked_text, read_text
 
-    out: dict[Path, tuple[str, str]] = {}
-    for path in selected_host_files(root, architecture):
-        out[path.resolve()] = (read_text(path), masked_text(path))
-    return out
+    paths = [path.resolve() for path in selected_host_files(root, architecture)]
+
+    def _one(path: Path) -> tuple[Path, tuple[str, str]]:
+        return path, (read_text(path), masked_text(path))
+
+    return dict(map_files(paths, _one))
 
 
 def _purge_broad_kernel_facts(codemap: CodeMap, allowed_kernel_files: set[str]) -> int:
@@ -726,7 +752,9 @@ def _rebuild_kernel_scopes(
             if _inside_span(match.start, macro_spans):
                 continue
             name_expr = _compact_qualified(match.name)
-            short = _short_qualified(name_expr)
+            short, ident_owner, signature = method_identity(match.name)
+            if not short:
+                short = _short_qualified(name_expr)
             if short in _CONTROL or short == "":
                 continue
             open_pos = match.open_brace
@@ -740,26 +768,34 @@ def _rebuild_kernel_scopes(
             accepted_end = close_pos
 
             containing = [c for c in classes if c.start <= match.start <= c.end]
-            owner = min(containing, key=lambda c: c.end - c.start).name if containing else _owner_qualified(name_expr)
+            owner = ident_owner or (
+                min(containing, key=lambda c: c.end - c.start).name if containing else _owner_qualified(name_expr)
+            )
+            owner = _base_type(owner) or owner
             kind = EntityKind.METHOD if owner else EntityKind.FUNCTION
             line = _line(raw, match.start)
+            end_line = _line(raw, close_pos)
 
             kernel_hits = codemap.by_name(short, kind=EntityKind.KERNEL) if not owner else []
             if kernel_hits and "__global__" in masked[match.start:open_pos]:
                 ent = kernel_hits[0]
+                if end_line > int(ent.line_end or 0):
+                    ent.line_end = end_line
             else:
                 ent = codemap.upsert(
                     kind,
-                    f"{owner}::{short}" if owner else short,
+                    short,
                     eid=f"SRCKDEF::{file}::{line}::{owner}::{short}",
                     attrs={
                         "owner": owner,
                         "source_definition": True,
                         "architecture": architecture,
                         "provenance": "source_kernel_definition",
+                        "signature": signature,
                     },
                     file=file,
                     line=line,
+                    line_end=end_line,
                     status="confirmed",
                 )
             params = match.params or ""
@@ -832,11 +868,15 @@ def _rebuild_kernel_calls(codemap: CodeMap, scopes: list[_Scope], class_names: s
                 if owner_candidates:
                     internal_hint = True
                     for owner in owner_candidates:
-                        candidates.extend(methods.get((owner, name), ()))
+                        for key in {owner, _base_type(owner)}:
+                            if key:
+                                candidates.extend(methods.get((key, name), ()))
             else:
-                if scope.owner and methods.get((scope.owner, name)):
-                    candidates.extend(methods[(scope.owner, name)])
-                    internal_hint = True
+                if scope.owner:
+                    for key in {scope.owner, _base_type(scope.owner)}:
+                        if key and methods.get((key, name)):
+                            candidates.extend(methods[(key, name)])
+                            internal_hint = True
                 if free_functions.get(name):
                     candidates.extend(free_functions[name])
                     internal_hint = True

@@ -216,3 +216,32 @@ def test_codemap_index_stays_cheap_under_interleaved_upsert_and_lookup():
         assert cm.neighbors(ent.id, kind=RelationKind.CALLS, direction="out")
     elapsed = time.perf_counter() - t0
     assert elapsed < 1.0, f"interleaved upsert/lookup took {elapsed:.3f}s"
+
+
+def test_from_host_ir_keeps_every_write_site() -> None:
+    class _Write:
+        def __init__(self, path: str, line: int, rhs: str) -> None:
+            self.path = path
+            self.function = "DoOpTiling"
+            self.file = "op_host/tiling.cpp"
+            self.line = line
+            self.rhs = rhs
+
+        def guards(self):
+            return []
+
+    class _HostIR:
+        backend = "clang"
+        summaries = {}
+        writes = [
+            _Write("result.mode", 115, "BAND"),
+            _Write("result.mode", 128, "DENSE"),
+            _Write("result.mode", 153, "CAUSAL"),
+        ]
+        call_sites = []
+
+    cm = CodeMap.from_host_ir(_HostIR(), op_name="toy", architecture="arch35")
+    field = cm.by_name("result.mode", kind=EntityKind.FIELD)[0]
+    sites = field.attrs.get("write_sites") or []
+    lines = [int(site.get("line") or 0) for site in sites if isinstance(site, dict)]
+    assert lines == [115, 128, 153]

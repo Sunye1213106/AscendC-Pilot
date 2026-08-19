@@ -110,13 +110,23 @@ def trace_host_key_roots(
     clang_records = _records_from_host_ir(root, host_ir)
     clang_keys = {(r.file, r.line, r.lhs) for r in clang_records}
     records.extend(clang_records)
-    for path in host_files:
+
+    from uo_init.parallel import map_files
+
+    def _load_one(path: Path) -> tuple[Path, str, list[_Record]]:
         text = read_text(path)
+        if clang_records:
+            return path, text, []
+        recs = [
+            rec
+            for rec in _assignments(root, path, text)
+            if (rec.file, rec.line, rec.lhs) not in clang_keys
+        ]
+        return path, text, recs
+
+    for path, text, recs in map_files(host_files, _load_one):
         texts.append((path, text))
-        for rec in _assignments(root, path, text):
-            if (rec.file, rec.line, rec.lhs) in clang_keys:
-                continue
-            records.append(rec)
+        records.extend(recs)
 
     by_exact: dict[str, list[_Record]] = defaultdict(list)
     by_short: dict[str, list[_Record]] = defaultdict(list)

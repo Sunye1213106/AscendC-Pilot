@@ -144,8 +144,60 @@ def _collect_staging_text(root: Path, *, names: tuple[str, ...] = ("staging.md",
     return ""
 
 
+def _goal_wants_test_generation(project_root: Path) -> bool:
+    try:
+        from ascendc_pilot.human_confirm import _auto_goal_wants_tests
+        from ascendc_pilot.user_goal import load_user_goal
+    except Exception:  # noqa: BLE001
+        return False
+    if _auto_goal_wants_tests(project_root):
+        return True
+    goal = load_user_goal(project_root) or {}
+    for item in goal.get("public_plan") or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "") in {"generate_cases", "validate_cases"}:
+            return True
+    return False
+
+
 def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     root = _test_script_root(project_root, ctx)
+    if not root and _goal_wants_test_generation(project_root):
+        ask = {
+            "header": "选择测试仓",
+            "question": (
+                "当前目标包含生成测试用例，但还没有 test_script_root。"
+                "请选择：已有测试仓并填写路径，或没有测试仓、改用 uo-query API 写 tg/init.yaml。"
+            ),
+            "prompt": (
+                "当前目标包含生成测试用例，但还没有 test_script_root。"
+                "请选择：已有测试仓并填写路径，或没有测试仓、改用 uo-query API 写 tg/init.yaml。"
+            ),
+            "options": [
+                {
+                    "label": "已有测试仓，填写路径",
+                    "value": "have_repo",
+                    "description": "在回复里给出测试脚本仓库的绝对路径",
+                },
+                {
+                    "label": "没有测试仓，用 uo-query API 写 tg/init.yaml",
+                    "value": "no_repo_uo_query",
+                    "description": "不扫描测试仓，按算子 UO 约束手写 init",
+                },
+                {"label": "停止", "value": "stop"},
+            ],
+            "allow_free_text": True,
+            "field": "test_script_root",
+        }
+        return {
+            "ok": False,
+            "engine": "repo_scan",
+            "needs_human_decision": True,
+            "ask_question": ask,
+            "message_zh": ask["question"],
+            "test_script_root": "",
+        }
     inventory = test_repo.scan(root or None)
     ident = {}
     try:

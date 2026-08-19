@@ -554,6 +554,7 @@ def get_or_build(
 ) -> SourceIndex:
     index = SourceIndex(root=root)
     registry = _registry_names()
+    missing: list[tuple[Path, str]] = []
     for raw in files:
         if deadline is not None and time.perf_counter() >= deadline:
             break
@@ -569,7 +570,21 @@ def get_or_build(
             continue
         if not path.is_file():
             continue
-        facts = _scan_file(path, root=root, registry=registry)
+        missing.append((path, resolved))
+
+    def _scan_missing(item: tuple[Path, str]) -> tuple[Path, str, SourceFacts]:
+        path, resolved = item
+        return path, resolved, _scan_file(path, root=root, registry=registry)
+
+    scanned: list[tuple[Path, str, SourceFacts]]
+    if len(missing) <= 1:
+        scanned = [_scan_missing(item) for item in missing]
+    else:
+        from uo_init.parallel import map_files
+
+        scanned = map_files(missing, _scan_missing)
+
+    for path, resolved, facts in scanned:
         cache_put(resolved, facts)
         index.by_file[_norm_file(str(path), root)] = facts
         index.by_file[str(path).replace("\\", "/")] = facts

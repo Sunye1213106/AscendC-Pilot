@@ -266,8 +266,17 @@ def _definition_rank(kind: str, name: str, eid: str, facts: dict[str, Any] | Non
     src = _prefer_src_id(eid)
     kind_u = str(kind or "").upper()
     facts = facts if isinstance(facts, dict) else {}
+    prov = str(facts.get("provenance") or "")
+    role = str(facts.get("role") or "")
     if kind_u == EntityKind.METHOD.value:
-        use = 0 if "::" in str(name or "") else 2
+        if facts.get("source_definition") or "source_kernel_definition" in prov:
+            use = 0
+        elif role == "kernel_call_boundary" or "call_boundary" in prov:
+            use = 4
+        elif "::" in str(name or ""):
+            use = 1
+        else:
+            use = 2
     elif kind_u == EntityKind.TYPE.value:
         cpp = str(facts.get("cpp_kind") or "").lower()
         role = str(facts.get("role") or "")
@@ -814,29 +823,52 @@ def _disk_window(
     line: int,
     *,
     kind: str = "",
-) -> str:
+    line_end: int = 0,
+) -> tuple[str, bool]:
     if not file or int(line or 0) <= 0:
-        return ""
+        return "", False
     path = _resolve_source_path(op_root, file)
     if path is None:
-        return ""
+        return "", False
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return ""
+        return "", False
     centre = int(line)
     kind_u = str(kind or "").upper()
+    span_end = int(line_end or 0)
     if kind_u in {EntityKind.METHOD.value, EntityKind.FUNCTION.value}:
         start = centre
     elif kind_u == EntityKind.BRANCH.value:
         start = _branch_window_start(lines, centre)
     else:
         start = max(1, centre - SNIPPET_BEFORE)
-    end = min(len(lines), start + SNIPPET_LINES - 1)
+    truncated = False
+    if span_end > start:
+        if span_end - start + 1 > SNIPPET_LINES:
+            truncated = True
+            end = start + SNIPPET_LINES - 1
+        else:
+            end = min(len(lines), span_end)
+    else:
+        end = min(len(lines), start + SNIPPET_LINES - 1)
     if end < centre:
         end = min(len(lines), centre + SNIPPET_LINES - 1)
         start = max(1, min(start, centre))
-    return "\n".join(f"{i}:{lines[i - 1]}" for i in range(start, end + 1))
+        truncated = span_end > end
+    return "\n".join(f"{i}:{lines[i - 1]}" for i in range(start, end + 1)), truncated
+
+
+def _disk_snippet(
+    op_root: Path | None,
+    file: str,
+    line: int,
+    *,
+    kind: str = "",
+    line_end: int = 0,
+) -> str:
+    text, _truncated = _disk_window(op_root, file, line, kind=kind, line_end=line_end)
+    return text
 
 
 def _rhs_looks_truncated(rhs: str) -> bool:
@@ -1355,13 +1387,24 @@ class UoSqlQuery:
                 ":" in snippet[:8] or "|" in snippet[:8]
             )
             if line > 0 and (thin or not _snippet_covers_line(snippet, line)):
-                window = _disk_window(self._op_root, orig, line, kind=kind) or _disk_window(
-                    self._op_root, file, line, kind=kind
+                line_end = int(hit.get("line_end") or 0)
+                window, truncated = _disk_window(
+                    self._op_root, orig, line, kind=kind, line_end=line_end
                 )
+                if not window:
+                    window, truncated = _disk_window(
+                        self._op_root, file, line, kind=kind, line_end=line_end
+                    )
                 if window:
                     snippet = window
                     numbered = True
+                    if truncated:
+                        hit["truncated"] = True
             hit["snippet"] = snippet if numbered else _cap_snippet(snippet, line)
+            if int(hit.get("line_end") or 0) > 0 and not _snippet_covers_line(
+                str(hit.get("snippet") or ""), int(hit.get("line_end") or 0)
+            ):
+                hit["truncated"] = True
         if with_rels and conn is not None:
             rels = self._relationships(
                 conn, str(hit.get("id") or ""), entity_kind=kind
@@ -1940,6 +1983,30 @@ class UoSqlQuery:
                 """,
                 (needle, start, end),
             ).fetchall()
+            if not seed_rows:
+                leaf = needle.rsplit("/", 1)[-1]
+                rel = needle
+                for marker in ("op_host/", "op_kernel/", "common/", "tests/"):
+                    idx = needle.find(marker)
+                    if idx >= 0:
+                        rel = needle[idx:]
+                        break
+                alt = rel if rel != needle else leaf
+                if alt and alt != needle:
+                    seed_rows = conn.execute(
+                        """
+                        SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                               IFNULL(s.snippet, '') AS snippet
+                        FROM entity e
+                        LEFT JOIN source_span s ON s.entity_id = e.id
+                        WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                          AND IFNULL(e.line_end, e.line_start) >= ?
+                          AND IFNULL(e.line_start, 0) <= ?
+                          AND IFNULL(e.line_start, 0) > 0
+                        LIMIT 80
+                        """,
+                        (alt, start, end),
+                    ).fetchall()
             seeds = [row for row in seed_rows if self._file_matches(str(row["file"] or ""), needle)]
             seen: dict[str, int] = {str(row["id"]): 0 for row in seeds}
             queue: deque[tuple[str, int]] = deque((str(row["id"]), 0) for row in seeds)
@@ -2141,7 +2208,7 @@ class UoSqlQuery:
         for hit in writers[:cap]:
             if str(hit.get("snippet") or "").strip():
                 continue
-            window = _disk_window(
+            window = _disk_snippet(
                 self._op_root,
                 str(hit.get("file") or ""),
                 int(hit.get("line_start") or 0),
@@ -2317,7 +2384,7 @@ class UoSqlQuery:
                 payload.setdefault("name", row.get("name"))
                 payload.setdefault("kind", extra.kind)
                 if not payload.get("snippet"):
-                    payload["snippet"] = _disk_window(self._op_root, extra.file, extra.line_start)
+                    payload["snippet"] = _disk_snippet(self._op_root, extra.file, extra.line_start)
                 payload["snippet"] = _cap_snippet(
                     str(payload.get("snippet") or ""), int(payload.get("line_start") or 0)
                 )
@@ -2408,7 +2475,7 @@ class UoSqlQuery:
         hit["facts"] = facts
         best = next((site for site in repaired if isinstance(site, dict)), None)
         if best is not None:
-            window = _disk_window(
+            window = _disk_snippet(
                 self._op_root, str(best.get("file") or ""), int(best.get("line") or 0)
             )
             if window:
@@ -3493,6 +3560,13 @@ class UoSqlQuery:
             kind = str(hit.get("kind") or "")
             if kind and kind not in by_kind:
                 by_kind[kind] = hit
+        if (
+            EntityKind.TILING_FIELD.value in by_kind
+            and EntityKind.FIELD.value in by_kind
+            and _last_ident(str(by_kind[EntityKind.TILING_FIELD.value].get("name") or "")).lower()
+            == _last_ident(str(by_kind[EntityKind.FIELD.value].get("name") or "")).lower()
+        ):
+            by_kind.pop(EntityKind.FIELD.value, None)
         cards_src = list(by_kind.values())[:MAX_NAME_CARDS]
         cards: list[dict[str, Any]] = []
         next_names: list[str] = []
@@ -3514,6 +3588,41 @@ class UoSqlQuery:
                 "edges": grouped,
             }
             extras = self._card_extras(hit)
+            line_end = int(hit.get("line_end") or hit.get("line_start") or 0)
+            card["definition_span"] = {
+                "file": hit.get("file") or "",
+                "line_start": int(hit.get("line_start") or 0),
+                "line_end": line_end,
+            }
+            if hit.get("truncated") or extras.get("truncated"):
+                card["truncated"] = True
+            writers = extras.get("writers") if isinstance(extras.get("writers"), list) else []
+            readers = extras.get("readers") if isinstance(extras.get("readers"), list) else []
+            if writers and not (grouped.get("WRITES") or {}).get("neighbors"):
+                grouped.setdefault("WRITES", {"count": len(writers), "neighbors": []})
+                grouped["WRITES"]["neighbors"] = [
+                    {
+                        "name": str(row.get("name") or ""),
+                        "kind": str(row.get("kind") or "FUNCTION"),
+                        "file": str(row.get("file") or ""),
+                        "line": int(row.get("line") or 0),
+                    }
+                    for row in writers[:EDGES_PER_KIND]
+                ]
+                grouped["WRITES"]["count"] = max(int(grouped["WRITES"].get("count") or 0), len(writers))
+            if readers and not (grouped.get("READS") or {}).get("neighbors"):
+                grouped.setdefault("READS", {"count": len(readers), "neighbors": []})
+                grouped["READS"]["neighbors"] = [
+                    {
+                        "name": str(row.get("name") or ""),
+                        "kind": str(row.get("kind") or "METHOD"),
+                        "file": str(row.get("file") or ""),
+                        "line": int(row.get("line") or 0),
+                    }
+                    for row in readers[:EDGES_PER_KIND]
+                ]
+                grouped["READS"]["count"] = max(int(grouped["READS"].get("count") or 0), len(readers))
+            card["edges"] = grouped
             if extras:
                 card["extras"] = extras
             cards.append(card)
@@ -3639,10 +3748,60 @@ class UoSqlQuery:
             )
         return grouped
 
+    def _call_direction_neighbors(self, entity_id: str, *, outgoing: bool) -> list[dict[str, Any]]:
+        if not entity_id:
+            return []
+        sql = """
+            SELECT e.kind AS other_kind, e.name AS other_name,
+                   e.file AS other_file, e.line_start AS other_line
+            FROM relation r
+            JOIN entity e ON e.id = {other}
+            WHERE r.kind = 'CALLS' AND {mine} = ?
+            ORDER BY e.kind, e.name
+            LIMIT ?
+        """.format(
+            other="r.dst" if outgoing else "r.src",
+            mine="r.src" if outgoing else "r.dst",
+        )
+        with self._connect() as conn:
+            rows = conn.execute(sql, (entity_id, EDGES_PER_KIND)).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            out.append(
+                {
+                    "name": str(_row_get(row, "other_name") or ""),
+                    "kind": str(_row_get(row, "other_kind") or ""),
+                    "file": _norm_file(str(_row_get(row, "other_file") or "")),
+                    "line": int(_row_get(row, "other_line") or 0),
+                }
+            )
+        return out
+
     def _card_extras(self, hit: dict[str, Any]) -> dict[str, Any]:
         kind = str(hit.get("kind") or "")
         name = str(hit.get("name") or "")
         extras: dict[str, Any] = {}
+        eid = str(hit.get("id") or "")
+        facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+        if kind in {EntityKind.METHOD.value, EntityKind.FUNCTION.value, EntityKind.KERNEL.value}:
+            extras["callers"] = self._call_direction_neighbors(eid, outgoing=False)
+            extras["callees"] = self._call_direction_neighbors(eid, outgoing=True)
+        write_sites = facts.get("write_sites")
+        if isinstance(write_sites, list) and write_sites:
+            extras["write_sites"] = write_sites[:12]
+            snippet = str(hit.get("snippet") or "")
+            uncovered = [
+                site
+                for site in write_sites
+                if isinstance(site, dict)
+                and int(site.get("line") or 0) > 0
+                and not _snippet_covers_line(snippet, int(site.get("line") or 0))
+            ]
+            if uncovered:
+                extras["truncated"] = True
+                extras["uncovered_writes"] = uncovered[:8]
+        if hit.get("truncated"):
+            extras["truncated"] = True
         if kind in {EntityKind.TILING_FIELD.value, EntityKind.FIELD.value, EntityKind.TILING_KEY.value}:
             field = self.field_impact(name)
             if field.get("ok"):
@@ -3755,18 +3914,21 @@ class UoSqlQuery:
             }
         result = self.impact_of(path, (start, end or start))
         if isinstance(result, dict):
+            count = int(result.get("count") or 0)
             payload = {
-                "ok": True,
+                "ok": count > 0,
                 "shape": "around",
                 "file": path,
                 "line": start,
                 "line_end": end or start,
                 **result,
             }
+            payload["ok"] = count > 0
+            payload["count"] = count
         else:
             rows = list(result)[: int(limit)]
             payload = {
-                "ok": True,
+                "ok": bool(rows),
                 "shape": "around",
                 "file": path,
                 "line": start,

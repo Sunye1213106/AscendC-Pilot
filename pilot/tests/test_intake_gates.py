@@ -204,7 +204,7 @@ def test_default_cli_project_ignores_path_under_pilot_checkout(
     assert intake.default_cli_project(harness, allow_last_project=False) == harness.resolve()
 
 
-def test_cli_start_auto_does_not_write_last_project(tmp_path: Path, monkeypatch, capsys):
+def test_cli_start_auto_empty_host_does_not_land_control_plane(tmp_path: Path, monkeypatch, capsys):
     op = tmp_path / "old_op"
     op.mkdir()
     (op / "op_host").mkdir()
@@ -217,9 +217,11 @@ def test_cli_start_auto_does_not_write_last_project(tmp_path: Path, monkeypatch,
     monkeypatch.delenv("ASCENDC_PROJECT_ROOT", raising=False)
     monkeypatch.delenv("UO_OP_DIR", raising=False)
     code = main(["start", "auto", "--project", str(host), "--intent", "生成用例"])
-    assert code == 0
+    assert code == 2
     out = json.loads(capsys.readouterr().out)
-    assert out.get("workflow_id") in {"auto", "goal-intake"}
+    assert out.get("needs_human_decision") is True
+    assert out.get("reason_code") == "OPERATOR_WORKDIR_REQUIRED"
+    assert not (host / ".ascendc-pilot").exists()
     assert cache.read_text(encoding="utf-8").strip() == str(op.resolve())
 
 
@@ -322,6 +324,7 @@ def test_cli_start_auto_allows_non_operator(tmp_path: Path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out.get("reason_code") != "OPERATOR_PROJECT_REQUIRED"
     assert code == 0 or out.get("ok") is True or out.get("needs_human_decision")
+    assert not (tmp_path / ".ascendc-pilot").exists()
 
 
 def test_cli_run_action_auto_skips_operator_assert(tmp_path: Path, capsys):
@@ -339,6 +342,7 @@ def test_cli_run_action_auto_skips_operator_assert(tmp_path: Path, capsys):
     start_out = json.loads(capsys.readouterr().out)
     assert start_out.get("reason_code") != "OPERATOR_PROJECT_REQUIRED"
     if start != 0 and not start_out.get("ok"):
+        assert not (tmp_path / ".ascendc-pilot").exists()
         return
     code = main(["run-action", "auto", "--project", str(tmp_path)])
     out = json.loads(capsys.readouterr().out)
@@ -671,3 +675,6 @@ def test_prepare_pr_on_pilot_checkout_forbidden():
     )
     assert prep.get("ok") is False
     assert prep.get("reason_code") == "PILOT_CHECKOUT_FORBIDDEN"
+    opts = (prep.get("ask_question") or {}).get("options") or []
+    assert len(opts) >= 2
+    assert all(o.get("label") and o.get("value") for o in opts)

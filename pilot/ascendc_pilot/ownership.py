@@ -380,6 +380,7 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "source:op_host/**",
             "source:op_kernel/**",
             "source:common/**",
+            "source:tests/**",
             "runs/**",
             "context/**",
             "skills/code-review/**",

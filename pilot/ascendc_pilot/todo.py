@@ -65,17 +65,18 @@ def build_todo(
     status = str(st.get("status") or "")
 
     try:
-        from ascendc_pilot.user_goal import is_auto_session, load_user_goal
+        from ascendc_pilot.user_goal import load_user_goal
 
         goal = load_user_goal(project_root)
-        auto = is_auto_session(goal)
     except Exception:  # noqa: BLE001
         goal = None
-        auto = False
-    if auto and str((goal or {}).get("status") or "") in {"active", "revising"}:
+    public_plan = [
+        item for item in ((goal or {}).get("public_plan") or []) if isinstance(item, dict)
+    ]
+    if public_plan:
         native_items: list[dict[str, str]] = []
         phases: list[dict[str, str]] = []
-        for item in goal.get("public_plan") or []:
+        for item in public_plan:
             if not isinstance(item, dict):
                 continue
             pid = str(item.get("id") or "")

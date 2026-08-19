@@ -85,6 +85,7 @@ def dispatch_result(
     action_result: dict[str, Any] | None = None,
     result_file: Path | str | None = None,
     result_text: str = "",
+    slice_id: str = "",
 ) -> dict[str, Any]:
     out = _legacy.dispatch_result(
         project_root,
@@ -92,6 +93,7 @@ def dispatch_result(
         action_result=action_result,
         result_file=result_file,
         result_text=result_text,
+        slice_id=slice_id,
     )
     if out.get("ok"):
         return out

@@ -176,7 +176,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         "command_description": 'Dual-axis review of a git/PR diff; dialogue only',
         "description": (
             "只读审查已有代码改动：GitCode PR、工作区 diff 或 base...head。"
-            "无 diff 则停。Spec 轴对照当前 `{slug}_plan.md`（没有计划则只陈述变更）；"
+            "无 diff 则停。Spec 轴对照当前 `{slug}_plan.md`（没有计划则从 PR/diff 索引推断粗意图并验收完成度）；"
             "Standards 轴对照仓规范。两轴并行子代理。结论留在对话，不写 ce/review。"
             "建议修改走 /ce-plan 或 /ce-apply；建议测试走 /tg-plan。用 `pilot_run`。"
         ),
@@ -1286,7 +1286,7 @@ Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
     elif is_primary:
         runtime = """## Runtime Contract
 
-        1. Workflows: first natural-language call is Host tool `pilot_run(workflow=auto, intent=<user text verbatim>, project=<OpenCode directory>)`. `auto` is reserved `goal-intake`. Then `pilot_run(workflow=<next_workflow_id>)`. Explicit slash: `workflow=<existing id>`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
+        1. Workflows: first natural-language call is Host tool `pilot_run(workflow=auto, intent=<user text verbatim>, project=<OpenCode directory>)`. `auto` intakes a Goal Contract only when no active user_goal exists; otherwise it resumes `task_plan` (uo-init → ce-review → tg-init). Dual-axis review Tasks are ACKed from native Task text; Host continues the next todo. Do not call `auto` again to re-intake. Explicit slash: `workflow=<existing id>`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
 2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures` / `retry-after-environment-fix`): call plugin tool `pilot_cli` with `command` as argv after the binary. Never `--help`. Never `--mode`.
 3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture.
 4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`.

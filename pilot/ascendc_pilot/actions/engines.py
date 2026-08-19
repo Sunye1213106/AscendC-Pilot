@@ -186,6 +186,151 @@ def _run_ce_patch_guard(project_root: Path, ctx: dict[str, Any]) -> dict[str, An
     return patch_guard(project_root, architecture=arch, state=_ce_state(project_root, ctx))
 
 
+def _hunk_filename(path: str, line: int) -> str:
+    safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in path.replace("\\", "/"))
+    return f"{safe}__{int(line)}.diff"
+
+
+def _compact_uo_hint(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict):
+        return str(payload)[:400]
+    cards = payload.get("cards") or payload.get("entities") or payload.get("around") or []
+    if isinstance(cards, dict):
+        cards = [cards]
+    bits: list[str] = []
+    for card in list(cards)[:4]:
+        if not isinstance(card, dict):
+            continue
+        name = str(card.get("name") or card.get("kind") or "").strip()
+        loc = f"{card.get('file') or ''}:{card.get('line') or card.get('line_start') or ''}"
+        snip = str(card.get("snippet") or "")[:240].replace("\n", " ")
+        bits.append(f"- {name} `{loc}` {snip}".strip())
+    if bits:
+        return "\n".join(bits)
+    for key in ("answer_zh", "message_zh", "error", "reason_code", "hint"):
+        text = str(payload.get(key) or "").strip()
+        if text:
+            return text[:600]
+    if payload.get("ok") and (payload.get("count") or payload.get("cards")):
+        return "ok"
+    return "no card"
+
+
+def _write_change_capture_artifacts(
+    out_dir: Path,
+    *,
+    diff_text: str,
+    project_root: Path,
+    architecture: str,
+    base_sha: str,
+    head_sha: str,
+) -> dict[str, str]:
+    """Index + hunk windows + bounded uo-query hints. diff.md is forensic only."""
+    from code_engineering.change.capture import (
+        extract_added_identifiers,
+        iter_hunk_windows,
+        parse_diff_ranges,
+        render_change_index,
+        suggested_file_line_queries,
+        suggested_ident_queries,
+        operator_relative_path,
+        _run_git,
+    )
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    diff_path = out_dir / "diff.md"
+    diff_path.write_text(
+        "# Change capture (forensic; do not linearly read)\n\n```diff\n"
+        + diff_text.rstrip()
+        + "\n```\n",
+        encoding="utf-8",
+    )
+    ranges = parse_diff_ranges(diff_text)
+    idents = extract_added_identifiers(diff_text)
+    ident_queries = suggested_ident_queries(idents, limit=8)
+    line_queries = suggested_file_line_queries(ranges, limit=4)
+    queries = ident_queries + line_queries
+    log_oneline = ""
+    subject = ""
+    try:
+        if head_sha:
+            subject = _run_git(project_root, "log", "-1", "--format=%s", head_sha).strip()
+        if base_sha and head_sha:
+            log_oneline = _run_git(
+                project_root, "log", "--oneline", f"{base_sha}..{head_sha}"
+            ).strip()
+        elif not log_oneline:
+            log_oneline = _run_git(project_root, "log", "--oneline", "-8").strip()
+        if not subject and log_oneline:
+            subject = log_oneline.splitlines()[0]
+    except Exception:  # noqa: BLE001
+        log_oneline = log_oneline or ""
+    index_path = out_dir / "index.md"
+    index_path.write_text(
+        render_change_index(
+            subject=subject,
+            log_oneline=log_oneline,
+            base_sha=base_sha,
+            head_sha=head_sha,
+            ranges={operator_relative_path(p): spans for p, spans in ranges.items()},
+            identifiers=idents,
+            queries=queries,
+        ),
+        encoding="utf-8",
+    )
+    hunk_dir = out_dir / "hunks"
+    hunk_dir.mkdir(parents=True, exist_ok=True)
+    hunk_paths: list[str] = []
+    for path, start, body in iter_hunk_windows(diff_text):
+        hp = hunk_dir / _hunk_filename(path, start)
+        hp.write_text(f"# {path}:{start}\n\n```diff\n{body}\n```\n", encoding="utf-8")
+        hunk_paths.append(hp.as_posix())
+    hints_path = out_dir / "uo_hints.md"
+    hint_lines = [
+        "# UO hints (bounded prefetch)",
+        "",
+        "Prefer form-1 identifier cards from index.md; skip empty format-hunk around queries.",
+        "",
+    ]
+    try:
+        from uo_init.uo_query import open_query
+
+        q = open_query(project_root, architecture=architecture)
+        for item in queries[:8]:
+            ident = str(item.get("ident") or "").strip()
+            path = str(item.get("file") or "")
+            line = int(item.get("line") or 0)
+            if ident:
+                hint_lines.append(f"## `{ident}`")
+                hint_lines.append("")
+                try:
+                    payload = q.agent_query(pattern=ident, limit=4)
+                    hint_lines.append(_compact_uo_hint(payload if isinstance(payload, dict) else {}))
+                except Exception as exc:  # noqa: BLE001
+                    hint_lines.append(f"prefetch failed: {exc}"[:400])
+            elif path and line:
+                hint_lines.append(f"## `{path}:{line}`")
+                hint_lines.append("")
+                try:
+                    payload = q.agent_query(pattern="", file=path, line=line, limit=4)
+                    hint_lines.append(_compact_uo_hint(payload if isinstance(payload, dict) else {}))
+                except Exception as exc:  # noqa: BLE001
+                    hint_lines.append(f"prefetch failed: {exc}"[:400])
+            else:
+                continue
+            hint_lines.append("")
+    except Exception as exc:  # noqa: BLE001
+        hint_lines.append(f"UO product unavailable ({exc}). Run suggested queries from index.md.")
+        hint_lines.append("")
+    hints_path.write_text("\n".join(hint_lines), encoding="utf-8")
+    return {
+        "diff": diff_path.as_posix(),
+        "index": index_path.as_posix(),
+        "uo_hints": hints_path.as_posix(),
+        "hunks": str(len(hunk_paths)),
+    }
+
+
 def _run_ce_review_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from ascendc_pilot.paths import agent_root
     from code_engineering.git import capture_change
@@ -249,17 +394,23 @@ def _run_ce_review_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str,
     diff = str(payload.get("diff") or "")
     run_id = str(ctx.get("run_id") or "").strip()
     if run_id and diff.strip():
-        out = (
+        out_dir = (
             agent_root(project_root, arch)
             / "runs"
             / run_id
             / "actions"
             / "change_capture"
-            / "diff.md"
         )
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text("# Change capture\n\n```diff\n" + diff.rstrip() + "\n```\n", encoding="utf-8")
-        payload["artifact"] = out.as_posix()
+        artifacts = _write_change_capture_artifacts(
+            out_dir,
+            diff_text=diff,
+            project_root=Path(capture_root),
+            architecture=arch,
+            base_sha=str(payload.get("base_sha") or base or ""),
+            head_sha=str(payload.get("head_sha") or head or ""),
+        )
+        payload["artifact"] = artifacts.get("index") or artifacts.get("diff")
+        payload["artifacts"] = artifacts
     payload.setdefault("engine", "change_capture")
     if not payload.get("ok"):
         payload["ok"] = False

@@ -2,6 +2,7 @@
 """L1 deterministic anchors: opdef / registry / kernel entry."""
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,27 +103,32 @@ def extract_registry(root: str | Path, op_name: str) -> list[dict]:
     silently return an empty list for every other operator."""
     root = Path(root)
     hits = []
-    for path in root.rglob("*"):
-        if ".ascendc-pilot" in path.parts:
-            continue
-        if path.suffix not in {".cpp", ".h", ".hpp"}:
-            continue
-        text = path.read_text(encoding="utf-8", errors="replace")
-        text_j = re.sub(r"\\\r?\n", " ", text)
-        for m in REG_TILING.finditer(text_j):
-            op, cls, arch, pri = m.groups()
-            if op != op_name:
+    skip_dirs = {".ascendc-pilot", ".git", ".svn", "__pycache__", "cache", "build", "output"}
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs and not d.startswith(".")]
+        for name in filenames:
+            if not name.endswith((".cpp", ".h", ".hpp")):
                 continue
-            hits.append(
-                {
-                    "op": op,
-                    "class": cls,
-                    "arch_expr": arch.strip(),
-                    "priority": int(pri),
-                    "file": str(path).replace("\\", "/"),
-                    "line": text_j[: m.start()].count("\n") + 1,
-                }
-            )
+            path = Path(dirpath) / name
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            text_j = re.sub(r"\\\r?\n", " ", text)
+            for m in REG_TILING.finditer(text_j):
+                op, cls, arch, pri = m.groups()
+                if op != op_name:
+                    continue
+                hits.append(
+                    {
+                        "op": op,
+                        "class": cls,
+                        "arch_expr": arch.strip(),
+                        "priority": int(pri),
+                        "file": str(path).replace("\\", "/"),
+                        "line": text_j[: m.start()].count("\n") + 1,
+                    }
+                )
     hits.sort(key=lambda r: (r["arch_expr"], r["priority"]))
     return hits
 

@@ -93,6 +93,8 @@ def _run_git(args: list[str], *, cwd: Path | None = None) -> subprocess.Complete
         check=False,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
 
 
@@ -387,7 +389,13 @@ def changed_files(mirror: Path, base_sha: str, head_sha: str) -> list[str]:
     return [line.strip() for line in (got.stdout or "").splitlines() if line.strip()]
 
 
+_NON_OPERATOR_DIR_NAMES = frozenset({"tests", "test", "ut", "st", "examples", "example", "docs"})
+
+
 def _is_operator_root(path: Path) -> bool:
+    parts = [p.lower() for p in Path(path).parts]
+    if any(name in _NON_OPERATOR_DIR_NAMES for name in parts):
+        return False
     return (path / "op_host").is_dir() or (path / "op_kernel").is_dir()
 
 

@@ -13,7 +13,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 ```text
 用户目标
   ├─ 自然语言说目标（不必知道模块名）
-  │     → Host 工具 `pilot_run(workflow=auto, intent=原文)`，再跟随 `next_workflow_id`
+  │     → Host 工具 `pilot_run(workflow=auto, intent=原文)`（无 active 目标才 intake；有则推进当前 todo）
   ├─ 显式 Slash：建库 / 更新 / TG / CE / 调查 unresolved
   │     → Host 工具 pilot_run（workflow=<该 id> + project + architecture）
   └─ 只读问 CodeMap / 看状态 / 看失败卡 / 环境修好后恢复
@@ -22,7 +22,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| 自然语言：「分析这个 PR 并生成对应测试用例」+ URL | `pilot_run(workflow=auto, intent=原文)`：在打开目录下新建文件夹 clone，从 PR 变更 pin 算子×架构，再 uo-init → ce-review → tg-* | 扫本地 fork、bash git、或用原生 skill 加载编排 |
+| 自然语言：「分析这个 PR 并生成对应测试用例」+ URL | `pilot_run(workflow=auto, intent=原文)`：在打开目录下新建文件夹 clone，从 PR 变更 pin 算子×架构，按 TaskPlan 推进 uo-init → ce-review → tg-* | 扫本地 fork、bash git、审查完再调 auto 做 intake、或用原生 skill 加载编排 |
 | `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run(workflow=<id>)` | 手工串 `start` / `next` / `run-action auto` |
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
@@ -85,7 +85,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 | 参数 | 说明 |
 | --- | --- |
 | `workflow` | 现有 slash id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
-| `project` | 控制面目录。空 project 时钉当前 OpenCode 打开目录（Host directory），**不是** `~/.cache/ascendc-pilot/sessions/auto`。算子根由 Workspace Manager 在 allowlisted PR URL 后 pin 到 worktree；模型禁止 bash `git clone` |
+| `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。模型禁止 bash `git clone` |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |

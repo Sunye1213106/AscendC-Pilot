@@ -17,6 +17,7 @@ from uo_init.source_layout import (
     include_root_owned_architecture,
     is_foreign_arch_entry_tu,
     is_other_arch_path,
+    keep_lexical_kernel_path,
     match_on_disk_architecture,
     path_owned_architecture,
     pick_kernel_entry,
@@ -373,5 +374,12 @@ def test_920r1_heuristic_keeps_arch35_apt_and_host_tiling(tmp_path: Path) -> Non
     )
     assert picked is not None
     assert picked.name == "toy_apt.cpp"
+
+
+def test_keep_lexical_kernel_path_drops_foreign_arch_bodies() -> None:
+    assert keep_lexical_kernel_path(Path("op_kernel/arch35/k.h"), "arch35") is True
+    assert keep_lexical_kernel_path(Path("op_kernel/arch22/old_tiling.h"), "arch35") is False
+    assert keep_lexical_kernel_path(Path("op_kernel/entry.cpp"), "arch35") is True
+    assert keep_lexical_kernel_path(Path("common/op_kernel/arch35/util.h"), "arch35") is True
 
 

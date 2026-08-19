@@ -5,10 +5,10 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 
 ## Transport
 
-- Workflows: Host tool `pilot_run` only (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged. Natural language first call: `pilot_run(workflow=auto, intent=<user text verbatim>)`. `auto` is reserved `goal-intake` (structure check, PR exact-head workspace, TaskPlan). Explicit slash: `workflow=<existing id>`. Do not invent Todo steps. Do not use OpenCode native `skill` for Pilot orchestration.
+- Workflows: Host tool `pilot_run` only (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged. Natural language first call: `pilot_run(workflow=auto, intent=<user text verbatim>)`. `auto` intakes only when there is no active user_goal; otherwise Host resumes the current `task_plan` step. Dual-axis review ACKs from native Task text and continues the next todo (tg-init when the goal wants tests). Explicit slash: `workflow=<existing id>`. Do not invent Todo steps. Do not use OpenCode native `skill` for Pilot orchestration.
 - If `pilot_run` is missing from the tool list: tell the user to fully quit OpenCode and reinstall the plugin.
 - Exception: **never** `pilot_run` for `uo-query`.
-- When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If a Host-driver `host_step.tasks` ≥2 (review dual-axis, not uo-query keyword fanout), launch all in the same turn, then Primary synthesizes each child's **native Task text**.
+- When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If a Host-driver `host_step.tasks` ≥2 (review dual-axis, not uo-query keyword fanout), launch all in the same turn. Plugin ACKs each child's **native Task text** and continues `task_plan`. Primary synthesizes the two Task bodies for the user as: 审查完成 / PR 做什么 / 改了哪些文件 / 问题 1… / 要测的变量. Do not emit `kb-answer-v1` as the review merge.
 - Same-Action rework resumes the original Task session. Formal IR is Host **finalize** only.
 
 ## Shell / OpenCode

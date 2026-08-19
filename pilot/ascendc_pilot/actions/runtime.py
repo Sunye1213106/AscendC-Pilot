@@ -527,6 +527,8 @@ def _review_axis_fanout_tasks(
     if len(axes_spec) < 2:
         return []
     run_id = str(stub_kwargs.get("run_id") or "").strip() or "current"
+    if (sdir / "parts" / "merged.md").is_file():
+        return []
     dt = dict(dispatch_targets or {})
     tasks: list[dict[str, str]] = []
     for axis_row in axes_spec:
@@ -543,7 +545,7 @@ def _review_axis_fanout_tasks(
         axis_method = sdir / f"method_{axis}.md"
         axis_method.write_text(mp.read_text(encoding="utf-8"), encoding="utf-8")
         axis_dt = dict(dt)
-        axis_dt["write"] = [artifact]
+        axis_dt["write"] = []
         forbid = list(axis_dt.get("forbid_read") or [])
         for blocked in (
             other,
@@ -560,14 +562,14 @@ def _review_axis_fanout_tasks(
             f"FOCUS: {focus}\n"
             f"SLICE_ID={axis}\n"
             "Read only the method path in this stub. "
-            f"Optional session part: {artifact}. Do not Write ce/**. "
+            "Put findings in the Task return. Do not Write harvest files or ce/**. "
             f"Do not Read {other}."
         )
         axis_kwargs = {
             **stub_kwargs,
             "method_path": axis_method.as_posix(),
             "dispatch_targets": axis_dt,
-            "write_paths": [artifact],
+            "write_paths": [],
             "user_question": question,
         }
         slice_stub = _build_task_prompt_stub(**axis_kwargs)
@@ -1933,6 +1935,18 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result["engine"] = eng
         if isinstance(eng, dict) and eng.get("receipt_path"):
             result["receipt_path"] = eng["receipt_path"]
+        if isinstance(eng, dict) and eng.get("needs_human_decision"):
+            result["needs_human_decision"] = True
+            if isinstance(eng.get("ask_question"), dict):
+                result["ask_question"] = eng["ask_question"]
+            result["ok"] = True
+            result["auto_finalize"] = False
+            result["message_zh"] = str(
+                eng.get("message_zh")
+                or (eng.get("ask_question") or {}).get("question")
+                or "需要人工选择后再继续。"
+            )
+            return result
         if isinstance(eng, dict) and not eng.get("ok", True):
             from ascendc_pilot.actions.failure_text import preferred_failure_text, with_failure_hint
 
@@ -1978,7 +1992,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         voice_state = dict(_load_state_for_voice(project_root) or state or {})
         if not voice_state.get("workflow_id"):
             voice_state["workflow_id"] = wid
-        if action_id in {"grill_confirm", "human_confirm", "plan_approve"}:
+        if action_id in {
+            "grill_confirm",
+            "human_confirm",
+            "plan_approve",
+            "apply_report",
+            "review_report",
+        }:
             if not hosted_confirm_should_ask(project_root, voice_state, action_id=action_id):
                 materialized = materialize_primary_decision(project_root, action_id)
                 if materialized.get("ok"):
@@ -2038,9 +2058,9 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
             "同一轮用 OpenCode 原生 Task 全部派发；每条 prompt 必须原样为 "
             "`dispatch_tasks[i].task_prompt_stub`。"
             "禁止用父 `task_prompt_stub` 再开一个。"
-            "全部返回后 Primary 按各 Task 原生全文综合，禁止只转述某一个，"
-            "禁止发明子代理没引用的事实。"
-            "切片子代理禁止自动 finalize；综合后由 Host `pilot_run` 完成本步。"
+            "插件用各 Task 原文 ACK 并推进 task_plan 下一格。"
+            "Primary 只把两段原文用人话合并给用户（审查完成 / 做什么 / 改了什么 / 问题 / 要测变量）。"
+            "禁止综合成 kb-answer-v1。禁止发明子代理没引用的事实。不要再调 workflow=auto 做 intake。"
         )
     else:
         result["message_zh"] = (

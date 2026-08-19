@@ -11,17 +11,18 @@ partial reference and never contributes to closure.
 from __future__ import annotations
 
 import re
+import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from uo_init.cpp_lex import iter_function_defs, line_at, line_index
+from uo_init.cpp_lex import iter_function_defs, line_at, line_index, method_identity
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
 from uo_init.passes.tiling_gaps import record_unresolved_tiling
-from uo_init.source_layout import includes_architecture
+from uo_init.source_layout import includes_architecture, keep_lexical_kernel_path
 
 _SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _CONTROL = {
@@ -36,8 +37,15 @@ _TILING_ACCESS_RE = re.compile(
     r"(?:\s*\.\s*(?P<inner>[A-Za-z_]\w*))?"
 )
 _WORD_RE = re.compile(r"\b[A-Za-z_]\w*\b")
+_CALL_RE = re.compile(
+    r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
+    r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)\s*"
+    r"(?:<[^;{}()]{0,1200}>)?\s*\("
+)
+_DEFINE_HEAD_RE = re.compile(r"\s*#\s*define\s+([A-Za-z_]\w*)")
 _CALL_PROV = {"source_kernel_call_bound_v2", "source_kernel_macro_call_bound_v2"}
 _LINE_CACHE: dict[int, list[int]] = {}
+_LINE_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -136,6 +144,7 @@ def refine_kernel_calls_and_tiling_reads(
 def _load_selected(
     root: Path, selected: list[str], architecture: str
 ) -> dict[Path, tuple[str, str]]:
+    from uo_init.parallel import map_files
     from uo_init.passes.source_text_cache import masked_text, read_text
 
     paths: set[Path] = set()
@@ -158,11 +167,12 @@ def _load_selected(
                 raw = read_text(path)
                 if includes_architecture(raw, architecture):
                     paths.add(path.resolve())
-    out: dict[Path, tuple[str, str]] = {}
-    for path in sorted(paths):
-        raw = read_text(path)
-        out[path] = (raw, masked_text(path))
-    return out
+    kept = sorted(p for p in paths if keep_lexical_kernel_path(p, architecture))
+
+    def _one(path: Path) -> tuple[Path, tuple[str, str]]:
+        return path, (read_text(path), masked_text(path))
+
+    return dict(map_files(kept, _one))
 
 
 def _purge_previous_refinement(codemap: CodeMap) -> None:
@@ -201,13 +211,29 @@ def _discover_scopes(
     architecture: str,
     texts: dict[Path, tuple[str, str]],
 ) -> tuple[list[_Scope], set[str]]:
+    from uo_init.parallel import map_files
+
+    items = list(texts.items())
+
+    def _parse(item: tuple[Path, tuple[str, str]]) -> tuple[Path, list[_Class], list[_Macro], list]:
+        path, (raw, masked) = item
+        classes = _class_scopes(masked)
+        macros = _macro_spans(masked)
+        hits = []
+        for hit in iter_function_defs(masked):
+            if any(m.start <= hit.open_brace < m.end for m in macros):
+                continue
+            hits.append(hit)
+        return path, classes, macros, hits
+
+    parsed = map_files(items, _parse)
+
     scopes: list[_Scope] = []
     class_names: set[str] = set()
-    for path, (raw, masked) in texts.items():
+    for path, classes, macros, hits in parsed:
+        raw, masked = texts[path]
         file = _rel(root, path)
-        classes = _class_scopes(masked)
         class_names.update(c.name for c in classes)
-        macros = _macro_spans(masked)
         for macro in macros:
             ent = codemap.upsert(
                 EntityKind.MACRO,
@@ -222,13 +248,11 @@ def _discover_scopes(
             scopes.append(_Scope(ent, macro.name, "", file, raw, masked, macro.start, macro.end, "", "macro"))
 
         newlines = line_index(raw)
-        for hit in iter_function_defs(masked):
-            if any(m.start <= hit.open_brace < m.end for m in macros):
-                continue
+        for hit in hits:
             qualified = hit.name
             params = hit.params
             open_paren = hit.open_paren
-            short = qualified.split("::")[-1].split("<", 1)[0].strip()
+            short, owner, signature = method_identity(qualified)
             if short in _CONTROL:
                 continue
             brace = hit.open_brace
@@ -236,24 +260,30 @@ def _discover_scopes(
             if close < 0:
                 continue
             containing = [c for c in classes if c.start <= brace <= c.end]
-            owner = qualified.split("::")[-2] if "::" in qualified else (
-                min(containing, key=lambda c: c.end - c.start).name if containing else ""
-            )
+            if not owner:
+                owner = (
+                    min(containing, key=lambda c: c.end - c.start).name if containing else ""
+                )
+            owner = _base_type(owner) or owner
             line = line_at(newlines, max(0, open_paren - len(qualified) - 8))
+            end_line = line_at(newlines, close)
             kernel_hits = codemap.by_name(short, kind=EntityKind.KERNEL)
             if kernel_hits and "__global__" in masked[max(0, open_paren - 400):brace]:
                 ent = kernel_hits[0]
+                if end_line > int(ent.line_end or 0):
+                    ent.line_end = end_line
             else:
                 kind = EntityKind.METHOD if owner else EntityKind.FUNCTION
                 ent = codemap.upsert(
                     kind,
-                    f"{owner}::{short}" if owner else short,
+                    short,
                     eid=f"SRCKDEFV2::{file}::{line}::{owner}::{short}",
                     attrs={
                         "owner": owner, "source_definition": True,
                         "architecture": architecture, "provenance": "source_kernel_definition_v2",
+                        "signature": signature,
                     },
-                    file=file, line=line, status="confirmed",
+                    file=file, line=line, line_end=end_line, status="confirmed",
                 )
             scopes.append(_Scope(ent, short, owner, file, raw, masked, brace + 1, close, params, "method" if owner else "function"))
     # one entity/scope per physical source definition
@@ -292,6 +322,8 @@ def _function_before_brace(text: str, brace: int) -> tuple[str, str, int] | None
 
 
 def _bind_calls(codemap: CodeMap, scopes: list[_Scope], class_names: set[str]) -> dict[str, int]:
+    from uo_init.parallel import map_files
+
     macros: dict[str, list[_Scope]] = defaultdict(list)
     funcs: dict[str, list[_Scope]] = defaultdict(list)
     methods: dict[tuple[str, str], list[_Scope]] = defaultdict(list)
@@ -301,17 +333,28 @@ def _bind_calls(codemap: CodeMap, scopes: list[_Scope], class_names: set[str]) -
         if scope.kind == "macro":
             macros[scope.name].append(scope)
         elif scope.owner:
-            methods[(scope.owner, scope.name)].append(scope)
+            owner_key = _base_type(scope.owner) or scope.owner
+            methods[(owner_key, scope.name)].append(scope)
+            if owner_key != scope.owner:
+                methods[(scope.owner, scope.name)].append(scope)
         else:
             funcs[scope.name].append(scope)
 
     aliases_by_file: dict[str, dict[str, set[str]]] = {}
-    bound_sites = bound_edges = external = unresolved = 0
     for scope in scopes:
-        aliases = aliases_by_file.setdefault(scope.file, _aliases(scope.masked, class_names))
+        aliases_by_file.setdefault(scope.file, _aliases(scope.masked, class_names))
+
+    def _scan(scope: _Scope) -> tuple[_Scope, dict[str, set[str]], list[tuple[str, str, int, int]]]:
+        aliases = aliases_by_file[scope.file]
         var_types = _variable_types(scope, class_names, aliases)
-        body = scope.masked[scope.body_start:scope.body_end]
-        for receiver, name, open_abs, close_abs in _call_sites(scope.masked, scope.body_start, scope.body_end):
+        sites = list(_call_sites(scope.masked, scope.body_start, scope.body_end))
+        return scope, var_types, sites
+
+    scanned = map_files(scopes, _scan)
+
+    bound_sites = bound_edges = external = unresolved = 0
+    for scope, var_types, sites in scanned:
+        for receiver, name, open_abs, close_abs in sites:
             if name in _CONTROL or name == scope.name:
                 continue
             argc = _arg_count(scope.masked[open_abs + 1:close_abs])
@@ -326,13 +369,17 @@ def _bind_calls(codemap: CodeMap, scopes: list[_Scope], class_names: set[str]) -
                 if owner_types:
                     internal_hint = True
                     for owner in owner_types:
-                        candidates.extend(methods.get((owner, name), ()))
+                        for key in {owner, _base_type(owner)}:
+                            if key:
+                                candidates.extend(methods.get((key, name), ()))
             else:
                 if name in macros:
                     candidates.extend(macros[name])
                     prov = "source_kernel_macro_call_bound_v2"
                 if scope.owner:
-                    candidates.extend(methods.get((scope.owner, name), ()))
+                    for key in {scope.owner, _base_type(scope.owner)}:
+                        if key:
+                            candidates.extend(methods.get((key, name), ()))
                 candidates.extend(funcs.get(name, ()))
 
             candidates = _dedupe(candidates)
@@ -477,7 +524,7 @@ def _macro_spans(masked: str) -> list[_Macro]:
     out: list[_Macro] = []
     i = 0
     while i < len(lines):
-        match = re.match(r"\s*#\s*define\s+([A-Za-z_]\w*)", lines[i])
+        match = _DEFINE_HEAD_RE.match(lines[i])
         if not match:
             i += 1
             continue
@@ -492,29 +539,14 @@ def _macro_spans(masked: str) -> list[_Macro]:
 
 def _call_sites(text: str, start: int, end: int) -> Iterable[tuple[str, str, int, int]]:
     region = text[start:end]
-    token_re = re.compile(
-        r"(?:(?P<receiver>[A-Za-z_]\w*)\s*(?:\.|->)\s*)?"
-        r"(?P<name>[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*)"
-    )
-    for match in token_re.finditer(region):
+    for match in _CALL_RE.finditer(region):
         receiver = str(match.group("receiver") or "")
         name = match.group("name").split("::")[-1]
-        pos = start + match.end()
-        while pos < end and text[pos].isspace():
-            pos += 1
-        if pos < end and text[pos] == "<":
-            close_angle = _matching_forward(text, pos, "<", ">")
-            if close_angle < 0 or close_angle >= end:
-                continue
-            pos = close_angle + 1
-            while pos < end and text[pos].isspace():
-                pos += 1
-        if pos >= end or text[pos] != "(":
-            continue
-        close = _matching_forward(text, pos, "(", ")")
+        open_abs = start + match.end() - 1
+        close = _matching_forward(text, open_abs, "(", ")")
         if close < 0 or close >= end:
             continue
-        yield receiver, name, pos, close
+        yield receiver, name, open_abs, close
 
 
 def _aliases(text: str, known: set[str]) -> dict[str, set[str]]:
@@ -765,8 +797,9 @@ def _rel(root: Path, path: Path) -> str:
 
 def _line(text: str, offset: int) -> int:
     key = id(text)
-    idx = _LINE_CACHE.get(key)
-    if idx is None:
-        idx = line_index(text)
-        _LINE_CACHE[key] = idx
+    with _LINE_LOCK:
+        idx = _LINE_CACHE.get(key)
+        if idx is None:
+            idx = line_index(text)
+            _LINE_CACHE[key] = idx
     return line_at(idx, offset)

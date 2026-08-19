@@ -18,6 +18,7 @@ read_scopes:
 - source:op_host/**
 - source:op_kernel/**
 - source:common/**
+- source:tests/**
 - method:skills/code-review/**
 - method:skills/code-engineering/**
 write_scopes:

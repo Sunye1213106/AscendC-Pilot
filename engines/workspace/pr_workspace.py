@@ -24,7 +24,13 @@ _SHARED_DIR_NAMES = frozenset({"common", "shared"})
 _ARCH_RE = re.compile(r"^arch[0-9A-Za-z._-]+$", re.I)
 
 
+_NON_OPERATOR_DIR_NAMES = frozenset({"tests", "test", "ut", "st", "examples", "example", "docs"})
+
+
 def _is_operator_root(path: Path) -> bool:
+    parts = [p.lower() for p in Path(path).parts]
+    if any(name in _NON_OPERATOR_DIR_NAMES for name in parts):
+        return False
     return (path / "op_host").is_dir() or (path / "op_kernel").is_dir()
 
 

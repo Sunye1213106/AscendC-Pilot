@@ -436,6 +436,18 @@ def _tokens(cursor, limit: int = 64) -> list[str]:
     return out
 
 
+# Assignment, not comparison. Avoid get_tokens on every `==` / `<=` BINARY_OPERATOR.
+_ASSIGN_OP_RE = re.compile(r"(?<![<>=!+\-*/&|^%])=(?![=])|\+=|-=|\*=|/=|\|=|&=")
+
+
+def _extent_looks_like_assign(cursor) -> bool:
+    raw = _extent_text(cursor)
+    if raw is not None:
+        return bool(_ASSIGN_OP_RE.search(raw))
+    toks = _tokens(cursor, 8)
+    return "=" in toks or any(t in toks for t in ("+=", "-=", "*=", "/=", "|=", "&="))
+
+
 # Extent slices skip clang_tokenize. Snippets stay on the token path so a
 # whole `if` statement is not dumped as a 16-token "snippet".
 _EXTENT_TEXT_MIN_LIMIT = 32
@@ -1769,12 +1781,10 @@ class _Walker:
                     self._record_operator_assign(cursor, stack, func)
         elif kind_name == "RETURN_STMT":
             self._record_return(cursor, func, stack)
-        if self.collect_writes and kind_name in (
-            "BINARY_OPERATOR",
-            "COMPOUND_ASSIGNMENT_OPERATOR",
-        ):
-            toks = _tokens(cursor, 96)
-            if "=" in toks or any(t in toks for t in ("+=", "-=", "*=", "/=", "|=", "&=")):
+        if self.collect_writes and kind_name == "COMPOUND_ASSIGNMENT_OPERATOR":
+            self._record_write(cursor, stack, func)
+        elif self.collect_writes and kind_name == "BINARY_OPERATOR":
+            if _extent_looks_like_assign(cursor):
                 self._record_write(cursor, stack, func)
 
         for ch in cursor.get_children():
@@ -2438,8 +2448,13 @@ def consume_parsed_tu(tu: Any, path: str | Path, ctx: BuildContext, **kwargs: An
 
 
 def _use_single_ast_pass(side: str) -> bool:
-    """Kernel TUs typically have no framework-header frames; skip index_walk."""
-    return str(side or "").strip().lower() != "host"
+    """One full walk; a second pass runs only when framework frame files exist.
+
+    Host used to always do index_walk + walk. On FAG that doubled ~50s+50s per
+    tiling TU. Kernel already skipped the duplicate when frames were empty.
+    """
+    del side
+    return True
 
 
 def walk_file(
@@ -2578,12 +2593,14 @@ def _walk_parsed_tu(
 
     injected = getattr(_INJECTED, "tu", None)
     _require_clang()
-    idx = cindex.Index.create()
     t0 = _time.perf_counter()
     ast_loaded = False
+    ast_src = "parse"
+    idx = None
     if injected is not None:
         tu = injected
         t_parse = 0.0
+        ast_src = "injected"
     else:
         tu = None
         ast_key = ""
@@ -2597,16 +2614,43 @@ def _walk_parsed_tu(
                     orig_assignment=orig_assignment,
                     parse_flags=list(args),
                 )
-                tu = tu_cache.load_ast(
-                    ast_key, op_dir=op_dir or None, arch=arch, index=idx
-                )
+                tu = tu_cache.load_live_ast(ast_key)
+                if tu is not None:
+                    ast_src = "live"
             except Exception:  # noqa: BLE001
                 tu = None
                 ast_key = ""
+        if tu is None:
+            idx = cindex.Index.create()
+            if ast_key:
+                try:
+                    tu = tu_cache.load_ast(
+                        ast_key, op_dir=op_dir or None, arch=arch, index=idx
+                    )
+                except Exception:  # noqa: BLE001
+                    tu = None
+                if (
+                    tu is None
+                    and str(side).strip().lower() == "kernel"
+                    and not orig_assignment
+                ):
+                    try:
+                        tu = tu_cache.load_ast(
+                            "kernel_entry",
+                            op_dir=op_dir or None,
+                            arch=arch,
+                            index=idx,
+                        )
+                    except Exception:  # noqa: BLE001
+                        tu = None
+            if tu is not None:
+                ast_src = "disk"
         if tu is not None:
             ast_loaded = True
             t_parse = 0.0
         else:
+            if idx is None:
+                idx = cindex.Index.create()
             tu = idx.parse(
                 path,
                 args=args,
@@ -2615,8 +2659,10 @@ def _walk_parsed_tu(
             )
             _perf_bump("clang_tu_parse")
             t_parse = _time.perf_counter() - t0
+            ast_src = "parse"
             if ast_key:
                 try:
+                    tu_cache.store_live_ast(ast_key, idx, tu, side=side)
                     tu_cache.store_ast(
                         ast_key, tu, op_dir=op_dir or None, arch=arch
                     )
@@ -2748,7 +2794,7 @@ def _walk_parsed_tu(
     _tlog(
         f"{t_total:7.3f}s{flag}  walk_file  file={name} side={side} "
         f"parse={t_parse:.3f}s frame={frame_label} index={t_index:.3f}s "
-        f"ast_walk={t_walk:.3f}s cache={'ast' if ast_loaded else ('store' if cache_key else 'off')} "
+        f"ast_walk={t_walk:.3f}s cache={ast_src} "
         f"reachable={len(reachable)} controls={len(w.controls)} "
         f"writes={len(w.writes)} calls={len(w.call_sites)} "
         f"diags={len(diags)} frames={len(frame_files)}"

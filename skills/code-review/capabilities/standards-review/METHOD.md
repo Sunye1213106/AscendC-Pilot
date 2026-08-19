@@ -8,18 +8,19 @@
 
 - Kernel：`op_kernel/`；Tiling：`op_host/`。分侧陈述。
 - 规范：`references/ascendc-checks.md` 与跨层契约。仓规范覆盖通用启发式。
-- PR 入口必须有 diff。Finding 必须有 `path:line`。
+- PR 入口必须有 `change_capture/index.md`。Finding 必须有 `path:line`。禁止线性通读 `diff.md`。
 
 ## 方法
 
 ```text
-入口 + 侧别 → CodeMap 邻域 → H0/H1（相对规范）→ 最小源码窗 → 推翻 → FINDING
+index 的 Added identifiers → 并行 form-1 → 字段 readers / 跨层契约 → H0/H1 → FINDING
 ```
 
-1. 先插件 `pilot_cli` `uo-query`（标识符 / `Dim=V` / `--file --line`；不要 `--mode`）。校验点看 `facts.check_sites`。
-2. 「来源 = TilingData」不是已校验；必须指到 `OP_CHECK_IF` 的 `path:line` 且变量同一。
-3. H0 = 该段符合规范；H1 = 可观察风险（越界、除零、同步缺失、跨层断裂）。报告前尝试推翻 H1。
+1. 先读 `change_capture/index.md` / `uo_hints.md`，再插件 `pilot_cli` `uo-query`（**先 form-1 标识符**，有 ident 再 `--file --line` / `Dim=V`；不要 `--mode`）。不要先打 format hunk。校验点看 `facts.check_sites`。
+2. snippet 截断不得下「枚举未用」。Kernel 以字段 readers 行为准。每个 changed file：finding / format-only / UNREVIEWED。未审 `op_kernel` 禁止「无 high/medium」。
+3. 「来源 = TilingData」不是已校验；必须指到 `OP_CHECK_IF` 的 `path:line` 且变量同一。
+4. H0 = 该段符合规范；H1 = 可观察风险（越界、除零、同步缺失、跨层断裂）。报告前尝试推翻 H1。
 
 ## 产物
 
-默认把 `path:line` 结论写在 **Task 回复**里。可写 session part（stub 给出的 md 路径）。禁止 Write `ce/**`。禁止合成 LGTM。
+默认把 `path:line` 结论写在 **Task 回复**里。不要 Write `parts/*.md` 收票。禁止 Write `ce/**`。禁止合成 LGTM。对人说审查结论时不要堆 H0/H1 编号表。

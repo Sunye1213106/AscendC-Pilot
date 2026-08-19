@@ -123,7 +123,13 @@ def _files(path: Path, *, recursive: bool = True) -> list[Path]:
 
 
 def _kernel_files(root: Path, architecture: str) -> list[Path]:
-    return selected_kernel_files(root, architecture)
+    from uo_init.source_layout import keep_lexical_kernel_path
+
+    return [
+        path
+        for path in selected_kernel_files(root, architecture)
+        if keep_lexical_kernel_path(path, architecture)
+    ]
 
 
 def _read(path: Path) -> str:
@@ -161,28 +167,32 @@ def _load_kernel_sources(root: Path, architecture: str) -> list[_KernelSource]:
 def _load_text_sources(
     root: Path, paths: Iterable[Path], *, parse_functions: bool
 ) -> list[_KernelSource]:
-    out: list[_KernelSource] = []
+    from uo_init.parallel import map_files
+
+    unique: list[Path] = []
     seen: set[Path] = set()
     for path in paths:
         key = path.resolve()
         if key in seen:
             continue
         seen.add(key)
+        unique.append(path)
+
+    def _one(path: Path) -> _KernelSource:
         text = _read(path)
         file = _rel(root, path)
         newlines = _line_index(text)
-        out.append(
-            _KernelSource(
-                path=path,
-                text=text,
-                file=file,
-                newlines=newlines,
-                functions=_function_scopes(text, file, newlines=newlines)
-                if parse_functions
-                else [],
-            )
+        return _KernelSource(
+            path=path,
+            text=text,
+            file=file,
+            newlines=newlines,
+            functions=_function_scopes(text, file, newlines=newlines)
+            if parse_functions
+            else [],
         )
-    return out
+
+    return map_files(unique, _one)
 
 
 def _matching_brace(text: str, open_pos: int) -> int:

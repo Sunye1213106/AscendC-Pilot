@@ -25,7 +25,7 @@ Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
 https://github.com/<org>/<repo>/pull/<id>
 ```
 
-系统会：在当前 OpenCode 打开目录上启动控制面 → 在该目录下 **新建文件夹** clone PR exact-head（模型不得 bash git，也不分析本地 fork）→ 从 changed-files 解析算子 × architecture 矩阵（1×1 自动 pin；多对按对分析）→ 建立或复用 CodeMap → 分析改动 → 生成并回放用例。凭证失败 / 0 算子 / 路径无 `arch*` 会问人，这不是 UX 失败。不要自己猜下一跳 slash。
+系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ pin 到含 `op_host/` / `op_kernel/` 的算子工作目录后再建控制面 → 从 changed-files 解析算子 × architecture 矩阵（1×1 自动 pin；多对按对分析）→ 建立或复用 CodeMap → 分析改动 → 生成并回放用例。凭证失败 / 0 算子 / 路径无 `arch*` 会问人，这不是 UX 失败。不要自己猜下一跳 slash。
 
 ## 1. 打开目标算子
 
@@ -179,7 +179,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 /ce-review --project <算子目录>
 ```
 
-自然语言「分析这个 PR 并生成对应测试用例」+ URL 第一次 `pilot_run(workflow=auto, intent=原文)`，再跟随 `next_workflow_id`（依赖链是 `/uo-init` → `/ce-review` → `/tg-init` → `/tg-plan` → `/tg-solve`）。显式只要审查才打 `/ce-review`。
+自然语言「分析这个 PR 并生成对应测试用例」+ URL 第一次 `pilot_run(workflow=auto, intent=原文)`。Host 按 TaskPlan 推进 `/uo-init` → `/ce-review` → `/tg-init` → `/tg-plan` → `/tg-solve`；审查双轴齐了之后不要再调 `auto` 做 intake。显式只要审查才打 `/ce-review`。
 
 
 CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query` 四种形态。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
@@ -190,7 +190,7 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 
 | 入口 | 用途 |
 | --- | --- |
-| 自然语言 + PR URL | `pilot_run(workflow=auto, intent=原文)`：打开目录下 clone，从 changed-files pin 算子×架构，再跟随 `next_workflow_id` |
+| 自然语言 + PR URL | `pilot_run(workflow=auto, intent=原文)`：打开目录下 clone，从 changed-files pin 算子×架构，按 TaskPlan 一直推进到真人门（空测试仓会问一次） |
 | `/uo-init` | 第一次建立 Operator CodeMap（需算子路径 + architecture） |
 | `/uo-update` | 源码变化后更新 CodeMap（需算子路径 + architecture） |
 | `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |

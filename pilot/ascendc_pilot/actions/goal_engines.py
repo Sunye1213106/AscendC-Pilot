@@ -49,6 +49,8 @@ def _receipt(project_root: Path, ctx: dict[str, Any], name: str, payload: dict[s
     body = dict(payload)
     body.setdefault("kind", "receipt")
     body.setdefault("written_at", _now())
+    if rid:
+        body.setdefault("run_id", rid)
     out = receipts_dir(project_root, rid or None) / name
     _dump_yaml(out, body)
     return out
@@ -91,6 +93,38 @@ def _parse_goal_contract(raw: str) -> dict[str, Any]:
     if not isinstance(doc, dict) or str(doc.get("schema") or "") != GOAL_CONTRACT_SCHEMA:
         return {}
     return doc
+
+
+def _pr_source_from_text(text: str) -> dict[str, Any]:
+    """Allowlisted PR URL is structure, not keyword routing."""
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+    try:
+        from ascendc_pilot.intake import extract_pr_url_from_intent
+
+        url = str(extract_pr_url_from_intent(raw) or "").strip()
+    except Exception:  # noqa: BLE001
+        url = ""
+    if not url:
+        return {}
+    return {"kind": "pull_request", "url": url}
+
+
+def _merge_pr_source(source: dict[str, Any], *texts: str) -> dict[str, Any]:
+    out = dict(source or {})
+    kind = str(out.get("kind") or "").strip().lower()
+    url = str(out.get("url") or out.get("ref") or "").strip()
+    if kind in {"pull_request", "pr"} and url:
+        out["kind"] = "pull_request"
+        if not str(out.get("url") or "").strip():
+            out["url"] = url
+        return out
+    for text in texts:
+        inferred = _pr_source_from_text(text)
+        if inferred.get("url"):
+            return inferred
+    return out
 
 
 def _contract_inputs(
@@ -180,12 +214,13 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     from ascendc_pilot.harness.intent import validate_intent_staging
     from ascendc_pilot.planning.task_plan import (
         current_workflow_id,
+        load_task_plan,
         mark_step_passed,
         plan_for,
         public_plan_for,
         write_task_plan,
     )
-    from ascendc_pilot.user_goal import create_user_goal, write_user_goal
+    from ascendc_pilot.user_goal import create_user_goal, load_user_goal, write_user_goal
 
     staging = _load_staging(project_root, ctx, "intent_promote")
     (
@@ -197,10 +232,21 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         objective_zh,
     ) = _contract_inputs(ctx, staging)
 
-    if str(source.get("kind") or "") == "pull_request" and not source.get("url"):
-        ref = str(source.get("ref") or "").strip()
-        if ref:
-            source["url"] = ref
+    source = _merge_pr_source(source, intent_text, objective_zh)
+    if str(source.get("kind") or "").strip().lower() in {"pull_request", "pr"}:
+        source["kind"] = "pull_request"
+        if not source.get("url"):
+            ref = str(source.get("ref") or "").strip()
+            if ref:
+                source["url"] = ref
+    if (
+        str(source.get("kind") or "") == "pull_request"
+        and str(source.get("url") or "").strip()
+        and not needed_workflows
+        and not needed_capabilities
+    ):
+        # Reserved auto chain: PR URL without Goal Contract JSON → uo → ce-review → tg.
+        needed_workflows = ["tg-solve"]
     llm_intent = {
         "intent_text": intent_text,
         "objective_zh": objective_zh,
@@ -250,7 +296,39 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     project_pin = Path(project_root).expanduser().resolve()
     arch_pin = str(ctx.get("architecture") or "").strip()
     run_id = str(ctx.get("run_id") or "").strip()
-    if str(source.get("kind") or "") == "pull_request" and source.get("url"):
+    already_operator = (project_pin / "op_host").is_dir() or (project_pin / "op_kernel").is_dir()
+    if str(source.get("kind") or "") == "pull_request" and source.get("url") and already_operator:
+        acquire = {"ok": True, "skipped_nested_clone": True, "project": str(project_pin)}
+        try:
+            from ascendc_pilot.run_resume import load_pr_architecture_pin
+
+            pinned = load_pr_architecture_pin(project_pin)
+            if pinned:
+                arch_pin = str(pinned[0] or arch_pin).strip() or arch_pin
+        except Exception:  # noqa: BLE001
+            pass
+        existing_goal = load_user_goal(project_pin)
+        existing_plan = None
+        try:
+            existing_plan = load_task_plan(project_pin)
+        except Exception:  # noqa: BLE001
+            existing_plan = None
+        nxt_existing = current_workflow_id(existing_plan)
+        if (
+            existing_goal
+            and str(existing_goal.get("status") or "") == "active"
+            and nxt_existing not in {"", "auto", "goal-intake"}
+        ):
+            return {
+                "ok": True,
+                "skipped_repromote": True,
+                "skipped_nested_clone": True,
+                "project": str(existing_goal.get("project") or project_pin),
+                "architecture": str(existing_goal.get("architecture") or arch_pin),
+                "next_workflow_id": nxt_existing,
+                "message_zh": f"目标进行中，继续 {nxt_existing}",
+            }
+    elif str(source.get("kind") or "") == "pull_request" and source.get("url"):
         try:
             gw = _git_workspace()
             acquire = gw.acquire_pull_request(
@@ -306,6 +384,22 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         llm_intent["source"] = source
         if targets:
             llm_intent["operator_targets"] = targets
+        try:
+            from ascendc_pilot.run_resume import save_pr_architecture_pin
+
+            pin_arches = list(resolved.get("changed_architectures") or [])
+            if arch_pin and not pin_arches:
+                pin_arches = [arch_pin]
+            save_pr_architecture_pin(project_pin, pin_arches or arch_pin)
+            for extra in [project_pin, *[
+                Path(str(t.get("operator_root") or "")).expanduser()
+                for t in targets
+                if isinstance(t, dict)
+            ]]:
+                if extra.exists():
+                    save_pr_architecture_pin(extra, pin_arches or arch_pin)
+        except Exception:  # noqa: BLE001
+            pass
 
     task_plan = plan_for(llm_intent)
     # PR acquisition is completed by this deterministic action, not a future workflow.
@@ -355,7 +449,6 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     write_user_goal(goal_root, goal)
     write_task_plan(goal_root, task_plan)
 
-    launch_root = Path(project_root).expanduser().resolve()
     extra_roots = [project_pin]
     for target in llm_intent.get("operator_targets") or []:
         if not isinstance(target, dict):
@@ -363,24 +456,19 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         extra = Path(str(target.get("operator_root") or "")).expanduser()
         if extra.as_posix() and extra not in extra_roots:
             extra_roots.append(extra)
-    if project_pin != launch_root:
-        # goal-intake completes under the Host staging root; keep a control-plane
-        # mirror there so complete_workflow can return the persisted next step.
+    for extra in extra_roots:
+        if extra == project_pin:
+            continue
+        if not extra.exists():
+            continue
+        if not ((extra / "op_host").is_dir() or (extra / "op_kernel").is_dir()):
+            continue
         try:
-            write_user_goal(launch_root, goal)
-            write_task_plan(launch_root, task_plan)
+            write_user_goal(extra, goal)
+            write_task_plan(extra, task_plan)
         except Exception:  # noqa: BLE001
             pass
-    for extra in extra_roots:
-        if extra == launch_root or extra == project_pin:
-            continue
-        if extra.exists():
-            try:
-                write_user_goal(extra, goal)
-                write_task_plan(extra, task_plan)
-            except Exception:  # noqa: BLE001
-                pass
-    if project_pin.exists() and (acquire or project_pin == launch_root):
+    if project_pin.exists():
         try:
             from ascendc_pilot.intake import write_last_project_cache
 
@@ -412,14 +500,9 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     receipt_ctx = dict(ctx)
     if arch_pin:
         receipt_ctx["architecture"] = arch_pin
-    receipt_root = project_pin if project_pin.exists() else launch_root
-    try:
-        _receipt(receipt_root, receipt_ctx, "intent_promoted.yaml", receipt)
-    except Exception:  # noqa: BLE001
-        pass
-    if project_pin.exists() and project_pin != launch_root:
+    if project_pin.exists():
         try:
-            _receipt(launch_root, receipt_ctx, "intent_promoted.yaml", receipt)
+            _receipt(project_pin, receipt_ctx, "intent_promoted.yaml", receipt)
         except Exception:  # noqa: BLE001
             pass
     return receipt

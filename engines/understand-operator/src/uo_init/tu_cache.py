@@ -37,10 +37,16 @@ _STATS = {
     "ast_hit": 0,
     "ast_store": 0,
     "ast_miss": 0,
+    "ast_live_store": 0,
+    "ast_live_hit": 0,
+    "ast_save_fail": 0,
 }
 AST_CACHE_VERSION = 1
 _LOCK = threading.Lock()
 _WALK_BUNDLE: dict[str, list[Any]] = {}
+# Prepare keeps Index+TU alive so extract can walk without a second cold parse.
+# Disk ``tu.save`` often fails when the TU was built with unsaved_files.
+_LIVE_AST: dict[str, tuple[Any, Any, str]] = {}
 
 
 def cache_enabled() -> bool:
@@ -53,6 +59,7 @@ def reset_stats() -> None:
         for k in _STATS:
             _STATS[k] = 0
         _WALK_BUNDLE.clear()
+        _LIVE_AST.clear()
 
 
 def stats() -> dict[str, int]:
@@ -663,12 +670,46 @@ def _ast_path(op_dir: str | Path | None, arch: str | None, key: str) -> Path:
     return tu_cache_dir(op_dir, arch) / f"{key}.ast"
 
 
+def store_live_ast(key: str, index: Any, tu: Any, *, side: str = "") -> None:
+    """Keep a parsed TU in this process for extract (prepare → extract)."""
+    if not key or tu is None or index is None:
+        return
+    with _LOCK:
+        _LIVE_AST[key] = (index, tu, str(side or ""))
+        _STATS["ast_live_store"] = int(_STATS.get("ast_live_store") or 0) + 1
+
+
+def load_live_ast(key: str) -> Any | None:
+    """Return a live TranslationUnit; the paired Index stays in ``_LIVE_AST``."""
+    if not key:
+        return None
+    with _LOCK:
+        row = _LIVE_AST.get(key)
+    if row is None:
+        return None
+    _bump("ast_live_hit")
+    return row[1]
+
+
+def has_live_ast_side(side: str) -> bool:
+    want = str(side or "").strip().lower()
+    with _LOCK:
+        return any(str(row[2]).strip().lower() == want for row in _LIVE_AST.values())
+
+
+def clear_live_ast() -> None:
+    """Drop in-process TUs after extract so analyze is not RAM-bound."""
+    with _LOCK:
+        _LIVE_AST.clear()
+
+
 def store_ast(
     key: str,
     tu: Any,
     *,
     op_dir: str | Path | None,
     arch: str | None = None,
+    alias: str | None = None,
 ) -> Path | None:
     """Persist a parsed TranslationUnit for the next process (prepare → extract)."""
     if not cache_enabled() or tu is None or not key:
@@ -682,16 +723,32 @@ def store_ast(
             tmp.unlink()
         save = getattr(tu, "save", None)
         if save is None:
+            _bump("ast_save_fail")
             return None
         err = save(str(tmp))
         if err not in (0, None):
             if tmp.exists():
                 tmp.unlink()
+            _bump("ast_save_fail")
             return None
         tmp.replace(path)
         _bump("ast_store")
+        if alias:
+            alias_path = _ast_path(op_dir, arch, alias)
+            try:
+                if alias_path.exists() or alias_path.is_symlink():
+                    alias_path.unlink()
+                os.link(path, alias_path)
+            except OSError:
+                try:
+                    import shutil
+
+                    shutil.copy2(path, alias_path)
+                except OSError:
+                    pass
         return path
     except Exception:  # noqa: BLE001
+        _bump("ast_save_fail")
         try:
             tmp = path.with_suffix(".ast.tmp")
             if tmp.exists():

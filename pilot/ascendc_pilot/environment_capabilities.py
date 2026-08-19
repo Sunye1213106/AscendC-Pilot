@@ -100,7 +100,7 @@ def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
             top = f.split("/", 1)[0]
             if top and top not in roots and not top.startswith("."):
                 roots.append(top)
-        for d in ("op_host", "op_kernel", "common", "op_graph", "test_script"):
+        for d in ("op_host", "op_kernel", "common", "op_graph", "test_script", "tests"):
             if (project_root / d).is_dir() and d not in roots:
                 roots.append(d)
         try:
@@ -111,6 +111,8 @@ def _source_scope(project_root: Path, *, run_id: str = "") -> dict[str, Any]:
                 roots.append("test_script")
         except Exception:
             pass
+    if (project_root / "tests").is_dir() and "tests" not in roots:
+        roots.append("tests")
     return {
         "confirmed": confirmed,
         "files": len(files),
@@ -213,6 +215,13 @@ def write_environment_capabilities(
     return path
 
 
+def _ensure_tests_source_root(project_root: Path, roots: list[str]) -> list[str]:
+    out = list(roots)
+    if (Path(project_root) / "tests").is_dir() and "tests" not in out:
+        out.append("tests")
+    return out
+
+
 def source_scope_for_lease(project_root: Path, *, run_id: str = "") -> dict[str, list[str]]:
     """Roots/files for Lease allowed_source_* (posix, project-relative preferred).
 
@@ -226,12 +235,13 @@ def source_scope_for_lease(project_root: Path, *, run_id: str = "") -> dict[str,
             scope_path = runs_root(project_root) / rid / "source_scope.yaml"
             cached = _load_yaml(scope_path)
             if cached.get("allowed_source_roots") or cached.get("allowed_source_files"):
+                roots = [
+                    str(x).replace("\\", "/").lstrip("/")
+                    for x in (cached.get("allowed_source_roots") or [])
+                    if str(x).strip()
+                ]
                 return {
-                    "allowed_source_roots": [
-                        str(x).replace("\\", "/").lstrip("/")
-                        for x in (cached.get("allowed_source_roots") or [])
-                        if str(x).strip()
-                    ],
+                    "allowed_source_roots": _ensure_tests_source_root(project_root, roots),
                     "allowed_source_files": [
                         str(x).replace("\\", "/").lstrip("/")
                         for x in (cached.get("allowed_source_files") or [])
@@ -247,7 +257,10 @@ def source_scope_for_lease(project_root: Path, *, run_id: str = "") -> dict[str,
         for f in (scope.get("file_paths") or [])
         if str(f).strip()
     ]
-    return {"allowed_source_roots": roots, "allowed_source_files": files}
+    return {
+        "allowed_source_roots": _ensure_tests_source_root(project_root, roots),
+        "allowed_source_files": files,
+    }
 
 
 def run_source_scope_roots(project_root: Path, *, run_id: str = "") -> list[Path]:

@@ -9,6 +9,7 @@ only across graph rows.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -262,7 +263,51 @@ def _seed_ids(
     elif seed_from == "open_keys":
         seeds.extend(_worklog_seeds(tg))
 
+    elif seed_from == "change_capture_identifiers":
+        seeds.extend(_change_capture_identifier_seeds(project_root, limit=limit))
+
     return seeds[: max(1, limit)]
+
+
+def _change_capture_identifier_seeds(project_root: Path, *, limit: int) -> list[str]:
+    from ascendc_pilot.paths import agent_root, runs_root
+
+    loaded = load_state(project_root) or {}
+    run_id = str(loaded.get("run_id") or "").strip()
+    arch = str(loaded.get("architecture") or "").strip() or None
+    candidates = []
+    if run_id:
+        try:
+            candidates.append(
+                agent_root(project_root, arch) / "runs" / run_id / "actions" / "change_capture" / "index.md"
+            )
+            candidates.append(
+                runs_root(project_root, arch=arch) / run_id / "actions" / "change_capture" / "index.md"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    idents: list[str] = []
+    for path in candidates:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        in_idents = False
+        for line in text.splitlines():
+            if line.strip() == "## Added identifiers":
+                in_idents = True
+                continue
+            if in_idents and line.startswith("## "):
+                break
+            if not in_idents:
+                continue
+            for token in re.findall(r"`([A-Za-z_][A-Za-z0-9_]{2,})`", line):
+                if token not in idents:
+                    idents.append(token)
+                if len(idents) >= limit:
+                    return idents
+        if idents:
+            return idents
+    return idents
 
 
 def _run_query(
@@ -284,6 +329,17 @@ def _run_query(
             rows = list(fn(seeds[:limit]) or [])
         except Exception as exc:  # noqa: BLE001 — slice must never break prepare
             return [{"error": f"{method}:{exc}"}]
+        return rows[:limit]
+
+    if method == "agent_query":
+        for seed in seeds[:limit]:
+            try:
+                part = q.agent_query(pattern=str(seed), limit=limit)
+            except Exception as exc:  # noqa: BLE001
+                rows.append({"error": f"{method}:{exc}", "_seed": seed})
+                continue
+            if isinstance(part, dict):
+                rows.append({**part, "_seed": seed})
         return rows[:limit]
 
     # Generic per-seed methods: neighbors, constraints_for, branches_for_key, ...

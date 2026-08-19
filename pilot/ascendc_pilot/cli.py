@@ -47,7 +47,27 @@ def _cli_project_default() -> Path:
     return default_cli_project()
 
 
-def _normalize_project_arg(args: argparse.Namespace) -> None:
+_DIAGNOSTIC_CMDS = frozenset(
+    {
+        "scan-architectures",
+        "status",
+        "next",
+        "inspect",
+        "inspect-failure",
+        "interpret-user-turn",
+        "host-context",
+    }
+)
+
+
+def _argv_has_explicit_project(argv: list[str] | None) -> bool:
+    for tok in argv or []:
+        if tok == "--project" or str(tok).startswith("--project="):
+            return True
+    return False
+
+
+def _normalize_project_arg(args: argparse.Namespace, argv: list[str] | None = None) -> None:
     """Resolve args.project through intake defaults when present."""
     if not hasattr(args, "project"):
         return
@@ -55,7 +75,11 @@ def _normalize_project_arg(args: argparse.Namespace) -> None:
 
     raw = getattr(args, "project", None)
     wf = str(getattr(args, "workflow_id", None) or getattr(args, "workflow", "") or "").strip()
-    allow_last = wf not in {"auto", "goal-intake"}
+    action_id = str(getattr(args, "action_id", "") or "").strip()
+    allow_last = wf not in {"auto", "goal-intake"} and action_id not in {"auto", "drive"}
+    cmd = str(getattr(args, "cmd", "") or "").strip()
+    if cmd in _DIAGNOSTIC_CMDS and not _argv_has_explicit_project(argv):
+        allow_last = False
     intent = str(getattr(args, "intent", "") or "").strip()
     if allow_last and intent:
         try:
@@ -72,6 +96,31 @@ def _adopt_prep_project(args: argparse.Namespace, prep: dict[str, Any]) -> None:
     pinned = str(prep.get("project") or "").strip()
     if pinned:
         args.project = Path(pinned).expanduser()
+
+
+def _active_goal_resume_payload(project: Path | str) -> dict[str, Any] | None:
+    """Return skip-start payload when user_goal is active on this operator workdir."""
+    from ascendc_pilot.user_goal import drive_progress_for_status
+
+    hint = drive_progress_for_status(project)
+    nxt = str(hint.get("task_plan_current_workflow_id") or "").strip()
+    st = hint.get("user_goal") if isinstance(hint.get("user_goal"), dict) else {}
+    if str(st.get("status") or "") != "active" or nxt in {"", "auto", "goal-intake"}:
+        return None
+    pin = str(st.get("project") or project)
+    return {
+        "ok": True,
+        "resumed_goal": True,
+        "skip_start": True,
+        "resumed": True,
+        "workflow_id": nxt,
+        "project": pin,
+        "architecture": str(st.get("architecture") or ""),
+        "user_goal": st,
+        "task_plan_current_workflow_id": nxt,
+        "status": "running",
+        "message_zh": f"目标进行中，继续 {nxt}",
+    }
 
 
 def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
@@ -202,6 +251,11 @@ def main(argv: list[str] | None = None) -> int:
         "--result-text",
         default="",
         help="Inline kb-answer-v1 / action result YAML (or fenced) from subagent return",
+    )
+    p_dres.add_argument(
+        "--slice-id",
+        default="",
+        help="Fan-out slice id (spec/standards). Required when AXIS= is not in the Task prompt.",
     )
     p_run.add_argument(
         "--set",
@@ -563,7 +617,7 @@ def main(argv: list[str] | None = None) -> int:
     p_dbg_fin.add_argument("--if-enabled", action="store_true")
 
     args = parser.parse_args(argv)
-    _normalize_project_arg(args)
+    _normalize_project_arg(args, raw)
 
     if args.cmd == "doctor":
         code = _doctor(args.project)
@@ -606,6 +660,15 @@ def main(argv: list[str] | None = None) -> int:
             from ascendc_pilot.occupancy import occupancy_status_payload
 
             out["occupancy"] = occupancy_status_payload(args.project)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from ascendc_pilot.user_goal import drive_progress_for_status
+
+            hint = drive_progress_for_status(args.project)
+            if hint:
+                out = dict(out)
+                out.update(hint)
         except Exception:  # noqa: BLE001
             pass
         print_json(out)
@@ -827,6 +890,18 @@ def main(argv: list[str] | None = None) -> int:
             print_json(result)
             return 0 if result.get("ok") else 1
 
+        if (
+            not force_new
+            and str(args.workflow_id or "").strip() in {"auto", "goal-intake"}
+        ):
+            try:
+                resumed = _active_goal_resume_payload(args.project)
+                if resumed:
+                    print_json(resumed)
+                    return 0
+            except Exception:  # noqa: BLE001
+                pass
+
         if needs_resume_decision(args.project, args.workflow_id):
             payload = existing_run_decision_payload(
                 args.project, args.workflow_id, architecture=arch
@@ -845,8 +920,22 @@ def main(argv: list[str] | None = None) -> int:
             print_json(prep)
             return 2
         _adopt_prep_project(args, prep)
-        arch = str(prep.get("architecture") or arch)
-        start_kwargs["architecture"] = arch
+        if str(args.workflow_id or "").strip() not in {"auto", "goal-intake"}:
+            arch = str(prep.get("architecture") or arch)
+            start_kwargs["architecture"] = arch
+
+        if (
+            not force_new
+            and str(args.workflow_id or "").strip() in {"auto", "goal-intake"}
+        ):
+            try:
+                resumed = _active_goal_resume_payload(args.project)
+                if resumed:
+                    write_last_project_cache(args.project)
+                    print_json(resumed)
+                    return 0
+            except Exception:  # noqa: BLE001
+                pass
 
         try:
             state = start_workflow(args.project, args.workflow_id, **start_kwargs)
@@ -860,8 +949,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 1
-        if str(args.workflow_id or "").strip() not in {"auto", "goal-intake"}:
-            write_last_project_cache(args.project)
+        write_last_project_cache(args.project)
         try:
             from ascendc_pilot.paths import context_root
             import yaml
@@ -910,7 +998,7 @@ def main(argv: list[str] | None = None) -> int:
         from ascendc_pilot.actions import run_action
         from ascendc_pilot.intake import assert_operator_if_required, write_last_project_cache
 
-        # Goal-intake may stage under the Host directory (no op_host yet).
+        # goal-intake also starts on the pinned operator package (empty Host cwd is not a control root).
         bad = assert_operator_if_required(args.project, action=str(args.action_id or ""))
         if bad is not None:
             bad["action_id"] = args.action_id
@@ -944,6 +1032,7 @@ def main(argv: list[str] | None = None) -> int:
             ticket_id=str(args.ticket or ""),
             result_file=getattr(args, "result_file", None),
             result_text=str(getattr(args, "result_text", "") or ""),
+            slice_id=str(getattr(args, "slice_id", "") or ""),
         )
         if result.get("ok"):
             write_last_project_cache(args.project)

@@ -258,6 +258,30 @@ def drive_until_interaction(
                     "error": str(result.get("error") or ""),
                 }
             )
+            eng = result.get("engine") if isinstance(result.get("engine"), dict) else {}
+            ask = result.get("ask_question")
+            if not isinstance(ask, dict):
+                ask = eng.get("ask_question") if isinstance(eng.get("ask_question"), dict) else None
+            if result.get("needs_human_decision") or eng.get("needs_human_decision") or ask:
+                return _done(
+                    {
+                        "ok": True,
+                        "stopped": True,
+                        "stop_reason": "interaction_required",
+                        "needs_human_decision": True,
+                        "ask_question": ask,
+                        "workflow_id": workflow_id,
+                        "phase": phase,
+                        "status": status,
+                        "executed": executed,
+                        "next": descriptor,
+                        "message_zh": str(
+                            result.get("message_zh")
+                            or (ask or {}).get("question")
+                            or f"确定性 Action `{action_id}` 需要人工选择后再继续。"
+                        ),
+                    }
+                )
             if not result.get("ok"):
                 _progress(f"{action_id} FAIL")
                 detail = _action_failure_detail(result)

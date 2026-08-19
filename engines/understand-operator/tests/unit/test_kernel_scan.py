@@ -377,3 +377,47 @@ def test_shifted_initbuffer_does_not_clobber_clang_merge(tmp_path: Path) -> None
     assert "input2Que[0]" in names
     assert "out1Que" in names
 
+
+def test_architecture_kernel_files_skips_root_cpp_owned_by_other_arch(tmp_path: Path) -> None:
+    root = tmp_path / "op"
+    (root / "op_kernel" / "arch35").mkdir(parents=True)
+    (root / "op_kernel" / "arch22").mkdir(parents=True)
+    (root / "op_kernel" / "arch35" / "k.h").write_text("void Current();\n", encoding="utf-8")
+    (root / "op_kernel" / "entry_apt.cpp").write_text(
+        '#include "arch35/k.h"\nvoid Apt() {}\n', encoding="utf-8"
+    )
+    (root / "op_kernel" / "entry.cpp").write_text(
+        '#include "arch22/old.h"\nvoid OldEntry() {}\n', encoding="utf-8"
+    )
+    (root / "op_kernel" / "arch22" / "old.h").write_text(
+        "void OldBody() { DataCopy(a, b, n); }\n", encoding="utf-8"
+    )
+    files = kscan.architecture_kernel_files(root, "arch35")
+    names = {p.name for p in files}
+    assert "k.h" in names
+    assert "entry_apt.cpp" in names
+    assert "entry.cpp" not in names
+    assert "old.h" not in names
+
+
+def test_kernel_corpus_does_not_follow_other_arch_includes(tmp_path: Path) -> None:
+    root = tmp_path / "op"
+    (root / "op_kernel" / "arch35").mkdir(parents=True)
+    (root / "op_kernel" / "arch22" / "basic_modules").mkdir(parents=True)
+    (root / "op_kernel" / "arch35" / "entry.h").write_text(
+        '#include "../arch22/tiling.h"\nvoid Kernel() { DataCopy(a, b, n); }\n',
+        encoding="utf-8",
+    )
+    (root / "op_kernel" / "arch22" / "tiling.h").write_text(
+        '#include "basic_modules/cube.h"\nstruct OldTiling {};\n',
+        encoding="utf-8",
+    )
+    (root / "op_kernel" / "arch22" / "basic_modules" / "cube.h").write_text(
+        "void Cube() { LoadAlign(v, p); }\n",
+        encoding="utf-8",
+    )
+    files = kscan.kernel_corpus(root, "arch35", include_walks=False)
+    posix = [p.as_posix().replace("\\", "/") for p in files]
+    assert any(p.endswith("arch35/entry.h") for p in posix)
+    assert not any("/arch22/" in p for p in posix)
+

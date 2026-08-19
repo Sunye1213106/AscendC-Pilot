@@ -64,12 +64,12 @@ python scripts/sync_shared_references.py --check
 | Prompt | 本次 task / input / constraints / output |
 | Agent YAML | identity / tools / `skill_ids` 上限 |
 | Docs | 解释性；测试不断言 docs 含某句 |
-| Agent YAML + invariant | 自然语言入口：第一次 `pilot_run(workflow=auto, intent=原文)`；`auto` ≡ `goal-intake` |
+| Agent YAML + invariant | 自然语言入口：第一次 `pilot_run(workflow=auto, intent=原文)`；无 active 目标时 `auto` ≡ `goal-intake`，有则 resume `task_plan` |
 | CE `change_capture` | PR URL vs 本地 diff 的 source 分流；不属于 Primary 探目录 |
 
 认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。**不存在**第六个 `workflow-orchestration` skill，也不要把编排权威写成那张 skill 图。编排权威是 Primary Goal Contract + reserved `goal-intake`（`auto` 别名）+ `plan_for`；Runtime 不二次解释自然语言。NL 禁止 Router 关键词分类（非 slash 返回 `primary_agent_route_required`）。没有独立 change-impact 角色（问变更影响 = 带着 diff 做 `/uo-query`）。
 
-CE source：有 allowlisted PR URL 时，在 Host 打开目录下 **新建子目录** clone exact-head，再从 changed-files 解析算子×架构矩阵；无 URL 时只吃当前算子仓本地 diff，不 clone。禁止把已打开的本地 fork 当成 PR head。
+CE source：有 allowlisted PR URL 时，在 Host 打开目录下 **新建子目录** clone exact-head，再从 changed-files 解析算子×架构矩阵；`.ascendc-pilot` 只落在 pin 到的算子工作目录，空打开目录不建控制面。无 URL 时只吃当前算子仓本地 diff，不 clone。禁止把已打开的本地 fork 当成 PR head。
 
 算子改码主流程：grilling → `/ce-plan`（写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴 review → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
 

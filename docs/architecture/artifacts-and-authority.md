@@ -1,6 +1,6 @@
 # 产物模型与权威边界
 
-AscendC-Pilot 在目标算子仓中维护运行状态和分析产物。UO、TG、CE 与 Pilot Runtime 共用 `.ascendc-pilot/`，下游只消费已通过检查的正式结果。
+AscendC-Pilot 在目标算子仓中维护运行状态和分析产物。UO、TG、CE 与 Pilot Runtime 共用 `.ascendc-pilot/`，下游只消费已通过检查的正式结果。空的 OpenCode 打开目录只做 PR clone 锚点，不建 `.ascendc-pilot`。
 
 ```text
 Source → UO CodeMap → TG / CE

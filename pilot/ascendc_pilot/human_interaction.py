@@ -50,6 +50,14 @@ def pending_path(project_root: Path) -> Path:
     return _control_root(project_root) / "pending_interaction.yaml"
 
 
+def _control_plane_writable(project_root: Path) -> bool:
+    """True when writing control files will not create `.ascendc-pilot` on an empty Host cwd."""
+    path = Path(project_root)
+    if (path / "op_host").is_dir() or (path / "op_kernel").is_dir():
+        return True
+    return (path / AGENT_DIR).exists()
+
+
 def _find_pending_elsewhere(project_root: Path) -> str:
     """Best-effort locate pending_interaction.yaml when --project is the Host cwd."""
     root = Path(project_root).expanduser()
@@ -181,7 +189,10 @@ def issue_interaction_request(
         "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "status": "pending",
     }
-    _dump(pending_path(project_root), req)
+    if _control_plane_writable(project_root):
+        _dump(pending_path(project_root), req)
+    else:
+        req["ephemeral"] = True
     return {
         "request_id": request_id,
         "run_id": rid,

@@ -209,6 +209,43 @@ def test_hosted_confirm_skips_tg_on_full_coverage_goal(tmp_path: Path) -> None:
     assert hosted_confirm_should_ask(tmp_path, state, action_id="plan_approve") is False
 
 
+def test_review_report_skips_when_goal_wants_tests(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "ce-review",
+        phase="summary",
+        force_phase=True,
+        architecture="arch35",
+        intent="审这个 PR 并生成针对性测例",
+    )
+    create_user_goal(
+        tmp_path,
+        intent_text="审这个 PR 并生成针对性测例",
+        llm_intent={
+            "objective_zh": "审查后生成测例",
+            "needed_capabilities": ["knowledge", "change_analysis", "test_generation"],
+            "source": {"kind": "pull_request"},
+        },
+        architecture="arch35",
+    )
+    state = load_state(tmp_path) or {}
+    state["workflow_id"] = "ce-review"
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="review_report") is False
+
+
+def test_review_report_asks_without_test_goal(tmp_path: Path) -> None:
+    start_workflow(
+        tmp_path,
+        "ce-review",
+        phase="summary",
+        force_phase=True,
+        architecture="arch35",
+        intent="只做代码审查",
+    )
+    state = load_state(tmp_path) or {}
+    assert hosted_confirm_should_ask(tmp_path, state, action_id="review_report") is True
+
+
 def test_hosted_confirm_asks_tg_without_goal(tmp_path: Path) -> None:
     start_workflow(
         tmp_path,

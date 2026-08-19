@@ -15,8 +15,9 @@ _legacy.CONTROL_PLANE_SKILL_IDS = ()
 
 _legacy.WORKFLOW_ENTRIES["ce-review"]["description"] = (
     "只读审查已有代码改动：PR、工作区 diff 或 base...head。PR source 已由 Workspace Manager "
-    "固定到隔离 exact-head workspace，禁止用本地 fork 冒充。除 findings 外，汇总 changed_scope、"
-    "affected_scope、risks、test_intent、validation_targets，作为后续 TG Planning Context。"
+    "固定到隔离 exact-head workspace，禁止用本地 fork 冒充。双轴结论在 Task 回复；插件用原文 ACK。"
+    "对人的汇总是：审查完成、PR 做什么、改了哪些文件、问题 1…、要测的变量。目标已含测例时 Host "
+    "continue_goal 进 tg-init，不要再 auto intake。"
 )
 _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
     "规划测试义务，只落 tg/plan.md。两项核心输入都必须存在：tg/init.yaml + Planning Context。"

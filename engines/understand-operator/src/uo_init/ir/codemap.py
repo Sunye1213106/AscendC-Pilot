@@ -29,6 +29,32 @@ from uo_init.ir.evidence import (
 from uo_init.ir.relation import Relation, RelationKind
 
 
+def append_write_site(attrs: dict[str, Any], *, file: str, line: int, rhs: str) -> None:
+    """Keep every assignment site; last-write-wins RHS stays a separate attr."""
+    loc = int(line or 0)
+    if loc <= 0:
+        return
+    path = str(file or "").replace("\\", "/")
+    site = {"file": path, "line": loc, "rhs": str(rhs or "")}
+    sites = attrs.setdefault("write_sites", [])
+    if not isinstance(sites, list):
+        sites = []
+        attrs["write_sites"] = sites
+    key = (path, loc, site["rhs"])
+    if any(
+        (
+            str(row.get("file") or "").replace("\\", "/"),
+            int(row.get("line") or 0),
+            str(row.get("rhs") or ""),
+        )
+        == key
+        for row in sites
+        if isinstance(row, dict)
+    ):
+        return
+    sites.append(site)
+
+
 def _is_truncated_kernel_branch(cond: str) -> bool:
     text = str(cond or "").strip()
     if not text:
@@ -350,6 +376,17 @@ class CodeMap:
             existing.file = entity.file
             existing.line_start = entity.line_start
             existing.line_end = entity.line_end
+        elif entity.file and existing.file == entity.file:
+            kind_name = existing.kind.value if isinstance(existing.kind, EntityKind) else str(existing.kind)
+            if kind_name in {EntityKind.FUNCTION.value, EntityKind.METHOD.value}:
+                if int(existing.line_start or 0) <= 0 and int(entity.line_start or 0) > 0:
+                    existing.line_start = entity.line_start
+                if int(entity.line_end or 0) > int(existing.line_end or 0):
+                    existing.line_end = entity.line_end
+            elif kind_name not in {EntityKind.BRANCH.value, EntityKind.OPERATION.value}:
+                if int(entity.line_end or 0) > int(existing.line_end or 0):
+                    existing.line_end = entity.line_end
+        self._merge_write_sites(existing, entity)
         settled = str(existing.attrs.get("root_status") or "")
         if settled in {"REACHED", "PROJECT", "BUILTIN"}:
             existing.status = "extracted"
@@ -397,6 +434,29 @@ class CodeMap:
         if len(sites) > 1:
             existing.attrs["definition_sites"] = sites
 
+    @staticmethod
+    def _merge_write_sites(existing: Entity, incoming: Entity) -> None:
+        merged: list[dict[str, Any]] = []
+        seen: set[tuple[str, int, str]] = set()
+
+        def _add(site: Any) -> None:
+            if not isinstance(site, dict):
+                return
+            file = str(site.get("file") or "").replace("\\", "/")
+            line = int(site.get("line") or 0)
+            rhs = str(site.get("rhs") or "")
+            if line <= 0 or (file, line, rhs) in seen:
+                return
+            seen.add((file, line, rhs))
+            merged.append({"file": file, "line": line, "rhs": rhs})
+
+        for blob in (existing.attrs.get("write_sites"), incoming.attrs.get("write_sites")):
+            if isinstance(blob, list):
+                for site in blob:
+                    _add(site)
+        if merged:
+            existing.attrs["write_sites"] = merged
+
     def upsert(
         self,
         kind: EntityKind | str,
@@ -406,11 +466,16 @@ class CodeMap:
         attrs: dict[str, Any] | None = None,
         file: str = "",
         line: int = 0,
+        line_end: int | None = None,
         status: str = "extracted",
         confidence: float = 1.0,
     ) -> Entity:
         kind_name = kind.value if isinstance(kind, EntityKind) else str(kind)
         attrs_doc = dict(attrs or {})
+        start = int(line or 0)
+        end = int(line_end) if line_end is not None and int(line_end) > 0 else start
+        if end < start:
+            end = start
 
         # A selected source Kernel is first materialised from its verified
         # __global__ signature, then the generic body scanner sees the same
@@ -434,8 +499,8 @@ class CodeMap:
                 entity.attrs = merge_attrs(entity.attrs, self._stamp_attrs(attrs_doc))
                 if file:
                     entity.file = file
-                    entity.line_start = int(line)
-                    entity.line_end = int(line)
+                    entity.line_start = start
+                    entity.line_end = max(int(entity.line_end or 0), end)
                 entity.status = status
                 entity.confidence = confidence
                 return entity
@@ -448,8 +513,8 @@ class CodeMap:
                 name=name,
                 attrs=self._stamp_attrs(attrs_doc),
                 file=file,
-                line_start=int(line),
-                line_end=int(line),
+                line_start=start,
+                line_end=end,
                 status=status,
                 confidence=confidence,
             )
@@ -801,6 +866,9 @@ class CodeMap:
                 file=ev_file,
                 line=ev_line,
             )
+            append_write_site(
+                field_e.attrs, file=ev_file, line=ev_line, rhs=str(getattr(ev, "rhs", "") or "")
+            )
             if fn_name:
                 fn = cm.upsert(
                     EntityKind.FUNCTION,
@@ -809,7 +877,13 @@ class CodeMap:
                     file=ev_file,
                     line=ev_line,
                 )
-                cm.link(RelationKind.WRITES, fn.id, field_e.id)
+                rel = cm.link(RelationKind.WRITES, fn.id, field_e.id)
+                append_write_site(
+                    rel.attrs, file=ev_file, line=ev_line, rhs=str(getattr(ev, "rhs", "") or "")
+                )
+                sites = rel.attrs.get("write_sites")
+                if isinstance(sites, list) and sites:
+                    rel.attrs["sites"] = sites
             if not ev_file or ev_line <= 0:
                 continue
             for guard in guards:

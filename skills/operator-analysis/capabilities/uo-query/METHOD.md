@@ -24,12 +24,14 @@ pilot_cli command=`uo-query --project <算子绝对路径> [--architecture arch3
 
 | 参数形态 | 返回 | 随后 |
 | --- | --- | --- |
-| 一个标识符 | 实体卡片：定义点、按边类型分组的邻居、`next` | 跟 `next` 再查下一个标识符 |
+| 一个标识符 | 实体卡片：定义点、`definition_span`、`extras.callers`/`callees`、按边类型分组的邻居、`next` | 同名 METHOD 优先定义实体，不要把 `kernel_call_boundary` 当定义。跟 `next` 再查 |
 | `Dim=V` 或 `Dim=V,Other=V` | 模板覆盖：`dim_coverage` / `matching_block_count` / `total_matched` | 空命中看 `nearby` / `hint`，不要把第一页 snippet 当全集 |
-| `--file` 与 `--line` | 从该位点走图 | 行号与路径从上一张卡片复制 |
+| `--file` 与 `--line` | 从该位点走图 | 行号与路径从上一张卡片复制。`count:0` 是该行无 span（format hunk 常见），**不是文件未索引**；改查 Added identifiers |
 | 无 pattern | 算子索引：launch 阶段、维名、TilingData 名、gaps 计数 | 再用标识符或 `Dim=V` 深入 |
 
-卡片已带 `file` + 行号 + snippet：该 span **视为已 Read**，不要再 Read 同一文件同一段。仅当 snippet 标明截断、且本 FOCUS 需要截断之外的行，才按卡片给出的 `file` 做窗口 Read（offset 用卡片行号）。`--file` 与 Read 路径只从卡片 `file` / `next` 复制，禁止猜测相对路径。
+代码审查最快路径：Added identifiers **并行 form-1**；一张字段卡含 Host writers 与 Kernel readers。不要先 form-3 打 format hunk。snippet 标明 `truncated` 时不得下「枚举未用」；看 `write_sites` / `uncovered_writes`。
+
+卡片已带 `file` + 行号 + snippet：该 span **视为已 Read**，不要再 Read 同一文件同一段。仅当 snippet 标明截断、且本 FOCUS 需要截断之外的行，才按卡片给出的 `file` 做窗口 Read（offset 用卡片行号）。`--file` 与 Read 路径只从卡片 `file` / `next` 复制，禁止猜测相对路径。长仓库路径打不中时改用算子相对短路径（`op_host/...`）。
 
 `count:0` 不是「图里没有」：按 `hint` 换短名再调用。仍空才 `pilot_cli` command=`ro-search --pattern <pat> --paths <已 citation 的文件>`。禁止 `findstr /S`、仓级 `grep`/`rg`、`dir /B`。
 

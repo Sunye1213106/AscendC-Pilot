@@ -8,20 +8,20 @@ review 阶段由 Host 并行派两个隔离子代理（`spec-review` / `standard
 
 ## 输入
 
-- PR flow：Workspace Manager 已把 exact PR head 放到隔离 workspace，并确定当前算子；`change_capture` 提供该 PR diff
+- PR flow：Workspace Manager 已把 exact PR head 放到隔离 workspace，并确定当前算子；`change_capture` 提供 **index.md（主输入）** 与可选 hunk 小窗，不是整份 `diff.md`
 - 本地 flow：`/ce-apply` 后的工作区 diff，或用户显式给出的 `base...head`
 - 当前 `.uo`：只作为语义查询权威
 
-有 PR URL 时禁止用用户当前本地 fork / 未提交改动冒充 patch。没有 diff 时标 UNRESOLVED 并停，不要猜。
+有 PR URL 时禁止用用户当前本地 fork / 未提交改动冒充 patch。没有 diff 索引时标 UNRESOLVED 并停，不要猜。
 
 侧别：`op_kernel/` → Kernel，`op_host/` → Tiling。分侧陈述。
 
 ## 语义与影响范围
 
-先 `uo-query --file PATH --line N`，再对 FOCUS 名做标识符查询。不要传 `--mode`。禁止 `explain-*` / Grep 通读。
+先读 `change_capture/index.md` / `uo_hints.md`，再 **并行 form-1 查 Added identifiers**，不要先 `uo-query --file --line` 打 format hunk。不要传 `--mode`。禁止 `explain-*` / Grep 通读 / 线性读完整 `diff.md`。snippet 截断不得下「枚举未用」。Kernel 以字段 readers 行为准。每个 changed file：finding / format-only / UNREVIEWED。
 
-- **Spec**：有 `{slug}_plan.md` 对照计划；纯 PR 则从 diff + UO 确定改动范围、直接影响、跨层影响和潜在回归面。
-- **Standards**：对照 `references/ascendc-checks.md`、跨层契约、H0/H1。
+- **Spec**：有 `{slug}_plan.md` 对照计划；纯 PR 无计划时从 PR 标题 + 索引 + UO **推断粗意图并验收完成度**（做完 / 半截 / 超范围）。禁止只陈述变更理解。
+- **Standards**：对照 `references/ascendc-checks.md`、跨层契约、H0/H1。同样用 index + uo-query，不通读 diff。
 - 两轴汇总时除了 findings，还必须给后续 TG 可直接使用的 **TG Planning Context**：
   - `changed_scope`：PR 实际修改的模块/路径/关键语义
   - `affected_scope`：经 UO 证明可能受影响的输入、分支、tiling/kernel 契约或输出行为

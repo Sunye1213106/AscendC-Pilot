@@ -55,7 +55,7 @@ Host (OpenCode / Cursor / Codex)
 
 **Host Session Driver**（运行时传输角色）：把 `start → auto → Task → finalize → auto` 从 Primary LLM 挪到 Host Adapter。OpenCode 暴露自定义工具 `pilot_run`；ACP 返回结构化 `host_step`（`dispatch_subagent` / `ask_human` / `done` / `failed` / `continue_goal`）与一次性 `dispatch_ticket`。Driver 不获得 advance/complete/写 canonical 的权力，也不做领域判断。
 
-自然语言任务：第一次 `pilot_run(workflow=auto, intent=原文)`。`auto` 是 reserved `goal-intake`，只做结构校验、PR exact-head workspace 和 TaskPlan 落盘。Runtime 不二次解释自然语言。有 PR URL 时在 OpenCode 打开目录下新建文件夹 clone，从 changed-files 解析算子×架构；无 URL 才吃本地 diff。显式 `workflow=<id>` 一次只跑该工作流。查询不进该环。没有独立 change-impact 工作流：问变更影响 = 带着 diff 做 `/uo-query`。
+自然语言任务：第一次 `pilot_run(workflow=auto, intent=原文)`。没有进行中的 user_goal 时 `auto` 做 reserved `goal-intake`（结构校验、PR exact-head workspace、TaskPlan）。已有 active 目标时 `auto` **恢复** `task_plan` 当前格（uo-init → ce-review → tg-init），禁止再开一轮 goal-intake。双轴审查 Task 用原文 ACK；Host 继续下一格 todo。Runtime 不二次解释自然语言。有 PR URL 时在 OpenCode 打开目录下新建文件夹 clone，从 changed-files 解析算子×架构；无 URL 才吃本地 diff。已经是算子包（含 `op_host/`）时不再嵌套 clone。**空打开目录不落 `.ascendc-pilot`**，控制面只写在 pin 到的算子工作目录。显式 `workflow=<id>` 一次只跑该工作流。查询不进该环。没有独立 change-impact 工作流：问变更影响 = 带着 diff 做 `/uo-query`。
 
 `authorize` 热路径：`acp serve-authorize --ipc-dir …` 常驻进程 + 短 TTL verdict 缓存；失败时回退 `spawnSync acp authorize`。
 
@@ -121,7 +121,7 @@ TG Workflow -> deterministic product engines
 User intent -> pilot_run / acp start
             -> acp run-action auto   # 排空确定性 + 返回 host_step
             -> Host 派发 Task(stub) 或 AskQuestion
-            -> acp dispatch-result   # finalize + 继续 drive
+            -> acp dispatch-result   # native Task 原文 ACK；齐了则 continue_goal 进下一格 todo
 ```
 
 **只读查询是例外**：`uo-query` 不是 Session Driver 工作流。简单查询直接调用插件 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数），复杂查询同一轮原生 `Task(agent=uo-query)`，可独立查询的目标分别委派。Host 不 `start`、不发 ticket、不 `finalize`。

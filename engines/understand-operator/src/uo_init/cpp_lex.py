@@ -27,6 +27,14 @@ _CONTROL = frozenset(
         "decltype",
     }
 )
+_DECL_KW_RE = re.compile(
+    r"\b(?:__aicore__|__global__|__host__|__device__|inline|static|constexpr|"
+    r"virtual|explicit|const|volatile|typename|struct|class|enum|friend|"
+    r"extern|register|mutable|restrict|__restrict__)\b"
+)
+_QUALIFIED_TAIL_RE = re.compile(
+    r"((?:[A-Za-z_]\w*(?:\s*<[^;{}()]*>)?\s*::\s*)*[A-Za-z_~]\w*)\s*$"
+)
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,62 @@ def line_index(text: str) -> list[int]:
 
 def line_at(newlines: list[int], offset: int) -> int:
     return bisect.bisect_right(newlines, max(0, offset)) + 1
+
+
+def _strip_leading_templates(text: str) -> str:
+    s = str(text or "").lstrip()
+    while s.startswith("template"):
+        lt = s.find("<")
+        if lt < 0:
+            break
+        depth = 0
+        end = -1
+        for idx, ch in enumerate(s[lt:], lt):
+            if ch == "<":
+                depth += 1
+            elif ch == ">":
+                depth -= 1
+                if depth == 0:
+                    end = idx
+                    break
+        if end < 0:
+            break
+        s = s[end + 1 :].lstrip()
+    return s
+
+
+def _strip_angle_args(text: str) -> str:
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch == "<":
+            depth += 1
+            continue
+        if ch == ">":
+            depth = max(0, depth - 1)
+            continue
+        if depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
+def method_identity(qualified: str) -> tuple[str, str, str]:
+    """Return ``(short_name, owner_class, signature)``.
+
+    Kernel declarators often include ``template<>`` / ``__aicore__`` / a return
+    type. Those belong in ``signature``, not in ``name`` or ``owner``. Owner is
+    the class ident without template arguments so ``this``-typed calls bind.
+    """
+    signature = str(qualified or "").strip()
+    text = _DECL_KW_RE.sub(" ", _strip_leading_templates(signature))
+    text = re.sub(r"\s+", " ", text).strip()
+    match = _QUALIFIED_TAIL_RE.search(text)
+    qname = _strip_angle_args(match.group(1) if match else text)
+    qname = re.sub(r"\s+", "", qname)
+    parts = [p for p in qname.split("::") if p]
+    short = parts[-1] if parts else ""
+    owner = parts[-2] if len(parts) >= 2 else ""
+    return short, owner, signature
 
 
 def mask_non_code(text: str) -> str:

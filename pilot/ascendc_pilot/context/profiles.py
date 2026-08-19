@@ -19,7 +19,7 @@ class QuerySlice:
 
     method: str
     # seed_from: where seed entity ids come from (relative to project uo/tg roots).
-    # Supported: unresolved_blockers | lemma_leads | open_keys | none
+    # Supported: unresolved_blockers | lemma_leads | open_keys | change_capture_identifiers | none
     seed_from: str = "none"
     limit: int = 16
     # Extra kwargs passed to the query method when applicable.
@@ -163,8 +163,7 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-review/references/finding-format.md",
         ),
         query_slices=(
-            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
-            QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
+            QuerySlice(method="agent_query", seed_from="change_capture_identifiers", limit=6),
         ),
         token_budget=4500,
     ),

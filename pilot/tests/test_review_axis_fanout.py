@@ -63,7 +63,10 @@ def test_review_axis_fanout_writes_isolated_stubs(tmp_path: Path) -> None:
     spec_method = (sdir / "method_spec.md").read_text(encoding="utf-8")
     std_method = (sdir / "method_standards.md").read_text(encoding="utf-8")
     assert "只做 **Spec** 轴" in spec_method
+    assert "推断" in spec_method and "完成度" in spec_method
+    assert "只陈述变更理解" not in spec_method or "禁止只陈述" in spec_method
     assert "只做 **Standards** 轴" in std_method
+    assert "index.md" in spec["task_prompt_stub"] or "plan.md" in spec["task_prompt_stub"]
     assert not (tmp_path / ".ascendc-pilot" / "arch0" / "ce" / "review" / "index.yaml").is_file()
 
 

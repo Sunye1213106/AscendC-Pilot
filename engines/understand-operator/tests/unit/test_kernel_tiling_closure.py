@@ -654,3 +654,34 @@ def test_unique_short_field_does_not_bind_wrong_receiver_type(tmp_path: Path) ->
     ]
     assert writes == []
     assert a.id
+
+
+def test_rebuild_bodies_false_skips_v1_call_graph(tmp_path: Path) -> None:
+    root = _root(tmp_path)
+    (root / "op_kernel" / "toy_apt.cpp").write_text(
+        '''
+        #include "arch35/entry.h"
+        template <bool A, bool B>
+        __global__ __aicore__ void toy_kernel(
+            __gm__ uint8_t *q, __gm__ uint8_t *out,
+            __gm__ uint8_t *workspace, __gm__ uint8_t *tiling_data) {
+          Helper(q);
+        }
+        ''',
+        encoding="utf-8",
+    )
+    (root / "op_kernel" / "arch35" / "entry.h").write_text(
+        "inline __aicore__ void Helper(__gm__ uint8_t *q) { (void)q; }\n",
+        encoding="utf-8",
+    )
+    cm = _base_cm()
+    cm.upsert(EntityKind.KERNEL, "toy_kernel", attrs={"provenance": "source_kernel_signature"})
+    finalize_kernel_tiling_closure(cm, root, architecture="arch35", rebuild_bodies=False)
+    meta = cm.meta["kernel_tiling_closure"]
+    assert meta["kernel_scopes"] == 0
+    assert meta["kernel_bound_call_sites"] == 0
+    assert not any(
+        str(e.attrs.get("provenance") or "") == "source_kernel_definition"
+        for e in cm.entities.values()
+    )
+    assert meta["kernel_entries"] >= 1

@@ -228,6 +228,16 @@ def is_other_arch_path(path: Path | str, architecture: str) -> bool:
     return False
 
 
+def keep_lexical_kernel_path(path: Path | str, architecture: str) -> bool:
+    """True when METHOD/CALLS / SourceIndex may scan this kernel file.
+
+    Clang may confirm a foreign-arch tiling header for types. That path stays
+    in ``selected_kernel_files``. Lexical body scans must not mint a second
+    architecture's kernel graph from ``op_kernel/archNN/**``.
+    """
+    return not is_other_arch_path(path, architecture)
+
+
 def include_root_owned_architecture(path: Path | str) -> str:
     """Arch folder a ``-I`` root sits in. Empty when the directory is arch-neutral.
 

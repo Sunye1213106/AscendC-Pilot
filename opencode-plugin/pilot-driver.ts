@@ -431,8 +431,8 @@ function createProgressReporter(
   const row = createToolRowProgressReporter({
     client: opts?.client,
     sessionId: resolvedSessionId(ctx, opts),
-    messageId: String(opts?.messageId || ctx?.messageID || lastToolSession.messageID || "").trim(),
-    callID: String(opts?.callID || ctx?.callID || lastToolSession.callID || "").trim(),
+    messageId: String(opts?.messageId || ctx?.messageID || "").trim(),
+    callID: String(opts?.callID || ctx?.callID || "").trim(),
     serverUrl: opts?.serverUrl,
     directory: opts?.directory,
     baseInput: primitiveToolArgs(opts?.baseInput),
@@ -565,7 +565,8 @@ function createProgressReporter(
       const ev = parseAcpProgressLine(line)
       if (ev.kind === "ignore") return
       if (ev.kind === "run" || ev.kind === "advance") {
-        if (ev.id) state.currentId = ev.id
+        const known = state.steps.some((s) => s.id === ev.id)
+        if (ev.id && (known || !state.steps.length)) state.currentId = ev.id
         if (ev.label) state.currentLabel = ev.label
         if (ev.kind === "run") state.detail = ""
         else if (ev.detail) state.detail = ev.detail
@@ -595,9 +596,15 @@ function createProgressReporter(
       flush()
     },
     setWorkflow(id: string) {
-      if (id) {
-        state.workflow = id
-        if (!state.steps.length) state.steps = defaultSteps(id)
+      const next = String(id || "").trim()
+      if (next && next !== state.workflow) {
+        state.workflow = next
+        state.steps = []
+        state.currentId = ""
+        state.currentLabel = "starting"
+        state.detail = ""
+      } else if (next) {
+        state.workflow = next
       }
       flush()
     },
@@ -620,6 +627,21 @@ function createProgressReporter(
   }
 }
 
+function writeLastProjectCache(project: string, sessionId?: string): void {
+  try {
+    const cache = resolve(openCodeHome(), "ascendc-last-project")
+    mkdirSync(openCodeHome(), { recursive: true })
+    const looksLikeOperator =
+      existsSync(resolve(project, "op_kernel")) || existsSync(resolve(project, "op_host"))
+    if (!looksLikeOperator) return
+    writeFileSync(cache, project, "utf-8")
+    const sid = String(sessionId || "").trim()
+    if (sid) writeFileSync(`${cache}.session`, sid, "utf-8")
+  } catch {
+    // best-effort
+  }
+}
+
 function acpControlEnv(opts?: {
   sessionId?: string
   workflow?: string
@@ -629,6 +651,12 @@ function acpControlEnv(opts?: {
   const wf = String(opts?.workflow || "").trim()
   if (sid) env.ASCENDC_SESSION_ID = sid
   if (wf) env.ASCENDC_WORKFLOW_ID = wf
+  if (wf === "auto" || wf === "goal-intake") {
+    // Previous operator sessions leave UO_ARCH=arch35 on the OpenCode process.
+    // Drain would then look under .ascendc-pilot/arch35/ instead of goal/.
+    env.UO_ARCH = ""
+    env.ASCENDC_ARCH = ""
+  }
   return env
 }
 
@@ -799,28 +827,29 @@ export async function submitDispatchResult(
   project: string,
   ticket: string,
   resultText: string,
-  opts?: { sessionId?: string; workflow?: string },
+  opts?: { sessionId?: string; workflow?: string; sliceId?: string },
 ): Promise<Record<string, unknown>> {
   const pending = readLatestPendingDispatch()
-  return runAcpJson(
-    [
-      "dispatch-result",
-      "--project",
-      project,
-      "--ticket",
-      ticket,
-      "--result-text",
-      String(resultText || "").slice(0, 200_000),
-    ],
+  const argv = [
+    "dispatch-result",
+    "--project",
     project,
-    {
-      timeoutMs: 180_000,
-      env: acpControlEnv({
-        sessionId: opts?.sessionId || pending?.sessionId,
-        workflow: opts?.workflow || pending?.workflow,
-      }),
-    },
-  )
+    "--ticket",
+    ticket,
+    "--result-text",
+    String(resultText || "").slice(0, 200_000),
+  ]
+  const sliceId = String(opts?.sliceId || "").trim()
+  if (sliceId) {
+    argv.push("--slice-id", sliceId)
+  }
+  return runAcpJson(argv, project, {
+    timeoutMs: 180_000,
+    env: acpControlEnv({
+      sessionId: opts?.sessionId || pending?.sessionId,
+      workflow: opts?.workflow || pending?.workflow,
+    }),
+  })
 }
 
 /** Cap matches ``acp dispatch-result --result-text`` (keep Explore-length answers). */
@@ -832,6 +861,68 @@ export const NATIVE_TASK_RESULT_CAP = 200_000
  */
 export function extractKbAnswer(text: string): string {
   return String(text || "").slice(0, NATIVE_TASK_RESULT_CAP)
+}
+
+export function canonicalWorkflowId(wf: string): string {
+  const w = String(wf || "").trim()
+  return w === "auto" ? "goal-intake" : w
+}
+
+/** `auto` with an active TaskPlan resumes the current workflow instead of re-intake. */
+export function resumeActiveGoal(args: {
+  workflow: string
+  project: string
+  architecture: string
+  forceNew: boolean
+  live: Record<string, unknown>
+}): { workflow: string; project: string; architecture: string } {
+  if (args.forceNew) return args
+  const requested = canonicalWorkflowId(args.workflow)
+  if (requested !== "goal-intake" && args.workflow !== "auto") return args
+  const goal =
+    args.live.user_goal && typeof args.live.user_goal === "object"
+      ? (args.live.user_goal as Record<string, unknown>)
+      : {}
+  if (String(goal.status || "") !== "active") return args
+  const nxt = String(args.live.task_plan_current_workflow_id || "").trim()
+  if (!nxt || nxt === "auto" || nxt === "goal-intake") return args
+  const pin = String(goal.project || "").trim()
+  const arch = String(goal.architecture || args.architecture || "").trim()
+  let project = args.project
+  if (pin) {
+    try {
+      project = resolve(pin)
+    } catch {
+      project = pin
+    }
+  }
+  return { workflow: nxt, project, architecture: arch || args.architecture }
+}
+
+export async function driveContinueGoalAfterAck(args: {
+  client: any
+  pluginInput?: { directory?: string; serverUrl?: unknown }
+  step: Record<string, unknown>
+  sessionId?: string
+}): Promise<Record<string, unknown>> {
+  const nextWf = String(args.step.next_workflow_id || "").trim()
+  if (!nextWf) {
+    return { ok: false, error: "CONTINUE_GOAL_MISSING_WORKFLOW" }
+  }
+  const continued = await runPilotDriver(
+    args.client,
+    {
+      workflow: nextWf,
+      project: String(args.step.project || ""),
+      architecture: String(args.step.architecture || "") || undefined,
+      intent: String(args.step.intent || "") || undefined,
+      hostDirectory: args.pluginInput?.directory
+        ? String(args.pluginInput.directory)
+        : undefined,
+    },
+    { sessionID: String(args.sessionId || ""), sessionId: String(args.sessionId || "") },
+  )
+  return continued
 }
 
 function authIpcDir(): string {
@@ -1426,8 +1517,10 @@ function nativeTaskHandoff(args: {
       `请在同一轮并行派发 ${tasks.length} 个 OpenCode 原生 Task：agent=\`${actor}\`。` +
       `每个 Task 的 prompt 必须原样为 host_step.tasks[i].task_prompt_stub（禁止改写）。` +
       `不要再用 host_step.task_prompt_stub 开第 ${tasks.length + 1} 个子代理。` +
-      `点各 Task 卡片可跳进子会话看思考。全部返回后由 Primary 综合成一份 kb-answer-v1，` +
-      `禁止只转述某一个，禁止发明子代理没引用的事实。综合后再 finalize（一张 ticket）。` +
+      `点各 Task 卡片可跳进子会话看思考。插件用各 Task 原文 ACK 并推进 task_plan 下一格` +
+      `（有测例目标时是 tg-init）。全部返回后 Primary 只把两段原文用人话合并给用户：` +
+      `审查完成；这个 PR 做什么；改了哪些文件；问题 1/2/3…；要测的变量（字段与取值）。` +
+      `禁止综合成 kb-answer-v1。禁止发明子代理没写的事实。不要再调 workflow=auto 做 intake。` +
       (ids ? `切片：${ids}。` : "")
     return {
       ok: true,
@@ -1511,15 +1604,7 @@ export async function runPilotDriver(
 
   // force_new / 删除重开 applies only to this start, not continue_goal's next workflow.
   let applyForceNew = Boolean(args.forceNew)
-  try {
-    const cache = resolve(openCodeHome(), "ascendc-last-project")
-    mkdirSync(openCodeHome(), { recursive: true })
-    const looksLikeOperator =
-      existsSync(resolve(project, "op_kernel")) || existsSync(resolve(project, "op_host"))
-    if (looksLikeOperator) writeFileSync(cache, project, "utf-8")
-  } catch {
-    // best-effort
-  }
+  writeLastProjectCache(project, parentSessionId)
   const adoptPinnedProject = (payload: Record<string, unknown> | undefined | null) => {
     const pinned = String(payload?.project || "").trim()
     if (!pinned) return
@@ -1528,15 +1613,7 @@ export async function runPilotDriver(
     } catch {
       project = pinned
     }
-    try {
-      const cache = resolve(openCodeHome(), "ascendc-last-project")
-      mkdirSync(openCodeHome(), { recursive: true })
-      const looksLikeOperator =
-        existsSync(resolve(project, "op_kernel")) || existsSync(resolve(project, "op_host"))
-      if (looksLikeOperator) writeFileSync(cache, project, "utf-8")
-    } catch {
-      // best-effort
-    }
+    writeLastProjectCache(project, parentSessionId)
   }
   const startOnce = (extra: string[] = []) => {
     const argv = ["start", workflow, "--project", project, ...extra]
@@ -1649,14 +1726,30 @@ export async function runPilotDriver(
     return payload
   }
 
-  const live = applyForceNew
+  const live0 = applyForceNew
     ? { ok: false }
     : await runAcpJson(["status", "--project", project], project, acpOpts(30_000))
+  const adoptedGoal = resumeActiveGoal({
+    workflow,
+    project,
+    architecture,
+    forceNew: applyForceNew,
+    live: live0 as Record<string, unknown>,
+  })
+  const goalShifted =
+    adoptedGoal.workflow !== workflow || adoptedGoal.project !== project
+  workflow = adoptedGoal.workflow
+  project = adoptedGoal.project
+  if (adoptedGoal.architecture) architecture = adoptedGoal.architecture
+  reporter?.setWorkflow(workflow)
+  const live = goalShifted
+    ? await runAcpJson(["status", "--project", project], project, acpOpts(30_000))
+    : live0
   const liveWf = String((live as Record<string, unknown>).workflow_id || "")
   const liveStatus = String((live as Record<string, unknown>).status || "")
   const sameLive =
     !applyForceNew &&
-    liveWf === workflow &&
+    (liveWf === workflow || canonicalWorkflowId(liveWf) === canonicalWorkflowId(workflow)) &&
     ["running", "rework_required", "human_required"].includes(liveStatus)
 
   const started = sameLive
@@ -1666,10 +1759,20 @@ export async function runPilotDriver(
         skip_start: true,
         run_id: (live as Record<string, unknown>).run_id,
         status: liveStatus,
-        workflow_id: liveWf,
+        workflow_id: liveWf || workflow,
         todo: (live as Record<string, unknown>).todo,
       }
     : await consumeStartAsks(await startOnce())
+  if (
+    started.resumed_goal === true ||
+    (started.skip_start === true && String(started.workflow_id || "").trim())
+  ) {
+    const nxt = String(started.workflow_id || "").trim()
+    if (nxt && nxt !== "auto" && nxt !== "goal-intake") {
+      workflow = nxt
+      reporter?.setWorkflow(nxt)
+    }
+  }
   adoptPinnedProject(started)
   const startedKind = String((started.host_step as HostStep | undefined)?.kind || "")
   if (started.answer_from_source === true || startedKind === "answer_from_source") {
@@ -1979,8 +2082,10 @@ export function createPilotRunTool(
     pilot_run: {
       description:
         "Run AscendC-Pilot via Host Session Driver. " +
-        "Natural language first call: workflow=auto (reserved goal-intake) with intent=user text verbatim. " +
-        "Then follow next_workflow_id. Explicit slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
+        "Natural language: workflow=auto with intent=user text verbatim. " +
+        "auto intakes only when no active user_goal; otherwise it resumes task_plan (uo-init → ce-review → tg-init). " +
+        "Do not call auto again to re-intake after review Tasks return — Host ACKs native Task text and continues the next todo. " +
+        "Explicit slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
         "(agent=actor_id, prompt=task_prompt_stub verbatim). " +
         "Host Driver syncs Todo and owns AskQuestion when the UI is available. Never uo-query. " +
@@ -1989,12 +2094,12 @@ export function createPilotRunTool(
         workflow: {
           type: "string",
           description:
-            "auto for natural language (reserved goal-intake), or an existing workflow id (uo-init, tg-plan, ce-review, …). Explicit slash uses the existing id. Never uo-query.",
+            "auto: first call intakes a Goal Contract; later auto resumes the current task_plan step. Never uo-query. Explicit slash uses the existing id.",
         },
         project: {
           type: "string",
           description:
-            "OpenCode open-directory anchor, or the operator package after a PR pin. With a PR URL this is where the clone folder is created, not the local fork to analyse.",
+            "OpenCode open-directory is the clone anchor only. `.ascendc-pilot` lands on the operator package after a PR pin (`op_host`/`op_kernel`). With a PR URL this is where the clone folder is created, not the local fork to analyse.",
         },
         architecture: {
           type: "string",
@@ -2028,7 +2133,7 @@ export function createPilotRunTool(
           messageID: String(
             (ctx as any)?.messageID || lastToolSession.messageID || "",
           ).trim(),
-          callID: String((ctx as any)?.callID || lastToolSession.callID || "").trim(),
+          callID: String((ctx as any)?.callID || "").trim(),
           askQuestion: ctx?.askQuestion || (ctx as any)?.ask,
           question: ctx?.question,
           metadata: ctx?.metadata,

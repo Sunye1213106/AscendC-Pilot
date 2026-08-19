@@ -807,12 +807,7 @@ def clang_include_paths(
                     dtype_variant="DT_FLOAT16",
                     parse_flags=list(args),
                 )
-                _tu_cache.store_ast(
-                    ast_key,
-                    tu,
-                    op_dir=op_dir or getattr(walk_ctx, "op_dir", None),
-                    arch=getattr(walk_ctx, "arch_dir", None),
-                )
+                _tu_cache.store_live_ast(ast_key, idx, tu, side=side)
             except Exception:  # noqa: BLE001
                 pass
     except Exception as exc:  # noqa: BLE001
@@ -844,8 +839,8 @@ def clang_include_paths(
         seen.add(key)
         out.append(Path(name))
     probe = _probe_from_parsed_tu(tu, path_s, str(op_dir or ""))
-    # Do not full-walk here. Serialize the TU so extract can skip a second
-    # cold parse; walking stays in extract (process/thread pool).
+    # Walking stays in extract: prepare-side host+kernel walks share the GIL
+    # and inflate kernel ast_walk from ~16s (isolated) to ~70s.
     return ClangIncludeResult(ok=True, paths=out, probe=probe)
 
 

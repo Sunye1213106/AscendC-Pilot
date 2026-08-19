@@ -26,6 +26,16 @@ _ARCH_TOKEN = re.compile(r"\barch[0-9A-Za-z._-]+\b", re.I)
 LAST_PROJECT_CACHE = opencode_home() / "ascendc-last-project"
 HARNESS_BIN_CACHE = opencode_home() / "ascendc-harness-bin"
 
+# Host Driver cannot pop AskQuestion with zero options (ses_fe7f).
+PROJECT_SWITCH_OPTIONS = [
+    {"label": "我已换到算子目录或空目录，请重新贴 PR / 再试", "value": "retry_elsewhere"},
+    {"label": "停止本次目标", "value": "stop"},
+]
+ARCHITECTURE_FALLBACK_OPTIONS = [
+    {"label": "稍后手工指定 architecture 再试", "value": "retry"},
+    {"label": "停止本次目标", "value": "stop"},
+]
+
 
 def _last_project_cache_path() -> Path:
     """Prefer the intake wrapper's LAST_PROJECT_CACHE so tests can monkeypatch it."""
@@ -153,7 +163,7 @@ def _fallback_operator(
     name = _explicit_basename(explicit)
     if cached is not None and name and name.lower() == cached.name.lower():
         return cached
-    env_path = _env_operator()
+    env_path = _env_operator() if allow_last_project else None
     if env_path is not None:
         return env_path
     cwd = Path.cwd().resolve()
@@ -497,7 +507,7 @@ def default_cli_project(
             )
             if fallback is not None:
                 return fallback
-        else:
+        elif allow_last_project:
             env_path = _env_operator()
             if env_path is not None:
                 return env_path
@@ -528,7 +538,7 @@ def assert_operator_project(root: Path | str, *, action: str = "") -> dict[str, 
         ),
         "ask_question": {
             "prompt_zh": "请确认算子源码目录（含 op_host/ 或 op_kernel/）",
-            "options": [],
+            "options": list(PROJECT_SWITCH_OPTIONS),
             "allow_free_text": True,
             "field": "project",
         },
@@ -849,7 +859,7 @@ def _resolve_operator_from_pr_workspace(
             ),
             "ask_question": {
                 "prompt_zh": "请换到算子目录、算子仓或空工作区",
-                "options": [],
+                "options": list(PROJECT_SWITCH_OPTIONS),
                 "allow_free_text": True,
                 "field": "project",
             },
@@ -908,7 +918,7 @@ def _resolve_operator_from_pr_workspace(
             ),
             "ask_question": {
                 "prompt_zh": "请选择要使用的算子目录（含 op_host/ 或 op_kernel/）",
-                "options": [],
+                "options": list(PROJECT_SWITCH_OPTIONS),
                 "allow_free_text": True,
                 "field": "project",
             },
@@ -990,7 +1000,7 @@ def prepare_workflow_start(
                     ),
                     "ask_question": {
                         "prompt_zh": "请确认算子源码目录",
-                        "options": [],
+                        "options": list(PROJECT_SWITCH_OPTIONS),
                         "allow_free_text": True,
                         "field": "project",
                     },
@@ -1022,6 +1032,16 @@ def prepare_workflow_start(
             resolved_from_intent = True
         else:
             try:
+                from ascendc_pilot.run_resume import load_pr_architecture_pin
+
+                pin = load_pr_architecture_pin(root)
+            except Exception:  # noqa: BLE001
+                pin = []
+            if len(pin) == 1 and pin[0] in labels:
+                arch = pin[0]
+                resolved_from_intent = True
+        if not arch:
+            try:
                 from ascendc_pilot.occupancy import get_session_binding
 
                 pinned = str((get_session_binding(root) or {}).get("architecture") or "").strip()
@@ -1046,7 +1066,7 @@ def prepare_workflow_start(
                     ),
                     "ask_question": {
                         "prompt_zh": "未扫到 arch* 目录，请手工输入 architecture",
-                        "options": [],
+                        "options": list(PROJECT_SWITCH_OPTIONS),
                         "allow_free_text": True,
                         "field": "architecture",
                     },

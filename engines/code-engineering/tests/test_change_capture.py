@@ -10,6 +10,44 @@ def _git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
 
 
+def test_extract_added_identifiers_and_index() -> None:
+    from code_engineering.change.capture import (
+        extract_added_identifiers,
+        render_change_index,
+        suggested_file_line_queries,
+        parse_diff_ranges,
+    )
+
+    diff = """diff --git a/op_kernel/arch35/k.cpp b/op_kernel/arch35/k.cpp
+--- a/op_kernel/arch35/k.cpp
++++ b/op_kernel/arch35/k.cpp
+@@ -1,1 +1,3 @@
+ int x;
++void CalBandDeterIndex() {}
++int DeterBandScheduleMode = 1;
+"""
+    names = extract_added_identifiers(diff)
+    assert "CalBandDeterIndex" in names
+    assert "DeterBandScheduleMode" in names
+    ranges = parse_diff_ranges(diff)
+    from code_engineering.change.capture import suggested_ident_queries
+
+    queries = suggested_ident_queries(names) + suggested_file_line_queries(ranges)
+    assert queries
+    text = render_change_index(
+        subject="formal deter band",
+        ranges=ranges,
+        identifiers=names,
+        queries=queries,
+    )
+    assert "Do not linearly read" in text
+    assert "CalBandDeterIndex" in text
+    suggested = [ln for ln in text.splitlines() if ln.startswith("- `uo-query")]
+    assert suggested, text
+    assert suggested[0] == "- `uo-query CalBandDeterIndex`"
+    assert any("uo-query --file" in ln for ln in suggested)
+
+
 def test_parse_and_capture_smoke(tmp_path: Path) -> None:
     _git(tmp_path, "init")
     source = tmp_path / "kernel.cpp"

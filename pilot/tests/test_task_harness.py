@@ -152,6 +152,25 @@ def test_todo_uses_public_plan(tmp_path: Path) -> None:
     assert len(in_prog) <= 1
 
 
+def test_todo_uses_public_plan_without_auto_session(tmp_path: Path) -> None:
+    create_user_goal(
+        tmp_path,
+        intent_text="审查改动",
+        llm_intent={"source": {"kind": "local"}, "objective_zh": "审查改动"},
+        public_plan=[
+            {"id": "acquire_change", "summary_zh": "获取改动", "status": "passed"},
+            {"id": "review_change", "summary_zh": "审查改动", "status": "in_progress"},
+        ],
+        architecture="arch35",
+        session_kind="expert",
+    )
+    start_workflow(tmp_path, "ce-review", phase="review", force_phase=True, architecture="arch35")
+    board = build_todo(tmp_path)
+    ids = [it["id"] for it in board["native_items"]]
+    assert ids == ["acquire_change", "review_change"]
+    assert board["native_items"][1]["status"] == "in_progress"
+
+
 def test_tg_confirms_do_not_ask(tmp_path: Path) -> None:
     start_workflow(
         tmp_path,
@@ -381,6 +400,11 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
     assert out.get("ok") is True
     assert Path(str(out.get("project"))).resolve() == pinned.resolve()
     assert out.get("next_workflow_id") == "uo-init"
+    pin = pinned / ".ascendc-pilot" / "pr_arch_pin.yaml"
+    assert pin.is_file(), pin
+    pin_doc = yaml.safe_load(pin.read_text(encoding="utf-8")) or {}
+    assert pin_doc.get("architectures") == ["arch35"]
+    assert pin_doc.get("source") == "pr_changed_files"
 
 
 def test_intent_promote_empty_roots_asks(tmp_path: Path, monkeypatch) -> None:

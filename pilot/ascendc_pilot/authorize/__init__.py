@@ -497,6 +497,22 @@ def _is_engine_source(norm: str) -> bool:
 
 
 _OPERATOR_SOURCE_SEGS = ("/op_host/", "/op_kernel/", "/op_graph/", "/common/")
+_PS_IF_BLOCK = re.compile(r"\bif\s*(?:\([^;]*\))?\s*\{([^{}]*)\}", re.I)
+_GIT_WRITE_HEAD = re.compile(
+    r"^\s*git(?:\.exe)?\s+"
+    r"(checkout|switch|reset|commit|push|clean|rebase|merge|stash|add|rm|"
+    r"mv|restore|worktree|tag|branch|fetch|pull|clone|init)\b",
+    re.I,
+)
+_GIT_REVIEW_HEAD = re.compile(
+    r"^\s*git(?:\.exe)?\s+(log|show|diff|rev-parse|status|name-rev|describe)\b",
+    re.I,
+)
+_GIT_SHOW_PATHSPEC = re.compile(r"\b[0-9a-f]{7,40}:|/dev/null|HEAD:", re.I)
+_GIT_STAT_FLAGS = re.compile(
+    r"(?:^|\s)(--stat|--name-only|--name-status|--format=|--pretty=|-s|--oneline|--no-patch)\b",
+    re.I,
+)
 
 
 def _is_diff_or_changeset_path(path_s: str) -> bool:
@@ -512,10 +528,24 @@ def _is_diff_or_changeset_path(path_s: str) -> bool:
     )
 
 
+def _blob_is_tests_query(path_s: str, pattern: str = "") -> bool:
+    """True when Glob/Grep is aimed at tests/, including tests/ut/op_host."""
+    pat = (pattern or "").replace("\\", "/").lower().lstrip("./")
+    pn = "/" + (path_s or "").replace("\\", "/").lower().lstrip("/")
+    if pat == "tests" or pat.startswith("tests/") or pat.startswith("tests/**"):
+        return True
+    if "/tests/" in pn or pn.rstrip("/").endswith("/tests") or pn.startswith("/tests"):
+        return True
+    blob = f"{path_s or ''} {pattern or ''}".replace("\\", "/").lower()
+    return "/tests/" in blob or blob.strip().startswith("tests/")
+
+
 def _is_operator_source_path(path_s: str, command: str = "") -> bool:
     """True for operator Host/Kernel/common source, not tests or Pilot artifacts."""
     blob = f"{path_s or ''} {command or ''}"
     if not blob.strip():
+        return False
+    if _blob_is_tests_query(path_s, command):
         return False
     norm = "/" + blob.replace("\\", "/").lower().lstrip("/")
     if "/.ascendc-pilot/" in "/" + (path_s or "").replace("\\", "/").lower().lstrip("/"):
@@ -526,6 +556,93 @@ def _is_operator_source_path(path_s: str, command: str = "") -> bool:
     if _is_diff_or_changeset_path(path_s):
         return False
     return any(seg in norm for seg in _OPERATOR_SOURCE_SEGS)
+
+
+def _flatten_ps_if(command: str) -> str:
+    """Unwrap simple PowerShell ``if { readonly }`` so inspect still matches."""
+    out = str(command or "")
+    prev = None
+    while prev != out:
+        prev = out
+        out = _PS_IF_BLOCK.sub(r"\1", out)
+    return out
+
+
+def _norm_glob_rel(value: str) -> str:
+    s = (value or "").replace("\\", "/").strip()
+    while s.startswith("./"):
+        s = s[2:]
+    if s in {".", ""}:
+        return ""
+    return s.strip("/")
+
+
+def _glob_scope_candidates(rel: str, pattern: str) -> list[str]:
+    """Join Glob search-root rel with pattern so scopes match the actual query."""
+    rel_n = _norm_glob_rel(rel)
+    pat = _norm_glob_rel(pattern)
+    out: list[str] = []
+    if rel_n:
+        out.append(rel_n)
+    if pat:
+        joined = f"{rel_n}/{pat}".strip("/") if rel_n else pat
+        joined = _norm_glob_rel(joined)
+        if joined and joined not in out:
+            out.append(joined)
+        prefix = re.sub(r"/?\*\*.*$", "", pat)
+        prefix = re.sub(r"/\*$", "", prefix)
+        prefix = _norm_glob_rel(prefix)
+        if prefix:
+            pref_join = f"{rel_n}/{prefix}".strip("/") if rel_n else prefix
+            pref_join = _norm_glob_rel(pref_join)
+            if pref_join and pref_join not in out:
+                out.append(pref_join)
+    return out
+
+
+def _glob_confined_to_pilot_artifacts(path_s: str, pattern: str) -> bool:
+    blob = f"{path_s or ''} {pattern or ''}".replace("\\", "/").lower()
+    if any(tok in blob for tok in (".ascendc-pilot", "ce/plan", "ce/**", "/runs/", "runs/", "context/", "/uo/", "uo/", "/tg/", "tg/")):
+        pat = (pattern or "").replace("\\", "/").lower()
+        if any(seg.strip("/") in pat.split("/") for seg in ("op_host", "op_kernel", "op_graph")):
+            return "/.ascendc-pilot/" in blob or ".ascendc-pilot" in blob
+        return True
+    return False
+
+
+def _glob_would_scan_operator_source(path_s: str, pattern: str) -> bool:
+    if _blob_is_tests_query(path_s, pattern):
+        return False
+    if _glob_confined_to_pilot_artifacts(path_s, pattern):
+        return False
+    blob = f"{path_s or ''} {pattern or ''}".replace("\\", "/").lower()
+    pat = (pattern or "").replace("\\", "/").lower()
+    if any(seg in pat for seg in ("op_host", "op_kernel", "op_graph", "common/")):
+        return True
+    pn = "/" + (path_s or "").replace("\\", "/").lower().lstrip("/")
+    if any(seg in pn + "/" for seg in _OPERATOR_SOURCE_SEGS):
+        return True
+    if any(seg in blob for seg in _OPERATOR_SOURCE_SEGS):
+        return True
+    return False
+
+
+def _is_readonly_review_git(command: str) -> bool:
+    """ce-reviewer may take commit titles / --stat, not blobs or full patches."""
+    cmd = (command or "").strip()
+    if not _is_git_cli(cmd):
+        return False
+    if _GIT_WRITE_HEAD.search(cmd):
+        return False
+    if not _GIT_REVIEW_HEAD.search(cmd):
+        return False
+    head = _GIT_REVIEW_HEAD.match(cmd)
+    sub = str(head.group(1) or "").lower() if head else ""
+    if sub in {"log", "rev-parse", "status", "name-rev", "describe"}:
+        return True
+    if _GIT_SHOW_PATHSPEC.search(cmd):
+        return False
+    return bool(_GIT_STAT_FLAGS.search(cmd))
 
 
 def _has_uo_product(project_root: Path | None) -> bool:
@@ -569,7 +686,12 @@ def _deny_uncited_operator_source(
 ) -> dict[str, Any] | None:
     """Force CodeMap query instead of scanning operator source when a graph exists."""
     tool_l = (tool or "read").strip().lower()
-    if not _is_operator_source_path(path_s, command):
+    if tool_l == "glob":
+        if _glob_confined_to_pilot_artifacts(path_s, command):
+            return None
+        if not _glob_would_scan_operator_source(path_s, command):
+            return None
+    elif not _is_operator_source_path(path_s, command):
         return None
     if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
         return None
@@ -881,12 +1003,20 @@ def _verdict_for_git_cli(
             status=status,
             command=(command or "")[:200],
         )
+    if agent_l == "ce-reviewer" and _is_readonly_review_git(command):
+        return _ok(
+            "allow",
+            "GIT_READONLY_REVIEW",
+            "ce-reviewer 允许只读 git log/show --stat/diff --stat/rev-parse，禁止 checkout 与源码 blob。",
+            status=status,
+            command=(command or "")[:200],
+        )
     return None
 
 
 def _is_readonly_inspect_bash(command: str) -> bool:
     """Allow ls / Get-ChildItem / pwd / cd … for structure probing (no writes)."""
-    cmd = (command or "").strip()
+    cmd = _flatten_ps_if(command or "").strip()
     if not cmd:
         return False
     cmd_l = cmd.lower().replace("\\", "/")
@@ -1705,7 +1835,28 @@ def _authorize_impl(
 
                 if rel is not None:
                     scopes = agent_read_scopes(agent_l, project_root)
-                    if scopes and not path_matches_scope(rel, scopes):
+                    pattern = cmd_raw if cmd_raw else cmd
+                    rel_cands = (
+                        _glob_scope_candidates(rel, pattern)
+                        if tool_l == "glob"
+                        else [rel]
+                    )
+                    scope_hit = False
+                    if not scopes:
+                        scope_hit = False
+                    else:
+                        for cand in rel_cands:
+                            if cand and path_matches_scope(cand, scopes):
+                                scope_hit = True
+                                break
+                        if not scope_hit and (rel in {"", "."}) and tool_l == "glob":
+                            from ascendc_pilot.agents_registry import split_scope_ns
+
+                            if any(split_scope_ns(s)[0] == "pilot" for s in scopes) and any(
+                                path_matches_scope(c, scopes) for c in rel_cands if c
+                            ):
+                                scope_hit = True
+                    if scopes and not scope_hit:
                         # Namespaced method/source scopes need absolute-path matching.
                         from ascendc_pilot.agents_registry import scope_allows_path
 
@@ -1720,7 +1871,18 @@ def _authorize_impl(
                                 rel=rel,
                             )
                     if lease.get("allowed_read_paths") or lease.get("forbidden_read_paths"):
-                        path_check = lease_allows_read_path(lease, rel)
+                        path_check = {"ok": False}
+                        for cand in rel_cands or [rel]:
+                            path_check = lease_allows_read_path(lease, cand or rel)
+                            if path_check.get("ok"):
+                                break
+                        if not path_check.get("ok") and tool_l == "glob" and (rel in {"", "."}):
+                            # Glob of agent root: allow when a pattern candidate is in-scope.
+                            for cand in rel_cands:
+                                if cand:
+                                    path_check = lease_allows_read_path(lease, cand)
+                                    if path_check.get("ok"):
+                                        break
                         if not path_check.get("ok"):
                             return _ok(
                                 "deny",
@@ -1741,7 +1903,11 @@ def _authorize_impl(
                     from ascendc_pilot.authorize.lease import lease_allows_source_path
 
                     scopes = agent_read_scopes(agent_l, project_root)
-                    if scopes and scope_allows_path(path_s, scopes, project_root=project_root):
+                    if tool_l == "glob" and _glob_confined_to_pilot_artifacts(
+                        path_s, cmd_raw if cmd_raw else cmd
+                    ):
+                        pass
+                    elif scopes and scope_allows_path(path_s, scopes, project_root=project_root):
                         # method: / source: agent ceiling matched
                         pass
                     else:

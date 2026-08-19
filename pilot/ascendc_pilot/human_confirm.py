@@ -220,9 +220,9 @@ def _ce_goal_going_to_apply(project_root: Path, state: dict[str, Any]) -> bool:
     return "implement" in caps or any(w in {"ce-plan", "ce-apply"} for w in wfs)
 
 
-def _auto_goal_needs_tests(project_root: Path) -> bool:
+def _auto_goal_wants_tests(project_root: Path) -> bool:
+    """True when the active auto goal includes test generation (any current workflow)."""
     try:
-        from ascendc_pilot.planning.task_plan import current_workflow_id, load_task_plan
         from ascendc_pilot.user_goal import is_auto_session, load_user_goal
     except Exception:  # noqa: BLE001
         return False
@@ -231,7 +231,15 @@ def _auto_goal_needs_tests(project_root: Path) -> bool:
         return False
     caps = list((goal.get("intent") or {}).get("needed_capabilities") or [])
     wfs = list((goal.get("intent") or {}).get("needed_workflows") or [])
-    if "test_generation" not in caps and not any(str(w).startswith("tg-") for w in wfs):
+    return "test_generation" in caps or any(str(w).startswith("tg-") for w in wfs)
+
+
+def _auto_goal_needs_tests(project_root: Path) -> bool:
+    try:
+        from ascendc_pilot.planning.task_plan import current_workflow_id, load_task_plan
+    except Exception:  # noqa: BLE001
+        return False
+    if not _auto_goal_wants_tests(project_root):
         return False
     nxt = current_workflow_id(load_task_plan(project_root))
     return bool(nxt) and str(nxt).startswith("tg-")
@@ -260,6 +268,8 @@ def hosted_confirm_should_ask(
     if wid in {"tg-init", "tg-plan"} and aid in {"human_confirm", "plan_approve"}:
         return False
     if aid == "apply_report" and _auto_goal_needs_tests(project_root):
+        return False
+    if aid == "review_report" and _auto_goal_wants_tests(project_root):
         return False
     if aid == "review_report":
         return True
@@ -742,6 +752,7 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
         "human_confirm",
         "plan_approve",
         "apply_report",
+        "review_report",
     } and not hosted_confirm_should_ask(
         project_root, state, action_id=action_id
     )

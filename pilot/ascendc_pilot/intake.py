@@ -70,7 +70,7 @@ def _resolve_operator_from_pr_workspace(
             ),
             "ask_question": {
                 "prompt_zh": "请换到算子目录、算子仓或空工作区",
-                "options": [],
+                "options": list(_legacy.PROJECT_SWITCH_OPTIONS),
                 "allow_free_text": True,
                 "field": "project",
             },
@@ -109,12 +109,48 @@ def _resolve_operator_from_pr_workspace(
     return resolved
 
 
+_GOAL_INTAKE_IDS = frozenset({"auto", "goal-intake"})
+
+
+def _should_materialize_pr_before_start(wf: str, root: Path, pr_url: str) -> bool:
+    """Clone+pin before start so `.ascendc-pilot` never lands on an empty Host cwd."""
+    if not pr_url or _is_isolated_pr_path(root):
+        return False
+    if wf in _legacy._workflows_need_operator():
+        return True
+    return wf in _GOAL_INTAKE_IDS and not _legacy.looks_like_operator_package(root)
+
+
+def _operator_workdir_required(wf: str, root: Path) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "needs_human_decision": True,
+        "decision_kind": "project",
+        "reason_code": "OPERATOR_WORKDIR_REQUIRED",
+        "workflow_id": wf,
+        "project": str(root),
+        "message_zh": (
+            "还没有算子工作目录，不能在空打开目录落下 .ascendc-pilot。"
+            "请贴 PR URL（系统会 clone 并 pin 到含 op_host/ 或 op_kernel/ 的算子目录），"
+            "或把 --project 指到已有算子包。"
+        ),
+        "ask_question": {
+            "prompt_zh": "请打开算子目录，或贴 PR 链接后再启动",
+            "options": list(_legacy.PROJECT_SWITCH_OPTIONS),
+            "allow_free_text": True,
+            "field": "project",
+        },
+    }
+
+
 def _mark_workspace_step(root_before: Path, root_after: Path) -> None:
     """Best-effort close the non-workflow workspace utility step if a plan exists."""
     try:
         from ascendc_pilot.planning.task_plan import load_task_plan, mark_step_passed, write_task_plan
 
         for candidate in (root_before, root_after):
+            if not _legacy.looks_like_operator_package(candidate):
+                continue
             plan = load_task_plan(candidate)
             if not plan:
                 continue
@@ -142,15 +178,50 @@ def prepare_workflow_start(
     pr_url = extract_pr_url_from_intent(intent_text)
     pr_context: dict[str, Any] = {}
 
-    if pr_url and wf in _legacy._workflows_need_operator() and not _is_isolated_pr_path(root):
+    if pr_url and _legacy._pilot_workspace_forbidden(root):
+        return _legacy._attach_intake_request(
+            {
+                "ok": False,
+                "needs_human_decision": True,
+                "decision_kind": "project",
+                "reason_code": "PILOT_CHECKOUT_FORBIDDEN",
+                "workflow_id": wf,
+                "project": str(root),
+                "pr_url": pr_url,
+                "message_zh": (
+                    "当前 OpenCode 工作区是 AscendC-Pilot 仓，禁止把算子源码 clone 进来。"
+                    "请打开算子目录、算子仓根目录，或空目录后再贴 PR。"
+                ),
+                "ask_question": {
+                    "prompt_zh": "请换到算子目录、算子仓或空工作区",
+                    "options": list(_legacy.PROJECT_SWITCH_OPTIONS),
+                    "allow_free_text": True,
+                    "field": "project",
+                },
+            },
+            original_root,
+        )
+
+    if _should_materialize_pr_before_start(wf, root, pr_url):
         resolved = _resolve_operator_from_pr_workspace(root, intent_text, wf)
         if resolved is not None:
             if not resolved.get("ok"):
                 return _legacy._attach_intake_request(resolved, original_root)
             root = Path(str(resolved["project"])).expanduser().resolve()
             pr_context = dict(resolved)
-            if not arch:
-                arch = str(resolved.get("architecture") or "").strip()
+            resolved_arch = str(resolved.get("architecture") or "").strip()
+            # goal-intake occupancy stays under goal/; arch* is pinned for later uo-init.
+            if wf not in _GOAL_INTAKE_IDS and not arch:
+                arch = resolved_arch
+            pin_arches = list(resolved.get("changed_architectures") or [])
+            if not pin_arches and (arch or resolved_arch):
+                pin_arches = [arch or resolved_arch]
+            try:
+                from ascendc_pilot.run_resume import save_pr_architecture_pin
+
+                save_pr_architecture_pin(root, pin_arches)
+            except Exception:  # noqa: BLE001
+                pass
             _mark_workspace_step(original_root, root)
             # PR has already been materialized. Do not let legacy intake inspect
             # the original Host cwd or acquire the PR a second time.
@@ -164,6 +235,13 @@ def prepare_workflow_start(
         project_explicit=project_explicit,
         intent=intent_text,
     )
+    if result.get("ok") and wf in _GOAL_INTAKE_IDS:
+        landed = Path(str(result.get("project") or root)).expanduser().resolve()
+        if not _legacy.looks_like_operator_package(landed):
+            return _legacy._attach_intake_request(
+                _operator_workdir_required(wf, landed),
+                original_root,
+            )
     if result.get("ok") and pr_context:
         result = dict(result)
         for key in (

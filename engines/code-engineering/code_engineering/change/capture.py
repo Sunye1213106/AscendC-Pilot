@@ -71,6 +71,186 @@ def parse_two_sided_spans(diff_text: str) -> list[dict[str, Any]]:
         })
     return rows
 
+
+_IDENT = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]{2,})\b")
+_IDENT_SKIP = frozenset(
+    {
+        "int", "void", "bool", "char", "long", "short", "float", "double", "auto",
+        "const", "static", "inline", "return", "class", "struct", "enum", "namespace",
+        "template", "typename", "using", "public", "private", "protected", "virtual",
+        "override", "nullptr", "true", "false", "this", "if", "else", "for", "while",
+        "switch", "case", "break", "continue", "sizeof", "include", "define",
+        "ACLNN", "TILING", "KERNEL", "TODO", "FIXME",
+        "std", "vector", "string", "size_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+        "int8_t", "int16_t", "int32_t", "int64_t", "batch", "size", "type", "value",
+        "data", "info", "flag", "mode", "ptr",
+    }
+)
+
+
+def extract_added_identifiers(diff_text: str, *, limit: int = 24) -> list[str]:
+    """Unique identifiers from added diff lines (intent seeds, not a spec)."""
+    seen: list[str] = []
+    for line in str(diff_text or "").splitlines():
+        if not line.startswith("+") or line.startswith("+++"):
+            continue
+        for match in _IDENT.finditer(line[1:]):
+            name = match.group(1)
+            if name in _IDENT_SKIP or name.startswith("_"):
+                continue
+            if name.isupper() and len(name) <= 16:
+                continue
+            if name not in seen:
+                seen.append(name)
+            if len(seen) >= limit:
+                return seen
+    return seen
+
+
+def operator_relative_path(path: str) -> str:
+    """Strip repo prefixes. Keep ``tests/`` even when the file sits under ``tests/ut/op_host``."""
+    norm = str(path or "").replace("\\", "/").lstrip("./")
+    for marker in ("tests/", "examples/"):
+        idx = norm.find(marker)
+        if idx >= 0:
+            return norm[idx:]
+    for marker in ("op_host/", "op_kernel/", "common/"):
+        idx = norm.find(marker)
+        if idx >= 0:
+            return norm[idx:]
+    return norm
+
+
+def suggested_file_line_queries(
+    ranges: dict[str, list[tuple[int, int]]], *, limit: int = 8
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for path, spans in ranges.items():
+        raw = str(path or "").replace("\\", "/")
+        rel = operator_relative_path(path)
+        if (
+            "/tests/" in raw
+            or raw.startswith("tests/")
+            or rel.startswith("tests/")
+            or rel.endswith(".md")
+        ):
+            continue
+        for start, _end in spans:
+            out.append({"file": rel, "line": int(start)})
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def _ident_suggest_rank(name: str) -> int:
+    if name.isupper():
+        return 2
+    camel = name[:1].isupper() or any(c.isupper() for c in name[1:])
+    if camel and len(name) >= 6:
+        return 0
+    return 1
+
+
+def suggested_ident_queries(identifiers: list[str], *, limit: int = 8) -> list[dict[str, Any]]:
+    items = [str(n).strip() for n in identifiers if str(n or "").strip()]
+    ranked = [name for _, name in sorted(enumerate(items), key=lambda p: (_ident_suggest_rank(p[1]), p[0]))]
+    out: list[dict[str, Any]] = []
+    for ident in ranked:
+        out.append({"ident": ident})
+        if len(out) >= limit:
+            return out
+    return out
+
+
+def iter_hunk_windows(
+    diff_text: str, *, max_hunks: int = 12, max_lines: int = 80
+) -> list[tuple[str, int, str]]:
+    """Small per-hunk windows so reviewers need not read the full patch."""
+    windows: list[tuple[str, int, str]] = []
+    current_path = ""
+    buf: list[str] = []
+    hunk_start = 0
+    for line in str(diff_text or "").splitlines():
+        fm = _DIFF_FILE.match(line)
+        if fm:
+            if buf and current_path and hunk_start:
+                windows.append((current_path, hunk_start, "\n".join(buf[:max_lines])))
+                if len(windows) >= max_hunks:
+                    return windows
+            current_path = (fm.group(1) or fm.group(2) or "").strip()
+            buf = []
+            hunk_start = 0
+            continue
+        hm = _HUNK.match(line)
+        if hm:
+            if buf and current_path and hunk_start:
+                windows.append((current_path, hunk_start, "\n".join(buf[:max_lines])))
+                if len(windows) >= max_hunks:
+                    return windows
+            hunk_start = int(hm.group(3))
+            buf = [line]
+            continue
+        if buf:
+            buf.append(line)
+    if buf and current_path and hunk_start and len(windows) < max_hunks:
+        windows.append((current_path, hunk_start, "\n".join(buf[:max_lines])))
+    return windows
+
+
+def render_change_index(
+    *,
+    subject: str = "",
+    log_oneline: str = "",
+    base_sha: str = "",
+    head_sha: str = "",
+    ranges: dict[str, list[tuple[int, int]]] | None = None,
+    identifiers: list[str] | None = None,
+    queries: list[dict[str, Any]] | None = None,
+) -> str:
+    """Markdown index: the Spec/Standards primary input instead of full diff.md."""
+    ranges = ranges or {}
+    identifiers = identifiers or []
+    queries = queries or []
+    lines = [
+        "# Change capture index",
+        "",
+        "Do not linearly read `diff.md`. Use this index, then `uo-query --file --line`.",
+        "",
+        "## Subject",
+        subject.strip() or "(no subject)",
+        "",
+        f"- base: `{base_sha or '-'}`",
+        f"- head: `{head_sha or '-'}`",
+        "",
+    ]
+    if log_oneline.strip():
+        lines.extend(["## git log --oneline", "```", log_oneline.strip(), "```", ""])
+    lines.append("## Changed files / hunks")
+    if not ranges:
+        lines.append("(none)")
+    for path, spans in ranges.items():
+        span_s = ", ".join(f"{a}-{b}" for a, b in spans)
+        lines.append(f"- `{operator_relative_path(path)}`: {span_s}")
+    lines.extend(["", "## Added identifiers", ""])
+    if identifiers:
+        lines.append(", ".join(f"`{n}`" for n in identifiers))
+    else:
+        lines.append("(none extracted)")
+    lines.extend(["", "## Suggested uo-query (form 1 identifiers, then form 3 with ident)", ""])
+    if not queries:
+        lines.append("(none)")
+    for q in queries:
+        ident = str(q.get("ident") or "").strip()
+        if ident:
+            lines.append(f"- `uo-query {ident}`")
+            continue
+        path = operator_relative_path(str(q.get("file") or ""))
+        line = int(q.get("line") or 0)
+        if path and line:
+            lines.append(f"- `uo-query --file {path} --line {line}`")
+    lines.append("")
+    return "\n".join(lines)
+
 _SOURCE_SUFFIXES = {".cpp", ".cc", ".c", ".h", ".hpp", ".cuh", ".cu", ".py"}
 _WIN_GIT_CANDIDATES = (
     r"C:\Program Files\Git\cmd\git.exe",

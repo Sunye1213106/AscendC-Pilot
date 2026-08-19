@@ -378,7 +378,9 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     next_workflow = "" if completed or acceptance_failed else current_workflow_id(plan)
     nxt = current_step(plan) if next_workflow else None
     next_project = str((nxt or {}).get("project") or "")
-    next_architecture = str((nxt or {}).get("architecture") or "")
+    next_architecture = str(
+        goal.get("architecture") or (nxt or {}).get("architecture") or ""
+    )
     if next_project:
         try:
             from ascendc_pilot.intake import write_last_project_cache
@@ -428,6 +430,31 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
         "next_project": next_project,
         "next_architecture": next_architecture,
     }
+
+
+def drive_progress_for_status(project_root: Path | str) -> dict[str, Any]:
+    """Arch-neutral hint so ``auto`` can resume ``task_plan`` instead of re-intake.
+
+    ``control/user_goal.yaml`` does not depend on ``UO_ARCH``. Status with an
+    empty arch still needs the current workflow id and operator pin.
+    """
+    from ascendc_pilot.planning.task_plan import current_workflow_id, load_task_plan
+
+    goal = load_user_goal(project_root)
+    plan = load_task_plan(project_root)
+    out: dict[str, Any] = {}
+    if goal:
+        out["user_goal"] = {
+            "status": str(goal.get("status") or ""),
+            "project": str(goal.get("project") or ""),
+            "architecture": str(goal.get("architecture") or ""),
+            "session_kind": str(goal.get("session_kind") or ""),
+            "label_zh": str(goal.get("label_zh") or ""),
+        }
+    nxt = current_workflow_id(plan)
+    if nxt:
+        out["task_plan_current_workflow_id"] = nxt
+    return out
 
 
 def conflict_ask(

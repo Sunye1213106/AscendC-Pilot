@@ -101,18 +101,41 @@ def architecture_kernel_files(source_root: Path, architecture: str) -> list[Path
     is one ORIG_DTYPE walk; TQue / DataCopy / Cast in the rest of this
     architecture's kernel tree still belong in the CodeMap.
     """
-    from uo_init.source_layout import is_foreign_arch_entry_tu, is_other_arch_path
+    from uo_init.source_layout import (
+        architecture_in_scope,
+        entry_include_architecture,
+        is_foreign_arch_entry_tu,
+        is_other_arch_path,
+    )
 
     arch = require_architecture(architecture)
     kernel_root = Path(source_root) / "op_kernel"
     if not kernel_root.is_dir():
         return []
+    try:
+        kernel_root_key = kernel_root.resolve()
+    except OSError:
+        kernel_root_key = kernel_root
     out: list[Path] = []
     for path in sorted(kernel_root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in _KERNEL_SOURCE_SUFFIXES:
             continue
         if is_foreign_arch_entry_tu(path, arch) or is_other_arch_path(path, arch):
             continue
+        try:
+            parent_key = path.parent.resolve()
+        except OSError:
+            parent_key = path.parent
+        if (
+            parent_key == kernel_root_key
+            and path.suffix.lower() in {".cpp", ".cc", ".cxx"}
+        ):
+            try:
+                owns = entry_include_architecture(read_text(path))
+            except OSError:
+                owns = ""
+            if owns and not architecture_in_scope(owns, arch):
+                continue
         out.append(path)
     return out
 
@@ -275,7 +298,7 @@ def _quoted_include_targets(path: Path, search_roots: list[Path]) -> list[Path]:
 
 def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
     """Files named by cached Clang walks (the TU Clang actually saw)."""
-    from uo_init.source_layout import is_foreign_arch_entry_tu
+    from uo_init.source_layout import is_foreign_arch_entry_tu, is_other_arch_path
 
     try:
         from uo_init import tu_cache
@@ -298,7 +321,7 @@ def walk_cited_kernel_files(source_root: Path, architecture: str) -> list[Path]:
         path = _resolve_cited_file(text, root)
         if path is None:
             continue
-        if is_foreign_arch_entry_tu(path, arch):
+        if is_foreign_arch_entry_tu(path, arch) or is_other_arch_path(path, arch):
             continue
         try:
             key = path.resolve()
@@ -375,7 +398,7 @@ def kernel_corpus(
     one hop. Walk-cited this-op / sibling files are unioned so fusion wrappers
     still see IFA/PFA call sites. CANN headers stay out of the lexical corpus.
     """
-    from uo_init.source_layout import is_foreign_arch_entry_tu
+    from uo_init.source_layout import is_foreign_arch_entry_tu, is_other_arch_path
 
     arch = require_architecture(architecture)
     root = Path(source_root)
@@ -390,7 +413,7 @@ def kernel_corpus(
     for path in extras:
         if not path.is_file():
             continue
-        if is_foreign_arch_entry_tu(path, arch):
+        if is_foreign_arch_entry_tu(path, arch) or is_other_arch_path(path, arch):
             continue
         # Walk-cited CANN / cube-template headers are already Clang CallExprs.
         # Union only this-op and sibling files so FIA locate still sees IFA.
@@ -413,7 +436,7 @@ def kernel_corpus(
             break
         path = pending.pop(0)
         for resolved in _quoted_include_targets(path, search_roots):
-            if is_foreign_arch_entry_tu(resolved, arch):
+            if is_foreign_arch_entry_tu(resolved, arch) or is_other_arch_path(resolved, arch):
                 continue
             owner = _corpus_should_follow(resolved, root)
             if not owner:
@@ -455,9 +478,12 @@ def selected_kernel_files(codemap: CodeMap, source_root: Path) -> list[Path]:
             continue
         seen.add(key)
         out.append(p)
+    arch = require_architecture(codemap.architecture)
     if out:
-        return out
-    return architecture_kernel_files(source_root, require_architecture(codemap.architecture))
+        from uo_init.source_layout import keep_lexical_kernel_path
+
+        return [p for p in out if keep_lexical_kernel_path(p, arch)]
+    return architecture_kernel_files(source_root, arch)
 
 
 def site_dedupe_key(site: Any, *, root: str = "") -> tuple[str, int, str]:

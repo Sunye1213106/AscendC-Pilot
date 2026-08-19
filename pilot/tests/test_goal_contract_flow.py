@@ -106,10 +106,10 @@ def test_pr_goal_promote_persists_plan_and_marks_workspace_acquired(tmp_path: Pa
     assert goal["source"]["head_sha"] == "b" * 40
     assert goal["constraints"]["test_script_root"] == str(tmp_path / "tests_repo")
 
-    # Host staging root is mirrored only so goal-intake completion can return the same next step.
-    mirrored = load_task_plan(host)
-    assert mirrored is not None
-    assert current_workflow_id(mirrored) == "uo-init"
+    # Empty Host cwd is only a clone anchor; control plane stays on the operator.
+    assert load_task_plan(host) is None
+    assert load_user_goal(host) is None
+    assert not (host / ".ascendc-pilot").exists()
 
 
 def test_review_completion_writes_planning_context(tmp_path: Path) -> None:

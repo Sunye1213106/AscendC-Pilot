@@ -1051,6 +1051,63 @@ def discover_available_archs(project_root: Path) -> list[str]:
         return sorted(seen)
 
 
+def pr_architecture_pin_path(project_root: Path) -> Path:
+    return Path(project_root).expanduser().resolve() / ".ascendc-pilot" / "pr_arch_pin.yaml"
+
+
+def save_pr_architecture_pin(project_root: Path, architectures: list[str] | str) -> None:
+    """Persist a unique PR changed-files architecture so later uo-init does not re-ask."""
+    if isinstance(architectures, str):
+        arches = [architectures.strip()] if architectures.strip() else []
+    else:
+        arches = [str(a).strip() for a in (architectures or []) if str(a).strip()]
+    uniq: list[str] = []
+    for arch in arches:
+        if arch not in uniq:
+            uniq.append(arch)
+    if len(uniq) != 1:
+        return
+    path = pr_architecture_pin_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        import yaml
+    except ImportError:  # pragma: no cover
+        path.write_text(f"architectures:\n- {uniq[0]}\nsource: pr_changed_files\n", encoding="utf-8")
+        return
+    path.write_text(
+        yaml.safe_dump(
+            {"architectures": uniq, "source": "pr_changed_files"},
+            allow_unicode=True,
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def load_pr_architecture_pin(project_root: Path) -> list[str]:
+    path = pr_architecture_pin_path(project_root)
+    if not path.is_file():
+        return []
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return []
+    if isinstance(data, dict):
+        raw = data.get("architectures") or data.get("architecture") or []
+    else:
+        raw = data
+    if isinstance(raw, str):
+        raw = [raw]
+    out: list[str] = []
+    for item in raw or []:
+        name = str(item or "").strip()
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
 def architecture_decision_payload(
     project_root: Path,
     workflow_id: str,
@@ -1130,6 +1187,14 @@ def resolve_start_architecture(
             "architecture": arch,
             "available_architectures": available,
             "selected_by": "explicit",
+        }
+    pin = load_pr_architecture_pin(root)
+    if len(pin) == 1 and (not available or pin[0] in available):
+        return {
+            "ok": True,
+            "architecture": pin[0],
+            "available_architectures": available,
+            "selected_by": "pr_changed_files",
         }
     if len(available) >= 2:
         return architecture_decision_payload(root, workflow_id, available=available)

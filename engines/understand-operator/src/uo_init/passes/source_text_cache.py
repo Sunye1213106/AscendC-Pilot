@@ -7,12 +7,14 @@ than once. Callers should go through this module instead of ``Path.read_text``.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 _TEXT: dict[str, str] = {}
 _BY_BASENAME: dict[str, list[str]] = {}
 _MASKED: dict[str, str] = {}
 _MASKED_BY_ID: dict[int, str] = {}
+_LOCK = threading.RLock()
 
 
 def _key(path: str | Path) -> str:
@@ -28,7 +30,8 @@ def _remember(key: str) -> None:
 
 def read_text(path: str | Path) -> str:
     key = _key(path)
-    hit = _TEXT.get(key)
+    with _LOCK:
+        hit = _TEXT.get(key)
     if hit is not None:
         try:
             from uo_init.perf import record_read
@@ -38,8 +41,18 @@ def read_text(path: str | Path) -> str:
             pass
         return hit
     text = Path(key).read_text(encoding="utf-8", errors="replace")
-    _TEXT[key] = text
-    _remember(key)
+    with _LOCK:
+        existing = _TEXT.get(key)
+        if existing is not None:
+            try:
+                from uo_init.perf import record_read
+
+                record_read(key, 0, cache_hit=True)
+            except Exception:  # noqa: BLE001
+                pass
+            return existing
+        _TEXT[key] = text
+        _remember(key)
     try:
         from uo_init.perf import record_read
 
@@ -79,13 +92,15 @@ def cached_snippet(path: str | Path, line: int) -> str:
 def mask_cached(text: str) -> str:
     """Mask comments/strings; cache by object identity of ``read_text`` hits."""
     key = id(text)
-    hit = _MASKED_BY_ID.get(key)
+    with _LOCK:
+        hit = _MASKED_BY_ID.get(key)
     if hit is not None:
         return hit
     from uo_init.cpp_lex import mask_non_code
 
     masked = mask_non_code(text)
-    _MASKED_BY_ID[key] = masked
+    with _LOCK:
+        _MASKED_BY_ID[key] = masked
     return masked
 
 
@@ -93,11 +108,16 @@ def masked_text(path: str | Path) -> str:
     """Comment/string-masked source with the same line breaks as ``read_text``."""
     raw = read_text(path)
     key = _key(path)
-    hit = _MASKED.get(key)
+    with _LOCK:
+        hit = _MASKED.get(key)
     if hit is not None:
         return hit
     masked = mask_cached(raw)
-    _MASKED[key] = masked
+    with _LOCK:
+        existing = _MASKED.get(key)
+        if existing is not None:
+            return existing
+        _MASKED[key] = masked
     return masked
 
 
@@ -106,7 +126,8 @@ def stats() -> dict[str, int]:
 
 
 def clear() -> None:
-    _TEXT.clear()
-    _BY_BASENAME.clear()
-    _MASKED.clear()
-    _MASKED_BY_ID.clear()
+    with _LOCK:
+        _TEXT.clear()
+        _BY_BASENAME.clear()
+        _MASKED.clear()
+        _MASKED_BY_ID.clear()

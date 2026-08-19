@@ -7,7 +7,7 @@ CE grill 冒出跨 session 会用错的新词时才改本表；算子结构事�
 **CodeMap** — UO 写入的 `.uo` 源码语义图。不是通用 call-graph。
 **digest** — session binding 上的 `canonical_graph_digest`。fresh = digest 匹配，不是「刚建过库」。
 **`{slug}_plan.md`** — `/ce-plan` 确认后的面向用户变更计划，落在 `ce/plan/{slug}_plan.md`。含实现分析、分步计划、可勾选 todo、测试内容。`/ce-apply` 只按未完成 `- [ ]` 改码，并可勾选该文件。
-**两轴** — Spec（有计划则对照 `{slug}_plan.md`；无计划则只陈述变更理解）与 Standards（是不是仓规范）。`/ce-review` 并行两个子代理，禁止合成 LGTM。结论留在对话，不落盘。
+**两轴** — Spec（有计划则对照 `{slug}_plan.md`；无计划则从 PR/diff 索引推断粗意图并验收完成度）与 Standards（是不是仓规范）。`/ce-review` 并行两个子代理，禁止合成 LGTM。结论留在对话，不落盘。
 **简单查询** — 一个起始标识符或一种参数形态、一两轮调用；主控当前会话插件 `pilot_cli`（command=`uo-query …`），stdout 即答案。
 **复杂查询** — 多个可独立查询的目标；同一轮并行 `Task(agent=uo-query)`，每路一个起始标识符或 `Dim=V`。综合只在主控。禁止因「要交叉综合」而合并 Task。
 **查询方式说明** — 查询不是 Host workflow。简单查询直接 `pilot_cli` `uo-query`，禁止单独一轮只宣布路数；复杂查询同一轮并行 `Task(agent=uo-query)`。见 `routing/uo-query.md`。四种形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。

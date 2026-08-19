@@ -227,7 +227,7 @@ def compile_codemap(
             ("tiling_registration", enrich_tiling_registrations, {}),
             ("source_gaps", resolve_source_gaps, {}),
             ("class_frontiers", resolve_class_frontiers, {}),
-            ("kernel_tiling_closure", finalize_kernel_tiling_closure, {"needs_irs": True}),
+            ("kernel_tiling_closure", finalize_kernel_tiling_closure, {"needs_irs": True, "rebuild_bodies": False}),
             ("kernel_identity", preserve_verified_kernel_identity, {"skip_arch": True}),
             ("kernel_call_refine", refine_kernel_calls_and_tiling_reads, {}),
             ("kernel_call_frontiers", resolve_kernel_call_frontiers, {}),
@@ -244,14 +244,19 @@ def compile_codemap(
             ("tiling_context_apis", enrich_tiling_context_apis, {"needs_host_ir": True}),
         ):
             t0 = time.perf_counter()
+            extra = {
+                key: value
+                for key, value in kwargs.items()
+                if key not in {"skip_arch", "needs_host_ir", "needs_irs"}
+            }
             if kwargs.get("skip_arch"):
-                fn(cm)  # type: ignore[misc]
+                fn(cm, **extra)  # type: ignore[misc]
             elif kwargs.get("needs_host_ir"):
-                fn(cm, source_root, architecture=arch, host_ir=host_ir)  # type: ignore[misc]
+                fn(cm, source_root, architecture=arch, host_ir=host_ir, **extra)  # type: ignore[misc]
             elif kwargs.get("needs_irs"):
-                fn(cm, source_root, architecture=arch, host_ir=host_ir, kernel_ir=kernel_ir)  # type: ignore[misc]
+                fn(cm, source_root, architecture=arch, host_ir=host_ir, kernel_ir=kernel_ir, **extra)  # type: ignore[misc]
             else:
-                fn(cm, source_root, architecture=arch)  # type: ignore[misc]
+                fn(cm, source_root, architecture=arch, **extra)  # type: ignore[misc]
             _span(name, t0)
         cm.meta["production_source_enrichment"] = True
     else:

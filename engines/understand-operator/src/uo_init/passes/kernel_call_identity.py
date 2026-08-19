@@ -414,215 +414,243 @@ def _patch_member_bindings(index: SourceSymbolIndex) -> None:
                     sc.bindings[field_name] = typ
 
 
-def build_source_symbol_index(
-    files: list[Path],
+def _merge_symbol_index(dst: SourceSymbolIndex, src: SourceSymbolIndex) -> None:
+    dst.methods.update(src.methods)
+    for key, rows in src.free.items():
+        dst.free[key].extend(rows)
+    dst.members.update(src.members)
+    dst.aliases.update(src.aliases)
+    for key, rows in src.scopes.items():
+        dst.scopes[key].extend(rows)
+    dst.files.update(src.files)
+
+
+def _index_one_source_file(
+    path: Path,
     *,
     root: str,
     deadline: float,
-) -> SourceSymbolIndex:
+) -> SourceSymbolIndex | None:
+    if time.perf_counter() > deadline:
+        return None
     index = SourceSymbolIndex()
-    for path in files:
-        if time.perf_counter() > deadline:
-            break
-        try:
-            text = read_text(path)
-        except OSError:
-            continue
-        text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-        nfile = kscan.norm_file(str(path), root)
-        lines = text.splitlines()
-        index.files[nfile] = lines
-        class_stack: list[tuple[str, int]] = []
-        ns_stack: list[tuple[str, int]] = []
-        brace = 0
+    try:
+        text = read_text(path)
+    except OSError:
+        return None
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    nfile = kscan.norm_file(str(path), root)
+    lines = text.splitlines()
+    index.files[nfile] = lines
+    class_stack: list[tuple[str, int]] = []
+    ns_stack: list[tuple[str, int]] = []
+    brace = 0
+    pending_sig = ""
+    pending_line = 0
+    pending_kind = ""
+    pending_owner = ""
+    pending_name = ""
+    pending_paren = 0
+    pending_type = ""
+    decl_carry = ""
+    func_stack: list[FuncScope] = []
+
+    def current_class() -> str:
+        return class_stack[-1][0] if class_stack else ""
+
+    def current_ns() -> str:
+        return ns_stack[-1][0] if ns_stack else ""
+
+    def start_or_decl(*, body: bool) -> None:
+        nonlocal pending_sig, pending_line, pending_kind, pending_owner, pending_name, pending_paren, decl_carry
+        decl_carry = ""
+        if not pending_name:
+            return
+        if pending_kind == "method":
+            _record_method(
+                index,
+                owner=pending_owner,
+                name=pending_name,
+                sig=pending_sig,
+                file=nfile,
+                line=pending_line,
+            )
+        elif pending_kind == "free":
+            _record_free(
+                index,
+                name=pending_name,
+                sig=pending_sig,
+                file=nfile,
+                line=pending_line,
+                ns=current_ns(),
+            )
+        if body:
+            func_stack.append(
+                FuncScope(
+                    file=nfile,
+                    start=pending_line,
+                    end=10**9,
+                    owner=pending_owner,
+                    name=pending_name,
+                    bindings=_param_bindings(pending_sig),
+                    enter_brace=0,
+                )
+            )
         pending_sig = ""
         pending_line = 0
         pending_kind = ""
         pending_owner = ""
         pending_name = ""
         pending_paren = 0
-        pending_type = ""
-        decl_carry = ""
-        func_stack: list[FuncScope] = []
 
-        def current_class() -> str:
-            return class_stack[-1][0] if class_stack else ""
+    for i, raw in enumerate(lines, start=1):
+        if i % 400 == 0 and time.perf_counter() > deadline:
+            break
+        line = kscan._strip_line_noise(raw)
+        stripped = line.strip()
+        opened_func = False
 
-        def current_ns() -> str:
-            return ns_stack[-1][0] if ns_stack else ""
+        if stripped:
+            class_m = _CLASS_RE.search(line)
+            if class_m and ";" not in line:
+                class_stack.append((class_m.group("name"), brace))
+            ns = _NS_RE.search(line)
+            if ns and ";" not in line and "using" not in line:
+                ns_stack.append((ns.group("name"), brace))
 
-        def start_or_decl(*, body: bool) -> None:
-            nonlocal pending_sig, pending_line, pending_kind, pending_owner, pending_name, pending_paren, decl_carry
-            decl_carry = ""
-            if not pending_name:
-                return
-            if pending_kind == "method":
-                _record_method(
-                    index,
-                    owner=pending_owner,
-                    name=pending_name,
-                    sig=pending_sig,
-                    file=nfile,
-                    line=pending_line,
-                )
-            elif pending_kind == "free":
-                _record_free(
-                    index,
-                    name=pending_name,
-                    sig=pending_sig,
-                    file=nfile,
-                    line=pending_line,
-                    ns=current_ns(),
-                )
-            if body:
-                func_stack.append(
-                    FuncScope(
-                        file=nfile,
-                        start=pending_line,
-                        end=10**9,
-                        owner=pending_owner,
-                        name=pending_name,
-                        bindings=_param_bindings(pending_sig),
-                        enter_brace=0,
-                    )
-                )
-            pending_sig = ""
-            pending_line = 0
-            pending_kind = ""
-            pending_owner = ""
-            pending_name = ""
-            pending_paren = 0
-
-        for i, raw in enumerate(lines, start=1):
-            if i % 400 == 0 and time.perf_counter() > deadline:
-                break
-            line = kscan._strip_line_noise(raw)
-            stripped = line.strip()
-            opened_func = False
-
-            if stripped:
-                class_m = _CLASS_RE.search(line)
-                if class_m and ";" not in line:
-                    class_stack.append((class_m.group("name"), brace))
-                ns = _NS_RE.search(line)
-                if ns and ";" not in line and "using" not in line:
-                    ns_stack.append((ns.group("name"), brace))
-
-                if class_stack and not func_stack and pending_name == "":
-                    um = _USING_IN_CLASS_RE.search(line)
-                    if um:
-                        index.aliases[(current_class(), um.group("alias"))] = um.group("target").strip()
+            if class_stack and not func_stack and pending_name == "":
+                um = _USING_IN_CLASS_RE.search(line)
+                if um:
+                    index.aliases[(current_class(), um.group("alias"))] = um.group("target").strip()
+                    pending_type = ""
+                elif pending_type:
+                    pending_type = pending_type + " " + stripped
+                    if ";" in stripped:
+                        _finish_member_blob(index, owner=current_class(), blob=pending_type)
                         pending_type = ""
-                    elif pending_type:
-                        pending_type = pending_type + " " + stripped
-                        if ";" in stripped:
-                            _finish_member_blob(index, owner=current_class(), blob=pending_type)
-                            pending_type = ""
-                    elif "(" not in line:
-                        mm = _MEMBER_RE.search(line)
-                        if mm and ";" in line:
-                            _record_member(
-                                index,
-                                owner=current_class(),
-                                typ=mm.group("type").strip(),
-                                name=mm.group("name"),
-                            )
-                        elif (
-                            stripped
-                            and not stripped.startswith(("public:", "private:", "protected:", "#", "~"))
-                            and ";" not in stripped
-                            and "{" not in stripped
-                            and not stripped.endswith(")")
-                        ):
-                            pending_type = stripped
-
-                if pending_name:
-                    pending_sig += " " + stripped
-                    pending_paren += line.count("(") - line.count(")")
-                    if pending_paren <= 0:
-                        if "{" in line:
-                            start_or_decl(body=True)
-                            opened_func = True
-                        elif ";" in line:
-                            start_or_decl(body=False)
-                elif not func_stack:
-                    if (
+                elif "(" not in line:
+                    mm = _MEMBER_RE.search(line)
+                    if mm and ";" in line:
+                        _record_member(
+                            index,
+                            owner=current_class(),
+                            typ=mm.group("type").strip(),
+                            name=mm.group("name"),
+                        )
+                    elif (
                         stripped
-                        and "(" not in stripped
-                        and "{" not in stripped
+                        and not stripped.startswith(("public:", "private:", "protected:", "#", "~"))
                         and ";" not in stripped
-                        and not stripped.startswith(("#", "//"))
-                        and stripped not in {"public:", "private:", "protected:", "{", "}"}
-                        and _DECL_CARRY_RE.search(stripped)
+                        and "{" not in stripped
+                        and not stripped.endswith(")")
                     ):
-                        decl_carry = f"{decl_carry} {stripped}".strip()
-                    owner_matches = list(_METHOD_OWNER_RE.finditer(line))
-                    owner_m = owner_matches[-1] if owner_matches else None
-                    name_m = _NAME_PAREN_RE.search(line)
-                    owner = ""
-                    name = ""
-                    prefix = line
-                    if owner_m:
-                        owner = owner_m.group("owner")
-                        name = owner_m.group("name")
-                        prefix = line[: owner_m.end()]
-                    elif name_m and name_m.group("name") not in _SKIP_NAMES:
-                        name = name_m.group("name")
-                        owner = current_class()
-                        prefix = line[: name_m.end()]
-                    check_prefix = f"{decl_carry} {prefix}".strip() if decl_carry else prefix
-                    if name and _looks_like_definition(
-                        check_prefix[: check_prefix.rfind("(")] if "(" in check_prefix else check_prefix,
-                        name,
-                        in_class=bool(owner),
-                    ):
-                        pending_sig = f"{decl_carry} {stripped}".strip() if decl_carry else stripped
-                        pending_line = i
-                        pending_name = name
-                        pending_owner = owner
-                        pending_kind = "method" if owner else "free"
-                        pending_paren = line.count("(") - line.count(")")
-                        if pending_paren <= 0 and "{" in line:
-                            start_or_decl(body=True)
-                            opened_func = True
-                        elif pending_paren <= 0 and ";" in line:
-                            start_or_decl(body=False)
-                    elif "(" in line:
-                        decl_carry = ""
+                        pending_type = stripped
 
-                if func_stack and not pending_name:
-                    head = line.split("=", 1)[0]
-                    if "(" not in head:
-                        for dm in _LOCAL_DECL_RE.finditer(line):
-                            nm = dm.group("name")
-                            typ = dm.group("type").strip()
-                            if nm in _SKIP_NAMES or not typ or _base_type(typ) in {"auto", ""}:
-                                continue
-                            func_stack[-1].bindings[nm] = typ
+            if pending_name:
+                pending_sig += " " + stripped
+                pending_paren += line.count("(") - line.count(")")
+                if pending_paren <= 0:
+                    if "{" in line:
+                        start_or_decl(body=True)
+                        opened_func = True
+                    elif ";" in line:
+                        start_or_decl(body=False)
+            elif not func_stack:
+                if (
+                    stripped
+                    and "(" not in stripped
+                    and "{" not in stripped
+                    and ";" not in stripped
+                    and not stripped.startswith(("#", "//"))
+                    and stripped not in {"public:", "private:", "protected:", "{", "}"}
+                    and _DECL_CARRY_RE.search(stripped)
+                ):
+                    decl_carry = f"{decl_carry} {stripped}".strip()
+                owner_matches = list(_METHOD_OWNER_RE.finditer(line))
+                owner_m = owner_matches[-1] if owner_matches else None
+                name_m = _NAME_PAREN_RE.search(line)
+                owner = ""
+                name = ""
+                prefix = line
+                if owner_m:
+                    owner = owner_m.group("owner")
+                    name = owner_m.group("name")
+                    prefix = line[: owner_m.end()]
+                elif name_m and name_m.group("name") not in _SKIP_NAMES:
+                    name = name_m.group("name")
+                    owner = current_class()
+                    prefix = line[: name_m.end()]
+                check_prefix = f"{decl_carry} {prefix}".strip() if decl_carry else prefix
+                if name and _looks_like_definition(
+                    check_prefix[: check_prefix.rfind("(")] if "(" in check_prefix else check_prefix,
+                    name,
+                    in_class=bool(owner),
+                ):
+                    pending_sig = f"{decl_carry} {stripped}".strip() if decl_carry else stripped
+                    pending_line = i
+                    pending_name = name
+                    pending_owner = owner
+                    pending_kind = "method" if owner else "free"
+                    pending_paren = line.count("(") - line.count(")")
+                    if pending_paren <= 0 and "{" in line:
+                        start_or_decl(body=True)
+                        opened_func = True
+                    elif pending_paren <= 0 and ";" in line:
+                        start_or_decl(body=False)
+                elif "(" in line:
+                    decl_carry = ""
 
-            delta = raw.count("{") - raw.count("}")
-            brace += delta
-            if opened_func and func_stack:
-                func_stack[-1].enter_brace = brace
-                body = line[line.find("{") :] if "{" in line else ""
-                if body.count("{") and body.count("{") <= body.count("}"):
-                    sc = func_stack.pop()
-                    sc.end = i
-                    index.scopes[nfile].append(sc)
-            while class_stack and brace <= class_stack[-1][1]:
-                class_stack.pop()
-                pending_type = ""
-            while ns_stack and brace <= ns_stack[-1][1]:
-                ns_stack.pop()
-            while func_stack and func_stack[-1].enter_brace and brace < func_stack[-1].enter_brace:
+            if func_stack and not pending_name:
+                head = line.split("=", 1)[0]
+                if "(" not in head:
+                    for dm in _LOCAL_DECL_RE.finditer(line):
+                        nm = dm.group("name")
+                        typ = dm.group("type").strip()
+                        if nm in _SKIP_NAMES or not typ or _base_type(typ) in {"auto", ""}:
+                            continue
+                        func_stack[-1].bindings[nm] = typ
+
+        delta = raw.count("{") - raw.count("}")
+        brace += delta
+        if opened_func and func_stack:
+            func_stack[-1].enter_brace = brace
+            body = line[line.find("{") :] if "{" in line else ""
+            if body.count("{") and body.count("{") <= body.count("}"):
                 sc = func_stack.pop()
                 sc.end = i
                 index.scopes[nfile].append(sc)
-
-        for sc in func_stack:
-            sc.end = len(lines)
+        while class_stack and brace <= class_stack[-1][1]:
+            class_stack.pop()
+            pending_type = ""
+        while ns_stack and brace <= ns_stack[-1][1]:
+            ns_stack.pop()
+        while func_stack and func_stack[-1].enter_brace and brace < func_stack[-1].enter_brace:
+            sc = func_stack.pop()
+            sc.end = i
             index.scopes[nfile].append(sc)
 
+    for sc in func_stack:
+        sc.end = len(lines)
+        index.scopes[nfile].append(sc)
+    return index
+
+
+def build_source_symbol_index(
+    files: list[Path],
+    *,
+    root: str,
+    deadline: float,
+) -> SourceSymbolIndex:
+    from uo_init.parallel import map_files
+
+    parts = map_files(
+        list(files),
+        lambda path: _index_one_source_file(path, root=root, deadline=deadline),
+    )
+    index = SourceSymbolIndex()
+    for part in parts:
+        if part is not None:
+            _merge_symbol_index(index, part)
     _patch_member_bindings(index)
     return index
 

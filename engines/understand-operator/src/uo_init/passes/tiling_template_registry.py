@@ -28,10 +28,18 @@ def enrich_tiling_template_registry(
     *,
     architecture: str = "",
 ) -> CodeMap:
+    import time as _time
+
+    from uo_init.timing import log as _tlog
+
     root = Path(operator_root).expanduser().resolve()
     op_name = str(codemap.op_name or "").strip()
+    t0 = _time.perf_counter()
     hits = extract_registry(root, op_name) if op_name else []
+    t_reg = _time.perf_counter() - t0
     count = 0
+    t_cap0 = _time.perf_counter()
+    capable_by_file: dict[Path, list] = {}
     for hit in hits:
         cls = str(hit.get("class") or "")
         if not cls:
@@ -45,7 +53,14 @@ def enrich_tiling_template_registry(
         cap_file = ""
         cap_line = 0
         try:
-            found = extract_iscapable(abs_file, class_name=cls) if abs_file.is_file() else []
+            if abs_file.is_file():
+                found = capable_by_file.get(abs_file)
+                if found is None:
+                    found = extract_iscapable(abs_file)
+                    capable_by_file[abs_file] = found
+                found = [p for p in found if cls in p.class_name]
+            else:
+                found = []
         except Exception:
             found = []
         if found:
@@ -77,7 +92,12 @@ def enrich_tiling_template_registry(
             status="confirmed",
         )
         count += 1
+    t_cap = _time.perf_counter() - t_cap0
     defaults = _emit_register_tiling_defaults(codemap, root, architecture)
+    _tlog(
+        f"{_time.perf_counter() - t0:7.3f}s  tiling_template_registry  "
+        f"hits={count} extract_registry={t_reg:.3f}s iscapable={t_cap:.3f}s"
+    )
     meta = dict(codemap.meta.get("tiling_template_registry") or {})
     meta["count"] = count
     meta["register_tiling_default"] = defaults

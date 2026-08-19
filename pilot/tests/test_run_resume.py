@@ -121,6 +121,17 @@ def test_build_run_resume_summary_without_arch_does_not_raise(
     assert "commands" in summary
 
 
+def test_resolve_start_architecture_pr_pin_skips_ask(tmp_path: Path) -> None:
+    from ascendc_pilot.run_resume import save_pr_architecture_pin
+
+    _make_multi_arch_op(tmp_path)
+    save_pr_architecture_pin(tmp_path, ["arch35"])
+    result = resolve_start_architecture(tmp_path, "", workflow_id="uo-init")
+    assert result["ok"] is True
+    assert result["architecture"] == "arch35"
+    assert result["selected_by"] == "pr_changed_files"
+
+
 def test_resolve_start_architecture_sole_arch_auto_selects(tmp_path: Path) -> None:
     (tmp_path / "op_host" / "arch22").mkdir(parents=True)
     result = resolve_start_architecture(tmp_path, "", workflow_id="uo-init")

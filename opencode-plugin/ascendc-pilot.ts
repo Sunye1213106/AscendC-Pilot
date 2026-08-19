@@ -30,7 +30,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
-import { delimiter, dirname, join, resolve } from "node:path"
+import { delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
 /** Inlined: OpenCode autoloads this file from plugins/ without sibling imports. */
@@ -508,6 +508,73 @@ function lastProjectCachePath(): string {
   return resolve(openCodeHome(), "ascendc-last-project")
 }
 
+/** OpenCode workspace (`ctx.directory`). Empty until the plugin factory runs. */
+let hostOpenDirectory = ""
+/** Current Host session. Empty until the first chat/tool hook. */
+let liveSessionId = ""
+
+function noteLiveSession(sessionId?: string): void {
+  const sid = String(sessionId || "").trim()
+  if (sid) liveSessionId = sid
+}
+
+function lastProjectSessionPath(): string {
+  return `${lastProjectCachePath()}.session`
+}
+
+function pathIsInsideHost(child: string, parent: string): boolean {
+  try {
+    const c = resolve(child)
+    const p = resolve(parent)
+    if (process.platform === "win32") {
+      if (c.toLowerCase() === p.toLowerCase()) return true
+    } else if (c === p) {
+      return true
+    }
+    const rel = relative(p, c)
+    if (!rel) return true
+    const norm = rel.replace(/\\/g, "/")
+    return !norm.startsWith("../") && norm !== ".." && !isAbsolute(rel)
+  } catch {
+    return false
+  }
+}
+
+function pathAllowedForHost(root: string): boolean {
+  const remembered = String(root || "").trim()
+  if (!remembered) return false
+  if (!hostOpenDirectory) return true
+  return pathIsInsideHost(remembered, hostOpenDirectory)
+}
+
+function writeLastProjectSession(sessionId?: string): void {
+  const sid = String(sessionId || liveSessionId || "").trim()
+  if (!sid) return
+  try {
+    writeFileSync(lastProjectSessionPath(), sid, "utf-8")
+  } catch {
+    // best-effort
+  }
+}
+
+function readLastProjectSession(): string {
+  try {
+    const p = lastProjectSessionPath()
+    if (!existsSync(p)) return ""
+    return readFileSync(p, "utf-8").trim()
+  } catch {
+    return ""
+  }
+}
+
+function rememberedUsable(root: string): boolean {
+  if (!pathAllowedForHost(root)) return false
+  if (!liveSessionId) return true
+  const sid = readLastProjectSession()
+  if (!sid) return false
+  return sid === liveSessionId
+}
+
 function pendingDispatchCachePath(): string {
   return resolve(openCodeHome(), "ascendc-pending-dispatch.json")
 }
@@ -516,10 +583,22 @@ function readPendingDispatchProject(): string {
   try {
     const cache = pendingDispatchCachePath()
     if (!existsSync(cache)) return ""
-    const rec = JSON.parse(readFileSync(cache, "utf-8")) as { project?: string }
+    const rec = JSON.parse(readFileSync(cache, "utf-8")) as {
+      project?: string
+      sessionId?: string
+    }
     const root = String(rec?.project || "").trim()
-    if (root && looksLikeOperatorDir(root)) return root
-    if (root && isPilotProjectRoot(root) && !isHarnessCheckout(root)) return root
+    const sid = String(rec?.sessionId || "").trim()
+    if (liveSessionId && sid && sid !== liveSessionId) return ""
+    if (root && looksLikeOperatorDir(root) && pathAllowedForHost(root)) return root
+    if (
+      root &&
+      isPilotProjectRoot(root) &&
+      !isHarnessCheckout(root) &&
+      pathAllowedForHost(root)
+    ) {
+      return root
+    }
   } catch {
     // ignore
   }
@@ -530,10 +609,12 @@ function rememberProjectRoot(project: string): void {
   const root = String(project || "").trim()
   // Cache operator dirs even before a live workflow.yaml exists.
   if (!root || !looksLikeOperatorDir(root) || isHarnessCheckout(root)) return
+  if (!pathAllowedForHost(root)) return
   try {
     const cache = lastProjectCachePath()
     mkdirSync(openCodeHome(), { recursive: true })
     writeFileSync(cache, root, "utf-8")
+    writeLastProjectSession(liveSessionId)
   } catch {
     // best-effort
   }
@@ -544,7 +625,7 @@ function readRememberedProjectRoot(): string {
     const cache = lastProjectCachePath()
     if (!existsSync(cache)) return ""
     const root = readFileSync(cache, "utf-8").trim()
-    if (root && looksLikeOperatorDir(root) && !isHarnessCheckout(root)) {
+    if (root && looksLikeOperatorDir(root) && !isHarnessCheckout(root) && rememberedUsable(root)) {
       return root
     }
   } catch {
@@ -564,7 +645,13 @@ function envOperatorRoot(): string {
     if (!raw) continue
     try {
       const resolved = resolve(raw)
-      if (looksLikeOperatorDir(resolved) && !isHarnessCheckout(resolved)) return resolved
+      if (
+        looksLikeOperatorDir(resolved) &&
+        !isHarnessCheckout(resolved) &&
+        pathAllowedForHost(resolved)
+      ) {
+        return resolved
+      }
     } catch {
       /* ignore */
     }
@@ -590,7 +677,9 @@ function boundOperatorRoot(pathHint?: string): string {
   const fromEnv = envOperatorRoot()
   if (fromEnv) return fromEnv
   const cwd = process.cwd()
-  if (looksLikeOperatorDir(cwd) && !isHarnessCheckout(cwd)) return cwd
+  if (looksLikeOperatorDir(cwd) && !isHarnessCheckout(cwd) && pathAllowedForHost(cwd)) {
+    return cwd
+  }
   const remembered = readRememberedProjectRoot()
   if (remembered && looksLikeOperatorDir(remembered)) {
     if (hint) {
@@ -1710,6 +1799,7 @@ function createPilotCliTool(): {
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
+      noteLiveSession(String(ctx?.sessionID || ctx?.sessionId || ""))
       const raw = String(args.command || args.cmd || args.argv || "").trim()
       if (!raw) {
         return {
@@ -1720,8 +1810,11 @@ function createPilotCliTool(): {
           metadata: { ok: false, error: "missing_command" },
         }
       }
-      const projectHint = uoQueryPickProject(args, raw)
       const full = /^(?:acp(?:\.exe|\.cmd)?)(\s|$)/i.test(raw) ? raw : `acp ${raw}`
+      const hasExplicitProject = Boolean(extractProjectFromAcpCommand(full))
+      const diagnostic = isAcpDiagnosticCommand(full)
+      const projectHint =
+        diagnostic && !hasExplicitProject ? "" : uoQueryPickProject(args, raw)
       if (isAcpHelpCommand(full) || raw === "-h" || raw === "--help" || raw === "help") {
         return {
           title: "pilot_cli help",
@@ -1763,8 +1856,9 @@ function createPilotCliTool(): {
       const project =
         extractProjectFromAcpCommand(rewritten) ||
         projectHint ||
-        readRememberedProjectRoot() ||
-        detectProjectRoot()
+        (diagnostic ? "" : readRememberedProjectRoot() || detectProjectRoot()) ||
+        hostOpenDirectory ||
+        process.cwd()
       const sessionId = String(ctx?.sessionID || ctx?.sessionId || "")
       rememberSessionAgent(sessionId, String(ctx?.agent || ctx?.sessionAgent || ""))
       let agent = resolveAgent({
@@ -2052,10 +2146,15 @@ function recoverSkillToolOutput(
 }
 
 /** Pending Task registrations keyed by stable invocation id or dispatch_nonce. */
-const pendingTaskRegs = new Map<
-  string,
-  { registration_id: string; dispatch_nonce: string; action_id: string; parent_session_id: string }
->()
+type PendingTaskReg = {
+  registration_id: string
+  dispatch_nonce: string
+  action_id: string
+  parent_session_id: string
+  slice_id?: string
+}
+
+const pendingTaskRegs = new Map<string, PendingTaskReg>()
 
 /** Local child→parent relationship registry (mirrors Python children registry). */
 const childSessionRegistry = new Map<
@@ -2222,6 +2321,20 @@ function extractTaskInvocationId(input: Record<string, unknown>): string {
 }
 
 /** Inject dispatch_nonce / registration_id into Task args so after-hook can recover without latest-pending. */
+function extractSliceIdFromPrompt(prompt: string): string {
+  const match = String(prompt || "").match(/(?:^|\n)\s*(?:AXIS|SLICE_ID)\s*=\s*([A-Za-z0-9_-]+)/i)
+  return match ? String(match[1] || "").trim() : ""
+}
+
+function inflightSliceIds(): Set<string> {
+  const out = new Set<string>()
+  for (const reg of pendingTaskRegs.values()) {
+    const sid = String(reg.slice_id || "").trim()
+    if (sid) out.add(sid)
+  }
+  return out
+}
+
 function injectTaskCorrelationMeta(
   args: Record<string, unknown>,
   meta: { dispatch_nonce: string; registration_id: string; task_invocation_id?: string },
@@ -2277,12 +2390,7 @@ function lookupPendingTaskReg(
 ):
   | {
       key: string
-      reg: {
-        registration_id: string
-        dispatch_nonce: string
-        action_id: string
-        parent_session_id: string
-      }
+      reg: PendingTaskReg
     }
   | undefined {
   const keys = [
@@ -2676,6 +2784,13 @@ export const AscendCHarnessPlugin = async (ctx?: {
   $?: unknown
 }) => {
   ensureOpenCodeRipgrep()
+  try {
+    const rawDir = String(ctx?.directory || "").trim()
+    hostOpenDirectory = rawDir ? resolve(rawDir) : ""
+  } catch {
+    hostOpenDirectory = ""
+  }
+  liveSessionId = ""
   const client = ctx && typeof ctx === "object" ? (ctx as any).client : undefined
   let pilotTools: Record<string, unknown> = {}
   let capturePilotToolSession:
@@ -2696,6 +2811,14 @@ export const AscendCHarnessPlugin = async (ctx?: {
         action: string
         ts: number
       }) => void)
+    | undefined
+  let driveContinueGoalAfterAck:
+    | ((args: {
+        client: unknown
+        pluginInput?: { directory?: string; serverUrl?: unknown }
+        step: Record<string, unknown>
+        sessionId?: string
+      }) => Promise<Record<string, unknown>>)
     | undefined
   try {
     // OpenCode autoloads every *.ts in ~/.config/opencode/plugins/.
@@ -2719,6 +2842,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
     readPendingDispatch = mod.readPendingDispatch
     clearPendingDispatch = mod.clearPendingDispatch
     rememberPendingDispatch = mod.rememberPendingDispatch
+    driveContinueGoalAfterAck = mod.driveContinueGoalAfterAck
     pilotTools = mod.createPilotRunTool(client, ctx) || {}
   } catch (err) {
     console.error("[ascendc-pilot] failed to load pilot-driver", err)
@@ -2756,6 +2880,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
       const bag = output.env && typeof output.env === "object" ? output.env : {}
       const patched = prependPilotToolPath(bag)
       Object.assign(bag, patched)
+      noteLiveSession(input.sessionID)
       const root = readRememberedProjectRoot()
       if (root) bag.ASCENDC_PROJECT_ROOT = root
       output.env = bag
@@ -2765,6 +2890,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
       output?: { message?: unknown; parts?: unknown },
     ) => {
       rememberSessionAgent(String(input.sessionID || ""), String(input.agent || ""))
+      noteLiveSession(input.sessionID)
       const agent = String(input.agent || "").trim()
       if (agent && !isPrimaryPilotAgent(agent) && !isPrimaryPilotAgent(resolveAgent({ sessionID: input.sessionID || "" }))) {
         return
@@ -2815,6 +2941,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
       const command = String(args.command || args.cmd || "")
       const sessionId = extractHostSessionId(input as Record<string, unknown>)
       rememberSessionAgent(sessionId, String(input.agent || input.sessionAgent || ""))
+      noteLiveSession(sessionId)
       let agent = resolveAgent({ ...input, sessionID: sessionId })
       // Build / Plan / other non-Pilot tabs: stock OpenCode permissions, no harness.
       if (!shouldEnforceHarness(agent, tool)) {
@@ -2984,14 +3111,19 @@ export const AscendCHarnessPlugin = async (ctx?: {
         // OpenCode frontmatter only allows `acp *`; rewriting to
         // `C:\...\Scripts\acp.exe --help` turns green allow into red deny (ses_00c4 follow-up).
         // resolveAcpBin() is only for this plugin's internal spawnSync(authorize).
-        pinOperatorBashContext(args, project)
+        const diagnosticBare =
+          isAcpDiagnosticCommand(command) && !extractProjectFromAcpCommand(command)
+        if (!diagnosticBare) pinOperatorBashContext(args, project)
         const commandNow = String(args.command || args.cmd || command)
+        const authorizeProject = diagnosticBare
+          ? hostOpenDirectory || process.cwd()
+          : project
         const verdict = runAuthorize({
           tool: "bash",
           command: commandNow,
           agent,
           action,
-          project,
+          project: authorizeProject,
           sessionId,
         })
         if (verdict.decision === "deny" || (verdict.ok === false && verdict.decision !== "ask")) {
@@ -3123,11 +3255,12 @@ export const AscendCHarnessPlugin = async (ctx?: {
               nonce,
           )
           if (regId) {
-            const entry = {
+            const entry: PendingTaskReg = {
               registration_id: regId,
               dispatch_nonce: resolvedNonce,
               action_id: dispatchAction,
               parent_session_id: hostSession,
+              slice_id: extractSliceIdFromPrompt(promptText),
             }
             // Prefer Hook-provided stable call id; always also index by dispatch_nonce.
             // NEVER key by parent+action "latest pending" (concurrent overwrite).
@@ -3182,6 +3315,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
         const tool = String(input.tool || "").toLowerCase()
         const sessionIdEarly = extractHostSessionId(input as Record<string, unknown>)
         rememberSessionAgent(sessionIdEarly, String(input.agent || input.sessionAgent || ""))
+        noteLiveSession(sessionIdEarly)
         const afterAgent = resolveAgent({ ...input, sessionID: sessionIdEarly })
         if (!shouldEnforceHarness(afterAgent, tool)) {
           return
@@ -3452,29 +3586,65 @@ export const AscendCHarnessPlugin = async (ctx?: {
             String(pendingDispatch.ticket || "")
           ) {
             const opProject = String(pendingDispatch.project || project)
+            const sliceId =
+              String((hit && hit.reg.slice_id) || "").trim() ||
+              extractSliceIdFromPrompt(taskPromptHint)
             const finished = await submitDispatchResult(
               opProject,
               String(pendingDispatch.ticket),
               answerText,
+              { sliceId },
             )
-            if (finished && finished.ok !== false) {
+            const waiting = Boolean(finished && finished.waiting_slices)
+            if (finished && finished.ok !== false && !waiting) {
               clearPendingDispatch?.(opProject)
             }
             const next =
               finished && finished.host_step && typeof finished.host_step === "object"
                 ? (finished.host_step as Record<string, unknown>)
                 : {}
-            if (String(next.kind || "") === "dispatch_subagent" && rememberPendingDispatch) {
-              rememberPendingDispatch({
-                project: opProject,
-                ticket: String(next.dispatch_ticket || ""),
-                actor: String(next.actor_id || ""),
-                action: String(next.action_id || ""),
-                ts: Date.now(),
+            if (String(next.kind || "") === "continue_goal" && driveContinueGoalAfterAck && client) {
+              const continued = await driveContinueGoalAfterAck({
+                client,
+                pluginInput: ctx,
+                step: next,
+                sessionId: liveSessionId,
               })
               if (output && typeof output.output === "string") {
-                output.output +=
-                  "\n\n还有下一步子代理。请再调用 pilot_run（同一 project，不要 force_new）领取原生 Task。"
+                const msg = String(
+                  (continued &&
+                    (continued.message_zh ||
+                      continued.message ||
+                      (continued.host_step &&
+                        typeof continued.host_step === "object" &&
+                        (continued.host_step as Record<string, unknown>).message_zh))) ||
+                    "审查已收口，已继续 task_plan 下一格。",
+                )
+                output.output += `\n\n${msg}`
+              }
+            } else if (String(next.kind || "") === "dispatch_subagent" && rememberPendingDispatch) {
+              rememberPendingDispatch({
+                project: opProject,
+                ticket: String(next.dispatch_ticket || pendingDispatch.ticket || ""),
+                actor: String(next.actor_id || pendingDispatch.actor || ""),
+                action: String(next.action_id || pendingDispatch.action || ""),
+                ts: Date.now(),
+                sessionId: liveSessionId,
+              })
+              if (output && typeof output.output === "string") {
+                if (waiting) {
+                  const remaining = Array.isArray(finished.remaining_slices)
+                    ? finished.remaining_slices.map((s) => String(s || "").trim()).filter(Boolean)
+                    : []
+                  const inflight = inflightSliceIds()
+                  const missing = remaining.filter((sid) => !inflight.has(sid))
+                  output.output += missing.length
+                    ? `\n\n切片未齐，禁止 finalize。请用 host_step.task_prompt_stub 原样派发剩余切片：${missing.join(", ")}。`
+                    : "\n\n切片未齐，另一轴仍在运行。禁止现在 finalize。"
+                } else {
+                  output.output +=
+                    "\n\n还有下一步子代理。请再调用 pilot_run（同一 project，不要 force_new）领取原生 Task。"
+                }
               }
             }
           }

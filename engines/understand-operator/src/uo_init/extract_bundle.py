@@ -241,6 +241,13 @@ def extract_host_bundle(
     )
 
     timing = timer.summary()
+    try:
+        from uo_init import tu_cache as _tu_cache
+
+        _tlog(f"  tu_cache { _tu_cache.stats() }")
+        _tu_cache.clear_live_ast()
+    except Exception:  # noqa: BLE001
+        pass
     _tlog(
         f"extract_host_bundle TOTAL {timing['total_seconds']:.1f}s  "
         f"slow={timing['slow_phases'] or 'none'}"
