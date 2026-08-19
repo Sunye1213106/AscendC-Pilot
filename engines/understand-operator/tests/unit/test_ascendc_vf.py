@@ -73,6 +73,7 @@ def test_vf_gated_by_architecture() -> None:
     assert architecture_has_vf("arch22") is False
     assert architecture_has_vf("") is True
     assert architecture_npu_arch("arch-920r1") == 9201
+    assert architecture_npu_arch("arch920r1") == 9201
     assert architecture_has_vf("arch-920r1") is True
     assert architecture_has_vf("9201") is True
     assert is_cann_vf_api("LoadAlign", architecture="arch35") is True

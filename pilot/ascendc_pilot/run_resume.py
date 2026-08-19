@@ -720,6 +720,10 @@ def apply_reinit_wipe(
     try:
         for rel in explicit_deletes:
             target = agent / rel
+            try:
+                target.resolve().relative_to(agent.resolve())
+            except ValueError:
+                continue
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)
                 removed.append(target.as_posix())

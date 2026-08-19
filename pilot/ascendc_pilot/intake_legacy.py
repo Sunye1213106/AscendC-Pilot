@@ -14,16 +14,27 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 from ascendc_pilot.paths import is_under_pilot_checkout, opencode_home, pilot_checkout_root
-from uo_init.source_layout import ARCH_DIR_RE
+from uo_init.source_layout import ARCH_DIR_RE, match_on_disk_architecture
 
 _ARCH_TOKEN = re.compile(r"\barch[0-9A-Za-z._-]+\b", re.I)
 
 LAST_PROJECT_CACHE = opencode_home() / "ascendc-last-project"
 HARNESS_BIN_CACHE = opencode_home() / "ascendc-harness-bin"
+
+
+def _last_project_cache_path() -> Path:
+    """Prefer the intake wrapper's LAST_PROJECT_CACHE so tests can monkeypatch it."""
+    mod = sys.modules.get("ascendc_pilot.intake")
+    if mod is not None:
+        override = getattr(mod, "LAST_PROJECT_CACHE", None)
+        if override is not None:
+            return Path(override)
+    return LAST_PROJECT_CACHE
 
 
 def _workflows_need_arch() -> frozenset[str]:
@@ -195,16 +206,23 @@ def architecture_from_intent(intent: str, known_archs: list[str] | tuple[str, ..
     raw = str(intent or "").strip()
     if not raw:
         return ""
-    if not is_architecture_pin_turn(raw):
-        return ""
     allowed_l = {a.lower(): a for a in names}
     compact = re.sub(r"\s+", "", raw).strip().lower()
     exact = allowed_l.get(compact)
     if exact:
         return exact
+    if re.fullmatch(r"(?:arch[0-9A-Za-z._-]+|dav[_-]?9201|9201)", compact, re.I):
+        mapped = match_on_disk_architecture(compact, names)
+        if mapped in set(names):
+            return mapped
+    if not is_architecture_pin_turn(raw):
+        return ""
     found: list[str] = []
     for token in _ARCH_TOKEN.findall(raw):
         hit = allowed_l.get(token.lower())
+        if not hit:
+            mapped = match_on_disk_architecture(token, names)
+            hit = mapped if mapped in set(names) else None
         if hit and hit not in found:
             found.append(hit)
     if len(found) == 1:
@@ -402,10 +420,11 @@ def describe_uo_products(root: Path | str | None) -> list[dict[str, str]]:
 
 
 def read_last_project_cache() -> Path | None:
+    cache = _last_project_cache_path()
     try:
-        if not LAST_PROJECT_CACHE.is_file():
+        if not cache.is_file():
             return None
-        root = Path(LAST_PROJECT_CACHE.read_text(encoding="utf-8").strip())
+        root = Path(cache.read_text(encoding="utf-8").strip())
         if _is_usable_operator(root):
             return root.resolve()
     except Exception:
@@ -417,9 +436,10 @@ def write_last_project_cache(root: Path | str) -> None:
     path = Path(root).expanduser().resolve()
     if not _is_usable_operator(path):
         return
+    cache = _last_project_cache_path()
     try:
-        LAST_PROJECT_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        LAST_PROJECT_CACHE.write_text(str(path), encoding="utf-8")
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(str(path), encoding="utf-8")
     except Exception:
         pass
 
@@ -1078,42 +1098,46 @@ def prepare_workflow_start(
     if need_arch and arch and looks_like_operator_package(root):
         known = discover_architectures(root)
         if known and arch not in known:
-            details = describe_architectures(root)
-            ask_opts = [
-                {
-                    "label": o["label"],
-                    "value": o["label"],
-                    "description": o.get("description") or "",
-                }
-                for o in details
-            ]
-            return _attach_intake_request(
-                {
-                    "ok": False,
-                    "needs_human_decision": True,
-                    "decision_kind": "architecture",
-                    "reason_code": "ARCHITECTURE_NOT_IN_TREE",
-                    "workflow_id": wf,
-                    "project": str(root),
-                    "architecture": arch,
-                    "architecture_options": known,
-                    "architecture_option_details": details,
-                    "message_zh": (
-                        f"指定的 architecture={arch} 不在算子仓 arch* 目录中。"
-                        f"仓内仅有: {', '.join(known)}。请重新选择后再 `pilot_run`。"
-                    ),
-                    "ask_question": {
-                        "prompt_zh": "请从算子仓实际 arch* 中选择",
-                        "options": ask_opts,
-                        "allow_free_text": False,
-                        "field": "architecture",
+            matched = match_on_disk_architecture(arch, known)
+            if matched in known:
+                arch = matched
+            else:
+                details = describe_architectures(root)
+                ask_opts = [
+                    {
+                        "label": o["label"],
+                        "value": o["label"],
+                        "description": o.get("description") or "",
+                    }
+                    for o in details
+                ]
+                return _attach_intake_request(
+                    {
+                        "ok": False,
+                        "needs_human_decision": True,
+                        "decision_kind": "architecture",
+                        "reason_code": "ARCHITECTURE_NOT_IN_TREE",
+                        "workflow_id": wf,
+                        "project": str(root),
+                        "architecture": arch,
+                        "architecture_options": known,
+                        "architecture_option_details": details,
+                        "message_zh": (
+                            f"指定的 architecture={arch} 不在算子仓 arch* 目录中。"
+                            f"仓内仅有: {', '.join(known)}。请重新选择后再 `pilot_run`。"
+                        ),
+                        "ask_question": {
+                            "prompt_zh": "请从算子仓实际 arch* 中选择",
+                            "options": ask_opts,
+                            "allow_free_text": False,
+                            "field": "architecture",
+                        },
+                        "suggested_command": (
+                            f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(known)}>'
+                        ),
                     },
-                    "suggested_command": (
-                        f'pilot_run workflow={wf} project="{root}" architecture=<{",".join(known)}>'
-                    ),
-                },
-                root,
-            )
+                    root,
+                )
 
     out: dict[str, Any] = {
         "ok": True,

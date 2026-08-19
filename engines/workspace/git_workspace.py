@@ -236,6 +236,57 @@ def worktree_home(
     )
 
 
+def _safe_path_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value or "")).strip("-.")
+    return token or "x"
+
+
+def isolated_pr_dest(
+    workspace_root: str | Path,
+    *,
+    host: str,
+    owner: str,
+    repo: str,
+    number: int,
+) -> Path:
+    """Checkout target under the Host open directory. Never the open directory itself."""
+    slug = (
+        f"{_safe_path_token(host)}--"
+        f"{_safe_path_token(owner)}--"
+        f"{_safe_path_token(repo)}--"
+        f"pr-{int(number)}"
+    )
+    return Path(workspace_root).expanduser() / ".ascendc-pr" / slug
+
+
+def is_isolated_pr_tree(path: str | Path | None) -> bool:
+    """True when path lives in a Host PR clone folder or a legacy cache worktree."""
+    if path is None or not str(path).strip():
+        return False
+    root = Path(path).expanduser()
+    try:
+        root = root.resolve()
+    except OSError:
+        pass
+    parts = [part.lower() for part in root.parts]
+    if ".ascendc-pr" in parts:
+        return True
+    try:
+        cache = (cache_root() / "workspaces").resolve()
+        root.resolve().relative_to(cache)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _sha_matches(existing: str, wanted: str) -> bool:
+    a = str(existing or "").strip().lower()
+    b = str(wanted or "").strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b) or b.startswith(a)
+
+
 def _lock_path(ws: Path) -> Path:
     return ws / "lock.yaml"
 
@@ -268,14 +319,44 @@ def acquire_workspace_lock(ws: Path, run_id: str) -> dict[str, Any]:
 
 def create_worktree(mirror: Path, dest: Path, sha: str, *, run_id: str = "") -> dict[str, Any]:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if not sha:
+        return {"ok": False, "error": "EMPTY_SHA"}
     if dest.exists():
         if run_id:
             held = acquire_workspace_lock(dest.parent, run_id)
             if not held.get("ok"):
                 return held
+        existing = _resolve_sha(dest, "HEAD")
+        if _sha_matches(existing, sha):
+            return {"ok": True, "path": dest, "sha": existing or sha, "reused": True}
+        if existing:
+            checked = _run_git(["checkout", "--detach", sha], cwd=dest)
+            if checked.returncode == 0:
+                return {"ok": True, "path": dest, "sha": sha, "reused": True}
+            fetched = _run_git(["fetch", "--all"], cwd=dest)
+            if fetched.returncode == 0:
+                checked = _run_git(["checkout", "--detach", sha], cwd=dest)
+                if checked.returncode == 0:
+                    return {"ok": True, "path": dest, "sha": sha, "reused": True}
+            return {
+                "ok": False,
+                "error": "WORKTREE_SHA_MISMATCH",
+                "message_zh": (
+                    f"已有 checkout {dest} 的 HEAD={existing[:12]} 与目标 {sha[:12]} 不一致，"
+                    "且无法原地 checkout。禁止 rmtree 算子源码。"
+                ),
+            }
+        has_operator = (dest / "op_host").is_dir() or (dest / "op_kernel").is_dir()
+        if has_operator:
+            return {
+                "ok": False,
+                "error": "WORKTREE_EXISTS_NOT_GIT",
+                "message_zh": (
+                    f"{dest} 已有算子源码但不是可复用的 git checkout，拒绝 rmtree。"
+                ),
+            }
+        # Leftover empty / metadata-only directory from a prior failed wipe.
         shutil.rmtree(dest, ignore_errors=True)
-    if not sha:
-        return {"ok": False, "error": "EMPTY_SHA"}
     if run_id:
         held = acquire_workspace_lock(dest.parent, run_id)
         if not held.get("ok"):
@@ -289,7 +370,7 @@ def create_worktree(mirror: Path, dest: Path, sha: str, *, run_id: str = "") -> 
                 "error": "WORKTREE_FAILED",
                 "message_zh": (added.stderr or cloned.stderr)[-400:],
             }
-        _run_git(["checkout", sha], cwd=dest)
+        _run_git(["checkout", "--detach", sha], cwd=dest)
     return {"ok": True, "path": dest, "sha": sha}
 
 
@@ -663,6 +744,22 @@ def acquire_pull_request(
     if not parsed.get("ok"):
         return parsed
     instance = str(run_id or goal_id or "run").strip() or "run"
+    ws_arg = str(workspace_root or "").strip()
+    if ws_arg:
+        anchor = Path(ws_arg).expanduser()
+        try:
+            anchor = anchor.resolve()
+        except OSError:
+            pass
+        if looks_like_pilot_checkout(anchor):
+            return {
+                "ok": False,
+                "error": "PILOT_CHECKOUT_FORBIDDEN",
+                "message_zh": (
+                    "当前目录是 AscendC-Pilot 仓，禁止把算子源码 clone 进来。"
+                    "请打开算子目录、算子仓根目录，或空的 OpenCode 工作区后再贴 PR。"
+                ),
+            }
     mirror_hit = ensure_bare_mirror(
         str(parsed["clone_url"]),
         host=str(parsed["host"]),
@@ -693,27 +790,21 @@ def acquire_pull_request(
     diff = _run_git(["diff", f"{base_sha}...{head_sha}"], cwd=mirror)
     digest = _diff_digest(diff.stdout or "")
     skipped_checkout = False
-    ws_arg = str(workspace_root or "").strip()
     if ws_arg:
-        dest = Path(ws_arg).expanduser()
-        try:
-            dest = dest.resolve()
-        except OSError:
-            pass
-        head_wt = materialize_workspace_head(
-            dest,
-            mirror,
-            sha,
+        dest = isolated_pr_dest(
+            anchor,
             host=str(parsed["host"]),
             owner=str(parsed["owner"]),
             repo=str(parsed["repo"]),
+            number=int(parsed["number"]),
         )
+        head_wt = create_worktree(mirror, dest, sha, run_id=instance)
         if not head_wt.get("ok"):
             return head_wt
         head_path = Path(head_wt["path"])
         ws_home = dest
         base_path = ""
-        skipped_checkout = bool(head_wt.get("skipped_checkout"))
+        skipped_checkout = False
     else:
         ws_home = worktree_home(
             host=str(parsed["host"]),

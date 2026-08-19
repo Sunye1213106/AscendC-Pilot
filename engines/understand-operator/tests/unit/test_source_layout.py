@@ -7,14 +7,19 @@ import yaml
 
 from uo_init.kernel_tiling_view import _default_tiling_type, render_stub
 from uo_init.source_layout import (
+    ARCH_DIR_RE,
     GLOBAL_KERNEL_RE,
     KERNEL_ENTRY_NAME_RE,
     arch_number,
+    architecture_in_scope,
+    canonicalize_architecture,
     entry_include_architecture,
     include_root_owned_architecture,
     is_foreign_arch_entry_tu,
     is_other_arch_path,
+    match_on_disk_architecture,
     path_owned_architecture,
+    pick_kernel_entry,
     selected_host_files,
     selected_kernel_files,
     selected_tiling_headers,
@@ -299,9 +304,10 @@ def test_hyphenated_arch_920r1_is_a_distinct_owned_path(tmp_path: Path) -> None:
     _write(own, '#include "tiling.h"\n__global__ __aicore__ void widget() {}\n')
     _write(foreign, "struct Old {};\n")
     assert path_owned_architecture(own) == "arch-920r1"
-    assert is_other_arch_path(foreign, "arch-920r1") is True
+    assert is_other_arch_path(foreign, "arch-920r1") is False
     assert is_other_arch_path(own, "arch-920r1") is False
     assert arch_number("arch-920r1") == 920
+    assert arch_number("arch920r1") == 920
     assert arch_number("arch35") == 35
     assert entry_include_architecture('#include "arch-920r1/tiling.h"\n') == "arch-920r1"
     assert include_root_owned_architecture(own.parent) == "arch-920r1"
@@ -330,5 +336,42 @@ def test_confirmed_keeps_clang_included_other_arch_header(tmp_path: Path) -> Non
     assert header.resolve() in kernel
     assert entry.resolve() in kernel
     assert foreign_entry.resolve() not in kernel
+
+
+def test_canonicalize_and_cousin_scope() -> None:
+    assert canonicalize_architecture("arch920r1") == "arch-920r1"
+    assert canonicalize_architecture("DAV_9201") == "arch-920r1"
+    assert canonicalize_architecture("9201") == "arch-920r1"
+    assert canonicalize_architecture("arch35") == "arch35"
+    assert ARCH_DIR_RE.match("arch920r1")
+    assert ARCH_DIR_RE.match("arch-920r1")
+    assert match_on_disk_architecture("arch920r1", ["arch-920r1", "arch35"]) == "arch-920r1"
+    assert architecture_in_scope("arch35", "arch-920r1") is True
+    assert architecture_in_scope("arch-920r1", "arch35") is False
+    assert architecture_in_scope("arch22", "arch-920r1") is False
+    assert is_other_arch_path(Path("op_kernel/arch22/x.h"), "arch-920r1") is True
+
+
+def test_920r1_heuristic_keeps_arch35_apt_and_host_tiling(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    _write(
+        op / "op_kernel" / "toy_apt.cpp",
+        '#include "arch35/tiling.h"\n__global__ __aicore__ void toy() {}\n',
+    )
+    _write(op / "op_kernel" / "arch35" / "tiling.h", "struct T {};\n")
+    _write(op / "op_kernel" / "arch22" / "old.h", "struct Old {};\n")
+    _write(op / "op_host" / "arch35" / "toy_tiling.cpp", "void DoTiling() {}\n")
+    kernel = [p.as_posix().replace("\\", "/") for p in selected_kernel_files(op, "arch-920r1")]
+    assert any(p.endswith("toy_apt.cpp") for p in kernel)
+    assert any(p.endswith("arch35/tiling.h") for p in kernel)
+    assert not any("arch22" in p for p in kernel)
+    host = [p.as_posix().replace("\\", "/") for p in selected_host_files(op, "arch-920r1")]
+    assert any(p.endswith("toy_tiling.cpp") for p in host)
+    picked = pick_kernel_entry(
+        [op / "op_kernel" / "toy_apt.cpp", op / "op_kernel" / "arch35" / "old.cpp"],
+        "arch-920r1",
+    )
+    assert picked is not None
+    assert picked.name == "toy_apt.cpp"
 
 

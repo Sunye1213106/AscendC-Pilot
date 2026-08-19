@@ -70,8 +70,8 @@ AscendC Source → UO → Operator CodeMap
                          └→ CE → Plan / Apply / Review
 
 User
-  ├─ 自然语言 → Primary 读编排 skill（slash I/O + 流水线）→ pilot_run(workflow=当前缺的那一步)
-  └─ Slash /uo /tg /ce → Primary → pilot_run(workflow=<该 id>)
+  ├─ 自然语言 → Primary 形成 Goal Contract → `pilot_run(workflow=auto)`（goal-intake）→ 跟随 `next_workflow_id`
+  └─ Slash /uo /tg /ce → Primary → `pilot_run(workflow=<该 id>)`
     ↓
 Host Adapter（安装期 compose + 运行时 Session Driver）
     ↓
@@ -80,7 +80,7 @@ ACP Harness（单步 lease / 派领域子代理；下一步回 Primary + skill �
 Engine（事实：clone / Clang / replay）或 LLM Agent（推理；不推进状态）
 ```
 
-自然语言 **对照编排 skill 选下一步**，不要 `workflow=auto` 再开一轮 Intent LLM，也不要用 Python TaskPlan 平行 DAG。显式 slash 只跑该节点。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。没有独立 change-impact 角色：问变更影响 = 带着 diff 做 `/uo-query`。
+自然语言第一次 `pilot_run(workflow=auto, intent=原文)`。`auto` 是 reserved `goal-intake`，只做结构校验、PR exact-head workspace 和 TaskPlan 落盘，Runtime 不二次解释自然语言。有 PR URL 时在打开目录下新建文件夹 clone，从 changed-files 解析算子×架构；无 URL 才吃本地 diff。显式 slash 只跑该节点。查询仍走 `pilot_cli` / `uo-query`，不进 Harness。没有独立 change-impact 角色：问变更影响 = 带着 diff 做 `/uo-query`。
 
 | 模块 | 一句话 |
 | --- | --- |

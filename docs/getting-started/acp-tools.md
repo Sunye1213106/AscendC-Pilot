@@ -13,7 +13,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 ```text
 用户目标
   ├─ 自然语言说目标（不必知道模块名）
-  │     → 对照编排 skill，Host 工具 `pilot_run(workflow=<当前缺的 slash id>)`
+  │     → Host 工具 `pilot_run(workflow=auto, intent=原文)`，再跟随 `next_workflow_id`
   ├─ 显式 Slash：建库 / 更新 / TG / CE / 调查 unresolved
   │     → Host 工具 pilot_run（workflow=<该 id> + project + architecture）
   └─ 只读问 CodeMap / 看状态 / 看失败卡 / 环境修好后恢复
@@ -22,7 +22,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| 自然语言：「分析这个 PR 并生成对应测试用例」+ URL | `pilot_run(workflow=<缺的那一步>)`：先补 UO，交付 ce-review + tg-plan + tg-solve | `workflow=auto` 再解析原文，或把「只要生成 case」发明成 `/ce-review` |
+| 自然语言：「分析这个 PR 并生成对应测试用例」+ URL | `pilot_run(workflow=auto, intent=原文)`：在打开目录下新建文件夹 clone，从 PR 变更 pin 算子×架构，再 uo-init → ce-review → tg-* | 扫本地 fork、bash git、或用原生 skill 加载编排 |
 | `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run(workflow=<id>)` | 手工串 `start` / `next` / `run-action auto` |
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
@@ -41,7 +41,7 @@ scan-architectures --project D:\ops\attention\flash_attention_score_grad
 retry-after-environment-fix --project D:\ops\attention\flash_attention_score_grad
 ```
 
-`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。自然语言贴 PR URL 时对照编排 skill 选下一步；「只要生成 case」不要默认 `/ce-review`。专家若只要审查，才显式 `/ce-review`。
+`--project` 必须是算子包根（含 `op_host/` / `op_kernel/`），不是 AscendC-Pilot 仓库，也不是 `ops-transformer` 仓根。自然语言贴 PR URL 时第一次 `workflow=auto`：系统在打开目录下新建 clone，自己从 changed-files 找算子和架构，不要把本地 `ops-transformer` fork 当成 PR head。
 
 ---
 

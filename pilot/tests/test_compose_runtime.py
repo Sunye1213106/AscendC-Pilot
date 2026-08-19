@@ -160,9 +160,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert (prompts / "codemap-query.md").is_file()
         assert (prompts / "investigate-gaps.md").is_file()
         tg_prompts = generated / "prompts" / "tasks" / "tg"
-        assert (generated / "skills" / "workflow-orchestration" / "SKILL.md").is_file()
-        orch = (generated / "skills" / "workflow-orchestration" / "SKILL.md").read_text(encoding="utf-8")
-        assert "disable-model-invocation" not in orch
+        assert not (generated / "skills" / "workflow-orchestration" / "SKILL.md").exists()
         assert (tg_prompts / "bind-init.md").is_file()
         assert (tg_prompts / "plan-fuse.md").is_file()
         assert not (tg_prompts / "parse-intent.md").exists()
@@ -350,7 +348,7 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
         "code-review",
         "code-engineering",
     )
-    assert CONTROL_PLANE_SKILL_IDS == ("workflow-orchestration",)
+    assert CONTROL_PLANE_SKILL_IDS == ()
     assert set(CONTROL_PLANE_SKILL_IDS).isdisjoint(set(COGNITIVE_SKILL_IDS))
     maintainer = {
         "writing-for-pilot-skills",
@@ -381,9 +379,11 @@ def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
     assert "同名不可互换" in primary
     oa = (out / "skills" / "operator-analysis" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in oa
-    orch = (out / "skills" / "workflow-orchestration" / "SKILL.md").read_text(encoding="utf-8")
-    assert "disable-model-invocation" not in orch
-    assert "slash-io.md" in orch or "编排" in orch
+    assert not (out / "skills" / "workflow-orchestration" / "SKILL.md").exists()
+    primary = (out / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
+    assert "workflow=auto" in primary
+    assert "Never workflow=auto" not in primary
+    assert "skills/workflow-orchestration" not in primary
 
 
 def test_policy_ids_follow_execution_mode() -> None:

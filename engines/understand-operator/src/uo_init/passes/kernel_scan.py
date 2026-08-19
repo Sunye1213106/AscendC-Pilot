@@ -101,7 +101,7 @@ def architecture_kernel_files(source_root: Path, architecture: str) -> list[Path
     is one ORIG_DTYPE walk; TQue / DataCopy / Cast in the rest of this
     architecture's kernel tree still belong in the CodeMap.
     """
-    from uo_init.source_layout import is_other_arch_path
+    from uo_init.source_layout import is_foreign_arch_entry_tu, is_other_arch_path
 
     arch = require_architecture(architecture)
     kernel_root = Path(source_root) / "op_kernel"
@@ -111,7 +111,7 @@ def architecture_kernel_files(source_root: Path, architecture: str) -> list[Path
     for path in sorted(kernel_root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in _KERNEL_SOURCE_SUFFIXES:
             continue
-        if is_other_arch_path(path, arch):
+        if is_foreign_arch_entry_tu(path, arch) or is_other_arch_path(path, arch):
             continue
         out.append(path)
     return out

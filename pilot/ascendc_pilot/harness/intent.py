@@ -95,7 +95,7 @@ def render_workflow_catalog() -> str:
         "# 用户工作流目录",
         "",
         "从下面选出用户要交付的工作流 id（并集、无序）。",
-        "不要发明目录外的 id，不要写执行顺序。下一步由主控对照编排 skill 的 I/O 决定。",
+        "不要发明目录外的 id，不要写执行顺序。下一步由 Goal Contract + goal-intake 的 TaskPlan 决定。",
         "",
     ]
     for row in workflow_catalog():

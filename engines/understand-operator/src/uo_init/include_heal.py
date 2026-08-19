@@ -27,7 +27,9 @@ import yaml
 from uo_init.paths import require_architecture
 from uo_init.source_layout import (
     arch_tokens_in_include,
+    architectures_match,
     include_root_owned_architecture,
+    is_other_arch_path,
     path_owned_architecture,
 )
 
@@ -381,8 +383,7 @@ def _identity_include_dirs(items: Iterable[Any], arch_dir: str | None) -> list[s
     arch = str(arch_dir or "").strip()
     out: list[str] = []
     for raw in _unique_dirs(items):
-        owned = include_root_owned_architecture(raw)
-        if owned and arch and owned != arch:
+        if arch and is_other_arch_path(raw, arch):
             continue
         out.append(raw)
     return out
@@ -1231,23 +1232,27 @@ def _pick_unique_header(
     viable = [p for p in _dedupe_paths(hits) if _viable_header(p, roots=roots)]
     if not viable:
         return INCLUDE_UNRESOLVED, []
-    arch = str(arch_dir or "").strip().lower()
+    arch = str(arch_dir or "").strip()
     tokens = {t.lower() for t in arch_tokens_in_include(rel)}
     if arch and len(viable) > 1:
-        current = [p for p in viable if path_owned_architecture(p) == arch]
-        if len(current) == 1:
-            return INCLUDE_UNIQUE, current
-        if current:
-            return INCLUDE_AMBIGUOUS, current
-        other = [
+        identity = [
             p
             for p in viable
-            if path_owned_architecture(p)
-            and path_owned_architecture(p) != arch
+            if architectures_match(path_owned_architecture(p), arch)
         ]
+        if len(identity) == 1:
+            return INCLUDE_UNIQUE, identity
+        if identity:
+            return INCLUDE_AMBIGUOUS, identity
+        scoped = [p for p in viable if not is_other_arch_path(p, arch)]
+        if len(scoped) == 1:
+            return INCLUDE_UNIQUE, scoped
+        if scoped:
+            return INCLUDE_AMBIGUOUS, scoped
+        other = [p for p in viable if is_other_arch_path(p, arch)]
         if other and len(other) == len(viable):
             # Every hit is another arch* folder. Bare ``foo.h`` must not put
-            # that folder on -I; an explicit ``arch35/foo.h`` spelling is ok.
+            # that folder on -I; an explicit ``arch22/foo.h`` spelling is ok.
             if not tokens:
                 return INCLUDE_UNRESOLVED, viable
             named = [p for p in other if path_owned_architecture(p) in tokens]
@@ -1263,7 +1268,7 @@ def _pick_unique_header(
     if (
         arch
         and owned
-        and owned != arch
+        and is_other_arch_path(viable[0], arch)
         and arch not in tokens
         and owned not in tokens
     ):
@@ -1311,7 +1316,7 @@ def find_include_dir(ctx: Any, include_name: str, *, side: str) -> HealHit | Non
         return None
     owned_root = include_root_owned_architecture(include_dir)
     arch = str(getattr(ctx, "arch_dir", "") or "").strip()
-    if owned_root and arch and owned_root != arch:
+    if owned_root and arch and is_other_arch_path(include_dir, arch):
         _set_include_resolution(INCLUDE_UNRESOLVED, viable)
         return None
     return HealHit(

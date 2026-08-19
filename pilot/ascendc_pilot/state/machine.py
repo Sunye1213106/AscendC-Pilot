@@ -619,6 +619,8 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
             payload["user_goal"] = goal_adv.get("goal")
             payload["user_goal_next_workflow_id"] = goal_adv.get("next_workflow_id") or ""
             payload["user_goal_next_summary_zh"] = goal_adv.get("next_summary_zh") or ""
+            payload["user_goal_next_project"] = goal_adv.get("next_project") or ""
+            payload["user_goal_next_architecture"] = goal_adv.get("next_architecture") or ""
             payload["user_goal_acceptance_failed"] = bool(goal_adv.get("acceptance_failed"))
             payload["user_summary_zh"] = str(goal_adv.get("message_zh") or "")
             payload["message_zh"] = str(goal_adv.get("message_zh") or "")
@@ -629,7 +631,13 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
                     + str(goal_adv.get("message_zh") or "")
                     + " 向用户仅说明意图/刚完成/下一步；禁止粘贴内部字段名。"
                     + f" 下一步：Host `pilot_run` workflow={goal_adv['next_workflow_id']} "
-                    f"--project <算子目录>（若需 architecture 则带上）。"
+                    f"--project {goal_adv.get('next_project') or '<算子目录>'}"
+                    + (
+                        f" --architecture {goal_adv['next_architecture']}"
+                        if goal_adv.get("next_architecture")
+                        else "（若需 architecture 则带上）"
+                    )
+                    + "。"
                 )
     except Exception:  # noqa: BLE001
         pass

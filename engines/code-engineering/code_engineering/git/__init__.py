@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 import ssl
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
@@ -398,8 +399,10 @@ def fetch_pr_diff(
     pr_url: str,
     *,
     architecture: str = "",
+    base_sha: str = "",
+    head_sha: str = "",
 ) -> dict[str, Any]:
-    """Fetch PR patch via matching local remote, else allowlisted HTTPS."""
+    """Fetch PR patch via isolated clone, matching local remote, else allowlisted HTTPS."""
     host = _norm_host(urlparse(str(pr_url or "")).netloc)
     if host not in ALLOWED_PR_HOSTS:
         return {
@@ -407,6 +410,11 @@ def fetch_pr_diff(
             "reason_code": "PR_HOST_NOT_ALLOWED",
             "message_zh": f"不支持的 PR 主机 {host}。只接受 gitcode.com / github.com。",
         }
+    isolated = _capture_isolated_pr(
+        project_root, architecture=architecture, base_sha=base_sha, head_sha=head_sha
+    )
+    if isolated is not None:
+        return isolated
     fetched = _fetch_via_remote(project_root, pr_url, architecture)
     if fetched.get("ok") or fetched.get("reason_code") in {"PR_EMPTY_DIFF"}:
         return fetched
@@ -422,6 +430,29 @@ def fetch_pr_diff(
     return fetched if fetched.get("reason_code") else http
 
 
+def _capture_isolated_pr(
+    project_root: str | Any,
+    *,
+    architecture: str = "",
+    base_sha: str = "",
+    head_sha: str = "",
+) -> dict[str, Any] | None:
+    try:
+        import sys
+
+        ws = Path(__file__).resolve().parents[3] / "workspace"
+        if str(ws) not in sys.path:
+            sys.path.insert(0, str(ws))
+        import pr_workspace as pw  # type: ignore[import-not-found]
+    except Exception:  # noqa: BLE001
+        return None
+    if not pw.is_isolated_pr_tree(project_root):
+        return None
+    return pw.capture_isolated_operator_diff(
+        project_root, architecture=architecture, base_sha=base_sha, head_sha=head_sha
+    )
+
+
 def capture_change(
     project_root: str | Any,
     *,
@@ -434,7 +465,14 @@ def capture_change(
     """Workspace diff, or PR fetch when a URL is present. No silent local fallback for PRs."""
     url = str(pr_url or "").strip() or extract_pr_url(intent)
     if url:
-        return fetch_pr_diff(project_root, url, architecture=architecture)
+        base_sha = "" if str(base or "").strip() in {"", "HEAD"} else str(base).strip()
+        return fetch_pr_diff(
+            project_root,
+            url,
+            architecture=architecture,
+            base_sha=base_sha,
+            head_sha=str(head or "").strip(),
+        )
     payload = capture(
         project_root,
         base=base,

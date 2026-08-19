@@ -5,7 +5,7 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 
 ## Transport
 
-- Workflows: Host tool `pilot_run` only (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged. Natural language: read `skills/workflow-orchestration/` and `pilot_run(workflow=<the missing slash id>)`. Do not `workflow=auto`. Explicit slash: `workflow=<existing id>`. Driver must not invent Todo steps.
+- Workflows: Host tool `pilot_run` only (live progress on the tool row) then `todowrite` from `todo.todo_sync.items` verbatim (full list, one `in_progress`). Skip only when items are unchanged. Natural language first call: `pilot_run(workflow=auto, intent=<user text verbatim>)`. `auto` is reserved `goal-intake` (structure check, PR exact-head workspace, TaskPlan). Explicit slash: `workflow=<existing id>`. Do not invent Todo steps. Do not use OpenCode native `skill` for Pilot orchestration.
 - If `pilot_run` is missing from the tool list: tell the user to fully quit OpenCode and reinstall the plugin.
 - Exception: **never** `pilot_run` for `uo-query`.
 - When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If a Host-driver `host_step.tasks` ≥2 (review dual-axis, not uo-query keyword fanout), launch all in the same turn, then Primary synthesizes each child's **native Task text**.
@@ -16,7 +16,7 @@ It does **not** mean the Action has no METHOD, Prompt, or session bundle.
 - Short CLI: plugin tool `pilot_cli`. Do not pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
 - Do not call `--help` / `-h` / `help` to discover protocol. Diagnose with `pilot_cli` `status` / `inspect-failure` / `scan-architectures`. Workflows: `pilot_run`. Query: `pilot_cli` `uo-query --project <abs>`. Environment repair: `pilot_cli` `retry-after-environment-fix`.
 - Do not write `.ascendc-pilot/**` via bash / `>` / `Set-Content` / `tee`.
-- Children must not use OpenCode `skill` (read session `method.md`). Primary may use OpenCode native skills and Pilot workflow skills.
+- Children must not use OpenCode `skill` (read session `method.md`). Primary must not use OpenCode native `skill` to load Pilot orchestration. Domain methods come from session `method.md` / cognitive skills.
 - Read of any directory is allow in AscendC-Pilot mode. Primary Write/edit is ask. Children: empty `write_scopes` → `edit`/`write` deny; otherwise ask (lease still fences).
 - Containment (`human_required` / `blocked` / `failed`) and pending AskQuestion: Primary may `Read` / `Glob` / `Grep`, `ls` / `dir` / `Get-ChildItem`, and diagnostic python (`check_cann.py` / `check_env.py` / `doctor` / `cann_extract.py --fixup`). Still deny Write, Task, engine scripts, and `pilot_run` **while the confirm UI is waiting**. If the user interrupts and replies in chat, pending is superseded (`interpret-user-turn`); follow that message and do not re-ask. Interrupt is not wipe/reinit. Prefer `pilot_cli` `inspect-failure` / `status`. Children stay contained.
 

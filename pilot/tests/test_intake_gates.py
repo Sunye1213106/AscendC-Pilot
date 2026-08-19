@@ -108,6 +108,25 @@ def test_start_intake_gate_rejects_unknown_arch(tmp_path: Path):
     assert gate["reason_code"] == "ARCHITECTURE_NOT_IN_TREE"
 
 
+def test_start_intake_gate_accepts_arch920r1_alias(tmp_path: Path):
+    (tmp_path / "op_host" / "arch-920r1").mkdir(parents=True)
+    gate = intake.start_intake_gate(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="arch920r1",
+        project_explicit=True,
+    )
+    assert gate is None
+    prep = intake.prepare_workflow_start(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="arch920r1",
+        project_explicit=True,
+    )
+    assert prep.get("ok") is True
+    assert prep.get("architecture") == "arch-920r1"
+
+
 def test_start_intake_gate_rejects_pilot_checkout():
     harness = pilot_checkout_root()
     gate = intake.start_intake_gate(
@@ -464,6 +483,11 @@ def test_architecture_from_intent_unique_and_ambiguous():
     assert intake.architecture_from_intent("arch35 和 arch22", ["arch22", "arch35"]) == ""
     assert intake.architecture_from_intent("arch36 建库", ["arch35"]) == ""
     assert intake.architecture_from_intent("", ["arch35"]) == ""
+    assert (
+        intake.architecture_from_intent("arch920r1 建库", ["arch-920r1", "arch35"])
+        == "arch-920r1"
+    )
+    assert intake.architecture_from_intent("DAV_9201", ["arch-920r1"]) == "arch-920r1"
 
 
 def test_prepare_workflow_start_adopts_unique_arch_from_intent(tmp_path: Path, monkeypatch):
@@ -562,21 +586,29 @@ def test_prepare_pins_operator_from_pr_then_uo_gate(tmp_path: Path, monkeypatch)
     workspace.mkdir()
     op = tmp_path / "FlashAttention"
     (op / "op_host" / "arch35").mkdir(parents=True)
-    (op / "op_kernel").mkdir()
+    (op / "op_kernel" / "arch35").mkdir(parents=True)
     repo = Path(__file__).resolve().parents[2]
     ws = repo / "engines" / "workspace"
     if str(ws) not in sys.path:
         sys.path.insert(0, str(ws))
-    import git_workspace as gw  # noqa: WPS433
+    import pr_workspace as pw  # noqa: WPS433
 
     monkeypatch.setattr(
-        gw,
+        pw,
         "acquire_pull_request",
         lambda *a, **k: {
             "ok": True,
             "operator_roots": [str(op)],
-            "worktree_head": str(workspace),
-            "changed_files": ["op_host/a.cpp"],
+            "worktree_head": str(op),
+            "changed_files": ["op_host/arch35/a.cpp"],
+            "operator_targets": [
+                {
+                    "operator_root": str(op),
+                    "operator_name": "FlashAttention",
+                    "architecture": "arch35",
+                }
+            ],
+            "changeset": {"changed_files": ["op_host/arch35/a.cpp"]},
         },
     )
     monkeypatch.delenv("UO_ARCH", raising=False)
@@ -598,6 +630,31 @@ def test_prepare_without_pr_still_requires_operator(tmp_path: Path):
         project=workspace,
         workflow_id="uo-init",
         intent="帮我建库",
+        project_explicit=True,
+    )
+    assert prep.get("ok") is False
+    assert prep.get("reason_code") == "OPERATOR_PROJECT_REQUIRED"
+
+
+def test_prepare_without_url_does_not_clone(tmp_path: Path, monkeypatch):
+    import sys
+
+    workspace = tmp_path / "opencode-ws"
+    workspace.mkdir()
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import pr_workspace as pw  # noqa: WPS433
+
+    def boom(*_a, **_k):
+        raise AssertionError("must not clone without a PR URL")
+
+    monkeypatch.setattr(pw, "acquire_pull_request", boom)
+    prep = intake.prepare_workflow_start(
+        project=workspace,
+        workflow_id="ce-review",
+        intent="审查当前工作区的本地 diff",
         project_explicit=True,
     )
     assert prep.get("ok") is False

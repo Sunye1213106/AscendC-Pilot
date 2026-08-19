@@ -83,15 +83,20 @@ _ALWAYS_VF_REG: frozenset[str] = frozenset(
 def architecture_npu_arch(architecture: str) -> int | None:
     """Map ``arch35`` / ``3510`` / ``arch-920r1`` onto the CANN ``__NPU_ARCH__`` number."""
     from uo_init.platform_ini import ARCH_TO_NPU_ARCH
+    from uo_init.source_layout import canonicalize_architecture
 
-    raw = str(architecture or "").strip().lower()
+    raw = str(architecture or "").strip()
     if not raw:
         return None
-    if raw in ARCH_TO_NPU_ARCH:
-        return int(ARCH_TO_NPU_ARCH[raw])
+    canon = canonicalize_architecture(raw)
+    if canon in ARCH_TO_NPU_ARCH:
+        return int(ARCH_TO_NPU_ARCH[canon])
+    low = raw.lower()
+    if low in ARCH_TO_NPU_ARCH:
+        return int(ARCH_TO_NPU_ARCH[low])
     if raw.isdigit():
         return int(raw)
-    m = re.fullmatch(r"arch(\d{2})", raw)
+    m = re.fullmatch(r"arch(\d{2})", canon or low)
     if not m:
         return None
     prefix = m.group(1)

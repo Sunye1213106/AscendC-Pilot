@@ -93,6 +93,8 @@ class BuildContext:
     extra_kernel_includes: list[str] = field(default_factory=list)
     extra_host_force_includes: list[str] = field(default_factory=list)
     extra_kernel_force_includes: list[str] = field(default_factory=list)
+    overlay_includes: list[str] = field(default_factory=list)
+    cann_9201: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def load(
@@ -145,6 +147,12 @@ class BuildContext:
             from uo_init.include_heal import apply_saved_extras as _apply_extras
 
             _apply_extras(obj)
+        try:
+            from uo_init.cann_9201_compat import attach_9201_overlay
+
+            attach_9201_overlay(obj)
+        except OSError:
+            pass
         return obj
 
     def mapping(self) -> dict[str, str]:
@@ -190,20 +198,33 @@ class BuildContext:
             f"{base}/3rd",
         ]
 
+    def _arch_cousin_includes(self) -> list[str]:
+        """On-disk cousin arch folders (920r1 may ``-I`` ``op_*/arch35``)."""
+        op = (self.op_dir or "").replace("\\", "/").rstrip("/")
+        if not op:
+            return []
+        from uo_init.source_layout import iter_cousin_arch_dirs
+
+        out: list[str] = []
+        for side in ("op_kernel", "op_host"):
+            for folder in iter_cousin_arch_dirs(Path(op) / side, self.arch_dir):
+                out.append(str(folder).replace("\\", "/"))
+        return out
+
     def add_include(self, path: str, *, side: str) -> bool:
         """Append a runtime extra -I. Returns False when already present or empty.
 
-        Refuse another architecture's folder (``op_kernel/arch35`` while
-        ``arch_dir`` is ``arch-920r1``). Neutral roots such as ``op_kernel`` stay.
+        Refuse another architecture's folder (``op_kernel/arch22`` while
+        ``arch_dir`` is ``arch-920r1``). Cousin ``arch35`` is allowed for 920r1.
+        Neutral roots such as ``op_kernel`` stay.
         """
         p = str(path or "").replace("\\", "/").rstrip("/")
         if not p:
             return False
-        from uo_init.source_layout import include_root_owned_architecture
+        from uo_init.source_layout import is_other_arch_path
 
-        owned = include_root_owned_architecture(p)
         arch = str(self.arch_dir or "").strip()
-        if owned and arch and owned != arch:
+        if arch and is_other_arch_path(p, arch):
             return False
         current = self.kernel_includes() if side == "kernel" else self.host_includes()
         if p.lower() in {x.replace("\\", "/").rstrip("/").lower() for x in current}:
@@ -228,12 +249,15 @@ class BuildContext:
     def host_includes(self) -> list[str]:
         out = [self.resolve_path(p) for p in (self.raw.get("host") or {}).get("includes") or []]
         out.extend(self._ops_family_includes())
+        out.extend(self._arch_cousin_includes())
         out.extend(self.extra_host_includes)
         return _dedupe_includes(out)
 
     def kernel_includes(self) -> list[str]:
-        out = [self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("includes") or []]
+        out = list(self.overlay_includes)
+        out.extend(self.resolve_path(p) for p in (self.raw.get("kernel") or {}).get("includes") or [])
         out.extend(self._ops_family_includes())
+        out.extend(self._arch_cousin_includes())
         out.extend(self.extra_kernel_includes)
         return _dedupe_includes(out)
 
@@ -311,6 +335,8 @@ class BuildContext:
             "extra_kernel_includes": list(self.extra_kernel_includes),
             "extra_host_force_includes": list(self.extra_host_force_includes),
             "extra_kernel_force_includes": list(self.extra_kernel_force_includes),
+            "overlay_includes": list(self.overlay_includes),
+            "cann_9201": dict(self.cann_9201),
         }
 
     @classmethod
@@ -327,6 +353,8 @@ class BuildContext:
             extra_kernel_includes=list(data.get("extra_kernel_includes") or []),
             extra_host_force_includes=list(data.get("extra_host_force_includes") or []),
             extra_kernel_force_includes=list(data.get("extra_kernel_force_includes") or []),
+            overlay_includes=list(data.get("overlay_includes") or []),
+            cann_9201=dict(data.get("cann_9201") or {}),
         )
 
     def kernel_args(

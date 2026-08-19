@@ -223,28 +223,63 @@ def plan_for(
     source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
     selected = _expand_source_dependencies(raw_wfs, source)
 
-    steps: list[dict[str, Any]] = []
-
-    def _add(wid: str, *, kind: str = "workflow", summary_zh: str = "") -> None:
-        if any(str(s.get("id")) == wid for s in steps):
-            return
-        steps.append(
+    targets: list[dict[str, Any]] = []
+    for raw in llm_intent.get("operator_targets") or []:
+        if not isinstance(raw, dict):
+            continue
+        root = str(raw.get("operator_root") or raw.get("project") or "").strip()
+        arch = str(raw.get("architecture") or "").strip()
+        if not root or not arch:
+            continue
+        targets.append(
             {
-                "id": wid,
-                "kind": kind,
-                "workflow_id": wid if kind == "workflow" else "",
-                "summary_zh": summary_zh or WORKFLOW_SUMMARY_ZH.get(wid, wid),
-                "status": "pending",
+                "operator_root": root,
+                "operator_name": str(raw.get("operator_name") or Path(root).name),
+                "architecture": arch,
             }
         )
+
+    steps: list[dict[str, Any]] = []
+
+    def _add(
+        wid: str,
+        *,
+        kind: str = "workflow",
+        summary_zh: str = "",
+        target: dict[str, Any] | None = None,
+        index: int | None = None,
+    ) -> None:
+        sid = wid if index is None else f"{wid}#{index}"
+        if any(str(s.get("id")) == sid for s in steps):
+            return
+        label = summary_zh or WORKFLOW_SUMMARY_ZH.get(wid, wid)
+        if target is not None:
+            label = f"{label}（{target['operator_name']}/{target['architecture']}）"
+        step: dict[str, Any] = {
+            "id": sid,
+            "kind": kind,
+            "workflow_id": wid if kind == "workflow" else "",
+            "summary_zh": label,
+            "status": "pending",
+        }
+        if target is not None:
+            step["project"] = target["operator_root"]
+            step["architecture"] = target["architecture"]
+        steps.append(step)
 
     if str(source.get("kind") or "").strip().lower() in {"pull_request", "pr"}:
         _add("workspace_acquire", kind="harness_action", summary_zh="获取隔离 PR workspace")
 
     ordered = [w for w in _STEP_ORDER if w in selected]
     ordered.extend([w for w in selected if w not in _STEP_ORDER and w != "workspace_acquire"])
-    for wid in ordered:
-        _add(wid)
+    if len(targets) > 1:
+        for index, target in enumerate(targets):
+            for wid in ordered:
+                _add(wid, target=target, index=index)
+    else:
+        target = targets[0] if targets else None
+        for wid in ordered:
+            _add(wid, target=target)
 
     if steps:
         for step in steps:
@@ -275,6 +310,7 @@ def plan_for(
         "needed_workflows": list(selected),
         "needed_capabilities": list(derived_caps),
         "steps": steps,
+        "operator_targets": targets,
         "acceptance": acceptance,
         "acceptance_status": {item: "pending" for item in acceptance},
         "source": dict(source),
@@ -293,6 +329,19 @@ def current_workflow_id(plan: dict[str, Any] | None) -> str:
                 return str(step.get("workflow_id") or step.get("id") or "")
             continue
     return ""
+
+
+def current_step(plan: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not plan:
+        return None
+    for step in plan.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        if str(step.get("status") or "") not in {"passed", "skipped"}:
+            if str(step.get("kind") or "workflow") == "workflow":
+                return dict(step)
+            continue
+    return None
 
 
 def mark_step_passed(plan: dict[str, Any], step_id: str) -> dict[str, Any]:

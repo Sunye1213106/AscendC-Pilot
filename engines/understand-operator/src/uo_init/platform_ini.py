@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import configparser
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
+
+from uo_init.source_layout import canonicalize_architecture
 
 # arch_dir short name → NpuArch number (`NpuArch=3510` in INI / DAV_NNNN).
 ARCH_TO_NPU_ARCH = {
@@ -31,11 +33,11 @@ DEFAULT_SKU_BY_ARCH = {
 }
 
 # Kernel -D set for a BuildVariant. Never silently fall back to 3510.
-# arch-920r1 is a first-class row (values currently match DAV_3510 header
-# enablement because CANN does not yet ship a 9201-only -D set).
+# arch-920r1 compiles as DAV_9201 (__NPU_ARCH__=9201). CANN headers that still
+# gate on 3510 are widened by cann_9201_compat overlay, not by this table.
 ARCH_KERNEL_MACROS: dict[str, dict[str, str]] = {
     "arch35": {"__NPU_ARCH__": "3510", "__DAV_C310__": "", "__CCE_AICORE__": "310"},
-    "arch-920r1": {"__NPU_ARCH__": "3510", "__DAV_C310__": "", "__CCE_AICORE__": "310"},
+    "arch-920r1": {"__NPU_ARCH__": "9201", "__DAV_C310__": "", "__CCE_AICORE__": "310"},
     "arch22": {"__NPU_ARCH__": "2201", "__DAV_C220__": "", "__CCE_AICORE__": "220"},
     "arch32": {"__NPU_ARCH__": "3202"},
     "arch50": {"__NPU_ARCH__": "5001"},
@@ -44,13 +46,14 @@ ARCH_KERNEL_MACROS: dict[str, dict[str, str]] = {
 
 def dav_name_for_arch(arch_dir: str | None) -> str | None:
     """``arch-920r1`` → ``DAV_9201``. None when the arch_dir is unknown."""
-    npu = ARCH_TO_NPU_ARCH.get(str(arch_dir or "").strip())
+    arch = canonicalize_architecture(arch_dir)
+    npu = ARCH_TO_NPU_ARCH.get(arch)
     return f"DAV_{npu}" if npu is not None else None
 
 
 def kernel_macros_for_arch(arch_dir: str | None) -> dict[str, str]:
     """Clang -D map for this architecture. Unknown arch: NPU number only."""
-    arch = str(arch_dir or "").strip()
+    arch = canonicalize_architecture(arch_dir) or str(arch_dir or "").strip()
     if not arch:
         return {}
     known = ARCH_KERNEL_MACROS.get(arch)
@@ -74,6 +77,8 @@ class PlatformProfile:
     l2_size: int
     memory_size: int
     ini_path: str
+    sku_fallback: str = ""
+    npu_arch_source: str = "ini"
 
     @property
     def aic_num(self) -> int:
@@ -168,8 +173,9 @@ def load_platform_profile(
     platform_sku: str | None = None,
 ) -> PlatformProfile:
     """Resolve a locked SKU profile or raise if the INI cannot be found."""
-    npu = ARCH_TO_NPU_ARCH.get(arch_dir)
-    sku = platform_sku or DEFAULT_SKU_BY_ARCH.get(arch_dir)
+    arch = canonicalize_architecture(arch_dir) or str(arch_dir or "").strip()
+    npu = ARCH_TO_NPU_ARCH.get(arch)
+    sku = platform_sku or DEFAULT_SKU_BY_ARCH.get(arch)
     profiles = list_profiles(cann_root, npu_arch=npu)
     if not profiles and sku:
         # Unpublished NpuArch (e.g. 9201) has no INI; resolve the named SKU.
@@ -180,24 +186,39 @@ def load_platform_profile(
             or p.soc_version.startswith(sku)
             or Path(p.ini_path).stem == sku
         ]
+    found: PlatformProfile | None = None
     if sku:
         for p in profiles:
             if p.soc_version == sku or p.soc_version.startswith(sku):
-                return p
-        # Allow bare stem match against filename when SoC_version differs.
-        for p in profiles:
-            if Path(p.ini_path).stem == sku:
-                return p
-    if profiles:
+                found = p
+                break
+        if found is None:
+            # Allow bare stem match against filename when SoC_version differs.
+            for p in profiles:
+                if Path(p.ini_path).stem == sku:
+                    found = p
+                    break
+    if found is None and profiles:
         # Prefer the arch default if listed among NpuArch matches, else first.
-        pref = DEFAULT_SKU_BY_ARCH.get(arch_dir)
+        pref = DEFAULT_SKU_BY_ARCH.get(arch)
         for p in profiles:
             if pref and p.soc_version == pref:
-                return p
-        return profiles[0]
-    raise FileNotFoundError(
-        f"no platform_config INI under {cann_root} for arch={arch_dir} sku={sku!r}"
-    )
+                found = p
+                break
+        if found is None:
+            found = profiles[0]
+    if found is None:
+        raise FileNotFoundError(
+            f"no platform_config INI under {cann_root} for arch={arch_dir} sku={sku!r}"
+        )
+    if npu is not None and found.npu_arch != npu:
+        return replace(
+            found,
+            npu_arch=npu,
+            sku_fallback=found.soc_version,
+            npu_arch_source="sku_fallback",
+        )
+    return found
 
 
 def cube_core_domain(profiles: Iterable[PlatformProfile]) -> list[int]:

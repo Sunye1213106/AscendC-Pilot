@@ -20,7 +20,7 @@ COGNITIVE_SKILLS = (
     "code-review",
     "code-engineering",
 )
-CONTROL_PLANE_SKILLS = ("workflow-orchestration",)
+CONTROL_PLANE_SKILLS = ()
 
 DELETED_CAPS = (
     "tilingkey-closure",

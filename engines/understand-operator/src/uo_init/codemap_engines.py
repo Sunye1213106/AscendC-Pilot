@@ -54,9 +54,14 @@ def _chain(
                 "steps": results,
                 "detail": out,
             }
-        for key in ("op_name", "architecture", "arch_dir", "run_id"):
+        for key in ("op_name", "run_id"):
             if out.get(key) and not ctx.get(key):
                 ctx[key] = out[key]
+        if out.get("arch_dir"):
+            ctx["arch_dir"] = out["arch_dir"]
+            ctx["architecture"] = out.get("architecture") or out["arch_dir"]
+        elif out.get("architecture") and not ctx.get("architecture"):
+            ctx["architecture"] = out["architecture"]
     return {"ok": True, "engine": engine, "steps": results}
 
 
@@ -79,18 +84,31 @@ def prepare(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
     )
     if out.get("ok"):
         try:
+            from uo_init.op_spec import discover
+            from uo_init.platform_ini import kernel_macros_for_arch
+
+            import yaml
+
             root = Path(project_root).expanduser().resolve()
-            uo = pe._uo_root(root, arch=ctx.get("arch_dir"))
-            arch = require_architecture(ctx.get("arch_dir") or ctx.get("architecture"))
-            pe._dump(
-                uo / "ir" / "build_variant.yaml",
-                {
-                    "schema": "build-variant/v1",
-                    "architecture": arch,
-                    "name": arch,
-                    "source": "uo_init.codemap_engines.prepare",
-                },
-            )
+            spec = discover(root, arch_dir=ctx.get("arch_dir") or ctx.get("architecture"))
+            arch = require_architecture(spec.arch_dir)
+            uo = pe._uo_root(root, arch=arch)
+            probe = uo / "cache" / "cann_9201_overlay" / "probe.yaml"
+            cann_9201 = {}
+            if probe.is_file():
+                loaded = yaml.safe_load(probe.read_text(encoding="utf-8")) or {}
+                if isinstance(loaded, dict):
+                    cann_9201 = loaded
+            payload = {
+                "schema": "build-variant/v1",
+                "architecture": arch,
+                "name": arch,
+                "source": "uo_init.codemap_engines.prepare",
+                "kernel_macros": kernel_macros_for_arch(arch),
+            }
+            if cann_9201:
+                payload["cann_9201"] = cann_9201
+            pe._dump(uo / "ir" / "build_variant.yaml", payload)
         except Exception as exc:  # noqa: BLE001
             out["build_variant_warning"] = str(exc)[:200]
     return out

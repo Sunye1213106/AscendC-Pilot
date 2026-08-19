@@ -55,7 +55,7 @@ Host (OpenCode / Cursor / Codex)
 
 **Host Session Driver**（运行时传输角色）：把 `start → auto → Task → finalize → auto` 从 Primary LLM 挪到 Host Adapter。OpenCode 暴露自定义工具 `pilot_run`；ACP 返回结构化 `host_step`（`dispatch_subagent` / `ask_human` / `done` / `failed` / `continue_goal`）与一次性 `dispatch_ticket`。Driver 不获得 advance/complete/写 canonical 的权力，也不做领域判断。
 
-自然语言任务：Primary 对照 `skills/workflow-orchestration/`（slash I/O + 流水线图）选出当前缺的那一步，再 `pilot_run(workflow=<id>)`。编排权威是这张 skill 图，不是 Python TaskPlan，也不要再派 Intent LLM。显式 `workflow=<id>` 一次只跑该工作流。查询不进该环。没有独立 change-impact 工作流：问变更影响 = 带着 diff 做 `/uo-query`。
+自然语言任务：第一次 `pilot_run(workflow=auto, intent=原文)`。`auto` 是 reserved `goal-intake`，只做结构校验、PR exact-head workspace 和 TaskPlan 落盘。Runtime 不二次解释自然语言。有 PR URL 时在 OpenCode 打开目录下新建文件夹 clone，从 changed-files 解析算子×架构；无 URL 才吃本地 diff。显式 `workflow=<id>` 一次只跑该工作流。查询不进该环。没有独立 change-impact 工作流：问变更影响 = 带着 diff 做 `/uo-query`。
 
 `authorize` 热路径：`acp serve-authorize --ipc-dir …` 常驻进程 + 短 TTL verdict 缓存；失败时回退 `spawnSync acp authorize`。
 
@@ -80,7 +80,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 | Session binding | Host session 钉住的 `.uo` 路径与 digest | `control/session_bindings.yaml` |
 | Action | 定义一次可执行任务，包括输入输出 contract | Workflow specification |
 | Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
-| Skill | 领域方法地图（五个认知 skill）+ 主控编排图（`workflow-orchestration`，非认知） | `skills/*/SKILL.md` |
+| Skill | 领域方法地图（五个认知 skill） | `skills/*/SKILL.md` |
 | METHOD | 一次 LLM Action 的推理 playbook | `skills/*/capabilities/*/METHOD.md` |
 | Router | 主控查询路由（不是 Action METHOD） | `skills/*/routing/*.md` |
 | Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |

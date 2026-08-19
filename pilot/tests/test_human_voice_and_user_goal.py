@@ -176,15 +176,18 @@ def test_user_goal_match_and_advance(tmp_path: Path) -> None:
     write_task_plan(tmp_path, plan)
     line = progress_line_zh(goal)
     assert line
+    wids = [
+        str(s.get("workflow_id") or s.get("id"))
+        for s in (plan.get("steps") or [])
+        if str(s.get("kind") or "workflow") == "workflow"
+    ]
+    assert "tg-plan" in wids
+    assert "tg-solve" in wids
 
-    adv = mark_workflow_passed(tmp_path, "tg-init")
+    adv = mark_workflow_passed(tmp_path, "tg-plan")
     assert adv is not None
-    assert not str(adv.get("next_workflow_id") or "").strip()
+    assert str(adv.get("next_workflow_id") or "").strip() == "tg-solve"
     assert contains_banned_jargon(str(adv.get("message_zh") or "")) == []
-
-    adv2 = mark_workflow_passed(tmp_path, "tg-plan")
-    assert adv2 is not None
-    assert not str(adv2.get("next_workflow_id") or "").strip()
 
     adv3 = mark_workflow_passed(tmp_path, "tg-solve")
     assert adv3 is not None

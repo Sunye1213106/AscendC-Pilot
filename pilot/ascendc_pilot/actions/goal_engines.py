@@ -284,49 +284,16 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                     "field": "project",
                 },
             }
-        roots = [Path(p) for p in (acquire.get("operator_roots") or []) if str(p).strip()]
-        if len(roots) == 0:
-            return {
-                "ok": False,
-                "error": "OPERATOR_ROOTS_EMPTY",
-                "message_zh": (
-                    "这次 PR 改动没有落到含 op_host/ 或 op_kernel/ 的算子目录"
-                    "（common/shared 也未能结构化定位受影响算子）。请选择算子，或改用本地代码。"
-                ),
-                "needs_human_decision": True,
-                "decision_kind": "project",
-                "changed_files": list(acquire.get("changed_files") or []),
-                "ask_question": {
-                    "prompt_zh": "请选择要处理的算子目录（含 op_host/ 或 op_kernel/）",
-                    "options": [],
-                    "allow_free_text": True,
-                    "field": "project",
-                },
-            }
-        if len(roots) > 1:
-            return {
-                "ok": False,
-                "error": "MULTI_OPERATOR",
-                "message_zh": "这次改动跨多个算子目录，请选择要处理的算子。",
-                "needs_human_decision": True,
-                "decision_kind": "project",
-                "operator_roots": [str(p) for p in roots],
-                "ask_question": {
-                    "prompt_zh": "请选择要处理的算子",
-                    "options": [
-                        {"label": p.name, "value": str(p), "description": str(p)} for p in roots
-                    ],
-                    "allow_free_text": True,
-                    "field": "project",
-                },
-            }
-        project_pin = roots[0]
-        changed_arches = [str(a) for a in (acquire.get("changed_architectures") or []) if str(a)]
-        arches = [str(a) for a in (acquire.get("architectures") or []) if str(a)]
-        if len(changed_arches) == 1 and changed_arches[0] in arches:
-            arch_pin = changed_arches[0]
-        elif len(arches) == 1:
-            arch_pin = arches[0]
+        resolved = gw.resolve_targets_or_ask(
+            acquire, workflow_id="goal-intake", host_root=Path(project_root)
+        )
+        if not resolved.get("ok"):
+            payload = dict(resolved)
+            payload.setdefault("error", str(resolved.get("reason_code") or "WORKSPACE_RESOLVE_FAILED"))
+            return payload
+        project_pin = Path(str(resolved["project"])).expanduser().resolve()
+        arch_pin = str(resolved.get("architecture") or arch_pin).strip()
+        targets = [t for t in (resolved.get("operator_targets") or []) if isinstance(t, dict)]
         source = dict(source)
         source.update(
             {
@@ -337,6 +304,8 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             }
         )
         llm_intent["source"] = source
+        if targets:
+            llm_intent["operator_targets"] = targets
 
     task_plan = plan_for(llm_intent)
     # PR acquisition is completed by this deterministic action, not a future workflow.
@@ -373,6 +342,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         arts["changeset"] = acquire["changeset"]
         arts["worktree_head"] = acquire.get("worktree_head") or ""
         arts["base_source"] = str((acquire.get("changeset") or {}).get("base_source") or "")
+        arts["operator_targets"] = list(llm_intent.get("operator_targets") or [])
         goal["artifacts"] = arts
     params_path = _write_runtime_params(
         goal_root,
@@ -386,12 +356,31 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     write_task_plan(goal_root, task_plan)
 
     launch_root = Path(project_root).expanduser().resolve()
+    extra_roots = [project_pin]
+    for target in llm_intent.get("operator_targets") or []:
+        if not isinstance(target, dict):
+            continue
+        extra = Path(str(target.get("operator_root") or "")).expanduser()
+        if extra.as_posix() and extra not in extra_roots:
+            extra_roots.append(extra)
     if project_pin != launch_root:
         # goal-intake completes under the Host staging root; keep a control-plane
         # mirror there so complete_workflow can return the persisted next step.
-        write_user_goal(launch_root, goal)
-        write_task_plan(launch_root, task_plan)
-    else:
+        try:
+            write_user_goal(launch_root, goal)
+            write_task_plan(launch_root, task_plan)
+        except Exception:  # noqa: BLE001
+            pass
+    for extra in extra_roots:
+        if extra == launch_root or extra == project_pin:
+            continue
+        if extra.exists():
+            try:
+                write_user_goal(extra, goal)
+                write_task_plan(extra, task_plan)
+            except Exception:  # noqa: BLE001
+                pass
+    if project_pin.exists() and (acquire or project_pin == launch_root):
         try:
             from ascendc_pilot.intake import write_last_project_cache
 
@@ -409,18 +398,28 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         "project": str(goal.get("project") or project_root),
         "architecture": str(goal.get("architecture") or arch_pin),
         "operator_roots": list(acquire.get("operator_roots") or []),
+        "operator_targets": list(llm_intent.get("operator_targets") or []),
         "workspace_mode": str(acquire.get("workspace_mode") or ("local" if not acquire else "")),
         "head_sha": str(acquire.get("head_sha") or ""),
-        "multi_operator": False,
+        "multi_operator": len(list(llm_intent.get("operator_targets") or [])) > 1,
+        "next_project": str(goal.get("project") or project_root),
+        "next_architecture": str(goal.get("architecture") or arch_pin),
         "message_zh": (
             f"Goal Contract 与 TaskPlan 已固定；下一步 {next_workflow}。"
             "后续只推进持久化计划，不重新解释原始自然语言。"
         ),
     }
-    _receipt(launch_root, ctx, "intent_promoted.yaml", receipt)
+    receipt_ctx = dict(ctx)
+    if arch_pin:
+        receipt_ctx["architecture"] = arch_pin
+    receipt_root = project_pin if project_pin.exists() else launch_root
+    try:
+        _receipt(receipt_root, receipt_ctx, "intent_promoted.yaml", receipt)
+    except Exception:  # noqa: BLE001
+        pass
     if project_pin.exists() and project_pin != launch_root:
         try:
-            _receipt(project_pin, ctx, "intent_promoted.yaml", receipt)
+            _receipt(launch_root, receipt_ctx, "intent_promoted.yaml", receipt)
         except Exception:  # noqa: BLE001
             pass
     return receipt

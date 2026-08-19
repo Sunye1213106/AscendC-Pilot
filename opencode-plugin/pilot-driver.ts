@@ -1979,21 +1979,22 @@ export function createPilotRunTool(
     pilot_run: {
       description:
         "Run AscendC-Pilot via Host Session Driver. " +
-        "Natural language: read workflow-orchestration skill, then workflow=<the missing slash id>. " +
-        "Never workflow=auto. Expert slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
+        "Natural language first call: workflow=auto (reserved goal-intake) with intent=user text verbatim. " +
+        "Then follow next_workflow_id. Explicit slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
         "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
         "(agent=actor_id, prompt=task_prompt_stub verbatim). " +
-        "Host Driver syncs Todo and owns AskQuestion when the UI is available. Never uo-query.",
+        "Host Driver syncs Todo and owns AskQuestion when the UI is available. Never uo-query. " +
+        "Do not load a native skill for orchestration. With a PR URL, do not scan a local fork.",
       args: {
         workflow: {
           type: "string",
           description:
-            "auto for reserved workspace bootstrap only, or an existing workflow id (uo-init, tg-plan, ce-review, …). Natural language must pass a concrete slash id. Never uo-query.",
+            "auto for natural language (reserved goal-intake), or an existing workflow id (uo-init, tg-plan, ce-review, …). Explicit slash uses the existing id. Never uo-query.",
         },
         project: {
           type: "string",
           description:
-            "Operator package absolute path. Optional when the user gave an allowlisted PR URL.",
+            "OpenCode open-directory anchor, or the operator package after a PR pin. With a PR URL this is where the clone folder is created, not the local fork to analyse.",
         },
         architecture: {
           type: "string",

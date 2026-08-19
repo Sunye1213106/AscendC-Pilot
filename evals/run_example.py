@@ -46,7 +46,6 @@ def main() -> int:
             "source-proof",
             "code-review",
             "code-engineering",
-            "workflow-orchestration",
         ):
             root = REPO / "skills" / skill / "examples"
             if root.is_dir():

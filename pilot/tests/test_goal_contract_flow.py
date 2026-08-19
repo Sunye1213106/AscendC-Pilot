@@ -26,6 +26,7 @@ def test_pr_goal_promote_persists_plan_and_marks_workspace_acquired(tmp_path: Pa
     class FakeWorkspace:
         @staticmethod
         def acquire_pull_request(url: str, **_: object) -> dict[str, object]:
+            del url
             return {
                 "ok": True,
                 "workspace_mode": "isolated_pr",
@@ -36,7 +37,14 @@ def test_pr_goal_promote_persists_plan_and_marks_workspace_acquired(tmp_path: Pa
                 "operator_roots": [str(op)],
                 "architectures": ["arch35"],
                 "changed_architectures": ["arch35"],
-                "worktree_head": str(tmp_path / "cache" / "head"),
+                "operator_targets": [
+                    {
+                        "operator_root": str(op),
+                        "operator_name": "demo_op",
+                        "architecture": "arch35",
+                    }
+                ],
+                "worktree_head": str(op),
                 "changeset": {
                     "schema": "pilot-changeset/v1",
                     "base_sha": "a" * 40,
@@ -44,6 +52,18 @@ def test_pr_goal_promote_persists_plan_and_marks_workspace_acquired(tmp_path: Pa
                     "diff_digest": "deadbeef",
                     "changed_files": ["attention/demo_op/op_kernel/arch35/kernel.cpp"],
                 },
+            }
+
+        @staticmethod
+        def resolve_targets_or_ask(acquire: dict, **_: object) -> dict:
+            return {
+                "ok": True,
+                "project": str(op),
+                "architecture": "arch35",
+                "operator_roots": [str(op)],
+                "operator_targets": acquire.get("operator_targets") or [],
+                "worktree_head": str(op),
+                "changeset": acquire.get("changeset") or {},
             }
 
     monkeypatch.setattr(goal_engines, "_git_workspace", lambda: FakeWorkspace)

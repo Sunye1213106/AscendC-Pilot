@@ -43,11 +43,7 @@ def extract_pr_url_from_intent(text: str) -> str:
 
 def _is_isolated_pr_path(root: Path) -> bool:
     try:
-        import git_workspace_legacy as legacy_ws  # type: ignore[import-not-found]
-
-        cache = (legacy_ws.cache_root() / "workspaces").resolve()
-        root.resolve().relative_to(cache)
-        return True
+        return bool(_workspace_engine().is_isolated_pr_tree(root))
     except Exception:  # noqa: BLE001
         return False
 
@@ -55,12 +51,33 @@ def _is_isolated_pr_path(root: Path) -> bool:
 def _resolve_operator_from_pr_workspace(
     root: Path, intent: str, workflow_id: str
 ) -> dict[str, Any] | None:
-    """Materialize exact PR head and resolve a structural operator candidate."""
+    """Materialize exact PR head under the Host open directory and pin (op, arch) pairs."""
     url = extract_pr_url_from_intent(intent)
     if not url:
         return None
+    if _legacy._pilot_workspace_forbidden(root):
+        return {
+            "ok": False,
+            "needs_human_decision": True,
+            "decision_kind": "project",
+            "reason_code": "PILOT_CHECKOUT_FORBIDDEN",
+            "workflow_id": workflow_id,
+            "project": str(root),
+            "pr_url": url,
+            "message_zh": (
+                "当前 OpenCode 工作区是 AscendC-Pilot 仓，禁止把算子源码 clone 进来。"
+                "请打开算子目录、算子仓根目录，或空目录后再贴 PR。"
+            ),
+            "ask_question": {
+                "prompt_zh": "请换到算子目录、算子仓或空工作区",
+                "options": [],
+                "allow_free_text": True,
+                "field": "project",
+            },
+        }
+    gw = _workspace_engine()
     try:
-        acquire = _workspace_engine().acquire_pull_request(url, workspace_root=None)
+        acquire = gw.acquire_pull_request(url, workspace_root=root)
     except Exception as exc:  # noqa: BLE001
         acquire = {
             "ok": False,
@@ -87,57 +104,9 @@ def _resolve_operator_from_pr_workspace(
                 "field": "project",
             },
         }
-    roots = [Path(p) for p in (acquire.get("operator_roots") or []) if str(p).strip()]
-    common = {
-        "pr_url": url,
-        "worktree_head": str(acquire.get("worktree_head") or ""),
-        "workspace_mode": "isolated_pr",
-        "source_revision": str(acquire.get("head_sha") or ""),
-        "changed_files": list(acquire.get("changed_files") or []),
-        "changed_architectures": list(acquire.get("changed_architectures") or []),
-        "changeset": dict(acquire.get("changeset") or {}),
-    }
-    if len(roots) == 1:
-        return {"ok": True, "project": str(roots[0]), **common}
-    if not roots:
-        return {
-            "ok": False,
-            "needs_human_decision": True,
-            "decision_kind": "project",
-            "reason_code": "OPERATOR_ROOTS_EMPTY",
-            "workflow_id": workflow_id,
-            "project": str(root),
-            **common,
-            "message_zh": (
-                "PR changed-files 无法结构化归属到含 op_host/ 或 op_kernel/ 的算子目录。"
-                "请明确本次要分析的算子 workspace。"
-            ),
-            "ask_question": {
-                "prompt_zh": "请提供要分析的算子目录（含 op_host/ 或 op_kernel/）",
-                "options": [],
-                "allow_free_text": True,
-                "field": "project",
-            },
-        }
-    return {
-        "ok": False,
-        "needs_human_decision": True,
-        "decision_kind": "project",
-        "reason_code": "MULTI_OPERATOR",
-        "workflow_id": workflow_id,
-        "project": str(root),
-        **common,
-        "operator_roots": [str(p) for p in roots],
-        "message_zh": "这次 PR 改动跨多个算子目录，请选择本次分析的算子。",
-        "ask_question": {
-            "prompt_zh": "请选择要分析的算子 workspace",
-            "options": [
-                {"label": p.name, "value": str(p), "description": str(p)} for p in roots
-            ],
-            "allow_free_text": False,
-            "field": "project",
-        },
-    }
+    resolved = gw.resolve_targets_or_ask(acquire, workflow_id=workflow_id, host_root=root)
+    resolved["pr_url"] = url
+    return resolved
 
 
 def _mark_workspace_step(root_before: Path, root_after: Path) -> None:
@@ -180,28 +149,8 @@ def prepare_workflow_start(
                 return _legacy._attach_intake_request(resolved, original_root)
             root = Path(str(resolved["project"])).expanduser().resolve()
             pr_context = dict(resolved)
-            changed_arches = [str(a) for a in (resolved.get("changed_architectures") or []) if str(a)]
-            if not arch and len(changed_arches) == 1:
-                arch = changed_arches[0]
-            elif not arch and len(changed_arches) > 1 and wf in _legacy._workflows_need_arch():
-                payload = {
-                    "ok": False,
-                    "needs_human_decision": True,
-                    "decision_kind": "architecture",
-                    "reason_code": "MULTI_PR_ARCHITECTURE",
-                    "workflow_id": wf,
-                    "project": str(root),
-                    "pr_url": pr_url,
-                    "architecture_options": changed_arches,
-                    "message_zh": "PR changed-files 同时涉及多个 architecture，请选择本次 UO target。",
-                    "ask_question": {
-                        "prompt_zh": "请选择本次分析的 architecture",
-                        "options": [{"label": a, "value": a} for a in changed_arches],
-                        "allow_free_text": False,
-                        "field": "architecture",
-                    },
-                }
-                return _legacy._attach_intake_request(payload, root)
+            if not arch:
+                arch = str(resolved.get("architecture") or "").strip()
             _mark_workspace_step(original_root, root)
             # PR has already been materialized. Do not let legacy intake inspect
             # the original Host cwd or acquire the PR a second time.
@@ -225,6 +174,8 @@ def prepare_workflow_start(
             "changed_files",
             "changed_architectures",
             "changeset",
+            "operator_targets",
+            "operator_roots",
         ):
             if key in pr_context:
                 result[key] = pr_context[key]

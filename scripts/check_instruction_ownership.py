@@ -32,7 +32,25 @@ OWNERS = (
     ROUTER,
 )
 
-# Agent-facing sources must not teach removed CLI or stacked recovery wording.
+# Agent-facing sources must not teach the removed orchestration skill.
+ORCH_BANNED_FILES = (
+    "pilot/policies/invariants/host-runtime-contract.md",
+    "pilot/policies/invariants/control-invariants.md",
+    "pilot/policies/invariants/human-voice-invariants.md",
+    "scripts/compose_opencode_commands.py",
+    "scripts/compose_runtime.py",
+    "scripts/compose_runtime_legacy.py",
+    "agents/ascendc-pilot.yaml",
+    "opencode-plugin/pilot-driver.ts",
+    "skills/code-review/SKILL.md",
+)
+ORCH_BANNED_PHRASES = (
+    "skills/workflow-orchestration",
+    "Never workflow=auto",
+    "Never `workflow=auto`",
+    "Do not `workflow=auto`",
+    "对照编排 skill",
+)
 STALE_CLI_FILES = (
     "scripts/compose_runtime.py",
     "opencode-plugin/ascendc-pilot.ts",
@@ -122,6 +140,14 @@ def errors(repo: Path | None = None) -> list[str]:
         for phrase in STALE_CLI_PHRASES:
             if phrase in text:
                 out.append(f"STALE_CLI {rel}: {phrase!r}")
+    for rel in ORCH_BANNED_FILES:
+        path = root / rel
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in ORCH_BANNED_PHRASES:
+            if phrase in text:
+                out.append(f"STALE_ORCH {rel}: {phrase!r}")
     scan_roots = list(MODEL_FACING_ROOTS)
     for rel_root in GENERATED_ACP_ROOTS:
         if (root / rel_root).is_dir():

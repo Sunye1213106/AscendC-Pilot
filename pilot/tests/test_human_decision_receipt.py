@@ -132,3 +132,11 @@ def test_require_expected_values_retry_mismatch(tmp_path: Path) -> None:
     )
     assert bad.get("ok") is False
     assert bad.get("error") == "HUMAN_DECISION_RECEIPT_VALUE_MISMATCH"
+
+
+def test_record_answer_without_pending_includes_path(tmp_path: Path) -> None:
+    missed = record_answer(tmp_path, request_id="nope", value="confirm")
+    assert missed.get("ok") is False
+    assert missed.get("error") == "NO_PENDING_INTERACTION"
+    assert "pending_interaction_path" in missed
+    assert "pending_interaction.yaml" in str(missed.get("pending_interaction_path") or "")

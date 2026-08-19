@@ -9,7 +9,7 @@ description: >
 
 # 代码审查
 
-`/ce-review` 的输入只有代码改动：GitCode/GitHub PR URL（引擎 fetch）、`/ce-apply` 后的工作区 diff、或 `base...head`。贴 PR URL 会作为审查的输入来源；自然语言由主控对照编排 skill 选 `/ce-review` 或其它节点。只有用户打了 `/ce-review` 才直达本入口。远程 fetch 失败时 HTTPS 回退需要 `GITHUB_TOKEN` 或 `GITCODE_TOKEN`。无 diff 则停。
+`/ce-review` 的输入只有代码改动：GitCode/GitHub PR URL（引擎 fetch）、`/ce-apply` 后的工作区 diff、或 `base...head`。贴 PR URL 会作为审查的输入来源；自然语言第一次 `pilot_run(workflow=auto)`，再跟随 `next_workflow_id`。只有用户打了 `/ce-review` 才直达本入口。远程 fetch 失败时 HTTPS 回退需要 `GITHUB_TOKEN` 或 `GITCODE_TOKEN`。无 diff 则停。
 
 侧别：`op_kernel/` → Kernel；`op_host/` → Tiling。两侧都动则分侧陈述。
 

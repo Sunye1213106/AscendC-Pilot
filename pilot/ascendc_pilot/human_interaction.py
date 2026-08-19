@@ -50,6 +50,40 @@ def pending_path(project_root: Path) -> Path:
     return _control_root(project_root) / "pending_interaction.yaml"
 
 
+def _find_pending_elsewhere(project_root: Path) -> str:
+    """Best-effort locate pending_interaction.yaml when --project is the Host cwd."""
+    root = Path(project_root).expanduser()
+    try:
+        root = root.resolve()
+    except OSError:
+        pass
+    seen: list[Path] = []
+    try:
+        from ascendc_pilot.intake import read_last_project_cache
+
+        cached = read_last_project_cache()
+        if cached is not None:
+            seen.append(Path(cached))
+    except Exception:  # noqa: BLE001
+        pass
+    for base in (root, *root.parents):
+        pr_home = base / ".ascendc-pr"
+        if not pr_home.is_dir():
+            continue
+        try:
+            hits = list(pr_home.rglob("pending_interaction.yaml"))
+        except OSError:
+            hits = []
+        for hit in hits[:8]:
+            seen.append(hit.parent.parent.parent if hit.parent.name == "control" else hit.parent)
+        break
+    for candidate in seen:
+        path = pending_path(candidate)
+        if path.is_file() and pending_is_open(_load(path)):
+            return str(path)
+    return str(pending_path(root))
+
+
 def decisions_dir(project_root: Path) -> Path:
     return _control_root(project_root) / "decisions"
 
@@ -210,10 +244,15 @@ def record_answer(
     project_root = Path(project_root).expanduser().resolve()
     pending = _load(pending_path(project_root))
     if not pending:
+        hinted = _find_pending_elsewhere(project_root)
         return {
             "ok": False,
             "error": "NO_PENDING_INTERACTION",
-            "message_zh": "没有待处理的人工交互请求",
+            "message_zh": (
+                "没有待处理的人工交互请求。"
+                "若 AskQuestion 写在 PR clone 的算子目录，请对该 --project 再 answer。"
+            ),
+            "pending_interaction_path": hinted,
         }
     if str(pending.get("request_id") or "") != str(request_id or "").strip():
         return {
@@ -527,6 +566,11 @@ def match_pending_option(pending: dict[str, Any] | None, text: str) -> str | Non
         found: list[str] = []
         for token in _ARCH_TOKEN.findall(raw):
             hit = allowed_l.get(token.lower())
+            if not hit:
+                from uo_init.source_layout import match_on_disk_architecture
+
+                mapped = match_on_disk_architecture(token, arches)
+                hit = mapped if mapped in set(arches) else None
             if hit and hit not in found:
                 found.append(hit)
         if len(found) == 1:

@@ -30,7 +30,13 @@ from typing import Any
 import yaml
 
 from uo_init import scope_scan as sscan
-from uo_init.source_layout import ARCH_DIR_RE, arch_number, is_other_arch_path
+from uo_init.source_layout import (
+    ARCH_DIR_RE,
+    arch_number,
+    is_other_arch_path,
+    iter_arch_source_dirs,
+    match_on_disk_architecture,
+)
 
 SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 OVERRIDE_DIR = SPEC_DIR / "operators"
@@ -202,6 +208,10 @@ def _host_targets(host_root: Path, arch_dir: str, op_snake: str) -> list[Path]:
     arch_root = host_root / arch_dir
     if arch_root.is_dir():
         out.extend(sorted(p for p in arch_root.glob("*.cpp") if "_tiling" in p.stem))
+    for folder in iter_arch_source_dirs(host_root, arch_dir):
+        if folder == arch_root:
+            continue
+        out.extend(sorted(p for p in folder.glob("*.cpp") if "_tiling" in p.stem))
     tiling_root = host_root / "op_tiling"
     if tiling_root.is_dir():
         for path in sorted(tiling_root.rglob("*.cpp")):
@@ -417,8 +427,9 @@ def _tiling_key_header(
         hit = select_tpl_decl_header(Path(op_dir), arch_dir)
         if hit is not None and hit.is_file():
             return hit, []
-    arch_root = kernel_root / arch_dir
-    search_roots = [r for r in (arch_root, kernel_root) if r.is_dir()]
+    search_roots = [
+        r for r in (*iter_arch_source_dirs(kernel_root, arch_dir), kernel_root) if r.is_dir()
+    ]
     hits: list[Path] = []
     seen: set[Path] = set()
     for glob_pat in _TPL_HEADER_GLOBS:
@@ -437,7 +448,8 @@ def _tiling_key_header(
 
 
 def _tiling_data_header(kernel_root: Path, arch_dir: str) -> Path | None:
-    for root in (kernel_root / arch_dir, kernel_root):
+    roots = [*iter_arch_source_dirs(kernel_root, arch_dir), kernel_root]
+    for root in roots:
         if not root.is_dir():
             continue
         hits = sorted(root.glob("*tiling_data*.h")) or sorted(root.glob("*_tiling.h"))
@@ -467,8 +479,8 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
     spec.available_archs = _discover_archs(op_dir)
 
     if arch_dir:
-        spec.arch_dir = arch_dir
-        if spec.available_archs and arch_dir not in spec.available_archs:
+        spec.arch_dir = match_on_disk_architecture(arch_dir, spec.available_archs) or str(arch_dir)
+        if spec.available_archs and spec.arch_dir not in spec.available_archs:
             spec.ambiguities.append(
                 f"arch_not_present: {arch_dir} not in {spec.available_archs}"
             )
@@ -570,18 +582,22 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
         # Layout glob fallback can pick an arch-neutral *.cpp that builds another
         # arch. Prefer an arch-folder TU; keep the last remaining root TU.
         if spec.kernel_entry is not None and spec.arch_dir:
-            from uo_init.source_layout import path_owned_architecture
+            from uo_init.source_layout import (
+                architecture_in_scope,
+                architectures_match,
+                path_owned_architecture,
+            )
 
-            arch = spec.arch_dir.strip().lower()
+            arch = spec.arch_dir.strip()
             owned = path_owned_architecture(spec.kernel_entry)
-            if owned and owned != arch:
+            if owned and not architectures_match(owned, arch):
                 spec.ambiguities.append(
                     f"kernel_entry_other_arch: {spec.kernel_entry.name} builds {owned}"
                 )
                 spec.kernel_entry = None
             elif not owned:
                 includes = sscan.entry_architecture(spec.kernel_entry)
-                if includes and includes != arch:
+                if includes and not architecture_in_scope(includes, arch):
                     alt, _alt_notes = _cpp_candidates(
                         spec.kernel_root / spec.arch_dir, spec.op_snake
                     )
@@ -592,6 +608,11 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
                             f"kernel_entry_kept_last_tu: {spec.kernel_entry.name} "
                             f"builds {includes} but is the only kernel TU"
                         )
+                elif includes and not architectures_match(includes, arch):
+                    spec.ambiguities.append(
+                        f"kernel_entry_kept_last_tu: {spec.kernel_entry.name} "
+                        f"builds {includes} but is the only kernel TU"
+                    )
 
     spec.tiling_key_header, notes = _tiling_key_header(
         spec.kernel_root,
@@ -604,9 +625,15 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
 
     spec.tiling_data_header = _tiling_data_header(spec.kernel_root, spec.arch_dir)
 
-    arch_kernel = spec.kernel_root / spec.arch_dir
-    if arch_kernel.is_dir():
-        spec.kernel_headers = sorted(arch_kernel.glob("*.h"))
+    spec.kernel_headers = []
+    seen_h: set[Path] = set()
+    for folder in iter_arch_source_dirs(spec.kernel_root, spec.arch_dir):
+        for header in sorted(folder.glob("*.h")):
+            key = header.resolve()
+            if key in seen_h:
+                continue
+            seen_h.add(key)
+            spec.kernel_headers.append(header)
 
     proto_root = op_dir / "op_graph"
     if proto_root.is_dir():

@@ -13,7 +13,7 @@
 | 出口 | 要求 |
 | --- | --- |
 | Primary 阶段总结 | 三句式：目标 / 刚完成 / 下一步或需要你 |
-| `uo-init` / `uo-update` 完成 | 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；对照编排 skill 选择下一步。禁止仅回复「完成」 |
+| `uo-init` / `uo-update` 完成 | 用 `pilot_cli` `uo-query --status-only` 看产物是否就绪；然后 `pilot_run(workflow=<next_workflow_id>)`。禁止仅回复「完成」 |
 | `uo-query` 完成 | 将答案正文（含 path:line）向用户陈述，禁止仅回复 workflow complete |
 | AskQuestion | 标题使用自然语言；正文含背景 + 决定 + 选项后果；选项为自然语言动词短语 |
 | ACP `message_zh` / `user_summary_zh`（面向用户） | 自然语言；机器字段留在 payload |

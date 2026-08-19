@@ -14,7 +14,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from uo_init.source_layout import ARCH_DIR_RE as ARCH_SEGMENT_RE
+from uo_init.source_layout import (
+    ARCH_DIR_RE as ARCH_SEGMENT_RE,
+    architecture_in_scope,
+    architectures_match,
+)
 
 SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
 HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx"})
@@ -340,14 +344,14 @@ def filter_architecture(paths: Iterable[Path], arch_dir: str) -> list[Path]:
 
     A path with no `archNN` segment is architecture-neutral and stays.
     """
-    arch = (arch_dir or "").strip().lower()
+    arch = (arch_dir or "").strip()
     if not arch:
         return list(paths)
     out: list[Path] = []
     for path in paths:
         segments = [p.lower() for p in path.parts]
         arch_segments = [p for p in segments if ARCH_SEGMENT_RE.match(p)]
-        if not arch_segments or arch in arch_segments:
+        if not arch_segments or any(architecture_in_scope(p, arch) for p in arch_segments):
             out.append(path)
     return out
 
@@ -590,7 +594,7 @@ def _drop_foreign_arch_entries(
     remaining kernel TU: some trees keep one ``.cpp`` and put the other arch
     in headers.
     """
-    arch = (arch_dir or "").strip().lower()
+    arch = (arch_dir or "").strip()
     if not arch:
         return files
     from uo_init.source_layout import path_owned_architecture
@@ -601,9 +605,9 @@ def _drop_foreign_arch_entries(
     def _keep_tu(path: Path) -> bool:
         owned = path_owned_architecture(path)
         if owned:
-            return owned == arch
+            return architectures_match(owned, arch)
         includes = entry_architecture(path)
-        if includes and includes != arch:
+        if includes and not architecture_in_scope(includes, arch):
             return False
         return True
 
@@ -611,7 +615,10 @@ def _drop_foreign_arch_entries(
     kept_tus = [f for f in kernel_tus if _keep_tu(f.path)]
     if kernel_tus and not kept_tus:
         kept_tus = [
-            f for f in kernel_tus if path_owned_architecture(f.path) in ("", arch)
+            f
+            for f in kernel_tus
+            if not path_owned_architecture(f.path)
+            or architectures_match(path_owned_architecture(f.path), arch)
         ]
         for f in kept_tus:
             notes.append(

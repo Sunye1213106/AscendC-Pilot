@@ -288,6 +288,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_abort = sub.add_parser("abort", help="Abort current run (mark failed)")
     p_abort.add_argument("--project", type=Path, default=None)
+    p_abort.add_argument("--architecture", default="")
     p_abort.add_argument("--reason", default="aborted_by_operator")
 
     p_answer = sub.add_parser(
@@ -1066,24 +1067,48 @@ def main(argv: list[str] | None = None) -> int:
         # Direct abort (no pending interaction) remains allowed for operators.
         from ascendc_pilot.human_interaction import pending_path
 
-        if pending_path(args.project).is_file():
-            from ascendc_pilot.human_interaction import load_pending, pending_is_open
+        try:
+            if pending_path(args.project).is_file():
+                from ascendc_pilot.human_interaction import load_pending, pending_is_open
 
-            if pending_is_open(load_pending(args.project)):
-                receipt = require_decision_receipt(
-                    args.project,
-                    expected_values=["abort_run", "abort"],
-                    expected_kind=KIND_HUMAN_REQUIRED,
-                    consume=True,
+                if pending_is_open(load_pending(args.project)):
+                    receipt = require_decision_receipt(
+                        args.project,
+                        expected_values=["abort_run", "abort"],
+                        expected_kind=KIND_HUMAN_REQUIRED,
+                        consume=True,
+                    )
+                    if not receipt.get("ok"):
+                        print_json(receipt)
+                        return 1
+            revoke_active_lease(args.project, reason="abort")
+            st = mark_terminal(args.project, "failed", reason=args.reason or "aborted_by_operator")
+            released = release_live_execution(
+                args.project, reason="aborted_by_operator", state=st
+            )
+        except ValueError as exc:
+            if "ARCHITECTURE_MISSING" in str(exc):
+                print_json(
+                    {
+                        "ok": False,
+                        "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+                        "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
+                        "message_zh": (
+                            "abort 需要 --architecture，或已有 run state 中的 architecture。"
+                            "不要猜测 arch。"
+                        ),
+                    }
                 )
-                if not receipt.get("ok"):
-                    print_json(receipt)
-                    return 1
-        revoke_active_lease(args.project, reason="abort")
-        st = mark_terminal(args.project, "failed", reason=args.reason or "aborted_by_operator")
-        released = release_live_execution(
-            args.project, reason="aborted_by_operator", state=st
-        )
+                return 2
+            print_json(
+                {
+                    "ok": False,
+                    "error": type(exc).__name__,
+                    "message": str(exc)[:800],
+                    "message_zh": f"abort 失败：{exc}"[:400],
+                }
+            )
+            return 1
         print_json(
             {
                 "ok": True,

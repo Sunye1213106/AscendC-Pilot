@@ -21,11 +21,25 @@ def _text(path: Path | str) -> str:
 # Hardware-generation directory / path token:
 #   arch35, arch22     — published DAV_NNNN → first two digits
 #   arch-920r1         — unpublished DAV_9201 (hyphenated product name)
-ARCH_NAME = r"arch(?:\d+|-\d+r\d+)"
+#   arch920r1          — same identity, unhyphenated spelling on disk / in intent
+# More-specific ``rN`` spellings must precede bare ``archNN`` so ``arch920r1``
+# is not consumed as ``arch920``.
+ARCH_NAME = r"arch(?:-\d+r\d+|\d+r\d+|\d+)"
 ARCH_DIR_RE = re.compile(rf"^{ARCH_NAME}$")
 ARCH_IN_PATH_RE = re.compile(rf"(?:^|/)({ARCH_NAME})(?:/|$)")
 # Path segment `/arch22/` or filename token `_arch22.h` / `foo_arch35_bar.h`.
 _ARCH_TOKEN_RE = re.compile(rf"(?:^|[/_.-])({ARCH_NAME})(?:[/_.-]|$)")
+_ARCH_ALIAS = {
+    "arch-920r1": "arch-920r1",
+    "arch920r1": "arch-920r1",
+    "dav_9201": "arch-920r1",
+    "dav-9201": "arch-920r1",
+    "9201": "arch-920r1",
+}
+# One-way: unpublished 920r1 may read arch35 sources. arch35 never reads 920r1.
+_SOURCE_COUSINS: dict[str, frozenset[str]] = {
+    "arch-920r1": frozenset({"arch35"}),
+}
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
 _QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"', re.MULTILINE)
 _ANY_INCLUDE_RE = re.compile(r'^\s*#\s*include\s*["<]([^">]+)[">]', re.MULTILINE)
@@ -53,6 +67,140 @@ _TILING_HEADER_GLOBS = (
 )
 
 
+def canonicalize_architecture(value: str | None) -> str:
+    """Map aliases onto the product arch name. Unknown input is returned as-is.
+
+    ``arch920r1`` / ``DAV_9201`` / ``9201`` → ``arch-920r1``. Published
+    ``arch35`` stays ``arch35``. Empty stays empty.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    low = re.sub(r"\s+", "", raw).lower()
+    if low in _ARCH_ALIAS:
+        return _ARCH_ALIAS[low]
+    compact = low.replace("-", "").replace("_", "")
+    if compact in {"dav9201"}:
+        return "arch-920r1"
+    m = re.fullmatch(r"arch-?(\d+)r(\d+)", low)
+    if m:
+        return f"arch-{m.group(1)}r{m.group(2)}"
+    m = re.fullmatch(r"arch(\d+)", low)
+    if m:
+        return f"arch{m.group(1)}"
+    return raw
+
+
+def architectures_match(left: str | None, right: str | None) -> bool:
+    """True when both names are the same compile identity (hyphen optional)."""
+    a = canonicalize_architecture(left)
+    b = canonicalize_architecture(right)
+    return bool(a) and a == b
+
+
+def identity_arch_names(architecture: str | None) -> frozenset[str]:
+    """On-disk spellings of this architecture, not ISA cousins."""
+    raw = str(architecture or "").strip()
+    if not raw:
+        return frozenset()
+    canon = canonicalize_architecture(raw)
+    names = {raw, raw.lower(), canon}
+    if canon == "arch-920r1":
+        names.update({"arch-920r1", "arch920r1"})
+    return frozenset(n for n in names if n)
+
+
+def arch_scope_names(architecture: str | None) -> frozenset[str]:
+    """Identity folders plus one-way source cousins (920r1 may read arch35)."""
+    ident = identity_arch_names(architecture)
+    canon = canonicalize_architecture(architecture)
+    extra = _SOURCE_COUSINS.get(canon, frozenset())
+    return ident | extra
+
+
+def architecture_in_scope(name: str | None, architecture: str | None) -> bool:
+    """True when ``name`` is this arch or a permitted cousin folder."""
+    token = str(name or "").strip()
+    if not token:
+        return False
+    scope = arch_scope_names(architecture)
+    low = {s.lower() for s in scope}
+    if token in scope or token.lower() in low:
+        return True
+    return canonicalize_architecture(token) in {canonicalize_architecture(s) for s in scope}
+
+
+def match_on_disk_architecture(pin: str | None, known: Iterable[str]) -> str:
+    """Resolve a user pin onto an existing ``arch*`` folder name.
+
+    Exact disk spelling wins; ``arch920r1`` matches ``arch-920r1``.
+    """
+    raw = str(pin or "").strip()
+    names = [str(n).strip() for n in known if str(n).strip()]
+    if not raw or not names:
+        return raw
+    if raw in names:
+        return raw
+    by_l = {n.lower(): n for n in names}
+    hit = by_l.get(raw.lower())
+    if hit:
+        return hit
+    canon = canonicalize_architecture(raw)
+    hits = [n for n in names if canonicalize_architecture(n) == canon]
+    if len(hits) == 1:
+        return hits[0]
+    if "arch-920r1" in hits:
+        return "arch-920r1"
+    return hits[0] if hits else raw
+
+
+def iter_identity_arch_dirs(parent: Path, architecture: str) -> list[Path]:
+    """Existing identity ``arch*`` folders under ``parent`` (not cousins)."""
+    out: list[Path] = []
+    seen: set[str] = set()
+    for name in sorted(identity_arch_names(architecture)):
+        d = Path(parent) / name
+        try:
+            if not d.is_dir():
+                continue
+            key = str(d.resolve())
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+
+def iter_cousin_arch_dirs(parent: Path, architecture: str) -> list[Path]:
+    """Existing one-way cousin folders (``arch35`` when analysing 920r1)."""
+    canon = canonicalize_architecture(architecture)
+    extra = _SOURCE_COUSINS.get(canon, frozenset())
+    out: list[Path] = []
+    seen: set[str] = set()
+    for name in sorted(extra):
+        d = Path(parent) / name
+        try:
+            if not d.is_dir():
+                continue
+            key = str(d.resolve())
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(d)
+    return out
+
+
+def iter_arch_source_dirs(parent: Path, architecture: str) -> list[Path]:
+    """Identity folders first, then cousins. Used for host tiling / headers."""
+    return iter_identity_arch_dirs(parent, architecture) + iter_cousin_arch_dirs(
+        parent, architecture
+    )
+
+
 def path_owned_architecture(path: Path) -> str:
     """``archNN`` folder the file sits in. Empty when the path is arch-neutral.
 
@@ -66,10 +214,16 @@ def path_owned_architecture(path: Path) -> str:
     return ""
 
 
-def is_other_arch_path(path: Path, architecture: str) -> bool:
+def is_other_arch_path(path: Path | str, architecture: str) -> bool:
+    """True when a path segment is an ``arch*`` folder outside this scope.
+
+    Cousin folders (``arch35`` while analysing ``arch-920r1``) are in scope.
+    """
     arch = str(architecture or "").strip()
+    if not arch:
+        return False
     for part in Path(path).parts:
-        if ARCH_DIR_RE.match(part) and part != arch:
+        if ARCH_DIR_RE.match(part) and not architecture_in_scope(part, arch):
             return True
     return False
 
@@ -86,19 +240,27 @@ _ENTRY_TU_SUFFIXES = {".cpp", ".cc", ".cxx"}
 
 
 def is_foreign_arch_entry_tu(path: Path | str, architecture: str) -> bool:
-    """True for another architecture's compile unit, not an included header."""
+    """True for another architecture's compile unit, not an included header.
+
+    Cousin ``arch35/*.cpp`` stays a foreign entry when analysing 920r1: the
+    sources may be included, but they are not this arch's kernel TU.
+    """
     p = Path(path)
     if p.suffix.lower() not in _ENTRY_TU_SUFFIXES:
         return False
-    return is_other_arch_path(p, architecture)
+    owned = path_owned_architecture(p)
+    if not owned:
+        return False
+    return not architectures_match(owned, architecture)
 
 
 def includes_architecture(text: str, architecture: str) -> bool:
     """True when the TU pulls the current arch, including ``./arch35/``."""
-    arch = str(architecture or "").strip()
-    if not arch:
+    names = arch_scope_names(architecture)
+    if not names:
         return False
-    return f"{arch}/" in text.replace("\\", "/")
+    blob = text.replace("\\", "/")
+    return any(f"{name}/" in blob for name in names)
 
 
 def arch_tokens_in_include(include: str) -> set[str]:
@@ -109,7 +271,7 @@ def arch_tokens_in_include(include: str) -> set[str]:
 
 def arch_number(architecture: str) -> int:
     """Numeric rank for apt-vs-plain entry picking. ``arch-920r1`` → 920."""
-    raw = str(architecture or "").strip().lower()
+    raw = canonicalize_architecture(architecture) or str(architecture or "").strip().lower()
     m = re.fullmatch(r"arch(\d+)", raw)
     if m:
         return int(m.group(1))
@@ -126,11 +288,15 @@ def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
     entries (``foo.cpp`` vs ``foo_apt.cpp``) use include-derived architecture
     when it is unique; otherwise apt vs plain is a candidate ranking by
     arch generation, not a semantic identity for the TU.
+
+    ``arch-920r1`` may keep a root ``*_apt.cpp`` that ``#include "arch35/..."``.
+    A compile unit sitting in a cousin folder is last-resort only.
     """
-    arch = str(architecture or "").strip().lower()
+    arch = str(architecture or "").strip()
     arch_n = arch_number(arch)
     matching: list[Path] = []
     unscoped: list[Path] = []
+    cousin_hits: list[Path] = []
     for raw in targets:
         path = Path(raw)
         if not path.is_file():
@@ -139,18 +305,24 @@ def pick_kernel_entry(targets: list[Path], architecture: str) -> Path | None:
             owned = path_owned_architecture(path)
         except OSError:
             owned = ""
+        include_owned = ""
         if not owned:
             try:
-                owned = entry_include_architecture(_text(path))
+                include_owned = entry_include_architecture(_text(path))
             except OSError:
-                owned = ""
-        if owned and arch and owned != arch:
+                include_owned = ""
+            owned = include_owned
+        if owned and arch and not architecture_in_scope(owned, arch):
             continue
-        if owned == arch:
+        if owned and architectures_match(owned, arch):
             matching.append(path)
+        elif include_owned and architecture_in_scope(include_owned, arch):
+            unscoped.append(path)
+        elif owned:
+            cousin_hits.append(path)
         else:
             unscoped.append(path)
-    pool = matching or unscoped
+    pool = matching or unscoped or cousin_hits
     if not pool:
         return None
     apt = [p for p in pool if p.name.endswith("_apt.cpp")]
@@ -383,12 +555,11 @@ def selected_kernel_files(
     if confirmed is not None:
         out = list(confirmed)
         if kernel_entry is not None and kernel_entry.is_file():
-            if not is_other_arch_path(kernel_entry, architecture):
+            if not is_foreign_arch_entry_tu(kernel_entry, architecture):
                 key = kernel_entry.resolve()
                 if key not in {p.resolve() for p in out}:
                     owns = entry_include_architecture(_text(kernel_entry))
-                    arch = str(architecture or "").strip().lower()
-                    if not (owns and arch and owns != arch):
+                    if not owns or architecture_in_scope(owns, architecture):
                         out.append(kernel_entry)
         return out
 
@@ -406,9 +577,8 @@ def selected_kernel_files(
 
     add(kernel_entry)
     kernel_root = Path(root) / "op_kernel"
-    arch_dir = kernel_root / architecture
-    if arch_dir.is_dir():
-        for path in sorted(iter_cpp(arch_dir)):
+    for folder in iter_identity_arch_dirs(kernel_root, architecture):
+        for path in sorted(iter_cpp(folder)):
             add(path)
     arch = str(architecture or "").strip().lower()
     arch_n = arch_number(arch)
@@ -420,7 +590,7 @@ def selected_kernel_files(
             except OSError:
                 continue
             owns = entry_include_architecture(text)
-            if owns and arch and owns != arch:
+            if owns and arch and not architecture_in_scope(owns, architecture):
                 continue
             root_tus.append((path, text, owns))
         apt_here = any(p.name.endswith("_apt.cpp") for p, _t, _o in root_tus)
@@ -519,7 +689,7 @@ def _kernel_include_closure(root: Path, architecture: str) -> list[Path]:
     for path in kernel_files:
         if path.suffix.lower() not in {".cpp", ".cc", ".cxx"}:
             continue
-        if is_other_arch_path(path, architecture):
+        if is_foreign_arch_entry_tu(path, architecture):
             continue
         try:
             text = _text(path)

@@ -53,8 +53,9 @@ def test_arch_920r1_is_first_class_compile_profile():
     assert "arch-920r1" in ARCH_KERNEL_MACROS
     assert "arch35" in ARCH_KERNEL_MACROS
     assert ARCH_KERNEL_MACROS["arch-920r1"] is not ARCH_KERNEL_MACROS["arch35"]
-    assert kernel_macros_for_arch("arch-920r1") == kernel_macros_for_arch("arch35")
-    assert kernel_macros_for_arch("arch-920r1")["__NPU_ARCH__"] == "3510"
+    assert kernel_macros_for_arch("arch-920r1") != kernel_macros_for_arch("arch35")
+    assert kernel_macros_for_arch("arch-920r1")["__NPU_ARCH__"] == "9201"
+    assert kernel_macros_for_arch("arch920r1")["__NPU_ARCH__"] == "9201"
     assert kernel_macros_for_arch("arch-920r1")["__DAV_C310__"] == ""
     assert kernel_macros_for_arch("arch22")["__NPU_ARCH__"] == "2201"
     assert DEFAULT_SKU_BY_ARCH["arch-920r1"] == DEFAULT_SKU_BY_ARCH["arch35"]
@@ -64,3 +65,6 @@ def test_load_arch_920r1_sku_resolves_without_9201_ini(cann_root):
     prof = load_platform_profile(cann_root, arch_dir="arch-920r1")
     assert prof.soc_version == DEFAULT_SKU_BY_ARCH["arch-920r1"]
     assert prof.aic_num == 32
+    assert prof.npu_arch == 9201
+    assert prof.npu_arch_source == "sku_fallback"
+    assert prof.sku_fallback == prof.soc_version

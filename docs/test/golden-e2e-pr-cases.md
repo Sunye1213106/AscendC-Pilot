@@ -19,16 +19,16 @@ https://github.com/<org>/<repo>/pull/<id>
 
 验收：
 
-1. Primary **对照编排 skill** 选下一步，一次一个 `pilot_run(workflow=<id>)`。不要 `workflow=auto` 再解析原文。交付节点是 `/ce-review` + `/tg-plan` + `/tg-solve`。缺 `.uo` 先 `/uo-init` 或有 diff 则 `/uo-update`；TG 前补 `/tg-init`
-2. 系统 clone/fetch/worktree，不要求用户先打开算子目录
-3. 识别 operator / architecture
-4. 变更影响用 `/uo-query`（可带 diff）问 CodeMap，**不是**独立 `goal-impact`，也不是把「只要生成 case」发明成 `/ce-review`
+1. Primary 第一次 `pilot_run(workflow=auto, intent=原文含 URL)`。不要用 OpenCode 原生 `skill` 加载编排。交付链是 `/uo-init` → `/ce-review` → `/tg-init` → `/tg-plan` → `/tg-solve`。
+2. 系统在 OpenCode 打开目录下 **新建文件夹** clone exact-head，不要求用户先打开算子目录，也不分析本地 fork
+3. 从 changed-files 识别 operator / architecture（1×1 自动 pin；多算子多架构按对执行）
+4. 变更影响用 `/uo-query`（可带 diff）问 CodeMap，**不是**独立 `goal-impact`
 5. 语义只走 `/uo-query`，禁止 Grep 算子仓
 6. `/ce-apply` 产出的 diff 走 `/uo-update`
-7. 生成 cases + replay / rework；`host_step.done` 后回到 skill 图看缺什么
+7. 生成 cases + replay / rework；`host_step.done` 后跟随 `next_workflow_id`
 8. 交付 cases 表 + 覆盖说明
 
-「只要给我生成针对 case」且没说 review 时，Planner **不得**发明 `/ce-review`。
+贴 PR URL 且要生成针对性 case 时，CE review 属于依赖链，用来确定 changed/affected scope。不要扫本地 FAG 再发明 arch 选项。
 
 ## 专家路径（必须仍可用）
 

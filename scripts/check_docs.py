@@ -265,6 +265,34 @@ def check_inline_implementation_paths(errors: list[str]) -> None:
                     )
 
 
+def check_stale_orchestration_surface(errors: list[str]) -> None:
+    """Agent-facing files must not teach the removed orchestration skill."""
+    banned = (
+        "skills/workflow-orchestration",
+        "Never workflow=auto",
+        "Never `workflow=auto`",
+        "Do not `workflow=auto`",
+        "对照编排 skill",
+    )
+    files = (
+        ROOT / "pilot" / "policies" / "invariants" / "host-runtime-contract.md",
+        ROOT / "pilot" / "policies" / "invariants" / "control-invariants.md",
+        ROOT / "pilot" / "policies" / "invariants" / "human-voice-invariants.md",
+        ROOT / "agents" / "ascendc-pilot.yaml",
+        ROOT / "opencode-plugin" / "pilot-driver.ts",
+        ROOT / "scripts" / "compose_opencode_commands.py",
+        ROOT / "scripts" / "compose_runtime_legacy.py",
+        ROOT / "skills" / "code-review" / "SKILL.md",
+    )
+    for path in files:
+        if not path.is_file():
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in banned:
+            if phrase in text:
+                errors.append(f"{rel(path)} still teaches {phrase!r}")
+
+
 def main() -> int:
     errors: list[str] = []
     check_readme_locations(errors)
@@ -275,6 +303,7 @@ def main() -> int:
     check_semantic_drift(errors)
     check_inline_implementation_paths(errors)
     check_generated_references_fresh(errors)
+    check_stale_orchestration_surface(errors)
     if errors:
         for item in errors:
             print(f"docs-check: {item}")

@@ -191,12 +191,60 @@ def _run_ce_review_capture(project_root: Path, ctx: dict[str, Any]) -> dict[str,
     from code_engineering.git import capture_change
 
     arch = _resolve_ce_arch(project_root, ctx)
+    pr_url = str(ctx.get("pr_url") or ctx.get("pr") or "").strip()
+    intent = str(ctx.get("intent") or "")
+    if not pr_url:
+        try:
+            from ascendc_pilot.intake import extract_pr_url_from_intent
+
+            pr_url = extract_pr_url_from_intent(intent)
+        except Exception:  # noqa: BLE001
+            pr_url = ""
+    capture_root = Path(project_root)
+    if pr_url:
+        try:
+            import sys
+
+            ws = Path(__file__).resolve().parents[3] / "engines" / "workspace"
+            if str(ws) not in sys.path:
+                sys.path.insert(0, str(ws))
+            import pr_workspace as gw  # type: ignore[import-not-found]
+
+            if not gw.is_isolated_pr_tree(capture_root):
+                acquire = gw.acquire_pull_request(
+                    pr_url,
+                    run_id=str(ctx.get("run_id") or "").strip(),
+                    workspace_root=capture_root,
+                )
+                if acquire.get("ok"):
+                    resolved = gw.resolve_targets_or_ask(
+                        acquire, workflow_id="ce-review", host_root=capture_root
+                    )
+                    if resolved.get("ok"):
+                        capture_root = Path(str(resolved["project"]))
+                        if resolved.get("architecture") and not arch:
+                            arch = str(resolved["architecture"])
+        except Exception:  # noqa: BLE001
+            pass
+    base = str(ctx.get("base") or "")
+    head = str(ctx.get("head") or "")
+    if pr_url and (not base or base == "HEAD"):
+        try:
+            from ascendc_pilot.user_goal import load_user_goal
+
+            goal = load_user_goal(capture_root) or load_user_goal(project_root)
+            cs = ((goal or {}).get("artifacts") or {}).get("changeset") or {}
+            base = str(cs.get("base_sha") or base)
+            head = str(cs.get("head_sha") or head)
+        except Exception:  # noqa: BLE001
+            pass
     payload = capture_change(
-        project_root,
+        capture_root,
         architecture=arch,
-        base=str(ctx.get("base") or "HEAD"),
-        head=str(ctx.get("head") or ""),
-        pr_url=str(ctx.get("pr_url") or ctx.get("pr") or ""),
+        base=base,
+        head=head,
+        pr_url=pr_url,
+        intent=intent,
     )
     diff = str(payload.get("diff") or "")
     run_id = str(ctx.get("run_id") or "").strip()

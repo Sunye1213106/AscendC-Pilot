@@ -59,7 +59,7 @@ gate [D] 当前计划有未完成 - [ ]
 ### `/ce-review`
 
 ```text
-scope [D] 从 intent 抽出 GitCode/GitHub PR URL。必须在对应算子仓打开且已有 `.uo`；向已配置且匹配的 remote fetch（禁止把用户 URL 加成 remote）；失败则在允许的主机上用 HTTPS 拉 patch（需 `GITHUB_TOKEN` / `GITCODE_TOKEN`），并按算子 pathspec 裁剪。有 PR URL 时禁止退回工作区 dirty tree。无 diff 则停。
+scope [D] 从 intent 抽出 GitCode/GitHub PR URL。有 URL：在 Host 打开目录下新建文件夹 clone exact-head，从 changed-files 解析算子 pathspec 后抓 diff；已 pin 的隔离树则切片、不二次 clone。无 URL：只吃当前算子仓本地 diff，不 clone。有 PR URL 时禁止把本地 fork 当成 head，也禁止退回工作区 dirty tree。无 diff 则停。
   → review [S ce-reviewer ×2] Spec ∥ Standards
   → summary [H] 建议修改或建议测试
 ```

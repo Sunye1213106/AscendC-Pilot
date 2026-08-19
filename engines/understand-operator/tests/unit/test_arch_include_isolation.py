@@ -31,16 +31,20 @@ def _ctx(tmp_path: Path, *, arch_dir: str = "arch-920r1") -> BuildContext:
     )
 
 
-def test_add_include_rejects_other_arch_root(tmp_path: Path) -> None:
+def test_add_include_allows_cousin_rejects_other_arch_root(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
-    foreign = Path(ctx.op_dir) / "op_kernel" / "arch35"
+    cousin = Path(ctx.op_dir) / "op_kernel" / "arch35"
+    cousin.mkdir(parents=True)
+    foreign = Path(ctx.op_dir) / "op_kernel" / "arch22"
     foreign.mkdir(parents=True)
     own = Path(ctx.op_dir) / "op_kernel" / "arch-920r1"
     own.mkdir(parents=True)
     extra = tmp_path / "neutral_inc"
     extra.mkdir()
+    joined = " ".join(p.replace("\\", "/") for p in ctx.kernel_includes())
+    assert "arch35" in joined
     assert ctx.add_include(str(foreign), side="kernel") is False
-    assert not any("arch35" in p.replace("\\", "/") for p in ctx.extra_kernel_includes)
+    assert not any("arch22" in p.replace("\\", "/") for p in ctx.extra_kernel_includes)
     assert ctx.add_include(str(extra), side="kernel") is True
 
 
@@ -59,10 +63,21 @@ def test_heal_prefers_current_arch_same_basename(tmp_path: Path) -> None:
     assert "arch35" not in hit.include_dir.replace("\\", "/")
 
 
-def test_heal_bare_header_only_in_other_arch_is_unresolved(tmp_path: Path) -> None:
+def test_heal_bare_header_only_in_cousin_arch_resolves(tmp_path: Path) -> None:
     reset_index_cache()
     ctx = _ctx(tmp_path)
-    foreign = Path(ctx.op_dir) / "op_kernel" / "arch35" / "only_there.h"
+    cousin = Path(ctx.op_dir) / "op_kernel" / "arch35" / "only_there.h"
+    cousin.parent.mkdir(parents=True)
+    cousin.write_text("struct Only {};\n", encoding="utf-8")
+    hit = find_include_dir(ctx, "only_there.h", side="kernel")
+    assert hit is not None
+    assert "arch35" in hit.found.replace("\\", "/")
+
+
+def test_heal_bare_header_only_in_arch22_is_unresolved(tmp_path: Path) -> None:
+    reset_index_cache()
+    ctx = _ctx(tmp_path)
+    foreign = Path(ctx.op_dir) / "op_kernel" / "arch22" / "only_there.h"
     foreign.parent.mkdir(parents=True)
     foreign.write_text("struct Only {};\n", encoding="utf-8")
     assert find_include_dir(ctx, "only_there.h", side="kernel") is None
@@ -81,18 +96,22 @@ def test_heal_explicit_other_arch_spelling_uses_neutral_root(tmp_path: Path) -> 
     assert not include_dir.endswith("/arch35")
 
 
-def test_save_extras_strips_other_arch_include_roots(tmp_path: Path) -> None:
+def test_save_extras_keeps_cousin_strips_other_arch_include_roots(tmp_path: Path) -> None:
     ctx = _ctx(tmp_path)
-    foreign = Path(ctx.op_dir) / "op_kernel" / "arch35"
+    cousin = Path(ctx.op_dir) / "op_kernel" / "arch35"
+    cousin.mkdir(parents=True)
+    foreign = Path(ctx.op_dir) / "op_kernel" / "arch22"
     foreign.mkdir(parents=True)
     extra = tmp_path / "ok_inc"
     extra.mkdir()
+    ctx.extra_kernel_includes.append(str(cousin).replace("\\", "/"))
     ctx.extra_kernel_includes.append(str(foreign).replace("\\", "/"))
     ctx.extra_kernel_includes.append(str(extra).replace("\\", "/"))
     path = save_extras(ctx, HealReport(enabled=True))
     assert path is not None
     payload = load_extras_payload(ctx.op_dir, ctx.arch_dir)
     kernel = " ".join(payload.get("kernel") or []).replace("\\", "/")
-    assert "arch35" not in kernel
+    assert "arch35" in kernel
+    assert "arch22" not in kernel
     assert extras_summary_path(ctx.op_dir, "arch-920r1").is_file()
     assert not extras_summary_path(ctx.op_dir, "arch35").is_file()

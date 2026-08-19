@@ -766,35 +766,16 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
             errors.append("NL PR URL must not be script-routed to a workflow")
         if hit.get("workflow_id") == "ce-review":
             errors.append("NL PR URL must not map to ce-review")
-        if str(hit.get("error") or "") != "use_orchestration_skill":
-            errors.append("unmatched NL must tell the caller to use the orchestration skill")
+        if str(hit.get("error") or "") != "primary_agent_route_required":
+            errors.append("unmatched NL must return primary_agent_route_required")
         for slash_id in ("uo-init", "tg-plan", "ce-review", "ce-plan", "tg-solve"):
             if slash_id not in list_user_workflows():
                 errors.append(f"user slash workflow {slash_id} missing from list_user_workflows()")
         if "goal-impact" in WORKFLOWS:
             errors.append("reserved goal-impact must not remain as a live workflow")
         orch = root / "skills" / "workflow-orchestration"
-        io_text = (orch / "references" / "slash-io.md").read_text(encoding="utf-8") if (orch / "references" / "slash-io.md").is_file() else ""
-        pipe = (orch / "references" / "product-pipelines.md").read_text(encoding="utf-8") if (orch / "references" / "product-pipelines.md").is_file() else ""
-        for slash in (
-            "/uo-init",
-            "/uo-update",
-            "/uo-query",
-            "/uo-investigate",
-            "/ce-plan",
-            "/ce-apply",
-            "/ce-review",
-            "/tg-init",
-            "/tg-plan",
-            "/tg-solve",
-            "/handoff",
-        ):
-            if slash not in io_text:
-                errors.append(f"orchestration slash-io.md missing {slash}")
-        if "/tg-init" not in pipe or ".uo" not in pipe:
-            errors.append("orchestration pipelines must include .uo → /tg-init")
-        if "goal-impact" in io_text or "goal-impact" in pipe:
-            errors.append("orchestration skill must not name goal-impact")
+        if orch.exists():
+            errors.append("skills/workflow-orchestration/ must not be resurrected")
         checked = validate_intent_staging(
             {
                 "objective_zh": "为这个 PR 生成针对性测试用例",
@@ -816,8 +797,10 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
             for s in (planned.get("steps") or [])
             if isinstance(s, dict)
         ]
-        if "ce-review" in wids:
-            errors.append("tg-plan/tg-solve staging must not default to ce-review")
+        if "ce-review" not in wids:
+            errors.append("PR + tg-plan/tg-solve must include ce-review")
+        if "uo-init" not in wids:
+            errors.append("PR plan must include uo-init")
         if "goal-impact" in wids:
             errors.append("plan_for must not insert goal-impact")
         if "tg-plan" not in wids or "tg-solve" not in wids:

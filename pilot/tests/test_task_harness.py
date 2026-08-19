@@ -59,7 +59,7 @@ def test_disallowed_pr_host_rejected() -> None:
     assert checked["error"] == "PR_HOST_NOT_ALLOWED"
 
 
-def test_plan_for_test_generation_not_ce_review() -> None:
+def test_plan_for_test_generation_includes_pr_dependencies() -> None:
     planned = plan_for(
         {
             "needed_workflows": ["tg-plan", "tg-solve"],
@@ -68,10 +68,11 @@ def test_plan_for_test_generation_not_ce_review() -> None:
         {"has_uo": False, "uo_stale": False},
     )
     wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
-    assert "ce-review" not in wids
+    assert "uo-init" in wids
+    assert "ce-review" in wids
     assert "goal-impact" not in wids
     assert "tg-plan" in wids and "tg-solve" in wids
-    assert "uo-init" not in wids
+    assert wids.index("uo-init") < wids.index("ce-review") < wids.index("tg-plan")
 
 
 def test_plan_for_review_and_tg_union() -> None:
@@ -87,7 +88,7 @@ def test_plan_for_review_and_tg_union() -> None:
     assert "tg-plan" in wids
     assert wids.index("ce-review") < wids.index("tg-plan")
     assert "goal-impact" not in wids
-    assert "uo-init" not in wids
+    assert "uo-init" in wids
 
 
 def test_workflow_catalog_lists_slash_not_skills() -> None:
@@ -298,19 +299,12 @@ def test_detect_operator_roots_common_fanout_and_empty(tmp_path: Path) -> None:
 
 
 def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
-    import sys
-
     import yaml
 
+    from ascendc_pilot.actions import goal_engines
     from ascendc_pilot.actions.goal_engines import run_intent_promote
     from ascendc_pilot.paths import agent_root
     from ascendc_pilot.state import start_workflow
-
-    repo = Path(__file__).resolve().parents[2]
-    ws = repo / "engines" / "workspace"
-    if str(ws) not in sys.path:
-        sys.path.insert(0, str(ws))
-    import git_workspace as gw  # noqa: WPS433
 
     host = tmp_path / "host"
     host.mkdir()
@@ -320,26 +314,48 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
 
     pinned = tmp_path / "worktree" / "FlashAttention"
     pinned.mkdir(parents=True)
-    (pinned / "op_host").mkdir()
-    (pinned / "op_kernel").mkdir()
+    (pinned / "op_host" / "arch35").mkdir(parents=True)
+    (pinned / "op_kernel" / "arch35").mkdir(parents=True)
 
-    def _acquire(url: str, *, run_id: str = "", goal_id: str = "", **_kw) -> dict:
-        del url, goal_id
-        return {
-            "ok": True,
-            "run_id": run_id,
-            "operator_roots": [str(pinned)],
-            "architectures": ["arch35"],
-            "changed_files": ["op_host/x.cpp"],
-            "worktree_head": str(pinned),
-            "changeset": {
-                "schema": "pilot-changeset/v1",
-                "base_source": "provider",
-                "changed_files": ["op_host/x.cpp"],
-            },
-        }
+    class FakeWorkspace:
+        @staticmethod
+        def acquire_pull_request(url: str, **kwargs: object) -> dict:
+            del url, kwargs
+            return {
+                "ok": True,
+                "operator_roots": [str(pinned)],
+                "architectures": ["arch35"],
+                "changed_architectures": ["arch35"],
+                "changed_files": ["op_host/arch35/x.cpp"],
+                "worktree_head": str(pinned),
+                "operator_targets": [
+                    {
+                        "operator_root": str(pinned),
+                        "operator_name": "FlashAttention",
+                        "architecture": "arch35",
+                    }
+                ],
+                "changeset": {
+                    "schema": "pilot-changeset/v1",
+                    "base_source": "provider",
+                    "changed_files": ["op_host/arch35/x.cpp"],
+                },
+            }
 
-    monkeypatch.setattr(gw, "acquire_pull_request", _acquire)
+        @staticmethod
+        def resolve_targets_or_ask(acquire: dict, **kwargs: object) -> dict:
+            del kwargs
+            return {
+                "ok": True,
+                "project": str(pinned),
+                "architecture": "arch35",
+                "operator_roots": [str(pinned)],
+                "operator_targets": acquire["operator_targets"],
+                "worktree_head": str(pinned),
+                "changeset": acquire["changeset"],
+            }
+
+    monkeypatch.setattr(goal_engines, "_git_workspace", lambda: FakeWorkspace)
     state = start_workflow(host, "auto", intent="生成 case", architecture="arch35")
     rid = str(state.get("run_id") or "")
     staging = (
@@ -364,36 +380,46 @@ def test_intent_promote_pins_before_plan(tmp_path: Path, monkeypatch) -> None:
     out = run_intent_promote(host, {"run_id": rid, "architecture": "arch35", "intent": "生成 case"})
     assert out.get("ok") is True
     assert Path(str(out.get("project"))).resolve() == pinned.resolve()
-    assert not str(out.get("next_workflow_id") or "").strip()
+    assert out.get("next_workflow_id") == "uo-init"
 
 
 def test_intent_promote_empty_roots_asks(tmp_path: Path, monkeypatch) -> None:
-    import sys
-
     import yaml
 
+    from ascendc_pilot.actions import goal_engines
     from ascendc_pilot.actions.goal_engines import run_intent_promote
     from ascendc_pilot.paths import agent_root
     from ascendc_pilot.state import start_workflow
 
-    repo = Path(__file__).resolve().parents[2]
-    ws = repo / "engines" / "workspace"
-    if str(ws) not in sys.path:
-        sys.path.insert(0, str(ws))
-    import git_workspace as gw  # noqa: WPS433
-
     host = tmp_path / "host"
     host.mkdir()
-    monkeypatch.setattr(
-        gw,
-        "acquire_pull_request",
-        lambda *a, **k: {
-            "ok": True,
-            "operator_roots": [],
-            "changed_files": ["docs/README.md"],
-            "changeset": {"changed_files": ["docs/README.md"]},
-        },
-    )
+
+    class FakeWorkspace:
+        @staticmethod
+        def acquire_pull_request(*_a, **_k) -> dict:
+            return {
+                "ok": True,
+                "operator_roots": [],
+                "operator_targets": [],
+                "changed_files": ["docs/README.md"],
+                "worktree_head": str(tmp_path / "head"),
+                "changeset": {"changed_files": ["docs/README.md"]},
+            }
+
+        @staticmethod
+        def resolve_targets_or_ask(acquire: dict, **kwargs: object) -> dict:
+            del kwargs
+            return {
+                "ok": False,
+                "error": "OPERATOR_ROOTS_EMPTY",
+                "reason_code": "OPERATOR_ROOTS_EMPTY",
+                "needs_human_decision": True,
+                "decision_kind": "project",
+                "changed_files": acquire.get("changed_files") or [],
+                "ask_question": {"prompt_zh": "请选择", "options": []},
+            }
+
+    monkeypatch.setattr(goal_engines, "_git_workspace", lambda: FakeWorkspace)
     state = start_workflow(host, "auto", intent="生成 case", architecture="arch35")
     rid = str(state.get("run_id") or "")
     staging = (
@@ -560,15 +586,16 @@ def test_acquire_into_opencode_workspace_not_cache(tmp_path: Path, monkeypatch) 
     )
     assert out.get("ok") is True
     head = Path(str(out.get("worktree_head") or ""))
-    assert head.resolve() == workspace.resolve()
-    assert (workspace / "op_host" / "a.cpp").is_file()
-    assert "workspaces" not in str(out.get("workspace_home") or "").replace("\\", "/")
-    assert any(
-        Path(p).resolve() == workspace.resolve() for p in (out.get("operator_roots") or [])
-    )
+    assert head.is_dir()
+    assert ".ascendc-pr" in head.parts
+    assert head.resolve() != workspace.resolve()
+    assert (head / "op_host" / "a.cpp").is_file()
+    assert not (workspace / "op_host").exists()
+    assert out.get("skipped_checkout") is False
+    assert any(Path(p).resolve() == head.resolve() or str(head) in str(p) for p in (out.get("operator_roots") or []))
 
 
-def test_acquire_skips_clone_when_workspace_is_operator(tmp_path: Path, monkeypatch) -> None:
+def test_acquire_does_not_skip_clone_when_workspace_is_operator(tmp_path: Path, monkeypatch) -> None:
     import sys
 
     repo = Path(__file__).resolve().parents[2]
@@ -589,9 +616,12 @@ def test_acquire_skips_clone_when_workspace_is_operator(tmp_path: Path, monkeypa
         workspace_root=op,
     )
     assert out.get("ok") is True
-    assert out.get("skipped_checkout") is True
+    assert out.get("skipped_checkout") is False
     assert marker.read_text(encoding="utf-8") == "local"
-    assert Path(str(out.get("worktree_head"))).resolve() == op.resolve()
+    head = Path(str(out.get("worktree_head")))
+    assert ".ascendc-pr" in head.parts
+    assert head.resolve() != op.resolve()
+    assert (head / "op_host" / "a.cpp").is_file()
 
 
 def test_acquire_refuses_pilot_checkout_workspace(tmp_path: Path, monkeypatch) -> None:

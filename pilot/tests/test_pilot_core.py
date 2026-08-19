@@ -39,22 +39,22 @@ def _write(path: Path, data: object) -> None:
 
 
 def test_router_slash_only_no_nl_keywords():
-    """Generic NL is not keyword-routed; caller uses the orchestration skill."""
+    """Generic NL is not keyword-routed; caller uses Primary + goal-intake."""
     assert route("/uo-init foo").get("workflow_id") == "uo-init"
     assert route("/tg-plan").get("workflow_id") == "tg-plan"
     assert route("uo-init").get("workflow_id") == "uo-init"
     # Natural language must NOT be keyword-routed by the script
     nl = route("为 flash_attention_score_grad 算子建立本地知识库，只分析 arch35")
     assert nl.get("ok") is False
-    assert nl.get("error") == "use_orchestration_skill"
+    assert nl.get("error") == "primary_agent_route_required"
     assert nl.get("workflow_id") in {None, ""}
     assert "uo-init" in (nl.get("candidates") or [])
     assert nl.get("message_zh")
     assert route("帮我建库初始化知识库").get("ok") is False
-    assert route("完全无关的话").get("error") == "use_orchestration_skill"
+    assert route("完全无关的话").get("error") == "primary_agent_route_required"
     assert route("/uo-diff").get("ok") is False
     goal = route("建立 TilingKey 全覆盖测试")
-    assert goal.get("ok") is False and goal.get("error") == "use_orchestration_skill"
+    assert goal.get("ok") is False and goal.get("error") == "primary_agent_route_required"
     ce = route("验证这次改动")
     assert ce.get("ok") is False and not ce.get("workflow_id")
     op = route("/operator /uo-init")

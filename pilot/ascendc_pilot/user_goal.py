@@ -340,6 +340,7 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     from ascendc_pilot.planning.task_plan import (
         acceptance_failure_zh,
         acceptance_satisfied,
+        current_step,
         current_workflow_id,
         evaluate_acceptance,
         load_task_plan,
@@ -375,6 +376,16 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
     completed = bool(accepted and not remaining)
     acceptance_failed = bool(not remaining and not accepted)
     next_workflow = "" if completed or acceptance_failed else current_workflow_id(plan)
+    nxt = current_step(plan) if next_workflow else None
+    next_project = str((nxt or {}).get("project") or "")
+    next_architecture = str((nxt or {}).get("architecture") or "")
+    if next_project:
+        try:
+            from ascendc_pilot.intake import write_last_project_cache
+
+            write_last_project_cache(next_project)
+        except Exception:  # noqa: BLE001
+            pass
     if completed:
         goal["status"] = "completed"
         for step in goal.get("public_plan") or []:
@@ -382,11 +393,7 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
                 step["status"] = "passed"
     write_user_goal(root, goal)
 
-    next_summary = ""
-    for step in plan.get("steps") or []:
-        if isinstance(step, dict) and str(step.get("workflow_id") or step.get("id")) == next_workflow:
-            next_summary = str(step.get("summary_zh") or next_workflow)
-            break
+    next_summary = str((nxt or {}).get("summary_zh") or "")
     if next_workflow and not next_summary:
         next_summary = next_workflow
 
@@ -418,6 +425,8 @@ def mark_workflow_passed(project_root: Path | str, workflow_id: str) -> dict[str
         "completed": completed,
         "acceptance_failed": acceptance_failed,
         "acceptance_status": acc,
+        "next_project": next_project,
+        "next_architecture": next_architecture,
     }
 
 

@@ -65,7 +65,7 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = (
 
 # Control-plane skill: Primary-invocable map of slash I/O + pipelines.
 # Not a sixth cognitive skill. Never disable-model-invocation.
-CONTROL_PLANE_SKILL_IDS: tuple[str, ...] = ("workflow-orchestration",)
+CONTROL_PLANE_SKILL_IDS: tuple[str, ...] = ()
 
 # LLM child agents Primary may spawn via OpenCode Task. Deterministic engines
 # are not in this set. Plugin must not widen this ceiling to task: allow.
@@ -526,7 +526,7 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     lines = [
         f"# {wid}",
         "",
-        "Pilot workflow entry. Orchestration authority: `skills/workflow-orchestration/` (slash I/O + pipelines). Spec owns phase and lease.",
+        "Pilot workflow entry. Goal Contract + `goal-intake` (`auto`) own orchestration. Spec owns phase and lease.",
         "",
     ]
     if skill_id:
@@ -1286,7 +1286,7 @@ Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
     elif is_primary:
         runtime = """## Runtime Contract
 
-        1. Workflows: read `skills/workflow-orchestration/` then call Host tool `pilot_run(workflow=<one slash id>, project, architecture)`. Never `workflow=auto`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
+        1. Workflows: first natural-language call is Host tool `pilot_run(workflow=auto, intent=<user text verbatim>, project=<OpenCode directory>)`. `auto` is reserved `goal-intake`. Then `pilot_run(workflow=<next_workflow_id>)`. Explicit slash: `workflow=<existing id>`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`.
 2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures` / `retry-after-environment-fix`): call plugin tool `pilot_cli` with `command` as argv after the binary. Never `--help`. Never `--mode`.
 3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture.
 4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`.

@@ -304,6 +304,8 @@ def prepare_layout(project_root: Path, payload: dict[str, Any] | None = None) ->
         "scrubbed_paths": scrub.get("removed") or [],
         "seeded_not_extracted": list(scrub.get("seeded_not_extracted") or []),
         "layout_reset": bool(scrub.get("removed")),
+        "arch_dir": spec.arch_dir,
+        "architecture": spec.arch_dir,
     }
 
 
@@ -467,18 +469,22 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
     hosts = [p for p in spec.host_targets if p.exists()]
     kernel = spec.kernel_entry if spec.kernel_entry and spec.kernel_entry.exists() else None
     if kernel is not None:
-        from uo_init.source_layout import path_owned_architecture
+        from uo_init.source_layout import (
+            architecture_in_scope,
+            architectures_match,
+            path_owned_architecture,
+        )
 
         owns_path = path_owned_architecture(kernel)
         owns_inc = sscan.entry_architecture(kernel)
-        arch = (spec.arch_dir or "").strip().lower()
+        arch = (spec.arch_dir or "").strip()
         drop = False
         if owns_path:
-            drop = bool(arch and owns_path != arch)
-        elif owns_inc and arch and owns_inc != arch:
-            # Root-level TU whose includes name another arch: discover already
-            # chose this as the only compile unit for the requested arch.
-            if spec.scope is not None:
+            drop = bool(arch and not architectures_match(owns_path, arch))
+        elif owns_inc and arch:
+            if not architecture_in_scope(owns_inc, arch):
+                drop = True
+            elif spec.scope is not None and not architectures_match(owns_inc, arch):
                 spec.scope.notes.append(
                     f"kernel_entry_kept_last_tu: {kernel.name} includes {owns_inc}"
                 )
@@ -816,6 +822,8 @@ def scope_scan(project_root: Path, payload: dict[str, Any] | None = None) -> dic
         "scope_shared": candidate["scope_shared"],
         "confirmed_source_files": len(confirmed),
         "include_heal": include_heal_report,
+        "arch_dir": spec.arch_dir,
+        "architecture": spec.arch_dir,
     }
 
 
