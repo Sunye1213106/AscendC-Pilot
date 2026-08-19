@@ -24,9 +24,11 @@ def test_return_value_hook_is_ephemeral_and_narrow() -> None:
     assert "isKbLookupFinalize" in capture_fn
 
 
-def test_task_hook_uses_pending_dispatch_project() -> None:
+def test_task_hook_uses_session_safe_pending_dispatch() -> None:
     plugin = (ROOT / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
-    driver = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")
+    driver_facade = (ROOT / "opencode-plugin" / "pilot-driver.ts").read_text(encoding="utf-8")
+    driver_core = (ROOT / "opencode-plugin" / "pilot-driver-core.ts").read_text(encoding="utf-8")
+    driver = driver_facade + "\n" + driver_core
     assert "ascendc-pending-dispatch.json" in plugin
     assert "readPendingDispatchProject" in plugin
     assert "isHarnessCheckout" in plugin
@@ -76,7 +78,9 @@ def test_task_hook_uses_pending_dispatch_project() -> None:
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "args.location = { directory: projectRoot }" not in plugin
     assert "readLatestPendingDispatch" in driver
-    assert "return readLatestPendingDispatch()" in driver
+    assert "readDispatchFor" in driver_facade
+    assert "currentHostSessionHint" in driver_facade
+    assert "return readLatestPendingDispatch()" not in driver_facade
     assert '"tasks"' in driver
     assert "native_tasks" in driver
     assert "host_step.tasks" in driver
