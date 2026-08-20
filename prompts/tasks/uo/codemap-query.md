@@ -8,7 +8,7 @@
 </input>
 
 <delta_constraints>
-1. 按 METHOD 的参数形态调用：标识符、Dim=V、`--file --line`、或无参数索引。不要传 `--mode`。若 USER QUESTION 含 FOCUS，只答该片。建议的首次调用先执行，再跟卡片 `next` / `hint`。
+1. 按 code-access 不变量的形态调用。若 USER QUESTION 含 FOCUS，只答该片。建议的首次调用先执行，再跟卡片 `next` / `hint`。
 2. 卡片已带 file:line + snippet 视为已 Read，不要再 Read 同一段。路径从卡片 `file` / `next` 复制，禁止猜相对路径。空结果按 `hint` 再查。不要仓级 findstr。图不够再开最小源码窗。
 3. 最终消息用完整自然语言作答（file:line + 必要 snippet）。不要只输出 YAML。文末可附很短 `kb-answer-v1` 状态头。不写文件，不推进工作流。
 </delta_constraints>

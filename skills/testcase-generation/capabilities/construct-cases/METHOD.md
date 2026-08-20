@@ -2,6 +2,8 @@
 
 按已批准 `plan.md` 构造脚本仓能直接吃的用例行。正式表由 `construct_promote` 写出。
 
+本步 refs：`references/construction-contract.md`、`references/oracle.md`、`references/closure-gotchas.md`。
+
 ## 方法
 
 1. 读 `init.yaml` 列与 `plan.md` YAML 义务。

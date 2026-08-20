@@ -1,7 +1,7 @@
-# Authority invariants (model-facing, short)
+# 权威不变量（面向模型，短）
 
-Priority (high → low): current source window → signed Pilot artifacts → current UO/TG KB → verified local memory → model memory / naming intuition.
+优先级（高 → 低）：当前源码窗口 → 已签名 Pilot 产物 → 当前 UO/TG KB → 模型记忆 / 命名直觉。
 
-MUST NOT close KEY/contract fields from naming guesses or stale memory.
+禁止用命名猜测闭合 KEY / 合同字段。
 
-Full detail: `pilot/policies/source-authority/POLICY.md`.
+全文：`pilot/policies/source-authority/POLICY.md`。

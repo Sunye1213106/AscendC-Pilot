@@ -37,34 +37,32 @@ def _build(
         "occupancy": "exclusive",
         "occupancy_group": "tg",
         "entry_state": "kb_ready",
-        "terminal_ready_states": ["confirm"],
+        "terminal_ready_states": ["validate"],
         "retry_budget": 3,
         "states": [
             _st("kb_ready", "校验知识库"),
             _st("scan", "扫描测试脚本仓"),
             _st("bind", "绑定列与 UO 标识符"),
             _st("validate", "校验 init.yaml"),
-            _st("confirm", "确认进入规划"),
         ],
         "transitions": [
             _tr("kb_ready", "scan"),
             _tr("scan", "bind"),
             _tr("bind", "validate"),
-            _tr("validate", "confirm"),
             _tr("validate", "bind", kind="rework", reason_codes=["INIT_INVALID", "MAPPING_EMPTY"]),
-            _tr("confirm", "bind", kind="rework", reason_codes=["rework"]),
+            _tr("bind", "scan", kind="rework", reason_codes=["HARNESS_CHANGED"]),
+            _tr("validate", "scan", kind="rework", reason_codes=["HARNESS_CHANGED"]),
         ],
         "phase_gates": {
             "kb_ready": ["uo_ready"],
-            "confirm": ["init_confirmed", "kb_fingerprint_fresh"],
+            "validate": ["init_confirmed", "kb_fingerprint_fresh"],
         },
         "complete_gates": ["init_confirmed", "kb_fingerprint_fresh"],
         "pipelines": {
             "kb_ready": ["kb_check"],
             "scan": ["repo_scan"],
-            "bind": ["bind_init", "bind_promote"],
+            "bind": ["bind_init", "bind_review", "bind_promote"],
             "validate": ["validate_init"],
-            "confirm": ["human_confirm"],
         },
         "actions": [
             _act(
@@ -104,6 +102,61 @@ def _build(
                 output_mode="staged",
                 staging_contract_id="tg-bind-staging-v1",
                 merge_action_id="bind_promote",
+                execution_variant="review_axis_fanout",
+                fanout_axes=[
+                    {
+                        "id": "harness",
+                        "skill": "testcase-generation",
+                        "capability_id": "bind-harness",
+                        "task_prompt_id": "tg/bind-harness",
+                        "artifact": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
+                        "other": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
+                        "allow_write": True,
+                        "focus": (
+                            "写出 parts/harness.yaml：golden（脚本计算流 vs 算子逻辑 match/mismatch/缺口）、"
+                            "compare（真实精度 flag、atol/rtol/only_grad；禁止写成 --golden-only）、"
+                            "modes.precision / modes.perf、generate_inputs（含近 0 / 大边界 / 浮点异常缺口）、findings。"
+                            "无仓时 kind 事实来自 repo_scan，从算子/图提 golden 与精度/性能口径。"
+                            "只绑定测试仓与算子；禁止把某列标成 PR 焦点或本次测试目标。"
+                            "查图形态见 code-access 不变量。"
+                            "禁止写正式 tg/init.yaml。"
+                        ),
+                    },
+                    {
+                        "id": "bind",
+                        "skill": "testcase-generation",
+                        "capability_id": "bind-columns",
+                        "task_prompt_id": "tg/bind-columns",
+                        "artifact": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
+                        "other": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
+                        "allow_write": True,
+                        "focus": (
+                            "写出 parts/bind.yaml：table_kind / entry / case_arg / columns / mapping"
+                            "（脚本读点 + UO 标识符 + Host API）/ domains（必须引用 tables[].profile 的 type/min/max/topk）/ findings。"
+                            "shape 列用 profile range，禁止把 *TemplateNum 合法集写成该列 enum；dim_* 用 Dim=Name。"
+                            "禁止为填 domains 去 Read 整份 CSV。无仓时列来自 Host API，kind=default_input。"
+                            "禁止发明列、空 mapping、空值域。只映射测试仓表头与算子标识符；"
+                            "禁止 PR#### focus / 把某 CSV 标成本次测试目标（PR 范围留给 /uo-query → plan）。"
+                            "查图形态见 code-access 不变量。"
+                            "禁止写正式 tg/init.yaml。"
+                        ),
+                    },
+                ],
+            ),
+            _act(
+                "bind_review",
+                label_zh="主控通读两路草稿并以 PASS/REWORK 推进",
+                phases=["bind"],
+                workflow_id="tg-init",
+                agent_id="ascendc-pilot",
+                role_id="controller",
+                execution_mode="primary_review",
+                capability_ids=[],
+                action_method_id="testcase-generation/bind-review",
+                task_prompt_id="tg/bind-review",
+                context_profile_id="tg-init-bind-review",
+                output_contract_id="tg-bind-review-v1",
+                output_mode="return_value",
             ),
             _act(
                 "bind_promote",
@@ -125,21 +178,6 @@ def _build(
                 capability_ids=[],
                 output_contract_id="tg-init-validate-v1",
             ),
-            _act(
-                "human_confirm",
-                label_zh="确认进入规划",
-                phases=["confirm"],
-                workflow_id="tg-init",
-                agent_id="ascendc-pilot",
-                role_id="controller",
-                execution_mode="primary_interactive",
-                human_interaction="confirm",
-                capability_ids=[],
-                task_prompt_id=None,
-                context_profile_id="tg-init-human-confirm",
-                output_contract_id="tg-init-confirmed-v1",
-                post_gates=["init_confirmed", "kb_fingerprint_fresh"],
-            ),
         ],
         "agents": [
             {"id": "deterministic-tg-engine", "role": "deterministic_engine"},
@@ -158,7 +196,7 @@ def _build(
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
-        "phases": ["kb_ready", "scan", "bind", "validate", "confirm"],
+        "phases": ["kb_ready", "scan", "bind", "validate"],
         "gates": ["uo_ready", "init_confirmed", "kb_fingerprint_fresh"],
     },
     "tg-plan": {

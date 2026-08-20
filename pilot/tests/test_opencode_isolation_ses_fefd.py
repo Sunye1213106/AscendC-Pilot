@@ -40,7 +40,7 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     assert "readDispatchFor" in driver_facade
     assert "currentHostSessionHint" in driver_facade
     assert "uo-query" not in driver_core.split("args: {")[1].split("project:")[0] or (
-        "Never uo-query" in driver_core
+        "禁止 uo-query" in driver_core
     )
 
 
@@ -140,7 +140,6 @@ def test_compose_primary_has_pilot_tools_and_hides_children(tmp_path: Path) -> N
     yaml_src = (ROOT / "agents" / "ascendc-pilot.yaml").read_text(encoding="utf-8")
     assert "没有 Host 工具就调用 PATH" not in yaml_src
     assert "pilot_run" in yaml_src
-    assert "pilot_cli" in yaml_src
 
 
 def test_authorize_denies_bash_start_and_auto(tmp_path: Path) -> None:

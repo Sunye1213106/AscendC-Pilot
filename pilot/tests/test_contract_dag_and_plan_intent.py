@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def test_plan_intent_action_removed() -> None:
-    from ascendc_pilot.actions.tg_primary import PRIMARY_TG_ACTIONS
+    from ascendc_pilot.human_confirm import PRIMARY_TG_ACTIONS
     from ascendc_pilot.workflows import action_by_id
 
     assert "plan_intent" not in PRIMARY_TG_ACTIONS

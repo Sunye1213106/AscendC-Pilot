@@ -29,6 +29,7 @@ def synthetic_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def test_repo_scan_and_validate_init(synthetic_root: Path):
     from ascendc_pilot.actions.tg_product import run_repo_scan, run_validate_init
+    from ascendc_pilot.human_interaction import adopt_test_script_root
     from testcase_agent.products import dump_init, INIT_SCHEMA
     from ascendc_pilot.paths import tg_root
     from ascendc_pilot.state import start_workflow
@@ -39,6 +40,7 @@ def test_repo_scan_and_validate_init(synthetic_root: Path):
         architecture="arch0",
         op_name="_synthetic_toy",
     )
+    adopt_test_script_root(synthetic_root, "no_repo_uo_query")
     run_id = str(state.get("run_id") or "")
     scan = run_repo_scan(synthetic_root, {"architecture": "arch0", "run_id": run_id})
     assert scan.get("ok") is True
@@ -110,8 +112,13 @@ def test_repo_scan_asks_when_goal_wants_tests_and_root_empty(synthetic_root: Pat
     opts = ask.get("options") or []
     assert len(opts) >= 2
     values = {str(o.get("value") or "") for o in opts if isinstance(o, dict)}
-    assert "have_repo" in values
+    assert "custom" in values
     assert "no_repo_uo_query" in values
+    assert "have_repo" not in values
+    assert "stop" not in values
+    assert str(opts[0].get("value") or "") == "no_repo_uo_query"
+    assert str(opts[-1].get("value") or "") == "custom"
+    assert ask.get("allow_free_text") is True
     assert scan.get("ok") is False
 
 
@@ -125,8 +132,10 @@ def test_repo_scan_asks_without_user_goal(synthetic_root: Path) -> None:
         for o in ((scan.get("ask_question") or {}).get("options") or [])
         if isinstance(o, dict)
     }
-    assert "have_repo" in values
+    assert "custom" in values
     assert "no_repo_uo_query" in values
+    assert "have_repo" not in values
+    assert "stop" not in values
 
 
 def test_repo_scan_default_input_sentinel_skips_ask(synthetic_root: Path) -> None:
@@ -173,3 +182,268 @@ def test_prepare_repo_scan_does_not_finalize_when_asking(synthetic_root: Path) -
     assert isinstance(prep.get("ask_question"), dict)
     assert len((prep.get("ask_question") or {}).get("options") or []) >= 2
     assert not (prep.get("finalize") or {}).get("ok")
+
+
+def test_custom_does_not_count_as_script_root(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_repo_scan
+
+    scan = run_repo_scan(
+        synthetic_root,
+        {"architecture": "arch0", "run_id": "R1", "test_script_root": "custom"},
+    )
+    assert scan.get("needs_human_decision") is True
+    assert str(scan.get("test_script_root") or "") == ""
+
+
+def test_repo_scan_adopts_existing_directory(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_repo_scan
+
+    repo = synthetic_root / "fag_debug_tools"
+    repo.mkdir()
+    scan = run_repo_scan(
+        synthetic_root,
+        {"architecture": "arch0", "run_id": "R1", "test_script_root": str(repo)},
+    )
+    assert scan.get("needs_human_decision") is not True
+    assert scan.get("ok") is True
+    assert scan.get("kind") == "script_repo"
+    assert Path(str(scan.get("test_script_root"))).resolve() == repo.resolve()
+
+
+def test_bind_promote_rejects_without_referee(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_bind_promote
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    out = run_bind_promote(
+        synthetic_root,
+        {"architecture": "arch0", "run_id": str(state.get("run_id") or ""), "op_name": "_synthetic_toy"},
+    )
+    assert out.get("ok") is False
+    assert out.get("error") == "REFEREE_REJECTED"
+
+
+def test_bind_promote_merges_parts_after_referee(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import _action_dir, run_bind_promote, run_repo_scan
+    from ascendc_pilot.human_interaction import adopt_test_script_root
+    from ascendc_pilot.paths import tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import load_init
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    adopt_test_script_root(synthetic_root, "no_repo_uo_query")
+    ctx = {"architecture": "arch0", "run_id": str(state.get("run_id") or ""), "op_name": "_synthetic_toy"}
+    scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": "no_repo_uo_query"})
+    assert scan.get("ok") is True
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True)
+    (bind_root / "parts" / "harness.yaml").write_text(
+        "golden: {status: match}\ncompare: {atol: 1e-4}\nmodes: {precision: [run], perf: []}\n"
+        "generate_inputs: {kind: default}\nfindings: [h1]\n",
+        encoding="utf-8",
+    )
+    (bind_root / "parts" / "bind.yaml").write_text(
+        "table_kind: csv\nentry: ''\ncase_arg: ''\ncolumns: [{name: B}]\n"
+        "mapping: {}\ndomains: {B: '>=0'}\nfindings: [b1]\n",
+        encoding="utf-8",
+    )
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is True, out
+    doc = load_init(tg_root(synthetic_root, arch="arch0"))
+    assert doc.get("kind") == "default_input"
+    assert doc.get("confirmed") is True
+    assert doc.get("golden", {}).get("status") == "match"
+    assert doc.get("columns")[0]["name"] == "B"
+    assert "h1" in doc.get("findings")
+    assert "b1" in doc.get("findings")
+
+
+def test_bind_review_rework_drops_named_slice(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.runtime import _complete_bind_review_prepare, _session_dir
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    run_id = str(state.get("run_id") or "")
+    bind_parts = _session_dir(synthetic_root, run_id, "bind_init") / "parts"
+    bind_parts.mkdir(parents=True)
+    (bind_parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+    (bind_parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+    sdir = _session_dir(synthetic_root, run_id, "bind_review")
+    sdir.mkdir(parents=True)
+    out = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="REWORK harness: golden 不清",
+    )
+    assert out.get("continue_drive") is True, out
+    assert out.get("rework") == ["harness"]
+    assert not (bind_parts / "harness.yaml").is_file()
+    assert (bind_parts / "harness.yaml.prev").is_file()
+    assert (bind_parts / "bind.yaml").is_file()
+    assert not (sdir / "verdict.yaml").is_file()
+    assert not (sdir / "referee.yaml").is_file()
+    rework_doc = yaml.safe_load(
+        (_session_dir(synthetic_root, run_id, "bind_init") / "rework.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert rework_doc.get("slices") == ["harness"]
+
+
+def test_bind_review_pass_from_intent_writes_engine_verdict(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.runtime import _complete_bind_review_prepare, _session_dir
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    run_id = str(state.get("run_id") or "")
+    bind_parts = _session_dir(synthetic_root, run_id, "bind_init") / "parts"
+    bind_parts.mkdir(parents=True)
+    (bind_parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+    (bind_parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+    sdir = _session_dir(synthetic_root, run_id, "bind_review")
+    sdir.mkdir(parents=True)
+    pending = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="绑定测试仓 flash_attention_score_grad",
+    )
+    assert pending.get("host_step_kind") == "primary_review"
+    assert "PASS" in str(pending.get("message_zh") or "")
+    assert not (sdir / "verdict.yaml").is_file()
+    out = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="PASS",
+    )
+    assert out.get("auto_finalize") is not False
+    assert (sdir / "verdict.yaml").is_file()
+    assert "ok: true" in (sdir / "verdict.yaml").read_text(encoding="utf-8")
+    assert not (sdir / "referee.yaml").is_file()
+
+
+def test_bind_review_empty_after_prompt_needs_intent(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.runtime import _complete_bind_review_prepare, _session_dir
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    run_id = str(state.get("run_id") or "")
+    bind_parts = _session_dir(synthetic_root, run_id, "bind_init") / "parts"
+    bind_parts.mkdir(parents=True)
+    (bind_parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+    (bind_parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+    sdir = _session_dir(synthetic_root, run_id, "bind_review")
+    sdir.mkdir(parents=True)
+    first = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="绑定测试仓 flash_attention_score_grad",
+    )
+    assert first.get("host_step_kind") == "primary_review"
+    second = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="",
+    )
+    assert second.get("ok") is False
+    assert second.get("error") == "NEED_BIND_REVIEW_INTENT"
+    assert not (sdir / "verdict.yaml").is_file()
+
+
+def test_bind_review_pass_uses_turn_intent_not_product_nl(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.runtime import (
+        _complete_bind_review_prepare,
+        _session_dir,
+        bind_turn_intent,
+        current_turn_intent,
+    )
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root,
+        "tg-init",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        intent="绑定测试仓 flash_attention_score_grad 并生成针对性测例",
+    )
+    run_id = str(state.get("run_id") or "")
+    bind_parts = _session_dir(synthetic_root, run_id, "bind_init") / "parts"
+    bind_parts.mkdir(parents=True)
+    (bind_parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+    (bind_parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+    sdir = _session_dir(synthetic_root, run_id, "bind_review")
+    sdir.mkdir(parents=True)
+    (sdir / "review_prompted.yaml").write_text("schema: tg-bind-review-prompted/v1\n", encoding="utf-8")
+    token = bind_turn_intent("PASS")
+    try:
+        assert current_turn_intent() == "PASS"
+        out = _complete_bind_review_prepare(
+            synthetic_root,
+            run_id=run_id,
+            sdir=sdir,
+            result={"ok": True},
+            intent="",
+        )
+    finally:
+        from ascendc_pilot.actions import runtime as _rt
+
+        _rt._TURN_INTENT.reset(token)
+    assert out.get("auto_finalize") is not False, out
+    assert (sdir / "verdict.yaml").is_file()
+
+
+def test_repo_scan_adopts_git_url_via_clone_mock(
+    synthetic_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    from ascendc_pilot.actions.tg_product import run_repo_scan
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw
+
+    dest = synthetic_root / "cloned_harness"
+    dest.mkdir()
+
+    def fake_clone(url: str, *, project_root):
+        assert "gitcode.com/foo/bar" in url
+        return {"ok": True, "path": str(dest.resolve()), "cloned": True}
+
+    monkeypatch.setattr(gw, "clone_harness_repo", fake_clone)
+    scan = run_repo_scan(
+        synthetic_root,
+        {
+            "architecture": "arch0",
+            "run_id": "R1",
+            "test_script_root": "https://gitcode.com/foo/bar",
+        },
+    )
+    assert scan.get("needs_human_decision") is not True, scan
+    assert scan.get("ok") is True
+    assert scan.get("kind") == "script_repo"
+    assert Path(str(scan.get("test_script_root"))).resolve() == dest.resolve()

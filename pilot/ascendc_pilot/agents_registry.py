@@ -489,7 +489,7 @@ def rel_under_agent_dir(path: str | Path, project_root: Path | None) -> str | No
         return None
     rel = norm.split(marker, 1)[1]
     parts = rel.split("/")
-    roots = {"uo", "tg", "ce", "runs", "state", "context", "memory"}
+    roots = {"uo", "tg", "ce", "runs", "state", "context"}
     if len(parts) >= 2 and parts[0] not in roots and parts[1] in roots:
         return "/".join(parts[1:])
     return rel

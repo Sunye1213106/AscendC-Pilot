@@ -41,7 +41,7 @@ RETRYABLE_CLASSES = frozenset(
 NON_SEMANTIC_BURN_CLASSES = frozenset({IDENTITY_CONTRACT, FORMAT_TRANSPORT, TRANSIENT_TOOL})
 # Quality-gate classes: retry only when an LLM producer can change the output.
 _QUALITY_CLASSES = frozenset({PRODUCER_OUTPUT, CHECKER_GATE})
-_LLM_EXECUTION_MODES = frozenset({"subagent", "primary_interactive"})
+_LLM_EXECUTION_MODES = frozenset({"subagent", "primary_interactive", "primary_review"})
 
 # Legal recovery verbs surfaced to agents / humans
 HUMAN_LEGAL_ACTIONS = (
@@ -65,7 +65,6 @@ CONTAINMENT_HARNESS_COMMANDS = (
 # Stable error-code patterns → failure_class (English / machine tokens only)
 _ENV_INVARIANT_PATTERNS = (
     re.compile(r"installed_skill_check", re.I),
-    re.compile(r"semantic_enrichment", re.I),
     re.compile(r"MISSING_INSTALLED_SKILL", re.I),
     re.compile(r"skill[_\s-]?missing", re.I),
     re.compile(r"reinstall", re.I),
@@ -511,8 +510,6 @@ def _finding_code_from_message(msg: str) -> str:
     m = str(msg).strip().lower()
     if "installed_skill" in m:
         return "INSTALLED_SKILL_CHECK_INVARIANT"
-    if "semantic_enrichment" in m:
-        return "SEMANTIC_ENRICHMENT_STATUS_INVALID"
     if "output" in m and "contract" in m:
         return "OUTPUT_CONTRACT_FAILED"
     slug = re.sub(r"[^a-z0-9]+", "_", m)[:48].strip("_").upper()

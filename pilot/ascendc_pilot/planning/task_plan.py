@@ -21,7 +21,7 @@ TASK_PLAN_SCHEMA = "pilot-task-plan/v1"
 PUBLIC_PLAN_TEST_GENERATION: tuple[dict[str, str], ...] = (
     {"id": "acquire_change", "summary_zh": "获取 PR 与代码"},
     {"id": "ensure_knowledge", "summary_zh": "建立算子理解"},
-    {"id": "review_change", "summary_zh": "审查改动并确定影响范围"},
+    {"id": "bind_harness", "summary_zh": "绑定测试前置契约"},
     {"id": "generate_cases", "summary_zh": "规划并生成测试用例"},
     {"id": "validate_cases", "summary_zh": "回放验证"},
     {"id": "deliver", "summary_zh": "输出结果"},
@@ -54,7 +54,7 @@ _WORKFLOW_TO_PUBLIC = {
     "ce-review": "review_change",
     "ce-plan": "plan_change",
     "ce-apply": "apply_change",
-    "tg-init": "generate_cases",
+    "tg-init": "bind_harness",
     "tg-plan": "generate_cases",
     "tg-solve": "validate_cases",
 }
@@ -63,11 +63,11 @@ _STEP_ORDER = (
     "workspace_acquire",
     "uo-init",
     "uo-update",
+    "tg-init",
     "uo-investigate",
     "ce-plan",
     "ce-apply",
     "ce-review",
-    "tg-init",
     "tg-plan",
     "tg-solve",
     "handoff",
@@ -119,13 +119,22 @@ def public_plan_for(
 
         wids = set(workflows_from_capabilities(list(caps)))
     if wids & {"tg-init", "tg-plan", "tg-solve"} or "test_generation" in caps:
-        spec = PUBLIC_PLAN_TEST_GENERATION
+        spec = [dict(item) for item in PUBLIC_PLAN_TEST_GENERATION]
+        if "ce-review" in wids or "code_review" in caps:
+            insert_at = next(
+                (i for i, item in enumerate(spec) if item["id"] == "generate_cases"),
+                len(spec),
+            )
+            spec.insert(
+                insert_at,
+                {"id": "review_change", "summary_zh": "审查改动并确定影响范围"},
+            )
     elif wids & {"ce-plan", "ce-apply"} or "implement" in caps:
-        spec = PUBLIC_PLAN_IMPLEMENT
+        spec = [dict(item) for item in PUBLIC_PLAN_IMPLEMENT]
     elif "ce-review" in wids or "code_review" in caps:
-        spec = PUBLIC_PLAN_REVIEW
+        spec = [dict(item) for item in PUBLIC_PLAN_REVIEW]
     else:
-        spec = PUBLIC_PLAN_KNOWLEDGE
+        spec = [dict(item) for item in PUBLIC_PLAN_KNOWLEDGE]
     rows = [
         {"id": item["id"], "summary_zh": item["summary_zh"], "status": "pending"}
         for item in spec
@@ -528,6 +537,10 @@ def executed_public_ids(plan: dict[str, Any] | None) -> set[str]:
             out.add("acquire_change")
         if sid in {"uo-init", "uo-update"}:
             out.add("ensure_knowledge")
+        if sid == "tg-init":
+            out.add("bind_harness")
+        if sid in {"tg-plan", "tg-solve"}:
+            out.add("bind_harness")
         if sid == "tg-solve":
             out.add("generate_cases")
             out.add("validate_cases")

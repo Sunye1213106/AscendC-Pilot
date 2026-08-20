@@ -12,7 +12,6 @@ try:
 except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
-from ascendc_pilot.memory import search_local
 from ascendc_pilot.paths import (
     context_root,
     discover_arch,
@@ -60,6 +59,9 @@ def _resolve_pilot_params(project_root: Path, state: dict[str, Any]) -> dict[str
         run_ctx.get("test_script_root"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
     )
+    from ascendc_pilot.human_interaction import resolved_test_script_root
+
+    test_script_root = resolved_test_script_root(project_root, test_script_root)
     architecture = pick(
         state.get("architecture"),
         params.get("architecture"),
@@ -82,8 +84,6 @@ def build_context_pack(
     *,
     intent: str,
     topic: str = "",
-    include_memory: bool = True,
-    max_memory: int = 5,
 ) -> dict[str, Any]:
     """Build the legacy lightweight context pack (byte-stable when no slice).
 
@@ -96,7 +96,7 @@ def build_context_pack(
     ensure_agent_layout(project_root, arch=arch)
     uo = uo_root(project_root, arch=arch)
     sources_used: list[str] = ["workflow_state"]
-    omitted: list[str] = ["full_kb", "full_source_tree", "full_memory"]
+    omitted: list[str] = ["full_kb", "full_source_tree"]
 
     overview = ""
     overview_path = uo / "summary" / "human_overview.md"
@@ -105,11 +105,6 @@ def build_context_pack(
         sources_used.append("summary/human_overview.md")
 
     open_items = list(state.get("open_items") or [])
-    memories: list[dict[str, Any]] = []
-    if include_memory and topic:
-        memories = search_local(project_root, topic=topic, limit=max_memory)
-        if memories:
-            sources_used.append("memory/stable+candidate")
 
     params = _resolve_pilot_params(project_root, state if isinstance(state, dict) else {})
     if params.get("op_name"):
@@ -133,7 +128,6 @@ def build_context_pack(
             "open_items": open_items,
         },
         "uo_snippet": {"human_overview_prefix": overview},
-        "memory": memories,
         "sources_used": sources_used,
         "omitted": omitted,
         "note": "Lightweight pack — do not load full KB unless a gate requires a specific path.",

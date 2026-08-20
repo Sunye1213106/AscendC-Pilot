@@ -17,5 +17,6 @@
 - 常量按名解析，禁止手抄易漂移数字
 - 批次送入与完成标记不符 → 裁决可疑，停止当负样本训练
 
-精度/性能场景的 oracle 是 harness `only_grad` / `profiler`，不是上表 Host HIT。
-详见 `references/harness-oracle.md`。Host 回放不能把 `P-*`/`F-*` 写入 CE `V`。
+精度/性能场景的 oracle 是测试仓 harness 的精度/性能 mode，不是上表 Host HIT。
+预期报错 / Disable 行不是精度失败，也不是 Host REFUSE 证明。
+Host 回放只能增长 dispatch / key `R`，不能把 `P-*`/`F-*` 写入 CE `V`。缺测试仓或 runner 时精度/性能保持 Open（`harness_missing`）。Crash / not-run 是环境，不是不可达，也不是 golden 失败。

@@ -38,7 +38,6 @@ def test_classify_uo_scope_finalize_is_environment_invariant():
         source="uo_scope",
         messages=[
             "installed_skill_check.consistent is not true",
-            "semantic_enrichment.yaml status must be pending, complete, or degraded",
         ],
     )
     assert c["failure_class"] == ENVIRONMENT_INVARIANT
@@ -86,7 +85,6 @@ def test_finalize_failure_updates_state(tmp_path: Path):
                 "ok": False,
                 "messages": [
                     "installed_skill_check.consistent is not true",
-                    "semantic_enrichment.yaml status must be pending, complete, or degraded",
                 ],
             }
         },
@@ -131,7 +129,6 @@ def test_next_after_failure_no_normal_actions(tmp_path: Path):
         step_id="uo_scope_finalize",
         messages=[
             "installed_skill_check.consistent is not true",
-            "semantic_enrichment.yaml status must be pending, complete, or degraded",
         ],
         source="uo_scope",
     )
@@ -265,7 +262,7 @@ def test_primary_readonly_inspect_during_containment(tmp_path: Path):
         command=r"Remove-Item -Recurse -Force -LiteralPath 'D:\tmp\.ascendc-pr\pr-1'",
         agent="ascendc-pilot",
     )
-    assert delete_ok.get("decision") == "allow", delete_ok
+    assert delete_ok.get("decision") == "ask", delete_ok
     assert delete_ok.get("reason_code") == "PRIMARY_BASH_ASK"
     child_ok = authorize(tmp_path, tool="bash", command="dir", agent="uo-gap-investigator")
     assert child_ok.get("decision") == "allow", child_ok
@@ -285,12 +282,11 @@ def test_write_formal_artifact_denied_after_failure(tmp_path: Path):
         ok=False,
         action_id="prepare",
         step_id="uo_scope_finalize",
-        messages=["semantic_enrichment.yaml status must be pending, complete, or degraded"],
+        messages=["installed_skill_check.consistent is not true"],
         source="uo_scope",
     )
     targets = [
         tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "installed_skill_check.yaml",
-        tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "semantic_enrichment.yaml",
         tmp_path / ".ascendc-pilot" / "uo" / "manifest.yaml",
         tmp_path / ".ascendc-pilot" / "uo" / "runs" / "r" / "scope" / "scope_validated.yaml",
     ]
@@ -514,7 +510,6 @@ def test_ses_0711_replay_finalize_containment(tmp_path: Path):
                 "ok": False,
                 "messages": [
                     "installed_skill_check.consistent is not true",
-                    "semantic_enrichment.yaml status must be pending, complete, or degraded",
                 ],
             }
         },
@@ -573,7 +568,7 @@ def test_observation_persisted_to_run_dir(tmp_path: Path):
         outcome="failed",
         action_id="prepare",
         step_id="uo_scope_finalize",
-        messages=["semantic_enrichment.yaml status must be pending, complete, or degraded"],
+        messages=["installed_skill_check.consistent is not true"],
         source="uo_scope",
     )
     applied = apply_observation(tmp_path, obs)

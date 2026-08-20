@@ -4,7 +4,7 @@ TG 把 UO 的 Operator CodeMap 变成**脚本仓能直接跑的用例表**，再
 
 | 阶段 | 产物 | 谁写 |
 | --- | --- | --- |
-| `/tg-init` | `tg/init.yaml` | LLM 草稿在 `runs/`，`bind_promote` 落盘，人确认打 `confirmed` |
+| `/tg-init` | `tg/init.yaml` | 两路草稿在 `runs/`，主控裁判放行后 `bind_promote` 落盘并确认 |
 | `/tg-plan` | `tg/plan.md` | 上半散文，下半 YAML 义务表；人批准打 `approved` |
 | `/tg-solve` | `tg/worklog.md` + `cases.csv`/`xls`/`xlsx` | 构造→Replay→分析，直到文首 `open: []` |
 
@@ -43,14 +43,14 @@ TG 永不改算子仓
     → open: [] 才签发
 ```
 
-引理：`Replay reject ≠ E`。查算子语义走 uo-query，禁止 Grep 算子仓。
+引理：`Replay reject ≠ E`。查算子语义优先 `uo-query`；Grep 只作定位辅助。
 
 ## 相位
 
 ```text
 /tg-init
-kb_check [D] → repo_scan [D] → bind_init [S tg-analyst] → bind_promote [D]
-    → validate_init [D] → human_confirm [H]
+kb_check [D] → repo_scan [D] → bind_init [S fanout=2] → bind_review [Primary 通读 PASS/REWORK]
+    → bind_promote [D] → validate_init [D]
                                           ──gate: init_confirmed, uo_digest
 
 /tg-plan

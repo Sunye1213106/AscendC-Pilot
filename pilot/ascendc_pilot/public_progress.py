@@ -12,6 +12,7 @@ from ascendc_pilot.user_goal import is_auto_session, load_user_goal, progress_li
 _ACTIVITY = {
     "acquire_change": "正在获取 PR 与代码",
     "ensure_knowledge": "正在建立或复用算子理解",
+    "bind_harness": "正在绑定测试前置契约",
     "generate_cases": "正在生成测试用例",
     "validate_cases": "正在回放验证",
     "deliver": "正在整理交付结果",

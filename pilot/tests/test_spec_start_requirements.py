@@ -39,13 +39,13 @@ def test_ascendc_pilot_agent_does_not_hardcode_architecture_lists() -> None:
     assert not ("--architecture" in text and "uo-update" in text and "tg-init" in text)
 
 
-def test_control_invariants_item_11_mentions_uo_update_and_uo_product() -> None:
+def test_control_invariants_item_6_mentions_uo_update_and_uo_product() -> None:
     text = (REPO / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(
         encoding="utf-8"
     )
-    item11 = next(line for line in text.splitlines() if line.startswith("11."))
-    assert "uo-update" in item11
-    assert ".uo" in item11
+    item6 = next(line for line in text.splitlines() if line.startswith("6."))
+    assert "uo-update" in item6
+    assert ".uo" in item6
 
 
 def test_compose_projection_includes_uo_update_and_uo_first() -> None:

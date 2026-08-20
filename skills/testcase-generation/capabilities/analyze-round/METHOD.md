@@ -2,6 +2,8 @@
 
 按 case 写 `worklog.md` 四段。正式文件由 `analyze_promote` 写入。
 
+本步 refs：`references/oracle.md`、`references/closure-gotchas.md`。
+
 ## 文首
 
 ```text

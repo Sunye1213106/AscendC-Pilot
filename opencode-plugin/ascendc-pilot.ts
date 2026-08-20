@@ -107,26 +107,26 @@ function isAcpDiagnosticCommand(command: string): boolean {
 
 /** Returned by plugin `pilot_cli` instead of argparse --help. */
 const PILOT_CLI_HELP_USAGE_CARD = [
-  "[ascendc-pilot] Do not use --help to discover protocol.",
-  "argparse lists internal commands (authorize / debug / serve-authorize) and is not the Session Driver contract.",
+  "[ascendc-pilot] 不要用 --help 发现协议。",
+  "argparse 列出的内部命令（authorize / debug / serve-authorize）不是 Session Driver 契约。",
   "",
-  "Workflows (uo-init / uo-update / tg-* / ce-* / uo-investigate): Host tool pilot_run(workflow, project, architecture).",
-  "If pilot_run is missing: tell the user to fully quit OpenCode and rerun refresh-opencode.ps1.",
+  "工作流（uo-init / uo-update / tg-* / ce-* / uo-investigate）：Host 工具 pilot_run(workflow, project, architecture)。",
+  "若没有 pilot_run：请用户完全退出 OpenCode 并重跑 refresh-opencode.ps1。",
   "",
-  "Plugin `pilot_cli` command examples:",
-  "  uo-query --project <operator-abs> [--architecture arch] <identifier|Dim=V>",
-  "  uo-query --project <operator-abs> --status-only",
-  "  scan-architectures --project <operator-abs>",
-  "  status --project <operator-abs>",
-  "  inspect-failure --project <operator-abs>",
-  "  inspect evidence-window --project <operator-abs> --path <rel> --lines A-B",
-  "  ro-search --pattern <pat> --paths <already-cited-file>",
-  "  next --project <operator-abs>",
-  "  retry-after-environment-fix --project <operator-abs>",
-  "  interpret-user-turn --project <operator-abs> --text <latest user message>",
+  "插件 `pilot_cli` 示例：",
+  "  uo-query --project <算子绝对路径> [--architecture <arch>]  # 形态见 code-access 不变量",
+  "  uo-query --project <算子绝对路径> --status-only",
+  "  scan-architectures --project <算子绝对路径>",
+  "  status --project <算子绝对路径>",
+  "  inspect-failure --project <算子绝对路径>",
+  "  inspect evidence-window --project <算子绝对路径> --path <rel> --lines A-B",
+  "  ro-search --pattern <pat> --paths <已 citation 的文件>",
+  "  next --project <算子绝对路径>",
+  "  retry-after-environment-fix --project <算子绝对路径>",
+  "  interpret-user-turn --project <算子绝对路径> --text <本轮原文>",
   "",
-  "On failure: inspect-failure / status, not another --help.",
-  "Pending AskQuestion: if the user typed a new message instead of clicking, interpret that turn; do not re-ask. --help does not consume the question.",
+  "失败时用 inspect-failure / status，不要再调 --help。",
+  "待处理 AskQuestion：用户打了新消息而不是点选时，解释该轮，不要重问。--help 不会消费该问题。",
 ].join("\n")
 
 function readPendingFromDisk(project: string): PendingHumanInteraction | null {
@@ -358,6 +358,20 @@ function runAcpInterpretUserTurn(
 }
 
 const lastUserTurnNote = new Map<string, string>()
+
+function extractExistingDirFromText(text: string): string {
+  const raw = String(text || "")
+  const win = raw.match(/[A-Za-z]:[\\/][^\s"'<>|*?\n，。；;！!？?]+/g) || []
+  for (const match of win) {
+    const cand = match.replace(/[\u4e00-\u9fff].*$/, "").replace(/[\\/]+$/, "")
+    try {
+      if (cand && existsSync(cand) && statSync(cand).isDirectory()) return cand
+    } catch {
+      /* ignore */
+    }
+  }
+  return ""
+}
 
 function extractUserTurnText(output: { message?: unknown; parts?: unknown } | undefined): string {
   if (!output || typeof output !== "object") return ""
@@ -1068,6 +1082,7 @@ function patchPilotReadPermissions(
       perm.skill = perm.skill || "allow"
       perm.question = perm.question || "allow"
       perm.todowrite = perm.todowrite || "allow"
+      // Do not widen task: Primary keeps compose_runtime whitelist, not task: allow.
       tools.pilot_run = true
       tools.pilotrun = true
       tools.pilot_cli = true
@@ -1585,11 +1600,11 @@ function createPilotSkillTool(): {
 } {
   return {
     description:
-      "Load an AscendC-Pilot workflow skill by name from the plugin-internal skills tree. Not registered as plugin.tool.skill (that would replace native Skill globally).",
+      "按名称从插件内部 skills 树加载 AscendC-Pilot workflow skill。不要注册为 plugin.tool.skill（那会全局替换原生 Skill）。",
     args: {
       name: {
         type: "string",
-        description: "The name of the skill from available_skills",
+        description: "available_skills 里的 skill 名称",
       },
     },
     async execute(args: Record<string, unknown>) {
@@ -1748,14 +1763,18 @@ function createPilotRunStub(err: unknown): Record<string, unknown> {
   return {
     pilot_run: {
       description:
-        "Run an AscendC-Pilot workflow via Host Session Driver (start→auto). " +
-        "Always present even when the driver failed to load.",
+        "运行 AscendC-Pilot 当前 Todo 格（start→auto）。禁止 uo-query。即使 Driver 加载失败也始终注册本工具。",
       args: {
-        workflow: { type: "string", description: "Workflow id (uo-init, tg-init, ce-review, …). Never uo-query." },
-        project: { type: "string", description: "Operator package absolute path" },
-        architecture: { type: "string", description: "Optional arch* (required for uo-init/uo-update)" },
-        intent: { type: "string", description: "User product intent verbatim" },
-        force_new: { type: "boolean", description: "Wipe only when the user asked to 删除重开" },
+        workflow: { type: "string", description: "工作流 id（uo-init、tg-init、ce-review 等）。禁止 uo-query。" },
+        project: { type: "string", description: "算子包绝对路径" },
+        architecture: { type: "string", description: "第一轮 auto/clone 省略；uo-init/uo-update 必填" },
+        intent: { type: "string", description: "第一轮 auto：用户目标含 PR URL。bind_review 之后：PASS 或 REWORK。" },
+        force_new: { type: "boolean", description: "仅当用户明确要求删除重开时擦掉重开" },
+        test_script_root: {
+          type: "string",
+          description:
+            "用户已给出的仓外测试脚本仓（路径或 git URL）；省略则走三项询问（末项可输入）。禁止传入算子仓 tests/",
+        },
       },
       async execute() {
         return {
@@ -1786,16 +1805,16 @@ function createPilotCliTool(): {
 } {
   return {
     description:
-      "Short AscendC-Pilot CLI (plugin tool `pilot_cli`, not bash). " +
-      "Pass command as argv after the binary (example: " +
-      "`uo-query --project <operator-abs> s1Inner`). Never `--mode`. " +
-      "Workflows: use Host tool `pilot_run`. Do not call `--help`.",
+      "AscendC-Pilot 短 CLI（插件工具 `pilot_cli`，不要走 bash）。" +
+      "command 为二进制后的 argv（例：" +
+      "`uo-query --project <算子绝对路径> s1Inner`）。禁止 `--mode`。" +
+      "工作流用 Host 工具 `pilot_run`。不要调用 `--help`。",
     args: {
       command: {
         type: "string",
         description:
-          "CLI argv after the binary (example: `uo-query --project <operator-abs> s1Inner`). " +
-          "Do not pass --help / -h. Do not pass start / run-action auto (use pilot_run). Allowed: uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn, retry-after-environment-fix.",
+          "二进制后的 CLI argv（例：`uo-query --project <算子绝对路径> s1Inner`）。" +
+          "不要传 --help / -h。不要传 start / run-action auto（用 pilot_run）。允许：uo-query, status, inspect, inspect-failure, ro-search, next, scan-architectures, interpret-user-turn --project <算子绝对路径> --text <本轮原文>（不要猜 --message）, retry-after-environment-fix.",
       },
     },
     async execute(args: Record<string, unknown>, ctx?: Record<string, unknown>) {
@@ -1846,8 +1865,7 @@ function createPilotCliTool(): {
         return {
           title: `pilot_cli ${head}`,
           output:
-            `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询只用四种 \`uo-query\` 形态` +
-            "（标识符 / Dim=V / --file --line / 无参数索引）。\n" +
+            `[ascendc-pilot] \`pilot_cli\` 不执行 \`${head}\`。查询形态见 code-access 不变量。\n` +
             "允许：uo-query / status / inspect / inspect-failure / ro-search / next / scan-architectures / abort / answer / interpret-user-turn / retry-after-environment-fix。\n" +
             "工作流用 Host `pilot_run`。不要 `uo impact` / `search` / `locate` / `explain-*`。",
           metadata: { ok: false, error: "USE_UO_QUERY" },
@@ -2322,8 +2340,18 @@ function extractTaskInvocationId(input: Record<string, unknown>): string {
 
 /** Inject dispatch_nonce / registration_id into Task args so after-hook can recover without latest-pending. */
 function extractSliceIdFromPrompt(prompt: string): string {
-  const match = String(prompt || "").match(/(?:^|\n)\s*(?:AXIS|SLICE_ID)\s*=\s*([A-Za-z0-9_-]+)/i)
-  return match ? String(match[1] || "").trim() : ""
+  const text = String(prompt || "")
+  const axis = text.match(/(?:^|\n)\s*(?:AXIS|SLICE_ID)\s*=\s*([A-Za-z0-9_-]+)/i)
+  if (axis) return String(axis[1] || "").trim()
+  const re = /(?:^|[^\w.])(?:parts[/\\])?([A-Za-z0-9_-]+)\.(?:yaml|yml|md)\b/gi
+  const skip = new Set(["merged", "referee"])
+  const found: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(text))) {
+    const sid = String(m[1] || "").trim()
+    if (sid && !skip.has(sid) && !found.includes(sid)) found.push(sid)
+  }
+  return found.length === 1 ? found[0] : ""
 }
 
 function inflightSliceIds(): Set<string> {
@@ -2337,7 +2365,12 @@ function inflightSliceIds(): Set<string> {
 
 function injectTaskCorrelationMeta(
   args: Record<string, unknown>,
-  meta: { dispatch_nonce: string; registration_id: string; task_invocation_id?: string },
+  meta: {
+    dispatch_nonce: string
+    registration_id: string
+    task_invocation_id?: string
+    slice_id?: string
+  },
 ): void {
   const bag =
     args.metadata && typeof args.metadata === "object"
@@ -2346,10 +2379,12 @@ function injectTaskCorrelationMeta(
   bag.ascendc_dispatch_nonce = meta.dispatch_nonce
   bag.ascendc_registration_id = meta.registration_id
   if (meta.task_invocation_id) bag.ascendc_task_invocation_id = meta.task_invocation_id
+  if (meta.slice_id) bag.ascendc_slice_id = meta.slice_id
   args.metadata = bag
   args.ascendc_dispatch_nonce = meta.dispatch_nonce
   args.ascendc_registration_id = meta.registration_id
   if (meta.task_invocation_id) args.ascendc_task_invocation_id = meta.task_invocation_id
+  if (meta.slice_id) args.ascendc_slice_id = meta.slice_id
 }
 
 function extractTaskCorrelationFromArgs(args: Record<string, unknown>): {
@@ -2896,12 +2931,17 @@ export const AscendCHarnessPlugin = async (ctx?: {
         return
       }
       const project = detectProjectRoot() || readRememberedProjectRoot()
-      if (!project || !getPending(project)) return
+      if (!project) return
       const text = extractUserTurnText(output)
+      const pending = getPending(project)
+      if (!pending && !extractExistingDirFromText(text)) return
       const interpreted = runAcpInterpretUserTurn(project, text, "user_message")
       if (
         interpreted.ok &&
-        (interpreted.disposition === "answered" || interpreted.disposition === "superseded")
+        (interpreted.disposition === "answered" ||
+          interpreted.disposition === "superseded" ||
+          interpreted.disposition === "adopted_test_script_root" ||
+          interpreted.disposition === "harness_reset")
       ) {
         clearPending(project)
         const sid = String(input.sessionID || "").trim()
@@ -3046,15 +3086,11 @@ export const AscendCHarnessPlugin = async (ctx?: {
           "",
       )
 
-      // Human Interaction Broker: while ACP has a pending interaction, only
-      // the question UI (and acp answer / inspect helpers) may proceed.
+      // Human Interaction Broker: while ACP has a pending interaction, Host
+      // already asked. Do not open a second question; click the existing UI
+      // or interpret-user-turn. Inspect helpers may proceed.
       const pending = getPending(project)
       if (pending) {
-        const isQuestion =
-          tool === "question" ||
-          tool === "askquestion" ||
-          tool === "ask_question" ||
-          tool.includes("question")
         const isAnswerCli =
           tool === "pilot_cli" && /\banswer\b/i.test(command)
         const isInterpretCli =
@@ -3066,9 +3102,6 @@ export const AscendCHarnessPlugin = async (ctx?: {
         const isResumeStartBash =
           (tool === "bash" || tool === "shell" || tool === "terminal") &&
           isAcpResumeStartCommand(command)
-        // Host Driver owns AskQuestion + start --decision; do not deadlock
-        // a second pilot_run after EXISTING_RUN left pending yaml on disk.
-        const isPilotDriver = tool === "pilot_run" || tool === "pilotrun"
         const isSkillTool = tool === "skill" || tool.endsWith("skill")
         const isPrimaryReadonly =
           isPrimaryPilotAgent(agent) &&
@@ -3081,13 +3114,11 @@ export const AscendCHarnessPlugin = async (ctx?: {
               isReadonlyInspectBash(command)) ||
             (tool === "pilot_cli" && isAcpDiagnosticCommand(command)))
         if (
-          !isQuestion &&
           !isAnswerCli &&
           !isInterpretCli &&
           !isInspectCli &&
           !isHelpBash &&
           !isResumeStartBash &&
-          !isPilotDriver &&
           !isSkillTool &&
           !isPrimaryReadonly
         ) {
@@ -3098,10 +3129,12 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
-              `If the user already replied in chat, call interpret-user-turn with that text — do not re-ask. ` +
-              `Clicking the question UI also works. ` +
-              `Primary may Read / Glob / Get-ChildItem / inspect-failure / status while the prompt is open. ` +
-              `Do not Write, Task, or run domain CLI until the pending question is answered or superseded.`,
+              `Host 已询问；不要再开第二个 question。` +
+              `若用户已在聊天里回复，用该原文调用 interpret-user-turn — 不要再问一遍。` +
+              `点选确认框也可以。` +
+              `确认框打开时 Primary 可以 Read / Glob / Get-ChildItem / inspect-failure / status。` +
+              `在 pending 被回答或取代之前，不要 Write、Task、pilot_run 或跑领域 CLI。` +
+              `禁止把发现的仓内 tests/ 填进 test_script_root 以跳过 harness 询问。`,
           )
         }
       }
@@ -3127,9 +3160,6 @@ export const AscendCHarnessPlugin = async (ctx?: {
           sessionId,
         })
         if (verdict.decision === "deny" || (verdict.ok === false && verdict.decision !== "ask")) {
-          throw new Error(denyMessage(verdict, "bash", commandNow))
-        }
-        if (verdict.decision === "ask") {
           throw new Error(denyMessage(verdict, "bash", commandNow))
         }
       }
@@ -3273,6 +3303,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
               dispatch_nonce: resolvedNonce,
               registration_id: regId,
               task_invocation_id: taskInvocationId || undefined,
+              slice_id: extractSliceIdFromPrompt(promptText) || undefined,
             })
           }
         }
@@ -3586,9 +3617,16 @@ export const AscendCHarnessPlugin = async (ctx?: {
             String(pendingDispatch.ticket || "")
           ) {
             const opProject = String(pendingDispatch.project || project)
+            const meta =
+              args.metadata && typeof args.metadata === "object"
+                ? (args.metadata as Record<string, unknown>)
+                : {}
             const sliceId =
+              String(args.ascendc_slice_id || meta.ascendc_slice_id || "").trim() ||
               String((hit && hit.reg.slice_id) || "").trim() ||
-              extractSliceIdFromPrompt(taskPromptHint)
+              extractSliceIdFromPrompt(String(args.prompt || "")) ||
+              extractSliceIdFromPrompt(taskPromptHint) ||
+              extractSliceIdFromPrompt(answerText)
             const finished = await submitDispatchResult(
               opProject,
               String(pendingDispatch.ticket),

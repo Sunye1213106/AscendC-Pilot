@@ -150,10 +150,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Also check Host adapter contract (e.g. opencode)",
     )
 
-    p_gates = sub.add_parser("validate-key-gates", help="Run KEY hard gates (ses_076d)")
-    p_gates.add_argument("project", type=Path)
-    p_gates.add_argument("--op-name", default="")
-
     p_validate = sub.add_parser("validate", help="Run all gates for the active workflow")
     p_validate.add_argument("--project", type=Path, default=None)
 
@@ -255,7 +251,12 @@ def main(argv: list[str] | None = None) -> int:
     p_dres.add_argument(
         "--slice-id",
         default="",
-        help="Fan-out slice id (spec/standards). Required when AXIS= is not in the Task prompt.",
+        help="Fan-out slice id (harness/bind or spec/standards). Count-complete ACK; order/parallelism do not matter.",
+    )
+    p_run.add_argument(
+        "--intent",
+        default="",
+        help="This-turn PASS/REWORK intent. Does not overwrite product intent.",
     )
     p_run.add_argument(
         "--set",
@@ -355,13 +356,19 @@ def main(argv: list[str] | None = None) -> int:
 
     p_interpret = sub.add_parser(
         "interpret-user-turn",
-        help="Map the latest user message onto a pending AskQuestion, or supersede it",
+        help="Map the latest user message onto a pending AskQuestion, adopt a new external test-script path, or supersede",
     )
     p_interpret.add_argument("--project", type=Path, default=None)
     p_interpret.add_argument(
         "--text",
         default="",
         help="Latest user message. Empty text supersedes (user interrupted).",
+    )
+    p_interpret.add_argument(
+        "--message",
+        default="",
+        dest="message_alias",
+        help="Deprecated alias of --text. Do not guess this flag; use --text.",
     )
     p_interpret.add_argument(
         "--reason",
@@ -372,15 +379,6 @@ def main(argv: list[str] | None = None) -> int:
     p_hashes = sub.add_parser("spec-hashes", help="Print four Spec Hash digests")
     p_hashes.add_argument("--project", type=Path, default=None)
     p_hashes.add_argument("--workflow", default="")
-
-    p_conf = sub.add_parser(
-        "emit-confidence-report",
-        help="Deprecated: removed. Use /uo-init verify / acp uo-query --status-only.",
-    )
-    p_conf.add_argument("--project", type=Path, default=None)
-    p_conf.add_argument("--op-name", default="")
-    p_conf.add_argument("--no-write-report", action="store_true", help="do not rewrite confidence_report.md")
-    p_conf.add_argument("--no-skeleton", action="store_true", help="deprecated alias for --no-write-report")
 
     p_auth = sub.add_parser("authorize", help="Authorize tool call (OpenCode plugin hook)")
     p_auth.add_argument("--project", type=Path, default=None)
@@ -630,20 +628,12 @@ def main(argv: list[str] | None = None) -> int:
             if not payload.get("ok"):
                 return 1
         return code
-    if args.cmd == "validate-key-gates":
-        from ascendc_pilot.gates import run_key_gates
-
-        payload = run_key_gates(args.project, op_name=args.op_name or None)
-        print_json(payload)
-        return 0 if payload.get("ok") else 1
     if args.cmd == "validate":
-        from ascendc_pilot.gates import run_key_gates, run_workflow_gates
+        from ascendc_pilot.gates import run_workflow_gates
 
-        key_payload = run_key_gates(args.project)
         wf = run_workflow_gates(args.project)
-        out = {"key_gates": key_payload, "workflow_gates": wf, "ok": bool(key_payload.get("ok") and wf.get("ok"))}
-        print_json(out)
-        return 0 if out["ok"] else 1
+        print_json(wf)
+        return 0 if wf.get("ok") else 1
     if args.cmd == "route":
         from ascendc_pilot.router import route
 
@@ -721,7 +711,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             result = interpret_user_turn(
                 args.project,
-                text=str(getattr(args, "text", "") or ""),
+                text=str(getattr(args, "text", "") or getattr(args, "message_alias", "") or ""),
                 reason=str(getattr(args, "reason", "") or "user_message"),
             )
         except Exception as exc:  # noqa: BLE001
@@ -1011,6 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
             args.action_id,
             finalize=bool(args.finalize),
             result_file=getattr(args, "result_file", None),
+            turn_intent=str(getattr(args, "intent", "") or ""),
         )
         if applied:
             result = dict(result)
@@ -1219,14 +1210,6 @@ def main(argv: list[str] | None = None) -> int:
                 repo = here
         print_json(all_spec_hashes(repo, workflow_id=args.workflow or None))
         return 0
-    if args.cmd == "emit-confidence-report":
-        return print_json(
-            {
-                "ok": False,
-                "error": "legacy_command_removed",
-                "message_zh": "emit-confidence-report 已删除；请用 /uo-init verify 或 acp uo-query --status-only",
-            }
-        ) or 2
     if args.cmd == "authorize":
         from ascendc_pilot.authorize import authorize
 

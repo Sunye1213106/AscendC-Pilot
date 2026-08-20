@@ -353,6 +353,8 @@ def _build(
                 task_prompt_id="ce/standalone-review",
                 context_profile_id="ce-review-code-review",
                 output_contract_id="code-review-v1",
+                # Dialogue only: findings stay in Task replies; do not persist yaml.
+                output_mode="return_value",
                 pre_gates=["kb_ready", "context_pack"],
                 execution_variant="review_axis_fanout",
                 fanout_axes=[
@@ -363,8 +365,9 @@ def _build(
                         "other": "runs/{run_id}/actions/code_review/parts/standards.md",
                         "focus": (
                             "Spec — 若有当前 `{slug}_plan.md` 则对照该计划（todo 是否做完、有无超范围）；"
-                            "纯 PR 无计划时从 PR 标题 + change_capture/index.md 的 Added identifiers + 并行 form-1 uo-query 推断粗意图并验收完成度"
-                            "（做完 / 半截 / 超范围），禁止只陈述理解，禁止通读 diff.md，禁止先 form-3 打 format hunk。"
+                            "纯 PR 无计划时从 PR 标题 + change_capture/index.md 的 Added identifiers + 并行标识符 uo-query 推断粗意图并验收完成度"
+                            "（做完 / 半截 / 超范围），禁止只陈述理解，禁止通读 diff.md，禁止把 format hunk 当第一跳。"
+                            "有 ident 用标识符；卡片给出 file:line 后必须 --file --line，不要改去 Read 整文件。"
                             "snippet 截断不得下「枚举未用」；Kernel 以字段 readers 行为准。"
                             "结论写在 Task 回复（path:line）。不要 Write parts 收票。不要写 ce/review 或任何 yaml。"
                         ),
@@ -376,7 +379,8 @@ def _build(
                         "other": "runs/{run_id}/actions/code_review/parts/spec.md",
                         "focus": (
                             "Standards — 对照 ascendc-checks 与跨层契约。"
-                            "用 change_capture/index.md 的 Added identifiers + 并行 form-1 uo-query，禁止通读 diff.md，禁止先 form-3 打 format hunk。"
+                            "用 change_capture/index.md 的 Added identifiers + 并行标识符 uo-query，禁止通读 diff.md，禁止把 format hunk 当第一跳。"
+                            "卡片给出 file:line 后必须 --file --line，不要改去 Read 整文件。"
                             "每个 changed file：finding / format-only / UNREVIEWED；未审 op_kernel 禁止无 high/medium。"
                             "结论写在 Task 回复（path:line）。不要 Write parts 收票。不要写 ce/review 或任何 yaml。"
                         ),

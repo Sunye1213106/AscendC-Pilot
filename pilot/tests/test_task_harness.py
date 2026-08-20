@@ -90,6 +90,33 @@ def test_plan_for_review_and_tg_union() -> None:
     assert "uo-init" not in wids
 
 
+def test_public_plan_for_cases_omits_review() -> None:
+    from ascendc_pilot.planning.task_plan import public_plan_for
+
+    ids = [row["id"] for row in public_plan_for(workflows=["uo-init", "tg-init", "tg-plan"])]
+    assert ids == [
+        "acquire_change",
+        "ensure_knowledge",
+        "bind_harness",
+        "generate_cases",
+        "validate_cases",
+        "deliver",
+    ]
+
+
+def test_public_plan_for_inserts_review_after_bind() -> None:
+    from ascendc_pilot.planning.task_plan import public_plan_for
+
+    ids = [
+        row["id"]
+        for row in public_plan_for(
+            workflows=["uo-init", "ce-review", "tg-init", "tg-plan"]
+        )
+    ]
+    assert ids.index("bind_harness") < ids.index("review_change")
+    assert ids.index("review_change") < ids.index("generate_cases")
+
+
 def test_workflow_catalog_lists_slash_not_skills() -> None:
     from ascendc_pilot.harness.intent import render_workflow_catalog, workflow_catalog
 
@@ -703,7 +730,8 @@ def test_public_plan_uo_init_does_not_pass_impact(tmp_path: Path) -> None:
     from ascendc_pilot.user_goal import load_user_goal, mark_workflow_passed
 
     ids = [row["id"] for row in PUBLIC_PLAN_TEST_GENERATION]
-    assert ids[:3] == ["acquire_change", "ensure_knowledge", "review_change"]
+    assert ids[:3] == ["acquire_change", "ensure_knowledge", "bind_harness"]
+    assert "review_change" not in ids
     llm = {
         "objective_zh": "生成针对性测试用例",
         "needed_workflows": ["uo-init", "ce-review", "tg-plan", "tg-solve"],
@@ -759,8 +787,11 @@ def test_authorize_allows_primary_git_cli(tmp_path: Path) -> None:
     ensure_agent_layout(op, arch="arch35")
     start_workflow(op, "auto", intent="生成 case", architecture="arch35")
     verdict = authorize(op, tool="bash", command="git remote -v", agent="ascendc-pilot")
-    assert verdict.get("decision") == "allow"
-    assert verdict.get("reason_code") == "GIT_CLI_ALLOWED"
+    assert verdict.get("decision") == "ask"
+    assert verdict.get("reason_code") == "GIT_WRITE_ASK"
+    status = authorize(op, tool="bash", command="git status", agent="ascendc-pilot")
+    assert status.get("decision") == "allow"
+    assert status.get("reason_code") == "GIT_READONLY"
 
 
 def test_authorize_allows_primary_git_clone(tmp_path: Path) -> None:
@@ -778,16 +809,16 @@ def test_authorize_allows_primary_git_clone(tmp_path: Path) -> None:
         command="git clone https://gitcode.com/cann/ops-transformer.git dest",
         agent="ascendc-pilot",
     )
-    assert clone.get("decision") == "allow"
-    assert clone.get("reason_code") == "GIT_CLI_ALLOWED"
+    assert clone.get("decision") == "ask"
+    assert clone.get("reason_code") == "GIT_WRITE_ASK"
     worktree = authorize(
         op,
         tool="bash",
         command="git worktree add --detach dest abcdef",
         agent="ascendc-pilot",
     )
-    assert worktree.get("decision") == "allow"
-    assert worktree.get("reason_code") == "GIT_CLI_ALLOWED"
+    assert worktree.get("decision") == "ask"
+    assert worktree.get("reason_code") == "GIT_WRITE_ASK"
 
 
 def test_authorize_allows_primary_workspace_delete(tmp_path: Path) -> None:
@@ -806,7 +837,7 @@ def test_authorize_allows_primary_workspace_delete(tmp_path: Path) -> None:
         command=f"Remove-Item -Recurse -Force -LiteralPath '{leftover}'",
         agent="ascendc-pilot",
     )
-    assert verdict.get("decision") == "allow"
+    assert verdict.get("decision") == "ask"
     assert verdict.get("reason_code") == "PRIMARY_BASH_ASK"
     protected = authorize(
         op,
@@ -814,11 +845,11 @@ def test_authorize_allows_primary_workspace_delete(tmp_path: Path) -> None:
         command="Remove-Item -Recurse -Force .ascendc-pilot",
         agent="ascendc-pilot",
     )
-    assert protected.get("decision") == "deny"
+    assert protected.get("decision") == "ask"
     assert protected.get("reason_code") == "BASH_PROTECTED_WRITE"
 
 
-def test_authorize_denies_uo_query_git_cli(tmp_path: Path) -> None:
+def test_authorize_allows_uo_query_readonly_git(tmp_path: Path) -> None:
     from ascendc_pilot.authorize import authorize
     from ascendc_pilot.paths import ensure_agent_layout
 
@@ -834,8 +865,8 @@ def test_authorize_denies_uo_query_git_cli(tmp_path: Path) -> None:
         agent="uo-query",
         action="kb_lookup",
     )
-    assert verdict.get("decision") == "deny"
-    assert verdict.get("reason_code") == "GIT_NOT_FOR_UO_QUERY"
+    assert verdict.get("decision") == "allow"
+    assert verdict.get("reason_code") == "GIT_READONLY"
 
 
 def test_authorize_denies_uncited_operator_source_when_uo_exists(tmp_path: Path) -> None:
@@ -864,11 +895,11 @@ def test_authorize_denies_uncited_operator_source_when_uo_exists(tmp_path: Path)
         op, tool="read", path=str(src), agent="uo-query", action="kb_lookup"
     )
     assert allow_q.get("decision") == "allow"
-    grep_deny = authorize(
+    grep_ok = authorize(
         op, tool="grep", path=str(src), agent="ascendc-pilot", command="int x"
     )
-    assert grep_deny.get("decision") == "deny"
-    assert grep_deny.get("reason_code") == "SOURCE_READ_USE_UO_QUERY"
+    assert grep_ok.get("decision") == "allow", grep_ok
+    assert grep_ok.get("reason_code") != "SOURCE_READ_USE_UO_QUERY"
 
 
 def test_authorize_allows_pilot_cli_uo_query_file_line(tmp_path: Path) -> None:

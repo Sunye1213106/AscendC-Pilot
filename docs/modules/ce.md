@@ -31,7 +31,7 @@ Grill 草稿只写 `runs/<run>/actions/intent_grill/` 下的 markdown。形状�
 | `/ce-plan`、`/ce-apply`、`/handoff` | `skills/code-engineering/` |
 | `/ce-review` | `skills/code-review/` |
 
-语义只走 `pilot_cli uo-query` 四种形态（标识符 / `Dim=V` / `--file --line` / 无参数索引）。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。LLM 禁止写 `.uo`；apply 刷图由引擎嵌套 `uo-update`。apply 不查图；查图是 plan / review。
+语义只走 `pilot_cli uo-query`（形态见 code-access 不变量）。LLM 禁止写 `.uo`；apply 刷图由引擎嵌套 `uo-update`。apply 不查图；查图是 plan / review。
 
 ### `/ce-plan`
 
@@ -78,6 +78,6 @@ session [S ce-analyst] 写 session_handoff.md
 
 `ce-plan` / `ce-apply` 为 exclusive 组；`ce-review` 与 `handoff` 为 shared。apply 刷图另抢 `uo` 锁。
 
-CodeMap 缺失或过期时先 `/uo-init` 或 `/uo-update`。跨层结构用四种 `uo-query` 形态，不要让子任务自行猜测 `.uo` 路径。
+CodeMap 缺失或过期时先 `/uo-init` 或 `/uo-update`。跨层结构用 `uo-query`（形态见 code-access 不变量），不要让子任务自行猜测 `.uo` 路径。
 
 实现入口：`engines/code-engineering/code_engineering/`；工作流合同在 `pilot/ascendc_pilot/workflows/ce_specs.py`。

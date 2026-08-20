@@ -112,6 +112,15 @@ def main() -> int:
     ):
         if marker not in driver_src:
             errors.append(f"pilot-driver.ts missing {marker}")
+    core_src = (plug / "pilot-driver-core.ts").read_text(encoding="utf-8")
+    if "写 referee.yaml" in core_src:
+        errors.append("pilot-driver-core.ts must not teach writing referee.yaml")
+    if '"run-action", "auto"' not in core_src and "run-action\", \"auto\"" not in core_src:
+        errors.append("pilot-driver-core.ts must drain with run-action auto")
+    if 'autoArgv.push("--intent"' not in core_src:
+        errors.append("pilot-driver-core.ts run-action auto must pass --intent")
+    if "Host 已询问" not in core_src:
+        errors.append("pilot-driver-core.ts must tell Primary not to open a second question")
     # Must not concat stderr into JSON parse buffer
     if 'stdout || ""}\n${result.stderr' in driver_src or "stdout + stderr" in driver_src:
         errors.append("pilot-driver.ts still concatenates stderr into JSON parse")
@@ -163,7 +172,8 @@ def main() -> int:
         "extractProjectFromAcpCommand",
         "isAcpResumeStartCommand",
         'status !== "pending"',
-        "isPilotDriver",
+        "禁止把发现的仓内 tests/ 填进 test_script_root",
+        "Host 已询问",
         "resolveInstalledSkillMd",
         "Do NOT overwrite OpenCode Task",
         "rgMissingRewrite",
@@ -187,7 +197,7 @@ def main() -> int:
         "createPilotCliTool",
         "createPilotRunStub",
         "PILOT_CLI_HELP_USAGE_CARD",
-        "Do not use --help to discover protocol",
+        "不要用 --help 发现协议",
         "isReadonlyInspectBash",
         "isPrimaryPilotAgent",
         "patchWindowsShell",
@@ -207,6 +217,10 @@ def main() -> int:
     ):
         if marker not in plugin_src:
             errors.append(f"ascendc-pilot.ts missing {marker}")
+    if "!isPilotDriver" in plugin_src:
+        errors.append(
+            "pending broker must not exempt pilot_run; stuffing test_script_root must not skip AskQuestion"
+        )
     if "args.location = { directory: projectRoot }" in plugin_src:
         errors.append("ascendc-pilot.ts must not pin Task location.directory to operator package")
     if ").skill = createPilotSkillTool" in plugin_src or "pilotTools as Record<string, unknown>).skill" in plugin_src:

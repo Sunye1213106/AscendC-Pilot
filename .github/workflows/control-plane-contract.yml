@@ -8,7 +8,6 @@ on:
       - "pilot/**"
       - "prompts/**"
       - "skills/**"
-      - "knowledge/**"
       - "engines/understand-operator/**"
       - "engines/testcase-generation/**"
       - "engines/code-engineering/**"
@@ -28,7 +27,6 @@ on:
       - "pilot/**"
       - "prompts/**"
       - "skills/**"
-      - "knowledge/**"
       - "engines/understand-operator/**"
       - "engines/testcase-generation/**"
       - "engines/code-engineering/**"
@@ -101,8 +99,6 @@ jobs:
         env:
           PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: python scripts/check_instruction_ownership.py
-      - name: Validate shared reference projections
-        run: python scripts/sync_shared_references.py --check --repo .
       - name: Validate uo-query Explore control plane
         env:
           PYTHONPATH: ${{ env.ACP_PYTHONPATH }}

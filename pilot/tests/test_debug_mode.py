@@ -320,14 +320,14 @@ def test_child_stop_auto_exports_bundle(tmp_path: Path) -> None:
     parent = "ses_parentF"
     child = "ses_childAUTO1"
     _enable_parent_debug(tmp_path, parent)
-    _register_and_patch(tmp_path, parent=parent, child=child, action_id="detect_score_pre")
+    _register_and_patch(tmp_path, parent=parent, child=child, action_id="extract")
     hook = dbg.hook_handle(
         "subagentStop",
         {
             "cwd": str(tmp_path),
             "session_id": child,
             "parent_session_id": parent,
-            "action_id": "detect_score_pre",
+            "action_id": "extract",
         },
     )
     assert hook["export"]["ok"] is True

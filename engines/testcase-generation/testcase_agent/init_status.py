@@ -152,12 +152,12 @@ def require_init_confirmed(project_root: Path, op_name: str) -> dict[str, Any]:
     doc = read_init_doc(out_root)
     if not is_init_confirmed(out_root):
         raise InitGateError(
-            f"tg-init not confirmed for {op_name}. Run /tg-init then human-confirm before /tg-plan.",
+            f"tg-init not confirmed for {op_name}. Run /tg-init before /tg-plan.",
             ask="init_required",
             payload={
                 "output_root": out_root.as_posix(),
                 "init_status": "missing" if not doc else "unconfirmed",
-                "next": f"/uo-init then /tg-init (op={op_name}) → AskQuestion → Host `pilot_run` finalizes `human_confirm`",
+                "next": f"/uo-init then /tg-init (op={op_name}) → dual-axis drafts → Primary referee → bind_promote",
             },
         )
     require_kb_fingerprint_fresh(project_root, op_name, out_root=out_root, status_doc=doc)
@@ -191,7 +191,7 @@ def require_kb_fingerprint_fresh(
             payload={
                 "output_root": root.as_posix(),
                 "understand_root": uo_path.as_posix(),
-                "next": f"/tg-init (op={op_name}) → AskQuestion → Host `pilot_run` finalizes `human_confirm`",
+                "next": f"/tg-init (op={op_name}) → dual-axis drafts → Primary referee → bind_promote",
             },
         )
     ok, detail = kb_fingerprint_matches(root, uo_path)
@@ -205,7 +205,7 @@ def require_kb_fingerprint_fresh(
             "understand_root": uo_path.as_posix(),
             "stored_digest": stored_digest,
             "current_digest": (detail.get("current") or {}).get("digest") if isinstance(detail, dict) else "",
-            "next": f"/uo-init then /tg-init (op={op_name}) → AskQuestion → Host `pilot_run` finalizes `human_confirm`",
+            "next": f"/uo-init then /tg-init (op={op_name}) → dual-axis drafts → Primary referee → bind_promote",
         },
     )
 
@@ -245,7 +245,7 @@ def mark_init_confirmed(out_root: Path, *, notes: str = "", require_merge: bool 
             payload={
                 "output_root": Path(out_root).as_posix(),
                 "fingerprint_hint": uo_path.as_posix(),
-                "next": f"/uo-init (op={op}) then /tg-init → human_confirm --finalize",
+                "next": f"/uo-init (op={op}) then /tg-init → dual-axis drafts → Primary referee → bind_promote",
             },
         )
     doc["confirmed"] = True

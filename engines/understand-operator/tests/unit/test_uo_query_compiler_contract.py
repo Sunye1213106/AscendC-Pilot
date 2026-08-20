@@ -415,5 +415,35 @@ def test_agent_query_index_and_around(tmp_path: Path) -> None:
     assert index["shape"] == "index"
     names = [row.get("pipe") for row in index.get("phases") or []]
     assert "pipeIn" in names
+    assert "Dim=" in str(index.get("hint") or "")
     around = q.agent_query(file="op_kernel/arch35/toy_entry_regbase.h", line=10)
     assert around["shape"] == "around"
+
+
+def test_agent_query_rejects_nl_or_multi_token(tmp_path: Path) -> None:
+    from uo_init.query.hints import looks_like_nl_or_multi_token, nl_or_multi_token_payload
+
+    assert looks_like_nl_or_multi_token("FlashAttentionScoreGrad host_api_params")
+    assert looks_like_nl_or_multi_token("这个算子的 tiling 怎么切")
+    assert not looks_like_nl_or_multi_token("s1Inner")
+    assert not looks_like_nl_or_multi_token("Dim=DTemplateNum")
+    payload = nl_or_multi_token_payload("FlashAttentionScoreGrad host_api_params tiling_fields")
+    assert payload["ok"] is False
+    assert payload["empty_reason"] == "nl_or_multi_token"
+    assert "FlashAttentionScoreGrad" in payload["suggested_retries"]
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    cm.add_entity(
+        Entity(
+            id="PIPE_pipeIn",
+            kind=EntityKind.PIPE,
+            name="pipeIn",
+            file="op_kernel/arch35/toy_entry_regbase.h",
+            line_start=10,
+            status="confirmed",
+        )
+    )
+    _product(cm, tmp_path)
+    q = open_query(tmp_path)
+    out = q.agent_query(pattern="FlashAttentionScoreGrad host_api_params")
+    assert out["ok"] is False
+    assert out["empty_reason"] == "nl_or_multi_token"

@@ -40,6 +40,7 @@ def audit(repo: Path) -> list[str]:
     from ascendc_pilot.ownership import (
         EXECUTION_DETERMINISTIC,
         EXECUTION_PRIMARY_INTERACTIVE,
+        EXECUTION_PRIMARY_REVIEW,
         EXECUTION_SUBAGENT,
         PRIMARY_AGENT_ID,
         path_within_scopes,
@@ -47,6 +48,7 @@ def audit(repo: Path) -> list[str]:
         write_roots_as_scopes,
     )
     from ascendc_pilot.workflows import WORKFLOWS
+    from ascendc_pilot.workflows.consistency import action_task_prompt_ids
     import compose_runtime as compose
 
     errors: list[str] = []
@@ -94,9 +96,15 @@ def audit(repo: Path) -> list[str]:
             role_id = str(action.get("role_id") or "")
             mid = str(action.get("action_method_id") or "")
             tpid = str(action.get("task_prompt_id") or "")
+            prompt_ids = action_task_prompt_ids(action)
             contract = str(action.get("output_contract_id") or "")
 
-            if mode not in {EXECUTION_DETERMINISTIC, EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
+            if mode not in {
+                EXECUTION_DETERMINISTIC,
+                EXECUTION_SUBAGENT,
+                EXECUTION_PRIMARY_INTERACTIVE,
+                EXECUTION_PRIMARY_REVIEW,
+            }:
                 errors.append(f"{wid}/{aid}: invalid execution_mode {mode!r}")
 
             if agent_id == PRIMARY_AGENT_ID and mode == EXECUTION_SUBAGENT:
@@ -106,7 +114,7 @@ def audit(repo: Path) -> list[str]:
                 if (wid, aid) not in ENGINE_REGISTRY:
                     errors.append(f"{wid}/{aid}: deterministic Action missing engine registry entry")
 
-            if mode == EXECUTION_SUBAGENT and tpid:
+            if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_REVIEW} and tpid:
                 default_mid = f"{wid}/{aid.replace('_', '-')}"
                 if not mid or "/" not in mid or mid == default_mid:
                     errors.append(
@@ -125,17 +133,17 @@ def audit(repo: Path) -> list[str]:
             elif mode in {EXECUTION_DETERMINISTIC, EXECUTION_PRIMARY_INTERACTIVE} and mid:
                 errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
 
-            if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
+            if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE, EXECUTION_PRIMARY_REVIEW}:
                 if mid and "/" not in mid:
                     errors.append(f"{wid}/{aid}: invalid action_method_id {mid!r}")
-                if tpid:
-                    if "/" in tpid:
-                        dom, name = tpid.split("/", 1)
+                for pid in prompt_ids:
+                    if "/" in pid:
+                        dom, name = pid.split("/", 1)
                         pp = prompts_dir / dom / f"{name}.md"
                     else:
-                        pp = prompts_dir / f"{tpid}.md"
+                        pp = prompts_dir / f"{pid}.md"
                     if not pp.is_file() or not pp.read_text(encoding="utf-8").strip():
-                        errors.append(f"TASK_PROMPT_MISSING {wid}/{aid}: {tpid}")
+                        errors.append(f"TASK_PROMPT_MISSING {wid}/{aid}: {pid}")
                     else:
                         ptext = pp.read_text(encoding="utf-8")
                         # Hardcoded owner conflicting with Spec placeholders

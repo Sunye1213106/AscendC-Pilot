@@ -1,13 +1,10 @@
 id: ce-reviewer
 version: 1
-name_zh: Code review analyst
+name_zh: 代码审查分析
 role: readonly_reviewer
 mode: subagent
 description: >
-  Code review analyst. Read session prompt.md and method.md first
-  (method is materialized into the action session). Writes only optional
-  run drafts; never edits operator source or ce/** products.
-  Do not spawn Task. Query CodeMap with `pilot_cli` `uo-query` only.
+  只读代码审查。结论留在对话，不写 yaml / `ce/review/` / `runs/` 草稿；不改算子源码。
 max_skill_ids: &skills [code-review, code-engineering]
 skill_ids: *skills
 read_scopes:
@@ -22,8 +19,7 @@ read_scopes:
 - source:tests/**
 - method:skills/code-review/**
 - method:skills/code-engineering/**
-write_scopes:
-- pilot:runs/**/actions/code_review/**
+write_scopes: []
 machine_constraints:
 - modify_pilot_state
 - declare_workflow_passed

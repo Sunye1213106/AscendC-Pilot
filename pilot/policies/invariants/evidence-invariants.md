@@ -1,12 +1,8 @@
-# Evidence invariants (model-facing, short)
+# 证据不变量（面向模型，短）
 
-1. Search / UO graph locate ≠ proof. High confidence needs a disk source window.
-2. `confidence: high` / `source_verified: true` requires **both**:
-   - `evidence_window_sha256` for the cited `path:line` window
-   - continuous `evidence_snippet` that is a substring of that window
-3. Never invent hashes, line numbers, or pasted non-contiguous snippets.
-4. Neighbor / wrong-window sha reuse is fabrication → reject.
-5. Absence claims need machine-checkable negative evidence, not “I searched a lot”.
-6. Intermediate locals are never input roots; ungrounded surfaces stay unresolved.
+1. 搜索 / UO 图定位 ≠ 证明。高置信度需要磁盘上的源码窗口。
+2. `confidence: high` / `source_verified: true` 必须同时具备该窗口的 `evidence_window_sha256` 与连续 `evidence_snippet`（窗口子串）。
+3. 禁止编造哈希、行号，或粘贴不连续片段。邻窗 / 错窗 sha 复用视为伪造。
+4. 缺席断言需要机器可检查的否定证据，不是「我搜了很多」。
 
-Full detail: `pilot/policies/evidence/POLICY.md`.
+全文：`pilot/policies/evidence/POLICY.md`。

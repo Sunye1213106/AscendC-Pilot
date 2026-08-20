@@ -9,4 +9,4 @@
 - 模板/宏分支是否被静默丢掉
 - SHARED `common/` 是否进入 ScopeSet **且** Host/Kernel walk 真正消费（勿被裸 `op_needle` 过滤）
 
-质量不够时记 gap，勿用空壳占位当作成功。与 `evidence-quality.md`、`completeness.md` 联用。
+质量不够时记 gap，勿用空壳占位当作成功。

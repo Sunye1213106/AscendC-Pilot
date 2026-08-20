@@ -24,7 +24,6 @@ def test_thin_primary_agent_description() -> None:
 
     low = desc.lower()
     assert "pilot_run" in low
-    assert "pilot_cli" in low
     assert "调用 PATH" not in desc
     assert "Get-Command acp" not in desc
     assert "没有 Host 工具就调用" not in desc
@@ -50,6 +49,6 @@ def test_spec_still_requires_architecture_for_uo_update() -> None:
     inv = (REPO / "pilot" / "policies" / "invariants" / "control-invariants.md").read_text(
         encoding="utf-8"
     )
-    item11 = next(line for line in inv.splitlines() if line.startswith("11."))
-    assert "uo-update" in item11
-    assert "--architecture" in item11 or "architecture" in item11
+    item6 = next(line for line in inv.splitlines() if line.startswith("6."))
+    assert "uo-update" in item6
+    assert "--architecture" in item6 or "architecture" in item6

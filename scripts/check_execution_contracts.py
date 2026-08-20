@@ -67,6 +67,7 @@ def check_prompt_capability_drift(repo: Path) -> list[str]:
     sys.path.insert(0, str(repo / "pilot"))
     sys.path.insert(0, str(repo / "scripts"))
     from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows.consistency import action_task_prompt_ids
 
     import compose_runtime as compose
 
@@ -79,19 +80,17 @@ def check_prompt_capability_drift(repo: Path) -> list[str]:
         if wf.get("reserved") or wf.get("alias_of"):
             continue
         for action in wf.get("actions") or []:
-            tpid = action.get("task_prompt_id")
-            if not tpid:
-                continue
             caps = list(action.get("capability_ids") or [])
-            key = str(tpid)
-            if key in expected and expected[key] != caps:
-                errors.append(
-                    f"prompt-cap-drift: task_prompt_id {key!r} used by "
-                    f"{owners[key]} and {wid}/{action.get('id')} with different capability_ids"
-                )
-                continue
-            expected[key] = caps
-            owners[key] = f"{wid}/{action.get('id')}"
+            for tpid in action_task_prompt_ids(action):
+                key = str(tpid)
+                if key in expected and expected[key] != caps:
+                    errors.append(
+                        f"prompt-cap-drift: task_prompt_id {key!r} used by "
+                        f"{owners[key]} and {wid}/{action.get('id')} with different capability_ids"
+                    )
+                    continue
+                expected[key] = caps
+                owners[key] = f"{wid}/{action.get('id')}"
 
     tasks_root = repo / "prompts" / "tasks"
     if not tasks_root.is_dir():
@@ -127,6 +126,7 @@ def audit(repo: Path = REPO) -> list[str]:
         sys.path.insert(0, str(pilot))
 
     from ascendc_pilot.workflows import WORKFLOWS
+    from ascendc_pilot.workflows.consistency import action_task_prompt_ids
 
     errors: list[str] = []
     agents_dir = repo / "agents"
@@ -163,6 +163,7 @@ def audit(repo: Path = REPO) -> list[str]:
             actor = str(action.get("agent_id") or "").strip()
             actors = [str(x) for x in (action.get("actors") or []) if str(x).strip()]
             prompt_id = str(action.get("task_prompt_id") or "").strip()
+            prompt_ids = action_task_prompt_ids(action)
 
             if actor and actors != [actor]:
                 errors.append(
@@ -210,13 +211,22 @@ def audit(repo: Path = REPO) -> list[str]:
                         f"PRIMARY_INTERACTIVE_OWNER {workflow_id}/{action_id}: actor={actor!r} role={role!r}"
                     )
 
-            if prompt_id:
-                prompt = _prompt_path(repo, prompt_id)
-                if not prompt.is_file():
+            if mode == "primary_review":
+                if actor != "ascendc-pilot" or role != "controller":
                     errors.append(
-                        f"TASK_PROMPT_MISSING {workflow_id}/{action_id}: {prompt_id}"
+                        f"PRIMARY_REVIEW_OWNER {workflow_id}/{action_id}: actor={actor!r} role={role!r}"
                     )
-                else:
+                if not prompt_id:
+                    errors.append(f"PRIMARY_REVIEW_PROMPT_MISSING {workflow_id}/{action_id}")
+
+            if prompt_ids:
+                for pid in prompt_ids:
+                    prompt = _prompt_path(repo, pid)
+                    if not prompt.is_file():
+                        errors.append(
+                            f"TASK_PROMPT_MISSING {workflow_id}/{action_id}: {pid}"
+                        )
+                        continue
                     body = prompt.read_text(encoding="utf-8")
                     match = PHYSICAL_COGNITIVE_PATH.search(body)
                     if match:

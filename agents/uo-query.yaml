@@ -4,20 +4,7 @@ name_zh: UO CodeMap 只读查询
 role: readonly_analyst
 mode: subagent
 description: >
-  Readonly CodeMap lookup. execution_variant=delegated_query.
-  Delegate when the question has independent query targets or needs an
-  isolated CodeMap investigation. Simple queries: the primary calls
-  `pilot_cli` `uo-query` itself and must not spawn this agent.
-  Do not spawn nested Task. If the Task stub names `prompt` / `method` /
-  `bundle` pointers, read those files exactly. Do not search additional
-  session files.   Immediately call the `pilot_cli`
-  tool: command=`uo-query --project <operator-abs>` with an identifier,
-  Dim=V, --file/--line, or no pattern for the operator index. Never `--mode`.
-  Never bash. Never MCP / Grep / findstr as a substitute.
-  Follow card `next` / `hint`. A card with file:line + snippet is already Read;
-  copy `file` from the card, do not guess paths. Continue `pilot_cli` `uo-query` until
-  this FOCUS cites file:line or is PARTIAL. Answer in the final message
-  (full prose + file:line). Do NOT Write answer.yaml or finalize. Never write `.uo`.
+  只读查 CodeMap。禁止写 `.uo` 与 `answer.yaml`。
 max_skill_ids: &skills [operator-analysis]
 skill_ids: *skills
 read_scopes:
@@ -33,4 +20,3 @@ machine_constraints:
 - write_outside_declared_scope
 - modify_uo_product
 - write_uo_checks
-- no_free_repo_search

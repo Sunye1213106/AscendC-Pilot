@@ -20,11 +20,13 @@ from typing import Any
 EXECUTION_DETERMINISTIC = "deterministic"
 EXECUTION_SUBAGENT = "subagent"
 EXECUTION_PRIMARY_INTERACTIVE = "primary_interactive"
+EXECUTION_PRIMARY_REVIEW = "primary_review"
 EXECUTION_MODES = frozenset(
     {
         EXECUTION_DETERMINISTIC,
         EXECUTION_SUBAGENT,
         EXECUTION_PRIMARY_INTERACTIVE,
+        EXECUTION_PRIMARY_REVIEW,
     }
 )
 
@@ -112,7 +114,7 @@ ACTION_FINALIZER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "tg-init": {
         "bind_promote": ["tg/init.yaml"],
-        "human_confirm": ["tg/init.yaml"],
+        "bind_review": ["runs/{run_id}/actions/bind_review/verdict.yaml"],
     },
     "tg-plan": {
         "plan_promote": ["tg/plan.md"],
@@ -187,9 +189,9 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/bind_init/scratch/**",
             "runs/{run_id}/actions/bind_init/staging.yaml",
         ],
+        "bind_review": [],
         "bind_promote": ["tg/init.yaml"],
         "validate_init": ["runs/{run_id}/receipts/validate_init.yaml"],
-        "human_confirm": ["tg/init.yaml"],
     },
     "tg-plan": {
         "plan_precheck": ["runs/{run_id}/receipts/plan_precheck.yaml"],
@@ -228,9 +230,7 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "change_capture": [
             "runs/{run_id}/actions/change_capture/**",
         ],
-        "code_review": [
-            "runs/{run_id}/actions/code_review/**",
-        ],
+        "code_review": [],
     },
     "ce-plan": {
         "intent_grill": [
@@ -314,13 +314,20 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "source:test_script/**",
             "context/**",
         ],
+        "bind_review": [
+            "runs/{run_id}/actions/bind_init/parts/**",
+            "runs/{run_id}/receipts/repo_scan.yaml",
+            "runs/{run_id}/actions/bind_review/**",
+            "uo/*.uo",
+            "context/**",
+        ],
         "bind_promote": [
             "tg/init.yaml",
             "runs/{run_id}/actions/bind_init/**",
+            "runs/{run_id}/actions/bind_review/**",
             "runs/{run_id}/receipts/repo_scan.yaml",
         ],
         "validate_init": ["tg/init.yaml"],
-        "human_confirm": ["tg/init.yaml", "uo/*.uo"],
     },
     "goal-intake": {
         "intent_promote": [
@@ -810,6 +817,7 @@ __all__ = [
     "EXECUTION_DETERMINISTIC",
     "EXECUTION_MODES",
     "EXECUTION_PRIMARY_INTERACTIVE",
+    "EXECUTION_PRIMARY_REVIEW",
     "EXECUTION_SUBAGENT",
     "PRIMARY_AGENT_ID",
     "STAGING_RELATIONS_NAME",

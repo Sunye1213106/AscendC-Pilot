@@ -163,7 +163,7 @@ def test_prepare_extract_plan_writes_filled_prompt(tmp_path: Path, monkeypatch) 
         op,
         actor_type="deterministic_engine",
         actor_id="deterministic-uo-engine",
-        action_id="detect_score_pre",
+        action_id="extract",
         workflow_spec_hash=workflow_spec_hash("uo-init"),
         input_hashes={"f": "1"},
         output_hashes={"f": "1"},
@@ -280,4 +280,13 @@ def test_uo_query_agent_has_empty_write_scopes() -> None:
 
     root = Path(__file__).resolve().parents[2]
     scopes = agent_write_scopes("uo-query", root)
+    assert scopes == []
+
+
+def test_ce_reviewer_agent_has_empty_write_scopes() -> None:
+    """code-review-v1 is a dialogue contract; reviewer must not persist yaml."""
+    from ascendc_pilot.agents_registry import agent_write_scopes
+
+    root = Path(__file__).resolve().parents[2]
+    scopes = agent_write_scopes("ce-reviewer", root)
     assert scopes == []

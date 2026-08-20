@@ -111,7 +111,7 @@ def infer_slice_id(
     *,
     explicit: str = "",
 ) -> str:
-    """Bind an ACK to one expected slice. Prefer AXIS=/SLICE_ID= over arrival order."""
+    """Bind an ACK to one expected slice. Count-complete; order does not matter."""
     want = [str(s).strip() for s in expected if str(s).strip()]
     exp = str(explicit or "").strip()
     if exp and exp in want:
@@ -124,6 +124,18 @@ def infer_slice_id(
     remaining = [s for s in want if s not in acked]
     if len(remaining) == 1:
         return remaining[0]
+    text = str(result_text or "")
+    filename_hits = [
+        sid
+        for sid in remaining
+        if re.search(
+            rf"(?:^|[^\w.])(?:parts[/\\])?{re.escape(sid)}\.(?:yaml|yml|md)\b",
+            text,
+            re.I,
+        )
+    ]
+    if len(filename_hits) == 1:
+        return filename_hits[0]
     return ""
 
 
@@ -212,7 +224,10 @@ def ack_fanout_slice(
     result_text: str = "",
     slice_id: str = "",
 ) -> dict[str, Any]:
-    """Record one fan-out Task return. Finalize only when every expected slice is in."""
+    """Record one fan-out Task return. Ready when the expected *count* is in.
+
+    Arrival order and same-turn parallelism do not matter.
+    """
     with _ticket_exclusive(project_root, ticket_id) as doc:
         if not doc:
             return {"ok": False, "error": "TICKET_NOT_FOUND", "ticket_id": ticket_id}
@@ -286,6 +301,57 @@ def ack_fanout_slice(
             "combined_text": combined,
             "slice_results": results,
         }
+
+
+def reopen_fanout_slices(
+    project_root: Path,
+    *,
+    action_id: str,
+    slice_ids: list[str],
+    run_id: str = "",
+) -> dict[str, Any]:
+    """Drop named fan-out ACK + part files so only those slices re-dispatch."""
+    from pathlib import Path as P
+
+    wanted = [str(s).strip() for s in slice_ids if str(s).strip()]
+    if not wanted:
+        return {"ok": False, "error": "REWORK_SLICES_EMPTY"}
+    doc = find_dispatch_ticket_for_action(
+        project_root, run_id=run_id, action_id=action_id
+    )
+    if not doc:
+        return {"ok": False, "error": "TICKET_NOT_FOUND", "action_id": action_id}
+    results = dict(doc.get("slice_results") or {})
+    for sid in wanted:
+        results.pop(sid, None)
+        sdir = P(str(doc.get("session_dir") or ""))
+        if sdir.is_dir():
+            for name in (f"{sid}.yaml", f"{sid}.md"):
+                part = sdir / "parts" / name
+                if part.is_file():
+                    prev = part.parent / (part.name + ".prev")
+                    try:
+                        import shutil
+
+                        shutil.copy2(part, prev)
+                    except OSError:
+                        pass
+                    part.unlink()
+    doc["slice_results"] = results
+    doc["status"] = "collecting"
+    _write_ticket(project_root, doc)
+    remaining_ids = [s for s in _expected_slices(doc) if s not in results]
+    remaining_tasks = _remaining_dispatch_tasks(doc, results)
+    return {
+        "ok": True,
+        "ticket": doc,
+        "rework": wanted,
+        "remaining_slices": remaining_ids,
+        "remaining_tasks": remaining_tasks,
+        "host_step": _waiting_fanout_host_step(
+            project_root, doc, remaining_tasks, remaining_ids
+        ),
+    }
 
 
 def issue_dispatch_ticket(
@@ -439,36 +505,107 @@ def find_dispatch_ticket_for_action(
     return found[0]
 
 
-def harvest_parts_into_ticket(project_root: Path, ticket: dict[str, Any]) -> dict[str, Any]:
-    """Fallback ACK from leftover ``parts/*.md`` when the Task after-hook missed a return.
+def discard_dispatch_tickets_for_action(
+    project_root: Path,
+    *,
+    run_id: str,
+    action_id: str,
+) -> int:
+    """Drop tickets for an action so rework can issue a fresh dispatch."""
+    rid = str(run_id or "").strip()
+    aid = str(action_id or "").strip()
+    if not rid or not aid:
+        return 0
+    try:
+        folder = _ticket_dir(project_root, run_id=rid)
+    except Exception:  # noqa: BLE001
+        return 0
+    if not folder.is_dir():
+        return 0
+    dropped = 0
+    for path in list(folder.glob("dxt_*.yaml")):
+        try:
+            if yaml is not None:
+                data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            else:
+                data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("run_id") or "") != rid or str(data.get("action_id") or "") != aid:
+            continue
+        try:
+            path.unlink()
+            dropped += 1
+        except OSError:
+            continue
+    return dropped
 
-    Dual-axis review ACKs from native Task text first. Disk harvest is not the
-    product path and must not require children to Write.
+
+_SKIP_PART_STEMS = frozenset({"merged", "referee"})
+_HARVEST_PART_SUFFIXES = {".md", ".yaml", ".yml"}
+
+
+def _parts_dir_for_ticket(project_root: Path, ticket: dict[str, Any]) -> Path | None:
+    """Prefer the ticket session dir; fall back to arch-scoped runs/parts."""
+    session_dir = str(ticket.get("session_dir") or "").strip()
+    if session_dir:
+        direct = Path(session_dir) / "parts"
+        if direct.is_dir():
+            return direct
+    run_id = str(ticket.get("run_id") or "").strip()
+    action_id = str(ticket.get("action_id") or "").strip()
+    if not run_id or not action_id:
+        return None
+    try:
+        from ascendc_pilot.paths import agent_root
+
+        fallback = (
+            agent_root(project_root) / "runs" / run_id / "actions" / action_id / "parts"
+        )
+    except Exception:  # noqa: BLE001
+        return None
+    return fallback if fallback.is_dir() else None
+
+
+def harvest_parts_into_ticket(project_root: Path, ticket: dict[str, Any]) -> dict[str, Any]:
+    """Fallback ACK from leftover ``parts/{slice}.md|.yaml`` when Task ACK missed.
+
+    Dual-axis review ACKs from native Task text first. tg-init bind fanout
+    writes ``harness.yaml`` / ``bind.yaml``; sequential Task is enough if those
+    drafts exist. Disk harvest is not the product path and must not require
+    children to Write.
     """
     if not ticket:
         return {}
     expected = _expected_slices(ticket)
-    if len(expected) < 2:
+    if not expected:
         return ticket
-    run_id = str(ticket.get("run_id") or "")
-    action_id = str(ticket.get("action_id") or "")
     tid = str(ticket.get("ticket_id") or "")
-    if not run_id or not action_id or not tid:
+    if not tid:
         return ticket
-    try:
-        from ascendc_pilot.paths import agent_root
-
-        parts_dir = (
-            agent_root(project_root) / "runs" / run_id / "actions" / action_id / "parts"
-        )
-    except Exception:  # noqa: BLE001
-        return ticket
-    if not parts_dir.is_dir():
+    parts_dir = _parts_dir_for_ticket(project_root, ticket)
+    if parts_dir is None or not parts_dir.is_dir():
         return ticket
     results = dict(ticket.get("slice_results") or {})
-    for path in sorted(parts_dir.glob("*.md")):
+    if "fix" in expected and "fix" not in results:
+        harness = parts_dir / "harness.yaml"
+        bindp = parts_dir / "bind.yaml"
+        if harness.is_file() and bindp.is_file():
+            try:
+                text = harness.read_text(encoding="utf-8") + "\n" + bindp.read_text(encoding="utf-8")
+            except OSError:
+                text = "SLICE_ID=fix"
+            acked = ack_fanout_slice(project_root, tid, result_text=text, slice_id="fix")
+            return acked.get("ticket") or load_dispatch_ticket(project_root, tid) or ticket
+    if len(expected) < 2:
+        return ticket
+    for path in sorted(parts_dir.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in _HARVEST_PART_SUFFIXES:
+            continue
         sid = path.stem.strip()
-        if not sid or sid == "merged" or sid not in expected or sid in results:
+        if not sid or sid in _SKIP_PART_STEMS or sid not in expected or sid in results:
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -598,8 +735,8 @@ def consume_dispatch_ticket(project_root: Path, ticket_id: str) -> dict[str, Any
 
 
 def _compact_dispatch_tasks(raw: Any) -> list[dict[str, str]]:
-    """Keep 2+ focused Task stubs for Cursor-style fan-out."""
-    if not isinstance(raw, list) or len(raw) < 2:
+    """Keep focused Task stubs for Cursor-style fan-out (1+ bind rework; 2+ review)."""
+    if not isinstance(raw, list) or not raw:
         return []
     out: list[dict[str, str]] = []
     for row in raw:
@@ -618,7 +755,11 @@ def _compact_dispatch_tasks(raw: Any) -> list[dict[str, str]]:
                 "task_prompt_stub": stub,
             }
         )
-    return out if len(out) >= 2 else []
+    if len(out) >= 2:
+        return out
+    if len(out) == 1 and str(out[0].get("slice_id") or "") in {"harness", "bind", "fix"}:
+        return out
+    return []
 
 
 def _fanout_dispatch_message_zh(actor_id: str, tasks: list[dict[str, str]]) -> str:
@@ -629,6 +770,7 @@ def _fanout_dispatch_message_zh(actor_id: str, tasks: list[dict[str, str]]) -> s
         "每个 prompt 必须原样为 host_step.tasks[i].task_prompt_stub。"
         "不要用父 task_prompt_stub 再开一个。"
         "Host 等全部切片返回后才 finalize（一张 ticket）；先回来的一轴不得结束本步。"
+        "若已分两轮写完对应 parts，下一轮 pilot_run 从磁盘收齐，禁止重派、禁止 force_new。"
         "禁止只转述某一个，禁止发明子代理没引用的事实。"
         + (f" 切片：{ids}。" if ids else "")
     )
@@ -705,12 +847,12 @@ def dispatch_result(
         return acked
     if acked.get("ready"):
         result_text = str(acked.get("combined_text") or result_text or "")
-        try:
-            write_axis_merged_part(
-                project_root, acked.get("ticket") or load_dispatch_ticket(project_root, ticket_id)
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        ready_ticket = acked.get("ticket") or load_dispatch_ticket(project_root, ticket_id) or {}
+        if str((ready_ticket or {}).get("action_id") or "") == "code_review":
+            try:
+                write_axis_merged_part(project_root, ready_ticket)
+            except Exception:  # noqa: BLE001
+                pass
         if action_result is None:
             action_result = {
                 "fanout": True,
@@ -984,12 +1126,36 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             "waiting_for_confirmation",
         }
     ):
+        ask = out.get("ask_question") if isinstance(out.get("ask_question"), dict) else None
+        nxt = out.get("next") if isinstance(out.get("next"), dict) else {}
+        if ask:
+            from ascendc_pilot.human_interaction import attach_interaction_request
+
+            field = str(ask.get("field") or "")
+            out = attach_interaction_request(
+                out,
+                project_root,
+                kind="harness" if field == "test_script_root" else "intake",
+                action_id=str(nxt.get("action_id") or out.get("failed_action") or "repo_scan"),
+                decision_kind=field or str(out.get("decision_kind") or "test_script_root"),
+            )
+            req = out.get("human_interaction_request") if isinstance(out.get("human_interaction_request"), dict) else {}
+            rid = str(req.get("request_id") or "")
+            if rid:
+                ask = dict(ask)
+                ask["request_id"] = rid
+                out["ask_question"] = ask
+        extra_ask: dict[str, Any] = {"status": status, "stop_reason": stop}
+        req = out.get("human_interaction_request") if isinstance(out.get("human_interaction_request"), dict) else {}
+        if req.get("request_id"):
+            extra_ask["request_id"] = str(req.get("request_id"))
         out["host_step"] = build_host_step(
             kind="ask_human",
             project_root=project_root,
+            action_id=str(nxt.get("action_id") or ""),
             ask_question=out.get("ask_question") if isinstance(out.get("ask_question"), dict) else None,
             message_zh=str(out.get("message_zh") or "human interaction required"),
-            extra={"status": status, "stop_reason": stop},
+            extra=extra_ask,
         )
         return out
 
@@ -998,7 +1164,7 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
     action_id = str(nxt.get("action_id") or "").strip()
     actor_id = str(nxt.get("actor_id") or "").strip()
 
-    if stop == "interaction_required" and kind in {"subagent", "primary_interactive"} and action_id:
+    if stop == "interaction_required" and kind in {"subagent", "primary_interactive", "primary_review"} and action_id:
         from ascendc_pilot.actions.runtime import prepare_action
         from ascendc_pilot.state import load_state
 
@@ -1037,7 +1203,8 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                 out["prepare"] = {"run_id": run_id, "action_id": action_id, "reused_ticket": True}
                 return out
             if expected:
-                write_axis_merged_part(project_root, live)
+                if action_id == "code_review":
+                    write_axis_merged_part(project_root, live)
                 return dispatch_result(
                     project_root,
                     ticket_id=str(live.get("ticket_id") or ""),
@@ -1062,6 +1229,39 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             from ascendc_pilot.actions.drive import drive_until_interaction
 
             return drive_until_interaction(project_root, prepare=prepare_action)
+
+        if prep.get("continue_drive"):
+            from ascendc_pilot.actions.drive import drive_until_interaction
+
+            return drive_until_interaction(project_root, prepare=prepare_action)
+
+        if prep.get("reuse_host_step") and isinstance(prep.get("host_step"), dict):
+            out["host_step"] = prep["host_step"]
+            out["prepare"] = prep
+            return out
+
+        if kind == "primary_review" and prep.get("auto_finalize"):
+            from ascendc_pilot.actions.drive import drive_until_interaction
+
+            return drive_until_interaction(project_root, prepare=prepare_action)
+
+        if kind == "primary_review" or str(prep.get("host_step_kind") or "") == "primary_review":
+            extra_review = {
+                "harness_path": str(prep.get("harness_path") or ""),
+                "bind_path": str(prep.get("bind_path") or ""),
+                "verdict_path": str(prep.get("verdict_path") or ""),
+            }
+            out["host_step"] = build_host_step(
+                kind="primary_review",
+                project_root=project_root,
+                action_id=action_id,
+                actor_id=actor_id or str(prep.get("actor_id") or "ascendc-pilot"),
+                prepare=prep,
+                message_zh=str(prep.get("message_zh") or "主控通读两路草稿；下一发 PASS 或 REWORK"),
+                extra=extra_review,
+            )
+            out["prepare"] = prep
+            return out
 
         if kind == "primary_interactive" or prep.get("needs_human_decision"):
             out["host_step"] = build_host_step(
@@ -1158,6 +1358,8 @@ __all__ = [
     "release_dispatch_ticket",
     "consume_dispatch_ticket",
     "ack_fanout_slice",
+    "reopen_fanout_slices",
+    "discard_dispatch_tickets_for_action",
     "infer_slice_id",
     "build_host_step",
     "dispatch_result",

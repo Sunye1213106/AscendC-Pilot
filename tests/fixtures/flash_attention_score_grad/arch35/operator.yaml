@@ -1,0 +1,48 @@
+# Identity + replay wiring for FlashAttentionScoreGrad on arch35.
+# Adapter pack YAML (bridge_spec / search_hints / …) is exported by UO
+# (export_adapter_pack), not checked in as priors.
+version: 1
+
+operator:
+  name: flash_attention_score_grad
+  #: Where the operator sits inside the ops checkout. Resolved against
+  #: ops_root by uo_init.paths, so it is a relative path and never absolute.
+  path: attention/flash_attention_score_grad
+  arch: arch35
+
+sources:
+  #: The header that declares how the key packs its dimensions. `{op}` and
+  #: `{arch}` expand from the operator block above.
+  tiling_key_header: op_kernel/{arch}/{op}_template_tiling_key.h
+
+replay:
+  #: Which machine runs the built driver. This block is about the developer's
+  #: setup rather than the operator, which is why every entry can be
+  #: overridden from the environment: a distribution registered by
+  #: `wsl --install` carries a dot in its name, an imported tarball carries
+  #: whatever it was imported as, and the driver lives wherever it was built.
+  host: wsl
+  distro: Ubuntu-22.04
+  #: Leave empty so Pilot bootstrap owns the runtime under tg/replay/runtime.
+  #: Override with UO_REPLAY_SCRIPT only when a custom entry is intentional.
+  entry: ""
+  #: Printed by the driver once a batch is complete. Its absence is how an
+  #: empty run is told from a finished one that produced nothing.
+  done_marker: BATCH_DONE
+  #: Environment variables that override the three above, in that order.
+  overrides:
+    distro: UO_REPLAY_DISTRO
+    entry: UO_REPLAY_SCRIPT
+    tiling_key_header: UO_REPLAY_TPL
+
+artifacts:
+  #: Relative to ``<op_src>/.ascendc-pilot/<arch>/``. Batches, logs and
+  #: snapshots for this operator live here and nowhere else.
+  cache: tg/replay
+  #: Wide tables that record a run. Operator-agnostic so a second package
+  #: does not need a fag_ prefix to be found.
+  wide_glob: "*key_cases*.csv"
+
+#: How to read what the run printed. Kept separate because it changes when the
+#: operator's logging changes, which is far more often than any of the above.
+log_protocol: log_protocol.yaml

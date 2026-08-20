@@ -20,6 +20,7 @@ _REQUIRED_PROFILES = (
     "uo-investigate-investigate",
     "uo-query-kb-lookup",
     "tg-init-bind-init",
+    "tg-init-bind-review",
     "tg-plan-plan-fuse",
     "tg-solve-construct-cases",
     "tg-solve-analyze-round",
@@ -37,7 +38,7 @@ _LLM_ROLES = {
     "readonly_reviewer",
     "controller",
 }
-_LLM_MODES = {"subagent", "primary_interactive"}
+_LLM_MODES = {"subagent", "primary_interactive", "primary_review"}
 
 
 def test_high_value_profiles_registered() -> None:
@@ -54,6 +55,24 @@ def test_profile_reference_files_exist() -> None:
     for pid, prof in PROFILES.items():
         for rel in prof.references:
             assert (REPO / rel).is_file(), f"{pid}: missing {rel}"
+
+
+def test_tg_profiles_materialize_phase_gotchas_not_index() -> None:
+    index = "skills/testcase-generation/references/gotchas.md"
+    bind_init = get_profile("tg-init-bind-init")
+    plan_fuse = get_profile("tg-plan-plan-fuse")
+    construct = get_profile("tg-solve-construct-cases")
+    analyze = get_profile("tg-solve-analyze-round")
+    assert bind_init is not None and plan_fuse is not None
+    assert construct is not None and analyze is not None
+    assert "skills/testcase-generation/references/construction-gotchas.md" in bind_init.references
+    assert "skills/testcase-generation/references/planning-gotchas.md" in plan_fuse.references
+    assert "skills/testcase-generation/references/planning-context.md" in plan_fuse.references
+    assert "skills/testcase-generation/references/closure-gotchas.md" in construct.references
+    assert "skills/testcase-generation/references/oracle.md" in construct.references
+    assert "skills/testcase-generation/references/oracle.md" in analyze.references
+    for prof in (bind_init, plan_fuse, construct, analyze):
+        assert index not in prof.references, prof.id
 
 
 def test_llm_actions_declare_registered_profiles() -> None:

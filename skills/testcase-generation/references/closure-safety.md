@@ -54,5 +54,3 @@ source / declaration / oracle / semantic graph 任一关键 fingerprint 改变�
 ```text
 旧 closure certificate → STALE
 ```
-
-见 `references/artifact-freshness.md`。

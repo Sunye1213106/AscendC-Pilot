@@ -17,4 +17,4 @@
 - **clean**（normal / zero / near_zero / all_ones）：必过门
 - **stress**（big / neg_big / denormal）：信息性，不得当唯一硬门
 
-Oracle 是 harness 精度比对（`only_grad`）。Host 命中 TilingKey 关不了 `P-*`。
+Oracle 是 harness 精度 mode，不是 Host TilingKey HIT。Host 命中 TilingKey 关不了 `P-*`。

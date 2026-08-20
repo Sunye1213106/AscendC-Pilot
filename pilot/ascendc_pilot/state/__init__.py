@@ -302,7 +302,7 @@ def start_workflow(
     focus: str = "",
 ) -> dict[str, Any]:
     """Start at entry_state. Arbitrary phase only when force_phase=True (tests)."""
-    from ascendc_pilot.human_interaction import clear_pending
+    from ascendc_pilot.human_interaction import clear_pending, normalize_start_test_script_root
     from ascendc_pilot.obligations import collect_obligations, open_obligations
     from ascendc_pilot.runs import append_event
     from ascendc_pilot.paths import (
@@ -387,7 +387,9 @@ def start_workflow(
     except Exception:  # noqa: BLE001
         hashes = {}
     all_obl = collect_obligations(project_root, workflow_id)
-    consumer = (test_script_root or "").strip()
+    consumer, harness_confirmed = normalize_start_test_script_root(
+        project_root, test_script_root
+    )
     session_id = current_session_id()
     pin = pin_digest_from_product(
         project_root, architecture=arch, op_name=(op_name or "").strip()
@@ -405,6 +407,7 @@ def start_workflow(
         "op_name": (op_name or "").strip(),
         "architecture": arch,
         "test_script_root": consumer,
+        "test_script_confirmed": harness_confirmed,
         "level": (level or "").strip() or "L0",
         "focus": (focus or "").strip(),
         "retry_budget": int(meta.get("retry_budget") or 3),

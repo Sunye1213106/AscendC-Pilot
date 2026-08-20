@@ -1,28 +1,28 @@
-# Host runtime contract (model-facing)
+# Host 运行时契约（人 / CI SSOT；不 compose 进模型）
 
-`host_driver=False` means the Session Driver does **not** auto start/drain.
-It does **not** mean the Action has no METHOD, Prompt, or session bundle.
+`host_driver=False` 表示 Session Driver **不**自动 start/drain。
+这**不等于**该 Action 没有 METHOD、Prompt 或 session bundle。
 
-## Transport
+## 传输
 
-- Workflows: Host tool `pilot_run` only (live progress on the tool row). Natural language: 思考里按产物缺口选 slash（计划不是用例；词表写明的前置输入也是缺口）；对用户只陈述目标、现状与下一步，再 `todowrite` 后 `pilot_run(workflow=<current slash>)`. Only the 「获取 PR 代码」 todo uses `workflow=auto` (Engine clone). `auto` 回执已唯一确定 `(算子, architecture)` 时直接用于后续格。`host_step.done` returns to Primary; do not Host-`continue_goal` the next user workflow. Dual-axis review ACKs from native Task text. Explicit slash: `workflow=<existing id>`. Driver must not overwrite Primary Todos with engine `todo.todo_sync`. Do not use OpenCode native `skill` for Pilot orchestration. 非 primary 不得再派发 Task。`/ce-review` 双轴与复杂 `uo-query` 留在主线；意图只是一次审查或一次查询时不要再包 coordinator。派发前写清算子路径、architecture、有无测试脚本。occupancy 不冲突的步骤同一轮派发。不要把 `/uo-query` 卡片全文写入后续 `pilot_run` intent。
-- If `pilot_run` is missing from the tool list: tell the user to fully quit OpenCode and reinstall the plugin.
-- Exception: **never** `pilot_run` for `uo-query`.
-- When Driver returns `dispatch_subagent`, Task body is **exactly** `task_prompt_stub`. If a Host-driver `host_step.tasks` ≥2 (review dual-axis, not uo-query keyword fanout), launch all in the same turn. Plugin ACKs each child's **native Task text** and returns `done` to Primary. Primary synthesizes the two Task bodies for the user as: 审查完成 / PR 做什么 / 改了哪些文件 / 问题 1… / 要测的变量. Do not emit `kb-answer-v1` as the review merge. Primary 勾 Todo 后再 `pilot_run` 下一格.
-- Same-Action rework resumes the original Task session. Formal IR is Host **finalize** only.
+- 工作流只用 Host 工具 `pilot_run`（工具行上有实时进度）。自然语言输入：思考里按产物缺口选 slash；对用户只陈述目标、现状与下一步，再 `todowrite` 后 `pilot_run(workflow=<当前格>)`。只有「获取 PR 代码」用 `workflow=auto`。`auto` 回执已唯一确定 `(算子, architecture)` 时直接用于后续格。`host_step.done` 回到 Primary；不要 Host-`continue_goal` 跨用户 slash。显式 slash：`workflow=<已有 id>`。Driver 不得用引擎 `todo.todo_sync` 覆盖 Primary Todo。不要用 OpenCode 原生 `skill` 做 Pilot 编排。需主控派 Task 的 workflow **串行**；同一格 `host_step.tasks` ≥2 由主控同一轮 fanout。不要把 `/uo-query` 卡片全文写入后续 `pilot_run` intent。
+- 工具列表里没有 `pilot_run`：请用户完全退出 OpenCode 并重装插件。
+- 例外：**禁止**对 `uo-query` 调用 `pilot_run`。
+- Driver 返回 `dispatch_subagent` 时，Task 正文必须是 `task_prompt_stub` 原文。`host_step.tasks` ≥2 时同一轮派发更好；ACK 只认到齐数量。`host_step.kind=primary_review` 时不写文件、不开 question。下一发 intent 仅 `PASS` 或 `REWORK bind` / `REWORK harness,bind`。勾 Todo 后再 `pilot_run` 下一格。
+- 同一 Action 返工恢复原 Task 会话。正式 IR 只由 Host **finalize** 写入。
 
 ## Shell / OpenCode
 
-- Short CLI: plugin tool `pilot_cli`. Do not pipe through PowerShell `Select-Object -Last` / `Out-String` or bash `tail`.
-- Do not call `--help` / `-h` / `help` to discover protocol. Diagnose with `pilot_cli` `status` / `inspect-failure` / `scan-architectures`. Workflows: `pilot_run`. Query: `pilot_cli` `uo-query --project <abs>`. Environment repair: `pilot_cli` `retry-after-environment-fix`.
-- Do not write `.ascendc-pilot/**` via bash / `>` / `Set-Content` / `tee`.
-- Children must not use OpenCode `skill` (read session `method.md`). Children must not spawn Task (authorize `TASK_NON_PRIMARY`). CodeMap lookup from a producer is `pilot_cli` `uo-query` only. Primary must not use OpenCode native `skill` to load Pilot orchestration. Domain methods come from session `method.md` / cognitive skills.
-- Read / Glob / list of operator source is allow for Primary. Semantic lookup still uses `uo-query`. Grep of operator source remains denied for `uo-query` children when a CodeMap exists. Primary Write/edit is ask. Children: empty `write_scopes` → `edit`/`write` ask (lease still fences).
-- Primary bash: readonly inspect + git auto-allow. Everything else (clone / `Remove-Item` / unknown commands) is OpenCode `ask`. Authorize 确认后放行。仍禁止写入或删除 `.ascendc-pilot`、领域 CLI、工作流 drain。隔离 PR 半成品由 Engine 自己清理。不要为理解语义通读全量 git diff。
-- Containment (`human_required` / `blocked` / `failed`) applies only to the **current OpenCode session** bound live run. Leftover failed `auto` from another session, `no_active_workflow`, or a mismatched `session_id` is MODE_NORMAL. Pending AskQuestion: Primary may `Read` / `Glob` / `Grep`, `ls` / `dir` / `Get-ChildItem`, diagnostic python, and ask-gated bash. Still deny Write, engine scripts, and `pilot_run` **while the confirm UI is waiting**. `uo-query` Task is not denied by leftover containment. If the user interrupts and replies in chat, pending is superseded (`interpret-user-turn`); follow that message and do not re-ask. Interrupt is not wipe/reinit. Prefer `pilot_cli` `inspect-failure` / `status`. Children stay contained.
+- 短 CLI：插件工具 `pilot_cli`。不要经 PowerShell `Select-Object -Last` / `Out-String` 或 bash `tail` 管道截断。
+- 不要用 `--help` / `-h` / `help` 发现协议。诊断用 `pilot_cli` `status` / `inspect-failure` / `scan-architectures`。工作流：`pilot_run`。查询：`pilot_cli` `uo-query --project <abs>`。环境修复：`pilot_cli` `retry-after-environment-fix`。
+- 不要用 bash / `>` / `Set-Content` / `tee` 写 `.ascendc-pilot/**`。
+- 子代禁止用 OpenCode `skill`（读 session `method.md`）。producer 查图只用 `pilot_cli` `uo-query`。主控不要用原生 `skill` 加载 Pilot 编排。领域方法来自 session `method.md` / 认知 skill。
+- Primary 与子代都允许 Read / Glob / Grep 算子源码。语义查询仍优先 `uo-query`。Primary 的 Write/edit 为 ask。子代 `write_scopes` 为空时 `edit`/`write` 为 ask。
+- 只读 inspect bash 与只读 git 允许。其它命令（clone / `Remove-Item` / 领域 CLI / 未知 bash）由 OpenCode `ask`，不是静默 deny。隔离 PR 半成品由 Engine 自己清理。不要为理解语义通读全量 git diff。
+- 围栏（`human_required` / `blocked` / `failed`）只作用于**当前 OpenCode 会话**绑定的活 run。确认框等待期间禁止 Write、引擎脚本、`pilot_run`。用户在聊天里打断则 pending 被取代（`interpret-user-turn`）。打断不是删除重开。优先 `pilot_cli` `inspect-failure` / `status`。
 
-## uo-query lifecycle
+## uo-query 生命周期
 
 - **简单查询**：主控直接调用 `pilot_cli` `uo-query`；stdout 即答案。禁止单独一轮只宣布路数。无 prepare / Task / finalize。
-- **复杂查询**：主控按独立查询目标同一轮并行 `Task(agent=uo-query)`，主控综合。Task 正文的建议首次调用只能是四种参数形态之一，禁止 `--mode`。无 `kb_lookup` prepare / finalize。子代不得 Write `answer.yaml`，不得自己 finalize。
-- **Delegated Task**（TG/CE）：Task 正文是 `task_prompt_stub`. Follow its `prompt` / `method` / `bundle` pointers; do not search additional session files.
+- **复杂查询**：主控按独立查询目标同一轮并行 `Task(agent=uo-query)`，主控综合。Task 正文禁止 `--mode`。子代不得 Write `answer.yaml`，不得自己 finalize。
+- **Delegated Task**（TG/CE）：Task 正文是 `task_prompt_stub`。按其中 `prompt` / `method` / `bundle` 指针读文件；不要另搜 session 文件。

@@ -83,28 +83,78 @@ _DEFAULT_INPUT_MARKERS = frozenset(
 )
 
 
+def _choice_from_raw(raw: str, project_root: Path | None = None) -> tuple[str, str]:
+    from ascendc_pilot.human_interaction import (
+        adopt_test_script_root,
+        extract_existing_directory,
+        extract_harness_git_url,
+    )
+
+    text = str(raw or "").strip()
+    if text.lower() in _DEFAULT_INPUT_MARKERS:
+        return "default_input", ""
+    if text.lower() in {"have_repo", "custom", "stop"}:
+        return "unset", ""
+    extracted = extract_existing_directory(text) if text else ""
+    if extracted:
+        return "script_repo", extracted
+    git_url = extract_harness_git_url(text) if text else ""
+    if git_url and project_root is not None:
+        adopted = adopt_test_script_root(project_root, git_url)
+        stored = str(adopted.get("test_script_root") or "").strip()
+        if adopted.get("ok") and stored:
+            return "script_repo", stored
+        return "unset", ""
+    if text:
+        try:
+            path = Path(text).expanduser()
+            if path.is_dir():
+                return "script_repo", str(path.resolve())
+        except OSError:
+            pass
+    return "unset", ""
+
+
 def _test_script_root(project_root: Path, ctx: dict[str, Any]) -> str:
     from ascendc_pilot.actions.engines import _resolve_tg_ctx
+    from ascendc_pilot.human_interaction import resolved_test_script_root
 
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
     raw = str(tg_ctx.get("test_script_root") or ctx.get("test_script_root") or "").strip()
-    if raw.lower() in _DEFAULT_INPUT_MARKERS or raw.lower() == "have_repo":
+    raw = resolved_test_script_root(project_root, raw)
+    if raw.lower() in _DEFAULT_INPUT_MARKERS or raw.lower() in {"have_repo", "custom", "stop"}:
         return ""
     return raw
 
 
 def _harness_choice(project_root: Path, ctx: dict[str, Any]) -> tuple[str, str]:
     from ascendc_pilot.actions.engines import _resolve_tg_ctx
+    from ascendc_pilot.human_interaction import (
+        adopt_test_script_root,
+        extract_existing_directory,
+        is_in_tree_operator_tests,
+        resolved_test_script_root,
+    )
+    from ascendc_pilot.state import load_state
 
     tg_ctx = _resolve_tg_ctx(project_root, ctx)
-    raw = str(tg_ctx.get("test_script_root") or ctx.get("test_script_root") or "").strip()
-    if raw.lower() in _DEFAULT_INPUT_MARKERS:
-        return "default_input", ""
-    if raw.lower() == "have_repo":
-        return "unset", ""
-    if raw:
-        return "script_repo", raw
-    return "unset", ""
+    picked = str(tg_ctx.get("test_script_root") or ctx.get("test_script_root") or "").strip()
+    st = load_state(project_root) or {}
+    live = str(st.get("workflow_id") or "") == "tg-init"
+    if live:
+        raw = resolved_test_script_root(project_root, picked)
+        if st.get("test_script_confirmed"):
+            return _choice_from_raw(raw, project_root)
+        # Unconfirmed live run: only an operator-external directory is a user fact.
+        # In-tree tests/ and default_input markers from pack overlay are guesses.
+        if raw.lower() in _DEFAULT_INPUT_MARKERS or raw.lower() in {"have_repo", "custom", "stop"}:
+            return "unset", ""
+        extracted = extract_existing_directory(raw) if raw else ""
+        if extracted and not is_in_tree_operator_tests(project_root, extracted):
+            adopt_test_script_root(project_root, extracted)
+            return "script_repo", extracted
+        return _choice_from_raw(raw, project_root)
+    return _choice_from_raw(picked, project_root)
 
 
 def _discover_in_tree_tests(project_root: Path) -> str:
@@ -193,49 +243,61 @@ def _goal_wants_test_generation(project_root: Path) -> bool:
     for item in goal.get("public_plan") or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("id") or "") in {"generate_cases", "validate_cases"}:
+        if str(item.get("id") or "") in {"bind_harness", "generate_cases", "validate_cases"}:
             return True
     return False
 
 
 def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from ascendc_pilot.human_interaction import (
+        adopt_test_script_root,
+        extract_existing_directory,
+        load_pending,
+        pending_field,
+    )
+
+    pending = load_pending(project_root)
+    if str(pending.get("status") or "") == "answered":
+        field = pending_field(pending)
+        answered = str(pending.get("answered_value") or "").strip()
+        if field == "test_script_root" or extract_existing_directory(answered):
+            adopt_test_script_root(project_root, answered)
     kind, root = _harness_choice(project_root, ctx)
     if kind == "unset":
         discovered = _discover_in_tree_tests(project_root)
         options: list[dict[str, str]] = [
             {
-                "label": "使用外部测试脚本仓，填写绝对路径",
-                "value": "have_repo",
-                "description": "在回复里给出测试脚本仓库的绝对路径",
-            },
-            {
-                "label": "不使用测试脚本仓（default_input；不要用仓内 UT）",
+                "label": "没有测试仓，由 Agent 按算子约束生成",
                 "value": "no_repo_uo_query",
-                "description": "不扫描测试仓，按算子 UO 约束手写 init",
+                "description": "不扫描测试仓，按算子 UO 约束手写 init（default_input）",
             },
         ]
         if discovered:
-            options.insert(
-                1,
+            options.append(
                 {
-                    "label": f"确认使用已发现的仓内目录 {discovered}",
+                    "label": f"使用已发现的仓内目录 {discovered}",
                     "value": discovered,
-                    "description": "未确认不得把算子仓 tests/ 写成 script_repo",
+                    "description": "只有点选此项才把算子仓 tests/ 当作 harness；禁止代答",
                 },
             )
-        options.append({"label": "停止", "value": "stop"})
+        options.append(
+            {
+                "label": "有外部测试仓，或其他想法：在下面输入",
+                "value": "custom",
+                "description": "输入本地绝对路径、git 仓 URL，或其它说明（会打断当前确认）",
+            }
+        )
+        question = (
+            "尚未确认 test_script_root。"
+            "请选择：没有测试仓则由 Agent 生成；"
+            "确认仓内 tests/（若已发现）；"
+            "或在最后一项输入外部仓路径 / git URL / 其它想法。"
+            "未点选仓内项不得把 tests/ 当作 harness；不要静默 default_input。"
+        )
         ask = {
             "header": "选择测试仓",
-            "question": (
-                "尚未确认 test_script_root。"
-                "请选择外部脚本仓路径、不使用测试脚本仓（default_input），"
-                "或确认使用已发现的仓内 tests/。未确认不得把仓内 UT 当作 harness。"
-            ),
-            "prompt": (
-                "尚未确认 test_script_root。"
-                "请选择外部脚本仓路径、不使用测试脚本仓（default_input），"
-                "或确认使用已发现的仓内 tests/。未确认不得把仓内 UT 当作 harness。"
-            ),
+            "question": question,
+            "prompt": question,
             "options": options,
             "allow_free_text": True,
             "field": "test_script_root",
@@ -260,6 +322,7 @@ def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     doc = {
         "schema": "tg-repo-scan/v1",
         "ok": not str(inventory.get("error") or ""),
+        "kind": kind,
         "test_script_root": root,
         "inventory": inventory,
         "contract": contract,
@@ -274,7 +337,40 @@ def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
-    staged = _collect_staging_mapping(_action_dir(project_root, ctx, "bind_init"))
+    action_root = _action_dir(project_root, ctx, "bind_init")
+    review_root = _action_dir(project_root, ctx, "bind_review")
+    verdict = _load_yaml(review_root / "verdict.yaml")
+    if verdict.get("ok") is not True:
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "bind_promote.yaml",
+            {"ok": False, "error": "REFEREE_REJECTED", "verdict": verdict},
+        )
+        return {
+            "ok": False,
+            "engine": "bind_promote",
+            "error": "REFEREE_REJECTED",
+            "message_zh": "没有引擎 verdict ok: true，禁止写入 tg/init.yaml。",
+            "receipt": receipt.as_posix(),
+        }
+    harness = _load_yaml(action_root / "parts" / "harness.yaml")
+    bind = _load_yaml(action_root / "parts" / "bind.yaml")
+    if not harness or not bind:
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "bind_promote.yaml",
+            {"ok": False, "error": "BIND_PARTS_MISSING", "harness": bool(harness), "bind": bool(bind)},
+        )
+        return {
+            "ok": False,
+            "engine": "bind_promote",
+            "error": "BIND_PARTS_MISSING",
+            "message_zh": "缺少 parts/harness.yaml 或 parts/bind.yaml，禁止 promote。",
+            "receipt": receipt.as_posix(),
+        }
+    staged = _collect_staging_mapping(action_root)
     from ascendc_pilot.runs import receipts_dir
 
     scan = _load_yaml(receipts_dir(project_root, _run_id(ctx) or None) / "repo_scan.yaml")
@@ -286,8 +382,17 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         ident = {"error": str(exc)[:200]}
 
-    kind = str(staged.get("kind") or contract.get("kind") or ("script_repo" if inventory.get("kind") == "script_repo" else "default_input"))
-    table_kind = str(staged.get("table_kind") or "csv").strip().lower()
+    scan_kind = str(scan.get("kind") or contract.get("kind") or "")
+    kind = str(
+        scan_kind
+        or staged.get("kind")
+        or bind.get("kind")
+        or harness.get("kind")
+        or ("script_repo" if inventory.get("kind") == "script_repo" else "default_input")
+    )
+    if not str(scan.get("test_script_root") or "").strip():
+        kind = "default_input"
+    table_kind = str(bind.get("table_kind") or staged.get("table_kind") or "csv").strip().lower()
     if table_kind not in {"csv", "xls", "xlsx"}:
         tables = inventory.get("tables") or []
         kinds = [str(t.get("kind") or "") for t in tables if isinstance(t, dict)]
@@ -298,25 +403,32 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         else:
             table_kind = "csv"
 
-    columns = staged.get("columns") or contract.get("columns") or []
+    columns = bind.get("columns") or staged.get("columns") or contract.get("columns") or []
     if columns and isinstance(columns[0], str):
         columns = [{"name": c} for c in columns]
+
+    findings: list[Any] = []
+    for src in (harness.get("findings"), bind.get("findings"), staged.get("findings"), contract.get("findings")):
+        if isinstance(src, list):
+            findings.extend(src)
 
     doc = {
         "schema": products.INIT_SCHEMA,
         "kind": kind,
         "table_kind": table_kind,
-        "entry": staged.get("entry") or contract.get("entry") or "",
-        "case_arg": staged.get("case_arg") or contract.get("case_arg") or "",
-        "modes": staged.get("modes") or contract.get("modes") or {"precision": [], "perf": []},
+        "entry": bind.get("entry") or staged.get("entry") or contract.get("entry") or "",
+        "case_arg": bind.get("case_arg") or staged.get("case_arg") or contract.get("case_arg") or "",
+        "modes": harness.get("modes") or staged.get("modes") or contract.get("modes") or {"precision": [], "perf": []},
         "columns": columns,
-        "defaults": staged.get("defaults") or contract.get("defaults") or {},
-        "mapping": staged.get("mapping") if isinstance(staged.get("mapping"), dict) else {},
-        "domains": staged.get("domains") or staged.get("value_domains") or {},
-        "golden": staged.get("golden") or {},
-        "compare": staged.get("compare") or staged.get("script_compare") or {},
-        "generate_inputs": staged.get("generate_inputs") or {},
-        "findings": staged.get("findings") or contract.get("findings") or [],
+        "defaults": bind.get("defaults") or staged.get("defaults") or contract.get("defaults") or {},
+        "mapping": bind.get("mapping") if isinstance(bind.get("mapping"), dict) else (
+            staged.get("mapping") if isinstance(staged.get("mapping"), dict) else {}
+        ),
+        "domains": bind.get("domains") or bind.get("value_domains") or staged.get("domains") or staged.get("value_domains") or {},
+        "golden": harness.get("golden") or staged.get("golden") or {},
+        "compare": harness.get("compare") or harness.get("script_compare") or staged.get("compare") or staged.get("script_compare") or {},
+        "generate_inputs": harness.get("generate_inputs") or staged.get("generate_inputs") or {},
+        "findings": findings,
         "test_script_root": str(scan.get("test_script_root") or _test_script_root(project_root, ctx)),
         "uo_digest": str(ident.get("sha256") or ident.get("digest") or scan.get("uo_digest") or ""),
         "uo_product": str(ident.get("path") or scan.get("uo_product") or ""),
@@ -329,13 +441,33 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "updated_at": _now(),
     }
     for key in ("precision_cmd", "perf_cmd", "corpus"):
-        if staged.get(key) is not None:
+        if harness.get(key) is not None:
+            doc[key] = harness[key]
+        elif staged.get(key) is not None:
             doc[key] = staged[key]
     errors = products.validate_init(doc)
     if errors:
         receipt = _receipt(project_root, ctx, "bind_promote.yaml", {"ok": False, "errors": errors})
         return {"ok": False, "engine": "bind_promote", "errors": errors, "receipt": receipt.as_posix()}
     path = products.dump_init(tg, doc)
+    try:
+        from testcase_agent.init_status import mark_init_confirmed
+
+        mark_init_confirmed(tg, notes="Confirmed after Primary bind_review", project_root=project_root)
+    except Exception as exc:  # noqa: BLE001
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "bind_promote.yaml",
+            {"ok": False, "error": str(exc)[:300], "artifact": path.as_posix()},
+        )
+        return {
+            "ok": False,
+            "engine": "bind_promote",
+            "error": str(exc)[:300],
+            "artifact": path.as_posix(),
+            "receipt": receipt.as_posix(),
+        }
     return {"ok": True, "engine": "bind_promote", "artifact": path.as_posix()}
 
 

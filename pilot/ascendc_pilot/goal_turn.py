@@ -151,6 +151,13 @@ def is_answer_shaped(text: str, *, pending: dict[str, Any] | None = None) -> boo
             for lab in labels:
                 if raw == lab or compact == compact_text(lab):
                     return True
+        from ascendc_pilot.human_interaction import (
+            extract_existing_directory,
+            pending_allows_free_path,
+        )
+
+        if pending_allows_free_path(pending) and extract_existing_directory(raw):
+            return True
     if len(raw) <= _ANSWER_SHORT_MAX and not _has_cue(raw, _QUERY_CUES):
         return True
     return False

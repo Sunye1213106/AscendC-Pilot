@@ -66,19 +66,20 @@
         │   AskQuestion：同工作流 → 继续上次 | 删除重开
         │               同族换工作流（如 uo-init ↔ uo-update）→ 开始 {请求} | 删除重开
         │
-        └── 参数齐（含不同族并行：uo 写与 tg-* / ce-* 可同时跑）
+        └── 参数齐（引擎锁按产物族；主控派 Task 的格仍串行）
                   │
                   ▼
             Host `pilot_run`（Driver 内部驱动 start→auto）
                   │
                   ├── host_step = dispatch_subagent  → Task(stub 原样) → 插件用 Task 原文 dispatch-result
                   │     （`host_step.tasks` ≥2：同一轮并行多个 Task；齐了 Host 返回 done，Primary 勾 Todo 再 `pilot_run` 下一格）
+                  ├── host_step = primary_review     → 主控通读草稿；下一发 PASS / REWORK，不要写文件、不要 AskQuestion
                   ├── host_step = ask_human          → 可点选框 → answer
                   ├── host_step = done               → 结束并释放本产物族锁
                   └── host_step = failed             → inspect-failure；不要翻 Pilot 源码
 ```
 
-控制面围着 **同一份 `.uo`（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥；不同族并行。
+控制面围着 **同一份 `.uo`（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥。引擎锁允许不同族同时占锁，但主控编排上 **全部 init 先于任何消费**（`/uo-init` `/tg-init` 在 `/uo-query` `/ce-review` `/tg-plan` 之前），且需主控派 Task 的 workflow（`/tg-init` / `/uo-query` / `/ce-review` 等）**一律串行**；同一格内部 fanout 仍由主控同一轮派。
 
 `complete` / `host_step.done` 之后 **释放本族锁**：`state/slots/{family}/workflow.yaml`（或 shared 的 `runs/{run_id}/live_state.yaml`）清掉，run 快照落到 `runs/{run_id}/final_state.yaml`。`uo-init` / `uo-update` 还会发布新 `canonical_graph_digest`，把钉在旧 digest 上的 session 标 STALE。正式产物（`.uo` / tg / ce）保留。`control/active_run.yaml` 只是最近一次 exclusive 指针，不是互斥权威。
 
@@ -180,16 +181,19 @@ investigate [S uo-gap-investigator]  →  report
 kb_ready  [D]  校验 .uo          ──gate: uo_ready
     │
     ▼
-scan      [D]  扫描测试仓（含 xls）
+scan      [D]  确认测试仓（意图无仓外路径则 Ask；仓内 tests/ 未确认不得当 harness；改路径则 HARNESS_CHANGED 回到本步）
     │
     ▼
-bind      [S tg-analyst] → promote [D]  写出 init.yaml
+bind      [S fanout=2 tg-analyst]  harness.yaml ∥ bind.yaml
     │
     ▼
-validate  [D]  mapping 空则失败
+review    [Primary 裁判]  通读两路；下一发 PASS / REWORK（不问用户、不写 yaml）
     │
     ▼
-confirm   [H]  进入规划            ──gate: init_confirmed
+promote   [D]  合并落盘 init.yaml
+    │
+    ▼
+validate  [D]  mapping 空则失败   ──gate: init_confirmed
 ```
 
 ### `/tg-plan` — 融合义务

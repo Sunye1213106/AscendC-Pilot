@@ -108,6 +108,7 @@ def test_uo_query_review_ready_contracts_not_bare_dirs() -> None:
     # kb-answer-v1 is a dialogue contract (Task/stdout), like code-review-v1.
     assert OUTPUT_CONTRACT_PATHS["kb-answer-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["code-review-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-bind-review-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["session-handoff-v1"] == ["session_handoff.md"]
     assert _joined("uo-ready-v1") == "runs/{run_id}/receipts/uo_ready.yaml"
     assert "z" + "3-solve-v1" not in OUTPUT_CONTRACT_PATHS

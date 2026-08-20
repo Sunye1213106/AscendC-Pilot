@@ -31,6 +31,39 @@ def is_multi_token(pattern: str) -> bool:
     return len(identifier_tokens(text)) > 1
 
 
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+_FOUR_FORMS_HINT = (
+    "Use one of four forms: (1) no-arg index, (2) one identifier, "
+    "(3) Dim=V[,Other=V], (4) --file PATH --line N copied from a previous card."
+)
+
+
+def looks_like_nl_or_multi_token(pattern: str) -> bool:
+    """Whole-sentence NL or multi-token queries that are not Dim=V cover."""
+    text = str(pattern or "").strip()
+    if not text or "=" in text:
+        return False
+    if is_multi_token(text):
+        return True
+    if _CJK_RE.search(text):
+        return True
+    return bool(re.search(r"\s", text))
+
+
+def nl_or_multi_token_payload(pattern: str) -> dict[str, Any]:
+    tokens = identifier_tokens(pattern)
+    return {
+        "ok": False,
+        "empty_reason": "nl_or_multi_token",
+        "pattern": str(pattern or "").strip(),
+        "cards": [],
+        "count": 0,
+        "hint": "Whole-sentence / multi-token queries are rejected. " + _FOUR_FORMS_HINT,
+        "suggested_retries": tokens[:4],
+        "pattern_tokens": tokens,
+    }
+
+
 def search_needles(pattern: str) -> list[str]:
     """Needles to OR for locate/search. Structured Dim=V stays a single string."""
     text = str(pattern or "").strip()
@@ -92,7 +125,7 @@ def attach_query_hints(
         payload["empty_reason"] = "no_entity_at_line"
         payload["hint"] = (
             "No CodeMap span covers this line (format-only hunks are expected empty). "
-            "This is not proof the file is unindexed. Query Added identifiers (form-1) instead."
+            "This is not proof the file is unindexed. Query Added identifiers instead."
         )
     elif count == 0 and multi:
         payload["empty_reason"] = "no_substring_match"

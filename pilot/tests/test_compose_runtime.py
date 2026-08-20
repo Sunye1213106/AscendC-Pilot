@@ -100,6 +100,8 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert ce["actors"] == ["ce-reviewer"]
     assert ce["task_prompt_id"] == "ce/standalone-review"
     assert ce["action_method_id"] == "code-review/standalone-review"
+    assert ce.get("output_mode") == "return_value"
+    assert list(ce.get("allowed_write_paths") or []) == []
     assert "ce-verify" not in WORKFLOWS
     assert "ce-intent" not in WORKFLOWS
     assert "ce-impact" not in WORKFLOWS
@@ -183,7 +185,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "Select-Object *" in pilot_agent
         assert "Get-ChildItem: allow" in pilot_agent
         assert "glob: allow" in pilot_agent
-        assert "grep: ask" in uo_query_agent or "grep: false" in uo_query_agent
+        assert "grep: ask" in uo_query_agent or "grep: allow" in uo_query_agent or "grep: false" in uo_query_agent
         assert "external_directory: allow" in pilot_agent
         assert "external_directory: allow" in uo_query_agent
         assert "read: allow" in pilot_agent
@@ -227,15 +229,13 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
             assert perm.get("pilot_cli") == "allow"
             assert "acp" not in perm
         assert "skill: false" in uo_query_agent
-        assert "grep: false" in uo_query_agent
         assert "There is no session `prompt.md`" not in uo_query_agent
-        assert "If the Task stub names" in uo_query_agent
         assert "execution_variant = delegated_query" in uo_query_agent
         assert "edit: ask" in uo_query_agent
         assert "*: ask" in uo_query_agent or "'*': ask" in uo_query_agent
         assert "webfetch: ask" in uo_query_agent
         assert "task: ask" in uo_query_agent
-        assert "glob: ask" in uo_query_agent or "glob: false" in uo_query_agent
+        assert "glob: ask" in uo_query_agent or "glob: allow" in uo_query_agent or "glob: false" in uo_query_agent
         tg_agent = (generated / "agents" / "tg-analyst.md").read_text(encoding="utf-8")
         assert "edit:" in tg_agent
         assert "host-runtime-contract" not in tg_agent.lower()
@@ -261,14 +261,13 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert "glob: ask" in analyst or "glob: allow" in analyst or "glob: false" in analyst
         primary = (generated / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
         assert "Host Session Driver" in primary or "host_driver=False" in primary
+        assert "Host 运行时契约" not in primary
+        assert "## Composed: policy-invariants" not in init_skill
+        assert "Composition index" not in init_skill
+        assert "semantic-grounding" in primary or "PROVEN_UNREACHABLE" in primary
         assert "edit:" in primary
         assert "uo-query --project" in uo_query_agent
-        assert "Never bash" in uo_query_agent or "not bash" in uo_query_agent.lower()
-        assert "bash: false" in uo_query_agent
         assert "pilot_run: false" in uo_query_agent
-        assert "Do not switch to MCP" in uo_query_agent
-        assert "Never `--mode`" in uo_query_agent
-        assert "Do not call `--help`" in uo_query_agent
         assert "--mode <mode>" not in uo_query_agent
         assert "--mode locate" not in uo_query_agent
         assert "If the stub still contains" not in uo_query_agent
@@ -311,7 +310,8 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
             assert "不要 `pilot_run`" in text
             assert "直接调用" in text
             assert "委派" in text
-            assert "禁止在 Task 正文写 `--mode`" in text
+            assert "禁止在 Task 正文写 `--mode`" not in text
+            assert "code-access" in text
             assert "丢掉" not in text
             assert "then call `acp run-action auto` again" not in text
             assert "call Host tool `pilot_run` again" in text or "pilot_run" in text
@@ -346,6 +346,8 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
     assert "深问" not in pack
     assert "同名不可互换" in pack
     assert "Open" in pack
+    assert "PROVEN_UNREACHABLE" in pack
+    assert "Host 运行时契约" not in pack
     assert COGNITIVE_SKILL_IDS == (
         "operator-analysis",
         "testcase-generation",
@@ -407,9 +409,12 @@ def test_policy_ids_follow_execution_mode() -> None:
     assert "pilot-control" not in mine["policy_ids"]
     assert "language" not in mine["policy_ids"]
 
-    confirm = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "human_confirm")
+    confirm = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_approve")
     assert confirm["execution_mode"] == "primary_interactive"
     assert confirm["policy_ids"] == ["pilot-control", "language"]
+    review = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_review")
+    assert review["execution_mode"] == "primary_review"
+    assert review["policy_ids"] == ["pilot-control", "language"]
 
 
 def test_cognitive_skill_md_does_not_cross_link_other_skill_refs() -> None:

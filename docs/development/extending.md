@@ -46,12 +46,11 @@ python scripts/check_ownership_contracts.py
 
 Skill 是自包含的 runtime method bundle。修改 `skills/<domain>/SKILL.md`，将必要的证据、完整性和易错点规则放在 `references/`，将可执行示例放在 `examples/`。行为改变时更新 `evals/skills/<domain>/`。
 
-不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。共享纪律改 `knowledge/shared-references/`，再 `python scripts/compose_runtime.py --sync`。运行：
+不要往已删除的 `skills/_shared/` 加文件（**已删除，勿再添加**），也不要把项目架构说明复制进 Skill。全局纪律改对应 `pilot/policies/<id>/POLICY.md`（模型面改 `invariants/`）。运行：
 
 ```bash
 python scripts/check_skill_architecture.py
 python scripts/check_instruction_ownership.py
-python scripts/sync_shared_references.py --check
 ```
 
 ### 指令所有权
@@ -67,11 +66,11 @@ python scripts/sync_shared_references.py --check
 | Agent YAML + invariant | 自然语言入口：有什么→要什么→缺什么产物 → `todowrite` 有序 Todo → 按格 `pilot_run`。只有「获取 PR 代码」才 `workflow=auto`（Engine clone）。Driver 不得用引擎 TaskPlan 覆盖侧栏 |
 | CE `change_capture` | PR URL vs 本地 diff 的 source 分流；不属于 Primary 探目录 |
 
-认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。**不存在**第六个 `workflow-orchestration` skill，也不要把编排权威写成那张 skill 图。编排权威是 Primary 的 have→want Todo + 按格 `pilot_run`；Runtime 只执行当前格，不二次解释自然语言、不按 PR 补 slash 链。NL 禁止 Router 关键词分类（非 slash 返回 `primary_agent_route_required`）。没有独立 change-impact 角色（问变更影响 = 带着 diff 做 `/uo-query`）。
+认知 skill 仍是闭合的五个（见 `skills/SCHEMA.md`）。**不存在**第六个 `workflow-orchestration` skill，也不要把编排权威写成那张 skill 图。编排权威是 Primary 的 have→want Todo + 按格 `pilot_run`；Runtime 只执行当前格，不二次解释自然语言、不按 PR 补 slash 链。自然语言输入禁止 Router 关键词分类（非 slash 返回 `primary_agent_route_required`）。没有独立 change-impact 角色（问变更影响 = 带着 diff 做 `/uo-query`）。
 
 CE source：有 allowlisted PR URL 时，Engine 在 Host 打开目录下 **新建子目录** clone exact-head，并列出 changed-files / operator_roots 作事实。若路径令牌唯一确定算子目录 × architecture，Engine 将该对作为事实交回 Primary 使用，并写入 `pr_arch_pin`；禁止的是静默自动开 `/uo-init`，不是禁止使用唯一路径令牌。多算子或多 architecture 仍由 Primary AskQuestion。空打开目录不建控制面。无 URL 时只吃当前算子仓本地 diff，不 clone。禁止把已打开的本地 fork 当成 PR head。
 
-算子改码主流程：grilling → `/ce-plan`（写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴 review → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md`。
+算子改码主流程：grilling → `/ce-plan`（写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴 review → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md` 与 `docs/architecture/agent-content-rules.md`。
 
 ## 新增 Engine、Capability 或 Host Adapter
 

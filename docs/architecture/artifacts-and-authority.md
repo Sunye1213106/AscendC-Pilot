@@ -33,7 +33,6 @@ Source → UO CodeMap → TG / CE
     ├── runs/
     │   └── {run_id}/live_state.yaml       # shared / query ephemeral
     ├── context/                   # rebuildable context packs
-    ├── memory/                    # reusable runtime memory
     ├── local/                     # operator-local extensions
     └── cache/                     # rebuildable cache
 ```
@@ -64,9 +63,7 @@ Producer → Staging → Check / Review → Finalize → Canonical
 
 为效率保存，可从源码与 CodeMap 重建，不作为事实来源。
 
-### Memory / Local（非 canonical）
-
-`memory/` 保存可复用但非 canonical 的辅助信息（candidate / stable memory），使用前仍受 freshness 与 contract 约束，不得单独当作领域事实。
+### Local（非 canonical）
 
 `local/` 保存算子仓提供的本地扩展实现或配置（例如 replay adapter、testcase builder、`tilingdata_decoder`、construction metadata）。其代码/配置本身可作为**执行输入**，但不得直接声明 UO/TG canonical 领域事实；覆盖结论仍须经 Host Replay 或正式 gate。
 

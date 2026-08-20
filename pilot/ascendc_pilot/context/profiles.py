@@ -41,7 +41,6 @@ class ContextProfile:
     excluded: tuple[str, ...] = (
         "full_kb",
         "full_source_tree",
-        "full_memory",
         "unrelated_ir",
         "reference_bodies",
     )
@@ -66,8 +65,6 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/operator-analysis/references/codemap-completeness.md",
             "skills/operator-analysis/references/semantic-resolution.md",
             "skills/operator-analysis/references/codemap-build-gotchas.md",
-            "skills/operator-analysis/references/evidence-quality.md",
-            "skills/operator-analysis/references/cpp-semantics.md",
         ),
         query_slices=(
             QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
@@ -82,7 +79,6 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/operator-analysis/references/codemap-query-gotchas.md",
             "skills/operator-analysis/references/uo-scenario-hooks.md",
             "skills/operator-analysis/references/codemap-authority.md",
-            "skills/operator-analysis/references/evidence-quality.md",
         ),
         query_slices=(
             QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
@@ -95,19 +91,21 @@ PROFILES: dict[str, ContextProfile] = {
         description="Bind test-script columns to UO identifiers; write init.yaml draft.",
         references=(
             "skills/testcase-generation/references/test-script-repo.md",
-            "skills/testcase-generation/references/gotchas.md",
+            "skills/testcase-generation/references/construction-gotchas.md",
         ),
         query_slices=(
             QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
         ),
         token_budget=3500,
     ),
-    "tg-init-human-confirm": ContextProfile(
-        id="tg-init-human-confirm",
-        description="Host-owned confirm of init.yaml to enter planning.",
-        references=(),
+    "tg-init-bind-review": ContextProfile(
+        id="tg-init-bind-review",
+        description="Primary reads both bind drafts; next pilot_run is PASS or REWORK.",
+        references=(
+            "skills/testcase-generation/references/test-script-repo.md",
+        ),
         query_slices=(),
-        token_budget=800,
+        token_budget=2000,
     ),
     "tg-plan-plan-fuse": ContextProfile(
         id="tg-plan-plan-fuse",
@@ -115,7 +113,8 @@ PROFILES: dict[str, ContextProfile] = {
         references=(
             "skills/testcase-generation/references/planning.md",
             "skills/testcase-generation/references/plan-heuristics.md",
-            "skills/testcase-generation/references/gotchas.md",
+            "skills/testcase-generation/references/planning-gotchas.md",
+            "skills/testcase-generation/references/planning-context.md",
         ),
         query_slices=(
             QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
@@ -135,7 +134,8 @@ PROFILES: dict[str, ContextProfile] = {
         description="Construct case rows for approved obligations.",
         references=(
             "skills/testcase-generation/references/construction-contract.md",
-            "skills/testcase-generation/references/gotchas.md",
+            "skills/testcase-generation/references/closure-gotchas.md",
+            "skills/testcase-generation/references/oracle.md",
         ),
         query_slices=(
             QuerySlice(method="constraints_for", seed_from="open_keys", limit=8),
@@ -146,7 +146,8 @@ PROFILES: dict[str, ContextProfile] = {
         id="tg-solve-analyze-round",
         description="Write per-case worklog: scene, construction, narrowing, lemmas.",
         references=(
-            "skills/testcase-generation/references/gotchas.md",
+            "skills/testcase-generation/references/closure-gotchas.md",
+            "skills/testcase-generation/references/oracle.md",
         ),
         query_slices=(
             QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
@@ -160,7 +161,6 @@ PROFILES: dict[str, ContextProfile] = {
             "skills/code-review/references/ascendc-checks.md",
             "skills/code-review/references/cross-layer-contracts.md",
             "skills/code-review/references/gotchas.md",
-            "skills/code-review/references/finding-format.md",
         ),
         query_slices=(
             QuerySlice(method="agent_query", seed_from="change_capture_identifiers", limit=6),

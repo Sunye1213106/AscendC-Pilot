@@ -193,7 +193,7 @@ def test_declare_workflow_passed_bash_forbidden(tmp_path: Path) -> None:
     assert verdict.get("decision") == "deny"
 
 
-def test_uo_query_denies_repo_grep_escape(tmp_path: Path) -> None:
+def test_uo_query_allows_locate_grep(tmp_path: Path) -> None:
     op = tmp_path / "DemoOp"
     op.mkdir()
     ensure_agent_layout(op, arch="arch35")
@@ -204,11 +204,10 @@ def test_uo_query_denies_repo_grep_escape(tmp_path: Path) -> None:
         'rg "DTemplateNum" op_kernel',
     ):
         verdict = authorize(op, tool="bash", command=cmd, agent="uo-query", action="kb_lookup")
-        assert verdict.get("decision") == "deny", (cmd, verdict)
-        assert verdict.get("reason_code") == "REPO_GREP_ESCAPE", (cmd, verdict)
+        assert verdict.get("decision") == "allow", (cmd, verdict)
+        assert verdict.get("reason_code") == "BASH_READONLY_INSPECT", (cmd, verdict)
     grep_tool = authorize(op, tool="grep", command="", agent="uo-query", action="kb_lookup")
-    assert grep_tool.get("decision") == "deny"
-    assert grep_tool.get("reason_code") == "REPO_GREP_ESCAPE"
+    assert grep_tool.get("decision") == "allow"
     listing = authorize(
         op, tool="bash", command="pwd", agent="uo-query", action="kb_lookup"
     )
@@ -257,3 +256,26 @@ def test_acp_stdout_pipe_denied_findstr_pipe_allowed_for_primary(tmp_path: Path)
     )
     assert chained.get("decision") == "allow", chained
     assert chained.get("reason_code") in {"HARNESS_CLI", "HARNESS_START"}
+
+
+def test_child_locate_tools_and_task_nested(tmp_path: Path) -> None:
+    op = tmp_path / "DemoOp"
+    op.mkdir()
+    ensure_agent_layout(op, arch="arch35")
+    start_workflow(op, "tg-init", phase="bind", force_phase=True, architecture="arch35")
+    for agent in ("uo-query", "tg-analyst", "ce-reviewer"):
+        grep_tool = authorize(op, tool="grep", command="foo", agent=agent, action="kb_lookup")
+        assert grep_tool.get("decision") == "allow", (agent, grep_tool)
+        glob_tool = authorize(op, tool="glob", path=str(op), command="*.cpp", agent=agent)
+        assert glob_tool.get("decision") == "allow", (agent, glob_tool)
+        task = authorize(op, tool="task", path="uo-query", command="uo-query", agent=agent)
+        assert task.get("decision") == "deny", (agent, task)
+        assert task.get("reason_code") == "TASK_NON_PRIMARY"
+    rm = authorize(
+        op,
+        tool="bash",
+        command="rm -rf /tmp/x",
+        agent="tg-analyst",
+        action="bind_init",
+    )
+    assert rm.get("decision") == "ask", rm

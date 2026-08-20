@@ -35,7 +35,7 @@ def test_around_empty_line_is_not_unindexed(tmp_path: Path) -> None:
     assert out.get("ok") is False
     hint = str(out.get("hint") or out.get("error") or "")
     assert "not proof the file is unindexed" in hint.lower() or "added identifiers" in hint.lower()
-    assert "format-only" in hint.lower() or "form-1" in hint.lower()
+    assert "format-only" in hint.lower()
 
 
 def test_method_card_has_callers_callees_and_field_readers(tmp_path: Path) -> None:

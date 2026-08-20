@@ -5,7 +5,23 @@ description: >
   `tg/plan.md` 将测试意图落到有限覆盖子集；solve 定向构造、Host 回放、引理闭合后写出 cases。
 ---
 
-# Testcase Generation
+# 测试用例生成
+
+薄入口：按当前 slash / 角色读一份。不要一次装完。子代禁止再用 skill 工具；方法已在 session `method.md` / `refs/`。
+
+```text
+/tg-init 扫描     → 引擎 repo_scan（主控不读 METHOD）
+/tg-init 绑定     → 子代已注入 bind-harness 或 bind-columns
+                    + test-script-repo.md、construction-gotchas.md
+                    主控不要读切片 METHOD，也不要读父索引 bind-init
+/tg-init 裁判     → 主控只读 session method.md（bind-review）
+/tg-plan          → 子代已注入 plan-fuse + planning.md、plan-heuristics.md、
+                    planning-gotchas.md、planning-context.md
+                    缺 Planning Context 则停
+/tg-solve         → 子代已注入 construct-cases / analyze-round
+                    + construction-contract.md、closure-gotchas.md、oracle.md
+查图              → 无参数索引 → 标识符 / Dim= → 窗口 Read；禁止 --mode
+```
 
 正式产物只有三份（外加脚本可直接吃的 cases 表）：
 
@@ -21,9 +37,7 @@ description: >
 
 输入：已有 `.uo`，测试脚本仓**可选**。只建立 harness contract，不是 cases。
 
-- **有脚本仓**（`kind=script_repo`）：扫描脚本 / CSV / XLS，把脚本输入变量（表列、生成器、代码里的读点如 `get_case` / `CaseConfig.xxx`）绑定到算子仓 / UO 标识符。写 `modes`、值域、`golden` 对照、精度口径、性能入口、`generate_inputs`。mapping 空则本步失败。
-- **无脚本仓**：不要假装已有仓。用 `pilot_cli` `uo-query` 读算子输入 API（Host 入参 / dtype / shape），按 API 设计控制面，`kind=default_input`。缺生成器另走 CE。
-- 有没有测试脚本、路径是什么：派发前由主控问清，写进 stub。本步 producer 查图只用 `pilot_cli`，禁止再派 Task。
+引擎 `repo_scan` 后两路草稿（`parts/harness.yaml` 与 `parts/bind.yaml`），主控通读裁判，放行后 `bind_promote` 落盘。无仓也两路都跑（`kind=default_input`）。有脚本仓时 mapping 空则失败。仓内 `tests/` 未确认、意图未给出仓外路径，都不得当 harness。只绑定测试仓与算子，不要把列标成 PR 焦点。
 
 ## `/tg-plan`：有限覆盖计划
 
@@ -33,7 +47,7 @@ description: >
 - 写清精度要求与（仅当 harness 真支持时的）性能要求；
 - 缺脚本 / 缺列 / 生成器造不出（含随机数）→ `test_harness_gap`，写出说明书交 `/ce-apply` 生成或修改测试脚本，不要在 TG 里改算子仓。未落地禁止批准规划、禁止 `/tg-solve`。
 
-Planning Context 来自 `/ce-review` 结论、`/ce-plan`「测试内容」、用户显式范围、handoff、或用户已选定只要用例时主控综合的 `/uo-query` 结论。TG 不审查 diff，也不重新解释原始 NL。没有 Planning Context 就不要 plan。本 skill 不编排是否先审查。
+Planning Context 来源见 CONTEXT 词表。没有 Planning Context 就不要 plan。
 
 ## `/tg-solve`
 
@@ -57,14 +71,10 @@ Primary 负责自然语言和跨 workflow Todo；本 skill 只定义 TG 领域�
 
 ## 按需参考
 
+切片 METHOD 与阶段 refs 已按上表注入，不要再装载。仅当注入未覆盖时读：
+
 | 需要 | 读取 |
 |---|---|
-| 绑定测试 harness | `capabilities/bind-init/METHOD.md` |
-| 融合义务 | `capabilities/plan-fuse/METHOD.md` |
-| 构造用例 | `capabilities/construct-cases/METHOD.md` |
-| 写 worklog | `capabilities/analyze-round/METHOD.md` |
-| 测试脚本仓 | `references/test-script-repo.md` |
-| Planning Context | `references/planning-context.md` |
-| 规划启发式 | `references/plan-heuristics.md` |
-| Host replay | `references/oracle.md` |
-| 踩坑 | `references/gotchas.md` |
+| shape 列 vs TemplateNum | `examples/add_example_tilingkey/README.md` |
+| Host 空 tensor 守卫 | `examples/fa_empty_tensor_host_guard/README.md` |
+| 人读踩坑索引 | `references/gotchas.md`（session 不物化此索引） |

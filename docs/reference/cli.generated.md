@@ -20,7 +20,6 @@
 | `acp debug` | 采集诊断信息并导出 session bundle |
 | `acp dispatch-result` | Host Session Driver：消费 dispatch ticket、finalize 并继续驱动 |
 | `acp doctor` | 执行环境预检 |
-| `acp emit-confidence-report` | 已移除：改用 /uo-init verify 或 `acp uo-query --status-only` |
 | `acp host-context` | 解析 arch 作用域的 Host 适配器上下文 |
 | `acp inspect` | 查询结构化 IR / 证据窗口（tasks、YAML 计数、evidence-window） |
 | `acp inspect-failure` | 查看结构化 failure 信息 |
@@ -41,7 +40,6 @@
 | `acp uo-query` | 通过 Pilot wrapper 查询 UO KB graph |
 | `acp uo-scope` | 执行 UO 源码范围扫描与校验 |
 | `acp validate` | 执行当前 workflow 的全部 gate |
-| `acp validate-key-gates` | 执行关键硬 gate |
 
 ## Engine 命令
 

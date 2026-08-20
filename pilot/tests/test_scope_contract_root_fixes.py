@@ -233,12 +233,12 @@ def test_authorize_readonly_inspection_still_blocks_writes(tmp_path: Path) -> No
         command=f'Get-ChildItem "{tmp_path}" > "{tmp_path / "out.txt"}"',
         agent="ascendc-pilot",
     )
-    assert redirect.get("decision") == "allow", redirect
+    assert redirect.get("decision") == "ask", redirect
     mkdir = authorize(
         tmp_path,
         tool="bash",
         command=f'mkdir "{tmp_path / "newdir"}"',
         agent="ascendc-pilot",
     )
-    assert mkdir.get("decision") == "allow", mkdir
+    assert mkdir.get("decision") == "ask", mkdir
     assert mkdir.get("reason_code") == "PRIMARY_BASH_ASK"

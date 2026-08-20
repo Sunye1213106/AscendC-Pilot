@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
+import shutil
+from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +33,16 @@ from ascendc_pilot.paths import (
 from ascendc_pilot.runs import append_event, file_sha256, issue_receipt, run_dir
 from ascendc_pilot.state import load_state
 from ascendc_pilot.workflows import actions_for_phase, get_workflow
+
+_TURN_INTENT: ContextVar[str] = ContextVar("acp_turn_intent", default="")
+
+
+def bind_turn_intent(text: str) -> Token[str]:
+    return _TURN_INTENT.set(str(text or ""))
+
+
+def current_turn_intent() -> str:
+    return str(_TURN_INTENT.get() or "")
 
 
 def _run_action_gates(
@@ -102,6 +114,7 @@ def _eng_ctx_from_pack(
     run_id: str,
     *,
     consumes_state: list[str] | None = None,
+    project_root: Path | None = None,
 ) -> dict[str, Any]:
     architecture = str(pack.get("architecture") or state.get("architecture") or "").strip()
     if not architecture:
@@ -110,13 +123,25 @@ def _eng_ctx_from_pack(
             "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
             "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
         }
+    picked_tsr = str(pack.get("test_script_root") or state.get("test_script_root") or "")
+    if str(state.get("workflow_id") or "") == "tg-init":
+        if state.get("test_script_confirmed"):
+            test_script_root = str(state.get("test_script_root") or "")
+        elif project_root is not None:
+            from ascendc_pilot.human_interaction import resolved_test_script_root
+
+            test_script_root = resolved_test_script_root(project_root, picked_tsr)
+        else:
+            test_script_root = ""
+    else:
+        test_script_root = picked_tsr
     ctx: dict[str, Any] = {
         "run_id": run_id,
         "op_name": pack.get("op_name") or state.get("op_name") or "",
         "architecture": architecture,
         "arch_dir": architecture,
         "workflow_id": str(pack.get("workflow_id") or state.get("workflow_id") or ""),
-        "test_script_root": pack.get("test_script_root") or state.get("test_script_root") or "",
+        "test_script_root": test_script_root,
         "level": pack.get("level") or state.get("level") or "L0",
         "focus": pack.get("focus") or state.get("focus") or "",
     }
@@ -499,6 +524,36 @@ def _build_task_prompt_stub(
     return stub
 
 
+_BIND_REWORK_SLICES = frozenset({"harness", "bind"})
+_BIND_PASS_HEAD = re.compile(r"^\s*(PASS|OK|通过)\b", re.I)
+_BIND_REWORK_HEAD = re.compile(r"^\s*(REWORK|打回)\b", re.I)
+
+
+def _load_bind_rework(sdir: Path) -> dict[str, Any]:
+    path = Path(sdir) / "rework.yaml"
+    if not path.is_file() or yaml is None:
+        return {}
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _stage_bind_part_for_rework(part: Path) -> None:
+    if not part.is_file():
+        return
+    prev = part.parent / (part.name + ".prev")
+    try:
+        shutil.copy2(part, prev)
+    except OSError:
+        pass
+    try:
+        part.unlink()
+    except OSError:
+        pass
+
+
 def _review_axis_fanout_tasks(
     *,
     action: dict[str, Any],
@@ -513,7 +568,7 @@ def _review_axis_fanout_tasks(
     project_root: str,
     architecture: str,
 ) -> list[dict[str, str]]:
-    """Parallel Spec / Standards Tasks so the two axes do not share context.
+    """Parallel axis Tasks so the two slices do not share context.
 
     Axes come from Workflow Spec ``execution_variant=review_axis_fanout`` +
     ``fanout_axes`` — runtime does not invent a second graph.
@@ -529,6 +584,88 @@ def _review_axis_fanout_tasks(
     run_id = str(stub_kwargs.get("run_id") or "").strip() or "current"
     if (sdir / "parts" / "merged.md").is_file():
         return []
+    rework_doc = _load_bind_rework(sdir)
+    rework_slices = {
+        str(s).strip()
+        for s in (rework_doc.get("slices") or [])
+        if str(s).strip() in _BIND_REWORK_SLICES
+    }
+    rework_reason = str(rework_doc.get("reason") or "").strip()
+    if rework_slices:
+        axes_spec = [row for row in axes_spec if str(row.get("id") or "").strip() in rework_slices]
+        if not axes_spec:
+            return []
+    if rework_slices == {"harness", "bind"} and len(axes_spec) >= 2:
+        method_prefix = str(action.get("action_method_id") or "").split("/", 1)[0].strip()
+        dt = dict(dispatch_targets or {})
+        artifacts: list[str] = []
+        prevs: list[str] = []
+        first_row = axes_spec[0]
+        for axis_row in axes_spec:
+            axis = str(axis_row.get("id") or "").strip()
+            cap = str(axis_row.get("capability_id") or "").strip()
+            artifact = str(axis_row.get("artifact") or "").replace("{run_id}", run_id)
+            skill = str(axis_row.get("skill") or method_prefix or "code-review").strip()
+            if not axis or not cap or not artifact:
+                artifacts = []
+                break
+            artifacts.append(artifact)
+            prevs.append(f"{artifact}.prev")
+            mp = _capability_method_path(repo, skill, cap)
+            if mp.is_file():
+                (sdir / f"method_{axis}.md").write_text(mp.read_text(encoding="utf-8"), encoding="utf-8")
+            axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
+            if axis_tpid:
+                src_prompt = _task_prompt_path(repo, axis_tpid)
+                if src_prompt.is_file():
+                    (sdir / f"prompt_{axis}.md").write_text(
+                        src_prompt.read_text(encoding="utf-8"), encoding="utf-8"
+                    )
+        if len(artifacts) >= 2:
+            first_method = sdir / f"method_{str(first_row.get('id') or 'harness')}.md"
+            axis_dt = dict(dt)
+            axis_dt["write"] = list(artifacts)
+            forbid = [p for p in list(axis_dt.get("forbid_read") or []) if p not in artifacts]
+            axis_dt["forbid_read"] = forbid
+            question = (
+                "AXIS=fix\n"
+                f"FOCUS: 按裁判原因 patch 两轴草稿，不要从零重写。原因：{rework_reason}\n"
+                "SLICE_ID=fix\n"
+                f"Read `{prevs[0]}` and `{prevs[1]}` if present. "
+                f"Write `{artifacts[0]}` and `{artifacts[1]}`. "
+                "Do not Write canonical tg/init.yaml."
+            )
+            axis_kwargs = {
+                **stub_kwargs,
+                "method_path": first_method.as_posix() if first_method.is_file() else stub_kwargs.get("method_path"),
+                "dispatch_targets": axis_dt,
+                "write_paths": list(artifacts),
+                "user_question": question,
+            }
+            first_prompt = sdir / f"prompt_{str(first_row.get('id') or 'harness')}.md"
+            if first_prompt.is_file():
+                axis_kwargs["prompt_path"] = first_prompt.as_posix()
+            slice_stub = _build_task_prompt_stub(**axis_kwargs)
+            tasks = [
+                {
+                    "slice_id": "fix",
+                    "focus": rework_reason or "patch harness and bind",
+                    "first_mode": "fix",
+                    "actor_id": actor_id,
+                    "action_id": action_id,
+                    "task_prompt_stub": slice_stub,
+                }
+            ]
+            (sdir / "task_prompt_stub_fix.md").write_text(slice_stub, encoding="utf-8")
+            _dump(
+                sdir / "review_axes.yaml",
+                {
+                    "phase": phase,
+                    "axes": [{"slice_id": "fix", "focus": rework_reason}],
+                },
+            )
+            return tasks
+    method_prefix = str(action.get("action_method_id") or "").split("/", 1)[0].strip()
     dt = dict(dispatch_targets or {})
     tasks: list[dict[str, str]] = []
     for axis_row in axes_spec:
@@ -537,41 +674,84 @@ def _review_axis_fanout_tasks(
         artifact = str(axis_row.get("artifact") or "").replace("{run_id}", run_id)
         other = str(axis_row.get("other") or "").replace("{run_id}", run_id)
         focus = str(axis_row.get("focus") or "").strip()
+        skill = str(axis_row.get("skill") or method_prefix or "code-review").strip()
+        allow_write = bool(axis_row.get("allow_write"))
         if not axis or not cap or not artifact:
             return []
-        mp = _capability_method_path(repo, "code-review", cap)
+        if allow_write and not rework_slices:
+            part_name = Path(artifact.replace("\\", "/")).name
+            if part_name and (sdir / "parts" / part_name).is_file():
+                continue
+        mp = _capability_method_path(repo, skill, cap)
         if not mp.is_file():
             return []
         axis_method = sdir / f"method_{axis}.md"
         axis_method.write_text(mp.read_text(encoding="utf-8"), encoding="utf-8")
+        axis_prompt_path = ""
+        axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
+        if axis_tpid:
+            src_prompt = _task_prompt_path(repo, axis_tpid)
+            if src_prompt.is_file():
+                axis_prompt = sdir / f"prompt_{axis}.md"
+                axis_prompt.write_text(src_prompt.read_text(encoding="utf-8"), encoding="utf-8")
+                axis_prompt_path = axis_prompt.as_posix()
         axis_dt = dict(dt)
-        axis_dt["write"] = []
+        axis_write = [artifact] if allow_write else []
+        axis_dt["write"] = axis_write
         forbid = list(axis_dt.get("forbid_read") or [])
-        for blocked in (
-            other,
-            "ce/review/functional_report.yaml",
-            "ce/review/bug_report.yaml",
-            "ce/review/index.yaml",
-            "ce/review/**",
-        ):
-            if blocked and blocked not in forbid:
-                forbid.append(blocked)
+        blocked = [other] if other else []
+        if skill == "code-review":
+            blocked.extend(
+                (
+                    "ce/review/functional_report.yaml",
+                    "ce/review/bug_report.yaml",
+                    "ce/review/index.yaml",
+                    "ce/review/**",
+                )
+            )
+        for item in blocked:
+            if item and item not in forbid:
+                forbid.append(item)
+        if rework_slices and other:
+            forbid = [p for p in forbid if p != other]
         axis_dt["forbid_read"] = forbid
-        question = (
-            f"AXIS={axis}\n"
-            f"FOCUS: {focus}\n"
-            f"SLICE_ID={axis}\n"
-            "Read only the method path in this stub. "
-            "Put findings in the Task return. Do not Write harvest files or ce/**. "
-            f"Do not Read {other}."
-        )
+        if allow_write and rework_slices:
+            prev = f"{artifact}.prev"
+            question = (
+                f"AXIS={axis}\n"
+                f"FOCUS: 按裁判原因 patch 已有草稿，不要从零重写。原因：{rework_reason or focus}\n"
+                f"SLICE_ID={axis}\n"
+                f"Read `{prev}` if present. Write only `{artifact}`. "
+                f"You MAY Read {other} to align contradictions. "
+                "Do not Write canonical tg/init.yaml."
+            )
+        elif allow_write:
+            question = (
+                f"AXIS={axis}\n"
+                f"FOCUS: {focus}\n"
+                f"SLICE_ID={axis}\n"
+                f"Read only the method path in this stub. "
+                f"Write only `{artifact}`. Do not Write the other axis or canonical products. "
+                f"Do not Read {other}." if other else f"Write only `{artifact}`."
+            )
+        else:
+            question = (
+                f"AXIS={axis}\n"
+                f"FOCUS: {focus}\n"
+                f"SLICE_ID={axis}\n"
+                "Read only the method path in this stub. "
+                "Put findings in the Task return. Do not Write harvest files or ce/**. "
+                f"Do not Read {other}."
+            )
         axis_kwargs = {
             **stub_kwargs,
             "method_path": axis_method.as_posix(),
             "dispatch_targets": axis_dt,
-            "write_paths": [],
+            "write_paths": axis_write,
             "user_question": question,
         }
+        if axis_prompt_path:
+            axis_kwargs["prompt_path"] = axis_prompt_path
         slice_stub = _build_task_prompt_stub(**axis_kwargs)
         tasks.append(
             {
@@ -584,7 +764,7 @@ def _review_axis_fanout_tasks(
             }
         )
         (sdir / f"task_prompt_stub_{axis}.md").write_text(slice_stub, encoding="utf-8")
-    if len(tasks) < 2:
+    if len(tasks) < 1:
         return []
     _dump(
         sdir / "review_axes.yaml",
@@ -599,27 +779,137 @@ def _review_axis_fanout_tasks(
     return tasks
 
 
-def _ensure_review_report_skeletons(project_root: str, architecture: str) -> None:
-    """Keep code-review-v1 contract satisfiable when review fans out two writers."""
-    arch = str(architecture or "").strip()
-    root = str(project_root or "").strip()
-    if not arch or not root:
-        return
-    try:
-        from ascendc_pilot.paths import ce_root
-    except Exception:  # noqa: BLE001
-        return
-    review = ce_root(root, arch=arch) / "review"
-    review.mkdir(parents=True, exist_ok=True)
-    skeletons = {
-        "index.yaml": "schema: ce-review-index/v1\nentry: ''\nfindings: []\n",
-        "functional_report.yaml": "schema: ce-review-spec/v1\naxis: spec\nfindings: []\n",
-        "bug_report.yaml": "schema: ce-review-standards/v1\naxis: standards\nfindings: []\n",
+def _bind_review_slices_from_intent(intent: str) -> list[str]:
+    text = str(intent or "")
+    found = {
+        sid
+        for sid in _BIND_REWORK_SLICES
+        if re.search(rf"\b{sid}\b", text, re.I)
     }
-    for name, body in skeletons.items():
-        path = review / name
-        if not path.is_file() or not path.read_text(encoding="utf-8").strip():
-            path.write_text(body, encoding="utf-8")
+    return [sid for sid in ("harness", "bind") if sid in found]
+
+
+def _parse_bind_review_intent(intent: str) -> dict[str, Any] | None:
+    """Start-of-string PASS / REWORK only. Original NL must not count as PASS."""
+    text = str(intent or "").strip()
+    if not text:
+        return None
+    if _BIND_PASS_HEAD.match(text):
+        return {"ok": True}
+    if _BIND_REWORK_HEAD.match(text):
+        slices = _bind_review_slices_from_intent(text)
+        if not slices:
+            return {"ok": False, "rework": [], "incomplete": True}
+        return {"ok": False, "rework": slices}
+    return None
+
+
+def _complete_bind_review_prepare(
+    project_root: Path,
+    *,
+    run_id: str,
+    sdir: Path,
+    result: dict[str, Any],
+    intent: str = "",
+) -> dict[str, Any]:
+    """Primary reads both bind drafts; next pilot_run carries PASS/REWORK. Never writes yaml."""
+    from ascendc_pilot.actions.dispatch_legacy import reopen_fanout_slices
+
+    turn = str(intent or current_turn_intent() or "").strip()
+    bind_init_sdir = _session_dir(project_root, run_id, "bind_init")
+    bind_parts = bind_init_sdir / "parts"
+    harness = bind_parts / "harness.yaml"
+    bindp = bind_parts / "bind.yaml"
+    verdict_path = sdir / "verdict.yaml"
+    prompted = sdir / "review_prompted.yaml"
+    result["harness_path"] = harness.as_posix()
+    result["bind_path"] = bindp.as_posix()
+    result["verdict_path"] = verdict_path.as_posix()
+    result["dispatch_task"] = False
+    result["needs_human_decision"] = False
+    parsed = _parse_bind_review_intent(turn)
+    if parsed and parsed.get("ok") is True:
+        doc = {"schema": "tg-bind-review-verdict/v1", "ok": True}
+        _dump(verdict_path, doc)
+        try:
+            if prompted.is_file():
+                prompted.unlink()
+        except OSError:
+            pass
+        fin = finalize_action(
+            project_root, "bind_review", engine_result={"ok": True, "verdict": doc}
+        )
+        result["auto_finalize"] = True
+        result["finalize"] = fin
+        result["ok"] = bool(fin.get("ok"))
+        result["message_zh"] = "主控裁判已放行。"
+        return result
+    if parsed and parsed.get("incomplete"):
+        result["ok"] = False
+        result["error"] = "NEED_BIND_REVIEW_SLICES"
+        result["message_zh"] = (
+            "REWORK 必须点名 harness 和/或 bind，例如 `REWORK bind` 或 `REWORK harness,bind`。"
+        )
+        return result
+    rework = list(parsed.get("rework") or []) if parsed else []
+    if parsed and parsed.get("ok") is False and rework:
+        try:
+            if verdict_path.is_file():
+                verdict_path.unlink()
+        except OSError:
+            pass
+        leftover = sdir / "referee.yaml"
+        try:
+            if leftover.is_file():
+                leftover.unlink()
+        except OSError:
+            pass
+        try:
+            if prompted.is_file():
+                prompted.unlink()
+        except OSError:
+            pass
+        _dump(
+            bind_init_sdir / "rework.yaml",
+            {"schema": "tg-bind-rework/v1", "slices": rework, "reason": turn},
+        )
+        for sid in rework:
+            _stage_bind_part_for_rework(bind_parts / f"{sid}.yaml")
+        from ascendc_pilot.actions.dispatch_legacy import discard_dispatch_tickets_for_action
+        from ascendc_pilot.runs import invalidate_action_receipts
+
+        reopen_fanout_slices(
+            project_root, action_id="bind_init", slice_ids=rework, run_id=run_id
+        )
+        discard_dispatch_tickets_for_action(
+            project_root, run_id=run_id, action_id="bind_init"
+        )
+        invalidate_action_receipts(project_root, action_id="bind_init")
+        result["ok"] = True
+        result["continue_drive"] = True
+        result["rework"] = rework
+        result["message_zh"] = (
+            "裁判未通过，只重开 " + ",".join(rework) + " 切片。子代理按原因 patch 后再进入 bind_review。"
+        )
+        return result
+    if prompted.is_file() and not parsed:
+        result["ok"] = False
+        result["error"] = "NEED_BIND_REVIEW_INTENT"
+        result["message_zh"] = (
+            "需要 PASS 或 REWORK bind / REWORK harness,bind，不要空跑 pilot_run。"
+        )
+        return result
+    _dump(prompted, {"schema": "tg-bind-review-prompted/v1"})
+    result["ok"] = True
+    result["host_step_kind"] = "primary_review"
+    result["message_zh"] = (
+        "请通读 harness.yaml 与 bind.yaml（不要只做字段差集）。"
+        "不要写文件、不要问用户。parts 已齐时禁止 force_new。"
+        "没问题：下一发 `pilot_run(tg-init)` intent=`PASS`。"
+        "有问题：intent=`REWORK bind` 或 `REWORK harness,bind`，后面跟原因。"
+        "必须点名 harness 和/或 bind，不要只写 REWORK。"
+    )
+    return result
 
 
 def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
@@ -649,6 +939,15 @@ def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | Non
     return _capability_method_path(repo, domain, capability)
 
 
+def _task_prompt_path(repo: Path, tpid: str) -> Path:
+    """``prompts/tasks/<domain>/<name>.md`` for ``domain/name`` prompt ids."""
+    token = str(tpid or "").strip()
+    if "/" in token:
+        dom, name = token.split("/", 1)
+        return repo / "prompts" / "tasks" / dom / f"{name}.md"
+    return repo / "prompts" / "tasks" / f"{token}.md"
+
+
 def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, str]:
     """Load task prompt and optional Skill METHOD playbook.
 
@@ -660,11 +959,7 @@ def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, st
     prompt = ""
     tpid = str(action.get("task_prompt_id") or "")
     if tpid:
-        if "/" in tpid:
-            dom, name = tpid.split("/", 1)
-            pp = repo / "prompts" / "tasks" / dom / f"{name}.md"
-        else:
-            pp = repo / "prompts" / "tasks" / f"{tpid}.md"
+        pp = _task_prompt_path(repo, tpid)
         if pp.is_file():
             prompt = pp.read_text(encoding="utf-8")
     mp = _resolve_capability_method(repo, action)
@@ -1104,7 +1399,12 @@ def _check_output_contract(
     }
 
 
-def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
+def prepare_action(
+    project_root: Path,
+    action_id: str,
+    *,
+    turn_intent: str = "",
+) -> dict[str, Any]:
     try:
         arch = discover_arch(project_root)
     except ValueError:
@@ -1200,6 +1500,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     from ascendc_pilot.ownership import (
         EXECUTION_DETERMINISTIC,
         EXECUTION_PRIMARY_INTERACTIVE,
+        EXECUTION_PRIMARY_REVIEW,
         EXECUTION_SUBAGENT,
         action_session_id as make_action_session_id,
         action_write_paths,
@@ -1430,6 +1731,7 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         state,
         run_id,
         consumes_state=list(action.get("consumes_state") or []),
+        project_root=project_root,
     )
     if eng_ctx.get("ok") is False:
         return eng_ctx
@@ -1727,6 +2029,13 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
                 "missing": [],
                 "ok": True,
                 "host_owned_confirm": True,
+            }
+        elif execution_mode == EXECUTION_PRIMARY_REVIEW:
+            bundle["method_materialized"] = {
+                "copied": [],
+                "missing": [],
+                "ok": True,
+                "primary_review": True,
             }
         elif execution_mode == EXECUTION_SUBAGENT:
             from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
@@ -2046,6 +2355,15 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result["dispatch_task"] = False
         return result
 
+    if execution_mode == EXECUTION_PRIMARY_REVIEW:
+        return _complete_bind_review_prepare(
+            project_root,
+            run_id=run_id,
+            sdir=sdir,
+            result=result,
+            intent=str(turn_intent or current_turn_intent() or ""),
+        )
+
     fanout_tasks = [
         row
         for row in (bundle.get("dispatch_tasks") or [])
@@ -2053,14 +2371,32 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
     ]
     if len(fanout_tasks) >= 2:
         result["dispatch_tasks"] = fanout_tasks
+        if action_id == "bind_init":
+            result["message_zh"] = (
+                f"已准备 {len(fanout_tasks)} 个 Task（agent=`{actor_id}`，Action `{action_id}` / 一张 ticket）。"
+                "同一轮并行最好；每条 prompt 必须原样为 `dispatch_tasks[i].task_prompt_stub`。"
+                "禁止用父 `task_prompt_stub` 再开一个。"
+                "若已分两轮写完 `parts/harness.yaml` 与 `parts/bind.yaml`，下一轮 `pilot_run` 从磁盘收齐，不要重派、不要 force_new。"
+                "对人只说 golden/精度口径与列映射是否齐，不要套审查完成模板。"
+                "禁止发明子代理没引用的事实。不要再调 workflow=auto 做 intake。"
+            )
+        else:
+            result["message_zh"] = (
+                f"已准备 {len(fanout_tasks)} 个并行 Task（agent=`{actor_id}`，同一 Action `{action_id}` / 一张 ticket）。"
+                "同一轮用 OpenCode 原生 Task 全部派发；每条 prompt 必须原样为 "
+                "`dispatch_tasks[i].task_prompt_stub`。"
+                "禁止用父 `task_prompt_stub` 再开一个。"
+                "插件用各 Task 原文 ACK 并推进 task_plan 下一格。"
+                "Primary 只把两段原文用人话合并给用户（审查完成 / 做什么 / 改了什么 / 问题 / 要测变量）。"
+                "禁止综合成 kb-answer-v1。禁止发明子代理没引用的事实。不要再调 workflow=auto 做 intake。"
+            )
+    elif len(fanout_tasks) == 1:
+        result["dispatch_tasks"] = fanout_tasks
+        result["task_prompt_stub"] = fanout_tasks[0]["task_prompt_stub"]
+        slice_id = str(fanout_tasks[0].get("slice_id") or "")
         result["message_zh"] = (
-            f"已准备 {len(fanout_tasks)} 个并行 Task（agent=`{actor_id}`，同一 Action `{action_id}` / 一张 ticket）。"
-            "同一轮用 OpenCode 原生 Task 全部派发；每条 prompt 必须原样为 "
-            "`dispatch_tasks[i].task_prompt_stub`。"
-            "禁止用父 `task_prompt_stub` 再开一个。"
-            "插件用各 Task 原文 ACK 并推进 task_plan 下一格。"
-            "Primary 只把两段原文用人话合并给用户（审查完成 / 做什么 / 改了什么 / 问题 / 要测变量）。"
-            "禁止综合成 kb-answer-v1。禁止发明子代理没引用的事实。不要再调 workflow=auto 做 intake。"
+            f"已准备 1 个 Task（agent=`{actor_id}`，切片 `{slice_id}` / Action `{action_id}`）。"
+            "Task 正文必须原样为该切片的 `task_prompt_stub`。禁止用父 stub 再开一个。"
         )
     else:
         result["message_zh"] = (
@@ -2088,7 +2424,8 @@ def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
         result["finalize_hint_fallback"] = ""
     else:
         result["message_zh"] += " 完成后由 Host `pilot_run` 完成本步。"
-    result["task_prompt_stub"] = stub
+    if len(fanout_tasks) != 1:
+        result["task_prompt_stub"] = stub
     result["task_prompt_stub_path"] = (sdir / "task_prompt_stub.md").as_posix()
     result["dispatch_task"] = True
     try:
@@ -2882,7 +3219,6 @@ def _finalize_owned_artifact_path(
         / "scope_validated.yaml"
     )
     owned: dict[str, Path] = {
-        "confidence_review": _uo_root(project_root) / "review" / "confidence_reason_review.yaml",
         # prepare owns the machine scope receipt; gate stamp is scope_validated.
         "prepare": scope_validated,
         "scope_validated": scope_validated,
@@ -2909,12 +3245,17 @@ def run_action(
     finalize: bool = False,
     result_file: Path | str | None = None,
     action_result: dict[str, Any] | None = None,
+    turn_intent: str = "",
 ) -> dict[str, Any]:
-    if finalize:
-        return finalize_action(
-            project_root,
-            action_id,
-            result_file=result_file,
-            action_result=action_result,
-        )
-    return prepare_action(project_root, action_id)
+    token = bind_turn_intent(turn_intent)
+    try:
+        if finalize:
+            return finalize_action(
+                project_root,
+                action_id,
+                result_file=result_file,
+                action_result=action_result,
+            )
+        return prepare_action(project_root, action_id, turn_intent=turn_intent)
+    finally:
+        _TURN_INTENT.reset(token)

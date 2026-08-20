@@ -3,7 +3,7 @@
 State / Workflow Spec / Action Lease aware. Soft control-plane only — not OS security.
 On human_required / containment, Write / Task / domain CLI stay denied. Primary may
 Read / Glob / Grep, readonly inspect bash, and (after OpenCode `ask`) other workspace
-bash. Domain CLI, `.ascendc-pilot` writes, and `uo-query` bash stay blocked.
+bash. Nested Task from a child stays denied. Formal product Write stays fenced.
 """
 
 from __future__ import annotations
@@ -112,7 +112,6 @@ _PROTECTED_MARKERS = (
 # Pilot formal scope artifacts — never agent-writable in containment
 _FORMAL_ARTIFACT_NAMES = (
     "installed_skill_check.yaml",
-    "semantic_enrichment.yaml",
     "manifest.yaml",
     "scope_validated.yaml",
     "scope_" + "confirmed.yaml",  # legacy layout; deny writes, no auto-migrate
@@ -657,7 +656,7 @@ def _glob_would_scan_operator_source(path_s: str, pattern: str) -> bool:
 
 
 def _is_readonly_review_git(command: str) -> bool:
-    """ce-reviewer may take commit titles / --stat, not blobs or full patches."""
+    """Readonly git for every agent: status/log/rev-parse and name-only/--stat diffs."""
     cmd = (command or "").strip()
     if not _is_git_cli(cmd):
         return False
@@ -724,7 +723,7 @@ def _deny_uncited_operator_source(
         return None
     if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
         return None
-    if tool_l in {"read", "glob", "list"}:
+    if tool_l in {"read", "glob", "list", "grep", "search"}:
         return None
     if not _has_uo_product(project_root):
         return None
@@ -744,7 +743,7 @@ def _deny_uncited_operator_source(
         "SOURCE_READ_USE_UO_QUERY",
         "算子源码语义走 uo-query 路由：简单问题用 `pilot_cli` `uo-query`，"
         "复杂或 CE/TG 问图用同一轮 Task(agent=uo-query)。"
-        "未 citation 的 op_host/op_kernel 不可 Grep。"
+        "Grep/Glob 只作定位辅助；语义结论仍优先 uo-query。"
         "卡片 snippet 视为已读；仅截断后的窗口可读。",
         error_code="HARNESS_ACTION_NOT_AUTHORIZED",
         path=path_s,
@@ -1015,36 +1014,27 @@ def _verdict_for_confirmed_bash(
     workflow_id: str = "",
     status: str | None = None,
 ) -> dict[str, Any] | None:
-    """OpenCode already asked. Allow remaining bash except uo-query / protected paths."""
-    if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
-        return _ok(
-            "deny",
-            "UO_QUERY_NO_BASH",
-            "uo-query 禁止 bash；查图用 pilot_cli `uo-query`。",
-            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-            status=status,
-            command=(command or "")[:200],
-        )
+    """Remaining bash is OpenCode ask — never a silent deny for commands."""
+    del action_id, workflow_id
     cmd_n = (command or "").replace("\\", "/").lower()
     if ".ascendc-pilot" in cmd_n or "/ascendc_pilot/" in cmd_n:
         return _ok(
-            "deny",
+            "ask",
             "BASH_PROTECTED_WRITE",
-            "禁止用 bash 改写或删除 .ascendc-pilot。",
-            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            "改写或删除 .ascendc-pilot 需用户确认。正式产物请用 Write 围栏或 Host `pilot_run`。",
             status=status,
             command=(command or "")[:200],
         )
     if agent_l in _PRIMARY_AGENTS:
         return _ok(
-            "allow",
+            "ask",
             "PRIMARY_BASH_ASK",
             "主控 bash 由 OpenCode ask 确认后放行。",
             status=status,
             command=(command or "")[:200],
         )
     return _ok(
-        "allow",
+        "ask",
         "CHILD_BASH_ASK",
         "子代理 bash 由 OpenCode ask 确认后放行。",
         status=status,
@@ -1060,35 +1050,33 @@ def _verdict_for_git_cli(
     workflow_id: str,
     status: str | None = None,
 ) -> dict[str, Any] | None:
-    """Primary may use git. uo-query must not. Non-primary falls through."""
+    """Readonly git is allowed for every agent; write git is OpenCode ask."""
+    del action_id, workflow_id
     if not _is_git_cli(command):
         return None
-    if _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
+    if _is_readonly_review_git(command):
         return _ok(
-            "deny",
-            "GIT_NOT_FOR_UO_QUERY",
-            "uo-query 禁止 bash git；查图用 pilot_cli `uo-query`。",
-            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            "allow",
+            "GIT_READONLY",
+            "允许只读 git status/log/diff --name-only|--stat/rev-parse。",
             status=status,
             command=(command or "")[:200],
         )
     if agent_l in _PRIMARY_AGENTS:
         return _ok(
-            "allow",
-            "GIT_CLI_ALLOWED",
-            "允许主控 bash git。隔离 PR checkout 仍由 Workspace Manager 建立；clone/worktree add 由 OpenCode ask 确认。",
+            "ask",
+            "GIT_WRITE_ASK",
+            "写 git（checkout/clone/push/reset 等）需用户确认后执行。",
             status=status,
             command=(command or "")[:200],
         )
-    if agent_l == "ce-reviewer" and _is_readonly_review_git(command):
-        return _ok(
-            "allow",
-            "GIT_READONLY_REVIEW",
-            "ce-reviewer 允许只读 git log/show --stat/diff --stat/rev-parse，禁止 checkout 与源码 blob。",
-            status=status,
-            command=(command or "")[:200],
-        )
-    return None
+    return _ok(
+        "ask",
+        "GIT_WRITE_ASK",
+        "写 git（checkout/clone/push/reset 等）需用户确认后执行。",
+        status=status,
+        command=(command or "")[:200],
+    )
 
 
 def _is_readonly_inspect_bash(command: str) -> bool:
@@ -1125,20 +1113,9 @@ def _maybe_deny_uo_query_repo_search(
     status: str | None = None,
     phase: Any = None,
 ) -> dict[str, Any] | None:
-    if not _is_uo_query_actor(agent_l, action_id, str(workflow_id or "")):
-        return None
-    if not _is_repo_search_bash(command):
-        return None
-    return _ok(
-        "deny",
-        "REPO_GREP_ESCAPE",
-                "uo-query 禁止仓级 findstr/grep/rg；用 pilot_cli `uo-query` 或 `ro-search --pattern … --paths <已 citation 文件>`",
-        error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-        status=status,
-        workflow_id=workflow_id or None,
-        phase=phase,
-        command=(command or "")[:200],
-    )
+    """Locate-only grep/rg is allowed; semantic lookup still prefers pilot_cli uo-query."""
+    del command, agent_l, action_id, workflow_id, status, phase
+    return None
 
 
 def _uses_exploration_budget(tool_l: str, agent_l: str, action_id: str, workflow_id: str) -> bool:
@@ -1580,17 +1557,6 @@ def _authorize_impl(
         # Primary diagnostic reads: operator tree / logs / .ascendc-pilot artifacts.
         # Engine scripts stay denied so containment cannot be used to bypass ACP.
         if agent_l in _PRIMARY_AGENTS and tool_l in _READ_TOOLS:
-            if tool_l == "grep" and _is_uo_query_actor(
-                agent_l, action_id, str(ctx.get("workflow_id") or wid)
-            ):
-                return _ok(
-                    "deny",
-                    "REPO_GREP_ESCAPE",
-                    "uo-query 禁止 Grep 工具；用 pilot_cli `uo-query` 或 `ro-search --pattern … --paths <已 citation 文件>`",
-                    error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-                    tool=tool_l,
-                    status=status,
-                )
             fenced = _deny_uncited_operator_source(
                 path_s=path_s,
                 project_root=project_root,
@@ -1703,10 +1669,9 @@ def _authorize_impl(
             if confirm_v is not None:
                 return confirm_v
             return _ok(
-                "deny",
+                "ask",
                 "NON_PRIMARY_BASH",
-                "非 primary 代理禁止该 bash；领域执行请用 Host `pilot_run`",
-                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                "非 primary 代理该 bash 需用户确认；领域执行请用 Host `pilot_run`",
                 command=cmd[:200],
             )
 
@@ -1782,19 +1747,17 @@ def _authorize_impl(
         cmd_l = cmd.lower().replace("\\", "/")
         if ".ascendc-pilot/" in cmd_l and any(p.search(cmd_l) for p in _BASH_PROTECTED_WRITE_RES):
             return _ok(
-                "deny",
+                "ask",
                 "BASH_PROTECTED_WRITE",
-                "禁止用 bash 写入 .ascendc-pilot 正式产物以绕过 Write 围栏；请由声明 actor 用 Write 或 Host `pilot_run`",
-                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                "用 bash 写入 .ascendc-pilot 需用户确认；正式产物请由声明 actor 用 Write 或 Host `pilot_run`",
                 command=cmd[:200],
             )
         for pat in _DENY_BASH:
             if pat.search(cmd):
                 return _ok(
-                    "deny",
+                    "ask",
                     "DOMAIN_CLI_BYPASS",
-                    "禁止直调领域脚本/CLI；请用 Host 工具 `pilot_run`",
-                    error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+                    "直调领域脚本/CLI 需用户确认；请优先用 Host 工具 `pilot_run`",
                     command=cmd[:200],
                 )
         git_v = _verdict_for_git_cli(
@@ -1836,25 +1799,14 @@ def _authorize_impl(
         if confirm_v is not None:
             return confirm_v
         return _ok(
-            "deny",
+            "ask",
             "NON_PRIMARY_BASH",
-            "非 primary 代理禁止该 bash；领域执行请用 Host `pilot_run`",
-            error_code="HARNESS_ACTION_NOT_AUTHORIZED",
+            "非 primary 代理该 bash 需用户确认；领域执行请用 Host `pilot_run`",
             command=cmd[:200],
         )
 
     # --- read / glob / grep ---
     if tool_l in _READ_TOOLS:
-        if tool_l == "grep" and _is_uo_query_actor(
-            agent_l, action_id, str(ctx.get("workflow_id") or "")
-        ):
-            return _ok(
-                "deny",
-                "REPO_GREP_ESCAPE",
-                "uo-query 禁止 Grep 工具；用 pilot_cli `uo-query` 或 `ro-search --pattern … --paths <已 citation 文件>`",
-                error_code="HARNESS_ACTION_NOT_AUTHORIZED",
-                tool=tool_l,
-            )
         fenced = _deny_uncited_operator_source(
             path_s=path_s,
             project_root=project_root,

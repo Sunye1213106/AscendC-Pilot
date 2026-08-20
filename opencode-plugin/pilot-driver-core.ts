@@ -83,6 +83,10 @@ const HOST_STEP_MODEL_KEYS = [
   "message_zh",
   "dispatch_ticket",
   "ask_question",
+  "request_id",
+  "harness_path",
+  "bind_path",
+  "referee_path",
   "next_workflow_id",
   "intent",
   "ticket_retryable",
@@ -184,6 +188,15 @@ export function compactPilotRunPayload(result: unknown): Record<string, unknown>
   if (hintZh) out.hint_zh = hintZh
   if (rec.native_task === true) out.native_task = true
   if (rec.native_tasks === true) out.native_tasks = true
+  const ask =
+    (step.ask_question && typeof step.ask_question === "object"
+      ? (step.ask_question as Record<string, unknown>)
+      : rec.ask_question && typeof rec.ask_question === "object"
+        ? (rec.ask_question as Record<string, unknown>)
+        : {}) as Record<string, unknown>
+  const requestId = String(ask.request_id || rec.request_id || step.request_id || "")
+  if (requestId) out.request_id = requestId
+  if (rec.ask_question && typeof rec.ask_question === "object") out.ask_question = rec.ask_question
   return out
 }
 
@@ -998,6 +1011,7 @@ export type PilotRunArgs = {
   architecture?: string
   intent?: string
   forceNew?: boolean
+  testScriptRoot?: string
   /** OpenCode workspace directory (pluginInput.directory). Staging home for workflow=auto. */
   hostDirectory?: string
 }
@@ -1166,6 +1180,8 @@ async function invokeAskHuman(
       value: o.value || o.label,
     })),
     multiple: Boolean(ask.multiple),
+    custom: Boolean(ask.allow_free_text),
+    allow_free_text: Boolean(ask.allow_free_text),
   }
 
   // 1) Tool-context askQuestion (OpenCode plugin tool ctx)
@@ -1313,7 +1329,7 @@ async function handleAskHumanStep(args: {
     todo,
     message_zh:
       step.message_zh ||
-      "需要人工确认：请立即用 AskQuestion，options 必须原样使用 ask_question.options；禁止自行改写选项。若用户已在对话里回复，改为 interpret-user-turn，不要重问。",
+      "Host 已询问；不要再开第二个 question。点选已弹出的确认框，或 interpret-user-turn。不要再开 question。",
     ask_ui_error: asked.error,
   }
 }
@@ -1461,13 +1477,17 @@ function nativeTaskHandoff(args: {
       .map((row) => String(row.slice_id || "").trim())
       .filter(Boolean)
       .join(", ")
+    const actionId = String(args.step.action_id || "").trim()
+    const afterBoth =
+      actionId === "bind_init"
+        ? "全部返回后 Host 从 parts 收齐并进入 bind_review；若已分两轮写完 harness.yaml/bind.yaml，下一轮 pilot_run 收齐即可，不要重派、不要套审查完成模板。"
+        : "全部返回后 Primary 只把两段原文用人话合并给用户：审查完成；这个 PR 做什么；改了哪些文件；问题 1/2/3…；要测的变量（字段与取值）。"
     const messageZh =
       `请在同一轮并行派发 ${tasks.length} 个 OpenCode 原生 Task：agent=\`${actor}\`。` +
       `每个 Task 的 prompt 必须原样为 host_step.tasks[i].task_prompt_stub（禁止改写）。` +
       `不要再用 host_step.task_prompt_stub 开第 ${tasks.length + 1} 个子代理。` +
       `点各 Task 卡片可跳进子会话看思考。插件用各 Task 原文 ACK 并推进 task_plan 下一格` +
-      `（有测例目标时是 tg-init）。全部返回后 Primary 只把两段原文用人话合并给用户：` +
-      `审查完成；这个 PR 做什么；改了哪些文件；问题 1/2/3…；要测的变量（字段与取值）。` +
+      `（有测例目标时是 tg-init）。${afterBoth}` +
       `禁止综合成 kb-answer-v1。禁止发明子代理没写的事实。不要再调 workflow=auto 做 intake。` +
       (ids ? `切片：${ids}。` : "")
     return {
@@ -1540,6 +1560,7 @@ export async function runPilotDriver(
 
   let architecture = args.architecture ? String(args.architecture) : ""
   let intent = args.intent ? String(args.intent) : ""
+  const testScriptRoot = args.testScriptRoot ? String(args.testScriptRoot).trim() : ""
   reporter?.setWorkflow(workflow)
   reporter?.note("starting")
 
@@ -1567,6 +1588,7 @@ export async function runPilotDriver(
     const argv = ["start", workflow, "--project", project, ...extra]
     if (architecture) argv.push("--architecture", architecture)
     if (intent) argv.push("--intent", intent)
+    if (testScriptRoot) argv.push("--test-script-root", testScriptRoot)
     if (applyForceNew) argv.push("--force-new")
     return runAcpJson(argv, project, acpOpts())
   }
@@ -1611,7 +1633,7 @@ export async function runPilotDriver(
         toolCtx,
         parentSessionId,
         project,
-        requestId: String(req.request_id || ""),
+        requestId: String(ask.request_id || req.request_id || ""),
         step: {
           kind: "ask_human",
           ask_question: ask,
@@ -1711,6 +1733,13 @@ export async function runPilotDriver(
         todo: (live as Record<string, unknown>).todo,
       }
     : await consumeStartAsks(await startOnce())
+  if (sameLive && testScriptRoot) {
+    await runAcpJson(
+      ["interpret-user-turn", "--project", project, "--text", testScriptRoot],
+      project,
+      acpOpts(60_000),
+    )
+  }
   if (
     started.resumed_goal === true ||
     (started.skip_start === true && String(started.workflow_id || "").trim())
@@ -1783,8 +1812,10 @@ export async function runPilotDriver(
       step = pendingStep
       pendingStep = null
     } else {
+      const autoArgv = ["run-action", "auto", "--project", project]
+      if (intent) autoArgv.push("--intent", intent)
       const driven = await runAcpJson(
-        ["run-action", "auto", "--project", project],
+        autoArgv,
         project,
         acpOpts(3_600_000),
       )
@@ -1851,7 +1882,7 @@ export async function runPilotDriver(
           toolCtx,
           parentSessionId,
           project,
-          requestId: String(req.request_id || ""),
+          requestId: String(ask.request_id || req.request_id || ""),
           step,
           ask,
           log,
@@ -1897,7 +1928,10 @@ export async function runPilotDriver(
           }
         }
         const actionId = String(step.action_id || asked.action_id || "")
-        if (actionId && decision !== "reinit" && decision !== "continue") {
+        const field = String(ask.field || "").trim().toLowerCase()
+        const skipFinalize =
+          field === "test_script_root" || actionId === "repo_scan"
+        if (actionId && decision !== "reinit" && decision !== "continue" && !skipFinalize) {
           const fin = await runAcpJson(
             ["run-action", actionId, "--finalize", "--project", project],
             project,
@@ -1918,6 +1952,18 @@ export async function runPilotDriver(
           }
         }
         continue
+      } else if (step.kind === "primary_review") {
+        reporter?.setStatus("ok")
+        return {
+          ok: true,
+          host_step: step,
+          message_zh: String(
+            step.message_zh ||
+              "请通读两路 yaml。不要写文件。下一发 intent=PASS 或 REWORK bind。",
+          ),
+          log,
+          todo: todoPayload,
+        }
       } else if (!step.kind) {
         reporter?.setStatus("fail")
         const err = String(driven.error || driven.error_code || "ACP_NO_JSON")
@@ -2007,39 +2053,38 @@ export function createPilotRunTool(
   return {
     pilot_run: {
       description:
-        "Run AscendC-Pilot via Host Session Driver. " +
-        "Natural language: write OpenCode Todos (have→want), then pilot_run(workflow=<current slash>). " +
-        "Only the acquire-code todo uses workflow=auto (Engine clone). After clone, use a unique (operator, architecture) from the Engine receipt when present; otherwise AskQuestion. Do not default architecture without evidence. Then pilot_run the next Todo slash. " +
-        "host_step.done returns to Primary; do not Host-continue_goal the next user slash. " +
-        "Explicit slash: workflow=<existing id> such as uo-init / tg-plan / ce-review. " +
-        "When it returns host_step.kind=dispatch_subagent, use OpenCode native Task " +
-        "(agent=actor_id, prompt=task_prompt_stub verbatim). " +
-        "Host Driver owns AskQuestion when the UI is available. Never uo-query. " +
-        "Do not load a native skill for orchestration. With a PR URL, do not scan a local fork.",
+        "运行 AscendC-Pilot 当前 Todo 格。workflow=当前 slash，或仅「获取 PR 代码」用 auto。禁止 uo-query。" +
+        "返回 dispatch_subagent 时，Task 正文用 task_prompt_stub 原文。",
       args: {
         workflow: {
           type: "string",
           description:
-            "Current slash, or auto only for the acquire-PR-code todo. Never uo-query. Explicit slash uses the existing id.",
+            "当前格 slash，或仅「获取 PR 代码」用 auto。禁止 uo-query。显式 slash 用已有 id。",
         },
         project: {
           type: "string",
           description:
-            "OpenCode open-directory is the clone anchor only. `.ascendc-pilot` lands on the operator package after Primary selects it (`op_host`/`op_kernel`). With a PR URL this is where the clone folder is created, not the local fork to analyse.",
+            "OpenCode 打开目录只是 clone 锚点。`.ascendc-pilot` 落在 Primary 选定的算子包（`op_host`/`op_kernel`）。有 PR URL 时这是创建 clone 目录的位置，不是要分析的本地 fork。",
         },
         architecture: {
           type: "string",
-          description: "Optional arch* (required for uo-init/uo-update)",
+          description:
+            "第一轮 auto/clone 省略。算子路径已知后，uo-init/uo-update 必填。clone 前不要为 architecture 开 AskQuestion。",
         },
         intent: {
           type: "string",
           description:
-            "Optional product intent. For /ce-review include the GitCode/GitHub PR URL when reviewing a pull request. Do not pass the raw NL as the first auto call.",
+            "第一轮 auto/clone：用户目标原文，含 PR URL。bind 草稿之后：只填 PASS 或 REWORK bind / REWORK harness,bind。/ce-review 带上 PR URL。",
         },
         force_new: {
           type: "boolean",
           description:
-            "Wipe an existing run and start fresh. Do not set on first start; omit unless the user asked to 删除重开.",
+            "擦掉已有 run 并重开。首次 start 不要设；除非用户明确要求删除重开。",
+        },
+        test_script_root: {
+          type: "string",
+          description:
+            "用户已给出的**仓外**测试脚本仓绝对路径或 git URL。用户没给路径则省略 — /tg-init 询问三项（生成 / 发现仓内 tests 时须点选 / 末项可输入）。禁止把算子仓 tests/ 填进来跳过询问。不要把路径塞进 intent。",
         },
       },
       async execute(toolArgs: Record<string, unknown>, ctx?: PilotToolContext) {
@@ -2083,6 +2128,9 @@ export function createPilotRunTool(
               architecture: toolArgs.architecture ? String(toolArgs.architecture) : undefined,
               intent: toolArgs.intent ? String(toolArgs.intent) : undefined,
               forceNew: Boolean(toolArgs.force_new),
+              testScriptRoot: toolArgs.test_script_root
+                ? String(toolArgs.test_script_root)
+                : undefined,
               hostDirectory: pluginInput?.directory ? String(pluginInput.directory) : undefined,
             },
             toolCtx,

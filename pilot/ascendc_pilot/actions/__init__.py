@@ -47,7 +47,12 @@ _engines.OUTPUT_CONTRACT_NONEMPTY_GLOBS.update(_UO_COMPOSITE_OUTPUT_CONTRACTS)
 _install_uo_product_compaction(_engines.ENGINE_REGISTRY)
 
 
-def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str, Any]:
+def _prepare_with_fast_uo_engine(
+    project_root: Path,
+    action_id: str,
+    *,
+    turn_intent: str = "",
+) -> dict[str, Any]:
     """Scope a temporary engine router to one synchronous CLI prepare call."""
     original = _runtime.invoke_engine
 
@@ -68,7 +73,9 @@ def _prepare_with_fast_uo_engine(project_root: Path, action_id: str) -> dict[str
 
     _runtime.invoke_engine = routed
     try:
-        return _runtime.prepare_action(project_root, action_id)
+        return _runtime.prepare_action(
+            project_root, action_id, turn_intent=turn_intent
+        )
     finally:
         _runtime.invoke_engine = original
 
@@ -158,8 +165,15 @@ def _host_action_result_from_env(
     return _parse_host_action_result(text)
 
 
-def prepare_action(project_root: Path, action_id: str) -> dict[str, Any]:
-    result = _prepare_with_fast_uo_engine(project_root, action_id)
+def prepare_action(
+    project_root: Path,
+    action_id: str,
+    *,
+    turn_intent: str = "",
+) -> dict[str, Any]:
+    result = _prepare_with_fast_uo_engine(
+        project_root, action_id, turn_intent=turn_intent
+    )
     root = Path(project_root)
     wid = str(result.get("workflow_id") or "")
     if result.get("ok") and is_hosted_confirm(root, action_id, workflow_id=wid):
@@ -225,13 +239,40 @@ def run_action(
     finalize: bool = False,
     result_file: Path | str | None = None,
     action_result: dict[str, Any] | None = None,
+    turn_intent: str = "",
+) -> dict[str, Any]:
+    token = _runtime.bind_turn_intent(turn_intent)
+    try:
+        return _run_action_body(
+            project_root,
+            action_id,
+            finalize=finalize,
+            result_file=result_file,
+            action_result=action_result,
+            turn_intent=turn_intent,
+        )
+    finally:
+        _runtime._TURN_INTENT.reset(token)
+
+
+def _run_action_body(
+    project_root: Path,
+    action_id: str,
+    *,
+    finalize: bool = False,
+    result_file: Path | str | None = None,
+    action_result: dict[str, Any] | None = None,
+    turn_intent: str = "",
 ) -> dict[str, Any]:
     if not finalize and action_id in {"auto", "drive"}:
         from ascendc_pilot.actions.drive import drive_until_interaction
 
+        def _prepare(root: Path, aid: str) -> dict[str, Any]:
+            return prepare_action(root, aid, turn_intent=turn_intent)
+
         return drive_until_interaction(
             Path(project_root),
-            prepare=prepare_action,
+            prepare=_prepare,
         )
     if finalize and action_id in {"auto", "drive"}:
         return {
@@ -251,7 +292,7 @@ def run_action(
             result_file=result_file,
             action_result=action_result or env_result,
         )
-    return prepare_action(project_root, action_id)
+    return prepare_action(project_root, action_id, turn_intent=turn_intent)
 
 
 __all__ = [

@@ -160,6 +160,7 @@ def _scan_banned_production_symbols(repo: Path, errors: list[str]) -> None:
 def _main() -> int:
     from ascendc_pilot.actions.engines import ENGINE_REGISTRY, OUTPUT_CONTRACT_PATHS
     from ascendc_pilot.workflows import WORKFLOWS
+    from ascendc_pilot.workflows.consistency import action_task_prompt_ids
 
     errors: list[str] = []
     agents_dir = REPO / "agents"
@@ -191,9 +192,7 @@ def _main() -> int:
                     errors.append(
                         f"workflow {wf_id} action {aid}: missing agents/{agent_id}.yaml"
                     )
-            tpid = action.get("task_prompt_id")
-            if tpid:
-                tpid_s = str(tpid)
+            for tpid_s in action_task_prompt_ids(action):
                 used_prompts.add(tpid_s)
                 if "/" not in tpid_s:
                     errors.append(

@@ -2,9 +2,9 @@
 
 只读检视。输入是已经绑定到当前算子 workspace 的代码改动；无 diff 则停。不写 `ce/review/`，不写新的正式 YAML 产品。
 
-详见 `references/cross-layer-contracts.md`、`references/ascendc-checks.md`、`references/finding-format.md`、`references/gotchas.md`。
+详见 `references/cross-layer-contracts.md`、`references/ascendc-checks.md`、`references/gotchas.md`。
 
-review 阶段由**主控**同一轮并行派两个隔离子代理（`spec-review` / `standards-review`）。本 METHOD 覆盖入口说明。stub 含 `AXIS=` 时不要用这份方法写那一轴。子代禁止再派 Task。
+review 阶段由**主控**同一轮并行派两个隔离子代理（`spec-review` / `standards-review`）。本 METHOD 覆盖入口说明。stub 含 `AXIS=` 时不要用这份方法写那一轴。
 
 ## 输入
 
@@ -18,7 +18,7 @@ review 阶段由**主控**同一轮并行派两个隔离子代理（`spec-review
 
 ## 语义与影响范围
 
-先读 `change_capture/index.md` / `uo_hints.md`，再 **并行 form-1 查 Added identifiers**，不要先 `uo-query --file --line` 打 format hunk。不要传 `--mode`。禁止 `explain-*` / Grep 通读 / 线性读完整 `diff.md`。snippet 截断不得下「枚举未用」。Kernel 以字段 readers 行为准。每个 changed file：finding / format-only / UNREVIEWED。
+先读 `change_capture/index.md` / `uo_hints.md`，再 **并行查标识符（Added identifiers）**，不要把 format hunk 当第一跳。卡片给出 `file:line` 后 **必须** `--file --line`，不要改去 Read 整文件。禁止 Grep 通读 / 线性读完整 `diff.md`。snippet 截断不得下「枚举未用」。Kernel 以字段 readers 行为准。每个 changed file：finding / format-only / UNREVIEWED。
 
 - **Spec**：有 `{slug}_plan.md` 对照计划；纯 PR 无计划时从 PR 标题 + 索引 + UO **推断粗意图并验收完成度**（做完 / 半截 / 超范围）。禁止只陈述变更理解。
 - **Standards**：对照 `references/ascendc-checks.md`、跨层契约、H0/H1。同样用 index + uo-query，不通读 diff。

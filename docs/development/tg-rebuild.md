@@ -24,7 +24,7 @@ Host replay 库（`HostOracle`、WSL replay、`tg-closure` CLI）保留，只作
 | plan | `tg/plan.md`（散文 + YAML 义务表） |
 | solve | `tg/worklog.md` + 脚本可读的 cases 表 |
 
-确定性引擎在 `actions/tg_product.py`。LLM 只有 `tg-analyst`，只写 `runs/` 草稿。人确认仍走 `human_confirm` / `plan_approve`；收据 `consume=False` 直到 finalize 成功。
+确定性引擎在 `actions/tg_product.py`。LLM 只有 `tg-analyst`，两路草稿写 `runs/`。主控通读裁判后 `bind_promote` 落盘并确认；规划仍走 `plan_approve`。收据 `consume=False` 直到 finalize 成功。
 
 `init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射、值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。测试脚本仓可选：有仓但 mapping 空 → init 失败；无仓则 `/uo-query` 读输入 API 设计控制面。扫描含 xls/xlsx。
 

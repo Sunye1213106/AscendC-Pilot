@@ -2,6 +2,8 @@
 
 把 **`tg/init.yaml` + Planning Context** 融成一份 `plan.md`。上半散文，下半 YAML 义务表。正式文件由 `plan_promote` 写入。
 
+本步 refs：`references/planning.md`、`references/plan-heuristics.md`、`references/planning-gotchas.md`、`references/planning-context.md`。
+
 ## 两项核心输入
 
 1. **Harness contract**：`tg/init.yaml`（强制）。提供测试表列、值域、生成器、golden/compare、precision/performance 跑测入口等可执行控制面。
@@ -12,14 +14,14 @@
    - `session_handoff.md` 中等价的明确测试意图；
    - 用户明确只要用例、主控已综合的 `/uo-query` 结论（写在本步 stub 里）。
 
-`.uo` 不是第三份“意图输入”，而是后续用 `uo-query` 给 Planning Context 做语义落根和可达性证明的事实权威。本步查图只用 `pilot_cli`，禁止再派 Task。
+`.uo` 不是第三份“意图输入”，而是后续用 `uo-query` 给 Planning Context 做语义落根和可达性证明的事实权威。本步查图用 `pilot_cli`。
 
 缺 Planning Context 时返回 `PLAN_CONTEXT_REQUIRED`；缺 `tg/init.yaml` 由 workflow gate 阻断。不要只看 PR URL 重新猜影响范围。
 
 ## 顺序
 
 1. 读取 `tg/init.yaml`，确认可以控制的列、生成器与现有精度/性能入口。
-2. 读取本次 Planning Context，拆出 changed/affected scope、风险、test intent 和 validation targets；不要重新审查 PR，也不要重新解释原始用户 NL。
+2. 读取本次 Planning Context，拆出 changed/affected scope、风险、test intent 和 validation targets；不要重新审查 PR，也不要重新解释自然语言输入。
 3. 对每条目标用 **uo-query** 求证涉及的输入、分支、tiling/kernel 契约和可观测行为，并 root 到 `init.yaml` 的列。
 4. 将目标展开成计划义务：
    - **coverage**：改动直接路径、影响路径、边界/反例、必要组合；
@@ -48,7 +50,7 @@
 ## 禁止
 
 - 写正式 `tg/plan.md`
-- 重新做 PR review 或重新解析原始 NL
+- 重新做 PR review 或重新解析自然语言输入
 - 没有 Planning Context 就静默生成默认计划
 - 默认 T=D / `tilingkey_full_coverage`
 - 义务不 root 到 init.yaml 列

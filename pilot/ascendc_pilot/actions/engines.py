@@ -289,7 +289,7 @@ def _write_change_capture_artifacts(
     hint_lines = [
         "# UO hints (bounded prefetch)",
         "",
-        "Prefer form-1 identifier cards from index.md; skip empty format-hunk around queries.",
+        "Prefer identifier cards from index.md; skip empty format-hunk around queries.",
         "",
     ]
     try:
@@ -834,6 +834,9 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
         init_intent.get("consumer_root"),
     )
+    from ascendc_pilot.human_interaction import resolved_test_script_root
+
+    test_script_root = resolved_test_script_root(project_root, test_script_root)
     mode = _pick(
         ctx.get("mode"),
         ctx.get("tg_mode"),
@@ -985,9 +988,10 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "tg-init-confirmed-v1": ["tg/init.yaml"],
     "tg-repo-scan-v1": ["runs/{run_id}/receipts/repo_scan.yaml"],
     "tg-bind-staging-v1": [
-        "runs/{run_id}/actions/bind_init/parts/**",
-        "runs/{run_id}/actions/bind_init/staging.yaml",
+        "runs/{run_id}/actions/bind_init/parts/harness.yaml",
+        "runs/{run_id}/actions/bind_init/parts/bind.yaml",
     ],
+    "tg-bind-review-v1": [],
     "plan-precheck-v1": [],
     "tg-plan-v1": ["tg/plan.md"],
     "tg-plan-staging-v1": [

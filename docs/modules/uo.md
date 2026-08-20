@@ -208,7 +208,7 @@ Canonical Kernel UO 提供的是 sync **facts**：operation、参数、pipe/even
 
 **关系（边）典型 kind**：日常查询默认走有用边 `WRITES` / `READS` / `CALLS` / `CONTROLS` / `DERIVES` / `SELECTS` / `LAUNCHES` / `SIGNALS` / `AWAITS` / `FLOWS_TO` / `BINDS`。图中还可有 `INSTANTIATES`、`WRAPS` / `ROOTED_AT`，以及同步相关的 `PRECEDES`。Host 条件、Tiling、Kernel、AscendC root 靠这些边串成可追溯图。
 
-Query 与 CE 读回的是按 kind 投影后的 evidence hit（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。跨层邻域由 `uo-query` 四种形态给出；`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。`legal_key` 在磁盘上按维列存，读取时再展开成 `dims` 字典。
+Query 与 CE 读回的是按 kind 投影后的 evidence hit（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。跨层邻域由 `uo-query` 给出（形态见 code-access 不变量）；`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。`legal_key` 在磁盘上按维列存，读取时再展开成 `dims` 字典。
 
 ```text
 meta + BuildVariant
@@ -253,14 +253,9 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `pilot_cli` `inspect evidence-window --project … --path … --lines A-B`。
 
-结构化查询（`pilot_cli` `uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图：
+结构化查询（`pilot_cli` `uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图。形态见 code-access 不变量；各形态返回什么见 `capabilities/uo-query/METHOD.md`。
 
-- 标识符：实体卡片（定义点 + 按边类型分组的邻居 + `next`）
-- `Dim=V`：模板覆盖（`dim_coverage` / `matching_block_count` / `total_matched`）
-- `--file --line`：从位点走图
-- 无参数：算子索引（launch 阶段、维名、TilingData、gaps 计数）
-
-这四种形态是 CE / TG / 主控的**唯一查询面**。`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。不要传 `--mode`。禁止 `explain-*`、`search`、`locate`。
+这是 CE / TG / 主控的**唯一查询面**。`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。
 
 与官方 cannbot 的适配（CodeMap 作为源码结构底座，含 FAG arch35 覆盖验证）见下文 [与官方 cannbot 的适配](#与官方-cannbot-的适配)。
 
@@ -272,7 +267,7 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 ## 与 TG、CE 的衔接
 
-TG 消费 CodeMap、TilingKey domain、Host/Kernel projection 与 unresolved 来写 `tg/plan.md` 义务。CE 用上述四种 `uo-query` 形态读图，不另走 impact API。二者都不应重新建立完整源码权威。
+TG 消费 CodeMap、TilingKey domain、Host/Kernel projection 与 unresolved 来写 `tg/plan.md` 义务。CE 用 `uo-query` 读图，不另走 impact API。二者都不应重新建立完整源码权威。
 
 UO 负责如实交付可证明关系及其未知部分；TG 决定哪些测试义务可通过 replay 或可靠排除关闭。
 
@@ -287,7 +282,7 @@ UO 不替代 cannbot。cannbot 的 code-review、runtime-debug、crash-debug、p
 现在：问题 → UO 一次查询（定位点 + 源码窗）→ cannbot 判断
 ```
 
-下表把 cannbot skill 要的源码点对齐到 **CodeMap 已实现的投影**（`query/evidence.py` 的 facts 与有用边；内部桶名见 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)）。**Agent / CE 技能不得按表中的 `locate` / `search` / `impact` 去调 CLI**——对外只有 `uo-query` 四种形态。`impact` 列表示图邻域分桶，对应磁盘 `uo/diff/impact.yaml` 时也只是 uo-update 产物。
+下表把 cannbot skill 要的源码点对齐到 **CodeMap 已实现的投影**（`query/evidence.py` 的 facts 与有用边；内部桶名见 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)）。**Agent / CE 技能不得按表中的 `locate` / `search` / `impact` 去调 CLI**——对外只有 `uo-query`（形态见 code-access 不变量）。`impact` 列表示图邻域分桶，对应磁盘 `uo/diff/impact.yaml` 时也只是 uo-update 产物。
 
 | cannbot skill 要的源码点 | 典型 skill | UO 查询 | CodeMap 给出 |
 | --- | --- | --- | --- |

@@ -28,6 +28,24 @@ KIND_PRIMARY_APPROVE = "primary_approve"
 KIND_RESUME = "resume"
 KIND_INTAKE = "intake"
 
+_HARNESS_DEFAULT_MARKERS = frozenset(
+    {
+        "no_repo_uo_query",
+        "default_input",
+        "none",
+        "null",
+        "-",
+        "__default_input__",
+    }
+)
+_PATH_CANDIDATE = re.compile(
+    r"(?:[A-Za-z]:[\\/][^\s\"'<>|*?\n，。；;！!？?]+"
+    r"|/(?:[^\s\"'<>|*?\n，。；;！!？?]+))",
+)
+_CJK_TAIL = re.compile(r"[\u4e00-\u9fff].*$")
+_IN_TREE_TEST_DIR_NAMES = frozenset({"tests", "test", "ut", "unittest", "unit_test"})
+_HARNESS_SKIP_MARKERS = frozenset({"have_repo", "stop", "custom"})
+
 
 def _dump(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,6 +138,269 @@ def pending_is_intake(pending: dict[str, Any] | None) -> bool:
         "intake",
         "project",
         "uo_product",
+    }
+
+
+def pending_field(pending: dict[str, Any] | None) -> str:
+    if not pending:
+        return ""
+    ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
+    return str(ask.get("field") or pending.get("decision_kind") or "").strip()
+
+
+def pending_allows_free_path(pending: dict[str, Any] | None) -> bool:
+    if not pending:
+        return False
+    ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
+    field = pending_field(pending)
+    return bool(ask.get("allow_free_text")) and field == "test_script_root"
+
+
+def extract_existing_directory(text: str) -> str:
+    """Return an existing absolute directory mentioned in free text, else empty."""
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    try:
+        direct = Path(raw).expanduser()
+        if direct.is_dir():
+            return str(direct.resolve())
+    except OSError:
+        pass
+    seen: list[str] = []
+    for match in _PATH_CANDIDATE.finditer(raw):
+        cand = _CJK_TAIL.sub("", match.group(0))
+        cand = cand.rstrip("\\/").rstrip("。，、；;）)］]」'\"`")
+        if cand and cand not in seen:
+            seen.append(cand)
+    for cand in seen:
+        try:
+            path = Path(cand).expanduser()
+            if path.is_dir():
+                return str(path.resolve())
+        except OSError:
+            continue
+    return ""
+
+
+def _git_workspace():
+    import sys
+
+    ws = Path(__file__).resolve().parents[2] / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw  # type: ignore[import-not-found]
+
+    return gw
+
+
+def extract_harness_git_url(text: str) -> str:
+    """First allowlisted https repo URL in free text (not a PR)."""
+    try:
+        gw = _git_workspace()
+    except Exception:  # noqa: BLE001
+        return ""
+    return str(gw.extract_git_repo_url(text) or "").strip()
+
+
+def _looks_like_fs_path(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    if _PATH_CANDIDATE.search(raw):
+        return True
+    try:
+        path = Path(raw).expanduser()
+    except OSError:
+        return False
+    return path.is_absolute() or ("/" in raw or "\\" in raw)
+
+
+def is_in_tree_operator_tests(project_root: Path, path: str) -> bool:
+    """True when ``path`` is the operator's own tests/test/ut tree, not an external harness."""
+    raw = str(path or "").strip()
+    if not raw or raw.lower() in _HARNESS_DEFAULT_MARKERS or raw.lower() in _HARNESS_SKIP_MARKERS:
+        return False
+    try:
+        child = Path(raw).expanduser().resolve()
+        parent = Path(project_root).expanduser().resolve()
+        rel = child.relative_to(parent)
+    except (ValueError, OSError):
+        return False
+    parts = [p.lower() for p in rel.parts]
+    return bool(parts) and parts[0] in _IN_TREE_TEST_DIR_NAMES
+
+
+def _path_only_in_tree_guess(project_root: Path, text: str, path: str) -> bool:
+    """True when ``text`` is just an operator tests/ path with no extra user language."""
+    if not path or not is_in_tree_operator_tests(project_root, path):
+        return False
+    remainder = str(text or "").replace(path, "")
+    extracted = extract_existing_directory(text)
+    if extracted:
+        remainder = remainder.replace(extracted, "")
+    remainder = remainder.strip(" \t\"'`\\/")
+    return not remainder
+
+
+def normalize_start_test_script_root(project_root: Path, value: str) -> tuple[str, bool]:
+    """Seed run-state from ``pilot_run`` / CLI. In-tree tests and default markers stay unconfirmed."""
+    raw = str(value or "").strip()
+    if not raw or raw.lower() in _HARNESS_SKIP_MARKERS:
+        return "", False
+    if raw.lower() in _HARNESS_DEFAULT_MARKERS:
+        return "", False
+    extracted = extract_existing_directory(raw)
+    if extracted and not is_in_tree_operator_tests(project_root, extracted):
+        return extracted, True
+    return "", False
+
+
+def resolved_test_script_root(project_root: Path, picked: str = "") -> str:
+    """Live tg-init: confirmed state wins; unconfirmed pack overlay is not a harness."""
+    root = Path(project_root).expanduser().resolve()
+    st = load_state(root) or {}
+    if str(st.get("workflow_id") or "") != "tg-init":
+        return str(picked or st.get("test_script_root") or "").strip()
+    if st.get("test_script_confirmed"):
+        return str(st.get("test_script_root") or "").strip()
+    raw = str(picked or st.get("test_script_root") or "").strip()
+    if not raw or raw.lower() in _HARNESS_DEFAULT_MARKERS or raw.lower() in _HARNESS_SKIP_MARKERS:
+        return ""
+    extracted = extract_existing_directory(raw)
+    if extracted and not is_in_tree_operator_tests(root, extracted):
+        return extracted
+    return ""
+
+
+def invalidate_tg_harness_downstream(project_root: Path) -> dict[str, Any]:
+    """Drop scan/bind work so a new harness root is scanned on a fresh ticket."""
+    from ascendc_pilot.actions.dispatch_legacy import discard_dispatch_tickets_for_action
+    from ascendc_pilot.paths import agent_root, tg_root
+    from ascendc_pilot.runs import invalidate_action_receipts, receipts_dir
+    from ascendc_pilot.state import save_state
+    from ascendc_pilot.state.machine import rework_phase
+
+    root = Path(project_root).expanduser().resolve()
+    st = load_state(root) or {}
+    rid = str(st.get("run_id") or "").strip()
+    arch = str(st.get("architecture") or "").strip() or None
+    dropped: dict[str, Any] = {}
+    if rid:
+        scan = receipts_dir(root, rid) / "repo_scan.yaml"
+        if scan.is_file():
+            try:
+                scan.unlink()
+                dropped["repo_scan_yaml"] = True
+            except OSError:
+                dropped["repo_scan_yaml"] = False
+        for aid in ("repo_scan", "bind_init", "bind_review", "bind_promote", "validate_init"):
+            dropped[aid] = invalidate_action_receipts(root, action_id=aid, run_id=rid)
+        dropped["tickets"] = discard_dispatch_tickets_for_action(
+            root, run_id=rid, action_id="bind_init"
+        )
+        action_root = agent_root(root, arch) / "runs" / rid / "actions"
+        for rel in (
+            "bind_init/parts/harness.yaml",
+            "bind_init/parts/bind.yaml",
+            "bind_init/staging.yaml",
+            "bind_review/verdict.yaml",
+        ):
+            path = action_root / rel
+            if path.is_file():
+                try:
+                    path.unlink()
+                    dropped[rel] = True
+                except OSError:
+                    dropped[rel] = False
+        parts_dir = action_root / "bind_init" / "parts"
+        if parts_dir.is_dir():
+            for part in parts_dir.glob("*.yaml"):
+                try:
+                    part.unlink()
+                    dropped[part.name] = True
+                except OSError:
+                    continue
+    phase = str(st.get("phase") or "")
+    if phase in {"bind", "validate"}:
+        if phase == "validate":
+            init_path = tg_root(root, arch=arch) / "init.yaml"
+            if init_path.is_file():
+                try:
+                    init_path.unlink()
+                    dropped["init_yaml"] = True
+                except OSError:
+                    dropped["init_yaml"] = False
+        try:
+            moved = rework_phase(root, to="scan", reason_code="HARNESS_CHANGED")
+            dropped["rewound_to"] = str(moved.get("to") or "scan")
+        except Exception as exc:  # noqa: BLE001
+            dropped["rework_error"] = str(exc)[:200]
+            st["phase"] = "scan"
+            save_state(root, st)
+            dropped["rewound_to"] = "scan"
+    return dropped
+
+
+def adopt_test_script_root(project_root: Path, value: str) -> dict[str, Any]:
+    """Persist a confirmed harness choice. ``have_repo`` / ``custom`` / ``stop`` are not roots."""
+    from ascendc_pilot.state import save_state
+
+    root = Path(project_root).expanduser().resolve()
+    raw = str(value or "").strip()
+    if not raw or raw.lower() in _HARNESS_SKIP_MARKERS:
+        return {"ok": True, "skipped": True, "test_script_root": ""}
+    if raw.lower() in _HARNESS_DEFAULT_MARKERS:
+        stored = "no_repo_uo_query"
+    else:
+        extracted = extract_existing_directory(raw)
+        if extracted:
+            stored = extracted
+        else:
+            git_url = extract_harness_git_url(raw)
+            if git_url:
+                try:
+                    gw = _git_workspace()
+                except Exception as exc:  # noqa: BLE001
+                    return {
+                        "ok": False,
+                        "error": "GIT_WORKSPACE_IMPORT",
+                        "message_zh": str(exc)[:200],
+                        "value": raw,
+                    }
+                cloned = gw.clone_harness_repo(git_url, project_root=root)
+                if not cloned.get("ok"):
+                    return {
+                        "ok": False,
+                        "error": str(cloned.get("error") or "HARNESS_CLONE_FAILED"),
+                        "message_zh": str(cloned.get("message_zh") or ""),
+                        "value": raw,
+                    }
+                stored = str(cloned.get("path") or "")
+            else:
+                try:
+                    path = Path(raw).expanduser()
+                except OSError:
+                    path = None
+                if path is None or not path.is_dir():
+                    return {"ok": False, "error": "NOT_A_DIRECTORY", "value": raw}
+                stored = str(path.resolve())
+    st = load_state(root) or {}
+    if not st:
+        return {"ok": True, "test_script_root": stored, "test_script_confirmed": True}
+    old = str(st.get("test_script_root") or "").strip()
+    st["test_script_root"] = stored
+    st["test_script_confirmed"] = True
+    save_state(root, st)
+    reset: dict[str, Any] = {}
+    if old and old != stored:
+        reset = invalidate_tg_harness_downstream(root)
+    return {
+        "ok": True,
+        "test_script_root": stored,
+        "test_script_confirmed": True,
+        "reset": bool(reset),
+        "reset_detail": reset,
     }
 
 
@@ -238,8 +519,9 @@ def attach_interaction_request(
     payload["primary_instruction_zh"] = (
         str(payload.get("primary_instruction_zh") or "")
         + " Host 弹出 question UI；点选即写入收据。"
-        " 若用户打断确认框并在对话里回复：用 `pilot_cli` `interpret-user-turn --text <本轮原文>`，"
-        "能对应原选项则记为答复，否则取消上一问并跟新消息。不要重问上一题。"
+        " 若用户打断确认框并在对话里回复：用 `pilot_cli` "
+        "`interpret-user-turn --project <算子绝对路径> --text <本轮原文>`，"
+        "能对应原选项则记为答复，否则取消上一问并跟新消息。不要重问上一题。不要猜 `--message`。"
         "未点选不等于批准删除/重开。无收据不得 finalize / resume / 破坏性 reinit。"
     ).strip()
     return payload
@@ -275,9 +557,10 @@ def record_answer(
         }
     allowed = [str(v) for v in (pending.get("allowed_values") or [])]
     answer = str(value or "").strip()
+    ask = pending.get("ask_question") if isinstance(pending.get("ask_question"), dict) else {}
     if allowed and answer not in allowed:
         # Accept option labels mapped via ask_question.options
-        for opt in (pending.get("ask_question") or {}).get("options") or []:
+        for opt in ask.get("options") or []:
             if not isinstance(opt, dict):
                 continue
             if answer in {
@@ -286,6 +569,16 @@ def record_answer(
             }:
                 answer = str(opt.get("value") or opt.get("label") or answer)
                 break
+    free_path = ""
+    git_url = ""
+    if pending_allows_free_path(pending):
+        free_path = extract_existing_directory(answer) or extract_existing_directory(str(value or ""))
+        if free_path:
+            answer = free_path
+        else:
+            git_url = extract_harness_git_url(answer) or extract_harness_git_url(str(value or ""))
+            if git_url:
+                answer = git_url
     try:
         from ascendc_pilot.run_resume import normalize_decision
 
@@ -296,7 +589,20 @@ def record_answer(
     except Exception:  # noqa: BLE001
         canon = None
         allowed_canon = set(allowed)
-    if allowed and answer not in allowed and answer not in allowed_canon:
+    path_ok = bool(free_path) or bool(git_url) or (
+        pending_allows_free_path(pending)
+        and answer.lower() not in _HARNESS_SKIP_MARKERS
+        and (answer.lower() in _HARNESS_DEFAULT_MARKERS or Path(answer).is_dir())
+    )
+    if allowed and answer not in allowed and answer not in allowed_canon and not path_ok:
+        if (
+            pending_allows_free_path(pending)
+            and answer.lower() not in _HARNESS_SKIP_MARKERS
+            and not _looks_like_fs_path(answer)
+        ):
+            return supersede_pending(
+                project_root, reason="ask_free_text", user_text=str(value or answer)
+            )
         return {
             "ok": False,
             "error": "VALUE_NOT_ALLOWED",
@@ -324,6 +630,8 @@ def record_answer(
     pending["status"] = "answered"
     pending["answered_value"] = answer
     _dump(pending_path(project_root), pending)
+    if pending_field(pending) == "test_script_root" or pending_allows_free_path(pending):
+        adopt_test_script_root(project_root, answer)
     return {
         "ok": True,
         "receipt_path": str(out),
@@ -596,6 +904,13 @@ def match_pending_option(pending: dict[str, Any] | None, text: str) -> str | Non
         uniq = list(dict.fromkeys(hits))
         if len(uniq) == 1:
             return uniq[0]
+    if pending_allows_free_path(pending):
+        extracted = extract_existing_directory(raw)
+        if extracted:
+            return extracted
+        git_url = extract_harness_git_url(raw)
+        if git_url:
+            return git_url
     return None
 
 
@@ -721,9 +1036,12 @@ def interpret_user_turn(
         workflow_id=str(st.get("workflow_id") or ""),
         goal=load_user_goal(root),
     )
-    if pending_is_open(pending) and relation == REL_ANSWER:
-        mapped = match_pending_option(pending, text)
+    if pending_is_open(pending):
+        try_match = relation == REL_ANSWER or pending_allows_free_path(pending)
+        mapped = match_pending_option(pending, text) if try_match else None
         if mapped and mapped.lower() in _DESTRUCTIVE_VALUES and len(str(text or "").strip()) > 24:
+            mapped = None
+        if mapped and _path_only_in_tree_guess(root, text, mapped):
             mapped = None
         if mapped:
             rec = record_answer(
@@ -738,10 +1056,94 @@ def interpret_user_turn(
                 rec["needs_human_decision"] = False
                 rec["message_zh"] = f"已把本轮回复记为选项「{mapped}」"
                 return rec
-    if pending_is_open(pending):
+        extracted_pending = extract_existing_directory(text)
+        if extracted_pending and _path_only_in_tree_guess(root, text, extracted_pending):
+            return {
+                "ok": True,
+                "disposition": "ignored_in_tree_guess",
+                "needs_human_decision": True,
+                "test_script_root": "",
+                "message_zh": (
+                    "仓内 tests/ 不是已确认的测试脚本仓。"
+                    "请点选 Ask 的仓内项，或在末项输入外部路径 / git URL；不要把发现的 tests/ 代答。"
+                ),
+            }
+        if extracted_pending and (
+            pending_allows_free_path(pending) or pending_field(pending) == "test_script_root"
+        ):
+            rec = record_answer(
+                root,
+                request_id=str(pending.get("request_id") or ""),
+                value=extracted_pending,
+            )
+            if rec.get("ok"):
+                _clear_superseded_flag(root)
+                rec["disposition"] = "answered"
+                rec["relation"] = REL_ANSWER
+                rec["needs_human_decision"] = False
+                rec["message_zh"] = f"已把测试脚本仓记为 {extracted_pending}"
+                return rec
+        git_pending = extract_harness_git_url(text)
+        if git_pending and (
+            pending_allows_free_path(pending) or pending_field(pending) == "test_script_root"
+        ):
+            rec = record_answer(
+                root,
+                request_id=str(pending.get("request_id") or ""),
+                value=git_pending,
+            )
+            if rec.get("ok"):
+                _clear_superseded_flag(root)
+                rec["disposition"] = "answered"
+                rec["relation"] = REL_ANSWER
+                rec["needs_human_decision"] = False
+                rec["message_zh"] = f"已把测试脚本仓记为 {git_pending}"
+                return rec
         return supersede_pending(
             root, reason=reason, user_text=text, relation=relation
         )
+    extracted = extract_existing_directory(text)
+    if extracted and str(st.get("workflow_id") or "") == "tg-init":
+        if is_in_tree_operator_tests(root, extracted):
+            # Path-only in-tree is a Primary guess (pilot_run overlay). In-tree
+            # harness is only confirmed by AskQuestion / pending option match.
+            pass
+        else:
+            adopted = adopt_test_script_root(root, extracted)
+            if adopted.get("ok") and not adopted.get("skipped"):
+                reset = bool(adopted.get("reset"))
+                return {
+                    "ok": True,
+                    "disposition": "harness_reset" if reset else "adopted_test_script_root",
+                    "value": extracted,
+                    "test_script_root": adopted.get("test_script_root") or extracted,
+                    "reset": reset,
+                    "needs_human_decision": False,
+                    "message_zh": (
+                        f"已改用测试脚本仓 {extracted}，scan/bind 将按新路径重做"
+                        if reset
+                        else f"已把测试脚本仓记为 {extracted}"
+                    ),
+                }
+    git_url = extract_harness_git_url(text)
+    if git_url and str(st.get("workflow_id") or "") == "tg-init":
+        adopted = adopt_test_script_root(root, git_url)
+        if adopted.get("ok") and not adopted.get("skipped"):
+            reset = bool(adopted.get("reset"))
+            stored = str(adopted.get("test_script_root") or git_url)
+            return {
+                "ok": True,
+                "disposition": "harness_reset" if reset else "adopted_test_script_root",
+                "value": git_url,
+                "test_script_root": stored,
+                "reset": reset,
+                "needs_human_decision": False,
+                "message_zh": (
+                    f"已改用测试脚本仓 {stored}，scan/bind 将按新路径重做"
+                    if reset
+                    else f"已把测试脚本仓记为 {stored}"
+                ),
+            }
     effects = apply_goal_relation(root, relation, text)
     from ascendc_pilot.human_voice import FOLLOW_NEW_TURN_ZH
 

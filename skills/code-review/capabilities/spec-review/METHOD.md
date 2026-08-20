@@ -1,6 +1,6 @@
 只做 **Spec** 轴：判断改动是不是这次需求要的。不要做 Standards 轴。
 
-详见 `references/finding-format.md`、`references/gotchas.md`、`references/evidence-quality.md`。
+详见 `references/gotchas.md`。
 
 ## 对照
 
@@ -13,18 +13,18 @@ PR 入口必须有 diff 索引。Finding 必须有 `path:line`。
 ## 方法
 
 ```text
-index 的 Added identifiers → 并行 form-1 新字段/新函数 → 字段 readers 定位 Kernel 定义 → 完成度 → FINDING
+index 的 Added identifiers → 并行查标识符 新字段/新函数 → 字段 readers 定位 Kernel 定义 → 完成度 → FINDING
 ```
 
-1. 先读 `runs/<RUN>/actions/change_capture/index.md` 与若存在的 `uo_hints.md`。需要某 hunk 细节时只读对应 `hunks/` 小窗。禁止先 form-3 打 format hunk。
-2. 插件 `pilot_cli` `uo-query`：**并行 form-1 标识符**（一张 `deterBandScheduleMode` 即 Host 写 + Kernel 读）。形态 3 `--file --line` 只用于有 ident 的位点，不要打纯空白/format 行。不要传 `--mode`。禁止 `explain-*`。禁止 Grep 通读算子源码。
+1. 先读 `runs/<RUN>/actions/change_capture/index.md` 与若存在的 `uo_hints.md`。需要某 hunk 细节时只读对应 `hunks/` 小窗。不要把 format hunk 当第一跳（空卡不是文件未索引）。
+2. 插件 `pilot_cli` `uo-query`：**有 ident 用标识符**（一张 `deterBandScheduleMode` 即 Host 写 + Kernel 读）。卡片给出 `file:line` 后 **必须** `--file --line`，不要改去 Read 整文件。不要打纯空白/format 行当第一跳。禁止 Grep 通读算子源码。
 3. snippet 截断不得下「枚举未用」。Kernel 以字段卡 `extras.readers` 行为准，不要把 `kernel_call_boundary` 调用点当定义。
 4. 只读 git 仅用于标题：`git log --oneline`、`git show --stat`、`git diff --stat`、`git rev-parse`。禁止 `git checkout` / 全量 patch。
 5. 报告：(a) 意图要但缺失或只做了一半；(b) 意图没要的行为；(c) 看起来做了但实现不对。每个 changed file：finding / format-only / UNREVIEWED。未审 `op_kernel` 禁止「无 high/medium」。
 6. UT 不在 CodeMap：只读 `tests/**` 搜新字段名。本 PR 测试文件零次出现新字段 → Spec I5 是缺口。
 7. 报告前尝试推翻 H1。
 
-本轴结论写在 Task 回复。两轴收齐后由主控综合，不要本子代理写 `merged.md`，也不要再派 Task。
+本轴结论写在 Task 回复。两轴收齐后由主控综合，不要本子代理写 `merged.md`。
 
 ## 产物
 

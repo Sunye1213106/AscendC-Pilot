@@ -25,7 +25,7 @@ Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
 https://github.com/<org>/<repo>/pull/<id>
 ```
 
-主控应先写出 Todo（获取代码 / uo-init / 视产物缺口而定的后续格），再执行。系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ Engine 回执列出 changed-files；路径令牌唯一时直接使用该 `(算子, architecture)`，多个才 AskQuestion（禁止在没有证据时默认 arch35）→ 建立或复用 CodeMap。测试范围来自尚未理解的改动且用户未选定完整审查或只要用例时，主控 AskQuestion。无旧 TG 产物则 `/tg-init`（缺测试脚本仓会问人；仓内 `tests/` 未确认不得当 harness）→ 有 Planning Context 后再 `/tg-plan` / `/tg-solve`。凭证失败会问人，这不是 UX 失败。显式 slash 只跑该格。
+主控应先写出 Todo（获取代码 / uo-init / tg-init，再视产物缺口写消费格），再执行。系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ Engine 回执列出 changed-files；路径令牌唯一时直接使用该 `(算子, architecture)`，多个才 AskQuestion（禁止在没有证据时默认 arch35）→ 建立或复用 CodeMap。**全部 init 先于任何消费**：缺 `.uo` 先 `/uo-init`；最终产物是用例且缺 `tg/init.yaml` 先 `/tg-init`（意图没有仓外测试脚本路径时第一步问人；仓内 `tests/` 未确认不得当 harness；主控不得把仓内 UT 填进 `test_script_root` 代答），再按产物缺口消费。禁止把 `/ce-review` 插在未完成的 init 之前。最终产物是用例、审查不是交付物时，用 `/uo-query` 作 Planning Context，不要把 `/ce-review` 推理成依赖。有 Planning Context 后再 `/tg-plan` / `/tg-solve`。需主控派 Task 的格串行。凭证失败会问人，这不是 UX 失败。显式 slash 只跑该格。不要按个别措辞选 slash。
 
 ## 1. 打开目标算子
 
@@ -104,7 +104,7 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 显式入口：`/uo-query --project <算子目录>`。调查 unresolved：`/uo-investigate --project <算子目录>`。二者都不修改正式 CodeMap。
 
-查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，向用户说明将直接调用还是委派。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询同一轮 `Task(agent=uo-query)`。调用形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
+查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/operator-analysis/references/uo-product-map.md)，向用户说明将直接调用还是委派。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询同一轮 `Task(agent=uo-query)`。形态见 code-access 不变量。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
 
 默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 
@@ -133,7 +133,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 **产品目标（推荐）**：说「全量 / 全覆盖 / tilingkey case / 建立 TilingKey 全覆盖测试」时，Pilot 会写入
 `.ascendc-pilot/control/user_goal.yaml`，并按三步串联（每步用自然语言说明意图与下一步）：
 
-1. **写出 init.yaml**（`/tg-init`）→ 向用户确认是否进入规划  
+1. **写出 init.yaml**（`/tg-init`）→ 主控裁判放行后直接结束，不再问是否进入规划  
 2. **写出 plan.md**（`/tg-plan`）→ 向用户批准是否开始求解  
 3. **写出 worklog.md + cases 表**（`/tg-solve`）
 
@@ -179,10 +179,10 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 /ce-review --project <算子目录>
 ```
 
-自然语言「分析这个 PR 并生成对应测试用例」+ URL：先 Todo 再按格执行。获取代码走 Engine clone；随后主控选定算子/arch 再 `/uo-init`。审查结束后勾 Todo 再 `pilot_run` 下一格，不要再调 `auto` 做 intake。显式只要审查才打 `/ce-review`。`/tg-init` 缺测试仓会问人。
+自然语言要生成用例且带 PR URL：先 Todo 再按格执行。获取代码走 Engine clone；`auto` 回执已唯一钉死 `(算子, architecture)` 时直接用于后续格，不要单独一条「确定算子/架构」Todo。全部 init 在前，再按产物缺口消费：最终产物是用例、审查不是交付物 → `/uo-query` 再 `/tg-plan` / `/tg-solve`；审查才是交付物 → `/ce-review`（若同时还要用例，审查结论作 Planning Context，不再加 `/uo-query`）。勾 Todo 后再 `pilot_run` 下一格，不要再调 `auto` 做 intake。`/tg-init` 缺测试仓会问人。需主控派 Task 的格串行。不要按个别措辞选 slash。
 
 
-CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query` 四种形态。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
+CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query`（形态见 code-access 不变量）。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。
 
 ---
 

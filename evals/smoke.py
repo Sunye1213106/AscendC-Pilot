@@ -82,7 +82,6 @@ def main() -> int:
     )
     results.append(_run([sys.executable, str(REPO / "scripts" / "check_skill_architecture.py")]))
     results.append(_run([sys.executable, str(REPO / "scripts" / "check_instruction_ownership.py")]))
-    results.append(_run([sys.executable, str(REPO / "scripts" / "sync_shared_references.py"), "--check", "--repo", str(REPO)]))
     results.append(_run([sys.executable, str(REPO / "scripts" / "check_operator_independence.py")]))
     results.append(_run([sys.executable, "-m", "evals.run_example", "--all"]))
     results.append(

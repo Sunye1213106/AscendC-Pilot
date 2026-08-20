@@ -87,6 +87,108 @@ def looks_like_pilot_checkout(path: Path | str | None) -> bool:
     return (root / "pilot" / "ascendc_pilot").is_dir() and (root / "engines").is_dir()
 
 
+_GIT_REPO_RE = re.compile(
+    r"https?://(?:www\.)?(?P<host>gitcode\.com|github\.com|gitcode\.net)"
+    r"/(?P<owner>[^/\s]+)/(?P<repo>[^/\s?#]+)",
+    re.I,
+)
+
+
+def parse_git_repo_url(url: str) -> dict[str, Any]:
+    """Allowlisted https repo URL (not a PR). Engine may clone this as a test harness."""
+    text = str(url or "").strip().rstrip("/")
+    match = _GIT_REPO_RE.search(text)
+    if not match:
+        return {"ok": False, "error": "GIT_URL_SHAPE"}
+    rest = text[match.end() :]
+    if re.match(r"^/(?:pulls|pull|merge_requests)(?:/|$)", rest, re.I):
+        return {"ok": False, "error": "GIT_URL_IS_PR"}
+    host = str(match.group("host") or "").lower()
+    owner = str(match.group("owner") or "")
+    repo = str(match.group("repo") or "")
+    if repo.lower().endswith(".git"):
+        repo = repo[:-4]
+    if not host or not owner or not repo:
+        return {"ok": False, "error": "GIT_URL_SHAPE"}
+    clone_url = f"https://{host}/{owner}/{repo}.git"
+    return {
+        "ok": True,
+        "host": host,
+        "owner": owner,
+        "repo": repo,
+        "clone_url": clone_url,
+        "url": text,
+    }
+
+
+def extract_git_repo_url(text: str) -> str:
+    for match in _GIT_REPO_RE.finditer(str(text or "")):
+        raw = match.group(0).rstrip(".,);]，。")
+        parsed = parse_git_repo_url(raw)
+        if parsed.get("ok"):
+            return str(parsed.get("url") or raw)
+    return ""
+
+
+def harness_workspace_anchor(project_root: Path | str) -> Path:
+    root = Path(project_root).expanduser().resolve()
+    parts = list(root.parts)
+    lowered = [p.lower() for p in parts]
+    if ".ascendc-pr" in lowered:
+        idx = lowered.index(".ascendc-pr")
+        if idx > 0:
+            return Path(*parts[:idx])
+    return root
+
+
+def harness_checkout_path(
+    workspace_root: Path | str,
+    *,
+    host: str,
+    owner: str,
+    repo: str,
+) -> Path:
+    slug = (
+        f"{_safe_path_token(host)}--"
+        f"{_safe_path_token(owner)}--"
+        f"{_safe_path_token(repo)}"
+    )
+    return Path(workspace_root).expanduser() / ".ascendc-harness" / slug
+
+
+def clone_harness_repo(url: str, *, project_root: Path | str) -> dict[str, Any]:
+    """Clone an allowlisted git repo next to `.ascendc-pr`. Never into Pilot."""
+    parsed = parse_git_repo_url(url)
+    if not parsed.get("ok"):
+        return parsed
+    anchor = harness_workspace_anchor(project_root)
+    if looks_like_pilot_checkout(anchor):
+        return {
+            "ok": False,
+            "error": "HARNESS_CLONE_INTO_PILOT",
+            "message_zh": "不能把测试仓 clone 进 AscendC-Pilot 本仓。请在打开的工作区目录下 clone。",
+        }
+    dest = harness_checkout_path(
+        anchor,
+        host=str(parsed["host"]),
+        owner=str(parsed["owner"]),
+        repo=str(parsed["repo"]),
+    )
+    if dest.is_dir() and ((dest / ".git").exists() or (dest / ".git").is_file()):
+        return {"ok": True, "path": str(dest.resolve()), "reused": True}
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cloned = _run_git(["clone", "--depth", "1", str(parsed["clone_url"]), str(dest)])
+    if cloned.returncode != 0:
+        _safe_rmtree(dest)
+        return {
+            "ok": False,
+            "error": "HARNESS_CLONE_FAILED",
+            "message_zh": "clone 测试脚本仓失败。请检查 URL、凭证或改用本地路径。",
+            "error_detail": (cloned.stderr or cloned.stdout)[-400:],
+        }
+    return {"ok": True, "path": str(dest.resolve()), "cloned": True}
+
+
 def _run_git(args: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", "-c", "core.longpaths=true", *args],

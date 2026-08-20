@@ -22,7 +22,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 
 | 目标 | 用什么 | 不要用 |
 | --- | --- | --- |
-| 自然语言：「分析这个 PR 并生成对应测试用例」+ URL | 先 Todo 再执行。获取代码：`pilot_run(workflow=auto)` Engine clone；随后主控 `git log` + `scan-architectures` 选定算子/arch，再 `pilot_run uo-init` | 无 Todo 把原文塞进 auto、脚本 pin architecture、扫本地 fork、审查完 Host 自动开下一 slash |
+| 自然语言要生成用例 + PR URL | 先 Todo 再按产物缺口执行。获取代码：`pilot_run(workflow=auto)` Engine clone；回执已钉死 `(算子, architecture)` 时直接用于后续格 | 无 Todo 把原文塞进 auto、脚本 pin architecture、扫本地 fork、按个别措辞把审查推理成依赖、审查完 Host 自动开下一 slash |
 | `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run(workflow=<id>)` | 手工串 `start` / `next` / `run-action auto` |
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
@@ -62,22 +62,22 @@ retry-after-environment-fix --project D:\ops\attention\flash_attention_score_gra
 
 | `command` | 何时用 |
 | --- | --- |
-| `uo-query --project <abs> [--architecture arch] <标识符或 Dim=V>` | 简单查询；stdout 即答案。也可 `--file <path> --line <n>`，或省略查询词拿算子索引 |
+| `uo-query --project <abs> [--architecture arch]` | 形态见 code-access 不变量。整句 NL 会失败 |
 | `uo-query --project <abs> --status-only` | 只看产物是否存在 / 是否 fresh |
 | `scan-architectures --project <abs>` | 启动前列出 `arch*` 选项，供 AskQuestion |
 | `status --project <abs>` | 当前 workflow / run 状态 |
 | `inspect-failure --project <abs>` | `pilot_run` 或确定性 Action 失败后的失败卡 |
 | `retry-after-environment-fix --project <abs>` | 外部环境修好后恢复 `human_required` / `blocked` |
-| `interpret-user-turn --project <abs> --text <本轮原文>` | 用户打断确认框后：把对话回复映射到原选项，或取消上一问 |
+| `interpret-user-turn --project <abs> --text <本轮原文>` | 用户打断确认框后：把对话回复映射到原选项，或取消上一问。路径夹在中文句子里也可以。禁止猜 `--message`。 |
 | `next --project <abs>` | 调试：看下一步允许的 Action（正常路径由 `pilot_run` 持有） |
 
 查询四种参数形态（禁止 `--mode`）：
 
 ```text
-pilot_cli command=`uo-query --project <abs> [--architecture arch35] s1Inner`
-pilot_cli command=`uo-query --project <abs> [--architecture arch35] SparseMode=3`
-pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_host/arch35/foo.cpp --line 120`
 pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] s1Inner`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] Dim=DTemplateNum`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_host/arch35/foo.cpp --line 120`
 ```
 
 `pilot_run` 参数：
@@ -85,12 +85,13 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 | 参数 | 说明 |
 | --- | --- |
 | `workflow` | 现有 slash id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
-| `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。模型禁止 bash `git clone` |
+| `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。bash `git clone` 走 OpenCode ask，不要自己建 PR 仓 |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |
+| `test_script_root` | `/tg-init` **仅当**用户原文已给出算子仓外测试脚本绝对路径时传入。不要塞进 `intent`，不要把仓内 `tests/` 填进来代答 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
 
-`pilot_run` 返回 `host_step.kind=dispatch_subagent` 时，用原生 `Task`，`prompt` 必须是 `task_prompt_stub` 原文。返回 `ask_question` / `host_owned_ask` 时，选项必须原样使用。用户打断确认并在对话里回复时，用 `interpret-user-turn`，不要重问上一题。
+`pilot_run` 返回 `host_step.kind=dispatch_subagent` 时，用原生 `Task`，`prompt` 必须是 `task_prompt_stub` 原文。返回 `host_step.kind=primary_review` 时通读两路 yaml，不要写文件、不要 AskQuestion；下一发 `intent=PASS` 或 `REWORK bind`。返回 `ask_question` / `host_owned_ask` 时，选项必须原样使用。用户打断确认并在对话里回复时，用 `interpret-user-turn`，不要重问上一题。
 
 ---
 

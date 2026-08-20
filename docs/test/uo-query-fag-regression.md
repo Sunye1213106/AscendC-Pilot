@@ -21,7 +21,7 @@ uo-query **禁止** `pilot_run`。简单查询直接执行，复杂查询同一�
 | 复杂、一个独立查询目标 | **一个** `Task(agent=uo-query)` |
 | 复杂、多个独立查询目标 | 主控 **同一轮并行** 多个 `Task(agent=uo-query)`；全部返回后综合 |
 
-调用形态：标识符 / `Dim=V` / `--file --line` / 无参数索引。算法见 `skills/operator-analysis/routing/uo-query.md`。
+调用形态见 code-access 不变量。算法见 `skills/operator-analysis/routing/uo-query.md`。
 
 ## 怎么判
 

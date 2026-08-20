@@ -19,16 +19,16 @@ https://github.com/<org>/<repo>/pull/<id>
 
 验收：
 
-1. Primary 先 `todowrite`（获取代码 / uo-init / ce-review / tg-init / tg-plan / tg-solve 等，随磁盘产物变化），再按格 `pilot_run`。不要用 OpenCode 原生 `skill` 加载编排。禁止第一轮 `pilot_run(workflow=auto, intent=原文)`。
+1. Primary 先 `todowrite`（获取代码 / uo-init / tg-init / uo-query / tg-plan / tg-solve；磁盘已有产物则跳过）。不要默认塞 `ce-review`。不要用 OpenCode 原生 `skill` 加载编排。获取代码格：`pilot_run(workflow=auto, intent=用户目标含 PR URL)`，不要跳过 Todo。
 2. 「获取代码」格：系统在 OpenCode 打开目录下 **新建文件夹** clone exact-head。空打开目录不落 `.ascendc-pilot`。clone 仍是 Engine，不要让主控 `git clone` 建 PR worktree。
 3. clone 后使用 Engine 回执中的 changed-files：路径令牌唯一则直接使用该 `(算子, architecture)`；多个 AskQuestion 原样选项。禁止在没有证据时默认 arch35。不要为理解语义通读全量 git diff。
-4. 变更影响用 `/uo-query`（可带 diff）问 CodeMap，**不是**独立 `goal-impact`
-5. 语义只走 `/uo-query`，禁止 Grep 算子仓
+4. 变更影响用 `/uo-query`（可带 diff）问 CodeMap，**不是**独立 `goal-impact`。缺 `tg/init.yaml` 且要生成用例时先 `/tg-init`，query stub 带上 init 的 harness/列/值域
+5. 语义优先 `/uo-query`；Grep/Glob 可作定位辅助。需主控派 Task 的格（`/tg-init` / `/uo-query` / `/ce-review`）串行
 6. `/ce-apply` 产出的 diff 走 `/uo-update`
 7. `/tg-init` 缺测试脚本仓会问人。`host_step.done` 后勾掉当前格再 `pilot_run` 下一格
 8. 交付 cases 表 + 覆盖说明
 
-贴 PR URL 且要生成针对性 case 时，CE review 属于推理出来的依赖，不是脚本补链。不要扫本地 FAG 再发明 arch 选项。
+贴 PR URL 且最终产物是针对性 case 时，不要把 CE review 推理成依赖。Planning Context 走 `/uo-query`。不要扫本地 FAG 再发明 arch 选项。这是一条手工验收输入，不是黄金链。
 
 ## 专家路径（必须仍可用）
 

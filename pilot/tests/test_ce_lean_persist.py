@@ -44,6 +44,8 @@ def test_ce_review_summary_is_report_confirm() -> None:
     assert persist["execution_mode"] == "primary_interactive"
     code_review = next(a for a in WORKFLOWS["ce-review"]["actions"] if a["id"] == "code_review")
     assert "summary" not in (code_review.get("phases") or [])
+    assert code_review.get("output_mode") == "return_value"
+    assert ACTION_WRITE_PATHS["ce-review"]["code_review"] == []
 
 
 def test_review_report_ask_options(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@
 `host_driver=False` 只表示 Session Driver **不** auto start/drain，**不等于**没有 Action / METHOD / bundle。
 
 - **简单查询**：一个起始标识符或一种参数形态、一两轮调用能答完。主控直接调用 `pilot_cli` `uo-query`，根据 stdout 作答。不委派子代理，不调用 `kb_lookup`，不调用 `pilot_run`。禁止先发「我将直接查询」挡住首屏答案。意图只是一次语义查询时留在主线，不要再包 coordinator。
-- **复杂查询**：用户原话里有 ≥2 个可独立作为首次调用的起始点。必须由**主控**同一轮并行调用 `Task(agent=uo-query)`（上限 5），可在派发时带一句 FOCUS；不要阻塞等确认。子代不得 Write、不得自己 finalize、**不得再派 Task**。综合只在主控。禁止把这次查询再包进另一个子代理里去做 fanout。
+- **复杂查询**：用户原话里有 ≥2 个可独立作为首次调用的起始点。必须由**主控**同一轮并行调用 `Task(agent=uo-query)`（上限 5），可在派发时带一句 FOCUS；不要阻塞等确认。子代不得 Write、不得自己 finalize。综合只在主控。禁止把这次查询再包进另一个子代理里去做 fanout。
 - **Delegated Task**（TG/CE 临时问图）：Task 正文即全部，不要另行查找 session `prompt.md`。
 
 缺 `.uo`：产物路径是 `<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`。
@@ -16,7 +16,7 @@
 
 输入：用户原话。输出：直接调用，或 1～N 路 Task（N = 独立起始点数，上限 5）。
 
-从原话抽出能作为**首次调用**的起始点：标识符、`Dim=V`、已知 `--file --line`。
+从原话抽出能作为**首次调用**的起始点。没有具体标识符时用无参数索引。有标识符、`Dim=V`、或上一张卡的 `--file --line` 时才直接用那一种。
 判定：这个起始点能否在**不依赖另一路结论**的情况下单独查完它所对应的那一问？能 → 单独一路。
 
 **必须分别委派**
@@ -41,15 +41,20 @@
 
 ## Task 正文（原样用）
 
-每路只含下面三行，再加本片必要的场景约束。**禁止**写 `--mode`。建议的首次调用必须是四种参数形态之一。
+每路只含下面三行，再加本片必要的场景约束。形态见 code-access 不变量。没有具体标识符时用无参数索引。不要把三种写成一句「或」。
 
 ```text
 FOCUS: <本路唯一查询目标>
-建议的首次调用: pilot_cli command=`uo-query --project <算子绝对路径> [--architecture arch35] <标识符或 Dim=V>`
+建议的首次调用（三选一正例，按序）：
+  uo-query --project <算子绝对路径>
+  uo-query --project <算子绝对路径> DTemplateNum
+  或 uo-query --project <算子绝对路径> Dim=DTemplateNum
+  uo-query --project <算子绝对路径> --file <卡片 file> --line <卡片 line>
+    （只从上一张卡复制 file:line，禁止猜行号）
 本片那一句: <这一路要回答的那一句>
 ```
 
-四种形态：标识符；`Dim=V`；`--file <path> --line <n>`；无参数索引。
+磁盘已有 `tg/init.yaml` 时，复杂查询 stub **必须**带上其中的 `kind`、`test_script_root`、列名、精度/性能入口。禁止再把算子仓 `tests/` / `ut` 当 harness。主控禁止把 query 卡片全文写入 `tg-init` intent。
 
 ## 硬停止
 

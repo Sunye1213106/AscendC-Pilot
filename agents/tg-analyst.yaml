@@ -1,12 +1,11 @@
 id: tg-analyst
 version: 1
-name_zh: TG 分析 producer
+name_zh: TG 分析
 role: producer
 mode: subagent
 description: >
-  Staged producer for TG bind, plan fusion, case construction, and worklog.
-  Read session prompt.md and method.md first. Write only runs/ drafts.
-  Never write operator source, .uo, or canonical tg/init.yaml / plan.md / worklog.md.
+  TG bind、plan 融合、造 case、worklog 的分阶段 producer。只写 `runs/` 草稿。
+  禁止写算子源码、`.uo`、正式 `tg/init.yaml` / `plan.md` / `worklog.md`。
 max_skill_ids: &skills [testcase-generation, operator-analysis]
 skill_ids: *skills
 write_scopes:
@@ -39,10 +38,8 @@ machine_constraints:
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_uo_formal_products
-- free_repo_search
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_uo_formal_products
-- free_repo_search

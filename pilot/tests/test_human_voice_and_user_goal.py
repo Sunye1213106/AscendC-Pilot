@@ -203,10 +203,11 @@ def test_tg_init_phase_labels_honest() -> None:
     states = {s["id"]: s["label_zh"] for s in tg["states"]}
     assert "意图确认" not in states.values()
     assert states["kb_ready"] == "校验知识库"
-    assert states["confirm"] == "确认进入规划"
+    assert "confirm" not in states
     acts = {a["id"]: a["label_zh"] for a in tg["actions"]}
     assert acts["repo_scan"] == "扫描测试脚本仓（含 xls/xlsx）"
-    assert acts["human_confirm"] == "确认进入规划"
+    assert "human_confirm" not in acts
+    assert "bind_review" in acts
 
 
 def test_human_voice_invariants_doc_exists() -> None:

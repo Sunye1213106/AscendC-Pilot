@@ -11,7 +11,6 @@ LEGACY_AGENT_DIR = ".ascendc-agent"
 UO_SUBDIR = "uo"
 TG_SUBDIR = "tg"
 CE_SUBDIR = "ce"
-MEMORY_SUBDIR = "memory"
 RUNS_SUBDIR = "runs"
 CONTEXT_SUBDIR = "context"
 STATE_SUBDIR = "state"
@@ -303,10 +302,6 @@ def ce_root(
     return agent_root(project_root, arch) / CE_SUBDIR
 
 
-def memory_root(project_root: Path, *, arch: str | None = None) -> Path:
-    return agent_root(project_root, arch) / MEMORY_SUBDIR
-
-
 def runs_root(project_root: Path, *, arch: str | None = None) -> Path:
     return agent_root(project_root, arch) / RUNS_SUBDIR
 
@@ -358,8 +353,7 @@ def migrate_legacy_agent_dir(project_root: Path, *, arch: str | None = None) -> 
     if (any(p.exists() for p in flat_control) or flat_yaml_uo) and not target.exists():
         target.mkdir(parents=True, exist_ok=True)
         move_names = [
-            TG_SUBDIR, CE_SUBDIR, MEMORY_SUBDIR,
-            RUNS_SUBDIR, CONTEXT_SUBDIR, STATE_SUBDIR,
+            TG_SUBDIR, CE_SUBDIR, RUNS_SUBDIR, CONTEXT_SUBDIR, STATE_SUBDIR,
         ]
         if flat_yaml_uo:
             move_names.insert(0, UO_SUBDIR)
@@ -418,13 +412,6 @@ def ensure_ce_layout(project_root: Path, *, arch: str | None = None) -> Path:
     return ce
 
 
-def ensure_memory_layout(project_root: Path, *, arch: str | None = None) -> Path:
-    root = ensure_control_layout(project_root, arch=arch)
-    for rel in (f"{MEMORY_SUBDIR}/candidate", f"{MEMORY_SUBDIR}/stable"):
-        (root / rel).mkdir(parents=True, exist_ok=True)
-    return root / MEMORY_SUBDIR
-
-
 def ensure_agent_layout(project_root: Path, *, arch: str | None = None) -> Path:
     """Backward-compatible full layout.
 
@@ -439,8 +426,6 @@ def ensure_agent_layout(project_root: Path, *, arch: str | None = None) -> Path:
         UO_SUBDIR,
         TG_SUBDIR,
         CE_SUBDIR,
-        f"{MEMORY_SUBDIR}/candidate",
-        f"{MEMORY_SUBDIR}/stable",
         RUNS_SUBDIR,
         CONTEXT_SUBDIR,
         STATE_SUBDIR,
@@ -449,7 +434,3 @@ def ensure_agent_layout(project_root: Path, *, arch: str | None = None) -> Path:
     ):
         (root / rel).mkdir(parents=True, exist_ok=True)
     return root
-
-
-def global_memory_root() -> Path:
-    return Path.home() / ".ascendc-pilot" / "global-memory"

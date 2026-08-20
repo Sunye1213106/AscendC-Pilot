@@ -184,10 +184,16 @@ export async function submitDispatchResult(
   return result
 }
 
+function remainingSlices(step: Record<string, unknown>): string[] {
+  const raw = step.remaining_slices
+  if (!Array.isArray(raw)) return []
+  return raw.map((s) => String(s || "").trim()).filter(Boolean)
+}
+
 function failedRedispatchPayload(entry: PendingDispatchRecord): Record<string, unknown> {
   const message =
     `同一 dispatch ticket 已有 Task 返回但 ACK 失败（ticket=${entry.ticket}）。` +
-    "禁止重新派发同一 spec/standards；先恢复 dispatch-result 传输。"
+    "禁止重新派发已经进票的切片。未齐的切片仍可补派；数量到齐即可，不要求同一轮并行。"
   return {
     ok: false,
     error: "HOST_ACK_STALLED",
@@ -255,13 +261,30 @@ function wrapPilotRunTool(tool: unknown): void {
     const result = await execute.call(rec, toolArgs, ctx)
     const payload = payloadFromToolResult(result)
     const step = dispatchStep(payload)
-    if (String(step.kind || "") === "dispatch_subagent") {
-      const project = String(step.project || step.cwd || toolArgs.project || "").trim()
-      const sessionId = sessionIdFromContext(ctx)
-      const ticket = String(step.dispatch_ticket || "").trim()
-      const previous = ticket ? readDispatchFor(project, sessionId) : null
-      if (previous && previous.ticket === ticket && previous.lastAckError) {
+    const kind = String(step.kind || "")
+    const project = String(step.project || step.cwd || toolArgs.project || "").trim()
+    const sessionId = sessionIdFromContext(ctx)
+    const ticket = String(step.dispatch_ticket || "").trim()
+    const previous =
+      (ticket ? readDispatchFor(project, sessionId) : null) ||
+      readDispatchFor(project, sessionId)
+    if (previous && previous.lastAckError && kind && kind !== "dispatch_subagent") {
+      clearDispatchFailure(previous)
+      return result
+    }
+    if (kind === "dispatch_subagent") {
+      const missing = remainingSlices(step)
+      // ACK is count-complete: allow dispatch of slices not yet in the ticket.
+      if (
+        previous &&
+        previous.ticket === ticket &&
+        previous.lastAckError &&
+        missing.length === 0
+      ) {
         return toToolResultLike(result, failedRedispatchPayload(previous))
+      }
+      if (previous && previous.ticket === ticket && previous.lastAckError && missing.length > 0) {
+        clearDispatchFailure(previous)
       }
       mirrorNativeDispatch(payload, toolArgs, ctx)
     }

@@ -15,6 +15,7 @@ def _template() -> list[dict[str, str]]:
     return [
         {"id": "acquire_change", "summary_zh": "获取 PR 与代码", "status": "pending"},
         {"id": "ensure_knowledge", "summary_zh": "建立算子理解", "status": "pending"},
+        {"id": "bind_harness", "summary_zh": "绑定测试前置契约", "status": "pending"},
         {"id": "review_change", "summary_zh": "审查改动并确定影响范围", "status": "pending"},
         {"id": "generate_cases", "summary_zh": "规划并生成测试用例", "status": "pending"},
         {"id": "validate_cases", "summary_zh": "回放验证", "status": "pending"},
@@ -22,14 +23,20 @@ def _template() -> list[dict[str, str]]:
     ]
 
 
-def _plan(*, review: str = "in_progress", tg_init: str = "pending", tg_plan: str = "pending", tg_solve: str = "pending") -> dict:
+def _plan(
+    *,
+    tg_init: str = "pending",
+    review: str = "pending",
+    tg_plan: str = "pending",
+    tg_solve: str = "pending",
+) -> dict:
     return {
         "schema": "pilot-task-plan/v1",
         "steps": [
             {"id": "workspace_acquire", "kind": "harness_action", "workflow_id": "", "status": "passed"},
             {"id": "uo-init", "kind": "workflow", "workflow_id": "uo-init", "status": "passed"},
-            {"id": "ce-review", "kind": "workflow", "workflow_id": "ce-review", "status": review},
             {"id": "tg-init", "kind": "workflow", "workflow_id": "tg-init", "status": tg_init},
+            {"id": "ce-review", "kind": "workflow", "workflow_id": "ce-review", "status": review},
             {"id": "tg-plan", "kind": "workflow", "workflow_id": "tg-plan", "status": tg_plan},
             {"id": "tg-solve", "kind": "workflow", "workflow_id": "tg-solve", "status": tg_solve},
         ],
@@ -45,29 +52,38 @@ def _by_id(rows: list[dict]) -> dict[str, dict]:
     return {str(row["id"]): row for row in rows}
 
 
-def test_uo_completion_projects_review_as_current() -> None:
-    rows = _by_id(project_public_plan(_plan(), _template()))
+def test_uo_completion_projects_bind_as_current() -> None:
+    rows = _by_id(project_public_plan(_plan(tg_init="in_progress"), _template()))
     assert rows["acquire_change"]["status"] == "passed"
     assert rows["ensure_knowledge"]["status"] == "passed"
+    assert rows["bind_harness"]["status"] == "in_progress"
+    assert rows["review_change"]["status"] == "pending"
+    assert rows["generate_cases"]["status"] == "pending"
+
+
+def test_bind_completion_projects_review_as_current() -> None:
+    plan = _plan(tg_init="passed", review="in_progress")
+    rows = _by_id(project_public_plan(plan, _template()))
+    assert rows["bind_harness"]["status"] == "passed"
     assert rows["review_change"]["status"] == "in_progress"
     assert rows["generate_cases"]["status"] == "pending"
 
 
-def test_review_completion_projects_tg_as_current() -> None:
-    plan = _plan(review="passed", tg_init="in_progress")
+def test_review_completion_projects_tg_plan_as_current() -> None:
+    plan = _plan(tg_init="passed", review="passed", tg_plan="in_progress")
     rows = _by_id(project_public_plan(plan, _template()))
     assert rows["review_change"]["status"] == "passed"
     assert rows["generate_cases"]["status"] == "in_progress"
 
 
-def test_generate_cases_waits_for_both_tg_init_and_plan() -> None:
-    plan = _plan(review="passed", tg_init="passed", tg_plan="in_progress")
+def test_generate_cases_waits_for_plan() -> None:
+    plan = _plan(tg_init="passed", review="passed", tg_plan="in_progress")
     rows = _by_id(project_public_plan(plan, _template()))
     assert rows["generate_cases"]["status"] == "in_progress"
 
 
 def test_deliver_requires_taskplan_terminal_and_acceptance() -> None:
-    plan = _plan(review="passed", tg_init="passed", tg_plan="passed", tg_solve="passed")
+    plan = _plan(tg_init="passed", review="passed", tg_plan="passed", tg_solve="passed")
     rows = _by_id(project_public_plan(plan, _template()))
     assert rows["validate_cases"]["status"] == "passed"
     assert rows["deliver"]["status"] == "pending"
@@ -91,6 +107,7 @@ def test_solve_only_plan_projects_generation_done_and_validation_current() -> No
         "acceptance_status": {"cases_validated": "pending"},
     }
     rows = _by_id(project_public_plan(plan, _template()))
+    assert rows["bind_harness"]["status"] == "passed"
     assert rows["generate_cases"]["status"] == "passed"
     assert rows["validate_cases"]["status"] == "in_progress"
 
@@ -108,17 +125,19 @@ def test_load_user_goal_ignores_stale_persisted_public_status(tmp_path: Path) ->
             "public_plan": stale,
         },
     )
-    write_task_plan(tmp_path, _plan())
+    write_task_plan(tmp_path, _plan(tg_init="passed", review="in_progress"))
 
     goal = load_user_goal(tmp_path)
     assert goal is not None
     rows = _by_id(goal["public_plan"])
     assert rows["ensure_knowledge"]["status"] == "passed"
+    assert rows["bind_harness"]["status"] == "passed"
     assert rows["review_change"]["status"] == "in_progress"
 
     board = build_todo(tmp_path, state={"workflow_id": "ce-review", "status": "running"})
     native = {item["id"]: item for item in board["native_items"]}
     assert native["ensure_knowledge"]["status"] == "completed"
+    assert native["bind_harness"]["status"] == "completed"
     assert native["review_change"]["status"] == "in_progress"
 
     # Persistence remains YAML-compatible; projection happens at the API boundary.

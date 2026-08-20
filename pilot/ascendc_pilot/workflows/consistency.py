@@ -32,22 +32,6 @@ _HARDCODED_WORKFLOW_IN_PROMPT = re.compile(
     r"workflow_id:\s*`(uo-init|uo-update|tg-init|tg-plan|tg-solve|ce-review|uo-query)`"
 )
 
-# KEY / confidence gates used by CLI ``run_key_gates`` (not WorkflowSpec phase gates).
-KEY_GATE_ALLOWLIST = frozenset(
-    {
-        "key_triage_required",
-        "key_resolve_receipt",
-        "empty_only_producer",
-        "key_report_quality",
-        "confidence_closed_high",
-        "confidence_reason_review",
-        "kb_review_consistency",
-        "confidence_gate",
-        "kb_review",
-    }
-)
-
-
 def _repo_root(explicit: Path | None) -> Path:
     if explicit is not None:
         return explicit.expanduser().resolve()
@@ -59,6 +43,24 @@ def _prompt_path(prompts: Path, tpid: str) -> Path:
         dom, name = tpid.split("/", 1)
         return prompts / "tasks" / dom / f"{name}.md"
     return prompts / "tasks" / f"{tpid}.md"
+
+
+def action_task_prompt_ids(action: dict[str, Any]) -> list[str]:
+    """Action-level prompt plus optional ``fanout_axes[].task_prompt_id``."""
+    ids: list[str] = []
+    seen: set[str] = set()
+    tpid = str(action.get("task_prompt_id") or "").strip()
+    if tpid:
+        ids.append(tpid)
+        seen.add(tpid)
+    for axis in action.get("fanout_axes") or []:
+        if not isinstance(axis, dict):
+            continue
+        axis_tpid = str(axis.get("task_prompt_id") or "").strip()
+        if axis_tpid and axis_tpid not in seen:
+            ids.append(axis_tpid)
+            seen.add(axis_tpid)
+    return ids
 
 
 def _registered_gate_ids(project_root: Path) -> set[str]:
@@ -121,11 +123,11 @@ def _check_gate_registry_closure(
         if gate not in gate_ids:
             errors.append(f"unregistered Spec/obligation gate id {gate!r}")
     for gate in sorted(gate_ids):
-        if gate in spec_refs or gate in KEY_GATE_ALLOWLIST:
+        if gate in spec_refs:
             continue
         errors.append(
             f"unreferenced workflow gate {gate!r} "
-            "(not in Spec/obligation map; add to Spec or KEY_GATE_ALLOWLIST)"
+            "(not in Spec/obligation map; add to Spec)"
         )
     return errors
 
@@ -238,16 +240,16 @@ def _check_architecture_start_requirements(
     inv = root / "pilot" / "policies" / "invariants" / "control-invariants.md"
     if inv.is_file():
         text_inv = inv.read_text(encoding="utf-8")
-        item11 = ""
+        item6 = ""
         for line in text_inv.splitlines():
-            if line.startswith("11."):
-                item11 = line
+            if line.startswith("6."):
+                item6 = line
                 break
-        if "uo-update" not in item11:
-            errors.append("control-invariants.md item 11 must mention uo-update")
-        if ".uo" not in item11:
+        if "uo-update" not in item6:
+            errors.append("control-invariants.md item 6 must mention uo-update")
+        if ".uo" not in item6:
             errors.append(
-                "control-invariants.md item 11 must mention .uo / UO-first for TG/CE consumers"
+                "control-invariants.md item 6 must mention .uo / UO-first for TG/CE consumers"
             )
     else:
         errors.append("missing pilot/policies/invariants/control-invariants.md")
@@ -399,8 +401,7 @@ def _collect_shared_task_prompts(workflows: dict[str, dict[str, Any]]) -> dict[s
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
                 continue
-            tpid = str(action.get("task_prompt_id") or "").strip()
-            if tpid:
+            for tpid in action_task_prompt_ids(action):
                 usage.setdefault(tpid, set()).add(wid)
     return {key: value for key, value in usage.items() if len(value) > 1}
 
@@ -541,6 +542,7 @@ def check_all(
             agent_id = str(action.get("agent_id") or "").strip()
             method_id = str(action.get("action_method_id") or "").strip()
             prompt_id = str(action.get("task_prompt_id") or "").strip()
+            prompt_ids = action_task_prompt_ids(action)
             contract_id = str(action.get("output_contract_id") or "").strip()
             mode = str(action.get("execution_mode") or "")
 
@@ -553,22 +555,28 @@ def check_all(
                     errors.append(f"{wid}/{aid}: missing METHOD.md for {method_id!r}")
             elif mode in {"deterministic", "primary_interactive"} and method_id:
                 errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
+            elif mode == "primary_review" and prompt_id:
+                skill, _, cap = method_id.partition("/")
+                mp = root / "skills" / skill / "capabilities" / cap / "METHOD.md"
+                if not method_id or "/" not in method_id or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                    errors.append(f"{wid}/{aid}: missing METHOD.md for {method_id!r}")
 
-            if prompt_id:
-                prompt_path = _prompt_path(prompts, prompt_id)
-                if not prompt_path.is_file():
-                    errors.append(f"{wid}/{aid}: missing task prompt {prompt_id}")
-                else:
+            if prompt_ids:
+                for pid in prompt_ids:
+                    prompt_path = _prompt_path(prompts, pid)
+                    if not prompt_path.is_file():
+                        errors.append(f"{wid}/{aid}: missing task prompt {pid}")
+                        continue
                     text = prompt_path.read_text(encoding="utf-8")
-                    if prompt_id in shared_prompts:
+                    if pid in shared_prompts:
                         match = _HARDCODED_WORKFLOW_IN_PROMPT.search(text)
                         if match:
                             errors.append(
-                                f"{wid}/{aid}: shared prompt {prompt_id} hardcodes workflow_id {match.group(1)!r}; use `<WORKFLOW_ID>`"
+                                f"{wid}/{aid}: shared prompt {pid} hardcodes workflow_id {match.group(1)!r}; use `<WORKFLOW_ID>`"
                             )
                         if "workflow_id:" in text and "`<WORKFLOW_ID>`" not in text:
                             errors.append(
-                                f"{wid}/{aid}: shared prompt {prompt_id} must use workflow_id: `<WORKFLOW_ID>`"
+                                f"{wid}/{aid}: shared prompt {pid} must use workflow_id: `<WORKFLOW_ID>`"
                             )
             elif role in {"producer", "referee", "readonly_analyst"}:
                 errors.append(f"{wid}/{aid}: semantic action missing task_prompt_id")
@@ -624,10 +632,10 @@ def check_all(
                     scopes = _effective_write_scopes(agent_id, aid, root)
                     output_mode = str(action.get("output_mode") or "direct").strip().lower()
                     if output_mode == "return_value":
-                        # Dialogue contracts: Explorer write_scopes may be empty.
+                        # Dialogue contracts: Explorer / reviewer write_scopes may be empty.
                         if role in {"producer", "referee"} and not scopes:
                             errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
-                        # readonly_analyst + return_value: empty scopes are intentional.
+                        # readonly_analyst / readonly_reviewer + return_value: empty scopes are intentional.
                     else:
                         if not scopes:
                             errors.append(f"{wid}/{aid}: agent {agent_id} has empty write_scopes")
@@ -797,14 +805,29 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
             for s in (planned.get("steps") or [])
             if isinstance(s, dict)
         ]
-        if "ce-review" not in wids:
-            errors.append("PR + tg-plan/tg-solve must include ce-review")
-        if "uo-init" not in wids:
-            errors.append("PR plan must include uo-init")
+        if "ce-review" in wids:
+            errors.append("PR + tg-plan/tg-solve must not invent ce-review")
+        if "uo-init" in wids:
+            errors.append("plan_for must not invent uo-init")
         if "goal-impact" in wids:
             errors.append("plan_for must not insert goal-impact")
         if "tg-plan" not in wids or "tg-solve" not in wids:
             errors.append("listed tg-plan/tg-solve must remain in the recorded plan")
+        ordered = plan_for(
+            {
+                "needed_workflows": ["ce-review", "tg-init", "tg-plan"],
+                "source": {"kind": "none"},
+            }
+        )
+        ordered_wids = [
+            str(s.get("workflow_id") or s.get("id"))
+            for s in (ordered.get("steps") or [])
+            if isinstance(s, dict)
+        ]
+        if "tg-init" not in ordered_wids or "ce-review" not in ordered_wids:
+            errors.append("listed tg-init/ce-review must remain in the recorded plan")
+        elif ordered_wids.index("tg-init") > ordered_wids.index("ce-review"):
+            errors.append("tg-init must precede ce-review")
     except Exception as exc:  # noqa: BLE001
         errors.append(f"task harness SSOT check failed: {exc}")
     return errors

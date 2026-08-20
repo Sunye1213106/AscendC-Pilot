@@ -1,12 +1,11 @@
 id: ce-analyst
 version: 1
-name_zh: CE 变更分析 producer
+name_zh: CE 变更分析
 role: producer
 mode: subagent
 description: >
-  Staged producer for requirement grill, named plan markdown, and session
-  handoff. Read session prompt.md and method.md first. Write grill drafts as
-  markdown and ce/plan/{slug}_plan.md; do not write CE yaml.
+  需求 grill、命名计划 markdown、会话交接的分阶段 producer。
+  草稿写 markdown 与 `ce/plan/{slug}_plan.md`；禁止写 CE yaml。
 max_skill_ids: &skills [code-engineering, testcase-generation, operator-analysis]
 skill_ids: *skills
 read_scopes:
@@ -32,10 +31,8 @@ machine_constraints:
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_canonical_ce_plan
-- free_repo_search
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_canonical_ce_plan
-- free_repo_search

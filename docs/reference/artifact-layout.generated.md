@@ -12,7 +12,6 @@
   <arch>/state/            Pilot state and leases
   <arch>/runs/             action bundles, staging and receipts
   <arch>/context/          compiled context packs
-  <arch>/memory/           candidate and stable memory
   <arch>/local/            operator-local extensions
   <arch>/cache/            rebuildable caches
 ```

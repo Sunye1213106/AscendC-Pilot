@@ -1,5 +1,5 @@
 <task>
-基于本次 `tg/init.yaml` 与已给定的 Planning Context，生成 `plan.md` 草稿；不要重新解释原始用户 NL，也不要重新做 PR review。
+基于本次 `tg/init.yaml` 与已给定的 Planning Context，生成 `plan.md` 草稿；不要重新解释自然语言输入，也不要重新做 PR review。
 </task>
 
 <input>

@@ -129,7 +129,7 @@ def test_ce_reviewer_readonly_git_log_allowed(tmp_path: Path) -> None:
         action="code_review",
     )
     assert log_v.get("decision") == "allow", log_v
-    assert log_v.get("reason_code") == "GIT_READONLY_REVIEW"
+    assert log_v.get("reason_code") == "GIT_READONLY"
     show_v = authorize(
         op,
         tool="bash",
@@ -157,7 +157,7 @@ def test_ce_reviewer_git_checkout_and_blob_denied(tmp_path: Path) -> None:
         agent="ce-reviewer",
         action="code_review",
     )
-    assert checkout.get("decision") == "allow", checkout
+    assert checkout.get("decision") == "ask", checkout
     blob = authorize(
         op,
         tool="bash",
@@ -165,7 +165,7 @@ def test_ce_reviewer_git_checkout_and_blob_denied(tmp_path: Path) -> None:
         agent="ce-reviewer",
         action="code_review",
     )
-    assert blob.get("decision") == "allow", blob
+    assert blob.get("decision") == "ask", blob
 
 
 def test_readonly_powershell_if_probe_allowed(tmp_path: Path) -> None:

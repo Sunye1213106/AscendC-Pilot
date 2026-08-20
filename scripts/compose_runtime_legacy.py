@@ -33,27 +33,38 @@ COMPOSE_POLICY_IDS: tuple[str, ...] = (
     "pilot-control",
     "language",
     "evidence",
+    "semantic-grounding",
     "code-access",
     "source-authority",
     "output-quality",
 )
 
-# Short model-facing packs under pilot/policies/invariants/ (≤ ~50 lines total).
+# Short model-facing packs under pilot/policies/invariants/.
 # agents/CONTEXT.md is appended separately: ubiquitous language, not a policy.
+# host-runtime-contract.md is human/CI SSOT and is not composed into the model.
 COMPOSE_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("control", "control-invariants.md"),
-    ("host-runtime", "host-runtime-contract.md"),
     ("intent-reasoning", "intent-reasoning.md"),
     ("evidence", "evidence-invariants.md"),
     ("code-access", "code-access-invariants.md"),
     ("authority", "authority.md"),
     ("output-quality", "output-quality.md"),
     ("language", "language.md"),
+    ("semantic-grounding", "semantic-grounding.md"),
 )
 
-# Child agents do not receive Host Session Driver / policy invariant packs.
-# Identity + tool ceiling + stub runtime contract is enough; METHOD owns how.
-CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = ()
+# Finding-writing children get evidence + output-quality + semantic-grounding + code-access.
+# uo-query gets code-access only (METHOD owns how; the four forms live in the invariant).
+CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
+    ("evidence", "evidence-invariants.md"),
+    ("output-quality", "output-quality.md"),
+    ("semantic-grounding", "semantic-grounding.md"),
+    ("code-access", "code-access-invariants.md"),
+)
+QUERY_CHILD_IDS: frozenset[str] = frozenset({"uo-query"})
+QUERY_CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
+    ("code-access", "code-access-invariants.md"),
+)
 
 # True Skills (model-facing expertise). Workflow slash entries are generated shells.
 COGNITIVE_SKILL_IDS: tuple[str, ...] = (
@@ -132,22 +143,15 @@ OPENCODE_SKIP_HOST_AGENT_IDS: frozenset[str] = frozenset()
 # Editorial discovery prose only. cognitive_skill_id / requires_* live on Workflow Spec.
 WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
     "uo-init": {
-        "command_description": '建立算子知识库 / Build and verify AscendC Operator CodeMap (.uo)',
+        "command_description": "建立算子知识库（Operator CodeMap / .uo）",
         "description": (
-            "首次构建 AscendC 算子知识库 / Operator CodeMap（`.uo`）：机器解析源码范围与构建变体、"
-            "抽取 CompilerFacts、运行确定性 CodeMap Pass、写入并校验单一 `.uo`。"
-            "semantic residual 保留在 unresolved.yaml，不由 LLM 写入 canonical UO。"
-            "用户要求建立知识库、建库、建 UO/CodeMap、索引/分析算子、首次理解算子或指定 "
-            "architecture 建图时使用——上述用户说法一律走本 workflow，禁止改用外部 MCP/"
-            "通用代码图谱索引。"
-            "缺 architecture 且回执未给出唯一 `(算子, architecture)` 时由 Host `pilot_run` 弹出 AskQuestion；"
-            "Engine clone 已用 changed-files 唯一钉死的 architecture 直接使用。"
-            "禁止在仓库根目录 Glob，禁止翻查 cmake/classify_rule 以猜测 architecture。"
-            "prepare 为确定性步骤：用户定 operator+arch，编译器定源码范围，无人工文件清单确认。"
+            "首次构建 AscendC 算子知识库 / Operator CodeMap（`.uo`）。"
+            "semantic residual 留在 unresolved.yaml，不由 LLM 写入 canonical UO。"
+            "用户要求建库、建 CodeMap、索引/分析算子时使用。禁止改用外部 MCP/通用代码图谱。"
         ),
     },
     "uo-update": {
-        "command_description": '刷新算子知识库 / Refresh existing AscendC Operator CodeMap',
+        "command_description": "刷新已有算子知识库（增量更新 CodeMap）",
         "description": (
             "在已有 `.uo` 上按工作区 / diff / PR 变更做确定性增量更新：检测变更、按层 "
             "（host / kernel / compile / commit）选择性重建，不是再跑一遍 `/uo-init`。"
@@ -156,20 +160,15 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-query": {
-        "command_description": '查询算子知识库：直接查询或同一轮委派 / Query CodeMap',
+        "command_description": "查询算子知识库：直接查询或同一轮委派",
         "description": (
-            "CodeMap 对外查询接口，给 TG / CE 补语义。简单查询由主控直接调用 `pilot_cli` `uo-query`"
-            "（标识符 / Dim=V / --file --line / 无参数索引），禁止单独一轮只宣布路数；"
-            "复杂查询必须由主控同一轮并行 Task(agent=`uo-query`)，可独立查询的目标分别委派，综合只在主控。"
-            "意图只是一次语义查询时留在主线，不要再包 coordinator。子代禁止再派 Task。"
-            "Task 正文不要写 `--mode`。禁止把复杂查询改成主控自行连续查询。"
+            "CodeMap 对外查询接口，给 TG / CE 补语义。"
+            "怎么拆见 `skills/operator-analysis/routing/uo-query.md`。"
             "**禁止** `pilot_run workflow=uo-query`。"
-            "禁止仅为问题分类而委派子代理。子代 PARTIAL / 未闭合 / 互相矛盾且图上还能查时再开一轮 Task（FOCUS=缺口），"
-            "禁止用无实质内容的确认（例如「要不要继续」）代替第 2 轮。多路已有结论但结案仍不清时 AskQuestion 给出选项（带推荐答案），请用户选择探查路径或 PARTIAL 停止。"
         ),
     },
     "uo-investigate": {
-        "command_description": '调查知识库 gap / Investigate unresolved CodeMap gaps',
+        "command_description": "调查知识库 gap（unresolved residual）",
         "description": (
             "调查算子知识库 / `.uo` 中保留的 unresolved semantic residual：分类根因、指出 "
             "deterministic engine 缺什么能力。不修改 canonical `.uo`。用户问某个 gap 为何未闭合、"
@@ -177,7 +176,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-review": {
-        "command_description": 'Dual-axis review of a git/PR diff; dialogue only',
+        "command_description": "双轴审查 git/PR diff；结论只留在对话",
         "description": (
             "只读审查已有代码改动：GitCode PR、工作区 diff 或 base...head。"
             "无 diff 则停。Spec 轴对照当前 `{slug}_plan.md`（没有计划则从 PR/diff 索引推断粗意图并验收完成度）；"
@@ -186,7 +185,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-plan": {
-        "command_description": 'Grill a requirement and write {slug}_plan.md',
+        "command_description": "把需求 grill 成 {slug}_plan.md",
         "description": (
             "自己有需求时使用：用 UO 语义 + 用户「改什么 / 实现什么」，持续 grill，写出 "
             "`.ascendc-pilot/<arch>/ce/plan/{slug}_plan.md`（实现分析 / 分步计划 / 明确 todo / 测试内容）。"
@@ -194,7 +193,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-apply": {
-        "command_description": 'Apply unfinished todos from the current plan markdown',
+        "command_description": "按当前计划 markdown 的未完成 todo 改码",
         "description": (
             "按当前 `{slug}_plan.md` 未完成 todo 改 `op_host/` / `op_kernel/` / `common/` / `test_script/`，一次一条。"
             "也可按 `/tg-plan` 的 `test_harness_gap` 说明书生成或修改测试脚本（含随机数生成器）。"
@@ -203,26 +202,22 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "handoff": {
-        "command_description": 'Write a portable session handoff markdown',
+        "command_description": "写出可带走的会话交接 markdown",
         "description": (
             "把当前会话整理为 `.ascendc-pilot/<arch>/session_handoff.md`："
             "只引用已有产物路径，写明下一条 slash。换窗口或交给同事时使用。不占锁。用 `pilot_run`。"
         ),
     },
     "tg-init": {
-        "command_description": 'Initialize TG: one init.yaml binding test scripts to CodeMap',
+        "command_description": "测试前置：写出一份绑定测试脚本与 CodeMap 的 init.yaml",
         "description": (
             "测试前置：用 `.uo` + 可选测试脚本写出一份 `tg/init.yaml`。"
-            "有脚本仓：绑定脚本输入变量（CSV/XLS 列、生成器、代码读点）与算子/UO 变量，"
-            "并分析 golden 对照、精度条件、性能条件；mapping 空则失败。"
-            "无仓：用 uo-query 读输入 API 设计 `kind=default_input` 控制面；缺脚本先问人，不要假装已绑定。"
-            "算子仓内 tests/ 未确认不得当作 script_repo。"
-            "无 `.uo` 时先 /uo-init。本步 producer 查图只用 `pilot_cli`，禁止再派 Task。"
-            "Pilot 管阶段；加载后用 `pilot_run`。"
+            "有脚本仓则绑定脚本输入变量与算子/UO 变量；无仓则用输入 API `kind=default_input`。"
+            "算子仓内 tests/ 未确认不得当作 script_repo。无 `.uo` 时先 /uo-init。用 `pilot_run`。"
         ),
     },
     "tg-plan": {
-        "command_description": 'Fuse intent into plan.md obligations rooted at CSV columns',
+        "command_description": "把测试意图融成 plan.md 义务（根在 CSV 列）",
         "description": (
             "规划测试义务，只落一份 `tg/plan.md`（散文 + YAML 义务表）。"
             "强制 `init.yaml`；意图有则融合。控制面是 CSV/XLS 列，不是 T=D。"
@@ -231,7 +226,7 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "tg-solve": {
-        "command_description": 'Construct cases, Host-replay, write worklog until Open is empty',
+        "command_description": "定向构造 cases、Host 回放、写 worklog，直到 Open 为空",
         "description": (
             "按已批准 plan 定向构造可执行 cases，Host 动态回放（无 NPU），引理闭合，写 worklog，直到 open 为空。"
             "test_harness_gap 未落地禁止开始。TG 永不改算子仓。向用户报告求解进度。"
@@ -247,10 +242,6 @@ CAPABILITY_DIRS: dict[str, str] = {
     "kb-query": "tools/codemap/kb-query",
     "structured-ir-query": "tools/codemap/structured-ir-query",
     "action-scratch": "pilot/runtime/action-scratch",
-    "bounded-semantic-batch": "pilot/runtime/bounded-semantic-batch",
-    "sharded-llm-producer": "pilot/runtime/sharded-llm-producer",
-    "sharded-semantic-producer": "pilot/runtime/sharded-semantic-producer",
-    "producer-self-check": "pilot/gates/producer-self-check",
 }
 
 
@@ -309,11 +300,9 @@ def _assert_generated_skill(path: Path, *, expected_actions: int | None = None) 
     text = path.read_text(encoding="utf-8")
     meta, body = _require_skill_frontmatter(text, path=path)
     if expected_actions is not None:
-        if "## Composition index" not in body:
-            raise ValueError(f"generated skill missing Composition index: {path}")
-        section = body.split("## Composition index", 1)[1]
-        # Stop at next H2 so Action runtime index is not double-counted.
-        section = re.split(r"\n##\s+", section, maxsplit=1)[0]
+        if "BEGIN GENERATED ACTIONS" not in body or "END GENERATED ACTIONS" not in body:
+            raise ValueError(f"generated skill missing Actions table: {path}")
+        section = body.split("BEGIN GENERATED ACTIONS", 1)[1].split("END GENERATED ACTIONS", 1)[0]
         found = len(re.findall(r"^\|\s*`([a-z0-9_]+)`\s*\|", section, flags=re.M))
         if found != expected_actions:
             raise ValueError(
@@ -370,16 +359,10 @@ def _start_requirements_line(repo: Path) -> str:
     uo = "/".join(sorted(workflows_needing_uo_product()))
     proj = "/".join(sorted(workflows_needing_project()))
     return (
-        f"11. `{arch}` 启动必须同时有算子目录（`--project`）与 architecture（仓内 `arch*`）。"
-        f"缺 arch → Host `pilot_run` 弹出 AskQuestion（禁止在仓库根目录 Glob 或翻查 cmake 以猜测 architecture）。"
-        f"参数齐全后 → `pilot_run`（workflow + project + architecture）一次启动。"
-        f"`{uo}` 以已有 `.uo` CodeMap 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`。"
-        f"产物路径确定（`<算子目录>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`），禁止 Glob/dir 找 `.uo`。"
-        f"查询类 AskQuestion：`/uo-init` 或回退源码作答；TG/CE 仍须先 `/uo-init`。"
-        f"有多个 `.uo` 再选 architecture（来自产物，不另扫 arch*）。"
-        f"需要算子目录的 workflow：`{proj}`。"
-        f"`uo-query` 禁止 `pilot_run`：简单查询直接 `pilot_cli` `uo-query`（禁止单独一轮只宣布路数）；复杂查询同一轮委派 Task。"
-        f"其余后续动作由 Host `pilot_run` 驱动；`.ascendc-pilot/` 只允许在该算子目录下。"
+        f"6. `{arch}` 启动必须同时有算子目录（`--project`）与 architecture。"
+        f"`{uo}` 以已有 `.uo` 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`，禁止 Glob 找产物。"
+        f"查询 AskQuestion：`/uo-init` 或源码作答；TG/CE 先 `/uo-init`。"
+        f"需要算子目录的 workflow：`{proj}`。`uo-query` 禁止 `pilot_run`（见 routing）。"
     )
 
 
@@ -390,18 +373,27 @@ def _cognitive_skill_for(repo: Path, wid: str) -> str:
     return cognitive_skill_id(wid)
 
 
-def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
+def _read_invariant_pack(
+    repo: Path, *, for_primary: bool = True, agent_id: str = ""
+) -> str:
     """Concatenate short invariant markdown for model context (not full POLICY.md)."""
     root = repo / "pilot" / "policies" / "invariants"
-    files = COMPOSE_INVARIANT_FILES if for_primary else CHILD_INVARIANT_FILES
     if for_primary:
+        files = COMPOSE_INVARIANT_FILES
         parts: list[str] = [
-            "Follow pilot policies (short invariants). Full text: `pilot/policies/*/POLICY.md`.",
+            "遵守下列短不变量。全文：`pilot/policies/*/POLICY.md`。",
+            "",
+        ]
+    elif str(agent_id) in QUERY_CHILD_IDS:
+        files = QUERY_CHILD_INVARIANT_FILES
+        parts = [
+            "按 stub 指针读文件。只做本 Action。不要自己 finalize。",
             "",
         ]
     else:
+        files = CHILD_INVARIANT_FILES
         parts = [
-            "Read task stub pointers. Work only on this Action. Do not finalize.",
+            "按 stub 指针读文件。只做本 Action。不要自己 finalize。",
             "",
         ]
     start_line = _start_requirements_line(repo)
@@ -412,7 +404,7 @@ def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
         text = path.read_text(encoding="utf-8").rstrip()
         if fname == "control-invariants.md":
             text = re.sub(
-                r"(?m)^11\..*$",
+                r"(?m)^6\..*$",
                 start_line,
                 text,
                 count=1,
@@ -423,7 +415,7 @@ def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
     if context.is_file():
         ctx_text = context.read_text(encoding="utf-8").rstrip()
         if not for_primary:
-            ctx_text = _child_context_glossary(ctx_text)
+            ctx_text = _child_context_glossary(ctx_text, agent_id=str(agent_id))
         parts.append(ctx_text)
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
@@ -432,17 +424,35 @@ def _read_invariant_pack(repo: Path, *, for_primary: bool = True) -> str:
 _CHILD_CONTEXT_DROP_PREFIXES = (
     "**简单查询**",
     "**复杂查询**",
-    "**查询方式说明**",
     "**clone 事实**",
 )
 
+_QUERY_CHILD_CONTEXT_DROP_PREFIXES = _CHILD_CONTEXT_DROP_PREFIXES + (
+    "**`{slug}_plan.md`**",
+    "**ce-apply**",
+    "**两轴**",
+    "**Planning Context**",
+    "**Open**",
+    "**replay / derived**",
+    "**init.yaml**",
+    "**plan.md**",
+    "**cases 表**",
+    "**worklog.md**",
+    "**session_handoff.md**",
+)
 
-def _child_context_glossary(text: str) -> str:
+
+def _child_context_glossary(text: str, *, agent_id: str = "") -> str:
     """Keep ubiquitous language; drop primary routing bullets from child packs."""
+    prefixes = (
+        _QUERY_CHILD_CONTEXT_DROP_PREFIXES
+        if agent_id in QUERY_CHILD_IDS
+        else _CHILD_CONTEXT_DROP_PREFIXES
+    )
     keep: list[str] = []
     for line in text.splitlines():
         stripped = line.lstrip()
-        if any(stripped.startswith(p) for p in _CHILD_CONTEXT_DROP_PREFIXES):
+        if any(stripped.startswith(p) for p in prefixes):
             continue
         keep.append(line)
     return "\n".join(keep).rstrip()
@@ -534,29 +544,25 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
     lines = [
         f"# {wid}",
         "",
-        "Pilot workflow entry. Primary Todos own orchestration. Spec owns phase and lease.",
+        "Pilot 工作流入口。编排由 Primary Todo 拥有。阶段与 lease 由 Spec 拥有。",
         "",
     ]
     if skill_id:
         if host == "opencode":
-            lines.append(f"Domain method: `cognitive-skills/{skill_id}/SKILL.md`.")
+            lines.append(f"领域方法：`cognitive-skills/{skill_id}/SKILL.md`。")
         else:
-            lines.append(f"Domain method: `skills/{skill_id}/SKILL.md`.")
+            lines.append(f"领域方法：`skills/{skill_id}/SKILL.md`。")
         lines.append("")
     if wid == "uo-query":
-        run_via = (
-            "Not a Host workflow. Do not spend a turn only announcing the route. "
-            "Simple: primary calls `pilot_cli` `uo-query`. Complex: N native Tasks agent=`uo-query` same turn — "
-            "never demote a complex query to primary Read. Never `--mode` in a Task stub. "
-            "Never `pilot_run` for uo-query. Do not spawn a routing-only subagent. "
-            "If any child is PARTIAL / 未闭合 / contradicts another, launch another Task round "
-            "(FOCUS=the gap) before closing; do not replace round 2 with a content-free confirmation. "
-            "After children have conclusions but the remaining choice is which gap to explore, "
-            "AskQuestion with labelled options and a recommended answer."
+        router = (
+            "cognitive-skills/operator-analysis/routing/uo-query.md"
+            if host == "opencode"
+            else "skills/operator-analysis/routing/uo-query.md"
         )
+        run_via = f"不是 Host workflow。禁止 `pilot_run`。怎么拆见 `{router}`。"
     else:
         run_via = (
-            "Run via Host tool `pilot_run` (workflow + project + architecture)."
+            "用 Host 工具 `pilot_run` 运行（workflow + project + architecture）。"
         )
     lines.extend(
         [
@@ -650,13 +656,10 @@ def check_skill_action_markers(repo: Path) -> list[str]:
 
 
 def sync_sources(repo: Path) -> list[str]:
-    """Write path: Spec is authority; project shared-reference SSOT into skills."""
-    from sync_shared_references import sync as sync_shared_refs
-
+    """Write path: Spec is authority."""
     errors: list[str] = []
     errors.extend(sync_action_yaml_mirrors(repo))
     errors.extend(sync_skill_action_markers(repo))
-    errors.extend(sync_shared_refs(repo))
     return errors
 
 
@@ -666,12 +669,10 @@ def validate(repo: Path) -> list[str]:
     skills = paths["skills"]
     prompts = paths["prompts"]
     agents = paths["agents"]
-    from sync_shared_references import check as check_shared_refs
 
     errors: list[str] = []
     errors.extend(check_skill_action_markers(repo))
     errors.extend(validate_domain_skills(repo))
-    errors.extend(check_shared_refs(repo))
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
@@ -928,60 +929,7 @@ def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any], *, host: str
     skill_id = str(meta.get("cognitive_skill_id") or "").strip()
     body = _entry_skill_shell(wid, skill_id=skill_id, host=host)
     body = _replace_actions_table(body, meta)
-    # Short invariant pack only (full POLICY.md stays under pilot/policies/ for humans).
-    pack = _host_remap_skill_paths(_read_invariant_pack(repo), host=host)
-    marker = "## Composed: policy-invariants"
-    if marker not in body and pack.strip():
-        body = body.rstrip() + f"\n\n{marker}\n\n" + pack + "\n"
-    # Index composed refs + runtime bundle paths
-    lines = [
-        "\n## Composition index\n",
-        "| action_id | policies | capabilities | method | prompt | agent |",
-        "|---|---|---|---|---|---|",
-    ]
-    runtime_lines = [
-        "\n## Action runtime index\n",
-        "| action_id | method_path | prompt_path | output_contract | role |",
-        "|---|---|---|---|---|",
-    ]
-    for a in meta.get("actions") or []:
-        lines.append(
-            "| `{id}` | {pols} | {caps} | `{method}` | `{prompt}` | `{agent}` |".format(
-                id=a.get("id"),
-                pols=",".join(a.get("policy_ids") or []) or "-",
-                caps=",".join(a.get("capability_ids") or []) or "-",
-                method=a.get("action_method_id") or "-",
-                prompt=a.get("task_prompt_id") or "-",
-                agent=(
-                    a.get("agent_id")
-                    or (
-                        "engine"
-                        if str(a.get("role_id") or "") == "deterministic_engine"
-                        or str(a.get("execution_mode") or "") == "deterministic"
-                        else "human"
-                    )
-                ),
-            )
-        )
-        mid = str(a.get("action_method_id") or "")
-        folder = str(a.get("id") or "").replace("_", "-") or "-"
-        tpid = str(a.get("task_prompt_id") or "")
-        prompt_path = f"prompts/tasks/{tpid}.md" if tpid and "/" not in tpid else (
-            f"prompts/tasks/{tpid}.md" if tpid else "-"
-        )
-        if tpid and "/" in tpid:
-            dom, name = tpid.split("/", 1)
-            prompt_path = f"prompts/tasks/{dom}/{name}.md"
-        runtime_lines.append(
-            "| `{id}` | `actions/{folder}/action.yaml` | `{prompt}` | `{contract}` | `{role}` |".format(
-                id=a.get("id"),
-                folder=folder,
-                prompt=prompt_path,
-                contract=a.get("output_contract_id") or "-",
-                role=a.get("role_id") or "-",
-            )
-        )
-    return body.rstrip() + "\n" + "\n".join(lines) + "\n" + "\n".join(runtime_lines) + "\n"
+    return body.rstrip() + "\n"
 
 
 # OpenCode agent frontmatter: use ``mode``, never legacy ``type: subagent``.
@@ -1025,7 +973,8 @@ def _opencode_bash_permission(
     Safe probes auto-allow. Anything else (including clone / deletes) is OpenCode
     ``ask`` so the user can confirm instead of a hard deny. Do **not** allowlist
     the harness binary. Workflows use Host ``pilot_run``; short CLI uses plugin
-    ``pilot_cli``. ``uo-query`` omits repo-wide search so agents must use ``pilot_cli``.
+    ``pilot_cli``. Locate-only grep/rg is allowed; semantic lookup still prefers
+    ``pilot_cli`` ``uo-query``.
     """
     perm = {
         "*": "ask",
@@ -1070,6 +1019,16 @@ def _opencode_bash_permission(
         "Measure-Object *": "allow",
         "Group-Object *": "allow",
         "ForEach-Object *": "allow",
+        "git status": "allow",
+        "git status *": "allow",
+        "git log": "allow",
+        "git log *": "allow",
+        "git rev-parse": "allow",
+        "git rev-parse *": "allow",
+        "git diff --name-only": "allow",
+        "git diff --name-only *": "allow",
+        "git diff --stat": "allow",
+        "git diff --stat *": "allow",
     }
     if primary:
         perm.update(
@@ -1119,20 +1078,9 @@ def _agent_capability_union(repo: Path, agent_id: str) -> set[str]:
 
 
 def _agent_allow_repo_search(repo: Path, agent_meta: dict[str, Any]) -> bool:
-    """Native/bash search is an Action capability, not an agent-name special case."""
-    aid = str(agent_meta.get("id") or "")
-    tags = {
-        str(x).strip()
-        for x in (
-            list(agent_meta.get("forbidden") or [])
-            + list(agent_meta.get("machine_constraints") or [])
-        )
-        if str(x).strip()
-    }
-    if aid == "uo-query" or "free_repo_search" in tags or "no_free_repo_search" in tags:
-        return False
-    caps = _agent_capability_union(repo, aid)
-    return bool(caps & _SEARCH_CAPABILITIES)
+    """Locate-only Grep/Glob/bash search is allowed for every agent."""
+    del repo, agent_meta
+    return True
 
 
 def _host_remap_skill_paths(text: str, *, host: str) -> str:
@@ -1180,20 +1128,17 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
                 remapped.append(s)
         read_scopes = remapped
     reads = "\n".join(f"- `{x}`" for x in read_scopes) or "- (none)"
-    writes = "\n".join(f"- `{x}`" for x in (agent_meta.get("write_scopes") or [])) or "- (none)"
-    forbidden_tags = [str(x) for x in (agent_meta.get("forbidden") or [])]
-    machine = [str(x) for x in (agent_meta.get("machine_constraints") or [])]
-    behavioral = [str(x) for x in (agent_meta.get("behavioral_constraints") or [])]
-    if not forbidden_tags:
-        forbidden_tags = machine + behavioral
-    seen_constraints: list[str] = []
-    for x in forbidden_tags + machine + behavioral:
-        if x and x not in seen_constraints:
-            seen_constraints.append(x)
-    forbidden = "\n".join(f"- {x}" for x in seen_constraints) or "- (none)"
+    write_scope_list = [str(x) for x in (agent_meta.get("write_scopes") or [])]
+    writes = "\n".join(f"- `{x}`" for x in write_scope_list) or "- (none)"
     is_primary = agent_meta.get("mode") == "primary"
+    if (
+        not is_primary
+        and len(write_scope_list) > 4
+        and all("runs" in s.replace("\\", "/") for s in write_scope_list)
+    ):
+        writes = "- 只写当前 Action 的 `pilot:runs/**` 草稿。"
     inv_pack = _host_remap_skill_paths(
-        _read_invariant_pack(repo, for_primary=is_primary),
+        _read_invariant_pack(repo, for_primary=is_primary, agent_id=str(aid)),
         host=host,
     )
     desc = _project_primary_description(
@@ -1255,7 +1200,7 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
         front["mode"] = "subagent"
         if host == "opencode":
             front["hidden"] = True
-        child_bash: Any = {"*": "ask"} if aid == "uo-query" else bash_perm
+        child_bash: Any = bash_perm
         front["permission"] = {
             "*": "ask",
             "bash": child_bash,
@@ -1278,69 +1223,48 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             "pilot_run": False,
             "pilot_cli": True,
         }
-        if aid == "uo-query":
-            tools["bash"] = False
-            tools["grep"] = False
-            tools["glob"] = False
         front["tools"] = tools
 
     if aid == "uo-query":
-        runtime = """## Runtime Contract
+        runtime = """## 运行时契约
 
-execution_variant = delegated_query. Simple queries never spawn this agent.
+execution_variant = delegated_query。
 
-If the Task stub names `prompt` / `method` / `bundle` pointers, read those files exactly as supplied. Do not search additional session files.
-
-1. **First**: call the `pilot_cli` tool (not bash). `command` is `uo-query --project <operator-abs>` plus one of: an identifier, `Dim=V`, `--file <path> --line <n>`, or no extra args (operator index). Never `--mode`. Do not call `--help`. Do not prefix with bash.
-2. Follow card `next` / `hint`. A card with `file:line` + snippet is already Read — do not Read the same span. Copy `file` from the card; do not guess paths.
-3. Empty stdout → follow `hint` / `suggested_retries` and query once more. Do not switch to MCP, Grep, findstr, or a second index.
-4. Answer in the final message (prose + file:line). Do not Write `answer.yaml`. Do not finalize.
-5. Do **not** spawn Task / nested subagents (authorize `TASK_NON_PRIMARY`).
-
-Simple query is Primary-only (`pilot_cli` `uo-query` stdout).
+先读 stub 指出的 `prompt` / `method`。怎么查见 session `method.md`。
+首次：`pilot_cli` `uo-query --project <算子绝对路径>`（无其它参数），除非 stub 已给出标识符 / `Dim=V` / `--file --line`。不要 Write `answer.yaml`。不要自己 finalize。
 """
     elif is_primary:
-        runtime = """## Runtime Contract
+        runtime = """## 运行时契约
 
-1. Workflows: 思考里按产物缺口选 slash（计划不是用例；词表写明的前置输入也是缺口）；对用户只陈述目标、现状与下一步，再 `todowrite` 后 Host tool `pilot_run(workflow=<that slash>, project=<OpenCode directory or operator package>)`. Only the acquire-code todo uses `workflow=auto` (Engine clone). After clone, use the unique `(operator, architecture)` from the Engine receipt when present; otherwise AskQuestion with on-disk `arch*` options. Do not default architecture without evidence, and do not read a full git diff for semantics. Then `pilot_run` the next missing slash. Dual-axis review Tasks are ACKed from native Task text; Primary checks off the todo and `pilot_run`s the next slash. Explicit slash: `workflow=<existing id>`. If `pilot_run` is missing from the tool list, tell the user to fully quit OpenCode and rerun `refresh-opencode.ps1` / `install.sh opencode`. 非 primary 不得再派发 Task。`/ce-review` 双轴与复杂 uo-query 留在主线；意图只是一次审查或一次查询时不要再包 coordinator。派发前写清算子绝对路径、architecture、有无测试脚本。occupancy 不冲突可同一轮派发。
-2. Short CLI (`uo-query` / `status` / `inspect-failure` / `scan-architectures` / `retry-after-environment-fix`): call plugin tool `pilot_cli` with `command` as argv after the binary. Never `--help`. Never `--mode`.
-3. On `pilot_run` / environment failure: Read / Glob / Get-ChildItem the operator tree; `python scripts/dev/check_cann.py` / `check_env.py` / `python -m ascendc_pilot doctor`; `cann_extract.py --fixup` only. Do not read engine source. Do not invent architecture. Isolation PR checkout is Engine-owned; other bash is OpenCode `ask`.
-4. When `host_step.kind=dispatch_subagent`, Task body is exactly `task_prompt_stub`. If `host_step.tasks` ≥2, launch all in the same turn.
+工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（见 routing）。禁止 `--help`。Task 正文用 `task_prompt_stub` 原文。缺 `pilot_run` 时请用户重装插件。
 """
     else:
-        runtime = """## Runtime Contract
+        runtime = """## 运行时契约
 
-At runtime, follow:
-
-1. **First**: Read the session files named by Host `task_prompt_stub` pointers (`prompt`, `method`, `bundle`). Treat `prompt.md` as the sole task body.
-2. Work only on this Action / METHOD. Do not invent extra goals.
-3. Do **not** finalize (primary runs `--finalize`). Write only declared `write:` targets; otherwise return a short native summary.
-4. Do **not** spawn Task / nested subagents (authorize `TASK_NON_PRIMARY`). CodeMap lookup: plugin `pilot_cli` `uo-query` only.
+先读 stub 指出的 `prompt` / `method` / `bundle`。以 `prompt.md` 为本任务正文。只做本 Action。不要自己 finalize。查图用 `pilot_cli` `uo-query`（形态见 code-access 不变量）。
 """
     body = f"""# Agent: {aid}
 
-## Role
+## 角色
 
-You are a `{role}` for AscendC-Pilot.
+你是 AscendC-Pilot 的 `{role}`。
 
 {desc}
 
-## Boundaries
+## 边界
 
-You may read:
+可读：
 
 {reads}
 
-Machine-scope **operator sources** (`op_host/**`, `op_kernel/**`, …) are outside `.ascendc-pilot`.
-Locate with UO KB query / ScopeSet first, then machine-scope windowed `Read` — never whole-file dumps.
+机器范围的**算子源码**（`op_host/**`、`op_kernel/**` 等）在 `.ascendc-pilot` 之外。
+先用 UO 查询 / ScopeSet 定位，再窗口化 `Read` — 禁止整文件倒进上下文。
 
-You may write:
+可写：
 
 {writes}
 
-You must not:
-
-{forbidden}
+写权限以 lease 与上面的可写范围为准。禁止宣布 workflow passed。
 
 {runtime}
 ## Composed: policy-invariants
@@ -1618,12 +1542,6 @@ def validate_generated(repo: Path, *, host: str = "opencode") -> list[str]:
                     )
                 )
                 role = str(action.get("role_id") or "-")
-                # Composition index row must list the workflow agent
-                if aid and f"| `{aid}` |" in text:
-                    # Prefer Action runtime index role column
-                    if f"| `{aid}` |" in text and role != "-" and f"| `{role}` |" not in text.split(f"| `{aid}` |", 1)[-1][:200]:
-                        # Soft: check composition index agent cell
-                        pass
                 if aid and agent and agent != "human":
                     # Fail if skill still maps this action to a different agent in the Actions table
                     # New table: action_id | execution_mode | agent | role | method | prompt | contract

@@ -21,14 +21,16 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
     prompt = _text("prompts/tasks/uo/codemap-query.md")
     invariant = _text("pilot/policies/invariants/control-invariants.md")
+    access = _text("pilot/policies/invariants/code-access-invariants.md")
 
-    assert "MUST NOT Write `answer.yaml`" in invariant
+    assert "禁止 Write `answer.yaml`" in invariant
     assert "源码作答" in method
     assert "禁止 Glob/dir/tree 找 `.uo`" in method
     assert "dim_coverage" in method
     assert "Dim=V" in method
+    assert "Dim=V" in access
+    assert "禁止 `--mode`" in access
     assert "edges" in method
-    assert "findstr" in method
     assert "--query" in _text("pilot/ascendc_pilot/cli.py")
     assert "session `method.md`" in method
 
@@ -61,7 +63,8 @@ def test_uo_query_router_owned_by_method() -> None:
     assert "数量由主控判断" not in router
     assert "host_step.tasks" not in router
     assert "每轮最多" in router
-    assert "不要传 `--mode`" in method
+    assert "不要传 `--mode`" not in method
+    assert "禁止 `--mode`" in _text("pilot/policies/invariants/code-access-invariants.md")
     assert "丢掉" not in method
     assert "旧 CLI" not in method
     assert "旧 mode" not in router
@@ -75,7 +78,6 @@ def test_uo_query_router_owned_by_method() -> None:
     assert "routing/uo-query.md" in skill
     ctx = _text("agents/CONTEXT.md")
     assert "主控当前会话 `acp uo-query`" not in ctx
-    assert "pilot_cli" in ctx
     assert "uo-query-router/METHOD.md" not in skill
     assert "相关 ≠ 单域" not in skill
     assert "相关 ≠ 单域" in router
@@ -93,12 +95,12 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     driver = driver_facade + "\n" + driver_core
     hook = _text("opencode-plugin/ascendc-pilot.ts")
     assert "禁止" in policy and "pilot_run" in policy
-    assert "except `uo-query`" in invariant
-    assert "Never" in invariant and "uo-query" in invariant
+    assert "uo-query" in invariant
     assert "host_step.tasks" in invariant
     assert "不要 `pilot_run`" in command_src
     assert "routing/uo-query.md" in command_src
-    assert "禁止在 Task 正文写 `--mode`" in command_src
+    assert "禁止在 Task 正文写 `--mode`" not in command_src
+    assert "禁止 `--mode`" in _text("pilot/policies/invariants/code-access-invariants.md")
     assert "丢掉" not in command_src
     assert "--mode locate" not in hook
     assert "短问" not in invariant

@@ -202,7 +202,7 @@ def _sync_public_plan(goal: dict[str, Any], workflow_id: str, plan: dict[str, An
                 step["status"] = "pending"
         if workflow_id == "tg-solve":
             for step in steps:
-                if str(step.get("id")) in {"generate_cases", "validate_cases"}:
+                if str(step.get("id")) in {"bind_harness", "generate_cases", "validate_cases"}:
                     step["status"] = "passed"
                 elif str(step.get("id")) == "deliver":
                     step["status"] = "in_progress"

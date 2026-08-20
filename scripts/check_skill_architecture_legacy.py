@@ -34,6 +34,10 @@ DELETED_CAPS = (
     "ce-feature-decompose",
     "ce-plan-review",
     "verify-review",
+    "bounded-semantic-batch",
+    "sharded-llm-producer",
+    "sharded-semantic-producer",
+    "producer-self-check",
 )
 
 PROMPT_BAD = re.compile(

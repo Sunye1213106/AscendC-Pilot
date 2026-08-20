@@ -7,28 +7,28 @@ description: >
   覆盖证明走 testcase-generation / source-proof。
 ---
 
-# Operator Analysis（UO CodeMap）
+# 算子分析（UO CodeMap）
 
 薄入口：按任务读对应 METHOD / router / reference，不要一次装载全部。
 
 ```text
-query  (child)  → capabilities/uo-query/METHOD.md
-route  (primary)→ routing/uo-query.md
-build           → 下方「构建」+ references/codemap-build-gotchas.md
-update          → 下方「增量更新」
-investigate     → capabilities/uo-investigate/METHOD.md
+查询（子代）     → capabilities/uo-query/METHOD.md
+路由（主控）     → routing/uo-query.md
+构建             → 下方「构建」+ references/codemap-build-gotchas.md
+增量更新         → 下方「增量更新」
+调查             → capabilities/uo-investigate/METHOD.md
 ```
 
-OpenCode 查询走插件 `pilot_cli`（command=`uo-query --project …`，不要 `--mode`）。
+OpenCode 查询走插件 `pilot_cli`（command=`uo-query --project …`）。形态见 code-access 不变量。
 
 目标：把 AscendC 源码与 architecture 编译成可查询的源码语义图，作为 TG / CE 的语义接口。
 
 ```text
 prepare → extract → analyze → commit → verify
-   ↘ heal (脚本 include-heal 失败才进入；staging → promote extras)
-                  ↘ query (readonly)
-                  ↘ update (incremental; existing .uo)
-                  ↘ investigate (optional; no .uo mutation)
+   ↘ heal（脚本 include-heal 失败才进入；staging → promote extras）
+                  ↘ query（只读）
+                  ↘ update（增量；已有 .uo）
+                  ↘ investigate（可选；不改 .uo）
 ```
 
 ## 职责边界
@@ -49,7 +49,7 @@ prepare → extract → analyze → commit → verify
 
 Clang / include / 写入由 engine 执行。输入：算子目录 + architecture。完成条件：`pilot_cli` `uo-query --status-only` 看产物是否就绪，向用户报告 graph 计数与 unresolved 分类。确定性步骤：主控只 `pilot_run`，不开 LLM 子代理。
 
-1. 缺 architecture：Engine 回执已给出唯一 `(算子, architecture)` 时直接使用；否则必须先得到合法 architecture，再启动建库。禁止在没有路径令牌证据时默认 arch35。
+1. 缺 architecture：Engine 回执已给出唯一 `(算子, architecture)` 时直接使用；否则必须先得到合法 architecture，再启动建库。禁止在没有路径令牌证据时默认 architecture。
 2. operator + arch 给定后，Source Scope 以 Clang include closure 为准。
 3. 探针失败见 `references/codemap-build-gotchas.md`。
 4. 建库结束用 `pilot_cli` `uo-query --status-only`（`grade` / `locate_blocking`）。桶含义见 `references/uo-gaps.md`。
@@ -60,7 +60,7 @@ Clang / include / 写入由 engine 执行。输入：算子目录 + architecture
 
 ## 查询（`/uo-query`）
 
-TG / CE 缺语义时走这里。简单查询主控 `pilot_cli`；复杂查询主控并行 `Task(agent=uo-query)`。意图只是一次查询时留在主线，不要再包 coordinator。子代禁止再派 Task。
+TG / CE 缺语义时走这里。简单查询与复杂查询见 `routing/uo-query.md`。
 
 ## 按需参考
 
@@ -74,4 +74,3 @@ TG / CE 缺语义时走这里。简单查询主控 `pilot_cli`；复杂查询主
 | 查询踩坑 | `references/codemap-query-gotchas.md` |
 | 场景 hooks | `references/uo-scenario-hooks.md` |
 | authority / 完整性 | `references/codemap-authority.md` / `references/codemap-completeness.md` |
-| 共用证据纪律 | `references/evidence-quality.md` |

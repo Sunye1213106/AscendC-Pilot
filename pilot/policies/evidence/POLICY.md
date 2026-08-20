@@ -1,45 +1,43 @@
 # Policy: evidence
 
-## Purpose
+## 目的
 
-关键结论必须可追溯；禁止伪造置信度。本策略对**所有**语义 Action / Agent 生效（经 `DEFAULT_POLICY_IDS` 注入），禁止只在个别 skill 里另写一套证据规则。
+所有关键语义结论必须可追溯、可验证。证据不足时保持未解决，不允许通过猜测闭合。
 
-## Rules
+本策略对所有语义 Action / Agent 生效。Skill 可以增加约束，但不得弱化、复制或建立例外。
 
-1. 关键结论必须有 `path:line`、KB reference 或确定性产物证据。
-2. 不能以命名猜测闭合 KEY。
-3. 不能伪造 `confidence: high`。
-4. 推断必须明确标记为 `inference`。
-5. 证据不足时保留 `unresolved` / `needs_human`，不得猜测闭合。
-6. 仅 `confidence: high` 可闭合 true / false / not_input_derivable 类字段。
-7. **高置信 = 源码比对（全局硬规则）**：凡写入 `confidence: high` 或 `source_verified: true` 的结论，必须同时具备：
-   - `evidence_source: source|uo_graph`（禁止将 `candidate_only` 当作 verified）
-   - 非空 `evidence_files` + `evidence_lines: [start, end]`（1-based inclusive）
-   - `evidence_window_sha256`：磁盘窗口 sha（pad=0；可从候选 `source_window.sha256` 拷贝）
-   - `evidence_snippet`：该窗口内**连续**真实源码文本（足够长），**必须为磁盘窗口连续子串**（可去缩进比对）；禁止挑行拼贴
-   - `decision_reason`：说明「读了哪段、为何成立」
-8. **UO 图 / search 不是比对**：图查询与候选表只能定位；定位后必须用定向 Read 窗口核验，再写 snippet。仅有搜索命中不得标 high / source_verified。
-9. **证据载体（硬 · AND 不是 OR）**：高置信必须 **同时** 有 `evidence_window_sha256` **与** 连续 `evidence_snippet`。仅 sha、仅 snippet、或 sha 对但 snippet 非连续窗口子串 → Gate / apply **拒绝**。共享校验：`uo.scripts.source_evidence.require_disk_window_proof`。
-10. **产品韧性（公共）**：apply 可在 files/lines 可解析时从磁盘窗口（或候选 `source_window.text`）**回填**连续 snippet 与 sha（`enrich_item_evidence_from_disk`）；禁止省略号拼贴残留。回填不是放宽合同，而是消除易碎 YAML。
-11. **禁止占位证据**：`candidates_sha256`、snippet、行号不得填 `PLACEHOLDER` / `TODO` / 编造 hash；Gate 必须拒绝。
-12. **邻项 / 错窗 sha 视为编造**：`evidence_window_sha256` 必须对应该条目的 `evidence_files`+`evidence_lines`（或候选同窗 `source_window.sha256` / summary 的 `source_window_sha256`）。复用邻居候选的 hash → Gate / apply **拒绝**；若 files/lines/连续 snippet 已正确，apply 可按磁盘窗 **覆盖**错误 sha（`enrich_item_evidence_from_disk`），覆盖不是放宽合同。禁止为捞 sha 而 Grep/findstr 全量大 IR。
-13. 校验实现统一走共享模块（`uo.scripts.source_evidence` / `yaml_literal_sanitize`），各 Action finalize **复用**，不得各自发明宽松规则。
-14. **`mark_missing` 硬 Gate（公共）**：不得仅以 `score < threshold` / `confidence too low` 作为唯一理由。必须提供机器可核验的 `negative_evidence`（`scope_snapshot_sha256`、`include_closure_status` 对照产物、`queries[]`、`inspected_windows[]+window_sha256`、`absence_kind`）。Gate **不信任**模型自填的 `include_scope_complete: true`，须读 scope/include closure 产物。`triage_category=macro_contract_resolvable` 禁止 `mark_missing`（应交宏合同物化）。校验：`uo.scripts.llm_tasks.validate_mark_missing_patch`。
-15. **语义表面由关系派生（公共）**：`Roles and sinks are derived from relations; heuristics cannot independently prove semantics.` LLM 只确认 Relation，不得直接选择最终 extract-plan role。
-16. **输入为唯一根（公共）**：`All semantic surfaces derive from input roots; intermediate locals are never roots.` 条件 / 分支 / 模板 / KEY 维必须经 `GROUNDED_IN`（或等价推导链）接到 input_root（B/N/S/D、layout、dtype、attr…）；否则 `unsolved` / `needs_binding`，不得进入可测 coverage。
-17. **TilingData / 分支 lemma**：把 outcome 标为 PROVEN_UNREACHABLE（E）或 pin 字段取值时，证据级别必须达到本策略的 high / `source_verified`（磁盘窗口 + 连续 snippet）。仅 UO 字段名、仅 `host_writer_sites` 最终拷贝点、或仅「观测上从未出现」**不足以**入 E。
-18. **浅 writer ≠ 结构完备**：若查询只返回 ABI `set_*` 拷贝而无 `value_defining_sites`，结论状态为 `PARTIAL`/`UNKNOWN`，下一步是定向读码回灌 UO，不是在 TG 里特判算子。
+## 规则
 
-## Hard Constraints
+1. 关键结论必须有可验证证据，例如源码位置、UO 关系、确定性分析产物或 KB 引用。
 
-- MUST：每个闭合结论附证据类型与引用。
-- MUST：`confidence: high` ⇒ `source_verified: true` + 磁盘窗口 sha **且** 连续可核验 `evidence_snippet`。
-- MUST：lemma / E / 字段 pin ⇒ high + 源码窗口；禁止「观测缺席」或「浅 writer」单独入 E。
-- MUST：`mark_missing` ⇒ 机器可核验 `negative_evidence`；禁止 score-only / 伪 missing。
-- MUST NOT：发明证据、行号、KB 节点或 snippet；禁止用「仅 window sha」放行拼贴 snippet。
-- MUST NOT：复用邻居候选 / 错窗的 `evidence_window_sha256`（邻项 hash 视为编造）。
-- MUST NOT：用「命名像 / 候选表有 / search 命中」当作 high 的唯一依据。
-- MUST NOT：对 `macro_contract_resolvable` 任务写 `mark_missing`。
-- MUST NOT：在个别 skill prompt 里弱化或覆盖本策略；skill 只可引用本策略，不可另立例外。
-- MUST：最终 role / sink / 条件由 Relation Graph 确定性派生；中间局部量不得作为 input_root。
-- MUST：未 grounding 到输入根的语义表面保持 unresolved，不得假闭合出题。
+2. search、候选结果、命名、score 只用于定位，不能单独证明语义。
+
+3. `confidence: high` 不是模型主观判断。只有证据满足验证条件后才能成立。
+
+4. 标记 `source_verified: true` 时，必须能够定位到真实源码窗口，并同时具备：
+   - `evidence_files`
+   - `evidence_lines`
+   - `evidence_window_sha256`
+   - 连续真实源码 `evidence_snippet`
+   - `decision_reason`
+
+5. `sha`、源码范围和 `snippet` 必须属于同一个源码窗口。禁止拼接 snippet、复用其他候选的 sha、使用占位证据或编造证据。
+
+6. 推断必须明确保持为推断。证据不足时使用 `unresolved`、`partial`、`unknown`、`needs_binding` 或 `needs_human`，不得猜测闭合。
+
+7. `true / false`、字段 pin、`PROVEN_UNREACHABLE`、branch lemma、`not_input_derivable` 等会缩小语义空间的结论，必须经过高等级证据验证。
+
+8. `mark_missing` 必须有机器可验证的 negative evidence，并证明检查范围完整。score 低、搜索不到、样本未出现不能单独作为 missing 依据。
+
+9. 确定性工具可以补全、校验或修复证据，但不得凭空生成语义结论。
+
+10. 所有 Action 和 Agent 使用同一套证据规则。
+
+## 硬约束
+
+- 没有证据，不得闭合。
+- 定位结果不等于证明结果。
+- 未验证结论不得标记 `high` 或 `source_verified`。
+- 不得编造 path、line、hash、KB 节点、snippet 或其他证据。
+- 证据不足必须保留未解决状态。
+- 下游不得通过特判掩盖上游证据缺口。

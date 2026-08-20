@@ -1,18 +1,21 @@
 # TG bind-init
 
-写出 **一份** `init.yaml` 草稿。正式文件由 `bind_promote` 写入。测试脚本仓可选。
+`/tg-init` 在 `repo_scan` 之后 **两路** `tg-analyst`：`bind-harness` 写 `parts/harness.yaml`，`bind-columns` 写 `parts/bind.yaml`（同一轮更好；ACK 只认两份到齐，不认顺序/并行）。正式 `tg/init.yaml` 由主控裁判放行后的 `bind_promote` 写入。测试脚本仓可选；无仓也两路都跑。
+
+本 METHOD 是父 Action 索引。各切片只读自己的 METHOD（`bind-harness` / `bind-columns`）。
 
 ## 方法
 
-1. 读 `runs/<run_id>/receipts/repo_scan.yaml`。
-2. **有脚本仓**（`kind=script_repo`）：为每一列写 `mapping`（脚本读点如 `get_case` / `CaseConfig.xxx` + 算子仓/UO 标识符）。mapping 空则本步失败。写 `modes`、值域、`golden`、比对口径、`generate_inputs`。
-3. **无脚本仓**：不要假装已有仓。用 uo-query 读算子 **输入 API**（Host 入参 / dtype / shape），按 API 设计 `init.yaml` 控制面（列/字段、值域、如何造输入）。`kind=default_input`。缺生成器另走 CE，不要伪造 mapping。算子仓内 `tests/` / `ut` 未经用户确认，不得写成 `kind=script_repo`。
-4. `uo_digest` 由 promote 写入；草稿可留空。
-5. 查语义：本步只用 `pilot_cli` `uo-query`（禁止再派 Task；子代不得嵌套子代理）。多起点在本步串行查完。禁止 Grep 算子仓。
+1. 读 `runs/<run_id>/receipts/repo_scan.yaml`。路径未确认不得把仓内 `tests/` / `ut` 写成 `script_repo`。
+2. **harness 切片**：golden / compare / modes / generate_inputs / findings。
+3. **columns 切片**：table_kind / entry / case_arg / columns / mapping / domains / findings。只映射测试仓与算子，不要标 PR 焦点。
+4. 查语义：只用 `pilot_cli` `uo-query`（列/口径 → 标识符；禁止当 PR 审查）。
+5. `uo_digest` 由 promote 写入；草稿可留空。
 
 ## 禁止
 
 - 写正式 `tg/init.yaml`
 - 把精度启发式标成 `--golden-only`
 - 无 mapping 却声称 script_repo 已绑定
+- 把列或 CSV 标成 PR 焦点 / 本次测试目标
 - 无仓时假装脚本仓已就绪

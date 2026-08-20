@@ -127,7 +127,7 @@ def test_interpret_maps_continue_alias(tmp_path: Path) -> None:
 def test_supersede_then_describe_next_human_required_does_not_reask(
     tmp_path: Path,
 ) -> None:
-    start_workflow(tmp_path, "tg-init", phase="confirm", force_phase=True, architecture="arch35")
+    start_workflow(tmp_path, "tg-init", phase="scan", force_phase=True, architecture="arch35")
     state = load_state(tmp_path) or {}
     state["status"] = "human_required"
     state["last_failure"] = {"error_code": "ORACLE_SUSPECT", "message_zh": "需要人工介入"}
@@ -152,3 +152,105 @@ def test_supersede_then_describe_next_human_required_does_not_reask(
     assert not after.get("ask_question")
     assert after.get("needs_human_decision") is not True
     assert "打断" in str(after.get("message_zh") or after.get("primary_instruction_zh") or "")
+
+
+def test_interpret_user_turn_adopts_path_inside_chinese(tmp_path: Path) -> None:
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    repo = tmp_path / "fag_debug_tools"
+    repo.mkdir()
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
+    text = f"{repo} 这个才是真正的测试脚本仓"
+    out = interpret_user_turn(tmp_path, text=text)
+    assert out.get("ok") is True, out
+    state = load_state(tmp_path) or {}
+    assert Path(str(state.get("test_script_root") or "")).resolve() == repo.resolve()
+
+
+def _ask_harness() -> dict:
+    return {
+        "header": "选择测试仓",
+        "question": "尚未确认 test_script_root",
+        "options": [
+            {"label": "没有测试仓，由 Agent 按算子约束生成", "value": "no_repo_uo_query"},
+            {"label": "有外部测试仓，或其他想法：在下面输入", "value": "custom"},
+        ],
+        "allow_free_text": True,
+        "field": "test_script_root",
+    }
+
+
+def test_interpret_pending_harness_adopts_git_url(tmp_path: Path, monkeypatch) -> None:
+    import sys
+
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    dest = tmp_path / "cloned_harness"
+    dest.mkdir()
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
+    issue_interaction_request(
+        tmp_path,
+        kind="human_required",
+        ask_question=_ask_harness(),
+        decision_kind="test_script_root",
+        allowed_values=["no_repo_uo_query", "custom"],
+        action_id="repo_scan",
+    )
+    monkeypatch.setattr(
+        gw,
+        "clone_harness_repo",
+        lambda url, *, project_root: {"ok": True, "path": str(dest.resolve()), "cloned": True},
+    )
+    out = interpret_user_turn(
+        tmp_path, text="用这个仓 https://gitcode.com/foo/bar 吧"
+    )
+    assert out.get("ok") is True, out
+    assert out.get("disposition") == "answered"
+    state = load_state(tmp_path) or {}
+    assert Path(str(state.get("test_script_root") or "")).resolve() == dest.resolve()
+
+
+def test_interpret_pending_harness_interrupt_nl_supersedes(tmp_path: Path) -> None:
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    start_workflow(tmp_path, "tg-init", architecture="arch35")
+    issue_interaction_request(
+        tmp_path,
+        kind="human_required",
+        ask_question=_ask_harness(),
+        decision_kind="test_script_root",
+        allowed_values=["no_repo_uo_query", "custom"],
+        action_id="repo_scan",
+    )
+    out = interpret_user_turn(tmp_path, text="先别测了，这个算子 s1Inner 怎么切")
+    assert out.get("ok") is True, out
+    assert out.get("error") != "NOT_A_DIRECTORY"
+    assert out.get("disposition") == "superseded"
+    assert pending_is_open(load_pending(tmp_path)) is False
+
+
+def test_parse_git_repo_url_rejects_pr() -> None:
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw
+
+    ok = gw.parse_git_repo_url("https://gitcode.com/cann/ops-transformer")
+    assert ok.get("ok") is True
+    pr = gw.parse_git_repo_url(
+        "https://gitcode.com/cann/ops-transformer/pulls/9851"
+    )
+    assert pr.get("ok") is False
+    assert pr.get("error") == "GIT_URL_IS_PR"

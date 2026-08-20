@@ -36,10 +36,11 @@ def project_public_plan(
 ) -> list[dict[str, Any]]:
     """Return public progress derived only from TaskPlan state.
 
-    Multiple TaskPlan steps may map to one public row (for example ``tg-init``
-    and ``tg-plan`` both map to ``generate_cases``). The public row is complete
-    only after all mapped steps are terminal. ``deliver`` is synthetic: it can
-    begin only after every TaskPlan step is terminal and acceptance is satisfied.
+    Multiple TaskPlan steps may map to one public row. ``tg-init`` maps to
+    ``bind_harness``; ``tg-plan`` maps to ``generate_cases``. The public row is
+    complete only after all mapped steps are terminal. ``deliver`` is synthetic:
+    it can begin only after every TaskPlan step is terminal and acceptance is
+    satisfied.
     """
 
     rows = [dict(item) for item in (template or []) if isinstance(item, dict)]
@@ -54,9 +55,15 @@ def project_public_plan(
             continue
         grouped.setdefault(public_id, []).append(str(step.get("status") or "pending"))
 
-    # A narrowly requested non-PR ``tg-solve`` plan may omit tg-init/tg-plan.
-    # Once solve is active, case generation is necessarily upstream work; mark
-    # that public row complete so validation is the single visible current item.
+    # A narrowly requested plan may omit earlier TG inits. Once a later TG
+    # step is active, mark upstream public rows complete.
+    later_tg = [
+        str(step.get("status") or "pending")
+        for step in task_steps
+        if str(step.get("workflow_id") or step.get("id") or "") in {"tg-plan", "tg-solve"}
+    ]
+    if later_tg and any(state in {"in_progress", "passed", "skipped"} for state in later_tg):
+        grouped.setdefault("bind_harness", ["passed"])
     if "generate_cases" not in grouped:
         solve_states = [
             str(step.get("status") or "pending")

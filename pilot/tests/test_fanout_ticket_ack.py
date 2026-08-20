@@ -58,6 +58,9 @@ def test_infer_slice_id_prefers_axis_and_explicit() -> None:
     assert infer_slice_id("AXIS=spec\nbody", expected, {}) == "spec"
     assert infer_slice_id("no axis", expected, {"spec": {"text": "x"}}) == "standards"
     assert infer_slice_id("no axis", expected, {}) == ""
+    assert infer_slice_id("完成。已编写 parts/harness.yaml。", ["harness", "bind"], {}) == "harness"
+    assert infer_slice_id("wrote bind.yaml", ["harness", "bind"], {"harness": {"text": "x"}}) == "bind"
+    assert infer_slice_id("see harness.yaml and bind.yaml", ["harness", "bind"], {}) == ""
 
 
 def test_first_slice_ack_does_not_consume(tmp_path: Path) -> None:
@@ -281,3 +284,157 @@ def test_harvest_complete_parts_does_not_issue_new_ticket(tmp_path: Path, monkey
     assert out.get("ticket_id") == tid or seen.get("ticket_id") == tid
     ids = {p.stem for p in (tmp_path / ".ascendc-pilot").rglob("dxt_*.yaml")}
     assert ids == {tid}
+
+
+def test_ce_review_serial_ack_without_parts(tmp_path: Path) -> None:
+    """Count-complete ACK: order does not matter; no parts files required."""
+    ticket = _issue_pair(tmp_path)
+    tid = str(ticket["ticket_id"])
+    missing = ack_fanout_slice(tmp_path, tid, result_text="no axis in the summary")
+    assert missing.get("ok") is False
+    assert missing.get("error") == "SLICE_ID_REQUIRED"
+    first = ack_fanout_slice(tmp_path, tid, result_text="spec findings", slice_id="spec")
+    assert first.get("waiting_slices") is True
+    assert first.get("remaining_slices") == ["standards"]
+    second = ack_fanout_slice(
+        tmp_path, tid, result_text="standards findings", slice_id="standards"
+    )
+    assert second.get("ok") is True
+    assert second.get("ready") is True
+    loaded = load_dispatch_ticket(tmp_path, tid)
+    assert set((loaded.get("slice_results") or {}).keys()) == {"spec", "standards"}
+
+
+def _issue_bind_pair_with_state_run(tmp_path: Path) -> tuple[dict[str, Any], str, Path]:
+    from ascendc_pilot.state import load_state
+
+    ensure_agent_layout(tmp_path, arch="arch0")
+    start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True, architecture="arch0")
+    run_id = str((load_state(tmp_path) or {}).get("run_id") or "").strip()
+    sdir = tmp_path / "bind_session"
+    sdir.mkdir()
+    harness_stub = "AXIS=harness\nSLICE_ID=harness\nwrite parts/harness.yaml"
+    bind_stub = "AXIS=bind\nSLICE_ID=bind\nwrite parts/bind.yaml"
+    ticket = issue_dispatch_ticket(
+        tmp_path,
+        run_id=run_id,
+        action_id="bind_init",
+        actor_id="tg-analyst",
+        lease_id="lease1",
+        session_dir=str(sdir),
+        task_prompt_stub="parent stub",
+        expected_slices=["harness", "bind"],
+        dispatch_tasks=[
+            {
+                "slice_id": "harness",
+                "focus": "Harness",
+                "first_mode": "harness",
+                "actor_id": "tg-analyst",
+                "action_id": "bind_init",
+                "task_prompt_stub": harness_stub,
+            },
+            {
+                "slice_id": "bind",
+                "focus": "Bind",
+                "first_mode": "bind",
+                "actor_id": "tg-analyst",
+                "action_id": "bind_init",
+                "task_prompt_stub": bind_stub,
+            },
+        ],
+    )
+    return ticket, run_id, sdir
+
+
+def test_harvest_bind_yaml_from_session_dir_finalizes(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import dispatch_legacy
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    ticket, _run_id, sdir = _issue_bind_pair_with_state_run(tmp_path)
+    tid = str(ticket["ticket_id"])
+    parts = sdir / "parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    (parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+    (parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+
+    seen: dict[str, Any] = {}
+
+    def fake_dispatch_result(project_root, **kwargs):
+        seen["ticket_id"] = kwargs.get("ticket_id")
+        return {"ok": True, "harvested": True, "ticket_id": kwargs.get("ticket_id")}
+
+    monkeypatch.setattr(dispatch_legacy, "dispatch_result", fake_dispatch_result)
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "status": "running",
+            "next": {
+                "action_id": "bind_init",
+                "execution_kind": "subagent",
+                "actor_id": "tg-analyst",
+            },
+        },
+    )
+    assert seen.get("ticket_id") == tid
+    assert out.get("ticket_id") == tid or seen.get("ticket_id") == tid
+    assert not (parts / "merged.md").is_file()
+    ids = {p.stem for p in (tmp_path / ".ascendc-pilot").rglob("dxt_*.yaml")}
+    assert ids == {tid}
+
+
+def test_harvest_bind_yaml_partial_then_complete(tmp_path: Path, monkeypatch) -> None:
+    """One slice already on disk (rework-like); writing the other reaches count-complete."""
+    from ascendc_pilot.actions import dispatch_legacy
+    from ascendc_pilot.actions.dispatch import attach_host_step
+
+    ticket, _run_id, sdir = _issue_bind_pair_with_state_run(tmp_path)
+    tid = str(ticket["ticket_id"])
+    parts = sdir / "parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    (parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+    first = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "status": "running",
+            "next": {
+                "action_id": "bind_init",
+                "execution_kind": "subagent",
+                "actor_id": "tg-analyst",
+            },
+        },
+    )
+    assert first.get("dispatch_ticket") == tid
+    remaining = (first.get("host_step") or {}).get("remaining_slices") or first.get(
+        "remaining_slices"
+    )
+    assert remaining == ["harness"] or "harness" in str(remaining)
+    (parts / "harness.yaml").write_text("golden: {status: match}\n", encoding="utf-8")
+
+    seen: dict[str, Any] = {}
+
+    def fake_dispatch_result(project_root, **kwargs):
+        seen["ticket_id"] = kwargs.get("ticket_id")
+        return {"ok": True, "harvested": True, "ticket_id": kwargs.get("ticket_id")}
+
+    monkeypatch.setattr(dispatch_legacy, "dispatch_result", fake_dispatch_result)
+    second = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "interaction_required",
+            "status": "running",
+            "next": {
+                "action_id": "bind_init",
+                "execution_kind": "subagent",
+                "actor_id": "tg-analyst",
+            },
+        },
+    )
+    assert seen.get("ticket_id") == tid
+    ids = {p.stem for p in (tmp_path / ".ascendc-pilot").rglob("dxt_*.yaml")}
+    assert ids == {tid}
+    assert second.get("host_step", {}).get("kind") != "failed"

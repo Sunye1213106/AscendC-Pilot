@@ -63,3 +63,49 @@ def test_plan_for_does_not_expand_multi_operator_from_one_slash() -> None:
     assert ids == ["tg-solve#0", "tg-solve#1"]
     assert "uo-init#0" not in ids
     assert "ce-review#0" not in ids
+
+
+def test_policies_do_not_parallel_task_workflows() -> None:
+    needles = (
+        "uo-query 可与 `/tg-init` 并行",
+        "uo-query 可与 /tg-init 并行",
+        "`/ce-review` 可与 `/tg-init` 并行",
+        "occupancy 不冲突即可并行",
+        "CE review 属于推理出来的依赖",
+    )
+    paths = [
+        REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md",
+        REPO / "pilot" / "policies" / "invariants" / "host-runtime-contract.md",
+        REPO / "docs" / "getting-started" / "quickstart.md",
+        REPO / "docs" / "architecture" / "workflows.md",
+        REPO / "docs" / "test" / "golden-e2e-pr-cases.md",
+        REPO / "agents" / "CONTEXT.md",
+    ]
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        for needle in needles:
+            assert needle not in text, f"{path} still has {needle!r}"
+
+
+def test_intent_reasoning_forces_inits_before_consume() -> None:
+    text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+        encoding="utf-8"
+    )
+    assert "禁止把消费格插在未完成的 init 之前" in text
+    assert "不要按个别措辞选 slash" in text
+    assert "不要背场景黄金链" in text
+    assert "/ce-review" in text and "消费" in text
+    assert "分析这个 PR 并生成" not in text
+    assert "Todo：`auto` → `/uo-init` → `/tg-init` → `/uo-query`" not in text
+
+
+def test_plan_for_orders_tg_init_before_ce_review() -> None:
+    planned = plan_for(
+        {
+            "needed_workflows": ["ce-review", "tg-init", "tg-plan"],
+            "source": {"kind": "none"},
+        }
+    )
+    wids = [str(s.get("workflow_id") or s.get("id")) for s in planned["steps"]]
+    assert wids.index("tg-init") < wids.index("ce-review")
+    assert wids.index("ce-review") < wids.index("tg-plan")

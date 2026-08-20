@@ -35,9 +35,9 @@ Host 产出 `x ∉ D` 时丢弃或强行投影进 D。
 ## 继承过期证书
 
 源码或声明变更后继续用旧 gap=0。  
-**对策**：`references/artifact-freshness.md`。
+**对策**：源码或声明变更后旧证书作废。
 
 ## 假完整性放行
 
 required 文件存在但内容为 `not_extracted` / 空壳，gate 当通过。  
-**对策**：`uo-codemap-build/references/completeness.md` — existence ≠ completeness。
+**对策**：文件存在 ≠ 语义完备；空壳 / `not_extracted` 不得当 gate 通过。

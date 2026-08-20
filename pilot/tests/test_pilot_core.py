@@ -1,4 +1,4 @@
-"""Pilot unit tests including ses_076d KEY gate fixtures."""
+"""Pilot unit tests for router, state machine, authorize, and complete gates."""
 
 from __future__ import annotations
 
@@ -7,17 +7,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from ascendc_pilot.context import build_context_pack
-from ascendc_pilot.gates import (
-    gate_confidence_closed_high,
-    gate_confidence_reason_review,
-    gate_confidence_report_quality,
-    gate_empty_only_producer,
-    gate_key_triage_required,
-    reject_key_patch_batch,
-    run_key_gates,
-)
-from ascendc_pilot.memory import add_candidate, promote_stable, propose_global_promote, search_local
 from ascendc_pilot.paths import tg_root, uo_root
 from ascendc_pilot.router import route
 from ascendc_pilot.state import (
@@ -130,158 +119,17 @@ def test_advance_gate_fail_keeps_phase_rework(tmp_path: Path):
         assert st["status"] in {"human_required", "rework_required", "running"}
 
 
-def test_key_triage_required_fails_without_triage(tmp_path: Path):
-    uo = uo_root(tmp_path)
-    _write(
-        uo / "ir" / "input_derivable_gaps.yaml",
-        {"gaps": [{"id": "KEY_ISNZOUT", "status": "open"}]},
-    )
-    r = gate_key_triage_required(uo)
-    assert r["ok"] is False
-    _write(uo / "ir" / "key_triage.yaml", {"keys": [{"id": "KEY_ISNZOUT", "complexity": "complex"}]})
-    r2 = gate_key_triage_required(uo)
-    assert r2["ok"] is True
-
-
-def test_empty_only_producer_rejected(tmp_path: Path):
-    uo = uo_root(tmp_path)
-    _write(
-        uo / "ir" / "resolution_patch.yaml",
-        {
-            "items": [
-                {
-                    "id": "KEY_FOO",
-                    "status": "accepted",
-                    "evidence": "producer only in RunEmptyTiling Regbase",
-                }
-            ]
-        },
-    )
-    r = gate_empty_only_producer(uo)
-    assert r["ok"] is False
-
-
-def test_reject_key_patch_batch_empty_and_receipt(tmp_path: Path):
-    uo = uo_root(tmp_path)
-    _write(
-        uo / "ir" / "input_derivable_gaps.yaml",
-        {"gaps": [{"id": "KEY_FOO", "status": "open"}]},
-    )
-    items = [
-        {
-            "id": "KEY_FOO",
-            "status": "accepted",
-            "confidence": "high",
-            "evidence": "RunEmptyTiling empty_tensor only",
-        }
-    ]
-    rejected = reject_key_patch_batch(tmp_path, uo, items)
-    assert rejected
-    assert any("empty_only" in r["reason"] for r in rejected)
-
-
-def test_report_quality_rejects_boilerplate(tmp_path: Path):
-    uo = uo_root(tmp_path)
-    lines = ["# report", ""]
-    excuse = "跨编译边界 bit-pack 无法回溯，Host/Kernel 不可解"
-    for i in range(8):
-        lines.extend([f"### KEY_X{i}", f"- 原因：{excuse}", ""])
-    _write(uo / "summary" / "confidence_report.md", "\n".join(lines))
-    r = gate_confidence_report_quality(uo, min_dup=5)
-    assert r["ok"] is False
-
-
-def test_closed_high_zero_fails_even_if_status_pass(tmp_path: Path):
-    uo = uo_root(tmp_path)
-    _write(
-        uo / "ir" / "input_derivable.yaml",
-        {"keys": {f"KEY_{i}": {"input_derivable": "unsolved", "confidence": "low"} for i in range(3)}},
-    )
-    _write(
-        uo / "checks" / "confidence_gate.yaml",
-        {"status": "pass", "closed_high_count": 0, "need_llm_count": 0},
-    )
-    r = gate_confidence_closed_high(uo)
-    assert r["ok"] is False
-    _write(uo / "checks" / "human_accept_reported.yaml", {"accepted": True})
-    r2 = gate_confidence_closed_high(uo)
-    assert r2["ok"] is True
-
-
-def test_confidence_reason_review_requires_referee(tmp_path: Path):
-    uo = uo_root(tmp_path)
-    _write(
-        uo / "ir" / "input_derivable.yaml",
-        {"keys": {"KEY_X": {"input_derivable": "unsolved", "confidence": "low"}}},
-    )
-    _write(
-        uo / "summary" / "confidence_report.md",
-        "### KEY_X\n- 原因：Host optional 未实例化，暂无法 high\n",
-    )
-    r = gate_confidence_reason_review(uo)
-    assert r["ok"] is False
-    _write(
-        uo / "review" / "confidence_reason_review.yaml",
-        {
-            "agent": "uo-confidence-review",
-            "verdict": "pass",
-            "summary": "原因充分",
-            "need_llm_count": 1,
-            "checked_ids": ["KEY_X"],
-        },
-    )
-    r2 = gate_confidence_reason_review(uo)
-    assert r2["ok"] is True
-
-
-def test_ses076d_fixture_full_gate_fail(tmp_path: Path):
-    """Regression: missing triage + boilerplate report + review pass must fail."""
-    uo = uo_root(tmp_path)
-    keys = {f"KEY_{i}": {"input_derivable": "unsolved", "confidence": "low"} for i in range(20)}
-    _write(uo / "ir" / "input_derivable.yaml", {"keys": keys})
-    _write(
-        uo / "ir" / "input_derivable_gaps.yaml",
-        {"gaps": [{"id": k, "status": "open"} for k in keys]},
-    )
-    lines = ["# 置信度", ""]
-    for k in keys:
-        lines.extend(
-            [
-                f"### {k}",
-                "- 原因：跨编译边界 bit-pack 无法回溯",
-                "",
-            ]
-        )
-    _write(uo / "summary" / "confidence_report.md", "\n".join(lines))
-    _write(
-        uo / "checks" / "confidence_gate.yaml",
-        {"status": "reported", "closed_high_count": 0, "need_llm_count": 20},
-    )
-    _write(uo / "review" / "kb_product_review.yaml", {"verdict": "pass", "closed_high_count": 0, "need_llm_count": 20})
-    payload = run_key_gates(tmp_path)
-    assert payload["ok"] is False
-    failed = {g["gate"] for g in payload["gates"] if not g.get("ok")}
-    assert "key_triage_required" in failed
-    assert "confidence_closed_high" in failed or "key_report_quality" in failed
-    assert "confidence_reason_review" in failed
-
-
-def test_complete_workflow_rework_on_key_gates(tmp_path: Path):
+def test_complete_workflow_rework_on_complete_gates(tmp_path: Path):
     start_workflow(tmp_path, "uo-init", phase="verify", force_phase=True, architecture="arch35")
-    uo = uo_root(tmp_path)
-    _write(
-        uo / "ir" / "input_derivable.yaml",
-        {"keys": {"KEY_A": {"input_derivable": "unsolved", "confidence": "low"}}},
-    )
-    _write(
-        uo / "ir" / "input_derivable_gaps.yaml",
-        {"gaps": [{"id": "KEY_A", "status": "open"}]},
-    )
     result = complete_workflow(tmp_path)
     assert result["ok"] is False
     assert result["status"] == "rework_required"
     assert load_state(tmp_path)["status"] == "rework_required"
     assert load_state(tmp_path)["phase"] == "verify"
+    lf = load_state(tmp_path).get("last_failure") or {}
+    assert lf.get("reason_code") == "COMPLETE_GATES_FAILED"
+    failed = {str(g.get("gate") or "") for g in (result.get("failed_gates") or [])}
+    assert "uo_product_ready" in failed or "integrity" in failed or "scope_receipt" in failed
 
 
 def test_plan_approved_reads_plan_md(tmp_path: Path):
@@ -409,28 +257,10 @@ def test_compile_skills_smoke():
     assert not (repo / "generated" / "opencode" / "skills" / "operator" / "SKILL.md").exists()
     assert (repo / "generated" / "opencode" / "agents" / "ascendc-pilot.md").is_file()
     text = (repo / "generated" / "opencode" / "skills" / "uo-init" / "SKILL.md").read_text(encoding="utf-8")
-    assert "pilot-control" in text
-    assert "Composition index" in text
-
-
-def test_memory_and_context(tmp_path: Path):
-    start_workflow(tmp_path, "uo-query", phase="answer", force_phase=True, architecture="arch35")
-    e = add_candidate(tmp_path, topic="tilingkey", kind="fact", content="Host GetTilingKey has IsNzOut predicate")
-    promote_stable(tmp_path, e["id"], verified_by="test")
-    hits = search_local(tmp_path, topic="tilingkey", limit=3)
-    assert hits
-    pack = build_context_pack(tmp_path, intent="uo-query", topic="tilingkey")
-    assert pack["memory"]
-    # private source blocked from global promote
-    bad = add_candidate(
-        tmp_path,
-        topic="src",
-        kind="fact",
-        content="```\n" + ("int x;\n" * 80) + "```\nD:\\code\\op.cpp",
-    )
-    promote_stable(tmp_path, bad["id"], verified_by="test")
-    prop = propose_global_promote(tmp_path, bad["id"])
-    assert prop.get("ok") is False
+    assert "BEGIN GENERATED ACTIONS" in text
+    assert "| `extract` |" in text
+    assert "Composition index" not in text
+    assert "## Composed: policy-invariants" not in text
 
 
 def test_actions_for_phase_strict_binding(tmp_path: Path):
@@ -575,7 +405,7 @@ def test_tg_kb_ready_no_fingerprint_gate():
     meta = get_workflow("tg-init")
     assert "kb_fingerprint_fresh" not in (meta.get("phase_gates") or {}).get("kb_ready", [])
     assert "uo_ready" in (meta.get("phase_gates") or {}).get("kb_ready", [])
-    assert "kb_fingerprint_fresh" in (meta.get("phase_gates") or {}).get("confirm", [])
+    assert "kb_fingerprint_fresh" in (meta.get("phase_gates") or {}).get("validate", [])
 
 
 def test_install_skill_lists_symmetric():

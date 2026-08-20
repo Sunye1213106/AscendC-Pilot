@@ -221,7 +221,8 @@ def test_pilot_progress_mjs_patches_tool_row_input() -> None:
 def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
     """OpenCode Truncate.output crashes if plugin execute returns a bare object."""
     driver = REPO / "opencode-plugin" / "pilot-driver.ts"
-    text = driver.read_text(encoding="utf-8")
+    core = REPO / "opencode-plugin" / "pilot-driver-core.ts"
+    text = driver.read_text(encoding="utf-8") + "\n" + core.read_text(encoding="utf-8")
     assert "toPluginToolResult" in text
     assert "compactPilotRunPayload" in text
     assert "compactPilotRunPayload(result)" in text
@@ -274,7 +275,7 @@ def test_plugin_pending_lock_does_not_block_resume_start() -> None:
     assert "isAcpResumeStartCommand" in text
     assert "extractProjectFromAcpCommand" in text
     assert "pendingByProject.delete" in text
-    assert "isPilotDriver" in text
+    assert "!isPilotDriver" not in text
     assert "applyForceNew" in (REPO / "opencode-plugin" / "pilot-driver.ts").read_text(
         encoding="utf-8"
     )

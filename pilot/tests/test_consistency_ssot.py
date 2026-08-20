@@ -130,6 +130,7 @@ def test_kb_answer_contract_is_lease_answer_not_integrity() -> None:
 
     assert OUTPUT_CONTRACT_PATHS["kb-answer-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["code-review-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-bind-review-v1"] == []
     assert "kb-answer-v1" not in _PRECONDITION_CONTRACTS
 
 

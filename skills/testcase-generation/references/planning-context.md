@@ -8,6 +8,6 @@
 - `{slug}_plan.md` 的「测试内容」
 - 用户已陈述的测试范围
 - `session_handoff.md`
-- 用户已选定只要用例后，主控综合的 `/uo-query` 结论
+- 最终产物是用例、审查不是交付物时，主控综合的 `/uo-query` 结论
 
-缺 Planning Context 时不要进入 `/tg-plan`。是否先做完整审查，由主控在意图推理中确认。
+缺 Planning Context 时不要进入 `/tg-plan`。最终产物是用例、审查不是交付物时，Planning Context 来自主控综合的 `/uo-query`，不要把 `/ce-review` 推理成前置。只有审查本身是交付物时才用审查结论。

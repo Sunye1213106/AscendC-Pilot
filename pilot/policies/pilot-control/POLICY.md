@@ -6,7 +6,7 @@ Pilot 独占状态、合法边、门禁与完成态。Host 传输细节见 `pilo
 
 ## Rules
 
-1. 只能执行 `pilot_run` / `pilot_cli next` 返回的 Action。
+1. 只能执行 `pilot_run` / `dispatch-result` 返回的 Action。`pilot_cli next` 是诊断只读，不推进工作流。
 2. Skill、Prompt、Agent、Capability、Action Method **不得**推进工作流状态。
 3. 终态只认 Host `complete`；禁止自行宣布 `done` / `passed`。
 4. Gate fail ≠ 立即 `blocked`；保持 phase，进入 `rework_required` / `human_required`。进入 `human_required` 后必须弹出可点选框，禁止仅用文字说明而不给出选项。用户打断确认框并在对话里另作回复时，取消该 pending（`interpret-user-turn`），不要重问上一题；未点选不等于批准删除/重开。

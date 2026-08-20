@@ -104,7 +104,7 @@ def test_investigator_has_bounded_ro_search_not_free_grep() -> None:
     assert "readonly-source-search" in caps
     meta = load_agent_meta("uo-gap-investigator")
     tags = set(meta.get("machine_constraints") or meta.get("forbidden") or [])
-    assert "no_free_repo_search" in tags
+    assert "write_canonical_uo_ir" in tags or "apply_semantic_gap_patch" in tags
 
 
 def test_ro_search_refuses_repo_root(tmp_path: Path) -> None:

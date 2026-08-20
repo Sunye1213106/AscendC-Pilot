@@ -1,6 +1,6 @@
 # TG Plan — Gotchas
 
-- **控制面是列**：义务必须 root 到 `init.yaml` 的 CSV/XLS 列，不是全部合法 Key。
+- **控制面是列**：义务必须 root 到 `init.yaml` 的 CSV/XLS 列，不是全部合法 Key。依赖列禁止当独立笛卡尔维。
 - **禁止默认 T=D / `tilingkey_full_coverage`**：全量 tilingkey 只在意图点名时做。
 - **融合，不是先套覆盖再贴标签**：有意图就拆精度/性能考虑；没有意图默认 L0，仍要能 root 的精度/性能义务。
 - **指标只有 `replay` 和 `derived`**：没有第三类上板误差/耗时。

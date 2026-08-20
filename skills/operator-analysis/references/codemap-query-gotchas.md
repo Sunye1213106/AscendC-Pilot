@@ -4,7 +4,7 @@
 
 - **CodeMap 优先于源码通读**：已有 `.uo` 时先调用插件 `pilot_cli` `uo-query`；不要一上来 grep 整棵算子树。
 - **缺 `.uo` 不搜索仓库根目录**：工作目录是确定的（`.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`）。找不到就 AskQuestion（`/uo-init` 或源码作答），禁止 Glob/dir 找产物。
-- **CLI**：标识符；`Dim=V[,Other=V]` 查覆盖；`--file --line` 从位点走图；无参数拿索引。不要写 regex `\|`。不要传 `--mode`。
+- **CLI**：形态见 code-access 不变量。不要写 regex `\|`。
 - **卡片 snippet 视为已 Read**：命中已带 `file:line` 与 snippet 时不要再 Read 同一段。路径从卡片 `file` / `next` 复制，禁止猜相对路径。
 - **空结果 ≠ 不存在**：`count:0` 先按 `hint` 缩短标识符再查；禁止仓级 `findstr`/`grep`/`rg`。最后才 `pilot_cli` `ro-search --pattern <pat> --paths <已 citation 文件>`。
 - **SEL 全集**：第一页 snippet 不是全部合法组合。声称某维没注册必须有 `dim_coverage` 或 `total_matched`。

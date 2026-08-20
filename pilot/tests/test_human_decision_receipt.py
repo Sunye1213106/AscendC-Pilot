@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from ascendc_pilot.actions.tg_primary import materialize_primary_decision
+from ascendc_pilot.human_confirm import materialize_primary_decision
 from ascendc_pilot.human_interaction import (
     issue_interaction_request,
     record_answer,
@@ -28,7 +28,7 @@ def _ask(value: str = "confirm") -> dict:
 
 
 def test_issue_answer_require_consumes_receipt(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "tg-init", phase="confirm", force_phase=True, architecture="arch35")
+    start_workflow(tmp_path, "tg-init", phase="validate", force_phase=True, architecture="arch35")
     env = issue_interaction_request(
         tmp_path,
         kind="primary_confirm",
@@ -68,7 +68,7 @@ def test_issue_answer_require_consumes_receipt(tmp_path: Path) -> None:
 
 def test_require_without_receipt_and_materialize(tmp_path: Path) -> None:
     start_workflow(
-        tmp_path, "tg-init", phase="confirm", force_phase=True, architecture="arch35"
+        tmp_path, "tg-init", phase="validate", force_phase=True, architecture="arch35"
     )
     missing = require_decision_receipt(tmp_path, expected_values=["confirm"])
     assert missing.get("ok") is False
@@ -86,7 +86,7 @@ def test_require_without_receipt_and_materialize(tmp_path: Path) -> None:
                 "action_id": "human_confirm",
                 "run_id": run_id,
                 "workflow_id": "tg-init",
-                "phase": "confirm",
+                "phase": "validate",
                 "actor_id": "ascendc-pilot",
                 "role_id": "primary_interactive",
                 "action_session_id": f"{run_id}:human_confirm",

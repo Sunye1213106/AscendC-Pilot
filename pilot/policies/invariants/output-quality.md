@@ -1,7 +1,7 @@
-# Output-quality invariants (model-facing, short)
+# 产出质量不变量（面向模型，短）
 
-1. Producer write surface ∩ Referee write surface = ∅.
-2. Do not forge high confidence; keep unresolved / needs_human explicit.
-3. Write only declared output-contract paths.
+1. Producer 写入面 ∩ Referee 写入面 = ∅。
+2. 未决 / 需人确认必须显式留下。
+3. 只写已声明的 output-contract 路径。
 
-Full detail: `pilot/policies/output-quality/POLICY.md`.
+全文：`pilot/policies/output-quality/POLICY.md`。

@@ -10,11 +10,13 @@ DEFAULT_POLICY_IDS: list[str] = [
     "source-authority",
     "code-access",
     "evidence",
+    "semantic-grounding",
     "output-quality",
 ]
 DEFAULT_PRODUCER_POLICY_IDS: list[str] = [
     "source-authority",
     "evidence",
+    "semantic-grounding",
     "output-quality",
 ]
 DEFAULT_PRIMARY_POLICY_IDS: list[str] = [
@@ -36,7 +38,7 @@ def _default_policy_ids(
     mode = str(execution_mode or "").strip()
     if mode == "deterministic" or role_id == "deterministic_engine":
         return []
-    if mode == "primary_interactive" or role_id == "controller":
+    if mode in {"primary_interactive", "primary_review"} or role_id == "controller":
         return list(DEFAULT_PRIMARY_POLICY_IDS)
     if str(output_mode or "") == "staged" or role_id == "producer":
         return list(DEFAULT_PRODUCER_POLICY_IDS)
@@ -683,7 +685,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "agents": [{"id": "uo-query", "role": "readonly_analyst"}],
         "static_obligations": [],
         "dynamic_obligation_sources": [],
-        "write_roots": ["runs", "context", "memory"],
+        "write_roots": ["runs", "context"],
         "reset_policy": {
             "reinit_delete": [],
             "reinit_preserve": ["uo", "tg", "ce"],

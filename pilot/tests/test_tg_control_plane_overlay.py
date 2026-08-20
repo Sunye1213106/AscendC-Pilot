@@ -5,16 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import ascendc_pilot.actions as actions
-from ascendc_pilot.actions.tg_primary import primary_interactive_steps
+from ascendc_pilot.human_confirm import primary_interactive_steps
 from ascendc_pilot.workflows import WORKFLOWS, action_by_id, phase_pipeline
 
 
 def test_tg_pipelines_are_explicit() -> None:
     assert phase_pipeline("tg-init", "kb_ready") == ["kb_check"]
     assert phase_pipeline("tg-init", "scan") == ["repo_scan"]
-    assert phase_pipeline("tg-init", "bind") == ["bind_init", "bind_promote"]
+    assert phase_pipeline("tg-init", "bind") == ["bind_init", "bind_review", "bind_promote"]
     assert phase_pipeline("tg-init", "validate") == ["validate_init"]
-    assert phase_pipeline("tg-init", "confirm") == ["human_confirm"]
+    assert phase_pipeline("tg-init", "confirm") == []
     assert phase_pipeline("tg-plan", "gate") == ["plan_precheck"]
     assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_promote"]
     assert phase_pipeline("tg-plan", "validate") == ["plan_validate"]
@@ -51,11 +51,15 @@ def test_tg_engines_registered() -> None:
 
 
 def test_tg_primary_actions_write_canonical_products() -> None:
-    init_action = action_by_id("tg-init", "human_confirm") or {}
+    review = action_by_id("tg-init", "bind_review") or {}
+    promote = action_by_id("tg-init", "bind_promote") or {}
     plan_action = action_by_id("tg-plan", "plan_approve") or {}
-    assert init_action["execution_mode"] == "primary_interactive"
-    assert init_action["agent_id"] == "ascendc-pilot"
-    assert "tg/init.yaml" in (init_action.get("allowed_write_paths") or [])
+    assert review["execution_mode"] == "primary_review"
+    assert review["agent_id"] == "ascendc-pilot"
+    assert review.get("output_mode") == "return_value"
+    assert not any("referee.yaml" in str(p) for p in (review.get("allowed_write_paths") or []))
+    assert promote["execution_mode"] == "deterministic"
+    assert "tg/init.yaml" in (promote.get("allowed_write_paths") or [])
     assert plan_action["execution_mode"] == "primary_interactive"
     assert "tg/plan.md" in (plan_action.get("allowed_write_paths") or [])
 
@@ -69,6 +73,12 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
         assert row.get("output_mode") == "staged"
         writes = row.get("allowed_write_paths") or []
         assert all("tg/init.yaml" not in p and "tg/plan.md" not in p for p in writes)
+    axes = bind.get("fanout_axes") or []
+    assert {a.get("id") for a in axes} == {"harness", "bind"}
+    assert {a.get("task_prompt_id") for a in axes} == {"tg/bind-harness", "tg/bind-columns"}
+    bind_axis = next(a for a in axes if a.get("id") == "bind")
+    assert "profile" in str(bind_axis.get("focus") or "")
+    assert "无参数" in str(bind_axis.get("focus") or "")
 
 
 def test_reset_policy_only_touches_three_products() -> None:
@@ -146,3 +156,25 @@ def test_plan_draft_binds_ce_plan_method() -> None:
     assert path is not None
     assert path.name == "METHOD.md"
     assert "ce-plan-draft" in path.as_posix().replace("\\", "/")
+
+
+def test_bind_review_return_value_skips_writable_check() -> None:
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
+    from ascendc_pilot.actions.runtime import _check_required_outputs_writable
+
+    review = action_by_id("tg-init", "bind_review") or {}
+    assert review.get("output_mode") == "return_value"
+    assert OUTPUT_CONTRACT_PATHS["tg-bind-review-v1"] == []
+    check = _check_required_outputs_writable(
+        workflow_id="tg-init",
+        action_id="bind_review",
+        actor_id="ascendc-pilot",
+        contract_id="tg-bind-review-v1",
+        output_mode="return_value",
+        write_paths=[],
+        run_id="RUN",
+        project_root=Path("."),
+    )
+    assert check.get("ok") is True
+    assert check.get("skipped") is True
+    assert check.get("error") != "OUTPUT_NOT_WRITABLE"

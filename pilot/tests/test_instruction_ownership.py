@@ -1,4 +1,4 @@
-"""Instruction ownership: METHOD load, confirm skip, query prepare, shared refs."""
+"""Instruction ownership: METHOD load, confirm skip, query prepare."""
 
 from __future__ import annotations
 
@@ -164,13 +164,13 @@ def test_confirm_prepare_skips_cognitive_skills(tmp_path: Path) -> None:
     ensure_agent_layout(op, arch="arch35")
     start_workflow(
         op,
-        "tg-init",
-        phase="confirm",
+        "tg-plan",
+        phase="approve",
         force_phase=True,
         architecture="arch35",
         op_name="DemoOp",
     )
-    result = prepare_action(op, "human_confirm")
+    result = prepare_action(op, "plan_approve")
     assert result.get("ok") is True, result
     session = Path(str(result["session_dir"]))
     method = (session / "method.md").read_text(encoding="utf-8")
@@ -179,7 +179,7 @@ def test_confirm_prepare_skips_cognitive_skills(tmp_path: Path) -> None:
     assert "Host-owned confirmation" in method
     from ascendc_pilot.workflows import WORKFLOWS
 
-    confirm = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "human_confirm")
+    confirm = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_approve")
     assert not confirm.get("action_method_id")
     for phrase in _SKILL_BODIES:
         assert phrase not in method
@@ -215,27 +215,6 @@ def test_short_question_does_not_fanout(tmp_path: Path) -> None:
     result = prepare_action(op, "kb_lookup")
     assert result.get("ok") is True, result
     assert not result.get("dispatch_tasks")
-
-
-def test_shared_reference_projections_match_ssot() -> None:
-    from sync_shared_references import SKILLS, check
-
-    errors = check(REPO)
-    assert errors == [], errors
-    src = (REPO / "knowledge" / "shared-references" / "finding-format.md").read_bytes()
-    for skill in SKILLS:
-        dest = REPO / "skills" / skill / "references" / "finding-format.md"
-        assert dest.read_bytes() == src
-    ce = REPO / "skills" / "code-engineering" / "references" / "finding-format.md"
-    assert not ce.is_file()
-    oracle_ssot = (REPO / "knowledge" / "shared-references" / "harness-oracle.md").read_bytes()
-    for skill in ("testcase-generation",):
-        dest = REPO / "skills" / skill / "references" / "harness-oracle.md"
-        assert dest.is_file()
-        assert dest.read_bytes() == oracle_ssot
-    for skill in ("operator-analysis", "source-proof", "code-review", "code-engineering"):
-        leaked = REPO / "skills" / skill / "references" / "harness-oracle.md"
-        assert not leaked.is_file()
 
 
 def test_instruction_ownership_lint_clean() -> None:
@@ -290,16 +269,16 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
     assert failures == []
 
 
-def test_cross_tree_harness_oracle_is_unauthorized(tmp_path: Path) -> None:
+def test_cross_tree_tg_oracle_is_unauthorized(tmp_path: Path) -> None:
     mat = materialize_method_bundle(
         tmp_path / "x",
         skill_ids=["code-engineering"],
-        existing_method="see `skills/testcase-generation/references/harness-oracle.md`",
+        existing_method="see `skills/testcase-generation/references/oracle.md`",
         project_root=REPO,
     )
     assert mat.get("ok") is False
     unauthorized = [str(x) for x in (mat.get("unauthorized") or [])]
-    assert any("testcase-generation" in x and "harness-oracle" in x for x in unauthorized)
+    assert any("testcase-generation" in x and "oracle.md" in x for x in unauthorized)
 
 
 def test_confirm_and_deterministic_omit_action_method_id() -> None:
@@ -349,8 +328,6 @@ def test_agent_playbooks_do_not_teach_acp_inspect_or_scan_steps() -> None:
     rels = (
         "docs/getting-started/quickstart.md",
         "tools/codemap/structured-ir-query/METHOD.md",
-        "pilot/gates/producer-self-check/METHOD.md",
-        "pilot/runtime/sharded-llm-producer/METHOD.md",
     )
     hits: list[str] = []
     for rel in rels:

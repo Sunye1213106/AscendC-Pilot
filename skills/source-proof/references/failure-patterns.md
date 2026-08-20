@@ -10,7 +10,7 @@
 ## 搜索耗尽当不可达
 
 有限构造未命中、样本未出现 → 写成「源码不可达」。  
-**对策**：见 `references/evidence-quality.md`；只能 `INSUFFICIENT` 或继续搜。
+**对策**：只能 `INSUFFICIENT` 或继续搜。
 
 ## domain 当可达域
 
@@ -20,7 +20,7 @@
 ## derived 当 exact
 
 有表达式就做排除证明。  
-**对策**：`evidence-quality.md` — derived ≠ exact。
+**对策**：derived ≠ exact。
 
 ## 复合赋值 / 容器写漏记
 
@@ -35,7 +35,7 @@
 ## 别名 / 保存-修改-恢复
 
 只看主名字赋值，漏别名写。  
-**对策**：`references/cpp-semantics.md`。
+**对策**：别名 / 保存-修改-恢复未闭合到写点时不得证无覆盖。
 
 ## 无观测写不可达
 

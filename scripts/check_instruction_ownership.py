@@ -127,10 +127,37 @@ def errors(repo: Path | None = None) -> list[str]:
     method = root / "skills/operator-analysis/capabilities/uo-query/METHOD.md"
     if method.is_file():
         mtext = method.read_text(encoding="utf-8")
-        if "不要传 `--mode`" not in mtext:
-            out.append("METHOD must say 不要传 `--mode` (one prohibition, no recovery stack)")
+        if "不要传 `--mode`" in mtext or "禁止 `--mode`" in mtext:
+            out.append("METHOD must not restate --mode; belongs in code-access invariant")
         if "丢掉" in mtext:
-            out.append("METHOD must not stack 丢掉 recovery on top of 不要传 `--mode`")
+            out.append("METHOD must not stack 丢掉 recovery on --mode")
+    forms = root / "pilot/policies/invariants/code-access-invariants.md"
+    if not forms.is_file():
+        out.append("missing code-access-invariants.md")
+    else:
+        ftext = forms.read_text(encoding="utf-8")
+        if "禁止 `--mode`" not in ftext:
+            out.append("code-access invariant must own 禁止 `--mode`")
+        if "Dim=V" not in ftext or "无参数索引" not in ftext:
+            out.append("code-access invariant must own the four uo-query forms")
+    restated = (
+        "不要传 `--mode`",
+        "禁止在 Task 正文写 `--mode`",
+        "只有四种 `uo-query` 形态",
+        "只有四种形态",
+    )
+    for rel_root in ("skills", "prompts", "agents"):
+        base = root / rel_root
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".md", ".yaml", ".yml"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(root).as_posix()
+            for phrase in restated:
+                if phrase in text:
+                    out.append(f"FORMS_RESTATED {rel}: {phrase!r} belongs in code-access invariant")
     for rel in STALE_CLI_FILES:
         path = root / rel
         if not path.is_file():

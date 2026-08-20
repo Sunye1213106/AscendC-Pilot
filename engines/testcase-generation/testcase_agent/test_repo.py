@@ -2,7 +2,7 @@
 """Generic test-script repository intake for TG.
 
 A test repo is optional. It is never operator-specific: the engine only
-records filesystem facts (entry scripts, argparse flags, CSV headers).
+records filesystem facts (entry scripts, argparse flags, CSV headers, column profiles).
 The agent reads those scripts against the CodeMap to learn how columns
 become operator inputs, which flags mean precision vs performance, and
 whether the scripts disagree with UO.
@@ -17,6 +17,8 @@ from __future__ import annotations
 import ast
 import csv
 import os
+import re
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +28,10 @@ _CASE_HINTS = ("case", "csv", "xls", "xlsx", "table", "sheet")
 _PRECISION_HINTS = ("only_grad", "golden", "precision", "compare", "atol", "rtol", "accuracy")
 _PERF_HINTS = ("profiler", "profiling", "perf", "performance", "kernel_time")
 _ENABLE_NAMES = ("enable", "Enable", "ENABLE")
+_PROFILE_TOPK = 16
+_PROFILE_UNIQUE_CAP = 64
+_INT_RE = re.compile(r"[+-]?\d+$")
+_FLOAT_RE = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$")
 
 
 def default_contract(*, root: str = "", reason: str = "no_test_script_root") -> dict[str, Any]:
@@ -42,6 +48,7 @@ def default_contract(*, root: str = "", reason: str = "no_test_script_root") -> 
         "mapping": {},
         "findings": [],
         "reason": reason,
+        "column_profile": {},
     }
 
 
@@ -84,12 +91,22 @@ def scan(root: str | Path | None) -> dict[str, Any]:
                 for flag in parsed["flags"]:
                     flags.append({"path": rel, **flag})
         elif file.suffix.lower() in {".csv", ".tsv"}:
-            header, sample = _csv_header(file)
+            header, sample, profile = _csv_table(file)
             if header:
-                tables.append({"path": rel, "columns": header, "sample": sample, "kind": "csv"})
+                tables.append(
+                    {
+                        "path": rel,
+                        "columns": header,
+                        "sample": sample,
+                        "kind": "csv",
+                        "profile": profile,
+                    }
+                )
         elif file.suffix.lower() in {".xls", ".xlsx"}:
-            header, sample, kind, err = _xls_header(file)
+            header, sample, kind, err, profile = _xls_table(file)
             row = {"path": rel, "columns": header, "sample": sample, "kind": kind}
+            if profile:
+                row["profile"] = profile
             if err:
                 row["error"] = err
             if header or err:
@@ -127,6 +144,7 @@ def contract_from_inventory(
     primary = _pick_table(tables)
     columns = list(primary.get("columns") or []) if primary else []
     sample = dict(primary.get("sample") or {}) if primary else {}
+    profile = dict(primary.get("profile") or {}) if isinstance(primary.get("profile"), dict) else {}
     entry = _pick_entry(entries, flags)
     case_arg = _pick_case_arg(flags)
     modes = _pick_modes(flags)
@@ -155,6 +173,7 @@ def contract_from_inventory(
         "corpus": [str(t.get("path") or "") for t in tables if t.get("path")],
         "mapping": {},
         "findings": findings,
+        "column_profile": profile,
         "reason": "",
     }
 
@@ -271,60 +290,168 @@ def _const_str(node: ast.AST) -> str:
     return ""
 
 
-def _csv_header(path: Path) -> tuple[list[str], dict[str, str]]:
+def _csv_table(path: Path) -> tuple[list[str], dict[str, str], dict[str, Any]]:
     try:
         with path.open(encoding="utf-8-sig", newline="") as handle:
             reader = csv.DictReader(handle)
             header = [str(name) for name in (reader.fieldnames or []) if str(name).strip()]
-            sample: dict[str, str] = {}
-            try:
-                row = next(reader)
-            except StopIteration:
-                row = {}
-            if isinstance(row, dict):
-                sample = {str(k): _cell(v) for k, v in row.items() if k}
-            return header, sample
+            rows: list[dict[str, str]] = []
+            for raw in reader:
+                if not isinstance(raw, dict):
+                    continue
+                row = {str(k): _cell(v) for k, v in raw.items() if k}
+                if _is_skipped_case_row(row, header):
+                    continue
+                rows.append(row)
+            sample = dict(rows[0]) if rows else {}
+            return header, sample, _profile_columns(header, rows)
     except OSError:
-        return [], {}
+        return [], {}, {}
 
 
-def _xls_header(path: Path) -> tuple[list[str], dict[str, str], str, str]:
+def _xls_table(path: Path) -> tuple[list[str], dict[str, str], str, str, dict[str, Any]]:
     suffix = path.suffix.lower()
     kind = "xlsx" if suffix == ".xlsx" else "xls"
     if suffix == ".xlsx":
         try:
             from openpyxl import load_workbook
         except ImportError:
-            return [], {}, kind, "xlsx_reader_missing"
+            return [], {}, kind, "xlsx_reader_missing", {}
         try:
             wb = load_workbook(path, read_only=True, data_only=True)
             ws = wb.active
             it = ws.iter_rows(values_only=True)
             raw_header = next(it, ())
             header = [str(c).strip() for c in raw_header if str(c or "").strip()]
-            sample_row = next(it, ())
-            sample = {
-                header[i]: _cell(sample_row[i] if i < len(sample_row) else "")
-                for i in range(len(header))
-            }
-            return header, sample, kind, ""
+            rows: list[dict[str, str]] = []
+            for sample_row in it:
+                row = {
+                    header[i]: _cell(sample_row[i] if i < len(sample_row) else "")
+                    for i in range(len(header))
+                }
+                if _is_skipped_case_row(row, header):
+                    continue
+                rows.append(row)
+            sample = dict(rows[0]) if rows else {}
+            return header, sample, kind, "", _profile_columns(header, rows)
         except Exception as exc:  # noqa: BLE001
-            return [], {}, kind, f"xlsx_read_failed:{type(exc).__name__}"
+            return [], {}, kind, f"xlsx_read_failed:{type(exc).__name__}", {}
     try:
         import xlrd
     except ImportError:
-        return [], {}, kind, "xls_reader_missing"
+        return [], {}, kind, "xls_reader_missing", {}
     try:
         book = xlrd.open_workbook(str(path))
         sheet = book.sheet_by_index(0)
-        header = [str(sheet.cell_value(0, c)).strip() for c in range(sheet.ncols) if str(sheet.cell_value(0, c)).strip()]
-        sample = {
-            header[c]: _cell(sheet.cell_value(1, c) if sheet.nrows > 1 else "")
-            for c in range(min(len(header), sheet.ncols))
-        } if header else {}
-        return header, sample, kind, ""
+        header = [
+            str(sheet.cell_value(0, c)).strip()
+            for c in range(sheet.ncols)
+            if str(sheet.cell_value(0, c)).strip()
+        ]
+        rows = []
+        for r in range(1, sheet.nrows):
+            row = {
+                header[c]: _cell(sheet.cell_value(r, c) if c < sheet.ncols else "")
+                for c in range(len(header))
+            }
+            if _is_skipped_case_row(row, header):
+                continue
+            rows.append(row)
+        sample = dict(rows[0]) if rows else {}
+        return header, sample, kind, "", _profile_columns(header, rows)
     except Exception as exc:  # noqa: BLE001
-        return [], {}, kind, f"xls_read_failed:{type(exc).__name__}"
+        return [], {}, kind, f"xls_read_failed:{type(exc).__name__}", {}
+
+
+def _is_skipped_case_row(row: dict[str, str], header: list[str]) -> bool:
+    cells = [_cell(row.get(h, "")).strip() for h in header]
+    if not any(cells):
+        return True
+    first = next((c for c in cells if c), "")
+    if first.startswith("#"):
+        return True
+    name_col = _match_column(header, "Testcase_Name")
+    if name_col and not _cell(row.get(name_col, "")).strip():
+        return True
+    return False
+
+
+def _profile_columns(header: list[str], rows: list[dict[str, str]]) -> dict[str, Any]:
+    n_rows = len(rows)
+    columns: dict[str, Any] = {}
+    for col in header:
+        raw = [_cell(row.get(col, "")).strip() for row in rows]
+        empty = sum(1 for v in raw if not v)
+        nonempty = [v for v in raw if v]
+        n_unique = len(set(nonempty))
+        empty_rate = (empty / n_rows) if n_rows else 0.0
+        inferred = _infer_column_type(nonempty, empty_rate)
+        entry: dict[str, Any] = {
+            "inferred_type": inferred,
+            "n_unique": n_unique,
+            "empty_rate": round(empty_rate, 4),
+        }
+        nums = _numeric_values(nonempty)
+        if nums:
+            entry["min"] = min(nums)
+            entry["max"] = max(nums)
+        topn = 4 if n_unique > _PROFILE_UNIQUE_CAP else _PROFILE_TOPK
+        entry["topk"] = [
+            {"value": value, "count": count}
+            for value, count in Counter(nonempty).most_common(topn)
+        ]
+        if n_unique > _PROFILE_UNIQUE_CAP:
+            entry["unique_truncated"] = True
+        columns[col] = entry
+    return {"n_rows": n_rows, "columns": columns}
+
+
+def _infer_column_type(values: list[str], empty_rate: float) -> str:
+    if empty_rate >= 0.8 or not values:
+        return "empty-heavy"
+    if all(_looks_list(v) for v in values):
+        return "list-literal"
+    nums = _numeric_values(values)
+    if nums and all(isinstance(v, int) for v in nums):
+        return "int"
+    if nums:
+        return "float"
+    return "enum-string"
+
+
+def _looks_list(value: str) -> bool:
+    text = str(value).strip()
+    return text.startswith("[") and text.endswith("]")
+
+
+def _looks_int(value: str) -> bool:
+    return bool(_INT_RE.fullmatch(str(value).strip()))
+
+
+def _looks_float(value: str) -> bool:
+    return bool(_FLOAT_RE.fullmatch(str(value).strip()))
+
+
+def _numeric_values(values: list[str]) -> list[int] | list[float]:
+    ints: list[int] = []
+    floats: list[float] = []
+    for value in values:
+        text = str(value).strip()
+        if _looks_int(text):
+            ints.append(int(text, 10))
+            floats.append(float(text))
+        elif _looks_float(text):
+            try:
+                floats.append(float(text))
+            except ValueError:
+                return []
+        else:
+            return []
+    if len(ints) == len(values):
+        return ints
+    if len(floats) == len(values):
+        return floats
+    return []
 
 
 def _pick_table(tables: list[dict[str, Any]]) -> dict[str, Any]:

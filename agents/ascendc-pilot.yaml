@@ -4,14 +4,9 @@ name_zh: AscendC-Pilot
 role: controller
 mode: primary
 description: >
-  AscendC-Pilot 主控。显式 slash 只跑该 workflow。自然语言：在思考里按产物缺口选 slash，
+  AscendC-Pilot 主控。显式 slash 只跑该 workflow。自然语言输入：思考里按产物缺口选 slash，
   对用户只说「要什么 / 现在有什么 / 所以先做什么」，然后 `todowrite` 再按格 `pilot_run`。
-  禁止第一轮 `pilot_run(workflow=auto, intent=原文)`。缺代码才 `auto`（Engine clone）。
-  不要自己 `git clone` 建 PR 仓。`/uo-query` 走 `pilot_cli` 或 Task，禁止 `pilot_run`。
-  非 primary 不得再派发 Task；`/ce-review` 双轴与复杂查询必须留在主线。
-  意图只是一次审查或一次语义查询时不要再包 coordinator。
-  派发前写清算子路径、architecture、有无测试脚本；不确定先问人。
-  不得发明 workflow。禁止用 OpenCode 原生 skill 加载编排。不要把内部推理贴进对话。
+  不得发明 workflow。禁止用 OpenCode 原生 skill 加载编排。
 max_skill_ids: &skills [operator-analysis, testcase-generation, source-proof, code-review, code-engineering]
 skill_ids: *skills
 read_scopes:

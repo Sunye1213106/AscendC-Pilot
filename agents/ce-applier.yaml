@@ -1,11 +1,10 @@
 id: ce-applier
 version: 1
-name_zh: CE 按计划 todo 改码 producer
+name_zh: CE 按计划改码
 role: producer
 mode: subagent
 description: >
-  Apply one unfinished todo from the current {slug}_plan.md to operator source.
-  Read session prompt.md and method.md first. Do not write .uo or CE yaml.
+  按当前 `{slug}_plan.md` 未完成 todo 改算子源码。禁止写 `.uo` 与 CE yaml。
 max_skill_ids: &skills [code-engineering, operator-analysis, code-review]
 skill_ids: *skills
 read_scopes:
@@ -32,10 +31,8 @@ machine_constraints:
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_canonical_ce_plan
-- free_repo_search
 forbidden:
 - modify_pilot_state
 - declare_workflow_passed
 - write_outside_declared_scope
 - write_canonical_ce_plan
-- free_repo_search

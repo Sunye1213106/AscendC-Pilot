@@ -29,7 +29,12 @@ from uo_init.query.evidence import (
     project_entity,
     project_relation,
 )
-from uo_init.query.hints import attach_query_hints, search_needles
+from uo_init.query.hints import (
+    attach_query_hints,
+    looks_like_nl_or_multi_token,
+    nl_or_multi_token_payload,
+    search_needles,
+)
 from uo_init.query.legal_key_cache import _pattern_filters
 from uo_init.source_locator import locations_from_attr_sites
 
@@ -3537,6 +3542,8 @@ class UoSqlQuery:
         text = str(pattern or "").strip()
         if not text:
             return self.query_index(limit=limit)
+        if looks_like_nl_or_multi_token(text):
+            return _fit_payload(nl_or_multi_token_payload(text))
         if "=" in text:
             return self.query_cover(text, limit=limit)
         return self.query_name_card(text, limit=limit)
@@ -4001,6 +4008,11 @@ class UoSqlQuery:
         if launch.get("other_kernels"):
             payload["other_kernels"] = launch.get("other_kernels")
         attach_query_hints(payload, "", count=len(phases), mode="index")
+        dim_hint = ", ".join(dim_names[:6]) or "<dim_names>"
+        payload["hint"] = (
+            f"next: uo-query Dim=<{dim_hint}> or a single identifier; "
+            "use --file --line only after copying file:line from a previous card."
+        )
         return _fit_payload(payload)
 
     def legal_key_query(

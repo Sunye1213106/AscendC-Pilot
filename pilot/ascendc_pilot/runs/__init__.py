@@ -338,6 +338,33 @@ def _maybe_compact_bloated_receipt(
 _VERIFY_RESULT_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
 
 
+def invalidate_action_receipts(
+    project_root: Path, *, action_id: str, run_id: str = ""
+) -> int:
+    """Drop signed receipts for an action so the pipeline can re-run that step."""
+    state = _load_state(project_root)
+    rid = str(run_id or state.get("run_id") or "").strip()
+    aid = str(action_id or "").strip()
+    if not rid or not aid:
+        return 0
+    base = runs_root(project_root) / rid / "subagents"
+    dropped = 0
+    for path in _receipt_paths_for_action(base, aid):
+        try:
+            path.unlink()
+            dropped += 1
+        except OSError:
+            continue
+    dead = [
+        key
+        for key in list(_VERIFY_RESULT_CACHE)
+        if len(key) >= 3 and str(key[1]) == rid and str(key[2]) == aid
+    ]
+    for key in dead:
+        _VERIFY_RESULT_CACHE.pop(key, None)
+    return dropped
+
+
 def _verify_cache_key(
     project_root: Path,
     *,
@@ -605,6 +632,7 @@ __all__ = [
     "fingerprint_improved",
     "get_or_create_hmac_key",
     "issue_receipt",
+    "invalidate_action_receipts",
     "no_progress_exceeded",
     "run_dir",
     "semantic_progress_fingerprint",
