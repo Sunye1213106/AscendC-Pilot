@@ -288,9 +288,14 @@ def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_
         encoding="utf-8",
     )
     (bind_root / "parts" / "bind.yaml").write_text(
-        "table_kind: mixed\nentry: run.py\ncase_arg: --case\ncolumns: [D]\n"
-        "mapping:\n  - column: D\n    script_read: get_case\n    uo_id: DTemplateNum\n"
-        "domains:\n  - column: D\n    observed: {max: 1}\n    legal: {max: 2}\n"
+        "table_kind: mixed\nentry: run.py\ncase_arg: --case\ncolumns: [D, CaseName]\n"
+        "call: {kind: pta, api: npu_fusion, site: runner.py:10}\n"
+        "mapping:\n"
+        "  - column: D\n    role: api_arg\n    script_read: get_case\n    uo_id: DTemplateNum\n"
+        "    encoding: 字面量\n"
+        "  - column: CaseName\n    role: script_meta\n    script_read: get_case\n"
+        "domains:\n  D:\n    profile: {max: 1}\n    operator: {declared: [0, 1], product: [0, 1]}\n"
+        "    compare: match\n"
         "findings: [b1]\n",
         encoding="utf-8",
     )
@@ -303,8 +308,12 @@ def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_
     assert doc.get("table_kind") in {"csv", "xls", "xlsx"}
     assert isinstance(doc.get("mapping"), dict)
     assert doc["mapping"]["D"]["uo_id"] == "DTemplateNum"
+    assert doc["mapping"]["D"]["role"] == "api_arg"
+    assert doc["mapping"]["CaseName"]["role"] == "script_meta"
+    assert not str(doc["mapping"]["CaseName"].get("uo_id") or "").strip()
     assert isinstance(doc.get("domains"), dict)
-    assert doc["domains"]["D"]["legal"]["max"] == 2
+    assert doc["domains"]["D"]["compare"] == "match"
+    assert doc.get("call", {}).get("kind") == "pta"
     assert doc.get("columns")[0]["name"] == "D"
 
 

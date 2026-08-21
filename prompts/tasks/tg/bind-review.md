@@ -9,9 +9,9 @@
 </input>
 
 <delta_constraints>
-1. 通读内容当裁判，不是只做字段差集。对照 tables[].profile。
-2. 不要写 referee.yaml 或任何审查 yaml。parts 已齐时禁止 force_new。
-3. 不要 AskQuestion。下一发 `pilot_run(tg-init)`：intent=`PASS` 或 `REWORK bind` / `REWORK harness,bind`。
+1. 通读内容当裁判，不是只做字段差集。交叉核对两路 `call.kind`。
+2. `script_meta` 不得有假 UO；api_arg/attr 必须有标识符。domains 必须做了 profile vs operator 比较。
+3. 不要写 referee.yaml。不要 AskQuestion。下一发 intent=`PASS` 或 `REWORK bind` / `REWORK harness,bind`。
 </delta_constraints>
 
 <output>

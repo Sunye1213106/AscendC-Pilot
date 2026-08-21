@@ -1,9 +1,8 @@
-# Code Engineering — Gotchas
+# Grill 易错点
 
-- **两条场景不要混用**：`/ce-plan` 不以 PR / diff 为输入；`/ce-review` 审已有 diff。贴 GitCode/GitHub PR URL 会走 `/ce-review`，但必须在对应算子仓打开、已有 `.uo`，HTTPS 回退需要 `GITCODE_TOKEN` / `GITHUB_TOKEN`。无 diff 时 `/ce-review` 停。
-- **正式产物只有 markdown**：`ce/plan/{slug}_plan.md` 与 `session_handoff.md`。禁止写任何 CE yaml（含 `tg_plan_intent.yaml`、`change_capture.yaml`、`ce/review/`）。
-- **语义走 `uo-query`**：形态见 code-access 不变量。
-- **apply 只做未完成 todo**：没有 `- [ ]` 就先 `/ce-plan`。不内嵌双轴审查，不另造测试意图文件。
-- **验证不在 CE**：建议测试走 `/tg-plan`。TG 自己从计划「测试内容」节、审查对话或 `session_handoff.md` 总结。
-- **handoff 只引用路径**：不要把 `{slug}_plan.md` 全文抄进总结。
-- **LLM 禁止写 `.uo`**：apply 刷图由引擎嵌套 `uo-update`。
+**何时加载**：把需求问成范围 / 不做的事 / 测试内容时。
+
+- 本步输入是用户需求 + 查询语义，不是 PR diff。贴了 PR URL 应走审查，不要在本步当 diff 审。
+- 草稿只写当前 action 目录的 markdown，不要 promote 成 yaml。
+- 「测试内容」给后续计划读，不要编码成 CE yaml 义务。
+- 超时或中止前，已查到的结论仍须写进最终消息。

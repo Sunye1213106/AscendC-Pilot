@@ -272,20 +272,13 @@ def test_materialize_method_bundle_copies_named_refs_only(tmp_path: Path) -> Non
         skill_ids=["ce-plan-draft"],
         existing_method="See playbook `references/gotchas.md`.\n",
         project_root=REPO,
-        prompt="Also `references/risk-classes.md`.\n",
+        current_skill_id="ce-plan-draft",
     )
     copied = list(mat.get("copied") or [])
-    assert copied == [
-        "refs/ce-plan-draft/gotchas.md",
-        "refs/ce-plan-draft/risk-classes.md",
-    ]
+    assert copied == ["refs/ce-plan-draft/gotchas.md"]
     assert (sdir / "refs" / "ce-plan-draft" / "gotchas.md").is_file()
-    assert (sdir / "refs" / "ce-plan-draft" / "risk-classes.md").is_file()
     assert not (sdir / "refs" / "ce-plan-draft" / "scenario-catalog.md").is_file()
-    assert mat.get("indexed") == [
-        "references/ce-plan-draft/gotchas.md",
-        "references/ce-plan-draft/risk-classes.md",
-    ]
+    assert mat.get("indexed") == ["references/ce-plan-draft/gotchas.md"]
 
 
 def test_method_bundle_repo_root_is_parents_3() -> None:

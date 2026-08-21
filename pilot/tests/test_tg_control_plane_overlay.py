@@ -16,6 +16,7 @@ def test_tg_pipelines_are_explicit() -> None:
     assert phase_pipeline("tg-init", "validate") == ["validate_init"]
     assert phase_pipeline("tg-init", "confirm") == []
     assert phase_pipeline("tg-plan", "gate") == ["plan_precheck"]
+    assert phase_pipeline("tg-plan", "scope") == ["plan_scope"]
     assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_promote"]
     assert phase_pipeline("tg-plan", "validate") == ["plan_validate"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
@@ -70,9 +71,16 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     construct = action_by_id("tg-solve", "construct_cases") or {}
     for row in (bind, fuse, construct):
         assert row.get("agent_id") == "tg-analyst"
-        assert row.get("output_mode") == "staged"
         writes = row.get("allowed_write_paths") or []
         assert all("tg/init.yaml" not in p and "tg/plan.md" not in p for p in writes)
+    assert fuse.get("output_mode") == "staged"
+    assert bind.get("output_mode") == "staged"
+    scope = action_by_id("tg-plan", "plan_scope") or {}
+    assert scope.get("agent_id") == "tg-analyst"
+    assert scope.get("skill_id") == "plan-scope"
+    assert scope.get("output_mode") == "direct"
+    assert scope.get("output_contract_id") == "tg-plan-scope-v1"
+    assert all("tg/plan.md" not in p for p in (scope.get("allowed_write_paths") or []))
     axes = bind.get("fanout_axes") or []
     assert {a.get("id") for a in axes} == {"harness", "bind"}
     assert {a.get("task_prompt_id") for a in axes} == {"tg/bind-harness", "tg/bind-columns"}

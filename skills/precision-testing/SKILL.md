@@ -5,7 +5,7 @@ description: 规划或构造精度义务。意图含精度、golden、atol/rtol�
 
 # 精度测试
 
-口径来自脚本事实，不是 Host TilingKey HIT。本步是叠加原语：plan 里出现精度义务、或 construct 要落 `P-*` 行时才读。不要发明 argparse 没有的阈值，不要把性能 mode 的默认值当成精度。
+口径来自脚本事实，不是 Host TilingKey HIT。plan 里出现精度义务、或 construct 要落 `P-*` 行时才读。不要发明 argparse 没有的阈值，不要把性能 mode 的默认值当成精度。
 
 Oracle 是 harness 精度 mode。Host 命中 TilingKey 关不了 `P-*`。
 

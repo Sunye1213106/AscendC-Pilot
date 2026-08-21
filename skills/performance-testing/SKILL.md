@@ -5,7 +5,7 @@ description: 规划或构造性能义务。意图含性能/profiling，或 init.
 
 # 性能测试
 
-没有可执行性能入口就写 gap，不发明 NPU 指标。Oracle 是 harness profiler。Host HIT 不能关闭 `F-*`。关 `V` 仍要 profiling 收据。本步是叠加原语：plan 或 construct 碰到性能意图时才读。
+没有可执行性能入口就写 gap，不发明 NPU 指标。Oracle 是 harness profiler。Host HIT 不能关闭 `F-*`。关 `V` 仍要 profiling 收据。plan 或 construct 碰到性能意图时才读。
 
 默认 argparse 若是性能 mode，那是「默认跑性能」，仍要有 `modes.perf` 入口；不要把默认性能当成精度，也不要反过来用精度 golden 关性能义务。
 

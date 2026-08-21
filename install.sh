@@ -35,12 +35,14 @@ opencode_home() {
   echo "${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 }
 
-# Install and uninstall share these names (compose slash workflows).
+# Compose slash workflows (pilot_run). `/uo-query` is a Command + Action Skill, not a workflow shell.
 WORKFLOW_SKILLS=(
-  uo-init uo-update uo-query uo-investigate
+  uo-init uo-update uo-investigate
   ce-review ce-plan ce-apply handoff
   tg-init tg-plan tg-solve
 )
+# Old installs left a workflow skill dir; unlink it. Uninstall still names it for cleanup.
+STALE_WORKFLOW_SKILLS=(uo-query workflow-orchestration operator)
 # Action Skills are discovered from generated/<host> after compose.
 # Uninstall still names the old five families so leftover installs are cleaned.
 LEGACY_COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
@@ -242,6 +244,9 @@ for name in "${WORKFLOW_SKILLS[@]}"; do
     ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
   fi
 done
+for name in "${STALE_WORKFLOW_SKILLS[@]}"; do
+  rm -rf "$SKILLS/$name"
+done
 
 # Action Skills: Cursor/Codex install into skill discovery with
 # disable-model-invocation; OpenCode keeps them plugin-internal only.
@@ -263,7 +268,7 @@ else
       [[ -d "$dir" ]] || continue
       name="$(basename "$dir")"
       case "$name" in
-        _policies|_shared|uo-init|uo-update|uo-query|uo-investigate|ce-review|ce-plan|ce-apply|handoff|tg-init|tg-plan|tg-solve) continue ;;
+        _policies|_shared|uo-init|uo-update|uo-investigate|ce-review|ce-plan|ce-apply|handoff|tg-init|tg-plan|tg-solve) continue ;;
       esac
       rm -rf "$SKILLS/$name"
       ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"

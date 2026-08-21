@@ -36,4 +36,4 @@ candidate → evidence → review → accepted fact
 
 ## 与完整性的关系
 
-「文件在 projection 路径上」不等于 authority 已填充。见 `codemap-completeness.md`。
+「文件在 projection 路径上」不等于 authority 已填充。空壳 / `not_extracted` 不能当抽取完成。

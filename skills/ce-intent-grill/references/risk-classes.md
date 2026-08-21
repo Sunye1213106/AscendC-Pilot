@@ -1,6 +1,8 @@
-# Risk Classes
+# 风险怎么分类
 
-写 `{slug}_plan.md` 的「测试内容」或审查对话时，按可观察失败模式分类，不要按文件名。CE 不写义务 yaml，也不把精度/性能写进 `V`。
+**何时加载**：写计划「测试内容」或审查对话、要按失败模式分类时。
+
+按可观察失败模式分类，不要按文件名。CE 不写义务 yaml，也不把精度/性能写进 `V`。
 
 | 失败怎么说 | class | 何时想到 |
 | --- | --- | --- |
@@ -12,4 +14,4 @@
 | 精度不对（Cast / DataCopy / 多 dtype） | **precision** | Cast / DataCopy；测量在 TG |
 | 性能回退 | **perf** | BUFFER 等；profiling 在 TG |
 
-精度若要点名用例，用 catalog 的 `P-*`；性能用 `F-*`。不要静默扩成全部合法 Key。id 只认 `references/scenario-catalog.md`。
+精度若要点名用例，用 `P-*`（见 `skills/precision-testing/SKILL.md`）；性能用 `F-*`（见 `skills/performance-testing/SKILL.md`）。不要静默扩成全部合法 Key。

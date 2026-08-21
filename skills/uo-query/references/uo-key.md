@@ -1,4 +1,4 @@
-# UO · TilingKey
+# TilingKey 与 packing
 
 按需阅读。权威仍在已 commit `.uo` 的 TILING_KEY 实体与 packing / registration 关系。
 

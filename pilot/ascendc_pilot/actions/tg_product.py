@@ -474,6 +474,7 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "golden": harness.get("golden") or staged.get("golden") or {},
         "compare": harness.get("compare") or harness.get("script_compare") or staged.get("compare") or staged.get("script_compare") or {},
         "generate_inputs": harness.get("generate_inputs") or staged.get("generate_inputs") or {},
+        "call": bind.get("call") or harness.get("call") or staged.get("call") or {},
         "findings": findings,
         "test_script_root": str(scan.get("test_script_root") or _test_script_root(project_root, ctx)),
         "uo_digest": str(ident.get("sha256") or ident.get("digest") or scan.get("uo_digest") or ""),
@@ -530,6 +531,74 @@ def run_validate_init(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     return {"ok": ok, "engine": "validate_init", "errors": errors, "receipt": receipt.as_posix()}
 
 
+def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    """Ident prefetch only. Never around. Safe when there is no PR diff."""
+    arch = str(ctx.get("architecture") or "").strip()
+    from ascendc_pilot.paths import agent_root
+
+    agent = agent_root(project_root, arch or None)
+    idents: list[str] = []
+    has_diff = False
+    note = ""
+    change_set = agent / "uo" / "diff" / "change_set.yaml"
+    if change_set.is_file():
+        data = _load_yaml(change_set)
+        for key in ("identifiers", "added_identifiers", "added"):
+            raw = data.get(key) if isinstance(data, dict) else None
+            if isinstance(raw, list):
+                for item in raw:
+                    name = str(item.get("name") if isinstance(item, dict) else item or "").strip()
+                    if name and name not in idents:
+                        idents.append(name)
+                if idents:
+                    has_diff = True
+                    break
+    if not has_diff:
+        try:
+            from code_engineering.change.capture import extract_added_identifiers, _run_git
+
+            diff_text = _run_git(project_root, "diff", "--unified=0", "HEAD", allow_diff=True)
+            if str(diff_text or "").strip():
+                has_diff = True
+                idents = extract_added_identifiers(diff_text, limit=12)
+        except Exception as exc:  # noqa: BLE001
+            note = str(exc)[:200]
+    if not has_diff:
+        note = note or "无 PR diff；用途来自用户意图 / CE plan / L0"
+    cards: list[dict[str, Any]] = []
+    if idents:
+        try:
+            from uo_init.uo_query import open_query
+
+            q = open_query(project_root, architecture=arch)
+            for name in idents[:8]:
+                out = q.agent_query(pattern=name)
+                if str(out.get("shape") or "") != "name":
+                    continue
+                card = (out.get("cards") or [{}])[0]
+                cards.append(
+                    {
+                        "pattern": name,
+                        "kind": card.get("kind"),
+                        "name": card.get("name"),
+                        "file": card.get("file"),
+                        "line": card.get("line"),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001
+            note = f"{note} ident prefetch skipped: {exc}".strip()
+    intents = products.collect_intent_sources(project_root, architecture=arch)
+    return {
+        "schema": "tg-plan-scope-packet/v1",
+        "has_diff": has_diff,
+        "note": note,
+        "identifiers": idents[:12],
+        "ident_cards": cards,
+        "intent_sources": intents,
+        "skip_around": True,
+    }
+
+
 def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     from testcase_agent.init_status import require_init_confirmed
 
@@ -542,6 +611,8 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         return {"ok": False, "engine": "plan_precheck", "error": str(exc), "ask": exc.ask, "payload": exc.payload}
     declared = _legal_key_count(project_root, ctx)
     intents = products.collect_intent_sources(project_root, architecture=str(tg_ctx.get("architecture") or ""))
+    packet = _compact_plan_scope_packet(project_root, ctx)
+    packet_path = _receipt(project_root, ctx, "plan_scope_packet.yaml", packet)
     receipt = _receipt(
         project_root,
         ctx,
@@ -552,6 +623,7 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
             "declared_source": "product_uo.legal_key_rows",
             "init_confirmed": True,
             "intent_sources": intents,
+            "scope_packet": packet_path.as_posix(),
         },
     )
     return {
@@ -559,12 +631,22 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         "engine": "plan_precheck",
         "declared_key_count": declared,
         "receipt": receipt.as_posix(),
+        "scope_packet": packet_path.as_posix(),
         "init": {"confirmed": True, "uo_digest": doc.get("uo_digest")},
     }
 
 
 def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
+    purpose = _action_dir(project_root, ctx, "plan_scope") / "parts" / "purpose.md"
+    if not purpose.is_file() or not purpose.read_text(encoding="utf-8").strip():
+        return {
+            "ok": False,
+            "engine": "plan_promote",
+            "error": "PLAN_SCOPE_REQUIRED",
+            "ask": "scope",
+            "message_zh": "缺少 plan_scope/parts/purpose.md；回 scope 写出测试用途，不要在 fuse 里补语义调查。",
+        }
     text = _collect_staging_text(_action_dir(project_root, ctx, "plan_fuse"))
     if not text.strip():
         return {"ok": False, "engine": "plan_promote", "error": "empty plan staging"}

@@ -142,9 +142,9 @@ Action 表示**确定边界的一次操作**。应有明确 input / output schem
 
 ## 6. Reference
 
-Reference 只保存**按需读取的信息**：schema、复杂字段、命令参考、算法背景、长示例、特殊场景。
+Reference 只保存**当前 Skill 分支才需要**的目录、长表、域专文。选择器与身份合同写在 `skills/SCHEMA.md`，不要在本文件再写一遍。
 
-不得把所有 Reference 默认塞进 Prompt。只有任务真正需要时才读取。全局不可违反的纪律在 Policy，不要另建共享引用目录。
+跨层：全局纪律在 Policy；可复用方法在 Skill 原语；本题 I/O 在 Prompt。禁止 `_shared/references/`，禁止 Skill 链到别人的 `references/`。
 
 ---
 

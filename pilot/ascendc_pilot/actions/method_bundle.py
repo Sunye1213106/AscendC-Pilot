@@ -40,48 +40,79 @@ def _repo_candidates(project_root: Path | None) -> list[Path]:
     return out
 
 
-_NAMED_REF_RE = re.compile(
-    r"`(?:(?:skills|cognitive-skills)/[a-z0-9-]+/)?references/([^`\s]+?\.md)`",
-    re.I,
-)
+_REL_REF_RE = re.compile(r"`references/([^`\s]+?\.md)`", re.I)
 _SKILL_SCOPED_REF_RE = re.compile(
     r"`(?:skills|cognitive-skills)/([a-z0-9-]+)/references/([^`\s]+?\.md)`",
     re.I,
 )
+_QUALIFIED_REF_PATH_RE = re.compile(
+    r"^(?:skills|cognitive-skills)/([a-z0-9-]+)/references/([^`\s]+?\.md)$",
+    re.I,
+)
 
 
-def _named_reference_files(*texts: str) -> set[str]:
-    """Return ``references/*.md`` basenames/relpaths named in backticks."""
-    found: set[str] = set()
-    for text in texts:
-        for match in _NAMED_REF_RE.finditer(text or ""):
-            rel = match.group(1).replace("\\", "/").lstrip("/")
-            if rel:
-                found.add(rel)
-    return found
+def parse_declared_refs(
+    *texts: str,
+    current_skill_id: str,
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Return ``(owner, rel)`` refs plus unauthorized foreign scoped paths.
 
-
-def _skill_scoped_refs(*texts: str) -> list[tuple[str, str]]:
-    """Return ``(skill_id, references/rel.md)`` named as ``skills/<id>/references/...``."""
-    out: list[tuple[str, str]] = []
+    ``references/foo.md`` binds to ``current_skill_id``.
+    ``skills/foo/references/bar.md`` binds to ``foo`` only when ``foo`` is the
+    current skill; otherwise it is unauthorized. No basename fallback.
+    """
+    owner_now = (current_skill_id or "").strip()
+    requested: list[tuple[str, str]] = []
+    unauthorized: list[str] = []
     seen: set[tuple[str, str]] = set()
+
+    def _add(owner: str, rel: str) -> None:
+        key = (owner, rel)
+        if owner and rel and key not in seen:
+            seen.add(key)
+            requested.append(key)
+
     for text in texts:
         for match in _SKILL_SCOPED_REF_RE.finditer(text or ""):
             owner = match.group(1).strip()
             rel = match.group(2).replace("\\", "/").lstrip("/")
-            key = (owner, rel)
-            if owner and rel and key not in seen:
-                seen.add(key)
-                out.append(key)
-    return out
+            posix = f"skills/{owner}/references/{rel}"
+            if owner != owner_now:
+                if posix not in unauthorized:
+                    unauthorized.append(posix)
+                continue
+            _add(owner, rel)
+        for match in _REL_REF_RE.finditer(text or ""):
+            rel = match.group(1).replace("\\", "/").lstrip("/")
+            _add(owner_now, rel)
+    return requested, unauthorized
 
 
-def _ref_is_named(rel: str, wanted: set[str]) -> bool:
-    posix = rel.replace("\\", "/")
-    name = Path(posix).name
-    return posix in wanted or name in wanted or any(
-        posix.endswith("/" + w) or w.endswith("/" + posix) for w in wanted
+def parse_qualified_ref_path(raw: str) -> tuple[str, str] | None:
+    """Parse ``skills/<id>/references/<rel>.md``. Bare basenames are rejected."""
+    posix = str(raw or "").replace("\\", "/").lstrip("/")
+    hit = _QUALIFIED_REF_PATH_RE.match(posix)
+    if not hit:
+        return None
+    return hit.group(1).strip(), hit.group(2).replace("\\", "/").lstrip("/")
+
+
+def declared_reference_paths(skill_id: str, project_root: Path | None = None) -> tuple[str, ...]:
+    """SKILL.md is the sole selector: qualified paths of locally declared refs."""
+    sid = (skill_id or "").strip()
+    if not sid:
+        return ()
+    skill_dir = find_cognitive_skill_dir(sid, project_root)
+    if skill_dir is None:
+        return ()
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        return ()
+    requested, _unauth = parse_declared_refs(
+        skill_md.read_text(encoding="utf-8"),
+        current_skill_id=sid,
     )
+    return tuple(f"skills/{owner}/references/{rel}" for owner, rel in requested)
 
 
 def find_cognitive_skill_dir(skill_id: str, project_root: Path | None = None) -> Path | None:
@@ -109,19 +140,26 @@ def materialize_method_bundle(
     max_refs: int = 24,
     prompt: str = "",
     extra_ref_paths: list[str] | None = None,
+    current_skill_id: str = "",
+    method_filename: str = "method.md",
+    refs_dirname: str = "refs",
 ) -> dict[str, Any]:
-    """Write session method.md from the current Action Skill.
+    """Write session method file from the current Action Skill.
 
-    ``skill_ids`` is a permission ceiling for named references.
+    ``skill_ids`` is a permission ceiling. Reference identity is
+    ``(owner_skill_id, relative_path)`` — never a basename.
+    ``extra_ref_paths`` must be Host ``conditional_refs`` (qualified paths) and
+    must not repeat SKILL-declared refs.
     """
     sdir = Path(session_dir)
     sdir.mkdir(parents=True, exist_ok=True)
-    refs_dir = sdir / "refs"
+    refs_dir = sdir / (refs_dirname or "refs")
     refs_dir.mkdir(parents=True, exist_ok=True)
     copied: list[str] = []
     indexed: list[str] = []
     missing: list[str] = []
     unauthorized: list[str] = []
+    ambiguous: list[str] = []
     method_chunks: list[str] = []
     method_body = existing_method.strip()
     if not method_body:
@@ -140,65 +178,71 @@ def materialize_method_bundle(
 
     method_chunks.append(method_body.rstrip() + "\n")
     allowed = {str(s).strip() for s in skill_ids if str(s).strip()}
+    owner_now = (current_skill_id or "").strip()
+    if not owner_now:
+        owner_now = next(iter(allowed), "")
 
-    prompt_text = prompt
-    prompt_file = sdir / "prompt.md"
-    if not prompt_text and prompt_file.is_file():
-        prompt_text = prompt_file.read_text(encoding="utf-8")
+    requested, scoped_unauth = parse_declared_refs(
+        existing_method,
+        current_skill_id=owner_now,
+    )
+    unauthorized.extend(scoped_unauth)
 
-    extra_blob = "\n".join(f"`{p}`" for p in (extra_ref_paths or []) if p)
-    wanted = _named_reference_files(existing_method, prompt_text, extra_blob)
-    for owner, rel in _skill_scoped_refs(existing_method, prompt_text, extra_blob):
-        if allowed and owner not in allowed:
-            posix = f"skills/{owner}/references/{rel}"
+    skill_declared = set(requested)
+    for raw in extra_ref_paths or []:
+        parsed = parse_qualified_ref_path(str(raw))
+        if parsed is None:
+            ambiguous.append(str(raw))
+            continue
+        extra_owner, extra_rel = parsed
+        if extra_owner not in allowed:
+            posix = f"skills/{extra_owner}/references/{extra_rel}"
             if posix not in unauthorized:
                 unauthorized.append(posix)
+            continue
+        if (extra_owner, extra_rel) in skill_declared:
+            continue
+        requested.append((extra_owner, extra_rel))
 
-    for sid in skill_ids:
-        sid = str(sid).strip()
-        if not sid:
-            continue
-        skill_dir = find_cognitive_skill_dir(sid, project_root)
-        if skill_dir is None:
-            missing.append(sid)
-            continue
-        ref_src = skill_dir / "references"
-        if not ref_src.is_dir():
-            continue
-        dest = refs_dir / sid
-        count = 0
-        for src in sorted(ref_src.rglob("*")):
-            if not src.is_file():
-                continue
-            rel = src.relative_to(ref_src).as_posix()
-            if not _ref_is_named(rel, wanted):
-                continue
-            if count >= max_refs:
-                break
-            dest.mkdir(parents=True, exist_ok=True)
-            target = dest / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, target)
-            copied.append(f"refs/{sid}/{rel}")
-            indexed.append(f"references/{sid}/{rel}")
-            count += 1
-
-    for raw in extra_ref_paths or []:
-        posix = str(raw).replace("\\", "/").lstrip("/")
-        parts = posix.split("/")
-        if len(parts) >= 4 and parts[0] == "skills" and parts[2] == "references":
-            owner = parts[1]
-            if allowed and owner not in allowed:
+    for owner, rel in requested:
+        if len(copied) >= max_refs:
+            break
+        posix = f"skills/{owner}/references/{rel}"
+        if allowed and owner not in allowed:
+            if posix not in unauthorized:
                 unauthorized.append(posix)
+            continue
+        skill_dir = find_cognitive_skill_dir(owner, project_root)
+        if skill_dir is None:
+            if posix not in missing:
+                missing.append(posix)
+            continue
+        src = skill_dir / "references" / rel
+        if not src.is_file():
+            if posix not in missing:
+                missing.append(posix)
+            continue
+        dest = refs_dir / owner / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+        prefix = (refs_dirname or "refs").replace("\\", "/").strip("/")
+        copied.append(f"{prefix}/{owner}/{rel}")
+        indexed.append(f"references/{owner}/{rel}")
 
-    method_path = sdir / "method.md"
+    method_path = sdir / (method_filename or "method.md")
     if copied:
         method_chunks.append("\n## Materialized refs (session-local)\n\n")
         for c in copied:
             method_chunks.append(f"- `{c}`\n")
     method_path.write_text("".join(method_chunks), encoding="utf-8")
 
-    ok = len(missing) == 0 and len(unauthorized) == 0
+    fail_bits = missing + unauthorized + ambiguous
+    ok = len(fail_bits) == 0
+    reason = ""
+    if ambiguous:
+        reason = "REFERENCE_AMBIGUOUS"
+    elif unauthorized or missing:
+        reason = "SKILL_BUNDLE_MISSING"
     if not ok:
         try:
             method_path.unlink(missing_ok=True)
@@ -207,20 +251,22 @@ def materialize_method_bundle(
 
     return {
         "ok": ok,
-        "error": "" if ok else "SKILL_BUNDLE_MISSING",
-        "reason_code": "" if ok else "SKILL_BUNDLE_MISSING",
+        "error": "" if ok else reason or "SKILL_BUNDLE_MISSING",
+        "reason_code": "" if ok else reason or "SKILL_BUNDLE_MISSING",
         "method_path": method_path.as_posix() if ok and method_path.is_file() else "",
         "refs_dir": refs_dir.as_posix(),
         "copied": copied,
         "indexed": indexed,
         "missing": missing,
         "unauthorized": unauthorized,
+        "ambiguous": ambiguous,
+        "requested": [f"skills/{o}/references/{r}" for o, r in requested],
         "message_zh": (
             ""
             if ok
             else (
                 "Required cognitive skill missing or unauthorized reference: "
-                + ", ".join((missing + unauthorized)[:8])
+                + ", ".join(fail_bits[:8])
                 + "；禁止派发（禁止 placeholder method.md）。"
             )
         ),
@@ -373,18 +419,17 @@ def method_skill_ids_for_action(
     agent_skill_ids: list[str] | None = None,
     extra_ref_paths: list[str] | None = None,
 ) -> list[str]:
-    """Action-scoped skills: this step's Skill ∪ named ref owners, intersected with ceiling."""
+    """Action Skill plus owners of Host conditional_refs, intersected with ceiling."""
     ceiling = {str(s).strip() for s in (agent_skill_ids or []) if str(s).strip()}
     wanted: set[str] = set()
     raw = str((action or {}).get("skill_id") or (action or {}).get("action_method_id") or "").strip()
     if raw:
         wanted.add(raw.rsplit("/", 1)[-1].strip())
     for raw_path in extra_ref_paths or []:
-        parts = str(raw_path).replace("\\", "/").lstrip("/").split("/")
-        if len(parts) >= 4 and parts[0] == "skills" and parts[2] == "references":
-            owner = parts[1].strip()
-            if owner:
-                wanted.add(owner)
+        parsed = parse_qualified_ref_path(str(raw_path))
+        if parsed is None:
+            continue
+        wanted.add(parsed[0])
     if ceiling:
         wanted &= ceiling
     return sorted(sid for sid in wanted if sid)
@@ -621,9 +666,12 @@ def check_bundle_readable(
 
 __all__ = [
     "TaskStubPointers",
+    "declared_reference_paths",
     "find_cognitive_skill_dir",
     "materialize_method_bundle",
     "method_skill_ids_for_action",
+    "parse_declared_refs",
+    "parse_qualified_ref_path",
     "parse_stub_pointers",
     "extract_stub_paths",
     "check_input_readability",

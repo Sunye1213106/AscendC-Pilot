@@ -1,11 +1,11 @@
 ---
 name: spec-review
-description: 审查 diff 的 Spec 轴：改动是不是这次需求要的。有 git/PR diff 且走 Spec 轴时使用。
+description: 审查 diff 的 Spec 这一路：改动是不是这次需求要的。有 git/PR diff 且走 Spec 时使用。
 ---
 
 # Spec 轴
 
-只做 **Spec** 轴。不要做 Standards。问的是：这次要的行为有没有做完、有没有超范围、看起来做了但实现对不对。Finding 必须有 `path:line`。报告前尝试推翻 H1（「改动实现了声称的意图」）。
+只做 **Spec** 这一路。不要做 Standards。问的是：这次要的行为有没有做完、有没有超范围、看起来做了但实现对不对。Finding 必须有 `path:line`。报告前尝试推翻 H1（「改动实现了声称的意图」）。
 
 禁止「只陈述理解就算完成」。无 span 的「可能有问题」降级或不报。
 
@@ -27,11 +27,11 @@ description: 审查 diff 的 Spec 轴：改动是不是这次需求要的。有 
 
 ## 常驻判断
 
-跨层合同优先于本地风格，但跨层检查属于 Standards 轴；本轴只在「超范围 / 没做完」时点名，不要把风格 finding 写进来。
+跨层契约优先于本地风格，但跨层检查属于 Standards 那一路；本路只在「超范围 / 没做完」时点名，不要把风格 finding 写进来。
 
 UT 不在图里：只读 `tests/**` 搜新字段名；对 test 文件 `--file --line` 空是预期。
 
-建议测试走 `/tg-plan`。本步不落测试 yaml，不合成 LGTM（收齐两轴后由主控合并）。
+建议测试走 `/tg-plan`。本步不落测试 yaml，不合成 LGTM（收齐两路后由主控合并）。
 
 TilingData 来源 ≠ 已校验：必须能 locate 到 `OP_CHECK_IF` 且变量同一，否则最多 UNREVIEWED / 开放，不要当完成。
 
@@ -63,7 +63,7 @@ TilingData 来源 ≠ 已校验：必须能 locate 到 `OP_CHECK_IF` 且变量�
 2. 建立或对照粗意图（有计划用计划，没有就 3–8 条）。
 3. 对每个 changed file 判定 finding / format-only / UNREVIEWED。
 4. 尝试推翻 H1：缺了什么、多了什么、做了但路径不对。
-5. 只交 Spec 轴回复。不写 Standards，不合成 LGTM。
+5. 只交 Spec 这一路的回复。不写 Standards，不合成 LGTM。
 
 ## 输出形状
 

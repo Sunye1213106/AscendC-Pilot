@@ -6,12 +6,14 @@ mode: subagent
 description: >
   TG bind、plan 融合、造 case、worklog 的分阶段 producer。只写 `runs/` 草稿。
   禁止写算子源码、`.uo`、正式 `tg/init.yaml` / `plan.md` / `worklog.md`。
-max_skill_ids: &skills [bind-init, bind-harness, bind-columns, bind-review, plan-fuse, construct-cases, analyze-round, uo-query, precision-testing, performance-testing, lemma-mine, lemma-review, source-proof]
+max_skill_ids: &skills [bind-init, bind-harness, bind-columns, bind-review, plan-scope, plan-fuse, construct-cases, analyze-round, uo-query, precision-testing, performance-testing, lemma-mine, lemma-review, source-proof]
 skill_ids: *skills
 write_scopes:
 - pilot:runs/**/actions/bind_init/parts/**
 - pilot:runs/**/actions/bind_init/scratch/**
 - pilot:runs/**/actions/bind_init/staging.yaml
+- pilot:runs/**/actions/plan_scope/parts/**
+- pilot:runs/**/actions/plan_scope/scratch/**
 - pilot:runs/**/actions/plan_fuse/parts/**
 - pilot:runs/**/actions/plan_fuse/scratch/**
 - pilot:runs/**/actions/plan_fuse/staging.md
@@ -35,6 +37,7 @@ read_scopes:
 - method:skills/bind-harness/**
 - method:skills/bind-columns/**
 - method:skills/bind-review/**
+- method:skills/plan-scope/**
 - method:skills/plan-fuse/**
 - method:skills/construct-cases/**
 - method:skills/analyze-round/**

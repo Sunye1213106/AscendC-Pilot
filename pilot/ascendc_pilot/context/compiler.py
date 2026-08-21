@@ -437,6 +437,25 @@ def _prior_failure(project_root: Path, action_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _skill_id_for_action(workflow_id: str, action_id: str, skill_id: str = "") -> str:
+    sid = (skill_id or "").strip()
+    if sid:
+        return sid.rsplit("/", 1)[-1]
+    if not workflow_id or not action_id:
+        return ""
+    try:
+        from ascendc_pilot.workflows import WORKFLOWS
+    except Exception:  # noqa: BLE001
+        return ""
+    meta = WORKFLOWS.get(workflow_id) or {}
+    for action in meta.get("actions") or []:
+        if str(action.get("id") or "") != action_id:
+            continue
+        raw = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
+        return raw.rsplit("/", 1)[-1] if raw else ""
+    return ""
+
+
 def compile_context_slice(
     project_root: Path,
     *,
@@ -445,6 +464,7 @@ def compile_context_slice(
     workflow_id: str = "",
     intent: str = "",
     repo_root: Path | None = None,
+    skill_id: str = "",
 ) -> dict[str, Any] | None:
     """Compile a context slice for ``profile_id``.
 
@@ -515,7 +535,16 @@ def compile_context_slice(
                 }
             )
 
-    references = _load_references(repo, profile.references)
+    from ascendc_pilot.actions.method_bundle import declared_reference_paths
+
+    sid = _skill_id_for_action(str(workflow_id or ""), str(action_id or ""), skill_id)
+    skill_refs = declared_reference_paths(sid, repo)
+    extra = [
+        str(x).replace("\\", "/").strip()
+        for x in (profile.conditional_refs or ())
+        if str(x).strip() and str(x).replace("\\", "/").strip() not in set(skill_refs)
+    ]
+    references = _load_references(repo, tuple(dict.fromkeys([*skill_refs, *extra])))
     missing_refs = missing_reference_paths(references)
     prior = _prior_failure(project_root, action_id) if profile.include_prior_failure else None
 
@@ -569,6 +598,7 @@ def maybe_compile_slice(
     workflow_id: str = "",
     intent: str = "",
     repo_root: Path | None = None,
+    skill_id: str = "",
 ) -> dict[str, Any] | None:
     """Public entry: compile when profile exists, else return None (legacy pack only)."""
     return compile_context_slice(
@@ -578,6 +608,7 @@ def maybe_compile_slice(
         workflow_id=workflow_id,
         intent=intent,
         repo_root=repo_root,
+        skill_id=skill_id,
     )
 
 

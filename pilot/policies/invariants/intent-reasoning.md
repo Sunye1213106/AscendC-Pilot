@@ -68,13 +68,13 @@ CodeMap 准备（按缺口二选一，不要当固定串）：
 
 `auto` 返回的 `(operator, architecture)` 直接用于后续 `pilot_run`。`status` / `uo-query --status-only` 也必须带上该算子路径，不要对着打开目录根判断 `.uo`。
 
-`Planning Context` 由 PR 改动、`uo-query` 语义和已初始化的 `tg/init.yaml` 组成，不要求先执行 Code Review。
+`Planning Context` 就是 `/tg-plan` 的 `purpose.md`（外加用户意图 / handoff）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
 
 ## 按用户目标选择流程
 
 用户只要求 Code Review 时，只执行 `/ce-review`。
 
-用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。Planning Context 走调查。
+用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；测试用途由 `plan_scope` 写出，不要在中间再派自由查询。
 
 用户只要求语义查询时：
 
@@ -111,14 +111,9 @@ TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
 
 调查只获取下一步真正需要的事实。
 
-比如进入 `tg-plan` 前，需要获取测试意图， 应综合：
+`/tg-init` 完成后直接 `/tg-plan`。测试用途由 `plan_scope` 根据 `tg/init.yaml` 与紧凑改动包写出 `purpose.md`。不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash，也不要在 bind 里加第三路 fanout。
 
-* 用户原始需求；
-* PR 的实际改动；
-* UO 中的代码语义；
-* `tg/init.yaml` 中的列、harness、精度入口和性能入口。
-
-结果应足够支持测试规划，并且内部无冲突。已有可用测试意图时直接复用。
+用户只要求语义查询、不要生成用例时，仍用 `pilot_cli uo-query`，不进入 `/tg-plan`。
 
 从用户原话中提取可以直接查询的起始点。两个问题若能各自独立查完，就分开查询。
 
@@ -150,6 +145,8 @@ TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
 综合只在主控。
 
 不要把完整查询卡片或大段 UO 输出复制进后续 `pilot_run intent`，只传该工作流真正需要的结论。
+
+`/ce-apply` 只改码（或改测试脚本缺口），不查图、不审 diff。需要语义时先走查询。
 
 ## 处理冲突和缺口
 

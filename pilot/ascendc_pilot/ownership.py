@@ -69,6 +69,10 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/{run_id}/actions/plan_fuse/staging.md",
             "runs/{run_id}/actions/plan_fuse/staging.yaml",
         ],
+        "plan_scope": [
+            "runs/{run_id}/actions/plan_scope/parts/**",
+            "runs/{run_id}/actions/plan_scope/scratch/**",
+        ],
     },
     "tg-solve": {
         "construct_cases": [
@@ -194,7 +198,14 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "validate_init": ["runs/{run_id}/receipts/validate_init.yaml"],
     },
     "tg-plan": {
-        "plan_precheck": ["runs/{run_id}/receipts/plan_precheck.yaml"],
+        "plan_precheck": [
+            "runs/{run_id}/receipts/plan_precheck.yaml",
+            "runs/{run_id}/receipts/plan_scope_packet.yaml",
+        ],
+        "plan_scope": [
+            "runs/{run_id}/actions/plan_scope/parts/**",
+            "runs/{run_id}/actions/plan_scope/scratch/**",
+        ],
         "plan_fuse": [
             "runs/{run_id}/actions/plan_fuse/parts/**",
             "runs/{run_id}/actions/plan_fuse/scratch/**",
@@ -337,6 +348,16 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "tg-plan": {
         "plan_precheck": ["uo/*.uo", "tg/init.yaml"],
+        "plan_scope": [
+            "uo/*.uo",
+            "tg/init.yaml",
+            "ce/plan/*_plan.md",
+            "session_handoff.md",
+            "runs/{run_id}/receipts/plan_precheck.yaml",
+            "runs/{run_id}/receipts/plan_scope_packet.yaml",
+            "runs/{run_id}/actions/plan_scope/**",
+            "context/**",
+        ],
         "plan_fuse": [
             "uo/*.uo",
             "tg/init.yaml",
@@ -344,9 +365,15 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "ce/plan/*_plan.md",
             "session_handoff.md",
             "runs/{run_id}/actions/plan_fuse/**",
+            "runs/{run_id}/actions/plan_scope/parts/purpose.md",
+            "runs/{run_id}/receipts/plan_scope_packet.yaml",
             "context/**",
         ],
-        "plan_promote": ["tg/plan.md", "runs/{run_id}/actions/plan_fuse/**"],
+        "plan_promote": [
+            "tg/plan.md",
+            "runs/{run_id}/actions/plan_fuse/**",
+            "runs/{run_id}/actions/plan_scope/parts/purpose.md",
+        ],
         "plan_validate": ["tg/init.yaml", "tg/plan.md"],
         "plan_approve": ["tg/plan.md", "tg/init.yaml"],
     },

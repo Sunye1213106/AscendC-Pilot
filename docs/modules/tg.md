@@ -21,7 +21,7 @@ test_harness_gap 未落地 → 禁止 start solve
 TG 永不改算子仓
 ```
 
-`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射（脚本读点 + UO 标识符）、值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。有脚本仓但 mapping 空 → init 失败。无脚本仓时用 `/uo-query` 读输入 API 设计控制面。扫描必须含 xls/xlsx。FAG 精度写 `only_grad`，性能写 `profiler`，禁止把精度记成 `--golden-only`。
+`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射（API 入参绑脚本读点 + UO 标识符；`script_meta` 可无标识符）、双源值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。有脚本仓但 API 入参 mapping 空 → init 失败。无脚本仓时用 `/uo-query` 读输入 API 设计控制面。扫描必须含 xls/xlsx。FAG 精度写 `only_grad`，性能写 `profiler`，禁止把精度记成 `--golden-only`。
 
 ## 规划是融合，不是套覆盖
 
@@ -54,8 +54,8 @@ kb_check [D] → repo_scan [D] → bind_init [S fanout=2] → bind_review [Prima
                                           ──gate: init_confirmed, uo_digest
 
 /tg-plan
-plan_precheck [D] → plan_fuse [S] → plan_promote [D] → plan_validate [D]
-    → plan_approve [H]
+plan_precheck [D] → plan_scope [S] → plan_fuse [S] → plan_promote [D]
+    → plan_validate [D] → plan_approve [H]
                                           ──gate: plan_approved
 
 /tg-solve

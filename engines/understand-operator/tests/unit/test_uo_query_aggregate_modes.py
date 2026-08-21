@@ -287,6 +287,17 @@ def test_template_match_dim_coverage_is_global_not_first_block(tmp_path: Path) -
     nearby = {row["dropped"]: row for row in miss["nearby"]}
     assert "128" in nearby["DTemplateNum"]["values"]
     assert "64" in nearby["DTemplateNum"]["values"]
+    # 0-hit must not look like a successful universe dump.
+    assert miss.get("dim_coverage") in ({}, None) or not miss["dim_coverage"]
+    assert (miss.get("coverage") or {}).get("answerable") is False
+
+    dim_only = q.agent_query(pattern="Dim=DTemplateNum")
+    assert dim_only.get("cover_kind") == "dim_list" or dim_only.get("dim_only") == "DTemplateNum"
+    listed = set(str(v) for v in (dim_only.get("dim_coverage") or {}).get("DTemplateNum") or [])
+    listed |= set(str(v) for v in (dim_only.get("product_coverage") or {}).get("DTemplateNum") or [])
+    assert {"64", "128", "192", "256", "768"} <= listed
+    declared = set(str(v) for v in (dim_only.get("declared_coverage") or {}).get("DTemplateNum") or [])
+    assert not declared or "64" in declared
 
     keys = query_legal_keys(
         product, pattern="DTemplateNum=128,DeterType=0,InputDType=3", limit=8

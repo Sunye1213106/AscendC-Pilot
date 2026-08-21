@@ -1,4 +1,4 @@
-# UO · Template / Macro / BuildVariant
+# Template / 宏 / BuildVariant
 
 按需阅读。
 

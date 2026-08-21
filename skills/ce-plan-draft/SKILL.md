@@ -81,4 +81,4 @@ LLM 禁止写 `.uo`。apply 刷图由引擎做。handoff 只引用路径，不�
 
 ## 指针
 
-CE 易错点：`references/gotchas.md`。grill 小节形状：`references/intent-grill-staging.md`。切片原语（todo 怎么切）：`references/slice-primitives.md`。
+写计划易错点：`references/gotchas.md`。grill 小节形状：`skills/ce-intent-grill/SKILL.md`。

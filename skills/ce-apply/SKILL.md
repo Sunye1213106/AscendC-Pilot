@@ -82,4 +82,4 @@ description: 按当前计划未完成 todo 改码。执行 /ce-apply 时使用�
 
 ## 指针
 
-CE 易错点：`references/gotchas.md`。todo 切片：`references/slice-primitives.md`。
+改码易错点：`references/gotchas.md`。

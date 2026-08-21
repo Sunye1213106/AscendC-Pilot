@@ -1,6 +1,6 @@
-# UO CodeMap Query — Gotchas
+# 查询易错点
 
-高信号易错点。流程见 `uo-product-map.md` 与 `skills/uo-query/SKILL.md`。
+高信号易错点。怎么查见 `skills/uo-query/SKILL.md`。
 
 - **CodeMap 优先于源码通读**：已有 `.uo` 时先调用插件 `pilot_cli` `uo-query`；不要一上来 grep 整棵算子树。
 - **缺 `.uo` 不搜索仓库根目录**：工作目录是确定的（`.ascendc-pilot/<arch>/uo/<op>.<arch>.uo`）。找不到就 AskQuestion（`/uo-init` 或源码作答），禁止 Glob/dir 找产物。

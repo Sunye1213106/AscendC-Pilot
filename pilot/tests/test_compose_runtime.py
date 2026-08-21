@@ -160,6 +160,7 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
         assert not (generated / "skills" / "workflow-orchestration" / "SKILL.md").exists()
         assert (tg_prompts / "bind-init.md").is_file()
         assert (tg_prompts / "plan-fuse.md").is_file()
+        assert (tg_prompts / "plan-scope.md").is_file()
         assert not (tg_prompts / "parse-intent.md").exists()
         assert not (tg_prompts / "change-impact.md").exists()
         assert not (tg_prompts / "change-obligations.md").exists()
@@ -325,6 +326,7 @@ def test_action_skill_ids_are_discovered_not_closed_five():
     ids = listed_skill_ids(REPO)
     assert "uo-query" in ids
     assert "plan-fuse" in ids
+    assert "plan-scope" in ids
     assert "ce-apply" in ids
     assert "standalone-review" in ids
     assert "precision-testing" in ids

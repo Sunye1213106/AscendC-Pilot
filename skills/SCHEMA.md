@@ -33,9 +33,22 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 | 每轮都要用的启发式 / 反模式 | 某一域的专文（Key / Kernel / Buffer） |
 | 短输出形状（必填字段、完成条件） | 证书 schema、完整对照表 |
 
-指针只深一层：`references/foo.md`。不要「见 references/ 再去看另一本 Skill 的 references」。叠加原语用 `skills/<id>/SKILL.md` 指针。
+指针只深一层：`references/foo.md`。Reference 正文不得再写 `references/*.md`。要复用方法 → `skills/<id>/SKILL.md`。不要链到别人的 `references/`。
 
 不要把 20 份 gotchas 默装进 session。也不要把 SKILL.md 写成「步骤三条 + 详见 references」。
+
+---
+
+## Reference 合同
+
+1. **范围 ≤ owner Skill。** 禁止 workflow 阶段 gotchas（init/plan/solve 混装）。
+2. **一个 blob 只属于一个有 `SKILL.md` 的目录。** 跨 Skill 需求升级为 Policy / CONTEXT / Skill 原语 / schema。禁止 `skills/_shared/`。
+3. **选择器唯一：本 Skill 的 `SKILL.md` 指针。** `ContextProfile` 不列 domain reference。Host 动态追加走 `conditional_refs`，且与 SKILL 声明交集为空。
+4. **身份是 `(owner_skill_id, relative_path)`。** 禁止 basename fallback；歧义 `REFERENCE_AMBIGUOUS` fail-closed。
+5. **删文件测试：** 删掉它是否损失「只有特定分支才需要」的信息？否 → 删。不要用 SKILL 摘要副本。
+6. **模型可见中文。** 判断与步骤用中文。保留英文的只有：路径、YAML/字段名、CLI、裁决枚举（`HIT` / `PROVED`）、场景 id（`P-*` / `F-*`）。标题与「何时加载」一律中文。禁止 `When to load` / `Gotchas` 当一级标题。
+
+跨层归属（Policy vs Skill vs Prompt）见 `docs/architecture/agent-content-rules.md`。细节合同以本文件为准。
 
 ### 正文骨架
 

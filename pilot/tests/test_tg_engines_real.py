@@ -49,6 +49,7 @@ def test_removed_legacy_actions_gone() -> None:
         "closure_certify",
     ):
         assert dead not in ids
+    assert "plan_scope" in ids
 
 
 def test_output_contracts_are_three_products() -> None:
@@ -57,6 +58,9 @@ def test_output_contracts_are_three_products() -> None:
     assert OUTPUT_CONTRACT_PATHS["tg-worklog-v1"] == ["tg/worklog.md"]
     assert OUTPUT_CONTRACT_PATHS["tg-cases-v1"] == ["tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"]
     assert OUTPUT_CONTRACT_PATHS["plan-precheck-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == [
+        "runs/{run_id}/actions/plan_scope/parts/purpose.md"
+    ]
     assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == []
     assert "tilingkey-contract-v1" not in OUTPUT_CONTRACT_PATHS
     assert "lemma-mine-v1" not in OUTPUT_CONTRACT_PATHS
@@ -108,6 +112,14 @@ obligations:
 """
 
 
+def _write_purpose(root: Path, run_id: str) -> None:
+    from ascendc_pilot.paths import agent_root
+
+    parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_scope" / "parts"
+    parts.mkdir(parents=True, exist_ok=True)
+    (parts / "purpose.md").write_text("测 L0 入口与精度/性能 mode。\n", encoding="utf-8")
+
+
 def test_plan_staging_contract_accepts_parts_plan_md(tmp_path: Path) -> None:
     from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_MATCH_ANY, OUTPUT_CONTRACT_PATHS
     from ascendc_pilot.actions.runtime import _check_output_contract
@@ -126,6 +138,7 @@ def test_plan_staging_contract_accepts_parts_plan_md(tmp_path: Path) -> None:
     parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse" / "parts"
     parts.mkdir(parents=True)
     (parts / "plan.md").write_text(_PLAN_BODY, encoding="utf-8")
+    _write_purpose(root, run_id)
     checked = _check_output_contract(
         root,
         "tg-plan-staging-v1",
@@ -154,6 +167,7 @@ def test_plan_staging_contract_accepts_legacy_staging_md(tmp_path: Path) -> None
     action = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse"
     action.mkdir(parents=True)
     (action / "staging.md").write_text(_PLAN_BODY, encoding="utf-8")
+    _write_purpose(root, run_id)
     checked = _check_output_contract(
         root,
         "tg-plan-staging-v1",
@@ -187,6 +201,40 @@ def test_plan_staging_contract_fails_when_empty(tmp_path: Path) -> None:
     )
     assert checked.get("ok") is False
     assert "missing outputs" in str(checked.get("message") or "")
+
+
+def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import _compact_plan_scope_packet
+    from ascendc_pilot.paths import ensure_agent_layout
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    packet = _compact_plan_scope_packet(root, {"architecture": _ARCH, "run_id": "R1"})
+    assert packet.get("schema") == "tg-plan-scope-packet/v1"
+    assert packet.get("skip_around") is True
+    assert "ident_cards" in packet
+    assert "intent_sources" in packet
+
+
+def test_plan_promote_requires_purpose(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_plan_promote
+    from ascendc_pilot.paths import agent_root, ensure_agent_layout
+    from ascendc_pilot.state import start_workflow
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse" / "parts"
+    parts.mkdir(parents=True)
+    (parts / "plan.md").write_text(_PLAN_BODY, encoding="utf-8")
+    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is False
+    assert out.get("error") == "PLAN_SCOPE_REQUIRED"
 
 
 def test_analyze_staging_contract_accepts_parts_worklog_md(tmp_path: Path) -> None:

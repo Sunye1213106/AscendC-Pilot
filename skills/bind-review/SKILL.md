@@ -3,9 +3,9 @@ name: bind-review
 description: 主控通读两路绑定草稿并裁判 PASS 或 REWORK。tg-init 裁判步使用。
 ---
 
-# 绑定裁判
+# 审绑定草稿
 
-通读 `parts/harness.yaml` 与 `parts/bind.yaml`。不要写文件。本步是主控裁判：放行后引擎才 `bind_promote` 合并正式 `init.yaml`。两份没到齐不能裁判。
+通读 `parts/harness.yaml` 与 `parts/bind.yaml`。不要写文件。本步只判过不过：放行后引擎才 `bind_promote` 合并正式 `init.yaml`。两份没到齐不能判。
 
 只判草稿自洽与否。不要自己补列、不要改口径、不要开始 `/tg-plan`。
 
@@ -20,15 +20,17 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 逐项过。任一项失败就 REWORK，不要「先用着」。
 
 1. **两份自洽。** harness 引用的表 / 入口 / `--case` 与 bind 的列集合对得上。一边有精度 mode、另一边没有对应列，要写原因。
-2. **有仓则 mapping 非空。** 每一列同时有脚本读点与 UO 标识符。有仓却 mapping 空 → `REWORK bind`。
+2. **有仓则 API 入参 mapping 非空。** `api_arg` / `attr` 必须有脚本读点与 UO 标识符。`script_meta` 不得假造标识符。有仓却 API 列空 → `REWORK bind`。
 3. **没有发明列。** bind 列名必须来自 scan 表头或（无仓时）Host API。不要把计划意图里的场景 id 当成列。
-4. **shape 列是 range。** domains 引用 `tables[].profile`。把一次抽样当成枚举全集 → `REWORK bind`。
+4. **shape 列是 range，且做了双源比较。** `domains.profile` 引用 `tables[].profile`；`domains.operator` 分开写声明面与产品覆盖面；`compare` 有结论。把一次抽样当成枚举全集 → `REWORK bind`。
 5. **精度口径来自脚本。** `modes.precision` / `modes.perf` 与 argparse 一致。默认性能 mode 被写成精度 → `REWORK harness`。`--golden-only` 写成精度 → `REWORK harness`。argparse 没有的 atol/rtol 被编出来 → `REWORK harness`。
-6. **无仓叙事。** `kind=default_input` 时 harness 应写缺口而不是假入口；bind 不应假装有脚本读点。
-7. **没有把列标成 PR 焦点。** 列是控制面，不是审查发现。
-8. **依赖未拆成独立笛卡尔。** reduce 轴与 rank、shape 与 `dim_*` 若被当成两列独立可填 → `REWORK bind` 或 harness（看缺口写在哪）。
-9. **generate_inputs 缺口诚实。** 空 tensor / inf / 对齐+1 / 非法 range 等 runner 造不出的，应标缺口，不要假装已覆盖。
-10. **预期报错行。** Disable / 预期错误没有被当成精度 golden。
+6. **两路 `call.kind` 一致。** harness 与 bind 对 PTA / aclnn / mixed 的说法打架 → 两路 REWORK。
+7. **无仓叙事。** `kind=default_input` 时 harness 应写缺口而不是假入口；bind 不应假装有脚本读点。
+8. **没有把列标成 PR 焦点。** 列是控制面，不是审查发现。
+9. **依赖未拆成独立笛卡尔。** reduce 轴与 rank、shape 与派生维若被当成两列独立可填 → `REWORK bind` 或 harness（看缺口写在哪）。
+10. **generate_inputs 缺口诚实。** 空 tensor / inf / 对齐+1 / 非法 range 等 runner 造不出的，应标缺口，不要假装已覆盖。
+11. **预期报错行。** Disable / 预期错误没有被当成精度 golden。
+12. **encoding。** 非平凡列应说明脚本写入什么、算子读成什么；按列名字面当物理量 → `REWORK bind`。
 
 ## 常驻判断
 
@@ -60,7 +62,7 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 
 ## 循环
 
-通读，不要抽样。先看 scan.kind 与两份叙事是否同一世界，再过清单十条。
+通读，不要抽样。先看 scan.kind 与两份叙事是否同一世界，再过清单十二条。
 
 改哪一路按「事实在哪」：脚本怎么跑在 harness，列叫什么在 bind。两边都在撒谎就两路 REWORK。
 
@@ -81,4 +83,4 @@ intent=REWORK bind
 
 ## 指针
 
-脚本仓确认纪律：`references/test-script-repo.md`。init 易错点：`references/construction-gotchas.md`。oracle 分类：`references/oracle.md`。
+两路草稿各自的完成条件：`skills/bind-harness/SKILL.md`、`skills/bind-columns/SKILL.md`。

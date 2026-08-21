@@ -3,9 +3,9 @@ name: lemma-mine
 description: 对本轮引理线索做证明或反驳。tg-solve 轮内 claim 使用。
 ---
 
-# 采矿引理
+# 证明引理
 
-只处理 closed lead pack 中的线索。主动找反例。本步是 producer：写出可被裁判 replay 的证书草稿，不自行决定是否写入排除集，不填 review。
+只处理已经写成「若 P 则 Q」的线索。主动找反例。本步只出证书草稿，交给下一步审查；不自己决定能不能写进排除集，也不填 review。
 
 问：在给定前提下，是否存在合法执行路径可以推翻这个结论？未找到 ≠ 不存在。也可读 `skills/source-proof/SKILL.md`（同一套完成条件）。
 
@@ -20,16 +20,16 @@ description: 对本轮引理线索做证明或反驳。tg-solve 轮内 claim 使
 ## 步骤
 
 1. **写成最小命题。** 前提 P ⇒ 结论 Q。观测绑定义务：若命题来自 REWRITE/REFUSE，须解释走了哪条入口、为何改写或拒绝。禁止把构造器先验拒采写成源码不可达。
-2. **分解义务并关闭。** 入口、控制流、赋值、调用、后续覆盖、替代路径。每项 `OPEN | CLOSED | BLOCKED`。漏入口、写点声明为 partial、调用目标未解析 → 不得 `PROVED`。关闭法见 `references/proof-obligations.md`。
+2. **分解义务并关闭。** 入口、控制流、赋值、调用、后续覆盖、替代路径。每项 `OPEN | CLOSED | BLOCKED`。漏入口、写点声明为 partial、调用目标未解析 → 不得 `PROVED`。关闭法见 `skills/source-proof/SKILL.md`。
 3. **先结构查询，再读窗口。** 先查图拿 span，再按 `file:line` 开最小窗口。partial 索引不能证明不存在。Grep 只作定位辅助。
 4. **主动找反例。** 其他入口、第一行分流、模板/宏/重载、alias、保存-修改-恢复。Host/Kernel 条件须经 TilingKey 映射，跳过 TemplateArg 的跨层蕴含通常错误。
-5. **出证书。** 最低字段见 `references/proof-certificate.md`。只贴 `file:line` 不够——必须有推理链 + 无后续覆盖。反例检查必须做过；声称 none 要可信。
+5. **出证书。** 最低字段见 `skills/source-proof/SKILL.md`。只贴 `file:line` 不够——必须有推理链 + 无后续覆盖。反例检查必须做过；声称 none 要可信。
 
 ## 常驻判断
 
-语义结论只有 `PROVED | REFUTED | INSUFFICIENT`。工作流层才映射是否可应用；producer 不升级 exclusion。
+语义结论只有 `PROVED | REFUTED | INSUFFICIENT`。能不能写进排除集由下一步审查决定；本步不升级 exclusion。
 
-假证模式（详见 `references/failure-patterns.md`）：
+假证模式（详见 `skills/source-proof/SKILL.md`）：
 
 - 漏入口 / 第一行分流
 - 搜索耗尽当不可达
@@ -40,7 +40,7 @@ description: 对本轮引理线索做证明或反驳。tg-solve 轮内 claim 使
 - 无观测写运行时不可达
 - 把运行时观察当成宏/模板的必然条件
 
-宏条件保留 compile-time provenance。Referee 独立上下文；自审自批无效。
+宏条件保留编译期出处。审查必须另开上下文；自审自批无效。
 
 ## 看到这样
 
@@ -64,7 +64,7 @@ description: 对本轮引理线索做证明或反驳。tg-solve 轮内 claim 使
 
 ## 循环
 
-1. 取出下一条 lead。不是 P⇒Q 就退回。
+1. 取出下一条线索。不是 P⇒Q 就退回。
 2. 列义务清单（入口 / 控制流 / 写点 / 调用 / 覆盖 / 替代路径）。
 3. 先查图拿 span，再开窗口。主动找反例。
 4. 能关的标 CLOSED 并引用窗口；不能关的 OPEN/BLOCKED。
@@ -80,8 +80,8 @@ obligations: entry/control/writes/calls/overwrite/alternatives/completeness
 counterexample: none | {condition, path}
 ```
 
-只贴行号不算证书。producer 不写 excluded。
+只贴行号不算证书。本步不写 excluded。
 
 ## 指针
 
-义务如何关：`references/proof-obligations.md`。证书字段：`references/proof-certificate.md`。假证：`references/failure-patterns.md`。静态包怎么读：`references/static-evidence.md`。
+证明方法与假证：`skills/source-proof/SKILL.md`。

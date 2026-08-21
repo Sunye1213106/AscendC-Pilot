@@ -77,8 +77,11 @@ retry-after-environment-fix --project D:\ops\attention\flash_attention_score_gra
 pilot_cli command=`uo-query --project <abs> [--architecture arch35]`
 pilot_cli command=`uo-query --project <abs> [--architecture arch35] s1Inner`
 pilot_cli command=`uo-query --project <abs> [--architecture arch35] Dim=DTemplateNum`
+pilot_cli command=`uo-query --project <abs> [--architecture arch35] IsTnd=1`
 pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_host/arch35/foo.cpp --line 120`
 ```
+
+`Dim=<维名>` 列出该维覆盖；`Name=Value` 做组合过滤。`--file --line` 只从上一张卡复制。
 
 `pilot_run` 参数：
 

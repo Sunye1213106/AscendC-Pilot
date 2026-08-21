@@ -153,6 +153,16 @@ def test_bind_init_fanout_writes_isolated_yaml_stubs(tmp_path: Path) -> None:
     assert (sdir / "prompt_bind.md").is_file()
     assert "golden" in (sdir / "method_harness.md").read_text(encoding="utf-8")
     assert "domains" in (sdir / "method_bind.md").read_text(encoding="utf-8")
+    harness_method = (sdir / "method_harness.md").read_text(encoding="utf-8")
+    bind_method = (sdir / "method_bind.md").read_text(encoding="utf-8")
+    assert "refs/bind-harness/harness-edge-cases.md" in harness_method
+    assert "refs/bind-columns/column-binding-edge-cases.md" in bind_method
+    assert "construction-gotchas" not in harness_method
+    assert "construction-gotchas" not in bind_method
+    assert (sdir / "refs" / "bind-harness" / "harness-edge-cases.md").is_file()
+    assert (sdir / "refs" / "bind-columns" / "column-binding-edge-cases.md").is_file()
+    assert not (sdir / "refs" / "bind-harness" / "column-binding-edge-cases.md").exists()
+    assert not (sdir / "refs" / "bind-columns" / "harness-edge-cases.md").exists()
 
 
 def test_bind_init_fanout_skips_existing_part(tmp_path: Path) -> None:

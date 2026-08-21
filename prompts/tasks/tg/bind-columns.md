@@ -1,5 +1,5 @@
 <task>
-写出 parts/bind.yaml：table_kind、entry、case_arg、columns、mapping、domains、findings。
+写出 parts/bind.yaml：调用接口 → CSV 列 → 剩余列 role/encoding；domains 做 profile vs operator 比较。
 </task>
 
 <input>
@@ -10,8 +10,9 @@
 
 <delta_constraints>
 1. 只写 bind.yaml；不要写 harness.yaml 或正式 tg/init.yaml。
-2. 有仓却 mapping 为空则本步失败；不要发明列、不要空值域。
-3. 无仓时列来自 Host API，kind=default_input。查语义用 uo-query。
+2. 先记 call.kind/api/site，再绑 API 入参。script_meta 禁止编造 uo_id。
+3. 未从卡片复制 file:line 时禁止 around。身份字段由框架写入。
+4. 无仓时不要假装 script_repo。
 </delta_constraints>
 
 <output>

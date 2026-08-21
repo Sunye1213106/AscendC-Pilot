@@ -5,13 +5,13 @@ description: 审查源码引理草稿是否可升级为排除。闭合裁判步�
 
 # 审查引理
 
-裁判 replay producer 的证书。搜索失败或裸 Host reject 单独不能升级为 exclusion。本步不自由探索新 hypothesis，不重新做一遍开放式源码研究，不修改 producer 草稿正文。
+复查上一步写出的证书。搜索失败或单次 Host reject 单独不能升级为 exclusion。本步不另开新命题，不重新做一遍开放式源码研究，不改上一步草稿正文。
 
 任务是验证：claim 是否明确、CLOSED 义务的证据是否真的证明该义务、枚举是完整还是 partial 却声称「全部」。
 
 ## 输入 / 输出 / 停
 
-读：producer 证书草稿、其 citation 指向的源码窗口、当前 Replay 事实。写：accept / reject / defer 的裁决，不要发明缺失 citation。
+读：证书草稿、其 citation 指向的源码窗口、当前 Replay 事实。写：accept / reject / defer 的裁决，不要发明缺失 citation。
 
 完成：每条升级都有源码窗口；否则保持开放。
 
@@ -40,10 +40,10 @@ description: 审查源码引理草稿是否可升级为排除。闭合裁判步�
 - 搜索失败升级为 exclusion
 - 裸 Host reject 当源码不可达
 - 发明缺失 citation
-- producer 自填 review
+- 上一步自己填 review
 - domain 当可达域、derived 当 exact
 
-value domain ≠ reachable domain。无观测不得声称运行时不可达。宏/模板条件保留 compile-time provenance。
+value domain ≠ reachable domain。无观测不得声称运行时不可达。宏/模板条件保留编译期出处。
 
 accept 之后才由确定性路径写入排除；本步不写 excluded 集，不改 `.uo`。
 
@@ -63,7 +63,7 @@ accept 之后才由确定性路径写入排除；本步不写 excluded 集，不
 
 - [ ] 逐项 replay 过 CLOSED 义务，不是只看结论词
 - [ ] 完整性声称与 completeness 字段一致
-- [ ] 没有发明 citation，没有改 producer 正文
+- [ ] 没有发明 citation，没有改上一步草稿正文
 - [ ] 不能升级的保持开放
 
 ## 循环
@@ -86,4 +86,4 @@ accept 才允许确定性路径写入排除。本步不写 excluded 集。
 
 ## 指针
 
-replay 清单：`references/referee-replay.md`。证书字段：`references/proof-certificate.md`。假证模式：`references/failure-patterns.md`。义务定义：`references/proof-obligations.md`。
+replay 清单：`references/referee-replay.md`。证明方法与假证：`skills/source-proof/SKILL.md`。

@@ -3,7 +3,7 @@ name: analyze-round
 description: 为本轮构造写 worklog：场景、收窄、引理线索。执行 analyze_round 时使用。
 ---
 
-# 轮次分析
+# 写本轮记录
 
 为本轮已构造的行写 worklog：场景与命中、构造、收窄、引理线索。权威闭合证据是 Host Replay 与经审查的源码引理。本步不签发、不改 cases 表、不写证书森林。
 
@@ -22,7 +22,7 @@ worklog 文首 `open:` 列出仍开放的义务。open 非空不得假装本轮�
 1. **按 case 写四段。** 每一行：(a) 场景与命中（对上哪条义务、Host 是 HIT / REWRITE / REFUSE / CRASH）；(b) 构造（控制列取了什么、recipe 复算了什么）；(c) 收窄（这条观测排除了什么、还剩什么）；(d) 引理线索（若有 P⇒Q，写成可反驳命题，不要写「感觉正确」）。
 2. **Replay 怎么读。** HIT 可增长 dispatch/key 的 R。REWRITE / REFUSE 是观测，供引理，不是 E。CRASH / NOT_RUN 是环境，禁止写 E，也不是 golden 失败。`Replay reject ≠ E`。
 3. **精度 / 性能另算。** Host 命中 TilingKey 关不了 `P-*` / `F-*`。这些看 harness 收据。缺收据 → 保持 open，标 `harness_missing`。
-4. **硬命题指针。** 需要证明或反驳线索时读 `skills/source-proof/SKILL.md`。采矿由 `skills/lemma-mine/SKILL.md` 做；本步只挂线索，不升级 exclusion。
+4. **硬命题指针。** 需要证明或反驳线索时读 `skills/source-proof/SKILL.md`。出证书由 `skills/lemma-mine/SKILL.md` 做；本步只挂线索，不升级 exclusion。
 5. **open 清单。** 文首列出仍开放的义务 id 与原因。能关的写清证据窗口；不能关的写还缺什么观测或哪条引理。
 
 ## 常驻判断
@@ -83,4 +83,4 @@ open: [义务id — 原因]
 
 ## 指针
 
-闭合易错点：`references/closure-gotchas.md`。oracle 分类：`references/oracle.md`。失败模式：`references/failure-patterns.md`。
+失败模式（残差停滞 / 假 gap=0 / R-E 冲突）：`references/failure-patterns.md`。硬命题：`skills/source-proof/SKILL.md`。证明引理：`skills/lemma-mine/SKILL.md`。

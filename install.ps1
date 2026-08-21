@@ -24,8 +24,10 @@ function Get-OpenCodeHome {
   return (Join-Path $HOME ".config\opencode")
 }
 
-# Keep install and uninstall on the same names (compose slash workflows).
-$workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
+# Compose slash workflows (pilot_run). `/uo-query` is a Command + Action Skill, not a workflow shell.
+$workflowSkills = @("uo-init","uo-update","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
+# Old installs left a workflow skill dir; unlink it. Uninstall still names it for cleanup.
+$staleWorkflowSkills = @("uo-query","workflow-orchestration","operator")
 # Action Skills are discovered from generated/<host>/cognitive-skills (or skills/) after compose.
 # Uninstall still names the old five families so leftover installs are cleaned.
 $legacyCognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
@@ -496,6 +498,9 @@ foreach ($name in $workflowSkills) {
   if (-not (Test-Path -LiteralPath $link)) {
     throw "failed to install skill $name → $link"
   }
+}
+foreach ($name in $staleWorkflowSkills) {
+  Remove-ReparseOrItem (Join-Path $Skills $name)
 }
 
 if ($Platform -eq "opencode") {

@@ -112,13 +112,10 @@ def _build(
                         "other": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
                         "allow_write": True,
                         "focus": (
-                            "写出 parts/harness.yaml：golden（脚本计算流 vs 算子逻辑 match/mismatch/缺口）、"
-                            "compare（真实精度 flag、atol/rtol/only_grad；禁止写成 --golden-only）、"
-                            "modes.precision / modes.perf、generate_inputs（含近 0 / 大边界 / 浮点异常缺口）、findings。"
-                            "无仓时 kind 事实来自 repo_scan，从算子/图提 golden 与精度/性能口径。"
-                            "只绑定测试仓与算子；禁止把某列标成 PR 焦点或本次测试目标。"
-                            "查图形态见 code-access 不变量。"
-                            "禁止写正式 tg/init.yaml。"
+                            "写出 parts/harness.yaml：golden、compare、modes.precision / modes.perf、"
+                            "generate_inputs、call.kind（pta / aclnn / mixed）+ call.api + call.site、findings。"
+                            "无仓时 kind 事实来自 repo_scan。禁止把某列标成 PR 焦点。"
+                            "禁止写正式 tg/init.yaml。身份字段由框架写入。"
                         ),
                     },
                     {
@@ -130,14 +127,12 @@ def _build(
                         "other": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
                         "allow_write": True,
                         "focus": (
-                            "写出 parts/bind.yaml：table_kind / entry / case_arg / columns / mapping"
-                            "（脚本读点 + UO 标识符 + Host API）/ domains（必须引用 tables[].profile 的 type/min/max/topk）/ findings。"
-                            "shape 列用 profile range，禁止把 *TemplateNum 合法集写成该列 enum；dim_* 用 Dim=Name。"
-                            "禁止为填 domains 去 Read 整份 CSV。无仓时列来自 Host API，kind=default_input。"
-                            "禁止发明列、空 mapping、空值域。只映射测试仓表头与算子标识符；"
-                            "禁止 PR#### focus / 把某 CSV 标成本次测试目标（PR 范围留给 /uo-query → plan）。"
-                            "查图用无参数索引 / 标识符 / Dim=V（形态见 code-access 不变量）。"
-                            "禁止写正式 tg/init.yaml。"
+                            "写出 parts/bind.yaml：先记调用接口 call.kind/api/site，再把 API 入参绑回 CSV 列，"
+                            "剩余列标 role=attr|feature|script_meta（script_meta 禁止编造 uo_id）。"
+                            "domains.profile 引用 tables[].profile；domains.operator 用标识符卡 / Dim=<维名> 覆盖列表 / Name=Value 组合；"
+                            "compare 为 match|tighter_profile|tighter_operator|mismatch。非平凡列写 encoding。"
+                            "禁止通读 CSV。查图用无参数索引 / 标识符 / Dim=<维名>；未从卡片复制 file:line 时禁止 around。"
+                            "禁止把某列标成 PR 焦点。禁止写正式 tg/init.yaml。身份字段由框架写入。"
                         ),
                     },
                 ],
@@ -211,15 +206,18 @@ def _build(
         "retry_budget": 3,
         "states": [
             _st("gate", "校验 init.yaml"),
+            _st("scope", "写测试用途"),
             _st("fuse", "融合意图写出义务"),
             _st("validate", "校验 YAML 义务表"),
             _st("approve", "批准规划"),
         ],
         "transitions": [
-            _tr("gate", "fuse"),
+            _tr("gate", "scope"),
+            _tr("scope", "fuse"),
             _tr("fuse", "validate"),
             _tr("validate", "approve"),
             _tr("validate", "fuse", kind="rework", reason_codes=["PLAN_INVALID"]),
+            _tr("fuse", "scope", kind="rework", reason_codes=["PLAN_SCOPE_REQUIRED"]),
             _tr("approve", "fuse", kind="rework", reason_codes=["rework"]),
         ],
         "phase_gates": {
@@ -229,6 +227,7 @@ def _build(
         "complete_gates": ["plan_approved"],
         "pipelines": {
             "gate": ["plan_precheck"],
+            "scope": ["plan_scope"],
             "fuse": ["plan_fuse", "plan_promote"],
             "validate": ["plan_validate"],
             "approve": ["plan_approve"],
@@ -236,7 +235,7 @@ def _build(
         "actions": [
             _act(
                 "plan_precheck",
-                label_zh="强制 init.yaml 并核对 UO digest",
+                label_zh="强制 init.yaml 并写出紧凑改动包",
                 phases=["gate"],
                 workflow_id="tg-plan",
                 agent_id="deterministic-tg-engine",
@@ -244,6 +243,20 @@ def _build(
                 pre_gates=["tg_init_confirmed", "kb_fingerprint_fresh"],
                 capability_ids=[],
                 output_contract_id="plan-precheck-v1",
+            ),
+            _act(
+                "plan_scope",
+                label_zh="写出这次测什么",
+                phases=["scope"],
+                workflow_id="tg-plan",
+                agent_id="tg-analyst",
+                role_id="producer",
+                capability_ids=["kb-query", "source-navigation", "source-reading"],
+                skill_id="plan-scope",
+                task_prompt_id="tg/plan-scope",
+                context_profile_id="tg-plan-plan-scope",
+                output_contract_id="tg-plan-scope-v1",
+                output_mode="direct",
             ),
             _act(
                 "plan_fuse",
@@ -314,7 +327,7 @@ def _build(
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
-        "phases": ["gate", "fuse", "validate", "approve"],
+        "phases": ["gate", "scope", "fuse", "validate", "approve"],
         "gates": ["tg_init_confirmed", "kb_fingerprint_fresh", "plan_approved"],
     },
     "tg-solve": {

@@ -179,6 +179,13 @@ def _apply_execution_rework_policy(
     fc = str(result.get("failure_class") or "")
     if fc in HUMAN_CLASSES:
         return result
+    if fc == IDENTITY_CONTRACT:
+        # Identity is stamped by finalize. Retry the Action (re-finalize);
+        # do not send the LLM back to copy run_id into yaml.
+        result["retryable"] = True
+        result["recommended_transition"] = "rework_required"
+        result["rework_action_ids"] = []
+        return result
     if fc == TRANSIENT_TOOL:
         result["retryable"] = True
         result["recommended_transition"] = "rework_required"

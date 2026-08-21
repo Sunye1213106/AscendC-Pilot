@@ -79,4 +79,4 @@ HOST 运行时叶不算定位失败。文件存在但 `not_extracted` 不算完�
 
 ## 指针
 
-权威分层：`references/codemap-authority.md`。完整性：`references/codemap-completeness.md`。gap 形态：`references/uo-gaps.md`。构建失败 vs 图缺口：`references/codemap-build-gotchas.md`。
+权威分层：`references/codemap-authority.md`。完整性：`references/codemap-completeness.md`。构建失败 vs 图缺口：`references/codemap-build-gotchas.md`。

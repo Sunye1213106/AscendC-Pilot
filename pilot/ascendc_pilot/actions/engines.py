@@ -992,11 +992,11 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "tg-bind-review-v1": [],
     "plan-precheck-v1": [],
+    "tg-plan-scope-v1": ["runs/{run_id}/actions/plan_scope/parts/purpose.md"],
     "tg-plan-v1": ["tg/plan.md"],
     "tg-plan-staging-v1": [
         "runs/{run_id}/actions/plan_fuse/parts/**",
         "runs/{run_id}/actions/plan_fuse/staging.md",
-        "runs/{run_id}/actions/plan_fuse/staging.yaml",
     ],
     "tg-plan-validate-v1": ["runs/{run_id}/receipts/plan_validate.yaml"],
     "tg-plan-approved-v1": ["tg/plan.md"],
@@ -1015,8 +1015,16 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "tg-certify-v1": ["runs/{run_id}/receipts/solve_certify.yaml"],
     "intent-promoted-v1": ["runs/{run_id}/receipts/intent_promoted.yaml"],
-
 }
+
+# Alternative draft locations: any one nonempty path satisfies the contract.
+OUTPUT_CONTRACT_MATCH_ANY: frozenset[str] = frozenset(
+    {
+        "tg-plan-staging-v1",
+        "tg-construct-staging-v1",
+        "tg-analyze-staging-v1",
+    }
+)
 
 # Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)
 OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {

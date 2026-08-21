@@ -7,11 +7,11 @@ description: 把测试意图融成有限覆盖计划。执行 /tg-plan 的 plan_
 
 把 `tg/init.yaml` 与 Planning Context 写成一份 `plan.md` 草稿：上半散文（这次为什么测），下半 YAML 义务表。正式文件由 `plan_promote` 写入。本步是融合，不是先套全覆盖再贴标签。
 
-Planning Context 来自调查综合（语义 + 脚本信息），不是必须先做过审查。没有 Context → `PLAN_CONTEXT_REQUIRED`，不要用「默认测一遍合法 Key」顶上。
+Planning Context **就是** `runs/.../plan_scope/parts/purpose.md`（外加用户意图 / handoff）。没有 purpose → `PLAN_SCOPE_REQUIRED`，回 scope，不要用「默认测一遍合法 Key」顶上，也不要在 init 与 plan 之间自己再查一轮图。
 
 ## 输入 / 输出 / 停
 
-读：`tg/init.yaml`（列、生成器、精度/性能入口）、Planning Context。没有 init → 停，去 `/tg-init`。
+读：`tg/init.yaml`（列、生成器、精度/性能入口）、`plan_scope/parts/purpose.md`。没有 init → 停，去 `/tg-init`。没有 purpose → 停，回 scope。
 
 写：计划草稿。批准前可变；`approved` 写在正式 YAML 围栏里，本步不自称已批准。
 
@@ -20,7 +20,7 @@ Planning Context 来自调查综合（语义 + 脚本信息），不是必须先
 ## 步骤
 
 1. **读 init。** 列、mapping、`generate_inputs`、`modes.precision` / `modes.perf`。缺列或缺生成器的事实带到义务闸门，不要假装能构造。
-2. **拆意图。** 来源可以是 `--intent`、对话、`ce/plan/*_plan.md`、`session_handoff.md`。禁止另写 `tg_plan_intent.yaml`。有意图就拆精度考虑 / 性能考虑（可重叠）。都没有 → 默认 L0，仍要写出能 root 的精度/性能义务。
+2. **拆意图。** Planning Context 就是 purpose.md。来源还可以叠加 `--intent`、对话、`ce/plan/*_plan.md`、`session_handoff.md`。禁止另写意图 YAML。有意图就拆精度考虑 / 性能考虑（可重叠）。都没有 → 默认 L0，仍要写出能 root 的精度/性能义务。
 3. **每条目标查图 root 到列。** 义务必须落到 `init.yaml` 的 CSV/XLS 列，不是全部合法 Key。依赖参数（轴∈rank、`dim_*` 派生）用 recipe 复算，不单独进 cover 维。
 4. **展开义务，选覆盖层。**
    - L0：每维一次
@@ -46,7 +46,7 @@ YAML 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cov
 | 现象 | 判断 |
 | --- | --- |
 | 没有 init.yaml | 停，去 `/tg-init` |
-| 没有 Planning Context | `PLAN_CONTEXT_REQUIRED` |
+| 没有 purpose.md | `PLAN_SCOPE_REQUIRED`，回 scope |
 | 意图只说「测准」 | 拆精度义务，读精度原语 |
 | 意图点名性能 / init 有 `modes.perf` | 读性能原语，带 `F-SHAPE-TYPICAL` |
 | 意图点名全量 tilingkey | 才做全量；否则禁止 T=D |

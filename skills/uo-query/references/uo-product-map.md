@@ -1,4 +1,4 @@
-# UO Product Map（progressive）
+# 查询产品地图
 
 短地图：认清权威 → 调用 `pilot_cli` `uo-query` → 查询完成后立即作答。简单查询直接调用；复杂查询同一轮委派。禁止 `pilot_run`。怎么查见 `skills/uo-query/SKILL.md`。
 
@@ -22,7 +22,7 @@
 4. **kernel-consumed** — Kernel 是否消费
 5. **full reachability** — 端到端可达（常需 TG）
 
-主问只需 1–3 时不要扩展到第 5 层。不同层级分开说，不能用 Host 不产生去否定「模板可接纳」。
+主问只需 1–3 时不要扩展到第 5 层。不同层级分开说，不能用 Host 不产生去否定「模板可接纳」。TilingKey / tiling 字段、kernel 分支、unresolved 缺口分开查，不要一次扩到 full reachability。
 
 ## 日常任务 → 调用形态
 
@@ -38,17 +38,5 @@
 | UT / 白盒线索 | `Dim=V` + 字段名 | 无参数索引的 gaps 计数 | 生成完整 ST 矩阵 |
 
 `source_span` 或查询返回的带行号 `snippet` **视为已 Read**。覆盖类 `dim_coverage` / `total_matched` 是全集。缺语义用 `PARTIAL` / `UNKNOWN`。空结果按 `hint` 用更短名字再查一次，禁止仓级 findstr。
-
-## 按需域文档
-
-| 域 | 文档 |
-| --- | --- |
-| TilingKey / packing | `uo-key.md` |
-| TilingData 字段写读 | `uo-tilingdata.md` |
-| Kernel 分支 | `uo-kernel.md` |
-| Template / BuildVariant | `uo-template.md` |
-| Buffer | `uo-buffer.md` |
-| unresolved | `uo-gaps.md` |
-| 场景 query 钩子 | `uo-scenario-hooks.md` |
 
 Worked example（**non-normative**）：`examples/uo-query-splitaxis/`。

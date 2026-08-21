@@ -77,4 +77,4 @@ revise 是补丁，不是第二份计划。
 
 ## 指针
 
-CE 易错点：`references/gotchas.md`。todo 怎么切：`references/slice-primitives.md`。
+改计划易错点：`references/gotchas.md`。

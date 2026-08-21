@@ -106,9 +106,10 @@ def _errors() -> list[str]:
 
     for path in PROMPTS.rglob("*.md"):
         text = path.read_text(encoding="utf-8", errors="replace")
-        if PROMPT_BAD.search(text):
+        stripped = re.sub(r"<[A-Z][A-Z0-9_]{2,}>", "", text)
+        if PROMPT_BAD.search(stripped):
             for tok in RUNTIME_PROMPT_TOKENS:
-                if tok in text and tok not in {"finalize"}:
+                if tok in stripped and tok not in {"finalize"}:
                     errors.append(f"PROMPT_RUNTIME_LEAK {path.as_posix()}: {tok}")
                     break
     return errors

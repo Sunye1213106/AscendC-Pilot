@@ -23,7 +23,7 @@ _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
     "（词表见 CONTEXT）。`/tg-plan` 不审查 diff。"
     "把测试意图落到有限覆盖子集（CSV/XLS 列或代码变量）及精度/性能要求。"
     "缺脚本/列/生成器（含随机数）写 test_harness_gap 说明书交 /ce-apply，不默认全量 tilingkey。"
-    "缺 Planning Context 返回 PLAN_CONTEXT_REQUIRED。"
+    "缺 purpose.md 返回 PLAN_SCOPE_REQUIRED。"
 )
 
 # Keep the Primary OpenCode permission contract explicit at the entrypoint. The

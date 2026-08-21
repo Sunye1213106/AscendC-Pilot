@@ -80,14 +80,10 @@ def test_splitaxis_example_is_non_normative() -> None:
     assert "examples/uo-query-splitaxis/" in product_map
 
 
-def test_ce_intent_grill_staging_in_bundle_profile() -> None:
-    from ascendc_pilot.context.profiles import get_profile
-
-    profile = get_profile("ce-plan-intent-grill")
-    refs = list(profile.references) if profile is not None else []
-    assert any("intent-grill-staging.md" in str(r) for r in refs)
+def test_ce_intent_grill_staging_in_skill_pointers() -> None:
     staging = _text("skills/ce-intent-grill/references/intent-grill-staging.md")
     method = _text("skills/ce-intent-grill/SKILL.md")
+    assert "`references/intent-grill-staging.md`" in method
     for token in ("范围", "不做的事", "测试内容", "未决"):
         assert token in staging
         assert token in method

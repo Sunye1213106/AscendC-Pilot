@@ -202,6 +202,9 @@ validate  [D]  mapping 空则失败   ──gate: init_confirmed
 gate     [D]  强制 init.yaml      ──gate: tg_init_confirmed
     │
     ▼
+scope    [S tg-analyst]  purpose.md（这次测什么）
+    │
+    ▼
 fuse     [S tg-analyst] → promote [D]  一份 plan.md
     │
     ▼

@@ -1,15 +1,15 @@
 ---
 name: bind-init
-description: 父索引：tg-init 在 repo_scan 之后分两路绑定 harness 与列。执行 bind_init 父 Action 时使用。
+description: tg-init 在 repo_scan 之后分两路：一路写怎么跑，一路写列怎么绑。执行 bind_init 父 Action 时使用。
 ---
 
-# 绑定测试合同
+# 分两路绑定
 
-本步是 fanout 父索引，不是自己写 YAML。`repo_scan` 之后分两路：一路写测试怎么跑，一路写表列怎么绑到算子变量。正式产物只有一份 `tg/init.yaml`，由主控裁判放行后的 `bind_promote` 写入。本文件不代替切片。
+本步自己不写 YAML。`repo_scan` 之后分两路：一路写测试怎么跑，一路写表列怎么绑到算子变量。正式产物只有一份 `tg/init.yaml`，主控审过两份草稿后由 `bind_promote` 写入。本文件不代替那两路各自的 Skill。
 
 无测试仓也两路都跑。`kind=default_input` 不是失败，是「列来自 Host API、没有脚本口径」。有仓却 mapping 空才是失败。
 
-## 为什么拆成父索引 + 两路
+## 为什么拆成两路
 
 引擎能扫表头和 argparse，但不能替你判断「这个 flag 算精度还是造数」「这一列是 shape 还是 Key 维」。这两类判断互读会串口径：harness 用列名猜 mapping，columns 用精度 mode 反推列。所以两路隔离写草稿，父步只保证到齐与边界，主控再通读裁判。
 
@@ -21,16 +21,16 @@ description: 父索引：tg-init 在 repo_scan 之后分两路绑定 harness 与
 
 两路：
 
-- `bind-harness` → `parts/harness.yaml`（golden / compare / 精度性能入口 / generate_inputs / findings）
-- `bind-columns` → `parts/bind.yaml`（列 mapping + domains）
+- `bind-harness` → `parts/harness.yaml`（golden / compare / 精度性能入口 / call.kind / generate_inputs / findings）
+- `bind-columns` → `parts/bind.yaml`（调用接口 + 列 mapping + 双源 domains）
 
 完成：两份草稿到齐，等待主控裁判。ACK 只认到齐数量，不替裁判读内容。
 
 ## 步骤
 
 1. **确认 scan 口径。** `kind=script_repo` 才把脚本仓当 runner；`kind=default_input` 不要假装已有仓、不要把算子仓 `tests/` 当 harness。用户改过路径则以最新 scan 为准，不要沿用旧表。
-2. **两路同时交卷，互不抄作业。** harness 不读 bind.yaml，columns 不读 harness.yaml。列值域以 `tables[].profile` 为准，禁止通读 CSV。
-3. **有仓则 mapping 必须有。** 每一列同时绑：脚本读点 + UO 标识符 + Host API。有仓却 mapping 空 → 本轮失败，不是「先 plan 再说」。
+2. **两路同时交卷，互不抄作业。** harness 不读 bind.yaml，columns 不读 harness.yaml。列值域以 `tables[].profile` 为准，禁止通读 CSV。身份字段由框架写入。
+3. **有仓则 API 入参 mapping 必须有。** 这些列同时绑：脚本读点 + UO 标识符。`script_meta` 不要假标识符。有仓却 API 列空 → 本轮失败。
 4. **精度/性能口径来自脚本事实。** argparse 的精度 mode 与性能 mode 分开写。默认值若是性能 mode，不得把默认当精度。`--golden-only`（不调 pta / 无需 NPU）是造数，不是精度。
 5. **裁判在主控。** 本步不 PASS、不 REWORK。切片写完即停。
 
@@ -48,7 +48,7 @@ description: 父索引：tg-init 在 repo_scan 之后分两路绑定 harness 与
 
 harness 必须能回答：现有 runner 怎么选 case、golden 怎么比、精度/性能分别怎么跑、现在造得出什么 / 造不出什么。
 
-columns 必须能回答：脚本读到的每一列对应哪个 UO 标识符；shape 列是 range；TilingKey 维用查图覆盖列表。不要把列标成 PR 焦点。
+columns 必须能回答：脚本怎么调算子、API 入参对应哪一列、剩余列是 attr/feature/script_meta；shape 列是 range；TilingKey 维用查图覆盖列表。不要把列标成 PR 焦点。
 
 冲突（列名对不上入口、精度口径与 argparse 矛盾、无仓却写成 script_repo）留给 `bind-review`，本步不合并。
 
@@ -73,7 +73,7 @@ columns 必须能回答：脚本读到的每一列对应哪个 UO 标识符；sh
 
 ## 循环
 
-本步几乎没有「再想一轮」：fanout 出去，两路交卷，停。
+本步几乎没有「再想一轮」：两路交卷，停。
 
 1. 读 `repo_scan.yaml` 的 `kind` 与仓根。路径被用户改过则以最新 scan 为准。
 2. 确认两路边界写进各自 prompt：harness 不写 mapping，columns 不写 modes。
@@ -88,4 +88,4 @@ columns 必须能回答：脚本读到的每一列对应哪个 UO 标识符；sh
 
 ## 指针
 
-切片各自只读自己的 Skill：`skills/bind-harness/SKILL.md`、`skills/bind-columns/SKILL.md`。脚本仓确认与 scan 纪律：`references/test-script-repo.md`。init 易错点：`references/construction-gotchas.md`。
+两路各自只读自己的 Skill：`skills/bind-harness/SKILL.md`、`skills/bind-columns/SKILL.md`。

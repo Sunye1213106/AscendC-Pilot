@@ -1,4 +1,4 @@
-# UO · Gaps / Unresolved
+# 缺口 / unresolved
 
 按需阅读。Deterministic pass 无法闭合的 residual 合法存在；**不得**默认用 LLM 补进 canonical `.uo`。
 

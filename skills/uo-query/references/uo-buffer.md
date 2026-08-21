@@ -1,4 +1,4 @@
-# UO · Buffer / LocalTensor
+# Buffer 与 LocalTensor
 
 按需阅读。
 

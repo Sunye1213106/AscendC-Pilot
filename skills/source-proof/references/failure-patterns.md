@@ -15,7 +15,7 @@
 ## domain 当可达域
 
 静态 `domain` / 可能值集合当作「运行不会取其他值」。  
-**对策**：`static-evidence.md` — value domain ≠ reachable domain。
+**对策**：value domain ≠ reachable domain。有 undecided 或 free vars 时不得对「不可能」返回 PROVED。
 
 ## derived 当 exact
 

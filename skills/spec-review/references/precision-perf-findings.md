@@ -1,24 +1,20 @@
-# Precision / perf findings (review only)
+# 精度/性能类发现
 
-**When to load**: `/ce-review` when the window contains Cast, copy, queue,
-or tiling-split code. Findings are H0/H1 clues. They do **not** enter CE
-`V`.
+**何时加载**：审查窗口里出现 Cast、拷贝、队列或切分公式，要把发现写成 H0/H1 线索时。这些线索不进 CE 的 `V`。
 
-## Side
+## 侧别
 
-`op_kernel/` → kernel numeric / copy / queue. `op_host/` → split formula /
-optional-input guards. State both sides if both moved.
+`op_kernel/` → 核内数值 / 拷贝 / 队列。`op_host/` → 切分公式 / 可选输入守卫。两边都动了就两边都写。
 
-## H0 / H1 cues
+## 线索
 
-| Window | H1 (needs path:line) | Related scenario clue |
+| 窗口 | H1（必须有 path:line） | 相关场景线索 |
 | --- | --- | --- |
-| `Cast` | wrong dst dtype or skipped path | `P-CAST`, `P-DTYPE` |
-| `DataCopy` last dim not 32B and not Pad | misaligned copy | `P-COPY-ALIGN` |
-| compute without EnQue/DeQue | stale UB / zeros | `P-QUEUE` |
-| long reduce without stable acc dtype | drift on large S | `P-REDUCE-LONG` |
-| split-field rhs change | tile/core bound shift | `F-SPLIT` |
-| InitBuffer / queue tposition | UB pressure | `F-BUFFER` |
+| `Cast` | 错 dst dtype 或跳过路径 | `P-CAST`、`P-DTYPE` |
+| `DataCopy` 末维非 32B 且未 Pad | 未对齐拷贝 | `P-COPY-ALIGN` |
+| 计算没有 EnQue/DeQue | 陈旧 UB / 全零 | `P-QUEUE` |
+| 长 reduce 没有稳定累加 dtype | 大 S 漂移 | `P-REDUCE-LONG` |
+| 切分字段 rhs 变了 | tile/核边界偏移 | `F-SPLIT` |
+| InitBuffer / 队列 tposition | UB 压力 | `F-BUFFER` |
 
-No `path:line` → not a finding. Point to CE scenario infer for test
-obligations; do not claim golden or profiler results from review.
+没有 `path:line` 就不是 finding。测试义务交给计划的测试内容，不要在审查里宣称 golden 或 profiler 结果。

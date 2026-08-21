@@ -9,6 +9,11 @@ def test_plan_intent_action_removed() -> None:
 
     assert "plan_intent" not in PRIMARY_TG_ACTIONS
     assert action_by_id("tg-plan", "plan_intent") is None
+    scope = action_by_id("tg-plan", "plan_scope")
+    assert scope is not None
+    assert scope.get("execution_mode") == "subagent"
+    assert scope.get("skill_id") == "plan-scope"
+    assert scope.get("output_mode") == "direct"
     fuse = action_by_id("tg-plan", "plan_fuse")
     assert fuse is not None
     assert fuse.get("execution_mode") == "subagent"

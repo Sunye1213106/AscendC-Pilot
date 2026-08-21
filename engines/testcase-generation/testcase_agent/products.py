@@ -67,6 +67,69 @@ def column_names(init_doc: dict[str, Any]) -> list[str]:
     return names
 
 
+_ROLES_REQUIRE_UO = frozenset({"api_arg", "attr", "feature"})
+_ROLES_OPTIONAL_UO = frozenset({"script_meta", "result_sink"})
+
+
+def mapping_as_dict(raw: Any) -> dict[str, Any]:
+    """Normalize bind mapping (list-of-rows or dict) keyed by column name."""
+    out: dict[str, Any] = {}
+    if isinstance(raw, dict):
+        items = raw.items()
+        for key, value in items:
+            col = str(key or "").strip()
+            if isinstance(value, dict):
+                row = dict(value)
+                col = str(row.get("column") or col).strip()
+            else:
+                row = {"uo_id": value}
+            if not col:
+                continue
+            row.setdefault("column", col)
+            out[col] = row
+        return out
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            col = str(item.get("column") or "").strip()
+            if not col:
+                continue
+            row = dict(item)
+            row.setdefault("column", col)
+            out[col] = row
+    return out
+
+
+def domains_as_dict(raw: Any) -> dict[str, Any]:
+    """Normalize bind domains (list-of-rows or dict) keyed by column name."""
+    out: dict[str, Any] = {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            col = str(key or "").strip()
+            if isinstance(value, dict):
+                row = dict(value)
+                col = str(row.get("column") or col).strip()
+            else:
+                row = {"legal": value}
+            if not col:
+                continue
+            row.setdefault("column", col)
+            out[col] = row
+        return out
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            col = str(item.get("column") or "").strip()
+            if not col:
+                continue
+            row = dict(item)
+            row.setdefault("column", col)
+            out[col] = row
+    return out
+
+
 def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -> list[str]:
     errors: list[str] = []
     schema = str(doc.get("schema") or "")
@@ -83,10 +146,22 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
     cols = column_names(doc)
     if kind == "script_repo" and not cols:
         errors.append("script_repo init.yaml has no columns")
-    mapping = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
+    mapping = mapping_as_dict(doc.get("mapping"))
     must_map = require_mapping if require_mapping is not None else kind == "script_repo"
     if must_map and not mapping:
         errors.append("script_repo mapping is empty; bind columns to script and UO identifiers")
+    api_mapped = False
+    for col, row in mapping.items():
+        if not isinstance(row, dict):
+            continue
+        role = str(row.get("role") or "api_arg").strip() or "api_arg"
+        if role in _ROLES_OPTIONAL_UO:
+            continue
+        api_mapped = True
+        if role in _ROLES_REQUIRE_UO and not str(row.get("uo_id") or "").strip():
+            errors.append(f"mapping {col}: {role} requires uo_id")
+    if kind == "script_repo" and must_map and mapping and not api_mapped:
+        errors.append("script_repo API argument columns are unbound; script_meta-only mapping is not enough")
     if kind == "script_repo":
         if not str(doc.get("entry") or "").strip():
             errors.append("entry required")

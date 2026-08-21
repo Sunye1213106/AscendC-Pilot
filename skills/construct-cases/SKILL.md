@@ -81,4 +81,4 @@ description: 按已批准计划定向构造用例行。执行 /tg-solve 的 cons
 
 ## 指针
 
-合同（一份 init.yaml、列是控制面）：`references/construction-contract.md`。闭合易错点：`references/closure-gotchas.md`。定向构造：`references/targeted-construct.md`。oracle：`references/oracle.md`。
+定向构造：`references/targeted-construct.md`。精度义务：`skills/precision-testing/SKILL.md`。性能义务：`skills/performance-testing/SKILL.md`。硬命题：`skills/source-proof/SKILL.md`。

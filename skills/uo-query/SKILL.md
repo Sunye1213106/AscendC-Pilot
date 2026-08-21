@@ -5,7 +5,7 @@ description: 只读查询已有 Operator CodeMap。用户问图上有什么、�
 
 # 查 CodeMap
 
-本步用已有 `.uo` 回答本路 FOCUS：图上有什么、谁写谁读、某维是否注册。权威是已 commit 的 `.uo`，不是记忆、不是未校验草稿。查询工具是插件 `pilot_cli` 的 `uo-query`。形态见 code-access 不变量（无参数索引 / 标识符 / `Dim=V` / `--file --line`）。
+本步用已有 `.uo` 回答本路 FOCUS：图上有什么、谁写谁读、某维是否注册。权威是已 commit 的 `.uo`，不是记忆、不是未校验草稿。查询工具是插件 `pilot_cli` 的 `uo-query`。形态见 code-access 不变量（无参数索引 / 标识符 / `Dim=<维名>` 覆盖列表或 `Name=Value` 组合 / `--file --line`）。
 
 不要改 `.uo`。不要宣布工作流 PASS。查询完成后立刻作答，不要为了先分类问题而空转。
 
@@ -19,7 +19,7 @@ description: 只读查询已有 Operator CodeMap。用户问图上有什么、�
 
 ## 步骤
 
-1. **选最短形态。** 名字 / 定义 / 字段写读 → 标识符。模板能否编过、kernel 是否注册 → `Dim=V`。从已知位点扩邻居 → `--file --line`。多阶段 launch 先看无参数索引里的 PIPE 阶段，不要把内层函数名当阶段。
+1. **选最短形态。** 名字 / 定义 / 字段写读 → 标识符。某维合法集 → `Dim=<维名>`。某组能否编过 → `Name=Value`。从已知位点扩 1 跳邻居 → `--file --line`（只从上一张卡复制）。多阶段 launch 先看无参数索引里的 PIPE 阶段，不要把内层函数名当阶段。
 2. **先图后源码。** 已有 `.uo` 时不要一上来 grep 整棵算子树。卡片带 `file:line` + snippet 视为已读；只要截断之外还需要行，才按卡片路径开最小窗口。路径从卡片 `file` / `next` 复制，禁止猜相对路径。
 3. **空结果先缩短再查。** `count:0` 按 `hint` / `canonical` 缩短标识符再查一次。禁止仓级 findstr。最后才对**已 citation 的文件**做只读搜索。仍空则 PARTIAL / UNKNOWN，不要写成「图上不存在」。
 4. **列表型结论用覆盖字段。** 声称某维没注册、某边没有，必须引用 `dim_coverage` / `edges` 的 `count` / `total_matched`。第一页 snippet 不是全集。

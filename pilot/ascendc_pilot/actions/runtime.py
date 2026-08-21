@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 from ascendc_pilot.actions.engines import (
+    OUTPUT_CONTRACT_MATCH_ANY,
     OUTPUT_CONTRACT_NONEMPTY_GLOBS,
     OUTPUT_CONTRACT_PATHS,
     invoke_engine,
@@ -548,10 +549,6 @@ def _stage_bind_part_for_rework(part: Path) -> None:
         shutil.copy2(part, prev)
     except OSError:
         pass
-    try:
-        part.unlink()
-    except OSError:
-        pass
 
 
 def _review_axis_fanout_tasks(
@@ -612,14 +609,34 @@ def _review_axis_fanout_tasks(
             prevs.append(f"{artifact}.prev")
             mp = _capability_method_path(repo, skill, cap)
             if mp.is_file():
-                (sdir / f"method_{axis}.md").write_text(mp.read_text(encoding="utf-8"), encoding="utf-8")
-            axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
-            if axis_tpid:
-                src_prompt = _task_prompt_path(repo, axis_tpid)
-                if src_prompt.is_file():
-                    (sdir / f"prompt_{axis}.md").write_text(
-                        src_prompt.read_text(encoding="utf-8"), encoding="utf-8"
-                    )
+                body = mp.read_text(encoding="utf-8")
+                (sdir / f"method_{axis}.md").write_text(body, encoding="utf-8")
+                axis_prompt_text = ""
+                axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
+                if axis_tpid:
+                    src_prompt = _task_prompt_path(repo, axis_tpid)
+                    if src_prompt.is_file():
+                        axis_prompt_text = src_prompt.read_text(encoding="utf-8")
+                        (sdir / f"prompt_{axis}.md").write_text(axis_prompt_text, encoding="utf-8")
+                from ascendc_pilot.actions.method_bundle import materialize_method_bundle
+
+                materialize_method_bundle(
+                    sdir,
+                    skill_ids=[skill],
+                    existing_method=body,
+                    project_root=repo,
+                    prompt=axis_prompt_text,
+                    current_skill_id=skill,
+                    method_filename=f"method_{axis}.md",
+                )
+            else:
+                axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
+                if axis_tpid:
+                    src_prompt = _task_prompt_path(repo, axis_tpid)
+                    if src_prompt.is_file():
+                        (sdir / f"prompt_{axis}.md").write_text(
+                            src_prompt.read_text(encoding="utf-8"), encoding="utf-8"
+                        )
         if len(artifacts) >= 2:
             first_method = sdir / f"method_{str(first_row.get('id') or 'harness')}.md"
             axis_dt = dict(dt)
@@ -683,16 +700,30 @@ def _review_axis_fanout_tasks(
         mp = _capability_method_path(repo, skill, cap)
         if not mp.is_file():
             return []
+        axis_method_text = mp.read_text(encoding="utf-8")
         axis_method = sdir / f"method_{axis}.md"
-        axis_method.write_text(mp.read_text(encoding="utf-8"), encoding="utf-8")
+        axis_method.write_text(axis_method_text, encoding="utf-8")
         axis_prompt_path = ""
+        axis_prompt_text = ""
         axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
         if axis_tpid:
             src_prompt = _task_prompt_path(repo, axis_tpid)
             if src_prompt.is_file():
+                axis_prompt_text = src_prompt.read_text(encoding="utf-8")
                 axis_prompt = sdir / f"prompt_{axis}.md"
-                axis_prompt.write_text(src_prompt.read_text(encoding="utf-8"), encoding="utf-8")
+                axis_prompt.write_text(axis_prompt_text, encoding="utf-8")
                 axis_prompt_path = axis_prompt.as_posix()
+        from ascendc_pilot.actions.method_bundle import materialize_method_bundle
+
+        materialize_method_bundle(
+            sdir,
+            skill_ids=[skill],
+            existing_method=axis_method_text,
+            project_root=repo,
+            prompt=axis_prompt_text,
+            current_skill_id=skill,
+            method_filename=f"method_{axis}.md",
+        )
         axis_dt = dict(dt)
         axis_write = [artifact] if allow_write else []
         axis_dt["write"] = axis_write
@@ -831,6 +862,21 @@ def _complete_bind_review_prepare(
     result["dispatch_task"] = False
     result["needs_human_decision"] = False
     parsed = _parse_bind_review_intent(turn)
+    from ascendc_pilot.yaml_check import format_yaml_error_zh, parse_yaml_mapping
+
+    _, harness_err = parse_yaml_mapping(harness)
+    _, bind_err = parse_yaml_mapping(bindp)
+    part_err = harness_err or bind_err
+    rework = list(parsed.get("rework") or []) if parsed else []
+    if part_err and not rework:
+        result["ok"] = False
+        result["error"] = "BIND_PART_YAML_INVALID"
+        result["host_step_kind"] = "primary_review"
+        result["message_zh"] = format_yaml_error_zh(part_err)
+        result["line"] = part_err.get("line")
+        result["column"] = part_err.get("column")
+        result["path"] = part_err.get("path")
+        return result
     if parsed and parsed.get("ok") is True:
         doc = {"schema": "tg-bind-review-verdict/v1", "ok": True}
         _dump(verdict_path, doc)
@@ -1325,10 +1371,13 @@ def _check_output_contract(
     missing = []
     empty = []
     identity_errors: list[dict[str, Any]] = []
+    match_any = contract_id in OUTPUT_CONTRACT_MATCH_ANY
+    any_nonempty = False
     for rel in expanded:
         matches = _resolve_contract_paths(root, rel)
         if not matches:
-            missing.append(rel)
+            if not match_any:
+                missing.append(rel)
             continue
         nonempty = False
         for path in matches:
@@ -1354,8 +1403,12 @@ def _check_output_contract(
             if path.is_dir() and any(p.is_file() and p.stat().st_size > 0 for p in path.rglob("*")):
                 nonempty = True
                 break
-        if not nonempty:
+        if nonempty:
+            any_nonempty = True
+        elif not match_any:
             empty.append(rel)
+    if match_any and not any_nonempty:
+        missing = list(expanded)
 
     # Stronger nonempty globs for TG plan/solve contracts
     glob_miss: list[str] = []
@@ -1588,6 +1641,7 @@ def prepare_action(
         workflow_id=wid,
         intent=f"run-action:{action_id}",
         repo_root=repo,
+        skill_id=str(action.get("skill_id") or action.get("action_method_id") or ""),
     )
     if isinstance(context_slice, dict) and context_slice.get("ok") is False:
         missing_refs = list(context_slice.get("missing_references") or [])
@@ -2050,18 +2104,20 @@ def prepare_action(
 
             ceiling = agent_skill_ceiling(actor_id, project_root)
             profile = get_profile(context_profile_id)
-            extra_refs = list(profile.references) if profile is not None else []
+            extra_refs = list(profile.conditional_refs) if profile is not None else []
             skill_ids = method_skill_ids_for_action(
                 action,
                 agent_skill_ids=ceiling,
                 extra_ref_paths=extra_refs,
             )
+            action_skill = str(action.get("skill_id") or action.get("action_method_id") or "").rsplit("/", 1)[-1]
             mat = materialize_method_bundle(
                 sdir,
                 skill_ids=[str(x) for x in skill_ids],
                 existing_method=method_r,
                 project_root=project_root,
                 extra_ref_paths=extra_refs,
+                current_skill_id=action_skill,
             )
             bundle["method_skill_ids"] = skill_ids
             bundle["agent_skill_ceiling"] = [str(x) for x in ceiling]
@@ -2474,6 +2530,54 @@ def prepare_action(
     return result
 
 
+def _iter_identity_stamp_paths(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+    contract_id: str,
+) -> list[Path]:
+    """YAML mappings the finalizer stamps: staging/output contract + owned UO receipts."""
+    from ascendc_pilot.ownership import expand_contract_paths
+
+    root = agent_root(project_root, _arch_for(project_root))
+    run_id = str(session.get("run_id") or "")
+    paths: list[Path] = []
+    seen: set[str] = set()
+
+    def _add(path: Path) -> None:
+        if not path.is_file():
+            return
+        if path.suffix.lower() not in {".yaml", ".yml"}:
+            return
+        key = path.resolve().as_posix()
+        if key in seen:
+            return
+        seen.add(key)
+        paths.append(path)
+
+    for rel in expand_contract_paths(
+        list(OUTPUT_CONTRACT_PATHS.get(contract_id) or []),
+        run_id=run_id,
+        workflow_id=str(session.get("workflow_id") or ""),
+        action_id=str(session.get("action_id") or action_id),
+        actor_id=str(session.get("actor_id") or ""),
+        action_session_id=str(session.get("action_session_id") or ""),
+    ):
+        for match in _resolve_contract_paths(root, rel):
+            if match.is_file():
+                _add(match)
+            elif match.is_dir():
+                for child in match.rglob("*"):
+                    _add(child)
+    owned = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
+    if owned is not None:
+        _add(owned)
+        if action_id in _SCOPE_GATE_ACTION_IDS:
+            _add(owned.parent / "receipt.yaml")
+    return paths
+
+
 def _finalize_inject_artifact_identity(
     project_root: Path,
     *,
@@ -2485,94 +2589,61 @@ def _finalize_inject_artifact_identity(
     from ascendc_pilot.ownership import artifact_identity_from_session, inject_trusted_identity
 
     identity = artifact_identity_from_session(session)
-    path = _finalize_owned_artifact_path(project_root, session=session, action_id=action_id)
-    if path is None:
+    targets = _iter_identity_stamp_paths(
+        project_root, session=session, action_id=action_id, contract_id=contract_id
+    )
+    if not targets:
         return {"ok": True, "skipped": True, "reason": "no_owned_artifact", "contract_id": contract_id}
-    if not path.is_file():
-        return {
-            "ok": True,
-            "skipped": True,
-            "reason": "artifact_missing",
-            "path": path.as_posix(),
-            "contract_id": contract_id,
-        }
     if yaml is None:
         return {
             "ok": False,
             "error": "IDENTITY_INJECTION_UNAVAILABLE",
-            "path": path.as_posix(),
             "message": "PyYAML is required to stamp artifact identity",
-        }
-    try:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "error": "IDENTITY_INJECTION_READ_FAILED",
-            "path": path.as_posix(),
-            "message": str(exc),
-        }
-    if not isinstance(doc, dict):
-        return {
-            "ok": False,
-            "error": "IDENTITY_INJECTION_INVALID_ARTIFACT",
-            "path": path.as_posix(),
-            "message": "artifact must be a YAML mapping to stamp identity",
+            "contract_id": contract_id,
         }
 
-    def _stamp_scope_safe(raw: dict[str, Any]) -> dict[str, Any]:
+    def _stamp_scope_safe(raw: dict[str, Any], path: Path) -> dict[str, Any]:
         """Stamp nested artifact_identity; keep top-level gate action_id."""
         prior_action = str(raw.get("action_id") or "").strip()
         stamped = inject_trusted_identity(raw, identity)
-        if _is_run_scoped_scope_artifact(path) or action_id in _SCOPE_GATE_ACTION_IDS:
-            # Canonical machine gate stamp — never rewrite to parent Action prepare.
+        if _is_run_scoped_scope_artifact(path) or (
+            action_id in _SCOPE_GATE_ACTION_IDS and path.name in {"scope_validated.yaml", "receipt.yaml"}
+        ):
             if prior_action in _SCOPE_GATE_ACTION_IDS and prior_action != "prepare":
                 stamped["action_id"] = prior_action
             else:
                 stamped["action_id"] = "scope_validated"
         return stamped
 
-    trusted = _stamp_scope_safe(doc)
-    try:
-        _dump(path, trusted)
-    except Exception as exc:  # noqa: BLE001
-        return {
-            "ok": False,
-            "error": "IDENTITY_INJECTION_WRITE_FAILED",
-            "path": path.as_posix(),
-            "message": str(exc),
-        }
-    # Also stamp scope receipt when present (prepare / scope_* owners).
-    if action_id in _SCOPE_GATE_ACTION_IDS:
-        receipt = path.parent / "receipt.yaml"
-        if receipt.is_file():
-            try:
-                rdoc = yaml.safe_load(receipt.read_text(encoding="utf-8")) or {}
-            except Exception as exc:  # noqa: BLE001
-                return {
-                    "ok": False,
-                    "error": "IDENTITY_INJECTION_READ_FAILED",
-                    "path": receipt.as_posix(),
-                    "message": str(exc),
-                }
-            if isinstance(rdoc, dict):
-                try:
-                    _dump(receipt, _stamp_scope_safe(rdoc))
-                except Exception as exc:  # noqa: BLE001
-                    return {
-                        "ok": False,
-                        "error": "IDENTITY_INJECTION_WRITE_FAILED",
-                        "path": receipt.as_posix(),
-                        "message": str(exc),
-                    }
-            else:
-                return {
-                    "ok": False,
-                    "error": "IDENTITY_INJECTION_INVALID_ARTIFACT",
-                    "path": receipt.as_posix(),
-                    "message": "receipt must be a YAML mapping to stamp identity",
-                }
-    return {"ok": True, "path": path.as_posix(), "contract_id": contract_id}
+    stamped_paths: list[str] = []
+    for path in targets:
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "IDENTITY_INJECTION_READ_FAILED",
+                "path": path.as_posix(),
+                "message": str(exc),
+            }
+        if not isinstance(doc, dict):
+            continue
+        try:
+            _dump(path, _stamp_scope_safe(doc, path))
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "IDENTITY_INJECTION_WRITE_FAILED",
+                "path": path.as_posix(),
+                "message": str(exc),
+            }
+        stamped_paths.append(path.as_posix())
+    return {
+        "ok": True,
+        "skipped": not stamped_paths,
+        "paths": stamped_paths,
+        "contract_id": contract_id,
+    }
 
 
 
@@ -2938,7 +3009,40 @@ def finalize_action(
     )
     producer_identity_ok = bool(producer_identity.get("ok"))
 
+    # Stamp run-scoped YAML before the contract check. Missing LLM-copied
+    # run_id must not fail the gate; Pilot identity is authoritative.
+    identity_injection = {"ok": True, "skipped": True}
     if producer_identity_ok:
+        identity_injection = _finalize_inject_artifact_identity(
+            project_root,
+            session=session,
+            action_id=action_id,
+            contract_id=contract_id,
+        )
+
+    if not producer_identity_ok:
+        contract = {
+            "ok": False,
+            "skipped": False,
+            "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
+            "producer_identity": producer_identity,
+            "message": str(
+                producer_identity.get("message")
+                or "producer-declared artifact identity conflicts with prepared Action session"
+            ),
+        }
+    elif not identity_injection.get("ok"):
+        contract = {
+            "ok": False,
+            "skipped": False,
+            "error": str(identity_injection.get("error") or "IDENTITY_INJECTION_FAILED"),
+            "identity_injection": identity_injection,
+            "message": str(
+                identity_injection.get("message")
+                or "finalizer could not stamp artifact identity"
+            ),
+        }
+    else:
         contract = _check_output_contract(
             project_root,
             contract_id,
@@ -2952,17 +3056,6 @@ def finalize_action(
             lease_id=lease_id,
             prepare_nonce=prepare_nonce,
         )
-    else:
-        contract = {
-            "ok": False,
-            "skipped": False,
-            "error": "PRODUCER_DECLARED_IDENTITY_MISMATCH",
-            "producer_identity": producer_identity,
-            "message": str(
-                producer_identity.get("message")
-                or "producer-declared artifact identity conflicts with prepared Action session"
-            ),
-        }
 
     # apply_result was previously set by the removed semantic-parts reduce path;
     # keep a defined local so every finalize path can report it without NameError.
@@ -2992,17 +3085,14 @@ def finalize_action(
 
     engine_ok = True if engine_result is None else bool(engine_result.get("ok", True))
     targets_ok = target_violation is None
-    overall_ok = bool(producer_identity_ok and gates_ok and contract_ok and engine_ok and targets_ok)
-
-    identity_injection = {"ok": True, "skipped": True}
-    if overall_ok:
-        identity_injection = _finalize_inject_artifact_identity(
-            project_root,
-            session=session,
-            action_id=action_id,
-            contract_id=contract_id,
-        )
-        overall_ok = bool(identity_injection.get("ok"))
+    overall_ok = bool(
+        producer_identity_ok
+        and identity_injection.get("ok")
+        and gates_ok
+        and contract_ok
+        and engine_ok
+        and targets_ok
+    )
 
     checker_result = {
         "ok": overall_ok,

@@ -28,13 +28,20 @@ def is_multi_token(pattern: str) -> bool:
     text = str(pattern or "").strip()
     if not text or "=" in text:
         return False
-    return len(identifier_tokens(text)) > 1
+    tokens = identifier_tokens(text)
+    if len(tokens) <= 1:
+        return False
+    # Qualified C++ names (result.mode, ns::Foo) are still one identifier query.
+    rest = _TOKEN_RE.sub("", text)
+    rest = rest.replace("::", "").replace(".", "").strip()
+    return bool(rest)
 
 
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _FOUR_FORMS_HINT = (
     "Use one of four forms: (1) no-arg index, (2) one identifier, "
-    "(3) Dim=V[,Other=V], (4) --file PATH --line N copied from a previous card."
+    "(3) Dim=<dimName> for one coverage list or Name=Value combo filter, "
+    "(4) --file PATH --line N copied from a previous card."
 )
 
 
@@ -116,7 +123,7 @@ def attach_query_hints(
         payload.setdefault("empty_reason", "pattern_looks_like_regex")
         payload["hint"] = (
             "Graph search is not regex; query one identifier. "
-            "For template coverage use Dim=V[,Other=V]."
+            "For template coverage use Dim=<dimName> or Name=Value combo filters."
         )
         payload["suggested_retries"] = tokens[:4]
         payload["pattern_tokens"] = tokens
@@ -130,7 +137,7 @@ def attach_query_hints(
     elif count == 0 and multi:
         payload["empty_reason"] = "no_substring_match"
         payload["hint"] = (
-            "Retry one shorter identifier, or Dim=V for template coverage, "
+            "Retry one shorter identifier, or Dim=<dimName> / Name=Value for coverage, "
             "or --file --line from a previous card."
         )
         payload["suggested_retries"] = tokens[:4]
@@ -139,14 +146,14 @@ def attach_query_hints(
         payload["empty_reason"] = payload.get("empty_reason") or "no_substring_match"
         payload.setdefault(
             "hint",
-            "Retry a shorter identifier, or Dim=V for template coverage, "
+            "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, "
             "or --file --line from a previous card. "
             "Empty is not proof the symbol is absent.",
         )
         if tokens:
             payload["suggested_retries"] = tokens[:4]
     if indexed is False:
-        extra = "Template coverage prefers Dim=V[,Other=V]; free-text is unindexed."
+        extra = "Template coverage prefers Dim=<dimName> or Name=Value (Dim=V); free-text is unindexed."
         prev = str(payload.get("hint") or "").strip()
         payload["hint"] = f"{prev} {extra}".strip() if prev else extra
     return payload

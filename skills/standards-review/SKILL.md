@@ -1,11 +1,11 @@
 ---
 name: standards-review
-description: 审查 diff 的 Standards 轴：是否符合仓规范与跨层契约。有 git/PR diff 且走 Standards 轴时使用。
+description: 审查 diff 的 Standards 这一路：是否符合仓规范与跨层契约。有 git/PR diff 且走 Standards 时使用。
 ---
 
 # Standards 轴
 
-只做 **Standards** 轴。不要做 Spec（完成度、超范围、粗意图验收是另一路）。Finding 必须有 `path:line`。报告前尝试推翻 H1（「改动不违反跨层契约与仓规范」）。
+只做 **Standards** 这一路。不要做 Spec（完成度、超范围、粗意图验收是另一路）。Finding 必须有 `path:line`。报告前尝试推翻 H1（「改动不违反跨层契约与仓规范」）。
 
 无 span 的「可能有问题」降级或不报。禁止只陈述变更理解。
 
@@ -30,7 +30,7 @@ description: 审查 diff 的 Standards 轴：是否符合仓规范与跨层契�
 
 Kernel 以字段 readers 行为准，不要把 `kernel_call_boundary` 调用点当成定义。TilingData 来源 ≠ 已校验：必须 locate 到 `OP_CHECK_IF` 且变量同一。
 
-本轴不验收「这次需求做完没有」——那是 Spec。两轴 finding 冲突时留给主控用字段卡裁定，禁止本步再派相同轴。
+本路不验收「这次需求做完没有」——那是 Spec。两路 finding 冲突时留给主控用字段卡裁定，禁止本步再派相同路。
 
 建议测试走 `/tg-plan`。不落 CE yaml，不合成 LGTM。
 
@@ -43,7 +43,7 @@ Kernel 以字段 readers 行为准，不要把 `kernel_call_boundary` 调用点�
 | 只看了 diff 行 | 不够；要对照 Tiling / Kernel 合同 |
 | EnQue / DeQue | TQue，看 QUEUE 方向 |
 | Set/Wait、CrossCore | `flag_paired`；happens-before 不在图 |
-| 想验收「需求做完没有」 | 那是 Spec 轴 |
+| 想验收「需求做完没有」 | 那是 Spec 那一路 |
 | 未审 `op_kernel` | 不宣称无高风险 |
 
 ## 完成勾选
@@ -59,7 +59,7 @@ Kernel 以字段 readers 行为准，不要把 `kernel_call_boundary` 调用点�
 2. 对每个新增/放宽组合走一遍 D_interface → … → implementation。
 3. 并发与 Buffer 看 tposition 与 QUEUE / flag_paired。
 4. 每个文件落 finding / format-only / UNREVIEWED。推翻 H1。
-5. 只交 Standards 轴。完成度问题留给 Spec。
+5. 只交 Standards 这一路。完成度问题留给 Spec。
 
 ## 输出形状
 

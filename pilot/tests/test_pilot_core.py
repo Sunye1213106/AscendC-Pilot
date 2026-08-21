@@ -415,7 +415,6 @@ def test_install_skill_lists_symmetric():
     workflow = (
         "uo-init",
         "uo-update",
-        "uo-query",
         "uo-investigate",
         "ce-review",
         "ce-plan",
@@ -432,6 +431,9 @@ def test_install_skill_lists_symmetric():
         assert name in wf_ps1, name
         assert name in wf_sh, name
         assert name in ps1 and name in sh
+    assert "uo-query" not in wf_ps1
+    assert "uo-query" not in wf_sh
+    assert "uo-query" in ps1 and "uo-query" in sh
     for retired in (
         "operator",
         "uo-diff",

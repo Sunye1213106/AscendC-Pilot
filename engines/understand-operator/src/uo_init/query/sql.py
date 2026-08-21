@@ -35,7 +35,7 @@ from uo_init.query.hints import (
     nl_or_multi_token_payload,
     search_needles,
 )
-from uo_init.query.legal_key_cache import _pattern_filters
+from uo_init.query.legal_key_cache import _pattern_filters, normalize_cover_pattern
 from uo_init.source_locator import locations_from_attr_sites
 
 SNIPPET_LINES = 40
@@ -95,7 +95,12 @@ CARD_EDGE_KINDS = NEIGHBOR_REL_KINDS + (
     "FLOWS_TO",
     "LAUNCHES",
 )
-EDGES_PER_KIND = 8
+EDGES_PER_KIND = 3
+DERIVES_PER_TILING_KEY = 3
+CARD_SNIPPET_MAX_LINES = 8
+AROUND_SEED_LIMIT = 16
+AROUND_NEIGHBORS_PER_KIND = 4
+TEMPLATE_BLOCK_EXEMPLARS = 1
 MAX_NAME_CARDS = 4
 _LAUNCH_NAMES = frozenset({"tpipe", "pipein", "pipebase", "pipepost", "pipe"})
 _EXACT_KINDS = {EntityKind.TYPE.value}
@@ -1041,6 +1046,30 @@ def _clip_hit_snippets(rows: list[Any], *, max_lines: int) -> None:
         row["snippet"] = _clip_snippet_around_line(
             snip, int(row.get("line_start") or 0), max_lines=max_lines
         )
+
+
+def _clip_definition_snippet(text: str, *, max_lines: int = CARD_SNIPPET_MAX_LINES) -> tuple[str, bool]:
+    lines = str(text or "").splitlines()
+    if len(lines) <= max_lines:
+        return str(text or ""), False
+    return "\n".join(lines[:max_lines]), True
+
+
+def _compact_around_hit(hit: dict[str, Any], *, snippet: bool = False) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "name": hit.get("name"),
+        "kind": hit.get("kind"),
+        "file": _norm_file(str(hit.get("file") or "")),
+        "line": int(hit.get("line_start") or hit.get("line") or 0),
+        "id": hit.get("id"),
+    }
+    if snippet:
+        clipped, truncated = _clip_definition_snippet(str(hit.get("snippet") or ""))
+        if clipped:
+            row["snippet"] = clipped
+        if truncated:
+            row["truncated"] = True
+    return {key: value for key, value in row.items() if value not in (None, "")}
 
 
 def _clip_snippets(payload: dict[str, Any], *, max_lines: int) -> None:
@@ -3029,14 +3058,15 @@ class UoSqlQuery:
         limit: int = 50,
     ) -> dict[str, Any]:
         needle = str(pattern or "").strip()
+        rest, dim_only = normalize_cover_pattern(needle)
         structured = {
             str(k).strip(): str(v).strip()
             for k, v in dict(filters or {}).items()
             if str(k).strip() and str(v).strip()
         }
         if not structured:
-            structured.update(_pattern_filters(needle))
-        graph_pattern = "" if structured else needle
+            structured.update(_pattern_filters(rest if rest else needle))
+        graph_pattern = "" if structured or dim_only else needle
         if graph_pattern:
             templates = self.templates_for_key(graph_pattern)
             macros = self.constant(graph_pattern)
@@ -3077,7 +3107,12 @@ class UoSqlQuery:
         if checked.get("ok"):
             all_blocks = _template_block_rows(checked.get("view"))
             universe_coverage = _dim_coverage(all_blocks)
-            if structured:
+            if dim_only:
+                product = list(universe_coverage.get(dim_only) or [])
+                dim_coverage = {dim_only: product}
+                matching_block_count = 0
+                block_matches = []
+            elif structured:
                 block_matches = [
                     row for row in all_blocks if _template_block_matches(row, structured)
                 ]
@@ -3085,7 +3120,7 @@ class UoSqlQuery:
                 dim_coverage = (
                     _dim_coverage_restricted(block_matches, structured)
                     if block_matches
-                    else universe_coverage
+                    else {}
                 )
                 if matching_block_count == 0:
                     nearby = _template_nearby(all_blocks, structured)
@@ -3094,35 +3129,98 @@ class UoSqlQuery:
                 matching_block_count = len(all_blocks)
                 block_matches = all_blocks
         compact_blocks = [_compact_template_block(row) for row in block_matches]
+        if not dim_only:
+            compact_blocks = compact_blocks[:TEMPLATE_BLOCK_EXEMPLARS]
+        else:
+            compact_blocks = []
         fixed_coverage = _fixed_coverage(block_matches) if block_matches else {}
+        if dim_only:
+            declared = self._declared_dim_values(dim_only)
+            product = list(dim_coverage.get(dim_only) or [])
+            completeness = "coverage_checked"
+            answerable = bool(product or declared)
+        elif structured:
+            completeness = "coverage_checked" if matching_block_count else "first_hit"
+            answerable = bool(matching_block_count)
+        else:
+            completeness = "coverage_checked" if dim_coverage else "first_hit"
+            answerable = bool(dim_coverage)
         coverage = {
             **_hits_coverage([], total=matching_block_count, dim_coverage=dim_coverage),
             "dim_coverage": dim_coverage,
             "fixed_coverage": fixed_coverage,
-            "completeness": "coverage_checked" if dim_coverage else "first_hit",
-            "answerable": bool(dim_coverage),
+            "completeness": completeness,
+            "answerable": answerable,
         }
         payload = {
-            "ok": bool(block_status.get("ok")) if structured else True,
+            "ok": bool(block_status.get("ok")) if structured or dim_only else True,
             "mode": "template_match",
             "pattern": needle,
             "filters": structured,
             "coverage": coverage,
             "dim_coverage": dim_coverage,
-            "matching_block_count": (
-                matching_block_count if structured else len(all_blocks or templates)
-            ),
-            "count": matching_block_count if structured else len(templates),
-            "templates": templates[: int(limit)],
-            "macros_compile_vars": macros[: int(limit)],
-            "template_blocks": compact_blocks[: int(limit)],
+            "matching_block_count": matching_block_count,
+            "count": matching_block_count if structured or dim_only else len(templates),
+            "templates": [] if structured or dim_only else templates[: int(limit)],
+            "macros_compile_vars": [] if structured or dim_only else macros[: int(limit)],
+            "template_blocks": compact_blocks,
             "template_projection": block_status,
             "fixed_coverage": fixed_coverage,
         }
+        if dim_only:
+            payload["dim_only"] = dim_only
+            payload["cover_kind"] = "dim_list"
+            payload["declared_coverage"] = {dim_only: self._declared_dim_values(dim_only)}
+            payload["product_coverage"] = {dim_only: list(dim_coverage.get(dim_only) or [])}
+            payload["count"] = len(payload["product_coverage"][dim_only])
         if nearby:
             payload["nearby"] = nearby
         attach_query_hints(payload, needle, count=int(payload["count"]))
+        if structured and matching_block_count == 0:
+            boolish = [
+                f"{k}=1"
+                for k, v in structured.items()
+                if str(v).lower() in {"true", "false", "yes", "no"}
+            ]
+            if boolish:
+                payload["hint"] = (
+                    "No combo matched. Boolean dims use 0/1 "
+                    f"(try {', '.join(boolish)}), not true/false. "
+                    "Dim=<name> lists one dimension's coverage."
+                )
         return _fit_payload(payload)
+
+    def _declared_dim_values(self, name: str) -> list[str]:
+        needle = str(name or "").strip()
+        if not needle:
+            return []
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT data FROM entity
+                WHERE kind = 'TILING_KEY' AND IFNULL(name, '') = ?
+                LIMIT 1
+                """,
+                (needle,),
+            ).fetchone()
+        if not row:
+            return []
+        try:
+            data = json.loads(_row_get(row, "data") or row[0] or "{}")
+        except (TypeError, json.JSONDecodeError, IndexError):
+            data = {}
+        if not isinstance(data, dict):
+            return []
+        attrs = data.get("attrs") if isinstance(data.get("attrs"), dict) else data
+        for key in ("value_domain", "declared_values", "allowed_values", "domain"):
+            raw = None
+            if isinstance(attrs, dict):
+                raw = attrs.get(key)
+            if raw is None:
+                raw = data.get(key)
+            if isinstance(raw, list) and raw:
+                return [str(v) for v in raw]
+        return []
 
     def aggregate_buffer(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
         needle = str(pattern or "").strip()
@@ -3574,6 +3672,13 @@ class UoSqlQuery:
             == _last_ident(str(by_kind[EntityKind.FIELD.value].get("name") or "")).lower()
         ):
             by_kind.pop(EntityKind.FIELD.value, None)
+        if (
+            EntityKind.TILING_KEY.value in by_kind
+            and EntityKind.TEMPLATE_ARG.value in by_kind
+            and _last_ident(str(by_kind[EntityKind.TILING_KEY.value].get("name") or "")).lower()
+            == _last_ident(str(by_kind[EntityKind.TEMPLATE_ARG.value].get("name") or "")).lower()
+        ):
+            by_kind.pop(EntityKind.TEMPLATE_ARG.value, None)
         cards_src = list(by_kind.values())[:MAX_NAME_CARDS]
         cards: list[dict[str, Any]] = []
         next_names: list[str] = []
@@ -3585,15 +3690,40 @@ class UoSqlQuery:
             name = str(hit.get("name") or needle)
             self_names.add(name.lower())
             grouped = self._grouped_edges(eid, entity_kind=kind)
+            if kind == EntityKind.TILING_KEY.value:
+                derives = grouped.get("DERIVES") if isinstance(grouped.get("DERIVES"), dict) else None
+                if derives:
+                    neigh = list(derives.get("neighbors") or [])
+                    if len(neigh) > DERIVES_PER_TILING_KEY:
+                        for row in neigh[DERIVES_PER_TILING_KEY:]:
+                            other = str(row.get("name") or "").strip()
+                            if other and other.lower() not in seen_next:
+                                seen_next.add(other.lower())
+                                next_names.append(other)
+                        derives["neighbors"] = neigh[:DERIVES_PER_TILING_KEY]
+                        derives["truncated"] = True
+                keep = {"WRITES", "READS", "DERIVES"}
+                grouped = {
+                    rel: (
+                        bucket
+                        if rel in keep
+                        else {"count": int(bucket.get("count") or 0)}
+                    )
+                    for rel, bucket in grouped.items()
+                    if isinstance(bucket, dict)
+                }
+            snippet, snip_cut = _clip_definition_snippet(str(hit.get("snippet") or ""))
             card: dict[str, Any] = {
                 "kind": kind,
                 "name": name,
                 "id": eid,
                 "file": hit.get("file") or "",
                 "line": int(hit.get("line_start") or 0),
-                "snippet": hit.get("snippet") or "",
+                "snippet": snippet,
                 "edges": grouped,
             }
+            if snip_cut:
+                card["truncated"] = True
             extras = self._card_extras(hit)
             line_end = int(hit.get("line_end") or hit.get("line_start") or 0)
             card["definition_span"] = {
@@ -3632,6 +3762,7 @@ class UoSqlQuery:
             card["edges"] = grouped
             if extras:
                 card["extras"] = extras
+            card["canonical"] = extras.get("canonical") or name
             cards.append(card)
             for group in grouped.values():
                 for row in list(group.get("neighbors") or []):
@@ -3743,7 +3874,12 @@ class UoSqlQuery:
                 continue
             bucket = grouped.setdefault(rel_kind, {"count": counts.get(rel_kind, 0), "neighbors": []})
             neighbors = bucket["neighbors"]
-            if len(neighbors) >= EDGES_PER_KIND:
+            kind_cap = (
+                DERIVES_PER_TILING_KEY
+                if skip_tpl and rel_kind == "DERIVES"
+                else EDGES_PER_KIND
+            )
+            if len(neighbors) >= kind_cap:
                 continue
             neighbors.append(
                 {
@@ -3853,7 +3989,11 @@ class UoSqlQuery:
                 }
         facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
         packing = facts.get("packing_value_sites")
-        if isinstance(packing, list) and packing:
+        if (
+            isinstance(packing, list)
+            and packing
+            and kind != EntityKind.TILING_KEY.value
+        ):
             extras["packing_value_sites"] = packing[:3]
         if kind in {EntityKind.COMPILE_VAR.value, EntityKind.MACRO.value}:
             extras["definition"] = {
@@ -3877,29 +4017,140 @@ class UoSqlQuery:
     def query_cover(self, pattern: str, *, limit: int = 8) -> dict[str, Any]:
         needle = str(pattern or "").strip()
         match = self.aggregate_template_match(needle, limit=limit)
-        legal = self.legal_key_query(pattern=needle, limit=limit)
+        _rest, dim_only = normalize_cover_pattern(needle)
+        if dim_only:
+            legal: dict[str, Any] = {"ok": True, "total_matched": 0, "count": 0}
+        else:
+            legal = self.legal_key_query(pattern=needle, limit=limit)
         matched = int(match.get("matching_block_count") or 0)
         coverage = dict(match.get("coverage") or {})
         dim_coverage = coverage.get("dim_coverage") or match.get("dim_coverage") or {}
         payload: dict[str, Any] = {
-            "ok": bool(match.get("ok") or legal.get("ok")),
+            "ok": bool(match.get("ok") or legal.get("ok") or dim_coverage),
             "shape": "cover",
             "pattern": needle,
+            "filters": match.get("filters") or {},
             "dim_coverage": dim_coverage,
             "matching_block_count": matched,
             "nearby": list(match.get("nearby") or [])[: int(limit)],
             "total_matched": int(legal.get("total_matched") or legal.get("count") or 0),
             "coverage": coverage,
-            "count": matched,
+            "count": int(match.get("count") or matched),
+            "answerable": bool((match.get("coverage") or {}).get("answerable")),
+            "completeness": str((match.get("coverage") or {}).get("completeness") or ""),
         }
+        if match.get("dim_only"):
+            payload["dim_only"] = match.get("dim_only")
+            payload["cover_kind"] = "dim_list"
+            payload["declared_coverage"] = match.get("declared_coverage") or {}
+            payload["product_coverage"] = match.get("product_coverage") or {}
+            payload["ok"] = True
         if matched > 0:
-            payload["template_blocks"] = list(match.get("template_blocks") or [])[: int(limit)]
+            payload["template_blocks"] = list(match.get("template_blocks") or [])[:TEMPLATE_BLOCK_EXEMPLARS]
         else:
             payload["template_blocks"] = []
-            payload.pop("templates", None)
-            payload.pop("macros_compile_vars", None)
-        attach_query_hints(payload, needle, count=matched, mode="cover")
+        attach_query_hints(payload, needle, count=int(payload.get("count") or 0), mode="cover")
+        if match.get("hint"):
+            payload["hint"] = match.get("hint")
         return _fit_payload(payload)
+
+    def _around_seed_hits(
+        self, file: str, start: int, end: int, *, limit: int
+    ) -> list[dict[str, Any]]:
+        needle = str(file or "").replace("\\", "/").lstrip("./")
+        cap = max(1, int(limit or AROUND_SEED_LIMIT))
+        with self._connect() as conn:
+            seed_rows = conn.execute(
+                """
+                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                       IFNULL(s.snippet, '') AS snippet
+                FROM entity e
+                LEFT JOIN source_span s ON s.entity_id = e.id
+                WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                  AND IFNULL(e.line_end, e.line_start) >= ?
+                  AND IFNULL(e.line_start, 0) <= ?
+                  AND IFNULL(e.line_start, 0) > 0
+                ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
+                LIMIT ?
+                """,
+                (needle, start, end, cap),
+            ).fetchall()
+            if not seed_rows:
+                leaf = needle.rsplit("/", 1)[-1]
+                rel = needle
+                for marker in ("op_host/", "op_kernel/", "common/", "tests/"):
+                    idx = needle.find(marker)
+                    if idx >= 0:
+                        rel = needle[idx:]
+                        break
+                alt = rel if rel != needle else leaf
+                if alt and alt != needle:
+                    seed_rows = conn.execute(
+                        """
+                        SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                               IFNULL(s.snippet, '') AS snippet
+                        FROM entity e
+                        LEFT JOIN source_span s ON s.entity_id = e.id
+                        WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                          AND IFNULL(e.line_end, e.line_start) >= ?
+                          AND IFNULL(e.line_start, 0) <= ?
+                          AND IFNULL(e.line_start, 0) > 0
+                        ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
+                        LIMIT ?
+                        """,
+                        (alt, start, end, cap),
+                    ).fetchall()
+            return self._hits_from_rows(conn, seed_rows, why="around", with_snippet=True)
+
+    def _around_one_hop(self, seed_ids: list[str]) -> list[dict[str, Any]]:
+        useful = tuple(USEFUL_EDGE_KINDS)
+        if not seed_ids or not useful:
+            return []
+        placeholders = ",".join("?" for _ in useful)
+        per_kind: dict[str, list[dict[str, Any]]] = {}
+        seen: set[tuple[str, str, str]] = set()
+        with self._connect() as conn:
+            for eid in seed_ids:
+                if not eid:
+                    continue
+                rows = conn.execute(
+                    f"""
+                    SELECT r.kind AS rel_kind, r.data AS rel_data,
+                           e.kind AS other_kind, e.name AS other_name,
+                           e.file AS other_file, e.line_start AS other_line, e.id AS other_id
+                    FROM relation r
+                    JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
+                    WHERE (r.src = ? OR r.dst = ?) AND r.kind IN ({placeholders})
+                    """,
+                    (eid, eid, eid, *useful),
+                ).fetchall()
+                for row in rows:
+                    if _is_advisory_data(_row_get(row, "rel_data")):
+                        continue
+                    rel = str(_row_get(row, "rel_kind") or "")
+                    bucket = per_kind.setdefault(rel, [])
+                    if len(bucket) >= AROUND_NEIGHBORS_PER_KIND:
+                        continue
+                    other_id = str(_row_get(row, "other_id") or "")
+                    other_name = str(_row_get(row, "other_name") or "")
+                    key = (rel, other_id, other_name)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    bucket.append(
+                        {
+                            "rel": rel,
+                            "name": other_name,
+                            "kind": str(_row_get(row, "other_kind") or ""),
+                            "file": _norm_file(str(_row_get(row, "other_file") or "")),
+                            "line": int(_row_get(row, "other_line") or 0),
+                            "id": other_id,
+                        }
+                    )
+        out: list[dict[str, Any]] = []
+        for rows in per_kind.values():
+            out.extend(rows)
+        return out
 
     def query_around(
         self,
@@ -3919,30 +4170,22 @@ class UoSqlQuery:
                 "error": "around_needs_file_line",
                 "hint": "Pass --file and --line from a previous card.",
             }
-        result = self.impact_of(path, (start, end or start))
-        if isinstance(result, dict):
-            count = int(result.get("count") or 0)
-            payload = {
-                "ok": count > 0,
-                "shape": "around",
-                "file": path,
-                "line": start,
-                "line_end": end or start,
-                **result,
-            }
-            payload["ok"] = count > 0
-            payload["count"] = count
-        else:
-            rows = list(result)[: int(limit)]
-            payload = {
-                "ok": bool(rows),
-                "shape": "around",
-                "file": path,
-                "line": start,
-                "line_end": end or start,
-                "count": len(rows),
-                "rows": rows,
-            }
+        seed_cap = AROUND_SEED_LIMIT
+        seeds = self._around_seed_hits(path, start, end or start, limit=seed_cap)
+        compact_seeds = [_compact_around_hit(hit, snippet=True) for hit in seeds]
+        neighbors = self._around_one_hop([str(hit.get("id") or "") for hit in seeds])
+        payload = {
+            "ok": bool(seeds),
+            "shape": "around",
+            "file": path,
+            "line": start,
+            "line_end": end or start,
+            "seeds": compact_seeds,
+            "neighbors": neighbors,
+            "hits": compact_seeds,
+            "count": len(seeds),
+            "truncated": False,
+        }
         attach_query_hints(payload, path, count=int(payload.get("count") or 0), mode="around")
         return _fit_payload(payload)
 
@@ -4008,10 +4251,10 @@ class UoSqlQuery:
         if launch.get("other_kernels"):
             payload["other_kernels"] = launch.get("other_kernels")
         attach_query_hints(payload, "", count=len(phases), mode="index")
-        dim_hint = ", ".join(dim_names[:6]) or "<dim_names>"
+        dim_example = next((n for n in dim_names if n), "S2TemplateNum")
         payload["hint"] = (
-            f"next: uo-query Dim=<{dim_hint}> or a single identifier; "
-            "use --file --line only after copying file:line from a previous card."
+            f"Coverage list: Dim={dim_example}. Combo filter: IsTnd=1 (Name=Value). "
+            "One identifier for a name card. --file --line only after copying file:line from a card."
         )
         return _fit_payload(payload)
 

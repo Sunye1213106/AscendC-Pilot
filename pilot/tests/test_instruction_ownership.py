@@ -90,7 +90,7 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     from ascendc_pilot.context.profiles import get_profile
 
     profile = get_profile("ce-review-code-review")
-    extra = list(profile.references) if profile is not None else []
+    extra = list(profile.conditional_refs) if profile is not None else []
     scoped = method_skill_ids_for_action(
         {"skill_id": "standalone-review"},
         agent_skill_ids=skill_ids,
@@ -123,13 +123,13 @@ def test_method_skill_ids_intersect_profile_and_ceiling() -> None:
     assert method_skill_ids_for_action(
         {"skill_id": "ce-plan-draft"},
         agent_skill_ids=ceiling,
-        extra_ref_paths=list(draft.references) if draft else [],
+        extra_ref_paths=list(draft.conditional_refs) if draft else [],
     ) == ["ce-plan-draft"]
     apply_prof = get_profile("ce-apply-patch")
     assert method_skill_ids_for_action(
         {"skill_id": "ce-apply"},
         agent_skill_ids=ceiling,
-        extra_ref_paths=list(apply_prof.references) if apply_prof else [],
+        extra_ref_paths=list(apply_prof.conditional_refs) if apply_prof else [],
     ) == ["ce-apply"]
 
 
@@ -240,7 +240,7 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
                 or []
             )
             profile = get_profile(action.get("context_profile_id"))
-            extra = list(profile.references) if profile is not None else []
+            extra = list(profile.conditional_refs) if profile is not None else []
             from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
 
             skill_ids = method_skill_ids_for_action(
@@ -256,6 +256,7 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
                 project_root=REPO,
                 prompt=prompt,
                 extra_ref_paths=extra,
+                current_skill_id=str(action.get("skill_id") or "").rsplit("/", 1)[-1],
             )
             if not mat.get("ok") or mat.get("unauthorized") or mat.get("missing"):
                 failures.append(
@@ -265,16 +266,30 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
     assert failures == []
 
 
-def test_cross_tree_tg_oracle_is_unauthorized(tmp_path: Path) -> None:
+def test_cross_tree_foreign_reference_is_unauthorized(tmp_path: Path) -> None:
     mat = materialize_method_bundle(
         tmp_path / "x",
         skill_ids=["ce-apply"],
-        existing_method="see `skills/construct-cases/references/oracle.md`",
+        existing_method="see `skills/analyze-round/references/failure-patterns.md`",
         project_root=REPO,
+        current_skill_id="ce-apply",
     )
     assert mat.get("ok") is False
     unauthorized = [str(x) for x in (mat.get("unauthorized") or [])]
-    assert any("construct-cases" in x and "oracle.md" in x for x in unauthorized)
+    assert any("analyze-round" in x and "failure-patterns.md" in x for x in unauthorized)
+
+
+def test_bare_basename_extra_ref_is_ambiguous(tmp_path: Path) -> None:
+    mat = materialize_method_bundle(
+        tmp_path / "y",
+        skill_ids=["ce-apply"],
+        existing_method="# ce apply\n",
+        project_root=REPO,
+        extra_ref_paths=["gotchas.md"],
+        current_skill_id="ce-apply",
+    )
+    assert mat.get("ok") is False
+    assert mat.get("reason_code") == "REFERENCE_AMBIGUOUS"
 
 
 def test_confirm_and_deterministic_omit_action_method_id() -> None:

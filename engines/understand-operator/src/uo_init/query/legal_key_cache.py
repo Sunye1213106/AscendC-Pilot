@@ -96,15 +96,32 @@ def _load_rows_from_blob(blob: Any) -> list[dict[str, Any]]:
     return expand_legal_key_rows(blob)
 
 
-def _pattern_filters(pattern: str) -> dict[str, str]:
-    """Parse ``Dim=1,Other=0`` from the existing --pattern CLI surface.
+def normalize_cover_pattern(pattern: str) -> tuple[str, str | None]:
+    """Split cover sugar from combo filters.
 
-    Keeping this in the query layer means the public ``acp uo-query`` command
-    does not need a second parallel flag grammar just to reach the index.
+    ``Dim=S2TemplateNum`` (no further ``=``) is a dim-only coverage list.
+    ``Dim=IsTnd=1`` / ``Dim=A=1,B=2`` drop the ``Dim=`` prefix so the first
+    ``=`` split stays ``Name=Value``. Bare ``IsTnd=1`` is unchanged.
+    """
+    text = str(pattern or "").strip()
+    if not text:
+        return "", None
+    while len(text) >= 4 and text[:4].lower() == "dim=":
+        rest = text[4:].strip()
+        if "=" not in rest:
+            return "", rest or None
+        text = rest
+    return text, None
+
+
+def _pattern_filters(pattern: str) -> dict[str, str]:
+    """Parse ``Name=Value[,Other=Value]`` from the existing --pattern CLI surface.
+
+    ``Dim=`` sugar is stripped by :func:`normalize_cover_pattern` first.
     Free-text patterns remain supported when every comma-separated token is not
     a simple key=value pair.
     """
-    text = str(pattern or "").strip()
+    text, _dim_only = normalize_cover_pattern(pattern)
     if not text or "=" not in text:
         return {}
     out: dict[str, str] = {}

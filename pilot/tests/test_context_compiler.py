@@ -21,6 +21,7 @@ _REQUIRED_PROFILES = (
     "uo-query-kb-lookup",
     "tg-init-bind-init",
     "tg-init-bind-review",
+    "tg-plan-plan-scope",
     "tg-plan-plan-fuse",
     "tg-solve-construct-cases",
     "tg-solve-analyze-round",
@@ -51,28 +52,29 @@ def test_high_value_profiles_registered() -> None:
         assert get_profile(pid).id == pid
 
 
-def test_profile_reference_files_exist() -> None:
+def test_profile_does_not_select_domain_references() -> None:
     for pid, prof in PROFILES.items():
-        for rel in prof.references:
-            assert (REPO / rel).is_file(), f"{pid}: missing {rel}"
+        assert not getattr(prof, "references", ()), pid
+        for rel in prof.conditional_refs:
+            assert (REPO / rel).is_file(), f"{pid}: missing conditional {rel}"
 
 
-def test_tg_profiles_materialize_phase_gotchas_not_index() -> None:
-    index = "skills/testcase-generation/references/gotchas.md"
-    bind_init = get_profile("tg-init-bind-init")
-    plan_fuse = get_profile("tg-plan-plan-fuse")
-    construct = get_profile("tg-solve-construct-cases")
-    analyze = get_profile("tg-solve-analyze-round")
-    assert bind_init is not None and plan_fuse is not None
-    assert construct is not None and analyze is not None
-    assert "skills/bind-init/references/construction-gotchas.md" in bind_init.references
-    assert "skills/plan-fuse/references/planning-gotchas.md" in plan_fuse.references
-    assert "skills/plan-fuse/references/planning-context.md" in plan_fuse.references
-    assert "skills/construct-cases/references/closure-gotchas.md" in construct.references
-    assert "skills/construct-cases/references/oracle.md" in construct.references
-    assert "skills/analyze-round/references/oracle.md" in analyze.references
-    for prof in (bind_init, plan_fuse, construct, analyze):
-        assert index not in prof.references, prof.id
+def test_tg_skill_pointers_are_action_local() -> None:
+    from ascendc_pilot.actions.method_bundle import declared_reference_paths
+
+    bind_init = declared_reference_paths("bind-init", REPO)
+    plan_fuse = declared_reference_paths("plan-fuse", REPO)
+    construct = declared_reference_paths("construct-cases", REPO)
+    analyze = declared_reference_paths("analyze-round", REPO)
+    assert bind_init == ()
+    assert "skills/plan-fuse/references/planning-gotchas.md" in plan_fuse
+    assert "skills/plan-fuse/references/planning-context.md" in plan_fuse
+    assert "skills/construct-cases/references/targeted-construct.md" in construct
+    assert "skills/construct-cases/references/oracle.md" not in construct
+    assert "skills/analyze-round/references/failure-patterns.md" in analyze
+    assert "skills/analyze-round/references/oracle.md" not in analyze
+    for path in (*bind_init, *plan_fuse, *construct, *analyze):
+        assert "skills/testcase-generation/references/gotchas.md" not in path
 
 
 def test_llm_actions_declare_registered_profiles() -> None:
