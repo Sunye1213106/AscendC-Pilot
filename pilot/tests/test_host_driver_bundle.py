@@ -35,9 +35,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def test_split_scope_ns_prefixes() -> None:
-    assert split_scope_ns("method:skills/operator-analysis/**") == (
+    assert split_scope_ns("method:skills/uo-query/**") == (
         "method",
-        "skills/operator-analysis/**",
+        "skills/uo-query/**",
     )
     assert split_scope_ns("pilot:uo/**")[0] == "pilot"
     assert split_scope_ns("source:op_host/**")[0] == "source"
@@ -47,11 +47,11 @@ def test_split_scope_ns_prefixes() -> None:
 
 
 def test_scope_allows_method_path(tmp_path: Path) -> None:
-    skill = REPO / "skills" / "operator-analysis" / "SKILL.md"
+    skill = REPO / "skills" / "uo-query" / "SKILL.md"
     assert skill.is_file()
     assert scope_allows_path(
         skill,
-        ["method:skills/operator-analysis/**"],
+        ["method:skills/uo-query/**"],
         project_root=REPO,
     )
 
@@ -251,7 +251,7 @@ def test_materialize_method_bundle_copies_refs(tmp_path: Path) -> None:
     sdir.mkdir()
     mat = materialize_method_bundle(
         sdir,
-        skill_ids=["operator-analysis"],
+        skill_ids=["uo-query"],
         existing_method="# existing\n",
         project_root=REPO,
     )
@@ -269,22 +269,22 @@ def test_materialize_method_bundle_copies_named_refs_only(tmp_path: Path) -> Non
     sdir.mkdir()
     mat = materialize_method_bundle(
         sdir,
-        skill_ids=["code-engineering"],
+        skill_ids=["ce-plan-draft"],
         existing_method="See playbook `references/gotchas.md`.\n",
         project_root=REPO,
         prompt="Also `references/risk-classes.md`.\n",
     )
     copied = list(mat.get("copied") or [])
     assert copied == [
-        "refs/code-engineering/gotchas.md",
-        "refs/code-engineering/risk-classes.md",
+        "refs/ce-plan-draft/gotchas.md",
+        "refs/ce-plan-draft/risk-classes.md",
     ]
-    assert (sdir / "refs" / "code-engineering" / "gotchas.md").is_file()
-    assert (sdir / "refs" / "code-engineering" / "risk-classes.md").is_file()
-    assert not (sdir / "refs" / "code-engineering" / "scenario-catalog.md").is_file()
+    assert (sdir / "refs" / "ce-plan-draft" / "gotchas.md").is_file()
+    assert (sdir / "refs" / "ce-plan-draft" / "risk-classes.md").is_file()
+    assert not (sdir / "refs" / "ce-plan-draft" / "scenario-catalog.md").is_file()
     assert mat.get("indexed") == [
-        "references/code-engineering/gotchas.md",
-        "references/code-engineering/risk-classes.md",
+        "references/ce-plan-draft/gotchas.md",
+        "references/ce-plan-draft/risk-classes.md",
     ]
 
 
@@ -293,7 +293,7 @@ def test_method_bundle_repo_root_is_parents_3() -> None:
 
     here = Path(mb.__file__).resolve()
     assert here.parents[3] in mb._repo_candidates(None)
-    found = mb.find_cognitive_skill_dir("code-engineering", project_root=None)
+    found = mb.find_cognitive_skill_dir("ce-plan-draft", project_root=None)
     assert found is not None
     assert (found / "SKILL.md").is_file()
     assert (found / "references" / "gotchas.md").is_file()
@@ -524,7 +524,7 @@ def test_method_bundle_fail_closed_without_placeholder(tmp_path: Path) -> None:
         project_root=tmp_path,
     )
     assert mat.get("ok") is False
-    assert mat.get("reason_code") == "METHOD_BUNDLE_MISSING"
+    assert mat.get("reason_code") == "SKILL_BUNDLE_MISSING"
     assert not (sdir / "method.md").is_file()
 
 

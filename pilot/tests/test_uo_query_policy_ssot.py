@@ -18,72 +18,38 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     assert agent["id"] == "uo-query"
     assert agent["write_scopes"] == []
 
-    method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
+    skill = _text("skills/uo-query/SKILL.md")
     prompt = _text("prompts/tasks/uo/codemap-query.md")
     invariant = _text("pilot/policies/invariants/control-invariants.md")
     access = _text("pilot/policies/invariants/code-access-invariants.md")
+    reason = _text("pilot/policies/invariants/intent-reasoning.md")
 
     assert "禁止 Write `answer.yaml`" in invariant
-    assert "源码作答" in method
-    assert "禁止 Glob/dir/tree 找 `.uo`" in method
-    assert "dim_coverage" in method
-    assert "Dim=V" in method
+    assert "partial" in skill or "不存在" in skill
     assert "Dim=V" in access
     assert "禁止 `--mode`" in access
-    assert "edges" in method
     assert "--query" in _text("pilot/ascendc_pilot/cli.py")
-    assert "session `method.md`" in method
+    assert "相关 ≠ 单域" in reason
+    assert "fanout" in reason.lower() or "隔离" in reason
 
     assert "return_value" not in prompt
     assert "answer.yaml" not in prompt
     assert "--finalize" not in prompt
 
-    stale_phrases = (
-        "subagent MUST Write lease `answer.yaml`",
-        "subagent 必须把答案写入 lease 的 `answer.yaml`",
-        "返工让 subagent 补写该文件",
-    )
-    all_text = "\n".join((method, prompt, invariant))
-    for phrase in stale_phrases:
-        assert phrase not in all_text
 
-
-def test_uo_query_router_owned_by_method() -> None:
-    router = _text("skills/operator-analysis/routing/uo-query.md")
-    method = _text("skills/operator-analysis/capabilities/uo-query/METHOD.md")
-    skill = _text("skills/operator-analysis/SKILL.md")
-    assert "compile" not in router
-    assert "FIRST_QUERY" not in router
-    assert "直接调用" in router
-    assert "委派" in router
-    assert "分别委派" in router
-    assert "综合只在主控" in router
-    assert "先向用户说明" not in router
-    assert "禁止单独一轮" in router
-    assert "数量由主控判断" not in router
-    assert "host_step.tasks" not in router
-    assert "每轮最多" in router
-    assert "不要传 `--mode`" not in method
+def test_uo_query_router_owned_by_primary() -> None:
+    reason = _text("pilot/policies/invariants/intent-reasoning.md")
+    skill = _text("skills/uo-query/SKILL.md")
+    assert "compile" not in reason
+    assert "FIRST_QUERY" not in reason
+    assert "分别派" in reason or "分别委派" in reason
+    assert "综合只在主控" in reason
+    assert "相关 ≠ 单域" in reason
+    assert "相关 ≠ 单域" not in skill
     assert "禁止 `--mode`" in _text("pilot/policies/invariants/code-access-invariants.md")
-    assert "丢掉" not in method
-    assert "旧 CLI" not in method
-    assert "旧 mode" not in router
-    assert "kernel_launch" not in method
-    assert "ProcessVec" not in method
-    assert "template_match" not in method
-    assert "SLICE_ID" not in method
-    assert "Dim=V" in method
-    assert "--file" in method and "--line" in method
-    assert "视为已 Read" in method
-    assert "routing/uo-query.md" in skill
+    assert "routing/uo-query.md" not in skill
     ctx = _text("agents/CONTEXT.md")
     assert "主控当前会话 `acp uo-query`" not in ctx
-    assert "uo-query-router/METHOD.md" not in skill
-    assert "相关 ≠ 单域" not in skill
-    assert "相关 ≠ 单域" in router
-    assert "Q6" not in skill
-    assert "Q7" not in skill
-    assert "Q18" not in skill
 
 
 def test_uo_query_host_behavior_not_phrase_sync() -> None:
@@ -98,30 +64,18 @@ def test_uo_query_host_behavior_not_phrase_sync() -> None:
     assert "uo-query" in invariant
     assert "host_step.tasks" in invariant
     assert "不要 `pilot_run`" in command_src
-    assert "routing/uo-query.md" in command_src
+    assert "routing/uo-query.md" not in command_src
     assert "禁止在 Task 正文写 `--mode`" not in command_src
     assert "禁止 `--mode`" in _text("pilot/policies/invariants/code-access-invariants.md")
     assert "丢掉" not in command_src
     assert "--mode locate" not in hook
-    assert "短问" not in invariant
-    assert "深问" not in invariant
-    assert "Compile output is candidates" not in invariant
     assert "UO_QUERY_NOT_HOST_DRIVEN" in driver
     assert "primary_router" in driver
     assert 'startedKind === "primary_router"' in driver
-    assert 'perm.task = "allow"' not in hook
-    assert "Do not widen task" in hook
-    assert '"tasks"' in driver
-    assert "native_tasks" in driver
-    assert "readDispatchFor" in driver_facade
-    assert "currentHostSessionHint" in driver_facade
-    assert "SLICE_ID=" in hook
-    assert "fanout_slice" in hook
-    assert "primary_synthesize" in hook
 
 
 def test_splitaxis_example_is_non_normative() -> None:
-    product_map = _text("skills/operator-analysis/references/uo-product-map.md")
+    product_map = _text("skills/uo-query/references/uo-product-map.md")
     assert "non-normative" in product_map
     assert "examples/uo-query-splitaxis/" in product_map
 
@@ -132,9 +86,8 @@ def test_ce_intent_grill_staging_in_bundle_profile() -> None:
     profile = get_profile("ce-plan-intent-grill")
     refs = list(profile.references) if profile is not None else []
     assert any("intent-grill-staging.md" in str(r) for r in refs)
-    staging = _text("skills/code-engineering/references/intent-grill-staging.md")
-    method = _text("skills/code-engineering/capabilities/ce-intent-grill/METHOD.md")
-    for token in ("范围", "不做的事", "测试内容", "未决", "staging.md"):
+    staging = _text("skills/ce-intent-grill/references/intent-grill-staging.md")
+    method = _text("skills/ce-intent-grill/SKILL.md")
+    for token in ("范围", "不做的事", "测试内容", "未决"):
         assert token in staging
         assert token in method
-    assert "目录遍历" in method

@@ -222,7 +222,7 @@ def test_skill_allowed_for_primary_denied_for_uo_query(tmp_path: Path) -> None:
     primary = authorize(op, tool="skill", command="uo-init", agent="ascendc-pilot")
     assert primary.get("decision") == "allow", primary
     assert primary.get("reason_code") == "SKILL_PRIMARY"
-    child = authorize(op, tool="skill", command="operator-analysis", agent="uo-query", action="kb_lookup")
+    child = authorize(op, tool="skill", command="uo-query", agent="uo-query", action="kb_lookup")
     assert child.get("decision") == "deny", child
     assert child.get("reason_code") == "SKILL_SUBAGENT_ESCAPE"
 

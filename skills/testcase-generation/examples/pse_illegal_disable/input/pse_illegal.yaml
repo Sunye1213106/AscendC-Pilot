@@ -1,4 +1,0 @@
-INPUT pse
-name: pse
-illegal_combo: true
-expected_scenarios: [P-DTYPE, P-OPTIONAL, P-ILLEGAL]

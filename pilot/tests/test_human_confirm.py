@@ -188,7 +188,7 @@ def test_hosted_confirm_skips_tg_on_full_coverage_goal(tmp_path: Path) -> None:
     start_workflow(
         tmp_path,
         "tg-init",
-        phase="confirm",
+        phase="bind",
         force_phase=True,
         architecture="arch35",
         intent="补全量 TilingKey 覆盖测试",
@@ -250,7 +250,7 @@ def test_hosted_confirm_asks_tg_without_goal(tmp_path: Path) -> None:
     start_workflow(
         tmp_path,
         "tg-init",
-        phase="confirm",
+        phase="bind",
         force_phase=True,
         architecture="arch35",
         intent="只绑定测试脚本",

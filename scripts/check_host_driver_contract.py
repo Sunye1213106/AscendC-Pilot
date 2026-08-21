@@ -33,7 +33,7 @@ def main() -> int:
         return 1
 
     # Scope namespace split
-    ns, pat = split_scope_ns("method:skills/operator-analysis/**")
+    ns, pat = split_scope_ns("method:skills/uo-query/**")
     if ns != "method" or not pat.startswith("skills/"):
         errors.append(f"split_scope_ns method failed: {(ns, pat)}")
     ns2, pat2 = split_scope_ns("uo/**")

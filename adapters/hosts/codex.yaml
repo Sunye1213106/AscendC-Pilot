@@ -1,14 +1,5 @@
 # Codex host defaults for composed skills.
+# Workflow slash entries stay invokable. Action Skills are internal.
 skill_defaults:
   disable-model-invocation: false
-skills:
-  operator-analysis:
-    disable-model-invocation: true
-  testcase-generation:
-    disable-model-invocation: true
-  source-proof:
-    disable-model-invocation: true
-  code-review:
-    disable-model-invocation: true
-  code-engineering:
-    disable-model-invocation: true
+skills: {}

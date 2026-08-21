@@ -15,11 +15,13 @@ if str(PILOT) not in sys.path:
 
 def _command_body(workflow_id: str) -> str:
     if workflow_id == "uo-query":
-        return """查询已有 Operator CodeMap。不要 `pilot_run`。怎么拆见 `cognitive-skills/operator-analysis/routing/uo-query.md`。形态见 code-access 不变量。
+        return """查询已有 Operator CodeMap。这是 Command，不要 `pilot_run`。
 
 用户参数：$ARGUMENTS
 
-简单查询直接调用 `pilot_cli` `uo-query`；复杂查询同一轮委派 `Task(agent=uo-query)`。
+缺的 init（`.uo`，若还要出用例则含 `tg/init.yaml`）先 `pilot_run` 补齐，再调查。
+一路且短：主控直接 `pilot_cli` `uo-query`。多路或会撑窗口：同一轮 `Task(agent=uo-query)`，综合只在主控。结论冲突再派一路只核对冲突点。
+形态见 code-access 不变量。拆路见 intent-reasoning。
 """
     if workflow_id == "uo-init":
         return """对当前算子项目运行 AscendC-Pilot 工作流 `uo-init`。

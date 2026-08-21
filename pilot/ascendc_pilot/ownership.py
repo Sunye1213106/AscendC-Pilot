@@ -390,7 +390,9 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "source:tests/**",
             "runs/**",
             "context/**",
-            "skills/code-review/**",
+            "skills/standalone-review/**",
+            "skills/spec-review/**",
+            "skills/standards-review/**",
         ],
         "review_report": [
             "ce/plan/**",

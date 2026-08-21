@@ -36,13 +36,9 @@ WORKFLOW_SKILLS: tuple[str, ...] = (
     "tg-solve",
     "workflow-orchestration",
 )
-COGNITIVE_SKILLS: tuple[str, ...] = (
-    "operator-analysis",
-    "testcase-generation",
-    "source-proof",
-    "code-review",
-    "code-engineering",
-)
+from compose_runtime_legacy import listed_skill_ids
+
+COGNITIVE_SKILLS: tuple[str, ...] = listed_skill_ids()
 OPENCODE_COMMANDS: tuple[str, ...] = (
     "uo-init",
     "uo-update",

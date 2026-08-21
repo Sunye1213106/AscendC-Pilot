@@ -1,6 +1,6 @@
 # 什么是高质量信息库
 
-> 抽检口径，不是架构权威。实现与 [uo.md](../modules/uo.md)、[uo-product-map.md](../../skills/operator-analysis/references/uo-product-map.md) 冲突时，以代码和那两份为准。
+> 抽检口径，不是架构权威。实现与 [uo.md](../modules/uo.md)、[uo-product-map.md](../../skills/uo-query/references/uo-product-map.md) 冲突时，以代码和那两份为准。
 >
 > 收据：`artifacts/uo-init-generalization/host-recv-narrow/`（2026-08-14，FAG arch35 + IFA arch22 冷启动）。
 

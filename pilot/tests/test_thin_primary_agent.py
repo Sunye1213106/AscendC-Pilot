@@ -35,7 +35,7 @@ def test_thin_primary_agent_description() -> None:
     assert meta.get("mode") == "primary"
     skills = meta.get("skill_ids") or meta.get("max_skill_ids") or []
     assert "workflow-orchestration" not in skills
-    assert "operator-analysis" in skills
+    assert list(skills) == []
     assert "read_scopes" in meta
     assert "write_scopes" in meta
     assert meta.get("machine_constraints") or meta.get("forbidden")

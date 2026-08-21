@@ -94,7 +94,7 @@ def audit(repo: Path) -> list[str]:
             mode = str(action.get("execution_mode") or "")
             agent_id = action.get("agent_id")
             role_id = str(action.get("role_id") or "")
-            mid = str(action.get("action_method_id") or "")
+            mid = str(action.get("skill_id") or action.get("action_method_id") or "")
             tpid = str(action.get("task_prompt_id") or "")
             prompt_ids = action_task_prompt_ids(action)
             contract = str(action.get("output_contract_id") or "")
@@ -115,27 +115,15 @@ def audit(repo: Path) -> list[str]:
                     errors.append(f"{wid}/{aid}: deterministic Action missing engine registry entry")
 
             if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_REVIEW} and tpid:
-                default_mid = f"{wid}/{aid.replace('_', '-')}"
-                if not mid or "/" not in mid or mid == default_mid:
-                    errors.append(
-                        f"{wid}/{aid}: subagent LLM Action missing explicit "
-                        f"skill/capability action_method_id (not {default_mid!r})"
-                    )
-                else:
-                    skill, cap = mid.split("/", 1)
-                    mp = skills_dir / skill / "capabilities" / cap / "METHOD.md"
-                    if not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
-                        errors.append(f"METHOD_MISSING {wid}/{aid}: {mid} -> {mp.as_posix()}")
-                    if skill not in compose.COGNITIVE_SKILL_IDS:
-                        errors.append(
-                            f"{wid}/{aid}: action_method_id skill {skill!r} not a cognitive skill"
-                        )
+                if "/" in mid:
+                    mid = mid.rsplit("/", 1)[-1]
+                mp = skills_dir / mid / "SKILL.md"
+                if not mid or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                    errors.append(f"SKILL_MISSING {wid}/{aid}: {mid} -> {mp.as_posix()}")
             elif mode in {EXECUTION_DETERMINISTIC, EXECUTION_PRIMARY_INTERACTIVE} and mid:
-                errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
+                errors.append(f"{wid}/{aid}: {mode} Action must omit skill_id")
 
             if mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE, EXECUTION_PRIMARY_REVIEW}:
-                if mid and "/" not in mid:
-                    errors.append(f"{wid}/{aid}: invalid action_method_id {mid!r}")
                 for pid in prompt_ids:
                     if "/" in pid:
                         dom, name = pid.split("/", 1)

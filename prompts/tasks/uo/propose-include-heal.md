@@ -4,7 +4,7 @@
 
 <context>
 脚本 include-heal 已经搜过 cann_root / ops，仍有头文件找不到。本步只写草稿 YAML。确定性 `heal_promote` 会校验目录存在且落在 cann_root / ops 内，再追加到 extras。extract 通过 `apply_saved_extras` 把 extras 变成 clang `-I`。不要手改 extras 或共享 `spec/build_context.yaml`。
-方法细节见打包 Skill `operator-analysis`。
+方法细节见打包 Skill `propose-include-heal`。
 </context>
 
 <instructions>

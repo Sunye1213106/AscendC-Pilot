@@ -30,7 +30,6 @@ def _build(
     "tg-init": {
         "slash": "/tg-init",
         "engine": "tg",
-        "cognitive_skill_id": "testcase-generation",
         "requires_project": True,
         "requires_architecture": False,
         "requires_uo_product": True,
@@ -95,7 +94,7 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                action_method_id="testcase-generation/bind-init",
+                skill_id="bind-init",
                 task_prompt_id="tg/bind-init",
                 context_profile_id="tg-init-bind-init",
                 output_contract_id="tg-init-v1",
@@ -106,7 +105,7 @@ def _build(
                 fanout_axes=[
                     {
                         "id": "harness",
-                        "skill": "testcase-generation",
+                        "skill": "bind-harness",
                         "capability_id": "bind-harness",
                         "task_prompt_id": "tg/bind-harness",
                         "artifact": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
@@ -124,7 +123,7 @@ def _build(
                     },
                     {
                         "id": "bind",
-                        "skill": "testcase-generation",
+                        "skill": "bind-columns",
                         "capability_id": "bind-columns",
                         "task_prompt_id": "tg/bind-columns",
                         "artifact": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
@@ -137,7 +136,7 @@ def _build(
                             "禁止为填 domains 去 Read 整份 CSV。无仓时列来自 Host API，kind=default_input。"
                             "禁止发明列、空 mapping、空值域。只映射测试仓表头与算子标识符；"
                             "禁止 PR#### focus / 把某 CSV 标成本次测试目标（PR 范围留给 /uo-query → plan）。"
-                            "查图形态见 code-access 不变量。"
+                            "查图用无参数索引 / 标识符 / Dim=V（形态见 code-access 不变量）。"
                             "禁止写正式 tg/init.yaml。"
                         ),
                     },
@@ -152,7 +151,7 @@ def _build(
                 role_id="controller",
                 execution_mode="primary_review",
                 capability_ids=[],
-                action_method_id="testcase-generation/bind-review",
+                skill_id="bind-review",
                 task_prompt_id="tg/bind-review",
                 context_profile_id="tg-init-bind-review",
                 output_contract_id="tg-bind-review-v1",
@@ -202,7 +201,6 @@ def _build(
     "tg-plan": {
         "slash": "/tg-plan",
         "engine": "tg",
-        "cognitive_skill_id": "testcase-generation",
         "requires_project": True,
         "requires_architecture": False,
         "requires_uo_product": True,
@@ -255,7 +253,7 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                action_method_id="testcase-generation/plan-fuse",
+                skill_id="plan-fuse",
                 task_prompt_id="tg/plan-fuse",
                 context_profile_id="tg-plan-plan-fuse",
                 output_contract_id="tg-plan-v1",
@@ -322,7 +320,6 @@ def _build(
     "tg-solve": {
         "slash": "/tg-solve",
         "engine": "tg",
-        "cognitive_skill_id": "testcase-generation",
         "requires_project": True,
         "requires_architecture": False,
         "requires_uo_product": True,
@@ -378,7 +375,7 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                action_method_id="testcase-generation/construct-cases",
+                skill_id="construct-cases",
                 task_prompt_id="tg/construct-cases",
                 context_profile_id="tg-solve-construct-cases",
                 output_contract_id="tg-cases-v1",
@@ -414,7 +411,7 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                action_method_id="testcase-generation/analyze-round",
+                skill_id="analyze-round",
                 task_prompt_id="tg/analyze-round",
                 context_profile_id="tg-solve-analyze-round",
                 output_contract_id="tg-worklog-v1",

@@ -110,14 +110,9 @@ def materialize_method_bundle(
     prompt: str = "",
     extra_ref_paths: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Write session method.md from the Action METHOD only.
+    """Write session method.md from the current Action Skill.
 
-    Never concatenate Agent ``SKILL.md`` files. ``skill_ids`` is a permission
-    ceiling: named ``references/*.md`` may be copied only from those trees.
-    Copy a reference when METHOD, the task prompt, or ``extra_ref_paths``
-    names it.
-
-    Returns ``{ok, method_path, refs_dir, copied, indexed, missing}``.
+    ``skill_ids`` is a permission ceiling for named references.
     """
     sdir = Path(session_dir)
     sdir.mkdir(parents=True, exist_ok=True)
@@ -132,22 +127,19 @@ def materialize_method_bundle(
     if not method_body:
         return {
             "ok": False,
-            "error": "METHOD_BUNDLE_MISSING",
-            "reason_code": "METHOD_BUNDLE_MISSING",
+            "error": "SKILL_BUNDLE_MISSING",
+            "reason_code": "SKILL_BUNDLE_MISSING",
             "method_path": "",
             "refs_dir": refs_dir.as_posix(),
             "copied": copied,
             "indexed": indexed,
             "missing": missing,
             "unauthorized": unauthorized,
-            "message_zh": "Action METHOD 缺失；禁止拼接 Agent SKILL.md 作为 fallback。",
+            "message_zh": "Action Skill 缺失。",
         }
 
     method_chunks.append(method_body.rstrip() + "\n")
     allowed = {str(s).strip() for s in skill_ids if str(s).strip()}
-    # Domain map is the Action-scoped set (method_skill_ids), not the Agent ceiling.
-    for sid in sorted(allowed):
-        method_chunks.append(f"\nDomain map (do not inline): `skills/{sid}/SKILL.md`\n")
 
     prompt_text = prompt
     prompt_file = sdir / "prompt.md"
@@ -215,8 +207,8 @@ def materialize_method_bundle(
 
     return {
         "ok": ok,
-        "error": "" if ok else "METHOD_BUNDLE_MISSING",
-        "reason_code": "" if ok else "METHOD_BUNDLE_MISSING",
+        "error": "" if ok else "SKILL_BUNDLE_MISSING",
+        "reason_code": "" if ok else "SKILL_BUNDLE_MISSING",
         "method_path": method_path.as_posix() if ok and method_path.is_file() else "",
         "refs_dir": refs_dir.as_posix(),
         "copied": copied,
@@ -381,21 +373,21 @@ def method_skill_ids_for_action(
     agent_skill_ids: list[str] | None = None,
     extra_ref_paths: list[str] | None = None,
 ) -> list[str]:
-    """Action-scoped skills: METHOD owner ∪ profile refs, intersected with agent ceiling."""
+    """Action-scoped skills: this step's Skill ∪ named ref owners, intersected with ceiling."""
     ceiling = {str(s).strip() for s in (agent_skill_ids or []) if str(s).strip()}
     wanted: set[str] = set()
-    mid = str((action or {}).get("action_method_id") or "").strip()
-    if "/" in mid:
-        wanted.add(mid.split("/", 1)[0].strip())
-    for raw in extra_ref_paths or []:
-        parts = str(raw).replace("\\", "/").lstrip("/").split("/")
+    raw = str((action or {}).get("skill_id") or (action or {}).get("action_method_id") or "").strip()
+    if raw:
+        wanted.add(raw.rsplit("/", 1)[-1].strip())
+    for raw_path in extra_ref_paths or []:
+        parts = str(raw_path).replace("\\", "/").lstrip("/").split("/")
         if len(parts) >= 4 and parts[0] == "skills" and parts[2] == "references":
             owner = parts[1].strip()
             if owner:
                 wanted.add(owner)
     if ceiling:
         wanted &= ceiling
-    return sorted(wanted)
+    return sorted(sid for sid in wanted if sid)
 
 
 def _resolve_existing_path(

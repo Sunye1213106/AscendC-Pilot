@@ -4,7 +4,7 @@
 
 <context>
 CompilerFacts 与确定性 CodeMap Pass 是 canonical `.uo` 的唯一事实来源。本任务解释 blocker 为何未闭合，而不是把 LLM 推断写进 `.uo`。
-方法细节见打包 Skill `operator-analysis`。
+方法细节见打包 Skill `uo-investigate`。
 </context>
 
 <instructions>

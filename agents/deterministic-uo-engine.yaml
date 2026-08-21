@@ -7,12 +7,12 @@ kind: deterministic_engine
 role: deterministic_engine
 mode: subagent
 description: UO CodeMap 确定性引擎（非 LLM）
-skill_ids: [operator-analysis]
+skill_ids: []
 read_scopes:
 - pilot:uo/**
 - pilot:runs/**
 - pilot:context/**
-- method:skills/operator-analysis/**
+- method:skills/uo-query/**
 write_scopes:
 - pilot:uo/**
 - pilot:runs/**/actions/**

@@ -84,22 +84,18 @@ def test_bind_init_is_staged_analyst_with_method() -> None:
     action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_init")
     assert action["execution_mode"] == "subagent"
     assert action["agent_id"] == "tg-analyst"
-    assert action.get("action_method_id") == "testcase-generation/bind-init"
+    assert action.get("skill_id") == "bind-init" or action.get("action_method_id") in {
+        "bind-init",
+        "testcase-generation/bind-init",
+    }
     method, prompt = _load_method_and_prompt(ROOT, action)
-    assert method.strip(), "METHOD.md must be non-empty"
+    assert method.strip(), "SKILL.md must be non-empty"
     assert "init.yaml" in method
     assert prompt.strip()
 
 
 def test_bind_init_method_file_exists() -> None:
-    path = (
-        ROOT
-        / "skills"
-        / "testcase-generation"
-        / "capabilities"
-        / "bind-init"
-        / "METHOD.md"
-    )
+    path = ROOT / "skills" / "bind-init" / "SKILL.md"
     assert path.is_file()
     text = path.read_text(encoding="utf-8")
     assert "mapping" in text.lower() or "列" in text
@@ -110,7 +106,7 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": "ce/plan-draft",
-            "action_method_id": "code-engineering/ce-plan-draft",
+            "skill_id": "ce-plan-draft",
             "id": "plan_draft",
         },
     )
@@ -122,7 +118,7 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": "ce/apply",
-            "action_method_id": "code-engineering/ce-apply",
+            "skill_id": "ce-apply",
             "id": "patch",
         },
     )
@@ -133,7 +129,7 @@ def test_ce_capability_methods_load_from_action_method_id() -> None:
         ROOT,
         {
             "task_prompt_id": "ce/impact-audit",
-            "action_method_id": "code-engineering/ce-impact-audit",
+            "skill_id": "ce-impact-audit",
             "id": "impact_audit",
         },
     )

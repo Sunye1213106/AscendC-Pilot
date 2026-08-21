@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compose runtime with Primary-owned natural-language routing and five cognitive skills."""
+"""Compose runtime: Commands + Action Skills. Primary owns routing; no closed skill families."""
 
 from __future__ import annotations
 

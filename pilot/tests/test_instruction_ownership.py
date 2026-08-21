@@ -39,17 +39,17 @@ _SKILL_BODIES = (
 )
 
 
-def _method(skill: str, cap: str) -> str:
-    return (REPO / "skills" / skill / "capabilities" / cap / "METHOD.md").read_text(encoding="utf-8")
+def _method(skill_id: str) -> str:
+    return (REPO / "skills" / skill_id / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_resolver_is_path_join_not_heuristic() -> None:
     assert _resolve_capability_method(REPO, {"id": "kb_lookup", "task_prompt_id": "uo/codemap-query"}) is None
     path = _resolve_capability_method(
         REPO,
-        {"action_method_id": "operator-analysis/uo-query"},
+        {"skill_id": "uo-query"},
     )
-    assert path == REPO / "skills" / "operator-analysis" / "capabilities" / "uo-query" / "METHOD.md"
+    assert path == REPO / "skills" / "uo-query" / "SKILL.md"
 
 
 def test_subagent_llm_actions_have_existing_method_files() -> None:
@@ -64,11 +64,10 @@ def test_subagent_llm_actions_have_existing_method_files() -> None:
                 continue
             if not str(action.get("task_prompt_id") or "").strip():
                 continue
-            mid = str(action.get("action_method_id") or "")
-            default = f"{wid}/{str(action.get('id') or '').replace('_', '-')}"
-            assert mid and mid != default, f"{wid}/{action.get('id')} used default {default}"
-            skill, _, cap = mid.partition("/")
-            mp = REPO / "skills" / skill / "capabilities" / cap / "METHOD.md"
+            mid = str(action.get("skill_id") or action.get("action_method_id") or "")
+            if "/" in mid:
+                mid = mid.rsplit("/", 1)[-1]
+            mp = REPO / "skills" / mid / "SKILL.md"
             if not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
                 missing.append(f"{wid}/{action.get('id')} -> {mid}")
     assert missing == []
@@ -78,27 +77,26 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     method, prompt = _load_method_and_prompt(
         REPO,
         {
-            "action_method_id": "code-review/standalone-review",
+            "skill_id": "standalone-review",
             "task_prompt_id": "ce/standalone-review",
         },
     )
-    assert "H0" in method and "H1" in method
+    assert "两轴" in method or "Spec" in method
     assert "Open = O - V - X" not in method
     assert "Open = O - V - X" not in prompt
-    assert "ce/review" in method.lower() or "不写" in method
     skill_ids = list(load_agent_meta("ce-reviewer", str(REPO)).get("skill_ids") or [])
-    assert "code-engineering" in skill_ids
+    assert "standalone-review" in skill_ids
     from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
     from ascendc_pilot.context.profiles import get_profile
 
     profile = get_profile("ce-review-code-review")
     extra = list(profile.references) if profile is not None else []
     scoped = method_skill_ids_for_action(
-        {"action_method_id": "code-review/standalone-review"},
+        {"skill_id": "standalone-review"},
         agent_skill_ids=skill_ids,
         extra_ref_paths=extra,
     )
-    assert scoped == ["code-review"]
+    assert "standalone-review" in scoped
     sdir = tmp_path / "ce-review"
     mat = materialize_method_bundle(
         sdir,
@@ -112,7 +110,7 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     assert "Open = O - V - X" not in packed
     assert "Materialized skill:" not in packed
     assert "# 代码审查" not in packed
-    assert "Domain map (do not inline): `skills/code-review/SKILL.md`" in packed
+    assert "Domain map" not in packed
     assert "skills/code-engineering/SKILL.md" not in packed
 
 
@@ -120,19 +118,19 @@ def test_method_skill_ids_intersect_profile_and_ceiling() -> None:
     from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
     from ascendc_pilot.context.profiles import get_profile
 
-    ceiling = ["code-review", "operator-analysis", "code-engineering", "testcase-generation"]
+    ceiling = ["ce-plan-draft", "ce-apply", "standalone-review", "uo-query"]
     draft = get_profile("ce-plan-draft")
     assert method_skill_ids_for_action(
-        {"action_method_id": "code-engineering/ce-plan-draft"},
+        {"skill_id": "ce-plan-draft"},
         agent_skill_ids=ceiling,
         extra_ref_paths=list(draft.references) if draft else [],
-    ) == ["code-engineering"]
+    ) == ["ce-plan-draft"]
     apply_prof = get_profile("ce-apply-patch")
     assert method_skill_ids_for_action(
-        {"action_method_id": "code-engineering/ce-apply"},
+        {"skill_id": "ce-apply"},
         agent_skill_ids=ceiling,
         extra_ref_paths=list(apply_prof.references) if apply_prof else [],
-    ) == ["code-engineering"]
+    ) == ["ce-apply"]
 
 
 def test_deleted_verify_review_method_is_gone() -> None:
@@ -148,13 +146,11 @@ def test_deleted_verify_review_method_is_gone() -> None:
     standalone, standalone_prompt = _load_method_and_prompt(
         REPO,
         {
-            "action_method_id": "code-review/standalone-review",
+            "skill_id": "standalone-review",
             "task_prompt_id": "ce/standalone-review",
         },
     )
-    assert "H0" in standalone and "H1" in standalone
-    assert "excepted_obligations" not in standalone
-    assert "不写" in standalone or "ce/review" in standalone
+    assert "两轴" in standalone or "Spec" in standalone
     assert standalone_prompt.strip()
 
 
@@ -272,13 +268,13 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
 def test_cross_tree_tg_oracle_is_unauthorized(tmp_path: Path) -> None:
     mat = materialize_method_bundle(
         tmp_path / "x",
-        skill_ids=["code-engineering"],
-        existing_method="see `skills/testcase-generation/references/oracle.md`",
+        skill_ids=["ce-apply"],
+        existing_method="see `skills/construct-cases/references/oracle.md`",
         project_root=REPO,
     )
     assert mat.get("ok") is False
     unauthorized = [str(x) for x in (mat.get("unauthorized") or [])]
-    assert any("testcase-generation" in x and "oracle.md" in x for x in unauthorized)
+    assert any("construct-cases" in x and "oracle.md" in x for x in unauthorized)
 
 
 def test_confirm_and_deterministic_omit_action_method_id() -> None:
@@ -290,11 +286,11 @@ def test_confirm_and_deterministic_omit_action_method_id() -> None:
             continue
         for action in meta.get("actions") or []:
             mode = str(action.get("execution_mode") or "")
-            mid = str(action.get("action_method_id") or "").strip()
+            mid = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
             if mode in {"deterministic", "primary_interactive"} and mid:
                 bad.append(f"{wid}/{action.get('id')}: {mode} has {mid}")
             if mode == "subagent" and str(action.get("task_prompt_id") or "").strip() and not mid:
-                bad.append(f"{wid}/{action.get('id')}: LLM Action missing method_id")
+                bad.append(f"{wid}/{action.get('id')}: LLM Action missing skill_id")
     assert bad == []
 
 

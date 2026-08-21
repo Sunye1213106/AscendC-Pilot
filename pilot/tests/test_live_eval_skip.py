@@ -42,7 +42,7 @@ def test_live_eval_skips_without_product_when_enabled(monkeypatch, tmp_path: Pat
     monkeypatch.setenv("ASCENDC_PILOT_LIVE_EVAL", "1")
     monkeypatch.setenv("ASCENDC_LIVE_EVAL_CMD", "python -c pass")
     monkeypatch.setenv("ASCENDC_LIVE_PRODUCT", str(tmp_path))
-    doc = evaluate_live(REPO, skill="operator-analysis")
+    doc = evaluate_live(REPO, skill="uo-query")
     assert doc["skipped"] is True
     assert doc["skip_reason"] == "no_product"
     assert doc["pass@k"] is None

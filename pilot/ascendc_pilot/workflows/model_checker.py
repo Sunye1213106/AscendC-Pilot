@@ -154,9 +154,6 @@ def check_workflow(workflow_id: str, meta: dict[str, Any]) -> list[str]:
         errors.append(f"{wid}: exclusive occupancy requires non-empty write_set")
     if occ == "shared" and write_set:
         errors.append(f"{wid}: shared occupancy must have empty write_set")
-    if not str(meta.get("cognitive_skill_id") or "").strip():
-        errors.append(f"{wid}: missing cognitive_skill_id")
-
     actions = [a for a in (meta.get("actions") or []) if isinstance(a, dict)]
     action_ids = {str(a.get("id") or "") for a in actions if a.get("id")}
     covered_phases: set[str] = set()

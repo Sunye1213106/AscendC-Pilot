@@ -20,7 +20,7 @@ CE（Code Engineering）在已有 Operator CodeMap 上做两件不要混用的�
 | `/ce-apply` | 算子源码；可勾选当前计划里的 `- [ ]` |
 | `/ce-review` | 不落盘。结论留在对话 |
 
-Grill 草稿只写 `runs/<run>/actions/intent_grill/` 下的 markdown。形状参考 `skills/code-engineering/examples/deter-band-schedule_plan.md`。
+Grill 草稿只写 `runs/<run>/actions/intent_grill/` 下的 markdown。形状参考 `skills/ce-intent-grill/examples/deter-band-schedule_plan.md`。
 
 `/tg-plan` 自己从计划的「测试内容」节、同一会话的 review 对话、或 `session_handoff.md` 总结义务。不要等 CE yaml。
 
@@ -28,8 +28,10 @@ Grill 草稿只写 `runs/<run>/actions/intent_grill/` 下的 markdown。形状�
 
 | 入口 | Skill |
 | --- | --- |
-| `/ce-plan`、`/ce-apply`、`/handoff` | `skills/code-engineering/` |
-| `/ce-review` | `skills/code-review/` |
+| `/ce-plan` | `skills/ce-intent-grill/`、`skills/ce-plan-draft/` |
+| `/ce-apply` | `skills/ce-apply/` |
+| `/handoff` | `skills/session-handoff/` |
+| `/ce-review` | `skills/standalone-review/`、`skills/spec-review/`、`skills/standards-review/` |
 
 语义只走 `pilot_cli uo-query`（形态见 code-access 不变量）。LLM 禁止写 `.uo`；apply 刷图由引擎嵌套 `uo-update`。apply 不查图；查图是 plan / review。
 

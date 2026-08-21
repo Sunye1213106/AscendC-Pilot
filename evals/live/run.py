@@ -13,7 +13,7 @@ Enable a real live run with::
     ASCENDC_LIVE_NPU=1                       # only if a case sets requires_npu
 
     python evals/live/run.py
-    python evals/skills/run_skill_eval.py --skill operator-analysis --live
+    python evals/skills/run_skill_eval.py --skill uo-query --live
 """
 
 from __future__ import annotations

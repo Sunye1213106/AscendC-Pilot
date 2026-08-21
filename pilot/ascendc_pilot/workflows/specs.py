@@ -81,6 +81,7 @@ def _act(
     human_interaction: str = "none",
     policy_ids: list[str] | None = None,
     capability_ids: list[str] | None = None,
+    skill_id: str | None = None,
     action_method_id: str | None = None,
     task_prompt_id: str | None = None,
     context_profile_id: str | None = None,
@@ -123,7 +124,9 @@ def _act(
     hi = str(human_interaction or "none").strip().lower()
     if hi not in {"none", "confirm", "approve"}:
         raise ValueError(f"{workflow_id}/{action_id}: invalid human_interaction={human_interaction!r}")
-    method_id = str(action_method_id or "").strip() or None
+    sid = str(skill_id or action_method_id or "").strip() or None
+    if sid and "/" in sid:
+        sid = sid.rsplit("/", 1)[-1].strip() or None
     actors = [agent_id] if agent_id else []
     mode = infer_execution_mode(
         agent_id=agent_id,
@@ -170,7 +173,8 @@ def _act(
             )
         ),
         "capability_ids": _merge_capability_ids(capability_ids),
-        "action_method_id": method_id,
+        "skill_id": sid,
+        "action_method_id": sid,
         "task_prompt_id": task_prompt_id,
         # Omit / explicit None for unregistered Actions. Never fabricate a
         # "{workflow}-{action}" id that is not in context.profiles.PROFILES.
@@ -289,7 +293,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-init": {
         "slash": "/uo-init",
         "engine": "uo",
-        "cognitive_skill_id": "operator-analysis",
         "requires_project": True,
         "requires_architecture": True,
         "requires_uo_product": False,
@@ -404,7 +407,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                     "readonly-source-search",
                     "action-scratch",
                 ],
-                action_method_id="operator-analysis/propose-include-heal",
+                skill_id="propose-include-heal",
                 task_prompt_id="uo/propose-include-heal",
                 context_profile_id="uo-init-propose-include-heal",
                 output_contract_id="include-heal-extras-v1",
@@ -506,7 +509,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-update": {
         "slash": "/uo-update",
         "engine": "uo",
-        "cognitive_skill_id": "operator-analysis",
         "requires_project": True,
         "requires_architecture": True,
         "requires_uo_product": False,
@@ -643,9 +645,10 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-query": {
         "slash": "/uo-query",
         "engine": "uo",
-        "cognitive_skill_id": "operator-analysis",
-        # Primary LLM router: classify in the visible chat, then DIY or Task.
-        # Host Session Driver must not start / drain this workflow.
+        # Instant Command: Primary investigates via pilot_cli / Task.
+        # Keep this registry row as a shim so start_workflow tests and
+        # kb_lookup Task bundles still resolve. Host must not pilot_run it.
+        "kind": "command",
         "host_driver": False,
         "requires_project": True,
         "requires_architecture": False,
@@ -673,7 +676,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 agent_id="uo-query",
                 role_id="readonly_analyst",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                action_method_id="operator-analysis/uo-query",
+                skill_id="uo-query",
                 task_prompt_id="uo/codemap-query",
                 context_profile_id="uo-query-kb-lookup",
                 output_contract_id="kb-answer-v1",
@@ -698,7 +701,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
     "uo-investigate": {
         "slash": "/uo-investigate",
         "engine": "uo",
-        "cognitive_skill_id": "operator-analysis",
         "requires_project": True,
         "requires_architecture": False,
         "requires_uo_product": True,
@@ -735,7 +737,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 role_id="readonly_analyst",
                 execution_mode="subagent",
                 capability_ids=_CAPS_INVESTIGATE,
-                action_method_id="operator-analysis/uo-investigate",
+                skill_id="uo-investigate",
                 task_prompt_id="uo/investigate-gaps",
                 context_profile_id="uo-investigate-investigate",
                 output_contract_id="uo-investigate-v1",

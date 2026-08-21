@@ -5,7 +5,7 @@ role: producer
 mode: subagent
 description: >
   按当前 `{slug}_plan.md` 未完成 todo 改算子源码。禁止写 `.uo` 与 CE yaml。
-max_skill_ids: &skills [code-engineering, operator-analysis, code-review]
+max_skill_ids: &skills [ce-apply]
 skill_ids: *skills
 read_scopes:
 - pilot:ce/plan/**
@@ -16,9 +16,7 @@ read_scopes:
 - source:op_kernel/**
 - source:common/**
 - source:test_script/**
-- method:skills/code-engineering/**
-- method:skills/operator-analysis/**
-- method:skills/code-review/**
+- method:skills/ce-apply/**
 write_scopes:
 - source:op_host/**
 - source:op_kernel/**

@@ -68,6 +68,7 @@ function Get-PluginsDest([string]$plat) {
 
 $workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
 $cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
+# Also remove any Action Skill dirs left under plugin cognitive-skills / skills.
 $openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
 $currentAgents = @("ascendc-pilot","uo-query","uo-heal-analyst","uo-gap-investigator","ce-reviewer","tg-analyst","ce-applier","ce-analyst")
 $legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies","ce-intent","ce-impact","ce-verify","ce-handoff","operator")

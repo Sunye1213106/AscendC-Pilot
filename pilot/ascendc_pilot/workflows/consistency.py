@@ -540,26 +540,23 @@ def check_all(
             aid = str(action.get("id") or "")
             role = str(action.get("role_id") or "")
             agent_id = str(action.get("agent_id") or "").strip()
-            method_id = str(action.get("action_method_id") or "").strip()
+            method_id = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
             prompt_id = str(action.get("task_prompt_id") or "").strip()
             prompt_ids = action_task_prompt_ids(action)
             contract_id = str(action.get("output_contract_id") or "").strip()
             mode = str(action.get("execution_mode") or "")
 
-            if method_id and "/" not in method_id:
-                errors.append(f"{wid}/{aid}: invalid action_method_id {method_id!r}")
+            if method_id and "/" in method_id:
+                method_id = method_id.rsplit("/", 1)[-1].strip()
+            mp = root / "skills" / method_id / "SKILL.md" if method_id else None
             if mode == "subagent" and prompt_id:
-                skill, _, cap = method_id.partition("/")
-                mp = root / "skills" / skill / "capabilities" / cap / "METHOD.md"
-                if not method_id or "/" not in method_id or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
-                    errors.append(f"{wid}/{aid}: missing METHOD.md for {method_id!r}")
+                if not method_id or mp is None or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                    errors.append(f"{wid}/{aid}: missing SKILL.md for {method_id!r}")
             elif mode in {"deterministic", "primary_interactive"} and method_id:
-                errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
+                errors.append(f"{wid}/{aid}: {mode} Action must omit skill_id")
             elif mode == "primary_review" and prompt_id:
-                skill, _, cap = method_id.partition("/")
-                mp = root / "skills" / skill / "capabilities" / cap / "METHOD.md"
-                if not method_id or "/" not in method_id or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
-                    errors.append(f"{wid}/{aid}: missing METHOD.md for {method_id!r}")
+                if not method_id or mp is None or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                    errors.append(f"{wid}/{aid}: missing SKILL.md for {method_id!r}")
 
             if prompt_ids:
                 for pid in prompt_ids:
@@ -724,7 +721,7 @@ def check_all(
 
 
 def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]]) -> list[str]:
-    """METHOD files, cognitive SKILL.md, module docs, and user_goal stay aligned."""
+    """Action skill files and module docs stay aligned."""
     errors: list[str] = []
     for wid, meta in wf_map.items():
         if meta.get("reserved"):
@@ -732,18 +729,14 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
         for action in meta.get("actions") or []:
             if not isinstance(action, dict):
                 continue
-            mid = str(action.get("action_method_id") or "").strip()
-            if not mid or "/" not in mid:
+            mid = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
+            if not mid:
                 continue
-            skill_id, name = mid.split("/", 1)
-            method = root / "skills" / skill_id / "capabilities" / name / "METHOD.md"
-            if not method.is_file():
-                errors.append(
-                    f"{wid}/{action.get('id')}: missing METHOD skills/{skill_id}/capabilities/{name}/METHOD.md"
-                )
-    for sid in ("operator-analysis", "testcase-generation", "code-review", "code-engineering"):
-        if not (root / "skills" / sid / "SKILL.md").is_file():
-            errors.append(f"missing skills/{sid}/SKILL.md")
+            if "/" in mid:
+                mid = mid.rsplit("/", 1)[-1]
+            skill = root / "skills" / mid / "SKILL.md"
+            if not skill.is_file():
+                errors.append(f"{wid}/{action.get('id')}: missing skills/{mid}/SKILL.md")
     docs = {
         "docs/modules/uo.md": ("uo-init", "uo-query"),
         "docs/modules/tg.md": ("tg-init", "tg-plan", "tg-solve"),
@@ -758,11 +751,11 @@ def _check_method_skill_docs_ssot(root: Path, wf_map: dict[str, dict[str, Any]])
         for needle in needles:
             if needle not in text and f"/{needle}" not in text:
                 errors.append(f"{rel} must mention {needle}")
-    apply_method = root / "skills" / "code-engineering" / "capabilities" / "ce-apply" / "METHOD.md"
-    if apply_method.is_file():
-        text = apply_method.read_text(encoding="utf-8")
-        if "不查图" not in text or "ce-plan" not in text or "ce-review" not in text:
-            errors.append("ce-apply METHOD must say apply 不查图；查图是 /ce-plan 与 /ce-review")
+    apply_skill = root / "skills" / "ce-apply" / "SKILL.md"
+    if apply_skill.is_file():
+        text = apply_skill.read_text(encoding="utf-8")
+        if "不查图" not in text:
+            errors.append("ce-apply SKILL must say 不查图")
     try:
         from ascendc_pilot.harness.intent import validate_intent_staging
         from ascendc_pilot.planning.task_plan import plan_for

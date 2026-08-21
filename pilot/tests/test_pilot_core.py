@@ -444,11 +444,16 @@ def test_install_skill_lists_symmetric():
     ):
         assert retired not in wf_ps1
         assert retired not in wf_sh
-    cog_ps1 = next(line for line in ps1.splitlines() if line.startswith("$cognitiveSkills"))
-    assert "code-engineering" in cog_ps1
-    assert "_shared" not in cog_ps1
-    assert "code-engineering" in sh
-    assert "COGNITIVE_SKILLS=" in sh
+    cog_note_ps1 = "legacyCognitiveSkills" in ps1 or "Action Skills are discovered" in ps1
+    cog_note_sh = "LEGACY_COGNITIVE_SKILLS" in sh
+    assert cog_note_ps1 and cog_note_sh
+    assert "$cognitiveSkills = @(\"operator-analysis\"" not in ps1
+    assert "COGNITIVE_SKILLS=(operator-analysis" not in sh.replace(
+        "LEGACY_COGNITIVE_SKILLS", "LEGACY_X"
+    )
+    assert "_shared" not in next(
+        (ln for ln in ps1.splitlines() if "legacyCognitiveSkills" in ln), ""
+    )
     assert "ascendc-pilot" in ps1
     assert "ascendc-pilot.ts" in ps1
     assert "ascendc-pilot.ts" in sh

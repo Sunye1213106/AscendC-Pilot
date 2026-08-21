@@ -86,17 +86,17 @@ def passes_hard_gates(scores: list[dict], *, answered_with_citation: list[bool])
 
 
 def test_eval_families_cover_baseline() -> None:
-    baseline = (
+    product_map = (
         Path(__file__).resolve().parents[2]
         / "skills"
-        / "operator-analysis"
-        / "examples"
-        / "uo-query-splitaxis"
-        / "eval-baseline.md"
+        / "uo-query"
+        / "references"
+        / "uo-product-map.md"
     )
-    text = baseline.read_text(encoding="utf-8")
-    for fam in EVAL_FAMILIES:
-        assert fam in text or fam.replace("_", "") in text.replace("_", "")
+    text = product_map.read_text(encoding="utf-8")
+    assert "non-normative" in text
+    for fam in ("tiling", "kernel", "unresolved"):
+        assert fam in text.lower() or fam.replace("_", "") in text.lower()
 
 
 def test_score_trace_hard_gates() -> None:

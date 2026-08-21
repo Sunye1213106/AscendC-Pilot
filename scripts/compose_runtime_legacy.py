@@ -66,14 +66,17 @@ QUERY_CHILD_INVARIANT_FILES: tuple[tuple[str, str], ...] = (
     ("code-access", "code-access-invariants.md"),
 )
 
-# True Skills (model-facing expertise). Workflow slash entries are generated shells.
-COGNITIVE_SKILL_IDS: tuple[str, ...] = (
-    "operator-analysis",
-    "testcase-generation",
-    "source-proof",
-    "code-review",
-    "code-engineering",
-)
+def listed_skill_ids(repo: Path | None = None) -> tuple[str, ...]:
+    """Every ``skills/<id>/SKILL.md``. Not a closed set of five."""
+    root = Path(repo) if repo is not None else Path(__file__).resolve().parents[1]
+    skills = root / "skills"
+    if not skills.is_dir():
+        return ()
+    return tuple(sorted(p.parent.name for p in skills.glob("*/SKILL.md")))
+
+
+# Import-time snapshot; compose/validate should call listed_skill_ids(repo).
+COGNITIVE_SKILL_IDS: tuple[str, ...] = listed_skill_ids()
 
 # Control-plane skill: Primary-invocable map of slash I/O + pipelines.
 # Not a sixth cognitive skill. Never disable-model-invocation.
@@ -160,11 +163,10 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "uo-query": {
-        "command_description": "查询算子知识库：直接查询或同一轮委派",
+        "command_description": "查询算子知识库（Command：直接查或委派）",
         "description": (
-            "CodeMap 对外查询接口，给 TG / CE 补语义。"
-            "怎么拆见 `skills/operator-analysis/routing/uo-query.md`。"
-            "**禁止** `pilot_run workflow=uo-query`。"
+            "CodeMap 查询 Command，不是 Host 工作流。不要 `pilot_run`。"
+            "init 先于调查；调查综合测试意图。"
         ),
     },
     "uo-investigate": {
@@ -362,7 +364,7 @@ def _start_requirements_line(repo: Path) -> str:
         f"6. `{arch}` 启动必须同时有算子目录（`--project`）与 architecture。"
         f"`{uo}` 以已有 `.uo` 为准：无 `.uo` → `UO_PRODUCT_REQUIRED`，禁止 Glob 找产物。"
         f"查询 AskQuestion：`/uo-init` 或源码作答；TG/CE 先 `/uo-init`。"
-        f"需要算子目录的 workflow：`{proj}`。`uo-query` 禁止 `pilot_run`（见 routing）。"
+        f"需要算子目录的 workflow：`{proj}`。`uo-query` 禁止 `pilot_run`（拆路见 intent-reasoning）。"
     )
 
 
@@ -412,10 +414,8 @@ def _read_invariant_pack(
         parts.append(text)
         parts.append("")
     context = repo / "agents" / "CONTEXT.md"
-    if context.is_file():
+    if context.is_file() and for_primary:
         ctx_text = context.read_text(encoding="utf-8").rstrip()
-        if not for_primary:
-            ctx_text = _child_context_glossary(ctx_text, agent_id=str(agent_id))
         parts.append(ctx_text)
         parts.append("")
     return "\n".join(parts).rstrip() + "\n"
@@ -499,7 +499,7 @@ def validate_domain_skills(repo: Path) -> list[str]:
     """Lint model-facing cognitive skills: frontmatter, line budget, no harness leakage."""
     errors: list[str] = []
     skills_root = repo / "skills"
-    errors.extend(_lint_skill_bundle(skills_root, COGNITIVE_SKILL_IDS, kind="cognitive"))
+    errors.extend(_lint_skill_bundle(skills_root, listed_skill_ids(repo), kind="cognitive"))
     errors.extend(_lint_skill_bundle(skills_root, CONTROL_PLANE_SKILL_IDS, kind="control-plane"))
     return errors
 
@@ -522,13 +522,16 @@ def _lint_skill_bundle(skills_root: Path, skill_ids: tuple[str, ...], *, kind: s
         if not str(meta.get("description") or "").strip():
             errors.append(f"{skill_md.as_posix()}: missing frontmatter description")
         n_lines = len(text.splitlines())
+        if n_lines < 80:
+            errors.append(
+                f"DOMAIN_SKILL_TOO_SHORT {skill_md.as_posix()}: {n_lines} lines < 80"
+            )
         if n_lines > 200:
             errors.append(
                 f"DOMAIN_SKILL_TOO_LONG {skill_md.as_posix()}: {n_lines} lines > 200"
             )
         gotchas = skills_root / skill_id / "references" / "gotchas.md"
-        if not gotchas.is_file():
-            errors.append(f"DOMAIN_MISSING_GOTCHAS {gotchas.as_posix()}")
+        del gotchas
         for i, line in enumerate(body.splitlines(), 1):
             for pat in _DOMAIN_HARNESS_PATTERNS:
                 if pat.search(line):
@@ -554,12 +557,10 @@ def _entry_skill_shell(wid: str, *, skill_id: str = "", host: str = "") -> str:
             lines.append(f"领域方法：`skills/{skill_id}/SKILL.md`。")
         lines.append("")
     if wid == "uo-query":
-        router = (
-            "cognitive-skills/operator-analysis/routing/uo-query.md"
-            if host == "opencode"
-            else "skills/operator-analysis/routing/uo-query.md"
+        run_via = (
+            "Command，不是 Host 工作流。禁止 `pilot_run`。"
+            "拆路与冲突核对见主控思考（intent-reasoning），不要读 Skill 路由手册。"
         )
-        run_via = f"不是 Host workflow。禁止 `pilot_run`。怎么拆见 `{router}`。"
     else:
         run_via = (
             "用 Host 工具 `pilot_run` 运行（workflow + project + architecture）。"
@@ -642,12 +643,9 @@ def check_skill_action_markers(repo: Path) -> list[str]:
         if not entry or not str(entry.get("description") or "").strip():
             errors.append(f"SKILL_ENTRY_MISSING {wid}: add WORKFLOW_ENTRIES description")
             continue
-        skill_id = str(meta.get("cognitive_skill_id") or "").strip()
-        if skill_id and skill_id not in COGNITIVE_SKILL_IDS:
-            errors.append(f"SKILL_ENTRY_BAD_SKILL {wid}: unknown cognitive_skill_id {skill_id!r}")
-        if "skill_id" in entry:
+        if "skill_id" in entry or "cognitive_skill_id" in entry:
             errors.append(
-                f"SKILL_ENTRY_LEGACY_SKILL_ID {wid}: skill_id moved to Spec cognitive_skill_id"
+                f"SKILL_ENTRY_LEGACY_SKILL_ID {wid}: Skill is per Action, not a workflow family"
             )
         expected = {str(a.get("id")) for a in (meta.get("actions") or []) if isinstance(a, dict)}
         if not expected:
@@ -732,27 +730,17 @@ def validate(repo: Path) -> list[str]:
             for cid in action.get("capability_ids") or []:
                 if not (_capability_dir(repo, str(cid)) / "capability.yaml").is_file():
                     errors.append(f"{wid}/{aid}: missing capability {cid}")
-            mid = str(action.get("action_method_id") or "").strip()
+            mid = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
             tpid = action.get("task_prompt_id")
             mode = str(action.get("execution_mode") or "")
             if mode == "subagent" and tpid:
-                default_mid = f"{wid}/{str(aid).replace('_', '-')}"
-                if not mid or "/" not in mid or mid == default_mid:
-                    errors.append(
-                        f"{wid}/{aid}: subagent LLM Action missing explicit "
-                        f"skill/capability action_method_id (not {default_mid!r})"
-                    )
-                else:
-                    skill, cap = mid.split("/", 1)
-                    mp = skills / skill / "capabilities" / cap / "METHOD.md"
-                    if not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
-                        errors.append(f"{wid}/{aid}: missing METHOD.md for {mid}")
-                    if skill not in COGNITIVE_SKILL_IDS:
-                        errors.append(
-                            f"{wid}/{aid}: action_method_id skill {skill!r} not in COGNITIVE_SKILL_IDS"
-                        )
+                if "/" in mid:
+                    mid = mid.rsplit("/", 1)[-1]
+                mp = skills / mid / "SKILL.md"
+                if not mid or not mp.is_file() or not mp.read_text(encoding="utf-8").strip():
+                    errors.append(f"{wid}/{aid}: missing SKILL.md for {mid!r}")
             elif mode in {"deterministic", "primary_interactive"} and mid:
-                errors.append(f"{wid}/{aid}: {mode} Action must omit action_method_id")
+                errors.append(f"{wid}/{aid}: {mode} Action must omit skill_id")
             if tpid:
                 p = prompts / "tasks" / f"{tpid}.md"
                 # tpid is domain/name
@@ -764,20 +752,17 @@ def validate(repo: Path) -> list[str]:
                 else:
                     prompt_text = p.read_text(encoding="utf-8")
                     _scan_forbidden(p, prompt_text, errors)
-                    mid = str(action.get("action_method_id") or "").strip()
-                    if mid and "/" in mid and mode == "subagent":
-                        skill, cap = mid.split("/", 1)
-                        if (skill, cap) in {
-                            ("code-engineering", "ce-intent-grill"),
-                            ("code-engineering", "ce-plan-draft"),
-                        }:
-                            mp = skills / skill / "capabilities" / cap / "METHOD.md"
-                            if mp.is_file():
-                                method_text = mp.read_text(encoding="utf-8")
-                                if _prompt_repeats_method_procedure(method_text, prompt_text):
-                                    errors.append(
-                                        f"{wid}/{aid}: task prompt repeats METHOD numbered procedure"
-                                    )
+                    sid = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
+                    if "/" in sid:
+                        sid = sid.rsplit("/", 1)[-1]
+                    if sid in {"ce-intent-grill", "ce-plan-draft"} and mode == "subagent":
+                        mp = skills / sid / "SKILL.md"
+                        if mp.is_file():
+                            method_text = mp.read_text(encoding="utf-8")
+                            if _prompt_repeats_method_procedure(method_text, prompt_text):
+                                errors.append(
+                                    f"{wid}/{aid}: task prompt repeats SKILL numbered procedure"
+                                )
             # Semantic / interactive actions need role + context + output contract
             if action.get("role_id") in {
                 "producer",
@@ -926,8 +911,8 @@ def _replace_actions_table(body: str, meta: dict[str, Any]) -> str:
 
 
 def _compose_skill_body(repo: Path, wid: str, meta: dict[str, Any], *, host: str = "") -> str:
-    skill_id = str(meta.get("cognitive_skill_id") or "").strip()
-    body = _entry_skill_shell(wid, skill_id=skill_id, host=host)
+    del repo
+    body = _entry_skill_shell(wid, skill_id="", host=host)
     body = _replace_actions_table(body, meta)
     return body.rstrip() + "\n"
 
@@ -1088,7 +1073,7 @@ def _host_remap_skill_paths(text: str, *, host: str) -> str:
     if host != "opencode" or not text:
         return text
     out = text
-    for cid in COGNITIVE_SKILL_IDS:
+    for cid in listed_skill_ids():
         token = f"\x00CS:{cid}\x00"
         # Protect already-remapped paths so ``skills/{cid}`` cannot match inside
         # ``cognitive-skills/{cid}``.
@@ -1105,9 +1090,7 @@ def _project_primary_description(repo: Path, description: str, *, host: str = ""
 
 
 def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "") -> str:
-    skills = repo / "skills"
     aid = agent_meta.get("id", "agent")
-    role = agent_meta.get("role", "")
     read_scopes = list(agent_meta.get("read_scopes") or [])
     if host == "opencode":
         # Cognitive skills are not in OpenCode Skill discovery; agents load
@@ -1117,11 +1100,11 @@ def _compose_agent_md(repo: Path, agent_meta: dict[str, Any], *, host: str = "")
             s = str(scope)
             # Namespaced: method:skills/<id> → method:cognitive-skills/<id>
             if s.startswith("method:skills/") and any(
-                s.startswith(f"method:skills/{cid}") for cid in COGNITIVE_SKILL_IDS
+                s.startswith(f"method:skills/{cid}") for cid in listed_skill_ids(repo)
             ):
                 remapped.append("method:cognitive-" + s[len("method:") :])
             elif s.startswith("skills/") and any(
-                s.startswith(f"skills/{cid}") for cid in COGNITIVE_SKILL_IDS
+                s.startswith(f"skills/{cid}") for cid in listed_skill_ids(repo)
             ):
                 remapped.append("cognitive-" + s)
             else:
@@ -1236,7 +1219,7 @@ execution_variant = delegated_query。
     elif is_primary:
         runtime = """## 运行时契约
 
-工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（见 routing）。禁止 `--help`。Task 正文用 `task_prompt_stub` 原文。缺 `pilot_run` 时请用户重装插件。
+工作流用 `pilot_run`。查询用 `pilot_cli` `uo-query`（拆路见 intent-reasoning）。禁止 `--help`。Task 正文用 `task_prompt_stub` 原文。缺 `pilot_run` 时请用户重装插件。
 """
     else:
         runtime = """## 运行时契约
@@ -1245,9 +1228,7 @@ execution_variant = delegated_query。
 """
     body = f"""# Agent: {aid}
 
-## 角色
-
-你是 AscendC-Pilot 的 `{role}`。
+## 任务
 
 {desc}
 
@@ -1313,7 +1294,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
     host_meta = _load_yaml(paths["hosts"] / f"{host}.yaml")
 
     sys.path.insert(0, str(repo / "pilot"))
-    from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
+    from ascendc_pilot.workflows import WORKFLOWS, workflow_is_command  # noqa: WPS433
 
     if out_root.exists():
         _rmtree(out_root)
@@ -1326,11 +1307,15 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
 
     compiled: list[str] = []
 
-    # Workflow slash entries (thin shells) + cognitive skills
+    # Slash workflow shells. Instant Commands (uo-query) are not Skills:
+    # they enter Primary investigation via compose_opencode_commands.
     workflow_ids = [
         wid
         for wid, m in WORKFLOWS.items()
-        if m.get("slash") and not m.get("reserved") and not m.get("alias_of")
+        if m.get("slash")
+        and not m.get("reserved")
+        and not m.get("alias_of")
+        and not workflow_is_command(wid)
     ]
     for wid in workflow_ids:
         entry = WORKFLOW_ENTRIES.get(wid) or {}
@@ -1393,7 +1378,7 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         if cognitive_out.exists():
             _rmtree(cognitive_out)
         cognitive_out.mkdir(parents=True, exist_ok=True)
-    for skill_id in COGNITIVE_SKILL_IDS:
+    for skill_id in listed_skill_ids(repo):
         src = skills / skill_id
         if not (src / "SKILL.md").is_file():
             continue

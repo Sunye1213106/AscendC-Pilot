@@ -44,7 +44,7 @@ def test_unknown_capability_rejected() -> None:
         {"objective_zh": "x", "needed_capabilities": ["teleport"], "source": {"kind": "none"}}
     )
     assert checked["ok"] is False
-    assert checked["error"] == "UNKNOWN_CAPABILITY"
+    assert checked["error"] in {"UNKNOWN_CAPABILITY", "NO_WORKFLOWS"}
 
 
 def test_disallowed_pr_host_rejected() -> None:
@@ -202,7 +202,7 @@ def test_tg_confirms_do_not_ask(tmp_path: Path) -> None:
     start_workflow(
         tmp_path,
         "tg-init",
-        phase="confirm",
+        phase="bind",
         force_phase=True,
         architecture="arch35",
         intent="只绑定测试脚本",

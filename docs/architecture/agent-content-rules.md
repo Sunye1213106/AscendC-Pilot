@@ -2,7 +2,7 @@
 
 最高指令：**不要通过增加更多文字解决职责不清。优先删除重复内容、收缩职责、建立唯一权威来源；只有确实存在缺失约束时才新增内容。**
 
-不要为修一个 bug 再往 yaml / invariant / POLICY / SKILL / METHOD / prompt 各补一句不同版本。
+不要为修一个 bug 再往 yaml / invariant / POLICY / SKILL / prompt 各补一句不同版本。
 
 ## 目标
 
@@ -29,17 +29,19 @@ Reference
 模型只处理需要语义判断的部分
 ```
 
-本仓路径对照（不要另建 `skills/uo-init/` 一类目录；认知 skill 保持闭合五个）：
+本仓路径对照：
 
 | 层 | 权威位置 |
 | --- | --- |
-| Policy | `pilot/policies/<id>/POLICY.md`（人 / CI SSOT） |
-| 模型常驻短投影 | `pilot/policies/invariants/*.md`（compose 注入 Primary；全文 POLICY **不**进模型） |
-| Skill | `skills/<id>/SKILL.md`（何时用 / 边界）+ `capabilities/*/METHOD.md`（怎么做） |
-| Prompt | `prompts/tasks/**`（本次任务 I/O） |
-| Agent | `agents/*.yaml` 的 `description`（角色与写面） |
-| Reference | `skills/*/references/`（按需） |
-| Action / validator | Spec + Engine + Gate（hash / snippet / schema 不进 prompt） |
+| Policy | `pilot/policies/<id>/POLICY.md` |
+| 模型常驻短投影 | `pilot/policies/invariants/*.md`（Primary 只拿编排需要的；全文 POLICY 不进模型） |
+| 编排 / 调查拆路 | `intent-reasoning.md`。Primary 不读 Skill。 |
+| Skill | `skills/<id>/SKILL.md`（当前 Action 怎么做）+ `references/`（指针后） |
+| Prompt | `prompts/tasks/**`（本题 I/O） |
+| Agent | `agents/*.yaml` 的职责与写面 |
+| Action | Spec + Engine + Gate |
+| Command `/uo-query` | 瞬时调查，不是 `pilot_run` 工作流 |
+
 
 写权限在 yaml `write_scopes` + authorize；产物诚实在 `output-quality`。不要另造 `permissions.md` / `mutation.md`。
 
@@ -79,7 +81,9 @@ Policy 应尽可能短。
 
 ## 2. Skill
 
-Skill 描述**一种可复用能力以及如何完成它**。本仓五个认知 skill 各覆盖一族能力；单次 Action 的步骤在 METHOD，不在 `SKILL.md` 正文铺开。
+Skill 描述**一种可复用能力以及如何完成它**。一份 Skill 对应一次可触发的执行步或叠加原语，不是 slash 家族说明书。
+
+写法权威：`skills/SCHEMA.md`。对照：别人可执行的 Skill 把**每轮都要用的判断**写在正文（大约 80–150 行），目录和长表放 `references/` 一层指针。不要写成十几行骨架。
 
 一个 Skill 应回答：
 
@@ -87,17 +91,18 @@ Skill 描述**一种可复用能力以及如何完成它**。本仓五个认知 
 什么时候使用
 输入是什么
 输出是什么
-执行步骤是什么（METHOD）
+执行步骤是什么（含怎么判断、何时停）
 需要哪些工具
 完成条件是什么
 失败时返回什么
+每轮都要用的启发式 / 反模式
 ```
 
 Skill 可以包含：工作流程指针、工具调用顺序、domain knowledge、少量必要示例、该能力的额外约束。
 
 Skill 不应该：重复全局 Policy、定义新的全局权限、修改其他 Skill 的语义、保存大量项目状态、包含与该能力无关的背景知识。
 
-不要让一个 Skill 同时承担提取 + 推理 + 测试生成 + review + 修复。五个闭合 id 已经按族切开；不要再拆仓，也不要在某一个 `SKILL.md` 里复述其它族的流程。
+不要让一个 Skill 同时承担提取 + 推理 + 测试生成 + review + 修复。不要按 slash 建 Skill，也不要在 SKILL.md 里复述 workflow 阶段。Skill 数量不固定；需要新判断时加新 Skill。
 
 ---
 
@@ -121,7 +126,7 @@ Agent 描述**角色和决策边界**。
 
 不应该重新定义 Skill 的具体流程，也不应该把 Policy / 编排步骤写进 `description`。
 
-主控 yaml 只留角色与入口句。Init 顺序、clone、`uo-query` 是否走 `pilot_run`、谁可以 `Task`：写在 invariant / routing / authorize，不写在 yaml。
+主控 yaml 只留入口句。Init 顺序、调查拆路、谁可以 Task：写在 `intent-reasoning` / authorize。子代 yaml 只留做什么、写哪。
 
 子代 yaml 只留做什么、写哪、不写哪。不要写「禁止再派 Task」（authorize 已拦）。
 
@@ -148,7 +153,7 @@ Reference 只保存**按需读取的信息**：schema、复杂字段、命令参
 整理任何一段文字时依次判断：
 
 1. 所有任务都不能违反？→ Policy
-2. 描述一种可重复执行的方法？→ Skill / METHOD
+2. 描述一种可重复执行的方法？→ Skill
 3. 只针对当前一次任务？→ Prompt
 4. 定义执行角色的职责和权限？→ Agent
 5. 可以由程序确定性执行或校验？→ Action / validator / script
@@ -166,7 +171,7 @@ Reference 只保存**按需读取的信息**：schema、复杂字段、命令参
 
 - 多个 Skill 都写「不得伪造 evidence」→ 留在 evidence Policy，Skill 只引用。
 - Policy 里写「先运行 clang_extract.py」→ 从 Policy 删除，移到对应 Skill / Engine。
-- Agent 和 Skill 都描述完整 `/uo-init` 流程 → 流程留在 operator-analysis；Agent 只说明何时调用。
+- Agent 和 Skill 都描述完整 `/uo-init` 流程 → 流程留在对应 Action Skill（如 `uo-query`）与 Spec；Agent 只说明何时调用。
 
 ---
 
@@ -210,12 +215,12 @@ conflict:
 ```text
 pilot/policies/<id>/POLICY.md
 pilot/policies/invariants/*.md
-skills/{operator-analysis,testcase-generation,source-proof,code-review,code-engineering}/
+skills/<skill-id>/SKILL.md
 agents/*.yaml
 prompts/tasks/
 ```
 
-新增 Policy 只在确实缺失全局约束时（例如 `semantic-grounding`）。不要把五个认知 skill 拆成按 slash 的目录。
+不要把 Skill 绑成固定五族。不要按 slash 拆仓。compose 只装配，不撰写「你是谁」或运行时契约。
 
 ---
 

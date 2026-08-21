@@ -80,17 +80,15 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 | Session binding | Host session 钉住的 `.uo` 路径与 digest | `control/session_bindings.yaml` |
 | Action | 定义一次可执行任务，包括输入输出 contract | Workflow specification |
 | Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
-| Skill | 领域方法地图（五个认知 skill） | `skills/*/SKILL.md` |
-| METHOD | 一次 LLM Action 的推理 playbook | `skills/*/capabilities/*/METHOD.md` |
-| Router | 主控查询路由（不是 Action METHOD） | `skills/*/routing/*.md` |
+| Skill | 当前 Action 怎么做（可增长，不闭合五个） | `skills/<id>/SKILL.md` |
 | Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |
 | Policy | 定义运行约束和行为规则 | `pilot/policies/` |
 | Capability | 定义 Agent 或 Engine 可以调用的能力 | runtime capability registry |
 | Engine | 执行确定性逻辑并生成可信产物 | `engines/` |
 
-职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管领域地图；METHOD 管 Action 方法；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
+职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管这一步怎么做；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
 
-例如在 TG 中：“如何判断列是否可测”属于 Skill；“融合义务”属于 Prompt；“Host replay”属于 Engine；“是否允许签发 worklog”属于 Workflow + Gate。它们不能混在一个 Agent 中。
+例如在 TG 中：“如何判断列是否可测”属于 `bind-init`；“融合义务”属于 `plan-fuse`；“Host replay”属于 Engine；“是否允许签发 worklog”属于 Workflow + Gate。它们不能混在一个 Agent 中。
 
 ---
 
@@ -98,8 +96,8 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 
 ```text
 确定性计算                    -> Engine
-领域推理方法                  -> METHOD.md（一次 LLM Action；Skill 是领域地图）
-主控查询路由                  -> routing/*.md（不是 METHOD）
+当前 Action 怎么做            -> skills/<id>/SKILL.md（prepare 写入 session method.md）
+主控查询拆路                  -> intent-reasoning.md（不是 Skill）
 一次任务目标                  -> Prompt
 状态迁移                      -> Workflow
 需要独立身份、权限或隔离上下文 -> Agent
@@ -155,7 +153,7 @@ Workflow 允许的根目录
 * **主控不写正式结论**：主控 Agent（`ascendc-pilot`）即使角色叫 controller，也不能直接写正式 IR / summary / checks / review / TG 正式产物；这些由声明的 Producer、Referee 或 Engine 写入。
 * **角色只是上限**：例如 `readonly_analyst` 不写正式 domain 产物（`.uo` / TG / CE），但**允许** action-local result / scratch；`referee` 只写 review。最终权限仍以「角色 ∩ Agent 上限 ∩ 本步通行证 ∩ Workflow 根目录 ∩ 身份禁令」为准。
 * **prepare 静态闭合（写）**：`direct` 模式下合同产物必须落在 `agent.write_scopes ∩ action.allowed_write_paths`，否则 `OUTPUT_NOT_WRITABLE` 当场失败，不派发子代理。`return_value` 由 finalizer 物化，不要求子代理先 Write。
-* **prepare 静态闭合（读）**：`task_prompt_stub` 引用的路径必须存在且落在 lease 可读集合内，否则 `BUNDLE_NOT_READABLE` 当场失败。Action METHOD 与点名的 references 在 prepare 时物化进 session 的 `method.md` / `refs/`；确认 Action 不装载认知 Skill。子代理只读自己的 session dir。
+* **prepare 静态闭合（读）**：`task_prompt_stub` 引用的路径必须存在且落在 lease 可读集合内，否则 `BUNDLE_NOT_READABLE` 当场失败。当前 Action 的 `SKILL.md` 与点名的 references 在 prepare 时物化进 session 的 `method.md` / `refs/`；确认 Action 不装载 Skill。子代理只读自己的 session dir。
 * **scope 命名空间**：`agents/*.yaml` 的 `read_scopes` / `write_scopes` 支持前缀 `pilot:`（`.ascendc-pilot/<arch>/` 相对）、`method:`（host cognitive-skills / skills 树）、`source:`（算子仓源码根）。无前缀旧值按现行语义兼容。
 * **run 级 source scope**：`acp start` 解析一次 `allowed_source_roots` 写入 `runs/<run_id>/source_scope.yaml`，后续 action lease 继承；探查性只读不再表现为「没有仓库权限」。
 * **containment 只读白名单**：`failed` / `blocked` / `human_required` 下仍禁止推进与写入。主控可以 `Read` / `Glob` / `Grep` 以及 `ls` / `dir` / `Get-ChildItem` 做诊断；仍禁止写、派 Task、读引擎脚本、直调领域 CLI。用户打断确认框并在对话里另作回复时，pending 被 `interpret-user-turn` 取消，跟新消息、不要重问上一题。所有人仍可读取 session `method.md` / `prompt.md` / skill 文本，避免 abort 后连方法都读不了。
@@ -284,14 +282,14 @@ prepare（物化 method.md / refs + Bundle 读闭合）
   -> dispatch-result / finalize -> Gate -> advance
 ```
 
-查询路由在主控。简单查询直接调用 `pilot_cli` `uo-query`，首屏即答案；复杂查询同一轮委派 `Task`。算法正文在 `skills/operator-analysis/routing/uo-query.md`。不要 `pilot_run workflow=uo-query`，禁止仅为问题分类而委派子代理。
+查询路由在主控。简单查询直接调用 `pilot_cli` `uo-query`，首屏即答案；复杂查询同一轮委派 `Task`。拆路算法在 `intent-reasoning.md`。不要 `pilot_run workflow=uo-query`，禁止仅为问题分类而委派子代理。
 
 子代理（若派了）最终消息用完整自然语言作答（结论 + file:line + snippet）。OpenCode Task 把全文交回主控；主控综合后向用户陈述。**子代不要 Write `answer.yaml`**，不要自己 finalize。复杂查询由主控综合，不调用 `kb_lookup --finalize`。YAML 不是 primary↔subagent 的传递通道。Domain 正式产物仍禁止 LLM 直写。
 
 ### 查询：直接执行或同一轮委派（不是 Host workflow）
 
 ```text
-主控 ——简单查询直接 `pilot_cli`；复杂查询同一轮 Task（见 routing/uo-query.md）
+主控 ——简单查询直接 `pilot_cli`；复杂查询同一轮 Task（拆路见 intent-reasoning）
 ├── 简单查询：当前会话 `pilot_cli` `uo-query`，将 stdout 向用户陈述（无 prepare / Task / finalize）
 └── 复杂查询：同一轮 Task(agent=uo-query) → Primary 综合（无 kb_lookup prepare / finalize）
 ```

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Instruction-ownership lint: routing heuristics live in the router, not Policy."""
+"""Instruction-ownership lint: investigation routing lives in Primary intent-reasoning."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Cognitive routing heuristics — the uo-query router owns these.
 HEURISTIC_PHRASES = (
     "相关 ≠ 单域",
     "related ≠ 单域",
@@ -18,7 +17,6 @@ HEURISTIC_PHRASES = (
     "METHOD ≥2",
 )
 
-# Control-plane files must not copy the UO query playbook.
 CONTROL_FILES = (
     "pilot/policies/pilot-control/POLICY.md",
     "pilot/policies/invariants/control-invariants.md",
@@ -26,13 +24,12 @@ CONTROL_FILES = (
     "scripts/compose_opencode_commands.py",
 )
 
-ROUTER = "skills/operator-analysis/routing/uo-query.md"
+ROUTER = "pilot/policies/invariants/intent-reasoning.md"
 OWNERS = (
-    "skills/operator-analysis/capabilities/uo-query/METHOD.md",
+    "skills/uo-query/SKILL.md",
     ROUTER,
 )
 
-# Agent-facing sources must not teach the removed orchestration skill.
 ORCH_BANNED_FILES = (
     "pilot/policies/invariants/host-runtime-contract.md",
     "pilot/policies/invariants/control-invariants.md",
@@ -42,7 +39,6 @@ ORCH_BANNED_FILES = (
     "scripts/compose_runtime_legacy.py",
     "agents/ascendc-pilot.yaml",
     "opencode-plugin/pilot-driver.ts",
-    "skills/code-review/SKILL.md",
 )
 ORCH_BANNED_PHRASES = (
     "skills/workflow-orchestration",
@@ -58,9 +54,7 @@ STALE_CLI_FILES = (
     "agents/uo-query.yaml",
     "agents/CONTEXT.md",
     "agents/ascendc-pilot.yaml",
-    "skills/operator-analysis/capabilities/uo-query/METHOD.md",
-    "skills/operator-analysis/routing/uo-query.md",
-    "skills/operator-analysis/references/codemap-query-gotchas.md",
+    "skills/uo-query/SKILL.md",
     "prompts/tasks/uo/codemap-query.md",
 )
 
@@ -77,7 +71,6 @@ STALE_CLI_PHRASES = (
     "调用 PATH 上的",
 )
 
-# Model-facing trees must not contain the human CLI name (including prohibitions).
 MODEL_FACING_ROOTS = (
     "agents",
     "skills",
@@ -101,9 +94,9 @@ def errors(repo: Path | None = None) -> list[str]:
         text = (root / rel).read_text(encoding="utf-8")
         for phrase in HEURISTIC_PHRASES:
             if phrase in text:
-                out.append(f"HEURISTIC_IN_CONTROL {rel}: {phrase!r} belongs in uo-query router")
+                out.append(f"HEURISTIC_IN_CONTROL {rel}: {phrase!r} belongs in intent-reasoning")
         if "FIRST_QUERY" in text:
-            out.append(f"HEURISTIC_IN_CONTROL {rel}: 'FIRST_QUERY' belongs in uo-query router")
+            out.append(f"HEURISTIC_IN_CONTROL {rel}: 'FIRST_QUERY' belongs in intent-reasoning")
         if "--mode compile" in text:
             out.append(f"STALE_COMPILE {rel}: query compile is removed")
     router = root / ROUTER
@@ -113,24 +106,24 @@ def errors(repo: Path | None = None) -> list[str]:
         rtext = router.read_text(encoding="utf-8")
         if "相关 ≠ 单域" not in rtext:
             out.append(f"{ROUTER} must own 相关 ≠ 单域")
-        if "直接调用" not in rtext or "委派" not in rtext:
-            out.append(f"{ROUTER} must say 直接调用 / 委派")
-        if "分别委派" not in rtext or "综合只在主控" not in rtext:
-            out.append(f"{ROUTER} must say 分别委派 / 综合只在主控")
-        if "compile" in rtext:
-            out.append(f"{ROUTER} must not mention compile")
-        if "数量由主控判断" in rtext:
-            out.append(f"{ROUTER} must not defer split count to 数量由主控判断")
+        if "分别派" not in rtext and "分别委派" not in rtext:
+            out.append(f"{ROUTER} must say 分别派")
+        if "综合只在主控" not in rtext:
+            out.append(f"{ROUTER} must say 综合只在主控")
+        if "fanout" not in rtext.lower() and "隔离" not in rtext:
+            out.append(f"{ROUTER} must keep fanout / context isolation")
     for rel in OWNERS:
         if not (root / rel).is_file():
             out.append(f"missing owner {rel}")
-    method = root / "skills/operator-analysis/capabilities/uo-query/METHOD.md"
+    method = root / "skills/uo-query/SKILL.md"
     if method.is_file():
         mtext = method.read_text(encoding="utf-8")
         if "不要传 `--mode`" in mtext or "禁止 `--mode`" in mtext:
-            out.append("METHOD must not restate --mode; belongs in code-access invariant")
+            out.append("uo-query SKILL must not restate --mode; belongs in code-access invariant")
         if "丢掉" in mtext:
-            out.append("METHOD must not stack 丢掉 recovery on --mode")
+            out.append("uo-query SKILL must not stack 丢掉 recovery on --mode")
+        if "相关 ≠ 单域" in mtext:
+            out.append("uo-query SKILL must not own 相关 ≠ 单域; belongs in intent-reasoning")
     forms = root / "pilot/policies/invariants/code-access-invariants.md"
     if not forms.is_file():
         out.append("missing code-access-invariants.md")

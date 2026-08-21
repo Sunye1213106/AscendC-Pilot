@@ -5,7 +5,7 @@ role: readonly_reviewer
 mode: subagent
 description: >
   只读代码审查。结论留在对话，不写 yaml / `ce/review/` / `runs/` 草稿；不改算子源码。
-max_skill_ids: &skills [code-review, code-engineering]
+max_skill_ids: &skills [standalone-review, spec-review, standards-review, uo-query]
 skill_ids: *skills
 read_scopes:
 - pilot:uo/**
@@ -17,8 +17,10 @@ read_scopes:
 - source:op_kernel/**
 - source:common/**
 - source:tests/**
-- method:skills/code-review/**
-- method:skills/code-engineering/**
+- method:skills/standalone-review/**
+- method:skills/spec-review/**
+- method:skills/standards-review/**
+- method:skills/uo-query/**
 write_scopes: []
 machine_constraints:
 - modify_pilot_state

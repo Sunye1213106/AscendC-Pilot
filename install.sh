@@ -41,7 +41,9 @@ WORKFLOW_SKILLS=(
   ce-review ce-plan ce-apply handoff
   tg-init tg-plan tg-solve
 )
-COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
+# Action Skills are discovered from generated/<host> after compose.
+# Uninstall still names the old five families so leftover installs are cleaned.
+LEGACY_COGNITIVE_SKILLS=(operator-analysis testcase-generation source-proof code-review code-engineering)
 OPENCODE_COMMANDS=(
   uo-init uo-update uo-query uo-investigate
   ce-review ce-plan ce-apply handoff
@@ -241,22 +243,32 @@ for name in "${WORKFLOW_SKILLS[@]}"; do
   fi
 done
 
-# Cognitive skills: Cursor/Codex install into skill discovery with
+# Action Skills: Cursor/Codex install into skill discovery with
 # disable-model-invocation; OpenCode keeps them plugin-internal only.
 if [[ "$PLATFORM" == "opencode" ]]; then
-  for name in "${COGNITIVE_SKILLS[@]}" _shared; do
+  for name in "${LEGACY_COGNITIVE_SKILLS[@]}" _shared; do
     rm -rf "$SKILLS/$name"
   done
   if [[ -d "$BUNDLE_ROOT/generated/opencode/cognitive-skills" ]]; then
     rm -rf "$DEST/cognitive-skills"
     cp -R "$BUNDLE_ROOT/generated/opencode/cognitive-skills" "$DEST/cognitive-skills"
+    for name in "$BUNDLE_ROOT/generated/opencode/cognitive-skills"/*; do
+      [[ -d "$name" ]] || continue
+      rm -rf "$SKILLS/$(basename "$name")"
+    done
   fi
 else
-  for name in "${COGNITIVE_SKILLS[@]}"; do
-    [[ -d "$DEST/skills/$name" ]] || continue
-    rm -rf "$SKILLS/$name"
-    ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
-  done
+  if [[ -d "$DEST/skills" ]]; then
+    for dir in "$DEST/skills"/*; do
+      [[ -d "$dir" ]] || continue
+      name="$(basename "$dir")"
+      case "$name" in
+        _policies|_shared|uo-init|uo-update|uo-query|uo-investigate|ce-review|ce-plan|ce-apply|handoff|tg-init|tg-plan|tg-solve) continue ;;
+      esac
+      rm -rf "$SKILLS/$name"
+      ln -sfn "$DEST/skills/$name" "$SKILLS/$name" 2>/dev/null || cp -R "$DEST/skills/$name" "$SKILLS/$name"
+    done
+  fi
   rm -rf "$SKILLS/_shared"
 fi
 

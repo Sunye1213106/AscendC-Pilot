@@ -4,7 +4,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 
 不要用 `--help` 当用法卡。argparse 会列出大量内部子命令，那不是 Session Driver 合同，也不是查询路由。工作流用 `pilot_run`；短命令用 `pilot_cli`。
 
-命令清单见 [CLI Reference](../reference/cli.generated.md)。协议与权限见 [Agent Runtime](../architecture/agent-runtime.md)。查询怎么走见 [UO Query Router](../../skills/operator-analysis/routing/uo-query.md)。
+命令清单见 [CLI Reference](../reference/cli.generated.md)。协议与权限见 [Agent Runtime](../architecture/agent-runtime.md)。查询怎么走见 [UO Query Router](../../pilot/policies/invariants/intent-reasoning.md)。
 
 ---
 

@@ -22,14 +22,14 @@ def test_agent_yaml_uses_machine_constraints_not_only_forbidden() -> None:
     assert meta.get("machine_constraints")
     assert "write_uo_formal_products" in meta["machine_constraints"]
     ceiling = agent_skill_ceiling("tg-analyst", REPO)
-    assert "testcase-generation" in ceiling
-    assert "code-review" not in ceiling
+    assert "bind-init" in ceiling
+    assert "standalone-review" not in ceiling
 
 
 def test_ce_analyst_ceiling_excludes_code_review() -> None:
     ceiling = agent_skill_ceiling("ce-analyst", REPO)
-    assert "code-engineering" in ceiling
-    assert "code-review" not in ceiling
+    assert "ce-plan-draft" in ceiling
+    assert "standalone-review" not in ceiling
 
 
 def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:

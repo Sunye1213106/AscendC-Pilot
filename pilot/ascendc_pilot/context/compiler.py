@@ -184,27 +184,10 @@ def _repo_root_from_project(project_root: Path) -> Path:
         cog = base / "cognitive-skills"
         if not (base / "pilot").is_dir():
             # Installed plugin bundle: cognitive-skills without pilot/
-            if cog.is_dir() and any(
-                (cog / name).is_dir()
-                for name in (
-                    "operator-analysis",
-                    "testcase-generation",
-                    "source-proof",
-                    "code-review",
-                )
-            ):
+            if cog.is_dir() and any(cog.glob("*/SKILL.md")):
                 return True
             return False
-        if skills.is_dir() and any(
-            (skills / name).is_dir()
-            for name in (
-                "operator-analysis",
-                "testcase-generation",
-                "source-proof",
-                "code-review",
-                "domain",
-            )
-        ):
+        if skills.is_dir() and any(skills.glob("*/SKILL.md")):
             return True
         if cog.is_dir():
             return True

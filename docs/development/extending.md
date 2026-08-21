@@ -4,11 +4,10 @@
 
 ```text
 确定性计算              -> Engine
-领域推理方法            -> METHOD.md（一次 LLM Action；confirm/deterministic 不要 METHOD）
-主控查询路由            -> skills/<id>/routing/*.md（不是 METHOD）
-领域能力地图            -> Skill
+当前 Action 怎么做      -> skills/<id>/SKILL.md（confirm/deterministic 不挂 Skill）
+主控查询拆路            -> intent-reasoning.md（不是 Skill）
 一次任务说明            -> Prompt（task/input/delta/output）
-状态与迁移              -> Workflow Spec（LLM Action 才写显式 action_method_id）
+状态与迁移              -> Workflow Spec（LLM Action 写 skill_id）
 可执行步骤              -> Action
 身份与权限上限          -> Agent（skill_ids 不是每次装载列表）
 动态事实                -> ContextProfile
@@ -85,7 +84,7 @@ acp doctor --host opencode
 python scripts/check_host_driver_contract.py
 ```
 
-并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。Agent YAML 路径优先使用 `pilot:` / `method:` / `source:` 命名空间；prepare 只物化该 Action 的 METHOD.md，读失败走 `BUNDLE_NOT_READABLE`。`Agent.skill_ids` 是权限上限，不是每次调用的装载列表。
+并在 [Agent Runtime](../architecture/agent-runtime.md) 中登记对人类有意义的 Engine / adapter 边界。Agent YAML 路径优先使用 `pilot:` / `method:` / `source:` 命名空间；prepare 只物化该 Action 的 `SKILL.md`，读失败走 `BUNDLE_NOT_READABLE`。`Agent.skill_ids` 是权限上限，不是每次调用的装载列表。
 
 ## Gate、测试与 Reference
 

@@ -99,7 +99,7 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert ce["agent_id"] == "ce-reviewer"
     assert ce["actors"] == ["ce-reviewer"]
     assert ce["task_prompt_id"] == "ce/standalone-review"
-    assert ce["action_method_id"] == "code-review/standalone-review"
+    assert ce["skill_id"] == "standalone-review"
     assert ce.get("output_mode") == "return_value"
     assert list(ce.get("allowed_write_paths") or []) == []
     assert "ce-verify" not in WORKFLOWS
@@ -108,15 +108,10 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert "ce-handoff" not in WORKFLOWS
 
     plan = WORKFLOWS["ce-plan"]
-    assert plan["cognitive_skill_id"] == "code-engineering"
     assert plan["slash"] == "/ce-plan"
-    assert plan["phases"] == ["kb_ready", "grill", "draft", "confirm"]
-    assert WORKFLOWS["ce-review"]["cognitive_skill_id"] == "code-review"
     assert "code-edit" not in WORKFLOWS
     assert "git-ops" not in WORKFLOWS
     assert "perf-analyze" not in WORKFLOWS
-    assert WORKFLOWS["ce-apply"]["cognitive_skill_id"] == "code-engineering"
-    assert WORKFLOWS["handoff"]["cognitive_skill_id"] == "code-engineering"
     assert WORKFLOWS["ce-apply"]["slash"] == "/ce-apply"
     assert WORKFLOWS["handoff"]["slash"] == "/handoff"
 
@@ -308,7 +303,7 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
         if name == "uo-query":
             assert "pilot_run" in text
             assert "不要 `pilot_run`" in text
-            assert "直接调用" in text
+            assert "直接 `pilot_cli`" in text or "直接调用" in text
             assert "委派" in text
             assert "禁止在 Task 正文写 `--mode`" not in text
             assert "code-access" in text
@@ -324,21 +319,30 @@ def test_native_opencode_commands_are_generated(tmp_path: Path):
             assert "pilot_run" in text
 
 
-def test_cognitive_skill_ids_include_code_engineering():
-    from compose_runtime import COGNITIVE_SKILL_IDS, _host_remap_skill_paths
+def test_action_skill_ids_are_discovered_not_closed_five():
+    from compose_runtime import listed_skill_ids, _host_remap_skill_paths
 
-    assert "code-engineering" in COGNITIVE_SKILL_IDS
+    ids = listed_skill_ids(REPO)
+    assert "uo-query" in ids
+    assert "plan-fuse" in ids
+    assert "ce-apply" in ids
+    assert "standalone-review" in ids
+    assert "precision-testing" in ids
+    assert "operator-analysis" not in ids
+    assert "testcase-generation" not in ids
+    assert "code-review" not in ids
+    assert "code-engineering" not in ids
     remapped = _host_remap_skill_paths(
-        "method:skills/code-engineering/** and `skills/code-engineering`",
+        "method:skills/uo-query/** and `skills/uo-query`",
         host="opencode",
     )
     assert remapped == (
-        "method:cognitive-skills/code-engineering/** and `cognitive-skills/code-engineering`"
+        "method:cognitive-skills/uo-query/** and `cognitive-skills/uo-query`"
     )
 
 
 def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
-    from compose_runtime import COGNITIVE_SKILL_IDS, CONTROL_PLANE_SKILL_IDS, _read_invariant_pack
+    from compose_runtime import listed_skill_ids, CONTROL_PLANE_SKILL_IDS, _read_invariant_pack
 
     pack = _read_invariant_pack(REPO)
     assert "简单查询" in pack
@@ -348,15 +352,10 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
     assert "Open" in pack
     assert "PROVEN_UNREACHABLE" in pack
     assert "Host 运行时契约" not in pack
-    assert COGNITIVE_SKILL_IDS == (
-        "operator-analysis",
-        "testcase-generation",
-        "source-proof",
-        "code-review",
-        "code-engineering",
-    )
+    ids = listed_skill_ids(REPO)
+    assert "uo-query" in ids and "bind-init" in ids
     assert CONTROL_PLANE_SKILL_IDS == ()
-    assert set(CONTROL_PLANE_SKILL_IDS).isdisjoint(set(COGNITIVE_SKILL_IDS))
+    assert set(CONTROL_PLANE_SKILL_IDS).isdisjoint(set(ids))
     maintainer = {
         "writing-for-pilot-skills",
         "diagnosing-pilot",
@@ -364,7 +363,7 @@ def test_invariant_pack_includes_context_and_keeps_cognitive_set_closed():
         "tdd-engines",
         "pilot-pr-review",
     }
-    assert maintainer.isdisjoint(set(COGNITIVE_SKILL_IDS))
+    assert maintainer.isdisjoint(set(ids))
     for name in maintainer:
         assert not (REPO / ".cursor" / "skills" / name / "SKILL.md").is_file()
 
@@ -384,7 +383,7 @@ def test_compose_injects_context_not_maintainer_skills(tmp_path: Path):
     assert "短问" not in primary
     assert "深问" not in primary
     assert "同名不可互换" in primary
-    oa = (out / "skills" / "operator-analysis" / "SKILL.md").read_text(encoding="utf-8")
+    oa = (out / "skills" / "uo-query" / "SKILL.md").read_text(encoding="utf-8")
     assert "disable-model-invocation: true" in oa
     assert not (out / "skills" / "workflow-orchestration" / "SKILL.md").exists()
     primary = (out / "agents" / "ascendc-pilot.md").read_text(encoding="utf-8")
@@ -417,21 +416,15 @@ def test_policy_ids_follow_execution_mode() -> None:
     assert review["policy_ids"] == ["pilot-control", "language"]
 
 
-def test_cognitive_skill_md_does_not_cross_link_other_skill_refs() -> None:
-    from compose_runtime import COGNITIVE_SKILL_IDS
+def test_action_skill_md_does_not_cross_link_other_skill_refs() -> None:
+    from compose_runtime import listed_skill_ids
 
-    for sid in COGNITIVE_SKILL_IDS:
+    ids = listed_skill_ids(REPO)
+    for sid in ids:
         text = (REPO / "skills" / sid / "SKILL.md").read_text(encoding="utf-8")
-        for other in COGNITIVE_SKILL_IDS:
+        for other in ids:
             if other == sid:
                 continue
             needle = f"skills/{other}/references/"
             assert needle not in text, f"{sid} SKILL.md links {needle}"
-        for method in (REPO / "skills" / sid).glob("capabilities/**/METHOD.md"):
-            body = method.read_text(encoding="utf-8")
-            for other in COGNITIVE_SKILL_IDS:
-                if other == sid:
-                    continue
-                needle = f"skills/{other}/references/"
-                assert needle not in body, f"{method} links {needle}"
 

@@ -6,13 +6,13 @@ mode: subagent
 description: >
   `/uo-init` heal 的分阶段 producer。只写 `propose_include_heal/staging.yaml`。
   禁止写 extras yaml、`spec/build_context.yaml`、shim、`.uo`。
-max_skill_ids: &skills [operator-analysis]
+max_skill_ids: &skills [propose-include-heal]
 skill_ids: *skills
 read_scopes:
 - pilot:uo/**
 - pilot:runs/**
 - pilot:context/**
-- method:skills/operator-analysis/**
+- method:skills/propose-include-heal/**
 write_scopes:
 - pilot:runs/**/actions/propose_include_heal/parts/**
 - pilot:runs/**/actions/propose_include_heal/scratch/**

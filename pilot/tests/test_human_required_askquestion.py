@@ -9,7 +9,7 @@ from ascendc_pilot.state import describe_next, load_state, save_state, start_wor
 
 
 def test_describe_next_header_uses_workflow_id(tmp_path: Path) -> None:
-    start_workflow(tmp_path, "tg-init", phase="confirm", force_phase=True, architecture="arch35")
+    start_workflow(tmp_path, "tg-init", phase="bind", force_phase=True, architecture="arch35")
     state = load_state(tmp_path) or {}
     state["status"] = "human_required"
     state["last_failure"] = {

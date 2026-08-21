@@ -40,14 +40,8 @@ def main() -> int:
 
     cases: list[Path] = []
     if args.all or not args.path:
-        for skill in (
-            "operator-analysis",
-            "testcase-generation",
-            "source-proof",
-            "code-review",
-            "code-engineering",
-        ):
-            root = REPO / "skills" / skill / "examples"
+        for skill_md in (REPO / "skills").glob("*/SKILL.md"):
+            root = skill_md.parent / "examples"
             if root.is_dir():
                 cases.extend(p for p in root.iterdir() if p.is_dir())
     else:

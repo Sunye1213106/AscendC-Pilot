@@ -596,7 +596,6 @@ def _review_axis_fanout_tasks(
         if not axes_spec:
             return []
     if rework_slices == {"harness", "bind"} and len(axes_spec) >= 2:
-        method_prefix = str(action.get("action_method_id") or "").split("/", 1)[0].strip()
         dt = dict(dispatch_targets or {})
         artifacts: list[str] = []
         prevs: list[str] = []
@@ -605,7 +604,7 @@ def _review_axis_fanout_tasks(
             axis = str(axis_row.get("id") or "").strip()
             cap = str(axis_row.get("capability_id") or "").strip()
             artifact = str(axis_row.get("artifact") or "").replace("{run_id}", run_id)
-            skill = str(axis_row.get("skill") or method_prefix or "code-review").strip()
+            skill = str(axis_row.get("skill") or cap or "").strip()
             if not axis or not cap or not artifact:
                 artifacts = []
                 break
@@ -665,7 +664,6 @@ def _review_axis_fanout_tasks(
                 },
             )
             return tasks
-    method_prefix = str(action.get("action_method_id") or "").split("/", 1)[0].strip()
     dt = dict(dispatch_targets or {})
     tasks: list[dict[str, str]] = []
     for axis_row in axes_spec:
@@ -674,7 +672,7 @@ def _review_axis_fanout_tasks(
         artifact = str(axis_row.get("artifact") or "").replace("{run_id}", run_id)
         other = str(axis_row.get("other") or "").replace("{run_id}", run_id)
         focus = str(axis_row.get("focus") or "").strip()
-        skill = str(axis_row.get("skill") or method_prefix or "code-review").strip()
+        skill = str(axis_row.get("skill") or cap or "").strip()
         allow_write = bool(axis_row.get("allow_write"))
         if not axis or not cap or not artifact:
             return []
@@ -700,7 +698,12 @@ def _review_axis_fanout_tasks(
         axis_dt["write"] = axis_write
         forbid = list(axis_dt.get("forbid_read") or [])
         blocked = [other] if other else []
-        if skill == "code-review":
+        if cap in {"spec-review", "standards-review", "standalone-review"} or skill in {
+            "code-review",
+            "standalone-review",
+            "spec-review",
+            "standards-review",
+        }:
             blocked.extend(
                 (
                     "ce/review/functional_report.yaml",
@@ -912,31 +915,36 @@ def _complete_bind_review_prepare(
     return result
 
 
+def _skill_path(repo: Path, skill_id: str) -> Path:
+    """``skills/<skill_id>/SKILL.md`` — one document per executable step."""
+    return repo / "skills" / str(skill_id or "").strip() / "SKILL.md"
+
+
+def _normalize_skill_id(raw: str) -> str:
+    token = str(raw or "").strip()
+    if "/" in token:
+        token = token.rsplit("/", 1)[-1].strip()
+    return token
+
+
 def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
-    """``skills/<domain>/capabilities/<cap>/METHOD.md`` (Spec identity → playbook)."""
-    return repo / "skills" / domain / "capabilities" / capability / "METHOD.md"
+    """Fanout axis playbook: ``capability`` is the Skill id."""
+    del domain
+    return _skill_path(repo, capability)
 
 
 def _uo_query_method_path(repo: Path) -> Path:
-    """Query playbook for ``uo-query`` (materialized as session/method.md)."""
-    return _capability_method_path(repo, "operator-analysis", "uo-query")
+    return _skill_path(repo, "uo-query")
 
 
 def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | None:
-    """Map explicit ``action_method_id`` ``{skill}/{capability}`` onto METHOD.md.
-
-    No heuristic fallback on prompt id or action id. Missing files are the
-    caller's problem (prepare fail-closed for subagent LLM Actions).
-    """
-    mid = str(action.get("action_method_id") or "").strip()
-    if "/" not in mid:
+    """Map ``skill_id`` onto ``skills/<id>/SKILL.md``. Missing files fail closed."""
+    sid = _normalize_skill_id(
+        str(action.get("skill_id") or action.get("action_method_id") or "")
+    )
+    if not sid:
         return None
-    domain, capability = mid.split("/", 1)
-    domain = domain.strip()
-    capability = capability.strip()
-    if not domain or not capability:
-        return None
-    return _capability_method_path(repo, domain, capability)
+    return _skill_path(repo, sid)
 
 
 def _task_prompt_path(repo: Path, tpid: str) -> Path:
@@ -1601,16 +1609,15 @@ def prepare_action(
     if execution_mode == EXECUTION_SUBAGENT and str(action.get("task_prompt_id") or "").strip():
         mp = _resolve_capability_method(repo, action)
         if mp is None or not mp.is_file() or not str(method or "").strip():
-            mid = str(action.get("action_method_id") or "")
+            sid = str(action.get("skill_id") or action.get("action_method_id") or "")
             return {
                 "ok": False,
-                "error": "METHOD_MISSING",
-                "reason_code": "METHOD_MISSING",
+                "error": "SKILL_MISSING",
+                "reason_code": "SKILL_MISSING",
                 "message_zh": (
-                    f"Action {action_id} missing METHOD.md for {mid or '(no action_method_id)'}；"
-                    "禁止拼接 Agent SKILL.md。"
+                    f"Action {action_id} missing SKILL.md for {sid or '(no skill_id)'}。"
                 ),
-                "action_method_id": mid,
+                "skill_id": sid,
             }
     if execution_mode in {EXECUTION_SUBAGENT, EXECUTION_PRIMARY_INTERACTIVE}:
         tpid = str(action.get("task_prompt_id") or "")

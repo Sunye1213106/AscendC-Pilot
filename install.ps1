@@ -26,7 +26,9 @@ function Get-OpenCodeHome {
 
 # Keep install and uninstall on the same names (compose slash workflows).
 $workflowSkills = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
-$cognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
+# Action Skills are discovered from generated/<host>/cognitive-skills (or skills/) after compose.
+# Uninstall still names the old five families so leftover installs are cleaned.
+$legacyCognitiveSkills = @("operator-analysis","testcase-generation","source-proof","code-review","code-engineering")
 $openCodeCommands = @("uo-init","uo-update","uo-query","uo-investigate","ce-review","ce-plan","ce-apply","handoff","tg-init","tg-plan","tg-solve")
 $currentAgents = @("ascendc-pilot","uo-query","uo-heal-analyst","uo-gap-investigator","ce-reviewer","tg-analyst","ce-applier","ce-analyst")
 $legacySkills = @("uo-code-review","understand-operator","uo-diff","_policies","ce-intent","ce-impact","ce-verify","ce-handoff","operator")
@@ -497,7 +499,7 @@ foreach ($name in $workflowSkills) {
 }
 
 if ($Platform -eq "opencode") {
-  foreach ($name in $cognitiveSkills) {
+  foreach ($name in $legacyCognitiveSkills) {
     Remove-ReparseOrItem (Join-Path $Skills $name)
   }
   $cogSrc = Join-Path $genRoot "cognitive-skills"
@@ -505,9 +507,21 @@ if ($Platform -eq "opencode") {
     $cogDst = Join-Path $Dest "cognitive-skills"
     if (Test-Path -LiteralPath $cogDst) { Remove-Item -Recurse -Force -LiteralPath $cogDst }
     Copy-Item -Recurse -Force -LiteralPath $cogSrc -Destination $cogDst
+    Get-ChildItem -LiteralPath $cogSrc -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+      Remove-ReparseOrItem (Join-Path $Skills $_.Name)
+    }
   }
 } else {
-  foreach ($name in $cognitiveSkills) {
+  $skillRoot = Join-Path $Dest "skills"
+  $cognitiveNames = @()
+  if (Test-Path -LiteralPath $skillRoot) {
+    $cognitiveNames = @(
+      Get-ChildItem -LiteralPath $skillRoot -Directory |
+        Where-Object { $workflowSkills -notcontains $_.Name -and $_.Name -notin @("_policies","_shared") } |
+        ForEach-Object { $_.Name }
+    )
+  }
+  foreach ($name in $cognitiveNames) {
     $target = Join-Path $Dest "skills\$name"
     if (-not (Test-Path -LiteralPath $target)) {
       throw "generated skill missing: $target (compose/copy failed)"

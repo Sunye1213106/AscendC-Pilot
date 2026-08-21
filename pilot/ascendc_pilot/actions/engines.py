@@ -985,7 +985,6 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "uo-ready-v1": ["runs/{run_id}/receipts/uo_ready.yaml"],
     "tg-init-v1": ["tg/init.yaml"],
     "tg-init-validate-v1": ["runs/{run_id}/receipts/validate_init.yaml"],
-    "tg-init-confirmed-v1": ["tg/init.yaml"],
     "tg-repo-scan-v1": ["runs/{run_id}/receipts/repo_scan.yaml"],
     "tg-bind-staging-v1": [
         "runs/{run_id}/actions/bind_init/parts/harness.yaml",

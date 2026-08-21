@@ -38,7 +38,6 @@ def _build(
             "slash": "",
             "reserved": True,
             "engine": "goal",
-            "cognitive_skill_id": "testcase-generation",
             "requires_project": False,
             "requires_architecture": False,
             "requires_uo_product": False,

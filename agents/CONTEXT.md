@@ -13,7 +13,7 @@
 
 **刷新 `.uo`** — `/uo-update`。基于工作区 / diff / PR 检测变更并增量重建受影响层；common / 头文件变更可退化为全量抽取。不是重新 `/uo-init`。
 
-**查询** — `/uo-query`。CodeMap 的唯一对外语义查询接口；不是 Host workflow。路由见 `routing/uo-query.md`。形态见 code-access 不变量。
+**查询** — `/uo-query` Command。调查：一路直接 `pilot_cli`，多路 fanout 子代理隔离主控窗口。不是 Host workflow。形态见 code-access 不变量。拆路见 intent-reasoning。
 
 **简单查询** — 单一起始符号或参数形态，通常一两轮查询可闭合。
 **复杂查询** — 含多个可独立查询的目标。

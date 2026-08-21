@@ -11,7 +11,7 @@
 - Optional UO hints: `runs/<RUN_ID>/actions/change_capture/uo_hints.md`
 - Optional hunk windows: `runs/<RUN_ID>/actions/change_capture/hunks/`
 
-本入口不写 ce/review。稳定审查方法、取证顺序与反证规则见 session `method.md`（`code-review/standalone-review`）。
+本入口不写 ce/review。稳定审查方法、取证顺序与反证规则见 session `method.md`（`standalone-review`）。
 </context>
 
 <output>

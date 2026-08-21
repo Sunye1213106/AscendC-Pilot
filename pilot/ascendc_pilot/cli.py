@@ -770,8 +770,8 @@ def main(argv: list[str] | None = None) -> int:
                     "error": "UO_QUERY_NOT_HOST_DRIVEN",
                     "reason_code": "UO_QUERY_NOT_HOST_DRIVEN",
                     "message_zh": (
-                        "uo-query 不是 Host Session Driver 工作流。"
-                        "请用 /uo-query 或 plugin `pilot_cli` 的 `uo-query`。"
+                        "uo-query 是瞬时查询 Command，不要 `pilot_run`。"
+                        "请用 /uo-query，或插件 `pilot_cli` 的 `uo-query`。"
                     ),
                 }
             )

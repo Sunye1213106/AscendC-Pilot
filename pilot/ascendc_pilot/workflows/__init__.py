@@ -259,13 +259,31 @@ def action_by_id(workflow_id: str, action_id: str, *, project_root: Any | None =
     return None
 
 
+def workflow_kind(workflow_id: str) -> str:
+    """``command`` is an instant slash; ``workflow`` has phase/lease/pilot_run."""
+    wid = resolve_workflow_id(workflow_id)
+    meta = WORKFLOWS.get(wid) or {}
+    kind = str(meta.get("kind") or "").strip().lower()
+    if kind:
+        return kind
+    if meta.get("host_driver") is False:
+        return "command"
+    return "workflow"
+
+
+def workflow_is_command(workflow_id: str) -> bool:
+    return workflow_kind(workflow_id) == "command"
+
+
 def workflow_uses_host_driver(workflow_id: str) -> bool:
     """True when OpenCode ``pilot_run`` / ``acp start`` owns the session loop.
 
-    ``uo-query`` is a Primary LLM router (visible classify → DIY or Task) and
-    must not be started by the Host Session Driver. Default True.
+    Commands such as ``uo-query`` are Primary investigation, not Host-driven
+    workflows. Default True.
     """
     wid = resolve_workflow_id(workflow_id)
+    if workflow_is_command(wid):
+        return False
     meta = WORKFLOWS.get(wid) or {}
     return meta.get("host_driver", True) is not False
 

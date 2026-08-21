@@ -91,9 +91,7 @@ def test_intent_reasoning_forces_inits_before_consume() -> None:
     text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
         encoding="utf-8"
     )
-    assert "禁止把消费格插在未完成的 init 之前" in text
-    assert "不要按个别措辞选 slash" in text
-    assert "不要背场景黄金链" in text
+    assert "init 先于调查" in text
     assert "/ce-review" in text and "消费" in text
     assert "分析这个 PR 并生成" not in text
     assert "Todo：`auto` → `/uo-init` → `/tg-init` → `/uo-query`" not in text

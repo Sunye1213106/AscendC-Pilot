@@ -154,7 +154,7 @@ def test_plan_draft_binds_ce_plan_method() -> None:
     assert action is not None
     path = _resolve_capability_method(repo, action)
     assert path is not None
-    assert path.name == "METHOD.md"
+    assert path.name == "SKILL.md"
     assert "ce-plan-draft" in path.as_posix().replace("\\", "/")
 
 

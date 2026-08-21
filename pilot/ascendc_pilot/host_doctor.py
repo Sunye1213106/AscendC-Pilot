@@ -120,10 +120,9 @@ def _doctor_opencode(*, project: Path | None = None) -> dict[str, Any]:
             text = md.read_text(encoding="utf-8")
         except Exception:  # noqa: BLE001
             continue
-        if "skills/testcase-generation/SKILL.md" in text and "cognitive-skills/" not in text:
-            # Still pointing at non-discoverable path without cognitive remap.
-            skill_path = home / "skills" / "testcase-generation" / "SKILL.md"
-            cog = home / "ascendc-pilot-plugin" / "cognitive-skills" / "testcase-generation" / "SKILL.md"
+        if "skills/construct-cases/SKILL.md" in text and "cognitive-skills/" not in text:
+            skill_path = home / "skills" / "construct-cases" / "SKILL.md"
+            cog = home / "ascendc-pilot-plugin" / "cognitive-skills" / "construct-cases" / "SKILL.md"
             if not skill_path.is_file() and cog.is_file():
                 bad_desc.append(md.name)
     add(

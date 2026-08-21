@@ -7,7 +7,7 @@ kind: deterministic_engine
 role: deterministic_engine
 mode: subagent
 description: TG 确定性引擎（非 LLM）
-skill_ids: [testcase-generation, operator-analysis, source-proof]
+skill_ids: []
 read_scopes:
 - pilot:tg/**
 - pilot:uo/**
@@ -17,8 +17,7 @@ read_scopes:
 - pilot:runs/**
 - pilot:context/**
 - source:test_script/**
-- method:skills/testcase-generation/**
-- method:skills/operator-analysis/**
+- method:skills/plan-fuse/**
 - method:skills/source-proof/**
 write_scopes:
 - pilot:tg/**

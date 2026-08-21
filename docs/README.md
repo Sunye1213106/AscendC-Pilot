@@ -21,7 +21,7 @@
 - [当前版本 UO benchmark（FAG arch35 冷启动 119s、查询与未闭合项）](benchmark.md)
 - [TG - Testcase Generation](modules/tg.md)
 - [CE - Code Engineering](modules/ce.md)
-- 认知 Skill：`operator-analysis`、`testcase-generation`、`source-proof`、`code-review`、`code-engineering`（见 `skills/`）
+- 执行 Skill：平铺在 `skills/<id>/SKILL.md`（当前 Action 配方；不是五个封闭领域）
 - Agent 词表：[`agents/CONTEXT.md`](../agents/CONTEXT.md)
 
 ## 开发 AscendC-Pilot
@@ -40,7 +40,7 @@
 - [Agent Runtime](architecture/agent-runtime.md)（含 `pilot_run`、`host_step`、Bundle 读闭合）
 - [Agent 内容整理规范](architecture/agent-content-rules.md)（Policy / Skill / Prompt / Agent 属主）
 - [产物与权威](architecture/artifacts-and-authority.md)
-- UO 查询产品地图：[`skills/operator-analysis/references/uo-product-map.md`](../skills/operator-analysis/references/uo-product-map.md)（progressive；域文档按需）
+- UO 查询产品地图：[`skills/uo-query/references/uo-product-map.md`](../skills/uo-query/references/uo-product-map.md)（progressive；域文档按需）
 - [扩展指南](development/extending.md)
 - [测试与评估](development/testing.md)
 - [文档维护](development/documentation.md)

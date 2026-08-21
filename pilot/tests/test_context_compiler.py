@@ -65,12 +65,12 @@ def test_tg_profiles_materialize_phase_gotchas_not_index() -> None:
     analyze = get_profile("tg-solve-analyze-round")
     assert bind_init is not None and plan_fuse is not None
     assert construct is not None and analyze is not None
-    assert "skills/testcase-generation/references/construction-gotchas.md" in bind_init.references
-    assert "skills/testcase-generation/references/planning-gotchas.md" in plan_fuse.references
-    assert "skills/testcase-generation/references/planning-context.md" in plan_fuse.references
-    assert "skills/testcase-generation/references/closure-gotchas.md" in construct.references
-    assert "skills/testcase-generation/references/oracle.md" in construct.references
-    assert "skills/testcase-generation/references/oracle.md" in analyze.references
+    assert "skills/bind-init/references/construction-gotchas.md" in bind_init.references
+    assert "skills/plan-fuse/references/planning-gotchas.md" in plan_fuse.references
+    assert "skills/plan-fuse/references/planning-context.md" in plan_fuse.references
+    assert "skills/construct-cases/references/closure-gotchas.md" in construct.references
+    assert "skills/construct-cases/references/oracle.md" in construct.references
+    assert "skills/analyze-round/references/oracle.md" in analyze.references
     for prof in (bind_init, plan_fuse, construct, analyze):
         assert index not in prof.references, prof.id
 

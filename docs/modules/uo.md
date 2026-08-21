@@ -244,16 +244,16 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 身份一律 `uo-query`。推理入口：
 
-- 短地图 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)
-- 子代 METHOD：`skills/operator-analysis/capabilities/uo-query/METHOD.md`
-- 主控路由：`skills/operator-analysis/routing/uo-query.md`
+- 短地图 [`uo-product-map.md`](../../skills/uo-query/references/uo-product-map.md)
+- 子代 METHOD：`skills/uo-query/SKILL.md`
+- 主控路由：`pilot/policies/invariants/intent-reasoning.md`
 - 交付：简单查询 = 当前会话 stdout；复杂查询 = 子代 Task 全文（主控综合）。子代不要 Write `answer.yaml`。
 
 `readonly_analyst`：**禁止改 domain 正式产物**（`.uo` / TG / CE）。子代理不写正式产物。
 
 高置信源码窗：查询命中里的 `snippet` 已算读过。只有窗被截断才 `pilot_cli` `inspect evidence-window --project … --path … --lines A-B`。
 
-结构化查询（`pilot_cli` `uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图。形态见 code-access 不变量；各形态返回什么见 `capabilities/uo-query/METHOD.md`。
+结构化查询（`pilot_cli` `uo-query`，默认 `--limit 8`）走 SQLite 索引，不 hydrate 全图。形态见 code-access 不变量；各形态返回什么见 `skills/uo-query/SKILL.md`。
 
 这是 CE / TG / 主控的**唯一查询面**。`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。
 
@@ -282,7 +282,7 @@ UO 不替代 cannbot。cannbot 的 code-review、runtime-debug、crash-debug、p
 现在：问题 → UO 一次查询（定位点 + 源码窗）→ cannbot 判断
 ```
 
-下表把 cannbot skill 要的源码点对齐到 **CodeMap 已实现的投影**（`query/evidence.py` 的 facts 与有用边；内部桶名见 [`uo-product-map.md`](../../skills/operator-analysis/references/uo-product-map.md)）。**Agent / CE 技能不得按表中的 `locate` / `search` / `impact` 去调 CLI**——对外只有 `uo-query`（形态见 code-access 不变量）。`impact` 列表示图邻域分桶，对应磁盘 `uo/diff/impact.yaml` 时也只是 uo-update 产物。
+下表把 cannbot skill 要的源码点对齐到 **CodeMap 已实现的投影**（`query/evidence.py` 的 facts 与有用边；内部桶名见 [`uo-product-map.md`](../../skills/uo-query/references/uo-product-map.md)）。**Agent / CE 技能不得按表中的 `locate` / `search` / `impact` 去调 CLI**——对外只有 `uo-query`（形态见 code-access 不变量）。`impact` 列表示图邻域分桶，对应磁盘 `uo/diff/impact.yaml` 时也只是 uo-update 产物。
 
 | cannbot skill 要的源码点 | 典型 skill | UO 查询 | CodeMap 给出 |
 | --- | --- | --- | --- |

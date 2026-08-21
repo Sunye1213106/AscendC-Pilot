@@ -182,16 +182,14 @@ def test_readonly_powershell_if_probe_allowed(tmp_path: Path) -> None:
 
 
 def test_spec_method_infers_intent_not_narrate_only() -> None:
-    method = (
-        REPO / "skills" / "code-review" / "capabilities" / "spec-review" / "METHOD.md"
-    ).read_text(encoding="utf-8")
+    method = (REPO / "skills" / "spec-review" / "SKILL.md").read_text(encoding="utf-8")
     assert "粗意图" in method
     assert "完成度" in method
     assert "只陈述理解就算完成" in method or "禁止「只陈述理解就算完成」" in method
     assert "只陈述变更理解，不假装有计划" not in method
-    standalone = (
-        REPO / "skills" / "code-review" / "capabilities" / "standalone-review" / "METHOD.md"
-    ).read_text(encoding="utf-8")
+    standalone = (REPO / "skills" / "standalone-review" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
     assert "index.md" in standalone
     assert "禁止只陈述变更理解" in standalone
     prompt = (REPO / "prompts" / "tasks" / "ce" / "standalone-review.md").read_text(

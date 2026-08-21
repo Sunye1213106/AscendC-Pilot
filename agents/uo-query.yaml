@@ -5,14 +5,14 @@ role: readonly_analyst
 mode: subagent
 description: >
   只读查 CodeMap。禁止写 `.uo` 与 `answer.yaml`。
-max_skill_ids: &skills [operator-analysis]
+max_skill_ids: &skills [uo-query]
 skill_ids: *skills
 read_scopes:
 - pilot:uo/**
 - pilot:runs/**
 - pilot:context/**
 - pilot:memory/**
-- method:skills/operator-analysis/**
+- method:skills/uo-query/**
 write_scopes: []
 machine_constraints:
 - modify_pilot_state

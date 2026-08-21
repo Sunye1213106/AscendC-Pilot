@@ -18,7 +18,7 @@ import yaml
 
 REPO = Path(__file__).resolve().parents[1]
 PHYSICAL_COGNITIVE_PATH = re.compile(
-    r"(?<![A-Za-z0-9_-])skills/(operator-analysis|testcase-generation|source-proof|code-review|code-engineering)/",
+    r"(?<![A-Za-z0-9_-])skills/(operator-analysis|testcase-generation|code-review|code-engineering)/",
     re.I,
 )
 TEMPLATE_TOKEN = re.compile(r"<([A-Z][A-Z0-9_]{2,})>")
