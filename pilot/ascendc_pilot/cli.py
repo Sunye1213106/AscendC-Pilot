@@ -131,6 +131,15 @@ def _apply_run_action_limit_flags(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "skipped": True, "reason": "extract_limits_not_applicable"}
 
 
+def _coerce_start_test_script_root(args: argparse.Namespace) -> str:
+    from ascendc_pilot.human_interaction import coerce_test_script_root_arg
+
+    return coerce_test_script_root_arg(
+        getattr(args, "test_script_root", "") or "",
+        project_root=getattr(args, "project", None),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_stdio()
     raw = list(argv if argv is not None else sys.argv[1:])
@@ -213,7 +222,11 @@ def main(argv: list[str] | None = None) -> int:
             "requires_architecture; no silent default)"
         ),
     )
-    p_start.add_argument("--test-script-root", type=Path, default=None, help="Test script root")
+    p_start.add_argument(
+        "--test-script-root",
+        default="",
+        help="External test-script directory or git URL (not type=Path: URLs must stay URLs)",
+    )
     p_start.add_argument("--level", default="", help="TG plan/solve level (default L0)")
     p_start.add_argument("--focus", default="", help="TG plan focus")
 
@@ -297,7 +310,10 @@ def main(argv: list[str] | None = None) -> int:
     p_ir_t.add_argument("--severity", default="")
     p_ir_t.add_argument("--object-type", default="")
     p_ir_t.add_argument("--limit", type=int, default=50)
-    p_ir_y = p_ir_sub.add_parser("yaml", help="Count top-level keys / list lengths in a YAML IR file")
+    p_ir_y = p_ir_sub.add_parser(
+        "yaml",
+        help="Parse a YAML file under .ascendc-pilot/ (keys/list lengths; reports BIND_PART_YAML_INVALID)",
+    )
     p_ir_y.add_argument("--project", type=Path, default=None)
     p_ir_y.add_argument("--rel", required=True, help="Path relative to .ascendc-pilot/")
     p_ir_d = p_ir_sub.add_parser("duplicates", help="Find duplicate llm_tasks targets")
@@ -786,11 +802,7 @@ def main(argv: list[str] | None = None) -> int:
             "intent": getattr(args, "intent", "") or "",
             "op_name": getattr(args, "op_name", "") or "",
             "architecture": arch,
-            "test_script_root": (
-                str(args.test_script_root.resolve())
-                if getattr(args, "test_script_root", None)
-                else ""
-            ),
+            "test_script_root": _coerce_start_test_script_root(args),
             "level": getattr(args, "level", "") or "",
             "focus": getattr(args, "focus", "") or "",
         }
@@ -1638,10 +1650,23 @@ def _cmd_inspect(args: Any) -> int:
         if not path.is_file():
             print_json({"ok": False, "error": "missing", "path": str(path)})
             return 1
-        doc = read_yaml(path) or {}
+        from ascendc_pilot.yaml_check import format_yaml_error_zh, parse_yaml_mapping
+
+        doc, err = parse_yaml_mapping(path)
+        if err:
+            print_json(
+                {
+                    "ok": False,
+                    **err,
+                    "rel": rel,
+                    "message_zh": format_yaml_error_zh(err, heal_hint=True),
+                },
+                default=str,
+            )
+            return 1
         counts = {
             k: (len(v) if isinstance(v, list) else type(v).__name__)
-            for k, v in (doc.items() if isinstance(doc, dict) else [])
+            for k, v in ((doc or {}).items() if isinstance(doc, dict) else [])
         }
         print_json({"ok": True, "path": rel, "counts": counts}, default=str)
         return 0

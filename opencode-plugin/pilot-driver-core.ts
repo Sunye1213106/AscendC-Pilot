@@ -105,6 +105,8 @@ const HOST_STEP_MODEL_KEYS = [
   "suggested_fix",
   "issues",
   "stop_reason",
+  "ask_ui_shown",
+  "host_owned_ask",
 ] as const
 
 const HOST_STEP_TASK_KEYS = [
@@ -197,6 +199,12 @@ export function compactPilotRunPayload(result: unknown): Record<string, unknown>
   const requestId = String(ask.request_id || rec.request_id || step.request_id || "")
   if (requestId) out.request_id = requestId
   if (rec.ask_question && typeof rec.ask_question === "object") out.ask_question = rec.ask_question
+  if (rec.host_owned_ask === true || step.host_owned_ask === true) out.host_owned_ask = true
+  if (rec.needs_human_decision === true) out.needs_human_decision = true
+  const askUiShown = rec.ask_ui_shown === true || rec.ask_ui_shown === false ? rec.ask_ui_shown : step.ask_ui_shown
+  if (askUiShown === true || askUiShown === false) out.ask_ui_shown = askUiShown
+  const askUiError = String(rec.ask_ui_error || "")
+  if (askUiError) out.ask_ui_error = askUiError
   return out
 }
 
@@ -1193,6 +1201,9 @@ async function invokeAskHuman(
         sessionID: sessionId,
         sessionId,
       })
+      if (!extractAskAnswer(answers)) {
+        return { answered: false, via: "toolCtx.askQuestion", error: "ASK_UI_EMPTY" }
+      }
       return { answered: true, answers, via: "toolCtx.askQuestion" }
     } catch (exc) {
       return { answered: false, error: String(exc).slice(0, 200) }
@@ -1209,6 +1220,9 @@ async function invokeAskHuman(
           ...payload,
         },
       })
+      if (!extractAskAnswer(answers)) {
+        return { answered: false, via: "client.question.ask", error: "ASK_UI_EMPTY" }
+      }
       return { answered: true, answers, via: "client.question.ask" }
     } catch (exc) {
       return { answered: false, error: String(exc).slice(0, 200) }
@@ -1289,6 +1303,7 @@ async function handleAskHumanStep(args: {
       answered: true,
       needs_human_decision: false,
       host_owned_ask: true,
+      ask_ui_shown: true,
       answers: asked.answers,
       resume_decision: decision,
       choice: label,
@@ -1301,7 +1316,6 @@ async function handleAskHumanStep(args: {
     }
   }
 
-  // UI missing: still mark host-owned so Primary must not invent options.
   if (isAskInterrupted(asked, toolCtx)) {
     log.push({ event: "ask_interrupted", error: asked.error })
     return {
@@ -1310,6 +1324,7 @@ async function handleAskHumanStep(args: {
       ask_interrupted: true,
       needs_human_decision: false,
       host_owned_ask: false,
+      ask_ui_shown: false,
       log,
       todo,
       message_zh:
@@ -1318,18 +1333,25 @@ async function handleAskHumanStep(args: {
     }
   }
 
+  // UI missing: host_owned_ask means options are owned (do not invent), not that a box appeared.
+  const uiReason = String(asked.via || asked.error || "ASK_UI_UNAVAILABLE")
+  const missingZh =
+    "原生确认框没有出现（" +
+    uiReason +
+    "）。ask_ui_shown=false。host_owned_ask 只表示选项归 Host、不许改选项，不表示框已弹出。" +
+    "立刻用 question 按 ask_question.options 原样询问；这是用户能看见的第一问，不是第二个 question。" +
+    "禁止用文字告诉用户「框应该已经弹出」或让用户去点看不见的框。点选结果由 Host 写入收据。"
   return {
     ok: false,
     answered: false,
     needs_human_decision: true,
     host_owned_ask: true,
-    host_step: step,
+    ask_ui_shown: false,
+    host_step: { ...step, kind: "ask_human", message_zh: missingZh, ask_ui_shown: false, host_owned_ask: true },
     ask_question: ask,
     log,
     todo,
-    message_zh:
-      step.message_zh ||
-      "Host 已询问；不要再开第二个 question。点选已弹出的确认框，或 interpret-user-turn。不要再开 question。",
+    message_zh: missingZh,
     ask_ui_error: asked.error,
   }
 }
@@ -1959,7 +1981,7 @@ export async function runPilotDriver(
           host_step: step,
           message_zh: String(
             step.message_zh ||
-              "请通读两路 yaml。不要写文件。下一发 intent=PASS 或 REWORK bind。",
+              "请通读两路 yaml。不要改口径。YAML 解析失败可 Edit 只修缩进。下一发 intent=PASS 或 REWORK bind。REWORK 后现稿留盘，子代理 patch，不要从零重写。",
           ),
           log,
           todo: todoPayload,

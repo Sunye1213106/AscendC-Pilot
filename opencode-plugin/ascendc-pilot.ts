@@ -88,6 +88,15 @@ function isPrimaryPilotAgent(agent: string): boolean {
   return a === "ascendc-pilot" || a === "ascendc_agent"
 }
 
+function isQuestionToolName(tool: string): boolean {
+  const t = String(tool || "").toLowerCase()
+  return t === "question" || t === "askquestion" || t === "ask_question" || t.includes("question")
+}
+
+function isPrimaryFetchTool(tool: string): boolean {
+  return tool === "webfetch" || tool === "websearch"
+}
+
 /** Listing / cwd probes only. File contents go through Read (engine-source fence). */
 function isReadonlyInspectBash(command: string): boolean {
   const cmd = String(command || "").trim()
@@ -785,10 +794,11 @@ function resolveEffectiveAgent(
   let agent = resolveAgent(input)
   const actor = String(active.actor_id || "").trim()
   if (!actor) return agent
-  // Task + all bash stay Primary. Authorize remaps write tools only.
+  // Task + bash + Primary fetch/ask stay Primary. Authorize remaps write tools only.
   const isTask = tool === "task" || tool === "subagent" || tool === "task_tool"
   if (isTask) return agent
   if (tool === "bash" || tool === "shell" || tool === "terminal") return agent
+  if (isPrimaryFetchTool(tool) || isQuestionToolName(tool)) return agent
   const status = String(active.status || "")
     .trim()
     .toLowerCase()
@@ -797,7 +807,7 @@ function resolveEffectiveAgent(
   if (status && status !== "prepared" && status !== "running" && status !== "actor_running") {
     return agent
   }
-  if (!agent || agent === "ascendc-pilot" || agent === "ascendc_agent") {
+  if (!agent || isPrimaryPilotAgent(agent)) {
     return actor
   }
   return agent
@@ -1082,6 +1092,8 @@ function patchPilotReadPermissions(
       perm.skill = perm.skill || "allow"
       perm.question = perm.question || "allow"
       perm.todowrite = perm.todowrite || "allow"
+      perm.webfetch = perm.webfetch || "allow"
+      perm.websearch = perm.websearch || "allow"
       // Do not widen task: Primary keeps compose_runtime whitelist, not task: allow.
       tools.pilot_run = true
       tools.pilotrun = true
@@ -3062,15 +3074,12 @@ export const AscendCHarnessPlugin = async (ctx?: {
         "pilotrun",
       ])
       const isMcpTool = !nativeTools.has(tool) && tool.includes("_")
-      if (isMcpTool && agent !== "ascendc-pilot") {
+      if (isMcpTool && !isPrimaryPilotAgent(agent)) {
         throw new Error(
           `[ascendc-pilot] MCP tool '${tool}' is denied for Pilot child '${agent}'. Use pilot_cli / session METHOD.`,
         )
       }
-      if (
-        agent !== "ascendc-pilot" &&
-        (tool === "webfetch" || tool === "websearch")
-      ) {
+      if (!isPrimaryPilotAgent(agent) && isPrimaryFetchTool(tool)) {
         throw new Error(
           `[ascendc-pilot] ${tool} is denied for Pilot child '${agent}'.`,
         )
@@ -3086,9 +3095,10 @@ export const AscendCHarnessPlugin = async (ctx?: {
           "",
       )
 
-      // Human Interaction Broker: while ACP has a pending interaction, Host
-      // already asked. Do not open a second question; click the existing UI
-      // or interpret-user-turn. Inspect helpers may proceed.
+      // Human Interaction Broker: while ACP has a pending interaction,
+      // options are owned. Children must not invent a different question.
+      // Primary may webfetch and MUST surface the same options via question
+      // when the Host UI did not actually pop (after-hook records the answer).
       const pending = getPending(project)
       if (pending) {
         const isAnswerCli =
@@ -3103,6 +3113,9 @@ export const AscendCHarnessPlugin = async (ctx?: {
           (tool === "bash" || tool === "shell" || tool === "terminal") &&
           isAcpResumeStartCommand(command)
         const isSkillTool = tool === "skill" || tool.endsWith("skill")
+        const isPrimaryAskOrFetch =
+          isPrimaryPilotAgent(agent) &&
+          (isQuestionToolName(tool) || isPrimaryFetchTool(tool))
         const isPrimaryReadonly =
           isPrimaryPilotAgent(agent) &&
           (tool === "read" ||
@@ -3120,6 +3133,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           !isHelpBash &&
           !isResumeStartBash &&
           !isSkillTool &&
+          !isPrimaryAskOrFetch &&
           !isPrimaryReadonly
         ) {
           const allowed = pending.allowed_values.length
@@ -3129,10 +3143,11 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
-              `Host 已询问；不要再开第二个 question。` +
+              `pending 不等于确认框已可见。若屏幕上没有可点选框，立刻用 question 按上述 prompt/options 原样询问；这是用户能看见的第一问。` +
+              `禁止用文字告诉用户「框应该已经弹出」。` +
               `若用户已在聊天里回复，用该原文调用 interpret-user-turn — 不要再问一遍。` +
-              `点选确认框也可以。` +
-              `确认框打开时 Primary 可以 Read / Glob / Get-ChildItem / inspect-failure / status。` +
+              `仅当原生确认框已经可见时才不要再开 question。` +
+              `pending 期间 Primary 可以 Read / Glob / Get-ChildItem / inspect-failure / status。` +
               `在 pending 被回答或取代之前，不要 Write、Task、pilot_run 或跑领域 CLI。` +
               `禁止把发现的仓内 tests/ 填进 test_script_root 以跳过 harness 询问。`,
           )
@@ -3378,11 +3393,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
         const projectRaw = isTaskTool
           ? detectProjectRootForTask(taskPromptHint)
           : detectProjectRoot(fromCmd || fromArgs || path)
-        const isQuestionTool =
-          tool === "question" ||
-          tool === "askquestion" ||
-          tool === "ask_question" ||
-          tool.includes("question")
+        const isQuestionTool = isQuestionToolName(tool)
         let project = projectRaw
         if (isQuestionTool) {
           const remembered = readRememberedProjectRoot()

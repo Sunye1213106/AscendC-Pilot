@@ -100,6 +100,8 @@ def main() -> int:
         "ask_interrupted",
         "normalizeResumeDecision",
         "answer_from_source",
+        "ask_ui_shown",
+        "ASK_UI_EMPTY",
         "primary_router",
         'startedKind === "primary_router"',
         'decision === "uo-init"',
@@ -119,8 +121,16 @@ def main() -> int:
         errors.append("pilot-driver-core.ts must drain with run-action auto")
     if 'autoArgv.push("--intent"' not in core_src:
         errors.append("pilot-driver-core.ts run-action auto must pass --intent")
-    if "Host 已询问" not in core_src:
-        errors.append("pilot-driver-core.ts must tell Primary not to open a second question")
+    if "立刻用 question 按 ask_question.options" not in core_src:
+        errors.append("pilot-driver-core.ts must tell Primary to surface ask_question via question when Host UI is missing")
+    if "原生确认框没有出现" not in core_src:
+        errors.append("pilot-driver-core.ts must say the native box did not appear when Host UI is missing")
+    if "禁止用文字告诉用户" not in core_src:
+        errors.append("pilot-driver-core.ts must forbid narrating a missing confirmation box")
+    if "ask_ui_shown" not in core_src:
+        errors.append("pilot-driver-core.ts must expose ask_ui_shown")
+    if "Host 已弹出确认框时不要再开第二个 question" in core_src:
+        errors.append("pilot-driver-core.ts must not forbid a fallback question on the missing-UI path")
     # Must not concat stderr into JSON parse buffer
     if 'stdout || ""}\n${result.stderr' in driver_src or "stdout + stderr" in driver_src:
         errors.append("pilot-driver.ts still concatenates stderr into JSON parse")
@@ -173,7 +183,10 @@ def main() -> int:
         "isAcpResumeStartCommand",
         'status !== "pending"',
         "禁止把发现的仓内 tests/ 填进 test_script_root",
-        "Host 已询问",
+        "pending 不等于确认框已可见",
+        "isPrimaryAskOrFetch",
+        "isPrimaryFetchTool",
+        "isQuestionToolName",
         "resolveInstalledSkillMd",
         "Do NOT overwrite OpenCode Task",
         "rgMissingRewrite",
@@ -217,6 +230,8 @@ def main() -> int:
     ):
         if marker not in plugin_src:
             errors.append(f"ascendc-pilot.ts missing {marker}")
+    if "Host 已询问；不要再开第二个 question" in plugin_src:
+        errors.append("pending broker must not claim Host already asked when the native box may be missing")
     if "!isPilotDriver" in plugin_src:
         errors.append(
             "pending broker must not exempt pilot_run; stuffing test_script_root must not skip AskQuestion"
@@ -233,6 +248,10 @@ def main() -> int:
         errors.append("ascendc-pilot.ts must keep createPilotSkillTool for Pilot SKILL.md recovery")
     if 'if (perm["*"] === undefined) perm["*"] = "deny"' in plugin_src:
         errors.append("plugin must not add top-level * deny on Primary (blocks read/grep)")
+    if 'agent !== "ascendc-pilot"' in plugin_src:
+        errors.append("webfetch/MCP deny must use isPrimaryPilotAgent (OpenCode reports name AscendC-Pilot)")
+    if "isPrimaryAskOrFetch" not in plugin_src:
+        errors.append("pending broker must allow Primary question/webfetch while Host ask is pending")
     if "denyPilotWorkflowSkills" not in plugin_src:
         errors.append("plugin must deny Pilot workflow skill names on native Build/Plan")
     if "ensureOpenCodeRipgrep" not in plugin_src:
@@ -242,8 +261,8 @@ def main() -> int:
     )
     if "workflow_uses_host_driver" not in auth_src:
         errors.append("authorize must allow Task of host_driver=False actors (uo-query)")
-    if "CONTAINMENT_PRIMARY_READ" not in auth_src:
-        errors.append("authorize must allow primary Read/Glob during containment")
+    if "READ_OK" not in auth_src:
+        errors.append("authorize must allow read-class tools (READ_OK)")
     driver_src = (plug / "pilot-driver.ts").read_text(encoding="utf-8")
     if "Do not strip to the yaml fence" not in driver_src:
         errors.append("pilot-driver.ts must keep native Task text (not yaml-fence-only)")

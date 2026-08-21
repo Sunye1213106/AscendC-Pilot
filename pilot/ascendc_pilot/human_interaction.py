@@ -243,16 +243,44 @@ def _path_only_in_tree_guess(project_root: Path, text: str, path: str) -> bool:
     return not remainder
 
 
-def normalize_start_test_script_root(project_root: Path, value: str) -> tuple[str, bool]:
-    """Seed run-state from ``pilot_run`` / CLI. In-tree tests and default markers stay unconfirmed."""
+def external_harness_seed(project_root: Path, value: str) -> str:
+    """Operator-external directory or allowlisted git repo URL. Empty if not a user fact."""
     raw = str(value or "").strip()
-    if not raw or raw.lower() in _HARNESS_SKIP_MARKERS:
-        return "", False
-    if raw.lower() in _HARNESS_DEFAULT_MARKERS:
-        return "", False
+    if not raw or raw.lower() in _HARNESS_SKIP_MARKERS or raw.lower() in _HARNESS_DEFAULT_MARKERS:
+        return ""
     extracted = extract_existing_directory(raw)
     if extracted and not is_in_tree_operator_tests(project_root, extracted):
-        return extracted, True
+        return extracted
+    return extract_harness_git_url(raw)
+
+
+def coerce_test_script_root_arg(value: object, project_root: Path | str | None = None) -> str:
+    """Keep git URLs as URLs. Do not Path.resolve() them — that smashes ``https://``."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    git = extract_harness_git_url(raw)
+    if git:
+        return git
+    root = Path(project_root).expanduser() if project_root is not None else None
+    if root is not None:
+        seed = external_harness_seed(root, raw)
+        if seed:
+            return seed
+    try:
+        path = Path(raw).expanduser()
+        if path.is_dir():
+            return str(path.resolve())
+    except OSError:
+        pass
+    return raw
+
+
+def normalize_start_test_script_root(project_root: Path, value: str) -> tuple[str, bool]:
+    """Seed run-state from ``pilot_run`` / CLI. In-tree tests and default markers stay unconfirmed."""
+    seed = external_harness_seed(project_root, value)
+    if seed:
+        return seed, True
     return "", False
 
 
@@ -265,12 +293,7 @@ def resolved_test_script_root(project_root: Path, picked: str = "") -> str:
     if st.get("test_script_confirmed"):
         return str(st.get("test_script_root") or "").strip()
     raw = str(picked or st.get("test_script_root") or "").strip()
-    if not raw or raw.lower() in _HARNESS_DEFAULT_MARKERS or raw.lower() in _HARNESS_SKIP_MARKERS:
-        return ""
-    extracted = extract_existing_directory(raw)
-    if extracted and not is_in_tree_operator_tests(root, extracted):
-        return extracted
-    return ""
+    return external_harness_seed(root, raw)
 
 
 def invalidate_tg_harness_downstream(project_root: Path) -> dict[str, Any]:

@@ -1,34 +1,184 @@
-# 意图推理（只在思考里）
+# 意图推理与工作流编排
 
-自然语言输入先写 Todo 再按格执行。缺代码时当前格 `pilot_run(workflow=auto, intent=用户目标含 PR URL)`，Engine 靠这段 intent clone。不要跳过 Todo 把整场当一条 auto 链。编排权威是 Primary 的 Todo，不是脚本链。本步不读 Skill。
+自然语言请求先由 Primary 规划，再执行。先写完整 Todo，再逐项处理。Todo 是编排依据，不要把整场任务直接交给一条 `auto` 链。本阶段不读取 Skill。
 
-思考（**不要写进对用户的对话**）：
+## 判断当前状态
 
-1. 用户最终要拿到什么**产物**。对照 CONTEXT 词表：同名不可互换；**计划不是用例**。词表写明的**前置输入**也算缺口。
-2. 磁盘上已经有哪些产物；对话里是否已有审查结论、调查综合、或用户说清的测试范围。
-3. 缺口对应哪个已有 slash。缺代码才 `pilot_run(workflow=auto)`。不要自己 `git clone`。
-4. **派发前条件齐**。第一轮 `auto`：project 是打开目录，省略 architecture，intent=用户目标含 PR URL。clone 之后才写清算子路径、architecture、有无测试脚本仓。只有用户已经给出的仓外测试路径才是已知事实。意图里没有这条路径时，`/tg-init` 第一步由 Host 询问。Host 已弹出确认框后不要再开第二个 question。`auto` 回执已给出唯一 `(算子, architecture)` 时直接使用。
-5. **init 先于调查与消费。** 缺什么先 `pilot_run` 补上，再调查，再消费。Init：获取代码 `auto`（无代码时）、`/uo-init`、`/uo-update`、`/tg-init`。消费：`/ce-review`、`/uo-investigate`、`/ce-plan`、`/ce-apply`、`/tg-plan`、`/tg-solve`、`/handoff`。`/uo-query` 是调查 Command，不是消费工作流，禁止 `pilot_run`。clone 回执里的 `(算子, architecture)` 直接用于后续 `pilot_run`。Planning Context 是调查综合（语义 + `tg/init.yaml`），不是必须先审查。
-6. 需要再派子代理的步骤必须留在主线。TG / CE producer 查图只用 `pilot_cli` `uo-query`。
-7. 意图只是一次审查：主线 `pilot_run /ce-review`。意图只是一次语义查询：先保证 `.uo`，再走下方调查拆路，不要进 `/tg-plan`。
-8. 其它 LLM 工作流：主控确认条件后 `pilot_run`；Host 用 `dispatch_subagent` 开该阶段 producer。确定性 `/uo-init` `/uo-update` 与开辟工作区（`auto` clone）：只 `pilot_run`，不开 LLM 子代理。
-9. **需主控派 Task 的格一律串行。** 同一格内部 fanout（主控同一轮派多个子代理）合法，用来隔离上下文。
-10. `todowrite` 全量列表。默认同一步一个 `in_progress`。`host_step.done` 后勾掉再下一格。显式 slash 只跑该格。
+执行前确认：
 
-## 调查拆路（隔离主控窗口）
+* 用户最终要拿到什么；
+* 磁盘上已有什么产物；
+* 对话中已有什么结论或测试范围；
+* 下一步还缺什么。
 
-目的是得到测试意图：把 PR/语义和已 init 的 `tg/init.yaml`（列、harness、精度/性能入口）合成全面、不冲突的意图，再交给 `/tg-plan`。已有可用测试意图则不要重复调查。
+术语和前置输入以 `CONTEXT` 为准。名称相近的概念不要互换，例如计划不等于测试用例。`CONTEXT` 要求的输入不存在时，视为真实缺口。
 
-从原话抽出能作为**首次调用**的起始点。判定：这个起始点能否在不依赖另一路结论的情况下单独查完？能 → 单独一路。
+已有可用且一致的结论时直接复用，不重复调查。
 
-**分别派：** 不同层的起始名（Host 函数、Kernel 宏、TilingKey 家族）；用户并列的多问。
+## 获取代码
 
-**收成一路：** 同一家族别名、同一符号的多个子问。交叉综合、共享场景、相关业务 **不能** 用来减少路数。相关 ≠ 单域。
+缺代码时执行：
 
-- 一路且短：主控直接 `pilot_cli` `uo-query`，根据 stdout 作答。不要单独一轮只宣布路数。
-- 多路或会撑主控窗口：同一轮 `Task(agent=uo-query)`，上限 5，每路隔离。子代只回短结论 + 出处。综合只在主控。
-- 不要把查询卡片全文写入后续 `pilot_run` intent。
-- 子代之间、或语义与脚本列对不上：再派一路，FOCUS 只核对冲突点，直到不冲突。闭合不了就写缺口。
-- 每轮最多 5 路。图上还能查的独立缺口自动开下一轮（路数=缺口数，≤5）。空 `task_result` 补一轮保留，不要当成图空。
+`pilot_run(workflow=auto, intent=<用户目标 + PR URL>)`
 
-对用户只陈述目标、现状与下一步，然后更新 Todo。不要贴思考清单、slash 对照或内部规则。
+首次 `auto`：
+
+* `project` 使用当前打开目录；
+* 省略 `architecture`；
+* `intent` 保留用户目标和 PR URL。
+
+由 `auto` 获取代码，不要自行 `git clone`。clone 完成前，不猜算子路径、`architecture` 或测试仓；完成后以回执为准。
+
+若回执唯一确定 `(operator, architecture)`，后续直接复用，不再确认。
+
+仓外测试路径或 git URL 用户已给出时，写入 `pilot_run(test_script_root=…)`；Host 不得再问三项。未提供时，由 `tg-init` 的 Host 询问，不自行推断。
+
+`host_owned_ask` / pending / `ask_human` JSON **不等于**确认框已弹出。`ask_ui_shown=false` 或屏幕上没有可点选框时：用户已经给过仓外路径或 git URL 时用该值 answer，不要再问用户；否则立刻用 `question` 并原样传递 `ask_question.options`。这是用户能看见的第一问。禁止用文字告诉用户「框应该已经弹出」，禁止让用户去点看不见的框。
+
+仅当用户屏幕上已经出现可点选框时，不要再开同一个 `question`。
+
+需要查看 PR 页面时使用 `webfetch`。
+
+## 执行顺序
+
+**init 先于调查与消费。** 缺什么先补上，再调查，再消费。不要先跑后续流程再回头补初始化。按产物缺口选 slash，不要背固定黄金链。
+
+CodeMap 准备（按缺口二选一，不要当固定串）：
+
+* 无 `.uo`：`/uo-init`。`auto` 拉到的是 PR 新代码，建库就是对新代码建库。
+* 已有 `.uo` 且过期：`/uo-update`。过期指 `pilot_cli status` 或 `uo-query --status-only` 显示 stale，或 `/ce-apply` 刚改过源码。
+* 刚完成 `/uo-init`，或 `.uo` 与当前源码一致：不要再跑 `/uo-update`。
+* 禁止把 `/uo-update` 紧挨着排在刚完成的 `/uo-init` 后面。
+
+不要为理解 PR diff 去跑 `/uo-update`。变更文件用 clone 回执；语义用 `uo-query`。不要通读全量 git diff。
+
+需要测试契约时再 `/tg-init`。
+
+消费工作流（有对应产物才跑）：
+
+* `/ce-review`
+* `/uo-investigate`
+* `/ce-plan`
+* `/ce-apply`（完成后若还要查图或生成测试，先 `/uo-update`）
+* `/tg-plan`
+* `/tg-solve`
+* `/handoff`
+
+`uo-query` 是调查 Command，不是消费工作流，禁止 `pilot_run`；查询 UO 使用 `pilot_cli uo-query`。
+
+`auto` 返回的 `(operator, architecture)` 直接用于后续 `pilot_run`。`status` / `uo-query --status-only` 也必须带上该算子路径，不要对着打开目录根判断 `.uo`。
+
+`Planning Context` 由 PR 改动、`uo-query` 语义和已初始化的 `tg/init.yaml` 组成，不要求先执行 Code Review。
+
+## 按用户目标选择流程
+
+用户只要求 Code Review 时，只执行 `/ce-review`。
+
+用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。Planning Context 走调查。
+
+用户只要求语义查询时：
+
+* 先保证 `.uo` 已存在（无图 `/uo-init`，图过期 `/uo-update`）；
+* 使用 `pilot_cli uo-query`；
+* 根据结果回答；
+* 不进入 `/tg-plan`。
+
+其它需要 LLM producer 的工作流：
+
+1. Primary 检查前置条件；
+2. Primary 调用 `pilot_run`；
+3. Host 按需要用 `dispatch_subagent` 启动该阶段 producer。
+
+编排始终留在 Primary。子代理只完成分配给它的任务，不接管后续流程。
+
+TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
+
+`auto`、`uo-init`、`uo-update` 是确定性步骤，只运行 `pilot_run`，不额外启动 LLM 子代理。
+
+## Todo 与并行
+
+使用 `todowrite` 保存完整任务列表。默认同时只有一个 Todo 为 `in_progress`。
+
+收到 `host_step.done` 后，先完成当前项，再开始下一项。
+
+需要 Primary 分别派 Task 的不同步骤默认串行。
+
+同一步中的独立任务可以并行，以隔离上下文；存在依赖的任务保持串行，不猜测尚未产生的输入。
+
+用户显式调用某个 workflow 时，只执行该步骤，不自动继续后续 workflow。
+
+## 语义调查
+
+调查只获取下一步真正需要的事实。
+
+比如进入 `tg-plan` 前，需要获取测试意图， 应综合：
+
+* 用户原始需求；
+* PR 的实际改动；
+* UO 中的代码语义；
+* `tg/init.yaml` 中的列、harness、精度入口和性能入口。
+
+结果应足够支持测试规划，并且内部无冲突。已有可用测试意图时直接复用。
+
+从用户原话中提取可以直接查询的起始点。两个问题若能各自独立查完，就分开查询。
+
+不同层级的起始对象通常分开，例如 Host 函数、Kernel 宏、TilingKey 家族。
+
+用户并列提出的独立问题也分别查询。
+
+同一符号的多个子问，或同一家族别名，可以合并。
+
+不要仅因为属于同一业务、同一场景或最终要一起综合就合并查询。相关 ≠ 单域。
+
+是否分开只看查询之间是否存在信息依赖。
+
+## 调查执行
+
+只有一个简单问题时，Primary 直接运行 `pilot_cli uo-query`，根据 stdout 继续处理。
+
+不要单独增加一轮只用于说明查询路数。
+
+有多个独立问题，或结果可能明显占用 Primary 上下文时，使用 `Task(agent=uo-query)`。
+
+每轮最多 5 路独立查询。
+
+每个子代理只处理一个明确目标，并保持上下文隔离，只返回：
+
+* 简短结论；
+* 对应出处。
+
+综合只在主控。
+
+不要把完整查询卡片或大段 UO 输出复制进后续 `pilot_run intent`，只传该工作流真正需要的结论。
+
+## 处理冲突和缺口
+
+不同查询结论冲突时，不凭直觉选一个。UO 语义与测试脚本列不一致时，也视为需要核实的冲突。
+
+新增一个查询，只检查冲突点。`FOCUS` 只描述该矛盾，不重新调查整个问题。
+
+根据新证据继续判断，直到得到一致结论，或现有证据不足以继续判断。
+
+证据不足时明确记录缺少什么，不猜测。
+
+每轮最多 5 个独立查询。若仍有可从图中继续确认的独立缺口，再开下一轮。
+
+下一轮只处理剩余独立缺口，最多 5 路。
+
+`task_result` 为空时，用同一问题补查一次。
+
+一次空结果不能证明 UO 中没有相关信息；补查后仍不足，再记录为缺口。
+
+## 对用户输出
+
+执行过程中只告诉用户：
+
+* 当前目标；
+* 已确认的事实；
+* 下一步动作。
+
+随后更新 Todo。
+
+不要向用户展示内部思考清单、workflow 路由表、查询拆分依据、编排规则，或不影响用户决策的控制细节。
+
+这些规则只用于内部执行。

@@ -267,6 +267,26 @@ def test_pilot_run_plugin_returns_string_output_and_streams_progress() -> None:
     assert "function acpControlEnv" in text
 
 
+def test_missing_host_ask_ui_requires_primary_question() -> None:
+    """Native AskQuestion miss must not be narrated as a visible confirmation box."""
+    core = (REPO / "opencode-plugin" / "pilot-driver-core.ts").read_text(encoding="utf-8")
+    plug = (REPO / "opencode-plugin" / "ascendc-pilot.ts").read_text(encoding="utf-8")
+    assert "ask_ui_shown" in core
+    assert "原生确认框没有出现" in core
+    assert "禁止用文字告诉用户" in core
+    assert "立刻用 question 按 ask_question.options" in core
+    assert "ASK_UI_EMPTY" in core
+    assert "Host 已弹出确认框时不要再开第二个 question" not in core
+    assert "pending 不等于确认框已可见" in plug
+    assert "Host 已询问；不要再开第二个 question" not in plug
+    assert "禁止用文字告诉用户" in plug
+    reason = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+        encoding="utf-8"
+    )
+    assert "不等于" in reason and "确认框已弹出" in reason
+    assert "禁止用文字告诉用户" in reason
+
+
 def test_plugin_pending_lock_does_not_block_resume_start() -> None:
     """ses_0072: after acp answer, stale pending must not block start --decision."""
     plug = REPO / "opencode-plugin" / "ascendc-pilot.ts"

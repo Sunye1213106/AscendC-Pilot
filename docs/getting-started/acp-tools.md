@@ -88,10 +88,10 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_ho
 | `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。bash `git clone` 走 OpenCode ask，不要自己建 PR 仓 |
 | `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
 | `intent` | 用户原话里的产品意图；不要编造 |
-| `test_script_root` | `/tg-init` **仅当**用户原文已给出算子仓外测试脚本绝对路径时传入。不要塞进 `intent`，不要把仓内 `tests/` 填进来代答 |
+| `test_script_root` | `/tg-init` **仅当**用户原文已给出算子仓外测试脚本绝对路径或 git URL 时传入。不要塞进 `intent`，不要把仓内 `tests/` 填进来代答，不要再问三项 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
 
-`pilot_run` 返回 `host_step.kind=dispatch_subagent` 时，用原生 `Task`，`prompt` 必须是 `task_prompt_stub` 原文。返回 `host_step.kind=primary_review` 时通读两路 yaml，不要写文件、不要 AskQuestion；下一发 `intent=PASS` 或 `REWORK bind`。返回 `ask_question` / `host_owned_ask` 时，选项必须原样使用。用户打断确认并在对话里回复时，用 `interpret-user-turn`，不要重问上一题。
+`pilot_run` 返回 `host_step.kind=dispatch_subagent` 时，用原生 `Task`，`prompt` 必须是 `task_prompt_stub` 原文。返回 `host_step.kind=primary_review` 时通读两路 yaml，不要改口径、不要 AskQuestion；YAML 无法解析时主控可 Edit 只修缩进，再用 `pilot_cli inspect yaml` 确认；下一发 `intent=PASS` 或 `REWORK bind`。REWORK 后现稿留在磁盘上，子代理按原因 patch，不要从零重写。返回 `ask_question` / `host_owned_ask` 时，选项必须原样使用。`ask_ui_shown=false` 或屏幕上没有确认框时，立刻用 `question` 展示同一组选项，禁止告诉用户框已经弹出。用户打断确认并在对话里回复时，用 `interpret-user-turn`，不要重问上一题。
 
 ---
 

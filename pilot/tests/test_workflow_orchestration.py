@@ -97,6 +97,30 @@ def test_intent_reasoning_forces_inits_before_consume() -> None:
     assert "Todo：`auto` → `/uo-init` → `/tg-init` → `/uo-query`" not in text
 
 
+def test_intent_reasoning_uo_update_is_refresh_not_chained_after_init() -> None:
+    text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+        encoding="utf-8"
+    )
+    assert "按缺口二选一" in text
+    assert "不要再跑 `/uo-update`" in text
+    assert "禁止把 `/uo-update` 紧挨着排在刚完成的 `/uo-init` 后面" in text
+    assert "不要为理解 PR diff 去跑 `/uo-update`" in text
+    assert "* `uo-init`；" not in text
+    assert "* `uo-update`；" not in text
+    assert "不要默认加入 `/ce-review`" in text
+
+
+def test_intent_reasoning_missing_ask_ui_requires_question_not_narration() -> None:
+    text = (REPO / "pilot" / "policies" / "invariants" / "intent-reasoning.md").read_text(
+        encoding="utf-8"
+    )
+    assert "不等于" in text
+    assert "确认框已弹出" in text
+    assert "立刻用 `question`" in text
+    assert "禁止用文字告诉用户「框应该已经弹出」" in text
+    assert "ask_ui_shown=false" in text
+
+
 def test_plan_for_orders_tg_init_before_ce_review() -> None:
     planned = plan_for(
         {

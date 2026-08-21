@@ -11,7 +11,7 @@
 
 **digest** — session binding 中的 `canonical_graph_digest`。`fresh` 表示当前 digest 匹配，不表示“最近建过库”。
 
-**刷新 `.uo`** — `/uo-update`。基于工作区 / diff / PR 检测变更并增量重建受影响层；common / 头文件变更可退化为全量抽取。不是重新 `/uo-init`。
+**刷新 `.uo`** — `/uo-update`。已有图且源码相对该图已变化时增量重建受影响层；common / 头文件变更可退化为全量抽取。不是重新 `/uo-init`。刚建库、图与当前源码一致时不要刷新。
 
 **查询** — `/uo-query` Command。调查：一路直接 `pilot_cli`，多路 fanout 子代理隔离主控窗口。不是 Host workflow。形态见 code-access 不变量。拆路见 intent-reasoning。
 

@@ -59,6 +59,8 @@ _WORKFLOW_TO_PUBLIC = {
     "tg-solve": "validate_cases",
 }
 
+# Order only. uo-init vs uo-update is chosen by Primary from on-disk gaps
+# (see intent-reasoning); this list must not be read as "always run both".
 _STEP_ORDER = (
     "workspace_acquire",
     "uo-init",

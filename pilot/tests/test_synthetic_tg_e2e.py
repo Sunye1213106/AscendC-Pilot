@@ -265,7 +265,119 @@ def test_bind_promote_merges_parts_after_referee(synthetic_root: Path) -> None:
     assert "b1" in doc.get("findings")
 
 
-def test_bind_review_rework_drops_named_slice(synthetic_root: Path) -> None:
+def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import _action_dir, run_bind_promote, run_repo_scan
+    from ascendc_pilot.human_interaction import adopt_test_script_root
+    from ascendc_pilot.paths import tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import load_init
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    adopt_test_script_root(synthetic_root, "no_repo_uo_query")
+    ctx = {"architecture": "arch0", "run_id": str(state.get("run_id") or ""), "op_name": "_synthetic_toy"}
+    scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": "no_repo_uo_query"})
+    assert scan.get("ok") is True
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True)
+    (bind_root / "parts" / "harness.yaml").write_text(
+        "golden: {status: match}\ncompare: {how: script}\n"
+        "modes:\n  precision: {flag: only_grad}\n  perf: {flag: profiler}\n"
+        "generate_inputs: {kind: default}\nfindings: [h1]\n",
+        encoding="utf-8",
+    )
+    (bind_root / "parts" / "bind.yaml").write_text(
+        "table_kind: mixed\nentry: run.py\ncase_arg: --case\ncolumns: [D]\n"
+        "mapping:\n  - column: D\n    script_read: get_case\n    uo_id: DTemplateNum\n"
+        "domains:\n  - column: D\n    observed: {max: 1}\n    legal: {max: 2}\n"
+        "findings: [b1]\n",
+        encoding="utf-8",
+    )
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is True, out
+    doc = load_init(tg_root(synthetic_root, arch="arch0"))
+    assert doc.get("table_kind") in {"csv", "xls", "xlsx"}
+    assert isinstance(doc.get("mapping"), dict)
+    assert doc["mapping"]["D"]["uo_id"] == "DTemplateNum"
+    assert isinstance(doc.get("domains"), dict)
+    assert doc["domains"]["D"]["legal"]["max"] == 2
+    assert doc.get("columns")[0]["name"] == "D"
+
+
+_INVALID_HARNESS = (
+    "golden: {status: match}\n"
+    "compare: {atol: 1e-4}\n"
+    "modes:\n"
+    "  perf:\n"
+    "    - value: profiler\n"
+    "      config:\n"
+    "        loop: 10\n"
+    "    # comment at sequence indent\n"
+    "    prof_csv_reader: {entry: show_prof.py}\n"
+    "generate_inputs: {kind: default}\n"
+    "findings: [h1]\n"
+)
+
+
+def test_bind_promote_invalid_yaml_is_structured(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.tg_product import _action_dir, run_bind_promote
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    ctx = {"architecture": "arch0", "run_id": str(state.get("run_id") or ""), "op_name": "_synthetic_toy"}
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True)
+    (bind_root / "parts" / "harness.yaml").write_text(_INVALID_HARNESS, encoding="utf-8")
+    (bind_root / "parts" / "bind.yaml").write_text(
+        "table_kind: csv\nentry: ''\ncase_arg: ''\ncolumns: [{name: B}]\n"
+        "mapping: {}\ndomains: {B: '>=0'}\nfindings: [b1]\n",
+        encoding="utf-8",
+    )
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is False, out
+    assert out.get("error") == "BIND_PART_YAML_INVALID"
+    assert "无法解析" in str(out.get("message_zh") or "")
+    assert out.get("line")
+
+
+def test_bind_review_pass_blocked_on_invalid_yaml(synthetic_root: Path) -> None:
+    from ascendc_pilot.actions.runtime import _complete_bind_review_prepare, _session_dir
+    from ascendc_pilot.state import start_workflow
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    run_id = str(state.get("run_id") or "")
+    bind_parts = _session_dir(synthetic_root, run_id, "bind_init") / "parts"
+    bind_parts.mkdir(parents=True)
+    (bind_parts / "harness.yaml").write_text(_INVALID_HARNESS, encoding="utf-8")
+    (bind_parts / "bind.yaml").write_text("columns: [{name: B}]\n", encoding="utf-8")
+    sdir = _session_dir(synthetic_root, run_id, "bind_review")
+    sdir.mkdir(parents=True)
+    out = _complete_bind_review_prepare(
+        synthetic_root,
+        run_id=run_id,
+        sdir=sdir,
+        result={"ok": True},
+        intent="PASS",
+    )
+    assert out.get("ok") is False, out
+    assert out.get("error") == "BIND_PART_YAML_INVALID"
+    assert out.get("host_step_kind") == "primary_review"
+    assert not (sdir / "verdict.yaml").is_file()
+    assert (bind_parts / "harness.yaml").is_file()
+
+
+def test_bind_review_rework_keeps_named_slice_for_patch(synthetic_root: Path) -> None:
     from ascendc_pilot.actions.runtime import _complete_bind_review_prepare, _session_dir
     from ascendc_pilot.state import start_workflow
 
@@ -288,8 +400,9 @@ def test_bind_review_rework_drops_named_slice(synthetic_root: Path) -> None:
     )
     assert out.get("continue_drive") is True, out
     assert out.get("rework") == ["harness"]
-    assert not (bind_parts / "harness.yaml").is_file()
+    assert (bind_parts / "harness.yaml").is_file()
     assert (bind_parts / "harness.yaml.prev").is_file()
+    assert (bind_parts / "harness.yaml").read_text(encoding="utf-8") == "golden: {status: match}\n"
     assert (bind_parts / "bind.yaml").is_file()
     assert not (sdir / "verdict.yaml").is_file()
     assert not (sdir / "referee.yaml").is_file()
@@ -447,3 +560,75 @@ def test_repo_scan_adopts_git_url_via_clone_mock(
     assert scan.get("ok") is True
     assert scan.get("kind") == "script_repo"
     assert Path(str(scan.get("test_script_root"))).resolve() == dest.resolve()
+
+
+def test_start_tg_init_git_url_is_confirmed_and_skips_ask(
+    synthetic_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ses_fdc7: user-given git URL must not reopen the three-way harness AskQuestion."""
+    import sys
+
+    from ascendc_pilot.actions.tg_product import run_repo_scan
+    from ascendc_pilot.human_interaction import (
+        coerce_test_script_root_arg,
+        normalize_start_test_script_root,
+    )
+    from ascendc_pilot.state import start_workflow
+
+    url = "https://gitcode.com/foo/bar"
+    stored, confirmed = normalize_start_test_script_root(synthetic_root, url)
+    assert confirmed is True
+    assert stored == url
+    assert coerce_test_script_root_arg(url) == url
+
+    repo = Path(__file__).resolve().parents[2]
+    ws = repo / "engines" / "workspace"
+    if str(ws) not in sys.path:
+        sys.path.insert(0, str(ws))
+    import git_workspace as gw
+
+    dest = synthetic_root / "cloned_from_start"
+    dest.mkdir()
+    monkeypatch.setattr(
+        gw,
+        "clone_harness_repo",
+        lambda u, *, project_root: {"ok": True, "path": str(dest.resolve()), "cloned": True},
+    )
+    state = start_workflow(
+        synthetic_root,
+        "tg-init",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        test_script_root=url,
+    )
+    assert state.get("test_script_confirmed") is True
+    assert str(state.get("test_script_root") or "") == url
+    scan = run_repo_scan(
+        synthetic_root,
+        {
+            "architecture": "arch0",
+            "run_id": str(state.get("run_id") or ""),
+            "op_name": "_synthetic_toy",
+        },
+    )
+    assert scan.get("needs_human_decision") is not True, scan
+    assert scan.get("ok") is True
+    assert scan.get("kind") == "script_repo"
+    assert Path(str(scan.get("test_script_root"))).resolve() == dest.resolve()
+
+
+def test_cli_coerce_keeps_git_url_and_rejects_in_tree_tests(synthetic_root: Path) -> None:
+    from argparse import Namespace
+
+    from ascendc_pilot.cli import _coerce_start_test_script_root
+    from ascendc_pilot.human_interaction import normalize_start_test_script_root
+
+    url = "https://gitcode.com/coder_linx/fag_debug_tools"
+    ns = Namespace(test_script_root=url, project=synthetic_root)
+    assert _coerce_start_test_script_root(ns) == url
+
+    tests = synthetic_root / "tests"
+    tests.mkdir()
+    stored, confirmed = normalize_start_test_script_root(synthetic_root, str(tests))
+    assert confirmed is False
+    assert stored == ""

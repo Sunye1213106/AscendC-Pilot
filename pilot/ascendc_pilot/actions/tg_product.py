@@ -104,7 +104,8 @@ def _choice_from_raw(raw: str, project_root: Path | None = None) -> tuple[str, s
         stored = str(adopted.get("test_script_root") or "").strip()
         if adopted.get("ok") and stored:
             return "script_repo", stored
-        return "unset", ""
+        err = str(adopted.get("message_zh") or adopted.get("error") or "HARNESS_CLONE_FAILED")
+        return "clone_failed", err
     if text:
         try:
             path = Path(text).expanduser()
@@ -145,7 +146,7 @@ def _harness_choice(project_root: Path, ctx: dict[str, Any]) -> tuple[str, str]:
         raw = resolved_test_script_root(project_root, picked)
         if st.get("test_script_confirmed"):
             return _choice_from_raw(raw, project_root)
-        # Unconfirmed live run: only an operator-external directory is a user fact.
+        # Unconfirmed live run: operator-external directory or git URL is a user fact.
         # In-tree tests/ and default_input markers from pack overlay are guesses.
         if raw.lower() in _DEFAULT_INPUT_MARKERS or raw.lower() in {"have_repo", "custom", "stop"}:
             return "unset", ""
@@ -211,21 +212,27 @@ def _collect_staging_mapping(root: Path) -> dict[str, Any]:
     return merged
 
 
-def _collect_staging_text(root: Path, *, names: tuple[str, ...] = ("staging.md", "plan.md", "worklog.md")) -> str:
+def _collect_staging_text(root: Path, *, names: tuple[str, ...] = ("plan.md", "worklog.md", "staging.md")) -> str:
+    """Prefer nonempty parts/<name>, then nonempty action-root <name>, then parts/*.md."""
+    parts = root / "parts"
+    for name in names:
+        path = parts / name
+        if path.is_file() and path.stat().st_size > 0:
+            return path.read_text(encoding="utf-8")
     for name in names:
         path = root / name
-        if path.is_file():
+        if path.is_file() and path.stat().st_size > 0:
             return path.read_text(encoding="utf-8")
     staging = _load_yaml(root / "staging.yaml")
     if isinstance(staging, dict):
         for key in ("text", "markdown", "plan_md", "worklog_md"):
             if staging.get(key):
                 return str(staging[key])
-    parts = root / "parts"
     if parts.is_dir():
         chunks: list[str] = []
         for part in sorted(parts.glob("*.md")):
-            chunks.append(part.read_text(encoding="utf-8"))
+            if part.stat().st_size > 0:
+                chunks.append(part.read_text(encoding="utf-8"))
         if chunks:
             return "\n\n".join(chunks)
     return ""
@@ -263,6 +270,15 @@ def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         if field == "test_script_root" or extract_existing_directory(answered):
             adopt_test_script_root(project_root, answered)
     kind, root = _harness_choice(project_root, ctx)
+    if kind == "clone_failed":
+        return {
+            "ok": False,
+            "engine": "repo_scan",
+            "error": "HARNESS_CLONE_FAILED",
+            "message_zh": root or "测试仓 git URL 克隆失败。",
+            "needs_human_decision": False,
+            "test_script_root": "",
+        }
     if kind == "unset":
         discovered = _discover_in_tree_tests(project_root)
         options: list[dict[str, str]] = [
@@ -354,8 +370,31 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             "message_zh": "没有引擎 verdict ok: true，禁止写入 tg/init.yaml。",
             "receipt": receipt.as_posix(),
         }
-    harness = _load_yaml(action_root / "parts" / "harness.yaml")
-    bind = _load_yaml(action_root / "parts" / "bind.yaml")
+    from ascendc_pilot.yaml_check import format_yaml_error_zh, parse_yaml_mapping
+
+    harness_path = action_root / "parts" / "harness.yaml"
+    bind_path = action_root / "parts" / "bind.yaml"
+    harness, harness_err = parse_yaml_mapping(harness_path)
+    bind, bind_err = parse_yaml_mapping(bind_path)
+    part_err = harness_err or bind_err
+    if part_err:
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "bind_promote.yaml",
+            {"ok": False, **part_err},
+        )
+        return {
+            "ok": False,
+            "engine": "bind_promote",
+            "error": str(part_err.get("error") or "BIND_PART_YAML_INVALID"),
+            "reason_code": "BIND_PART_YAML_INVALID",
+            "message_zh": format_yaml_error_zh(part_err),
+            "path": part_err.get("path"),
+            "line": part_err.get("line"),
+            "column": part_err.get("column"),
+            "receipt": receipt.as_posix(),
+        }
     if not harness or not bind:
         receipt = _receipt(
             project_root,
@@ -412,6 +451,15 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         if isinstance(src, list):
             findings.extend(src)
 
+    mapping = products.mapping_as_dict(bind.get("mapping"))
+    if not mapping:
+        mapping = products.mapping_as_dict(staged.get("mapping"))
+    domains = products.domains_as_dict(bind.get("domains") if bind.get("domains") is not None else bind.get("value_domains"))
+    if not domains:
+        domains = products.domains_as_dict(
+            staged.get("domains") if staged.get("domains") is not None else staged.get("value_domains")
+        )
+
     doc = {
         "schema": products.INIT_SCHEMA,
         "kind": kind,
@@ -421,10 +469,8 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "modes": harness.get("modes") or staged.get("modes") or contract.get("modes") or {"precision": [], "perf": []},
         "columns": columns,
         "defaults": bind.get("defaults") or staged.get("defaults") or contract.get("defaults") or {},
-        "mapping": bind.get("mapping") if isinstance(bind.get("mapping"), dict) else (
-            staged.get("mapping") if isinstance(staged.get("mapping"), dict) else {}
-        ),
-        "domains": bind.get("domains") or bind.get("value_domains") or staged.get("domains") or staged.get("value_domains") or {},
+        "mapping": mapping,
+        "domains": domains,
         "golden": harness.get("golden") or staged.get("golden") or {},
         "compare": harness.get("compare") or harness.get("script_compare") or staged.get("compare") or staged.get("script_compare") or {},
         "generate_inputs": harness.get("generate_inputs") or staged.get("generate_inputs") or {},
@@ -786,7 +832,7 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
 def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
-    text = _collect_staging_text(_action_dir(project_root, ctx, "analyze_round"), names=("staging.md", "worklog.md"))
+    text = _collect_staging_text(_action_dir(project_root, ctx, "analyze_round"), names=("worklog.md", "staging.md"))
     if not text.strip():
         return {"ok": False, "engine": "analyze_promote", "error": "empty worklog staging"}
     if not text.lstrip().startswith("open:"):

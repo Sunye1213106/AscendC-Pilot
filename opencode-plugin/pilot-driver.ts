@@ -346,11 +346,12 @@ export async function driveContinueGoalAfterAck(args: {
  * canonicalWorkflowId task_plan_current_workflow_id createToolRowProgressReporter
  * publishVisibleProgress withProgressArg Do not call ctx.metadata ctx.metadata
  * await reporter.flushAsync() isHumanDecision isAcpStartSuccess ask_interrupted
- * normalizeResumeDecision answer_from_source primary_router
+ * normalizeResumeDecision answer_from_source ask_ui_shown ASK_UI_EMPTY primary_router
  * startedKind === "primary_router" decision === "uo-init" decision === "source"
  * applyForceNew export default PilotDriverLibraryPlugin
  * from "./pilot-progress.mjs"
  * compactPilotRunPayload(result)
+ * ask_ui_shown ASK_UI_EMPTY
  * hostDirectory AUTO_HOST_DIRECTORY
  * Do not strip to the yaml fence NATIVE_TASK_RESULT_CAP UO_QUERY_NOT_HOST_DRIVEN
  * 3_600_000 ACP_TIMEOUT
