@@ -951,7 +951,78 @@ def _conditional_branch_classes(prefix: str) -> list[str]:
                 parts = _split_top_level_args(prefix[lt + 1 : j])
                 names = [_short_type_name(p) for p in parts[1:3]]
                 return [n for n in names if n]
+
+
+_CONDITIONAL_SKIP_BASES = frozenset(
+    {"nullptr_t", "nullptr", "conditional", "conditional_t", "type"}
+)
+
+
+def _conditional_storage_bases(type_text: str) -> list[str]:
+    """Then/else class names of ``std::conditional<Cond, A, B>`` that can own storage."""
+    out: list[str] = []
+
+    def walk(text: str) -> None:
+        names = _conditional_branch_classes(text)
+        if not names:
+            return
+        for name in names:
+            raw = str(name or "").strip()
+            if "conditional" in raw.lower():
+                walk(raw)
+                continue
+            short = _short_type_name(raw) or raw
+            if not short or short in _CONDITIONAL_SKIP_BASES or short in _CXX_SKIP_BASE:
+                continue
+            if short not in out:
+                out.append(short)
+
+    walk(type_text)
+    return out
+
+
+def _member_type_weak(row: dict[str, Any]) -> bool:
+    """Clang spelling that hides a ``std::conditional`` field — prefer lexical type_text."""
+    text = str(row.get("type_text") or "")
+    if "conditional" in text.lower():
+        return False
+    if not text.strip():
+        return True
+    base = (_base_type_name(text) or str(row.get("base_type") or "")).lower()
+    return base in _CONDITIONAL_SKIP_BASES or base in {"void", ""}
+
+
+def _conditional_storage_bases_any(*blobs: str) -> list[str]:
+    for blob in blobs:
+        hit = _conditional_storage_bases(blob)
+        if hit:
+            return hit
     return []
+
+
+def _wrapper_from_branch_types(codemap: Any, ents: list[Any]) -> str:
+    """Common storage wrapper on conditional branches — not a runtime policy pick."""
+    names: list[str] = []
+    for ent in ents:
+        if ent is None:
+            continue
+        for _rel, other in codemap.neighbors(ent.id, kind=RelationKind.WRAPS, direction="out"):
+            if other is None or other.kind_name() != EntityKind.TYPE.value:
+                continue
+            if not (
+                other.attrs.get("wraps_storage")
+                or other.attrs.get("wraps_lock")
+                or other.attrs.get("wraps_flag")
+            ):
+                continue
+            short = _short_type_name(other.name)
+            if short and short not in names and short not in _CONDITIONAL_SKIP_BASES:
+                names.append(short)
+        for root in ent.attrs.get("wrapped_roots") or []:
+            short = str(root or "").replace("AscendC::", "").split("::")[-1]
+            if short and short not in names:
+                names.append(short)
+    return names[0] if names else ""
 
 
 def _local_decl_owners(chunk: str, ident: str, before: int) -> list[str]:
@@ -1746,28 +1817,35 @@ def finalize_kernel_root_trace(
         row.setdefault("provenance", "lexical_regex")
         aliases.append(row)
         seen_alias.add(key)
-    seen_member = {
-        (
+    seen_member: dict[tuple[str, str, str], dict[str, Any]] = {}
+    members_merged: list[dict[str, Any]] = []
+    for r in members:
+        key = (
             str(r.get("owner") or ""),
             str(r.get("member") or ""),
-            str(r.get("file") or ""),
-            int(r.get("line") or 0),
+            _norm_file(str(r.get("file") or ""), root),
         )
-        for r in members
-    }
+        if key in seen_member:
+            continue
+        seen_member[key] = r
+        members_merged.append(r)
     for row in members_lex:
         key = (
             str(row.get("owner") or ""),
             str(row.get("member") or ""),
-            str(row.get("file") or ""),
-            int(row.get("line") or 0),
+            _norm_file(str(row.get("file") or ""), root),
         )
-        if key in seen_member:
+        existing = seen_member.get(key)
+        if existing is not None:
+            if _member_type_weak(existing) and not _member_type_weak(row):
+                existing["type_text"] = row.get("type_text") or existing.get("type_text")
+                existing["base_type"] = row.get("base_type") or existing.get("base_type")
             continue
         row = dict(row)
         row.setdefault("provenance", "lexical_regex")
-        members.append(row)
-        seen_member.add(key)
+        members_merged.append(row)
+        seen_member[key] = row
+    members = members_merged
 
     alias_to_target: dict[str, str] = {
         str(row["alias"]): str(row["target"]) for row in aliases if row.get("alias")
@@ -1932,71 +2010,80 @@ def finalize_kernel_root_trace(
             continue
         type_text = str(row["type_text"])
         resolved = _resolve_alias_chain(type_text)
+        canon = str(row.get("canonical_type") or "")
         resolved_base = _base_type_name(resolved) or str(row.get("base_type") or "")
-        if not resolved_base or resolved_base in _CXX_SKIP_BASE:
-            continue
-        member_ikey = _type_identity_key(
-            resolved,
-            usr=str(row.get("referenced_type_usr") or ""),
-            qualified="",
-        ) or resolved_base
-        # Reuse an already-materialised owner/class node for the same short name.
-        if member_ikey not in type_ents and resolved_base in type_ents and "<" not in resolved:
-            type_ents[member_ikey] = type_ents[resolved_base]
-        display = resolved.strip() if "<" in resolved else resolved_base
-        if member_ikey not in type_ents:
-            existing = _existing_type_id(codemap, resolved_base) or _existing_type_id(
-                codemap, display
-            )
-            if existing:
-                type_ents[member_ikey] = existing
-                type_ents.setdefault(resolved_base, existing)
-            elif _is_ascendc_root_spelling(resolved_base):
-                type_ents[member_ikey] = _ensure_ascendc_root(
-                    codemap,
-                    resolved_base,
-                    root_kind=(
-                        "STORAGE"
-                        if resolved_base in ASCENDC_BUFFER_TYPES
-                        else (
-                            "REGISTER"
-                            if resolved_base in ASCENDC_REGISTER_TYPES
-                            else "COMPUTE_API"
-                        )
-                    ),
+        branch_bases = _conditional_storage_bases_any(type_text, resolved, canon)
+        if branch_bases:
+            targets = [(base, base, base) for base in branch_bases]
+        else:
+            if not resolved_base or resolved_base in _CXX_SKIP_BASE:
+                continue
+            member_ikey = _type_identity_key(
+                resolved,
+                usr=str(row.get("referenced_type_usr") or ""),
+                qualified="",
+            ) or resolved_base
+            display = resolved.strip() if "<" in resolved else resolved_base
+            targets = [(resolved_base, member_ikey, display)]
+        for resolved_base, member_ikey, display in targets:
+            # Reuse an already-materialised owner/class node for the same short name.
+            if member_ikey not in type_ents and resolved_base in type_ents and "<" not in display:
+                type_ents[member_ikey] = type_ents[resolved_base]
+            if member_ikey not in type_ents:
+                existing = _existing_type_id(codemap, resolved_base) or _existing_type_id(
+                    codemap, display
                 )
-                type_ents.setdefault(resolved_base, type_ents[member_ikey])
-            else:
-                mid = make_id("Type", "member_type", member_ikey, row["file"], int(row["line"]))
-                ment = codemap.upsert(
-                    EntityKind.TYPE,
-                    display,
-                    eid=mid,
-                    attrs={
-                        "role": "source_type",
-                        "root_status": "UNRESOLVED",
-                        "type_name": _persist_type_name(resolved),
-                        "spelling_base": resolved_base,
+                if existing:
+                    type_ents[member_ikey] = existing
+                    type_ents.setdefault(resolved_base, existing)
+                elif _is_ascendc_root_spelling(resolved_base):
+                    type_ents[member_ikey] = _ensure_ascendc_root(
+                        codemap,
+                        resolved_base,
+                        root_kind=(
+                            "STORAGE"
+                            if resolved_base in ASCENDC_BUFFER_TYPES
+                            else (
+                                "REGISTER"
+                                if resolved_base in ASCENDC_REGISTER_TYPES
+                                else "COMPUTE_API"
+                            )
+                        ),
+                    )
+                    type_ents.setdefault(resolved_base, type_ents[member_ikey])
+                else:
+                    mid = make_id("Type", "member_type", member_ikey, row["file"], int(row["line"]))
+                    ment = codemap.upsert(
+                        EntityKind.TYPE,
+                        display,
+                        eid=mid,
+                        attrs={
+                            "role": "source_type",
+                            "root_status": "UNRESOLVED",
+                            "type_name": _persist_type_name(resolved),
+                            "spelling_base": resolved_base,
+                        },
+                        file=str(row["file"]),
+                        line=int(row["line"]),
+                        status="partial",
+                        confidence=0.5,
+                    )
+                    type_ents[member_ikey] = ment.id
+                    type_ents.setdefault(resolved_base, ment.id)
+            wraps_edges.append(
+                (
+                    type_ents[owner],
+                    type_ents[member_ikey],
+                    {
+                        "member": row["member"],
+                        "type_name": resolved_base
+                        if branch_bases
+                        else _persist_type_name(type_text),
+                        "file": row["file"],
+                        "line": row["line"],
                     },
-                    file=str(row["file"]),
-                    line=int(row["line"]),
-                    status="partial",
-                    confidence=0.5,
                 )
-                type_ents[member_ikey] = ment.id
-                type_ents.setdefault(resolved_base, ment.id)
-        wraps_edges.append(
-            (
-                type_ents[owner],
-                type_ents[member_ikey],
-                {
-                    "member": row["member"],
-                    "type_name": _persist_type_name(type_text),
-                    "file": row["file"],
-                    "line": row["line"],
-                },
             )
-        )
 
     for src, dst, attrs in wraps_edges:
         _link(codemap, RelationKind.WRAPS, src, dst, attrs=attrs)
@@ -2324,11 +2411,36 @@ def finalize_kernel_root_trace(
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
+        branch_bases = _conditional_storage_bases_any(
+            type_text, expanded, str(row.get("canonical_type") or "")
+        )
+        branch_ents = [
+            codemap.entities[type_ents[b]]
+            for b in branch_bases
+            if b in type_ents and type_ents[b] in codemap.entities
+        ]
         owner_ent = codemap.entities.get(type_ents[base]) if base in type_ents else None
         wraps_storage = bool(owner_ent and owner_ent.attrs.get("wraps_storage"))
-        catalog_root = _catalog_storage_root(expanded) or _catalog_storage_root(type_text)
+        wraps_storage = wraps_storage or any(
+            e.attrs.get("wraps_storage") for e in branch_ents
+        )
+        wraps_lock = bool(owner_ent and owner_ent.attrs.get("wraps_lock"))
+        wraps_lock = wraps_lock or any(e.attrs.get("wraps_lock") for e in branch_ents)
+        catalog_root = (
+            _catalog_storage_root(expanded)
+            or _catalog_storage_root(type_text)
+            or _catalog_storage_root(str(row.get("canonical_type") or ""))
+        )
+        space = (
+            memory_space_from_type_text(expanded)
+            or memory_space_from_type_text(type_text)
+            or memory_space_from_type_text(str(row.get("canonical_type") or ""))
+            or ""
+        )
         known = (
             is_storage_type_text(expanded)
+            or is_storage_type_text(type_text)
+            or is_storage_type_text(str(row.get("canonical_type") or ""))
             or catalog_root
             or wraps_storage
             or base in alias_to_target
@@ -2337,6 +2449,12 @@ def finalize_kernel_root_trace(
                 and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
                 and "LocalTensor" in str(owner_ent.attrs.get("root") or "")
             )
+            or any(
+                str(e.attrs.get("root_status") or "") == "REACHED"
+                and "LocalTensor" in str(e.attrs.get("root") or "")
+                for e in branch_ents
+            )
+            or (bool(branch_bases) and bool(space))
         )
         if not known:
             continue
@@ -2345,32 +2463,56 @@ def finalize_kernel_root_trace(
         owner = str(row["owner"])
         bid = buffer_site_id(file=nfile, line=line, scope=owner, name=name, root=root)
         resolved = resolve_buffer_decl(expanded) or resolve_buffer_decl(type_text)
-        space = memory_space_from_type_text(expanded) or memory_space_from_type_text(type_text) or "UNKNOWN"
+        if not space:
+            space = "UNKNOWN"
         root_spell = catalog_root
         if not root_spell and wraps_storage:
-            roots = list(owner_ent.attrs.get("wrapped_roots") or []) if owner_ent else []
+            roots: list[Any] = []
+            if owner_ent is not None:
+                roots = list(owner_ent.attrs.get("wrapped_roots") or [])
+            if not roots:
+                for e in branch_ents:
+                    roots.extend(e.attrs.get("wrapped_roots") or [])
             root_spell = str(roots[0] if roots else "LocalTensor")
         elif not root_spell and base in ASCENDC_BUFFER_TYPES:
             root_spell = base
         elif not root_spell and owner_ent is not None:
             root_spell = str(owner_ent.attrs.get("root") or "").replace("AscendC::", "")
-        is_wrapper = bool(wraps_storage and not catalog_root)
+        elif not root_spell and branch_ents:
+            root_spell = str(branch_ents[0].attrs.get("root") or "").replace("AscendC::", "") or "LocalTensor"
+        is_wrapper = bool((wraps_storage or branch_bases) and not catalog_root)
+        wrapper_spell = ""
+        if is_wrapper:
+            wrapper_spell = (
+                _wrapper_from_branch_types(codemap, branch_ents)
+                if branch_bases
+                else (base if wraps_storage else "")
+            )
+            if not wrapper_spell and branch_bases:
+                wrapper_spell = branch_bases[0]
+        type_name = (
+            "|".join(branch_bases[:2]) if branch_bases else _persist_type_name(type_text)
+        )
         attrs = {
             "memory_space": space,
             "tposition": tposition_from_type_text(expanded)
             or tposition_from_type_text(type_text)
             or "",
             "scope": owner,
-            "type_name": _persist_type_name(type_text),
+            "type_name": type_name,
             "role": "storage_wrapper" if is_wrapper else "storage",
-            "wrapper": base if is_wrapper else "",
+            "wrapper": wrapper_spell,
             "root_status": "REACHED" if root_spell else "UNRESOLVED",
             "root_kind": "STORAGE" if root_spell else "",
             "root": f"AscendC::{root_spell}" if root_spell else "",
-            "trace": [name] + ([base] if base else []) + ([root_spell] if root_spell else []),
+            "trace": [name]
+            + (branch_bases or ([base] if base else []))
+            + ([root_spell] if root_spell else []),
             "allocated": bool(catalog_root in {"TBuf", "TBufPool"}),
-            "wraps_lock": bool(owner_ent and owner_ent.attrs.get("wraps_lock")),
+            "wraps_lock": wraps_lock,
         }
+        if branch_bases:
+            attrs["conditional_flag"] = True
         ent = codemap.upsert(
             EntityKind.BUFFER,
             name,
@@ -2400,6 +2542,15 @@ def finalize_kernel_root_trace(
             )
         if base in type_ents and _is_catalog_storage_base(base):
             _link(codemap, RelationKind.WRAPS, ent.id, type_ents[base], attrs={"via": "member_type"})
+        for branch in branch_bases:
+            if branch in type_ents:
+                _link(
+                    codemap,
+                    RelationKind.WRAPS,
+                    ent.id,
+                    type_ents[branch],
+                    attrs={"via": "conditional_branch", "member": name},
+                )
         if root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind="STORAGE")
             _link(codemap, RelationKind.WRAPS, ent.id, rid, attrs={"via": "storage_root"})
@@ -2482,9 +2633,21 @@ def finalize_kernel_root_trace(
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
+        branch_bases = _conditional_storage_bases_any(type_text, expanded)
+        branch_ents = [
+            codemap.entities[type_ents[b]]
+            for b in branch_bases
+            if b in type_ents and type_ents[b] in codemap.entities
+        ]
         owner_ent = codemap.entities.get(type_ents[base]) if base in type_ents else None
         wraps_storage = bool(owner_ent and owner_ent.attrs.get("wraps_storage"))
+        wraps_storage = wraps_storage or any(
+            e.attrs.get("wraps_storage") for e in branch_ents
+        )
         catalog_root = _catalog_storage_root(expanded) or _catalog_storage_root(type_text)
+        space_hint = memory_space_from_type_text(expanded) or memory_space_from_type_text(
+            type_text
+        )
         known = (
             is_storage_type_text(expanded)
             or is_storage_type_text(type_text)
@@ -2495,6 +2658,7 @@ def finalize_kernel_root_trace(
                 owner_ent is not None
                 and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
             )
+            or (bool(branch_bases) and bool(space_hint))
         )
         if not known:
             continue
@@ -2533,11 +2697,15 @@ def finalize_kernel_root_trace(
 
         resolved = resolve_buffer_decl(expanded) or resolve_buffer_decl(type_text)
         space = memory_space_from_type_text(expanded) or memory_space_from_type_text(type_text) or "UNKNOWN"
-        is_wrapper = bool(wraps_storage and not catalog_root)
-        wrapper_spell = base if is_wrapper else ""
+        is_wrapper = bool((wraps_storage or branch_bases) and not catalog_root)
+        wrapper_spell = base if (is_wrapper and not branch_bases) else ""
+        if branch_bases:
+            wrapper_spell = _wrapper_from_branch_types(codemap, branch_ents) or branch_bases[0]
         project_reached = bool(
             owner_ent is not None
             and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
+        ) or any(
+            str(e.attrs.get("root_status") or "") == "REACHED" for e in branch_ents
         )
         root_status = "REACHED"
         root_spell = catalog_root
@@ -2562,7 +2730,9 @@ def finalize_kernel_root_trace(
             or tposition_from_type_text(type_text)
             or "",
             "scope": function,
-            "type_name": _persist_type_name(type_text),
+            "type_name": (
+                "|".join(branch_bases[:2]) if branch_bases else _persist_type_name(type_text)
+            ),
             "role": (
                 "storage_wrapper"
                 if is_wrapper
@@ -2578,6 +2748,8 @@ def finalize_kernel_root_trace(
             "allocated": bool(catalog_root in {"TBuf", "TBufPool"}),
             "wraps_lock": bool(owner_ent and owner_ent.attrs.get("wraps_lock")),
         }
+        if branch_bases:
+            attrs["conditional_flag"] = True
         if root_status == "UNRESOLVED":
             attrs["gap_code"] = REASON_NO_ASCENDC_ROOT
             gaps.append(

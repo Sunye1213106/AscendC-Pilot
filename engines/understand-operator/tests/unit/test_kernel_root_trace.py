@@ -1558,6 +1558,11 @@ def test_conditional_member_type_binds_unique_method(tmp_path: Path) -> None:
     assert gets
     assert all(e.status == "extracted" for e in gets)
     assert all(e.attrs.get("root_status") != "REACHED" for e in gets)
+    buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "commonL1Buf"), None)
+    assert buf is not None
+    assert int(buf.line_start or 0) > 0
+    assert buf.attrs.get("conditional_flag") is True
+    assert "mutex_policy" not in buf.attrs
 
 
 def test_outofline_method_binds_class_member(tmp_path: Path) -> None:
@@ -2101,9 +2106,11 @@ def test_mutex_policy_on_conditional_buffer(tmp_path: Path) -> None:
     semreg.load_registry.cache_clear()
     finalize_kernel_root_trace(cm, root, architecture="arch35")
     buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "pL1Buf"), None)
-    if buf is not None:
-        assert not buf.attrs.get("allocated")
-        assert "mutex_policy" not in buf.attrs
+    assert buf is not None
+    assert not buf.attrs.get("allocated")
+    assert "mutex_policy" not in buf.attrs
+    assert buf.attrs.get("conditional_flag") is True
+    assert buf.attrs.get("memory_space") == "L1"
     assert "kernel_execution_pipeline" not in cm.meta
 
 

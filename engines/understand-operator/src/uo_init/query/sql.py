@@ -556,7 +556,7 @@ def _is_compile_unit_placeholder(name: str) -> bool:
 
 
 def _site_loc(row: dict[str, Any]) -> tuple[str, int]:
-    file = str(row.get("file") or "").replace("\\", "/")
+    file = _norm_file(str(row.get("file") or ""))
     line = int(row.get("line") or row.get("line_start") or 0)
     return file, line
 
@@ -4472,22 +4472,23 @@ class UoSqlQuery:
                     _add(value_rows, seen_value, site, "value")
                 else:
                     _add(packing_rows, seen_pack, site, "packing")
-        impact = self.field_impact(str(primary.get("id") or ident))
-        if impact.get("ok"):
+            if str(hit.get("kind") or "") != EntityKind.TILING_KEY.value:
+                continue
+            impact = self.field_impact(str(hit.get("id") or ident))
+            if not impact.get("ok"):
+                continue
             for writer in list(impact.get("writers") or []):
-                loc = (
-                    str(writer.get("file") or "").replace("\\", "/"),
-                    int(writer.get("line_start") or writer.get("line") or 0),
-                )
-                if loc in seen_value:
-                    continue
                 row = {
                     "file": writer.get("file"),
                     "line": writer.get("line_start") or writer.get("line"),
                     "name": writer.get("name"),
                     "kind": writer.get("kind"),
-                    "rhs": (writer.get("facts") or {}).get("rhs") if isinstance(writer.get("facts"), dict) else "",
+                    "rhs": (writer.get("facts") or {}).get("rhs")
+                    if isinstance(writer.get("facts"), dict)
+                    else "",
                 }
+                if _site_loc(row) in seen_value:
+                    continue
                 _add(packing_rows, seen_pack, row, "packing")
         value_rows.sort(key=lambda row: (str(row.get("file") or ""), int(row.get("line") or 0)))
         packing_rows.sort(key=lambda row: (str(row.get("file") or ""), int(row.get("line") or 0)))

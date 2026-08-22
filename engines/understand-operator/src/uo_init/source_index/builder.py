@@ -46,11 +46,15 @@ _TYPEDEF_RE = re.compile(
     r"\btypedef\s+(?P<target>[\w:<>,\s*&]+?)\s+(?P<alias>[A-Za-z_]\w*)\s*;"
 )
 _MEMBER_RE = re.compile(
-    r"(?P<type>(?:[\w:<>,\s*&]+?))\s+(?P<name>[A-Za-z_]\w*)\s*;"
+    r"(?P<type>(?:[\w:<>,\s*&!()]+?))\s+(?P<name>[A-Za-z_]\w*)\s*;"
 )
 # ``TPipe *pipe;`` — star sits between type and name, so _MEMBER_RE misses it.
 _PTR_MEMBER_RE = re.compile(
     r"(?P<type>(?:const\s+|volatile\s+)*[\w:]+(?:\s*<[^;{>]*>)?)\s*\*\s*(?P<name>[A-Za-z_]\w*)\s*;"
+)
+_CONDITIONAL_FIELD_RE = re.compile(
+    r"^(?P<type>.+?\b(?:conditional(?:_t)?)\b.+)\s+(?P<name>[A-Za-z_]\w*)$",
+    re.I,
 )
 _CONTINUATION_NAME_RE = re.compile(r"^\s*(?P<name>[A-Za-z_]\w*)\s*;\s*$")
 _QUOTED_INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
@@ -132,6 +136,23 @@ def _base_type_name(type_text: str) -> str:
     no_tpl = text.split("<", 1)[0].strip()
     token = no_tpl.split("::")[-1].strip()
     return token if token.isidentifier() else ""
+
+
+def _conditional_field(text: str) -> tuple[str, str] | None:
+    """Name + type of a ``std::conditional`` / ``conditional_t`` class field."""
+    blob = re.sub(r"\s+", " ", str(text or "")).strip().rstrip(";").strip()
+    if "conditional" not in blob.lower():
+        return None
+    m = _CONDITIONAL_FIELD_RE.match(blob)
+    if m is None:
+        return None
+    name = m.group("name")
+    type_text = m.group("type").strip()
+    if not name or name.lower() in {"type", "conditional", "conditional_t"}:
+        return None
+    if "conditional" not in type_text.lower():
+        return None
+    return name, type_text
 
 
 def _is_tpl_dsl_file(path: Path) -> bool:
@@ -390,17 +411,21 @@ def _advance_members(
             emit_name = nm.group("name")
             emit_type = pending_type
         elif ";" in line:
-            m = _MEMBER_RE.search(combined.replace("\n", " "))
-            if m:
-                emit_type = m.group("type").strip()
-                emit_name = m.group("name")
+            hit = _conditional_field(combined)
+            if hit:
+                emit_name, emit_type = hit
             else:
-                m2 = _MEMBER_RE.search(line)
-                if m2:
-                    emit_type = f"{pending_type} {m2.group('type')}".strip()
-                    emit_name = m2.group("name")
+                m = _MEMBER_RE.search(combined.replace("\n", " "))
+                if m:
+                    emit_type = m.group("type").strip()
+                    emit_name = m.group("name")
+                else:
+                    m2 = _MEMBER_RE.search(line)
+                    if m2:
+                        emit_type = f"{pending_type} {m2.group('type')}".strip()
+                        emit_name = m2.group("name")
         if emit_name:
-            _emit_member(facts, current, emit_name, emit_type, path, root, pending_line)
+            _emit_member(facts, current, emit_name, emit_type, path, root, i)
             return None, 0
         return combined, pending_line
     if "(" in line and "std::conditional" not in line and "conditional_t" not in line:
@@ -415,6 +440,10 @@ def _advance_members(
         )
     ):
         return stripped, i
+    hit = _conditional_field(line)
+    if hit:
+        _emit_member(facts, current, hit[0], hit[1], path, root, i)
+        return pending_type, pending_line
     for m in _MEMBER_RE.finditer(line):
         _emit_member(facts, current, m.group("name"), m.group("type").strip(), path, root, i)
     for m in _PTR_MEMBER_RE.finditer(line):
