@@ -23,6 +23,11 @@ def test_agent_yaml_uses_machine_constraints_not_only_forbidden() -> None:
     assert "write_uo_formal_products" in meta["machine_constraints"]
     ceiling = agent_skill_ceiling("tg-analyst", REPO)
     assert "bind-init" in ceiling
+    assert "plan" in ceiling
+    assert "solve" in ceiling
+    assert "uo-query" in ceiling
+    assert "test-modes" not in ceiling
+    assert "lemma" not in ceiling
     assert "standalone-review" not in ceiling
 
 
@@ -60,7 +65,7 @@ def test_forbidden_blocks_canonical_ce_and_tg_writes() -> None:
     assert (
         forbidden_blocks_write(
             "ce-analyst",
-            "runs/r1/actions/intent_grill/staging.md",
+            "runs/r1/actions/plan_draft/notes.md",
             project_root=REPO,
         )
         is None

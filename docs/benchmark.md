@@ -1,12 +1,12 @@
 # UO 当前版本 benchmark
 
-记录 **2026-08-13** 对 `flash_attention_score_grad` / **arch35** 的 `/uo-init`。当前口径是 **true cold start**（抹掉 `.ascendc-pilot/arch35`，含 TU cache），默认 profile `fast`。
+记录 **2026-08-13** 对 `flash_attention_score_grad` / **arch35** 的 `/uo-init`。当前口径是 **true cold start**（抹掉 `.ascendc-pilot/arch35`，含 TU cache），默认 **1 个 kernel dtype**。
 
 机器：Windows，8 核。产品：
 
 `<op>/.ascendc-pilot/arch35/uo/flash_attention_score_grad.arch35.uo`
 
-默认 profile（未设 `UO_INIT_PROFILE` 即 `fast`）：`closure_mode=keypath`，**1 个 kernel dtype**，`fold_kernel=false`，`with_api=False`。完整抽取用 `UO_INIT_PROFILE=full`（全 dtype + fold + API clang），冷启动会明显超过 3 分钟预算。
+默认（未设 `UO_KERNEL_MAX_VARIANTS` 即 **1**）：一个 kernel dtype。`UO_WITH_KERNEL` 控制是否抽 Kernel。`UO_KERNEL_MAX_VARIANTS=0` 扫全部声明 dtype，冷启动会明显超过 3 分钟预算。
 
 同日家族泛化抽检见 [test/uo-init-generalization.md](test/uo-init-generalization.md)（**不当本页质量入口**）。pass7 全量：prepare 4/33、`.uo` 5 份（unknown 仍为 0）；墙钟与 verify 口径仍只以本页 FAG 冷启动为准。
 

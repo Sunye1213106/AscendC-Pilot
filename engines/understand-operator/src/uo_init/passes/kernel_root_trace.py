@@ -60,6 +60,12 @@ from uo_init.semantics.ascendc_vf import (
     is_vf_only_api,
     vf_root_spelling,
 )
+from uo_init.pipe_lifetime import (
+    continued_line_ranges,
+    lifetime_edges,
+    receiver_leaf,
+    topo_pipe_ordinals,
+)
 from uo_init.semantics.ascendc_util import is_cann_util_api
 from uo_init.semantics.ascendc_sync import (
     ASCENDC_SYNC_TYPES,
@@ -638,6 +644,19 @@ def _catalog_storage_root(type_text: str) -> str:
     return ""
 
 
+def _is_catalog_storage_base(name: str) -> bool:
+    """True when *name* itself is a catalog storage root, not a substring hit."""
+    short = str(name or "").split("::")[-1]
+    return short in ASCENDC_BUFFER_TYPES or short in {
+        "LocalTensor",
+        "GlobalTensor",
+        "TBufPool",
+        "TBuf",
+        "TQueBind",
+        "TQue",
+    }
+
+
 def _wraps_lock_type(type_text: str) -> bool:
     text = str(type_text or "")
     return "MutexID" in text or re.search(r"(?:^|::)Mutex(?:<|$)", text) is not None
@@ -861,6 +880,25 @@ def _backslash_logical_lines(text: str) -> list[tuple[int, str]]:
             i += 1
         out.append((start, chunk))
         i += 1
+    return out
+
+
+_TPIPE_DECL_RE = re.compile(
+    r"(?:(?:AscendC|ascendc)::)?TPipe\s+(?:const\s+)?(?!\*)(?P<name>[A-Za-z_]\w*)"
+)
+
+
+def _tpipe_decl_lines(text: str) -> dict[str, int]:
+    """Physical line of each non-pointer ``TPipe name`` decl, including ``#define`` bodies."""
+    out: dict[str, int] = {}
+    for idx, raw in enumerate(str(text or "").splitlines(), 1):
+        line = raw.rstrip()
+        if line.endswith("\\"):
+            line = line[:-1]
+        for match in _TPIPE_DECL_RE.finditer(line):
+            name = match.group("name")
+            if name and name not in out:
+                out[name] = idx
     return out
 
 
@@ -1377,6 +1415,27 @@ def _propagate_reachability(codemap: CodeMap) -> None:
             if parent not in seen:
                 seen.add(parent)
                 queue.append(parent)
+
+
+def _link_owner_declares_methods(codemap: CodeMap, type_ents: dict[str, str]) -> None:
+    """TYPE --DECLARES--> class METHOD so around/file:line can hop to Init/Lock."""
+    for e in list(codemap.by_kind(EntityKind.METHOD)):
+        owner = str(e.attrs.get("owner") or "")
+        if not owner:
+            q = str(e.attrs.get("qualified_name") or "")
+            if "::" in q:
+                owner = _base_type_name(q.rsplit("::", 1)[0]) or ""
+        if not owner or owner not in type_ents:
+            continue
+        if e.name in _CXX_SKIP_BASE:
+            continue
+        _link(
+            codemap,
+            RelationKind.DECLARES,
+            type_ents[owner],
+            e.id,
+            attrs={"via": "class_method"},
+        )
 
 
 def _normalize_settled_entities(codemap: CodeMap) -> None:
@@ -1945,7 +2004,6 @@ def finalize_kernel_root_trace(
         dst_e = codemap.entities.get(dst)
         if src_e is None or dst_e is None:
             continue
-        member_name = str(attrs.get("member") or "")
         type_name = str(attrs.get("type_name") or "")
         catalog = _catalog_storage_root(type_name) or _catalog_storage_root(dst_e.name)
         if catalog:
@@ -1956,21 +2014,8 @@ def finalize_kernel_root_trace(
                 roots.append(catalog)
         if _wraps_lock_type(type_name) or _wraps_lock_type(dst_e.name):
             src_e.attrs["wraps_lock"] = True
-        if member_name:
-            _link(
-                codemap,
-                RelationKind.CONTAINS,
-                src,
-                dst,
-                attrs={"member": member_name, "via": "class_member"},
-            )
-            _link(
-                codemap,
-                RelationKind.DECLARES,
-                src,
-                dst,
-                attrs={"member": member_name, "via": "class_member"},
-            )
+        # CONTAINS/DECLARES belong on the member instance (FIELD/BUFFER),
+        # not on the member's TYPE. TYPE→TYPE WRAPS stays as composition.
 
     # Inheritance edges from Clang BaseDecl.
     for row in clang_bases:
@@ -2133,6 +2178,20 @@ def finalize_kernel_root_trace(
             return file_hits[0]
         return other_hits[0] if len(other_hits) == 1 else ""
 
+    tpipe_decl_by_file: dict[str, dict[str, int]] = {}
+    kernel_file_text: dict[str, str] = {}
+    for path in files or []:
+        pth = Path(path)
+        if not pth.is_file():
+            continue
+        try:
+            text = read_text(pth)
+        except OSError:
+            continue
+        nfile = _norm_file(str(pth), root)
+        kernel_file_text[nfile] = text
+        tpipe_decl_by_file[nfile] = _tpipe_decl_lines(text)
+
     def _collect_lexical_init_pipe_args() -> None:
         """``opPost.Init(..., &pipePost)`` in #define bodies clang never turns into Init calls."""
         for path in files or []:
@@ -2145,6 +2204,8 @@ def finalize_kernel_root_trace(
                 continue
             nfile = _norm_file(str(pth), root)
             phys = text.splitlines()
+            decl_lines = tpipe_decl_by_file.get(nfile) or _tpipe_decl_lines(text)
+            tpipe_decl_by_file[nfile] = decl_lines
             lexical_inherit.extend(_inherit_pairs_from_text(text))
             for start_line, logical in _backslash_logical_lines(text):
                 for m in _RECV_INIT_RE.finditer(logical):
@@ -2168,10 +2229,14 @@ def finalize_kernel_root_trace(
                     if not owners:
                         continue
                     aline = start_line
-                    token = f"&{first_name}" if first_name else ""
-                    if token:
-                        for pi in range(start_line - 1, min(len(phys), start_line + 160)):
-                            if token in phys[pi] or first_name in phys[pi]:
+                    if first_name and first_name in decl_lines:
+                        aline = decl_lines[first_name]
+                    elif first_name:
+                        token = f"TPipe {first_name}"
+                        for pi, raw in enumerate(phys):
+                            if token in raw or re.search(
+                                rf"\bTPipe\b[^;\n]*\b{re.escape(first_name)}\b", raw
+                            ):
                                 aline = pi + 1
                                 break
                     for owner in owners:
@@ -2333,7 +2398,7 @@ def finalize_kernel_root_trace(
                 ent.id,
                 attrs={"member": name, "via": "class_member"},
             )
-        if base in type_ents:
+        if base in type_ents and _is_catalog_storage_base(base):
             _link(codemap, RelationKind.WRAPS, ent.id, type_ents[base], attrs={"via": "member_type"})
         if root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind="STORAGE")
@@ -2349,9 +2414,31 @@ def finalize_kernel_root_trace(
         sync_kind = _sync_object_kind(expanded) or _sync_object_kind(type_text)
         if sync_kind is not None:
             nfile = _norm_file(file, root)
-            if (function, name) in buffer_by_key or name in buffer_by_name:
-                existing = buffer_by_key.get((function, name)) or buffer_by_name.get(name)
-                if existing:
+            line = int(line)
+            this_ptr = _type_is_pointer(type_text) or _type_is_pointer(expanded)
+            if sync_kind == EntityKind.PIPE and not this_ptr:
+                mapped = (tpipe_decl_by_file.get(nfile) or {}).get(name)
+                if mapped:
+                    line = mapped
+            existing_key = buffer_by_key.get((function, name))
+            if existing_key:
+                continue
+            existing_name = buffer_by_name.get(name)
+            if existing_name:
+                exist_ent = codemap.entities.get(existing_name)
+                # A TPipe* member / other-file namesake must not suppress a local instance.
+                skip_namesake = True
+                if (
+                    sync_kind == EntityKind.PIPE
+                    and not this_ptr
+                    and exist_ent is not None
+                    and (
+                        exist_ent.attrs.get("pointer")
+                        or str(exist_ent.file or "").replace("\\", "/") != nfile
+                    )
+                ):
+                    skip_namesake = False
+                if skip_namesake:
                     continue
             sid = make_id(sync_kind.value.title(), "decl", function, name, nfile, line)
             root_spell = (
@@ -2516,9 +2603,11 @@ def finalize_kernel_root_trace(
         buf_count += 1
         if root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind="STORAGE")
-            if is_wrapper and wrapper_spell in type_ents:
+            if is_wrapper and wrapper_spell in type_ents and _is_catalog_storage_base(
+                wrapper_spell
+            ):
                 _link(codemap, RelationKind.WRAPS, ent.id, type_ents[wrapper_spell])
-            if base in type_ents:
+            if base in type_ents and _is_catalog_storage_base(base):
                 _link(codemap, RelationKind.WRAPS, ent.id, type_ents[base], attrs={"via": "decl_type"})
             _link(codemap, RelationKind.WRAPS, ent.id, rid, attrs={"via": "storage_root"})
             _link(codemap, RelationKind.ROOTED_AT, ent.id, rid)
@@ -3190,6 +3279,22 @@ def finalize_kernel_root_trace(
                 )
 
     _collect_lexical_init_pipe_args()
+    for ent in list(codemap.by_kind(EntityKind.PIPE)):
+        if ent.attrs.get("pointer"):
+            continue
+        name = str(ent.name or "")
+        ef = str(ent.file or "").replace("\\", "/")
+        leaf = ef.rsplit("/", 1)[-1]
+        for nfile, decls in tpipe_decl_by_file.items():
+            if name not in decls:
+                continue
+            nf = str(nfile).replace("\\", "/")
+            if ef != nf and leaf != nf.rsplit("/", 1)[-1]:
+                continue
+            line = int(decls[name])
+            if line > 0 and int(ent.line_start or 0) != line:
+                ent.line_start = line
+            break
     inherit_from: dict[str, set[str]] = defaultdict(set)
     for rel in list(codemap.relations.values()):
         if rel.kind_name() != RelationKind.WRAPS.value:
@@ -3270,15 +3375,70 @@ def finalize_kernel_root_trace(
     pair_stats = _record_flag_pair_appearance(codemap, gaps)
 
     by_scope: dict[str, list[Any]] = defaultdict(list)
+    by_file_pipes: dict[str, list[Any]] = defaultdict(list)
     for e in codemap.by_kind(EntityKind.PIPE):
         if e.attrs.get("catalog") == "ascendc":
             continue
         if e.attrs.get("pointer"):
             continue
         by_scope[str(e.attrs.get("scope") or "")].append(e)
+        by_file_pipes[_norm_file(str(e.file or ""), root)].append(e)
+    destroy_by_file: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for op in codemap.by_kind(EntityKind.OPERATION):
+        callee = str(op.attrs.get("callee") or op.name or "").split("::")[-1]
+        if callee != "Destroy":
+            continue
+        recv = receiver_leaf(str(op.attrs.get("receiver") or ""))
+        if not recv:
+            continue
+        destroy_by_file[_norm_file(str(op.file or ""), root)].append(
+            (int(op.line_start or 0), recv)
+        )
+    for nfile, pipes in by_file_pipes.items():
+        text = kernel_file_text.get(nfile) or ""
+        if not text:
+            leaf = str(nfile or "").replace("\\", "/").rsplit("/", 1)[-1]
+            for key, body in kernel_file_text.items():
+                if str(key).replace("\\", "/").rsplit("/", 1)[-1] == leaf:
+                    text = body
+                    break
+        ranges = continued_line_ranges(text) if text else []
+        constructs = [(e.name, int(e.line_start or 0)) for e in pipes]
+        file_destroys = destroy_by_file.get(nfile) or []
+        if not file_destroys:
+            leaf = str(nfile or "").replace("\\", "/").rsplit("/", 1)[-1]
+            for key, rows in destroy_by_file.items():
+                if str(key).replace("\\", "/").rsplit("/", 1)[-1] == leaf:
+                    file_destroys = rows
+                    break
+        edges = lifetime_edges(constructs, file_destroys, ranges) if ranges else []
+        if not edges:
+            continue
+        line_of = {e.name: int(e.line_start or 0) for e in pipes}
+        ordinals = topo_pipe_ordinals([e.name for e in pipes], edges, line_of=line_of)
+        by_name = {e.name: e for e in pipes}
+        for name, ordinal in ordinals.items():
+            pipe = by_name.get(name)
+            if pipe is None:
+                continue
+            pipe.attrs["pipe_ordinal"] = ordinal
+        for src_name, dst_name in edges:
+            src = by_name.get(src_name)
+            dst = by_name.get(dst_name)
+            if src is None or dst is None:
+                continue
+            _link(
+                codemap,
+                RelationKind.PRECEDES,
+                src.id,
+                dst.id,
+                attrs={"via": "pipe_destroy"},
+            )
     for _scope, pipes in by_scope.items():
         pipes.sort(key=lambda item: (int(item.line_start or 0), item.name))
         for idx, pipe in enumerate(pipes, start=1):
+            if pipe.attrs.get("pipe_ordinal"):
+                continue
             pipe.attrs["pipe_ordinal"] = idx
 
     lock_roots = {"Lock", "Unlock", "AllocMutexID", "ReleaseMutexID"}
@@ -3397,6 +3557,7 @@ def finalize_kernel_root_trace(
                 e.status = "extracted"
                 break
 
+    _link_owner_declares_methods(codemap, type_ents)
     _normalize_settled_entities(codemap)
 
     # --- 7. Gaps for still-unresolved source types that participate in WRAPS
@@ -3455,7 +3616,8 @@ def finalize_kernel_root_trace(
         elif kind == RelationKind.WRAPS.value:
             wraps += 1
         elif kind == RelationKind.ROOTED_AT.value:
-            rooted_at += 1
+            if str(r.attrs.get("provenance") or "") == "kernel_root_trace":
+                rooted_at += 1
         elif kind == RelationKind.ALIASES.value:
             alias_rels += 1
         elif kind == RelationKind.BINDS.value:

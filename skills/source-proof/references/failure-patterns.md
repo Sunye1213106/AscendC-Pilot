@@ -2,42 +2,42 @@
 
 **何时加载**：准备宣称 PROVED，或排查「看起来像证明其实会误杀可达态」时。
 
-## 漏入口 / 第一行分流
+## 没钉层 / 用错层的 cover
 
-函数第一行 dispatch / early return 未枚举 → 蕴含边界画错 → 误杀可达状态。  
-**对策**：入口义务未关不得 `PROVED`。
+「没有 4/5/6」可能是 template 不编，也可能是 Host 拒掉。组合 cover>0 只说明 SEL 接纳。  
+**对策**：先 `Dim=` / 组合查询。product 无值 → template。product 有、仍称不可达 → 必须证 host。
 
-## 搜索耗尽当不可达
+## 赋值当成发出的 Key
 
-有限构造未命中、样本未出现 → 写成「源码不可达」。  
-**对策**：只能 `INSUFFICIENT` 或继续搜。
+`DetermineMode` 给 `inputDtype` 赋了 4/5/6，就说这些 Key 会产生。  
+**对策**：还要看同一条调用链上有没有 `GRAPH_FAILED` / early return。写出 ≠ 活到 `GetTilingKey`。
 
-## domain 当可达域
+## 第一页 snippet 当函数已读完
 
-静态 `domain` / 可能值集合当作「运行不会取其他值」。  
-**对策**：value domain ≠ reachable domain。有 undecided 或 free vars 时不得对「不可能」返回 PROVED。
+`ProcessQuantInfo` 卡停在 `if (queryType == FP8…)`，没看到 `return GRAPH_FAILED`。  
+**对策**：按定义 span 读完函数。截断处不得关入口 / 返回义务。
 
-## derived 当 exact
+## packing writers 当字段写点全集
 
-有表达式就做排除证明。  
-**对策**：derived ≠ exact。
+`IsRope` 的 writers 只有 `GetTilingKey` 的 `hasRope` 打包。`hasRope` 本身在哪赋值，图上可能没有。  
+**对策**：另查 `fBaseParams.<field>`。写点不全 → 覆盖义务最多 `BLOCKED`。
 
-## 复合赋值 / 容器写漏记
+## 第一张卡是错 kind
 
-`+=`、`push_back`、整容器 `operator=` 被当成无关或覆盖错误 → 写点集合假完备。  
-**对策**：写点义务要求完整；解析器 partial 时 `INSUFFICIENT`。
+`IsRope` 先落到 TilingData `isRope`（空 tensor），`hasRope` 先落到 kernel 分支。  
+**对策**：看卡片全部 kind，跟 `next`。禁止只信第一页。
 
-## 错误退出守卫一律丢弃
+## cover=0 当 Host 不可达
 
-把所有 failure return 的否定扔掉 → 合法输入域被放宽 → 假可达。  
-**对策**：区分「重述型 bailout」与「排除型 bailout」。
+`IsNEqual=1,DeterType=0` 模板未编，不能直接写成 Host 从不产生。  
+**对策**：template 排除只写 template。host 仍要 packing 公式。
 
-## 别名 / 保存-修改-恢复
+## 漏例外分支
 
-只看主名字赋值，漏别名写。  
-**对策**：别名 / 保存-修改-恢复未闭合到写点时不得证无覆盖。
+无 mask 时 `SetSparseParams` 的 PREFIX 可走 `DeterType=1`。漏掉会误杀可达 Key。  
+**对策**：第一行分流、PREFIX / 改写 layout / 空 tensor 必须进替代路径。
 
-## 无观测写不可达
+## 搜索耗尽 / 无观测写运行时不可达
 
-没有 REWRITE/REFUSE 等运行事实，仅凭「源码看起来」。  
-**对策**：观测绑定义务；无事实不得声称运行时不可达。
+有限构造未命中，或没有 REWRITE/REFUSE 就写运行时不可达。  
+**对策**：`INSUFFICIENT`。运行时值不能回填成宏条件。

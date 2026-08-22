@@ -20,6 +20,7 @@ from typing import Any, Iterable
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
 from uo_init.ir.relation import RelationKind
+from uo_init.semantics.const_expr import occupancy_overlap, worth_sharing
 from uo_init.source_layout import iter_cpp, selected_host_files, selected_kernel_files
 
 _CPP_SUFFIXES = {".h", ".hpp", ".hh", ".cpp", ".cc", ".cxx"}
@@ -33,6 +34,18 @@ _CLASS_RE = re.compile(r"\bclass\s+([A-Za-z_]\w*)[^\{;]*\{", re.S)
 _MEMBER_RE = re.compile(
     r"^\s*([A-Za-z_][\w:\s<>,*&]*?)\s+([A-Za-z_]\w*)(?:\[[^\]]+\])?\s*(?:=[^;]+)?;\s*$"
 )
+_CONTINUATION_NAME_RE = re.compile(r"^\s*(?P<name>[A-Za-z_]\w*)\s*;\s*$")
+_CLASS_METHOD_RE = re.compile(
+    r"(?:template\s*<[^;{}]{0,400}>\s*)?"
+    r"(?:__aicore__\s+)?(?:static\s+)?(?:inline\s+)?"
+    r"(?:[\w:<>,\s*&]{0,200}?\s+)?"
+    r"(?P<name>[A-Za-z_]\w*)\s*\([^;{}]{0,800}\)"
+    r"(?:\s*const)?"
+    r"(?:\s*=\s*delete)?"
+    r"\s*\{",
+    re.S,
+)
+_SKIP_MEMBER_PREFIXES = ("using ", "typedef ", "template ", "static_assert")
 _TILING_READ_RE = re.compile(r"\btilingData\s*->\s*([A-Za-z_]\w*)(?:\s*\.\s*([A-Za-z_]\w*))?")
 _FIELD_TILING_ASSIGN_RE = re.compile(
     r"\b(?:[A-Za-z_]\w*\s*(?:\.|->)\s*)*([A-Za-z_]\w*)\s*=\s*[^=\n]{0,240}?\btilingData\b"
@@ -60,6 +73,16 @@ _RESOURCE_TYPES = (
 _CALL_SKIP = {
     "if", "while", "for", "switch", "sizeof", "alignof", "decltype", "static_cast",
     "reinterpret_cast", "const_cast", "dynamic_cast", "return", "likely", "unlikely",
+}
+_METHOD_NAME_SKIP = _CALL_SKIP | {
+    "else",
+    "do",
+    "catch",
+    "try",
+    "constexpr",
+    "public",
+    "private",
+    "protected",
 }
 
 
@@ -193,6 +216,17 @@ def _load_text_sources(
         )
 
     return map_files(unique, _one)
+
+
+def _iter_brace_body_lines(
+    text: str, open_pos: int, close_pos: int, newlines: list[int]
+) -> Iterable[tuple[int, str]]:
+    """Physical 1-based line of each row in ``text[open_pos+1:close_pos]``."""
+    body = text[open_pos + 1 : close_pos]
+    abs_off = 0
+    for raw in body.splitlines(keepends=True):
+        yield _line_at(newlines, open_pos + 1 + abs_off), raw.rstrip("\r\n")
+        abs_off += len(raw)
 
 
 def _matching_brace(text: str, open_pos: int) -> int:
@@ -658,11 +692,59 @@ def _extract_compile_facts(
                 status="confirmed",
             )
             type_aliases += 1
+    shared = _link_shared_compile_values(codemap)
     return {
         "source_macros": macros,
         "source_compile_vars": compile_vars,
         "source_type_aliases": type_aliases,
+        "shared_compile_values": shared,
     }
+
+
+def _compile_value_text(ent: Entity) -> str:
+    attrs = ent.attrs or {}
+    for key in ("value_expr", "value", "definition"):
+        text = str(attrs.get(key) or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _link_shared_compile_values(codemap: CodeMap) -> int:
+    """ALIASES among same-file COMPILE_VAR/MACRO whose integer sets overlap."""
+    by_file: dict[str, list[Entity]] = {}
+    for kind in (EntityKind.COMPILE_VAR, EntityKind.MACRO):
+        for ent in codemap.by_kind(kind):
+            path = str(ent.file or "").replace("\\", "/")
+            if not path:
+                continue
+            by_file.setdefault(path, []).append(ent)
+    linked = 0
+    for _path, rows in by_file.items():
+        if len(rows) < 2:
+            continue
+        payloads = [(ent, _compile_value_text(ent)) for ent in rows]
+        for i, (left, ltext) in enumerate(payloads):
+            if not ltext:
+                continue
+            neighbors = 0
+            for right, rtext in payloads[i + 1 :]:
+                if neighbors >= 8:
+                    break
+                if left.id == right.id or not rtext:
+                    continue
+                overlap = occupancy_overlap(ltext, rtext)
+                if not worth_sharing(overlap, ltext, rtext):
+                    continue
+                attrs = {
+                    "via": "shares_value",
+                    "overlap": sorted(overlap)[:8],
+                    "provenance": "source_compile_occupancy",
+                }
+                codemap.link(RelationKind.ALIASES, left.id, right.id, attrs=attrs, status="extracted")
+                linked += 1
+                neighbors += 1
+    return linked
 
 
 def _extract_field_tiling_assigns(
@@ -711,6 +793,7 @@ def _extract_runtime_structs_and_resources(
 ) -> dict[str, int]:
     structs = 0
     resources = 0
+    methods = 0
     for src in sources:
         text = src.text
         file = src.file
@@ -732,31 +815,152 @@ def _extract_runtime_structs_and_resources(
                     status="confirmed",
                 )
                 structs += 1
-                body = text[open_pos + 1 : close_pos]
+                pending: str | None = None
+                pending_line = 0
                 depth = 0
-                for off, raw_line in enumerate(body.splitlines()):
+                for line_no, raw_line in _iter_brace_body_lines(text, open_pos, close_pos, newlines):
                     stripped = re.sub(r"//.*", "", raw_line).strip()
-                    if depth == 0 and stripped and "(" not in stripped and not stripped.endswith(":"):
+                    if depth > 0:
+                        depth += raw_line.count("{") - raw_line.count("}")
+                        depth = max(0, depth)
+                        continue
+                    if pending is not None:
+                        combined = f"{pending} {stripped}"
+                        emit_type = ""
+                        emit_name = ""
+                        nm = _CONTINUATION_NAME_RE.match(stripped)
+                        if nm:
+                            emit_type = pending
+                            emit_name = nm.group("name")
+                        elif ";" in stripped:
+                            mm = _MEMBER_RE.match(re.sub(r"\s+", " ", combined).strip())
+                            if mm:
+                                emit_type = " ".join(mm.group(1).split())
+                                emit_name = mm.group(2)
+                        if emit_name:
+                            if _mint_runtime_field(
+                                codemap,
+                                owner_ent,
+                                owner,
+                                emit_name,
+                                emit_type,
+                                file,
+                                line_no,
+                            ):
+                                resources += 1
+                            pending = None
+                        else:
+                            pending = combined
+                    elif stripped.startswith(_SKIP_MEMBER_PREFIXES):
+                        if not stripped.startswith("template ") and ";" not in stripped:
+                            pending = stripped
+                            pending_line = line_no
+                    elif ";" not in stripped and (
+                        stripped.endswith("::type")
+                        or stripped.endswith(",")
+                        or (
+                            (
+                                "MutexBuffer" in stripped
+                                or "conditional" in stripped
+                                or "Tensor" in stripped
+                            )
+                            and not re.search(r"\b[A-Za-z_]\w*\s*;\s*$", stripped)
+                            and "(" not in stripped
+                        )
+                    ):
+                        pending = stripped
+                        pending_line = line_no
+                    elif (
+                        stripped
+                        and "(" not in stripped
+                        and not stripped.endswith(":")
+                    ):
                         mm = _MEMBER_RE.match(stripped)
                         if mm:
-                            ctype, name = " ".join(mm.group(1).split()), mm.group(2)
-                            field = codemap.upsert(
-                                EntityKind.FIELD,
-                                name,
-                                eid=f"SRCFIELD::{file}::{owner}::{name}",
-                                attrs={"owner": owner, "cpp_type": ctype, "provenance": "source_runtime_member"},
-                                file=file,
-                                line=_line_at(newlines, open_pos + 1) + off,
-                                status="confirmed",
-                            )
-                            codemap.link(RelationKind.DECLARES, owner_ent.id, field.id, attrs={"provenance": "source_runtime_type"}, status="confirmed")
-                            if any(token in ctype for token in _RESOURCE_TYPES):
-                                field.attrs["hardware_resource"] = True
-                                field.attrs["resource_type"] = next((x for x in _RESOURCE_TYPES if x in ctype), ctype)
+                            if _mint_runtime_field(
+                                codemap,
+                                owner_ent,
+                                owner,
+                                mm.group(2),
+                                " ".join(mm.group(1).split()),
+                                file,
+                                line_no,
+                            ):
                                 resources += 1
                     depth += raw_line.count("{") - raw_line.count("}")
                     depth = max(0, depth)
-    return {"runtime_types": structs, "hardware_resources": resources}
+                body = text[open_pos + 1 : close_pos]
+                for hit in _CLASS_METHOD_RE.finditer(body):
+                    name = hit.group("name")
+                    if not name or name in _METHOD_NAME_SKIP:
+                        continue
+                    line = _line_at(newlines, open_pos + 1 + hit.start("name"))
+                    method = codemap.upsert(
+                        EntityKind.METHOD,
+                        name,
+                        eid=f"SRCKDEF::{file}::{line}::{owner}::{name}",
+                        attrs={
+                            "owner": owner,
+                            "source_definition": True,
+                            "architecture": architecture,
+                            "provenance": "source_runtime_method",
+                            "qualified_name": f"{owner}::{name}",
+                        },
+                        file=file,
+                        line=line,
+                        status="confirmed",
+                    )
+                    codemap.link(
+                        RelationKind.DECLARES,
+                        owner_ent.id,
+                        method.id,
+                        attrs={"provenance": "source_runtime_type", "via": "class_method"},
+                        status="confirmed",
+                    )
+                    methods += 1
+    return {
+        "runtime_types": structs,
+        "hardware_resources": resources,
+        "runtime_methods": methods,
+    }
+
+
+def _mint_runtime_field(
+    codemap: CodeMap,
+    owner_ent: Entity,
+    owner: str,
+    name: str,
+    ctype: str,
+    file: str,
+    line: int,
+) -> bool:
+    if not name or name in {"public", "private", "protected"}:
+        return False
+    if not ctype or ctype.startswith("#"):
+        return False
+    field = codemap.upsert(
+        EntityKind.FIELD,
+        name,
+        eid=f"SRCFIELD::{file}::{owner}::{name}",
+        attrs={"owner": owner, "cpp_type": ctype, "provenance": "source_runtime_member"},
+        file=file,
+        line=line,
+        status="confirmed",
+    )
+    codemap.link(
+        RelationKind.DECLARES,
+        owner_ent.id,
+        field.id,
+        attrs={"provenance": "source_runtime_type"},
+        status="confirmed",
+    )
+    if any(token in ctype for token in _RESOURCE_TYPES):
+        field.attrs["hardware_resource"] = True
+        field.attrs["resource_type"] = next(
+            (x for x in _RESOURCE_TYPES if x in ctype), ctype
+        )
+        return True
+    return False
 
 
 def _candidate_spans(ent: Entity) -> list[tuple[str, int, int]]:

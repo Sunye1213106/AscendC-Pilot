@@ -82,6 +82,13 @@ def test_find_uo_product_unique_arch_without_arg(tmp_path: Path):
     assert found == product.resolve()
 
 
+def test_find_uo_product_default_slot(tmp_path: Path):
+    product = _write_product(tmp_path, arch="default")
+    found = find_uo_product(tmp_path, op_name="toy", architecture="default")
+    assert found == product.resolve()
+    assert find_uo_product(tmp_path) == product.resolve()
+
+
 def test_find_uo_product_ambiguous_arch_returns_none(tmp_path: Path):
     _write_product(tmp_path, arch="arch22")
     later = _write_product(tmp_path, arch="arch35")

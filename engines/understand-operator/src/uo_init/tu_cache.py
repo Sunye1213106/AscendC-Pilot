@@ -22,7 +22,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 _ENV_ENABLE = "UO_TU_CACHE"
 _ENV_ROOT = "UO_CACHE_ROOT"
 
@@ -352,6 +352,7 @@ def deserialize_walk_result(payload: dict[str, Any]) -> Any:
             name=str(row.get("name") or name),
             file=str(row.get("file") or ""),
             line=int(row.get("line") or 0),
+            line_end=int(row.get("line_end") or 0),
             reads=list(row.get("reads") or []),
             writes=list(row.get("writes") or []),
             guards=list(row.get("guards") or []),

@@ -9,6 +9,45 @@ from typing import Iterable
 
 
 BW_RE = re.compile(r"ASCENDC_TPL_(\d+)_BW")
+
+_BOOL_TRUE = frozenset({"1", "true", "True", "TRUE", "yes", "Yes", "YES"})
+_BOOL_FALSE = frozenset({"0", "false", "False", "FALSE", "no", "No", "NO"})
+
+
+def canonicalize_bool_token(value: int | bool | str) -> str:
+    """Store BOOL TPL values as ``0`` / ``1`` (query still aliases true/false)."""
+    if value is True or value == 1:
+        return "1"
+    if value is False or value == 0:
+        return "0"
+    text = str(value).strip()
+    if text in _BOOL_TRUE:
+        return "1"
+    if text in _BOOL_FALSE:
+        return "0"
+    return "1" if text.lower() in {"true", "1"} else "0"
+
+
+def bool_value_aliases(value: int | bool | str) -> tuple[str, ...]:
+    """Expand true/false/0/1 only. Other tokens stay themselves."""
+    if value is True:
+        return ("1", "true", "True", "TRUE")
+    if value is False:
+        return ("0", "false", "False", "FALSE")
+    text = str(value).strip()
+    if text in _BOOL_TRUE or text.lower() == "true":
+        return ("1", "true", "True", "TRUE")
+    if text in _BOOL_FALSE or text.lower() == "false":
+        return ("0", "false", "False", "FALSE")
+    return (text,)
+
+
+def canonicalize_sel_vals(kind: str, vals: list[str]) -> list[str]:
+    if str(kind).upper() != "BOOL":
+        return [str(v) for v in vals]
+    return [canonicalize_bool_token(v) for v in vals]
+
+
 DECL_KIND_RE = re.compile(
     r"ASCENDC_TPL_(UINT|BOOL|DTYPE|FORMAT|KERNEL_TYPE)_DECL\s*\("
 )
@@ -62,7 +101,7 @@ class TplSchema:
             raise ValueError(f"{dim.name} value {value!r} not in {domain}") from e
 
     def encode_bool(self, value: int | bool | str) -> int:
-        return 1 if value in (1, True, "1", "true", "True") else 0
+        return 1 if canonicalize_bool_token(value) == "1" else 0
 
     def encode_tiling_key(self, inst: dict[str, str | int | bool]) -> int:
         """Pack one concrete ARGS_SEL instance into a uint64 tiling key."""
@@ -449,7 +488,7 @@ def parse_args_decl(src: str) -> TplSchema:
             bw = _uint_bit_width(parts[1] if len(parts) > 1 else "")
             vals = parts[2:]
         elif kind == "BOOL":
-            bw, vals = 1, parts[1:]
+            bw, vals = 1, canonicalize_sel_vals("BOOL", parts[1:])
         elif kind == "KERNEL_TYPE":
             # Host GET_TPL_TILING_KEY still passes this dim (cvMode / mix ratio).
             bw, vals = 6, parts[1:]
@@ -478,7 +517,13 @@ def parse_args_sel(src: str) -> list[list[dict]]:
             kind = sm.group(1)
             inner = _balanced_paren_body(body, sm.end() - 1)
             parts = _split_args(inner)
-            sels.append({"name": parts[0], "kind": kind, "vals": parts[1:]})
+            sels.append(
+                {
+                    "name": parts[0],
+                    "kind": kind,
+                    "vals": canonicalize_sel_vals(kind, parts[1:]),
+                }
+            )
         if sels:
             groups.append(sels)
     return groups

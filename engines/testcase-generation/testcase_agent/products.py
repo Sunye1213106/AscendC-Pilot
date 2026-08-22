@@ -190,6 +190,18 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
             errors.append("script compare required")
         if "generate_inputs" not in doc:
             errors.append("generate_inputs required")
+    _COMPARE = frozenset({"match", "tighter_profile", "tighter_operator", "mismatch"})
+    domains = doc.get("domains") if isinstance(doc.get("domains"), dict) else {}
+    for key, row in domains.items():
+        if not isinstance(row, dict):
+            continue
+        cmp = str(row.get("compare") or "").strip()
+        if cmp and cmp not in _COMPARE:
+            errors.append(f"domains.{key}.compare {cmp!r} not in match|tighter_profile|tighter_operator|mismatch")
+    call = doc.get("call") if isinstance(doc.get("call"), dict) else {}
+    kind = str(call.get("kind") or "").strip()
+    if kind and kind not in {"pta", "aclnn", "mixed"}:
+        errors.append(f"call.kind {kind!r} not in pta|aclnn|mixed")
     return errors
 
 

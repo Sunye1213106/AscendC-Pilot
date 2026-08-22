@@ -241,6 +241,17 @@ def prepare_workflow_start(
             intent_text = ""
             project_explicit = True
 
+    if (
+        wf in _GOAL_INTAKE_IDS
+        and not pr_url
+        and not _legacy.looks_like_operator_package(root)
+        and not _is_isolated_pr_path(root)
+    ):
+        return _legacy._attach_intake_request(
+            _operator_workdir_required(wf, root),
+            original_root,
+        )
+
     result = _legacy.prepare_workflow_start(
         project=root,
         workflow_id=wf,

@@ -270,13 +270,13 @@ def test_cross_tree_foreign_reference_is_unauthorized(tmp_path: Path) -> None:
     mat = materialize_method_bundle(
         tmp_path / "x",
         skill_ids=["ce-apply"],
-        existing_method="see `skills/analyze-round/references/failure-patterns.md`",
+        existing_method="see `skills/solve/references/failure-patterns.md`",
         project_root=REPO,
         current_skill_id="ce-apply",
     )
     assert mat.get("ok") is False
     unauthorized = [str(x) for x in (mat.get("unauthorized") or [])]
-    assert any("analyze-round" in x and "failure-patterns.md" in x for x in unauthorized)
+    assert any("solve" in x and "failure-patterns.md" in x for x in unauthorized)
 
 
 def test_bare_basename_extra_ref_is_ambiguous(tmp_path: Path) -> None:

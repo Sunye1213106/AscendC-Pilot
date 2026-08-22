@@ -39,7 +39,7 @@ TG 永不改算子仓
 已批准 plan.md
     → 构造 cases 表（脚本可直接吃）
     → Host Replay（无 NPU；无 WSL/CANN 则 replay_round 失败停住，不进 analyze）
-    → worklog 每 case 四段
+    → 对照预期：一致进 R，不一致分类并推引理
     → open: [] 才签发
 ```
 

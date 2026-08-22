@@ -1,0 +1,58 @@
+[
+  {
+    "op": "NSA",
+    "root": "d:\\TEST\\ops-transformer\\attention\\nsa_compress",
+    "extract_s": 29.2,
+    "extract_ok": true,
+    "extract_error": "",
+    "analyze_s": 7.2,
+    "analyze_ok": true,
+    "analyze_error": "",
+    "commit_s": 0.3,
+    "commit_ok": true,
+    "commit_path": "D:\\TEST\\ops-transformer\\attention\\nsa_compress\\.ascendc-pilot\\arch35\\uo\\NsaCompress.arch35.uo",
+    "commit_error": ""
+  },
+  {
+    "op": "GMM",
+    "root": "d:\\TEST\\ops-transformer\\gmm\\grouped_matmul",
+    "extract_s": 33.3,
+    "extract_ok": true,
+    "extract_error": "",
+    "analyze_s": 32.4,
+    "analyze_ok": true,
+    "analyze_error": "",
+    "commit_s": 3.3,
+    "commit_ok": true,
+    "commit_path": "D:\\TEST\\ops-transformer\\gmm\\grouped_matmul\\.ascendc-pilot\\arch35\\uo\\GroupedMatmul.arch35.uo",
+    "commit_error": ""
+  },
+  {
+    "op": "FAG",
+    "root": "d:\\TEST\\ops-transformer\\attention\\flash_attention_score_grad",
+    "extract_s": 29.3,
+    "extract_ok": true,
+    "extract_error": "",
+    "analyze_s": 44.2,
+    "analyze_ok": true,
+    "analyze_error": "",
+    "commit_s": 3.5,
+    "commit_ok": true,
+    "commit_path": "D:\\TEST\\ops-transformer\\attention\\flash_attention_score_grad\\.ascendc-pilot\\arch35\\uo\\FlashAttentionScoreGrad.arch35.uo",
+    "commit_error": ""
+  },
+  {
+    "op": "IFA",
+    "root": "d:\\TEST\\ops-transformer\\attention\\incre_flash_attention",
+    "extract_s": 109.5,
+    "extract_ok": true,
+    "extract_error": "",
+    "analyze_s": 150.2,
+    "analyze_ok": true,
+    "analyze_error": "",
+    "commit_s": 7.8,
+    "commit_ok": true,
+    "commit_path": "D:\\TEST\\ops-transformer\\attention\\incre_flash_attention\\.ascendc-pilot\\arch35\\uo\\IncreFlashAttention.arch35.uo",
+    "commit_error": ""
+  }
+]

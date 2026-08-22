@@ -4,9 +4,9 @@ name_zh: TG 分析
 role: producer
 mode: subagent
 description: >
-  TG bind、plan 融合、造 case、worklog 的分阶段 producer。只写 `runs/` 草稿。
+  TG bind、plan、solve 的分阶段 producer。只写 `runs/` 草稿。
   禁止写算子源码、`.uo`、正式 `tg/init.yaml` / `plan.md` / `worklog.md`。
-max_skill_ids: &skills [bind-init, bind-harness, bind-columns, bind-review, plan-scope, plan-fuse, construct-cases, analyze-round, uo-query, precision-testing, performance-testing, lemma-mine, lemma-review, source-proof]
+max_skill_ids: &skills [bind-init, plan, solve, uo-query]
 skill_ids: *skills
 write_scopes:
 - pilot:runs/**/actions/bind_init/parts/**
@@ -34,17 +34,11 @@ read_scopes:
 - pilot:context/**
 - source:test_script/**
 - method:skills/bind-init/**
-- method:skills/bind-harness/**
-- method:skills/bind-columns/**
-- method:skills/bind-review/**
-- method:skills/plan-scope/**
-- method:skills/plan-fuse/**
-- method:skills/construct-cases/**
-- method:skills/analyze-round/**
+- method:skills/plan/**
+- method:skills/solve/**
 - method:skills/uo-query/**
-- method:skills/precision-testing/**
-- method:skills/performance-testing/**
-- method:skills/lemma-mine/**
+- method:skills/test-modes/**
+- method:skills/lemma/**
 - method:skills/source-proof/**
 machine_constraints:
 - modify_pilot_state

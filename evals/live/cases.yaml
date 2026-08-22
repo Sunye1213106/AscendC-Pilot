@@ -72,31 +72,31 @@ cases:
     requires_uo: true
 
   - id: tg_closure_target_set
-    skill: construct-cases
+    skill: solve
     query: Host replay 闭环 target set，扩大 R 与 E，完成 T=(R∩T)∪E
-    expect_skill: construct-cases
+    expect_skill: solve
     requires_uo: true
     source: evals/skills/testcase-generation/cases.yaml#closure_target_set
 
   - id: tg_init_contract_bind
-    skill: construct-cases
+    skill: solve
     query: 测例契约与语义绑定，TilingKey 初始化，不构造 Host replay
-    expect_skill: construct-cases
+    expect_skill: solve
     forbid_skill: ce-review
     requires_uo: true
     source: evals/skills/testcase-generation/cases.yaml#init_contract_bind
 
   - id: tg_scenario_targeted_construct
-    skill: construct-cases
+    skill: solve
     query: 测试生成规划目标 T 为精度 ScenarioSet，针对性构造少量 CSV，禁止笛卡尔全量 legal key
-    expect_skill: construct-cases
+    expect_skill: solve
     requires_uo: true
     source: evals/skills/testcase-generation/cases.yaml#scenario_targeted_construct
 
   - id: tg_scenario_perf_split
-    skill: construct-cases
+    skill: solve
     query: 测试生成按性能 ScenarioSet 定向再构造少量 CSV，T 不是全量 legal key
-    expect_skill: construct-cases
+    expect_skill: solve
     requires_uo: true
     source: evals/skills/testcase-generation/cases.yaml#scenario_perf_split
 

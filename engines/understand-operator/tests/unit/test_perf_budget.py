@@ -7,7 +7,6 @@ from uo_init.perf import TimeBudget, kernel_root_trace_budget_s
 def test_default_kernel_root_trace_budget_does_not_cut_off(monkeypatch):
     monkeypatch.delenv("UO_KERNEL_ROOT_TRACE_BUDGET_S", raising=False)
     monkeypatch.delenv("UO_KERNEL_ROOT_TRACE_BUDGET_FAST", raising=False)
-    monkeypatch.delenv("UO_INIT_PROFILE", raising=False)
     assert kernel_root_trace_budget_s() == 0.0
     budget = TimeBudget(kernel_root_trace_budget_s())
     assert budget.expired() is False

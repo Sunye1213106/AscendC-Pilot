@@ -7,9 +7,8 @@ UO（Understand Operator）不是把 AscendC 源码做成普通的调用图。�
 ```text
 Operator + Architecture
   → Source Scope / BuildVariant
-  → Host Compiler Facts
+  → Host / Kernel IR (clang_walk)
   → TilingKey / TilingData
-  → Template / Compile-time
   → Kernel Identity / Call Boundary
   → AscendC Root Trace
   → Unified CodeMap + unresolved
@@ -20,8 +19,8 @@ Operator + Architecture
 | 阶段 | 输入 | 做什么 | 输出 |
 | --- | --- | --- | --- |
 | `prepare` | 算子目录、目标架构 | 认清目录结构、构建变体，划定要解析的源码范围 | 已校验的源码范围 |
-| `extract` | 源码范围 | 用 Clang 抽出编译期可见事实（声明、语法树、调用/写点等） | CompilerFacts（原始事实，尚无业务解释） |
-| `analyze` | CompilerFacts | 按固定规则串成跨层关系（TilingKey、TilingData、Kernel 等）；证不全的记下来 | 语义关系图 + unresolved（未闭合项） |
+| `extract` | 源码范围 | 用 Clang 抽出编译期可见事实（声明、语法树、调用/写点等） | Host IR / Kernel IR（尚无业务解释） |
+| `analyze` | Host / Kernel IR | 按固定规则串成跨层关系（TilingKey、TilingData、Kernel 等）；证不全的记下来 | 语义关系图 + unresolved（未闭合项） |
 | `commit` | 分析结果 | 写入正式产品文件 | `<op_name>.<arch>.uo` |
 | `verify` | `.uo` | 检查结构是否完整、约定视图能否读出；写入 `uo/checks/integrity.yaml` 与 `uo/checks/quality.yaml` | 已验证的 CodeMap |
 
@@ -38,8 +37,8 @@ UO **不跑**算子仓自己的 CMake/Ninja，也**不用** `compile_commands.js
 
 | 需要什么                                | 干什么                                                                      |
 | ----------------------------------- | ------------------------------------------------------------------------ |
-| **clang 可执行文件**（必选）                 | 真正按编译参数解析；并用 `-ast-dump` 看到模板实例、`if constexpr` 折叠后的结果（仅靠 libclang 看不到这些） |
-| **libclang**（Python 绑定，必选）          | 走 AST、算 include 闭包、抽出函数/调用/写点等 `CompilerFacts`                           |
+| **clang 可执行文件**（必选）                 | `clang -E` 预处理 TPL 头（`clang_cmd`）；真正按编译参数解析 Host/Kernel 走 libclang（`clang_walk`） |
+| **libclang**（Python 绑定，必选）          | 走 AST、算 include 闭包、抽出函数/调用/写点（`host_ir` / `kernel_ir`）                           |
 | `build_context.yaml` + CANN Headers | 提供基线 `-I/-D` 与 AscendC 类型/API 语义。Kernel `-D`（`__NPU_ARCH__` / `__DAV_*` / `__CCE_AICORE__`）按 `arch_dir` 表注入，不在 yaml 里冻一份。prepare 的 **include-heal** 按缺头文件在 CANN/ops 树补 runtime `-I`（并把 `lib/matrix/matmul/` 映射到现存的 `lib/matmul/`），写入 `uo/summary/build_context_extras.yaml`；extract 经 `apply_saved_extras` 合并进 clang `-I`。脚本仍找不到时才进入 `heal`：LLM 只写 staging，`heal_promote` 校验后追加 extras（`source: heal_promote`）。不要手改 extras 或共享 `spec/build_context.yaml`。prepare 还会生成 kernel tiling stub（packed POD + `GET_TILING_DATA*`）并 force-include，使未手写专用 tiling 头的算子 TU 也能看见类型。 |
 | 仓内 `compat/`                        | 少量 shim，免去拖入整套工程构建系统。prelude **不** stub `RegTensor`/`VecReg`（与 CANN 撞车）；Host 另 force-include `host_prelude.h`（`using std::string`），kernel 不加。 |
 
@@ -54,7 +53,7 @@ UO **不跑**算子仓自己的 CMake/Ninja，也**不用** `compile_commands.js
 ```
 
 1. **prepare**：认清算子布局和 `arch`*，用 include 闭包划定 Source Scope（真依赖进、猜的不进），并探针能否解析。
-2. **extract**：对范围内文件做 AST 分析，得到调用、写点、控制条件、源码位置等——这时还**没有** AscendC 业务解释；涉及模板折叠时依赖 clang `-ast-dump`。默认 `UO_INIT_PROFILE=fast`（`init_profile.py`：未设置即 `fast`）：`closure_mode=keypath`，**1 个 kernel dtype**，不跑 explicit-instantiation fold，不开 API clang。全量（全部声明 dtype + fold + API clang + full closure）需显式 `UO_INIT_PROFILE=full`。精度 / UT 若需要全 dtype 事实，用 `full`，不要假定默认已经折完。
+2. **extract**：对范围内文件做 AST 分析，得到调用、写点、控制条件、源码位置等——这时还**没有** AscendC 业务解释。Host / Kernel 走 `host_ir` / `kernel_ir`（`clang_walk`）。默认 `UO_KERNEL_MAX_VARIANTS=1`（一个 kernel dtype）；`UO_WITH_KERNEL` 控制是否抽 Kernel。要扫全部声明 dtype 时设 `UO_KERNEL_MAX_VARIANTS=0`。
 3. **analyze**：在事实之上跑确定性 passes，得到 TilingKey / TilingData / Kernel 等关系；证不全的记入 `unresolved`。正式 `.uo` 只由这条链路写入，不经 LLM。
 
 换 CANN 版本或架构后应重跑 UO，不要手工改 `.uo`。
@@ -73,8 +72,10 @@ operator root + architecture
   -> 源码范围
 ```
 
-**提取什么**：算子目录布局、`arch*` 变体、真正参与编译的源文件及其 include 依赖。  
-**结果是什么**：当前架构下的 Source Scope（事实边界，不是手点的目录清单）。
+**提取什么**：算子目录布局、`arch*` 实现变体、真正参与编译的源文件及其 include 依赖。  
+**结果是什么**：当前实现下的 Source Scope（事实边界，不是手点的目录清单）。
+
+`arch22` / `arch35` / `arch-920r1` 这类目录用来区分不同实现（官方算子仓）。没有这些目录时按一套源码一起构建，产物槽是 `default`，**不会**发明 `arch35`。多种实现并存且用户未指定时，产品启动会问人；批处理 `discover()` 未钉死时取编号最新的 `arch*` 文件夹。
 
 算子目录外的 common header 只要确实是编译依赖，就应进入；相邻但不参与当前构建的源码不应凭猜测进入。源码范围失败会让 `/uo-init` 回到 `prepare`。
 
@@ -86,12 +87,12 @@ operator root + architecture
 
 ## 2. Host Compiler Facts
 
-在 Source Scope 上，UO 用 **libclang + clang 驱动**（`-ast-dump`）在 CANN 编译上下文中抽取 CompilerFacts。
+在 Source Scope 上，UO 用 **libclang + clang 驱动** 在 CANN 编译上下文中抽取 Host / Kernel 事实（`clang_walk`）。
 
 **提取什么**：声明、调用、写点、分支条件、类型线索、看不透的宏守卫，以及对应源码位置。  
 **结果是什么**：可定位的编译期事实底座——还不是最终 CodeMap。
 
-实现层：`clang_walk.py` 经 `host_ir.py` / `kernel_ir.py` 抽取；模板折叠见 `harness.py`。
+实现层：`clang_walk.py` 经 `host_ir.py` / `kernel_ir.py` 抽取。产品路径不跑独立的 `extract_kernel` / explicit-instantiation fold。
 
 ---
 
@@ -127,10 +128,10 @@ operator root + architecture
 
 AscendC 大量行为由模板参数、宏和编译期分支决定。
 
-**提取什么**：模板参数与实例、相关宏事实、编译期条件如何约束走哪条路径。  
+**提取什么**：TPL 选择、相关宏事实、编译期条件如何约束走哪条路径。  
 **结果是什么**：编译期选择与 Host/Kernel 实体之间的关系；猜出来的实例不当事实。
 
-实现层：`passes/`（template / compile-time / macro）。
+实现层：`passes/`（`tpl_schema` / `macro`）以及 `source_contract` 的 `TILING_KEY_IS` / `GET_TILING_DATA*`。产品路径不跑独立的 template / compile_time pass，也不跑 explicit-instantiation fold。
 
 ---
 
@@ -343,4 +344,4 @@ acp uo-query --project <op> SplitAxis=1,IsTnd=1
 
 源码范围问题回到 `prepare`；抽取问题回到 `extract`；完整性或 gap 问题回到 `analyze` 或 `commit`；验证失败按原因重跑对应阶段。恢复边由 workflow spec 声明。
 
-实现入口：`engines/understand-operator/src/uo_init/codemap_engines.py`、`pilot_engines.py`、`build.py`、`frontend/`、`passes/`、`ir/`、`update/`、`query/`；运行时合同位于 `pilot/ascendc_pilot/workflows/specs.py`。精确阶段见 [Workflow Reference](../reference/workflows.generated.md)。当前版本 FAG arch35 提取/查询耗时与未闭合项见 [benchmark.md](../benchmark.md)。禁止把 `operator_report.py` 或 sqlite `kb_graph` 当作 `/uo-init` 产品路径。
+实现入口：`engines/understand-operator/src/uo_init/codemap_engines.py`、`pilot_engines.py`、`build.py`、`frontend/`、`passes/`、`ir/`、`update/`、`query/`；运行时合同位于 `pilot/ascendc_pilot/workflows/specs.py`。精确阶段见 [Workflow Reference](../reference/workflows.generated.md)。当前版本 FAG arch35 提取/查询耗时与未闭合项见 [benchmark.md](../benchmark.md)。正式产品是 `<op>.<arch>.uo`，不要把 sqlite `kb_graph` 当作 `/uo-init` 产品路径。

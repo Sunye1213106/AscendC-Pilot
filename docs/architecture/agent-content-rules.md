@@ -6,21 +6,6 @@
 
 ## 目标
 
-整理：
-
-```text
-Policy
-Skill
-Prompt
-Agent
-Action
-Reference
-```
-
-消除重复规则、职责重叠、相互覆盖和过度上下文。
-
-优先保证：
-
 ```text
 规则只有一个来源
 职责边界清晰
@@ -29,19 +14,24 @@ Reference
 模型只处理需要语义判断的部分
 ```
 
+两种负载分开算：
+
+- **人**：只记 slash（`/uo-query` `/uo-init` `/uo-investigate` `/tg-init` `/tg-plan` `/tg-solve` `/ce-plan` `/ce-apply` `/ce-review` `/handoff`）。磁盘 `skills/` 目录不是入口。
+- **窗**：每个 LLM Action 只装一份 `method.md`。磁盘 skill 数 ≠ 常驻 token。
+
 本仓路径对照：
 
 | 层 | 权威位置 |
 | --- | --- |
 | Policy | `pilot/policies/<id>/POLICY.md` |
 | 模型常驻短投影 | `pilot/policies/invariants/*.md`（Primary 只拿编排需要的；全文 POLICY 不进模型） |
+| Workflow / Spec | `pilot/ascendc_pilot/workflows/*.py`：机器图 + 装载指针（`skill_id` / `method_ref` / `refs`） |
+| Engine / Gate | 文件在不在、schema、到齐 ACK、scan/promote |
 | 编排 / 调查拆路 | `intent-reasoning.md`。Primary 不读 Skill。 |
-| Skill | `skills/<id>/SKILL.md`（当前 Action 怎么做）+ `references/`（指针后） |
+| Skill | `skills/<id>/SKILL.md`（当前窗口怎么判断）+ `references/`（指针后） |
 | Prompt | `prompts/tasks/**`（本题 I/O） |
 | Agent | `agents/*.yaml` 的职责与写面 |
-| Action | Spec + Engine + Gate |
 | Command `/uo-query` | 瞬时调查，不是 `pilot_run` 工作流 |
-
 
 写权限在 yaml `write_scopes` + authorize；产物诚实在 `output-quality`。不要另造 `permissions.md` / `mutation.md`。
 
@@ -49,133 +39,135 @@ Reference
 
 ## 1. Policy
 
-Policy 只描述**全局不可违反的约束**。
+Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 
-适合放：
+适合放：证据要求、权限边界、修改限制、状态闭合、安全约束、全局语义不变量。
 
-- 证据要求
-- 权限边界
-- 修改限制
-- 状态闭合条件
-- 安全约束
-- 全局语义不变量
+不适合放：执行步骤、shell、函数名、某 Action 的 I/O、某算子特化、长示例、troubleshooting、workflow 教程。
 
-不适合放：
-
-- 执行步骤
-- shell 命令
-- Python 函数名
-- 某个 Action 的输入输出
-- 某个算子的特殊规则
-- 长示例
-- troubleshooting
-- workflow 教程
-
-Policy 应尽可能短。
-
-原则：一个规则只能有一个权威定义。Skill、Prompt、Agent 不得复制 Policy 全文，只引用 Policy。
-
-面向模型的 `invariants/*.md` 是 POLICY 的短投影，不是第二套规则书。投影不得比全文更严或更松，也不得塞进别的 Policy 的领域条款。
+一个规则只能有一个权威定义。Skill、Prompt、Agent 不得复制 Policy 全文，只引用。`invariants/*.md` 是短投影，不得比全文更严或更松。
 
 ---
 
-## 2. Skill
+## 2. Workflow / Spec
 
-Skill 描述**一种可复用能力以及如何完成它**。一份 Skill 对应一次可触发的执行步或叠加原语，不是 slash 家族说明书。
+机器图：谁跑、隔离、下一态。装载指针：`skill_id` / `method_ref` / `refs`。
 
-写法权威：`skills/SCHEMA.md`。对照：别人可执行的 Skill 把**每轮都要用的判断**写在正文（大约 80–150 行），目录和长表放 `references/` 一层指针。不要写成十几行骨架。
+`focus` 只写交付物名，不写判断配方。`fanout_axes.focus` 禁止成为迷你 Skill。
 
-一个 Skill 应回答：
+判断写进 Spec、编排图画进 SKILL，视为层错位：删副本，不留摘要。
 
-```text
-什么时候使用
-输入是什么
-输出是什么
-执行步骤是什么（含怎么判断、何时停）
-需要哪些工具
-完成条件是什么
-失败时返回什么
-每轮都要用的启发式 / 反模式
-```
-
-Skill 可以包含：工作流程指针、工具调用顺序、domain knowledge、少量必要示例、该能力的额外约束。
-
-Skill 不应该：重复全局 Policy、定义新的全局权限、修改其他 Skill 的语义、保存大量项目状态、包含与该能力无关的背景知识。
-
-不要让一个 Skill 同时承担提取 + 推理 + 测试生成 + review + 修复。不要按 slash 建 Skill，也不要在 SKILL.md 里复述 workflow 阶段。Skill 数量不固定；需要新判断时加新 Skill。
+确定性 Action 不挂 Skill。
 
 ---
 
-## 3. Prompt
+## 3. Engine / Gate
 
-Prompt 描述**当前这一次任务要做什么**。
+文件在不在、schema、到齐 ACK、scan/promote。能代码化的审查项离开 `review.md`。
 
-应主要包含：任务目标、当前输入、当前上下文、期望输出、本次特殊限制。
-
-不应该包含：完整 Policy、Skill 的完整说明、项目长期架构、大量不会变化的知识、validator 已经能确定性检查的规则。
-
-原则：Prompt 负责本次任务，不负责定义系统。
+模型只做语义裁判。
 
 ---
 
-## 4. Agent
+## 4. Skill
 
-Agent 描述**角色和决策边界**。
+当前窗口怎么判断。执行步按 Action 绑定；轴 HOW 只在 `references/<axis>.md`；叠加原语不进人清单。
 
-应定义：负责什么、不负责什么、允许使用哪些 Skill、允许使用哪些工具、输入来自哪里、输出交给谁、何时停止、何时升级。
+三类：
 
-不应该重新定义 Skill 的具体流程，也不应该把 Policy / 编排步骤写进 `description`。
+| 种类 | 何时用 | 例子 |
+| --- | --- | --- |
+| 执行步 | Action `skill_id` 强装 | `bind-init`、`plan`、`solve`、`ce-plan-draft`、`uo-query` |
+| 轴 playbook | `method_ref`，无独立 skill 目录 | `harness.md`、`scope.md`、`spec.md` |
+| 叠加原语 | 点名才 Read，不进 `max_skill_ids` | `test-modes`、`lemma`、`source-proof` |
 
-主控 yaml 只留入口句。Init 顺序、调查拆路、谁可以 Task：写在 `intent-reasoning` / authorize。子代 yaml 只留做什么、写哪。
+切目录的唯一合法理由：同一 slash 的多窗，或同一叠加原语的多支。禁止「都跟 plan / 测试有关」焊成一份 always-loaded 正文。后序步骤进前窗会 rush。
 
-子代 yaml 只留做什么、写哪、不写哪。不要写「禁止再派 Task」（authorize 已拦）。
+`description` 只做人读短句，不写步骤。本仓是 Action 强装，不拿 description 做触发实验。
 
----
+写法权威：`skills/SCHEMA.md`。执行步目标 80–150 行、硬顶 200；路由父本允许更短。
 
-## 5. Action
+先问是图、是确定性、还是判断；判断才加执行步或 overlay。不要尽管加 Skill。
 
-Action 表示**确定边界的一次操作**。应有明确 input / output schema、precondition、postcondition、failure state。
-
-能由代码确定的事情必须由 Action / validator 完成，不交给 LLM：hash 是否匹配、snippet 是否连续、schema 是否正确、文件是否存在、字段是否缺失、状态转换是否合法。
-
----
-
-## 6. Reference
-
-Reference 只保存**当前 Skill 分支才需要**的目录、长表、域专文。选择器与身份合同写在 `skills/SCHEMA.md`，不要在本文件再写一遍。
-
-跨层：全局纪律在 Policy；可复用方法在 Skill 原语；本题 I/O 在 Prompt。禁止 `_shared/references/`，禁止 Skill 链到别人的 `references/`。
+指针只深一层。Reference 不得 hop。要复用方法 → `skills/<id>/SKILL.md`。
 
 ---
 
-## 7. 内容归属判断
+## 5. Prompt
+
+本题 I/O 路径。稳定指令在前、路径占位在后。不复制 Skill 判断句。
+
+不应该包含：完整 Policy、Skill 全文、长期架构、validator 已能检查的规则。
+
+---
+
+## 6. Agent
+
+身份、写面、**窄天花板**（本角色会接到的执行步 + `uo-query`）。`description` 不写步骤。
+
+叠加原语用 `read_scopes` 的 `method:skills/<overlay>/**`，指针 Read 才进窗，不进 `max_skill_ids` 常列。
+
+主控 yaml 只留入口句。Primary `max_skill_ids: []`。
+
+---
+
+## 7. Reference
+
+仅该窗分支才需要的目录/长表。禁止 hop，禁止 `_shared/`。
+
+lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多打开 3 份正文。
+
+---
+
+## 8. 内容归属判断
 
 整理任何一段文字时依次判断：
 
 1. 所有任务都不能违反？→ Policy
-2. 描述一种可重复执行的方法？→ Skill
-3. 只针对当前一次任务？→ Prompt
-4. 定义执行角色的职责和权限？→ Agent
-5. 可以由程序确定性执行或校验？→ Action / validator / script
-6. 只是辅助知识或详细说明？→ Reference
+2. 能代码化（在不在 / schema / ACK）？→ Engine / Gate
+3. 谁跑、隔离、下一态、装载哪份 playbook？→ Workflow 指针
+4. 当前窗口怎么判断？→ Skill
+5. 角色写面与天花板？→ Agent
+6. 本题路径？→ Prompt
+7. 只有该窗分支才要的目录/长表？→ Reference
 
 ---
 
-## 8. 去重规则
+## 9. 去重规则
 
-同一规则出现在多个地方时，找到它真正应该归属的位置，不是按文件名优先级机械保留。
+经验顺序：Policy > Engine/Gate > Workflow 指针 > Skill 判断 > Agent 天花板 > Prompt I/O。
 
-经验顺序：Policy > Skill > Agent > Prompt。
+同一规则出现在多处时，找到真正归属，不是按文件名机械保留。合法耦合只有指针。
 
 示例：
 
 - 多个 Skill 都写「不得伪造 evidence」→ 留在 evidence Policy，Skill 只引用。
-- Policy 里写「先运行 clang_extract.py」→ 从 Policy 删除，移到对应 Skill / Engine。
-- Agent 和 Skill 都描述完整 `/uo-init` 流程 → 流程留在对应 Action Skill（如 `uo-query`）与 Spec；Agent 只说明何时调用。
+- Spec.focus 写 `Dim=` / `--golden-only` → 留 playbook，focus 删到交付物名。
+- 路由 SKILL 复述阶段表 → 删；图在 Spec。
+- 精度配方写进 `plan` SKILL → 错位；留 overlay 指针。
 
 ---
 
-## 9. 冲突处理
+## 10. 窗口全表
+
+| slash | 磁盘执行步 | 窗 / method_ref |
+| --- | --- | --- |
+| `/tg-init` | `bind-init` | harness / columns / review |
+| `/tg-plan` | `plan` | scope / fuse |
+| `/tg-solve` | `solve` | construct / analyze |
+| `/ce-review` | `standalone-review` | spec / standards |
+| `/ce-plan` | `ce-plan-draft` | 单窗 |
+| `/ce-apply` | `ce-apply` | 单窗 |
+| `/uo-query` | `uo-query` | 单窗 |
+| `/uo-init` | `propose-include-heal` | 单窗 |
+| `/uo-investigate` | `uo-investigate` | 单窗 |
+| `/handoff` | `session-handoff` | 单窗 |
+
+叠加原语：`test-modes`（精度/性能）、`lemma`（mine/review）、`source-proof`。
+
+---
+
+## 11. 冲突处理
 
 两个文件规则冲突时，不允许静默选择一个。必须记录：
 
@@ -192,7 +184,7 @@ conflict:
 
 ---
 
-## 10. 特化规则
+## 12. 特化规则
 
 禁止因为当前主要测试某一个算子，而把算子特化规则写入公共 Skill 或 Policy。
 
@@ -200,7 +192,7 @@ conflict:
 
 ---
 
-## 11. 确定性优先
+## 13. 确定性优先
 
 若某项判断能通过 AST、Clang、schema、图遍历、hash、diff、solver、replay、静态规则可靠完成，则优先确定性实现。不要用 Prompt 写「请认真判断 / 请确保 / 尽量不要」。
 
@@ -208,7 +200,7 @@ conflict:
 
 ---
 
-## 12. 本仓目标结构
+## 14. 本仓目标结构
 
 保持现仓，不搬目录：
 
@@ -224,6 +216,6 @@ prompts/tasks/
 
 ---
 
-## 13. 整理时的输出
+## 15. 整理时的输出
 
-对改动的文件说明 keep / move / delete / rewrite。冲突按第 9 节记录。不得仅评价文笔。
+对改动的文件说明 keep / move / delete / rewrite。冲突按第 11 节记录。不得仅评价文笔。

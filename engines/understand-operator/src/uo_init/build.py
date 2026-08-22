@@ -199,6 +199,7 @@ def compile_codemap(
         "template_bindings": template_bindings or [],
         "op_name": op_name,
         "op_root": str(op_root or ""),
+        "clang_ctx": build_context,
     }
     if kb is not None:
         CodeMap.from_kb(kb, codemap=cm)

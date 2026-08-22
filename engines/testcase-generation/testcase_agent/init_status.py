@@ -9,6 +9,15 @@ from typing import Any
 from .io import output_root
 
 
+def _is_product_slot(name: str) -> bool:
+    try:
+        from uo_init.source_layout import is_product_architecture
+
+        return is_product_architecture(name)
+    except Exception:
+        return bool(name) and (name == "default" or name.startswith("arch"))
+
+
 def _uo_root(project_root: Path, op_name: str, *, arch: str | None = None) -> Path:
     del op_name
     try:
@@ -81,14 +90,14 @@ def kb_exists(project_root: Path, op_name: str, kb_root: Path | None = None) -> 
         if root.name == "uo":
             parent = root.parent
             if parent.name == ".ascendc-pilot" or (
-                parent.parent.name == ".ascendc-pilot" and parent.name.startswith("arch")
+                parent.parent.name == ".ascendc-pilot" and _is_product_slot(parent.name)
             ):
                 if root.is_dir() and any(root.glob("*.uo")):
                     return root
                 return root if root.is_dir() else None
         if root.name == ".ascendc-pilot":
             for child in sorted(root.iterdir()) if root.is_dir() else []:
-                if child.is_dir() and child.name.startswith("arch"):
+                if child.is_dir() and _is_product_slot(child.name):
                     candidate = child / "uo"
                     if candidate.is_dir() and any(candidate.glob("*.uo")):
                         return candidate

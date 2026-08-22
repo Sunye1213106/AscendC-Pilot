@@ -1,0 +1,22 @@
+{
+  "FAG": {
+    "analyze": {
+      "elapsed_s": 41.945,
+      "ok": true,
+      "error": null,
+      "path": null
+    },
+    "commit": {
+      "elapsed_s": 2.813,
+      "ok": true,
+      "error": null,
+      "path": "D:\\TEST\\ops-transformer\\attention\\flash_attention_score_grad\\.ascendc-pilot\\arch35\\uo\\flash_attention_score_grad.arch35.uo"
+    },
+    "verify": {
+      "elapsed_s": 2.143,
+      "ok": true,
+      "error": null,
+      "path": "D:\\TEST\\ops-transformer\\attention\\flash_attention_score_grad\\.ascendc-pilot\\arch35\\uo\\flash_attention_score_grad.arch35.uo"
+    }
+  }
+}

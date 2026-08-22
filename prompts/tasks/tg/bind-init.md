@@ -10,8 +10,6 @@
 
 <delta_constraints>
 1. 只写本切片声明的 yaml；不要写正式 `tg/init.yaml`。
-2. 无脚本仓：不要假装已有仓。精度口径写脚本真实比对方式；禁止 `--golden-only`。
-3. 查语义用 uo-query 路由。
 </delta_constraints>
 
 <output>

@@ -1,6 +1,6 @@
 ---
 name: ce-apply
-description: 按当前计划未完成 todo 改码。执行 /ce-apply 时使用。
+description: 按当前计划未完成 todo 改码。命名计划已在、有未勾选 todo 要改算子或测试脚本时使用。
 ---
 
 # 按 todo 改码

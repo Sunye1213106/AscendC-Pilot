@@ -536,6 +536,8 @@ def resolve_uo_root(project_root: Path, *, architecture: str = "") -> Path:
     """
     root = Path(project_root).expanduser().resolve()
     arch = (architecture or "").strip()
+    from uo_init.source_layout import is_product_architecture
+
     try:
         from ascendc_pilot.paths import uo_root
 
@@ -548,7 +550,9 @@ def resolve_uo_root(project_root: Path, *, architecture: str = "") -> Path:
             arch_dirs = sorted(
                 p
                 for p in pilot.iterdir()
-                if p.is_dir() and p.name.startswith("arch") and (p / "uo").is_dir()
+                if p.is_dir()
+                and is_product_architecture(p.name)
+                and (p / "uo").is_dir()
             )
             with_product = [p for p in arch_dirs if any((p / "uo").glob("*.uo"))]
             chosen = with_product[0] if len(with_product) == 1 else (

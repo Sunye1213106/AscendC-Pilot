@@ -80,7 +80,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 | Session binding | Host session 钉住的 `.uo` 路径与 digest | `control/session_bindings.yaml` |
 | Action | 定义一次可执行任务，包括输入输出 contract | Workflow specification |
 | Agent | 定义稳定身份、角色和权限上限 | `agents/*.yaml` |
-| Skill | 当前 Action 怎么做（可增长，不闭合五个） | `skills/<id>/SKILL.md` |
+| Skill | 当前 Action 怎么做（Action 强制装载一份；Primary 零 skill） | `skills/<id>/SKILL.md` |
 | Prompt | 定义某一次 Action 的具体任务描述 | `prompts/tasks/` |
 | Policy | 定义运行约束和行为规则 | `pilot/policies/` |
 | Capability | 定义 Agent 或 Engine 可以调用的能力 | runtime capability registry |
@@ -88,7 +88,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 
 职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管这一步怎么做；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
 
-例如在 TG 中：“如何判断列是否可测”属于 `bind-init`；“融合义务”属于 `plan-fuse`；“Host replay”属于 Engine；“是否允许签发 worklog”属于 Workflow + Gate。它们不能混在一个 Agent 中。
+例如在 TG 中：“如何判断列是否可测”属于 `bind-init`；“融合义务”属于 `plan` 的 fuse 窗；“Host replay”属于 Engine；“是否允许签发 worklog”属于 Workflow + Gate。它们不能混在一个 Agent 中。
 
 ---
 
@@ -96,7 +96,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 
 ```text
 确定性计算                    -> Engine
-当前 Action 怎么做            -> skills/<id>/SKILL.md（prepare 写入 session method.md）
+当前 Action 怎么做            -> skills/<id>/SKILL.md（Action 强制装载一份；Primary 零 skill）
 主控查询拆路                  -> intent-reasoning.md（不是 Skill）
 一次任务目标                  -> Prompt
 状态迁移                      -> Workflow
@@ -260,7 +260,7 @@ acp start
 | `acp next` | 下一 Action / 恢复提示 |
 | `acp run-action` | **workflow run 内**唯一正式执行入口：prepare / `--finalize` / `auto`（drive + `host_step`） |
 | `acp dispatch-result` | 消费一次性 `dispatch_ticket`，finalize 后继续 drive |
-| `acp scan-architectures` | 启动前快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项（供 AskQuestion；禁止在仓库根目录搜索以猜测 architecture） |
+| `acp scan-architectures` | 启动前快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 实现选项（多个才 AskQuestion；没有这些目录则产物槽 `default`，禁止发明 arch35） |
 | `acp authorize` / `serve-authorize` | Host plugin 授权裁决；后者为常驻 daemon（IPC），失败回退前者 |
 | `acp doctor --host opencode` | Host Session Driver / plugin / cognitive-skills 契约预检 |
 | `acp advance` / `complete` | 仅 gate 通过后推进或结束；`complete` 可推进 User Goal 并返回 `recommended_next_workflow` |

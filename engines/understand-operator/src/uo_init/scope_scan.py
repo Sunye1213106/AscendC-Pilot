@@ -18,6 +18,7 @@ from uo_init.source_layout import (
     ARCH_DIR_RE as ARCH_SEGMENT_RE,
     architecture_in_scope,
     architectures_match,
+    is_variant_architecture,
 )
 
 SOURCE_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx"})
@@ -345,7 +346,7 @@ def filter_architecture(paths: Iterable[Path], arch_dir: str) -> list[Path]:
     A path with no `archNN` segment is architecture-neutral and stays.
     """
     arch = (arch_dir or "").strip()
-    if not arch:
+    if not is_variant_architecture(arch):
         return list(paths)
     out: list[Path] = []
     for path in paths:
@@ -595,7 +596,7 @@ def _drop_foreign_arch_entries(
     in headers.
     """
     arch = (arch_dir or "").strip()
-    if not arch:
+    if not is_variant_architecture(arch):
         return files
     from uo_init.source_layout import path_owned_architecture
 

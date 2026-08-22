@@ -308,17 +308,15 @@ def main() -> int:
         errors.append("plugin must not widen Primary task to allow")
     sh = (repo / "install.sh").read_text(encoding="utf-8")
     ps1 = (repo / "install.ps1").read_text(encoding="utf-8")
-    frontend = repo / "engines" / "understand-operator" / "native" / "uo_frontend" / "CMakeLists.txt"
-    if not frontend.is_file():
-        errors.append("native uo_frontend/CMakeLists.txt missing")
-    if "native/uo_frontend" not in sh.replace("\\", "/"):
-        errors.append("install.sh must cmake uo_frontend")
-    if "native\\uo_frontend" not in ps1 and "native/uo_frontend" not in ps1.replace("\\", "/"):
-        errors.append("install.ps1 must cmake uo_frontend")
-    if "native/uo_walk" in sh or "native\\uo_walk" in sh:
-        errors.append("install.sh still references stale uo_walk")
-    if "native\\uo_walk" in ps1 or "native/uo_walk" in ps1:
-        errors.append("install.ps1 still references stale uo_walk")
+    frontend = repo / "engines" / "understand-operator" / "native" / "uo_frontend"
+    if frontend.exists():
+        errors.append("stale native uo_frontend must be removed (extract uses clang_walk.py)")
+    sh_norm = sh.replace("\\", "/")
+    ps1_norm = ps1.replace("\\", "/")
+    if "native/uo_frontend" in sh_norm or "native/uo_walk" in sh_norm:
+        errors.append("install.sh still references stale native extractor")
+    if "native/uo_frontend" in ps1_norm or "native/uo_walk" in ps1_norm:
+        errors.append("install.ps1 still references stale native extractor")
     if "Keep workflow skills plugin-internal" not in ps1:
         errors.append("install.ps1 must not link workflow skills into global OpenCode skills/")
     if "plugin-internal only. Global skills/" not in sh:

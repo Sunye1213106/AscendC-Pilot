@@ -41,7 +41,7 @@ AscendC-Pilot
 > 由 Host（OpenCode / Cursor 等）注册，**不是**终端里的 shell 命令；安装后会出现在补全列表里，并由 `ascendc-pilot` 主控接管。
 > 也可以不敲 `/`，直接用自然语言描述目标。
 
-Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时从算子仓 `op_host/arch*` / `op_kernel/arch*` 中选择，必须同时有算子路径与 architecture。Engine clone 已唯一钉死的 architecture 直接使用。否则从发现的架构中选择，不会在没有证据时默认。Agent 侧优先用 clone 回执与 `pilot_cli` `scan-architectures --project <算子目录>`；唯一 pin 在选项内时不要再 AskQuestion。不要 Glob 仓根或翻 cmake 猜架构。
+Architecture 在 **建立 CodeMap（`/uo-init` / `/uo-update`）** 时必须同时有算子路径与 architecture。`op_host/arch*` / `op_kernel/arch*` 用来区分不同实现：从发现的目录中选择（Engine clone 已唯一钉死的直接用；多个未指定则 AskQuestion，禁止发明 arch35）。没有这些目录时按一套源码一起构建，产物槽是 `default`。Agent 侧优先用 clone 回执与 `pilot_cli` `scan-architectures --project <算子目录>`；唯一 pin 或无 `arch*` 时不要再 AskQuestion。不要 Glob 仓根或翻 cmake 猜架构。
 
 第一次启动不要传 `force_new` / `--force-new`。那是「删除重开」逃生口，会按策略 wipe 已有 `.uo`。已有未完成 run 时由 Host AskQuestion 选「继续上次」或「删除重开」，不要为了「确保能跑」先 wipe。
 
@@ -68,7 +68,7 @@ TG / CE / 查询 **不以源码目录另选架构**：以已有 `.uo` 为准。�
 `/uo-init` 在真实编译上下文中建立 CodeMap：
 
 ```text
-operator + architecture → source scope → Clang CompilerFacts
+operator + architecture → source scope → Host/Kernel IR (clang_walk)
                         → semantic analysis → CodeMap → verify
 ```
 
@@ -106,7 +106,7 @@ LocalTensor / Buffer 最终落到哪类 AscendC 存储（GM / UB / L1 等），�
 
 查询由主控做**可见 LLM 路由**（禁止 `pilot_run`）：先读 [`uo-product-map`](../../skills/uo-query/references/uo-product-map.md)，向用户说明将直接调用还是委派。简单查询主控直接调用 `pilot_cli` `uo-query`；复杂查询同一轮 `Task(agent=uo-query)`。形态见 code-access 不变量。调查 unresolved：`/uo-investigate`（仍走 Host `pilot_run`）。
 
-默认 `/uo-init` 为 `UO_INIT_PROFILE=fast`（未设置即 fast：1 个 kernel dtype，keypath，fold / API clang 关闭）。全量 dtype / fold / API clang 需显式 `UO_INIT_PROFILE=full`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
+默认 `/uo-init` 抽 **1 个 kernel dtype**（`UO_KERNEL_MAX_VARIANTS=1`，未设置即 1）。`UO_WITH_KERNEL` 控制是否抽 Kernel。要扫全部声明 dtype 时设 `UO_KERNEL_MAX_VARIANTS=0`。已有 `.uo` 要拿到新的分支 span / 全 dtype 事实，需要完整重跑 init，而不是增量猜测。
 
 ---
 
@@ -196,13 +196,13 @@ CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-que
 | `/uo-query` | 只读提问：简单查询直接 `pilot_cli` `uo-query`，复杂查询同一轮派子代理（需已有 `.uo`；不走 `pilot_run`） |
 | `/uo-investigate` | 调查 unresolved（需已有 `.uo`） |
 | `/tg-init` / `/tg-plan` / `/tg-solve` | 建立覆盖并闭环（需已有 `.uo`；架构以 UO 为准） |
-| `/ce-plan` | 自己有需求：grill 并写出 `{slug}_plan.md` |
+| `/ce-plan` | 自己有需求：边问边写出 `{slug}_plan.md` |
 | `/ce-apply` | 按当前计划未完成 todo 改码（需已有 `.uo`） |
 | `/ce-review` | 已有 diff / PR：只读双轴审查，不落盘 |
 | `/handoff` | 会话交接：写 `session_handoff.md` |
 | `python -m ascendc_pilot doctor` / `doctor --host opencode` | 环境预检；后者校验 Host Session Driver / plugin 契约 |
 | `pilot_cli`：`inspect` / `ro-search` / `next` / `inspect-failure` / `status` | 证据窗、只读搜索、下一步、失败卡 |
-| `pilot_cli`：`scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 选项 |
+| `pilot_cli`：`scan-architectures` | 快速扫描算子 `op_host`/`op_kernel` 布局与 `arch*` 实现选项（无则 `default`） |
 | `pilot_run`（OpenCode 工具） | Host Session Driver：自然语言第一次 `workflow=auto`；`workflow=<id>` 跑现有工作流 |
 | 插件 `pilot_cli`（OpenCode 工具） | 查询与诊断；`command` 不要 `--help`，不要 `start`/`run-action auto`。用法见 [ACP 工具使用](acp-tools.md) |
 

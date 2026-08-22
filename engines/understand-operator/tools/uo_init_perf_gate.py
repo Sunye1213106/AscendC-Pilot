@@ -237,7 +237,6 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
     os.environ["UO_TIMING"] = "1"
     os.environ["PYTHONUNBUFFERED"] = "1"
     os.environ["UO_ARCH"] = arch
-    os.environ.setdefault("UO_INIT_PROFILE", profile)
     reset()
     set_meta(
         operator=op.name,

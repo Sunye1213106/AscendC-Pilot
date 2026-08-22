@@ -62,6 +62,15 @@ def test_bool_direct_encoding():
     sch = TplSchema(op_tag="X", dims=[])
     assert sch.encode_bool(1) == 1
     assert sch.encode_bool(0) == 0
+    assert sch.encode_bool("true") == 1
+    assert sch.encode_bool("false") == 0
+
+
+def test_bool_sel_canonicalizes_true_false():
+    groups = parse_args_sel(
+        "ASCENDC_TPL_ARGS_SEL(ASCENDC_TPL_BOOL_SEL(HasAttenMask, false, true));"
+    )
+    assert groups[0][0]["vals"] == ["0", "1"]
 
 
 def test_uint_literal_and_named_macro_width():

@@ -60,6 +60,8 @@ def compute_extract_fingerprint(
             f"{uo}; run prepare until clang_scope_status=complete writes "
             "summary/scope_set.yaml confirmed_source_files"
         )
+    from uo_init.tu_cache import CACHE_VERSION
+
     content_fp = content_fingerprint(root, rels)
     extract_fp = _stable_hash(
         {
@@ -67,6 +69,7 @@ def compute_extract_fingerprint(
             "content_fingerprint": content_fp,
             "build_fingerprint": build_fingerprint or "",
             "confirmed_sources": rels,
+            "walk_cache_version": CACHE_VERSION,
         }
     )[:32]
     return {

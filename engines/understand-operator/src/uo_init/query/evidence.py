@@ -38,6 +38,7 @@ USEFUL_EDGE_KINDS: tuple[str, ...] = (
     "PRECEDES",
     "ACTIVE_UNDER",
     "CONTAINS",
+    "RETURNS",
 )
 
 _FIELD_EDGE_KINDS = frozenset({"WRITES", "READS", "DERIVES", "CONTROLS"})
@@ -85,6 +86,7 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "check_sites",
         "fused_outer_candidates",
         "local_aliases",
+        "write_sites",
     ),
     EntityKind.FIELD.value: (
         "layer",
@@ -95,6 +97,7 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "cpp_type",
         "default_initializer",
         "definition_sites",
+        "write_sites",
     ),
     EntityKind.TYPE.value: (
         "cpp_kind",
@@ -104,6 +107,8 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "root_kind",
         "type_name",
         "owner",
+        "catalog",
+        "spelling",
         "wraps_storage",
         "wraps_lock",
         "wraps_flag",
@@ -121,6 +126,7 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "wraps_lock",
         "wraps_storage",
         "conditional_flag",
+        "mutex_policy",
     ),
     EntityKind.REGISTER.value: ("register_class", "scope", "type_name"),
     EntityKind.OPERATION.value: (
@@ -163,8 +169,9 @@ _KIND_FACTS: dict[str, tuple[str, ...]] = {
         "api_attr_index",
     ),
     EntityKind.OUTPUT.value: ("dtype", "shape", "declaration", "api_kind", "api_index"),
-    EntityKind.FUNCTION.value: ("definition_sites",),
-    EntityKind.METHOD.value: ("definition_sites",),
+    EntityKind.FUNCTION.value: ("definition_sites", "write_sites"),
+    EntityKind.METHOD.value: ("definition_sites", "write_sites"),
+    EntityKind.VARIABLE.value: ("layer", "rhs", "write_sites"),
     EntityKind.MACRO.value: ("value", "definition", "layer"),
     EntityKind.COMPILE_VAR.value: ("value", "value_expr", "origin", "layer"),
     EntityKind.PREDICATE.value: (
@@ -241,6 +248,7 @@ _FULL_FACT_KEYS = frozenset(
         "definition_sites",
         "fused_outer_candidates",
         "local_aliases",
+        "write_sites",
     }
 )
 _ARG_CUT_RE = re.compile(r";|\bif\b")
@@ -437,3 +445,29 @@ def field_edge_kinds() -> frozenset[str]:
 
 def drop_noise_attr(key: str) -> bool:
     return str(key) in _DROP_ATTRS
+
+
+_SURFACE_KINDS = frozenset(
+    {
+        EntityKind.BUFFER.value,
+        EntityKind.QUEUE.value,
+        EntityKind.PIPE.value,
+        EntityKind.EVENT.value,
+        EntityKind.REGISTER.value,
+    }
+)
+
+
+def surface_facts(kind: str, facts: dict[str, Any] | None) -> dict[str, Any]:
+    """Identity attrs agents need on the name card, not only inside ``facts``."""
+    if str(kind or "") not in _SURFACE_KINDS or not isinstance(facts, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key in _KIND_FACTS.get(str(kind), ()):
+        if key in _FULL_FACT_KEYS:
+            continue
+        value = facts.get(key)
+        if value in (None, "", [], {}):
+            continue
+        out[key] = value
+    return out

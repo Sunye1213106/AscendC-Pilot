@@ -21,13 +21,15 @@
         ├── /tg-init ──► /tg-plan ──► /tg-solve     覆盖闭环
         │
         ├── /ce-plan ──► /ce-apply                  自己有需求：计划 → 按 todo 改码
-        ├── /ce-review                              已有 diff / PR：只读双轴审查
+        ├── /ce-review                              已有 diff / PR：只读双路审查
         └── /handoff                                会话交接（无 ce- 前缀）
 ```
 
-`uo-init` / `uo-update` 必须同时有 `--project` 与 `--architecture`（来自仓内 `arch*`）。其余 workflow 以已有 `.uo` 为准，不再另扫 `arch*`。
+`uo-init` / `uo-update` 必须有 `--project`。`--architecture` 用来区分不同实现：仓内有 `arch*` 时从中选择（多个未指定则问人，禁止发明 arch35）；没有 `arch*` 时按一套源码一起构建，产物槽是 `default`。其余 workflow 以已有 `.uo` 为准，不再另扫 `arch*`。
 
 ---
+
+
 
 ## 启动（所有 workflow 共用）
 
@@ -79,7 +81,7 @@
                   └── host_step = failed             → inspect-failure；不要翻 Pilot 源码
 ```
 
-控制面围着 **同一份 `.uo`（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥。引擎锁允许不同族同时占锁，但主控编排上 **全部 init 先于任何消费**（`/uo-init` `/tg-init` 在 `/uo-query` `/ce-review` `/tg-plan` 之前），且需主控派 Task 的 workflow（`/tg-init` / `/uo-query` / `/ce-review` 等）**一律串行**；同一格内部 fanout 仍由主控同一轮派。
+控制面围着 **同一份** `.uo`**（算子 + arch + digest）**，不是全局执行槽。只读提问不占锁（主控路由，不 start）。`uo-investigate` / `ce-review` / `handoff` 是 shared：不占锁、不写 exclusive `active_run`。写工作流按 `occupancy_group`（`uo` / `tg` / `ce-plan` / `ce-apply`）互斥。引擎锁允许不同族同时占锁，但主控编排上 **全部 init 先于任何消费**（`/uo-init` `/tg-init` 在 `/uo-query` `/ce-review` `/tg-plan` 之前），且需主控派 Task 的 workflow（`/tg-init` / `/uo-query` / `/ce-review` 等）**一律串行**；同一格内部 fanout 仍由主控同一轮派。
 
 `complete` / `host_step.done` 之后 **释放本族锁**：`state/slots/{family}/workflow.yaml`（或 shared 的 `runs/{run_id}/live_state.yaml`）清掉，run 快照落到 `runs/{run_id}/final_state.yaml`。`uo-init` / `uo-update` 还会发布新 `canonical_graph_digest`，把钉在旧 digest 上的 session 标 STALE。正式产物（`.uo` / tg / ce）保留。`control/active_run.yaml` 只是最近一次 exclusive 指针，不是互斥权威。
 
@@ -89,7 +91,11 @@
 
 ---
 
+
+
 ## UO
+
+
 
 ### `/uo-init` — 建立 CodeMap
 
@@ -101,7 +107,7 @@ prepare [D]  准备范围 / BuildVariant / Clang 探针 / 脚本 include-heal
     ├── 脚本仍缺头 → heal：propose_include_heal [S] → heal_promote [D] → 重跑 prepare
     │
     ▼
-extract [D]  Clang 抽 CompilerFacts（`apply_saved_extras` 把 extras 变成 `-I`）
+extract [D]  Clang 抽 Host/Kernel IR（`apply_saved_extras` 把 extras 变成 `-I`）
     │
     ▼
 analyze [D]  确定性 Pass 串跨层边；证不全记 unresolved
@@ -171,6 +177,8 @@ investigate [S uo-gap-investigator]  →  report
 
 ---
 
+
+
 ## TG
 
 消费已有 CodeMap。正式产物只有 `init.yaml` / `plan.md` / `worklog.md` + cases 表。用户说「全量覆盖」会串联 init → plan → solve，但那是意图，不是 T=D 默认模式。根本改动见 [tg-rebuild.md](../development/tg-rebuild.md)。
@@ -196,6 +204,8 @@ promote   [D]  合并落盘 init.yaml
 validate  [D]  mapping 空则失败   ──gate: init_confirmed
 ```
 
+
+
 ### `/tg-plan` — 融合义务
 
 ```text
@@ -214,6 +224,8 @@ validate [D]  列 root 闸门
 approve  [H]  开始求解            ──gate: plan_approved
 ```
 
+
+
 ### `/tg-solve` — 构造、Replay、worklog
 
 ```text
@@ -226,7 +238,7 @@ construct [S] → promote [D]  cases 表
 replay    [D]  Host tiling（无 NPU）
     │
     ▼
-analyze   [S] → promote [D]  worklog 四段
+analyze   [S] → promote [D]  对照预期，同步 worklog
     │
     ├── open 非空 ──► construct
     ▼
@@ -236,6 +248,8 @@ certify   [D]  open: []           ──gate: worklog_closed
 `Replay reject ≠ E`。TG 永不改算子仓；缺列走 CE apply 测试脚本仓。
 
 ---
+
+
 
 ## CE
 
@@ -247,14 +261,13 @@ certify   [D]  open: []           ──gate: worklog_closed
 kb_ready  [D]  校验 .uo            ──gate: kb_ready
     │
     ▼
-grill     [S ce-analyst] + [D] grill_promote + [H] 确认问清
-    │
-    ▼
-draft     [S ce-analyst]  写出 ce/plan/{slug}_plan.md
+draft     [S ce-analyst]  边问边写出 ce/plan/{slug}_plan.md
     │
     ▼
 confirm   [H]  去 /ce-apply 或继续改计划
 ```
+
+
 
 ### `/ce-apply` — 按计划 todo 改码
 
@@ -274,6 +287,8 @@ refresh   [D]  嵌套 uo-update（禁止 LLM 写 .uo）
 report    [H]  建议审查 / 建议测试 / 回计划 / 交接
 ```
 
+
+
 ### `/ce-review` — 已有 diff，只读检视
 
 ```text
@@ -287,6 +302,8 @@ review    [S ce-reviewer ×2]  Spec ∥ Standards
 summary   [H]  建议修改或建议测试（不落盘）
 ```
 
+
+
 ### `/handoff` — 会话交接
 
 ```text
@@ -295,11 +312,16 @@ session   [S ce-analyst]  写 session_handoff.md（只引用路径，下一步 s
 
 ---
 
+
+
 ## 实现锚点
 
-| 权威 | 位置 |
-| --- | --- |
-| 阶段 / Action / gate | `pilot/ascendc_pilot/workflows/specs.py`、CE：`ce_specs.py` |
-| 启动与 architecture | Host `pilot_run`、`pilot_cli` `scan-architectures` |
-| Host 传输环 | `pilot_run` →（内部）`run-action auto` → `dispatch-result` |
-| 精确表 | [workflows.generated.md](../reference/workflows.generated.md) |
+
+| 权威                 | 位置                                                            |
+| ------------------ | ------------------------------------------------------------- |
+| 阶段 / Action / gate | `pilot/ascendc_pilot/workflows/specs.py`、CE：`ce_specs.py`     |
+| 启动与 architecture   | Host `pilot_run`、`pilot_cli` `scan-architectures`             |
+| Host 传输环           | `pilot_run` →（内部）`run-action auto` → `dispatch-result`        |
+| 精确表                | [workflows.generated.md](../reference/workflows.generated.md) |
+
+

@@ -1,0 +1,610 @@
+{
+  "FAG": {
+    "queries": {
+      "index": {
+        "elapsed_s": 0.177,
+        "shape": "index",
+        "ok": true,
+        "count": 3,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": [
+          "DTemplateNum",
+          "DeterType",
+          "InputDType",
+          "IsAttenMask",
+          "IsBn2MultiBlk",
+          "IsDNoEqual",
+          "IsDrop",
+          "IsEmptyTensor",
+          "IsNEqual",
+          "IsNzOut",
+          "IsPse",
+          "IsRegbase",
+          "IsRope",
+          "IsTnd",
+          "IsTndSwizzle",
+          "OutDType",
+          "S1TemplateNum",
+          "S2TemplateNum",
+          "SplitAxis"
+        ],
+        "hint": "Coverage list: Dim=DTemplateNum. Combo filter: DTemplateNum=0 (Name=Value). One identifier for a name card. --file --line only after copying file:line from a card.",
+        "phases": [
+          {
+            "pipe": "pipeIn",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 213,
+            "phase": "1"
+          },
+          {
+            "pipe": "pipeBase",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 225,
+            "phase": "2"
+          },
+          {
+            "pipe": "pipePost",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 225,
+            "phase": "3"
+          }
+        ],
+        "cards": [
+          {
+            "kind": "1",
+            "name": "pipeIn",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 213,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "2",
+            "name": "pipeBase",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 225,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "3",
+            "name": "pipePost",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 225,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      },
+      "IsTnd=1": {
+        "elapsed_s": 1.909,
+        "shape": "cover",
+        "ok": true,
+        "count": 38,
+        "matching_block_count": 38,
+        "dim_coverage": {
+          "IsEmptyTensor": [
+            "0"
+          ],
+          "SplitAxis": [
+            "0",
+            "1",
+            "5"
+          ],
+          "InputDType": [
+            "1",
+            "2",
+            "3"
+          ],
+          "IsTnd": [
+            "1"
+          ],
+          "S1TemplateNum": [
+            "128",
+            "64"
+          ],
+          "S2TemplateNum": [
+            "128"
+          ],
+          "DeterType": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4"
+          ],
+          "IsNEqual": [
+            "0",
+            "1"
+          ],
+          "IsBn2MultiBlk": [
+            "0",
+            "1"
+          ],
+          "IsRope": [
+            "0",
+            "1"
+          ],
+          "OutDType": [
+            "1",
+            "2",
+            "3"
+          ],
+          "IsNzOut": [
+            "0",
+            "1"
+          ],
+          "IsTndSwizzle": [
+            "0",
+            "1"
+          ],
+          "IsRegbase": [
+            "1"
+          ],
+          "IsDrop": [
+            "0",
+            "1"
+          ],
+          "IsPse": [
+            "0",
+            "1"
+          ],
+          "IsAttenMask": [
+            "0",
+            "1"
+          ],
+          "DTemplateNum": [
+            "128",
+            "192",
+            "256",
+            "64",
+            "768"
+          ],
+          "IsDNoEqual": [
+            "0",
+            "1"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      },
+      "Dim=IsTnd": {
+        "elapsed_s": 1.754,
+        "shape": "cover",
+        "ok": true,
+        "count": 2,
+        "matching_block_count": 0,
+        "dim_coverage": {
+          "IsTnd": [
+            "0",
+            "1"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      },
+      "s1Inner": {
+        "elapsed_s": 0.045,
+        "shape": "name",
+        "ok": true,
+        "count": 3,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": [
+          {
+            "kind": "TILING_FIELD",
+            "name": "s1Inner",
+            "file": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h",
+            "line": 197,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "VARIABLE",
+            "name": "s1Inner",
+            "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 483,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "PREDICATE",
+            "name": "s1Inner",
+            "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 491,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      }
+    },
+    "verdict": {
+      "index_hint": "improve",
+      "IsTnd=1": "improve",
+      "Dim=IsTnd": "keep",
+      "pipe_not_225": "regress",
+      "s1Inner_readers": "keep"
+    }
+  },
+  "IFA": {
+    "queries": {
+      "index": {
+        "elapsed_s": 0.343,
+        "shape": "index",
+        "ok": true,
+        "count": 3,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": [
+          "Config",
+          "EmptyTensor",
+          "EnableKVPrefix",
+          "EnableS1OutSplit",
+          "HasAttenMask",
+          "HasRope",
+          "InOutLayoutType",
+          "IsFd",
+          "KvLayoutType",
+          "PseMode",
+          "QuantMode"
+        ],
+        "hint": "Coverage list: Dim=Config. Combo filter: Config=1 (Name=Value). One identifier for a name card. --file --line only after copying file:line from a card.",
+        "phases": [
+          {
+            "pipe": "tPipe",
+            "file": "op_kernel/arch35/incre_flash_attention_entry_regbase.h",
+            "line": 44,
+            "phase": "1"
+          },
+          {
+            "pipe": "tPipe1",
+            "file": "op_kernel/arch35/incre_flash_attention_entry_regbase.h",
+            "line": 59,
+            "phase": "2"
+          },
+          {
+            "pipe": "tPipe",
+            "file": "op_kernel/arch35/incre_flash_attention_entry_regbase.h",
+            "line": 198,
+            "phase": "3"
+          }
+        ],
+        "cards": [
+          {
+            "kind": "1",
+            "name": "tPipe",
+            "file": "op_kernel/arch35/incre_flash_attention_entry_regbase.h",
+            "line": 44,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "2",
+            "name": "tPipe1",
+            "file": "op_kernel/arch35/incre_flash_attention_entry_regbase.h",
+            "line": 59,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "3",
+            "name": "tPipe",
+            "file": "op_kernel/arch35/incre_flash_attention_entry_regbase.h",
+            "line": 198,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      },
+      "HasAttenMask=true": {
+        "elapsed_s": 6.274,
+        "shape": "cover",
+        "ok": true,
+        "count": 122,
+        "matching_block_count": 122,
+        "dim_coverage": {
+          "QuantMode": [
+            "AntiquantMode_K_PER_CHANNEL_V_PER_TOKEN",
+            "AntiquantMode_PER_CHANNEL",
+            "AntiquantMode_PER_TOKEN",
+            "AntiquantMode_PER_TOKEN_HEAD_PAGE_ATTENTION",
+            "AntiquantMode_PER_TOKEN_PAGE_ATTENTION",
+            "NoQuantMode"
+          ],
+          "HasRope": [
+            "false",
+            "true"
+          ],
+          "IsFd": [
+            "false",
+            "true"
+          ],
+          "EmptyTensor": [
+            "0",
+            "false"
+          ],
+          "EnableKVPrefix": [
+            "false",
+            "true"
+          ],
+          "EnableS1OutSplit": [
+            "false"
+          ],
+          "InOutLayoutType": [
+            "InOutLayoutType_BNSD_BNSD",
+            "InOutLayoutType_BSH_BSH",
+            "InOutLayoutType_TND_TND"
+          ],
+          "Config": [
+            "Config_S1Aligned128_S2Aligned128_DAligned128_DVAligned128",
+            "Config_S1Aligned128_S2Aligned128_DAligned192_DVAligned128",
+            "Config_S1Aligned128_S2Aligned128_DAligned256_DVAligned128",
+            "Config_S1Aligned128_S2Aligned128_DAligned256_DVAligned256",
+            "Config_S1Aligned128_S2Aligned128_DAligned512_DVAligned512",
+            "Config_S1Aligned128_S2Aligned128_DAligned64_DVAligned64",
+            "Config_S1Aligned16_S2Aligned1024_DAligned64_DVAligned64",
+            "Config_S1Aligned16_S2Aligned128_DAligned512_DVAligned512",
+            "Config_S1Aligned16_S2Aligned256_DAligned256_DVAligned256",
+            "Config_S1Aligned16_S2Aligned512_DAligned128_DVAligned128",
+            "Config_S1Aligned16_S2Aligned512_DAligned64_DVAligned64",
+            "Config_S1Aligned64_S2Aligned128_DAligned576_DVAligned512",
+            "Config_S1Aligned64_S2Aligned256_DAligned128_DVAligned128",
+            "Config_S1Aligned64_S2Aligned256_DAligned64_DVAligned64"
+          ],
+          "PseMode": [
+            "PSE_MODE_PSE_INNER_MUL_ADD_SQRT_TYPE",
+            "PSE_MODE_PSE_INNER_MUL_ADD_TYPE",
+            "PSE_MODE_PSE_NONE_TYPE",
+            "PSE_MODE_PSE_OUTER_MUL_ADD_TYPE"
+          ],
+          "HasAttenMask": [
+            "true"
+          ],
+          "KvLayoutType": [
+            "KvLayoutType_NO_PA",
+            "KvLayoutType_PA_BBH",
+            "KvLayoutType_PA_BNBD",
+            "KvLayoutType_PA_NZ"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      },
+      "HasAttenMask=1": {
+        "elapsed_s": 6.297,
+        "shape": "cover",
+        "ok": true,
+        "count": 122,
+        "matching_block_count": 122,
+        "dim_coverage": {
+          "QuantMode": [
+            "AntiquantMode_K_PER_CHANNEL_V_PER_TOKEN",
+            "AntiquantMode_PER_CHANNEL",
+            "AntiquantMode_PER_TOKEN",
+            "AntiquantMode_PER_TOKEN_HEAD_PAGE_ATTENTION",
+            "AntiquantMode_PER_TOKEN_PAGE_ATTENTION",
+            "NoQuantMode"
+          ],
+          "HasRope": [
+            "false",
+            "true"
+          ],
+          "IsFd": [
+            "false",
+            "true"
+          ],
+          "EmptyTensor": [
+            "0",
+            "false"
+          ],
+          "EnableKVPrefix": [
+            "false",
+            "true"
+          ],
+          "EnableS1OutSplit": [
+            "false"
+          ],
+          "InOutLayoutType": [
+            "InOutLayoutType_BNSD_BNSD",
+            "InOutLayoutType_BSH_BSH",
+            "InOutLayoutType_TND_TND"
+          ],
+          "Config": [
+            "Config_S1Aligned128_S2Aligned128_DAligned128_DVAligned128",
+            "Config_S1Aligned128_S2Aligned128_DAligned192_DVAligned128",
+            "Config_S1Aligned128_S2Aligned128_DAligned256_DVAligned128",
+            "Config_S1Aligned128_S2Aligned128_DAligned256_DVAligned256",
+            "Config_S1Aligned128_S2Aligned128_DAligned512_DVAligned512",
+            "Config_S1Aligned128_S2Aligned128_DAligned64_DVAligned64",
+            "Config_S1Aligned16_S2Aligned1024_DAligned64_DVAligned64",
+            "Config_S1Aligned16_S2Aligned128_DAligned512_DVAligned512",
+            "Config_S1Aligned16_S2Aligned256_DAligned256_DVAligned256",
+            "Config_S1Aligned16_S2Aligned512_DAligned128_DVAligned128",
+            "Config_S1Aligned16_S2Aligned512_DAligned64_DVAligned64",
+            "Config_S1Aligned64_S2Aligned128_DAligned576_DVAligned512",
+            "Config_S1Aligned64_S2Aligned256_DAligned128_DVAligned128",
+            "Config_S1Aligned64_S2Aligned256_DAligned64_DVAligned64"
+          ],
+          "PseMode": [
+            "PSE_MODE_PSE_INNER_MUL_ADD_SQRT_TYPE",
+            "PSE_MODE_PSE_INNER_MUL_ADD_TYPE",
+            "PSE_MODE_PSE_NONE_TYPE",
+            "PSE_MODE_PSE_OUTER_MUL_ADD_TYPE"
+          ],
+          "HasAttenMask": [
+            "1"
+          ],
+          "KvLayoutType": [
+            "KvLayoutType_NO_PA",
+            "KvLayoutType_PA_BBH",
+            "KvLayoutType_PA_BNBD",
+            "KvLayoutType_PA_NZ"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      },
+      "Dim=HasAttenMask": {
+        "elapsed_s": 6.472,
+        "shape": "cover",
+        "ok": true,
+        "count": 3,
+        "matching_block_count": 0,
+        "dim_coverage": {
+          "HasAttenMask": [
+            "0",
+            "false",
+            "true"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      }
+    },
+    "verdict": {
+      "index_hint": "improve",
+      "HasAttenMask=true": "improve",
+      "HasAttenMask=1": "improve",
+      "HasAttenMask_canonical": "keep"
+    }
+  },
+  "GMM": {
+    "queries": {
+      "index": {
+        "elapsed_s": 0.065,
+        "shape": "index",
+        "ok": true,
+        "count": 1,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": [
+          "KERNEL_TYPE",
+          "QUANT_A_TRANS",
+          "QUANT_B_TRANS"
+        ],
+        "hint": "Coverage list: Dim=KERNEL_TYPE. Combo filter: KERNEL_TYPE=GMM_DEQUANT_FIXP (Name=Value). One identifier for a name card. --file --line only after copying file:line from a card.",
+        "phases": [
+          {
+            "pipe": "pipe",
+            "file": "op_kernel/gmm_infra/arch/gmm_resource.hpp",
+            "line": 22,
+            "phase": "1"
+          }
+        ],
+        "cards": [
+          {
+            "kind": "1",
+            "name": "pipe",
+            "file": "op_kernel/gmm_infra/arch/gmm_resource.hpp",
+            "line": 22,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      },
+      "Dim=TRANS_B": {
+        "elapsed_s": 0.057,
+        "shape": "cover",
+        "ok": true,
+        "count": 0,
+        "matching_block_count": 0,
+        "dim_coverage": {
+          "TRANS_B": []
+        },
+        "dim_names": null,
+        "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+        "phases": [],
+        "cards": []
+      },
+      "TRANS_B=1": {
+        "elapsed_s": 0.061,
+        "shape": "cover",
+        "ok": true,
+        "count": 0,
+        "matching_block_count": 0,
+        "dim_coverage": {},
+        "dim_names": null,
+        "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+        "phases": [],
+        "cards": []
+      },
+      "groupNum": {
+        "elapsed_s": 0.029,
+        "shape": "name",
+        "ok": true,
+        "count": 1,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": [
+          {
+            "kind": "TILING_FIELD",
+            "name": "groupNum",
+            "file": "op_kernel/arch35/grouped_matmul_tiling_data_apt.h",
+            "line": 32,
+            "readers": 2,
+            "reads_edges": 2
+          }
+        ]
+      }
+    },
+    "verdict": {
+      "index_hint": "improve",
+      "Dim=TRANS_B": "regress",
+      "index_has_TRANS_B": "regress",
+      "groupNum_readers": "improve"
+    }
+  },
+  "NSA": {
+    "queries": {
+      "index": {
+        "elapsed_s": 0.006,
+        "shape": "index",
+        "ok": true,
+        "count": 1,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": [],
+        "hint": "No source-declared TPL identifier dims. Coverage list: Dim=<name>. One identifier for a name card. --file --line only after copying file:line from a card.",
+        "phases": [
+          {
+            "pipe": "pipe",
+            "file": "op_kernel/nsa_compress.cpp",
+            "line": 30,
+            "phase": "1"
+          }
+        ],
+        "cards": [
+          {
+            "kind": "1",
+            "name": "pipe",
+            "file": "op_kernel/nsa_compress.cpp",
+            "line": 30,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      }
+    },
+    "verdict": {
+      "index_hint": "improve",
+      "dim_names_no_zero": "improve"
+    }
+  }
+}

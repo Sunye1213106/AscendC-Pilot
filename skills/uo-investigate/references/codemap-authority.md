@@ -6,7 +6,7 @@
 
 ```text
 Source
-  ↓ Clang CompilerFacts + deterministic Passes
+  ↓ Clang Host/Kernel IR + deterministic Passes
 Semantic authority = operator.<arch>.uo（统一 CodeMap）
   ↓
 uo-dump / query views（临时展开，非持久权威）

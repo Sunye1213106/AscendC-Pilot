@@ -1,0 +1,753 @@
+{
+  "dims": [
+    {
+      "query": "Dim=InputDType",
+      "count": 4,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "InputDType": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ]
+      },
+      "declared_coverage": {
+        "InputDType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6"
+        ]
+      },
+      "product_coverage": {
+        "InputDType": [
+          "0",
+          "1",
+          "2",
+          "3"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsRope",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsRope": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsRope": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsRope": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=DTemplateNum",
+      "count": 6,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DTemplateNum": [
+          "0",
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ]
+      },
+      "declared_coverage": {
+        "DTemplateNum": [
+          "0",
+          "64",
+          "128",
+          "192",
+          "256",
+          "768"
+        ]
+      },
+      "product_coverage": {
+        "DTemplateNum": [
+          "0",
+          "128",
+          "192",
+          "256",
+          "64",
+          "768"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsDNoEqual",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsDNoEqual": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsBn2MultiBlk",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsBn2MultiBlk": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsTnd",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsTnd": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsTnd": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsTnd": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=DeterType",
+      "count": 5,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "DeterType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      "declared_coverage": {
+        "DeterType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      "product_coverage": {
+        "DeterType": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=SplitAxis",
+      "count": 3,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "declared_coverage": {
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "product_coverage": {
+        "SplitAxis": [
+          "0",
+          "1",
+          "5"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsDrop",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsDrop": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsDrop": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsDrop": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=S1TemplateNum",
+      "count": 3,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "S1TemplateNum": [
+          "0",
+          "128",
+          "64"
+        ]
+      },
+      "declared_coverage": {
+        "S1TemplateNum": [
+          "0",
+          "64",
+          "128",
+          "512"
+        ]
+      },
+      "product_coverage": {
+        "S1TemplateNum": [
+          "0",
+          "128",
+          "64"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=S2TemplateNum",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "S2TemplateNum": [
+          "0",
+          "128"
+        ]
+      },
+      "declared_coverage": {
+        "S2TemplateNum": [
+          "0",
+          "128",
+          "256",
+          "512"
+        ]
+      },
+      "product_coverage": {
+        "S2TemplateNum": [
+          "0",
+          "128"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsAttenMask",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsAttenMask": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsAttenMask": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsAttenMask": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsNEqual",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsNEqual": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsNEqual": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsNEqual": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    },
+    {
+      "query": "Dim=IsTndSwizzle",
+      "count": 2,
+      "matching_block_count": 0,
+      "completeness": "coverage_checked",
+      "dim_coverage": {
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ]
+      },
+      "declared_coverage": {
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ]
+      },
+      "product_coverage": {
+        "IsTndSwizzle": [
+          "0",
+          "1"
+        ]
+      },
+      "nearby": [],
+      "cover_kind": "dim_list",
+      "answerable": true,
+      "top_keys": [
+        "ok",
+        "shape",
+        "pattern",
+        "filters",
+        "dim_coverage",
+        "matching_block_count",
+        "nearby",
+        "total_matched",
+        "coverage",
+        "count",
+        "answerable",
+        "completeness",
+        "dim_only",
+        "cover_kind",
+        "declared_coverage",
+        "product_coverage",
+        "template_blocks"
+      ]
+    }
+  ],
+  "around": {
+    "top_keys": [
+      "ok",
+      "shape",
+      "file",
+      "line",
+      "line_end",
+      "seeds",
+      "neighbors",
+      "hits",
+      "count",
+      "truncated"
+    ],
+    "count": 16,
+    "shape": "around",
+    "ok": true,
+    "seeds_len": 16,
+    "seeds_0_keys": [
+      "name",
+      "kind",
+      "file",
+      "line",
+      "id",
+      "snippet",
+      "truncated"
+    ],
+    "seeds_0": {
+      "kind": "FUNCTION",
+      "name": "SetSplitAxis",
+      "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+      "line": 1581
+    },
+    "seeds_0_snip": "1581:void SetSplitAxis(const gert::TilingContext *context_, FuzzyBaseInfoParamsRegbase& fBaseParams)\n1582:{\n1583:    fBaseParams.isBn2 = (fBaseParams.s1 <= BN2_MAX_S && fBaseParams.s2 <= BN2_MAX_S) &&\n1584:                        (fBaseParams.n1 == fBaseParams.n2) &&\n1585:                        (fBaseParams.d <= BN2_MAX_D) &&\n1586:                        (fBaseParams.queryType != ge::DT_FLOAT) &&",
+    "neighbors_len": 3,
+    "neighbors_0_keys": [
+      "rel",
+      "name",
+      "kind",
+      "file",
+      "line",
+      "id"
+    ],
+    "neighbors_0": {
+      "kind": "FIELD",
+      "name": "fBaseParams.isBn2",
+      "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+      "line": 1583
+    },
+    "hits_len": 16,
+    "hits_0_keys": [
+      "name",
+      "kind",
+      "file",
+      "line",
+      "id",
+      "snippet",
+      "truncated"
+    ],
+    "hits_0": {
+      "kind": "FUNCTION",
+      "name": "SetSplitAxis",
+      "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+      "line": 1581
+    },
+    "hits_0_snip": "1581:void SetSplitAxis(const gert::TilingContext *context_, FuzzyBaseInfoParamsRegbase& fBaseParams)\n1582:{\n1583:    fBaseParams.isBn2 = (fBaseParams.s1 <= BN2_MAX_S && fBaseParams.s2 <= BN2_MAX_S) &&\n1584:                        (fBaseParams.n1 == fBaseParams.n2) &&\n1585:                        (fBaseParams.d <= BN2_MAX_D) &&\n1586:                        (fBaseParams.queryType != ge::DT_FLOAT) &&"
+  }
+}

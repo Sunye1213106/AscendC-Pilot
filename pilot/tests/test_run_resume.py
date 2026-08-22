@@ -141,6 +141,23 @@ def test_resolve_start_architecture_sole_arch_auto_selects(tmp_path: Path) -> No
     assert result["selected_by"] == "sole_arch"
 
 
+def test_resolve_start_architecture_unified_when_no_arch_dirs(tmp_path: Path) -> None:
+    (tmp_path / "op_host").mkdir()
+    (tmp_path / "op_kernel").mkdir()
+    result = resolve_start_architecture(tmp_path, "", workflow_id="uo-init")
+    assert result["ok"] is True
+    assert result["architecture"] == "default"
+    assert result["selected_by"] == "unified_implementation"
+    assert result.get("needs_human_decision") is not True
+    # Explicit slot is still accepted (reinit / already-pinned product).
+    explicit_variant = resolve_start_architecture(tmp_path, "arch35", workflow_id="uo-init")
+    assert explicit_variant["ok"] is True
+    assert explicit_variant["architecture"] == "arch35"
+    explicit = resolve_start_architecture(tmp_path, "default", workflow_id="uo-init")
+    assert explicit["ok"] is True
+    assert explicit["architecture"] == "default"
+
+
 def test_reinit_requires_architecture_when_multiple_archs(tmp_path: Path) -> None:
     _make_multi_arch_op(tmp_path)
     start_workflow(tmp_path, "uo-init", architecture="arch35")

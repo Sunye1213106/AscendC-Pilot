@@ -28,6 +28,17 @@ from uo_init.clang_walk import (
 )
 
 
+def _host_ir_workers(n_files: int) -> int:
+    """Cap concurrent libclang TUs. Default 1 — N-way walks froze Windows."""
+    import os
+
+    n = max(1, int(n_files))
+    raw = str(os.environ.get("UO_HOST_IR_WORKERS") or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return max(1, min(n, int(raw)))
+    return 1
+
+
 def _host_ir_pool_kind() -> str:
     """Host TU parallelism. libclang releases the GIL during parse.
 
@@ -166,6 +177,7 @@ class FuncSummary:
     name: str
     file: str = ""
     line: int = 0
+    line_end: int = 0
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
     guards: list[str] = field(default_factory=list)
@@ -821,7 +833,10 @@ _ASSIGN = re.compile(
 
 
 def extract_writes_text(path: str | Path, template_precondition: str | None = None) -> list[WriteEvent]:
-    """Fallback single-line regex scanner. Under-counts; never use for coverage."""
+    """Deprecated fallback: single-line regex scanner. Product path uses BuildContext.
+
+    Under-counts; never use for coverage.
+    """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     events: list[WriteEvent] = []
     for m in _ASSIGN.finditer(text):
@@ -954,8 +969,8 @@ def build_host_ir(
         import os
         from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-        max_workers = min(len(path_list), os.cpu_count() or 4)
-        use_proc = _host_ir_pool_kind() == "process"
+        max_workers = _host_ir_workers(len(path_list))
+        use_proc = max_workers > 1 and _host_ir_pool_kind() == "process"
         results = [None] * len(path_list)
         pool_kind = "process" if use_proc else "thread"
         _tlog(
@@ -1045,9 +1060,21 @@ def build_host_ir(
                 all_controls.append(node)
         for name, fr in res.functions.items():
             s = summaries.setdefault(name, FuncSummary(name=name))
-            if getattr(fr, "file", "") and not s.file:
-                s.file = str(fr.file)
-                s.line = int(getattr(fr, "line", 0) or 0)
+            fr_file = str(getattr(fr, "file", "") or "")
+            fr_start = int(getattr(fr, "line", 0) or 0)
+            fr_end = int(getattr(fr, "line_end", 0) or 0)
+            if fr_end < fr_start:
+                fr_end = fr_start
+            incoming_span = max(0, fr_end - fr_start) if fr_start > 0 else 0
+            existing_span = max(0, int(s.line_end or s.line or 0) - int(s.line or 0))
+            if incoming_span > existing_span or (fr_file and not s.file):
+                if fr_file:
+                    s.file = fr_file
+                if fr_start > 0:
+                    s.line = fr_start
+                s.line_end = fr_end
+            elif fr_end > int(s.line_end or 0):
+                s.line_end = fr_end
             for w in fr.writes:
                 if w not in s.writes:
                     s.writes.append(w)

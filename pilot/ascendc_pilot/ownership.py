@@ -88,11 +88,6 @@ ACTION_PRODUCER_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         ],
     },
     "ce-plan": {
-        "intent_grill": [
-            "runs/{run_id}/actions/intent_grill/parts/**",
-            "runs/{run_id}/actions/intent_grill/scratch/**",
-            "runs/{run_id}/actions/intent_grill/staging.md",
-        ],
         "plan_draft": [
             "ce/plan/*_plan.md",
             "runs/{run_id}/actions/plan_draft/**",
@@ -244,11 +239,6 @@ ACTION_WRITE_PATHS: dict[str, dict[str, list[str]]] = {
         "code_review": [],
     },
     "ce-plan": {
-        "intent_grill": [
-            "runs/{run_id}/actions/intent_grill/parts/**",
-            "runs/{run_id}/actions/intent_grill/scratch/**",
-            "runs/{run_id}/actions/intent_grill/staging.md",
-        ],
         "plan_draft": [
             "ce/plan/*_plan.md",
             "runs/{run_id}/actions/plan_draft/**",
@@ -418,8 +408,6 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
             "runs/**",
             "context/**",
             "skills/standalone-review/**",
-            "skills/spec-review/**",
-            "skills/standards-review/**",
         ],
         "review_report": [
             "ce/plan/**",
@@ -428,9 +416,6 @@ ACTION_READ_PATHS: dict[str, dict[str, list[str]]] = {
     },
     "ce-plan": {
         "kb_check": ["uo/*.uo"],
-        "intent_grill": ["uo/*.uo", "ce/plan/**", "context/**", "runs/**"],
-        "grill_promote": ["runs/{run_id}/actions/intent_grill/**"],
-        "grill_confirm": ["ce/plan/**", "runs/{run_id}/actions/intent_grill/**"],
         "plan_draft": ["uo/*.uo", "ce/plan/**", "context/**", "runs/**"],
         "human_confirm": ["ce/plan/**"],
     },

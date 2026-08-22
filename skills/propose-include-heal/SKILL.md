@@ -1,6 +1,6 @@
 ---
 name: propose-include-heal
-description: 为未解析 include 提议额外 -I。uo-init 的 include-heal 提议步使用。
+description: 为未解析 include 提议额外 -I。include 探针失败、路径与 CANN 树没对齐时使用。
 ---
 
 # 提议补 include

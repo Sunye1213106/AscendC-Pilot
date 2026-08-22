@@ -1,3 +1,0 @@
-ids: [F-SPLIT, F-SHAPE-TYPICAL, F-BALANCE]
-oracle: profiler
-budget_max: 8

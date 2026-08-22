@@ -1,0 +1,353 @@
+{
+  "summary_before": {
+    "n": 164,
+    "elapsed_s": 103.89,
+    "rss_start_mb": 24.0,
+    "rss_end_mb": 30.9,
+    "rss_peak_mb": 31.0,
+    "ok": 153,
+    "p50_ms": 44.6,
+    "p95_ms": 1432.4,
+    "max_ms": 4339.2,
+    "avg_bytes": 2774,
+    "avg_tokens": 693,
+    "max_tokens": 5366,
+    "max_payload_tokens": 6000,
+    "morphs": {
+      "index": 4,
+      "Dim=": 24,
+      "Name=Value": 24,
+      "identifier": 58,
+      "--file --line": 54
+    },
+    "scenes": {
+      "index/launch": 4,
+      "tilingkey/domain": 24,
+      "tilingkey/combo": 24,
+      "tilingdata": 7,
+      "around": 47,
+      "identifier": 22,
+      "sync/pipe": 10,
+      "host/kernel": 8,
+      "template/macro": 2,
+      "buffer": 9,
+      "launch-around": 7
+    },
+    "ops": {
+      "FAG": 59,
+      "IFA": 39,
+      "GMM": 48,
+      "NSA": 18
+    }
+  },
+  "summary_after": {
+    "n": 163,
+    "elapsed_s": 151.16,
+    "rss_start_mb": 24.4,
+    "rss_end_mb": 32.0,
+    "rss_peak_mb": 32.0,
+    "ok": 151,
+    "p50_ms": 67.7,
+    "p95_ms": 1783.8,
+    "max_ms": 6952.7,
+    "avg_bytes": 3651,
+    "avg_tokens": 912,
+    "max_tokens": 5080,
+    "max_payload_tokens": 6000,
+    "morphs": {
+      "index": 4,
+      "Dim=": 24,
+      "Name=Value": 24,
+      "identifier": 58,
+      "--file --line": 53
+    },
+    "scenes": {
+      "index/launch": 4,
+      "tilingkey/domain": 24,
+      "tilingkey/combo": 24,
+      "tilingdata": 7,
+      "around": 46,
+      "identifier": 22,
+      "sync/pipe": 10,
+      "host/kernel": 8,
+      "template/macro": 2,
+      "buffer": 9,
+      "launch-around": 7
+    },
+    "ops": {
+      "FAG": 58,
+      "IFA": 39,
+      "GMM": 48,
+      "NSA": 18
+    }
+  },
+  "morph_before": {
+    "index": {
+      "n": 4,
+      "ok": 4,
+      "p50_ms": 85.8,
+      "p95_ms": 196.5,
+      "max_ms": 196.5,
+      "avg_bytes": 2128,
+      "max_bytes": 3554,
+      "max_tokens": 888
+    },
+    "Dim=": {
+      "n": 24,
+      "ok": 24,
+      "p50_ms": 1270.0,
+      "p95_ms": 4298.8,
+      "max_ms": 4339.2,
+      "avg_bytes": 1017,
+      "max_bytes": 4081,
+      "max_tokens": 1020
+    },
+    "Name=Value": {
+      "n": 24,
+      "ok": 24,
+      "p50_ms": 1303.5,
+      "p95_ms": 4218.1,
+      "max_ms": 4278.8,
+      "avg_bytes": 3444,
+      "max_bytes": 6008,
+      "max_tokens": 1502
+    },
+    "identifier": {
+      "n": 58,
+      "ok": 47,
+      "p50_ms": 38.8,
+      "p95_ms": 192.4,
+      "max_ms": 254.9,
+      "avg_bytes": 2393,
+      "max_bytes": 6283,
+      "max_tokens": 1571
+    },
+    "--file --line": {
+      "n": 54,
+      "ok": 54,
+      "p50_ms": 25.1,
+      "p95_ms": 46.5,
+      "max_ms": 51.0,
+      "avg_bytes": 3715,
+      "max_bytes": 21463,
+      "max_tokens": 5366
+    }
+  },
+  "morph_after": {
+    "index": {
+      "n": 4,
+      "ok": 4,
+      "p50_ms": 51.7,
+      "p95_ms": 293.6,
+      "max_ms": 293.6,
+      "avg_bytes": 2144,
+      "max_bytes": 3554,
+      "max_tokens": 888
+    },
+    "Dim=": {
+      "n": 24,
+      "ok": 24,
+      "p50_ms": 1615.3,
+      "p95_ms": 6837.8,
+      "max_ms": 6952.7,
+      "avg_bytes": 1017,
+      "max_bytes": 4081,
+      "max_tokens": 1020
+    },
+    "Name=Value": {
+      "n": 24,
+      "ok": 24,
+      "p50_ms": 1608.0,
+      "p95_ms": 6592.1,
+      "max_ms": 6659.0,
+      "avg_bytes": 3444,
+      "max_bytes": 6008,
+      "max_tokens": 1502
+    },
+    "identifier": {
+      "n": 58,
+      "ok": 46,
+      "p50_ms": 65.6,
+      "p95_ms": 523.4,
+      "max_ms": 1031.6,
+      "avg_bytes": 3578,
+      "max_bytes": 14061,
+      "max_tokens": 3515
+    },
+    "--file --line": {
+      "n": 53,
+      "ok": 53,
+      "p50_ms": 32.6,
+      "p95_ms": 122.2,
+      "max_ms": 351.9,
+      "avg_bytes": 5130,
+      "max_bytes": 20321,
+      "max_tokens": 5080
+    }
+  },
+  "probes": {
+    "FAG": {
+      "hint_has_IsTnd1": false,
+      "phases": [
+        [
+          "pipeBase",
+          63
+        ],
+        [
+          "pipePost",
+          94
+        ],
+        [
+          "pipeIn",
+          213
+        ]
+      ],
+      "numeric_dim": [],
+      "GRAPH_FAILED": {
+        "ok": true,
+        "catalog": "ge.graphStatus",
+        "role": "host_refuse",
+        "RETURNS": 227,
+        "kinds": [
+          "TYPE"
+        ]
+      },
+      "LocalTensor": {
+        "ok": false,
+        "count": 0
+      },
+      "TQue": {
+        "ok": false,
+        "count": 0
+      },
+      "CheckShapeValid": {
+        "kind": "FUNCTION",
+        "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+        "span": {
+          "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp",
+          "line_start": 194,
+          "line_end": 220
+        },
+        "snippet_lines": 27,
+        "truncated": null
+      },
+      "around_host": {
+        "seed0_kind": "FUNCTION",
+        "seed0_name": "CheckShapeValid"
+      },
+      "Dim=IsTnd": [
+        "0",
+        "1"
+      ],
+      "IsTnd=1": 38,
+      "empty": {
+        "count": 0,
+        "completeness": "coverage_checked",
+        "nearby": true
+      }
+    },
+    "IFA": {
+      "hint_has_IsTnd1": false,
+      "phases": [
+        [
+          "tPipe",
+          44
+        ],
+        [
+          "tPipe1",
+          59
+        ]
+      ],
+      "numeric_dim": [],
+      "GRAPH_FAILED": {
+        "ok": true,
+        "catalog": "ge.graphStatus",
+        "role": "host_refuse",
+        "RETURNS": 1160,
+        "kinds": [
+          "TYPE",
+          "BRANCH"
+        ]
+      },
+      "LocalTensor": {
+        "ok": false,
+        "count": 0
+      },
+      "TQue": {
+        "ok": false,
+        "count": 0
+      },
+      "HasAttenMask=true": 122,
+      "Dim=HasAttenMask": [
+        "0",
+        "1"
+      ]
+    },
+    "GMM": {
+      "hint_has_IsTnd1": false,
+      "phases": [
+        [
+          "pipe",
+          22
+        ]
+      ],
+      "numeric_dim": [],
+      "GRAPH_FAILED": {
+        "ok": true,
+        "catalog": "ge.graphStatus",
+        "role": "host_refuse",
+        "RETURNS": 553,
+        "kinds": [
+          "TYPE"
+        ]
+      },
+      "LocalTensor": {
+        "ok": false,
+        "count": 0
+      },
+      "TQue": {
+        "ok": false,
+        "count": 0
+      },
+      "Dim=TRANS_B": [
+        "0",
+        "1"
+      ],
+      "groupNum_readers": 2
+    },
+    "NSA": {
+      "hint_has_IsTnd1": false,
+      "phases": [
+        [
+          "pipe",
+          30
+        ]
+      ],
+      "numeric_dim": [],
+      "GRAPH_FAILED": {
+        "ok": true,
+        "catalog": "ge.graphStatus",
+        "role": "host_refuse",
+        "RETURNS": 42,
+        "kinds": [
+          "TYPE"
+        ]
+      },
+      "LocalTensor": {
+        "ok": false,
+        "count": 0
+      },
+      "TQue": {
+        "ok": false,
+        "count": 0
+      },
+      "pipe": [
+        [
+          "PIPE",
+          "op_kernel/nsa_compress.cpp",
+          30
+        ]
+      ]
+    }
+  }
+}

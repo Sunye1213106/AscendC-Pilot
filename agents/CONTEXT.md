@@ -2,7 +2,7 @@
 
 模型常驻的跨工作流术语表。完整人类定义见 `docs/reference/glossary.md`。
 
-只回答：这个词是什么、不是什么、易与哪个词混淆。编排不写在这里。
+只回答：这个词是什么、不是什么、易与哪个词混淆。编排不写在这里。人记 slash（`/tg-init` / `/tg-plan` / `/tg-solve` / `/ce-*` / `/uo-*` / `/handoff`），不记磁盘 `skills/` 目录名。
 
 ## 核心术语
 
@@ -17,7 +17,7 @@
 **简单查询** — 单一起始符号或参数形态。
 **复杂查询** — 含多个可独立查询的目标。
 
-**`{slug}_plan.md`** — `/ce-plan` 确认后的用户变更计划（`ce/plan/{slug}_plan.md`）。输入是需求 + UO 语义，不是 PR。含实现分析、todo、测试内容。不是 `plan.md`，也不是 cases。
+**`{slug}_plan.md`** — `/ce-plan` 确认后的用户变更计划（`ce/plan/{slug}_plan.md`）。输入是需求 + UO 语义，不是 PR。边问边写：实现分析、todo、测试内容。不是 `plan.md`，也不是 cases。
 
 **ce-apply** — 按计划未完成 `- [ ]` 改代码，或按 `test_harness_gap` 改测试脚本。不是审查，不是查图。
 

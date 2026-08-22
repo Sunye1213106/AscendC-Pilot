@@ -98,6 +98,8 @@ def _act(
     consumes_state: list[str] | None = None,
     execution_variant: str | None = None,
     fanout_axes: list[dict[str, Any]] | None = None,
+    method_ref: str | None = None,
+    refs: list[str] | None = None,
     schema_version: str = "1",
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
@@ -202,6 +204,10 @@ def _act(
         row["execution_variant"] = str(execution_variant)
     if fanout_axes:
         row["fanout_axes"] = [dict(axis) for axis in fanout_axes]
+    if method_ref:
+        row["method_ref"] = str(method_ref).strip()
+    if refs:
+        row["refs"] = [str(r).strip() for r in refs if str(r).strip()]
     return row
 
 
@@ -304,7 +310,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
         "states": [
             _st("prepare", "准备 BuildVariant / 范围"),
             _st("heal", "补 include 路径（脚本失败才进入）"),
-            _st("extract", "Clang 抽取 CompilerFacts"),
+            _st("extract", "Clang 抽取 Host/Kernel IR"),
             _st("analyze", "确定性 CodeMap Pass"),
             _st("commit", "写入 <op>.<arch>.uo"),
             _st("verify", "结构合法性校验"),
@@ -433,7 +439,7 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
             ),
             _act(
                 "extract",
-                label_zh="Clang 抽取 CompilerFacts",
+                label_zh="Clang 抽取 Host/Kernel IR",
                 phases=["extract"],
                 workflow_id="uo-init",
                 agent_id=None,

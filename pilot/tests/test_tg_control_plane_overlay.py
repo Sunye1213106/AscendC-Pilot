@@ -77,16 +77,32 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert bind.get("output_mode") == "staged"
     scope = action_by_id("tg-plan", "plan_scope") or {}
     assert scope.get("agent_id") == "tg-analyst"
-    assert scope.get("skill_id") == "plan-scope"
+    assert scope.get("skill_id") == "plan"
+    assert scope.get("method_ref") == "scope.md"
+    fuse = action_by_id("tg-plan", "plan_fuse") or {}
+    assert fuse.get("skill_id") == "plan"
+    assert fuse.get("method_ref") == "fuse.md"
+    construct = action_by_id("tg-solve", "construct_cases") or {}
+    assert construct.get("skill_id") == "solve"
+    assert construct.get("method_ref") == "construct.md"
+    analyze = action_by_id("tg-solve", "analyze_round") or {}
+    assert analyze.get("skill_id") == "solve"
+    assert analyze.get("method_ref") == "analyze.md"
     assert scope.get("output_mode") == "direct"
     assert scope.get("output_contract_id") == "tg-plan-scope-v1"
     assert all("tg/plan.md" not in p for p in (scope.get("allowed_write_paths") or []))
     axes = bind.get("fanout_axes") or []
     assert {a.get("id") for a in axes} == {"harness", "bind"}
     assert {a.get("task_prompt_id") for a in axes} == {"tg/bind-harness", "tg/bind-columns"}
+    assert {a.get("method_ref") for a in axes} == {"harness.md", "columns.md"}
+    assert {a.get("skill") for a in axes} == {"bind-init"}
     bind_axis = next(a for a in axes if a.get("id") == "bind")
-    assert "profile" in str(bind_axis.get("focus") or "")
-    assert "无参数" in str(bind_axis.get("focus") or "")
+    assert "parts/bind.yaml" in str(bind_axis.get("focus") or "")
+    columns = (Path(__file__).resolve().parents[2] / "skills" / "bind-init" / "references" / "columns.md").read_text(
+        encoding="utf-8"
+    )
+    assert "profile" in columns
+    assert "无参数" in columns or "Dim=" in columns
 
 
 def test_reset_policy_only_touches_three_products() -> None:

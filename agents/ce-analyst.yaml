@@ -4,9 +4,9 @@ name_zh: CE 变更分析
 role: producer
 mode: subagent
 description: >
-  需求 grill、命名计划 markdown、会话交接的分阶段 producer。
-  草稿写 markdown 与 `ce/plan/{slug}_plan.md`；禁止写 CE yaml。
-max_skill_ids: &skills [ce-intent-grill, ce-plan-draft, ce-plan-revise, session-handoff, uo-query]
+  需求 grill 并写出或修订命名计划 markdown、会话交接的 producer。
+  写 `ce/plan/{slug}_plan.md`；禁止写 CE yaml。
+max_skill_ids: &skills [ce-plan-draft, session-handoff, uo-query]
 skill_ids: *skills
 read_scopes:
 - pilot:ce/plan/**
@@ -15,15 +15,10 @@ read_scopes:
 - pilot:uo/**
 - pilot:runs/**
 - pilot:context/**
-- method:skills/ce-intent-grill/**
 - method:skills/ce-plan-draft/**
-- method:skills/ce-plan-revise/**
 - method:skills/session-handoff/**
 - method:skills/uo-query/**
 write_scopes:
-- pilot:runs/**/actions/intent_grill/parts/**
-- pilot:runs/**/actions/intent_grill/scratch/**
-- pilot:runs/**/actions/intent_grill/staging.md
 - pilot:runs/**/actions/plan_draft/**
 - pilot:runs/**/actions/plan_revise/**
 - pilot:ce/plan/**

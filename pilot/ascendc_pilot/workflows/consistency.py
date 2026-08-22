@@ -15,8 +15,6 @@ _PRECONDITION_CONTRACTS = frozenset(
         "plan-precheck-v1",
         "solve-precheck-v1",
         "ce-kb-check-v1",
-        "intent-grill-v1",
-        "ce-plan-grilled-v1",
         "ce-plan-confirmed-v1",
         "apply-gate-v1",
         "apply-patch-guard-v1",

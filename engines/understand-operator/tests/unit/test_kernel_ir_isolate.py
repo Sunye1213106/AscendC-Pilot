@@ -13,10 +13,10 @@ from uo_init.kernel_ir import (
 )
 
 
-def test_kernel_ir_isolate_defaults_to_process_on_windows(monkeypatch):
+def test_kernel_ir_isolate_opt_in_only(monkeypatch):
     monkeypatch.delenv("UO_KERNEL_IR_ISOLATE", raising=False)
     monkeypatch.setattr("os.name", "nt")
-    assert kernel_ir_isolate() is True
+    assert kernel_ir_isolate() is False
     monkeypatch.setenv("UO_KERNEL_IR_ISOLATE", "thread")
     assert kernel_ir_isolate() is False
     monkeypatch.setenv("UO_KERNEL_IR_ISOLATE", "process")
@@ -24,7 +24,14 @@ def test_kernel_ir_isolate_defaults_to_process_on_windows(monkeypatch):
     assert kernel_ir_isolate() is True
 
 
-def test_kernel_ir_isolate_defaults_to_thread_on_posix(monkeypatch):
+def test_host_ir_workers_default_serial(monkeypatch):
+    from uo_init.host_ir import _host_ir_workers
+
+    monkeypatch.delenv("UO_HOST_IR_WORKERS", raising=False)
+    assert _host_ir_workers(8) == 1
+    monkeypatch.setenv("UO_HOST_IR_WORKERS", "4")
+    assert _host_ir_workers(8) == 4
+    assert _host_ir_workers(2) == 2
     monkeypatch.delenv("UO_KERNEL_IR_ISOLATE", raising=False)
     monkeypatch.setattr("os.name", "posix")
     assert kernel_ir_isolate() is False

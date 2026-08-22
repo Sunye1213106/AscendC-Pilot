@@ -42,8 +42,20 @@
 - 若命题来自运行观测（REWRITE/REFUSE），证明须解释该观测：走了哪条入口、为何改写或拒绝
 - 禁止把构造器先验拒采写成源码不可达
 
+## 维值 / 组合命题
+
+先用 cover 决定层，再关义务：
+
+- domain：DECL / `declared_coverage` 是否包含被禁值
+- template：`Dim=<维>` 的 `product_coverage`；组合看 `matching_block_count`。须 `coverage_checked`
+- host：赋值函数（不是 packing 那一行）+ early return / `GRAPH_FAILED` + 无后续覆盖 + 替代路径。packing 只证明「Key 槽位读哪个字段」
+- kernel：模板实参 / `if constexpr`
+- full：host 写出且 template 接纳
+
+组合 cover>0 时，template 义务不得写成「不存在」。漏空 tensor、PREFIX、layout 回写 → 替代路径未关。
+
 ## 完整性
 
 下列用语依赖完整性：全部、唯一、从不、没有其他、必然、不可能、不可达。
 
-完整性不足时：继续关闭缺口，或整体 `INSUFFICIENT`。
+维值列表看 `dim_coverage` / `completeness=coverage_checked`。完整性不足时：继续关闭缺口，或整体 `INSUFFICIENT`。

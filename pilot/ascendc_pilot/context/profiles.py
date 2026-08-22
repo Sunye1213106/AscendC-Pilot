@@ -117,7 +117,7 @@ PROFILES: dict[str, ContextProfile] = {
     ),
     "tg-solve-analyze-round": ContextProfile(
         id="tg-solve-analyze-round",
-        description="Write per-case worklog: scene, construction, narrowing, lemmas.",
+        description="Split expected vs unexpected Replay, grow R, derive lemmas, sync worklog.",
         query_slices=(
             QuerySlice(method="neighbors", seed_from="open_keys", limit=8),
         ),
@@ -137,28 +137,14 @@ PROFILES: dict[str, ContextProfile] = {
         query_slices=(),
         token_budget=800,
     ),
-    "ce-plan-intent-grill": ContextProfile(
-        id="ce-plan-intent-grill",
-        description="Grill a requirement into in_scope / out_of_scope / acceptance before writing the plan.",
-        query_slices=(
-            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
-        ),
-        token_budget=3500,
-    ),
-    "ce-plan-grill-confirm": ContextProfile(
-        id="ce-plan-grill-confirm",
-        description="Host-owned confirm that the grilled intent is closed enough to write {slug}_plan.md.",
-        query_slices=(),
-        token_budget=800,
-    ),
     "ce-plan-draft": ContextProfile(
         id="ce-plan-draft",
-        description="Write ce/plan/{slug}_plan.md: analysis, plan, todos, test section.",
+        description="Grill while writing ce/plan/{slug}_plan.md: analysis, todos, test section.",
         query_slices=(
-            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=6),
+            QuerySlice(method="neighbors", seed_from="unresolved_blockers", limit=8),
             QuerySlice(method="constraints_for", seed_from="unresolved_blockers", limit=8),
         ),
-        token_budget=4000,
+        token_budget=4500,
     ),
     "ce-plan-human-confirm": ContextProfile(
         id="ce-plan-human-confirm",

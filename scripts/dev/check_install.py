@@ -79,19 +79,24 @@ def check_python(reporter: Reporter) -> None:
     )
 
 
-def check_native_frontend_source(reporter: Reporter) -> None:
-    src = ROOT / "engines" / "understand-operator" / "native" / "uo_frontend" / "CMakeLists.txt"
+def check_no_stale_native_extractor(reporter: Reporter) -> None:
+    src = ROOT / "engines" / "understand-operator" / "native" / "uo_frontend"
     reporter.add(
-        "native uo_frontend source",
-        src.is_file(),
-        str(src) if src.is_file() else "missing; installer must fail-fast if this path is absent",
+        "no native uo_frontend",
+        not src.exists(),
+        "extract uses clang_walk.py"
+        if not src.exists()
+        else f"stale path still present: {src}",
     )
     sh = (ROOT / "install.sh").read_text(encoding="utf-8")
     ps1 = (ROOT / "install.ps1").read_text(encoding="utf-8")
-    ok_sh = "native/uo_frontend" in sh and "native/uo_walk" not in sh
-    ok_ps1 = ("native\\uo_frontend" in ps1 or "native/uo_frontend" in ps1.replace("\\", "/")) and "uo_walk" not in ps1
-    reporter.add("install.sh native target", ok_sh, "uo_frontend" if ok_sh else "stale uo_walk path")
-    reporter.add("install.ps1 native target", ok_ps1, "uo_frontend" if ok_ps1 else "stale uo_walk path")
+    sh_norm = sh.replace("\\", "/")
+    ps1_norm = ps1.replace("\\", "/")
+    stale = ("native/uo_frontend", "native/uo_walk")
+    ok_sh = not any(s in sh_norm for s in stale)
+    ok_ps1 = not any(s in ps1_norm for s in stale)
+    reporter.add("install.sh native target", ok_sh, "python clang_walk only")
+    reporter.add("install.ps1 native target", ok_ps1, "python clang_walk only")
 
 
 def check_base(reporter: Reporter) -> None:
@@ -111,7 +116,7 @@ def check_base(reporter: Reporter) -> None:
     ):
         check_import(reporter, package, module)
     check_tool(reporter, "acp", required=True)
-    check_native_frontend_source(reporter)
+    check_no_stale_native_extractor(reporter)
 
 
 def check_uo(reporter: Reporter) -> None:

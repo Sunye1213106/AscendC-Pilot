@@ -1,0 +1,237 @@
+{
+  "FAG": {
+    "queries": {
+      "index": {
+        "elapsed_s": 0.057,
+        "shape": "index",
+        "ok": true,
+        "count": 3,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": [
+          "DTemplateNum",
+          "DeterType",
+          "InputDType",
+          "IsAttenMask",
+          "IsBn2MultiBlk",
+          "IsDNoEqual",
+          "IsDrop",
+          "IsEmptyTensor",
+          "IsNEqual",
+          "IsNzOut",
+          "IsPse",
+          "IsRegbase",
+          "IsRope",
+          "IsTnd",
+          "IsTndSwizzle",
+          "OutDType",
+          "S1TemplateNum",
+          "S2TemplateNum",
+          "SplitAxis"
+        ],
+        "hint": "Coverage list: Dim=DTemplateNum. Combo filter: DTemplateNum=0 (Name=Value). One identifier for a name card. --file --line only after copying file:line from a card.",
+        "phases": [
+          {
+            "pipe": "pipeBase",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 63,
+            "phase": "1"
+          },
+          {
+            "pipe": "pipePost",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 94,
+            "phase": "2"
+          },
+          {
+            "pipe": "pipeIn",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 213,
+            "phase": "3"
+          }
+        ],
+        "cards": [
+          {
+            "kind": "1",
+            "name": "pipeBase",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 63,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "2",
+            "name": "pipePost",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 94,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "3",
+            "name": "pipeIn",
+            "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+            "line": 213,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      },
+      "IsTnd=1": {
+        "elapsed_s": 1.558,
+        "shape": "cover",
+        "ok": true,
+        "count": 38,
+        "matching_block_count": 38,
+        "dim_coverage": {
+          "IsEmptyTensor": [
+            "0"
+          ],
+          "SplitAxis": [
+            "0",
+            "1",
+            "5"
+          ],
+          "InputDType": [
+            "1",
+            "2",
+            "3"
+          ],
+          "IsTnd": [
+            "1"
+          ],
+          "S1TemplateNum": [
+            "128",
+            "64"
+          ],
+          "S2TemplateNum": [
+            "128"
+          ],
+          "DeterType": [
+            "0",
+            "1",
+            "2",
+            "3",
+            "4"
+          ],
+          "IsNEqual": [
+            "0",
+            "1"
+          ],
+          "IsBn2MultiBlk": [
+            "0",
+            "1"
+          ],
+          "IsRope": [
+            "0",
+            "1"
+          ],
+          "OutDType": [
+            "1",
+            "2",
+            "3"
+          ],
+          "IsNzOut": [
+            "0",
+            "1"
+          ],
+          "IsTndSwizzle": [
+            "0",
+            "1"
+          ],
+          "IsRegbase": [
+            "1"
+          ],
+          "IsDrop": [
+            "0",
+            "1"
+          ],
+          "IsPse": [
+            "0",
+            "1"
+          ],
+          "IsAttenMask": [
+            "0",
+            "1"
+          ],
+          "DTemplateNum": [
+            "128",
+            "192",
+            "256",
+            "64",
+            "768"
+          ],
+          "IsDNoEqual": [
+            "0",
+            "1"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      },
+      "Dim=IsTnd": {
+        "elapsed_s": 1.476,
+        "shape": "cover",
+        "ok": true,
+        "count": 2,
+        "matching_block_count": 0,
+        "dim_coverage": {
+          "IsTnd": [
+            "0",
+            "1"
+          ]
+        },
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": []
+      },
+      "s1Inner": {
+        "elapsed_s": 0.04,
+        "shape": "name",
+        "ok": true,
+        "count": 3,
+        "matching_block_count": null,
+        "dim_coverage": null,
+        "dim_names": null,
+        "hint": null,
+        "phases": [],
+        "cards": [
+          {
+            "kind": "TILING_FIELD",
+            "name": "s1Inner",
+            "file": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h",
+            "line": 197,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "VARIABLE",
+            "name": "s1Inner",
+            "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 483,
+            "readers": 0,
+            "reads_edges": 0
+          },
+          {
+            "kind": "PREDICATE",
+            "name": "s1Inner",
+            "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 491,
+            "readers": 0,
+            "reads_edges": 0
+          }
+        ]
+      }
+    },
+    "verdict": {
+      "index_hint": "improve",
+      "IsTnd=1": "improve",
+      "Dim=IsTnd": "keep",
+      "pipe_not_225": "improve",
+      "s1Inner_readers": "keep"
+    }
+  }
+}

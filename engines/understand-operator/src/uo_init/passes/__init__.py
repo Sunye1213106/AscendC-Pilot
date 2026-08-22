@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
 """Deterministic CodeMap passes.
 
-Pass order (canonical):
-  BuildVariant → Clang → Reachability → CoreCodeMap → CompileTime →
-  Template → Dataflow → Tiling → Kernel → HostKernelBind
+Pass order (canonical, see manager.ANALYZE_PASSES):
+  Reachability → CoreCodeMap → Macro → TplSchema → Dataflow → Kernel → HostKernelBind
+
+Current-source enrichment (source_contract, tiling_*, kernel_root_trace) runs
+in compile_codemap after this structural list.
 """
 
 from uo_init.passes.manager import PassManager, run_analyze_passes

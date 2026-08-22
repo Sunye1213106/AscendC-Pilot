@@ -143,6 +143,8 @@ def materialize_method_bundle(
     current_skill_id: str = "",
     method_filename: str = "method.md",
     refs_dirname: str = "refs",
+    refs_ns: str = "",
+    copy_declared_refs: bool = True,
 ) -> dict[str, Any]:
     """Write session method file from the current Action Skill.
 
@@ -150,6 +152,10 @@ def materialize_method_bundle(
     ``(owner_skill_id, relative_path)`` — never a basename.
     ``extra_ref_paths`` must be Host ``conditional_refs`` (qualified paths) and
     must not repeat SKILL-declared refs.
+    ``refs_ns`` optionally namespaces copied files under ``refs/<ns>/`` so
+    parallel fanout slices in one session do not share a folder.
+    ``copy_declared_refs=False`` keeps pointer text but does not copy those
+    files (fanout parent routers: slices load their own ``method_ref``).
     """
     sdir = Path(session_dir)
     sdir.mkdir(parents=True, exist_ok=True)
@@ -187,6 +193,8 @@ def materialize_method_bundle(
         current_skill_id=owner_now,
     )
     unauthorized.extend(scoped_unauth)
+    if not copy_declared_refs:
+        requested = []
 
     skill_declared = set(requested)
     for raw in extra_ref_paths or []:
@@ -222,12 +230,13 @@ def materialize_method_bundle(
             if posix not in missing:
                 missing.append(posix)
             continue
-        dest = refs_dir / owner / rel
+        dest_owner = str(refs_ns or owner).strip() or owner
+        dest = refs_dir / dest_owner / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dest)
         prefix = (refs_dirname or "refs").replace("\\", "/").strip("/")
-        copied.append(f"{prefix}/{owner}/{rel}")
-        indexed.append(f"references/{owner}/{rel}")
+        copied.append(f"{prefix}/{dest_owner}/{rel}")
+        indexed.append(f"references/{dest_owner}/{rel}")
 
     method_path = sdir / (method_filename or "method.md")
     if copied:

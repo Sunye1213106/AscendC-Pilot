@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
 _LOCK = threading.Lock()
-_CACHE: dict[str, dict[str, Any]] = {}
+_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_MAX_CACHED_PRODUCTS = 1
 
 
 def clear_legal_key_cache(path: str | Path | None = None) -> None:
@@ -92,6 +94,15 @@ def expand_legal_key_rows(blob: Any) -> list[dict[str, Any]]:
     return out
 
 
+def _store_cache(key: str, entry: dict[str, Any]) -> dict[str, Any]:
+    with _LOCK:
+        _CACHE[key] = entry
+        _CACHE.move_to_end(key)
+        while len(_CACHE) > _MAX_CACHED_PRODUCTS:
+            _CACHE.popitem(last=False)
+    return entry
+
+
 def _load_rows_from_blob(blob: Any) -> list[dict[str, Any]]:
     return expand_legal_key_rows(blob)
 
@@ -155,6 +166,7 @@ def legal_key_index_cache(product: str | Path) -> dict[str, Any]:
     with _LOCK:
         hit = _CACHE.get(key)
         if hit and hit.get("mtime_ns") == mtime_ns:
+            _CACHE.move_to_end(key)
             return hit
 
     from uo_init.store.reader import load_view_blob_checked
@@ -163,6 +175,7 @@ def legal_key_index_cache(product: str | Path) -> dict[str, Any]:
         path,
         "tiling/legal_key_index.jsonl",
         fallback_canonical=False,
+        expand_legal_keys=False,
     )
     if not checked.get("ok"):
         entry = {
@@ -173,32 +186,41 @@ def legal_key_index_cache(product: str | Path) -> dict[str, Any]:
             "by_dim": {},
             "freshness": checked.get("check") or {},
         }
-        with _LOCK:
-            _CACHE[key] = entry
-        return entry
+        return _store_cache(key, entry)
 
     blob = checked.get("view")
-    rows = _load_rows_from_blob(blob)
+    compact = compact_legal_key_blob(blob if isinstance(blob, dict) else {"rows": blob})
+    dim_order = [str(n) for n in (compact.get("dim_order") or [])] if isinstance(compact, dict) else []
+    raw_rows = compact.get("rows") if isinstance(compact, dict) else []
+    if not isinstance(raw_rows, list):
+        raw_rows = []
     by_dim: dict[str, list[int]] = {}
-    for i, row in enumerate(rows):
-        dims = row.get("dims") or row.get("dimensions") or row.get("key") or {}
-        if isinstance(dims, dict):
-            for dname, dval in dims.items():
-                by_dim.setdefault(f"{dname}={dval}", []).append(i)
-        for k in ("key_id", "id", "packed"):
-            if k in row:
-                by_dim.setdefault(f"{k}={row[k]}", []).append(i)
+    for i, row in enumerate(raw_rows):
+        if isinstance(row, dict):
+            dims = row.get("dims") or row.get("dimensions") or {}
+            if isinstance(dims, dict):
+                for dname, dval in dims.items():
+                    by_dim.setdefault(f"{dname}={dval}", []).append(i)
+            for k in ("key_id", "id", "packed"):
+                if k in row:
+                    by_dim.setdefault(f"{k}={row[k]}", []).append(i)
+            continue
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        values = row[3] if isinstance(row[3], list) else []
+        for j, val in enumerate(values):
+            if j < len(dim_order):
+                by_dim.setdefault(f"{dim_order[j]}={val}", []).append(i)
     entry = {
         "ok": True,
         "reason_code": "",
         "mtime_ns": mtime_ns,
-        "rows": rows,
+        "rows": raw_rows,
+        "dim_order": dim_order,
         "by_dim": by_dim,
         "freshness": checked.get("check") or {},
     }
-    with _LOCK:
-        _CACHE[key] = entry
-    return entry
+    return _store_cache(key, entry)
 
 
 def _indexed_row_ids(
@@ -206,9 +228,14 @@ def _indexed_row_ids(
     filters: dict[str, str],
 ) -> list[int]:
     """Intersect inverted-index postings for all requested dimensions."""
+    from uo_init.tpl_dsl import bool_value_aliases
+
     postings: list[set[int]] = []
     for name, value in filters.items():
-        postings.append(set(by_dim.get(f"{name}={value}") or []))
+        bucket: set[int] = set(by_dim.get(f"{name}={value}") or [])
+        for alt in bool_value_aliases(value):
+            bucket.update(by_dim.get(f"{name}={alt}") or [])
+        postings.append(bucket)
     if not postings:
         return []
     hits = postings[0]
@@ -228,6 +255,29 @@ def _sel_group_ids(rows: list[dict[str, Any]]) -> list[str]:
             continue
         seen.add(gid)
         out.append(gid)
+        if len(out) >= 32:
+            break
+    return out
+
+
+def _sel_group_ids_compact(raw_rows: list[Any], idxs: list[int], dim_order: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for i in idxs:
+        if i < 0 or i >= len(raw_rows):
+            continue
+        row = raw_rows[i]
+        gid = ""
+        if isinstance(row, dict):
+            gid = str(row.get("sel_group_id") or "").strip()
+        elif isinstance(row, (list, tuple)) and len(row) > 4:
+            gid = str(row[4] or "").strip()
+        if not gid or gid in seen:
+            continue
+        seen.add(gid)
+        out.append(gid)
+        if len(out) >= 32:
+            break
     return out
 
 
@@ -262,8 +312,9 @@ def _legal_key_nearby(
             for key, posting in by_dim.items():
                 if not str(key).startswith(prefix):
                     continue
-                if remaining_ids & set(posting):
-                    values.append(str(key)[len(prefix) :])
+                if remaining_ids.isdisjoint(posting):
+                    continue
+                values.append(str(key)[len(prefix) :])
             values = sorted(set(values))
         else:
             total = 0
@@ -303,8 +354,8 @@ def query_legal_keys(
             "freshness": cache.get("freshness") or {},
         }
 
-    all_rows: list[dict[str, Any]] = list(cache.get("rows") or [])
-    rows = all_rows
+    raw_rows = cache.get("rows") or []
+    dim_order = [str(n) for n in (cache.get("dim_order") or [])]
     needle = str(pattern or "").strip()
     structured = {
         str(k).strip(): str(v).strip()
@@ -318,28 +369,52 @@ def query_legal_keys(
     if not structured:
         structured.update(_pattern_filters(needle))
 
+    n_raw = len(raw_rows) if isinstance(raw_rows, list) else 0
     if structured:
         idxs = _indexed_row_ids(dict(cache.get("by_dim") or {}), structured)
-        rows = [all_rows[i] for i in idxs if 0 <= i < len(all_rows)]
     elif needle:
-        # Free-text is compatibility only; `Dim=V[,Other=V]` reaches the index.
         low = needle.lower()
-        filtered: list[dict[str, Any]] = []
-        for row in rows:
-            hay = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str).lower()
-            if low in hay:
-                filtered.append(row)
-        rows = filtered
+        idxs = [
+            i
+            for i, row in enumerate(raw_rows)
+            if low in json.dumps(row, ensure_ascii=False, default=str).lower()
+        ]
+    else:
+        idxs = []
+        total_unfiltered = n_raw
+        start = max(0, int(offset or 0))
+        stop = start + int(limit) if limit and limit > 0 else n_raw
+        page_rows = list(raw_rows[start:stop]) if isinstance(raw_rows, list) else []
+        rows = expand_legal_key_rows({"dim_order": dim_order, "rows": page_rows})
+        payload = {
+            "ok": True,
+            "mode": "legal_key",
+            "pattern": needle,
+            "filters": structured,
+            "total_matched": total_unfiltered,
+            "count": len(rows),
+            "offset": int(offset or 0),
+            "limit": int(limit or 0),
+            "rows": rows,
+            "sel_group_ids": [],
+            "cached": True,
+            "indexed": False,
+        }
+        from uo_init.query.hints import attach_query_hints
 
-    total = len(rows)
-    sel_group_ids = _sel_group_ids(rows) if structured else []
+        attach_query_hints(payload, needle, count=total_unfiltered)
+        return payload
+
+    total = len(idxs)
+    sel_group_ids = _sel_group_ids_compact(raw_rows, idxs, dim_order) if structured else []
     nearby: list[dict[str, Any]] = []
     if structured and total == 0:
         nearby = _legal_key_nearby(dict(cache.get("by_dim") or {}), structured)
-    if offset:
-        rows = rows[offset:]
-    if limit and limit > 0:
-        rows = rows[: int(limit)]
+    start = max(0, int(offset or 0))
+    stop = start + int(limit) if limit and limit > 0 else None
+    page_idxs = idxs[start:stop]
+    page_raw = [raw_rows[i] for i in page_idxs if 0 <= i < n_raw]
+    rows = expand_legal_key_rows({"dim_order": dim_order, "rows": page_raw})
     from uo_init.query.hints import attach_query_hints
 
     payload = {

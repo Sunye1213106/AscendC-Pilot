@@ -683,31 +683,6 @@ if ($Platform -eq "opencode") {
 }
 Write-Host "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
 
-# optional native frontend (best-effort cmake/libclang). Missing source is a bug.
-# Skip on fast refresh; Python path is enough.
-if (-not $FastInstall) {
-  $uoFrontendSrc = Join-Path $Dest "engines\understand-operator\native\uo_frontend"
-  $uoFrontendCmake = Join-Path $uoFrontendSrc "CMakeLists.txt"
-  if (-not (Test-Path $uoFrontendCmake)) {
-    throw "native uo_frontend source missing at $uoFrontendSrc"
-  }
-  $uoFrontendBuild = Join-Path $uoFrontendSrc "build"
-  if (Get-Command cmake -ErrorAction SilentlyContinue) {
-    New-Item -ItemType Directory -Force -Path $uoFrontendBuild | Out-Null
-    cmake -S $uoFrontendSrc -B $uoFrontendBuild
-    if ($LASTEXITCODE -eq 0) {
-      cmake --build $uoFrontendBuild
-      if ($LASTEXITCODE -eq 0) {
-        Write-Host "Built optional uo_frontend → $uoFrontendBuild"
-      } else {
-        Write-Host "uo_frontend optional build skipped (cmake/libclang)"
-      }
-    } else {
-      Write-Host "uo_frontend optional build skipped (cmake/libclang)"
-    }
-  }
-}
-
 # cmd/mklink often leaves LASTEXITCODE=1/2 after a swallowed fallback copy.
 # Without an explicit success exit, refresh-opencode.ps1 treats install as failed.
 exit 0

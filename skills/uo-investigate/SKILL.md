@@ -1,6 +1,6 @@
 ---
 name: uo-investigate
-description: 调查 CodeMap 里留下的 unresolved residual。执行 /uo-investigate 时使用。
+description: 调查 CodeMap 里留下的 unresolved residual。问某个 gap 为何未闭合、或要指出引擎缺什么时使用。
 ---
 
 # 调查缺口

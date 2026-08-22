@@ -126,11 +126,19 @@ def complete_tiling_fields(
             if close_pos < 0:
                 continue
             body = text[open_pos + 1:close_pos]
-            body_line = _line(text, open_pos + 1)
             depth = 0
-            for offset, raw_line in enumerate(body.splitlines()):
-                stripped = re.sub(r"//.*", "", raw_line).strip()
-                if depth == 0 and stripped and "(" not in stripped and not stripped.endswith(":"):
+            abs_off = 0
+            for raw_line in body.splitlines(keepends=True):
+                line = raw_line.rstrip("\r\n")
+                field_line = _line(text, open_pos + 1 + abs_off)
+                stripped = re.sub(r"//.*", "", line).strip()
+                if (
+                    depth == 0
+                    and stripped
+                    and "(" not in stripped
+                    and not stripped.endswith(":")
+                    and not stripped.startswith(("using ", "typedef ", "template ", "static_assert"))
+                ):
                     mm = _MEMBER_RE.match(stripped)
                     if mm:
                         cpp_type = " ".join(mm.group("type").split())
@@ -157,7 +165,7 @@ def complete_tiling_fields(
                                     "provenance": "source_tiling_data_member_complete",
                                 },
                                 file=_src_rel(root, path),
-                                line=body_line + offset,
+                                line=field_line,
                                 status="confirmed",
                             )
                             codemap.link(
@@ -184,11 +192,12 @@ def complete_tiling_fields(
                             field.attrs["default_initializer"] = initializer
                             field.attrs["default_initializer_site"] = {
                                 "file": _src_rel(root, path),
-                                "line": body_line + offset,
+                                "line": field_line,
                             }
                             initializers += 1
-                depth += raw_line.count("{") - raw_line.count("}")
+                depth += line.count("{") - line.count("}")
                 depth = max(0, depth)
+                abs_off += len(raw_line)
 
     codemap.meta["source_tiling_data_complete"] = {
         "added_fields": added,

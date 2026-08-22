@@ -112,6 +112,84 @@ def _ingest_host_checks(cm: "CodeMap", host_ir: Any, ordinals: dict[tuple[str, s
         )
 
 
+def _ingest_host_write_events(
+    cm: "CodeMap",
+    events: Iterable[Any],
+    ordinals: dict[tuple[str, str, str], int],
+) -> None:
+    """Upsert field/local writes with WRITES + GUARDED_BY. Skip evidence-poor rows."""
+    from uo_init.ids import branch_id
+
+    try:
+        from uo_init.clang_walk import RETURN_SLOT
+    except Exception:  # noqa: BLE001
+        RETURN_SLOT = "__return__"
+
+    for ev in events or []:
+        path = str(getattr(ev, "path", "") or "").replace("->", ".")
+        if not path or path == RETURN_SLOT:
+            continue
+        ev_file = str(getattr(ev, "file", "") or "")
+        ev_line = int(getattr(ev, "line", 0) or 0)
+        rhs = str(getattr(ev, "rhs", "") or "")
+        if not ev_file or ev_line <= 0 or not rhs.strip():
+            continue
+        fn_name = str(getattr(ev, "function", "") or "")
+        guards = list((ev.guards() if hasattr(ev, "guards") else []) or [])
+        kind = EntityKind.FIELD if ("." in path) else EntityKind.VARIABLE
+        field_attrs: dict[str, Any] = {
+            "layer": "host",
+            "rhs": rhs,
+        }
+        if guards and (not ev_file or ev_line <= 0):
+            field_attrs["guards"] = [str(g)[:120] for g in guards]
+        target = cm.upsert(
+            kind,
+            path,
+            attrs=field_attrs,
+            file=ev_file,
+            line=ev_line,
+        )
+        append_write_site(target.attrs, file=ev_file, line=ev_line, rhs=rhs)
+        if fn_name:
+            fn = cm.upsert(EntityKind.FUNCTION, fn_name, attrs={"layer": "host"})
+            rel = cm.link(RelationKind.WRITES, fn.id, target.id)
+            append_write_site(rel.attrs, file=ev_file, line=ev_line, rhs=rhs)
+            sites = rel.attrs.get("write_sites")
+            if isinstance(sites, list) and sites:
+                rel.attrs["sites"] = sites
+        for guard in guards:
+            gtext = str(guard or "").strip()
+            if not gtext:
+                continue
+            okey = (ev_file, fn_name, gtext)
+            ordinal = ordinals.get(okey, 0)
+            ordinals[okey] = ordinal + 1
+            eid = branch_id(
+                side="host",
+                file=ev_file,
+                function=fn_name,
+                guard=gtext,
+                ordinal=ordinal,
+            )
+            br = cm.upsert(
+                EntityKind.BRANCH,
+                gtext[:120],
+                eid=eid,
+                attrs={
+                    "layer": "host",
+                    "predicate": gtext,
+                    "branch_kind": "host_guard",
+                    "function": fn_name,
+                },
+                file=ev_file,
+                line=ev_line,
+                status="confirmed",
+            )
+            cm.link(RelationKind.GUARDED_BY, target.id, br.id)
+            cm.link(RelationKind.CONTROLS, br.id, target.id)
+
+
 # Legacy KB kind → CodeMap entity kind.
 _KB_KIND_MAP: dict[str, EntityKind] = {
     "Variable": EntityKind.VARIABLE,
@@ -372,20 +450,7 @@ class CodeMap:
         if entity.name and not existing.name:
             existing.name = entity.name
         self._merge_definition_sites(existing, entity)
-        if entity.file and not existing.file:
-            existing.file = entity.file
-            existing.line_start = entity.line_start
-            existing.line_end = entity.line_end
-        elif entity.file and existing.file == entity.file:
-            kind_name = existing.kind.value if isinstance(existing.kind, EntityKind) else str(existing.kind)
-            if kind_name in {EntityKind.FUNCTION.value, EntityKind.METHOD.value}:
-                if int(existing.line_start or 0) <= 0 and int(entity.line_start or 0) > 0:
-                    existing.line_start = entity.line_start
-                if int(entity.line_end or 0) > int(existing.line_end or 0):
-                    existing.line_end = entity.line_end
-            elif kind_name not in {EntityKind.BRANCH.value, EntityKind.OPERATION.value}:
-                if int(entity.line_end or 0) > int(existing.line_end or 0):
-                    existing.line_end = entity.line_end
+        self._widen_locus(existing, entity)
         self._merge_write_sites(existing, entity)
         settled = str(existing.attrs.get("root_status") or "")
         if settled in {"REACHED", "PROJECT", "BUILTIN"}:
@@ -433,6 +498,57 @@ class CodeMap:
                     _add(str(site.get("file") or ""), int(site.get("line") or site.get("line_start") or 0))
         if len(sites) > 1:
             existing.attrs["definition_sites"] = sites
+
+    @staticmethod
+    def _widen_locus(existing: Entity, incoming: Entity) -> None:
+        """Definition span only expands. Point write/call sites do not relocate it."""
+        kind = existing.kind.value if isinstance(existing.kind, EntityKind) else str(existing.kind)
+        inc_start = int(incoming.line_start or 0)
+        inc_end = int(incoming.line_end or 0)
+        if inc_end < inc_start:
+            inc_end = inc_start
+        inc_span = (inc_end - inc_start) if inc_start > 0 else 0
+        inc_point = inc_start > 0 and inc_end <= inc_start
+        ex_start = int(existing.line_start or 0)
+        ex_end = int(existing.line_end or 0)
+        ex_span = (ex_end - ex_start) if ex_start > 0 else 0
+        def_kinds = {
+            EntityKind.FUNCTION.value,
+            EntityKind.METHOD.value,
+            EntityKind.KERNEL.value,
+        }
+        if kind in def_kinds:
+            if inc_point:
+                if not existing.file and incoming.file:
+                    existing.file = incoming.file
+                    existing.line_start = inc_start
+                    existing.line_end = inc_end
+                return
+            if inc_span > ex_span:
+                if incoming.file:
+                    existing.file = incoming.file
+                existing.line_start = inc_start
+                existing.line_end = inc_end
+                return
+            if incoming.file and existing.file == incoming.file:
+                if ex_start <= 0 and inc_start > 0:
+                    existing.line_start = inc_start
+                if inc_end > ex_end:
+                    existing.line_end = inc_end
+            elif not existing.file and incoming.file:
+                existing.file = incoming.file
+                existing.line_start = inc_start
+                existing.line_end = inc_end
+            return
+        if incoming.file and not existing.file:
+            existing.file = incoming.file
+            existing.line_start = inc_start
+            existing.line_end = inc_end
+            return
+        if incoming.file and existing.file == incoming.file:
+            if kind not in {EntityKind.BRANCH.value, EntityKind.OPERATION.value}:
+                if int(incoming.line_end or 0) > int(existing.line_end or 0):
+                    existing.line_end = incoming.line_end
 
     @staticmethod
     def _merge_write_sites(existing: Entity, incoming: Entity) -> None:
@@ -823,12 +939,15 @@ class CodeMap:
             cm.architecture = architecture
 
         for name, summary in (getattr(host_ir, "summaries", None) or {}).items():
+            start = int(getattr(summary, "line", 0) or 0)
+            end = int(getattr(summary, "line_end", 0) or 0)
             fn = cm.upsert(
                 EntityKind.FUNCTION,
                 str(name),
                 attrs={"layer": "host"},
                 file=str(getattr(summary, "file", "") or ""),
-                line=int(getattr(summary, "line", 0) or 0),
+                line=start,
+                line_end=end if end > start else None,
             )
             for callee, _args in getattr(summary, "calls", None) or []:
                 other = cm.upsert(EntityKind.FUNCTION, str(callee), attrs={"layer": "host"})
@@ -840,90 +959,17 @@ class CodeMap:
                 var_e = cm.upsert(EntityKind.VARIABLE, str(r), attrs={"layer": "host"})
                 cm.link(RelationKind.READS, fn.id, var_e.id)
 
-        from uo_init.ids import branch_id
-
         host_branch_ordinals: dict[tuple[str, str, str], int] = {}
-        for ev in getattr(host_ir, "writes", None) or []:
-            path = str(getattr(ev, "path", "") or "")
-            if not path:
-                continue
-            ev_file = str(getattr(ev, "file", "") or "")
-            ev_line = int(getattr(ev, "line", 0) or 0)
-            fn_name = str(getattr(ev, "function", "") or "")
-            guards = list((ev.guards() if hasattr(ev, "guards") else []) or [])
-            field_attrs: dict[str, Any] = {
-                "layer": "host",
-                "rhs": getattr(ev, "rhs", ""),
-            }
-            if guards and (not ev_file or ev_line <= 0):
-                # Keep short guard text on the write site when we cannot mint a
-                # located Host BRANCH (span is required for test/dev locate).
-                field_attrs["guards"] = [str(g)[:120] for g in guards]
-            field_e = cm.upsert(
-                EntityKind.FIELD,
-                path,
-                attrs=field_attrs,
-                file=ev_file,
-                line=ev_line,
-            )
-            append_write_site(
-                field_e.attrs, file=ev_file, line=ev_line, rhs=str(getattr(ev, "rhs", "") or "")
-            )
-            if fn_name:
-                fn = cm.upsert(
-                    EntityKind.FUNCTION,
-                    fn_name,
-                    attrs={"layer": "host"},
-                    file=ev_file,
-                    line=ev_line,
-                )
-                rel = cm.link(RelationKind.WRITES, fn.id, field_e.id)
-                append_write_site(
-                    rel.attrs, file=ev_file, line=ev_line, rhs=str(getattr(ev, "rhs", "") or "")
-                )
-                sites = rel.attrs.get("write_sites")
-                if isinstance(sites, list) and sites:
-                    rel.attrs["sites"] = sites
-            if not ev_file or ev_line <= 0:
-                continue
-            for guard in guards:
-                gtext = str(guard or "").strip()
-                if not gtext:
-                    continue
-                okey = (ev_file, fn_name, gtext)
-                ordinal = host_branch_ordinals.get(okey, 0)
-                host_branch_ordinals[okey] = ordinal + 1
-                eid = branch_id(
-                    side="host",
-                    file=ev_file,
-                    function=fn_name,
-                    guard=gtext,
-                    ordinal=ordinal,
-                )
-                br = cm.upsert(
-                    EntityKind.BRANCH,
-                    gtext[:120],
-                    eid=eid,
-                    attrs={
-                        "layer": "host",
-                        "predicate": gtext,
-                        "branch_kind": "host_guard",
-                        "function": fn_name,
-                    },
-                    file=ev_file,
-                    line=ev_line,
-                    status="confirmed",
-                )
-                cm.link(RelationKind.GUARDED_BY, field_e.id, br.id)
-                cm.link(RelationKind.CONTROLS, br.id, field_e.id)
+        _ingest_host_write_events(cm, getattr(host_ir, "writes", None) or [], host_branch_ordinals)
+        _ingest_host_write_events(
+            cm, getattr(host_ir, "local_writes", None) or [], host_branch_ordinals
+        )
 
         for site in getattr(host_ir, "call_sites", None) or []:
             caller = cm.upsert(
                 EntityKind.FUNCTION,
                 str(getattr(site, "caller", "") or ""),
                 attrs={"layer": "host"},
-                file=str(getattr(site, "file", "") or ""),
-                line=int(getattr(site, "line", 0) or 0),
             )
             callee = cm.upsert(
                 EntityKind.FUNCTION,
@@ -931,9 +977,17 @@ class CodeMap:
                 attrs={"layer": "host"},
             )
             if caller.name and callee.name:
-                cm.link(RelationKind.CALLS, caller.id, callee.id)
+                rel = cm.link(RelationKind.CALLS, caller.id, callee.id)
+                site_file = str(getattr(site, "file", "") or "")
+                site_line = int(getattr(site, "line", 0) or 0)
+                if site_file and site_line > 0:
+                    rel.attrs["file"] = site_file
+                    rel.attrs["line"] = site_line
 
         _ingest_host_checks(cm, host_ir, host_branch_ordinals)
+        from uo_init.passes.host_graph_status import enrich_host_graph_status
+
+        enrich_host_graph_status(cm, host_ir)
 
         cm.meta["host_backend"] = str(getattr(host_ir, "backend", "") or "")
         return cm

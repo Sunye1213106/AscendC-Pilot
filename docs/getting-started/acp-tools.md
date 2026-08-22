@@ -26,7 +26,7 @@ OpenCode 的 AscendC-Pilot 模式里有两个 Host 工具：`pilot_run` 和 `pil
 | `/uo-init`、`/uo-update`、`/tg-*`、`/ce-*`、`/uo-investigate` | `pilot_run(workflow=<id>)` | 手工串 `start` / `next` / `run-action auto` |
 | 简单查询（一个标识符或一种参数形态） | 插件 `pilot_cli`：`uo-query --project <算子绝对路径> …` | `pilot_run workflow=uo-query` |
 | 复杂查询（多个可独立查询的起始点） | 同一轮 `Task(agent=uo-query)`，子代用插件 `pilot_cli` | 主控自己把多路查完再假装委派 |
-| 缺 architecture、要列 `arch*` 选项 | 插件 `pilot_cli`：`scan-architectures --project <算子绝对路径>` | 在仓库根目录 Glob / 翻 cmake |
+| 缺 architecture、要列实现选项 | 插件 `pilot_cli`：`scan-architectures --project <算子绝对路径>`（有 `arch*` 则列出；没有则产物槽 `default`） | 在仓库根目录 Glob / 翻 cmake / 发明 arch35 |
 | `pilot_run` 失败、要看原因 | 插件 `pilot_cli`：`inspect-failure` / `status` / `next`（都要 `--project`） | `--help`、读 Pilot 源码、bash 管道 |
 | 环境修好后恢复 | 插件 `pilot_cli`：`retry-after-environment-fix --project <算子绝对路径>` | 直接开始 TG |
 | 证据窗 / 已 citation 文件内搜索 | 插件 `pilot_cli`：`inspect evidence-window`；`ro-search --pattern … --paths …` | 仓级 grep |
@@ -64,7 +64,7 @@ retry-after-environment-fix --project D:\ops\attention\flash_attention_score_gra
 | --- | --- |
 | `uo-query --project <abs> [--architecture arch]` | 形态见 code-access 不变量。整句 NL 会失败 |
 | `uo-query --project <abs> --status-only` | 只看产物是否存在 / 是否 fresh |
-| `scan-architectures --project <abs>` | 启动前列出 `arch*` 选项，供 AskQuestion |
+| `scan-architectures --project <abs>` | 启动前列出 `arch*` 实现选项；没有这些目录时返回产物槽 `default` |
 | `status --project <abs>` | 当前 workflow / run 状态 |
 | `inspect-failure --project <abs>` | `pilot_run` 或确定性 Action 失败后的失败卡 |
 | `retry-after-environment-fix --project <abs>` | 外部环境修好后恢复 `human_required` / `blocked` |
@@ -89,7 +89,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_ho
 | --- | --- |
 | `workflow` | 现有 slash id：`uo-init` / `uo-update` / `tg-init` / `tg-plan` / `tg-solve` / `ce-plan` / `ce-apply` / `ce-review` / `handoff` / `uo-investigate` 等。自然语言一次只填当前缺的那一步。**不要**填 `uo-query`，也不要用 `auto` 再解析原文 |
 | `project` | 空 project 时钉当前 OpenCode 打开目录作为 **clone 锚点**（Host directory），**不是**控制面根，也不是 `~/.cache/ascendc-pilot/sessions/auto`。有 PR URL 时 Workspace Manager 在打开目录下新建 clone，再 pin 到含 `op_host/` / `op_kernel/` 的算子包；`.ascendc-pilot` 只落在该算子工作目录。bash `git clone` 走 OpenCode ask，不要自己建 PR 仓 |
-| `architecture` | `uo-init` / `uo-update` 必填；从 `scan-architectures` 的选项里选，不要猜 |
+| `architecture` | `uo-init` / `uo-update` 必填产物槽。有 `arch*` 时从 `scan-architectures` 选项里选；没有这些目录时用 `default`（一套实现），不要猜 arch35 |
 | `intent` | 用户原话里的产品意图；不要编造 |
 | `test_script_root` | `/tg-init` **仅当**用户原文已给出算子仓外测试脚本绝对路径或 git URL 时传入。不要塞进 `intent`，不要把仓内 `tests/` 填进来代答，不要再问三项 |
 | `force_new` | 默认不要设。只有用户明确说删除重开时才为 true |
@@ -110,7 +110,7 @@ pilot_cli command=`uo-query --project <abs> [--architecture arch35] --file op_ho
 插件 pilot_cli：inspect-failure --project <abs>
 插件 pilot_cli：status --project <abs>
 插件 pilot_cli：retry-after-environment-fix --project <abs>
-缺 architecture：scan-architectures，然后 AskQuestion
+缺 architecture：scan-architectures（有 arch* 则 AskQuestion；没有则用 default）
 主控只读：Read / Glob / Get-ChildItem / ls / dir / pwd
 诊断：python scripts/dev/check_cann.py / check_env.py / python -m ascendc_pilot doctor / cann_extract.py --fixup
 不要：--help、读引擎脚本、Write / Task

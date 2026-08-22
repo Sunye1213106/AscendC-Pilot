@@ -6,7 +6,6 @@ from uo_init.diagnostics.audit import audit_codemap
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
-from uo_init.passes import compile_time
 from uo_init.passes.host_defuse import (
     _function_scopes,
     _identifier_refs,
@@ -14,6 +13,7 @@ from uo_init.passes.host_defuse import (
     trace_host_key_roots,
 )
 from uo_init.passes.host_tiling_key import bind_host_tiling_key_expressions
+from uo_init.passes.manager import ANALYZE_PASSES
 from uo_init.passes.symbol_identity import normalize_symbol
 
 
@@ -163,12 +163,11 @@ def test_function_scope_parser_does_not_name_control_statement_if() -> None:
     assert [scope.name for scope in scopes] == ["T::Run"]
 
 
-def test_compile_time_does_not_promote_uppercase_branch_spelling() -> None:
-    cm = CodeMap(op_name="toy", architecture="arch35")
-    br = cm.upsert(EntityKind.BRANCH, "x == BN2", attrs={"condition": "x == BN2"})
-    compile_time.run(cm)
-    assert not cm.by_name("BN2", kind=EntityKind.COMPILE_VAR)
-    assert not any(r.dst == br.id and r.kind_name() == RelationKind.CONTROLS.value for r in cm.relations.values())
+def test_analyze_passes_does_not_include_retired_compile_time() -> None:
+    names = [name for name, _ in ANALYZE_PASSES]
+    assert "compile_time" not in names
+    assert "template" not in names
+    assert "tiling" not in names
 
 
 def test_audit_rejects_branch_only_fake_key_root() -> None:

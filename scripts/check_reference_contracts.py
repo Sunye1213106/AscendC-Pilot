@@ -28,8 +28,22 @@ EN_LOAD_RE = re.compile(
 )
 FENCE_RE = re.compile(r"```.*?```", re.S)
 
-SIBLING_BAN = {
-    "bind-columns": (
+# Axis playbooks inside bind-init must not mix the other axis's field vocabulary.
+# Router SKILL.md and review.md name both axes on purpose.
+SIBLING_BAN_FILES = {
+    "bind-init/references/harness.md": (
+        r"api_arg",
+        r"script_meta",
+        r"domains\.operator",
+        r"column-binding",
+    ),
+    "bind-init/references/harness-edge-cases.md": (
+        r"api_arg",
+        r"script_meta",
+        r"domains\.operator",
+        r"column-binding",
+    ),
+    "bind-init/references/columns.md": (
         r"modes\.precision",
         r"modes\.perf",
         r"--golden-only",
@@ -38,11 +52,14 @@ SIBLING_BAN = {
         r"closure-safety",
         r"performance-testing",
     ),
-    "bind-harness": (
-        r"api_arg",
-        r"script_meta",
-        r"domains\.operator",
-        r"column-binding",
+    "bind-init/references/column-binding-edge-cases.md": (
+        r"modes\.precision",
+        r"modes\.perf",
+        r"--golden-only",
+        r"generate_inputs",
+        r"worklog\.md",
+        r"closure-safety",
+        r"performance-testing",
     ),
 }
 
@@ -104,13 +121,20 @@ def check() -> list[str]:
                 if cjk < 12 and latin > 80:
                     errors.append(f"BODY_NOT_ZH {qualified}: cjk={cjk} latin={latin}")
 
-        for pat in SIBLING_BAN.get(sid, ()):
-            for path in [skill_md, *sorted((refs_dir).rglob("*.md"))] if refs_dir.is_dir() else [skill_md]:
-                if path == skill_md:
-                    continue  # SKILL may name the forbidden neighbor as a boundary
-                blob = path.read_text(encoding="utf-8")
+        for rel, pats in SIBLING_BAN_FILES.items():
+            owner, _, name = rel.partition("/")
+            if not name.startswith("references/"):
+                continue
+            if sid != owner:
+                continue
+            path = skill_dir / name
+            if not path.is_file():
+                errors.append(f"SIBLING_BAN_MISSING {rel}")
+                continue
+            blob = path.read_text(encoding="utf-8")
+            for pat in pats:
                 if re.search(pat, blob):
-                    errors.append(f"SIBLING_LEAK {sid}/{path.name}: /{pat}/")
+                    errors.append(f"SIBLING_LEAK {rel}: /{pat}/")
 
         h1 = H1_RE.search(skill_text)
         if h1 and not CJK_RE.search(h1.group(1)):
@@ -169,12 +193,15 @@ def check() -> list[str]:
                 errors.append(
                     f"COPIED_NE_REQUESTED {wid}/{action.get('id')}: {copied} vs {requested}"
                 )
-            if sid == "bind-columns":
-                blob = skill_md.read_text(encoding="utf-8")
-                for path in (skill_dir / "references").glob("*.md") if (skill_dir / "references").is_dir() else []:
-                    blob += "\n" + path.read_text(encoding="utf-8")
+            if sid == "bind-init":
+                columns = skill_dir / "references" / "columns.md"
+                edge = skill_dir / "references" / "column-binding-edge-cases.md"
+                blob = ""
+                for path in (columns, edge):
+                    if path.is_file():
+                        blob += "\n" + path.read_text(encoding="utf-8")
                 if "performance-testing" in blob:
-                    errors.append("GOLDEN_POLLUTE bind-columns contains performance-testing")
+                    errors.append("GOLDEN_POLLUTE bind-init columns playbook contains performance-testing")
 
     return errors
 

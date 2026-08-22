@@ -5,26 +5,23 @@ description: 只读查询已有 Operator CodeMap。用户问图上有什么、�
 
 # 查 CodeMap
 
-本步用已有 `.uo` 回答本路 FOCUS：图上有什么、谁写谁读、某维是否注册。权威是已 commit 的 `.uo`，不是记忆、不是未校验草稿。查询工具是插件 `pilot_cli` 的 `uo-query`。形态见 code-access 不变量（无参数索引 / 标识符 / `Dim=<维名>` 覆盖列表或 `Name=Value` 组合 / `--file --line`）。
-
-不要改 `.uo`。不要宣布工作流 PASS。查询完成后立刻作答，不要为了先分类问题而空转。
+用已 commit 的 `.uo` 回答本路 FOCUS。工具：插件 `pilot_cli` 的 `uo-query`。形态见 code-access（无参数索引 / 标识符 / `Dim=<维名>` 或 `Name=Value` / `--file --line`）。
 
 ## 输入 / 输出 / 停
 
-读：本路 FOCUS、已有 `.uo`、查询卡片。写：对话里的作答（只读，不写正式产物）。
+读：本路 FOCUS、已有 `.uo`、查询卡片。写：对话作答。不写正式产物，不改 `.uo`。
 
-没有具体标识符时先做无参数索引，再跟卡片 `next` / `hint`。stub 已给出标识符、`Dim=V` 或 `--file --line` 时直接用那一种。缺 `.uo` 不是本步的事：停，让主控去 `/uo-init` 或改用源码作答。禁止在仓库根目录 Glob 找产物。
+缺 `.uo`：停，交给主控 `/uo-init` 或源码作答。stub 已给标识符 / `Dim=V` / `--file --line` 时直接用。否则先无参数索引，跟 `next` / `hint`。
 
-完成：本 FOCUS 能用 `file:line` 作答，或只能 PARTIAL 并写明缺什么。partial graph 不能证明「不存在」。
+完成：本 FOCUS 能用 `file:line` 作答，或 PARTIAL 并写明缺什么。partial 图不能证明「不存在」。
 
 ## 步骤
 
-1. **选最短形态。** 名字 / 定义 / 字段写读 → 标识符。某维合法集 → `Dim=<维名>`。某组能否编过 → `Name=Value`。从已知位点扩 1 跳邻居 → `--file --line`（只从上一张卡复制）。多阶段 launch 先看无参数索引里的 PIPE 阶段，不要把内层函数名当阶段。
-2. **先图后源码。** 已有 `.uo` 时不要一上来 grep 整棵算子树。卡片带 `file:line` + snippet 视为已读；只要截断之外还需要行，才按卡片路径开最小窗口。路径从卡片 `file` / `next` 复制，禁止猜相对路径。
-3. **空结果先缩短再查。** `count:0` 按 `hint` / `canonical` 缩短标识符再查一次。禁止仓级 findstr。最后才对**已 citation 的文件**做只读搜索。仍空则 PARTIAL / UNKNOWN，不要写成「图上不存在」。
-4. **列表型结论用覆盖字段。** 声称某维没注册、某边没有，必须引用 `dim_coverage` / `edges` 的 `count` / `total_matched`。第一页 snippet 不是全集。
-5. **问什么层就答什么层。** 主问只需 domain / 模板可接纳 / Host 写出时，不要扩到端到端可达。Host 不产生 ≠ 模板不接纳；Host 分支 ≠ Kernel 分支。
-6. **锁当前 architecture。** 禁止用其他 arch 的命中闭合本 arch claim。差分题先给 verdict 再给证据，禁止「根因已定位」。
+1. **选最短形态。** 名字 / 定义 / 写读 → 标识符。某维合法集 → `Dim=<维名>`。某组能否编过 → `Name=Value`。已知位点扩 1 跳 → `--file --line`（路径只从上一张卡复制）。多阶段 launch 先看无参数索引的 PIPE 名。
+2. **调用 `uo-query`，卡片即窗口。** 有 `file:line` + snippet 视为已读；只要截断之外还需要行，才按卡片路径开最小窗口。
+3. **`count:0` 缩短再查。** 跟 `hint` / `canonical`。仍空：只对已 citation 文件做 `pilot_cli` `ro-search`。然后 PARTIAL / UNKNOWN。
+4. **列表结论引用覆盖字段。** `dim_coverage` / `edges` 的 `count` / `total_matched`。第一页 snippet 不是全集。
+5. **问哪一层答哪一层。** Host 不产生 ≠ 模板不接纳；Host 分支 ≠ Kernel 分支。锁当前 architecture。差分题先 verdict 后证据。
 
 ## 常驻判断
 
@@ -36,50 +33,44 @@ description: 只读查询已有 Operator CodeMap。用户问图上有什么、�
 4. kernel-consumed — Kernel 是否消费
 5. full reachability — 端到端可达（常需测试生成，不在本步发明）
 
-不同层级分开说。完整性用语（全部、唯一、从不、没有其他）依赖覆盖字段；索引 partial 时最多 PARTIAL。
+完整性用语（全部 / 唯一 / 从不）依赖覆盖字段；索引 partial 时最多 PARTIAL。
 
-**易错**
+`coverage_checked` = 合法宇宙（template_blocks / declared）已扫完，与 `matching_block_count` 无关。0 命中且已扫完仍是已覆盖的空集。`first_hit` 只留给未扫完的列表。`nearby` 属于 coverage（缺一维后的剩余宇宙）。
 
-- 问句里的局部名常常不是 TILING_FIELD 名；空了看 `next` / `canonical` / `hint`。
-- 同名函数看卡片全部 kind 与 `edges`，不要只信第一页。
-- 运行时值不能回填成宏条件的唯一真值。
-- unresolved 不可凭命名闭合。
-- 配对、时序、仿真、sanitizer 不在 UO；不要用图回答 happens-before 或测量。
+Host 失败码标识符打到 `ge.graphStatus` 根：拒单入口，不是 Kernel catalog。边上的站点才是 guard；有失败根 ≠ 某维永不产生。
+
+问句里的局部名常常不是 TILING_FIELD 名；空了看 `next` / `canonical` / `hint`。同名函数看卡片全部 kind 与 `edges`。运行时值不能回填成宏条件。unresolved 不可凭命名闭合。配对 / 时序 / 仿真 / sanitizer 不在 UO。
 
 ## 看到这样
 
 | 现象 | 判断 |
 | --- | --- |
-| 没有标识符、不知道从哪开始 | 无参数索引，跟 `next` |
-| 问「这个名字是什么 / 谁写谁读」 | 标识符查询 |
-| 问「这个 Dim 值会不会编过 / 有没有 kernel」 | `Dim=V` |
-| 已有 `file:line`，要邻居 | `--file --line`，路径从卡片复制 |
+| 没有标识符 | 无参数索引，跟 `next` |
+| 这个名字是什么 / 谁写谁读 | 标识符 |
+| 这维会不会编过 / 有没有 kernel | `Dim=V` |
+| 已有 `file:line`，要邻居 | `--file --line` |
 | `count:0` | 按 `hint` 缩短再查；不是「不存在」 |
-| 第一页没看到某维 | 看 `dim_coverage`，不是看 snippet |
-| 卡片已有 snippet | 视为已读，不要再 Read 同一段 |
-| 问时序 / 测量 / sanitizer | 停：不在 UO |
+| 第一页没看到某维 | `dim_coverage`，不是 snippet |
+| 卡片已有 snippet | 视为已读 |
+| 时序 / 测量 / sanitizer | 停：不在 UO |
 | 缺 `.uo` | 停：不是本步 |
 
 ## 完成勾选
 
-- [ ] 本 FOCUS 的结论能指到 `file:line`，或明确 PARTIAL 并写出缺什么
-- [ ] 列表型结论引用了覆盖字段，没有用第一页当全集
-- [ ] 没有把 Host 层结论说成 Kernel 层，也没有把「没查到」说成「不存在」
+- [ ] 结论有 `file:line`，或 PARTIAL 并写出缺什么
+- [ ] 列表型结论引用了覆盖字段
+- [ ] 层没扩：Host 没说成 Kernel，「没查到」没说成「不存在」
 - [ ] 没有改 `.uo`，没有跨 arch 借命中
-
-作答先给结论，再给窗口。差分题先 verdict 后证据。
 
 ## 循环
 
-每一轮只推进本路 FOCUS，不要同时查三条无关线索。
+每一轮只推进本路 FOCUS。
 
-1. 看手头有没有标识符 / `Dim=V` / `file:line`。没有 → 无参数索引。
-2. 调用 `pilot_cli` `uo-query`。读卡片：`file`、`next`、`hint`、snippet、覆盖字段。
-3. 够作答就停。snippet 已覆盖的窗口不要再 Read。
-4. 不够：跟 `next`，或按 `hint` 缩短再查。仍不够 → 开最小源码窗，或 PARTIAL。
-5. 写结论。问哪一层就答哪一层。不要把本轮变成全图巡检。
-
-日常任务对照：名字/写读用标识符；能否编过用 `Dim=V`；已知位点扩邻居用 `--file --line`；多阶段 launch 先看 PIPE。配对、时序、仿真不在本步。
+1. 手头有标识符 / `Dim=V` / `file:line`？没有 → 无参数索引。
+2. 调用 `pilot_cli` `uo-query`。读 `file`、`next`、`hint`、snippet、覆盖字段。
+3. 够作答就停。
+4. 不够：跟 `next`，或按 `hint` 缩短。仍不够 → 最小源码窗，或 PARTIAL。
+5. 写结论：先 verdict，再窗口。问哪一层答哪一层。
 
 ## 输出形状
 
@@ -91,11 +82,9 @@ coverage: dim_coverage=... / count=...   # 列表型结论必填
 missing: ...                             # PARTIAL 必填
 ```
 
-不要写「图上不存在」。不要跨层把 Host 结论说成 Kernel。
-
 ## 指针
 
-域专文（走到该域才打开）：
+走到该域才打开：
 
 - TilingKey / packing：`references/uo-key.md`
 - TilingData 写读：`references/uo-tilingdata.md`
@@ -104,4 +93,4 @@ missing: ...                             # PARTIAL 必填
 - Buffer：`references/uo-buffer.md`
 - unresolved：`references/uo-gaps.md`
 
-权威分层与任务→形态表：`references/uo-product-map.md`。查询易错点：`references/codemap-query-gotchas.md`。
+权威分层与任务→形态（含「再补 / UO 不回答」）：`references/uo-product-map.md`。

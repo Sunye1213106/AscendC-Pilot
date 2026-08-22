@@ -69,7 +69,7 @@ python scripts/check_instruction_ownership.py
 
 CE source：有 allowlisted PR URL 时，Engine 在 Host 打开目录下 **新建子目录** clone exact-head，并列出 changed-files / operator_roots 作事实。若路径令牌唯一确定算子目录 × architecture，Engine 将该对作为事实交回 Primary 使用，并写入 `pr_arch_pin`；禁止的是静默自动开 `/uo-init`，不是禁止使用唯一路径令牌。多算子或多 architecture 仍由 Primary AskQuestion。空打开目录不建控制面。无 URL 时只吃当前算子仓本地 diff，不 clone。禁止把已打开的本地 fork 当成 PR head。
 
-算子改码主流程：grilling → `/ce-plan`（写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴 review → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md` 与 `docs/architecture/agent-content-rules.md`。
+算子改码主流程：`/ce-plan`（边问边写出 `ce/plan/{slug}_plan.md`），改码 → `/ce-apply`（按该 md 未完成 todo），双轴 review → `/ce-review`（对话不落盘），交接 → `/handoff`。验证走 `/tg-plan`。不要把通用 `/implement` 写进 `skill_ids`。共享语言改 `agents/CONTEXT.md`。改认知 skill 时读 `skills/SCHEMA.md` 与 `docs/architecture/agent-content-rules.md`。
 
 ## 新增 Engine、Capability 或 Host Adapter
 

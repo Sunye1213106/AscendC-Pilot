@@ -179,16 +179,34 @@ def _confirm_quality_blocked(state: dict[str, Any]) -> bool:
     }
 
 
-def _staging_has_open_forks(project_root: Path, state: dict[str, Any]) -> bool:
-    """True when intent_grill staging.md has a non-empty 未决决策 section."""
-    run_id = str((state or {}).get("run_id") or "").strip()
-    if not run_id:
+def _plan_has_open_forks(project_root: Path, state: dict[str, Any]) -> bool:
+    """True when the current {slug}_plan.md has a non-empty 未决 section."""
+    arch = _arch(state)
+    if not arch:
         return False
-    staging = runs_root(project_root) / run_id / "actions" / "intent_grill" / "staging.md"
-    if not staging.is_file():
+    root = ce_root(project_root, arch=arch) / "plan"
+    if not root.is_dir():
+        return False
+    files = sorted(p for p in root.glob("*_plan.md") if p.is_file())
+    if not files:
         return False
     try:
-        text = staging.read_text(encoding="utf-8")
+        from code_engineering.plan_md import resolve_active_plan
+
+        active = resolve_active_plan(project_root, architecture=arch, state=state)
+        if active is not None and active.is_file():
+            files = [active]
+    except Exception:  # noqa: BLE001
+        pass
+    for path in files:
+        if _section_has_open_forks(path):
+            return True
+    return False
+
+
+def _section_has_open_forks(path: Path) -> bool:
+    try:
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return False
     match = re.search(
@@ -250,7 +268,7 @@ def grill_should_ask(project_root: Path, state: dict[str, Any], *, action_id: st
     del action_id
     if _confirm_quality_blocked(state):
         return True
-    if _staging_has_open_forks(project_root, state):
+    if _plan_has_open_forks(project_root, state):
         return True
     if _ce_goal_going_to_apply(project_root, state):
         return False
@@ -275,7 +293,7 @@ def hosted_confirm_should_ask(
         return True
     if aid == "apply_report":
         return True
-    if wid == "ce-plan" and aid in {"grill_confirm", "human_confirm"}:
+    if wid == "ce-plan" and aid == "human_confirm":
         return grill_should_ask(project_root, state, action_id=aid)
     return True
 
@@ -285,11 +303,11 @@ def _ask_ce_plan(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     return decision_question(
         header="需求计划已写出。下一步？",
         goal=f"确认 {op}（{arch}）的当前计划 markdown 可以去改码",
-        background="计划里应有实现分析、可勾选 todo、测试内容。返工则继续 grill 或改计划。",
+        background="计划里应有实现分析、可勾选 todo、测试内容。返工则继续改计划。",
         decide="去 /ce-apply，还是继续改计划？",
         consequences={
             "去改码": "进入 /ce-apply，按未完成 todo 改源码",
-            "继续改计划": "回到 grill 或草稿",
+            "继续改计划": "回到草稿，边问边改同一份计划",
             "交接": "写 session_handoff.md",
             "停止": "结束本次规划",
         },
@@ -297,26 +315,6 @@ def _ask_ce_plan(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
             {"label": "去 /ce-apply", "value": "confirm"},
             {"label": "继续改计划", "value": "rework"},
             {"label": "去 /handoff", "value": "handoff"},
-            {"label": "停止本次目标", "value": "stop"},
-        ],
-    )
-
-
-def _ask_grill_confirm(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
-    op, arch = _op_arch(project_root, state)
-    return decision_question(
-        header="需求是否已经问清，可以写计划？",
-        goal=f"确认 {op}（{arch}）的范围、不做的事和测试内容已够写计划 markdown",
-        background="事实走 uo-query / 最小源码窗。未决分叉继续问。",
-        decide="是否开始写计划？",
-        consequences={
-            "确认已问清": "进入计划草稿",
-            "返工": "继续 grill",
-            "停止": "结束本次规划",
-        },
-        options=[
-            {"label": "确认需求已问清", "value": "confirm"},
-            {"label": "返工继续问", "value": "rework"},
             {"label": "停止本次目标", "value": "stop"},
         ],
     )
@@ -507,11 +505,6 @@ def _hints_ce_plan(project_root: Path, state: dict[str, Any]) -> list[str]:
     return [f"Review {rel}*_plan.md (analysis / todos / 测试内容) before applying."]
 
 
-def _hints_grill_confirm(project_root: Path, state: dict[str, Any]) -> list[str]:
-    del project_root, state
-    return ["Grill staging is markdown under runs/.../intent_grill/. Do not write yaml."]
-
-
 def _hints_apply_report(project_root: Path, state: dict[str, Any]) -> list[str]:
     del project_root, state
     return ["Source is already patched. Next is /ce-review or /tg-plan, not a yaml product."]
@@ -545,14 +538,6 @@ SCENARIOS: dict[tuple[str, str], dict[str, Any]] = {
         "ask": _ask_ce_plan,
         "materialize": _materialize_ce_decision,
         "hints": _hints_ce_plan,
-        "compact": None,
-    },
-    ("ce-plan", "grill_confirm"): {
-        "kind": "primary_confirm",
-        "expected_values": ["confirm"],
-        "ask": _ask_grill_confirm,
-        "materialize": _materialize_ce_decision,
-        "hints": _hints_grill_confirm,
         "compact": None,
     },
     ("ce-apply", "apply_report"): {
@@ -748,7 +733,6 @@ def materialize_primary_decision(project_root: Path, action_id: str) -> dict[str
         return {"ok": False, "error": "NOT_HOSTED_CONFIRM_ACTION", "action_id": action_id}
 
     skip_gate = action_id in {
-        "grill_confirm",
         "human_confirm",
         "plan_approve",
         "apply_report",

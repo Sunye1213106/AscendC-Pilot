@@ -607,10 +607,8 @@ def _review_axis_fanout_tasks(
                 break
             artifacts.append(artifact)
             prevs.append(f"{artifact}.prev")
-            mp = _capability_method_path(repo, skill, cap)
+            mp = _axis_method_path(repo, axis_row)
             if mp.is_file():
-                body = mp.read_text(encoding="utf-8")
-                (sdir / f"method_{axis}.md").write_text(body, encoding="utf-8")
                 axis_prompt_text = ""
                 axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
                 if axis_tpid:
@@ -618,16 +616,12 @@ def _review_axis_fanout_tasks(
                     if src_prompt.is_file():
                         axis_prompt_text = src_prompt.read_text(encoding="utf-8")
                         (sdir / f"prompt_{axis}.md").write_text(axis_prompt_text, encoding="utf-8")
-                from ascendc_pilot.actions.method_bundle import materialize_method_bundle
-
-                materialize_method_bundle(
-                    sdir,
-                    skill_ids=[skill],
-                    existing_method=body,
-                    project_root=repo,
-                    prompt=axis_prompt_text,
-                    current_skill_id=skill,
-                    method_filename=f"method_{axis}.md",
+                _materialize_fanout_axis(
+                    repo=repo,
+                    sdir=sdir,
+                    axis_row=axis_row,
+                    axis=axis,
+                    prompt_text=axis_prompt_text,
                 )
             else:
                 axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
@@ -697,12 +691,9 @@ def _review_axis_fanout_tasks(
             part_name = Path(artifact.replace("\\", "/")).name
             if part_name and (sdir / "parts" / part_name).is_file():
                 continue
-        mp = _capability_method_path(repo, skill, cap)
+        mp = _axis_method_path(repo, axis_row)
         if not mp.is_file():
             return []
-        axis_method_text = mp.read_text(encoding="utf-8")
-        axis_method = sdir / f"method_{axis}.md"
-        axis_method.write_text(axis_method_text, encoding="utf-8")
         axis_prompt_path = ""
         axis_prompt_text = ""
         axis_tpid = str(axis_row.get("task_prompt_id") or "").strip()
@@ -713,17 +704,14 @@ def _review_axis_fanout_tasks(
                 axis_prompt = sdir / f"prompt_{axis}.md"
                 axis_prompt.write_text(axis_prompt_text, encoding="utf-8")
                 axis_prompt_path = axis_prompt.as_posix()
-        from ascendc_pilot.actions.method_bundle import materialize_method_bundle
-
-        materialize_method_bundle(
-            sdir,
-            skill_ids=[skill],
-            existing_method=axis_method_text,
-            project_root=repo,
-            prompt=axis_prompt_text,
-            current_skill_id=skill,
-            method_filename=f"method_{axis}.md",
+        _materialize_fanout_axis(
+            repo=repo,
+            sdir=sdir,
+            axis_row=axis_row,
+            axis=axis,
+            prompt_text=axis_prompt_text,
         )
+        axis_method = sdir / f"method_{axis}.md"
         axis_dt = dict(dt)
         axis_write = [artifact] if allow_write else []
         axis_dt["write"] = axis_write
@@ -973,10 +961,74 @@ def _normalize_skill_id(raw: str) -> str:
     return token
 
 
+def _skill_method_ref_path(repo: Path, skill_id: str, method_ref: str) -> Path:
+    """Disclosed playbook: ``skills/<id>/references/<method_ref>``."""
+    rel = str(method_ref or "").strip().replace("\\", "/").lstrip("/")
+    if rel.startswith("references/"):
+        rel = rel[len("references/") :]
+    return repo / "skills" / str(skill_id or "").strip() / "references" / rel
+
+
 def _capability_method_path(repo: Path, domain: str, capability: str) -> Path:
     """Fanout axis playbook: ``capability`` is the Skill id."""
     del domain
     return _skill_path(repo, capability)
+
+
+def _axis_method_path(repo: Path, axis_row: dict[str, Any]) -> Path:
+    """Slice playbook: ``method_ref`` under the axis skill, else ``SKILL.md``."""
+    skill = str(axis_row.get("skill") or axis_row.get("capability_id") or "").strip()
+    method_ref = str(axis_row.get("method_ref") or "").strip()
+    if method_ref and skill:
+        return _skill_method_ref_path(repo, skill, method_ref)
+    cap = str(axis_row.get("capability_id") or skill).strip()
+    return _skill_path(repo, cap)
+
+
+def _axis_playbook_text(repo: Path, axis_row: dict[str, Any]) -> str:
+    """Branch HOW plus one-level pointers for this slice only.
+
+    ``references/*.md`` hops are forbidden inside reference files, so the
+    axis ``refs`` list is appended here (the composed session method is not
+    a reference file).
+    """
+    path = _axis_method_path(repo, axis_row)
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    refs = [str(r).strip().replace("\\", "/").lstrip("/") for r in (axis_row.get("refs") or [])]
+    refs = [r[len("references/") :] if r.startswith("references/") else r for r in refs if r]
+    if not refs:
+        return text
+    lines = [text.rstrip(), "", "## 指针", ""]
+    for rel in refs:
+        lines.append(f"- `references/{rel}`")
+    return "\n".join(lines) + "\n"
+
+
+def _materialize_fanout_axis(
+    *,
+    repo: Path,
+    sdir: Path,
+    axis_row: dict[str, Any],
+    axis: str,
+    prompt_text: str = "",
+) -> str:
+    """Write ``method_{axis}.md`` and copy only this slice's refs."""
+    skill = str(axis_row.get("skill") or axis_row.get("capability_id") or "").strip()
+    body = _axis_playbook_text(repo, axis_row)
+    from ascendc_pilot.actions.method_bundle import materialize_method_bundle
+
+    refs_ns = axis if str(axis_row.get("method_ref") or "").strip() else ""
+    materialize_method_bundle(
+        sdir,
+        skill_ids=[skill],
+        existing_method=body,
+        project_root=repo,
+        prompt=prompt_text,
+        current_skill_id=skill,
+        method_filename=f"method_{axis}.md",
+        refs_ns=refs_ns,
+    )
+    return body
 
 
 def _uo_query_method_path(repo: Path) -> Path:
@@ -984,12 +1036,15 @@ def _uo_query_method_path(repo: Path) -> Path:
 
 
 def _resolve_capability_method(repo: Path, action: dict[str, Any]) -> Path | None:
-    """Map ``skill_id`` onto ``skills/<id>/SKILL.md``. Missing files fail closed."""
+    """Map ``skill_id`` (+ optional ``method_ref``) onto a playbook. Missing files fail closed."""
     sid = _normalize_skill_id(
         str(action.get("skill_id") or action.get("action_method_id") or "")
     )
     if not sid:
         return None
+    method_ref = str(action.get("method_ref") or "").strip()
+    if method_ref:
+        return _skill_method_ref_path(repo, sid, method_ref)
     return _skill_path(repo, sid)
 
 
@@ -1019,7 +1074,22 @@ def _load_method_and_prompt(repo: Path, action: dict[str, Any]) -> tuple[str, st
     mp = _resolve_capability_method(repo, action)
     if mp is not None and mp.is_file():
         method = mp.read_text(encoding="utf-8")
+    method = _append_action_ref_pointers(method, action)
     return method, prompt
+
+
+def _append_action_ref_pointers(text: str, action: dict[str, Any]) -> str:
+    """Axis HOW files cannot hop; Action ``refs`` become one-level pointers."""
+    refs = [str(r).strip().replace("\\", "/").lstrip("/") for r in (action.get("refs") or [])]
+    refs = [r[len("references/") :] if r.startswith("references/") else r for r in refs if r]
+    if not refs or not str(text or "").strip():
+        return text
+    if any(f"`references/{rel}`" in text for rel in refs):
+        return text
+    lines = [text.rstrip(), "", "## 指针", ""]
+    for rel in refs:
+        lines.append(f"- `references/{rel}`")
+    return "\n".join(lines) + "\n"
 
 
 def _resolve_contract_paths(root: Path, rel: str) -> list[Path]:
@@ -2111,6 +2181,10 @@ def prepare_action(
                 extra_ref_paths=extra_refs,
             )
             action_skill = str(action.get("skill_id") or action.get("action_method_id") or "").rsplit("/", 1)[-1]
+            axes = list(action.get("fanout_axes") or [])
+            copy_declared = not (
+                bool(axes) and all(str(a.get("method_ref") or "").strip() for a in axes)
+            )
             mat = materialize_method_bundle(
                 sdir,
                 skill_ids=[str(x) for x in skill_ids],
@@ -2118,6 +2192,7 @@ def prepare_action(
                 project_root=project_root,
                 extra_ref_paths=extra_refs,
                 current_skill_id=action_skill,
+                copy_declared_refs=copy_declared,
             )
             bundle["method_skill_ids"] = skill_ids
             bundle["agent_skill_ceiling"] = [str(x) for x in ceiling]
@@ -2365,7 +2440,6 @@ def prepare_action(
         if not voice_state.get("workflow_id"):
             voice_state["workflow_id"] = wid
         if action_id in {
-            "grill_confirm",
             "human_confirm",
             "plan_approve",
             "apply_report",

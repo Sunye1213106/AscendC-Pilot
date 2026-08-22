@@ -2,6 +2,7 @@
 import pytest
 
 from uo_init.anchors import (
+    INVOKE_MACRO_RE,
     ValidationError,
     Anchor,
     Evidence,
@@ -54,6 +55,13 @@ def test_arch_bucket_keeps_9201_distinct_from_3510():
 def test_kernel_entry_nttp_arity(fag_dir):
     e = extract_kernel_entry(fag_dir / "op_kernel" / "flash_attention_score_grad_apt.cpp")
     assert e["nttp_arity"] == 19
+    assert all(m.startswith("INVOKE_") for m in e["invoke_macros"])
+
+
+def test_invoke_macro_re_lives_in_anchors() -> None:
+    assert INVOKE_MACRO_RE.findall("INVOKE_FLASH_ATTENTION_SCORE_GRAD_GENERAL();") == [
+        "INVOKE_FLASH_ATTENTION_SCORE_GRAD_GENERAL"
+    ]
 
 
 def test_build_anchors_yaml(fag_dir):

@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any
 
 
+# Operator kernels dispatch through an `INVOKE_<OP>_<VARIANT>` macro. clang
+# expands these away, so they are recovered textually; the operator tag varies
+# per operator, hence no fixed prefix.
+INVOKE_MACRO_RE = re.compile(r"\bINVOKE_[A-Z][A-Z0-9_]{2,}\b")
+
+
 class ValidationError(ValueError):
     pass
 
@@ -145,7 +151,6 @@ def arch_bucket(arch_expr: str) -> str:
 
 
 def extract_kernel_entry(path: str | Path, entry_name: str | None = None) -> dict[str, Any]:
-    from uo_init.branch_inventory import INVOKE_MACRO_RE
     from uo_init.tpl_bind import parse_kernel_nttps
 
     text = Path(path).read_text(encoding="utf-8", errors="replace")

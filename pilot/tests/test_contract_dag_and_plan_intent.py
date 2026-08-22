@@ -12,7 +12,8 @@ def test_plan_intent_action_removed() -> None:
     scope = action_by_id("tg-plan", "plan_scope")
     assert scope is not None
     assert scope.get("execution_mode") == "subagent"
-    assert scope.get("skill_id") == "plan-scope"
+    assert scope.get("skill_id") == "plan"
+    assert scope.get("method_ref") == "scope.md"
     assert scope.get("output_mode") == "direct"
     fuse = action_by_id("tg-plan", "plan_fuse")
     assert fuse is not None

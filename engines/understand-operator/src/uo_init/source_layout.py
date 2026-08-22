@@ -29,6 +29,10 @@ ARCH_DIR_RE = re.compile(rf"^{ARCH_NAME}$")
 ARCH_IN_PATH_RE = re.compile(rf"(?:^|/)({ARCH_NAME})(?:/|$)")
 # Path segment `/arch22/` or filename token `_arch22.h` / `foo_arch35_bar.h`.
 _ARCH_TOKEN_RE = re.compile(rf"(?:^|[/_.-])({ARCH_NAME})(?:[/_.-]|$)")
+# Product slot when the tree has no ``arch*`` folders. Not a hardware generation:
+# official repos split implementations under arch22/arch35/…; a third-party tree
+# without those folders is one implementation and is built together.
+UNIFIED_ARCH_DIR = "default"
 _ARCH_ALIAS = {
     "arch-920r1": "arch-920r1",
     "arch920r1": "arch-920r1",
@@ -89,6 +93,30 @@ def canonicalize_architecture(value: str | None) -> str:
     if m:
         return f"arch{m.group(1)}"
     return raw
+
+
+def is_variant_architecture(value: str | None) -> bool:
+    """True when ``value`` names an ``arch*`` implementation folder.
+
+    ``arch35`` / ``arch-920r1`` split official ops-transformer trees.
+    ``default`` and empty are the single-implementation product slot.
+    """
+    canon = canonicalize_architecture(value)
+    return bool(canon) and ARCH_DIR_RE.match(canon) is not None
+
+
+def is_product_architecture(value: str | None) -> bool:
+    """True for an ``arch*`` variant folder or the unified ``default`` product slot.
+
+    Product paths live under ``.ascendc-pilot/<slot>/``. ``default`` is not an
+    on-disk source folder; it names the single-implementation product tree.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return False
+    if raw == UNIFIED_ARCH_DIR:
+        return True
+    return is_variant_architecture(raw)
 
 
 def architectures_match(left: str | None, right: str | None) -> bool:
@@ -220,7 +248,7 @@ def is_other_arch_path(path: Path | str, architecture: str) -> bool:
     Cousin folders (``arch35`` while analysing ``arch-920r1``) are in scope.
     """
     arch = str(architecture or "").strip()
-    if not arch:
+    if not is_variant_architecture(arch):
         return False
     for part in Path(path).parts:
         if ARCH_DIR_RE.match(part) and not architecture_in_scope(part, arch):
@@ -257,6 +285,8 @@ def is_foreign_arch_entry_tu(path: Path | str, architecture: str) -> bool:
     """
     p = Path(path)
     if p.suffix.lower() not in _ENTRY_TU_SUFFIXES:
+        return False
+    if not is_variant_architecture(architecture):
         return False
     owned = path_owned_architecture(p)
     if not owned:
@@ -765,25 +795,229 @@ def _first_tpl_marker_file(
     return []
 
 
+_PACKING_CAST_WORDS = frozenset(
+    {
+        "static_cast",
+        "reinterpret_cast",
+        "const_cast",
+        "dynamic_cast",
+        "uint8_t",
+        "uint16_t",
+        "uint32_t",
+        "uint64_t",
+        "int8_t",
+        "int16_t",
+        "int32_t",
+        "int64_t",
+        "int",
+        "bool",
+        "true",
+        "false",
+        "sizeof",
+    }
+)
+_LINE_MARKER_RE = re.compile(r"^#\s+(?:\d+\s+)?\"([^\"]+)\"", re.MULTILINE)
+
+
+def _host_get_tpl_packing_arities(root: Path, architecture: str) -> list[int]:
+    """Argument counts of Host ``GET_TPL_TILING_KEY(...)`` calls (longest first)."""
+    from uo_init.tpl_dsl import _balanced_paren_body, _split_args
+
+    arities: list[int] = []
+    for path in selected_host_files(root, architecture):
+        try:
+            text = _text(path)
+        except OSError:
+            continue
+        for match in re.finditer(r"\bGET_TPL_TILING_KEY\s*\(", text):
+            try:
+                body = _balanced_paren_body(text, match.end() - 1)
+            except ValueError:
+                continue
+            n = len(_split_args(body))
+            if n:
+                arities.append(n)
+    arities.sort(reverse=True)
+    return arities
+
+
+def _host_get_tpl_dim_names(root: Path, architecture: str) -> list[str]:
+    """Identifier order from the first Host ``GET_TPL_TILING_KEY(...)`` call."""
+    from uo_init.tpl_dsl import _balanced_paren_body, _split_args
+
+    for path in selected_host_files(root, architecture):
+        try:
+            text = _text(path)
+        except OSError:
+            continue
+        match = re.search(r"\bGET_TPL_TILING_KEY\s*\(", text)
+        if not match:
+            continue
+        try:
+            body = _balanced_paren_body(text, match.end() - 1)
+        except ValueError:
+            continue
+        names: list[str] = []
+        for arg in _split_args(body):
+            idents = [
+                tok
+                for tok in re.findall(r"[A-Za-z_]\w*", arg)
+                if tok not in _PACKING_CAST_WORDS
+            ]
+            if not idents:
+                continue
+            names.append(idents[-1] if len(idents) > 1 else idents[0])
+        if names:
+            return names
+    return []
+
+
+def _decl_dim_names(text: str) -> list[str]:
+    from uo_init.tpl_dsl import parse_args_decl
+
+    return [dim.name for dim in parse_args_decl(text).dims]
+
+
+def _tpl_decl_rank(
+    path: Path, text: str, packing: list[str], arities: list[int]
+) -> tuple[int, int, int, int, int]:
+    """Lower is better: GET_TPL arity, not a nested variant, packing names, header, more dims."""
+    dims = _decl_dim_names(text)
+    n = len(dims)
+    best_arity = arities[0] if arities else 0
+    arity_gap = abs(n - best_arity) if best_arity else 0
+    nested = 0 if path.parent.name == "op_kernel" else 1
+    overlap = sum(1 for name in packing if name in dims) if packing else 0
+    name = path.name.lower()
+    return (
+        arity_gap,
+        nested,
+        -overlap,
+        0 if "tiling_key" in name else 1,
+        0 if path.suffix.lower() in {".h", ".hpp", ".hh"} else 1,
+        -n,
+    )
+
+
+def tpl_decl_candidates_from_preprocess(stdout: str, root: Path) -> list[Path]:
+    """Files clang.exe ``-E`` actually included that still contain ARGS_DECL."""
+    root_r = root.expanduser().resolve()
+    hits: list[Path] = []
+    seen: set[Path] = set()
+    for match in _LINE_MARKER_RE.finditer(stdout or ""):
+        raw = match.group(1).replace("\\\\", "/").replace("\\", "/")
+        cand = Path(raw)
+        if not cand.is_file():
+            continue
+        try:
+            resolved = cand.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        try:
+            resolved.relative_to(root_r)
+        except ValueError:
+            continue
+        try:
+            text = _text(resolved)
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_DECL" not in text:
+            continue
+        seen.add(resolved)
+        hits.append(resolved)
+    return hits
+
+
+def list_tpl_decl_candidates(root: Path, architecture: str) -> list[tuple[Path, str]]:
+    hits: list[tuple[Path, str]] = []
+    seen: set[Path] = set()
+    for path in _kernel_include_closure(root, architecture):
+        if not _path_is_under(path, root):
+            continue
+        try:
+            key = path.resolve()
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        try:
+            text = _text(path)
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_DECL" not in text:
+            continue
+        seen.add(key)
+        hits.append((path, text))
+    return hits
+
+
+def _scan_op_kernel_tpl_decls(root: Path, architecture: str) -> list[tuple[Path, str]]:
+    hits: list[tuple[Path, str]] = []
+    seen: set[Path] = set()
+    kernel_root = root / "op_kernel"
+    if not kernel_root.is_dir():
+        return hits
+    paths = list(kernel_root.rglob("*tiling_key*.h")) + list(kernel_root.glob("*.h"))
+    for path in paths:
+        if not path.is_file() or is_other_arch_path(path, architecture):
+            continue
+        try:
+            key = path.resolve()
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        try:
+            text = _text(path)
+        except OSError:
+            continue
+        if "ASCENDC_TPL_ARGS_DECL" not in text:
+            continue
+        seen.add(key)
+        hits.append((path, text))
+    return hits
+
+
 def tpl_decl_files(root: Path, architecture: str) -> list[Path]:
-    """One TPL ARGS_DECL schema: the header the current-arch kernel entry includes.
+    """One TPL ARGS_DECL schema: packing-aligned header, not the first literal hit.
 
     Layout globs and Clang scope often also list sibling ``*_tiling_key.h``
     files (apt vs non-apt, ifdef-gated variants). Merging those schemas
     inflates TILING_KEY counts so GET_TPL_TILING_KEY packing never matches.
     Fusion wrappers that ``#include "../../../other_op/...tiling_key.h"`` must
     not inherit that sibling's ARGS_DECL as this operator's source-declared keys.
+    An entry ``.cpp`` may contain a small C++-template ARGS_DECL that must not
+    crowd out the real ``*_tiling_key.h`` schema.
     """
-    for path in _kernel_include_closure(root, architecture):
-        if not _path_is_under(path, root):
-            continue
-        try:
-            text = _text(path)
-        except OSError:
-            continue
-        if "ASCENDC_TPL_ARGS_DECL" in text:
-            return [path]
-    return _first_tpl_marker_file(root, architecture, "ASCENDC_TPL_ARGS_DECL")
+    packing = _host_get_tpl_dim_names(root, architecture)
+    arities = _host_get_tpl_packing_arities(root, architecture)
+    hits = list_tpl_decl_candidates(root, architecture)
+    if arities:
+        target = arities[0]
+
+        def _gap(item: tuple[Path, str]) -> int:
+            return abs(len(_decl_dim_names(item[1])) - target)
+
+        best = min((_gap(item) for item in hits), default=99)
+        if best > 0:
+            seen = {p.resolve() for p, _ in hits}
+            for extra in _scan_op_kernel_tpl_decls(root, architecture):
+                try:
+                    key = extra[0].resolve()
+                except OSError:
+                    continue
+                if key in seen:
+                    continue
+                if _gap(extra) < best:
+                    hits.append(extra)
+                    seen.add(key)
+    if not hits:
+        fallback = _first_tpl_marker_file(root, architecture, "ASCENDC_TPL_ARGS_DECL")
+        return fallback
+    hits.sort(key=lambda item: _tpl_decl_rank(item[0], item[1], packing, arities))
+    return [hits[0][0]]
 
 
 def tpl_sel_files(root: Path, architecture: str) -> list[Path]:

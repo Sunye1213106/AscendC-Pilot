@@ -31,7 +31,7 @@
 | `acp route` | 将自然语言或 Slash 路由到 workflow |
 | `acp run-action` | 准备或 finalize 一个 workflow action |
 | `acp run-summary` | 汇总中断的 uo-init run，供人工询问使用 |
-| `acp scan-architectures` | 快速扫描算子 op_host/op_kernel 布局与 arch* 选项 |
+| `acp scan-architectures` | 快速扫描算子 op_host/op_kernel 布局与 arch* 实现选项；无 arch* 时产物槽 default |
 | `acp serve-authorize` | 长驻 authorize 守护进程（stdio JSON-lines） |
 | `acp spec-hashes` | 输出四类 Spec Hash 摘要 |
 | `acp start` | 从 entry state 启动 workflow |

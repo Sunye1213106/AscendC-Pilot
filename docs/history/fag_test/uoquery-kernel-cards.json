@@ -1,0 +1,1812 @@
+{
+  "n": 53,
+  "rows": [
+    {
+      "ok": true,
+      "shape": "index",
+      "count": 3,
+      "hint": "Coverage list: Dim=DTemplateNum. Combo filter: DTemplateNum=0 (Name=Value). One identifier for a name card. --file --line only after copying file:line from a card.",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": null,
+          "name": "1",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 63,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": ""
+        },
+        {
+          "kind": null,
+          "name": "2",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 94,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": ""
+        },
+        {
+          "kind": null,
+          "name": "3",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 213,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": ""
+        }
+      ],
+      "phases_len": 3,
+      "phases_0": {
+        "kind": null,
+        "name": null,
+        "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+        "line": 63,
+        "rel": null
+      },
+      "group": "index",
+      "query": "",
+      "raw_top_keys": [
+        "ok",
+        "shape",
+        "entry",
+        "phases",
+        "dim_names",
+        "tiling_data_names",
+        "gaps_count",
+        "coverage",
+        "count",
+        "files",
+        "other_kernels",
+        "hint"
+      ],
+      "phase_rows": [
+        {
+          "name": "1",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 63,
+          "kind": null
+        },
+        {
+          "name": "2",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 94,
+          "kind": null
+        },
+        {
+          "name": "3",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 213,
+          "kind": null
+        }
+      ]
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "AscendC::TPipe"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "PIPE",
+          "name": "tPipe",
+          "file": "op_kernel/flash_attention_score_grad_apt.cpp",
+          "line": 56,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "53:        needDeterPrefix, IsTnd, IsTndSwizzle>; | 54:    REGISTER_TILING_DEFAULT(fagTiling); | 55:    if constexpr (IsEmptyTensor) { | 56:        TPipe tPipe; | 57:        REGISTER_TILING_FOR_TILINGKEY(\"(TILING_KEY_VAR & 0x1)\", optiling::fag::FlashAttentionScoreGradEmptyTensorTilingDataRegbase); | 58:        GET_TILING_DATA_WITH_STRUCT(FlashAttentionScoreG"
+        }
+      ],
+      "group": "catalog",
+      "query": "TPipe"
+    },
+    {
+      "ok": false,
+      "shape": "name",
+      "count": 0,
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "next": [],
+      "error": null,
+      "cards": [],
+      "group": "catalog",
+      "query": "TQue"
+    },
+    {
+      "ok": false,
+      "shape": "name",
+      "count": 0,
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "next": [],
+      "error": null,
+      "cards": [],
+      "group": "catalog",
+      "query": "LocalTensor"
+    },
+    {
+      "ok": false,
+      "shape": "name",
+      "count": 0,
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "next": [],
+      "error": null,
+      "cards": [],
+      "group": "catalog",
+      "query": "HardEvent"
+    },
+    {
+      "ok": false,
+      "shape": "name",
+      "count": 0,
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "next": [],
+      "error": null,
+      "cards": [],
+      "group": "catalog",
+      "query": "PIPE_MTE3"
+    },
+    {
+      "ok": false,
+      "shape": "name",
+      "count": 0,
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "next": [],
+      "error": null,
+      "cards": [],
+      "group": "catalog",
+      "query": "PIPE_MTE2"
+    },
+    {
+      "ok": false,
+      "shape": "name",
+      "count": 0,
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "next": [],
+      "error": null,
+      "cards": [],
+      "group": "catalog",
+      "query": "PIPE_FIX"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "AscendC::TBuf"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "BUFFER",
+          "name": "tbuf",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+          "line": 28,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "25:public: | 26:    __aicore__ inline void Init(TPipe *pipe, uint32_t size) | 27:    { | 28:        TBuf<BufferInfo<bufferType>::Position> tbuf; | 29:        pipe->InitBuffer(tbuf, size); | 30:        mem_ = tbuf.template Get<uint8_t>(); | 31:    } | 32:"
+        }
+      ],
+      "group": "catalog",
+      "query": "TBuf"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "castQue",
+        "dkInitBuf",
+        "dqInitBuf",
+        "Destroy",
+        "AscendC::TPipe"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "PIPE",
+          "name": "pipeIn",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 213,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "210:           __gm__ uint8_t *dkRope, __gm__ uint8_t *dsink, __gm__ uint8_t *workspace, __gm__ uint8_t *tiling_data) | 211:{ | 212:    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2); | 213:    TPipe pipeIn; | 214:    SetMaskNorm(); | 215:    SetSysWorkspace(workspace); | 216:    __gm__ uint8_t *user = GetUserWorkspace(workspace); | 217:    constexpr stat"
+        }
+      ],
+      "group": "ident",
+      "query": "pipeIn"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "inQueue",
+        "mm1ResBuf",
+        "mm2ResBuf",
+        "Destroy",
+        "AscendC::TPipe"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "PIPE",
+          "name": "pipeBase",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 63,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "60:            opPre.SyncALLCores();                                                                                      \\ | 61:        }                                                                                                              \\ | 62:        pipeIn.Destroy();                                                                                "
+        }
+      ],
+      "group": "ident",
+      "query": "pipeBase"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "dsinkResBuf",
+        "inQueue",
+        "inQueuePing",
+        "AscendC::TPipe"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "PIPE",
+          "name": "pipePost",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 94,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "91:        if (ORIG_DTYPE_QUERY != DT_FLOAT) {                                                                            \\ | 92:            op.SyncALLCores();                                                                                         \\ | 93:            pipeBase.Destroy();                                                                          "
+        }
+      ],
+      "group": "ident",
+      "query": "pipePost"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipePost",
+        "dsinkResBuf",
+        "inQueue",
+        "outQueue",
+        "InitBuffer",
+        "FlashAttentionScoreGradNzPost",
+        "AscendC::TPipe"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "PIPE",
+          "name": "pipe",
+          "file": "op_kernel/arch35/flash_attention_score_grad_nz_post.h",
+          "line": 46,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "43:    constexpr static uint32_t CUBE_BASEN = (uint32_t)s2TemplateType; | 44:    constexpr static uint32_t ROPE_D = 64; | 45: | 46:    TPipe *pipe; | 47:    FagTilingType tilingData; | 48: | 49:    // GlobalBuffer | 50:    GlobalTensor<OUTDTYPE> dqGm;"
+        }
+      ],
+      "group": "ident",
+      "query": "pipe"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "pipePost",
+        "AllocTensor",
+        "DeQue",
+        "EnQue",
+        "FlashAttentionScoreGradS1S2BNGS1S2PostRegbase",
+        "AscendC::TQue"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "QUEUE",
+          "name": "inQueuePing",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+          "line": 52,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "49:    uint32_t POST_S_BASE = 96; | 50:    TPipe *pipe; | 51:    FagTilingType tilingData; | 52:    TQue<QuePosition::VECIN, 1> inQueuePing; | 53:    TQue<QuePosition::VECOUT, 1> outQueuePing; | 54:    TQue<QuePosition::VECIN, 1> inQueuePong; | 55:    TQue<QuePosition::VECOUT, 1> outQueuePong; | 56:    GlobalTensor<OUTDTYPE> dqkv[3];"
+        }
+      ],
+      "group": "ident",
+      "query": "inQueuePing"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "pipeIn",
+        "AllocTensor",
+        "FreeTensor",
+        "FlashAttentionScoreGradS1S2BNGS1S2PreRegbase",
+        "AscendC::TQue"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "QUEUE",
+          "name": "helpQue",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+          "line": 48,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "45:    __aicore__ inline void SyncALLCores(); | 46: | 47:    TPipe *pipe; | 48:    TQue<QuePosition::VECIN, 1> helpQue; | 49:    TQue<QuePosition::VECIN, 1> inputQue; | 50:    TQue<QuePosition::VECIN, 1> castQue; | 51:    TQue<QuePosition::VECOUT, 1> outQue; | 52:"
+        }
+      ],
+      "group": "ident",
+      "query": "helpQue"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "pipeIn",
+        "AllocTensor",
+        "DeQue",
+        "EnQue",
+        "FlashAttentionScoreGradS1S2BNGS1S2PreRegbase",
+        "AscendC::TQue"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "QUEUE",
+          "name": "inputQue",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+          "line": 49,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "46: | 47:    TPipe *pipe; | 48:    TQue<QuePosition::VECIN, 1> helpQue; | 49:    TQue<QuePosition::VECIN, 1> inputQue; | 50:    TQue<QuePosition::VECIN, 1> castQue; | 51:    TQue<QuePosition::VECOUT, 1> outQue; | 52: | 53:    GlobalTensor<float> dqWorkSpaceGm, dkWorkSpaceGm, dvWorkSpaceGm, dsinkWorkSpaceGm;"
+        }
+      ],
+      "group": "ident",
+      "query": "inputQue"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "pipeIn",
+        "AllocTensor",
+        "DeQue",
+        "EnQue",
+        "FlashAttentionScoreGradS1S2BNGS1S2PreRegbase",
+        "AscendC::TQue"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "QUEUE",
+          "name": "outQue",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+          "line": 51,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "48:    TQue<QuePosition::VECIN, 1> helpQue; | 49:    TQue<QuePosition::VECIN, 1> inputQue; | 50:    TQue<QuePosition::VECIN, 1> castQue; | 51:    TQue<QuePosition::VECOUT, 1> outQue; | 52: | 53:    GlobalTensor<float> dqWorkSpaceGm, dkWorkSpaceGm, dvWorkSpaceGm, dsinkWorkSpaceGm; | 54:    GlobalTensor<T1> dqGm, dkGm, dvGm; | 55:    GlobalTensor<uint8_t> mask"
+        }
+      ],
+      "group": "ident",
+      "query": "outQue"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "tensor_",
+        "GetTensor",
+        "Init",
+        "Lock",
+        "AscendC::LocalTensor",
+        "AscendC::Lock",
+        "MutexBuffersPolicy3buff"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 52,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "49:}; | 50: | 51:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC> | 52:class MutexBuffer { | 53:    // TensorType用于定义缓冲区的基础数据类型（此处为uint8_t），用于互斥缓冲区的原始存储。 | 54:    using TensorType = LocalTensor<uint8_t>; | 55: | 56:    // TargetTensorType是一个模板，允许根据需要组合不同的数据类型，便于不同数据类型的缓冲需求。"
+        },
+        {
+          "kind": "METHOD",
+          "name": "MutexBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 61,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "61:    __aicore__ inline MutexBuffer() | 62:    { | 63:    } | 64:    __aicore__ inline MutexBuffer(TensorType tensor, uint32_t size) : tensor_(tensor), size_(size) | 65:    { | 66:    } | 67: | 68:    __aicore__ inline void Init()"
+        }
+      ],
+      "group": "ident",
+      "query": "MutexBuffer"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "buffer_",
+        "Get",
+        "GetPre",
+        "GetReused",
+        "AscendC::LocalTensor",
+        "FAGBlockCube",
+        "MutexBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBuffersPolicySingleBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+          "line": 41,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "38:} // namespace detail | 39: | 40:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC> | 41:class MutexBuffersPolicySingleBuffer { | 42:public: | 43:    __aicore__ inline void Init(MutexBufferManager<bufferType> &bufferManager, uint32_t size) | 44:    { | 45:        buffer_ = detail::AllocMutexBuf<bufferType, syncType>(bufferMana"
+        }
+      ],
+      "group": "ident",
+      "query": "MutexBuffersPolicySingleBuffer"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "ping_",
+        "pong_",
+        "Get",
+        "GetPre",
+        "GetReused",
+        "AscendC::LocalTensor",
+        "FAGBlockCube",
+        "MutexBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBuffersPolicyDB",
+          "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+          "line": 74,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "71:}; | 72: | 73:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC> | 74:class MutexBuffersPolicyDB { | 75:public: | 76:    __aicore__ inline void Init(MutexBufferManager<bufferType> &bufferManager, uint32_t size) | 77:    { | 78:        ping_ = detail::AllocMutexBuf<bufferType, syncType>(bufferManager, size);"
+        }
+      ],
+      "group": "ident",
+      "query": "MutexBuffersPolicyDB"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "a_",
+        "b_",
+        "c_",
+        "Get",
+        "GetCube",
+        "GetPre",
+        "AscendC::LocalTensor",
+        "MutexBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBuffersPolicy3buff",
+          "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+          "line": 143,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "140:}; | 141: | 142:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC> | 143:class MutexBuffersPolicy3buff { | 144:public: | 145:    __aicore__ inline void Init(MutexBufferManager<bufferType> &bufferManager, uint32_t size) | 146:    { | 147:        a_ = detail::AllocMutexBuf<bufferType, syncType>(bufferManager, size);"
+        }
+      ],
+      "group": "ident",
+      "query": "MutexBuffersPolicy3buff"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "a_",
+        "b_",
+        "c_",
+        "Get",
+        "GetPre",
+        "GetReused",
+        "AscendC::LocalTensor",
+        "MutexBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBuffersPolicy4buff",
+          "file": "op_kernel/arch35/cube_api/mutex_buffers_policy.h",
+          "line": 256,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "253:}; | 254: | 255:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC> | 256:class MutexBuffersPolicy4buff { | 257:public: | 258:    __aicore__ inline void Init(MutexBufferManager<bufferType> &bufferManager, uint32_t size) | 259:    { | 260:        a_ = detail::AllocMutexBuf<bufferType, syncType>(bufferManager, size);"
+        }
+      ],
+      "group": "ident",
+      "query": "MutexBuffersPolicy4buff"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "mem_",
+        "tbuf",
+        "AllocBuffer",
+        "FreeBuffer",
+        "Init",
+        "AscendC::LocalTensor",
+        "AscendC::TBuf",
+        "FAGBlockCube"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBufferManager",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+          "line": 22,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "19: | 20:namespace fa_base_matmul { | 21:template <BufferType bufferType> | 22:class MutexBufferManager { | 23:    using TensorType = LocalTensor<uint8_t>; | 24: | 25:public: | 26:    __aicore__ inline void Init(TPipe *pipe, uint32_t size)"
+        }
+      ],
+      "group": "ident",
+      "query": "MutexBufferManager"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "Init",
+        "AscendC::AllocMutexID"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "AllocMutexID",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 72,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "69:    { | 70:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) { | 71:            if ASCEND_IS_AIC { | 72:                mutexId_ = AllocMutexID(); | 73:            } | 74:        } | 75:    } | 76:"
+        }
+      ],
+      "group": "ident",
+      "query": "AllocMutexID"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "UnInit",
+        "AscendC::ReleaseMutexID"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "ReleaseMutexID",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 81,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "78:    { | 79:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) { | 80:            if ASCEND_IS_AIC { | 81:                ReleaseMutexID(mutexId_); | 82:            } | 83:        } | 84:    } | 85:"
+        }
+      ],
+      "group": "ident",
+      "query": "ReleaseMutexID"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipe",
+        "AscendC::InitBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "InitBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+          "line": 29,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "26:    __aicore__ inline void Init(TPipe *pipe, uint32_t size) | 27:    { | 28:        TBuf<BufferInfo<bufferType>::Position> tbuf; | 29:        pipe->InitBuffer(tbuf, size); | 30:        mem_ = tbuf.template Get<uint8_t>(); | 31:    } | 32: | 33:    template <SyncType syncType = SyncType::INNER_CORE_SYNC>"
+        }
+      ],
+      "group": "ident",
+      "query": "InitBuffer"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "AscendC::LocalTensor"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "BUFFER",
+          "name": "dSL1Buffer",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 60,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "57:                CrossCoreWaitFlag<SYNC_MODE, PIPE_MTE3>(SYNC_C4_TO_V3_FLAG); | 58:            } | 59:        } | 60:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> dSL1Buffer = this->dSL1Buf.Get(); | 61:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> pL1Buffer = this->pL1Buf.Get(); | 62:        this->vecBlock.ProcessVec3(dSL1Buffer, mm1ResTe"
+        }
+      ],
+      "group": "ident",
+      "query": "dSL1Buf"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "AscendC::LocalTensor"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "BUFFER",
+          "name": "pL1Buffer",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 61,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "58:            } | 59:        } | 60:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> dSL1Buffer = this->dSL1Buf.Get(); | 61:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> pL1Buffer = this->pL1Buf.Get(); | 62:        this->vecBlock.ProcessVec3(dSL1Buffer, mm1ResTensor, mm2ResTensor, this->constInfo, | 63:                                   prevR"
+        }
+      ],
+      "group": "ident",
+      "query": "pL1Buf"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "Init",
+        "FlashAttentionScoreGradKernelBase",
+        "AscendC::LocalTensor"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "BUFFER",
+          "name": "l1BufferManager",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+          "line": 126,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "123:    // CV核间共享Buffer | 124:    TBuf<> mm1ResBuf[2]; | 125:    TBuf<> mm2ResBuf[2]; | 126:    MutexBufferManager<BufferType::L1> l1BufferManager; | 127:    typename std::conditional<IS_PRELOAD_TWO_TIMES, MutexBuffersPolicyDB<BufferType::L1, SyncType::NO_SYNC>, | 128:                              MutexBuffersPolicySingleBuffer<BufferType::L1, SyncType::NO_S"
+        }
+      ],
+      "group": "ident",
+      "query": "l1BufferManager"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "FlashAttentionScoreGradS1S2BNGS1S2PreRegbase"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "METHOD",
+          "name": "SyncALLCores",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+          "line": 280,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "280:__aicore__ inline void FlashAttentionScoreGradS1S2BNGS1S2PreRegbase<FAG_PRE_FUNCTION_PARAMS_TEMPLATE>::SyncALLCores() | 281:{ | 282:    SyncAll<false>(); | 283:}"
+        }
+      ],
+      "group": "ident",
+      "query": "SyncALLCores"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "SyncALLCores",
+        "AscendC::SyncAll"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "SyncAll",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+          "line": 282,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "279:FAG_PRE_FUNCTION_TEMPLATE | 280:__aicore__ inline void FlashAttentionScoreGradS1S2BNGS1S2PreRegbase<FAG_PRE_FUNCTION_PARAMS_TEMPLATE>::SyncALLCores() | 281:{ | 282:    SyncAll<false>(); | 283:} | 284:#endif // _FLASH_ATTENTION_SCORE_GRAD_S1S2_BNGS1S2_PRE_KERNEL_REGBASE_H_"
+        }
+      ],
+      "group": "ident",
+      "query": "SyncAll"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "ProcessBn2gs1s2LastVec",
+        "CrossCoreWaitFlag",
+        "AscendC::CrossCoreSetFlag",
+        "SYNC_V3_TO_C3_FLAG"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "CrossCoreSetFlag",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 68,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "65:            this->vecBlock.ProcessVecSink(mm1ResTensor, mm2ResTensor, this->constInfo, prevRunInfo); | 66:        } | 67:        if ASCEND_IS_AIV { | 68:            CrossCoreSetFlag<SYNC_MODE, PIPE_MTE3>(SYNC_V3_TO_C3_FLAG); // dqk must wait ds copy completely | 69:        } else { | 70:            // wait ds in ub copy to l1 | 71:            CrossCoreWai"
+        }
+      ],
+      "group": "ident",
+      "query": "CrossCoreSetFlag"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "SYNC_C4_TO_V3_FLAG",
+        "ProcessBn2gs1s2LastVec",
+        "CrossCoreSetFlag",
+        "AscendC::CrossCoreWaitFlag"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "CrossCoreWaitFlag",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 57,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "54:    if constexpr (IS_DROP) { | 55:        if ASCEND_IS_AIV { | 56:            if (needSyncDkMM) { | 57:                CrossCoreWaitFlag<SYNC_MODE, PIPE_MTE3>(SYNC_C4_TO_V3_FLAG); | 58:            } | 59:        } | 60:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> dSL1Buffer = this->dSL1Buf.Get(); | 61:        MutexBuffer<BufferType::L1, SyncType"
+        }
+      ],
+      "group": "ident",
+      "query": "CrossCoreWaitFlag"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "Init",
+        "AscendC::SetFlag",
+        "eventIDMte3ToS"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "SetFlag",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+          "line": 138,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "135:    } | 136:    GM_ADDR baseAddr = (__gm__ uint8_t *)dsinkWorkspace.GetPhyAddr(); | 137:    for (uint64_t nIdx = begin; nIdx < end; nIdx++) { | 138:        SetFlag<HardEvent::MTE3_S>(eventIDMte3ToS); | 139:        WaitFlag<HardEvent::MTE3_S>(eventIDMte3ToS); | 140:        float dsinkAccu = 0.0; | 141:        uint64_t dsinkBaseOffset = nIdx * bSinkSize * "
+        }
+      ],
+      "group": "ident",
+      "query": "SetFlag"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "eventIDMte3ToS",
+        "Init",
+        "AscendC::WaitFlag"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "WaitFlag",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+          "line": 139,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "136:    GM_ADDR baseAddr = (__gm__ uint8_t *)dsinkWorkspace.GetPhyAddr(); | 137:    for (uint64_t nIdx = begin; nIdx < end; nIdx++) { | 138:        SetFlag<HardEvent::MTE3_S>(eventIDMte3ToS); | 139:        WaitFlag<HardEvent::MTE3_S>(eventIDMte3ToS); | 140:        float dsinkAccu = 0.0; | 141:        uint64_t dsinkBaseOffset = nIdx * bSinkSize * s1SinkOuter "
+        }
+      ],
+      "group": "ident",
+      "query": "WaitFlag"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "arch35",
+        "CrossCoreSetFlag"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SYNC_DETER_FIX_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_common.h",
+          "line": 41,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "38:constexpr uint8_t SYNC_C4_TO_V6_FLAG = 7; | 39:constexpr uint8_t SYNC_C4_TO_V3_FLAG = 8; | 40:constexpr uint8_t SYNC_C5_TO_V4_FLAG = 9; | 41:constexpr uint8_t SYNC_DETER_FIX_FLAG = 10; | 42:constexpr uint8_t SYNC_DK_DETER_FIX_FLAG = 11; | 43:constexpr uint8_t SYNC_DV_DETER_FIX_FLAG = 12; | 44:// for small D preload 2 times | 45:constexpr uint8_t SYNC_V2_T"
+        },
+        {
+          "kind": "EVENT",
+          "name": "SYNC_DETER_FIX_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 288,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "285:            this->vecBlock.template ProcessMulsAndCast<CALC_TYPE, BaseClass::IS_DV_WRITE_UB, DV_IDX>( | 286:                mm2ResTensor, this->constInfo, prevRunInfo); // v6: dv muls + cast | 287:            if ASCEND_IS_AIV { | 288:                CrossCoreSetFlag<SYNC_MODE, PIPE_V>(SYNC_DETER_FIX_FLAG); | 289:            } | 290:            needSyncDk"
+        }
+      ],
+      "group": "ident",
+      "query": "SYNC_DETER_FIX_FLAG"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "arch35"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SYNC_V2_TO_C1_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_common.h",
+          "line": 45,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "42:constexpr uint8_t SYNC_DK_DETER_FIX_FLAG = 11; | 43:constexpr uint8_t SYNC_DV_DETER_FIX_FLAG = 12; | 44:// for small D preload 2 times | 45:constexpr uint8_t SYNC_V2_TO_C1_FLAG[2] = {10, 11}; | 46:constexpr uint8_t SYNC_V2_TO_C2_FLAG[2] = {12, 13}; | 47: | 48:// MM_IDX | 49:constexpr uint8_t DQ_IDX = 0;"
+        }
+      ],
+      "group": "ident",
+      "query": "SYNC_V2_TO_C1_FLAG"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "PostTiling"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "SetScheduleMode",
+          "file": "flash_attention_score_grad_tiling_normal_regbase.cpp",
+          "line": 1504,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "1501:    // 使用SyncAll，需要设置为batch mode模式，所有核同时启动，否则在多流方式下执行可能会卡死 | 1502:    if (fBaseParams.splitAxis != SplitAxisEnum::BN2 || !fBaseParams.isBn2MultiBlk || | 1503:        fBaseParams.layoutType != INPUT_FORMAT_TND) { | 1504:        context_->SetScheduleMode(1); | 1505:    } | 1506:    return ge::GRAPH_SUCCESS; | 1507:} | 1508:"
+        },
+        {
+          "kind": "FUNCTION",
+          "name": "SetScheduleMode",
+          "file": "",
+          "line": 0,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": ""
+        }
+      ],
+      "group": "ident",
+      "query": "SetScheduleMode"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "AscendC::Destroy",
+        "AscendC::GetUserWorkspace",
+        "AscendC::SetMaskNorm"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "FUNCTION",
+          "name": "RegbaseFAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 201,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "201:inline __aicore__ void | 202:RegbaseFAG(__gm__ uint8_t *query, __gm__ uint8_t *key, __gm__ uint8_t *value, __gm__ uint8_t *dy, | 203:           __gm__ uint8_t *pse_shift, __gm__ uint8_t *drop_mask, __gm__ uint8_t *padding_mask, | 204:           __gm__ uint8_t *atten_mask, __gm__ uint8_t *softmax_max, __gm__ uint8_t *softmax_sum, | 205:           __gm__ u"
+        },
+        {
+          "kind": "METHOD",
+          "name": "RegbaseFAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 214,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "214:    SetMaskNorm(); | 215:    SetSysWorkspace(workspace); | 216:    __gm__ uint8_t *user = GetUserWorkspace(workspace); | 217:    constexpr static bool needDeterPrefix = NEED_DETER_PREFIX(deterType, isTnd); | 218:    using fagTiling = FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase<NEED_DETER(deterType), | 219:        needDeterPrefix, isTnd, isTndS"
+        }
+      ],
+      "group": "ident",
+      "query": "RegbaseFAG"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 1,
+      "hint": "",
+      "next": [
+        "pipeIn",
+        "AscendC::Destroy"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "Destroy",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 62,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "59:            opPre.Process();                                                                                           \\ | 60:            opPre.SyncALLCores();                                                                                      \\ | 61:        }                                                                                                "
+        }
+      ],
+      "group": "ident",
+      "query": "Destroy"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "AscendC::Lock",
+        "MutexBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "Lock",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 91,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "88:    { | 89:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) { | 90:            if ASCEND_IS_AIC { | 91:                AscendC::Mutex::Lock<pipe>(mutexId_); | 92:            } | 93:        } | 94:    } | 95:"
+        },
+        {
+          "kind": "METHOD",
+          "name": "Lock",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 87,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "87:    __aicore__ inline void Lock() | 88:    { | 89:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) { | 90:            if ASCEND_IS_AIC { | 91:                AscendC::Mutex::Lock<pipe>(mutexId_); | 92:            } | 93:        } | 94:    }"
+        }
+      ],
+      "group": "ident",
+      "query": "Lock"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "AscendC::Unlock",
+        "MutexBuffer"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "OPERATION",
+          "name": "Unlock",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 101,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "98:    { | 99:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) { | 100:            if ASCEND_IS_AIC { | 101:                AscendC::Mutex::Unlock<pipe>(mutexId_); | 102:            } | 103:        } | 104:    } | 105:"
+        },
+        {
+          "kind": "METHOD",
+          "name": "Unlock",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 97,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "97:    __aicore__ inline void Unlock() | 98:    { | 99:        if constexpr (syncType == SyncType::INNER_CORE_SYNC) { | 100:            if ASCEND_IS_AIC { | 101:                AscendC::Mutex::Unlock<pipe>(mutexId_); | 102:            } | 103:        } | 104:    }"
+        }
+      ],
+      "group": "ident",
+      "query": "Unlock"
+    },
+    {
+      "ok": true,
+      "shape": "name",
+      "count": 2,
+      "hint": "",
+      "next": [
+        "tensor_",
+        "GetEventID",
+        "GetTensor",
+        "AscendC::LocalTensor",
+        "BuffersPolicy3buff",
+        "BuffersPolicy4buff"
+      ],
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "Buffer",
+          "file": "op_kernel/buffer.h",
+          "line": 161,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "161:class Buffer {"
+        },
+        {
+          "kind": "METHOD",
+          "name": "Buffer",
+          "file": "op_kernel/buffer.h",
+          "line": 168,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "168:__aicore__ inline Buffer()"
+        }
+      ],
+      "group": "ident",
+      "query": "buffer"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 2,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "FUNCTION",
+          "name": "RegbaseFAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 201,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "201:inline __aicore__ void | 202:RegbaseFAG(__gm__ uint8_t *query, __gm__ uint8_t *key, __gm__ uint8_t *value, __gm__ uint8_t *dy, | 203:           __gm__ uint8_t *pse_shift, __gm__ uint8_t *drop_mask, __gm__ uint8_t *padding_mask, | 204:           __gm__ uint8_t *atten_mask, __gm__ uint8_t *softmax_max, __gm__ uint8_t *softmax_sum, | 205:           __gm__ u"
+        },
+        {
+          "kind": "PIPE",
+          "name": "pipeIn",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 213,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "210:           __gm__ uint8_t *dkRope, __gm__ uint8_t *dsink, __gm__ uint8_t *workspace, __gm__ uint8_t *tiling_data) | 211:{ | 212:    KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIC_1_2); | 213:    TPipe pipeIn; | 214:    SetMaskNorm(); | 215:    SetSysWorkspace(workspace); | 216:    __gm__ uint8_t *user = GetUserWorkspace(workspace); | 217:    constexpr stat"
+        }
+      ],
+      "seeds_len": 2,
+      "hits_len": 2,
+      "hits_0": {
+        "kind": "FUNCTION",
+        "name": "RegbaseFAG",
+        "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+        "line": 201,
+        "rel": null
+      },
+      "neighbors_len": 0,
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_entry_regbase.h --line 213",
+      "from": "pipeIn"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 1,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "PIPE",
+          "name": "pipeBase",
+          "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+          "line": 63,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "60:            opPre.SyncALLCores();                                                                                      \\ | 61:        }                                                                                                              \\ | 62:        pipeIn.Destroy();                                                                                "
+        }
+      ],
+      "seeds_len": 1,
+      "hits_len": 1,
+      "hits_0": {
+        "kind": "PIPE",
+        "name": "pipeBase",
+        "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+        "line": 63,
+        "rel": null
+      },
+      "neighbors_len": 7,
+      "neighbors_0": {
+        "kind": "BUFFER",
+        "name": "mm1ResBuf",
+        "file": "op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+        "line": 124,
+        "rel": "BINDS"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_entry_regbase.h --line 63",
+      "from": "pipeBase"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 1,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "QUEUE",
+          "name": "inQueuePing",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+          "line": 52,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "49:    uint32_t POST_S_BASE = 96; | 50:    TPipe *pipe; | 51:    FagTilingType tilingData; | 52:    TQue<QuePosition::VECIN, 1> inQueuePing; | 53:    TQue<QuePosition::VECOUT, 1> outQueuePing; | 54:    TQue<QuePosition::VECIN, 1> inQueuePong; | 55:    TQue<QuePosition::VECOUT, 1> outQueuePong; | 56:    GlobalTensor<OUTDTYPE> dqkv[3];"
+        }
+      ],
+      "seeds_len": 1,
+      "hits_len": 1,
+      "hits_0": {
+        "kind": "QUEUE",
+        "name": "inQueuePing",
+        "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+        "line": 52,
+        "rel": null
+      },
+      "neighbors_len": 8,
+      "neighbors_0": {
+        "kind": "OPERATION",
+        "name": "AllocTensor",
+        "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h",
+        "line": 144,
+        "rel": "CALLS"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_post_regbase.h --line 52",
+      "from": "inQueuePing"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 1,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "TYPE",
+          "name": "MutexBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 52,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "49:}; | 50: | 51:template <BufferType bufferType, SyncType syncType = SyncType::INNER_CORE_SYNC> | 52:class MutexBuffer { | 53:    // TensorType用于定义缓冲区的基础数据类型（此处为uint8_t），用于互斥缓冲区的原始存储。 | 54:    using TensorType = LocalTensor<uint8_t>; | 55: | 56:    // TargetTensorType是一个模板，允许根据需要组合不同的数据类型，便于不同数据类型的缓冲需求。"
+        }
+      ],
+      "seeds_len": 1,
+      "hits_len": 1,
+      "hits_0": {
+        "kind": "TYPE",
+        "name": "MutexBuffer",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+        "line": 52,
+        "rel": null
+      },
+      "neighbors_len": 10,
+      "neighbors_0": {
+        "kind": "BUFFER",
+        "name": "tensor_",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+        "line": 146,
+        "rel": "CONTAINS"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/cube_api/mutex_buffer.h --line 52",
+      "from": "MutexBuffer"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 2,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "METHOD",
+          "name": "LockCons",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 61,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "61:    __aicore__ inline MutexBuffer() | 62:    { | 63:    } | 64:    __aicore__ inline MutexBuffer(TensorType tensor, uint32_t size) : tensor_(tensor), size_(size) | 65:    { | 66:    } | 67: | 68:    __aicore__ inline void Init()"
+        },
+        {
+          "kind": "METHOD",
+          "name": "MutexBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+          "line": 61,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "61:    __aicore__ inline MutexBuffer() | 62:    { | 63:    } | 64:    __aicore__ inline MutexBuffer(TensorType tensor, uint32_t size) : tensor_(tensor), size_(size) | 65:    { | 66:    } | 67: | 68:    __aicore__ inline void Init()"
+        }
+      ],
+      "seeds_len": 2,
+      "hits_len": 2,
+      "hits_0": {
+        "kind": "METHOD",
+        "name": "LockCons",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer.h",
+        "line": 61,
+        "rel": null
+      },
+      "neighbors_len": 3,
+      "neighbors_0": {
+        "kind": "METHOD",
+        "name": "MatmulFullMutex",
+        "file": "op_kernel/arch35/cube_api/matmul.h",
+        "line": 34,
+        "rel": "CALLS"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/cube_api/mutex_buffer.h --line 61",
+      "from": "MutexBuffer"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 2,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "METHOD",
+          "name": "Init",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+          "line": 26,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "26:    __aicore__ inline void Init(TPipe *pipe, uint32_t size) | 27:    { | 28:        TBuf<BufferInfo<bufferType>::Position> tbuf; | 29:        pipe->InitBuffer(tbuf, size); | 30:        mem_ = tbuf.template Get<uint8_t>(); | 31:    }"
+        },
+        {
+          "kind": "OPERATION",
+          "name": "InitBuffer",
+          "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+          "line": 29,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "26:    __aicore__ inline void Init(TPipe *pipe, uint32_t size) | 27:    { | 28:        TBuf<BufferInfo<bufferType>::Position> tbuf; | 29:        pipe->InitBuffer(tbuf, size); | 30:        mem_ = tbuf.template Get<uint8_t>(); | 31:    } | 32: | 33:    template <SyncType syncType = SyncType::INNER_CORE_SYNC>"
+        }
+      ],
+      "seeds_len": 2,
+      "hits_len": 2,
+      "hits_0": {
+        "kind": "METHOD",
+        "name": "Init",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+        "line": 26,
+        "rel": null
+      },
+      "neighbors_len": 2,
+      "neighbors_0": {
+        "kind": "METHOD",
+        "name": "Get",
+        "file": "op_kernel/arch35/cube_api/mutex_buffer_manager.h",
+        "line": 30,
+        "rel": "CALLS"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/cube_api/mutex_buffer_manager.h --line 29",
+      "from": "InitBuffer"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 3,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "METHOD",
+          "name": "ProcessBn2gs1s2LastVec",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 42,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "42:    __aicore__ inline void ProcessBn2gs1s2LastVec(FagRunInfo &prevRunInfo, bool &needSyncDkMM); | 43:}; | 44: | 45:template <typename CubeBlockType, typename VecBlockType> | 46:__aicore__ inline void | 47:FlashAttentionScoreGradKernel<CubeBlockType, VecBlockType>::ProcessBn2gs1s2LastVec(FagRunInfo &prevRunInfo, | 48:                                       "
+        },
+        {
+          "kind": "BUFFER",
+          "name": "dSL1Buffer",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 60,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "57:                CrossCoreWaitFlag<SYNC_MODE, PIPE_MTE3>(SYNC_C4_TO_V3_FLAG); | 58:            } | 59:        } | 60:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> dSL1Buffer = this->dSL1Buf.Get(); | 61:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> pL1Buffer = this->pL1Buf.Get(); | 62:        this->vecBlock.ProcessVec3(dSL1Buffer, mm1ResTe"
+        },
+        {
+          "kind": "EVENT",
+          "name": "SYNC_C4_TO_V3_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 57,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "54:    if constexpr (IS_DROP) { | 55:        if ASCEND_IS_AIV { | 56:            if (needSyncDkMM) { | 57:                CrossCoreWaitFlag<SYNC_MODE, PIPE_MTE3>(SYNC_C4_TO_V3_FLAG); | 58:            } | 59:        } | 60:        MutexBuffer<BufferType::L1, SyncType::NO_SYNC> dSL1Buffer = this->dSL1Buf.Get(); | 61:        MutexBuffer<BufferType::L1, SyncType"
+        }
+      ],
+      "seeds_len": 3,
+      "hits_len": 3,
+      "hits_0": {
+        "kind": "METHOD",
+        "name": "ProcessBn2gs1s2LastVec",
+        "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+        "line": 42,
+        "rel": null
+      },
+      "neighbors_len": 1,
+      "neighbors_0": {
+        "kind": "TYPE",
+        "name": "FlashAttentionScoreGradKernel",
+        "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+        "line": 28,
+        "rel": "DECLARES"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_kernel.h --line 60",
+      "from": "dSL1Buf"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 1,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "METHOD",
+          "name": "SyncALLCores",
+          "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+          "line": 280,
+          "truncated": false,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "280:__aicore__ inline void FlashAttentionScoreGradS1S2BNGS1S2PreRegbase<FAG_PRE_FUNCTION_PARAMS_TEMPLATE>::SyncALLCores() | 281:{ | 282:    SyncAll<false>(); | 283:}"
+        }
+      ],
+      "seeds_len": 1,
+      "hits_len": 1,
+      "hits_0": {
+        "kind": "METHOD",
+        "name": "SyncALLCores",
+        "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+        "line": 280,
+        "rel": null
+      },
+      "neighbors_len": 1,
+      "neighbors_0": {
+        "kind": "TYPE",
+        "name": "FlashAttentionScoreGradS1S2BNGS1S2PreRegbase",
+        "file": "op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h",
+        "line": 37,
+        "rel": "DECLARES"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_s1s2_bn2gs1s2_pre_regbase.h --line 280",
+      "from": "SyncALLCores"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 1,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "COMPILE_VAR",
+          "name": "SYNC_DETER_FIX_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_common.h",
+          "line": 41,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "38:constexpr uint8_t SYNC_C4_TO_V6_FLAG = 7; | 39:constexpr uint8_t SYNC_C4_TO_V3_FLAG = 8; | 40:constexpr uint8_t SYNC_C5_TO_V4_FLAG = 9; | 41:constexpr uint8_t SYNC_DETER_FIX_FLAG = 10; | 42:constexpr uint8_t SYNC_DK_DETER_FIX_FLAG = 11; | 43:constexpr uint8_t SYNC_DV_DETER_FIX_FLAG = 12; | 44:// for small D preload 2 times | 45:constexpr uint8_t SYNC_V2_T"
+        }
+      ],
+      "seeds_len": 1,
+      "hits_len": 1,
+      "hits_0": {
+        "kind": "COMPILE_VAR",
+        "name": "SYNC_DETER_FIX_FLAG",
+        "file": "op_kernel/arch35/flash_attention_score_grad_common.h",
+        "line": 41,
+        "rel": null
+      },
+      "neighbors_len": 1,
+      "neighbors_0": {
+        "kind": "ARCH",
+        "name": "arch35",
+        "file": "",
+        "line": null,
+        "rel": "ACTIVE_UNDER"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_common.h --line 41",
+      "from": "SYNC_DETER_FIX_FLAG"
+    },
+    {
+      "ok": true,
+      "shape": "around",
+      "count": 5,
+      "hint": "",
+      "next": null,
+      "error": null,
+      "cards": [
+        {
+          "kind": "METHOD",
+          "name": "ComputeDqkvBn2s2",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 178,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "178:    ProcessBn2gs1s2LastVec(prevRunInfo, needSyncDkMM); | 179:} | 180: | 181:template <typename CubeBlockType, typename VecBlockType> | 182:__aicore__ inline void FlashAttentionScoreGradKernel<CubeBlockType, VecBlockType>::ComputeDqkvBn2s2( | 183:    FagRunInfo &prevRunInfo, bool &needSyncDkMM, bool &needSyncDkDvFixUb, int64_t taskId) | 184:{ | 185:    Lo"
+        },
+        {
+          "kind": "OPERATION",
+          "name": "CrossCoreSetFlag",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 288,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "285:            this->vecBlock.template ProcessMulsAndCast<CALC_TYPE, BaseClass::IS_DV_WRITE_UB, DV_IDX>( | 286:                mm2ResTensor, this->constInfo, prevRunInfo); // v6: dv muls + cast | 287:            if ASCEND_IS_AIV { | 288:                CrossCoreSetFlag<SYNC_MODE, PIPE_V>(SYNC_DETER_FIX_FLAG); | 289:            } | 290:            needSyncDk"
+        },
+        {
+          "kind": "EVENT",
+          "name": "SYNC_DETER_FIX_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 288,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "285:            this->vecBlock.template ProcessMulsAndCast<CALC_TYPE, BaseClass::IS_DV_WRITE_UB, DV_IDX>( | 286:                mm2ResTensor, this->constInfo, prevRunInfo); // v6: dv muls + cast | 287:            if ASCEND_IS_AIV { | 288:                CrossCoreSetFlag<SYNC_MODE, PIPE_V>(SYNC_DETER_FIX_FLAG); | 289:            } | 290:            needSyncDk"
+        },
+        {
+          "kind": "EVENT",
+          "name": "SYNC_C3_TO_V5_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 280,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "277:                                                                                    prevRunInfo); // c3 | 278:        if (!prevRunInfo.isNextS2IdxNoChange) { | 279:            if ASCEND_IS_AIC { | 280:                CrossCoreSetFlag<SYNC_MODE, PIPE_FIX>(SYNC_C3_TO_V5_FLAG); | 281:                CrossCoreSetFlag<SYNC_MODE, PIPE_FIX>(16 + SYNC_C3_TO_V5_F"
+        },
+        {
+          "kind": "EVENT",
+          "name": "SYNC_C5_TO_V4_FLAG",
+          "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+          "line": 215,
+          "truncated": true,
+          "catalog": null,
+          "role": null,
+          "wrapper": null,
+          "tposition": null,
+          "snippet_head": "212:    } | 213:    if ASCEND_IS_AIV { | 214:        if (needSyncDkMM) { | 215:            CrossCoreWaitFlag<SYNC_MODE, PIPE_MTE3>(SYNC_C5_TO_V4_FLAG); | 216:        } | 217:    } | 218:    this->vecBlock.ProcessVec4(pL1Buffer, mm2ResTensor, this->constInfo, prevRunInfo); // v4: cast + nd2nz | 219:    if ASCEND_IS_AIV {"
+        }
+      ],
+      "seeds_len": 5,
+      "hits_len": 5,
+      "hits_0": {
+        "kind": "METHOD",
+        "name": "ComputeDqkvBn2s2",
+        "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+        "line": 178,
+        "rel": null
+      },
+      "neighbors_len": 2,
+      "neighbors_0": {
+        "kind": "METHOD",
+        "name": "Get",
+        "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+        "line": 239,
+        "rel": "CALLS"
+      },
+      "group": "around",
+      "query": "--file op_kernel/arch35/flash_attention_score_grad_kernel.h --line 288",
+      "from": "SYNC_DETER_FIX_FLAG"
+    }
+  ]
+}

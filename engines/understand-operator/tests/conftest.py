@@ -122,7 +122,7 @@ def build_ctx(fag_dir, cann_root, ops_root):
 
 @pytest.fixture(scope="session")
 def clang_exe():
-    from uo_init.harness import find_clang
+    from uo_init.clang_cmd import find_clang
 
     exe = find_clang()
     if exe is None:
@@ -165,27 +165,7 @@ def update_baselines() -> bool:
 
 @pytest.fixture(scope="session")
 def host_tus() -> dict[str, Path]:
-    """Host tiling TU paths, keyed the same way as `host_walks`."""
+    """Host tiling TU paths keyed by file name."""
     if FAG is None:
         _need(None, "operator sources")
     return {p.name: p for p in host_tiling_sources(FAG)}
-
-
-@pytest.fixture(scope="session")
-def host_walks():
-    """Every host tiling TU for the arch under analysis, parsed once (~8s each)."""
-    from uo_init.branch_inventory import inventory_clang
-    from uo_init.build_context import BuildContext
-
-    if None in (FAG, CANN, OPS):
-        _need(None, "operator sources, CANN and ops-transformer")
-    ctx = BuildContext.load(
-        cann_root=str(CANN), ops_root=str(OPS), op_dir=str(FAG), arch_dir=ARCH
-    )
-    targets = host_tiling_sources(FAG)
-    if not targets:
-        _need(None, f"host tiling sources under {FAG}")
-    names = [p.name for p in targets]
-    if len(set(names)) != len(names):
-        raise RuntimeError(f"two host TUs share a file name: {sorted(names)}")
-    return {p.name: inventory_clang(p, ctx) for p in targets}

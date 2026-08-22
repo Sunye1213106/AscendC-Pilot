@@ -18,7 +18,7 @@ dependencies = [
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-uo-init = "uo_init.operator_report:main"
+uo-init = "uo_init.__main__:main"
 uo-dump = "uo_init.dump:main"
 
 [tool.setuptools.packages.find]

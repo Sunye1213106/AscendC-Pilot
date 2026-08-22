@@ -1162,10 +1162,12 @@ def resolve_start_architecture(
     """Resolve architecture for a new start/reinit, or return AskQuestion payload.
 
     - Explicit --architecture: validate against discovered dirs when any exist.
+      A tree with no ``arch*`` folders still accepts an explicit slot (reinit /
+      already-pinned product); unspecified uses ``default``.
     - Unspecified + unique changed-files pin in tree: use the pin.
     - Unspecified + 2+ dirs and no unique pin: needs_human_decision (no silent arch35).
     - Unspecified + exactly 1 dir: auto-select that dir.
-    - Unspecified + 0 dirs: ARCHITECTURE_NOT_FOUND (never silent arch35).
+    - Unspecified + 0 dirs: product slot ``default`` (one implementation; never invent arch35).
     """
     root = Path(project_root).expanduser().resolve()
     available = discover_available_archs(root)
@@ -1209,14 +1211,18 @@ def resolve_start_architecture(
             "available_architectures": available,
             "selected_by": "sole_arch",
         }
+    from uo_init.source_layout import UNIFIED_ARCH_DIR
+
     return {
-        "ok": False,
-        "error": "ARCHITECTURE_NOT_FOUND",
-        "architecture": "",
-        "available_architectures": available,
+        "ok": True,
+        "architecture": UNIFIED_ARCH_DIR,
+        "available_architectures": [],
         "workflow_id": workflow_id,
-        "message_zh": "算子目录没有可识别的 architecture；请指定 --architecture 或先 scan-architectures。",
-        "selected_by": "none",
+        "message_zh": (
+            f"未扫到 arch* 目录：按一套源码一起构建，产物槽是 `{UNIFIED_ARCH_DIR}`。"
+        ),
+        "selected_by": "unified_implementation",
+        "unified_implementation": True,
     }
 
 

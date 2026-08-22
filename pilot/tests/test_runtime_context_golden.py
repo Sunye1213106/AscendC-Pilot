@@ -66,17 +66,36 @@ def test_runtime_context_identity_and_pollution() -> None:
                 }
             )
         seen.append(row)
-        if sid == "bind-columns":
-            assert "modes.precision" not in bodies
-            assert "performance-testing" not in bodies
-            assert "`references/construction-gotchas.md`" not in bodies
-        if sid == "bind-harness":
-            assert "api_arg" not in bodies
-            assert "script_meta" not in bodies
-        if sid == "analyze-round":
+        if action.get("id") == "bind_init":
+            names = {r["id"] for r in row["available_refs"]}
+            assert names == {
+                "bind-init/harness.md",
+                "bind-init/columns.md",
+                "bind-init/review.md",
+                "bind-init/test-script-repo.md",
+                "bind-init/harness-edge-cases.md",
+                "bind-init/column-binding-edge-cases.md",
+            }
+            assert "```yaml" not in skill_text
+            harness = (SKILLS / "bind-init" / "references" / "harness.md").read_text(
+                encoding="utf-8"
+            )
+            columns = (SKILLS / "bind-init" / "references" / "columns.md").read_text(
+                encoding="utf-8"
+            )
+            assert "api_arg" not in harness
+            assert "script_meta" not in harness
+            assert "modes.precision" not in columns
+            assert "performance-testing" not in columns
+        if action.get("id") == "bind_review":
+            assert str(action.get("method_ref") or "") == "review.md"
+            review = (SKILLS / "bind-init" / "references" / "review.md").read_text(
+                encoding="utf-8"
+            )
+            assert "intent=PASS" in review
+            assert "intent=REWORK" in review
+        if sid == "solve":
             assert "`references/search.md`" not in bodies
             assert "`references/closure-safety.md`" not in bodies
-        if sid == "bind-init":
-            assert row["available_refs"] == []
     assert seen, "expected LLM actions"
     assert all(r["skill_tokens"] > 0 for r in seen)

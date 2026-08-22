@@ -81,10 +81,70 @@ def run(codemap: CodeMap, *, context: dict[str, Any] | None = None) -> CodeMap:
         reconcile_source_declared_tiling_keys(codemap)
 
 
+def _kernel_args_from_ctx(ctx: dict[str, Any], path: Path) -> list[str]:
+    clang_ctx = ctx.get("clang_ctx")
+    if clang_ctx is not None and hasattr(clang_ctx, "kernel_args"):
+        try:
+            return list(clang_ctx.kernel_args(dtype_variant=None, source_path=path))
+        except TypeError:
+            try:
+                return list(clang_ctx.kernel_args(dtype_variant=None))
+            except Exception:
+                return []
+        except Exception:
+            return []
+    raw = ctx.get("kernel_args")
+    return list(raw) if isinstance(raw, (list, tuple)) else []
+
+
+def _preprocess_pick_decl(ctx: dict[str, Any], root: Path, arch: str) -> Path | None:
+    """Prefer the ARGS_DECL file clang.exe actually included from the kernel entry."""
+    from uo_init.clang_cmd import clang_preprocess
+    from uo_init.source_layout import (
+        list_tpl_decl_candidates,
+        pick_kernel_entry,
+        selected_kernel_files,
+        tpl_decl_candidates_from_preprocess,
+        tpl_decl_files,
+    )
+
+    if len(list_tpl_decl_candidates(root, arch)) < 2:
+        return None
+
+    files = list(selected_kernel_files(root, arch))
+    entry = pick_kernel_entry(files, arch) if files else None
+    if entry is None:
+        return None
+    args = _kernel_args_from_ctx(ctx, Path(entry))
+    if not args:
+        return None
+    stdout = clang_preprocess(entry, args)
+    if not stdout:
+        return None
+    hits = tpl_decl_candidates_from_preprocess(stdout, root)
+    if not hits:
+        return None
+    ranked = tpl_decl_files(root, arch)
+    prefer = {p.resolve() for p in ranked}
+    for hit in hits:
+        if hit.resolve() in prefer or "tiling_key" in hit.name.lower():
+            return hit.resolve()
+    return hits[0].resolve()
+
+
 def _resolve_schema(
     codemap: CodeMap, ctx: dict[str, Any]
 ) -> tuple[TplSchema | None, Path | None]:
     header = _find_header(codemap, ctx)
+    op_root = str(ctx.get("op_root") or "").strip()
+    arch = str(ctx.get("architecture") or codemap.architecture or "")
+    if op_root and arch:
+        try:
+            picked = _preprocess_pick_decl(ctx, Path(op_root), arch)
+        except Exception:
+            picked = None
+        if picked is not None and picked.is_file():
+            header = picked
     paths: list[Path] = []
     if header is not None and header.is_file():
         paths.append(header)
@@ -294,6 +354,10 @@ def _upsert_dims(codemap: CodeMap, schema: TplSchema, header_ref: str) -> None:
     shift = 0
     for order, dim in enumerate(schema.dims):
         domain = [str(v) for v in dim.value_domain]
+        if str(dim.kind).upper() == "BOOL":
+            from uo_init.tpl_dsl import canonicalize_bool_token
+
+            domain = [canonicalize_bool_token(v) for v in domain]
         bit_lo = int(dim.bit_lo or shift)
         bit_hi = int(dim.bit_hi or (bit_lo + max(int(dim.bw), 1) - 1))
         if not dim.bit_hi and not dim.bit_lo:

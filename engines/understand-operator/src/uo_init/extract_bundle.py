@@ -20,11 +20,9 @@ def extract_host_bundle(
     One product path: no controllability, API clang, var_model, or key bind.
     ``kernel_max_variants`` defaults to one dtype so cold extract stays bounded.
     """
-    from concurrent.futures import ThreadPoolExecutor
-
     from uo_init.build_context import BuildContext
     from uo_init.host_ir import build_host_ir
-    from uo_init.kernel_ir import build_kernel_ir
+    from uo_init.kernel_ir import build_kernel_ir, kernel_ir_isolate
     from uo_init.op_spec import discover
     from uo_init.tpl_dsl import parse_file
 
@@ -184,33 +182,38 @@ def extract_host_bundle(
         return out
 
     with timer.span("host||kernel", tus=len(targets)):
+        # Default: one libclang TU at a time. Overlapping host walks with a
+        # KernelIR child process is what froze Windows (several GB of AST).
+        overlap = str(__import__("os").environ.get("UO_EXTRACT_OVERLAP") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
         if not with_kernel:
             ir = _run_host()
             kernel = None
-        else:
+        elif overlap and kernel_ir_isolate():
             from uo_init.kernel_ir import (
                 finish_kernel_ir_job,
-                kernel_ir_isolate,
                 kernel_ir_payload,
                 start_kernel_ir_job,
             )
 
             kernel_job = None
-            if kernel_ir_isolate():
-                try:
-                    payload = kernel_ir_payload(
-                        spec,
-                        ctx,
-                        dimensions=kernel_dims,
-                        max_variants=kernel_max_variants,
-                    )
-                    kernel_job = start_kernel_ir_job(payload)
-                    _tlog("kernel_ir.isolate process")
-                except Exception as exc:  # noqa: BLE001
-                    _tlog(f"kernel_ir.isolate_fallback  reason={type(exc).__name__}")
-                    kernel_job = None
+            try:
+                payload = kernel_ir_payload(
+                    spec,
+                    ctx,
+                    dimensions=kernel_dims,
+                    max_variants=kernel_max_variants,
+                )
+                kernel_job = start_kernel_ir_job(payload)
+                _tlog("kernel_ir.isolate process")
+            except Exception as exc:  # noqa: BLE001
+                _tlog(f"kernel_ir.isolate_fallback  reason={type(exc).__name__}")
+                kernel_job = None
+            ir = _run_host()
             if kernel_job is not None:
-                ir = _run_host()
                 try:
                     t0 = _time.perf_counter()
                     kernel = finish_kernel_ir_job(*kernel_job)
@@ -230,11 +233,10 @@ def extract_host_bundle(
                         pass
                     kernel = _run_kernel_early()
             else:
-                with ThreadPoolExecutor(max_workers=2) as pool:
-                    fut_host = pool.submit(_run_host)
-                    fut_kernel = pool.submit(_run_kernel_early)
-                    ir = fut_host.result()
-                    kernel = fut_kernel.result()
+                kernel = _run_kernel_early()
+        else:
+            ir = _run_host()
+            kernel = _run_kernel_early() if with_kernel else None
     _tlog(
         f"  host_ir controls={len(ir.controls)} writes={len(ir.writes)} "
         f"kernel_branches={len(getattr(kernel, 'branches', []) or [])}"

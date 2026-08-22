@@ -325,11 +325,14 @@ def test_action_skill_ids_are_discovered_not_closed_five():
 
     ids = listed_skill_ids(REPO)
     assert "uo-query" in ids
-    assert "plan-fuse" in ids
-    assert "plan-scope" in ids
+    assert "plan" in ids
+    assert "solve" in ids
     assert "ce-apply" in ids
     assert "standalone-review" in ids
-    assert "precision-testing" in ids
+    assert "test-modes" in ids
+    assert "lemma" in ids
+    assert "plan-fuse" not in ids
+    assert "precision-testing" not in ids
     assert "operator-analysis" not in ids
     assert "testcase-generation" not in ids
     assert "code-review" not in ids

@@ -142,3 +142,27 @@ def test_discover_defaults_to_newest_hyphenated_arch(tmp_path: Path) -> None:
     assert spec.available_archs[-1] == "arch-920r1"
     spec_pin = discover(op, arch_dir="arch-920r1")
     assert spec_pin.arch_dir == "arch-920r1"
+
+
+def test_discover_unified_implementation_when_no_arch_dirs(tmp_path: Path) -> None:
+    op = tmp_path / "toy"
+    (op / "op_host").mkdir(parents=True)
+    (op / "op_kernel").mkdir(parents=True)
+    (op / "op_host" / "toy_def.cpp").write_text(
+        "class Toy : public OpDef {};\n",
+        encoding="utf-8",
+    )
+    (op / "op_kernel" / "toy.cpp").write_text(
+        "__global__ __aicore__ void toy() {}\n",
+        encoding="utf-8",
+    )
+    spec = discover(op)
+    assert spec.arch_dir == "default"
+    assert spec.available_archs == []
+    assert any(str(n).startswith("unified_implementation:") for n in spec.ambiguities)
+    pinned = discover(op, arch_dir="arch35")
+    assert pinned.arch_dir == "arch35"
+    assert any(str(n).startswith("arch_not_present:") for n in pinned.ambiguities)
+    ok = discover(op, arch_dir="default")
+    assert ok.arch_dir == "default"
+    assert not any(str(n).startswith("arch_not_present:") for n in ok.ambiguities)

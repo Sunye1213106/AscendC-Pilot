@@ -26,7 +26,6 @@ _REQUIRED_PROFILES = (
     "tg-solve-construct-cases",
     "tg-solve-analyze-round",
     "ce-review-code-review",
-    "ce-plan-intent-grill",
     "ce-plan-draft",
     "ce-apply-patch",
     "handoff-session",
@@ -63,17 +62,22 @@ def test_tg_skill_pointers_are_action_local() -> None:
     from ascendc_pilot.actions.method_bundle import declared_reference_paths
 
     bind_init = declared_reference_paths("bind-init", REPO)
-    plan_fuse = declared_reference_paths("plan-fuse", REPO)
-    construct = declared_reference_paths("construct-cases", REPO)
-    analyze = declared_reference_paths("analyze-round", REPO)
-    assert bind_init == ()
-    assert "skills/plan-fuse/references/planning-gotchas.md" in plan_fuse
-    assert "skills/plan-fuse/references/planning-context.md" in plan_fuse
-    assert "skills/construct-cases/references/targeted-construct.md" in construct
-    assert "skills/construct-cases/references/oracle.md" not in construct
-    assert "skills/analyze-round/references/failure-patterns.md" in analyze
-    assert "skills/analyze-round/references/oracle.md" not in analyze
-    for path in (*bind_init, *plan_fuse, *construct, *analyze):
+    plan = declared_reference_paths("plan", REPO)
+    solve = declared_reference_paths("solve", REPO)
+    assert "skills/bind-init/references/harness.md" in bind_init
+    assert "skills/bind-init/references/columns.md" in bind_init
+    assert "skills/bind-init/references/review.md" in bind_init
+    assert "skills/bind-init/references/test-script-repo.md" in bind_init
+    assert "skills/bind-init/references/harness-edge-cases.md" in bind_init
+    assert "skills/bind-init/references/column-binding-edge-cases.md" in bind_init
+    assert "skills/plan/references/scope.md" in plan
+    assert "skills/plan/references/fuse.md" in plan
+    assert "skills/plan/references/planning-gotchas.md" in plan
+    assert "skills/plan/references/planning-context.md" in plan
+    assert "skills/solve/references/targeted-construct.md" in solve
+    assert "skills/solve/references/oracle.md" not in solve
+    assert "skills/solve/references/failure-patterns.md" in solve
+    for path in (*bind_init, *plan, *solve):
         assert "skills/testcase-generation/references/gotchas.md" not in path
 
 

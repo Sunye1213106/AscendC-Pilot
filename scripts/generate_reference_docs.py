@@ -29,7 +29,7 @@ CLI_HELP_ZH = {
     "route": "将自然语言或 Slash 路由到 workflow",
     "run-action": "准备或 finalize 一个 workflow action",
     "run-summary": "汇总中断的 uo-init run，供人工询问使用",
-    "scan-architectures": "快速扫描算子 op_host/op_kernel 布局与 arch* 选项",
+    "scan-architectures": "快速扫描算子 op_host/op_kernel 布局与 arch* 实现选项；无 arch* 时产物槽 default",
     "spec-hashes": "输出四类 Spec Hash 摘要",
     "start": "从 entry state 启动 workflow",
     "status": "查看 workflow 状态",

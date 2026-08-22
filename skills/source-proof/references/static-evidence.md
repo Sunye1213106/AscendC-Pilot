@@ -26,7 +26,7 @@ field
 | guards | 构造路径条件 | 漏 early return / 第一行分流 |
 | roots | 绑定输入/属性前提 | 当成已证明可达 |
 | undecided / free vars | 保持 OPEN/BLOCKED | 声称已闭合 |
-| domain | 候选值上界 | **当成可达域** |
+| domain | 候选值上界（DECL / 枚举） | **当成可达域或 SEL 全集** |
 
 ## 硬规则
 

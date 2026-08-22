@@ -18,7 +18,7 @@ Source → UO CodeMap → TG / CE
 │   ├── active_run.yaml            # last exclusive pointer (not the mutex)
 │   ├── product_locks.yaml         # family → holder run
 │   └── session_bindings.yaml      # session_id → .uo path + digest
-└── <arch>/                        # e.g. arch35 / arch22 (multi-arch siblings)
+└── <arch>/                        # arch35 / arch22 / …，或无 arch* 时的 default
     ├── uo/
     │   ├── <op_name>.<arch>.uo    # Canonical Operator CodeMap (durable)
     │   ├── checks/                # verify receipts (work tree)

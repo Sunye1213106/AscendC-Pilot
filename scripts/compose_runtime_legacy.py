@@ -82,6 +82,17 @@ COGNITIVE_SKILL_IDS: tuple[str, ...] = listed_skill_ids()
 # Not a sixth cognitive skill. Never disable-model-invocation.
 CONTROL_PLANE_SKILL_IDS: tuple[str, ...] = ()
 
+ROUTER_SKILLS = frozenset(
+    {
+        "bind-init",
+        "plan",
+        "solve",
+        "standalone-review",
+        "test-modes",
+        "lemma",
+    }
+)
+
 # LLM child agents Primary may spawn via OpenCode Task. Deterministic engines
 # are not in this set. Plugin must not widen this ceiling to task: allow.
 OPENCODE_PRIMARY_TASK_ALLOW: tuple[str, ...] = (
@@ -187,9 +198,9 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "ce-plan": {
-        "command_description": "把需求 grill 成 {slug}_plan.md",
+        "command_description": "把需求写成 {slug}_plan.md",
         "description": (
-            "自己有需求时使用：用 UO 语义 + 用户「改什么 / 实现什么」，持续 grill，写出 "
+            "自己有需求时使用：用 UO 语义 + 用户「改什么 / 实现什么」，边问边写出 "
             "`.ascendc-pilot/<arch>/ce/plan/{slug}_plan.md`（实现分析 / 分步计划 / 明确 todo / 测试内容）。"
             "不以 PR 为输入。正式产物只有 markdown。去改码用 /ce-apply。用 `pilot_run`。"
         ),
@@ -522,7 +533,7 @@ def _lint_skill_bundle(skills_root: Path, skill_ids: tuple[str, ...], *, kind: s
         if not str(meta.get("description") or "").strip():
             errors.append(f"{skill_md.as_posix()}: missing frontmatter description")
         n_lines = len(text.splitlines())
-        if n_lines < 80:
+        if n_lines < 80 and skill_id not in ROUTER_SKILLS:
             errors.append(
                 f"DOMAIN_SKILL_TOO_SHORT {skill_md.as_posix()}: {n_lines} lines < 80"
             )
@@ -755,7 +766,7 @@ def validate(repo: Path) -> list[str]:
                     sid = str(action.get("skill_id") or action.get("action_method_id") or "").strip()
                     if "/" in sid:
                         sid = sid.rsplit("/", 1)[-1]
-                    if sid in {"ce-intent-grill", "ce-plan-draft"} and mode == "subagent":
+                    if sid == "ce-plan-draft" and mode == "subagent":
                         mp = skills / sid / "SKILL.md"
                         if mp.is_file():
                             method_text = mp.read_text(encoding="utf-8")

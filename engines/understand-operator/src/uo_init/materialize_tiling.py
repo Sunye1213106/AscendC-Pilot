@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """TPL template blocks and legal-key rows (no KnowledgeBase landing)."""
 from __future__ import annotations
 
@@ -98,10 +98,12 @@ class LegalKeyRow:
 
 
 def _sel_domain(sel: dict[str, Any]) -> list[str]:
+    from uo_init.tpl_dsl import canonicalize_sel_vals
+
     vals = list(sel.get("vals") or [])
     if vals and ("UI_LIST" in str(vals[0]) or "UI_RANGE" in str(vals[0])):
-        return [str(v) for v in vals[1:]]
-    return [str(v) for v in vals]
+        vals = vals[1:]
+    return canonicalize_sel_vals(str(sel.get("kind") or ""), [str(v) for v in vals])
 
 
 def build_template_blocks(schema: TplSchema) -> list[TemplateBlock]:

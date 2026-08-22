@@ -36,7 +36,7 @@ WORKFLOW_SUMMARY_ZH = {
     "tg-init": "绑定测试变量并写前置 yaml",
     "tg-plan": "把测试意图收成有限覆盖计划",
     "tg-solve": "定向构造并回放生成用例",
-    "ce-plan": "grill 需求并写出带 todo 的改码计划",
+    "ce-plan": "问清需求并写出带 todo 的改码计划",
     "ce-apply": "按计划改算子或测试脚本",
     "ce-review": "审查 diff：意图、改动、问题与应测点",
     "handoff": "会话交接",

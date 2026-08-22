@@ -1801,11 +1801,20 @@ def _matching_brace(text: str, open_pos: int) -> int:
     return -1
 
 
-def _class_members(body: str, body_start_line: int) -> Iterable[tuple[str, str, int]]:
+def _class_members(body: str, body_abs_start: int, text: str) -> Iterable[tuple[str, str, int]]:
     depth = 0
-    for off, line in enumerate(body.splitlines()):
+    abs_off = 0
+    for raw in body.splitlines(keepends=True):
+        line = raw.rstrip("\r\n")
+        line_no = _line_of(text, body_abs_start + abs_off)
         stripped = re.sub(r"//.*", "", line).strip()
-        if depth == 0 and stripped and "(" not in stripped and not stripped.endswith(":"):
+        if (
+            depth == 0
+            and stripped
+            and "(" not in stripped
+            and not stripped.endswith(":")
+            and not stripped.startswith(("using ", "typedef ", "template ", "static_assert"))
+        ):
             m = _MEMBER_RE.match(stripped)
             if m:
                 cpp_type = " ".join(m.group("type").split())
@@ -1814,9 +1823,10 @@ def _class_members(body: str, body_start_line: int) -> Iterable[tuple[str, str, 
                 if arrays:
                     cpp_type = f"{cpp_type}{arrays}"
                 if name not in {"public", "private", "protected"} and cpp_type:
-                    yield cpp_type, name, body_start_line + off
+                    yield cpp_type, name, line_no
         depth += line.count("{") - line.count("}")
         depth = max(0, depth)
+        abs_off += len(raw)
 
 
 def wanted_tiling_data_names(codemap: CodeMap, root: Path, architecture: str) -> set[str]:
@@ -1980,8 +1990,7 @@ def _parse_tiling_data(
         )
         class_count += 1
         body = text[open_pos + 1 : close_pos]
-        body_line = _line_of(text, open_pos + 1)
-        for cpp_type, field_name, field_line in _class_members(body, body_line):
+        for cpp_type, field_name, field_line in _class_members(body, open_pos + 1, text):
             nested_hits = _referenced_type_names(cpp_type, known_classes)
             nested = _cpp_type_name(cpp_type)
             if nested and nested not in _PRIMITIVE_TYPES and nested in index:

@@ -10,6 +10,7 @@ from uo_init.source_layout import (
     ARCH_DIR_RE,
     GLOBAL_KERNEL_RE,
     KERNEL_ENTRY_NAME_RE,
+    UNIFIED_ARCH_DIR,
     arch_number,
     architecture_in_scope,
     canonicalize_architecture,
@@ -17,6 +18,8 @@ from uo_init.source_layout import (
     include_root_owned_architecture,
     is_foreign_arch_entry_tu,
     is_other_arch_path,
+    is_product_architecture,
+    is_variant_architecture,
     keep_lexical_kernel_path,
     match_on_disk_architecture,
     path_owned_architecture,
@@ -32,6 +35,19 @@ from uo_init.source_layout import (
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
+
+
+def test_variant_architecture_is_arch_folder_not_default() -> None:
+    assert is_variant_architecture("arch35") is True
+    assert is_variant_architecture("arch-920r1") is True
+    assert is_variant_architecture(UNIFIED_ARCH_DIR) is False
+    assert is_variant_architecture("") is False
+    assert is_product_architecture("arch35") is True
+    assert is_product_architecture(UNIFIED_ARCH_DIR) is True
+    assert is_product_architecture("") is False
+    assert is_other_arch_path(Path("op_kernel/foo.cpp"), UNIFIED_ARCH_DIR) is False
+    assert is_other_arch_path(Path("op_kernel/arch35/foo.cpp"), UNIFIED_ARCH_DIR) is False
+    assert is_foreign_arch_entry_tu(Path("op_kernel/toy.cpp"), UNIFIED_ARCH_DIR) is False
 
 
 def _seed_scope(op: Path, architecture: str, rels: list[str]) -> None:
@@ -381,5 +397,28 @@ def test_keep_lexical_kernel_path_drops_foreign_arch_bodies() -> None:
     assert keep_lexical_kernel_path(Path("op_kernel/arch22/old_tiling.h"), "arch35") is False
     assert keep_lexical_kernel_path(Path("op_kernel/entry.cpp"), "arch35") is True
     assert keep_lexical_kernel_path(Path("common/op_kernel/arch35/util.h"), "arch35") is True
+
+
+def test_tpl_decl_prefers_tiling_key_header_over_apt_cpp(tmp_path: Path) -> None:
+    op = tmp_path / "grouped_matmul"
+    _write(
+        op / "op_kernel" / "grouped_matmul_tiling_key.h",
+        "ASCENDC_TPL_ARGS_DECL(Gmm,\n"
+        "  ASCENDC_TPL_BOOL_DECL(TRANS_B, 0, 1),\n"
+        "  ASCENDC_TPL_UINT_DECL(D_T_A, ASCENDC_TPL_2_BW, ASCENDC_TPL_UI_LIST, 0, 1, 2));\n",
+    )
+    _write(
+        op / "op_kernel" / "apt.cpp",
+        '#include "grouped_matmul_tiling_key.h"\n'
+        "template<int8_t QUANT_B_TRANS, int8_t QUANT_A_TRANS, int8_t KERNEL_TYPE>\n"
+        "ASCENDC_TPL_ARGS_DECL(GmmApt, ASCENDC_TPL_BOOL_DECL(QUANT_B_TRANS, 0, 1));\n"
+        "__global__ __aicore__ void grouped_matmul() {}\n",
+    )
+    _write(
+        op / "op_host" / "tiling.cpp",
+        "uint64_t key = GET_TPL_TILING_KEY(TRANS_B, D_T_A);\n",
+    )
+    decls = tpl_decl_files(op, "arch35")
+    assert [p.name for p in decls] == ["grouped_matmul_tiling_key.h"]
 
 

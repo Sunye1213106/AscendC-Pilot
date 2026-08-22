@@ -2,7 +2,8 @@
 """CLI intake gates: operator --project, architecture, and existing .uo CodeMap.
 
 Two start modes (Spec SSOT):
-- ``requires_architecture`` (uo-init / uo-update): choose arch* from the operator tree
+- ``requires_architecture`` (uo-init / uo-update): ``arch*`` folders distinguish
+  implementations. No such folders → product slot ``default`` (one implementation).
 - ``requires_uo_product`` (tg-*/ce-*/uo-query/uo-investigate): architecture comes
   from an existing ``.uo``. Missing CodeMap is a human fork, not a search problem:
   the product path is determined (``.ascendc-pilot/<arch>/uo/<op>.<arch>.uo``).
@@ -19,7 +20,12 @@ from pathlib import Path
 from typing import Any
 
 from ascendc_pilot.paths import is_under_pilot_checkout, opencode_home, pilot_checkout_root
-from uo_init.source_layout import ARCH_DIR_RE, match_on_disk_architecture
+from uo_init.source_layout import (
+    ARCH_DIR_RE,
+    UNIFIED_ARCH_DIR,
+    is_product_architecture,
+    match_on_disk_architecture,
+)
 
 _ARCH_TOKEN = re.compile(r"\barch[0-9A-Za-z._-]+\b", re.I)
 
@@ -345,6 +351,30 @@ def scan_operator_directory(root: Path | str | None) -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         pinned = []
     unique_pin = len(pinned) == 1 and pinned[0] in arches
+    unified = not arches
+    if unified:
+        slot = UNIFIED_ARCH_DIR
+        out: dict[str, Any] = {
+            "ok": True,
+            "project": str(path),
+            "op_name": path.name,
+            "layout": layout,
+            "architectures": [],
+            "architecture_options": [],
+            "architecture_option_details": [],
+            "architecture": slot,
+            "selected_by": "unified_implementation",
+            "unified_implementation": True,
+            "ask_question": None,
+            "message_zh": (
+                "未扫到 arch* 目录：按一套源码一起构建，产物槽是 "
+                f"`{slot}`。不要发明 arch35。"
+            ),
+            "suggested_command": (
+                f'pilot_run workflow=uo-init project="{path}" architecture={slot}'
+            ),
+        }
+        return out
     out: dict[str, Any] = {
         "ok": True,
         "project": str(path),
@@ -371,27 +401,17 @@ def scan_operator_directory(root: Path | str | None) -> dict[str, Any]:
             else (
                 f"扫描到 {len(arches)} 个 architecture：{', '.join(arches)}。"
                 "阅读 layout 后用 AskQuestion 选项原样提问；禁止 Glob 仓根或翻 cmake/classify_rule。"
-                if arches
-                else "未扫到 arch* 目录；请确认算子包布局或手工提供 architecture。"
             )
         ),
         "suggested_command": (
             f'pilot_run workflow=uo-init project="{path}" architecture={pinned[0]}'
             if unique_pin
-            else (
-                f'pilot_run workflow=uo-init project="{path}" architecture=<arch*>'
-                if arches
-                else f'pilot_run workflow=uo-init project="{path}" architecture=<arch>'
-            )
+            else f'pilot_run workflow=uo-init project="{path}" architecture=<arch*>'
         ),
     }
     if unique_pin:
         out["architecture"] = pinned[0]
         out["selected_by"] = "pr_changed_files"
-    if not arches:
-        out["ok"] = False
-        out["error"] = "ARCHITECTURE_NOT_FOUND"
-        out["reason_code"] = "ARCHITECTURE_NOT_FOUND"
     return out
 
 
@@ -399,7 +419,7 @@ def parse_uo_product_name(path: Path) -> dict[str, str]:
     """Parse ``<op>.<arch>.uo`` filename into op_name / architecture."""
     stem = path.name[: -len(path.suffix)] if path.suffix == ".uo" else path.stem
     parts = stem.rsplit(".", 1)
-    if len(parts) == 2 and ARCH_DIR_RE.fullmatch(parts[1]):
+    if len(parts) == 2 and is_product_architecture(parts[1]):
         return {"op_name": parts[0], "architecture": parts[1], "path": str(path)}
     return {"op_name": stem, "architecture": "", "path": str(path)}
 
@@ -418,7 +438,7 @@ def discover_uo_products(root: Path | str | None) -> list[dict[str, str]]:
     seen: set[str] = set()
     search_dirs: list[Path] = []
     for child in sorted(base.iterdir()):
-        if child.is_dir() and child.name.startswith("arch"):
+        if child.is_dir() and is_product_architecture(child.name):
             search_dirs.append(child / "uo")
     for product_dir in search_dirs:
         if not product_dir.is_dir():
@@ -1075,28 +1095,8 @@ def prepare_workflow_start(
                 arch = pinned
                 resolved_from_intent = True
         if not arch and not options:
-            return _attach_intake_request(
-                {
-                    "ok": False,
-                    "needs_human_decision": True,
-                    "decision_kind": "architecture",
-                    "reason_code": "ARCHITECTURE_NOT_FOUND",
-                    "workflow_id": wf,
-                    "project": str(root),
-                    "architecture_options": [],
-                    "message_zh": (
-                        f"在 {root} 下未发现 op_host/arch* 或 op_kernel/arch*。"
-                        "请检查算子目录，或 AskQuestion 手工指定 architecture。"
-                    ),
-                    "ask_question": {
-                        "prompt_zh": "未扫到 arch* 目录，请手工输入 architecture",
-                        "options": list(PROJECT_SWITCH_OPTIONS),
-                        "allow_free_text": True,
-                        "field": "architecture",
-                    },
-                },
-                root,
-            )
+            arch = UNIFIED_ARCH_DIR
+            resolved_from_intent = True
         if not arch:
             ask_opts = [
                 {
@@ -1182,6 +1182,40 @@ def prepare_workflow_start(
                     },
                     root,
                 )
+        elif not known and arch != UNIFIED_ARCH_DIR:
+            return _attach_intake_request(
+                {
+                    "ok": False,
+                    "needs_human_decision": True,
+                    "decision_kind": "architecture",
+                    "reason_code": "ARCHITECTURE_NOT_IN_TREE",
+                    "workflow_id": wf,
+                    "project": str(root),
+                    "architecture": arch,
+                    "architecture_options": [UNIFIED_ARCH_DIR],
+                    "message_zh": (
+                        f"算子没有 arch* 目录（一套实现），产物槽是 `{UNIFIED_ARCH_DIR}`。"
+                        f"不能使用 architecture={arch}。"
+                    ),
+                    "ask_question": {
+                        "prompt_zh": "没有 arch* 目录时使用 default",
+                        "options": [
+                            {
+                                "label": UNIFIED_ARCH_DIR,
+                                "value": UNIFIED_ARCH_DIR,
+                                "description": "按一套源码一起构建，不要发明 arch35",
+                            }
+                        ],
+                        "allow_free_text": False,
+                        "field": "architecture",
+                    },
+                    "suggested_command": (
+                        f'pilot_run workflow={wf} project="{root}" '
+                        f"architecture={UNIFIED_ARCH_DIR}"
+                    ),
+                },
+                root,
+            )
 
     out: dict[str, Any] = {
         "ok": True,

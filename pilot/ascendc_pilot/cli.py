@@ -218,8 +218,8 @@ def main(argv: list[str] | None = None) -> int:
         "--architecture",
         default="",
         help=(
-            "Target architecture (required for workflows declared in Spec "
-            "requires_architecture; no silent default)"
+            "Target architecture. arch* folders distinguish implementations; "
+            "a tree with none uses product slot default (never invent arch35)"
         ),
     )
     p_start.add_argument(

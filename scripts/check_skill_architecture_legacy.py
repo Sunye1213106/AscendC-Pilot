@@ -14,6 +14,19 @@ PROMPTS = REPO / "prompts" / "tasks"
 
 CONTROL_PLANE_SKILLS = ()
 
+# Router parents disclose axis HOW; they must stay short. Execution-step
+# skills still target 80–150 and hard-cap at 200.
+ROUTER_SKILLS = frozenset(
+    {
+        "bind-init",
+        "plan",
+        "solve",
+        "standalone-review",
+        "test-modes",
+        "lemma",
+    }
+)
+
 DELETED_CAPS = (
     "tilingkey-closure",
     "structured-review",
@@ -85,7 +98,7 @@ def _errors() -> list[str]:
             continue
         text = skill_md.read_text(encoding="utf-8")
         n = len(text.splitlines())
-        if n < 80:
+        if n < 80 and skill_id not in ROUTER_SKILLS:
             errors.append(f"DOMAIN_SKILL_TOO_SHORT {skill_md.as_posix()}: {n}<80")
         if n > 200:
             errors.append(f"DOMAIN_SKILL_TOO_LONG {skill_md.as_posix()}: {n}>200")

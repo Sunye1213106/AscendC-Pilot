@@ -7,7 +7,7 @@ Skill 是**执行步文档**：当前 Action 装载的那一份 `SKILL.md`。不
 | 种类 | 路径 | 说明 |
 |------|------|------|
 | 执行 Skill | `skills/<id>/SKILL.md` | 这一步怎么做。中文。 |
-| 叠加原语 | 同目录结构 | 如 `precision-testing`、`performance-testing`、`source-proof`。由执行步指针触发，不进主控。 |
+| 叠加原语 | 同目录结构 | 如 `test-modes`、`lemma`、`source-proof`。由执行步指针触发，不进天花板名单。 |
 | Reference | `skills/<id>/references/` | 仅当该步点名才装。目录、长表、域专文。 |
 | Workflow spec | `pilot/ascendc_pilot/workflows/*.py` | 阶段、lease、gate。Skill 不复述。 |
 | 主控路由 | `intent-reasoning.md` | 拆路、fanout、冲突核对。不在 Skill 树。 |
@@ -20,7 +20,7 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 
 对照对象：可复用的执行 Skill（Matt Pocock 仓里 `diagnosing-bugs` / `code-review` / `wayfinder` / `writing-beats` 这一档），不是 15 行的入口壳。
 
-量过：那一档正文大约 **80–140 行**，中位数约 75。本仓硬顶 **200 行**（compose / architecture lint）。目标 **80–150 行**。少于约 80 行通常是把判断全赶到 `references/`，模型只看到骨架。
+量过：那一档正文大约 **80–140 行**，中位数约 75。本仓硬顶 **200 行**（compose / architecture lint）。执行步目标 **80–150 行**。路由父本（`bind-init` / `plan` / `solve` / `standalone-review` / `test-modes` / `lemma`）允许更短，禁止为过 80 行补背景课。
 
 ### 渐进式披露
 
@@ -51,6 +51,8 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 跨层归属（Policy vs Skill vs Prompt）见 `docs/architecture/agent-content-rules.md`。细节合同以本文件为准。
 
 ### 正文骨架
+
+`description`：做什么是能力短句，不是「先…再…」步骤。什么时候用是触发场景（出现什么意图 / 产物 / 问题），不是「执行 <Action> / slash 时使用」。
 
 ```markdown
 ---
@@ -100,9 +102,11 @@ description: <做什么>。<什么时候用>。第三人称。
 - 叠加原语：`skills/<id>/SKILL.md`
 ```
 
-lint：少于 80 行视为空壳，超过 200 行失败。150 以上先考虑把目录/长表示例下沉到 `references/`，不要删判断。
+lint：执行步少于 80 行视为空壳，超过 200 行失败。路由父本不设 80 行地板。150 以上先考虑把目录/长表示例下沉到 `references/`，不要删判断。
 
-父步（fanout 索引，如 `bind-init`、`standalone-review`）同样用这副骨架：写清两路各交什么、禁止混轴、本步不代替切片。不要因为「真正的活在切片里」就只留 12 行。
+父步（fanout / 序列路由，如 `bind-init`、`plan`、`solve`、`standalone-review`）写清各窗交什么、禁止混轴、本步不代替切片。不要为凑行数写背景课。按 slash 窗口收目录，禁止按主题焊成一份 always-loaded 正文。
+
+切片 HOW 若只属于某一轴，放 `references/<axis>.md`，由 Spec `fanout_axes[].method_ref` 或串行 Action `method_ref` 装进该窗的 `method.md`；`refs` 是该窗才拷的一层指针（轴文件禁止 hop）。父窗口 `SKILL.md` 点名这些文件，prepare 不把它们拷进父 session。同一 Skill 里的后序裁判步用 Action `method_ref` 只装裁判文，不要把两路 HOW 塞进主控窗口。禁止把多窗正文拼进一份始终装载的 `SKILL.md`。
 
 ### 禁止
 
@@ -111,5 +115,6 @@ lint：少于 80 行视为空壳，超过 200 行失败。150 以上先考虑把
 - 「你是某某角色」。
 - 把五个家族或 slash 说明书写进 Skill。
 - 为凑行数写背景课（什么是 PDF、什么是 CodeMap）。
+- `description` 写成执行步骤，或把 Action / slash 名当成触发条件。
 
 Prompt 只留本题 I/O。确定性 invariant 放 Engine。词表 `agents/CONTEXT.md`。属主：`docs/architecture/agent-content-rules.md`。

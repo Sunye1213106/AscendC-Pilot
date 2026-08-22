@@ -94,3 +94,15 @@ def test_kept_last_kernel_tu_is_soft_ambiguity():
     )
     assert blockers == []
 
+
+def test_unified_implementation_is_soft_ambiguity():
+    blockers = _hard_scope_blockers(
+        ["unified_implementation: no arch* folders; one implementation"],
+        arch_user_specified=False,
+        probe_clean=True,
+        clang_scope_status="complete",
+        hosts=["a.cpp"],
+        kernel_entry="k.cpp",
+    )
+    assert blockers == []
+

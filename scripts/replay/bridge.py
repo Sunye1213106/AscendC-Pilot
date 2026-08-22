@@ -186,7 +186,7 @@ def exact_fields() -> dict[str, dict]:
 def premises():
     """Every extracted legality condition, graded or not."""
     if "p" not in _cache:
-        from uo_init.concrete_eval import Premises
+        from .concrete_eval import Premises
 
         _cache["p"] = Premises(derivation().get("premises") or [])
     return _cache["p"]
@@ -219,7 +219,7 @@ def _unsound() -> set[str] | None:
 def gated_premises():
     """The subset a preflight may refuse an input on."""
     if "g" not in _cache:
-        from uo_init.concrete_eval import Premises
+        from .concrete_eval import Premises
 
         bad = _unsound()
         blobs = [] if bad is None else [

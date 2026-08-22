@@ -22,11 +22,18 @@ def test_discover_architectures_from_tree_only(tmp_path: Path):
     (tmp_path / "op_host" / "arch35").mkdir(parents=True)
     (tmp_path / "op_host" / "notes").mkdir()
     assert intake.discover_architectures(tmp_path) == ["arch22", "arch35"]
-    # No invented fallback when tree empty
+    # On-disk listing never invents default / arch35.
     empty = tmp_path / "empty"
     empty.mkdir()
     (empty / "op_host").mkdir()
     assert intake.discover_architectures(empty) == []
+
+
+def test_parse_uo_product_name_accepts_default_slot(tmp_path: Path):
+    path = tmp_path / "toy.default.uo"
+    parsed = intake.parse_uo_product_name(path)
+    assert parsed["op_name"] == "toy"
+    assert parsed["architecture"] == "default"
 
 
 def test_discover_architectures_includes_hyphenated_920r1(tmp_path: Path):
@@ -81,6 +88,58 @@ def test_scan_operator_directory_omits_ask_when_pr_pin_unique(tmp_path: Path):
     assert scanned.get("selected_by") == "pr_changed_files"
     assert not scanned.get("ask_question")
     assert "arch35" in scanned["suggested_command"]
+
+
+def test_scan_operator_directory_unified_when_no_arch_dirs(tmp_path: Path):
+    (tmp_path / "op_host").mkdir()
+    (tmp_path / "op_kernel").mkdir()
+    scanned = intake.scan_operator_directory(tmp_path)
+    assert scanned["ok"] is True
+    assert scanned["architecture"] == "default"
+    assert scanned["selected_by"] == "unified_implementation"
+    assert not scanned.get("ask_question")
+    assert scanned.get("error") != "ARCHITECTURE_NOT_FOUND"
+    assert "default" in scanned["suggested_command"]
+
+
+def test_start_intake_gate_unified_when_no_arch_dirs(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("UO_ARCH", raising=False)
+    monkeypatch.delenv("ASCENDC_ARCH", raising=False)
+    (tmp_path / "op_host").mkdir()
+    (tmp_path / "op_kernel").mkdir()
+    gate = intake.start_intake_gate(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="",
+        project_explicit=True,
+    )
+    assert gate is None
+    prep = intake.prepare_workflow_start(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="",
+        project_explicit=True,
+    )
+    assert prep.get("ok") is True
+    assert prep.get("architecture") == "default"
+    rejected = intake.start_intake_gate(
+        project=tmp_path,
+        workflow_id="uo-init",
+        architecture="arch35",
+        project_explicit=True,
+    )
+    assert rejected is not None
+    assert rejected["reason_code"] == "ARCHITECTURE_NOT_IN_TREE"
+
+
+def test_discover_uo_products_includes_default_slot(tmp_path: Path):
+    product = tmp_path / ".ascendc-pilot" / "default" / "uo" / "toy.default.uo"
+    product.parent.mkdir(parents=True)
+    product.write_text("x", encoding="utf-8")
+    found = intake.discover_uo_products(tmp_path)
+    assert len(found) == 1
+    assert found[0]["architecture"] == "default"
+    assert found[0]["op_name"] == "toy"
 
 
 def test_scan_operator_directory_rejects_non_operator(tmp_path: Path):

@@ -54,13 +54,13 @@ def test_list_archs_includes_hyphenated_920r1(tmp_path: Path, gen):
     assert gen._pick_arch(op) == "arch-920r1"
 
 
-def test_pick_arch_defaults_arch35_when_no_arch_dirs(tmp_path: Path, gen):
+def test_pick_arch_unified_when_no_arch_dirs(tmp_path: Path, gen):
     op = tmp_path / "toy"
     (op / "op_kernel").mkdir(parents=True)
-    assert gen._pick_arch(op) == "arch35"
+    assert gen._pick_arch(op) == "default"
 
 
-def test_discover_ops_keeps_arch_agnostic_trees(tmp_path: Path, gen, capsys):
+def test_discover_ops_keeps_single_implementation_trees(tmp_path: Path, gen, capsys):
     fam = tmp_path / "attention" / "noarch"
     (fam / "op_kernel").mkdir(parents=True)
     has_arch = tmp_path / "attention" / "widget"
@@ -68,5 +68,5 @@ def test_discover_ops_keeps_arch_agnostic_trees(tmp_path: Path, gen, capsys):
     cases = gen.discover_ops(tmp_path)
     by_rel = {c["rel"]: c for c in cases}
     assert by_rel["attention/widget"]["arch"] == "arch22"
-    assert by_rel["attention/noarch"]["arch"] == "arch35"
+    assert by_rel["attention/noarch"]["arch"] == "default"
     assert "NO_ARCHITECTURE_DISCOVERED" not in capsys.readouterr().out

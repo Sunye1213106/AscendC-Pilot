@@ -472,7 +472,7 @@ def kernel_ir_isolate() -> bool:
         return True
     if raw in {"thread", "0", "false", "no"}:
         return False
-    return os.name == "nt"
+    return False
 
 
 def kernel_ir_payload(spec, ctx, *, dimensions, max_variants) -> dict:

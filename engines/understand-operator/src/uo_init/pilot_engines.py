@@ -12,6 +12,7 @@ from typing import Any
 import yaml
 
 from uo_init import paths
+from uo_init.source_layout import is_product_architecture
 
 
 def _payload_arch(ctx: dict[str, Any] | None) -> str | None:
@@ -50,7 +51,7 @@ def _uo_root(project_root: Path, *, arch: str | None = None) -> Path:
         arch_dirs = sorted(
             p
             for p in pilot.iterdir()
-            if p.is_dir() and p.name.startswith("arch") and (p / "uo").is_dir()
+            if p.is_dir() and is_product_architecture(p.name) and (p / "uo").is_dir()
         )
         with_product = [p for p in arch_dirs if any((p / "uo").glob("*.uo"))]
         chosen = (
@@ -842,6 +843,7 @@ _SOFT_AMBIGUITY_PREFIXES = (
     "tiling_key_header_not_found:",
     "kernel_entry_kept_last_tu:",
     "host_targets_from_sibling_kernel_include:",
+    "unified_implementation:",
 )
 
 
@@ -868,7 +870,6 @@ def _hard_scope_blockers(
         if text.startswith(
             (
                 "arch_not_present:",
-                "no_arch_dir_found",
                 "opdef_not_found:",
                 "host_targets_not_found:",
                 "kernel_entry_not_found:",

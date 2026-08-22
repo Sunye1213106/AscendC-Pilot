@@ -12,13 +12,20 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from collections import deque
+import threading
+from collections import OrderedDict, deque
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator, Sequence
 
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.evidence import TRUST_ADVISORY
 from uo_init.ir.relation import RelationKind
+from uo_init.pipe_lifetime import (
+    continued_line_ranges,
+    order_pipe_names,
+    receiver_leaf,
+)
 from uo_init.query.evidence import (
     USEFUL_EDGE_KINDS,
     bucket_hits,
@@ -28,6 +35,7 @@ from uo_init.query.evidence import (
     is_tque_api_name,
     project_entity,
     project_relation,
+    surface_facts,
 )
 from uo_init.query.hints import (
     attach_query_hints,
@@ -36,6 +44,7 @@ from uo_init.query.hints import (
     search_needles,
 )
 from uo_init.query.legal_key_cache import _pattern_filters, normalize_cover_pattern
+from uo_init.semantics.const_expr import occupancy_overlap, worth_sharing
 from uo_init.source_locator import locations_from_attr_sites
 
 SNIPPET_LINES = 40
@@ -86,6 +95,7 @@ NEIGHBOR_REL_KINDS = (
 )
 CARD_EDGE_KINDS = NEIGHBOR_REL_KINDS + (
     "ROOTED_AT",
+    "RETURNS",
     "GUARDED_BY",
     "DERIVES",
     "PRECEDES",
@@ -100,8 +110,27 @@ DERIVES_PER_TILING_KEY = 3
 CARD_SNIPPET_MAX_LINES = 8
 AROUND_SEED_LIMIT = 16
 AROUND_NEIGHBORS_PER_KIND = 4
+_DECLARES_KIND_SQL = (
+    "CASE e.kind WHEN 'METHOD' THEN 0 WHEN 'FUNCTION' THEN 1 "
+    "WHEN 'FIELD' THEN 2 WHEN 'BUFFER' THEN 3 ELSE 4 END"
+)
 TEMPLATE_BLOCK_EXEMPLARS = 1
 MAX_NAME_CARDS = 4
+MAX_DEFINITION_SITES = 12
+MAX_WRITE_TIMELINE = 8
+MAX_SAME_VALUE = 8
+_VIEW_CACHE_MAX = 1
+_TEMPLATE_BLOCKS_LOCK = threading.Lock()
+_TEMPLATE_BLOCKS_CACHE: OrderedDict[str, dict[str, Any]] = OrderedDict()
+_IDENT_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_AROUND_KIND_PRIORITY = {
+    EntityKind.TILING_FIELD.value: 0,
+    EntityKind.TILING_DATA.value: 1,
+    EntityKind.TILING_KEY.value: 2,
+    EntityKind.FIELD.value: 3,
+    EntityKind.PIPE.value: 4,
+    EntityKind.KERNEL.value: 5,
+}
 _LAUNCH_NAMES = frozenset({"tpipe", "pipein", "pipebase", "pipepost", "pipe"})
 _EXACT_KINDS = {EntityKind.TYPE.value}
 _TOKEN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -158,6 +187,20 @@ def _is_advisory_data(raw: Any) -> bool:
     return str(_parse_data(raw).get("trust") or "") == TRUST_ADVISORY
 
 
+def _skip_composition_neighbor(
+    entity_kind: str, rel_kind: str, other_kind: str
+) -> bool:
+    """Hide inverted TYPE composition that floods MutexBuffer-style cards."""
+    rel = str(rel_kind or "")
+    other = str(other_kind or "").upper()
+    kind_u = str(entity_kind or "").upper()
+    if rel == "WRAPS" and other == EntityKind.BUFFER.value:
+        return kind_u in {"", EntityKind.TYPE.value}
+    if rel == "CONTAINS" and other == EntityKind.TYPE.value:
+        return True
+    return False
+
+
 def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
     try:
         value = row[key]
@@ -180,12 +223,14 @@ def _norm_file(file: str) -> str:
 
 
 def _architecture_from_name(path: Path) -> str:
+    from uo_init.source_layout import is_product_architecture
+
     name = path.name
     if not name.endswith(".uo"):
         return ""
     stem = name[: -len(".uo")]
     parts = stem.rsplit(".", 1)
-    if len(parts) == 2 and parts[1].startswith("arch"):
+    if len(parts) == 2 and is_product_architecture(parts[1]):
         return parts[1]
     return ""
 
@@ -224,6 +269,132 @@ def _keep_branch(kind: str, name: str, data: dict[str, Any]) -> bool:
 def _last_ident(name: str) -> str:
     text = str(name or "").replace(".", "::")
     return text.split("::")[-1].strip()
+
+
+_DEF_CARD_KINDS = {
+    EntityKind.FUNCTION.value,
+    EntityKind.METHOD.value,
+    EntityKind.KERNEL.value,
+}
+_ENCLOSE_KINDS = _DEF_CARD_KINDS
+_ASCENDC_CATALOG_SQL = "IFNULL(json_extract(e.data, '$.catalog'), '') != 'ascendc'"
+
+
+def _is_recorded_definition(hit: dict[str, Any]) -> bool:
+    kind = str(hit.get("kind") or "").upper()
+    start = int(hit.get("line_start") or hit.get("line") or 0)
+    end = int(hit.get("line_end") or 0)
+    return kind in _DEF_CARD_KINDS and end > start
+
+
+def _card_snippet_for_hit(hit: dict[str, Any]) -> tuple[str, bool]:
+    text = str(hit.get("snippet") or "")
+    if _is_recorded_definition(hit):
+        return text, bool(hit.get("truncated"))
+    return _clip_definition_snippet(text)
+
+
+def _same_path(left: str, right: str) -> bool:
+    a = _norm_file(left)
+    b = _norm_file(right)
+    if not a or not b:
+        return False
+    return a == b or a.endswith("/" + b) or b.endswith("/" + a) or a.endswith(b) or b.endswith(a)
+
+
+def _occupancy_rank(hit: dict[str, Any]) -> int:
+    """Prefer located, written identities over empty VARIABLE / bare BRANCH."""
+    facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+    kind = str(hit.get("kind") or "").upper()
+    catalog = str(facts.get("catalog") or "")
+    if catalog == "ge.graphStatus":
+        return 0
+    if catalog == "ascendc":
+        return 9
+    file = str(hit.get("file") or "").strip()
+    writes = (
+        facts.get("write_sites")
+        or facts.get("host_writer_sites")
+        or facts.get("value_defining_sites")
+        or facts.get("packing_value_sites")
+    )
+    has_writes = isinstance(writes, list) and bool(writes)
+    if file and (
+        has_writes
+        or kind
+        in {
+            EntityKind.FIELD.value,
+            EntityKind.TILING_FIELD.value,
+            EntityKind.TILING_KEY.value,
+        }
+    ):
+        return 0
+    if file:
+        return 1
+    if kind == EntityKind.VARIABLE.value:
+        return 3
+    if kind == EntityKind.BRANCH.value:
+        return 4
+    return 2
+
+
+def _leaf_name_where(needle: str) -> tuple[str, list[str]]:
+    full = str(needle or "").lower().strip()
+    ident = _last_ident(full.replace(".", "::"))
+    if not ident:
+        ident = full
+    clause = f"""
+      {_ASCENDC_CATALOG_SQL}
+      AND (
+        lower(IFNULL(e.name, '')) = ?
+        OR lower(IFNULL(e.name, '')) = ?
+        OR lower(IFNULL(e.name, '')) LIKE ('%.' || ?)
+        OR lower(IFNULL(e.name, '')) LIKE ('%::' || ?)
+      )
+    """
+    return clause, [full, ident, ident, ident]
+
+
+def _encloses_line(hit: dict[str, Any], line: int) -> bool:
+    kind = str(hit.get("kind") or "").upper()
+    if kind not in _ENCLOSE_KINDS:
+        return False
+    start = int(hit.get("line_start") or 0)
+    end = int(hit.get("line_end") or 0)
+    if start <= 0 or end <= start:
+        return False
+    loc = int(line or 0)
+    return start <= loc <= end
+
+
+def _edge_evidence_rank(
+    rel_kind: str,
+    rel_data: Any,
+    other_kind: str,
+    other_file: str,
+    seed_file: str,
+) -> int:
+    data = _parse_data(rel_data)
+    rel_file = str(data.get("file") or other_file or "")
+    same = _same_path(rel_file, seed_file) or _same_path(str(other_file or ""), seed_file)
+    formula = bool(
+        str(data.get("rhs") or data.get("expression") or data.get("formula") or "").strip()
+    )
+    predicate = bool(
+        data.get("predicate")
+        or data.get("guards")
+        or rel_kind in {"GUARDED_BY", "CONTROLS"}
+    )
+    is_input = str(other_kind or "").upper() == EntityKind.INPUT.value
+    if same and formula:
+        return 0
+    if same and predicate:
+        return 1
+    if (not same) and (formula or rel_kind == "BINDS"):
+        return 2
+    if is_input and not formula:
+        return 3
+    return 4
 
 
 def _name_rank(
@@ -380,6 +551,100 @@ def _select_launch_phases(
     return selected[: max(0, int(limit))], other_files
 
 
+def _is_compile_unit_placeholder(name: str) -> bool:
+    return "source_scope" in str(name or "").lower()
+
+
+def _site_loc(row: dict[str, Any]) -> tuple[str, int]:
+    file = str(row.get("file") or "").replace("\\", "/")
+    line = int(row.get("line") or row.get("line_start") or 0)
+    return file, line
+
+
+def _definition_sites_from_hits(
+    hits: Sequence[dict[str, Any]], *, needle: str, limit: int = MAX_DEFINITION_SITES
+) -> tuple[list[dict[str, Any]], bool]:
+    ident = _last_ident(str(needle or "").replace(".", "::")).lower()
+    sites: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, str]] = set()
+    for hit in hits:
+        name = str(hit.get("name") or "")
+        if ident and _last_ident(name.replace(".", "::")).lower() != ident:
+            if name.lower() != str(needle or "").lower():
+                continue
+        file = str(hit.get("file") or "").replace("\\", "/")
+        line = int(hit.get("line_start") or hit.get("line") or 0)
+        kind = str(hit.get("kind") or "")
+        if not file or line <= 0:
+            continue
+        key = (file, line, kind)
+        if key in seen:
+            continue
+        seen.add(key)
+        sites.append({"file": file, "line": line, "kind": kind, "name": name})
+    complete = len(sites) <= int(limit)
+    return sites[: max(0, int(limit))], complete
+
+
+def _timeline_site(row: dict[str, Any], *, role: str) -> dict[str, Any] | None:
+    file, line = _site_loc(row)
+    if not file or line <= 0:
+        return None
+    item = {
+        "file": file,
+        "line": line,
+        "rhs": str(row.get("rhs") or (row.get("facts") or {}).get("rhs") or ""),
+        "role": role,
+    }
+    fn = str(row.get("function") or row.get("name") or "")
+    if fn:
+        item["function"] = fn
+    kind = str(row.get("kind") or "")
+    if kind:
+        item["kind"] = kind
+    return item
+
+
+def _order_pipes_by_lifetime(
+    selected: list[dict[str, Any]],
+    *,
+    destroys: Sequence[tuple[int, str]],
+    source_text: str,
+) -> list[dict[str, Any]]:
+    if not selected:
+        return selected
+    line_of = {
+        str(hit.get("name") or ""): int(hit.get("line_start") or 0) for hit in selected
+    }
+    names = [str(hit.get("name") or "") for hit in selected]
+    constructs = [(name, line_of[name]) for name in names if name]
+    ranges = continued_line_ranges(source_text) if source_text else []
+    ordered = order_pipe_names(
+        names, constructs, destroys, ranges, line_of=line_of
+    )
+    if not ordered:
+        return selected
+    by_name = {str(hit.get("name") or ""): hit for hit in selected}
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for idx, name in enumerate(ordered, start=1):
+        hit = by_name.get(name)
+        if hit is None or name in seen:
+            continue
+        seen.add(name)
+        item = dict(hit)
+        facts = dict(item.get("facts") or {}) if isinstance(item.get("facts"), dict) else {}
+        facts["pipe_ordinal"] = idx
+        item["facts"] = facts
+        out.append(item)
+    for hit in selected:
+        name = str(hit.get("name") or "")
+        if name in seen:
+            continue
+        out.append(hit)
+    return out
+
+
 def _collapse_locate_hits(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """One location per (kind, name, file); extra lines stay on definition_sites."""
     grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -507,6 +772,9 @@ def _kind_priority(hit: dict[str, Any], needle: str) -> int:
     ident = _last_ident(str(hit.get("name") or "")).lower()
     file = str(hit.get("file") or "").replace("\\", "/").lower()
     last_needle = _last_ident(str(needle or "").lower().replace(".", "::"))
+    facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+    if kind == EntityKind.TYPE.value and str(facts.get("catalog") or "") == "ge.graphStatus":
+        return 0
     table = {
         EntityKind.TILING_KEY.value: 0,
         EntityKind.TILING_FIELD.value: 0,
@@ -546,6 +814,7 @@ def _agent_sort_key(
     src, use = _definition_rank(kind, name, eid, facts)
     return (
         match,
+        _occupancy_rank(hit),
         _kind_priority(hit, needle),
         _arch_file_rank(str(hit.get("file") or ""), architecture),
         _entry_rank(hit),
@@ -827,6 +1096,24 @@ def _resolve_source_path(op_root: Path | None, file: str) -> Path | None:
     return next((p for p in candidates if p.is_file()), None)
 
 
+def _read_line_range(path: Path, start: int, end: int) -> list[str]:
+    """Read ``start..end`` (1-based, inclusive) without slurping the whole file."""
+    out: list[str] = []
+    lo = max(1, int(start))
+    hi = max(lo, int(end))
+    try:
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            for idx, raw in enumerate(handle, 1):
+                if idx < lo:
+                    continue
+                if idx > hi:
+                    break
+                out.append(raw.rstrip("\n"))
+    except OSError:
+        return []
+    return out
+
+
 def _disk_window(
     op_root: Path | None,
     file: str,
@@ -840,33 +1127,41 @@ def _disk_window(
     path = _resolve_source_path(op_root, file)
     if path is None:
         return "", False
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return "", False
     centre = int(line)
     kind_u = str(kind or "").upper()
     span_end = int(line_end or 0)
-    if kind_u in {EntityKind.METHOD.value, EntityKind.FUNCTION.value}:
+    if kind_u in {
+        EntityKind.METHOD.value,
+        EntityKind.FUNCTION.value,
+        EntityKind.KERNEL.value,
+    }:
         start = centre
     elif kind_u == EntityKind.BRANCH.value:
-        start = _branch_window_start(lines, centre)
+        probe_from = max(1, centre - BRANCH_OUTER_BEFORE)
+        probe = _read_line_range(path, probe_from, centre)
+        virtual = [""] * (probe_from - 1) + probe
+        while len(virtual) < centre:
+            virtual.append("")
+        start = _branch_window_start(virtual, centre)
     else:
         start = max(1, centre - SNIPPET_BEFORE)
     truncated = False
-    if span_end > start:
+    recorded_span = span_end > centre
+    if recorded_span:
         if span_end - start + 1 > SNIPPET_LINES:
-            truncated = True
             end = start + SNIPPET_LINES - 1
+            truncated = span_end > end
         else:
-            end = min(len(lines), span_end)
+            end = span_end
     else:
-        end = min(len(lines), start + SNIPPET_LINES - 1)
+        end = start + SNIPPET_LINES - 1
     if end < centre:
-        end = min(len(lines), centre + SNIPPET_LINES - 1)
-        start = max(1, min(start, centre))
-        truncated = span_end > end
-    return "\n".join(f"{i}:{lines[i - 1]}" for i in range(start, end + 1)), truncated
+        end = centre + SNIPPET_LINES - 1
+        truncated = recorded_span and span_end > end
+    chosen = _read_line_range(path, start, end)
+    if not chosen:
+        return "", False
+    return "\n".join(f"{start + i}:{chosen[i]}" for i in range(len(chosen))), truncated
 
 
 def _disk_snippet(
@@ -893,15 +1188,12 @@ def _read_statement(op_root: Path | None, file: str, line: int) -> str:
     path = _resolve_source_path(op_root, str(file or ""))
     if path is None or int(line or 0) <= 0:
         return ""
-    try:
-        rows = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return ""
-    start = int(line) - 1
-    if start < 0 or start >= len(rows):
+    start = int(line)
+    rows = _read_line_range(path, start, start + 23)
+    if not rows:
         return ""
     buf: list[str] = []
-    for raw in rows[start : start + 24]:
+    for raw in rows:
         buf.append(raw.rstrip())
         if ";" in raw:
             break
@@ -921,11 +1213,50 @@ def _template_block_rows(blob: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _load_template_blocks_cached(product: Path) -> dict[str, Any]:
+    key = str(product)
+    try:
+        mtime_ns = product.stat().st_mtime_ns
+    except OSError:
+        return {"ok": False, "reason_code": "UO_PRODUCT_MISSING", "rows": [], "mtime_ns": -1}
+    with _TEMPLATE_BLOCKS_LOCK:
+        hit = _TEMPLATE_BLOCKS_CACHE.get(key)
+        if hit and hit.get("mtime_ns") == mtime_ns:
+            _TEMPLATE_BLOCKS_CACHE.move_to_end(key)
+            return hit
+    from uo_init.store.reader import load_view_blob_checked
+
+    checked = load_view_blob_checked(
+        product,
+        "tiling/template_blocks.yaml",
+        fallback_canonical=False,
+    )
+    entry = {
+        "ok": bool(checked.get("ok")),
+        "reason_code": str(checked.get("reason_code") or ""),
+        "mtime_ns": mtime_ns,
+        "rows": _template_block_rows(checked.get("view")) if checked.get("ok") else [],
+    }
+    with _TEMPLATE_BLOCKS_LOCK:
+        _TEMPLATE_BLOCKS_CACHE[key] = entry
+        _TEMPLATE_BLOCKS_CACHE.move_to_end(key)
+        while len(_TEMPLATE_BLOCKS_CACHE) > _VIEW_CACHE_MAX:
+            _TEMPLATE_BLOCKS_CACHE.popitem(last=False)
+    return entry
+
+
 def _value_matches_domain(value: str, domain: Any) -> bool:
-    want = str(value)
+    from uo_init.tpl_dsl import bool_value_aliases
+
+    want = {str(value)}
+    want.update(bool_value_aliases(value))
+    want_l = {v.lower() for v in want}
+    values: list[str]
     if isinstance(domain, (list, tuple, set)):
-        return any(str(v) == want for v in domain)
-    return str(domain) == want
+        values = [str(v) for v in domain]
+    else:
+        values = [str(domain)]
+    return any(item in want or item.lower() in want_l for item in values)
 
 
 def _template_block_matches(row: dict[str, Any], filters: dict[str, str]) -> bool:
@@ -1064,7 +1395,7 @@ def _compact_around_hit(hit: dict[str, Any], *, snippet: bool = False) -> dict[s
         "id": hit.get("id"),
     }
     if snippet:
-        clipped, truncated = _clip_definition_snippet(str(hit.get("snippet") or ""))
+        clipped, truncated = _card_snippet_for_hit(hit)
         if clipped:
             row["snippet"] = clipped
         if truncated:
@@ -1352,10 +1683,17 @@ class UoSqlQuery:
         self._op_root = _op_root_from_product(self.product)
         self._engine = None
 
-    def _connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(f"file:{self.product.as_posix()}?mode=ro", uri=True)
-        conn.row_factory = sqlite3.Row
-        return conn
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        from uo_init.store.reader import shared_uo
+
+        yield shared_uo(self.product)
+
+    def close(self) -> None:
+        from uo_init.store.reader import close_uo_connections
+
+        close_uo_connections(self.product)
+        self._engine = None
 
     @property
     def architecture(self) -> str:
@@ -1483,6 +1821,8 @@ class UoSqlQuery:
             if skip_tpl and rel_kind == "BINDS" and (
                 other_kind == EntityKind.TEMPLATE.value or other_name.startswith("ARGS_SEL")
             ):
+                continue
+            if _skip_composition_neighbor(entity_kind, rel_kind, other_kind):
                 continue
             out.append(
                 {
@@ -3092,20 +3432,14 @@ class UoSqlQuery:
         dim_coverage: dict[str, list[str]] = {}
         nearby: list[dict[str, Any]] = []
         matching_block_count = 0
-        from uo_init.store.reader import load_view_blob_checked
-
-        checked = load_view_blob_checked(
-            self.product,
-            "tiling/template_blocks.yaml",
-            fallback_canonical=False,
-        )
+        cached = _load_template_blocks_cached(self.product)
         block_status = {
-            "ok": bool(checked.get("ok")),
-            "reason_code": str(checked.get("reason_code") or ""),
-            "used": bool(checked.get("ok")),
+            "ok": bool(cached.get("ok")),
+            "reason_code": str(cached.get("reason_code") or ""),
+            "used": bool(cached.get("ok")),
         }
-        if checked.get("ok"):
-            all_blocks = _template_block_rows(checked.get("view"))
+        if cached.get("ok"):
+            all_blocks = cached.get("rows") or []
             universe_coverage = _dim_coverage(all_blocks)
             if dim_only:
                 product = list(universe_coverage.get(dim_only) or [])
@@ -3134,16 +3468,17 @@ class UoSqlQuery:
         else:
             compact_blocks = []
         fixed_coverage = _fixed_coverage(block_matches) if block_matches else {}
+        universe_scanned = bool(cached.get("ok"))
         if dim_only:
             declared = self._declared_dim_values(dim_only)
             product = list(dim_coverage.get(dim_only) or [])
-            completeness = "coverage_checked"
+            completeness = "coverage_checked" if universe_scanned or declared else "first_hit"
             answerable = bool(product or declared)
         elif structured:
-            completeness = "coverage_checked" if matching_block_count else "first_hit"
+            completeness = "coverage_checked" if universe_scanned else "first_hit"
             answerable = bool(matching_block_count)
         else:
-            completeness = "coverage_checked" if dim_coverage else "first_hit"
+            completeness = "coverage_checked" if universe_scanned else "first_hit"
             answerable = bool(dim_coverage)
         coverage = {
             **_hits_coverage([], total=matching_block_count, dim_coverage=dim_coverage),
@@ -3152,6 +3487,8 @@ class UoSqlQuery:
             "completeness": completeness,
             "answerable": answerable,
         }
+        if nearby:
+            coverage["nearby"] = nearby
         payload = {
             "ok": bool(block_status.get("ok")) if structured or dim_only else True,
             "mode": "template_match",
@@ -3177,16 +3514,16 @@ class UoSqlQuery:
             payload["nearby"] = nearby
         attach_query_hints(payload, needle, count=int(payload["count"]))
         if structured and matching_block_count == 0:
-            boolish = [
-                f"{k}=1"
-                for k, v in structured.items()
-                if str(v).lower() in {"true", "false", "yes", "no"}
-            ]
-            if boolish:
+            declared_hints: list[str] = []
+            for dim_name, want in structured.items():
+                domain = self._declared_dim_values(dim_name)
+                if domain:
+                    declared_hints.append(f"{dim_name}={domain[0]}")
+            if declared_hints:
                 payload["hint"] = (
-                    "No combo matched. Boolean dims use 0/1 "
-                    f"(try {', '.join(boolish)}), not true/false. "
-                    "Dim=<name> lists one dimension's coverage."
+                    "No combo matched. Declared values include "
+                    + ", ".join(declared_hints)
+                    + ". Boolean true/false aliases 0/1. Dim=<name> lists one dimension."
                 )
         return _fit_payload(payload)
 
@@ -3463,13 +3800,20 @@ class UoSqlQuery:
             }
         )
 
-    def _kernel_launch_entry(self, pattern: str) -> list[dict[str, Any]]:
-        """KERNEL or a symbol in an *entry* file — not a per-op class name."""
+    def _kernel_launch_entry(
+        self, pattern: str, *, scope: str = "", winner_file: str = ""
+    ) -> list[dict[str, Any]]:
+        """Constructing function/KERNEL — not a compile-unit ``source_scope`` stub."""
         needle = str(pattern or "").strip()
         hits: list[dict[str, Any]] = []
         if needle:
             hits = list(self.locate(needle, limit=12) or [])
         if hits:
+            hits = [
+                hit
+                for hit in hits
+                if not _is_compile_unit_placeholder(str(hit.get("name") or ""))
+            ]
             hits.sort(
                 key=lambda hit: _agent_sort_key(
                     hit, needle, architecture=self._architecture
@@ -3494,23 +3838,85 @@ class UoSqlQuery:
                     e.kind = 'KERNEL'
                     OR lower(IFNULL(e.file, '')) LIKE '%entry%'
                     OR lower(IFNULL(e.name, '')) LIKE '%entry%'
+                    OR (? != '' AND IFNULL(e.name, '') = ?)
                   )
                 LIMIT 48
                 """,
-                kinds,
+                (*kinds, str(scope or ""), str(scope or "")),
             ).fetchall()
             hits = self._hits_from_rows(
                 conn, rows, why="kernel_launch_entry", with_snippet=True, with_rels=False
             )
-        hits.sort(
-            key=lambda hit: _agent_sort_key(
-                hit, "entry", architecture=self._architecture
+        hits = [
+            hit
+            for hit in hits
+            if not _is_compile_unit_placeholder(str(hit.get("name") or ""))
+        ]
+        want = str(scope or "").strip()
+        win = str(winner_file or "").replace("\\", "/").lower()
+
+        def _launch_entry_key(hit: dict[str, Any]) -> tuple[Any, ...]:
+            kind = str(hit.get("kind") or "")
+            name = str(hit.get("name") or "")
+            file = str(hit.get("file") or "").replace("\\", "/").lower()
+            same_file = 0 if win and (file == win or file.endswith("/" + win) or win.endswith("/" + file)) else 1
+            scope_hit = 0 if want and name == want else 1
+            kind_rank = {
+                EntityKind.KERNEL.value: 0,
+                EntityKind.FUNCTION.value: 1,
+                EntityKind.METHOD.value: 2,
+            }.get(kind, 3)
+            return (
+                scope_hit,
+                same_file,
+                kind_rank,
+                _agent_sort_key(hit, want or "entry", architecture=self._architecture),
             )
-        )
+
+        hits.sort(key=_launch_entry_key)
         return hits
 
+    def _source_text(self, file: str) -> str:
+        path = _resolve_source_path(self._op_root, file)
+        if path is None:
+            return ""
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
+
+    def _destroy_ops_in_file(self, winner_file: str) -> list[tuple[int, str]]:
+        want = str(winner_file or "").replace("\\", "/").lower()
+        if not want:
+            return []
+        leaf = want.rsplit("/", 1)[-1]
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT e.file, e.line_start, e.data, e.name
+                FROM entity e
+                WHERE e.kind = 'OPERATION'
+                  AND (
+                    IFNULL(e.name, '') = 'Destroy'
+                    OR IFNULL(json_extract(e.data, '$.callee'), '') = 'Destroy'
+                  )
+                LIMIT 200
+                """
+            ).fetchall()
+        out: list[tuple[int, str]] = []
+        for row in rows:
+            file = str(_row_get(row, "file") or "").replace("\\", "/").lower()
+            if file != want and not file.endswith("/" + leaf) and leaf not in file:
+                continue
+            data = _parse_data(_row_get(row, "data", "{}"))
+            recv = receiver_leaf(str(data.get("receiver") or ""))
+            if not recv:
+                continue
+            out.append((int(_row_get(row, "line_start") or 0), recv))
+        return out
+
     def aggregate_kernel_launch(self, pattern: str = "", *, limit: int = 50) -> dict[str, Any]:
-        """TPipe instances on the selected kernel entry, ordered by declaration."""
+        """TPipe instances on the selected kernel entry, ordered by Destroy chain."""
         with self._connect() as conn:
             pipe_rows = conn.execute(
                 """
@@ -3535,12 +3941,19 @@ class UoSqlQuery:
         selected, other_files = _select_launch_phases(
             hits, architecture=self._architecture, limit=max(int(limit), 1)
         )
-        winner_file = str(selected[0].get("file") or "").replace("\\", "/").lower() if selected else ""
+        winner_file = str(selected[0].get("file") or "").replace("\\", "/") if selected else ""
+        if selected:
+            selected = _order_pipes_by_lifetime(
+                selected,
+                destroys=self._destroy_ops_in_file(winner_file),
+                source_text=self._source_text(winner_file),
+            )[: max(int(limit), 1)]
         group_total = sum(
             1
             for hit in hits
             if _is_launch_pipe_hit(hit)
-            and str(hit.get("file") or "").replace("\\", "/").lower() == winner_file
+            and str(hit.get("file") or "").replace("\\", "/").lower()
+            == winner_file.replace("\\", "/").lower()
         ) if winner_file else 0
         clipped = bool(selected) and group_total > len(selected)
         phases: list[dict[str, Any]] = []
@@ -3554,7 +3967,15 @@ class UoSqlQuery:
             item["pipe"] = item.get("name")
             item["ok"] = True
             phases.append(item)
-        entry_hits = self._kernel_launch_entry(str(pattern or "").strip())
+        first_facts = (
+            (phases[0].get("facts") or {}) if phases and isinstance(phases[0].get("facts"), dict) else {}
+        )
+        scope = str(first_facts.get("scope") or "").strip()
+        entry_hits = self._kernel_launch_entry(
+            str(pattern or "").strip() or scope,
+            scope=scope,
+            winner_file=winner_file,
+        )
         entry = entry_hits[0] if entry_hits else None
         coverage = _hits_coverage(
             [p for p in phases if p.get("ok")] + ([entry] if entry else []),
@@ -3652,8 +4073,11 @@ class UoSqlQuery:
             payload = {"ok": False, "shape": "name", "pattern": needle, "cards": [], "count": 0}
             attach_query_hints(payload, needle, count=0, mode="name")
             return _fit_payload(payload)
-        hits = self._exact_name_hits(needle, limit=max(int(limit) * 4, 16))
-        if not hits:
+        hits = self._exact_name_hits(needle, limit=max(int(limit) * 16, 64))
+        catalog_ident = (not hits) and self._is_ascendc_catalog_ident(needle)
+        if not hits and not catalog_ident:
+            hits = self._prefix_name_hits(needle, limit=max(int(limit) * 16, 64))
+        if not hits and not catalog_ident:
             located = self.aggregate_locate(needle, limit=max(int(limit), 8))
             hits = list(located.get("locations") or [])
         by_kind: dict[str, dict[str, Any]] = {}
@@ -3661,6 +4085,7 @@ class UoSqlQuery:
             hits,
             key=lambda hit: _agent_sort_key(hit, needle, architecture=self._architecture),
         )
+        definition_sites, sites_complete = _definition_sites_from_hits(ranked, needle=needle)
         for hit in ranked:
             kind = str(hit.get("kind") or "")
             if kind and kind not in by_kind:
@@ -3679,6 +4104,8 @@ class UoSqlQuery:
             == _last_ident(str(by_kind[EntityKind.TEMPLATE_ARG.value].get("name") or "")).lower()
         ):
             by_kind.pop(EntityKind.TEMPLATE_ARG.value, None)
+        # Occupancy ranking already prefers located identities. Keep fileless
+        # FUNCTION/METHOD API symbols when they carry CALLS / ROOTED_AT.
         cards_src = list(by_kind.values())[:MAX_NAME_CARDS]
         cards: list[dict[str, Any]] = []
         next_names: list[str] = []
@@ -3712,7 +4139,7 @@ class UoSqlQuery:
                     for rel, bucket in grouped.items()
                     if isinstance(bucket, dict)
                 }
-            snippet, snip_cut = _clip_definition_snippet(str(hit.get("snippet") or ""))
+            snippet, snip_cut = _card_snippet_for_hit(hit)
             card: dict[str, Any] = {
                 "kind": kind,
                 "name": name,
@@ -3725,12 +4152,18 @@ class UoSqlQuery:
             if snip_cut:
                 card["truncated"] = True
             extras = self._card_extras(hit)
+            if definition_sites:
+                extras["definition_sites"] = definition_sites
+                extras["definition_sites_complete"] = sites_complete
             line_end = int(hit.get("line_end") or hit.get("line_start") or 0)
             card["definition_span"] = {
                 "file": hit.get("file") or "",
                 "line_start": int(hit.get("line_start") or 0),
                 "line_end": line_end,
             }
+            for key in ("catalog", "role", "spelling", "wrapper", "tposition", "pipe_ordinal"):
+                if extras.get(key) not in (None, "", []):
+                    card[key] = extras[key]
             if hit.get("truncated") or extras.get("truncated"):
                 card["truncated"] = True
             writers = extras.get("writers") if isinstance(extras.get("writers"), list) else []
@@ -3781,6 +4214,18 @@ class UoSqlQuery:
                 if len(next_names) >= 12:
                     break
         coverage = _hits_coverage(cards_src, total=len(hits), needle=needle)
+        if definition_sites:
+            coverage["definition_sites_count"] = max(
+                int(coverage.get("definition_sites_count") or 0),
+                len(definition_sites),
+            )
+            coverage["definition_sites_complete"] = sites_complete
+            if not sites_complete:
+                coverage["completeness"] = "page_clipped"
+                coverage["answerable"] = False
+            elif len(definition_sites) > 1:
+                coverage["completeness"] = "siblings_checked"
+                coverage["answerable"] = True
         payload = {
             "ok": bool(cards),
             "shape": "name",
@@ -3794,12 +4239,46 @@ class UoSqlQuery:
         attach_query_hints(payload, needle, count=len(cards), mode="name")
         return _fit_payload(payload)
 
+    def _is_ascendc_catalog_ident(self, needle: str) -> bool:
+        ident = _last_ident(str(needle or "").replace(".", "::")).lower()
+        if not ident:
+            return False
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM entity e
+                WHERE IFNULL(json_extract(e.data, '$.catalog'), '') = 'ascendc'
+                  AND (
+                    lower(IFNULL(e.name, '')) = ?
+                    OR lower(IFNULL(json_extract(e.data, '$.spelling'), '')) = ?
+                    OR lower(IFNULL(e.name, '')) LIKE ('%::' || ?)
+                  )
+                LIMIT 1
+                """,
+                (ident, ident, ident),
+            ).fetchone()
+        return row is not None
+
     def _exact_name_hits(self, needle: str, *, limit: int) -> list[dict[str, Any]]:
+        where, params = _leaf_name_where(needle)
         with self._connect() as conn:
             rows = self._select_entities(
                 conn,
-                extra_where="lower(IFNULL(e.name, '')) = ?",
-                params=(needle.lower(),),
+                extra_where=where,
+                params=params,
+                limit=max(int(limit), 8),
+            )
+            return self._hits_from_rows(conn, rows, why="name_card", with_snippet=True)
+
+    def _prefix_name_hits(self, needle: str, *, limit: int) -> list[dict[str, Any]]:
+        ident = str(needle or "").strip()
+        if not _IDENT_NAME_RE.match(ident):
+            return []
+        with self._connect() as conn:
+            rows = self._select_entities(
+                conn,
+                extra_where=f"{_ASCENDC_CATALOG_SQL} AND lower(IFNULL(e.name, '')) LIKE ?",
+                params=(ident.lower() + "%",),
                 limit=max(int(limit), 8),
             )
             return self._hits_from_rows(conn, rows, why="name_card", with_snippet=True)
@@ -3810,7 +4289,13 @@ class UoSqlQuery:
         placeholders = ",".join("?" for _ in CARD_EDGE_KINDS)
         skip_tpl = str(entity_kind or "").upper() == EntityKind.TILING_KEY.value
         grouped: dict[str, dict[str, Any]] = {}
+        seed_file = ""
         with self._connect() as conn:
+            seed_row = conn.execute(
+                "SELECT file FROM entity WHERE id = ? LIMIT 1", (entity_id,)
+            ).fetchone()
+            if seed_row is not None:
+                seed_file = str(seed_row[0] or "")
             counts = {
                 str(row[0] or ""): int(row[1] or 0)
                 for row in conn.execute(
@@ -3831,7 +4316,9 @@ class UoSqlQuery:
                                e.kind AS other_kind, e.name AS other_name,
                                e.file AS other_file, e.line_start AS other_line,
                                ROW_NUMBER() OVER (
-                                   PARTITION BY r.kind ORDER BY e.kind, e.name
+                                   PARTITION BY r.kind ORDER BY
+                                     CASE r.kind WHEN 'DECLARES' THEN {_DECLARES_KIND_SQL} ELSE 0 END,
+                                     e.kind, e.name
                                ) AS rn
                         FROM relation r
                         JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
@@ -3839,56 +4326,81 @@ class UoSqlQuery:
                     ) ranked
                     WHERE rn <= ?
                     """,
-                    (entity_id, entity_id, entity_id, *CARD_EDGE_KINDS, EDGES_PER_KIND),
+                    (entity_id, entity_id, entity_id, *CARD_EDGE_KINDS, EDGES_PER_KIND * 8),
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
                 for kind in CARD_EDGE_KINDS:
                     rows.extend(
                         conn.execute(
-                            """
+                            f"""
                             SELECT r.kind AS rel_kind, r.data AS rel_data,
                                    e.kind AS other_kind, e.name AS other_name,
                                    e.file AS other_file, e.line_start AS other_line
                             FROM relation r
                             JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
                             WHERE (r.src = ? OR r.dst = ?) AND r.kind = ?
-                            ORDER BY e.kind, e.name
+                            ORDER BY CASE r.kind WHEN 'DECLARES' THEN {_DECLARES_KIND_SQL} ELSE 0 END, e.kind, e.name
                             LIMIT ?
                             """,
-                            (entity_id, entity_id, entity_id, kind, EDGES_PER_KIND),
+                            (entity_id, entity_id, entity_id, kind, EDGES_PER_KIND * 8),
                         ).fetchall()
                     )
         for rel_kind, n in counts.items():
             if rel_kind:
                 grouped[rel_kind] = {"count": n, "neighbors": []}
+        pending: dict[str, list[tuple[int, dict[str, Any]]]] = {}
         for row in rows:
             if _is_advisory_data(_row_get(row, "rel_data")):
                 continue
             rel_kind = str(_row_get(row, "rel_kind") or "")
             other_kind = str(_row_get(row, "other_kind") or "")
             other_name = str(_row_get(row, "other_name") or "")
+            other_file = _norm_file(str(_row_get(row, "other_file") or ""))
             if skip_tpl and rel_kind == "BINDS" and (
                 other_kind == EntityKind.TEMPLATE.value or other_name.startswith("ARGS_SEL")
             ):
                 continue
-            bucket = grouped.setdefault(rel_kind, {"count": counts.get(rel_kind, 0), "neighbors": []})
-            neighbors = bucket["neighbors"]
+            if _skip_composition_neighbor(entity_kind, rel_kind, other_kind):
+                continue
+            grouped.setdefault(rel_kind, {"count": counts.get(rel_kind, 0), "neighbors": []})
+            rank = _edge_evidence_rank(
+                rel_kind,
+                _row_get(row, "rel_data"),
+                other_kind,
+                other_file,
+                seed_file,
+            )
+            pending.setdefault(rel_kind, []).append(
+                (
+                    rank,
+                    {
+                        "name": other_name,
+                        "kind": other_kind,
+                        "file": other_file,
+                        "line": int(_row_get(row, "other_line") or 0),
+                    },
+                )
+            )
+        for rel_kind, scored in pending.items():
             kind_cap = (
                 DERIVES_PER_TILING_KEY
                 if skip_tpl and rel_kind == "DERIVES"
                 else EDGES_PER_KIND
             )
-            if len(neighbors) >= kind_cap:
-                continue
-            neighbors.append(
-                {
-                    "name": other_name,
-                    "kind": other_kind,
-                    "file": _norm_file(str(_row_get(row, "other_file") or "")),
-                    "line": int(_row_get(row, "other_line") or 0),
-                }
-            )
+            scored.sort(key=lambda item: (item[0], str(item[1].get("name") or "")))
+            neighbors: list[dict[str, Any]] = []
+            seen: set[tuple[str, str]] = set()
+            for _rank, neigh in scored:
+                key = (str(neigh.get("kind") or ""), str(neigh.get("name") or ""))
+                if key in seen:
+                    continue
+                seen.add(key)
+                neighbors.append(neigh)
+                if len(neighbors) >= kind_cap:
+                    break
+            bucket = grouped.setdefault(rel_kind, {"count": counts.get(rel_kind, 0), "neighbors": []})
+            bucket["neighbors"] = neighbors
         return grouped
 
     def _call_direction_neighbors(self, entity_id: str, *, outgoing: bool) -> list[dict[str, Any]]:
@@ -3920,6 +4432,145 @@ class UoSqlQuery:
             )
         return out
 
+    def _write_timeline(self, needle: str, *, primary: dict[str, Any]) -> dict[str, Any]:
+        ident = _last_ident(str(needle or "").replace(".", "::"))
+        if not ident:
+            return {}
+        aliases = self._named_fields(
+            ident,
+            kinds=(
+                EntityKind.TILING_FIELD.value,
+                EntityKind.FIELD.value,
+                EntityKind.TILING_KEY.value,
+            ),
+        )
+        value_rows: list[dict[str, Any]] = []
+        packing_rows: list[dict[str, Any]] = []
+        seen_value: set[tuple[str, int]] = set()
+        seen_pack: set[tuple[str, int]] = set()
+
+        def _add(bucket: list[dict[str, Any]], seen: set[tuple[str, int]], row: dict[str, Any], role: str) -> None:
+            item = _timeline_site(row, role=role)
+            if item is None:
+                return
+            loc = (str(item["file"]), int(item["line"]))
+            if loc in seen:
+                return
+            seen.add(loc)
+            bucket.append(item)
+
+        for hit in aliases:
+            facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+            for site in list(facts.get("write_sites") or []):
+                if isinstance(site, dict):
+                    _add(value_rows, seen_value, site, "value")
+            for site in list(facts.get("packing_value_sites") or []):
+                if not isinstance(site, dict):
+                    continue
+                kind = str(site.get("kind") or "")
+                if kind in {"assignment", "declaration"}:
+                    _add(value_rows, seen_value, site, "value")
+                else:
+                    _add(packing_rows, seen_pack, site, "packing")
+        impact = self.field_impact(str(primary.get("id") or ident))
+        if impact.get("ok"):
+            for writer in list(impact.get("writers") or []):
+                loc = (
+                    str(writer.get("file") or "").replace("\\", "/"),
+                    int(writer.get("line_start") or writer.get("line") or 0),
+                )
+                if loc in seen_value:
+                    continue
+                row = {
+                    "file": writer.get("file"),
+                    "line": writer.get("line_start") or writer.get("line"),
+                    "name": writer.get("name"),
+                    "kind": writer.get("kind"),
+                    "rhs": (writer.get("facts") or {}).get("rhs") if isinstance(writer.get("facts"), dict) else "",
+                }
+                _add(packing_rows, seen_pack, row, "packing")
+        value_rows.sort(key=lambda row: (str(row.get("file") or ""), int(row.get("line") or 0)))
+        packing_rows.sort(key=lambda row: (str(row.get("file") or ""), int(row.get("line") or 0)))
+        if not value_rows and not packing_rows:
+            return {}
+        return {
+            "value_writes": value_rows[:MAX_WRITE_TIMELINE],
+            "packing_writes": packing_rows[:MAX_WRITE_TIMELINE],
+            "write_sites_complete": len(value_rows) <= MAX_WRITE_TIMELINE
+            and len(packing_rows) <= MAX_WRITE_TIMELINE,
+        }
+
+    def _same_value_neighbors(self, hit: dict[str, Any]) -> list[dict[str, Any]]:
+        facts = hit.get("facts") if isinstance(hit.get("facts"), dict) else {}
+        expr = str(facts.get("value_expr") or facts.get("value") or "").strip()
+        if not expr:
+            return []
+        file = str(hit.get("file") or "").replace("\\", "/")
+        leaf = file.rsplit("/", 1)[-1] if file else ""
+        self_id = str(hit.get("id") or "")
+        self_name = str(hit.get("name") or "")
+        grouped = self._grouped_edges(self_id, entity_kind=str(hit.get("kind") or ""))
+        aliases = grouped.get("ALIASES") if isinstance(grouped.get("ALIASES"), dict) else {}
+        from_graph: list[dict[str, Any]] = []
+        for row in list(aliases.get("neighbors") or []):
+            name = str(row.get("name") or "")
+            if not name or name == self_name:
+                continue
+            from_graph.append(
+                {
+                    "name": name,
+                    "file": str(row.get("file") or ""),
+                    "line": int(row.get("line") or 0),
+                }
+            )
+            if len(from_graph) >= MAX_SAME_VALUE:
+                return from_graph
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT e.id, e.kind, e.name, e.status, e.file, e.line_start, e.line_end, e.data,
+                       IFNULL(s.snippet, '') AS snippet
+                FROM entity e
+                LEFT JOIN source_span s ON s.entity_id = e.id
+                WHERE e.kind IN ('COMPILE_VAR', 'MACRO')
+                  AND IFNULL(e.file, '') != ''
+                  AND (? = '' OR lower(IFNULL(e.file, '')) LIKE '%' || ?)
+                LIMIT 80
+                """,
+                (leaf.lower(), leaf.lower()),
+            ).fetchall()
+            others = self._hits_from_rows(conn, rows, why="same_value", with_snippet=False)
+        out = list(from_graph)
+        seen = {str(row.get("name") or "").lower() for row in out}
+        seen.add(self_name.lower())
+        for other in others:
+            if str(other.get("id") or "") == self_id:
+                continue
+            name = str(other.get("name") or "")
+            if name.lower() in seen:
+                continue
+            other_file = str(other.get("file") or "").replace("\\", "/")
+            if leaf and other_file.rsplit("/", 1)[-1] != leaf:
+                continue
+            ofacts = other.get("facts") if isinstance(other.get("facts"), dict) else {}
+            other_expr = str(ofacts.get("value_expr") or ofacts.get("value") or "").strip()
+            overlap = occupancy_overlap(expr, other_expr)
+            if not worth_sharing(overlap, expr, other_expr):
+                continue
+            seen.add(name.lower())
+            out.append(
+                {
+                    "name": name,
+                    "file": other_file,
+                    "line": int(other.get("line_start") or 0),
+                    "value_expr": other_expr,
+                    "overlap": sorted(overlap)[:8],
+                }
+            )
+            if len(out) >= MAX_SAME_VALUE:
+                break
+        return out
+
     def _card_extras(self, hit: dict[str, Any]) -> dict[str, Any]:
         kind = str(hit.get("kind") or "")
         name = str(hit.get("name") or "")
@@ -3946,7 +4597,7 @@ class UoSqlQuery:
         if hit.get("truncated"):
             extras["truncated"] = True
         if kind in {EntityKind.TILING_FIELD.value, EntityKind.FIELD.value, EntityKind.TILING_KEY.value}:
-            field = self.field_impact(name)
+            field = self.field_impact(eid or name)
             if field.get("ok"):
                 extras["writers"] = [
                     {
@@ -3968,6 +4619,21 @@ class UoSqlQuery:
                     extras["canonical"] = field.get("canonical")
                 if field.get("occupancy_axis"):
                     extras["occupancy_axis"] = field.get("occupancy_axis")
+            if not extras.get("readers") and eid:
+                grouped = self._grouped_edges(eid, entity_kind=kind)
+                reads = grouped.get("READS") if isinstance(grouped.get("READS"), dict) else {}
+                neigh = list(reads.get("neighbors") or [])
+                if neigh:
+                    extras["readers"] = [
+                        {
+                            "name": row.get("name"),
+                            "file": row.get("file"),
+                            "line": row.get("line"),
+                        }
+                        for row in neigh[:5]
+                    ]
+            timeline = self._write_timeline(name, primary=hit)
+            extras.update(timeline)
         if kind in {EntityKind.PIPE.value, EntityKind.KERNEL.value} or name.lower() in _LAUNCH_NAMES:
             launch = self.aggregate_kernel_launch(name if kind == EntityKind.KERNEL.value else "", limit=8)
             extras["phases"] = [
@@ -4004,14 +4670,18 @@ class UoSqlQuery:
             for key in ("value", "value_expr", "origin"):
                 if facts.get(key) not in (None, "", []):
                     extras[key] = facts[key]
+            same = self._same_value_neighbors(hit)
+            if same:
+                extras["same_value"] = same
         if kind == EntityKind.TYPE.value:
-            for key in ("alias_of", "cpp_kind", "type_name", "members"):
+            for key in ("alias_of", "cpp_kind", "type_name", "members", "catalog", "role", "spelling"):
                 if facts.get(key) not in (None, "", []):
                     extras[key] = facts[key]
         if kind == EntityKind.OPERATION.value:
-            for key in ("callee", "mechanism", "function"):
+            for key in ("callee", "mechanism", "function", "receiver"):
                 if facts.get(key) not in (None, "", []):
                     extras[key] = facts[key]
+        extras.update(surface_facts(kind, facts))
         return extras
 
     def query_cover(self, pattern: str, *, limit: int = 8) -> dict[str, Any]:
@@ -4073,7 +4743,7 @@ class UoSqlQuery:
                 ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
                 LIMIT ?
                 """,
-                (needle, start, end, cap),
+                (needle, start, end, cap * 4),
             ).fetchall()
             if not seed_rows:
                 leaf = needle.rsplit("/", 1)[-1]
@@ -4098,9 +4768,44 @@ class UoSqlQuery:
                         ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
                         LIMIT ?
                         """,
-                        (alt, start, end, cap),
+                        (alt, start, end, cap * 4),
                     ).fetchall()
-            return self._hits_from_rows(conn, seed_rows, why="around", with_snippet=True)
+            hits = self._hits_from_rows(conn, seed_rows, why="around", with_snippet=True)
+        return self._rank_around_seeds(hits, line=start, limit=cap)
+
+    def _rank_around_seeds(
+        self, hits: list[dict[str, Any]], *, line: int, limit: int
+    ) -> list[dict[str, Any]]:
+        enclosing = [hit for hit in hits if _encloses_line(hit, line)]
+        enclosing.sort(
+            key=lambda hit: (
+                int(hit.get("line_end") or 0) - int(hit.get("line_start") or 0),
+                str(hit.get("name") or ""),
+            )
+        )
+        enclosed_ids = {str(hit.get("id") or "") for hit in enclosing}
+
+        def _key(hit: dict[str, Any]) -> tuple[Any, ...]:
+            kind = str(hit.get("kind") or "")
+            name = str(hit.get("name") or "")
+            start = int(hit.get("line_start") or 0)
+            handler = 1 if "FieldHandler" in name else 0
+            empty = 1 if not str(hit.get("file") or "").strip() else 0
+            return (
+                empty,
+                handler,
+                _AROUND_KIND_PRIORITY.get(kind, 8),
+                abs(start - int(line or 0)),
+                name,
+            )
+
+        others = [
+            hit
+            for hit in hits
+            if str(hit.get("id") or "") not in enclosed_ids
+        ]
+        ranked = enclosing + sorted(others, key=_key)
+        return ranked[: max(1, int(limit))]
 
     def _around_one_hop(self, seed_ids: list[str]) -> list[dict[str, Any]]:
         useful = tuple(USEFUL_EDGE_KINDS)
@@ -4121,6 +4826,7 @@ class UoSqlQuery:
                     FROM relation r
                     JOIN entity e ON e.id = CASE WHEN r.src = ? THEN r.dst ELSE r.src END
                     WHERE (r.src = ? OR r.dst = ?) AND r.kind IN ({placeholders})
+                    ORDER BY CASE r.kind WHEN 'DECLARES' THEN {_DECLARES_KIND_SQL} ELSE 0 END, e.kind, e.name
                     """,
                     (eid, eid, eid, *useful),
                 ).fetchall()
@@ -4128,12 +4834,15 @@ class UoSqlQuery:
                     if _is_advisory_data(_row_get(row, "rel_data")):
                         continue
                     rel = str(_row_get(row, "rel_kind") or "")
+                    other_kind = str(_row_get(row, "other_kind") or "")
+                    if _skip_composition_neighbor("", rel, other_kind):
+                        continue
                     bucket = per_kind.setdefault(rel, [])
                     if len(bucket) >= AROUND_NEIGHBORS_PER_KIND:
                         continue
                     other_id = str(_row_get(row, "other_id") or "")
                     other_name = str(_row_get(row, "other_name") or "")
-                    key = (rel, other_id, other_name)
+                    key = (rel, other_kind, other_name)
                     if key in seen:
                         continue
                     seen.add(key)
@@ -4173,7 +4882,9 @@ class UoSqlQuery:
         seed_cap = AROUND_SEED_LIMIT
         seeds = self._around_seed_hits(path, start, end or start, limit=seed_cap)
         compact_seeds = [_compact_around_hit(hit, snippet=True) for hit in seeds]
-        neighbors = self._around_one_hop([str(hit.get("id") or "") for hit in seeds])
+        enclosing = [hit for hit in seeds if _encloses_line(hit, start)]
+        hop_from = enclosing[:1] if enclosing else seeds[:1]
+        neighbors = self._around_one_hop([str(hit.get("id") or "") for hit in hop_from])
         payload = {
             "ok": bool(seeds),
             "shape": "around",
@@ -4194,17 +4905,29 @@ class UoSqlQuery:
         dim_names: list[str] = []
         tiling_data: list[str] = []
         with self._connect() as conn:
-            dim_names = [
-                str(row[0])
-                for row in conn.execute(
-                    """
-                    SELECT DISTINCT name FROM entity
-                    WHERE kind = 'TILING_KEY' AND IFNULL(name, '') != ''
-                    ORDER BY name
-                    """
-                ).fetchall()
-                if row[0]
-            ]
+            dim_rows = conn.execute(
+                """
+                SELECT name, data FROM entity
+                WHERE kind = 'TILING_KEY' AND IFNULL(name, '') != ''
+                ORDER BY name
+                """
+            ).fetchall()
+            dim_names = []
+            seen_dims: set[str] = set()
+            for row in dim_rows:
+                name = str(row[0] or "")
+                if name in seen_dims or not _IDENT_NAME_RE.fullmatch(name):
+                    continue
+                if name.isdigit():
+                    continue
+                data = _parse_data(row[1] if len(row) > 1 else None)
+                attrs = data.get("attrs") if isinstance(data.get("attrs"), dict) else data
+                if not isinstance(attrs, dict):
+                    attrs = {}
+                if attrs.get("source_declared") is not True:
+                    continue
+                seen_dims.add(name)
+                dim_names.append(name)
             tiling_data = [
                 str(row[0])
                 for row in conn.execute(
@@ -4251,11 +4974,19 @@ class UoSqlQuery:
         if launch.get("other_kernels"):
             payload["other_kernels"] = launch.get("other_kernels")
         attach_query_hints(payload, "", count=len(phases), mode="index")
-        dim_example = next((n for n in dim_names if n), "S2TemplateNum")
-        payload["hint"] = (
-            f"Coverage list: Dim={dim_example}. Combo filter: IsTnd=1 (Name=Value). "
-            "One identifier for a name card. --file --line only after copying file:line from a card."
-        )
+        if dim_names:
+            dim_example = dim_names[0]
+            domain = self._declared_dim_values(dim_example)
+            sample = f"{dim_example}={domain[0]}" if domain else dim_example
+            payload["hint"] = (
+                f"Coverage list: Dim={dim_example}. Combo filter: {sample} (Name=Value). "
+                "One identifier for a name card. --file --line only after copying file:line from a card."
+            )
+        else:
+            payload["hint"] = (
+                "No source-declared TPL identifier dims. Coverage list: Dim=<name>. "
+                "One identifier for a name card. --file --line only after copying file:line from a card."
+            )
         return _fit_payload(payload)
 
     def legal_key_query(

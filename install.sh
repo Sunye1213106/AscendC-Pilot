@@ -385,20 +385,3 @@ else
   echo "Run: $PYTHON -m ascendc_pilot doctor"
 fi
 echo "Keep this checkout; pip -e installs point at it. Fully quit and reopen the Host."
-
-# optional native frontend (best-effort cmake/libclang). Missing source is a bug.
-UO_FRONTEND_SRC="$DEST/engines/understand-operator/native/uo_frontend"
-if [ ! -d "$UO_FRONTEND_SRC" ] || [ ! -f "$UO_FRONTEND_SRC/CMakeLists.txt" ]; then
-  echo "ERROR: native uo_frontend source missing at $UO_FRONTEND_SRC" >&2
-  exit 1
-fi
-if command -v cmake >/dev/null 2>&1; then
-  UO_FRONTEND_BUILD="$UO_FRONTEND_SRC/build"
-  mkdir -p "$UO_FRONTEND_BUILD"
-  if cmake -S "$UO_FRONTEND_SRC" -B "$UO_FRONTEND_BUILD" \
-      && cmake --build "$UO_FRONTEND_BUILD"; then
-    echo "Built optional uo_frontend → $UO_FRONTEND_BUILD"
-  else
-    echo "uo_frontend optional build skipped (cmake/libclang)"
-  fi
-fi

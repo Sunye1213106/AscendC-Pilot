@@ -1,6 +1,6 @@
 # Domain contract: closure safety
 
-Owner: `construct-cases` (`skills/construct-cases/references/closure-safety.md`).
+Owner: `solve` (`skills/solve/`).
 
 Consumers: `source-proof` lemma Skill. Load only via the Action Context
 Profile — do not open the owner skill from a foreign SKILL body.

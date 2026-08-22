@@ -46,6 +46,7 @@ TQUE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
 # TPipe / TBufPool methods (kernel_tpipe.h). Receiver is the pipe, TQue/TBuf is an argument.
 TPIPE_METHOD_BRIDGES: dict[str, tuple[str, str]] = {
     "InitBuffer": ("InitBuffer", "MEMORY_API"),
+    "Destroy": ("Destroy", "MEMORY_API"),
     "FetchEventID": ("FetchEventID", "SYNC"),
     "AllocEventID": ("AllocEventID", "SYNC"),
     "ReleaseEventID": ("ReleaseEventID", "SYNC"),

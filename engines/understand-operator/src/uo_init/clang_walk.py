@@ -46,6 +46,46 @@ _FUNCTION_DEF_KINDS = frozenset(
     {"CXX_METHOD", "FUNCTION_DECL", "FUNCTION_TEMPLATE", "CONSTRUCTOR"}
 )
 
+
+def _cursor_definition_span(cursor) -> tuple[int, int]:
+    """Definition body extent; start==end when extent is unavailable."""
+    start = int(getattr(getattr(cursor, "location", None), "line", 0) or 0)
+    end = start
+    try:
+        ext = getattr(cursor, "extent", None)
+        end_line = int(getattr(getattr(ext, "end", None), "line", 0) or 0)
+        if end_line > end:
+            end = end_line
+    except Exception:  # noqa: BLE001
+        pass
+    if end < start:
+        end = start
+    return start, end
+
+
+def _remember_func(
+    functions: dict[str, "FuncRecord"],
+    name: str,
+    file: str,
+    start: int,
+    end: int,
+) -> "FuncRecord":
+    """Keep the widest definition span for a short name (header vs cpp)."""
+    rec = functions.get(name)
+    if rec is None:
+        rec = FuncRecord(name=name, file=file, line=start, line_end=end)
+        functions[name] = rec
+        return rec
+    incoming_span = max(0, int(end or 0) - int(start or 0))
+    existing_span = max(0, int(rec.line_end or rec.line or 0) - int(rec.line or 0))
+    if incoming_span > existing_span:
+        rec.file = file
+        rec.line = start
+        rec.line_end = end
+    else:
+        rec.line_end = max(int(rec.line_end or 0), int(end or 0))
+    return rec
+
 # Guard expressions are read back as text and re-parsed; 48 tokens truncated
 # real conditions mid-expression and produced spurious parse failures.
 COND_TOKENS = 200
@@ -338,6 +378,7 @@ class FuncRecord:
     name: str
     file: str
     line: int
+    line_end: int = 0
     reads: list[str] = field(default_factory=list)
     writes: list[str] = field(default_factory=list)
     guards: list[str] = field(default_factory=list)
@@ -1072,10 +1113,8 @@ class _Walker:
             if self._in_frame(file):
                 assert file is not None
                 name = cursor.spelling or func
-                rec = self.functions.setdefault(
-                    name,
-                    FuncRecord(name=name, file=file, line=cursor.location.line),
-                )
+                start, end = _cursor_definition_span(cursor)
+                rec = _remember_func(self.functions, name, file, start, end)
                 for ch in cursor.get_children():
                     if ch.kind.name == "PARM_DECL" and ch.spelling:
                         if ch.spelling not in rec.params:
@@ -1707,10 +1746,8 @@ class _Walker:
                 if self._in_frame(file):
                     assert file is not None
                     name = cursor.spelling or func
-                    rec = self.functions.setdefault(
-                        name,
-                        FuncRecord(name=name, file=file, line=cursor.location.line),
-                    )
+                    start, end = _cursor_definition_span(cursor)
+                    rec = _remember_func(self.functions, name, file, start, end)
                     for ch in cursor.get_children():
                         if ch.kind.name == "PARM_DECL" and ch.spelling:
                             if ch.spelling not in rec.params:

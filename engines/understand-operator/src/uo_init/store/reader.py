@@ -5,8 +5,75 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
+
+_SHARED_LOCK = threading.Lock()
+_SHARED_CONN: OrderedDict[str, sqlite3.Connection] = OrderedDict()
+_SHARED_CONN_MAX = 1
+
+
+def _configure_readonly(conn: sqlite3.Connection) -> sqlite3.Connection:
+    """Bound SQLite RAM: no mmap of the whole .uo, ~2MB page cache."""
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA query_only = 1")
+        conn.execute("PRAGMA cache_size = -2000")
+        conn.execute("PRAGMA mmap_size = 0")
+        conn.execute("PRAGMA temp_store = MEMORY")
+    except sqlite3.Error:
+        pass
+    return conn
+
+
+def _connect_readonly(path: str | Path) -> sqlite3.Connection:
+    db = Path(path).expanduser().resolve()
+    if not db.is_file():
+        raise FileNotFoundError(f"missing .uo product: {db}")
+    conn = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+    return _configure_readonly(conn)
+
+
+def shared_uo(path: str | Path) -> sqlite3.Connection:
+    """One live read-only connection per process (evict others).
+
+    Opening a 80MB ``.uo`` per query was the Windows freeze: each connect
+    remapped the file and cover queries did that several times per hop.
+    """
+    key = str(Path(path).expanduser().resolve())
+    with _SHARED_LOCK:
+        hit = _SHARED_CONN.get(key)
+        if hit is not None:
+            _SHARED_CONN.move_to_end(key)
+            return hit
+        while len(_SHARED_CONN) >= _SHARED_CONN_MAX:
+            _, old = _SHARED_CONN.popitem(last=False)
+            try:
+                old.close()
+            except sqlite3.Error:
+                pass
+        conn = _connect_readonly(key)
+        _SHARED_CONN[key] = conn
+        return conn
+
+
+def close_uo_connections(path: str | Path | None = None) -> None:
+    """Drop the shared query connection(s). Tests and eval harness call this."""
+    with _SHARED_LOCK:
+        if path is None:
+            keys = list(_SHARED_CONN)
+        else:
+            keys = [str(Path(path).expanduser().resolve())]
+        for key in keys:
+            conn = _SHARED_CONN.pop(key, None)
+            if conn is None:
+                continue
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
 
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import Entity, EntityKind
@@ -31,21 +98,14 @@ def _legacy_trust_attrs(attrs: dict[str, Any], *, legacy: bool) -> dict[str, Any
 
 
 def open_uo(path: str | Path) -> sqlite3.Connection:
-    db = Path(path).expanduser().resolve()
-    if not db.is_file():
-        raise FileNotFoundError(f"missing .uo product: {db}")
-    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+    """Exclusive short-lived connection. Caller must ``close()``."""
+    return _connect_readonly(path)
 
 
 def read_meta(path: str | Path) -> dict[str, str]:
-    conn = open_uo(path)
-    try:
-        rows = conn.execute("SELECT key, value FROM meta").fetchall()
-        return {str(r["key"]): str(r["value"]) for r in rows}
-    finally:
-        conn.close()
+    conn = shared_uo(path)
+    rows = conn.execute("SELECT key, value FROM meta").fetchall()
+    return {str(r["key"]): str(r["value"]) for r in rows}
 
 
 def read_codemap(path: str | Path) -> CodeMap:
@@ -126,23 +186,29 @@ def read_codemap(path: str | Path) -> CodeMap:
         conn.close()
 
 
-def load_view_blob(path: str | Path, name: str) -> Any | None:
-    conn = open_uo(path)
-    try:
-        row = conn.execute(
-            "SELECT data FROM view_blob WHERE name = ?", (name,)
-        ).fetchone()
-        if row is None:
-            return None
-        blob = json.loads(row["data"])
-        if name == "tiling/legal_key_index.jsonl" and isinstance(blob, dict):
-            from uo_init.query.legal_key_cache import expand_legal_key_rows
+def load_view_blob(
+    path: str | Path,
+    name: str,
+    *,
+    expand_legal_keys: bool = True,
+) -> Any | None:
+    conn = shared_uo(path)
+    row = conn.execute(
+        "SELECT data FROM view_blob WHERE name = ?", (name,)
+    ).fetchone()
+    if row is None:
+        return None
+    blob = json.loads(row["data"])
+    if (
+        expand_legal_keys
+        and name == "tiling/legal_key_index.jsonl"
+        and isinstance(blob, dict)
+    ):
+        from uo_init.query.legal_key_cache import expand_legal_key_rows
 
-            blob = dict(blob)
-            blob["rows"] = expand_legal_key_rows(blob)
-        return blob
-    finally:
-        conn.close()
+        blob = dict(blob)
+        blob["rows"] = expand_legal_key_rows(blob)
+    return blob
 
 
 def load_production_view(path: str | Path, name: str) -> Any | None:
@@ -154,12 +220,14 @@ def load_production_view(path: str | Path, name: str) -> Any | None:
 
 
 def _architecture_from_uo_name(path: Path) -> str:
+    from uo_init.source_layout import is_product_architecture
+
     name = path.name
     if not name.endswith(".uo"):
         return ""
     stem = name[: -len(".uo")]
     parts = stem.rsplit(".", 1)
-    if len(parts) == 2 and parts[1].startswith("arch"):
+    if len(parts) == 2 and is_product_architecture(parts[1]):
         return parts[1]
     return ""
 
@@ -170,6 +238,7 @@ def load_view_blob_checked(
     *,
     codemap: CodeMap | None = None,
     fallback_canonical: bool = True,
+    expand_legal_keys: bool = True,
 ) -> dict[str, Any]:
     """Load a projection with fail-closed provenance validation.
 
@@ -191,7 +260,7 @@ def load_view_blob_checked(
         project_tg_host_view,
     )
 
-    blob = load_view_blob(path, name)
+    blob = load_view_blob(path, name, expand_legal_keys=expand_legal_keys)
     if blob is None:
         return {"ok": False, "reason_code": "VIEW_MISSING", "name": name, "view": None}
     stored_digest = str(_maybe_json(read_meta(path).get("cm_canonical_graph_digest") or "") or "")
@@ -255,11 +324,8 @@ def load_view_blob_checked(
 
 
 def list_views(path: str | Path) -> list[str]:
-    conn = open_uo(path)
-    try:
-        return [str(r["name"]) for r in conn.execute("SELECT name FROM view_blob ORDER BY name")]
-    finally:
-        conn.close()
+    conn = shared_uo(path)
+    return [str(r["name"]) for r in conn.execute("SELECT name FROM view_blob ORDER BY name")]
 
 
 def find_uo_product(
@@ -294,11 +360,13 @@ def find_uo_product(
         if path not in search_dirs:
             search_dirs.append(path)
 
+    from uo_init.source_layout import is_product_architecture
+
     if root.is_dir():
-        # Already standing in a uo product directory or an arch dir.
-        if root.name == "uo" or root.name.startswith("arch"):
+        # Already standing in a uo product directory or an arch / default slot.
+        if root.name == "uo" or is_product_architecture(root.name):
             _add_dir(root)
-        if root.name.startswith("arch") and (root / "uo").is_dir():
+        if is_product_architecture(root.name) and (root / "uo").is_dir():
             _add_dir(root / "uo")
 
     if op_name and arch:
@@ -317,8 +385,8 @@ def find_uo_product(
         _add_dir(root / ".ascendc-pilot" / arch / "uo")
 
     pilot = root / ".ascendc-pilot"
-    if not pilot.is_dir() and root.name == "uo" and root.parent.name.startswith("arch"):
-        # ``<op>/.ascendc-pilot/<arch>/uo`` → climb to op root's pilot dir.
+    if not pilot.is_dir() and root.name == "uo" and is_product_architecture(root.parent.name):
+        # ``<op>/.ascendc-pilot/<arch|default>/uo`` → climb to op root's pilot dir.
         maybe_pilot = root.parent.parent
         if maybe_pilot.name == ".ascendc-pilot":
             pilot = maybe_pilot
@@ -328,7 +396,7 @@ def find_uo_product(
 
     if pilot.is_dir():
         for child in sorted(pilot.iterdir()):
-            if child.is_dir() and child.name.startswith("arch"):
+            if child.is_dir() and is_product_architecture(child.name):
                 _add_dir(child / "uo")
         # Intentionally skip legacy top-level ``.ascendc-pilot/uo/``.
 

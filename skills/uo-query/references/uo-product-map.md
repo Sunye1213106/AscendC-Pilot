@@ -1,6 +1,6 @@
 # 查询产品地图
 
-短地图：认清权威 → 调用 `pilot_cli` `uo-query` → 查询完成后立即作答。简单查询直接调用；复杂查询同一轮委派。禁止 `pilot_run`。怎么查见 `skills/uo-query/SKILL.md`。
+短地图：认清权威 → 调用 `pilot_cli` `uo-query` → 查询完成后立即作答。简单查询直接调用；复杂查询同一轮委派。禁止 `pilot_run`。怎么查、Claim 分层、空结果纪律见 `skills/uo-query/SKILL.md`。
 
 同一查询目标可沿图继续调用（跟卡片 `next`）。是否并行委派见 `pilot/policies/invariants/intent-reasoning.md`。
 
@@ -14,19 +14,9 @@
 
 无法验证 freshness 时不得当作 fresh。
 
-## Claim 层级（不静默扩大）
-
-1. **domain** — 声明域允许什么值
-2. **template-admissible** — 编译期模板/宏是否接纳
-3. **host-produced** — Host 在何条件下写出
-4. **kernel-consumed** — Kernel 是否消费
-5. **full reachability** — 端到端可达（常需 TG）
-
-主问只需 1–3 时不要扩展到第 5 层。不同层级分开说，不能用 Host 不产生去否定「模板可接纳」。TilingKey / tiling 字段、kernel 分支、unresolved 缺口分开查，不要一次扩到 full reachability。
-
 ## 日常任务 → 调用形态
 
-按手头任务选最短查询。配对、时序、仿真、sanitizer **不在 UO**。
+按手头任务选最短查询。TilingKey / Kernel / unresolved 分开查，不要一次扩到 full reachability。配对、时序、仿真、sanitizer **不在 UO**。
 
 | 任务 | 先调用 | 再补 | UO 不回答 |
 | --- | --- | --- | --- |
@@ -36,7 +26,5 @@
 | 多阶段 launch | 无参数索引 | 跟 PIPE 名再查 | 把内层函数名当阶段 |
 | 从已知位点扩邻居 | `--file --line` | 卡片 `next` | Git / PR |
 | UT / 白盒线索 | `Dim=V` + 字段名 | 无参数索引的 gaps 计数 | 生成完整 ST 矩阵 |
-
-`source_span` 或查询返回的带行号 `snippet` **视为已 Read**。覆盖类 `dim_coverage` / `total_matched` 是全集。缺语义用 `PARTIAL` / `UNKNOWN`。空结果按 `hint` 用更短名字再查一次，禁止仓级 findstr。
 
 Worked example（**non-normative**）：`examples/uo-query-splitaxis/`。

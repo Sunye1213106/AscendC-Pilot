@@ -14,8 +14,13 @@ PROVED | REFUTED | INSUFFICIENT
 
 ```yaml
 claim:
+  layer: domain | template | host | kernel | full
   premise: ...
   conclusion: ...
+coverage:
+  declared: [...]
+  product: [...]
+  completeness: coverage_checked | first_hit | unknown
 obligations:
   entry: CLOSED | OPEN | BLOCKED
   control: CLOSED | OPEN | BLOCKED

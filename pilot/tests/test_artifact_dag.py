@@ -224,7 +224,7 @@ def test_staged_producer_does_not_publish_canonical() -> None:
     from ascendc_pilot.workflows.artifact_dag import is_staged_producer, normalize_published
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
-    grill = next(a for a in WORKFLOWS["ce-plan"]["actions"] if a["id"] == "intent_grill")
-    assert is_staged_producer(grill)
-    published = normalize_published(grill)
+    fuse = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_fuse")
+    assert is_staged_producer(fuse)
+    published = normalize_published(fuse)
     assert not any(str(p).endswith(".yaml") for p in published)

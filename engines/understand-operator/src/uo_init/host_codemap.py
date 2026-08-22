@@ -261,8 +261,8 @@ def _feature_hint(text: str) -> str:
 def _predicates_from_writers(writers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Lift guard strings into predicate rows with a feature_hint when possible.
 
-    Full predicate normalisation stays in `uo_init.predicate.PredicateNormalizer`;
-    here we keep a durable, queryable projection for TG feature engineering.
+    This is a durable, queryable projection for TG feature engineering,
+    not a full predicate normalizer.
     """
     seen: set[tuple] = set()
     out = []
@@ -296,6 +296,7 @@ def load_host_codemap(
 ) -> dict[str, Any]:
     """Load the TG host view from the ``.uo`` product blob only."""
     from uo_init.store.reader import find_uo_product
+    from uo_init.source_layout import is_product_architecture
 
     root = Path(uo_root).expanduser().resolve()
     product: Path | None
@@ -303,7 +304,7 @@ def load_host_codemap(
         product = root
     else:
         product = find_uo_product(root, op_name=op_name, architecture=architecture)
-        if product is None and root.name == "uo" and root.parent.name.startswith("arch"):
+        if product is None and root.name == "uo" and is_product_architecture(root.parent.name):
             product = find_uo_product(
                 root.parent.parent.parent,
                 op_name=op_name,

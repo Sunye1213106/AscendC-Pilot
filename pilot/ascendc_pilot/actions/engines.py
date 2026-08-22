@@ -101,29 +101,6 @@ def _run_ce_kb_check(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     return {"ok": bool(gate.get("ok")), "engine": "kb_check", "gate": gate}
 
 
-def _run_ce_grill_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    from ascendc_pilot.paths import agent_root
-
-    arch = _resolve_ce_arch(project_root, ctx)
-    run_id = str(ctx.get("run_id") or "").strip()
-    root = agent_root(project_root, arch) / "runs" / (run_id or "_missing") / "actions" / "intent_grill"
-    staging = root / "staging.md"
-    parts = sorted(root.glob("parts/*.md")) if root.is_dir() else []
-    if not staging.is_file() and not parts:
-        return {
-            "ok": False,
-            "engine": "grill_promote",
-            "reason_code": "GRILL_STAGING_MISSING",
-            "message_zh": "缺少 grill 草稿 staging.md。请继续 /ce-plan 问清需求。",
-        }
-    return {
-        "ok": True,
-        "engine": "grill_promote",
-        "staging": staging.as_posix() if staging.is_file() else "",
-        "parts": [p.as_posix() for p in parts],
-    }
-
-
 def _ce_state(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     try:
         from ascendc_pilot.state import load_state
@@ -900,7 +877,6 @@ ENGINE_REGISTRY: dict[tuple[str, str], EngineFn] = {
     ("uo-update", "diff_summary"): _run_diff_summary,
     ("uo-update", "diff_only"): _run_diff_summary,
     ("ce-plan", "kb_check"): _run_ce_kb_check,
-    ("ce-plan", "grill_promote"): _run_ce_grill_promote,
     ("ce-apply", "apply_gate"): _run_ce_apply_gate,
     ("ce-apply", "patch_guard"): _run_ce_patch_guard,
     ("ce-apply", "plan_revise_check"): _run_ce_plan_revise_check,
@@ -963,12 +939,6 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "kb-answer-v1": [],
     "code-review-v1": [],
     "ce-kb-check-v1": [],
-    "intent-grill-v1": [],
-    "intent-grill-staging-v1": [
-        "runs/{run_id}/actions/intent_grill/parts/**",
-        "runs/{run_id}/actions/intent_grill/staging.md",
-    ],
-    "ce-plan-grilled-v1": [],
     "ce-plan-v1": ["ce/plan/*_plan.md"],
     "ce-plan-confirmed-v1": [],
     "apply-gate-v1": [],

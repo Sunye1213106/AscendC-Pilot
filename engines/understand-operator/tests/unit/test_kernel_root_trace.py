@@ -2027,6 +2027,60 @@ def test_pipe_kernel_phase_and_sync_ops(tmp_path: Path) -> None:
     assert "kernel_execution_pipeline" not in cm.meta
 
 
+def test_pipe_ordinal_follows_destroy_in_define_body(tmp_path: Path) -> None:
+    root = tmp_path / "lifetime"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+#define PHASES \\
+  pipeA.Destroy(); \\
+  TPipe pipeB; \\
+  pipeB.Destroy(); \\
+  TPipe pipeC;
+
+class Process {
+ public:
+  __aicore__ inline void Launch() {
+    TPipe pipeA;
+    PHASES
+  }
+};
+""",
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="lifetime", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    pipes = {
+        e.name: e
+        for e in cm.by_kind(EntityKind.PIPE)
+        if e.attrs.get("catalog") != "ascendc" and not e.attrs.get("pointer")
+    }
+    if not {"pipeA", "pipeB", "pipeC"} <= set(pipes):
+        return
+    destroys = [
+        e
+        for e in cm.by_kind(EntityKind.OPERATION)
+        if str(e.attrs.get("callee") or e.name) == "Destroy"
+    ]
+    if not destroys:
+        return
+    assert int(pipes["pipeA"].attrs.get("pipe_ordinal") or 0) == 1
+    assert int(pipes["pipeB"].attrs.get("pipe_ordinal") or 0) == 2
+    assert int(pipes["pipeC"].attrs.get("pipe_ordinal") or 0) == 3
+    precedes = [
+        (cm.entities[r.src].name, cm.entities[r.dst].name)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.PRECEDES.value
+        and str(r.attrs.get("via") or "") == "pipe_destroy"
+    ]
+    assert ("pipeA", "pipeB") in precedes
+    assert ("pipeB", "pipeC") in precedes
+
+
 def test_mutex_policy_on_conditional_buffer(tmp_path: Path) -> None:
     root = tmp_path / "mutex"
     arch = root / "op_kernel" / "arch35"
@@ -2851,6 +2905,60 @@ def test_wrapper_class_body_proves_storage_and_lock(tmp_path: Path) -> None:
     assert lock_ops
     assert not any(e.name == "Grab" for e in cm.by_kind(EntityKind.OPERATION))
     assert not any(e.name == "Latch" for e in cm.by_kind(EntityKind.OPERATION))
+
+
+def test_contains_targets_member_instance_not_member_type(tmp_path: Path) -> None:
+    root = tmp_path / "contains"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class MutexBuffersPolicyDB {
+         public:
+          MutexBuffer<BufferType::L1> a_;
+          MutexBuffer<BufferType::L1> b_;
+        };
+        class MutexBuffer {
+         public:
+          LocalTensor<uint8_t> tensor_;
+        };
+        class Process {
+         public:
+          MutexBuffersPolicyDB policy;
+          __aicore__ inline void Process() { auto &buf = policy.a_; }
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="contains", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    mutex = _type(cm, "MutexBuffer")
+    assert mutex is not None
+    contains_dst = [
+        cm.entities.get(r.dst)
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.CONTAINS.value and r.src == mutex.id
+    ]
+    assert all(
+        e is not None and e.kind_name() != EntityKind.TYPE.value for e in contains_dst
+    )
+    assert not any(e is not None and "Policy" in (e.name or "") for e in contains_dst)
+    a_bufs = [e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "a_"]
+    for buf in a_bufs:
+        wraps_mutex = [
+            r
+            for r in cm.relations.values()
+            if r.kind_name() == RelationKind.WRAPS.value
+            and r.src == buf.id
+            and r.dst == mutex.id
+        ]
+        assert not wraps_mutex
+    assert _wraps_path(cm, "MutexBuffersPolicyDB", "MutexBuffer") or _wraps_path(
+        cm, "MutexBuffersPolicyDB", "LocalTensor"
+    )
 
 
 

@@ -39,23 +39,18 @@ def _build(
         "retry_budget": 3,
         "states": [
             _st("kb_ready", "校验知识库"),
-            _st("grill", "问清需求"),
-            _st("draft", "写出需求计划"),
+            _st("draft", "问清需求并写出计划"),
             _st("confirm", "确认去 apply 或继续改计划"),
         ],
         "transitions": [
-            _tr("kb_ready", "grill"),
-            _tr("grill", "draft"),
+            _tr("kb_ready", "draft"),
             _tr("draft", "confirm"),
-            _tr("grill", "grill", kind="rework", reason_codes=["GRILL_OPEN"]),
-            _tr("confirm", "grill", kind="rework", reason_codes=["GRILL_OPEN"]),
             _tr("confirm", "draft", kind="rework", reason_codes=["rework"]),
         ],
         "phase_gates": {"kb_ready": ["kb_ready"]},
         "complete_gates": ["kb_ready"],
         "pipelines": {
             "kb_ready": ["kb_check"],
-            "grill": ["intent_grill", "grill_promote", "grill_confirm"],
             "draft": ["plan_draft"],
             "confirm": ["human_confirm"],
         },
@@ -72,48 +67,8 @@ def _build(
                 output_contract_id="ce-kb-check-v1",
             ),
             _act(
-                "intent_grill",
-                label_zh="问清变更需求",
-                phases=["grill"],
-                workflow_id="ce-plan",
-                agent_id="ce-analyst",
-                role_id="producer",
-                capability_ids=["kb-query", "source-navigation", "source-reading"],
-                skill_id="ce-intent-grill",
-                task_prompt_id="ce/intent-grill",
-                context_profile_id="ce-plan-intent-grill",
-                output_contract_id="intent-grill-v1",
-                output_mode="staged",
-                staging_contract_id="intent-grill-staging-v1",
-                merge_action_id="grill_promote",
-            ),
-            _act(
-                "grill_promote",
-                label_zh="确认 grill 草稿存在",
-                phases=["grill"],
-                workflow_id="ce-plan",
-                agent_id="deterministic-ce-engine",
-                role_id="deterministic_engine",
-                capability_ids=[],
-                output_contract_id="intent-grill-v1",
-            ),
-            _act(
-                "grill_confirm",
-                label_zh="确认需求已问清或继续问",
-                phases=["grill"],
-                workflow_id="ce-plan",
-                agent_id="ascendc-pilot",
-                role_id="controller",
-                execution_mode="primary_interactive",
-                human_interaction="confirm",
-                capability_ids=[],
-                task_prompt_id=None,
-                context_profile_id="ce-plan-grill-confirm",
-                output_contract_id="ce-plan-grilled-v1",
-            ),
-            _act(
                 "plan_draft",
-                label_zh="写出 {slug}_plan.md",
+                label_zh="问清需求并写出 {slug}_plan.md",
                 phases=["draft"],
                 workflow_id="ce-plan",
                 agent_id="ce-analyst",
@@ -154,7 +109,7 @@ def _build(
             "reinit_wipe_runs": "current",
             "continue_scrub": "from_contracts",
         },
-        "phases": ["kb_ready", "grill", "draft", "confirm"],
+        "phases": ["kb_ready", "draft", "confirm"],
         "gates": ["kb_ready"],
     },
     "ce-apply": {
@@ -265,7 +220,7 @@ def _build(
                 agent_id="ce-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                skill_id="ce-plan-revise",
+                skill_id="ce-plan-draft",
                 task_prompt_id="ce/plan-revise",
                 context_profile_id="ce-apply-revise",
                 output_contract_id="apply-plan-revise-v1",
@@ -357,30 +312,28 @@ def _build(
                 fanout_axes=[
                     {
                         "id": "spec",
+                        "skill": "standalone-review",
                         "capability_id": "spec-review",
+                        "method_ref": "spec.md",
+                        "refs": ["spec-gotchas.md", "precision-perf-findings.md"],
                         "artifact": "runs/{run_id}/actions/code_review/parts/spec.md",
                         "other": "runs/{run_id}/actions/code_review/parts/standards.md",
-                        "focus": (
-                            "Spec — 若有当前 `{slug}_plan.md` 则对照该计划（todo 是否做完、有无超范围）；"
-                            "纯 PR 无计划时从 PR 标题 + change_capture/index.md 的 Added identifiers + 并行标识符 uo-query 推断粗意图并验收完成度"
-                            "（做完 / 半截 / 超范围），禁止只陈述理解，禁止通读 diff.md，禁止把 format hunk 当第一跳。"
-                            "有 ident 用标识符；卡片给出 file:line 后必须 --file --line，不要改去 Read 整文件。"
-                            "snippet 截断不得下「枚举未用」；Kernel 以字段 readers 行为准。"
-                            "结论写在 Task 回复（path:line）。不要 Write parts 收票。不要写 ce/review 或任何 yaml。"
-                        ),
+                        "focus": "Spec 结论（path:line；每个 changed file：finding / format-only / UNREVIEWED）",
                     },
                     {
                         "id": "standards",
+                        "skill": "standalone-review",
                         "capability_id": "standards-review",
+                        "method_ref": "standards.md",
+                        "refs": [
+                            "ascendc-checks.md",
+                            "cross-layer-contracts.md",
+                            "concurrency.md",
+                            "standards-gotchas.md",
+                        ],
                         "artifact": "runs/{run_id}/actions/code_review/parts/standards.md",
                         "other": "runs/{run_id}/actions/code_review/parts/spec.md",
-                        "focus": (
-                            "Standards — 对照 ascendc-checks 与跨层契约。"
-                            "用 change_capture/index.md 的 Added identifiers + 并行标识符 uo-query，禁止通读 diff.md，禁止把 format hunk 当第一跳。"
-                            "卡片给出 file:line 后必须 --file --line，不要改去 Read 整文件。"
-                            "每个 changed file：finding / format-only / UNREVIEWED；未审 op_kernel 禁止无 high/medium。"
-                            "结论写在 Task 回复（path:line）。不要 Write parts 收票。不要写 ce/review 或任何 yaml。"
-                        ),
+                        "focus": "Standards 结论（path:line；每个 changed file：finding / format-only / UNREVIEWED）",
                     },
                 ],
             ),

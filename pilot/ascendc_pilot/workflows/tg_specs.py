@@ -105,35 +105,27 @@ def _build(
                 fanout_axes=[
                     {
                         "id": "harness",
-                        "skill": "bind-harness",
-                        "capability_id": "bind-harness",
+                        "skill": "bind-init",
+                        "capability_id": "bind-init",
+                        "method_ref": "harness.md",
+                        "refs": ["test-script-repo.md", "harness-edge-cases.md"],
                         "task_prompt_id": "tg/bind-harness",
                         "artifact": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
                         "other": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
                         "allow_write": True,
-                        "focus": (
-                            "写出 parts/harness.yaml：golden、compare、modes.precision / modes.perf、"
-                            "generate_inputs、call.kind（pta / aclnn / mixed）+ call.api + call.site、findings。"
-                            "无仓时 kind 事实来自 repo_scan。禁止把某列标成 PR 焦点。"
-                            "禁止写正式 tg/init.yaml。身份字段由框架写入。"
-                        ),
+                        "focus": "parts/harness.yaml（golden / compare / modes / generate_inputs / call / findings）",
                     },
                     {
                         "id": "bind",
-                        "skill": "bind-columns",
-                        "capability_id": "bind-columns",
+                        "skill": "bind-init",
+                        "capability_id": "bind-init",
+                        "method_ref": "columns.md",
+                        "refs": ["test-script-repo.md", "column-binding-edge-cases.md"],
                         "task_prompt_id": "tg/bind-columns",
                         "artifact": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
                         "other": "runs/{run_id}/actions/bind_init/parts/harness.yaml",
                         "allow_write": True,
-                        "focus": (
-                            "写出 parts/bind.yaml：先记调用接口 call.kind/api/site，再把 API 入参绑回 CSV 列，"
-                            "剩余列标 role=attr|feature|script_meta（script_meta 禁止编造 uo_id）。"
-                            "domains.profile 引用 tables[].profile；domains.operator 用标识符卡 / Dim=<维名> 覆盖列表 / Name=Value 组合；"
-                            "compare 为 match|tighter_profile|tighter_operator|mismatch。非平凡列写 encoding。"
-                            "禁止通读 CSV。查图用无参数索引 / 标识符 / Dim=<维名>；未从卡片复制 file:line 时禁止 around。"
-                            "禁止把某列标成 PR 焦点。禁止写正式 tg/init.yaml。身份字段由框架写入。"
-                        ),
+                        "focus": "parts/bind.yaml（call / mapping / domains）",
                     },
                 ],
             ),
@@ -146,7 +138,8 @@ def _build(
                 role_id="controller",
                 execution_mode="primary_review",
                 capability_ids=[],
-                skill_id="bind-review",
+                skill_id="bind-init",
+                method_ref="review.md",
                 task_prompt_id="tg/bind-review",
                 context_profile_id="tg-init-bind-review",
                 output_contract_id="tg-bind-review-v1",
@@ -252,7 +245,8 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                skill_id="plan-scope",
+                skill_id="plan",
+                method_ref="scope.md",
                 task_prompt_id="tg/plan-scope",
                 context_profile_id="tg-plan-plan-scope",
                 output_contract_id="tg-plan-scope-v1",
@@ -266,7 +260,9 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                skill_id="plan-fuse",
+                skill_id="plan",
+                method_ref="fuse.md",
+                refs=["plan-heuristics.md", "planning-gotchas.md", "planning-context.md"],
                 task_prompt_id="tg/plan-fuse",
                 context_profile_id="tg-plan-plan-fuse",
                 output_contract_id="tg-plan-v1",
@@ -388,7 +384,9 @@ def _build(
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                skill_id="construct-cases",
+                skill_id="solve",
+                method_ref="construct.md",
+                refs=["targeted-construct.md"],
                 task_prompt_id="tg/construct-cases",
                 context_profile_id="tg-solve-construct-cases",
                 output_contract_id="tg-cases-v1",
@@ -418,13 +416,15 @@ def _build(
             ),
             _act(
                 "analyze_round",
-                label_zh="按 case 写 worklog 四段",
+                label_zh="对照本轮预期并写 worklog",
                 phases=["analyze"],
                 workflow_id="tg-solve",
                 agent_id="tg-analyst",
                 role_id="producer",
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
-                skill_id="analyze-round",
+                skill_id="solve",
+                method_ref="analyze.md",
+                refs=["failure-patterns.md"],
                 task_prompt_id="tg/analyze-round",
                 context_profile_id="tg-solve-analyze-round",
                 output_contract_id="tg-worklog-v1",

@@ -127,13 +127,10 @@ def test_plan_approve_unique_without_workflow(tmp_path: Path) -> None:
     assert "approve" in values
 
 
-def _write_grill_staging(tmp_path: Path, body: str) -> None:
-    state = load_state(tmp_path) or {}
-    run_id = str(state.get("run_id") or "")
-    assert run_id
-    sdir = runs_root(tmp_path) / run_id / "actions" / "intent_grill"
-    sdir.mkdir(parents=True, exist_ok=True)
-    (sdir / "staging.md").write_text(body, encoding="utf-8")
+def _write_plan_unresolved(tmp_path: Path, body: str) -> None:
+    plan = ce_root(tmp_path, arch="arch35") / "plan" / "demo_plan.md"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text(body, encoding="utf-8")
 
 
 def test_grill_should_ask_skips_when_authorized_and_no_forks(tmp_path: Path) -> None:
@@ -145,12 +142,12 @@ def test_grill_should_ask_skips_when_authorized_and_no_forks(tmp_path: Path) -> 
         architecture="arch35",
         intent="按这个写，直接出计划",
     )
-    _write_grill_staging(
+    _write_plan_unresolved(
         tmp_path,
         "# 范围\n- kernel\n\n## 未决决策\n- 无\n",
     )
     state = load_state(tmp_path) or {}
-    assert grill_should_ask(tmp_path, state, action_id="grill_confirm") is False
+    assert grill_should_ask(tmp_path, state, action_id="human_confirm") is False
     assert hosted_confirm_should_ask(tmp_path, state, action_id="human_confirm") is False
 
 
@@ -163,12 +160,12 @@ def test_grill_should_ask_when_open_forks(tmp_path: Path) -> None:
         architecture="arch35",
         intent="按这个写",
     )
-    _write_grill_staging(
+    _write_plan_unresolved(
         tmp_path,
         "## 未决决策\n- 改 kernel 还是 tiling？推荐 kernel\n",
     )
     state = load_state(tmp_path) or {}
-    assert grill_should_ask(tmp_path, state, action_id="grill_confirm") is True
+    assert grill_should_ask(tmp_path, state, action_id="human_confirm") is True
 
 
 def test_grill_should_ask_default_still_asks(tmp_path: Path) -> None:
@@ -181,7 +178,7 @@ def test_grill_should_ask_default_still_asks(tmp_path: Path) -> None:
         intent="帮我整理一下需求",
     )
     state = load_state(tmp_path) or {}
-    assert grill_should_ask(tmp_path, state, action_id="grill_confirm") is True
+    assert grill_should_ask(tmp_path, state, action_id="human_confirm") is True
 
 
 def test_hosted_confirm_skips_tg_on_full_coverage_goal(tmp_path: Path) -> None:

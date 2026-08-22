@@ -257,10 +257,12 @@ def main(argv: list[str] | None = None) -> int:
             kind, product = _resolve_db_or_uo(uo)
             if kind != "uo":
                 raise FileNotFoundError("--materialize-tg requires a .uo product")
-            # <op>/.ascendc-pilot/<arch>/uo/<op>.<arch>.uo → op root = parents[3]
+            from uo_init.source_layout import is_product_architecture
+
+            # <op>/.ascendc-pilot/<arch|default>/uo/<op>.<arch>.uo → op root = parents[3]
             if (
                 product.parent.name == "uo"
-                and product.parent.parent.name.startswith("arch")
+                and is_product_architecture(product.parent.parent.name)
                 and product.parent.parent.parent.name == ".ascendc-pilot"
             ):
                 op_root = product.parent.parent.parent.parent

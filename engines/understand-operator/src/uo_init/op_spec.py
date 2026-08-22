@@ -32,6 +32,7 @@ import yaml
 from uo_init import scope_scan as sscan
 from uo_init.source_layout import (
     ARCH_DIR_RE,
+    UNIFIED_ARCH_DIR,
     arch_number,
     is_other_arch_path,
     iter_arch_source_dirs,
@@ -470,9 +471,10 @@ def load_override(op_name: str) -> dict[str, Any] | None:
 def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
     """Resolve every path uo-init needs for one operator.
 
-    `arch_dir` defaults to the newest architecture folder present, since a
-    repository carrying both arch22 and arch35 is being developed against the
-    newer one.
+    `arch_dir` defaults to the newest ``arch*`` folder present. Those folders
+    distinguish implementations (official ops-transformer: arch22 vs arch35).
+    A tree with none is a single implementation: scan host/kernel together and
+    use the ``default`` product slot. Never invent arch35.
     """
     op_dir = Path(op_dir).expanduser().resolve()
     spec = OpSpec(op_dir=op_dir)
@@ -480,9 +482,14 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
 
     if arch_dir:
         spec.arch_dir = match_on_disk_architecture(arch_dir, spec.available_archs) or str(arch_dir)
-        if spec.available_archs and spec.arch_dir not in spec.available_archs:
+        if spec.available_archs:
+            if spec.arch_dir not in spec.available_archs:
+                spec.ambiguities.append(
+                    f"arch_not_present: {arch_dir} not in {spec.available_archs}"
+                )
+        elif spec.arch_dir != UNIFIED_ARCH_DIR:
             spec.ambiguities.append(
-                f"arch_not_present: {arch_dir} not in {spec.available_archs}"
+                f"arch_not_present: {arch_dir} not in []"
             )
     elif len(spec.available_archs) == 1:
         spec.arch_dir = spec.available_archs[0]
@@ -492,7 +499,10 @@ def discover(op_dir: str | Path, *, arch_dir: str | None = None) -> OpSpec:
             f"multiple_arch_dirs: {spec.available_archs}; defaulted to {spec.arch_dir}"
         )
     else:
-        spec.ambiguities.append("no_arch_dir_found")
+        spec.arch_dir = UNIFIED_ARCH_DIR
+        spec.ambiguities.append(
+            "unified_implementation: no arch* folders; one implementation"
+        )
 
     spec.opdef, notes = _find_opdef(spec.host_root)
     spec.ambiguities.extend(notes)

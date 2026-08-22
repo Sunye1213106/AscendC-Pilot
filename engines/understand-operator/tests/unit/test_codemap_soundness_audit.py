@@ -6,7 +6,8 @@ from uo_init.diagnostics.audit import audit_codemap
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
 from uo_init.ir.relation import RelationKind
-from uo_init.passes import host_kernel, template
+from uo_init.passes import host_kernel
+from uo_init.passes.manager import ANALYZE_PASSES
 from uo_init.query.engine import CodeMapQuery
 from uo_init.store.reader import load_view_blob
 from uo_init.store.writer import write_codemap
@@ -36,32 +37,11 @@ def test_host_kernel_pass_does_not_invent_cartesian_selection() -> None:
     assert cm.meta["has_evidence_backed_host_kernel_path"] is False
 
 
-def test_template_pass_only_instantiates_explicit_kernel_target() -> None:
-    cm = _base_map()
-    template.run(
-        cm,
-        context={
-            "template_bindings": [
-                {
-                    "template": "FagTemplate",
-                    "instance": "FagTemplate<0>",
-                    "tiling_key": "IsRegbase",
-                    "kernel": "KernelA",
-                    "args": {"MODE": 0},
-                }
-            ]
-        },
-    )
-    instance = cm.by_name("FagTemplate<0>", kind=EntityKind.TEMPLATE_INSTANCE)[0]
-    targets = {
-        cm.entities[r.dst].name
-        for r in cm.relations.values()
-        if r.src == instance.id
-        and r.kind_name() == RelationKind.INSTANTIATES.value
-        and cm.entities.get(r.dst) is not None
-        and cm.entities[r.dst].kind_name() == EntityKind.KERNEL.value
-    }
-    assert targets == {"KernelA"}
+def test_analyze_passes_do_not_include_retired_template_pass() -> None:
+    names = [name for name, _ in ANALYZE_PASSES]
+    assert "template" not in names
+    assert "compile_time" not in names
+    assert "tiling" not in names
 
 
 def test_audit_rejects_presence_without_real_path() -> None:

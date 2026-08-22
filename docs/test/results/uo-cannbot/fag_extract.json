@@ -1,0 +1,13 @@
+{
+  "elapsed_s": 23.865,
+  "ok": true,
+  "error": null,
+  "failed_step": null,
+  "target_s": 120,
+  "hard_cap_s": 150,
+  "within_target": true,
+  "within_cap": true,
+  "profile": "fast",
+  "cache_mode": "true-cold-extract",
+  "tu_cache": "D:\\TEST\\ops-transformer\\attention\\flash_attention_score_grad\\.ascendc-pilot\\arch35\\uo\\cache\\tu"
+}
