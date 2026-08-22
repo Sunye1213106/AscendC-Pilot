@@ -522,6 +522,9 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
             release_live_execution(
                 project_root, reason="workflow_passed_idempotent", state=snap
             )
+            from ascendc_pilot.state import _end_uo_init_session
+
+            _end_uo_init_session(project_root, snap)
             return payload
         raise RuntimeError(f"Workflow already terminal: {state.get('status')}")
 
@@ -663,4 +666,7 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
     payload["released_execution"] = released
     if not payload.get("message_zh"):
         payload["message_zh"] = "工作流已完成；已释放本产物族锁。"
+    from ascendc_pilot.state import _end_uo_init_session
+
+    _end_uo_init_session(project_root, fresh)
     return payload

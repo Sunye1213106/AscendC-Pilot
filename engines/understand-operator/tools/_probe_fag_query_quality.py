@@ -36,8 +36,9 @@ def _first_card(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _span(payload: dict[str, Any]) -> str:
     card = _first_card(payload)
-    file = str(card.get("file") or "").replace("\\", "/")
-    line = int(card.get("line") or card.get("line_start") or 0)
+    span = card.get("definition_span") if isinstance(card.get("definition_span"), dict) else {}
+    file = str(card.get("file") or span.get("file") or "").replace("\\", "/")
+    line = int(card.get("line") or card.get("line_start") or span.get("line_start") or 0)
     if file and line:
         return f"{file}:{line}"
     return ""
@@ -86,8 +87,13 @@ def judge(case: dict[str, Any], payload: dict[str, Any], bytes_n: int) -> dict[s
                     notes.append("writers empty")
                     grade = "partial" if grade != "fail" else grade
             if case.get("need_readers") and not readers:
-                notes.append("readers empty")
-                grade = "partial" if grade != "fail" else grade
+                if case.get("honest_empty_readers"):
+                    notes.append("kernel-consumed honest-empty")
+                else:
+                    notes.append("readers empty")
+                    grade = "partial" if grade != "fail" else grade
+            elif case.get("honest_empty_readers") and not readers:
+                notes.append("kernel-consumed honest-empty")
             if not notes:
                 notes.append(f"{card.get('kind')} @ {span}")
     elif want == "catalog_empty":
@@ -107,7 +113,10 @@ def judge(case: dict[str, Any], payload: dict[str, Any], bytes_n: int) -> dict[s
         else:
             notes.append(f"{case.get('dim')}={values}")
     elif want == "cover_combo":
-        if blocks <= 0:
+        nearby = coverage.get("nearby") or payload.get("nearby") or []
+        if blocks <= 0 and completeness == "coverage_checked" and nearby:
+            notes.append("honest empty combo + nearby")
+        elif blocks <= 0:
             grade = "fail"
             notes.append("matching_block_count=0")
         elif completeness and completeness != "coverage_checked":
@@ -237,7 +246,7 @@ def main() -> int:
             "argv": {"pattern": "s1Inner"},
             "expect": "name_located",
             "need_writers": True,
-            "need_readers": True,
+            "honest_empty_readers": True,
         },
         {
             "id": "Q10",

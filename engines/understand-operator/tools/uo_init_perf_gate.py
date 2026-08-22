@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,67 @@ def _rss_mb() -> float:
         return psutil.Process(os.getpid()).memory_info().rss / 1e6
     except Exception:  # noqa: BLE001
         return 0.0
+
+
+def _process_tree_rss_mb() -> float:
+    try:
+        import psutil
+
+        proc = psutil.Process(os.getpid())
+        total = float(proc.memory_info().rss)
+        for child in proc.children(recursive=True):
+            try:
+                total += float(child.memory_info().rss)
+            except Exception:  # noqa: BLE001
+                continue
+        return total / 1e6
+    except Exception:  # noqa: BLE001
+        return _rss_mb()
+
+
+class ProcessTreeRssMonitor:
+    """Sample parent+child RSS on a 50–100ms cadence plus stage boundaries."""
+
+    def __init__(self, interval_s: float = 0.075) -> None:
+        self.interval_s = max(0.05, min(0.1, float(interval_s)))
+        self.stage_boundary_rss_mb = 0.0
+        self.sampled_peak_rss_mb = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _sample(self) -> float:
+        rss = _process_tree_rss_mb()
+        self.sampled_peak_rss_mb = max(self.sampled_peak_rss_mb, rss)
+        return rss
+
+    def mark_stage(self) -> None:
+        rss = self._sample()
+        self.stage_boundary_rss_mb = max(self.stage_boundary_rss_mb, rss)
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self.mark_stage()
+
+        def _loop() -> None:
+            while not self._stop.wait(self.interval_s):
+                self._sample()
+
+        self._thread = threading.Thread(target=_loop, name="uo-rss-sample", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1.0)
+            self._thread = None
+        self.mark_stage()
+
+    def snapshot(self) -> dict[str, float]:
+        return {
+            "stage_boundary_rss_mb": round(self.stage_boundary_rss_mb, 1),
+            "sampled_peak_rss_mb": round(self.sampled_peak_rss_mb, 1),
+        }
 
 sys.path[:0] = [
     str(REPO / "engines" / "understand-operator" / "src"),
@@ -274,7 +336,8 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
     }
     stages: dict[str, Any] = {"start": {"ok": bool(started.get("ok")), "run_id": run_id}}
     t_all = time.perf_counter()
-    peak_rss = _rss_mb()
+    rss_mon = ProcessTreeRssMonitor(interval_s=0.075)
+    rss_mon.start()
     for name, fn in (
         ("prepare", prepare),
         ("extract", extract),
@@ -293,7 +356,7 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
             "error": out.get("error"),
         }
         print(f"{name} {dt:.3f}s ok={out.get('ok')} error={out.get('error')}", flush=True)
-        peak_rss = max(peak_rss, _rss_mb())
+        rss_mon.mark_stage()
         if not out.get("ok"):
             stages["ok"] = False
             stages["failed_step"] = name
@@ -302,6 +365,8 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
             ctx["run_id"] = out.get("run_id")
     else:
         stages["ok"] = True
+    rss_mon.stop()
+    rss_snap = rss_mon.snapshot()
     stages["total_s"] = round(time.perf_counter() - t_all, 3)
     stages["cache_mode"] = cache_mode
 
@@ -332,7 +397,9 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
             "walk_bundle": len(tu_cache._WALK_BUNDLE),
             "bundle_store": bool(_STORE.get("bundle")),
             "compile_mem": len(_COMPILE_MEM),
-            "peak_rss_mb": round(peak_rss, 1),
+            "stage_boundary_rss_mb": rss_snap["stage_boundary_rss_mb"],
+            "sampled_peak_rss_mb": rss_snap["sampled_peak_rss_mb"],
+            "peak_rss_mb": rss_snap["sampled_peak_rss_mb"],
             "rss_mb": round(_rss_mb(), 1),
         }
     except Exception:  # noqa: BLE001
@@ -404,12 +471,20 @@ def main(argv: list[str] | None = None) -> int:
         fails.append("bundle store still populated after verify")
     if int(runtime.get("compile_mem") or 0):
         fails.append(f"compile mem leftover={runtime.get('compile_mem')}")
-    peak_rss = float(runtime.get("peak_rss_mb") or 0)
-    gold_rss = float((gold.get("runtime") or {}).get("peak_rss_mb") or 0) if gold else 0
+    peak_rss = float(
+        runtime.get("sampled_peak_rss_mb") or runtime.get("peak_rss_mb") or 0
+    )
+    gold_rss = float(
+        (gold.get("runtime") or {}).get("sampled_peak_rss_mb")
+        or (gold.get("runtime") or {}).get("peak_rss_mb")
+        or 0
+    ) if gold else 0
     if gold_rss > 0 and peak_rss > gold_rss * 1.25:
-        fails.append(f"peak RSS {peak_rss:.0f}MB > gold {gold_rss:.0f}MB +25%")
+        fails.append(f"sampled peak RSS {peak_rss:.0f}MB > gold {gold_rss:.0f}MB +25%")
     print(
-        f"runtime live_ast={runtime.get('live_ast')} peak_rss={peak_rss:.0f}MB "
+        f"runtime live_ast={runtime.get('live_ast')} "
+        f"stage_boundary_rss={runtime.get('stage_boundary_rss_mb')} "
+        f"sampled_peak_rss={peak_rss:.0f}MB "
         f"(FD/thread informational on Windows)",
         flush=True,
     )

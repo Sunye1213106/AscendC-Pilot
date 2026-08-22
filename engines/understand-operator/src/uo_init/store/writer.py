@@ -19,6 +19,9 @@ from uo_init.ir.relation import RelationKind
 from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
+LEGAL_KEY_FLUSH = 3000
+
+
 def _posix_file(path: str) -> str:
     return str(path or "").replace("\\", "/")
 
@@ -31,9 +34,25 @@ def _write_legal_key_tables(conn: sqlite3.Connection, blob: dict[str, Any]) -> N
         return
     key_rows: list[tuple[Any, ...]] = []
     dim_rows: list[tuple[Any, ...]] = []
+    next_kid = 0
+
+    def _flush() -> None:
+        if key_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO legal_key(id, packed, hex, sel_group, status) VALUES (?,?,?,?,?)",
+                key_rows,
+            )
+            key_rows.clear()
+        if dim_rows:
+            conn.executemany(
+                "INSERT OR REPLACE INTO legal_key_dim(key_id, dim, value) VALUES (?,?,?)",
+                dim_rows,
+            )
+            dim_rows.clear()
+
     for row in rows:
         if isinstance(row, dict):
-            kid = int(row.get("index") or len(key_rows))
+            kid = int(row.get("index") if row.get("index") is not None else next_kid)
             key_rows.append(
                 (
                     kid,
@@ -46,33 +65,27 @@ def _write_legal_key_tables(conn: sqlite3.Connection, blob: dict[str, Any]) -> N
             dims = row.get("dims") if isinstance(row.get("dims"), dict) else {}
             for dim, value in dims.items():
                 dim_rows.append((kid, str(dim), "" if value is None else str(value)))
-            continue
-        if not isinstance(row, (list, tuple)) or len(row) < 4:
-            continue
-        kid = int(row[0] if row[0] is not None else len(key_rows))
-        key_rows.append(
-            (
-                kid,
-                str(row[1] or ""),
-                str(row[2] or "") if len(row) > 2 else "",
-                str(row[4] or "") if len(row) > 4 else "",
-                str(row[5] or "template_admissible") if len(row) > 5 else "template_admissible",
+        elif isinstance(row, (list, tuple)) and len(row) >= 4:
+            kid = int(row[0] if row[0] is not None else next_kid)
+            key_rows.append(
+                (
+                    kid,
+                    str(row[1] or ""),
+                    str(row[2] or "") if len(row) > 2 else "",
+                    str(row[4] or "") if len(row) > 4 else "",
+                    str(row[5] or "template_admissible") if len(row) > 5 else "template_admissible",
+                )
             )
-        )
-        values = row[3] if isinstance(row[3], list) else []
-        for i, dim in enumerate(dim_order):
-            value = values[i] if i < len(values) else ""
-            dim_rows.append((kid, dim, "" if value is None else str(value)))
-    if key_rows:
-        conn.executemany(
-            "INSERT OR REPLACE INTO legal_key(id, packed, hex, sel_group, status) VALUES (?,?,?,?,?)",
-            key_rows,
-        )
-    if dim_rows:
-        conn.executemany(
-            "INSERT OR REPLACE INTO legal_key_dim(key_id, dim, value) VALUES (?,?,?)",
-            dim_rows,
-        )
+            values = row[3] if isinstance(row[3], list) else []
+            for i, dim in enumerate(dim_order):
+                value = values[i] if i < len(values) else ""
+                dim_rows.append((kid, dim, "" if value is None else str(value)))
+        else:
+            continue
+        next_kid = max(next_kid, kid + 1)
+        if len(key_rows) >= LEGAL_KEY_FLUSH:
+            _flush()
+    _flush()
 
 
 def uo_product_dir(op_root: str | Path, *, architecture: str = "") -> Path:

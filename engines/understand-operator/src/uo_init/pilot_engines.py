@@ -1293,18 +1293,46 @@ def _bundle_key(
     *,
     spec: Any = None,
     extract_fingerprint: str = "",
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str]:
     from uo_init.runtime import bundle_identity
 
     op_name = str(getattr(spec, "op_name", "") or ctx.get("op_name") or "")
     arch = str(getattr(spec, "arch_dir", "") or _payload_arch(ctx) or "")
+    del extract_fingerprint
     return bundle_identity(
         project_root,
         ctx,
         op_name=op_name,
         architecture=arch,
-        extract_fingerprint=extract_fingerprint,
     )
+
+
+def _current_extract_fingerprint(
+    project_root: Path,
+    ctx: dict[str, Any],
+    *,
+    spec: Any = None,
+) -> str:
+    ctx = ctx or {}
+    fp = str(ctx.get("extract_fingerprint") or "")
+    if fp:
+        return fp
+    try:
+        from uo_init.extract_cache import compute_extract_fingerprint, load_extract_fingerprint
+
+        arch = str(getattr(spec, "arch_dir", "") or _payload_arch(ctx) or "")
+        uo = _uo_root(Path(project_root), arch=arch)
+        try:
+            meta = compute_extract_fingerprint(Path(project_root), uo_root=uo, arch=arch)
+            got = str(meta.get("extract_fingerprint") or "")
+            if got:
+                return got
+        except Exception:  # noqa: BLE001
+            pass
+        stored = load_extract_fingerprint(uo)
+        return str(stored.get("extract_fingerprint") or "")
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _put_bundle(
@@ -1316,17 +1344,19 @@ def _put_bundle(
     extract_fingerprint: str = "",
 ) -> None:
     _STORE["bundle"] = bundle
-    _STORE["bundle_key"] = _bundle_key(
-        project_root, ctx, spec=spec, extract_fingerprint=extract_fingerprint
-    )
+    _STORE["bundle_key"] = _bundle_key(project_root, ctx, spec=spec)
+    _STORE["bundle_fp"] = str(extract_fingerprint or "")
 
 
 def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     ctx = _ctx(ctx)
     want = _bundle_key(project_root, ctx)
     cached = _STORE.get("bundle")
+    stored_fp = str(_STORE.get("bundle_fp") or "")
+    current_fp = _current_extract_fingerprint(project_root, ctx)
     if cached is not None and _STORE.get("bundle_key") == want:
-        return cached
+        if not stored_fp or not current_fp or stored_fp == current_fp:
+            return cached
     from uo_init.extract_bundle import extract_host_bundle
     from uo_init.kernel_ir import kernel_ir_from_dict
     from uo_init.init_profile import default_kernel_max_variants, default_with_kernel

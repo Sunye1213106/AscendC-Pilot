@@ -342,6 +342,67 @@ def _sql_legal_key_ready(conn: Any) -> bool:
         return False
 
 
+def _sql_intersect_key_ids(structured: dict[str, str]) -> tuple[str, tuple[Any, ...]]:
+    clauses: list[str] = []
+    params: list[Any] = []
+    for name, value in structured.items():
+        aliases = _sql_dim_aliases(name, value)
+        marks = ",".join("?" for _ in aliases)
+        clauses.append(f"(dim = ? AND value IN ({marks}))")
+        params.extend([name, *aliases])
+    n = len(structured)
+    sql = (
+        "SELECT key_id FROM legal_key_dim WHERE "
+        + " OR ".join(clauses)
+        + " GROUP BY key_id HAVING COUNT(DISTINCT dim) = ?"
+    )
+    params.append(n)
+    return sql, tuple(params)
+
+
+def _sql_legal_key_nearby(
+    conn: Any, structured: dict[str, str]
+) -> list[dict[str, Any]]:
+    nearby: list[dict[str, Any]] = []
+    for dropped in structured:
+        remaining = {k: v for k, v in structured.items() if k != dropped}
+        if remaining:
+            remain_sql, remain_params = _sql_intersect_key_ids(remaining)
+            total = int(
+                conn.execute(f"SELECT COUNT(*) FROM ({remain_sql})", remain_params).fetchone()[0]
+                or 0
+            )
+            values = [
+                str(r[0])
+                for r in conn.execute(
+                    f"""
+                    SELECT DISTINCT value FROM legal_key_dim
+                    WHERE dim = ? AND key_id IN ({remain_sql})
+                    ORDER BY value
+                    """,
+                    (dropped, *remain_params),
+                )
+            ]
+        else:
+            total = 0
+            values = [
+                str(r[0])
+                for r in conn.execute(
+                    "SELECT DISTINCT value FROM legal_key_dim WHERE dim = ? ORDER BY value",
+                    (dropped,),
+                )
+            ]
+        nearby.append(
+            {
+                "dropped": dropped,
+                "remaining_filters": remaining,
+                "total_matched": total,
+                "values": values,
+            }
+        )
+    return nearby
+
+
 def _sql_dim_aliases(name: str, value: str) -> list[str]:
     from uo_init.tpl_dsl import bool_value_aliases
 
@@ -393,51 +454,54 @@ def _query_legal_keys_sql(
     conn = shared_uo(product)
     if not _sql_legal_key_ready(conn):
         return None
-    ids: list[int]
+    start = max(0, int(offset or 0))
+    cap = int(limit or 0)
+    nearby: list[dict[str, Any]] = []
     if structured:
-        ids = []
-        for i, (name, value) in enumerate(structured.items()):
-            aliases = _sql_dim_aliases(name, value)
-            marks = ",".join("?" for _ in aliases)
-            hit = {
-                int(r[0])
-                for r in conn.execute(
-                    f"SELECT key_id FROM legal_key_dim WHERE dim = ? AND value IN ({marks})",
-                    (name, *aliases),
-                )
-            }
-            ids = list(hit) if i == 0 else [kid for kid in ids if kid in hit]
-            if not ids:
-                break
-        ids = sorted(ids)
+        match_sql, match_params = _sql_intersect_key_ids(structured)
+        total = int(
+            conn.execute(f"SELECT COUNT(*) FROM ({match_sql})", match_params).fetchone()[0] or 0
+        )
+        page_sql = f"{match_sql} ORDER BY key_id LIMIT ? OFFSET ?"
+        page_limit = cap if cap > 0 else total
+        page_ids = [
+            int(r[0])
+            for r in conn.execute(page_sql, (*match_params, page_limit, start))
+        ]
+        if total == 0:
+            nearby = _sql_legal_key_nearby(conn, structured)
     elif needle:
         like = f"%{needle}%"
-        ids = [
-            int(r[0])
-            for r in conn.execute(
-                """
-                SELECT DISTINCT k.id
+        like_params = (like, like, like, like, like, like)
+        needle_from = """
+                SELECT DISTINCT k.id AS key_id
                 FROM legal_key k
                 LEFT JOIN legal_key_dim d ON d.key_id = k.id
                 WHERE k.packed LIKE ? OR k.hex LIKE ? OR k.status LIKE ?
                    OR k.sel_group LIKE ? OR d.dim LIKE ? OR d.value LIKE ?
-                ORDER BY k.id
-                """,
-                (like, like, like, like, like, like),
+        """
+        total = int(
+            conn.execute(f"SELECT COUNT(*) FROM ({needle_from})", like_params).fetchone()[0] or 0
+        )
+        page_limit = cap if cap > 0 else total
+        page_ids = [
+            int(r[0])
+            for r in conn.execute(
+                f"{needle_from} ORDER BY key_id LIMIT ? OFFSET ?",
+                (*like_params, page_limit, start),
             )
         ]
     else:
         total = int(conn.execute("SELECT COUNT(*) FROM legal_key").fetchone()[0] or 0)
-        start = max(0, int(offset or 0))
-        cap = int(limit or 0)
-        page = [
+        page_limit = cap if cap > 0 else total
+        page_ids = [
             int(r[0])
             for r in conn.execute(
                 "SELECT id FROM legal_key ORDER BY id LIMIT ? OFFSET ?",
-                (cap if cap > 0 else total, start),
+                (page_limit, start),
             )
         ]
-        rows = _hydrate_sql_keys(conn, page)
+        rows = _hydrate_sql_keys(conn, page_ids)
         payload = {
             "ok": True,
             "mode": "legal_key",
@@ -458,58 +522,6 @@ def _query_legal_keys_sql(
         attach_query_hints(payload, needle, count=total)
         return payload
 
-    total = len(ids)
-    nearby: list[dict[str, Any]] = []
-    if structured and total == 0:
-        for dropped in structured:
-            remaining = {k: v for k, v in structured.items() if k != dropped}
-            if remaining:
-                remain_ids: set[int] | None = None
-                for name, value in remaining.items():
-                    aliases = _sql_dim_aliases(name, value)
-                    marks = ",".join("?" for _ in aliases)
-                    hit = {
-                        int(r[0])
-                        for r in conn.execute(
-                            f"SELECT key_id FROM legal_key_dim WHERE dim = ? AND value IN ({marks})",
-                            (name, *aliases),
-                        )
-                    }
-                    remain_ids = hit if remain_ids is None else remain_ids & hit
-                values = [
-                    str(r[0])
-                    for r in conn.execute(
-                        "SELECT DISTINCT value FROM legal_key_dim WHERE dim = ? ORDER BY value",
-                        (dropped,),
-                    )
-                ]
-                nearby.append(
-                    {
-                        "dropped": dropped,
-                        "remaining_filters": remaining,
-                        "total_matched": len(remain_ids or []),
-                        "values": values,
-                    }
-                )
-            else:
-                values = [
-                    str(r[0])
-                    for r in conn.execute(
-                        "SELECT DISTINCT value FROM legal_key_dim WHERE dim = ? ORDER BY value",
-                        (dropped,),
-                    )
-                ]
-                nearby.append(
-                    {
-                        "dropped": dropped,
-                        "remaining_filters": remaining,
-                        "total_matched": 0,
-                        "values": values,
-                    }
-                )
-    start = max(0, int(offset or 0))
-    stop = start + int(limit) if limit and limit > 0 else None
-    page_ids = ids[start:stop]
     rows = _hydrate_sql_keys(conn, page_ids)
     sel_group_ids: list[str] = []
     seen: set[str] = set()

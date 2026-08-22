@@ -398,6 +398,14 @@ def test_status_identifier_returns_catalog_root(tmp_path: Path) -> None:
     facts_catalog = extras.get("catalog") or type_card.get("catalog") or ""
     assert facts_catalog == GRAPH_STATUS_CATALOG
     assert (type_card.get("role") or extras.get("role")) == "host_refuse"
+    span = type_card.get("definition_span") or {}
+    assert str(span.get("file") or type_card.get("file") or "").replace("\\", "/").endswith(
+        "op_host/h.cpp"
+    )
+    assert int(span.get("line_start") or type_card.get("line") or 0) == 10
+    writers = extras.get("writers") or []
+    assert writers
+    assert int(writers[0].get("line") or 0) == 10
     catalog_empty = q.agent_query(pattern="LocalTensor")
     assert catalog_empty.get("ok") is False
     assert not (catalog_empty.get("cards") or [])

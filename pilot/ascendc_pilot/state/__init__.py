@@ -766,7 +766,23 @@ def mark_terminal(
     except Exception:  # noqa: BLE001
         pass
     append_event(project_root, {"type": "mark_terminal", "status": normalized, "reason": reason})
+    _end_uo_init_session(project_root, state)
     return load_state(project_root)
+
+
+def _end_uo_init_session(project_root: Path, state: dict[str, Any] | None = None) -> None:
+    snap = dict(state or {})
+    if str(snap.get("workflow_id") or "") not in {"", "uo-init"}:
+        return
+    try:
+        from uo_init.runtime import end_session
+
+        end_session(
+            op_root=project_root,
+            architecture=str(snap.get("architecture") or snap.get("arch_dir") or ""),
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 # Advance / rework / complete / next

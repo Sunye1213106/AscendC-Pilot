@@ -1268,7 +1268,7 @@ def _template_block_matches(row: dict[str, Any], filters: dict[str, str]) -> boo
         domains = {}
     for name, value in filters.items():
         if name in fixed:
-            if str(fixed[name]) != str(value):
+            if not _value_matches_domain(str(value), [fixed[name]]):
                 return False
             continue
         if name in domains:
@@ -3447,21 +3447,8 @@ class UoSqlQuery:
             templates = self.templates_for_key(graph_pattern)
             macros = self.constant(graph_pattern)
         else:
-            with self._connect() as conn:
-                templates = self._hits_from_rows(
-                    conn,
-                    self._select_entities(
-                        conn,
-                        kinds=("TEMPLATE", "TEMPLATE_ARG", "TEMPLATE_INSTANCE"),
-                        limit=int(limit),
-                    ),
-                    with_snippet=False,
-                )
-                macros = self._hits_from_rows(
-                    conn,
-                    self._select_entities(conn, kinds=("MACRO", "COMPILE_VAR"), limit=int(limit)),
-                    with_snippet=False,
-                )
+            templates = []
+            macros = []
         block_matches: list[dict[str, Any]] = []
         all_blocks: list[dict[str, Any]] = []
         block_status: dict[str, Any] = {"ok": True, "reason_code": "", "used": False}
@@ -4211,6 +4198,31 @@ class UoSqlQuery:
                 "line_start": int(hit.get("line_start") or 0),
                 "line_end": line_end,
             }
+            returns = grouped.get("RETURNS") if isinstance(grouped.get("RETURNS"), dict) else {}
+            return_hit = next(
+                (
+                    row
+                    for row in list(returns.get("neighbors") or [])
+                    if str(row.get("file") or "").strip() and int(row.get("line") or 0) > 0
+                ),
+                None,
+            )
+            if return_hit and not card["definition_span"]["file"]:
+                card["file"] = str(return_hit.get("file") or "")
+                card["line"] = int(return_hit.get("line") or 0)
+                card["definition_span"] = {
+                    "file": str(return_hit.get("file") or ""),
+                    "line_start": int(return_hit.get("line") or 0),
+                    "line_end": int(return_hit.get("line") or 0),
+                }
+                extras.setdefault("writers", []).insert(
+                    0,
+                    {
+                        "name": str(return_hit.get("name") or ""),
+                        "file": str(return_hit.get("file") or ""),
+                        "line": int(return_hit.get("line") or 0),
+                    },
+                )
             for key in ("catalog", "role", "spelling", "wrapper", "tposition", "pipe_ordinal"):
                 if extras.get(key) not in (None, "", []):
                     card[key] = extras[key]

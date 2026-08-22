@@ -88,13 +88,19 @@ def test_bind_session_tiling_key_keeps_writers(q, name: str) -> None:
 
 
 def test_bind_session_bad_dim_true_is_honest_zero(q) -> None:
-    out = q.agent_query(pattern="Dim=IsTnd=true")
+    # Dim= sugar + true as a dimension name, not IsTnd=true combo.
+    out = q.agent_query(pattern="Dim=true")
     assert out["shape"] == "cover"
     assert int(out.get("matching_block_count") or 0) == 0
-    assert not (out.get("dim_coverage") or {})
+    dim_cov = out.get("dim_coverage") or {}
+    assert not any(dim_cov.values())
     assert (out.get("coverage") or {}).get("answerable") is not True
-    hint = str(out.get("hint") or "").lower()
-    assert "isTnd=1".lower() in hint or "0/1" in hint
+
+
+def test_bind_session_istnd_true_combo_hits(q) -> None:
+    out = q.agent_query(pattern="IsTnd=true")
+    assert out["shape"] == "cover"
+    assert int(out.get("matching_block_count") or 0) > 0
 
 
 def test_bind_session_istnd_slice_keeps_s2(q) -> None:

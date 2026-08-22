@@ -108,6 +108,26 @@ def _run(q, *, pattern: str = "", file: str = "", line: int = 0) -> dict:
     }
 
 
+def hold_open_argv(seeds: list[str], n: int = 200) -> list[str]:
+    """Build a diverse hold-open argv list; cycle seeds if fewer than n."""
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for item in seeds:
+        text = str(item or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        uniq.append(text)
+    if not uniq:
+        uniq = ["LocalTensor"]
+    out: list[str] = []
+    i = 0
+    while len(out) < max(1, int(n)):
+        out.append(uniq[i % len(uniq)])
+        i += 1
+    return out
+
+
 def _cover_budget(op: str) -> int:
     return 4 if op == "IFA" else 10
 
@@ -148,6 +168,7 @@ def main() -> int:
     hold_fails: list[str] = []
     t_all = time.perf_counter()
     for op, root in OPS.items():
+        collected_argv: list[str] = []
         print(f"==== {op} rss={_rss_mb():.0f}MB ====", flush=True)
         q = open_query(root, architecture=ARCH)
         idx = _run(q)
@@ -165,6 +186,7 @@ def main() -> int:
             r = _run(q, pattern=f"Dim={dim}")
             r.update(op=op, morph="Dim=", argv=f"Dim={dim}", scene="tilingkey/domain")
             rows.append(r)
+            collected_argv.append(f"Dim={dim}")
             cov = q.agent_query(pattern=f"Dim={dim}")
             values = list((cov.get("dim_coverage") or {}).get(dim) or [])
             if values:
@@ -172,6 +194,7 @@ def main() -> int:
                 r2 = _run(q, pattern=combo)
                 r2.update(op=op, morph="Name=Value", argv=combo, scene="tilingkey/combo")
                 rows.append(r2)
+                collected_argv.append(combo)
         for ident in IDENTIFIERS[op]:
             r = _run(q, pattern=ident)
             kind = "name"
@@ -189,6 +212,7 @@ def main() -> int:
                 scene = "identifier"
             r.update(op=op, morph="identifier", argv=ident, scene=scene)
             rows.append(r)
+            collected_argv.append(ident)
             if r.get("file") and r.get("line"):
                 around = _run(q, file=str(r["file"]), line=int(r["line"]))
                 around.update(
@@ -198,6 +222,7 @@ def main() -> int:
                     scene="around",
                 )
                 rows.append(around)
+                collected_argv.append(f"{r['file']}:{r['line']}")
         for ph in phases[:3]:
             f = str(ph.get("file") or "")
             ln = int(ph.get("line") or 0)
@@ -210,28 +235,49 @@ def main() -> int:
                     scene="launch-around",
                 )
                 rows.append(around)
+                collected_argv.append(f"{f}:{ln}")
         if args.hold_open:
+            argv_list = hold_open_argv(collected_argv, n=max(1, int(args.hold_n)))
             before = _rss_mb()
-            for i in range(max(1, int(args.hold_n))):
-                hop = _run(q, pattern="LocalTensor")
-                hop.update(
-                    op=op,
-                    morph="hold-open",
-                    argv=f"hold-{i}",
-                    scene="hold-open",
-                )
-                rows.append(hop)
-            after = _rss_mb()
-            peak = max(peak, after)
+            round_rss: list[float] = [before]
+            for rnd in range(3):
+                for argv in argv_list:
+                    file_pat, line_pat = "", 0
+                    if ":" in argv and not argv.startswith("Dim=") and "=" not in argv.split(":")[0]:
+                        head, tail = argv.rsplit(":", 1)
+                        if tail.isdigit():
+                            file_pat, line_pat = head, int(tail)
+                    hop = (
+                        _run(q, file=file_pat, line=line_pat)
+                        if file_pat and line_pat
+                        else _run(q, pattern=argv)
+                    )
+                    hop.update(
+                        op=op,
+                        morph="hold-open",
+                        argv=f"r{rnd + 1}:{argv}",
+                        scene="hold-open",
+                    )
+                    rows.append(hop)
+                after_round = _rss_mb()
+                round_rss.append(after_round)
+                peak = max(peak, after_round)
+            after = round_rss[-1]
             delta = after - before
+            r2 = round_rss[2] - round_rss[1] if len(round_rss) > 2 else 0
+            r3 = round_rss[3] - round_rss[2] if len(round_rss) > 3 else 0
             print(
-                f"  {op} hold-open n={args.hold_n} rss {before:.0f}->{after:.0f}MB "
-                f"delta={delta:.0f}MB",
+                f"  {op} hold-open n={args.hold_n}x3 rss {before:.0f}->{after:.0f}MB "
+                f"delta={delta:.0f}MB r2={r2:.0f} r3={r3:.0f}",
                 flush=True,
             )
             if delta > float(args.hold_rss_delta_mb):
                 hold_fails.append(
                     f"{op} hold-open RSS +{delta:.0f}MB > {args.hold_rss_delta_mb:g}MB"
+                )
+            if r2 > float(args.hold_rss_delta_mb) or r3 > float(args.hold_rss_delta_mb):
+                hold_fails.append(
+                    f"{op} hold-open RSS did not plateau r2=+{r2:.0f} r3=+{r3:.0f}MB"
                 )
             q.close()
         else:

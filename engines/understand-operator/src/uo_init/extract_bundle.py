@@ -6,6 +6,19 @@ from pathlib import Path
 from typing import Any
 
 
+def _reap_isolate_child(proc: Any, timeout: float = 5.0) -> None:
+    if proc is None:
+        return
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        proc.wait(timeout=timeout)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def extract_host_bundle(
     *,
     op_dir: str | Path,
@@ -258,10 +271,7 @@ def _extract_host_bundle_impl(
                         f"kernel_ir.isolate_failed  reason={type(exc).__name__}; "
                         "rebuilding in-process"
                     )
-                    try:
-                        kernel_job[0].kill()
-                    except Exception:
-                        pass
+                    _reap_isolate_child(kernel_job[0], timeout=5.0)
                     kernel = _run_kernel_early()
             else:
                 kernel = _run_kernel_early()

@@ -105,6 +105,111 @@ def test_legal_key_sql_intersection(tmp_path: Path) -> None:
     assert out["rows"][0]["dims"]["IsTnd"] == "1"
 
 
+def test_legal_key_sql_nearby_restricted_to_remaining(tmp_path: Path) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    product = tmp_path / "toy.arch35.uo"
+    write_codemap(cm, product)
+    conn = sqlite3.connect(str(product))
+    try:
+        conn.executemany(
+            "INSERT OR REPLACE INTO legal_key(id, packed, hex, sel_group, status) VALUES (?,?,?,?,?)",
+            [
+                (0, "10", "0xa", "g0", "template_admissible"),
+                (1, "11", "0xb", "g0", "template_admissible"),
+                (2, "20", "0x14", "g0", "template_admissible"),
+            ],
+        )
+        conn.executemany(
+            "INSERT OR REPLACE INTO legal_key_dim(key_id, dim, value) VALUES (?,?,?)",
+            [
+                (0, "A", "1"),
+                (0, "B", "2"),
+                (1, "A", "1"),
+                (1, "B", "3"),
+                (2, "A", "0"),
+                (2, "B", "9"),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    out = query_legal_keys(product, pattern="A=1,B=9", limit=8)
+    assert out.get("total_matched") == 0
+    nearby = {row["dropped"]: row for row in (out.get("nearby") or [])}
+    assert "B" in nearby
+    assert set(nearby["B"]["values"]) == {"2", "3"}
+    assert "9" not in nearby["B"]["values"]
+
+
+def test_legal_key_sql_pages_without_hydrating_all(tmp_path: Path, monkeypatch) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    product = tmp_path / "toy.arch35.uo"
+    write_codemap(cm, product)
+    conn = sqlite3.connect(str(product))
+    try:
+        rows = [
+            (i, str(i), hex(i), "g0", "template_admissible") for i in range(12)
+        ]
+        conn.executemany(
+            "INSERT OR REPLACE INTO legal_key(id, packed, hex, sel_group, status) VALUES (?,?,?,?,?)",
+            rows,
+        )
+        conn.executemany(
+            "INSERT OR REPLACE INTO legal_key_dim(key_id, dim, value) VALUES (?,?,?)",
+            [(i, "A", "1") for i in range(12)],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    hydrated: list[int] = []
+    real = __import__("uo_init.query.legal_key_cache", fromlist=["_hydrate_sql_keys"])._hydrate_sql_keys
+
+    def spy(conn, key_ids):
+        hydrated.append(len(list(key_ids)))
+        return real(conn, key_ids)
+
+    monkeypatch.setattr("uo_init.query.legal_key_cache._hydrate_sql_keys", spy)
+    out = query_legal_keys(product, pattern="A=1", limit=3, offset=3)
+    assert out.get("total_matched") == 12
+    assert out.get("count") == 3
+    assert hydrated == [3]
+
+
+def test_write_legal_key_tables_chunks_batches() -> None:
+    from uo_init.store.writer import LEGAL_KEY_FLUSH, _write_legal_key_tables
+
+    class _Spy:
+        def __init__(self) -> None:
+            self.sizes: list[int] = []
+
+        def executemany(self, _sql: str, rows: list) -> None:
+            self.sizes.append(len(list(rows)))
+
+    dims = {f"d{i}": str(i % 3) for i in range(8)}
+    blob = {
+        "dim_order": list(dims),
+        "rows": [
+            {
+                "index": i,
+                "tiling_key": str(i),
+                "tiling_key_hex": hex(i),
+                "dims": dict(dims),
+                "sel_group_id": "",
+                "status": "template_admissible",
+            }
+            for i in range(5000)
+        ],
+    }
+    spy = _Spy()
+    _write_legal_key_tables(spy, blob)
+    assert spy.sizes
+    assert max(spy.sizes) <= max(LEGAL_KEY_FLUSH, LEGAL_KEY_FLUSH * 8)
+    assert all(n <= LEGAL_KEY_FLUSH * 8 for n in spy.sizes)
+    key_batches = [n for n in spy.sizes if n <= LEGAL_KEY_FLUSH]
+    assert key_batches
+    assert max(key_batches) <= LEGAL_KEY_FLUSH
+
+
 def test_fag_product_hot_query_plans_if_present() -> None:
     import os
 

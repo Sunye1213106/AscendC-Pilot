@@ -20,10 +20,12 @@ def live_ast_count() -> int:
 def end_session(
     op_root: str | Path | None = None,
     architecture: str | None = None,
+    *,
+    drop_compile_mem: bool = True,
 ) -> None:
     """Release process-global extract/analyze caches for this workflow."""
     from uo_init import include_heal, tu_cache
-    from uo_init.build import drop_compile_mem
+    from uo_init.build import drop_compile_mem as _drop_compile_mem
     from uo_init.passes.source_text_cache import clear as clear_source_text
     from uo_init.source_index import reset_index_cache
 
@@ -34,7 +36,8 @@ def end_session(
         pe._STORE.clear()
     except Exception:  # noqa: BLE001
         pass
-    drop_compile_mem(Path(op_root) if op_root else None, architecture=architecture)
+    if drop_compile_mem:
+        _drop_compile_mem(Path(op_root) if op_root else None, architecture=architecture)
     clear_source_text()
     reset_index_cache()
     include_heal.reset_index_cache()
@@ -47,7 +50,7 @@ def bundle_identity(
     op_name: str = "",
     architecture: str = "",
     extract_fingerprint: str = "",
-) -> tuple[str, str, str, str]:
+) -> tuple[str, str, str]:
     ctx = ctx or {}
     root = str(Path(project_root).expanduser().resolve())
     name = str(op_name or ctx.get("op_name") or "")
@@ -58,5 +61,5 @@ def bundle_identity(
         or ctx.get("arch")
         or ""
     )
-    fp = str(extract_fingerprint or ctx.get("extract_fingerprint") or "")
-    return (root, name, arch, fp)
+    del extract_fingerprint
+    return (root, name, arch)

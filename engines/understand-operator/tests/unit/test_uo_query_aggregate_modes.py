@@ -170,6 +170,30 @@ def test_template_match_filters_fixed_fields_and_domains(tmp_path: Path) -> None
     assert out["template_blocks"][0]["id"] == named_id("TemplateBinding", "sel21")
     assert out["matching_block_count"] == 1
     assert "128" in (out.get("dim_coverage") or {}).get("DTemplate", [])
+    alias = q.aggregate_template_match("SplitAxis=1,IsTnd=true,DTemplate=128")
+    assert alias["matching_block_count"] == 1
+    assert alias["template_blocks"][0]["name"] == "ARGS_SEL_21"
+
+
+def test_structured_cover_skips_template_entity_scan(tmp_path: Path, monkeypatch) -> None:
+    cm = CodeMap(op_name="toy", architecture="arch35")
+    _add_tpl_key(cm, name="IsTnd", order=0, bw=1, domain=[0, 1], kind="BOOL")
+    _add_tpl_group(cm, index=1, fixed={"IsTnd": 1})
+    product = tmp_path / ".ascendc-pilot" / "arch35" / "uo" / "toy.arch35.uo"
+    product.parent.mkdir(parents=True, exist_ok=True)
+    write_codemap(cm, product)
+    q = open_query(tmp_path)
+    called: list[tuple] = []
+    real = q._select_entities
+
+    def spy(conn, *args, **kwargs):
+        called.append((args, kwargs))
+        return real(conn, *args, **kwargs)
+
+    monkeypatch.setattr(q, "_select_entities", spy)
+    out = q.aggregate_template_match("IsTnd=1")
+    assert out["matching_block_count"] >= 1
+    assert called == []
 
 
 def test_aggregate_modes(tmp_path: Path) -> None:

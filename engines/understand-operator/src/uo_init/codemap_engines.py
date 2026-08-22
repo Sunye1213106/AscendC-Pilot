@@ -197,6 +197,12 @@ def analyze(project_root: Path, payload: dict[str, Any] | None = None) -> dict[s
         with step("analyze.store_cache"):
             store_compile_cache(root, op_name, arch, result)
     except Exception as exc:  # noqa: BLE001
+        try:
+            from uo_init.runtime import end_session
+
+            end_session(op_root=root, architecture=str(ctx.get("architecture") or ctx.get("arch_dir") or ""))
+        except Exception:  # noqa: BLE001
+            pass
         return {"ok": False, "engine": "analyze", "error": str(exc)[:400]}
 
     gaps = [g for g in (result.get("gaps") or []) if isinstance(g, dict)]
@@ -258,8 +264,20 @@ def commit(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
     from uo_init.progress import step
 
     ctx = dict(payload or {})
+    root = Path(project_root).expanduser().resolve()
     with step("commit.write_uo_product"):
-        product = _commit_uo_product(Path(project_root), ctx)
+        product = _commit_uo_product(root, ctx)
+    if not product.get("ok"):
+        try:
+            from uo_init.runtime import end_session
+
+            end_session(
+                op_root=root,
+                architecture=str(ctx.get("architecture") or ctx.get("arch_dir") or ""),
+                drop_compile_mem=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "ok": bool(product.get("ok")),
         "engine": "commit",
