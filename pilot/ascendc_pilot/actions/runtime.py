@@ -102,29 +102,34 @@ LIST_STATE_KEYS = ("targets", "constraints")
 REQUIRED_NONEMPTY_STATE_KEYS = frozenset({"intent"})
 
 
-def _pack_value(pack: dict[str, Any], key: str) -> Any:
-    value = pack.get(key)
-    if isinstance(value, str) and value.startswith("run-action:"):
-        return ""
-    return value
+def _pilot_params(project_root: Path | None, state: dict[str, Any]) -> dict[str, Any]:
+    if project_root is None:
+        return {}
+    try:
+        from ascendc_pilot.paths import context_root, discover_arch
+
+        arch = str(state.get("architecture") or "").strip() or discover_arch(project_root)
+        return _load_yaml_file(context_root(project_root, arch=arch) / "pilot_params.yaml")
+    except Exception:  # noqa: BLE001
+        return {}
 
 
-def _eng_ctx_from_pack(
-    pack: dict[str, Any],
+def _eng_ctx_from_state(
     state: dict[str, Any],
     run_id: str,
     *,
     consumes_state: list[str] | None = None,
     project_root: Path | None = None,
 ) -> dict[str, Any]:
-    architecture = str(pack.get("architecture") or state.get("architecture") or "").strip()
+    params = _pilot_params(project_root, state)
+    architecture = str(state.get("architecture") or params.get("architecture") or "").strip()
     if not architecture:
         return {
             "ok": False,
             "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
             "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
         }
-    picked_tsr = str(pack.get("test_script_root") or state.get("test_script_root") or "")
+    picked_tsr = str(state.get("test_script_root") or params.get("test_script_root") or "")
     if str(state.get("workflow_id") or "") == "tg-init":
         if state.get("test_script_confirmed"):
             test_script_root = str(state.get("test_script_root") or "")
@@ -138,13 +143,13 @@ def _eng_ctx_from_pack(
         test_script_root = picked_tsr
     ctx: dict[str, Any] = {
         "run_id": run_id,
-        "op_name": pack.get("op_name") or state.get("op_name") or "",
+        "op_name": state.get("op_name") or params.get("op_name") or "",
         "architecture": architecture,
         "arch_dir": architecture,
-        "workflow_id": str(pack.get("workflow_id") or state.get("workflow_id") or ""),
+        "workflow_id": str(state.get("workflow_id") or ""),
         "test_script_root": test_script_root,
-        "level": pack.get("level") or state.get("level") or "L0",
-        "focus": pack.get("focus") or state.get("focus") or "",
+        "level": state.get("level") or params.get("level") or "L0",
+        "focus": state.get("focus") or params.get("focus") or "",
     }
     declared = [str(k).strip() for k in (consumes_state or []) if str(k).strip()]
     for key in declared:
@@ -152,17 +157,13 @@ def _eng_ctx_from_pack(
             continue
         if key in LIST_STATE_KEYS:
             raw = state.get(key)
-            if raw is None:
-                raw = _pack_value(pack, key)
             ctx[key] = list(raw) if isinstance(raw, list) else []
             continue
         value = state.get(key)
-        if value in (None, ""):
-            value = _pack_value(pack, key)
         if key == "description" and value in (None, ""):
-            value = state.get("intent") or _pack_value(pack, "intent") or ""
+            value = state.get("intent") or ""
         if key == "intent" and value in (None, ""):
-            value = state.get("description") or _pack_value(pack, "description") or ""
+            value = state.get("description") or ""
         ctx[key] = "" if value is None else value
         if key == "intent" and ctx.get("description") in (None, ""):
             ctx["description"] = ctx["intent"]
@@ -313,7 +314,6 @@ def _render_placeholders(
     uo_root: str = "",
     tg_root_path: str = "",
     topic: str = "",
-    context_pack_path: str = "",
     op_name: str = "",
     target: str = "",
     architecture: str = "",
@@ -329,7 +329,7 @@ def _render_placeholders(
         "<ACTION_ID>": action_id,
         "<WORKFLOW_ID>": workflow_id,
         "<ACTOR_ID>": actor_id,
-        "<TARGET_IDS_OR_FILES>": target or "(see context pack / human input)",
+        "<TARGET_IDS_OR_FILES>": target or "(see human input)",
         "<TARGET>": target or "(see dispatch_targets / batch file)",
         "<SHARD_ID>": shard_id or "(see dispatch_tasks[].shard_id)",
         "<OP_NAME>": op_name,
@@ -337,7 +337,6 @@ def _render_placeholders(
         "<UO_ROOT>": uo_root,
         "<TG_ROOT>": tg_root_path,
         "<TOPIC>": topic,
-        "<CONTEXT_PACK_PATH>": context_pack_path,
         "<ARCHITECTURE>": architecture or "[UNRESOLVED:ARCHITECTURE]",
         "<ROLE_ID>": role_id,
         "<LEASE_ID>": lease_id,
@@ -549,6 +548,17 @@ def _stage_bind_part_for_rework(part: Path) -> None:
         shutil.copy2(part, prev)
     except OSError:
         pass
+
+
+class FanoutPrepareError(Exception):
+    """Fanout axis declared refs or knowledge_refs that did not materialize."""
+
+    def __init__(self, result: dict[str, Any]):
+        self.result = dict(result or {})
+        super().__init__(str(self.result.get("message_zh") or self.result.get("error") or "FANOUT_PREPARE_FAILED"))
+
+
+FanoutKnowledgeError = FanoutPrepareError
 
 
 def _review_axis_fanout_tasks(
@@ -996,11 +1006,24 @@ def _axis_playbook_text(repo: Path, axis_row: dict[str, Any]) -> str:
     text = path.read_text(encoding="utf-8") if path.is_file() else ""
     refs = [str(r).strip().replace("\\", "/").lstrip("/") for r in (axis_row.get("refs") or [])]
     refs = [r[len("references/") :] if r.startswith("references/") else r for r in refs if r]
-    if not refs:
+    knowledge = [
+        str(r).strip().replace("\\", "/").lstrip("/")
+        for r in (axis_row.get("knowledge_refs") or [])
+        if str(r).strip()
+    ]
+    knowledge = [
+        r[len("knowledge/") :] if r.startswith("knowledge/") else r for r in knowledge
+    ]
+    axis = str(axis_row.get("id") or "").strip()
+    knowledge_ns = axis if str(axis_row.get("method_ref") or "").strip() else ""
+    if not refs and not knowledge:
         return text
     lines = [text.rstrip(), "", "## 指针", ""]
     for rel in refs:
         lines.append(f"- `references/{rel}`")
+    for rel in knowledge:
+        prefix = f"knowledge/{knowledge_ns}/" if knowledge_ns else "knowledge/"
+        lines.append(f"- `{prefix}{rel}`")
     return "\n".join(lines) + "\n"
 
 
@@ -1018,7 +1041,7 @@ def _materialize_fanout_axis(
     from ascendc_pilot.actions.method_bundle import materialize_method_bundle
 
     refs_ns = axis if str(axis_row.get("method_ref") or "").strip() else ""
-    materialize_method_bundle(
+    mat = materialize_method_bundle(
         sdir,
         skill_ids=[skill],
         existing_method=body,
@@ -1027,7 +1050,20 @@ def _materialize_fanout_axis(
         current_skill_id=skill,
         method_filename=f"method_{axis}.md",
         refs_ns=refs_ns,
+        explicit_refs=[str(r).strip() for r in (axis_row.get("refs") or []) if str(r).strip()],
     )
+    if not mat.get("ok"):
+        raise FanoutPrepareError(mat)
+    from ascendc_pilot.actions.method_bundle import materialize_knowledge_refs
+
+    know = materialize_knowledge_refs(
+        sdir,
+        list(axis_row.get("knowledge_refs") or []),
+        project_root=repo,
+        knowledge_ns=refs_ns,
+    )
+    if not know.get("ok"):
+        raise FanoutKnowledgeError(know)
     return body
 
 
@@ -1082,13 +1118,27 @@ def _append_action_ref_pointers(text: str, action: dict[str, Any]) -> str:
     """Axis HOW files cannot hop; Action ``refs`` become one-level pointers."""
     refs = [str(r).strip().replace("\\", "/").lstrip("/") for r in (action.get("refs") or [])]
     refs = [r[len("references/") :] if r.startswith("references/") else r for r in refs if r]
-    if not refs or not str(text or "").strip():
+    knowledge = [
+        str(r).strip().replace("\\", "/").lstrip("/")
+        for r in (action.get("knowledge_refs") or [])
+        if str(r).strip()
+    ]
+    knowledge = [
+        r[len("knowledge/") :] if r.startswith("knowledge/") else r for r in knowledge
+    ]
+    if (not refs and not knowledge) or not str(text or "").strip():
         return text
-    if any(f"`references/{rel}`" in text for rel in refs):
+    if refs:
+        refs = [rel for rel in refs if f"`references/{rel}`" not in text]
+    if knowledge:
+        knowledge = [rel for rel in knowledge if f"`knowledge/{rel}`" not in text]
+    if not refs and not knowledge:
         return text
     lines = [text.rstrip(), "", "## 指针", ""]
     for rel in refs:
         lines.append(f"- `references/{rel}`")
+    for rel in knowledge:
+        lines.append(f"- `knowledge/{rel}`")
     return "\n".join(lines) + "\n"
 
 
@@ -1688,47 +1738,7 @@ def prepare_action(
         sdir.mkdir(parents=True, exist_ok=True)
         staging_dir(sdir).mkdir(parents=True, exist_ok=True)
 
-    from ascendc_pilot.context import build_context_pack, maybe_compile_slice
-
-    try:
-        pack = build_context_pack(project_root, intent=f"run-action:{action_id}", topic=action_id)
-    except ValueError as exc:
-        if "ARCHITECTURE_MISSING_IN_RUN_STATE" in str(exc):
-            return {
-                "ok": False,
-                "error": "ARCHITECTURE_MISSING_IN_RUN_STATE",
-                "reason_code": "ARCHITECTURE_MISSING_IN_RUN_STATE",
-            }
-        raise
     repo = _repo_root(project_root)
-    # Optional Context Compiler slice — only when a profile is registered.
-    # Unregistered profiles leave pack/session identical to the pre-compiler path.
-    context_profile_id = str(action.get("context_profile_id") or "") or None
-    context_slice = maybe_compile_slice(
-        project_root,
-        context_profile_id=context_profile_id,
-        action_id=action_id,
-        workflow_id=wid,
-        intent=f"run-action:{action_id}",
-        repo_root=repo,
-        skill_id=str(action.get("skill_id") or action.get("action_method_id") or ""),
-    )
-    if isinstance(context_slice, dict) and context_slice.get("ok") is False:
-        missing_refs = list(context_slice.get("missing_references") or [])
-        return {
-            "ok": False,
-            "error": str(context_slice.get("error") or "BUNDLE_NOT_READABLE"),
-            "reason_code": str(
-                context_slice.get("reason_code") or "CONTEXT_REFERENCES_MISSING"
-            ),
-            "missing": missing_refs,
-            "message_zh": str(
-                context_slice.get("message_zh")
-                or "Context references 缺失；禁止派发"
-            ),
-            "action_id": action_id,
-            "context_profile_id": context_profile_id,
-        }
     method, prompt = _load_method_and_prompt(repo, action)
     if execution_mode == EXECUTION_SUBAGENT and str(action.get("task_prompt_id") or "").strip():
         mp = _resolve_capability_method(repo, action)
@@ -1771,8 +1781,6 @@ def prepare_action(
         }
     uo_s = uo_root(project_root, arch=architecture).as_posix()
     tg_s = tg_root(project_root, arch=architecture).as_posix()
-    pack_path = str(pack.get("path") or "")
-    slice_path = str((context_slice or {}).get("path") or "")
     op_name = str(state.get("op_name") or Path(project_root).name or "")
     ph_kwargs = {
         "run_id": run_id,
@@ -1783,8 +1791,6 @@ def prepare_action(
         "uo_root": uo_s,
         "tg_root_path": tg_s,
         "topic": action_id,
-        "context_pack_path": pack_path,
-        "context_slice_path": slice_path,
         "op_name": op_name,
         "architecture": architecture,
         "role_id": role_id,
@@ -1833,8 +1839,11 @@ def prepare_action(
         "policy_ids": list(action.get("policy_ids") or []),
         "capability_ids": list(action.get("capability_ids") or []),
         "action_method_id": action.get("action_method_id"),
+        "skill_id": action.get("skill_id"),
+        "method_ref": action.get("method_ref"),
         "task_prompt_id": action.get("task_prompt_id"),
-        "context_profile_id": action.get("context_profile_id"),
+        "refs": list(action.get("refs") or []),
+        "knowledge_refs": list(action.get("knowledge_refs") or []),
         "output_contract_id": action.get("output_contract_id"),
         "output_mode": str(action.get("output_mode") or "direct"),
         "staging_contract_id": action.get("staging_contract_id"),
@@ -1842,9 +1851,6 @@ def prepare_action(
         "referee_required": bool(action.get("referee_required", False)),
         "pre_gates": list(action.get("pre_gates") or []),
         "post_gates": list(action.get("post_gates") or []),
-        "context_pack_path": pack_path,
-        "context_slice_path": slice_path,
-        "context_slice_token_estimate": int((context_slice or {}).get("token_estimate") or 0),
         "project_root": root_s,
         "uo_root": uo_s,
         "tg_root": tg_s,
@@ -1857,8 +1863,7 @@ def prepare_action(
         ),
     }
 
-    eng_ctx = _eng_ctx_from_pack(
-        pack,
+    eng_ctx = _eng_ctx_from_state(
         state,
         run_id,
         consumes_state=list(action.get("consumes_state") or []),
@@ -1964,21 +1969,10 @@ def prepare_action(
         f"runs/{run_id}/actions/{action_id}/method.md",
         f"runs/{run_id}/actions/{action_id}/bundle.yaml",
         f"runs/{run_id}/actions/{action_id}/session_state.yaml",
+        f"runs/{run_id}/actions/{action_id}/knowledge/**",
     ]
     if not dt.get("map_reduce"):
         session_extras.insert(0, f"runs/{run_id}/actions/{action_id}/**")
-    # Compiled context slice (when profile registered) is always readable.
-    if slice_path:
-        # Prefer relative path under context/ for authorize globs.
-        try:
-            from ascendc_pilot.paths import agent_root as _agent_root
-
-            rel = Path(slice_path).resolve().relative_to(
-                _agent_root(project_root, architecture).resolve()
-            )
-            session_extras.append(rel.as_posix())
-        except Exception:
-            session_extras.append("context/slices/**")
     for extra in session_extras:
         if extra not in read_paths:
             read_paths.append(extra)
@@ -2124,7 +2118,8 @@ def prepare_action(
         stub, stub_pointers = build_task_stub(**stub_kwargs)
         bundle["task_prompt_stub"] = stub
         bundle["stub_pointers"] = stub_pointers.as_dict()
-        fanout = _review_axis_fanout_tasks(
+        try:
+            fanout = _review_axis_fanout_tasks(
                 action=action,
                 action_id=action_id,
                 actor_id=actor_id,
@@ -2137,6 +2132,26 @@ def prepare_action(
                 project_root=root_s,
                 architecture=architecture,
             )
+        except FanoutPrepareError as exc:
+            know = exc.result
+            return {
+                "ok": False,
+                "error": str(know.get("error") or "KNOWLEDGE_MISSING"),
+                "reason_code": str(know.get("reason_code") or "KNOWLEDGE_MISSING"),
+                "missing": know.get("missing") or [],
+                "message_zh": str(know.get("message_zh") or "knowledge_refs 缺失；禁止派发"),
+                "action_id": action_id,
+                "session_dir": sdir.as_posix(),
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "METHOD_BUNDLE_FAILED",
+                "reason_code": "METHOD_BUNDLE_FAILED",
+                "message_zh": f"fanout METHOD/knowledge 装配异常：{exc}；禁止派发",
+                "action_id": action_id,
+                "session_dir": sdir.as_posix(),
+            }
         if fanout:
             bundle["dispatch_tasks"] = fanout
 
@@ -2152,7 +2167,6 @@ def prepare_action(
             check_bundle_readable,
             materialize_method_bundle,
         )
-        from ascendc_pilot.context.profiles import get_profile
 
         if execution_mode == EXECUTION_PRIMARY_INTERACTIVE:
             bundle["method_materialized"] = {
@@ -2173,8 +2187,7 @@ def prepare_action(
             from ascendc_pilot.agents_registry import agent_skill_ceiling
 
             ceiling = agent_skill_ceiling(actor_id, project_root)
-            profile = get_profile(context_profile_id)
-            extra_refs = list(profile.conditional_refs) if profile is not None else []
+            extra_refs: list[str] = []
             skill_ids = method_skill_ids_for_action(
                 action,
                 agent_skill_ids=ceiling,
@@ -2193,6 +2206,7 @@ def prepare_action(
                 extra_ref_paths=extra_refs,
                 current_skill_id=action_skill,
                 copy_declared_refs=copy_declared,
+                explicit_refs=[str(r).strip() for r in (action.get("refs") or []) if str(r).strip()],
             )
             bundle["method_skill_ids"] = skill_ids
             bundle["agent_skill_ceiling"] = [str(x) for x in ceiling]
@@ -2211,6 +2225,28 @@ def prepare_action(
                         mat.get("message_zh")
                         or "Required METHOD missing；禁止派发"
                     ),
+                    "action_id": action_id,
+                    "session_dir": sdir.as_posix(),
+                }
+            from ascendc_pilot.actions.method_bundle import materialize_knowledge_refs
+
+            know = materialize_knowledge_refs(
+                sdir,
+                list(action.get("knowledge_refs") or []),
+                project_root=project_root,
+            )
+            bundle["knowledge_materialized"] = {
+                "copied": know.get("copied") or [],
+                "missing": know.get("missing") or [],
+                "ok": bool(know.get("ok")),
+            }
+            if not know.get("ok"):
+                return {
+                    "ok": False,
+                    "error": str(know.get("error") or "KNOWLEDGE_MISSING"),
+                    "reason_code": str(know.get("reason_code") or "KNOWLEDGE_MISSING"),
+                    "missing": know.get("missing") or [],
+                    "message_zh": str(know.get("message_zh") or "knowledge_refs 缺失；禁止派发"),
                     "action_id": action_id,
                     "session_dir": sdir.as_posix(),
                 }
@@ -2242,7 +2278,14 @@ def prepare_action(
             except Exception:  # noqa: BLE001
                 pass
     except Exception as _mat_exc:  # noqa: BLE001
-        bundle["method_materialized"] = {"error": str(_mat_exc)[:200]}
+        return {
+            "ok": False,
+            "error": "METHOD_BUNDLE_FAILED",
+            "reason_code": "METHOD_BUNDLE_FAILED",
+            "message_zh": f"METHOD/knowledge 装配异常：{_mat_exc}；禁止派发",
+            "action_id": action_id,
+            "session_dir": sdir.as_posix(),
+        }
 
     # Write bundle.yaml before BUNDLE_NOT_READABLE: the check always requires
     # the session pack (prompt/method/bundle). Dumping after the check made
@@ -3197,9 +3240,6 @@ def finalize_action(
         out_hashes = {"session": file_sha256(_session_overlay_path(sdir)) or "none"}
 
     in_hashes = {
-        "context_pack": file_sha256(Path(str(session.get("context_pack_path") or ""))) or "",
-        "context_slice": file_sha256(Path(str(session.get("context_slice_path") or ""))) or "",
-        "context_slice_token_estimate": str(session.get("context_slice_token_estimate") or ""),
         "prompt": file_sha256(sdir / "prompt.md") or "",
         "prepare_nonce": str(session.get("prepare_nonce") or ""),
         "lease_id": str(session.get("lease_id") or ""),

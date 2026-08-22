@@ -330,6 +330,219 @@ def _legal_key_nearby(
     return nearby
 
 
+def _sql_legal_key_ready(conn: Any) -> bool:
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='legal_key'"
+        ).fetchone()
+        if not row:
+            return False
+        return int(conn.execute("SELECT COUNT(*) FROM legal_key").fetchone()[0] or 0) > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _sql_dim_aliases(name: str, value: str) -> list[str]:
+    from uo_init.tpl_dsl import bool_value_aliases
+
+    values = [value]
+    for alt in bool_value_aliases(value):
+        if alt not in values:
+            values.append(alt)
+    return values
+
+
+def _hydrate_sql_keys(conn: Any, key_ids: list[int]) -> list[dict[str, Any]]:
+    if not key_ids:
+        return []
+    placeholders = ",".join("?" for _ in key_ids)
+    keys = {
+        int(row["id"]): {
+            "index": int(row["id"]),
+            "tiling_key": row["packed"],
+            "tiling_key_hex": row["hex"] or "",
+            "sel_group_id": row["sel_group"] or "",
+            "status": row["status"] or "template_admissible",
+            "dims": {},
+        }
+        for row in conn.execute(
+            f"SELECT id, packed, hex, sel_group, status FROM legal_key WHERE id IN ({placeholders})",
+            key_ids,
+        )
+    }
+    for row in conn.execute(
+        f"SELECT key_id, dim, value FROM legal_key_dim WHERE key_id IN ({placeholders})",
+        key_ids,
+    ):
+        item = keys.get(int(row["key_id"]))
+        if item is not None:
+            item["dims"][str(row["dim"])] = row["value"]
+    return [keys[kid] for kid in key_ids if kid in keys]
+
+
+def _query_legal_keys_sql(
+    product: str | Path,
+    *,
+    structured: dict[str, str],
+    needle: str,
+    limit: int,
+    offset: int,
+) -> dict[str, Any] | None:
+    from uo_init.store.reader import shared_uo
+
+    conn = shared_uo(product)
+    if not _sql_legal_key_ready(conn):
+        return None
+    ids: list[int]
+    if structured:
+        ids = []
+        for i, (name, value) in enumerate(structured.items()):
+            aliases = _sql_dim_aliases(name, value)
+            marks = ",".join("?" for _ in aliases)
+            hit = {
+                int(r[0])
+                for r in conn.execute(
+                    f"SELECT key_id FROM legal_key_dim WHERE dim = ? AND value IN ({marks})",
+                    (name, *aliases),
+                )
+            }
+            ids = list(hit) if i == 0 else [kid for kid in ids if kid in hit]
+            if not ids:
+                break
+        ids = sorted(ids)
+    elif needle:
+        like = f"%{needle}%"
+        ids = [
+            int(r[0])
+            for r in conn.execute(
+                """
+                SELECT DISTINCT k.id
+                FROM legal_key k
+                LEFT JOIN legal_key_dim d ON d.key_id = k.id
+                WHERE k.packed LIKE ? OR k.hex LIKE ? OR k.status LIKE ?
+                   OR k.sel_group LIKE ? OR d.dim LIKE ? OR d.value LIKE ?
+                ORDER BY k.id
+                """,
+                (like, like, like, like, like, like),
+            )
+        ]
+    else:
+        total = int(conn.execute("SELECT COUNT(*) FROM legal_key").fetchone()[0] or 0)
+        start = max(0, int(offset or 0))
+        cap = int(limit or 0)
+        page = [
+            int(r[0])
+            for r in conn.execute(
+                "SELECT id FROM legal_key ORDER BY id LIMIT ? OFFSET ?",
+                (cap if cap > 0 else total, start),
+            )
+        ]
+        rows = _hydrate_sql_keys(conn, page)
+        payload = {
+            "ok": True,
+            "mode": "legal_key",
+            "pattern": needle,
+            "filters": structured,
+            "total_matched": total,
+            "count": len(rows),
+            "offset": int(offset or 0),
+            "limit": int(limit or 0),
+            "rows": rows,
+            "sel_group_ids": [],
+            "cached": False,
+            "indexed": True,
+            "backend": "sql",
+        }
+        from uo_init.query.hints import attach_query_hints
+
+        attach_query_hints(payload, needle, count=total)
+        return payload
+
+    total = len(ids)
+    nearby: list[dict[str, Any]] = []
+    if structured and total == 0:
+        for dropped in structured:
+            remaining = {k: v for k, v in structured.items() if k != dropped}
+            if remaining:
+                remain_ids: set[int] | None = None
+                for name, value in remaining.items():
+                    aliases = _sql_dim_aliases(name, value)
+                    marks = ",".join("?" for _ in aliases)
+                    hit = {
+                        int(r[0])
+                        for r in conn.execute(
+                            f"SELECT key_id FROM legal_key_dim WHERE dim = ? AND value IN ({marks})",
+                            (name, *aliases),
+                        )
+                    }
+                    remain_ids = hit if remain_ids is None else remain_ids & hit
+                values = [
+                    str(r[0])
+                    for r in conn.execute(
+                        "SELECT DISTINCT value FROM legal_key_dim WHERE dim = ? ORDER BY value",
+                        (dropped,),
+                    )
+                ]
+                nearby.append(
+                    {
+                        "dropped": dropped,
+                        "remaining_filters": remaining,
+                        "total_matched": len(remain_ids or []),
+                        "values": values,
+                    }
+                )
+            else:
+                values = [
+                    str(r[0])
+                    for r in conn.execute(
+                        "SELECT DISTINCT value FROM legal_key_dim WHERE dim = ? ORDER BY value",
+                        (dropped,),
+                    )
+                ]
+                nearby.append(
+                    {
+                        "dropped": dropped,
+                        "remaining_filters": remaining,
+                        "total_matched": 0,
+                        "values": values,
+                    }
+                )
+    start = max(0, int(offset or 0))
+    stop = start + int(limit) if limit and limit > 0 else None
+    page_ids = ids[start:stop]
+    rows = _hydrate_sql_keys(conn, page_ids)
+    sel_group_ids: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        gid = str(row.get("sel_group_id") or "").strip()
+        if gid and gid not in seen:
+            seen.add(gid)
+            sel_group_ids.append(gid)
+            if len(sel_group_ids) >= 32:
+                break
+    from uo_init.query.hints import attach_query_hints
+
+    payload = {
+        "ok": True,
+        "mode": "legal_key",
+        "pattern": needle,
+        "filters": structured,
+        "total_matched": total,
+        "count": len(rows),
+        "offset": int(offset or 0),
+        "limit": int(limit or 0),
+        "rows": rows,
+        "sel_group_ids": sel_group_ids,
+        "cached": False,
+        "indexed": bool(structured),
+        "backend": "sql",
+    }
+    if nearby:
+        payload["nearby"] = nearby
+    attach_query_hints(payload, needle, count=total, indexed=bool(structured) if needle else None)
+    return payload
+
+
 def query_legal_keys(
     product: str | Path,
     *,
@@ -340,7 +553,24 @@ def query_legal_keys(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """Filter legal keys without re-parsing/scanning the full blob when structured filters exist."""
+    """Filter legal keys via SQL postings when present; else the compact blob cache."""
+    needle = str(pattern or "").strip()
+    structured = {
+        str(k).strip(): str(v).strip()
+        for k, v in dict(filters or {}).items()
+        if str(k).strip() and str(v).strip()
+    }
+    dname = str(dim or "").strip()
+    dval = str(value or "").strip()
+    if dname and dval:
+        structured[dname] = dval
+    if not structured:
+        structured.update(_pattern_filters(needle))
+    sql_hit = _query_legal_keys_sql(
+        product, structured=structured, needle=needle, limit=limit, offset=offset
+    )
+    if sql_hit is not None:
+        return sql_hit
     cache = legal_key_index_cache(product)
     if not cache.get("ok"):
         return {

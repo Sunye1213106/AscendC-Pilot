@@ -115,6 +115,62 @@ def declared_reference_paths(skill_id: str, project_root: Path | None = None) ->
     return tuple(f"skills/{owner}/references/{rel}" for owner, rel in requested)
 
 
+def find_knowledge_file(ref: str, project_root: Path | None = None) -> Path | None:
+    """Resolve ``ascendc/foo.md`` or ``knowledge/ascendc/foo.md`` from repo roots."""
+    rel = str(ref or "").replace("\\", "/").lstrip("/")
+    if rel.startswith("knowledge/"):
+        rel = rel[len("knowledge/") :]
+    if not rel or ".." in rel.split("/"):
+        return None
+    for root in _repo_candidates(project_root):
+        cand = root / "knowledge" / rel
+        if cand.is_file():
+            return cand
+    return None
+
+
+def materialize_knowledge_refs(
+    session_dir: Path,
+    knowledge_refs: list[str] | None,
+    *,
+    project_root: Path | None = None,
+    knowledge_ns: str = "",
+) -> dict[str, Any]:
+    """Copy declared knowledge files into ``session_dir/knowledge/**``.
+
+    ``knowledge_ns`` optionally namespaces copies under ``knowledge/<ns>/``
+    so parallel fanout slices do not share one folder.
+    """
+    dest = Path(session_dir) / "knowledge"
+    ns = str(knowledge_ns or "").strip().replace("\\", "/").strip("/")
+    if ns:
+        dest = dest / ns
+    dest.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    missing: list[str] = []
+    for raw in knowledge_refs or []:
+        rel = str(raw or "").replace("\\", "/").lstrip("/")
+        if rel.startswith("knowledge/"):
+            rel = rel[len("knowledge/") :]
+        src = find_knowledge_file(rel, project_root)
+        if src is None:
+            missing.append(rel or str(raw))
+            continue
+        out = dest / rel
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, out)
+        copied.append(f"{ns}/{rel}" if ns else rel)
+    ok = not missing
+    return {
+        "ok": ok,
+        "copied": copied,
+        "missing": missing,
+        "error": "" if ok else "KNOWLEDGE_MISSING",
+        "reason_code": "" if ok else "KNOWLEDGE_MISSING",
+        "message_zh": "" if ok else f"knowledge_refs 缺失：{missing}",
+    }
+
+
 def find_cognitive_skill_dir(skill_id: str, project_root: Path | None = None) -> Path | None:
     sid = (skill_id or "").strip()
     if not sid:
@@ -131,6 +187,13 @@ def find_cognitive_skill_dir(skill_id: str, project_root: Path | None = None) ->
     return None
 
 
+def _normalize_ref_rel(raw: str) -> str:
+    rel = str(raw or "").replace("\\", "/").lstrip("/")
+    if rel.startswith("references/"):
+        rel = rel[len("references/") :]
+    return rel
+
+
 def materialize_method_bundle(
     session_dir: Path,
     *,
@@ -145,13 +208,15 @@ def materialize_method_bundle(
     refs_dirname: str = "refs",
     refs_ns: str = "",
     copy_declared_refs: bool = True,
+    explicit_refs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Write session method file from the current Action Skill.
 
     ``skill_ids`` is a permission ceiling. Reference identity is
     ``(owner_skill_id, relative_path)`` — never a basename.
-    ``extra_ref_paths`` must be Host ``conditional_refs`` (qualified paths) and
-    must not repeat SKILL-declared refs.
+    Copy selectors are only ActionSpec / axis ``explicit_refs`` plus optional
+    qualified ``extra_ref_paths``. Skill-body backticks are pointers, not a
+    second discovery mechanism.
     ``refs_ns`` optionally namespaces copied files under ``refs/<ns>/`` so
     parallel fanout slices in one session do not share a folder.
     ``copy_declared_refs=False`` keeps pointer text but does not copy those
@@ -188,13 +253,20 @@ def materialize_method_bundle(
     if not owner_now:
         owner_now = next(iter(allowed), "")
 
-    requested, scoped_unauth = parse_declared_refs(
+    _ignored, scoped_unauth = parse_declared_refs(
         existing_method,
         current_skill_id=owner_now,
     )
     unauthorized.extend(scoped_unauth)
-    if not copy_declared_refs:
-        requested = []
+    requested: list[tuple[str, str]] = []
+    if copy_declared_refs:
+        for raw in explicit_refs or []:
+            rel = _normalize_ref_rel(raw)
+            if not rel or ".." in rel.split("/"):
+                if str(raw) not in ambiguous:
+                    ambiguous.append(str(raw))
+                continue
+            requested.append((owner_now, rel))
 
     skill_declared = set(requested)
     for raw in extra_ref_paths or []:
@@ -428,7 +500,7 @@ def method_skill_ids_for_action(
     agent_skill_ids: list[str] | None = None,
     extra_ref_paths: list[str] | None = None,
 ) -> list[str]:
-    """Action Skill plus owners of Host conditional_refs, intersected with ceiling."""
+    """Action Skill plus owners of extra qualified refs, intersected with ceiling."""
     ceiling = {str(s).strip() for s in (agent_skill_ids or []) if str(s).strip()}
     wanted: set[str] = set()
     raw = str((action or {}).get("skill_id") or (action or {}).get("action_method_id") or "").strip()
@@ -638,6 +710,19 @@ def check_metadata_identity(
     return {"ok": True}
 
 
+def missing_reference_paths(references: list[dict[str, str]] | None) -> list[str]:
+    """Paths recorded as missing by a reference status list."""
+    out: list[str] = []
+    for row in references or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "") == "missing":
+            p = str(row.get("path") or "").strip()
+            if p:
+                out.append(p)
+    return out
+
+
 def check_bundle_readable(
     *,
     stub: str = "",
@@ -687,4 +772,7 @@ __all__ = [
     "check_output_writability",
     "check_metadata_identity",
     "check_bundle_readable",
+    "missing_reference_paths",
+    "find_knowledge_file",
+    "materialize_knowledge_refs",
 ]

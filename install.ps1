@@ -462,7 +462,7 @@ if ($FastInstall -and $bundleReady) {
 
 # Install ONLY generated runtime trees.
 $genRoot = Join-Path $BundleRoot "generated\$Platform"
-foreach ($name in @("skills", "agents", "prompts", "commands")) {
+foreach ($name in @("skills", "agents", "prompts", "commands", "knowledge")) {
   $p = Join-Path $Dest $name
   if (Test-Path -LiteralPath $p) { Remove-Item -Recurse -Force -LiteralPath $p }
 }
@@ -474,6 +474,11 @@ if (Test-Path (Join-Path $genRoot "prompts")) {
 if (Test-Path (Join-Path $genRoot "commands")) {
   Copy-Item -Recurse -Force (Join-Path $genRoot "commands") (Join-Path $Dest "commands")
 }
+$knowSrc = Join-Path $genRoot "knowledge"
+if (-not (Test-Path -LiteralPath $knowSrc)) {
+  throw "generated knowledge missing: $knowSrc (compose/copy failed)"
+}
+Copy-Item -Recurse -Force -LiteralPath $knowSrc -Destination (Join-Path $Dest "knowledge")
 $manSrc = Join-Path $genRoot "install-manifest.json"
 if (Test-Path -LiteralPath $manSrc) {
   Copy-Item -Force -LiteralPath $manSrc -Destination (Join-Path $Dest "install-manifest.json")

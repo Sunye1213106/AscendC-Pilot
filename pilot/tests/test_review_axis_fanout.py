@@ -67,6 +67,12 @@ def test_review_axis_fanout_writes_isolated_stubs(tmp_path: Path) -> None:
     assert "只做 **Standards** 这一路" in std_method
     assert "index.md" in spec_method or "plan.md" in spec_method
     assert not (tmp_path / ".ascendc-pilot" / "arch0" / "ce" / "review" / "index.yaml").is_file()
+    assert (sdir / "knowledge" / "standards" / "ascendc" / "precision.md").is_file()
+    assert (sdir / "knowledge" / "standards" / "ascendc" / "cross-layer-contracts.md").is_file()
+    assert not (sdir / "knowledge" / "ascendc" / "precision.md").exists()
+    assert not (sdir / "knowledge" / "spec" / "ascendc" / "precision.md").exists()
+    assert "`knowledge/standards/ascendc/precision.md`" in std_method
+    assert "`knowledge/standards/ascendc/precision.md`" not in spec_method
 
 
 def test_review_axis_fanout_skips_scope_phase(tmp_path: Path) -> None:
@@ -212,3 +218,53 @@ def test_bind_init_fanout_skips_existing_part(tmp_path: Path) -> None:
         architecture="arch0",
     )
     assert {t["slice_id"] for t in tasks} == {"harness"}
+
+
+def test_review_axis_fanout_missing_knowledge_fails_closed(tmp_path: Path) -> None:
+    import copy
+    import sys
+
+    if str(REPO / "pilot") not in sys.path:
+        sys.path.insert(0, str(REPO / "pilot"))
+    import pytest
+    from ascendc_pilot.actions.runtime import FanoutKnowledgeError, _review_axis_fanout_tasks
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
+    (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
+    stub_kwargs = {
+        "actor_id": "ce-reviewer",
+        "action_id": "code_review",
+        "run_id": "r1",
+        "session_dir": sdir.as_posix(),
+        "prompt_path": (sdir / "prompt.md").as_posix(),
+        "method_path": (sdir / "method.md").as_posix(),
+        "bundle_path": (sdir / "bundle.yaml").as_posix(),
+        "project_root": tmp_path.as_posix(),
+        "architecture": "arch0",
+        "write_paths": ["ce/review/**"],
+        "user_question": "review the patch",
+    }
+    action = copy.deepcopy(
+        next(a for a in WORKFLOWS["ce-review"]["actions"] if a["id"] == "code_review")
+    )
+    for row in action["fanout_axes"]:
+        if row.get("id") == "standards":
+            row["knowledge_refs"] = ["ascendc/does-not-exist.md"]
+    with pytest.raises(FanoutKnowledgeError) as exc:
+        _review_axis_fanout_tasks(
+            action=action,
+            action_id="code_review",
+            actor_id="ce-reviewer",
+            phase="review",
+            sdir=sdir,
+            stub_kwargs=stub_kwargs,
+            repo=REPO,
+            dispatch_targets={},
+            write_paths=["ce/review/**"],
+            project_root=tmp_path.as_posix(),
+            architecture="arch0",
+        )
+    assert exc.value.result.get("reason_code") == "KNOWLEDGE_MISSING"

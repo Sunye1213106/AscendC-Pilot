@@ -22,8 +22,6 @@ ROUTER_SKILLS = frozenset(
         "plan",
         "solve",
         "standalone-review",
-        "test-modes",
-        "lemma",
     }
 )
 

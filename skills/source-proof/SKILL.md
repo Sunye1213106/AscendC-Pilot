@@ -46,6 +46,8 @@ uo-query 能定位、能分层，不能单独闭合「只能 / 从不」。完�
 
 Host `ge.graphStatus` 失败根上的边是「这条路径活不到 Host 产出」的入口。命题是否被该 guard 覆盖仍要读站点，不能凭「图上有失败码根」写成某维永不产生。
 
+lemma 是产物名词（已形成的 P⇒Q 规则），不是另一个 Skill。本步只出证明结果 `PROVED | REFUTED | INSUFFICIENT`。证书审查 `accept | reject | defer` 是另一方法，由 Workflow 决定是否另开，不要在本步自审自批。
+
 不要做的：
 
 - 没钉层就证「只能是 / 没有」
@@ -98,4 +100,4 @@ windows: [file:line, ...]
 
 ## 指针
 
-义务如何关：`references/proof-obligations.md`。假证：`references/failure-patterns.md`。静态包：`references/static-evidence.md`。证书：`references/proof-certificate.md`。查图：`skills/uo-query/SKILL.md`。
+义务如何关：`references/proof-obligations.md`。假证：`references/failure-patterns.md`。静态包：`references/static-evidence.md`。证书：`references/proof-certificate.md`。独立审证：`references/review.md`；replay 清单：`references/referee-replay.md`。查图：`skills/uo-query/SKILL.md`。

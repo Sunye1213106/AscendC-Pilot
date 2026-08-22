@@ -31,5 +31,5 @@ description: 确认有可审 diff 并说明两路各交什么。有 git/PR 改�
 ## 指针
 
 - Spec 轴：`references/spec.md`；边角：`references/spec-gotchas.md`、`references/precision-perf-findings.md`
-- Standards 轴：`references/standards.md`；边角：`references/standards-gotchas.md`、`references/ascendc-checks.md`、`references/cross-layer-contracts.md`、`references/concurrency.md`
+- Standards 轴：`references/standards.md`；边角：`references/standards-gotchas.md`、`references/ascendc-checks.md`
 - 入口边角：`references/gotchas.md`

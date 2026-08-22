@@ -185,7 +185,7 @@ Canonical Kernel UO 提供的是 sync **facts**：operation、参数、pipe/even
 
 ### `.uo` 是什么
 
-`<op>.<arch>.uo` 是 **SQLite 数据库**（schema：`codemap-uo/v2`，兼容读取 `codemap-uo/v1`），不是 YAML/JSON 文本。它是对外唯一的 canonical Operator CodeMap：Query / TG / CE 都读它；只有 UO 确定性 `commit` 可写。v2 边带 `trust`（authoritative / derived / advisory / legacy_unknown）；Query 默认不沿 `advisory` 边闭合。v1 产品读入后标 `legacy_unknown`，不会被推断成 lexical。
+`<op>.<arch>.uo` 是 **SQLite 数据库**（schema：`codemap-uo/v3`，兼容读取 `codemap-uo/v1` / `v2`），不是 YAML/JSON 文本。它是对外唯一的 canonical Operator CodeMap：Query / TG / CE 都读它；只有 UO 确定性 `commit` 可写。v2+ 边带 `trust`（authoritative / derived / advisory / legacy_unknown）；Query 默认不沿 `advisory` 边闭合。v1 产品读入后标 `legacy_unknown`，不会被推断成 lexical。v3 去掉了从未写入的 `attribute` / `predicate` / `provenance` 空表。新库在 commit 时整库重建，没有 online ALTER。
 
 可用普通 SQLite 工具打开（只读排查），但不要手工改库内容——应走 `/uo-init` 或 `/uo-update`。
 
@@ -200,22 +200,22 @@ Canonical Kernel UO 提供的是 sync **facts**：operation、参数、pipe/even
 | `relation`                 | 有向边：kind、src、dst、status、confidence；`data` 只存业务 attrs                                       |
 | `file`                     | 涉及的源文件路径与角色                                                                             |
 | `source_span`              | 实体到 `path:line`（及短 snippet）的定位；无 snippet 时不写行                                         |
-| `attribute`                | schema 预留；commit 不再写入键值副本（查属性读 `entity.data`）                                          |
-| `view_blob`                | 可重建投影与摘要（JSON）；须带 provenance（digest + counts + builder）；mismatch → `VIEW_STALE` → engine fallback；TG 依赖如 `ir/tg_host_view.yaml` 等 |
-| `predicate` / `provenance` | 谓词与溯源槽位（schema 预留；随 passes 填充）                                                          |
+| `view_blob`                | 低基数投影：`summary`、`views/kernel.yaml`、`views/tilingdata.yaml`、`ir/tg_host_view.yaml`（TG 直读）；另保留 compact `tiling/legal_key_index.jsonl` 供 dump / 旧客户端。实体/关系计数不单独存，可由 SQL 得到。须带 provenance；mismatch → `VIEW_STALE` |
+| `legal_key` / `legal_key_dim` | 模板可接纳 tiling-key 组合的关系表；cover 查询走维 posting 交集，不再把 universe 拉进 Python |
 
 
 **实体（节点）典型 kind**：`BUILD_VARIANT`、`TILING_KEY` / `TILING_DATA` / `TILING_FIELD`、`KERNEL`、`TEMPLATE`*、`FUNCTION` / `VARIABLE` / `FIELD`、`BRANCH` / `PREDICATE`、`BUFFER` / `REGISTER` / `PIPE` / `EVENT` / `QUEUE` / `OPERATION` 等。
 
 **关系（边）典型 kind**：日常查询默认走有用边 `WRITES` / `READS` / `CALLS` / `CONTROLS` / `DERIVES` / `SELECTS` / `LAUNCHES` / `SIGNALS` / `AWAITS` / `FLOWS_TO` / `BINDS`。图中还可有 `INSTANTIATES`、`WRAPS` / `ROOTED_AT`，以及同步相关的 `PRECEDES`。Host 条件、Tiling、Kernel、AscendC root 靠这些边串成可追溯图。
 
-Query 与 CE 读回的是按 kind 投影后的 evidence hit（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。跨层邻域由 `uo-query` 给出（形态见 code-access 不变量）；`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。`legal_key` 在磁盘上按维列存，读取时再展开成 `dims` 字典。
+Query 与 CE 读回的是按 kind 投影后的 evidence hit（`id/kind/name/file/line` + 少量 `facts`），不是整份 `entity.data`。跨层邻域由 `uo-query` 给出（形态见 code-access 不变量）；`uo/diff/impact.yaml` 是 `/uo-update` 的引擎产物，不是 agent API。`legal_key` 查询走 `legal_key` / `legal_key_dim` posting 交集；`view_blob` 仍保留一份 compact 索引供 dump / 旧客户端。
 
 ```text
 meta + BuildVariant
   + entities / relations（跨层图）
   + source_span（证据定位）
-  + view_blob（summary + TG/CE 投影）
+  + legal_key / legal_key_dim（模板可接纳组合）
+  + view_blob（summary + TG/CE 投影 + compact legal-key blob）
   = 一个可查询的 Operator CodeMap
 ```
 

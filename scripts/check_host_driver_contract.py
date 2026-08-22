@@ -27,7 +27,7 @@ def main() -> int:
         )
         from ascendc_pilot.agents_registry import scope_allows_path, split_scope_ns
         from ascendc_pilot.host_doctor import doctor_host
-        from ascendc_pilot.context.compiler import missing_reference_paths
+        from ascendc_pilot.actions.method_bundle import missing_reference_paths
     except Exception as exc:  # noqa: BLE001
         print(f"IMPORT_FAIL: {exc}")
         return 1
@@ -333,6 +333,14 @@ def main() -> int:
         errors.append("install.ps1 must install install-manifest.json")
     if "install-manifest.json" not in sh:
         errors.append("install.sh must install install-manifest.json")
+    if 'Join-Path $genRoot "knowledge"' not in ps1:
+        errors.append("install.ps1 must copy generated knowledge/")
+    if "generated knowledge missing" not in ps1:
+        errors.append("install.ps1 must fail-closed when generated knowledge/ is missing")
+    if '"$GEN/knowledge"' not in sh:
+        errors.append("install.sh must copy generated knowledge/")
+    if "generated knowledge missing" not in sh:
+        errors.append("install.sh must fail-closed when generated knowledge/ is missing")
     if "PILOT_AGENT_PREFIXES" in plugin_src:
         errors.append("plugin must not classify Pilot agents by filename prefix")
     if 'resolve(openCodeHome(), "agents")' in plugin_src:

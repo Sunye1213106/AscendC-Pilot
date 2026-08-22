@@ -272,30 +272,30 @@ def _write_change_capture_artifacts(
     try:
         from uo_init.uo_query import open_query
 
-        q = open_query(project_root, architecture=architecture)
-        for item in queries[:8]:
-            ident = str(item.get("ident") or "").strip()
-            path = str(item.get("file") or "")
-            line = int(item.get("line") or 0)
-            if ident:
-                hint_lines.append(f"## `{ident}`")
+        with open_query(project_root, architecture=architecture) as q:
+            for item in queries[:8]:
+                ident = str(item.get("ident") or "").strip()
+                path = str(item.get("file") or "")
+                line = int(item.get("line") or 0)
+                if ident:
+                    hint_lines.append(f"## `{ident}`")
+                    hint_lines.append("")
+                    try:
+                        payload = q.agent_query(pattern=ident, limit=4)
+                        hint_lines.append(_compact_uo_hint(payload if isinstance(payload, dict) else {}))
+                    except Exception as exc:  # noqa: BLE001
+                        hint_lines.append(f"prefetch failed: {exc}"[:400])
+                elif path and line:
+                    hint_lines.append(f"## `{path}:{line}`")
+                    hint_lines.append("")
+                    try:
+                        payload = q.agent_query(pattern="", file=path, line=line, limit=4)
+                        hint_lines.append(_compact_uo_hint(payload if isinstance(payload, dict) else {}))
+                    except Exception as exc:  # noqa: BLE001
+                        hint_lines.append(f"prefetch failed: {exc}"[:400])
+                else:
+                    continue
                 hint_lines.append("")
-                try:
-                    payload = q.agent_query(pattern=ident, limit=4)
-                    hint_lines.append(_compact_uo_hint(payload if isinstance(payload, dict) else {}))
-                except Exception as exc:  # noqa: BLE001
-                    hint_lines.append(f"prefetch failed: {exc}"[:400])
-            elif path and line:
-                hint_lines.append(f"## `{path}:{line}`")
-                hint_lines.append("")
-                try:
-                    payload = q.agent_query(pattern="", file=path, line=line, limit=4)
-                    hint_lines.append(_compact_uo_hint(payload if isinstance(payload, dict) else {}))
-                except Exception as exc:  # noqa: BLE001
-                    hint_lines.append(f"prefetch failed: {exc}"[:400])
-            else:
-                continue
-            hint_lines.append("")
     except Exception as exc:  # noqa: BLE001
         hint_lines.append(f"UO product unavailable ({exc}). Run suggested queries from index.md.")
         hint_lines.append("")
@@ -752,9 +752,6 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     params = _load_yaml(_ctx_root(project_root, arch=arch_hint) / "pilot_params.yaml") or {}
     if not isinstance(params, dict):
         params = {}
-    pack = _load_yaml(_ctx_root(project_root, arch=arch_hint) / "context_pack.yaml") or {}
-    if not isinstance(pack, dict):
-        pack = {}
     run_ctx = _load_yaml(_tg(project_root, arch=arch_hint) / "init.yaml") or {}
     if not isinstance(run_ctx, dict):
         run_ctx = {}
@@ -785,7 +782,6 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         ctx.get("op_name"),
         state.get("op_name"),
         params.get("op_name"),
-        pack.get("op_name"),
         run_ctx.get("op_name"),
         man.get("op_name"),
         project_root.name,
@@ -794,19 +790,17 @@ def _resolve_tg_ctx(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         ctx.get("architecture"),
         state.get("architecture"),
         params.get("architecture"),
-        pack.get("architecture"),
         man.get("architecture"),
         default=arch_hint,
     )
     if not architecture:
         raise ValueError("ARCHITECTURE_MISSING_IN_RUN_STATE")
-    level = _pick(ctx.get("level"), state.get("level"), params.get("level"), pack.get("level"), default="L0")
-    focus = _pick(ctx.get("focus"), state.get("focus"), params.get("focus"), pack.get("focus"))
+    level = _pick(ctx.get("level"), state.get("level"), params.get("level"), default="L0")
+    focus = _pick(ctx.get("focus"), state.get("focus"), params.get("focus"))
     test_script_root = _pick(
         ctx.get("test_script_root"),
         state.get("test_script_root"),
         params.get("test_script_root"),
-        pack.get("test_script_root"),
         run_ctx.get("test_script_root"),
         os.environ.get("ASCENDC_TEST_SCRIPT_ROOT"),
         init_intent.get("consumer_root"),

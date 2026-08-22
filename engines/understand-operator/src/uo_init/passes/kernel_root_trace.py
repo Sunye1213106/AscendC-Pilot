@@ -933,14 +933,14 @@ def _paren_arg_text(text: str, open_at: int) -> str:
     return ""
 
 
-def _conditional_branch_classes(prefix: str) -> list[str]:
-    """True/false types of ``std::conditional<Cond, A, B>`` in a local decl prefix."""
-    idx = str(prefix or "").find("conditional")
+def _conditional_arg_parts(prefix: str) -> tuple[str, str, str] | None:
+    """``(cond, then, else)`` of the first ``conditional`` template in *prefix*."""
+    idx = str(prefix or "").lower().find("conditional")
     if idx < 0:
-        return []
+        return None
     lt = prefix.find("<", idx)
     if lt < 0:
-        return []
+        return None
     depth = 0
     for j in range(lt, len(prefix)):
         if prefix[j] == "<":
@@ -949,8 +949,19 @@ def _conditional_branch_classes(prefix: str) -> list[str]:
             depth -= 1
             if depth == 0:
                 parts = _split_top_level_args(prefix[lt + 1 : j])
-                names = [_short_type_name(p) for p in parts[1:3]]
-                return [n for n in names if n]
+                if len(parts) < 3:
+                    return None
+                return parts[0].strip(), parts[1].strip(), parts[2].strip()
+    return None
+
+
+def _conditional_branch_classes(prefix: str) -> list[str]:
+    """True/false types of ``std::conditional<Cond, A, B>`` in a local decl prefix."""
+    parts = _conditional_arg_parts(prefix)
+    if not parts:
+        return []
+    names = [_short_type_name(p) for p in parts[1:3]]
+    return [n for n in names if n]
 
 
 _CONDITIONAL_SKIP_BASES = frozenset(
@@ -963,11 +974,11 @@ def _conditional_storage_bases(type_text: str) -> list[str]:
     out: list[str] = []
 
     def walk(text: str) -> None:
-        names = _conditional_branch_classes(text)
-        if not names:
+        parts = _conditional_arg_parts(text)
+        if not parts:
             return
-        for name in names:
-            raw = str(name or "").strip()
+        for raw in parts[1:3]:
+            raw = str(raw or "").strip()
             if "conditional" in raw.lower():
                 walk(raw)
                 continue
@@ -1000,29 +1011,185 @@ def _conditional_storage_bases_any(*blobs: str) -> list[str]:
     return []
 
 
-def _wrapper_from_branch_types(codemap: Any, ents: list[Any]) -> str:
-    """Common storage wrapper on conditional branches — not a runtime policy pick."""
-    names: list[str] = []
-    for ent in ents:
-        if ent is None:
+def _walk_conditional_polarity(text: str, acc: dict[str, tuple[str, str]]) -> None:
+    parts = _conditional_arg_parts(text)
+    if not parts:
+        return
+    cond, then, els = parts
+    for raw, polarity in ((then, "then"), (els, "else")):
+        if "conditional" in raw.lower():
+            _walk_conditional_polarity(raw, acc)
             continue
-        for _rel, other in codemap.neighbors(ent.id, kind=RelationKind.WRAPS, direction="out"):
-            if other is None or other.kind_name() != EntityKind.TYPE.value:
-                continue
-            if not (
-                other.attrs.get("wraps_storage")
-                or other.attrs.get("wraps_lock")
-                or other.attrs.get("wraps_flag")
-            ):
-                continue
-            short = _short_type_name(other.name)
-            if short and short not in names and short not in _CONDITIONAL_SKIP_BASES:
-                names.append(short)
-        for root in ent.attrs.get("wrapped_roots") or []:
-            short = str(root or "").replace("AscendC::", "").split("::")[-1]
-            if short and short not in names:
-                names.append(short)
-    return names[0] if names else ""
+        short = _short_type_name(raw) or raw.strip()
+        if not short or short in _CONDITIONAL_SKIP_BASES or short in _CXX_SKIP_BASE:
+            continue
+        acc.setdefault(short, (cond, polarity))
+
+
+def _conditional_polarity_map(*blobs: str) -> dict[str, tuple[str, str]]:
+    acc: dict[str, tuple[str, str]] = {}
+    for blob in blobs:
+        if blob:
+            _walk_conditional_polarity(str(blob), acc)
+    return acc
+
+
+def _branch_wrapper_names(codemap: Any, ent: Any) -> set[str]:
+    names: set[str] = set()
+    if ent is None:
+        return names
+    short = _short_type_name(ent.name)
+    if (
+        short
+        and short not in _CONDITIONAL_SKIP_BASES
+        and not _is_catalog_storage_base(short)
+        and (
+            ent.attrs.get("wraps_storage")
+            or ent.attrs.get("wraps_lock")
+            or ent.attrs.get("wraps_flag")
+        )
+    ):
+        names.add(short)
+    for _rel, other in codemap.neighbors(ent.id, kind=RelationKind.WRAPS, direction="out"):
+        if other is None or other.kind_name() != EntityKind.TYPE.value:
+            continue
+        if not (
+            other.attrs.get("wraps_storage")
+            or other.attrs.get("wraps_lock")
+            or other.attrs.get("wraps_flag")
+        ):
+            continue
+        wrap = _short_type_name(other.name)
+        if (
+            wrap
+            and wrap not in _CONDITIONAL_SKIP_BASES
+            and not _is_catalog_storage_base(wrap)
+        ):
+            names.add(wrap)
+    return names
+
+
+def _branch_root_names(ent: Any) -> set[str]:
+    roots: set[str] = set()
+    if ent is None:
+        return roots
+    for root in ent.attrs.get("wrapped_roots") or []:
+        short = str(root or "").replace("AscendC::", "").split("::")[-1]
+        if short:
+            roots.add(short)
+    catalog = _catalog_storage_root(str(ent.name or ""))
+    if catalog:
+        roots.add(catalog)
+    return roots
+
+
+def _intersect_name_sets(sets: list[set[str]]) -> str:
+    if not sets:
+        return ""
+    common = set(sets[0])
+    for extra in sets[1:]:
+        common &= extra
+    if len(common) != 1:
+        return ""
+    return next(iter(common))
+
+
+def _wrapper_from_branch_types(
+    codemap: Any, ents: list[Any], *, expected: int = 0
+) -> str:
+    """Common storage wrapper only when every branch names the same wrapper."""
+    live = [ent for ent in ents if ent is not None]
+    if not live:
+        return ""
+    if expected and len(live) != expected:
+        return ""
+    sets = [_branch_wrapper_names(codemap, ent) for ent in live]
+    if any(not names for names in sets):
+        return ""
+    return _intersect_name_sets(sets)
+
+
+def _common_branch_root(ents: list[Any], *, expected: int = 0) -> str:
+    """Common AscendC storage root only when every branch agrees."""
+    live = [ent for ent in ents if ent is not None]
+    if not live:
+        return ""
+    if expected and len(live) != expected:
+        return ""
+    sets = [_branch_root_names(ent) for ent in live]
+    if any(not names for names in sets):
+        return ""
+    return _intersect_name_sets(sets)
+
+
+def _member_type_sig(row: dict[str, Any]) -> str:
+    return (
+        _base_type_name(str(row.get("type_text") or ""))
+        or str(row.get("base_type") or "")
+        or str(row.get("type_text") or "")
+    ).strip()
+
+
+def _absorb_alt_member_type(existing: dict[str, Any], row: dict[str, Any]) -> None:
+    """Keep a second strong type as a guarded alternative, do not drop it."""
+    if _member_type_weak(row):
+        return
+    sig_r = _member_type_sig(row)
+    if not sig_r or sig_r == _member_type_sig(existing):
+        return
+    text = str(row.get("type_text") or sig_r)
+    current = str(existing.get("type_text") or "")
+    alts = [str(x) for x in (existing.get("alt_type_texts") or []) if x]
+    if text and text != current and text not in alts:
+        alts.append(text)
+    existing["alt_type_texts"] = alts
+
+
+def _row_branch_bases(row: dict[str, Any], *blobs: str) -> list[str]:
+    bases = _conditional_storage_bases_any(*blobs)
+    alts = [str(x) for x in (row.get("alt_type_texts") or []) if x]
+    if not alts:
+        return bases
+    if not bases:
+        primary = _short_type_name(str(blobs[0] if blobs else "") or str(row.get("type_text") or ""))
+        if (
+            primary
+            and primary not in _CONDITIONAL_SKIP_BASES
+            and primary not in _CXX_SKIP_BASE
+            and "conditional" not in str(row.get("type_text") or "").lower()
+        ):
+            bases.append(primary)
+    for extra in alts:
+        for name in _conditional_storage_bases(extra):
+            if name not in bases:
+                bases.append(name)
+        if "conditional" in extra.lower():
+            continue
+        short = _short_type_name(extra) or _base_type_name(extra)
+        if (
+            short
+            and short not in bases
+            and short not in _CONDITIONAL_SKIP_BASES
+            and short not in _CXX_SKIP_BASE
+        ):
+            bases.append(short)
+    return bases
+
+
+def _conditional_branch_attrs(
+    name: str,
+    branch: str,
+    index: int,
+    total: int,
+    polarity: dict[str, tuple[str, str]],
+) -> dict[str, Any]:
+    attrs: dict[str, Any] = {"via": "conditional_branch", "member": name}
+    if branch in polarity:
+        attrs["cond"] = polarity[branch][0]
+        attrs["polarity"] = polarity[branch][1]
+    elif total == 2:
+        attrs["polarity"] = "then" if index == 0 else "else"
+    return attrs
 
 
 def _local_decl_owners(chunk: str, ident: str, before: int) -> list[str]:
@@ -1449,6 +1616,8 @@ def _propagate_reachability(codemap: CodeMap) -> None:
             pe = codemap.entities.get(parent)
             if pe is None:
                 continue
+            if str(pe.attrs.get("root_status") or "") == "GUARDED":
+                continue
             if pe.attrs.get("root_status") == "REACHED" and pe.attrs.get("root"):
                 # Already rooted; still allow ROOTED_AT edge refresh below.
                 pass
@@ -1826,6 +1995,7 @@ def finalize_kernel_root_trace(
             _norm_file(str(r.get("file") or ""), root),
         )
         if key in seen_member:
+            _absorb_alt_member_type(seen_member[key], r)
             continue
         seen_member[key] = r
         members_merged.append(r)
@@ -1840,6 +2010,8 @@ def finalize_kernel_root_trace(
             if _member_type_weak(existing) and not _member_type_weak(row):
                 existing["type_text"] = row.get("type_text") or existing.get("type_text")
                 existing["base_type"] = row.get("base_type") or existing.get("base_type")
+            else:
+                _absorb_alt_member_type(existing, row)
             continue
         row = dict(row)
         row.setdefault("provenance", "lexical_regex")
@@ -2012,7 +2184,7 @@ def finalize_kernel_root_trace(
         resolved = _resolve_alias_chain(type_text)
         canon = str(row.get("canonical_type") or "")
         resolved_base = _base_type_name(resolved) or str(row.get("base_type") or "")
-        branch_bases = _conditional_storage_bases_any(type_text, resolved, canon)
+        branch_bases = _row_branch_bases(row, type_text, resolved, canon)
         if branch_bases:
             targets = [(base, base, base) for base in branch_bases]
         else:
@@ -2411,8 +2583,8 @@ def finalize_kernel_root_trace(
             event_count += int(sync_kind == EntityKind.EVENT)
             queue_count += int(sync_kind == EntityKind.QUEUE)
             continue
-        branch_bases = _conditional_storage_bases_any(
-            type_text, expanded, str(row.get("canonical_type") or "")
+        branch_bases = _row_branch_bases(
+            row, type_text, expanded, str(row.get("canonical_type") or "")
         )
         branch_ents = [
             codemap.entities[type_ents[b]]
@@ -2466,33 +2638,31 @@ def finalize_kernel_root_trace(
         if not space:
             space = "UNKNOWN"
         root_spell = catalog_root
-        if not root_spell and wraps_storage:
-            roots: list[Any] = []
-            if owner_ent is not None:
+        is_wrapper = bool((wraps_storage or branch_bases) and not catalog_root)
+        wrapper_spell = ""
+        if branch_bases:
+            wrapper_spell = _wrapper_from_branch_types(
+                codemap, branch_ents, expected=len(branch_bases)
+            )
+            root_spell = _common_branch_root(branch_ents, expected=len(branch_bases))
+        elif is_wrapper:
+            wrapper_spell = base if wraps_storage else ""
+            if not root_spell and owner_ent is not None:
                 roots = list(owner_ent.attrs.get("wrapped_roots") or [])
-            if not roots:
-                for e in branch_ents:
-                    roots.extend(e.attrs.get("wrapped_roots") or [])
-            root_spell = str(roots[0] if roots else "LocalTensor")
+                root_spell = str(roots[0] if roots else "")
         elif not root_spell and base in ASCENDC_BUFFER_TYPES:
             root_spell = base
         elif not root_spell and owner_ent is not None:
             root_spell = str(owner_ent.attrs.get("root") or "").replace("AscendC::", "")
-        elif not root_spell and branch_ents:
-            root_spell = str(branch_ents[0].attrs.get("root") or "").replace("AscendC::", "") or "LocalTensor"
-        is_wrapper = bool((wraps_storage or branch_bases) and not catalog_root)
-        wrapper_spell = ""
-        if is_wrapper:
-            wrapper_spell = (
-                _wrapper_from_branch_types(codemap, branch_ents)
-                if branch_bases
-                else (base if wraps_storage else "")
-            )
-            if not wrapper_spell and branch_bases:
-                wrapper_spell = branch_bases[0]
         type_name = (
-            "|".join(branch_bases[:2]) if branch_bases else _persist_type_name(type_text)
+            "|".join(branch_bases) if branch_bases else _persist_type_name(type_text)
         )
+        if branch_bases and not root_spell:
+            root_status = "GUARDED"
+        elif root_spell:
+            root_status = "REACHED"
+        else:
+            root_status = "UNRESOLVED"
         attrs = {
             "memory_space": space,
             "tposition": tposition_from_type_text(expanded)
@@ -2502,7 +2672,7 @@ def finalize_kernel_root_trace(
             "type_name": type_name,
             "role": "storage_wrapper" if is_wrapper else "storage",
             "wrapper": wrapper_spell,
-            "root_status": "REACHED" if root_spell else "UNRESOLVED",
+            "root_status": root_status,
             "root_kind": "STORAGE" if root_spell else "",
             "root": f"AscendC::{root_spell}" if root_spell else "",
             "trace": [name]
@@ -2542,14 +2712,19 @@ def finalize_kernel_root_trace(
             )
         if base in type_ents and _is_catalog_storage_base(base):
             _link(codemap, RelationKind.WRAPS, ent.id, type_ents[base], attrs={"via": "member_type"})
-        for branch in branch_bases:
+        polarity = _conditional_polarity_map(
+            type_text, expanded, str(row.get("canonical_type") or ""), *list(row.get("alt_type_texts") or [])
+        )
+        for idx, branch in enumerate(branch_bases):
             if branch in type_ents:
                 _link(
                     codemap,
                     RelationKind.WRAPS,
                     ent.id,
                     type_ents[branch],
-                    attrs={"via": "conditional_branch", "member": name},
+                    attrs=_conditional_branch_attrs(
+                        name, branch, idx, len(branch_bases), polarity
+                    ),
                 )
         if root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind="STORAGE")
@@ -2699,8 +2874,6 @@ def finalize_kernel_root_trace(
         space = memory_space_from_type_text(expanded) or memory_space_from_type_text(type_text) or "UNKNOWN"
         is_wrapper = bool((wraps_storage or branch_bases) and not catalog_root)
         wrapper_spell = base if (is_wrapper and not branch_bases) else ""
-        if branch_bases:
-            wrapper_spell = _wrapper_from_branch_types(codemap, branch_ents) or branch_bases[0]
         project_reached = bool(
             owner_ent is not None
             and str(owner_ent.attrs.get("root_status") or "") == "REACHED"
@@ -2709,7 +2882,14 @@ def finalize_kernel_root_trace(
         )
         root_status = "REACHED"
         root_spell = catalog_root
-        if is_wrapper:
+        if branch_bases:
+            wrapper_spell = _wrapper_from_branch_types(
+                codemap, branch_ents, expected=len(branch_bases)
+            )
+            root_spell = _common_branch_root(branch_ents, expected=len(branch_bases))
+            if not root_spell:
+                root_status = "GUARDED"
+        elif is_wrapper:
             roots = list(owner_ent.attrs.get("wrapped_roots") or []) if owner_ent else []
             root_spell = str(roots[0] if roots else "LocalTensor")
         elif base in ASCENDC_BUFFER_TYPES:
@@ -2722,6 +2902,10 @@ def finalize_kernel_root_trace(
             root_spell = storage_root_kind_from_space(space)
         else:
             root_status = "UNRESOLVED"
+        if branch_bases and not root_spell:
+            root_status = "GUARDED"
+        elif root_spell:
+            root_status = "REACHED"
 
         bid = buffer_site_id(file=file, line=line, scope=function, name=name, root=root)
         attrs = {
@@ -2731,7 +2915,7 @@ def finalize_kernel_root_trace(
             or "",
             "scope": function,
             "type_name": (
-                "|".join(branch_bases[:2]) if branch_bases else _persist_type_name(type_text)
+                "|".join(branch_bases) if branch_bases else _persist_type_name(type_text)
             ),
             "role": (
                 "storage_wrapper"
@@ -2740,7 +2924,7 @@ def finalize_kernel_root_trace(
             ),
             "wrapper": wrapper_spell,
             "root_status": root_status,
-            "root_kind": "STORAGE" if root_status == "REACHED" else "",
+            "root_kind": "STORAGE" if root_spell else "",
             "root": f"AscendC::{root_spell}" if root_spell else "",
             "trace": [name]
             + ([wrapper_spell] if wrapper_spell else [])
@@ -2773,6 +2957,18 @@ def finalize_kernel_root_trace(
         )
         _index_storage(ent.id, scope=function, name=name, nfile=nfile)
         buf_count += 1
+        polarity = _conditional_polarity_map(type_text, expanded)
+        for idx, branch in enumerate(branch_bases):
+            if branch in type_ents:
+                _link(
+                    codemap,
+                    RelationKind.WRAPS,
+                    ent.id,
+                    type_ents[branch],
+                    attrs=_conditional_branch_attrs(
+                        name, branch, idx, len(branch_bases), polarity
+                    ),
+                )
         if root_spell:
             rid = _ensure_ascendc_root(codemap, root_spell, root_kind="STORAGE")
             if is_wrapper and wrapper_spell in type_ents and _is_catalog_storage_base(

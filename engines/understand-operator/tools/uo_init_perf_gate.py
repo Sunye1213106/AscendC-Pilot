@@ -29,6 +29,15 @@ DEFAULT_IFA = Path(
 GOLD = REPO / "artifacts" / "uo-init-perf" / "gold" / "fag-arch35.yaml"
 _CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}
 
+
+def _rss_mb() -> float:
+    try:
+        import psutil
+
+        return psutil.Process(os.getpid()).memory_info().rss / 1e6
+    except Exception:  # noqa: BLE001
+        return 0.0
+
 sys.path[:0] = [
     str(REPO / "engines" / "understand-operator" / "src"),
     str(REPO / "engines" / "common"),
@@ -265,6 +274,7 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
     }
     stages: dict[str, Any] = {"start": {"ok": bool(started.get("ok")), "run_id": run_id}}
     t_all = time.perf_counter()
+    peak_rss = _rss_mb()
     for name, fn in (
         ("prepare", prepare),
         ("extract", extract),
@@ -283,6 +293,7 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
             "error": out.get("error"),
         }
         print(f"{name} {dt:.3f}s ok={out.get('ok')} error={out.get('error')}", flush=True)
+        peak_rss = max(peak_rss, _rss_mb())
         if not out.get("ok"):
             stages["ok"] = False
             stages["failed_step"] = name
@@ -310,6 +321,22 @@ def run_pipeline(op: Path, arch: str, *, cache_mode: str, profile: str) -> dict[
     except Exception:  # noqa: BLE001
         pass
     stages["performance"] = _load_yaml(uo / "checks" / "performance.yaml")
+    try:
+        from uo_init import tu_cache
+        from uo_init.build import _COMPILE_MEM
+        from uo_init.pilot_engines import _STORE
+        from uo_init.runtime import live_ast_count
+
+        stages["runtime"] = {
+            "live_ast": live_ast_count(),
+            "walk_bundle": len(tu_cache._WALK_BUNDLE),
+            "bundle_store": bool(_STORE.get("bundle")),
+            "compile_mem": len(_COMPILE_MEM),
+            "peak_rss_mb": round(peak_rss, 1),
+            "rss_mb": round(_rss_mb(), 1),
+        }
+    except Exception:  # noqa: BLE001
+        stages["runtime"] = {}
     return stages
 
 
@@ -368,6 +395,24 @@ def main(argv: list[str] | None = None) -> int:
     if gold:
         fails.extend(compare_gold(result.get("precision") or {}, gold))
     fails.extend(_hot_file_fails(result.get("performance") or {}, args.op))
+    runtime = dict(result.get("runtime") or {})
+    if int(runtime.get("live_ast") or 0):
+        fails.append(f"live TU leftover={runtime.get('live_ast')}")
+    if int(runtime.get("walk_bundle") or 0):
+        fails.append(f"walk_bundle leftover={runtime.get('walk_bundle')}")
+    if runtime.get("bundle_store"):
+        fails.append("bundle store still populated after verify")
+    if int(runtime.get("compile_mem") or 0):
+        fails.append(f"compile mem leftover={runtime.get('compile_mem')}")
+    peak_rss = float(runtime.get("peak_rss_mb") or 0)
+    gold_rss = float((gold.get("runtime") or {}).get("peak_rss_mb") or 0) if gold else 0
+    if gold_rss > 0 and peak_rss > gold_rss * 1.25:
+        fails.append(f"peak RSS {peak_rss:.0f}MB > gold {gold_rss:.0f}MB +25%")
+    print(
+        f"runtime live_ast={runtime.get('live_ast')} peak_rss={peak_rss:.0f}MB "
+        f"(FD/thread informational on Windows)",
+        flush=True,
+    )
     total = float(result.get("total_s") or 0)
     analyze_s = float(((result.get("analyze") or {}).get("elapsed_s")) or 0)
     krt_s = float((result.get("precision") or {}).get("kernel_root_trace_s") or 0)

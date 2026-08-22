@@ -699,9 +699,15 @@ def has_live_ast_side(side: str) -> bool:
 
 
 def clear_live_ast() -> None:
-    """Drop in-process TUs after extract so analyze is not RAM-bound."""
+    """Drop in-process TUs and walk bundles after extract so analyze is not RAM-bound."""
     with _LOCK:
         _LIVE_AST.clear()
+        _WALK_BUNDLE.clear()
+
+
+def live_ast_count() -> int:
+    with _LOCK:
+        return len(_LIVE_AST)
 
 
 def store_ast(

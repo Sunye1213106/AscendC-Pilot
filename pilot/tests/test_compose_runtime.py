@@ -150,6 +150,8 @@ def test_compose_and_prune_runtime_context(tmp_path: Path):
 
         man = json.loads(man_path.read_text(encoding="utf-8"))
         assert man.get("owner") == "ascendc-pilot"
+        assert "ascendc" in (man.get("knowledge") or [])
+        assert (generated / "knowledge" / "ascendc" / "precision.md").is_file()
         assert "uo-query.md" in man.get("agents")
         assert "ascendc-pilot.md" in man.get("global_agents")
         assert "ce-helper.md" not in man.get("agents")
@@ -329,8 +331,9 @@ def test_action_skill_ids_are_discovered_not_closed_five():
     assert "solve" in ids
     assert "ce-apply" in ids
     assert "standalone-review" in ids
-    assert "test-modes" in ids
-    assert "lemma" in ids
+    assert "test-modes" not in ids
+    assert "lemma" not in ids
+    assert "source-proof" in ids
     assert "plan-fuse" not in ids
     assert "precision-testing" not in ids
     assert "operator-analysis" not in ids

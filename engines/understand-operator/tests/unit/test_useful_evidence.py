@@ -71,7 +71,14 @@ def test_writer_attrs_only_no_attribute_table(tmp_path: Path) -> None:
         assert "kind" not in data
         assert "file" not in data
         assert "type_text" not in data
-        assert conn.execute("SELECT COUNT(*) FROM attribute").fetchone()[0] == 0
+        tables = {
+            r[0]
+            for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert "attribute" not in tables
+        assert "predicate" not in tables
+        assert "provenance" not in tables
+        assert "legal_key" in tables
         assert conn.execute("SELECT COUNT(*) FROM source_span").fetchone()[0] == 0
     finally:
         conn.close()

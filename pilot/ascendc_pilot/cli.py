@@ -193,11 +193,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Operator package root (op_host/op_kernel). Required.",
     )
 
-    p_ctx = sub.add_parser("context", help="Build context pack")
-    p_ctx.add_argument("--project", type=Path, default=None)
-    p_ctx.add_argument("--intent", required=True)
-    p_ctx.add_argument("--topic", default="")
-
     p_start = sub.add_parser("start", help="Start workflow at entry_state (idempotent if same workflow active)")
     p_start.add_argument("workflow_id")
     p_start.add_argument(
@@ -742,12 +737,6 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print_json(result)
         return 0 if result.get("ok") else 1
-    if args.cmd == "context":
-        from ascendc_pilot.context import build_context_pack
-
-        pack = build_context_pack(args.project, intent=args.intent, topic=args.topic)
-        print_json(pack)
-        return 0
     if args.cmd == "run-summary":
         from ascendc_pilot.run_resume import existing_run_decision_payload, needs_resume_decision
 
@@ -1305,6 +1294,7 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 0
+        q = None
         try:
             q = open_query(project, op_name=op_name, architecture=architecture)
             limit = int(args.limit or 8)
@@ -1365,6 +1355,9 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001
             print_json({"ok": False, "error": str(exc)[:300]})
             return 1
+        finally:
+            if q is not None:
+                q.close()
     if args.cmd == "uo":
         if getattr(args, "uo_cmd", "") == "query":
             print_json(_uo_removed_payload("query"))

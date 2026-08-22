@@ -581,13 +581,6 @@ def run_named_gate(
         "kb_ready": lambda: gate_uo_ready_tg(
             project_root, uo, op_name=op_name, architecture=arch
         ),
-        "context_pack": lambda: {
-            "gate": "context_pack",
-            "ok": (agent_root(project_root, arch) / "context" / "context_pack.yaml").is_file(),
-            "message": "ok"
-            if (agent_root(project_root, arch) / "context" / "context_pack.yaml").is_file()
-            else "context pack missing",
-        },
         # TG — real engine adapters (kb_fingerprint is NOT an alias of uo_ready)
         "tg_init_confirmed": lambda: tg_adapters.gate_init_confirmed(
             project_root, op_name=op_name, architecture=arch

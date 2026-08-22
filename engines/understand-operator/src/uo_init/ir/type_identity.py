@@ -111,9 +111,21 @@ def named_type_is_unique(
     return n <= 1
 
 
+def _merge_type_text(left: str, right: str) -> str:
+    a = str(left or "").strip()
+    b = str(right or "").strip()
+    if not a:
+        return b
+    if not b or b == a or b in a:
+        return a
+    if a in b:
+        return b
+    return f"{a} | {b}"
+
+
 def iter_field_decl_rows(*irs: Any) -> Iterator[tuple[str, str, str, str, int]]:
     """Yield (owner_short, member, type_text, file, line) from HostIR/KernelIR field_decls."""
-    seen_keys: set[tuple[str, str, str]] = set()
+    collected: dict[tuple[str, str, str], tuple[str, str, str, str, int]] = {}
     for ir in irs:
         if ir is None:
             continue
@@ -144,20 +156,31 @@ def iter_field_decl_rows(*irs: Any) -> Iterator[tuple[str, str, str, str, int]]:
             if not owner or not member:
                 continue
             dedupe = (owner, member, file)
-            if dedupe in seen_keys:
+            prev = collected.get(dedupe)
+            if prev is not None:
+                collected[dedupe] = (prev[0], prev[1], _merge_type_text(prev[2], type_text), prev[3], prev[4])
                 continue
-            seen_keys.add(dedupe)
-            yield owner, member, type_text, file, line
+            collected[dedupe] = (owner, member, type_text, file, line)
+    yield from collected.values()
 
 
 def iter_unique_field_decls(*irs: Any) -> Iterator[tuple[str, str, str, str, int]]:
-    """Drop (owner, member) pairs that appear on more than one Clang record."""
+    """One row per (owner, member). Divergent types stay as guarded alternatives."""
     grouped: dict[tuple[str, str], list[tuple[str, str, str, str, int]]] = defaultdict(list)
     for row in iter_field_decl_rows(*irs):
         grouped[(row[0], row[1])].append(row)
     for rows in grouped.values():
         if len(rows) == 1:
             yield rows[0]
+            continue
+        texts = {str(row[2] or "").strip() for row in rows if str(row[2] or "").strip()}
+        if len(texts) <= 1:
+            continue
+        type_text = rows[0][2]
+        for extra in rows[1:]:
+            type_text = _merge_type_text(type_text, extra[2])
+        first = rows[0]
+        yield (first[0], first[1], type_text, first[3], first[4])
 
 
 def ir_var_types(host_ir: Any, known: set[str]) -> dict[str, set[str]]:

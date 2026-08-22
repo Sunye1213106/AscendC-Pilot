@@ -14,7 +14,7 @@ description: 写出测试用途并融成义务表。init 已有、要规划覆�
 
 ## 常驻判断
 
-缺 `tg/init.yaml` 先 `/tg-init`。scope 窗不要写义务表；fuse 窗不要重做用途调查。精度/性能口径不写进本文件，fuse 点名叠加原语再读。
+缺 `tg/init.yaml` 先 `/tg-init`。scope 窗不要写义务表；fuse 窗不要重做用途调查。精度/性能口径不写进本文件；fuse 窗用 knowledge 识别风险，用 scenario-catalog 写成 `P-*` / `F-*`。
 
 ## 看到这样
 
@@ -28,4 +28,4 @@ description: 写出测试用途并融成义务表。init 已有、要规划覆�
 
 - scope 窗：`references/scope.md`
 - fuse 窗：`references/fuse.md`
-- fuse 专表：`references/plan-heuristics.md`、`references/planning-gotchas.md`、`references/planning-context.md`
+- fuse 专表：`references/scenario-catalog.md`、`references/plan-heuristics.md`、`references/planning-gotchas.md`、`references/planning-context.md`

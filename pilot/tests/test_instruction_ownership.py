@@ -87,14 +87,10 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     skill_ids = list(load_agent_meta("ce-reviewer", str(REPO)).get("skill_ids") or [])
     assert "standalone-review" in skill_ids
     from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
-    from ascendc_pilot.context.profiles import get_profile
 
-    profile = get_profile("ce-review-code-review")
-    extra = list(profile.conditional_refs) if profile is not None else []
     scoped = method_skill_ids_for_action(
         {"skill_id": "standalone-review"},
         agent_skill_ids=skill_ids,
-        extra_ref_paths=extra,
     )
     assert "standalone-review" in scoped
     sdir = tmp_path / "ce-review"
@@ -114,22 +110,17 @@ def test_standalone_review_session_excludes_certificate_method(tmp_path: Path) -
     assert "skills/code-engineering/SKILL.md" not in packed
 
 
-def test_method_skill_ids_intersect_profile_and_ceiling() -> None:
+def test_method_skill_ids_intersect_action_and_ceiling() -> None:
     from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
-    from ascendc_pilot.context.profiles import get_profile
 
     ceiling = ["ce-plan-draft", "ce-apply", "standalone-review", "uo-query"]
-    draft = get_profile("ce-plan-draft")
     assert method_skill_ids_for_action(
         {"skill_id": "ce-plan-draft"},
         agent_skill_ids=ceiling,
-        extra_ref_paths=list(draft.conditional_refs) if draft else [],
     ) == ["ce-plan-draft"]
-    apply_prof = get_profile("ce-apply-patch")
     assert method_skill_ids_for_action(
         {"skill_id": "ce-apply"},
         agent_skill_ids=ceiling,
-        extra_ref_paths=list(apply_prof.conditional_refs) if apply_prof else [],
     ) == ["ce-apply"]
 
 
@@ -220,7 +211,6 @@ def test_instruction_ownership_lint_clean() -> None:
 
 
 def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> None:
-    from ascendc_pilot.context.profiles import get_profile
     from ascendc_pilot.workflows import WORKFLOWS
 
     failures: list[str] = []
@@ -239,24 +229,26 @@ def test_all_subagent_llm_actions_materialize_method_bundle(tmp_path: Path) -> N
                 or load_agent_meta(actor, str(REPO)).get("skill_ids")
                 or []
             )
-            profile = get_profile(action.get("context_profile_id"))
-            extra = list(profile.conditional_refs) if profile is not None else []
             from ascendc_pilot.actions.method_bundle import method_skill_ids_for_action
 
             skill_ids = method_skill_ids_for_action(
                 action,
                 agent_skill_ids=ceiling,
-                extra_ref_paths=extra,
             )
             sdir = tmp_path / wid / str(action.get("id"))
+            axes = list(action.get("fanout_axes") or [])
+            copy_declared = not (
+                bool(axes) and all(str(a.get("method_ref") or "").strip() for a in axes)
+            )
             mat = materialize_method_bundle(
                 sdir,
                 skill_ids=skill_ids,
                 existing_method=method,
                 project_root=REPO,
                 prompt=prompt,
-                extra_ref_paths=extra,
                 current_skill_id=str(action.get("skill_id") or "").rsplit("/", 1)[-1],
+                copy_declared_refs=copy_declared,
+                explicit_refs=list(action.get("refs") or []),
             )
             if not mat.get("ok") or mat.get("unauthorized") or mat.get("missing"):
                 failures.append(

@@ -17,7 +17,7 @@
 1. **打开入口。** 常见 `run_*.py`。确认 `--case` 或等价选行方式；哪些 flag 是精度、哪些是性能。扫描含 xls/xlsx，只认 csv 会漏真实跑测表。用户没点名的表不当本次目标。
 2. **写 golden。** match / mismatch / 缺口分开。设计文件里带预期报错或 Disable 的行不上精度 oracle。`--golden-only`（help 写不调用 pta / 无需 NPU）是造数，不是精度。
 3. **写 compare。** 脚本真实怎么比：函数里的阈值写进 compare；argparse 没有的 `atol`/`rtol` 不要编。Host replay 只关 dispatch / key，不是本路的精度 oracle。
-4. **写 `modes.precision` / `modes.perf`。** argparse 同时有两种 mode 就分别写。默认值若是性能 mode，不得把默认当精度。设计文件分开写了精度标准与性能标准，照抄事实，不要发明阈值。有精度或性能入口可读 `skills/test-modes/SKILL.md` 再打开对应支。在 golden/modes 之外记下同一 `call.kind`（pta / aclnn / mixed）。
+4. **写 `modes.precision` / `modes.perf`。** argparse 同时有两种 mode 就分别写。默认值若是性能 mode，不得把默认当精度。设计文件分开写了精度标准与性能标准，照抄事实，不要发明阈值。怎么跑只抄当前脚本与 `tg/init.yaml` 将要记录的事实。在 golden/modes 之外记下同一 `call.kind`（pta / aclnn / mixed）。
 5. **写 `generate_inputs` 缺口。** 脚本现在造得出什么、造不出什么。至少核对这些轴（runner 吃不了的标缺口，不要假装已覆盖）：空 tensor、标量 tensor、inf / -inf / nan、上/下边界、末维对齐 vs +1、合法 range vs 非法 range。常规 dtype 覆盖和这些特殊值分开计，不要铺进每一组 shape。
 6. **参数依赖。** reduce 轴必须落在 rank 内，shape 列与 `*TemplateNum` / `dim_*` 同理。依赖用 `control.recipe` 从可控列复算；生成器做不到 → `test_harness_gap`。记进 findings，不要当成两列独立可填。
 

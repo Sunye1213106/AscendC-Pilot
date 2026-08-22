@@ -38,7 +38,6 @@ RUNTIME_PROMPT_TOKENS = {
     "UO_ROOT",
     "TG_ROOT",
     "TOPIC",
-    "CONTEXT_PACK_PATH",
     "ARCHITECTURE",
     "ROLE_ID",
     "LEASE_ID",

@@ -339,17 +339,17 @@ def _occupancy_rank(hit: dict[str, Any]) -> int:
 
 
 def _leaf_name_where(needle: str) -> tuple[str, list[str]]:
-    full = str(needle or "").lower().strip()
+    full = str(needle or "").strip()
     ident = _last_ident(full.replace(".", "::"))
     if not ident:
         ident = full
     clause = f"""
       {_ASCENDC_CATALOG_SQL}
       AND (
-        lower(IFNULL(e.name, '')) = ?
-        OR lower(IFNULL(e.name, '')) = ?
-        OR lower(IFNULL(e.name, '')) LIKE ('%.' || ?)
-        OR lower(IFNULL(e.name, '')) LIKE ('%::' || ?)
+        e.name = ? COLLATE NOCASE
+        OR e.name = ? COLLATE NOCASE
+        OR e.name LIKE '%.' || ? COLLATE NOCASE
+        OR e.name LIKE '%::' || ? COLLATE NOCASE
       )
     """
     return clause, [full, ident, ident, ident]
@@ -1690,10 +1690,21 @@ class UoSqlQuery:
         yield shared_uo(self.product)
 
     def close(self) -> None:
+        from uo_init.query.legal_key_cache import clear_legal_key_cache
         from uo_init.store.reader import close_uo_connections
 
         close_uo_connections(self.product)
+        clear_legal_key_cache(self.product)
+        key = str(self.product)
+        with _TEMPLATE_BLOCKS_LOCK:
+            _TEMPLATE_BLOCKS_CACHE.pop(key, None)
         self._engine = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
 
     @property
     def architecture(self) -> str:
@@ -1985,16 +1996,16 @@ class UoSqlQuery:
             if needle:
                 prefix = f"{needle}%"
                 extra = """
-                    lower(IFNULL(e.name, '')) = ?
-                    OR lower(IFNULL(e.name, '')) LIKE ?
-                    OR lower(IFNULL(e.name, '')) LIKE '%::' || ?
-                    OR lower(IFNULL(e.name, '')) LIKE '%.' || ?
+                    e.name COLLATE NOCASE = ?
+                    OR e.name COLLATE NOCASE LIKE ?
+                    OR e.name COLLATE NOCASE LIKE '%::' || ?
+                    OR e.name COLLATE NOCASE LIKE '%.' || ?
                     OR lower(IFNULL(e.id, '')) = ?
                     OR lower(IFNULL(e.id, '')) LIKE '%::' || ?
                     OR lower(IFNULL(e.id, '')) LIKE '%.' || ?
                     OR (
                       e.kind NOT IN ('TYPE')
-                      AND lower(IFNULL(e.name, '')) LIKE ?
+                      AND e.name COLLATE NOCASE LIKE ?
                     )
                 """
                 sql_params: list[Any] = [
@@ -2010,10 +2021,10 @@ class UoSqlQuery:
                 ]
                 order_sql = """
                 ORDER BY CASE
-                  WHEN lower(IFNULL(e.name, '')) = ? THEN 0
-                  WHEN lower(IFNULL(e.name, '')) LIKE ? THEN 1
-                  WHEN lower(IFNULL(e.name, '')) LIKE '%::' || ? THEN 1
-                  WHEN lower(IFNULL(e.name, '')) LIKE ? THEN 2
+                  WHEN e.name COLLATE NOCASE = ? THEN 0
+                  WHEN e.name COLLATE NOCASE LIKE ? THEN 1
+                  WHEN e.name COLLATE NOCASE LIKE '%::' || ? THEN 1
+                  WHEN e.name COLLATE NOCASE LIKE ? THEN 2
                   ELSE 3
                 END, e.id
                 """
@@ -2327,8 +2338,8 @@ class UoSqlQuery:
                            IFNULL(s.snippet, '') AS snippet
                     FROM entity e
                     LEFT JOIN source_span s ON s.entity_id = e.id
-                    WHERE replace(IFNULL(e.file, ''), '\\', '/') = ?
-                       OR replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                    WHERE IFNULL(e.file, '') = ?
+                       OR IFNULL(e.file, '') LIKE '%' || ?
                     ORDER BY e.kind, e.id
                     LIMIT 200
                     """,
@@ -2349,13 +2360,13 @@ class UoSqlQuery:
                        IFNULL(s.snippet, '') AS snippet
                 FROM entity e
                 LEFT JOIN source_span s ON s.entity_id = e.id
-                WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
                   AND IFNULL(e.line_end, e.line_start) >= ?
                   AND IFNULL(e.line_start, 0) <= ?
                   AND IFNULL(e.line_start, 0) > 0
                 LIMIT 80
                 """,
-                (needle, start, end),
+                (needle, "/" + needle.lstrip("/"), start, end),
             ).fetchall()
             if not seed_rows:
                 leaf = needle.rsplit("/", 1)[-1]
@@ -2373,13 +2384,13 @@ class UoSqlQuery:
                                IFNULL(s.snippet, '') AS snippet
                         FROM entity e
                         LEFT JOIN source_span s ON s.entity_id = e.id
-                        WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                        WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
                           AND IFNULL(e.line_end, e.line_start) >= ?
                           AND IFNULL(e.line_start, 0) <= ?
                           AND IFNULL(e.line_start, 0) > 0
                         LIMIT 80
                         """,
-                        (alt, start, end),
+                        (alt, "/" + alt.lstrip("/"), start, end),
                     ).fetchall()
             seeds = [row for row in seed_rows if self._file_matches(str(row["file"] or ""), needle)]
             seen: dict[str, int] = {str(row["id"]): 0 for row in seeds}
@@ -2453,9 +2464,9 @@ class UoSqlQuery:
                 LEFT JOIN source_span s ON s.entity_id = e.id
                 WHERE e.kind IN ({placeholders})
                   AND (
-                    lower(IFNULL(e.name, '')) = ?
-                    OR lower(IFNULL(e.name, '')) LIKE '%::' || ?
-                    OR lower(IFNULL(e.name, '')) LIKE '%.' || ?
+                    e.name COLLATE NOCASE = ?
+                    OR e.name COLLATE NOCASE LIKE '%::' || ?
+                    OR e.name COLLATE NOCASE LIKE '%.' || ?
                     OR lower(e.id) = ?
                     OR lower(e.id) LIKE '%::' || ?
                   )
@@ -2666,7 +2677,7 @@ class UoSqlQuery:
                 FROM entity e
                 LEFT JOIN source_span s ON s.entity_id = e.id
                 WHERE e.kind IN ('COMPILE_VAR', 'MACRO')
-                  AND lower(IFNULL(e.name, '')) LIKE ?
+                  AND e.name COLLATE NOCASE LIKE ?
                 LIMIT 20
                 """,
                 (f"%{needle}%",),
@@ -2996,10 +3007,35 @@ class UoSqlQuery:
         return self._engine
 
     def audit(self) -> dict[str, Any]:
+        """Offline / expensive: hydrates the full CodeMap for path-existence audit."""
         return self._lazy_engine().audit()
 
     def summary(self) -> dict[str, Any]:
-        return self._lazy_engine().summary()
+        from uo_init.store.reader import load_view_blob, read_meta
+
+        blob = load_view_blob(self.product, "summary", expand_legal_keys=False)
+        if isinstance(blob, dict) and blob:
+            return dict(blob)
+        meta = read_meta(self.product)
+        with self._connect() as conn:
+            by_kind = {
+                str(k): int(n)
+                for k, n in conn.execute("SELECT kind, COUNT(*) FROM entity GROUP BY kind")
+            }
+            by_rel = {
+                str(k): int(n)
+                for k, n in conn.execute("SELECT kind, COUNT(*) FROM relation GROUP BY kind")
+            }
+            entity_count = int(conn.execute("SELECT COUNT(*) FROM entity").fetchone()[0])
+            relation_count = int(conn.execute("SELECT COUNT(*) FROM relation").fetchone()[0])
+        return {
+            "op_name": meta.get("op_name") or "",
+            "architecture": meta.get("architecture") or "",
+            "entity_count": entity_count,
+            "relation_count": relation_count,
+            "entities_by_kind": by_kind,
+            "relations_by_kind": by_rel,
+        }
 
     def _slice(
         self,
@@ -3300,9 +3336,9 @@ class UoSqlQuery:
                 where.append(
                     """(
                     e.name = ?
-                    OR lower(e.name) = lower(?)
-                    OR lower(e.name) LIKE '%::' || lower(?)
-                    OR lower(e.name) LIKE '%.' || lower(?)
+                    OR e.name = ? COLLATE NOCASE
+                    OR e.name LIKE '%::' || ? COLLATE NOCASE
+                    OR e.name LIKE '%.' || ? COLLATE NOCASE
                     OR lower(IFNULL(json_extract(e.data, '$.condition'), '')) LIKE lower(?)
                     OR lower(IFNULL(json_extract(e.data, '$.predicate'), '')) LIKE lower(?)
                     OR lower(IFNULL(e.data, '')) LIKE lower(?)
@@ -3573,7 +3609,7 @@ class UoSqlQuery:
                 WHERE e.kind = 'BUFFER'
                   AND (
                     ? = ''
-                    OR lower(IFNULL(e.name, '')) LIKE ?
+                    OR e.name COLLATE NOCASE LIKE ?
                     OR lower(e.id) LIKE ?
                     OR lower(IFNULL(json_extract(e.data, '$.allocated'), '')) LIKE ?
                     OR lower(IFNULL(e.data, '')) LIKE ?
@@ -3600,9 +3636,9 @@ class UoSqlQuery:
                   )
                   AND (
                     ? = ''
-                    OR lower(IFNULL(e.name, '')) = ?
-                    OR lower(IFNULL(e.name, '')) LIKE ?
-                    OR lower(IFNULL(e.name, '')) LIKE '%::' || ?
+                    OR e.name COLLATE NOCASE = ?
+                    OR e.name COLLATE NOCASE LIKE ?
+                    OR e.name COLLATE NOCASE LIKE '%::' || ?
                     OR lower(IFNULL(json_extract(e.data, '$.wraps_lock'), '')) LIKE ?
                     OR lower(IFNULL(e.data, '')) LIKE ?
                   )
@@ -3705,7 +3741,7 @@ class UoSqlQuery:
                     LEFT JOIN source_span s ON s.entity_id = e.id
                     WHERE e.kind = 'OPERATION'
                       AND (
-                        lower(IFNULL(e.name, '')) LIKE ?
+                        e.name COLLATE NOCASE LIKE ?
                         OR lower(IFNULL(json_extract(e.data, '$.callee'), '')) LIKE ?
                         OR lower(e.id) LIKE ?
                       )
@@ -3837,7 +3873,7 @@ class UoSqlQuery:
                   AND (
                     e.kind = 'KERNEL'
                     OR lower(IFNULL(e.file, '')) LIKE '%entry%'
-                    OR lower(IFNULL(e.name, '')) LIKE '%entry%'
+                    OR e.name COLLATE NOCASE LIKE '%entry%'
                     OR (? != '' AND IFNULL(e.name, '') = ?)
                   )
                 LIMIT 48
@@ -4104,6 +4140,20 @@ class UoSqlQuery:
             == _last_ident(str(by_kind[EntityKind.TEMPLATE_ARG.value].get("name") or "")).lower()
         ):
             by_kind.pop(EntityKind.TEMPLATE_ARG.value, None)
+        key_ident = _last_ident(
+            str((by_kind.get(EntityKind.TILING_KEY.value) or {}).get("name") or "")
+        ).lower()
+        if key_ident:
+            for weaker in (
+                EntityKind.FIELD.value,
+                EntityKind.PREDICATE.value,
+                EntityKind.VARIABLE.value,
+                EntityKind.COMPILE_VAR.value,
+                EntityKind.MACRO.value,
+            ):
+                other = by_kind.get(weaker)
+                if other and _last_ident(str(other.get("name") or "")).lower() == key_ident:
+                    by_kind.pop(weaker, None)
         # Occupancy ranking already prefers located identities. Keep fileless
         # FUNCTION/METHOD API symbols when they carry CALLS / ROOTED_AT.
         cards_src = list(by_kind.values())[:MAX_NAME_CARDS]
@@ -4249,9 +4299,9 @@ class UoSqlQuery:
                 SELECT 1 FROM entity e
                 WHERE IFNULL(json_extract(e.data, '$.catalog'), '') = 'ascendc'
                   AND (
-                    lower(IFNULL(e.name, '')) = ?
+                    e.name COLLATE NOCASE = ?
                     OR lower(IFNULL(json_extract(e.data, '$.spelling'), '')) = ?
-                    OR lower(IFNULL(e.name, '')) LIKE ('%::' || ?)
+                    OR e.name COLLATE NOCASE LIKE ('%::' || ?)
                   )
                 LIMIT 1
                 """,
@@ -4277,7 +4327,7 @@ class UoSqlQuery:
         with self._connect() as conn:
             rows = self._select_entities(
                 conn,
-                extra_where=f"{_ASCENDC_CATALOG_SQL} AND lower(IFNULL(e.name, '')) LIKE ?",
+                extra_where=f"{_ASCENDC_CATALOG_SQL} AND e.name COLLATE NOCASE LIKE ?",
                 params=(ident.lower() + "%",),
                 limit=max(int(limit), 8),
             )
@@ -4737,14 +4787,14 @@ class UoSqlQuery:
                        IFNULL(s.snippet, '') AS snippet
                 FROM entity e
                 LEFT JOIN source_span s ON s.entity_id = e.id
-                WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
                   AND IFNULL(e.line_end, e.line_start) >= ?
                   AND IFNULL(e.line_start, 0) <= ?
                   AND IFNULL(e.line_start, 0) > 0
                 ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
                 LIMIT ?
                 """,
-                (needle, start, end, cap * 4),
+                (needle, "/" + needle.lstrip("/"), start, end, cap * 4),
             ).fetchall()
             if not seed_rows:
                 leaf = needle.rsplit("/", 1)[-1]
@@ -4762,14 +4812,14 @@ class UoSqlQuery:
                                IFNULL(s.snippet, '') AS snippet
                         FROM entity e
                         LEFT JOIN source_span s ON s.entity_id = e.id
-                        WHERE replace(IFNULL(e.file, ''), '\\', '/') LIKE '%' || ?
+                        WHERE (IFNULL(e.file, '') = ? OR IFNULL(e.file, '') LIKE '%' || ?)
                           AND IFNULL(e.line_end, e.line_start) >= ?
                           AND IFNULL(e.line_start, 0) <= ?
                           AND IFNULL(e.line_start, 0) > 0
                         ORDER BY (IFNULL(e.line_end, e.line_start) - IFNULL(e.line_start, 0)) ASC, e.kind, e.name
                         LIMIT ?
                         """,
-                        (alt, start, end, cap * 4),
+                        (alt, "/" + alt.lstrip("/"), start, end, cap * 4),
                     ).fetchall()
             hits = self._hits_from_rows(conn, seed_rows, why="around", with_snippet=True)
         return self._rank_around_seeds(hits, line=start, limit=cap)

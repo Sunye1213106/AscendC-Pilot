@@ -126,6 +126,18 @@ def main() -> int:
         default=str(OUT),
         help="JSON result path. Do not overwrite the cannbot baseline unless asked.",
     )
+    parser.add_argument(
+        "--hold-open",
+        action="store_true",
+        help="Reuse one UoSqlQuery without cache/gc between hops (production growth).",
+    )
+    parser.add_argument("--hold-n", type=int, default=200)
+    parser.add_argument(
+        "--hold-rss-delta-mb",
+        type=float,
+        default=200,
+        help="Fail hold-open if RSS grows more than this (MB) during the reuse loop.",
+    )
     args = parser.parse_args()
     out_path = Path(args.out)
 
@@ -133,6 +145,7 @@ def main() -> int:
     rows: list[dict] = []
     peak = _rss_mb()
     start_rss = peak
+    hold_fails: list[str] = []
     t_all = time.perf_counter()
     for op, root in OPS.items():
         print(f"==== {op} rss={_rss_mb():.0f}MB ====", flush=True)
@@ -197,12 +210,37 @@ def main() -> int:
                     scene="launch-around",
                 )
                 rows.append(around)
-        q.close()
-        clear_legal_key_cache()
-        _TEMPLATE_BLOCKS_CACHE.clear()
-        close_uo_connections()
-        gc.collect()
-        peak = max(peak, _rss_mb())
+        if args.hold_open:
+            before = _rss_mb()
+            for i in range(max(1, int(args.hold_n))):
+                hop = _run(q, pattern="LocalTensor")
+                hop.update(
+                    op=op,
+                    morph="hold-open",
+                    argv=f"hold-{i}",
+                    scene="hold-open",
+                )
+                rows.append(hop)
+            after = _rss_mb()
+            peak = max(peak, after)
+            delta = after - before
+            print(
+                f"  {op} hold-open n={args.hold_n} rss {before:.0f}->{after:.0f}MB "
+                f"delta={delta:.0f}MB",
+                flush=True,
+            )
+            if delta > float(args.hold_rss_delta_mb):
+                hold_fails.append(
+                    f"{op} hold-open RSS +{delta:.0f}MB > {args.hold_rss_delta_mb:g}MB"
+                )
+            q.close()
+        else:
+            q.close()
+            clear_legal_key_cache()
+            _TEMPLATE_BLOCKS_CACHE.clear()
+            close_uo_connections()
+            gc.collect()
+            peak = max(peak, _rss_mb())
         print(f"  {op} done n={len(rows)} rss={_rss_mb():.0f}MB", flush=True)
 
     elapsed = round(time.perf_counter() - t_all, 2)
@@ -213,6 +251,7 @@ def main() -> int:
         "rss_end_mb": round(_rss_mb(), 1),
         "rss_peak_mb": round(peak, 1),
         "ok": sum(1 for r in rows if r.get("ok")),
+        "hold_fails": hold_fails,
         "p50_ms": sorted(r["ms"] for r in rows)[len(rows) // 2] if rows else 0,
         "p95_ms": sorted(r["ms"] for r in rows)[int(len(rows) * 0.95)] if rows else 0,
         "max_ms": max((r["ms"] for r in rows), default=0),
@@ -237,6 +276,9 @@ def main() -> int:
         encoding="utf-8",
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
+    if hold_fails:
+        print("HOLD-OPEN FAIL: " + "; ".join(hold_fails), flush=True)
+        return 1
     return 0 if len(rows) >= 150 else 1
 
 

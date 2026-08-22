@@ -346,6 +346,12 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
                 )
             except Exception:  # noqa: BLE001
                 perf_path = None
+        try:
+            from uo_init.runtime import end_session
+
+            end_session(op_root=root, architecture=arch)
+        except Exception:  # noqa: BLE001
+            pass
         return {
             "ok": ok,
             "engine": "verify",
@@ -359,6 +365,12 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             "locate_ready": quality.get("locate_ready"),
         }
     except Exception as exc:  # noqa: BLE001
+        try:
+            from uo_init.runtime import end_session
+
+            end_session(op_root=root, architecture=str(ctx.get("architecture") or ctx.get("arch_dir") or ""))
+        except Exception:  # noqa: BLE001
+            pass
         return {"ok": False, "engine": "verify", "error": str(exc)[:400], "verdict": "fail"}
 
 
@@ -402,6 +414,9 @@ def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
                 summary=cached.get("summary"),
                 meta={"source_revision": revision} if revision else None,
             )
+            from uo_init.build import drop_compile_mem
+
+            drop_compile_mem(root, architecture=arch)
             return {
                 "ok": bool(written.get("ok")),
                 "path": written.get("path"),
@@ -422,6 +437,9 @@ def _commit_uo_product(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
             key_fields=[],
             commit=True,
         )
+        from uo_init.build import drop_compile_mem
+
+        drop_compile_mem(root, architecture=arch)
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": str(exc)[:400]}
 

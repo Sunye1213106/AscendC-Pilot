@@ -20,12 +20,6 @@ def extract_host_bundle(
     One product path: no controllability, API clang, var_model, or key bind.
     ``kernel_max_variants`` defaults to one dtype so cold extract stays bounded.
     """
-    from uo_init.build_context import BuildContext
-    from uo_init.host_ir import build_host_ir
-    from uo_init.kernel_ir import build_kernel_ir, kernel_ir_isolate
-    from uo_init.op_spec import discover
-    from uo_init.tpl_dsl import parse_file
-
     from uo_init.timing import PhaseTimer, log as _tlog
 
     timer = PhaseTimer()
@@ -33,6 +27,43 @@ def extract_host_bundle(
         f"extract_host_bundle start  with_kernel={with_kernel} "
         f"kernel_max_variants={kernel_max_variants}"
     )
+    try:
+        return _extract_host_bundle_impl(
+            op_dir=op_dir,
+            cann_root=cann_root,
+            ops_root=ops_root,
+            arch_dir=arch_dir,
+            with_kernel=with_kernel,
+            kernel_max_variants=kernel_max_variants,
+            timer=timer,
+            _tlog=_tlog,
+        )
+    finally:
+        try:
+            from uo_init import tu_cache as _tu_cache
+
+            _tlog(f"  tu_cache {_tu_cache.stats()}")
+            _tu_cache.clear_live_ast()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _extract_host_bundle_impl(
+    *,
+    op_dir,
+    cann_root,
+    ops_root,
+    arch_dir,
+    with_kernel,
+    kernel_max_variants,
+    timer,
+    _tlog,
+):
+    from uo_init.build_context import BuildContext
+    from uo_init.host_ir import build_host_ir
+    from uo_init.kernel_ir import build_kernel_ir, kernel_ir_isolate
+    from uo_init.op_spec import discover
+    from uo_init.tpl_dsl import parse_file
 
     with timer.span("discover"):
         spec = discover(op_dir, arch_dir=arch_dir)
@@ -243,13 +274,6 @@ def extract_host_bundle(
     )
 
     timing = timer.summary()
-    try:
-        from uo_init import tu_cache as _tu_cache
-
-        _tlog(f"  tu_cache { _tu_cache.stats() }")
-        _tu_cache.clear_live_ast()
-    except Exception:  # noqa: BLE001
-        pass
     _tlog(
         f"extract_host_bundle TOTAL {timing['total_seconds']:.1f}s  "
         f"slow={timing['slow_phases'] or 'none'}"

@@ -113,6 +113,21 @@ def load_compile_cache(
         return None
 
 
+def drop_compile_mem(op_root: Path | None = None, architecture: str | None = None) -> None:
+    """Drop in-process compile payloads. Disk pickle stays for crash/restart."""
+    if op_root is None:
+        _COMPILE_MEM.clear()
+        return
+    prefix = f"{Path(op_root).expanduser().resolve()}|"
+    arch = str(architecture or "")
+    for key in list(_COMPILE_MEM):
+        if not key.startswith(prefix):
+            continue
+        if arch and not key.endswith(f"|{arch}"):
+            continue
+        _COMPILE_MEM.pop(key, None)
+
+
 def clear_compile_cache(op_root: Path | None = None, architecture: str | None = None) -> None:
     if op_root is None:
         _COMPILE_MEM.clear()
@@ -259,6 +274,8 @@ def compile_codemap(
             else:
                 fn(cm, source_root, architecture=arch, **extra)  # type: ignore[misc]
             _span(name, t0)
+        clear_source_text()
+        reset_index_cache()
         cm.meta["production_source_enrichment"] = True
     else:
         cm.meta["production_source_enrichment"] = False

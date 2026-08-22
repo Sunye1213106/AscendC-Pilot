@@ -10,7 +10,8 @@
 状态与迁移              -> Workflow Spec（LLM Action 写 skill_id）
 可执行步骤              -> Action
 身份与权限上限          -> Agent（skill_ids 不是每次装载列表）
-动态事实                -> ContextProfile
+静态领域事实            -> knowledge/（Action knowledge_refs 显式声明）
+本次运行已确认的事实    -> Artifact
 硬不变量                -> Policy / Invariant（不是 LLM heuristic）
 工具或 runtime 方法合同 -> Capability
 控制面传输与派发        -> Host Session Driver（Host Adapter 运行时）

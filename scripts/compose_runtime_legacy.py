@@ -88,8 +88,6 @@ ROUTER_SKILLS = frozenset(
         "plan",
         "solve",
         "standalone-review",
-        "test-modes",
-        "lemma",
     }
 )
 
@@ -682,6 +680,19 @@ def validate(repo: Path) -> list[str]:
     errors: list[str] = []
     errors.extend(check_skill_action_markers(repo))
     errors.extend(validate_domain_skills(repo))
+    for rel in (
+        "knowledge/ascendc/precision.md",
+        "knowledge/ascendc/performance.md",
+        "knowledge/ascendc/cross-layer-contracts.md",
+        "knowledge/ascendc/synchronization.md",
+        "skills/plan/references/scenario-catalog.md",
+        "skills/solve/references/precision-construction.md",
+        "skills/solve/references/performance-construction.md",
+        "skills/source-proof/references/review.md",
+        "skills/source-proof/references/referee-replay.md",
+    ):
+        if not (repo / rel).is_file():
+            errors.append(f"AUTHORITY_FILE_MISSING {rel}")
 
     sys.path.insert(0, str(repo / "pilot"))
     from ascendc_pilot.workflows import WORKFLOWS  # noqa: WPS433
@@ -781,8 +792,6 @@ def validate(repo: Path) -> list[str]:
                 "readonly_analyst",
                 "controller",
             } or action.get("execution_mode") in {"subagent", "primary_interactive"}:
-                if not action.get("context_profile_id"):
-                    errors.append(f"{wid}/{aid}: missing context_profile_id")
                 if not action.get("output_contract_id"):
                     errors.append(f"{wid}/{aid}: missing output_contract_id")
             agent_id = action.get("agent_id")
@@ -807,7 +816,6 @@ def _action_yaml_drift(wid: str, action: dict[str, Any], ayaml: dict[str, Any]) 
         "role_id": action.get("role_id"),
         "execution_mode": action.get("execution_mode"),
         "task_prompt_id": action.get("task_prompt_id"),
-        "context_profile_id": action.get("context_profile_id"),
         "output_contract_id": action.get("output_contract_id"),
     }
     # capabilities / policies lists
@@ -860,7 +868,6 @@ def _spec_action_yaml(wid: str, action: dict[str, Any], extras: dict[str, Any] |
             "capabilities": list(action.get("capability_ids") or []),
             "policies": list(action.get("policy_ids") or []),
             "task_prompt_id": action.get("task_prompt_id"),
-            "context_profile_id": action.get("context_profile_id"),
             "output_contract_id": action.get("output_contract_id"),
             "allowed_write_paths": list(action.get("allowed_write_paths") or []),
             "forbidden_write_paths": list(action.get("forbidden_write_paths") or []),
@@ -1432,6 +1439,27 @@ def compose_host(repo: Path, host: str, *, out_root: Path | None = None) -> dict
         # Legacy leftover: cognitive skills must be self-contained under references/.
         # Do not copy _shared into generated hosts.
         pass
+    knowledge_src = repo / "knowledge"
+    knowledge_dst = out_root / "knowledge"
+    required_knowledge = (
+        "ascendc/precision.md",
+        "ascendc/performance.md",
+        "ascendc/cross-layer-contracts.md",
+        "ascendc/synchronization.md",
+    )
+    missing_knowledge = [rel for rel in required_knowledge if not (knowledge_src / rel).is_file()]
+    if missing_knowledge:
+        return {
+            "ok": False,
+            "error": "KNOWLEDGE_MISSING",
+            "missing": missing_knowledge,
+            "compiled": compiled,
+            "out_root": out_root.as_posix(),
+        }
+    if knowledge_dst.exists():
+        _rmtree(knowledge_dst)
+    shutil.copytree(knowledge_src, knowledge_dst)
+    compiled.append(f"{host}/knowledge")
 
     # Shared policies + short invariants under each host
     pol_dst = out_skills / "_policies"
@@ -1692,6 +1720,15 @@ def compose_all(
     all_compiled: list[str] = []
     for host in host_names:
         result = compose_host(repo, host)
+        if not result.get("ok", True):
+            return {
+                "ok": False,
+                "errors": [
+                    f"{host}: {result.get('error') or 'COMPOSE_FAILED'} "
+                    f"missing={result.get('missing') or []}"
+                ],
+                "compiled": all_compiled,
+            }
         all_compiled.extend(result.get("compiled") or [])
     gen_errors: list[str] = []
     for host in host_names:

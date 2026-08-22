@@ -26,7 +26,7 @@ from ascendc_pilot.authorize.session_registry import (
     lookup_child_session,
     register_child_session,
 )
-from ascendc_pilot.context.compiler import missing_reference_paths
+from ascendc_pilot.actions.method_bundle import missing_reference_paths
 from ascendc_pilot.paths import ensure_agent_layout
 from ascendc_pilot.state import start_workflow
 
@@ -267,17 +267,28 @@ def test_materialize_method_bundle_copies_refs(tmp_path: Path) -> None:
 def test_materialize_method_bundle_copies_named_refs_only(tmp_path: Path) -> None:
     sdir = tmp_path / "session"
     sdir.mkdir()
-    mat = materialize_method_bundle(
-        sdir,
+    implicit = materialize_method_bundle(
+        sdir / "implicit",
         skill_ids=["ce-plan-draft"],
         existing_method="See playbook `references/gotchas.md`.\n",
         project_root=REPO,
         current_skill_id="ce-plan-draft",
     )
+    assert implicit.get("ok") is True, implicit
+    assert implicit.get("copied") == []
+    assert not (sdir / "implicit" / "refs" / "ce-plan-draft" / "gotchas.md").exists()
+    mat = materialize_method_bundle(
+        sdir / "explicit",
+        skill_ids=["ce-plan-draft"],
+        existing_method="See playbook `references/gotchas.md`.\n",
+        project_root=REPO,
+        current_skill_id="ce-plan-draft",
+        explicit_refs=["gotchas.md"],
+    )
     copied = list(mat.get("copied") or [])
     assert copied == ["refs/ce-plan-draft/gotchas.md"]
-    assert (sdir / "refs" / "ce-plan-draft" / "gotchas.md").is_file()
-    assert not (sdir / "refs" / "ce-plan-draft" / "scenario-catalog.md").is_file()
+    assert (sdir / "explicit" / "refs" / "ce-plan-draft" / "gotchas.md").is_file()
+    assert not (sdir / "explicit" / "refs" / "ce-plan-draft" / "scenario-catalog.md").is_file()
     assert mat.get("indexed") == ["references/ce-plan-draft/gotchas.md"]
 
 
@@ -337,6 +348,72 @@ def test_missing_reference_paths_helper() -> None:
     assert missing_reference_paths(
         [{"path": "a.md", "status": "ok"}, {"path": "b.md", "status": "missing"}]
     ) == ["b.md"]
+
+
+def test_knowledge_refs_materialize_into_session(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.method_bundle import materialize_knowledge_refs
+    from ascendc_pilot.workflows import WORKFLOWS
+
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    out = materialize_knowledge_refs(
+        sdir,
+        ["ascendc/precision.md", "ascendc/performance.md"],
+        project_root=REPO,
+    )
+    assert out.get("ok") is True, out
+    assert (sdir / "knowledge" / "ascendc" / "precision.md").is_file()
+    body = (sdir / "knowledge" / "ascendc" / "precision.md").read_text(encoding="utf-8")
+    assert "P-CAST" not in body
+    assert "/tg-plan" not in body
+    fuse = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_fuse")
+    assert "scenario-catalog.md" in (fuse.get("refs") or [])
+    assert "ascendc/precision.md" in (fuse.get("knowledge_refs") or [])
+    draft = next(a for a in WORKFLOWS["ce-plan"]["actions"] if a["id"] == "plan_draft")
+    assert "ascendc/cross-layer-contracts.md" in (draft.get("knowledge_refs") or [])
+    assert not any(str(r).startswith("P-") for r in (draft.get("refs") or []))
+    revise = next(a for a in WORKFLOWS["ce-apply"]["actions"] if a["id"] == "plan_revise")
+    assert revise.get("knowledge_refs") == draft.get("knowledge_refs")
+
+
+def test_knowledge_refs_namespace_and_missing(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.method_bundle import materialize_knowledge_refs
+
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    isolated = materialize_knowledge_refs(
+        sdir,
+        ["ascendc/precision.md"],
+        project_root=REPO,
+        knowledge_ns="standards",
+    )
+    assert isolated.get("ok") is True, isolated
+    assert (sdir / "knowledge" / "standards" / "ascendc" / "precision.md").is_file()
+    assert not (sdir / "knowledge" / "ascendc" / "precision.md").exists()
+    missing = materialize_knowledge_refs(
+        sdir,
+        ["ascendc/does-not-exist.md"],
+        project_root=REPO,
+    )
+    assert missing.get("ok") is False
+    assert missing.get("reason_code") == "KNOWLEDGE_MISSING"
+    assert "ascendc/does-not-exist.md" in (missing.get("missing") or [])
+
+
+def test_append_action_ref_pointers_skips_only_present() -> None:
+    from ascendc_pilot.actions.runtime import _append_action_ref_pointers
+
+    text = "# draft\n\n读 `knowledge/ascendc/precision.md`。\n"
+    action = {
+        "knowledge_refs": [
+            "ascendc/precision.md",
+            "ascendc/performance.md",
+        ]
+    }
+    out = _append_action_ref_pointers(text, action)
+    assert "`knowledge/ascendc/precision.md`" in out
+    assert "`knowledge/ascendc/performance.md`" in out
+    assert out.count("`knowledge/ascendc/precision.md`") == 1
 
 
 def test_agent_yaml_uses_scope_namespaces() -> None:

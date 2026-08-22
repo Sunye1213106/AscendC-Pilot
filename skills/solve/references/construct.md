@@ -16,7 +16,7 @@
 
 1. **按义务定向。** 只构造计划里的控制列；其余用 defaults。不要把 L3 特殊值铺进每一组 L0 shape。
 2. **填满表。** 每一行覆盖 init 声明的列。缺值用 defaults 或 recipe 复算（轴∈rank、`dim_*` 派生），不要留空让 runner 崩。
-3. **精度 / 性能旋钮。** 碰到 `P-*` / `F-*` 读 `skills/test-modes/SKILL.md` 再打开对应支。clean（normal / zero / near_zero / all_ones）是必过门；stress 不当唯一硬门。性能预算 3–8 条，禁止枚举全部 legal key。任一性能场景带上 `F-SHAPE-TYPICAL`。
+3. **精度 / 性能旋钮。** 只按已批准的 `P-*` / `F-*` 构造，不要重新判断该不该挂场景。旋钮见本窗装载的构造表。clean（normal / zero / near_zero / all_ones）是必过门；stress 不当唯一硬门。性能预算 3–8 条，禁止枚举全部 legal key。任一性能场景带上 `F-SHAPE-TYPICAL`。怎么跑以 `tg/init.yaml` 为准。
 4. **硬命题。** 义务需要「源码不可达 / P⇒Q」时读 `skills/source-proof/SKILL.md`。不要把 Host Replay reject 写成不可达证明。
 5. **观测怎么用。** Host Replay 无 NPU，只看 tiling key / TD / OP_CHECK / 分支。HIT 可增长 dispatch/key；REWRITE / REFUSE 是观测，供引理；CRASH / NOT_RUN 是环境，禁止当负样本，也不是 golden 失败。`Replay reject ≠ E`。
 6. **精度 oracle 是 harness mode。** Host 命中 TilingKey 关不了 `P-*`。预期报错 / Disable 行不上 NPU，也不要写成精度失败。
@@ -35,8 +35,8 @@
 | --- | --- |
 | 计划未批准 | 停 |
 | 义务要改某几列 | 只动这些列，其余 defaults |
-| `P-*` | 读精度原语；clean 是必过门 |
-| `F-*` | 读性能原语；带 `F-SHAPE-TYPICAL` |
+| `P-*` | 读精度构造表；clean 是必过门 |
+| `F-*` | 读性能构造表；带 `F-SHAPE-TYPICAL` |
 | 需要「不可达」 | 读源码证明；Replay reject 不够 |
 | HIT | 可增长 dispatch/key |
 | REWRITE / REFUSE | 观测，给引理 |
@@ -76,4 +76,4 @@
 
 ## 指针
 
-定向构造表由本窗装载。精度/性能：`skills/test-modes/SKILL.md`。硬命题：`skills/source-proof/SKILL.md`。
+定向构造表与精度/性能旋钮由本窗装载。硬命题：`skills/source-proof/SKILL.md`。

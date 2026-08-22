@@ -296,7 +296,7 @@ scope     [D]  内存 git/PR diff；无 diff 则停
     │
     ▼
 review    [S ce-reviewer ×2]  Spec ∥ Standards
-                          ──gate: kb_ready, context_pack
+                          ──gate: kb_ready
     │
     ▼
 summary   [H]  建议修改或建议测试（不落盘）

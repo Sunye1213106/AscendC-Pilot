@@ -106,6 +106,10 @@ def test_installers_expose_only_primary_opencode_tab() -> None:
     assert "install-manifest.json" in sh
     assert "install-manifest.json" in ps1
     assert "install-manifest.json" in un_ps1
+    assert '"$GEN/knowledge"' in sh
+    assert 'Join-Path $genRoot "knowledge"' in ps1
+    assert "generated knowledge missing" in sh
+    assert "generated knowledge missing" in ps1
     assert "uninstall.ps1" in refresh
     assert "Skip uninstall" not in refresh
     assert "ascendc-cann-root" in sh

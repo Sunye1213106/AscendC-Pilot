@@ -89,11 +89,6 @@ def test_start_persists_pilot_params(tmp_path: Path) -> None:
     )
     assert state.get("op_name") == "synth_tg"
     assert Path(str(state.get("test_script_root") or "")).resolve() == consumer.resolve()
-    from ascendc_pilot.context import build_context_pack
-
-    pack = build_context_pack(root, intent="test", topic="plan")
-    assert pack.get("op_name") == "synth_tg"
-    assert Path(str(pack.get("test_script_root") or "")).resolve() == consumer.resolve()
 
 
 _PLAN_BODY = """# why

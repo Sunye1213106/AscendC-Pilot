@@ -14,4 +14,4 @@
 | 精度不对（Cast / DataCopy / 多 dtype） | **precision** | Cast / DataCopy；测量在 TG |
 | 性能回退 | **perf** | BUFFER 等；profiling 在 TG |
 
-精度若要点名用例，用 `P-*`（见 `skills/test-modes/SKILL.md`）；性能用 `F-*`（同一 overlay 性能支）。不要静默扩成全部合法 Key。
+测试内容写成可观察风险散文（精度 / 性能 / 跨层 / 同步），不要写 TG 场景 id。不要静默扩成全部合法 Key。

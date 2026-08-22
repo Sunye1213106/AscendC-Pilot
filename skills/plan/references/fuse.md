@@ -23,7 +23,7 @@ Planning Context **就是** `runs/.../plan_scope/parts/purpose.md`（外加用�
    - L2：有界笛卡尔
    - L3：异常（空 tensor / inf/nan / 对齐+1 / 非法 range）
    不要把特殊值铺进 L0/L1 的每一组 shape。
-5. **精度 / 性能指针。** 义务含精度 → 读 `skills/test-modes/SKILL.md` 再打开精度支。harness 有性能入口或意图含性能 → 读同一 overlay 的性能支。口径来自 init 的 harness mode，不是 Host HIT。
+5. **精度 / 性能映射。** 领域风险见本窗装载的 knowledge。把风险写成义务时，id 只从本窗装载的场景目录取，不要自造。口径来自 init 的 harness mode，不是 Host HIT。怎么跑脚本只抄 `tg/init.yaml`。
 6. **闸门。** root 不到 → `untestable` + `reason`，不进义务表（不要写成 `class: untestable`）。缺列 / 缺脚本 / 生成器造不出 → `test_harness_gap` 说明书，先 `/ce-apply` 改测试仓，禁止 start solve。
 
 ## 常驻判断
@@ -42,8 +42,8 @@ YAML 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cov
 | --- | --- |
 | 没有 init.yaml | 停，去 `/tg-init` |
 | 没有 purpose.md | `PLAN_SCOPE_REQUIRED`，回 scope |
-| 意图只说「测准」 | 拆精度义务，读精度原语 |
-| 意图点名性能 / init 有 `modes.perf` | 读性能原语，带 `F-SHAPE-TYPICAL` |
+| 意图只说「测准」 | 拆精度义务，对照 scenario-catalog 选 `P-*` |
+| 意图点名性能 / init 有 `modes.perf` | 对照 catalog 选 `F-*`，带 `F-SHAPE-TYPICAL` |
 | 意图点名全量 tilingkey | 才做全量；否则禁止 T=D |
 | 某目标 root 不到列 | `untestable` + reason，不进表 |
 | 缺列或缺生成器 | `test_harness_gap`，禁止 start solve |
@@ -63,7 +63,7 @@ YAML 字段：`id, why, uo{query,span}, control{columns,recipe}, class, hit, cov
 1. 确认 init 在。确认 Planning Context 在。缺一则停。
 2. 把意图拆成「必须证明什么」。没有意图就 L0，仍写出能跑的精度/性能义务。
 3. 每条义务：查图 → root 到列 → 选 L0/L1/L2/L3 → 填 YAML 字段。
-4. 精度读精度原语，性能读性能原语。全量 Key 只在点名时。
+4. 领域风险对照 knowledge，再映射到 catalog 的 `P-*` / `F-*`。全量 Key 只在点名时。
 5. 过闸门：root 不到进 untestable；缺列/生成器进 gap，不要进义务表。
 
 `cover` 是有界的。L3 才放空 tensor / inf / 对齐+1 / 非法 range。依赖参数走 `control.recipe`，不要当笛卡尔维。

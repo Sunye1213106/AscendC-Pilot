@@ -1,6 +1,6 @@
 ﻿# Case study: accepted-but-undeclared dispatch（历史）
 
-> 人类溯源材料。Agent 默认不读。方法见 `skills/skills/standalone-review/references/cross-layer-contracts.md`。
+> 人类溯源材料。Agent 默认不读。方法见 `knowledge/ascendc/cross-layer-contracts.md`。
 
 ## 一句话
 

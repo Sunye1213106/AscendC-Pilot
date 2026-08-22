@@ -32,7 +32,7 @@ Source → UO CodeMap → TG / CE
     │   └── action_lease.yaml      # one lease per arch
     ├── runs/
     │   └── {run_id}/live_state.yaml       # shared / query ephemeral
-    ├── context/                   # rebuildable context packs
+    ├── context/                   # pilot_params and other run projections
     ├── local/                     # operator-local extensions
     └── cache/                     # rebuildable cache
 ```

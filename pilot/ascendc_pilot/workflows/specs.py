@@ -84,7 +84,6 @@ def _act(
     skill_id: str | None = None,
     action_method_id: str | None = None,
     task_prompt_id: str | None = None,
-    context_profile_id: str | None = None,
     output_contract_id: str | None = None,
     output_mode: str | None = None,
     staging_contract_id: str | None = None,
@@ -100,6 +99,7 @@ def _act(
     fanout_axes: list[dict[str, Any]] | None = None,
     method_ref: str | None = None,
     refs: list[str] | None = None,
+    knowledge_refs: list[str] | None = None,
     schema_version: str = "1",
 ) -> dict[str, Any]:
     """Declare a Pilot Action with compositional references.
@@ -178,9 +178,6 @@ def _act(
         "skill_id": sid,
         "action_method_id": sid,
         "task_prompt_id": task_prompt_id,
-        # Omit / explicit None for unregistered Actions. Never fabricate a
-        # "{workflow}-{action}" id that is not in context.profiles.PROFILES.
-        "context_profile_id": context_profile_id,
         "output_contract_id": output_contract_id,
         "allowed_write_paths": list(writes or []),
         "allowed_read_paths": list(reads or []),
@@ -208,6 +205,8 @@ def _act(
         row["method_ref"] = str(method_ref).strip()
     if refs:
         row["refs"] = [str(r).strip() for r in refs if str(r).strip()]
+    if knowledge_refs:
+        row["knowledge_refs"] = [str(r).strip() for r in knowledge_refs if str(r).strip()]
     return row
 
 
@@ -415,7 +414,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 ],
                 skill_id="propose-include-heal",
                 task_prompt_id="uo/propose-include-heal",
-                context_profile_id="uo-init-propose-include-heal",
                 output_contract_id="include-heal-extras-v1",
                 output_mode="staged",
                 staging_contract_id="include-heal-staging-v1",
@@ -684,7 +682,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 skill_id="uo-query",
                 task_prompt_id="uo/codemap-query",
-                context_profile_id="uo-query-kb-lookup",
                 output_contract_id="kb-answer-v1",
                 # Ephemeral Q&A: child answers in the Task message; primary synthesizes.
                 output_mode="return_value",
@@ -745,7 +742,6 @@ WORKFLOWS: dict[str, dict[str, Any]] = {
                 capability_ids=_CAPS_INVESTIGATE,
                 skill_id="uo-investigate",
                 task_prompt_id="uo/investigate-gaps",
-                context_profile_id="uo-investigate-investigate",
                 output_contract_id="uo-investigate-v1",
                 allowed_write_paths=[
                     "runs/{run_id}/actions/investigate/parts/**",

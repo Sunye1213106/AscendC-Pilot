@@ -165,6 +165,7 @@ def builtin_manifest(host: str) -> dict[str, Any]:
         "global_agents": global_agents,
         "skills": list(WORKFLOW_SKILLS),
         "cognitive_skills": list(COGNITIVE_SKILLS),
+        "knowledge": ["ascendc"],
         "commands": commands,
         "plugins": plugins,
         "legacy": {
@@ -185,6 +186,7 @@ def build_manifest(out_root: Path, host: str) -> dict[str, Any]:
     skills = _dir_names(out_root / "skills", skip=("_policies",))
     cognitive = _dir_names(out_root / "cognitive-skills")
     commands = _file_names(out_root / "commands", "*.md")
+    knowledge = _dir_names(out_root / "knowledge")
     if host == "opencode":
         global_agents = ["ascendc-pilot.md"]
         plugins = list(CURRENT_PLUGINS)
@@ -199,6 +201,7 @@ def build_manifest(out_root: Path, host: str) -> dict[str, Any]:
         "global_agents": global_agents,
         "skills": skills,
         "cognitive_skills": cognitive,
+        "knowledge": knowledge,
         "commands": commands,
         "plugins": plugins,
         "legacy": {
@@ -329,6 +332,7 @@ def uninstall_plan(
         "global_keep_agents": global_keep_agent_files(manifest),
         "skills": skills,
         "commands": commands,
+        "knowledge": _names(manifest.get("knowledge")),
         "plugins": plugins,
         "plugin_trees": trees,
         "manifest": MANIFEST_NAME,

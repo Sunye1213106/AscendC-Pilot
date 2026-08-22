@@ -218,7 +218,7 @@ for eng in common understand-operator testcase-generation code-engineering; do
 done
 
 GEN="$BUNDLE_ROOT/generated/$PLATFORM"
-for name in skills agents prompts commands; do
+for name in skills agents prompts commands knowledge; do
   rm -rf "$DEST/$name"
 done
 cp -R "$GEN/skills" "$DEST/skills"
@@ -229,6 +229,11 @@ fi
 if [[ -d "$GEN/commands" ]]; then
   cp -R "$GEN/commands" "$DEST/commands"
 fi
+if [[ ! -d "$GEN/knowledge" ]]; then
+  echo "generated knowledge missing: $GEN/knowledge (compose/copy failed)" >&2
+  exit 1
+fi
+cp -R "$GEN/knowledge" "$DEST/knowledge"
 if [[ -f "$GEN/install-manifest.json" ]]; then
   cp "$GEN/install-manifest.json" "$DEST/install-manifest.json"
 fi

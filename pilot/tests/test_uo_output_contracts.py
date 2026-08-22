@@ -143,10 +143,9 @@ def test_no_bare_single_segment_contracts_without_nonempty() -> None:
 
 
 def test_eng_ctx_copies_architecture_to_arch_dir() -> None:
-    from ascendc_pilot.actions.runtime import _eng_ctx_from_pack
+    from ascendc_pilot.actions.runtime import _eng_ctx_from_state
 
-    ctx = _eng_ctx_from_pack(
-        {"architecture": "arch35", "op_name": "Toy"},
+    ctx = _eng_ctx_from_state(
         {"architecture": "arch35", "op_name": "Toy"},
         "r1",
     )

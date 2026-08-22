@@ -2,6 +2,8 @@
 
 最高指令：**不要通过增加更多文字解决职责不清。优先删除重复内容、收缩职责、建立唯一权威来源；只有确实存在缺失约束时才新增内容。**
 
+本轮装配准则：**Runtime 只装配显式依赖；Skill 只描述方法；Knowledge 只描述领域事实；Workflow 只描述执行图；Engine 只处理确定性逻辑。任何内容如果同时属于两个层，就说明边界还没拆干净。**
+
 不要为修一个 bug 再往 yaml / invariant / POLICY / SKILL / prompt 各补一句不同版本。
 
 ## 目标
@@ -25,7 +27,8 @@
 | --- | --- |
 | Policy | `pilot/policies/<id>/POLICY.md` |
 | 模型常驻短投影 | `pilot/policies/invariants/*.md`（Primary 只拿编排需要的；全文 POLICY 不进模型） |
-| Workflow / Spec | `pilot/ascendc_pilot/workflows/*.py`：机器图 + 装载指针（`skill_id` / `method_ref` / `refs`） |
+| Workflow / Spec | `pilot/ascendc_pilot/workflows/*.py`：机器图 + 装载指针（`skill_id` / `method_ref` / `refs` / `knowledge_refs`） |
+| Domain Knowledge | `knowledge/ascendc/*.md`：跨任务仍成立的 AscendC 事实。Action 显式声明才装，无自动选择 |
 | Engine / Gate | 文件在不在、schema、到齐 ACK、scan/promote |
 | 编排 / 调查拆路 | `intent-reasoning.md`。Primary 不读 Skill。 |
 | Skill | `skills/<id>/SKILL.md`（当前窗口怎么判断）+ `references/`（指针后） |
@@ -51,7 +54,7 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 
 ## 2. Workflow / Spec
 
-机器图：谁跑、隔离、下一态。装载指针：`skill_id` / `method_ref` / `refs`。
+机器图：谁跑、隔离、下一态。装载指针：`skill_id` / `method_ref` / `refs` / `knowledge_refs`。`refs` / `knowledge_refs` 只装 Action / 轴上的显式名单，缺文件则 fail-closed。Skill 正文反引号不是第二套发现机制。
 
 `focus` 只写交付物名，不写判断配方。`fanout_axes.focus` 禁止成为迷你 Skill。
 
@@ -79,7 +82,7 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 | --- | --- | --- |
 | 执行步 | Action `skill_id` 强装 | `bind-init`、`plan`、`solve`、`ce-plan-draft`、`uo-query` |
 | 轴 playbook | `method_ref`，无独立 skill 目录 | `harness.md`、`scope.md`、`spec.md` |
-| 叠加原语 | 点名才 Read，不进 `max_skill_ids` | `test-modes`、`lemma`、`source-proof` |
+| 叠加原语 | 点名才 Read，不进 `max_skill_ids` | `source-proof` |
 
 切目录的唯一合法理由：同一 slash 的多窗，或同一叠加原语的多支。禁止「都跟 plan / 测试有关」焊成一份 always-loaded 正文。后序步骤进前窗会 rush。
 
@@ -130,6 +133,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 5. 角色写面与天花板？→ Agent
 6. 本题路径？→ Prompt
 7. 只有该窗分支才要的目录/长表？→ Reference
+8. 这段知识在该 Action 不存在时是否仍成立？是 → `knowledge/`；否 → Skill / reference
 
 ---
 
@@ -163,7 +167,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 | `/uo-investigate` | `uo-investigate` | 单窗 |
 | `/handoff` | `session-handoff` | 单窗 |
 
-叠加原语：`test-modes`（精度/性能）、`lemma`（mine/review）、`source-proof`。
+叠加原语：`source-proof`。lemma 是 worklog / 证书里的产物名词，不是 Skill。精度/性能领域事实在 `knowledge/ascendc/`。
 
 ---
 

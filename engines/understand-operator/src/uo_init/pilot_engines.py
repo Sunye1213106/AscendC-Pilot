@@ -1230,6 +1230,12 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
             import traceback
 
             tb = traceback.format_exc()
+            try:
+                from uo_init.runtime import end_session
+
+                end_session(op_root=root, architecture=arch)
+            except Exception:  # noqa: BLE001
+                pass
             return {
                 "ok": False,
                 "engine": "extract_host",
@@ -1240,7 +1246,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
     spec = bundle.get("spec")
     arch = str(getattr(spec, "arch_dir", "") or arch or "")
     uo = _uo_root(root, arch=arch)
-    _STORE["bundle"] = bundle
+    _put_bundle(root, ctx, bundle, spec=spec)
     persisted = _persist_bundle_ir(uo, bundle)
 
     fp_meta = compute_extract_fingerprint(root, uo_root=uo, arch=arch)
@@ -1267,7 +1273,7 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
         uo / "ir" / "host_extract_receipt.yaml",
         {"ok": True, "engine": "extract_host", **meta},
     )
-    _STORE["bundle"] = bundle
+    _put_bundle(root, ctx, bundle, spec=spec, extract_fingerprint=str(meta.get("extract_fingerprint") or ""))
     return {
         "ok": True,
         "engine": "extract_host",
@@ -1281,21 +1287,57 @@ def extract_host(project_root: Path, payload: dict[str, Any] | None = None) -> d
 _STORE: dict[str, Any] = {}
 
 
+def _bundle_key(
+    project_root: Path,
+    ctx: dict[str, Any],
+    *,
+    spec: Any = None,
+    extract_fingerprint: str = "",
+) -> tuple[str, str, str, str]:
+    from uo_init.runtime import bundle_identity
+
+    op_name = str(getattr(spec, "op_name", "") or ctx.get("op_name") or "")
+    arch = str(getattr(spec, "arch_dir", "") or _payload_arch(ctx) or "")
+    return bundle_identity(
+        project_root,
+        ctx,
+        op_name=op_name,
+        architecture=arch,
+        extract_fingerprint=extract_fingerprint,
+    )
+
+
+def _put_bundle(
+    project_root: Path,
+    ctx: dict[str, Any],
+    bundle: dict[str, Any],
+    *,
+    spec: Any = None,
+    extract_fingerprint: str = "",
+) -> None:
+    _STORE["bundle"] = bundle
+    _STORE["bundle_key"] = _bundle_key(
+        project_root, ctx, spec=spec, extract_fingerprint=extract_fingerprint
+    )
+
+
 def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    if "bundle" in _STORE:
-        return _STORE["bundle"]
+    ctx = _ctx(ctx)
+    want = _bundle_key(project_root, ctx)
+    cached = _STORE.get("bundle")
+    if cached is not None and _STORE.get("bundle_key") == want:
+        return cached
     from uo_init.extract_bundle import extract_host_bundle
     from uo_init.kernel_ir import kernel_ir_from_dict
     from uo_init.init_profile import default_kernel_max_variants, default_with_kernel
     from uo_init.timing import log as _tlog
 
-    ctx = _ctx(ctx)
     root = Path(project_root).expanduser().resolve()
     arch = _payload_arch(ctx)
     uo = _uo_root(root, arch=arch)
     restored = _restore_extracted_bundle(root, uo, ctx)
     if restored is not None:
-        _STORE["bundle"] = restored
+        _put_bundle(root, ctx, restored, spec=restored.get("spec"))
         return restored
 
     cached_meta = _load(_bundle_cache(uo))
@@ -1332,7 +1374,7 @@ def _ensure_bundle(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     ):
         _dump(uo / "ir" / "kernel_ir.yaml", bundle["kernel_ir"].to_persist_dict())
     _persist_bundle_ir(uo, bundle)
-    _STORE["bundle"] = bundle
+    _put_bundle(root, ctx, bundle, spec=bundle.get("spec"))
     return bundle
 
 

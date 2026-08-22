@@ -2968,6 +2968,226 @@ def test_contains_targets_member_instance_not_member_type(tmp_path: Path) -> Non
     )
 
 
+def _conditional_branch_wraps(cm: CodeMap, buf) -> list[Any]:
+    return [
+        r
+        for r in cm.relations.values()
+        if r.kind_name() == RelationKind.WRAPS.value
+        and r.src == buf.id
+        and str(r.attrs.get("via") or "") == "conditional_branch"
+    ]
+
+
+def test_divergent_conditional_wrappers_are_not_collapsed(tmp_path: Path) -> None:
+    """Different Then/Else storage wrappers must not become one canonical wrapper."""
+    root = tmp_path / "divergent"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        template <typename T>
+        class SomeWrapper {
+         public:
+          LocalTensor<T> tensor_;
+        };
+        template <typename T>
+        class SomeOtherWrapper {
+         public:
+          TQue<QuePosition::VECIN, 1> queue_;
+        };
+        class Process {
+         public:
+          typename std::conditional<COND, SomeWrapper<LocalTensor<int>>,
+                                    SomeOtherWrapper<TQue<QuePosition::VECIN, 1>>>::type mixedBuf;
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="divergent", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "mixedBuf"), None)
+    assert buf is not None
+    assert buf.attrs.get("conditional_flag") is True
+    wrapper = str(buf.attrs.get("wrapper") or "")
+    assert wrapper not in {"SomeWrapper", "SomeOtherWrapper"}
+    assert buf.attrs.get("root_status") in {"UNRESOLVED", "GUARDED"}
+    branches = _conditional_branch_wraps(cm, buf)
+    names = {
+        (cm.entities[r.dst].name if r.dst in cm.entities else "")
+        for r in branches
+    }
+    assert "SomeWrapper" in names
+    assert "SomeOtherWrapper" in names
+    polarities = {str(r.attrs.get("polarity") or "") for r in branches}
+    assert "then" in polarities
+    assert "else" in polarities
+    assert all(str(r.attrs.get("cond") or "") for r in branches)
+
+
+def test_common_conditional_root_is_derived(tmp_path: Path) -> None:
+    """Same AscendC storage root on both branches may become the common root."""
+    root = tmp_path / "commonroot"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class WrapA {
+         public:
+          LocalTensor<uint8_t> a_;
+        };
+        class WrapB {
+         public:
+          LocalTensor<uint8_t> b_;
+        };
+        class Process {
+         public:
+          typename std::conditional<FLAG, WrapA, WrapB>::type sharedBuf;
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="commonroot", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "sharedBuf"), None)
+    assert buf is not None
+    assert buf.attrs.get("conditional_flag") is True
+    assert "LocalTensor" in str(buf.attrs.get("root") or "")
+    assert buf.attrs.get("root_status") == "REACHED"
+    assert not buf.attrs.get("wrapper")
+
+
+def test_conditional_t_alias_keeps_both_branches(tmp_path: Path) -> None:
+    root = tmp_path / "condt"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class WrapA {
+         public:
+          LocalTensor<uint8_t> a_;
+        };
+        class WrapB {
+         public:
+          TQue<QuePosition::VECIN, 1> q_;
+        };
+        using Mixed = std::conditional_t<ON, WrapA, WrapB>;
+        class Process {
+         public:
+          Mixed aliasBuf;
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="condt", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "aliasBuf"), None)
+    assert buf is not None
+    assert buf.attrs.get("conditional_flag") is True
+    names = {
+        (cm.entities[r.dst].name if r.dst in cm.entities else "")
+        for r in _conditional_branch_wraps(cm, buf)
+    }
+    assert "WrapA" in names
+    assert "WrapB" in names
+
+
+def test_nested_conditional_does_not_pick_first_wrapper(tmp_path: Path) -> None:
+    root = tmp_path / "nested"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class WrapA {
+         public:
+          LocalTensor<uint8_t> a_;
+        };
+        class WrapB {
+         public:
+          TQue<QuePosition::VECIN, 1> q_;
+        };
+        class WrapC {
+         public:
+          GlobalTensor<uint8_t> g_;
+        };
+        class Process {
+         public:
+          typename std::conditional<OUTER, WrapA,
+                                    typename std::conditional<INNER, WrapB, WrapC>::type>::type nestBuf;
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="nested", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    buf = next((e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "nestBuf"), None)
+    assert buf is not None
+    assert buf.attrs.get("conditional_flag") is True
+    assert not buf.attrs.get("wrapper")
+    names = {
+        (cm.entities[r.dst].name if r.dst in cm.entities else "")
+        for r in _conditional_branch_wraps(cm, buf)
+    }
+    assert {"WrapA", "WrapB", "WrapC"} <= names
+
+
+def test_ifelse_same_member_keeps_divergent_types(tmp_path: Path) -> None:
+    """Lexical #if/#else decls of one member must stay guarded alternatives."""
+    root = tmp_path / "ifelse"
+    arch = root / "op_kernel" / "arch35"
+    arch.mkdir(parents=True)
+    (root / "op_host" / "arch35").mkdir(parents=True)
+    (arch / "process.h").write_text(
+        """
+        class WrapA {
+         public:
+          LocalTensor<uint8_t> a_;
+        };
+        class WrapB {
+         public:
+          TQue<QuePosition::VECIN, 1> q_;
+        };
+        class Process {
+         public:
+        #if FLAG
+          WrapA gatedBuf;
+        #else
+          WrapB gatedBuf;
+        #endif
+        };
+        """,
+        encoding="utf-8",
+    )
+    cm = CodeMap(op_name="ifelse", architecture="arch35")
+    _seed(cm, root)
+    semreg.load_registry.cache_clear()
+    finalize_kernel_root_trace(cm, root, architecture="arch35")
+    bufs = [e for e in cm.by_kind(EntityKind.BUFFER) if e.name == "gatedBuf"]
+    assert len(bufs) == 1
+    buf = bufs[0]
+    type_name = str(buf.attrs.get("type_name") or "")
+    assert "WrapA" in type_name
+    assert "WrapB" in type_name
+    names = {
+        (cm.entities[r.dst].name if r.dst in cm.entities else "")
+        for r in _conditional_branch_wraps(cm, buf)
+    }
+    assert "WrapA" in names
+    assert "WrapB" in names
+    assert str(buf.attrs.get("wrapper") or "") not in {"WrapA", "WrapB"}
+
+
 
 
 

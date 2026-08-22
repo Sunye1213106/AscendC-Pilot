@@ -37,8 +37,6 @@ read_scopes:
 - method:skills/plan/**
 - method:skills/solve/**
 - method:skills/uo-query/**
-- method:skills/test-modes/**
-- method:skills/lemma/**
 - method:skills/source-proof/**
 machine_constraints:
 - modify_pilot_state

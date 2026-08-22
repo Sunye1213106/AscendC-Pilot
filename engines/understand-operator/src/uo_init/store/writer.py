@@ -19,6 +19,62 @@ from uo_init.ir.relation import RelationKind
 from uo_init.store.schema import SCHEMA_SQL, SCHEMA_VERSION
 
 
+def _posix_file(path: str) -> str:
+    return str(path or "").replace("\\", "/")
+
+
+def _write_legal_key_tables(conn: sqlite3.Connection, blob: dict[str, Any]) -> None:
+    """Materialize compact legal-key rows as relational postings."""
+    rows = blob.get("rows") if isinstance(blob, dict) else None
+    dim_order = [str(n) for n in ((blob or {}).get("dim_order") or [])]
+    if not isinstance(rows, list) or not rows:
+        return
+    key_rows: list[tuple[Any, ...]] = []
+    dim_rows: list[tuple[Any, ...]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            kid = int(row.get("index") or len(key_rows))
+            key_rows.append(
+                (
+                    kid,
+                    str(row.get("tiling_key") or ""),
+                    str(row.get("tiling_key_hex") or ""),
+                    str(row.get("sel_group_id") or ""),
+                    str(row.get("status") or "template_admissible"),
+                )
+            )
+            dims = row.get("dims") if isinstance(row.get("dims"), dict) else {}
+            for dim, value in dims.items():
+                dim_rows.append((kid, str(dim), "" if value is None else str(value)))
+            continue
+        if not isinstance(row, (list, tuple)) or len(row) < 4:
+            continue
+        kid = int(row[0] if row[0] is not None else len(key_rows))
+        key_rows.append(
+            (
+                kid,
+                str(row[1] or ""),
+                str(row[2] or "") if len(row) > 2 else "",
+                str(row[4] or "") if len(row) > 4 else "",
+                str(row[5] or "template_admissible") if len(row) > 5 else "template_admissible",
+            )
+        )
+        values = row[3] if isinstance(row[3], list) else []
+        for i, dim in enumerate(dim_order):
+            value = values[i] if i < len(values) else ""
+            dim_rows.append((kid, dim, "" if value is None else str(value)))
+    if key_rows:
+        conn.executemany(
+            "INSERT OR REPLACE INTO legal_key(id, packed, hex, sel_group, status) VALUES (?,?,?,?,?)",
+            key_rows,
+        )
+    if dim_rows:
+        conn.executemany(
+            "INSERT OR REPLACE INTO legal_key_dim(key_id, dim, value) VALUES (?,?,?)",
+            dim_rows,
+        )
+
+
 def uo_product_dir(op_root: str | Path, *, architecture: str = "") -> Path:
     """Arch-scoped UO tree that holds the ``*.uo`` product and work files.
 
@@ -359,6 +415,7 @@ def write_codemap(
         file_rows = []
         span_rows = []
         for ent in codemap.entities.values():
+            file_path = _posix_file(ent.file)
             entity_rows.append(
                 (
                     ent.id,
@@ -366,15 +423,15 @@ def write_codemap(
                     ent.name,
                     ent.status,
                     float(ent.confidence),
-                    ent.file,
+                    file_path,
                     int(ent.line_start),
                     int(ent.line_end),
                     _attrs_json(ent.attrs),
                 )
             )
-            if ent.file:
+            if file_path:
                 file_rows.append(
-                    (ent.file, ent.file, "", ent.attrs.get("layer") or "")
+                    (file_path, file_path, "", ent.attrs.get("layer") or "")
                 )
                 snippet = _entity_snippet(ent)
                 if snippet and int(ent.line_start or 0) > 0:
@@ -382,7 +439,7 @@ def write_codemap(
                         (
                             f"span:{ent.id}",
                             ent.id,
-                            ent.file,
+                            file_path,
                             int(ent.line_start),
                             int(ent.line_end or ent.line_start),
                             snippet,
@@ -452,6 +509,9 @@ def write_codemap(
             "INSERT OR REPLACE INTO view_blob(name, schema_id, data) VALUES (?,?,?)",
             view_rows,
         )
+        legal_blob = finalized.get("tiling/legal_key_index.jsonl")
+        if isinstance(legal_blob, dict):
+            _write_legal_key_tables(conn, compact_legal_key_blob(legal_blob))
         conn.commit()
         vacuum = str(os.environ.get("UO_VACUUM_UO") or "").strip().lower() in {
             "1",

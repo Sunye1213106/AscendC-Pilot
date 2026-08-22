@@ -8,6 +8,13 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+_CE_DOMAIN_KNOWLEDGE = [
+    "ascendc/cross-layer-contracts.md",
+    "ascendc/precision.md",
+    "ascendc/performance.md",
+    "ascendc/synchronization.md",
+]
+
 
 def attach_ce_workflows(
     workflows: dict[str, dict[str, Any]],
@@ -76,7 +83,7 @@ def _build(
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 skill_id="ce-plan-draft",
                 task_prompt_id="ce/plan-draft",
-                context_profile_id="ce-plan-draft",
+                knowledge_refs=list(_CE_DOMAIN_KNOWLEDGE),
                 output_contract_id="ce-plan-v1",
             ),
             _act(
@@ -90,7 +97,6 @@ def _build(
                 human_interaction="confirm",
                 capability_ids=[],
                 task_prompt_id=None,
-                context_profile_id="ce-plan-human-confirm",
                 output_contract_id="ce-plan-confirmed-v1",
             ),
         ],
@@ -175,7 +181,6 @@ def _build(
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 skill_id="ce-apply",
                 task_prompt_id="ce/apply",
-                context_profile_id="ce-apply-patch",
                 output_contract_id="apply-patch-v1",
             ),
             _act(
@@ -209,7 +214,6 @@ def _build(
                 human_interaction="confirm",
                 capability_ids=[],
                 task_prompt_id=None,
-                context_profile_id="ce-apply-report",
                 output_contract_id="apply-report-v1",
             ),
             _act(
@@ -222,7 +226,7 @@ def _build(
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 skill_id="ce-plan-draft",
                 task_prompt_id="ce/plan-revise",
-                context_profile_id="ce-apply-revise",
+                knowledge_refs=list(_CE_DOMAIN_KNOWLEDGE),
                 output_contract_id="apply-plan-revise-v1",
             ),
             _act(
@@ -274,8 +278,8 @@ def _build(
             _tr("scope", "review"),
             _tr("review", "summary"),
         ],
-        "phase_gates": {"scope": ["kb_ready", "context_pack"]},
-        "complete_gates": ["kb_ready", "context_pack"],
+        "phase_gates": {"scope": ["kb_ready"]},
+        "complete_gates": ["kb_ready"],
         "pipelines": {
             "scope": ["change_capture"],
             "review": ["code_review"],
@@ -303,11 +307,10 @@ def _build(
                 capability_ids=["kb-query", "source-navigation", "source-reading"],
                 skill_id="standalone-review",
                 task_prompt_id="ce/standalone-review",
-                context_profile_id="ce-review-code-review",
                 output_contract_id="code-review-v1",
                 # Dialogue only: findings stay in Task replies; do not persist yaml.
                 output_mode="return_value",
-                pre_gates=["kb_ready", "context_pack"],
+                pre_gates=["kb_ready"],
                 execution_variant="review_axis_fanout",
                 fanout_axes=[
                     {
@@ -327,10 +330,9 @@ def _build(
                         "method_ref": "standards.md",
                         "refs": [
                             "ascendc-checks.md",
-                            "cross-layer-contracts.md",
-                            "concurrency.md",
                             "standards-gotchas.md",
                         ],
+                        "knowledge_refs": list(_CE_DOMAIN_KNOWLEDGE),
                         "artifact": "runs/{run_id}/actions/code_review/parts/standards.md",
                         "other": "runs/{run_id}/actions/code_review/parts/spec.md",
                         "focus": "Standards 结论（path:line；每个 changed file：finding / format-only / UNREVIEWED）",
@@ -348,7 +350,6 @@ def _build(
                 human_interaction="confirm",
                 capability_ids=[],
                 task_prompt_id=None,
-                context_profile_id="ce-review-report",
                 output_contract_id="review-report-v1",
             ),
         ],
@@ -368,7 +369,7 @@ def _build(
             "continue_scrub": "from_contracts",
         },
         "phases": ["scope", "review", "summary"],
-        "gates": ["kb_ready", "context_pack"],
+        "gates": ["kb_ready"],
     },
     "handoff": {
         "slash": "/handoff",
@@ -401,7 +402,6 @@ def _build(
                 capability_ids=["kb-query"],
                 skill_id="session-handoff",
                 task_prompt_id="ce/handoff",
-                context_profile_id="handoff-session",
                 output_contract_id="session-handoff-v1",
             ),
         ],

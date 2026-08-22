@@ -18,7 +18,7 @@ from ascendc_pilot.state import start_workflow
 def test_render_placeholders_fills_roots() -> None:
     text = (
         "run=<RUN_ID> root=<PROJECT_ROOT> uo=<UO_ROOT> tg=<TG_ROOT> "
-        "topic=<TOPIC> pack=<CONTEXT_PACK_PATH> op=<OP_NAME> target=<TARGET_IDS_OR_FILES>"
+        "topic=<TOPIC> op=<OP_NAME> target=<TARGET_IDS_OR_FILES>"
     )
     out = _render_placeholders(
         text,
@@ -30,7 +30,6 @@ def test_render_placeholders_fills_roots() -> None:
         uo_root="D:/op/.ascendc-pilot/uo",
         tg_root_path="D:/op/.ascendc-pilot/tg",
         topic="extract_plan",
-        context_pack_path="D:/op/.ascendc-pilot/context/context_pack.yaml",
         op_name="demo",
         target="candidates only",
     )

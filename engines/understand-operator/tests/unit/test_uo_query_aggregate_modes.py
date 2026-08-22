@@ -99,7 +99,7 @@ def test_legal_key_cache_uses_structured_index(tmp_path: Path) -> None:
     assert combined["rows"][0]["sel_group_id"] == named_id("TemplateBinding", "sel1")
 
     second = query_legal_keys(product, pattern="IsTnd=0", limit=10)
-    assert second["cached"] is True
+    assert second.get("backend") == "sql" or second["cached"] is True
     assert second["indexed"] is True
     assert second["total_matched"] == 2
 

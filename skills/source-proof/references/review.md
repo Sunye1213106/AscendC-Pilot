@@ -1,6 +1,15 @@
-# 审查引理
+# 独立审证
 
-复查上一步写出的证书。搜索失败或单次 Host reject 单独不能升级为 exclusion。本步不另开新命题，不重新做一遍开放式源码研究，不改上一步草稿正文。
+复查已写出的证明证书。搜索失败或单次 Host reject 单独不能升级为 exclusion。本步不另开新命题，不重新做一遍开放式源码研究，不改证书草稿正文。
+
+是否开审证窗由 Workflow 决定，不是证明步骤的一部分。
+
+证明结果与审证裁决不是同一套状态：
+
+```text
+proof result:     PROVED | REFUTED | INSUFFICIENT
+certificate review: accept | reject | defer
+```
 
 任务是验证：claim 是否明确、CLOSED 义务的证据是否真的证明该义务、枚举是完整还是 partial 却声称「全部」。
 
@@ -35,7 +44,7 @@
 - 搜索失败升级为 exclusion
 - 裸 Host reject 当源码不可达
 - 发明缺失 citation
-- 上一步自己填 review
+- 证明窗口自己填 review
 - domain 当可达域、derived 当 exact
 
 value domain ≠ reachable domain。无观测不得声称运行时不可达。宏/模板条件保留编译期出处。
@@ -78,7 +87,3 @@ broken: <obligation> <citation>   # reject 时必填
 ```
 
 accept 才允许确定性路径写入排除。本步不写 excluded 集。
-
-## 指针
-
-replay 清单由本窗装载。证明方法与假证：`skills/source-proof/SKILL.md`。

@@ -144,18 +144,6 @@ def check() -> list[str]:
         if len(locs) > 1:
             errors.append(f"DUPLICATE_REFERENCE_BODY {digest[:12]}: {', '.join(locs)}")
 
-    from ascendc_pilot.context.profiles import PROFILES
-
-    for pid, prof in PROFILES.items():
-        if getattr(prof, "references", ()):
-            errors.append(f"PROFILE_SELECTS_REFS {pid}")
-        for extra in prof.conditional_refs:
-            posix = str(extra).replace("\\", "/")
-            skill_set = set()
-            # overlap with any SKILL pointer of the same file
-            if posix in reachable:
-                errors.append(f"CONDITIONAL_OVERLAP {pid}: {posix}")
-
     llm_modes = {"subagent", "primary_interactive", "primary_review"}
     for wid, meta in WORKFLOWS.items():
         if not isinstance(meta, dict) or meta.get("reserved"):
@@ -172,6 +160,10 @@ def check() -> list[str]:
             if not skill_md.is_file():
                 errors.append(f"LLM_ACTION_MISSING_SKILL {wid}/{action.get('id')}: {sid}")
                 continue
+            axes = list(action.get("fanout_axes") or [])
+            copy_declared = not (
+                bool(axes) and all(str(a.get("method_ref") or "").strip() for a in axes)
+            )
             with tempfile.TemporaryDirectory() as tmp:
                 mat = materialize_method_bundle(
                     Path(tmp),
@@ -179,6 +171,8 @@ def check() -> list[str]:
                     existing_method=skill_md.read_text(encoding="utf-8"),
                     project_root=REPO,
                     current_skill_id=sid,
+                    copy_declared_refs=copy_declared,
+                    explicit_refs=list(action.get("refs") or []),
                 )
             if not mat.get("ok"):
                 errors.append(
@@ -202,6 +196,51 @@ def check() -> list[str]:
                         blob += "\n" + path.read_text(encoding="utf-8")
                 if "performance-testing" in blob:
                     errors.append("GOLDEN_POLLUTE bind-init columns playbook contains performance-testing")
+
+    knowledge_root = REPO / "knowledge"
+    for rel in (
+        "knowledge/ascendc/precision.md",
+        "knowledge/ascendc/performance.md",
+        "knowledge/ascendc/cross-layer-contracts.md",
+        "knowledge/ascendc/synchronization.md",
+        "skills/plan/references/scenario-catalog.md",
+        "skills/solve/references/precision-construction.md",
+        "skills/solve/references/performance-construction.md",
+        "skills/source-proof/references/review.md",
+        "skills/source-proof/references/referee-replay.md",
+    ):
+        if not (REPO / rel).is_file():
+            errors.append(f"AUTHORITY_FILE_MISSING {rel}")
+    for wid, meta in WORKFLOWS.items():
+        if not isinstance(meta, dict) or meta.get("reserved"):
+            continue
+        for action in meta.get("actions") or []:
+            aid = str(action.get("id") or "")
+            sid = str(action.get("skill_id") or "").rsplit("/", 1)[-1]
+            declared = list(action.get("knowledge_refs") or [])
+            method_refs = [(sid, r) for r in (action.get("refs") or [])]
+            for axis in action.get("fanout_axes") or []:
+                declared.extend(axis.get("knowledge_refs") or [])
+                axis_skill = str(axis.get("skill") or axis.get("capability_id") or sid)
+                method_refs.extend((axis_skill, r) for r in (axis.get("refs") or []))
+            for raw in declared:
+                rel = str(raw or "").replace("\\", "/").lstrip("/")
+                if rel.startswith("knowledge/"):
+                    rel = rel[len("knowledge/") :]
+                if not rel or ".." in rel.split("/"):
+                    errors.append(f"KNOWLEDGE_REF_INVALID {wid}/{aid}: {raw}")
+                    continue
+                if not (knowledge_root / rel).is_file():
+                    errors.append(f"KNOWLEDGE_REF_MISSING {wid}/{aid}: {rel}")
+            for owner, raw in method_refs:
+                rel = str(raw or "").replace("\\", "/").lstrip("/")
+                if rel.startswith("references/"):
+                    rel = rel[len("references/") :]
+                if not owner or not rel or ".." in rel.split("/"):
+                    errors.append(f"REF_INVALID {wid}/{aid}: {owner}/{raw}")
+                    continue
+                if not (SKILLS / owner / "references" / rel).is_file():
+                    errors.append(f"REF_MISSING {wid}/{aid}: skills/{owner}/references/{rel}")
 
     return errors
 

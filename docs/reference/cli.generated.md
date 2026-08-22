@@ -16,7 +16,6 @@
 | `acp authorize` | 执行 host hook 的授权检查 |
 | `acp block` | 标记为 blocked、failed 或 human_required |
 | `acp complete` | 全部 gate 通过后标记 workflow 完成 |
-| `acp context` | 构建 context pack |
 | `acp debug` | 采集诊断信息并导出 session bundle |
 | `acp dispatch-result` | Host Session Driver：消费 dispatch ticket、finalize 并继续驱动 |
 | `acp doctor` | 执行环境预检 |

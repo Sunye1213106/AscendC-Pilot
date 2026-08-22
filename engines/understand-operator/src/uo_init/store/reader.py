@@ -117,8 +117,10 @@ def read_codemap(path: str | Path) -> CodeMap:
             architecture=meta.get("architecture") or "",
         )
         cm.meta = {k[3:]: _maybe_json(v) for k, v in meta.items() if k.startswith("cm_")}
+        from uo_init.store.schema import SCHEMA_COMPAT
+
         schema = str(meta.get("schema") or "")
-        legacy = schema != "codemap-uo/v2"
+        legacy = schema == "codemap-uo/v1" or schema not in SCHEMA_COMPAT
         if legacy:
             cm.meta["trust_model"] = "legacy_unknown"
         for row in conn.execute(

@@ -14,7 +14,7 @@ description: 按已批准计划构造用例并对照 Replay 写 worklog。plan �
 
 ## 常驻判断
 
-没有批准计划 → 停。construct 窗不要「先切两堆」；analyze 窗不要改构造表。精度/性能/引理只在点名后读叠加原语。
+没有批准计划 → 停。construct 窗不要「先切两堆」；analyze 窗不要改构造表。精度/性能只按已批准的 `P-*` / `F-*` 构造，不重新做风险识别。
 
 ## 看到这样
 
@@ -26,5 +26,5 @@ description: 按已批准计划构造用例并对照 Replay 写 worklog。plan �
 
 ## 指针
 
-- construct 窗：`references/construct.md`；定向表：`references/targeted-construct.md`
+- construct 窗：`references/construct.md`；定向表：`references/targeted-construct.md`、`references/precision-construction.md`、`references/performance-construction.md`
 - analyze 窗：`references/analyze.md`；分类表：`references/failure-patterns.md`

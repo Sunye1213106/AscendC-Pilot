@@ -103,6 +103,119 @@ def test_ce_review_prepare_dispatches_with_project_root(tmp_path: Path, monkeypa
     assert "." not in (prep.get("unleased") or [])
 
 
+def test_ce_review_prepare_missing_knowledge_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import prepare_action
+    from ascendc_pilot.state import start_workflow
+
+    root = _setup_op_with_sources(tmp_path, monkeypatch)
+    start_workflow(
+        root,
+        "ce-review",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        phase="review",
+        force_phase=True,
+    )
+
+    def _missing(_session_dir, _refs, **_kwargs):
+        return {
+            "ok": False,
+            "copied": [],
+            "missing": ["ascendc/does-not-exist.md"],
+            "error": "KNOWLEDGE_MISSING",
+            "reason_code": "KNOWLEDGE_MISSING",
+            "message_zh": "knowledge_refs 缺失：['ascendc/does-not-exist.md']",
+        }
+
+    monkeypatch.setattr(
+        "ascendc_pilot.actions.method_bundle.materialize_knowledge_refs",
+        _missing,
+    )
+    prep = prepare_action(root, "code_review")
+    assert prep.get("ok") is False, prep
+    assert prep.get("reason_code") == "KNOWLEDGE_MISSING"
+    assert not prep.get("dispatch_tasks")
+
+
+def test_ce_review_prepare_materialize_exception_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import prepare_action
+    from ascendc_pilot.state import start_workflow
+
+    root = _setup_op_with_sources(tmp_path, monkeypatch)
+    start_workflow(
+        root,
+        "ce-review",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        phase="review",
+        force_phase=True,
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("copy2 exploded")
+
+    monkeypatch.setattr(
+        "ascendc_pilot.actions.method_bundle.materialize_method_bundle",
+        _boom,
+    )
+    prep = prepare_action(root, "code_review")
+    assert prep.get("ok") is False, prep
+    assert prep.get("reason_code") == "METHOD_BUNDLE_FAILED"
+    assert not prep.get("dispatch_tasks")
+
+
+def test_ce_plan_prepare_knowledge_exception_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import prepare_action
+    from ascendc_pilot.state import start_workflow
+
+    root = _setup_op_with_sources(tmp_path, monkeypatch)
+    start_workflow(
+        root,
+        "ce-plan",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        phase="draft",
+        force_phase=True,
+    )
+
+    def _boom(*_a, **_k):
+        raise OSError("copy2 exploded")
+
+    monkeypatch.setattr(
+        "ascendc_pilot.actions.method_bundle.materialize_knowledge_refs",
+        _boom,
+    )
+    prep = prepare_action(root, "plan_draft")
+    assert prep.get("ok") is False, prep
+    assert prep.get("reason_code") == "METHOD_BUNDLE_FAILED"
+    assert not prep.get("dispatch_tasks")
+
+
+def test_ce_plan_prepare_does_not_copy_skill_backtick_refs(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions import prepare_action
+    from ascendc_pilot.paths import runs_root
+    from ascendc_pilot.state import start_workflow
+
+    root = _setup_op_with_sources(tmp_path, monkeypatch)
+    start_workflow(
+        root,
+        "ce-plan",
+        architecture="arch0",
+        op_name="_synthetic_toy",
+        phase="draft",
+        force_phase=True,
+    )
+    prep = prepare_action(root, "plan_draft")
+    assert prep.get("ok") is True, prep
+    sdir = Path(str(prep.get("session_dir") or ""))
+    if not sdir.is_dir():
+        sdir = runs_root(root, arch="arch0") / "current" / "actions" / "plan_draft"
+    assert sdir.is_dir(), sdir
+    assert (sdir / "knowledge" / "ascendc" / "precision.md").is_file()
+    assert not (sdir / "refs" / "ce-plan-draft" / "gotchas.md").exists()
+    assert not (sdir / "refs" / "ce-plan-draft" / "risk-classes.md").exists()
+
+
 def test_prepare_rejects_out_of_scope_source_read(tmp_path: Path, monkeypatch) -> None:
     from ascendc_pilot.actions.method_bundle import TaskStubPointers, check_bundle_readable
     from ascendc_pilot.paths import ensure_agent_layout

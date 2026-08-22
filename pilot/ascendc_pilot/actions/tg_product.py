@@ -570,21 +570,21 @@ def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[
         try:
             from uo_init.uo_query import open_query
 
-            q = open_query(project_root, architecture=arch)
-            for name in idents[:8]:
-                out = q.agent_query(pattern=name)
-                if str(out.get("shape") or "") != "name":
-                    continue
-                card = (out.get("cards") or [{}])[0]
-                cards.append(
-                    {
-                        "pattern": name,
-                        "kind": card.get("kind"),
-                        "name": card.get("name"),
-                        "file": card.get("file"),
-                        "line": card.get("line"),
-                    }
-                )
+            with open_query(project_root, architecture=arch) as q:
+                for name in idents[:8]:
+                    out = q.agent_query(pattern=name)
+                    if str(out.get("shape") or "") != "name":
+                        continue
+                    card = (out.get("cards") or [{}])[0]
+                    cards.append(
+                        {
+                            "pattern": name,
+                            "kind": card.get("kind"),
+                            "name": card.get("name"),
+                            "file": card.get("file"),
+                            "line": card.get("line"),
+                        }
+                    )
         except Exception as exc:  # noqa: BLE001
             note = f"{note} ident prefetch skipped: {exc}".strip()
     intents = products.collect_intent_sources(project_root, architecture=arch)

@@ -7,7 +7,7 @@ Skill 是**执行步文档**：当前 Action 装载的那一份 `SKILL.md`。不
 | 种类 | 路径 | 说明 |
 |------|------|------|
 | 执行 Skill | `skills/<id>/SKILL.md` | 这一步怎么做。中文。 |
-| 叠加原语 | 同目录结构 | 如 `test-modes`、`lemma`、`source-proof`。由执行步指针触发，不进天花板名单。 |
+| 叠加原语 | 同目录结构 | 如 `source-proof`。由执行步指针触发，不进天花板名单。 |
 | Reference | `skills/<id>/references/` | 仅当该步点名才装。目录、长表、域专文。 |
 | Workflow spec | `pilot/ascendc_pilot/workflows/*.py` | 阶段、lease、gate。Skill 不复述。 |
 | 主控路由 | `intent-reasoning.md` | 拆路、fanout、冲突核对。不在 Skill 树。 |
@@ -20,7 +20,7 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 
 对照对象：可复用的执行 Skill（Matt Pocock 仓里 `diagnosing-bugs` / `code-review` / `wayfinder` / `writing-beats` 这一档），不是 15 行的入口壳。
 
-量过：那一档正文大约 **80–140 行**，中位数约 75。本仓硬顶 **200 行**（compose / architecture lint）。执行步目标 **80–150 行**。路由父本（`bind-init` / `plan` / `solve` / `standalone-review` / `test-modes` / `lemma`）允许更短，禁止为过 80 行补背景课。
+量过：那一档正文大约 **80–140 行**，中位数约 75。本仓硬顶 **200 行**（compose / architecture lint）。执行步目标 **80–150 行**。路由父本（`bind-init` / `plan` / `solve` / `standalone-review`）允许更短，禁止为过 80 行补背景课。
 
 ### 渐进式披露
 
@@ -43,7 +43,7 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 
 1. **范围 ≤ owner Skill。** 禁止 workflow 阶段 gotchas（init/plan/solve 混装）。
 2. **一个 blob 只属于一个有 `SKILL.md` 的目录。** 跨 Skill 需求升级为 Policy / CONTEXT / Skill 原语 / schema。禁止 `skills/_shared/`。
-3. **选择器唯一：本 Skill 的 `SKILL.md` 指针。** `ContextProfile` 不列 domain reference。Host 动态追加走 `conditional_refs`，且与 SKILL 声明交集为空。
+3. **选择器只有两类显式声明。** `refs` = 当前方法的补充材料；`knowledge_refs` = 跨任务仍成立的静态领域知识。禁止自动选择。Runtime 只拷 Action / 轴上的这两类名单，Skill 正文反引号是给人看的指针，不是第二套发现机制。指针只深一层。
 4. **身份是 `(owner_skill_id, relative_path)`。** 禁止 basename fallback；歧义 `REFERENCE_AMBIGUOUS` fail-closed。
 5. **删文件测试：** 删掉它是否损失「只有特定分支才需要」的信息？否 → 删。不要用 SKILL 摘要副本。
 6. **模型可见中文。** 判断与步骤用中文。保留英文的只有：路径、YAML/字段名、CLI、裁决枚举（`HIT` / `PROVED`）、场景 id（`P-*` / `F-*`）。标题与「何时加载」一律中文。禁止 `When to load` / `Gotchas` 当一级标题。
@@ -99,6 +99,7 @@ description: <做什么>。<什么时候用>。第三人称。
 ## 指针
 
 - 分支目录 / 长表：`references/…`
+- 领域事实：`knowledge/…`（只由 Action / 轴 `knowledge_refs` 装，不自动选）
 - 叠加原语：`skills/<id>/SKILL.md`
 ```
 

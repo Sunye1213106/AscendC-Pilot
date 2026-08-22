@@ -27,8 +27,6 @@ GATE_ARTIFACT_READS: dict[str, list[str]] = {
     # gate_uo_ready_tg: CodeMap .uo product (+ view blobs inside).
     "kb_ready": ["uo/*.uo"],
     "uo_ready": ["uo/*.uo"],
-    # EXTERNAL rebuildable context pack.
-    "context_pack": ["context/**"],
     "init_confirmed": ["tg/init.yaml"],
     "tg_init_confirmed": ["tg/init.yaml"],
     "kb_fingerprint_fresh": ["tg/init.yaml"],

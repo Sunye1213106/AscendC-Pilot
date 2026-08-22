@@ -33,7 +33,7 @@ worklog 文首 `open:` 列出仍开放的义务。open 非空不得假装本轮�
    - oracle 错位：拿 Host 命中当精度/性能
    - 未声明态：Host 产出计划域外的值
 
-4. **分类 + 源码 → 推引理。** 每一类写成可反驳的 P⇒Q，读 `skills/source-proof/SKILL.md` 做推导；要出证书草稿再读 `skills/lemma/SKILL.md`（先 `INDEX.md` 再最多 3 份正文）。本步更新 worklog 里的引理，不写排除集、不填 review。`Replay reject ≠ E`。CRASH 禁止写 E。
+4. **分类 + 源码证明。** 每一类写成可反驳的 P⇒Q，读 `skills/source-proof/SKILL.md` 得到 `PROVED | REFUTED | INSUFFICIENT`。本步把证明结果记进 worklog 引理段，不写排除集、不自己填审证裁决。`Replay reject ≠ E`。CRASH 禁止写 E。是否另开审证窗由 Workflow 决定，本步不要切窗口。
 
 5. **指导下轮 + 同步 worklog。** 用引理写「下轮改哪几列、别再盲搜什么」。更新文首 `open:`：能关的写证据窗口，不能关的写还缺什么观测或哪条引理。需要改构造 → 保持 open，回构造。
 
@@ -101,4 +101,4 @@ open: [义务id — 原因]
 
 ## 指针
 
-预期外分类与记账红线见本窗装载的失败模式表。硬命题：`skills/source-proof/SKILL.md`。引理：`skills/lemma/SKILL.md`。已有引理产物先读其 `INDEX.md`，再最多打开 3 份正文。
+预期外分类与记账红线见本窗装载的失败模式表。硬命题：`skills/source-proof/SKILL.md`。已有引理产物先读其 `INDEX.md`，再最多打开 3 份正文。

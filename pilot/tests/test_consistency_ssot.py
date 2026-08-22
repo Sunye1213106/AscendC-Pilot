@@ -53,7 +53,6 @@ def test_injected_action_missing_contract_fails(repo_root: Path, monkeypatch: py
             "capability_ids": ["kb-query"],
             "action_method_id": "uo-query/kb-lookup",
             "task_prompt_id": None,
-            "context_profile_id": "ssot-broken",
             "output_contract_id": None,
             "actors": ["uo-query"],
         }
@@ -91,7 +90,6 @@ def test_injected_unknown_contract_id_fails(repo_root: Path) -> None:
                 "capability_ids": [],
                 "action_method_id": "uo-init/extract",
                 "task_prompt_id": None,
-                "context_profile_id": "x",
                 "output_contract_id": "not-registered-contract-xyz",
                 "actors": [],
             }

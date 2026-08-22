@@ -11,7 +11,7 @@
   <arch>/session_handoff.md         /handoff conversation summary
   <arch>/state/            Pilot state and leases
   <arch>/runs/             action bundles, staging and receipts
-  <arch>/context/          compiled context packs
+  <arch>/context/          pilot_params and run projections
   <arch>/local/            operator-local extensions
   <arch>/cache/            rebuildable caches
 ```
