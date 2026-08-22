@@ -203,7 +203,7 @@ def check() -> list[str]:
         "knowledge/ascendc/performance.md",
         "knowledge/ascendc/cross-layer-contracts.md",
         "knowledge/ascendc/synchronization.md",
-        "skills/plan/references/scenario-catalog.md",
+        "skills/test-plan/references/evidence.md",
         "skills/solve/references/precision-construction.md",
         "skills/solve/references/performance-construction.md",
         "skills/source-proof/references/review.md",

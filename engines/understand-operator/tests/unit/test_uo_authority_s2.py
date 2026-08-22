@@ -134,6 +134,20 @@ def test_cli_status_only_and_dump_list_use_uo(tmp_path: Path, capsys):
     assert payload.get("ok") is False
 
     product = _write_product(tmp_path)
+    quality = product.parent / "checks" / "quality.yaml"
+    quality.parent.mkdir(parents=True, exist_ok=True)
+    quality.write_text(
+        "grade: ready\n"
+        "integrity: pass\n"
+        "locate_ready: true\n"
+        "graph:\n"
+        "  entity_count: 12\n"
+        "  relation_count: 34\n"
+        "unresolved:\n"
+        "  locate_blocking: 0\n"
+        "  total: 2\n",
+        encoding="utf-8",
+    )
     rc = main(
         [
             "uo-query",
@@ -148,6 +162,12 @@ def test_cli_status_only_and_dump_list_use_uo(tmp_path: Path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload.get("ok") is True
     assert payload.get("product", "").endswith(product.name)
+    assert payload.get("grade") == "ready"
+    assert payload.get("entity_count") == 12
+    assert payload.get("relation_count") == 34
+    assert payload.get("locate_blocking") == 0
+    assert payload.get("unresolved_total") == 2
+    assert payload.get("locate_ready") is True
 
     rc = main(
         [

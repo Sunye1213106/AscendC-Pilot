@@ -206,19 +206,19 @@ validate  [D]  mapping 空则失败   ──gate: init_confirmed
 
 
 
-### `/tg-plan` — 融合义务
+### `/tg-plan` — 白盒测试规划
 
 ```text
 gate     [D]  强制 init.yaml      ──gate: tg_init_confirmed
     │
     ▼
-scope    [S tg-analyst]  purpose.md（这次测什么）
+scope    [S tg-analyst]  targets.yaml（独立测试变量）
     │
     ▼
-fuse     [S tg-analyst] → promote [D]  一份 plan.md
+fuse     [S tg-analyst] → promote [D]  一份 plan.md（direction + evidence + L0–L3）
     │
     ▼
-validate [D]  列 root 闸门
+validate [D]  变量 / evidence / ladder
     │
     ▼
 approve  [H]  开始求解            ──gate: plan_approved

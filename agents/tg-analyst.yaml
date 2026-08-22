@@ -6,7 +6,7 @@ mode: subagent
 description: >
   TG bind、plan、solve 的分阶段 producer。只写 `runs/` 草稿。
   禁止写算子源码、`.uo`、正式 `tg/init.yaml` / `plan.md` / `worklog.md`。
-max_skill_ids: &skills [bind-init, plan, solve, uo-query]
+max_skill_ids: &skills [bind-init, test-plan, solve, uo-query]
 skill_ids: *skills
 write_scopes:
 - pilot:runs/**/actions/bind_init/parts/**
@@ -34,7 +34,7 @@ read_scopes:
 - pilot:context/**
 - source:test_script/**
 - method:skills/bind-init/**
-- method:skills/plan/**
+- method:skills/test-plan/**
 - method:skills/solve/**
 - method:skills/uo-query/**
 - method:skills/source-proof/**

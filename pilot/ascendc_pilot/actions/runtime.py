@@ -131,13 +131,21 @@ def _eng_ctx_from_state(
         }
     picked_tsr = str(state.get("test_script_root") or params.get("test_script_root") or "")
     if str(state.get("workflow_id") or "") == "tg-init":
-        if state.get("test_script_confirmed"):
-            test_script_root = str(state.get("test_script_root") or "")
+        confirmed_url = str(state.get("test_script_root") or "").strip()
+        if state.get("test_script_confirmed") and confirmed_url:
+            test_script_root = confirmed_url
         elif project_root is not None:
-            from ascendc_pilot.human_interaction import resolved_test_script_root
+            from ascendc_pilot.human_interaction import (
+                peek_confirmed_harness,
+                resolved_test_script_root,
+            )
 
             test_script_root = resolved_test_script_root(project_root, picked_tsr)
+            if not str(test_script_root or "").strip():
+                test_script_root = peek_confirmed_harness(project_root)
         else:
+            test_script_root = ""
+        if not str(test_script_root or "").strip():
             test_script_root = ""
     else:
         test_script_root = picked_tsr
@@ -699,8 +707,16 @@ def _review_axis_fanout_tasks(
             return []
         if allow_write and not rework_slices:
             part_name = Path(artifact.replace("\\", "/")).name
-            if part_name and (sdir / "parts" / part_name).is_file():
-                continue
+            part_path = sdir / "parts" / part_name
+            if part_name and part_path.is_file():
+                try:
+                    from testcase_agent.bind_parts import is_llm_edited
+
+                    skip = is_llm_edited(part_path)
+                except Exception:
+                    skip = True
+                if skip:
+                    continue
         mp = _axis_method_path(repo, axis_row)
         if not mp.is_file():
             return []
@@ -863,7 +879,7 @@ def _complete_bind_review_prepare(
     from ascendc_pilot.yaml_check import format_yaml_error_zh, parse_yaml_mapping
 
     _, harness_err = parse_yaml_mapping(harness)
-    _, bind_err = parse_yaml_mapping(bindp)
+    bind_doc, bind_err = parse_yaml_mapping(bindp)
     part_err = harness_err or bind_err
     rework = list(parsed.get("rework") or []) if parsed else []
     if part_err and not rework:
@@ -876,6 +892,21 @@ def _complete_bind_review_prepare(
         result["path"] = part_err.get("path")
         return result
     if parsed and parsed.get("ok") is True:
+        bind_errors: list[str] = []
+        if isinstance(bind_doc, dict):
+            try:
+                from testcase_agent import products
+
+                bind_errors = products.validate_bind_part(bind_doc)
+            except Exception:  # noqa: BLE001
+                bind_errors = []
+        if bind_errors:
+            result["ok"] = False
+            result["error"] = "BIND_PART_INVALID"
+            result["host_step_kind"] = "primary_review"
+            result["errors"] = bind_errors
+            result["message_zh"] = "bind 草稿非法：" + "；".join(bind_errors)
+            return result
         doc = {"schema": "tg-bind-review-verdict/v1", "ok": True}
         _dump(verdict_path, doc)
         try:
@@ -2695,6 +2726,63 @@ def _iter_identity_stamp_paths(
     return paths
 
 
+def _finalize_restore_bind_parts(
+    project_root: Path,
+    *,
+    session: dict[str, Any],
+    action_id: str,
+) -> dict[str, Any]:
+    """Restore engine-owned cells; never yaml.safe_load+stamp LLM bind parts."""
+    del action_id
+    from ascendc_pilot.paths import agent_root
+
+    run_id = str(session.get("run_id") or "")
+    arch = str(session.get("architecture") or "").strip() or _arch_for(project_root) or None
+    parts = (
+        agent_root(project_root, arch)
+        / "runs"
+        / run_id
+        / "actions"
+        / "bind_init"
+        / "parts"
+    )
+    owned = parts / ".engine"
+    if not owned.is_dir():
+        return {"ok": True, "skipped": True, "reason": "no_owned_snapshot", "contract_id": "tg-bind-staging-v1"}
+    try:
+        from testcase_agent.bind_parts import restore_and_dump_parts
+
+        restored = restore_and_dump_parts(parts)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "BIND_PART_YAML_INVALID",
+            "message": str(exc),
+            "path": parts.as_posix(),
+            "contract_id": "tg-bind-staging-v1",
+        }
+    if not restored.get("ok"):
+        return {
+            "ok": False,
+            "error": "BIND_PART_INVALID",
+            "message": "; ".join(str(x) for x in (restored.get("errors") or [])),
+            "errors": restored.get("errors") or [],
+            "contract_id": "tg-bind-staging-v1",
+        }
+    from ascendc_pilot.ownership import artifact_identity_from_session, inject_trusted_identity
+    from testcase_agent.bind_parts import dump_part
+
+    identity = artifact_identity_from_session(session)
+    for name in ("bind.yaml", "harness.yaml"):
+        path = parts / name
+        if not path.is_file():
+            continue
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        if isinstance(doc, dict):
+            dump_part(path, inject_trusted_identity(doc, identity))
+    return {"ok": True, "skipped": True, "reason": "bind_parts_engine_owned", "contract_id": "tg-bind-staging-v1"}
+
+
 def _finalize_inject_artifact_identity(
     project_root: Path,
     *,
@@ -2705,6 +2793,13 @@ def _finalize_inject_artifact_identity(
     """Overwrite LLM-declared identity with session-trusted artifact_identity."""
     from ascendc_pilot.ownership import artifact_identity_from_session, inject_trusted_identity
 
+    if contract_id == "tg-bind-staging-v1":
+        return {
+            "ok": True,
+            "skipped": True,
+            "reason": "bind_parts_engine_owned",
+            "contract_id": contract_id,
+        }
     identity = artifact_identity_from_session(session)
     targets = _iter_identity_stamp_paths(
         project_root, session=session, action_id=action_id, contract_id=contract_id
@@ -3129,7 +3224,11 @@ def finalize_action(
     # Stamp run-scoped YAML before the contract check. Missing LLM-copied
     # run_id must not fail the gate; Pilot identity is authoritative.
     identity_injection = {"ok": True, "skipped": True}
-    if producer_identity_ok:
+    if contract_id == "tg-bind-staging-v1":
+        identity_injection = _finalize_restore_bind_parts(
+            project_root, session=session, action_id=action_id
+        )
+    elif producer_identity_ok:
         identity_injection = _finalize_inject_artifact_identity(
             project_root,
             session=session,

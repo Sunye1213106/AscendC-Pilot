@@ -78,7 +78,7 @@ def _op_arch(project_root: Path, state: dict[str, Any]) -> tuple[str, str]:
 def _ask_tg_init(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     gctx = _goal_context(project_root)
-    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）绑定测试脚本并规划义务"
+    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）绑定测试脚本并规划覆盖"
     n = _declared_key_count(project_root)
     scale = f"（声明域约 {n} 个合法 Key，不是默认 T）" if n else ""
     background = f"init.yaml 已写出{scale}。"
@@ -88,9 +88,9 @@ def _ask_tg_init(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
         header="init.yaml 已写出，是否进入规划？",
         goal=goal,
         background=background,
-        decide="是否进入「规划测试义务」阶段？",
+        decide="是否进入「白盒测试规划」阶段？",
         consequences={
-            "确认进入规划": "开始规划测试义务（tg-plan）",
+            "确认进入规划": "开始列出独立测试变量（tg-plan）",
             "返工": "回到建立合同阶段重做",
             "停止": "结束本次目标（不进入规划）",
         },
@@ -105,8 +105,8 @@ def _ask_tg_init(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
 def _ask_plan_approve(project_root: Path, state: dict[str, Any]) -> dict[str, Any]:
     op, arch = _op_arch(project_root, state)
     gctx = _goal_context(project_root)
-    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）按列规划测试义务"
-    background = "测试义务规划已生成，等待你批准后才能开始求解与生成用例。"
+    goal = str(gctx.get("label_zh") or "") or f"为 {op}（{arch}）列出独立测试变量并规划覆盖"
+    background = "测试规划已生成，等待你批准后才能开始求解与生成用例。"
     if gctx.get("progress_line"):
         background = f"{gctx['progress_line']} {background}"
     return decision_question(
@@ -116,7 +116,7 @@ def _ask_plan_approve(project_root: Path, state: dict[str, Any]) -> dict[str, An
         decide="是否批准规划并进入「求解并生成用例」？",
         consequences={
             "批准并开始求解": "启动求解与 Host Replay（tg-solve）",
-            "返工": "回到规划阶段调整义务",
+            "返工": "回到规划阶段调整变量或观测",
             "停止": "结束本次目标（不开始求解）",
         },
         options=[
@@ -329,7 +329,7 @@ def _ask_apply_report(project_root: Path, state: dict[str, Any]) -> dict[str, An
         decide="建议审查、建议测试、回计划，还是交接？",
         consequences={
             "建议审查": "去 /ce-review 审这次 git diff",
-            "建议测试": "去 /tg-plan，TG 自己从计划 md 总结义务",
+            "建议测试": "去 /tg-plan，TG 自己从计划 md 列出独立测试变量",
             "回计划": "回到 /ce-plan",
             "交接": "写 /handoff",
         },

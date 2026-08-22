@@ -9,6 +9,7 @@ import yaml
 from ascendc_pilot.actions.runtime import (
     _check_output_contract,
     _finalize_inject_artifact_identity,
+    _finalize_restore_bind_parts,
 )
 from ascendc_pilot.observation import IDENTITY_CONTRACT, classify_failure
 from ascendc_pilot.paths import agent_root, ensure_agent_layout
@@ -34,34 +35,48 @@ def _session(run_id: str) -> dict:
     }
 
 
-def test_finalize_stamps_bind_parts_without_handwritten_run_id(tmp_path: Path) -> None:
+def test_finalize_restores_bind_identity_without_stamping_llm_yaml(tmp_path: Path) -> None:
+    from testcase_agent.bind_parts import emit_bind_parts
+
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root, arch=_ARCH)
     state = start_workflow(root, "tg-init", architecture=_ARCH, op_name="toy")
     run_id = str(state.get("run_id") or "")
     parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "bind_init" / "parts"
-    parts.mkdir(parents=True)
-    (parts / "harness.yaml").write_text(
-        "golden: {status: match}\nmodes: {precision: {flag: only_grad}}\n",
-        encoding="utf-8",
+    emit_bind_parts(
+        parts,
+        scan={
+            "kind": "script_repo",
+            "contract": {"entry": "run_x.py", "case_arg": "--case", "columns": ["D"]},
+            "inventory": {"tables": [{"columns": ["D"], "kind": "csv"}]},
+        },
+        identity={
+            "run_id": run_id,
+            "workflow_id": "tg-init",
+            "action_id": "bind_init",
+            "produced_by": "pilot-finalizer",
+        },
     )
-    (parts / "bind.yaml").write_text(
-        "run_id: LLM_FORGED\nmapping:\n  D: {uo_id: DTemplateNum, role: api_arg}\n",
-        encoding="utf-8",
-    )
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    bind["run_id"] = "LLM_FORGED"
+    bind["mapping"]["D"]["encoding"] = "TND: literal"
+    (parts / "bind.yaml").write_text(yaml.safe_dump(bind, allow_unicode=True), encoding="utf-8")
     session = _session(run_id)
+    restored = _finalize_restore_bind_parts(
+        root, session=session, action_id="bind_init"
+    )
+    assert restored.get("ok") is True, restored
     injected = _finalize_inject_artifact_identity(
         root, session=session, action_id="bind_init", contract_id="tg-bind-staging-v1"
     )
     assert injected.get("ok") is True, injected
-    harness = yaml.safe_load((parts / "harness.yaml").read_text(encoding="utf-8"))
+    assert injected.get("skipped") is True
     bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
-    assert harness["run_id"] == run_id
     assert bind["run_id"] == run_id
     assert bind["run_id"] != "LLM_FORGED"
-    assert harness["artifact_identity"]["run_id"] == run_id
-    assert harness["artifact_identity"]["produced_by"] == "pilot-finalizer"
+    assert bind["artifact_identity"]["run_id"] == run_id
+    assert bind["mapping"]["D"]["encoding"] == "TND: literal"
     checked = _check_output_contract(
         root,
         "tg-bind-staging-v1",

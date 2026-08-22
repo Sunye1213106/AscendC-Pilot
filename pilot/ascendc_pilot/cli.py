@@ -1286,13 +1286,18 @@ def main(argv: list[str] | None = None) -> int:
             print_json(payload)
             return 1 if args.status_only else 2
         if args.status_only:
-            print_json(
-                {
-                    "ok": True,
-                    "product": product.as_posix(),
-                    "engine": "uo_init.uo_query",
-                }
-            )
+            payload: dict[str, Any] = {
+                "ok": True,
+                "product": product.as_posix(),
+                "engine": "uo_init.uo_query",
+            }
+            try:
+                from uo_init.diagnostics.quality import load_product_ready_status
+
+                payload.update(load_product_ready_status(product))
+            except Exception:  # noqa: BLE001
+                pass
+            print_json(payload)
             return 0
         q = None
         try:
@@ -1653,6 +1658,26 @@ def _cmd_inspect(args: Any) -> int:
                     **err,
                     "rel": rel,
                     "message_zh": format_yaml_error_zh(err, heal_hint=True),
+                },
+                default=str,
+            )
+            return 1
+        part_errors: list[str] = []
+        if isinstance(doc, dict):
+            try:
+                from testcase_agent.products import check_tg_part
+
+                part_errors = check_tg_part(doc)
+            except Exception:  # noqa: BLE001
+                part_errors = []
+        if part_errors:
+            print_json(
+                {
+                    "ok": False,
+                    "error": "BIND_PART_INVALID",
+                    "rel": rel,
+                    "errors": part_errors,
+                    "message_zh": "草稿未过交卷检查：" + "；".join(part_errors[:12]),
                 },
                 default=str,
             )

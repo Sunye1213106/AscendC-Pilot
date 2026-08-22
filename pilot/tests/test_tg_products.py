@@ -13,6 +13,66 @@ if str(TG_ENGINE) not in sys.path:
 from testcase_agent import products, test_repo
 
 
+def test_validate_bind_part_empty_uo_id_is_content_not_structure() -> None:
+    """Primary judges whether uo_id is filled/correct; inspect only checks shape."""
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {"prefix": {"role": "api_arg", "uo_id": ""}},
+        }
+    )
+    assert not any("uo_id" in e for e in errors)
+
+
+def test_validate_bind_part_rejects_illegal_call_kind() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta_direct"},
+            "mapping": {"B": {"role": "api_arg", "uo_id": "b"}},
+        }
+    )
+    assert any("pta_direct" in e for e in errors)
+
+
+def test_validate_bind_part_allows_feature_without_uo_id() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {
+                "B": {"role": "api_arg", "uo_id": "b"},
+                "inner_drop": {"role": "feature", "uo_id": ""},
+            },
+        }
+    )
+    assert not any("inner_drop" in e for e in errors)
+
+
+def test_validate_init_empty_uo_id_is_content_not_structure() -> None:
+    errors = products.validate_init(
+        {
+            "schema": products.INIT_SCHEMA,
+            "kind": "script_repo",
+            "table_kind": "csv",
+            "entry": "run_fag.py",
+            "case_arg": "--case",
+            "modes": {"precision": ["only_grad"], "perf": ["profiler"]},
+            "columns": [{"name": "B"}, {"name": "prefix"}, {"name": "inner_drop"}],
+            "mapping": {
+                "B": {"role": "api_arg", "uo_id": "scaleValue"},
+                "prefix": {"role": "api_arg", "uo_id": ""},
+                "inner_drop": {"role": "feature", "uo_id": ""},
+            },
+            "domains": {"B": {"compare": "match"}},
+            "golden": {},
+            "compare": {"how": "script"},
+            "generate_inputs": {"fn": "gen"},
+            "uo_digest": "abc",
+        }
+    )
+    assert not any("uo_id" in e for e in errors)
+    assert not any("scaleValue" in e for e in errors)
+
+
 def test_script_repo_empty_mapping_fails() -> None:
     errors = products.validate_init(
         {
@@ -55,44 +115,86 @@ def test_golden_only_precision_fails() -> None:
     assert any("golden-only" in e for e in errors)
 
 
-def test_plan_rejects_td_mode_and_requires_column_root() -> None:
+def _v2_fence(**overrides: object) -> dict:
     fence = {
         "schema": products.PLAN_SCHEMA,
-        "mode": "tilingkey_full_coverage",
-        "obligations": [
+        "intent": "default_tilingkey",
+        "variables": [
             {
-                "id": "o1",
-                "why": "dtype",
-                "class": "replay",
-                "control": {"columns": ["Missing"], "recipe": "set dtype"},
-                "hit": {"pred": "key"},
-                "uo": {"query": "dtype"},
-                "cover": "L0",
+                "id": "V-dtype",
+                "symbol": "InputDType",
+                "direction": {"columns": ["B"], "note": "set dtype"},
+                "evidence": {"kind": "replay_field", "field": "tiling_key"},
             }
         ],
+        "ladder": {"L0": ["V-dtype"], "L1": [], "L2": [], "L3": []},
+        "oracle": [],
     }
+    fence.update(overrides)
+    return fence
+
+
+def test_plan_rejects_td_mode_and_unknown_column() -> None:
+    fence = _v2_fence(
+        mode="tilingkey_full_coverage",
+        variables=[
+            {
+                "id": "V-dtype",
+                "direction": {"columns": ["Missing"], "note": "set dtype"},
+                "evidence": {"kind": "replay_field", "field": "tiling_key"},
+            }
+        ],
+    )
     errors = products.validate_plan_fence(fence, init_columns=["B"])
     assert any("Missing" in e for e in errors)
+    assert any("T=D" in e or "tilingkey_full_coverage" in e for e in errors)
+
+
+def test_plan_rejects_v1_obligations() -> None:
+    errors = products.validate_plan_fence(
+        {
+            "schema": "tg-plan/v1",
+            "obligations": [{"id": "o1", "class": "replay"}],
+            "variables": [
+                {
+                    "id": "V-dtype",
+                    "direction": {"columns": ["B"], "note": "x"},
+                    "evidence": {"kind": "replay_field", "field": "tiling_key"},
+                }
+            ],
+            "ladder": {"L0": ["V-dtype"], "L1": [], "L2": [], "L3": []},
+        },
+        init_columns=["B"],
+    )
+    assert any("obligations" in e for e in errors)
+    assert any("v2" in e or "schema" in e for e in errors)
+
+
+def test_plan_requires_evidence_and_ladder() -> None:
+    errors = products.validate_plan_fence(
+        {
+            "schema": products.PLAN_SCHEMA,
+            "variables": [{"id": "V-dtype", "direction": {"columns": ["B"]}}],
+        },
+        init_columns=["B"],
+    )
+    assert any("evidence.kind" in e for e in errors)
+    assert any("ladder" in e for e in errors)
 
 
 def test_untestable_needs_reason() -> None:
-    fence = {
-        "schema": products.PLAN_SCHEMA,
-        "obligations": [
-            {
-                "id": "o1",
-                "why": "b",
-                "class": "derived",
-                "control": {"columns": ["B"], "recipe": "fix B"},
-                "hit": {"formula": "B>0"},
-                "uo": {"span": "x.cpp:1"},
-                "cover": "L0",
-            }
-        ],
-        "untestable": [{"id": "u1"}],
-    }
+    fence = _v2_fence(untestable=[{"id": "u1"}])
     errors = products.validate_plan_fence(fence, init_columns=["B"])
     assert any("reason" in e for e in errors)
+
+
+def test_plan_prose_requires_three_headings() -> None:
+    errors = products.validate_plan_prose("# plan\n\n```yaml\nschema: tg-plan/v2\n```\n")
+    assert any("测什么" in e for e in errors)
+    ok = products.validate_plan_prose(
+        "## 测什么\n\n## 第一轮怎么造\n\n## 怎么知道打到了\n"
+    )
+    assert ok == []
 
 
 def test_worklog_open_ids() -> None:
@@ -121,3 +223,34 @@ def test_collect_intent_reads_plan_markdown_not_yaml(tmp_path: Path) -> None:
     assert "ce_plan" in kinds
     assert "ce_tg_plan_intent" not in kinds
     assert not (tmp_path / ".ascendc-pilot" / "arch35" / "tg" / "plan" / "plan_intent.yaml").exists()
+
+
+def test_inspect_yaml_checks_structure_not_uo_id_content(tmp_path: Path, capsys) -> None:
+    import json
+    from argparse import Namespace
+
+    from ascendc_pilot.cli import _cmd_inspect
+
+    rel = "arch0/runs/R1/actions/bind_init/parts/bind.yaml"
+    path = tmp_path / ".ascendc-pilot" / rel
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "schema: tg-bind-part/v1\ncall: {kind: pta}\nmapping:\n  prefix:\n    role: api_arg\n    uo_id: ''\n",
+        encoding="utf-8",
+    )
+    rc = _cmd_inspect(Namespace(inspect_cmd="yaml", project=tmp_path, rel=rel))
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    payload = json.loads(out)
+    assert payload.get("ok") is True
+
+    path.write_text(
+        "schema: tg-bind-part/v1\ncall: {kind: pta_direct}\nmapping:\n  B:\n    role: api_arg\n    uo_id: b\n",
+        encoding="utf-8",
+    )
+    rc = _cmd_inspect(Namespace(inspect_cmd="yaml", project=tmp_path, rel=rel))
+    assert rc == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload.get("ok") is False
+    assert payload.get("error") == "BIND_PART_INVALID"
+    assert any("pta_direct" in str(e) for e in (payload.get("errors") or []))

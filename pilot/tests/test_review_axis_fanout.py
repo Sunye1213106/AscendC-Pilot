@@ -160,6 +160,8 @@ def test_bind_init_fanout_writes_isolated_yaml_stubs(tmp_path: Path) -> None:
     assert "domains" in (sdir / "method_bind.md").read_text(encoding="utf-8")
     harness_method = (sdir / "method_harness.md").read_text(encoding="utf-8")
     bind_method = (sdir / "method_bind.md").read_text(encoding="utf-8")
+    assert "只 Edit" in harness_method
+    assert "只 Edit" in bind_method
     assert "refs/harness/harness-edge-cases.md" in harness_method
     assert "refs/bind/column-binding-edge-cases.md" in bind_method
     assert "refs/harness/test-script-repo.md" in harness_method
@@ -176,6 +178,52 @@ def test_bind_init_fanout_writes_isolated_yaml_stubs(tmp_path: Path) -> None:
     assert not (sdir / "refs" / "bind" / "harness-edge-cases.md").exists()
 
 
+def test_bind_init_fanout_dispatches_engine_skeleton_llm_edit_false(tmp_path: Path) -> None:
+    import sys
+
+    if str(REPO / "pilot") not in sys.path:
+        sys.path.insert(0, str(REPO / "pilot"))
+    from ascendc_pilot.actions.runtime import _review_axis_fanout_tasks
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+
+    sdir = tmp_path / "session"
+    sdir.mkdir()
+    (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
+    (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
+    parts = sdir / "parts"
+    parts.mkdir()
+    (parts / "harness.yaml").write_text("schema: tg-harness-part/v1\nllm_edit: false\n", encoding="utf-8")
+    (parts / "bind.yaml").write_text("schema: tg-bind-part/v1\nllm_edit: false\n", encoding="utf-8")
+    stub_kwargs = {
+        "actor_id": "tg-analyst",
+        "action_id": "bind_init",
+        "run_id": "r1",
+        "session_dir": sdir.as_posix(),
+        "prompt_path": (sdir / "prompt.md").as_posix(),
+        "method_path": (sdir / "method.md").as_posix(),
+        "bundle_path": (sdir / "bundle.yaml").as_posix(),
+        "project_root": tmp_path.as_posix(),
+        "architecture": "arch0",
+        "write_paths": ["runs/{run_id}/actions/bind_init/parts/**"],
+        "user_question": "bind",
+    }
+    action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_init")
+    tasks = _review_axis_fanout_tasks(
+        action=action,
+        action_id="bind_init",
+        actor_id="tg-analyst",
+        phase="bind",
+        sdir=sdir,
+        stub_kwargs=stub_kwargs,
+        repo=REPO,
+        dispatch_targets={},
+        write_paths=["runs/{run_id}/actions/bind_init/parts/**"],
+        project_root=tmp_path.as_posix(),
+        architecture="arch0",
+    )
+    assert {t["slice_id"] for t in tasks} == {"harness", "bind"}
+
+
 def test_bind_init_fanout_skips_existing_part(tmp_path: Path) -> None:
     import sys
 
@@ -189,7 +237,10 @@ def test_bind_init_fanout_skips_existing_part(tmp_path: Path) -> None:
     (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
     (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
     (sdir / "parts").mkdir()
-    (sdir / "parts" / "bind.yaml").write_text("columns: []\n", encoding="utf-8")
+    (sdir / "parts" / "bind.yaml").write_text(
+        "schema: tg-bind-part/v1\nllm_edit: true\ncolumns: []\n",
+        encoding="utf-8",
+    )
     stub_kwargs = {
         "actor_id": "tg-analyst",
         "action_id": "bind_init",

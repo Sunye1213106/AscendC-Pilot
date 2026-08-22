@@ -19,7 +19,7 @@ CONTROL_PLANE_SKILLS = ()
 ROUTER_SKILLS = frozenset(
     {
         "bind-init",
-        "plan",
+        "test-plan",
         "solve",
         "standalone-review",
     }

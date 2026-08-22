@@ -125,7 +125,14 @@ def errors(repo: Path | None = None) -> list[str]:
         if "相关 ≠ 单域" in mtext:
             out.append("uo-query SKILL must not own 相关 ≠ 单域; belongs in intent-reasoning")
         if "Dim=V" not in mtext or "无参数索引" not in mtext:
-            out.append("uo-query SKILL must own the four uo-query forms")
+            out.append("uo-query SKILL must own when to pick each uo-query form")
+    cap = root / "tools/codemap/kb-query/METHOD.md"
+    if not cap.is_file():
+        out.append("missing tools/codemap/kb-query/METHOD.md")
+    else:
+        ctext = cap.read_text(encoding="utf-8")
+        if "Dim=V" not in ctext or "无参数索引" not in ctext:
+            out.append("kb-query capability must own the four uo-query forms")
     forms = root / "pilot/policies/invariants/code-access-invariants.md"
     if not forms.is_file():
         out.append("missing code-access-invariants.md")
@@ -137,7 +144,7 @@ def errors(repo: Path | None = None) -> list[str]:
             out.append("code-access invariant must keep the hard bound 禁止四种形态之外")
         if "Dim=V" in ftext or "Dim=<维名>" in ftext or "--file PATH" in ftext:
             out.append(
-                "code-access invariant must not catalog uo-query forms; belongs in uo-query Skill"
+                "code-access invariant must not catalog uo-query forms; belongs in kb-query capability"
             )
     restated = (
         "不要传 `--mode`",

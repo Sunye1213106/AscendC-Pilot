@@ -299,3 +299,22 @@ def test_plugin_pending_lock_does_not_block_resume_start() -> None:
     assert "applyForceNew" in (REPO / "opencode-plugin" / "pilot-driver.ts").read_text(
         encoding="utf-8"
     )
+
+
+def test_compact_host_step_keeps_pin_facts() -> None:
+    core = (REPO / "opencode-plugin" / "pilot-driver-core.ts").read_text(encoding="utf-8")
+    start = core.index("const HOST_STEP_MODEL_KEYS")
+    chunk = core[start : start + 1200]
+    for key in (
+        '"project"',
+        '"architecture"',
+        '"selected_by"',
+        '"changed_files_preview"',
+        '"changed_files"',
+    ):
+        assert key in chunk, f"{key} missing from HOST_STEP_MODEL_KEYS"
+    ack_start = core.index("export async function driveContinueGoalAfterAck")
+    ack = core[ack_start : ack_start + 900]
+    assert "args.step.message_zh" in ack
+    assert "selected_by" in ack
+    assert "changed_files_preview" in ack or "changed_files" in ack

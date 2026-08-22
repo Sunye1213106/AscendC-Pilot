@@ -1,106 +1,78 @@
 # 对照本轮
 
-构造 + Replay 刚结束。先按「跟预期是否一样」切开，再只对不一样的做分析。本步写 worklog 草稿：记下 R、分类、引理、下轮怎么改。不签发、不改 cases 表、不写 `tg/closure/**`。
+构造 + Replay 刚结束。先按 **evidence 是否对上** 切开，再只对 `TARGET_MISS` 做分析。本步写 worklog 草稿：记下命中、分类、引理、下轮改哪几列。
 
-权威证据：dispatch/key 看 Host Replay；不可达看经审查的源码引理；`P-*` / `F-*` 看 harness 收据。
+尺子是 `plan.md` 里该变量的 `evidence`。Host tiling `HIT` 只有在 evidence 就是那条 TilingKey / 字段时才等于 `TARGET_HIT`。Replay 原始裁决回答「Host 接不接受、改没改 key」；evidence 回答「这次要测的那个状态打到了没有」。两个问题叠在一起，MISS 会被解释成「其实也算命中」。
 
-worklog 文首 `open:` 列出仍开放的义务。open 非空不得假装本轮已闭合。需要改构造就保持 open。
+```text
+accuracy PASS 但 TARGET_MISS ≠ 变量已覆盖
+```
+
+文首 `open:` 列出仍未 `TARGET_HIT` 的变量 id。open 非空不得假装本轮已闭合。
 
 ## 输入 / 输出 / 停
 
-读：本轮行、Replay 收据、计划义务（含预期 `hit`）、init 列、已有引理。写：本轮 worklog 草稿。
+读：本轮行、Replay 收据、计划 `variables[].evidence`（及可选 `oracle`）、init 列、已有引理。写：本轮 worklog 草稿。
 
-完成：每条义务被标成「进 R」或「仍 open + 原因」；不一致的已分类；有 P⇒Q 的已更新引理并写下轮改哪几列。
+完成：每个本轮变量标成 `TARGET_HIT` 或仍 open + 原因；MISS 已分类；下轮改哪些列已写清。
 
-没有 Replay 收据时，不要用「看起来能过」关闭 dispatch/key。没有经审查引理时，不要用搜索失败关闭不可达。
+缺 Replay 收据 → 该变量保持 open（`UNKNOWN`），不猜命中。
 
 ## 步骤
 
-1. **先切两堆。** 拿计划里这条义务的预期（目标 key / 分支 / 公式结果 / harness 口径），对照本轮收据。
-   - 一样 → 进 R（或关 derived / 记下 harness 通过）。不要再分析。
-   - 不一样 → 留下，进入分类。缺收据 → 保持 open，不要猜。分类桶见本窗装载的失败模式表。
-
-2. **预期一样的直接进 R。** 只认真实 oracle 的成功观测。
-   - dispatch/key：Host **HIT**（实际 TilingKey = 目标 key）才能进 R。
-   - `P-*` / `F-*`：看 harness 收据，不是 Host HIT。缺收据 → `harness_missing`，保持 open。
-   - target / 模型预测 / 构造意图都不是 R。
-
-3. **不一样的先分类。** 不要按 case 写散文，按类归堆。类目录见本窗装载的失败模式表。先认这几桶：
-   - `REWRITE`：Host 接受但改写到别的 key
-   - `REFUSE`：Host 拒绝
-   - `CRASH` / `NOT_RUN`：环境，不是语义
-   - 构造错：列填错 / recipe 错 / shape 不合法
-   - oracle 错位：拿 Host 命中当精度/性能
-   - 未声明态：Host 产出计划域外的值
-
-4. **分类 + 源码证明。** 每一类写成可反驳的 P⇒Q，读 `skills/source-proof/SKILL.md` 得到 `PROVED | REFUTED | INSUFFICIENT`。本步把证明结果记进 worklog 引理段，不写排除集、不自己填审证裁决。`Replay reject ≠ E`。CRASH 禁止写 E。是否另开审证窗由 Workflow 决定，本步不要切窗口。
-
-5. **指导下轮 + 同步 worklog。** 用引理写「下轮改哪几列、别再盲搜什么」。更新文首 `open:`：能关的写证据窗口，不能关的写还缺什么观测或哪条引理。需要改构造 → 保持 open，回构造。
+1. **先切两堆。** 拿该变量的 evidence（字段 / 谓词 / `TG_PROBE` / 源码引理）对照本轮收据。
+   - 对上 → `TARGET_HIT`，进 R。不再分析。
+   - 对不上 → `TARGET_MISS`，进入分类。
+   - 缺收据 / 探针没打出来 → `UNKNOWN`，open。
+2. **oracle 后置。** 仅对已 `TARGET_HIT` 且 `oracle` 非空的行看 harness 收据。缺收据 → `harness_missing`，open。精度 PASS 不回写为变量已覆盖。
+3. **MISS 先分类。** 按类归堆，不按 case 写散文。桶见本窗装载的失败模式表。先认：`REWRITE`、`REFUSE`、`CRASH`/`NOT_RUN`、构造错（列 / recipe）、evidence 没打到、未声明态。
+4. **分类 + 源码证明。** 每一类写成可反驳的 P⇒Q，读 `skills/source-proof/SKILL.md`。结果记进 worklog 引理段。`REFUSE` ≠ 不可达，也不是 E。
+5. **指导下轮。** 用引理写「改哪几列、仍用哪条 evidence」。更新 `open:`：能关的写证据窗口，不能关的写还缺什么观测。
 
 ## 常驻判断
 
-闭合账本：`T = (R ∩ T) ∪ E` 且 `R ∩ E = ∅`。R 只来自真实 oracle 成功观测。E 只来自经审查的源码引理。`Replay reject ≠ E`。搜索耗尽、样本缺失、模型分数不能单独进 E。
+闭合账本：`T = (R ∩ T) ∪ E` 且 `R ∩ E = ∅`。R 来自 `TARGET_HIT`（加已点名的 oracle 通过）。E 只来自经审查的源码引理。`Replay reject ≠ E`。
 
-HIT / REWRITE / REFUSE 是 Host tiling 回放裁决（无 NPU），只对 dispatch/key 有意义。**HIT** = Host 接受且实际 TilingKey 等于目标 key。`REWRITE` / `REFUSE` 是预期外观测，供分类和引理，不是 E。
+`HIT / REWRITE / REFUSE` 仍是 Host tiling 原始裁决，与 `TARGET_HIT` 分开记账。worklog 的 `open:` 写变量 id，下一轮 construct 才能对上 direction。
 
-`P-*` 是精度场景 id（如 `P-DTYPE`），`F-*` 是性能场景 id（如 `F-SHAPE-TYPICAL`）。它们的 oracle 是 harness，不是 Host。Host 命中 TilingKey 关不了这两类义务。
-
-正式产物是稍后 promote 的 `worklog.md`。引理 span 来自查图；Grep 只作定位辅助。
-
-禁止：
-
-- 把预期不一致的行解释成「其实也算命中」硬塞进 R
-- 把 Host reject 写成源码不可达或 E
-- 把搜索失败写成「不存在」
-- 无观测写运行时不可达
-- 用精度失败解释 dispatch 未命中，或反过来
-- 未分类就盲搜下一轮
-
-需要改构造 → 保持 open，回到构造，不要在 worklog 里「解释掉」。
-
-完整性用语（全部 / 唯一 / 从不）依赖经审查引理。本步最多提出或更新线索；PROVED 只能来自带源码窗口的推导。
+完整性用语（全部 / 唯一 / 从不）依赖经审查引理。本步最多提出或更新线索。
 
 ## 看到这样
 
 | 现象 | 判断 |
 | --- | --- |
-| 与义务预期一致且是 HIT | 进 R；这条不必再推引理 |
-| REWRITE / REFUSE | 预期外；分类后推引理，不是 E |
-| CRASH / NOT_RUN | 环境；open，禁止写 E |
-| `P-*` / `F-*` 只有 Host HIT | 关不了；缺 harness → `harness_missing` |
-| 行填错列 / recipe 错 | 保持 open，回构造 |
-| 「搜索没找到」 | 不是不可达；最多挂证明线索 |
-| 同类 rewrite 重复出现 | 停盲搜；按引理改控制列 |
+| evidence 对上 | `TARGET_HIT`；这条不必再推引理 |
+| Host `HIT` 但 evidence 是别的字段 | 仍可能 `TARGET_MISS` |
+| `REWRITE` / `REFUSE` | 分类后推引理，不是 E |
+| `CRASH` / `NOT_RUN` | 环境；open |
+| 精度 PASS、evidence 没打到 | 变量仍 open |
+| 列填错 / recipe 错 | open，回构造 |
+| 「搜索没找到」 | 不是不可达 |
 
 ## 完成勾选
 
-- [ ] 先按预期切堆，没有从散文四段写起
-- [ ] 预期一致的已进 R（或已标 harness / derived 通过）
-- [ ] 预期外的已分类，每类有 P⇒Q 或「还缺窗口」
-- [ ] 下轮构造指令写清：改哪些列 / 停什么盲搜
-- [ ] 文首 `open:` 与正文一致
-- [ ] 没有签发、没有改 cases、没有写 `tg/closure/**`
+- [ ] 先按 evidence 切堆
+- [ ] `TARGET_HIT` 已进 R；MISS 已分类并有下轮改列
+- [ ] `open:` 是变量 id，与正文一致
+- [ ] 没有签发、没有改 cases
 
 ## 循环
 
-1. 取出本轮每条行的义务预期与 Replay / harness 收据。没有收据就 open。
-2. 一样 → 记入 R（或关对应义务）。
-3. 不一样 → 归类。同类合并，不要一条 case 一篇。
-4. 每类写成 P⇒Q，结合源码推引理；能证 / 能驳都写进 worklog 引理段。
-5. 用引理写下轮构造。更新 `open:`。空了才能谈闭合。
+1. 取出本轮每条行的变量 id、evidence、Replay / 探针收据。
+2. 对上 → `TARGET_HIT`。对不上 → 归类。
+3. 每类写成 P⇒Q；能证 / 能驳都写进引理段。
+4. 写下轮构造。更新 `open:`。空了才能谈闭合。
 
-worklog 是给下一轮构造看的。只记现象、不写「下轮怎么改」，下一轮就会重复盲搜。
+worklog 是给下一轮构造看的。只记现象、不写「改哪几列」，下一轮就会重复盲搜。
 
 ## 输出形状
 
-文首：
-
 ```text
-open: [义务id — 原因]
+open: [V-dtype — TARGET_MISS: tiling_key 未到预期维]
 ```
 
-然后三块：预期一致（进 R 的 key / 义务 + 证据窗口）；预期不一致（类 → 观测 → 引理 P⇒Q → 下轮改哪列）；引理清单（本轮新增 / 改写 / 驳回）。
+然后三块：`TARGET_HIT`（变量 + 证据窗口）；`TARGET_MISS`（类 → 观测 → 引理 → 下轮改哪列）；引理清单。
 
 ## 指针
 
-预期外分类与记账红线见本窗装载的失败模式表。硬命题：`skills/source-proof/SKILL.md`。已有引理产物先读其 `INDEX.md`，再最多打开 3 份正文。
+预期外分类见本窗装载的失败模式表。硬命题：`skills/source-proof/SKILL.md`。已有引理先读其 `INDEX.md`，再最多打开 3 份正文。

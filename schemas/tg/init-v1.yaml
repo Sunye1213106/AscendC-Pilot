@@ -1,0 +1,32 @@
+schema: tg-init/v1
+description: >
+  Canonical tg/init.yaml. Engine writes schema, UO digest, operator pin, and
+  timestamps. Semantic fields come from merged bind/harness parts.
+engine_owned:
+  - schema
+  - uo_digest
+  - uo_product
+  - op_name
+  - architecture
+  - project_root
+  - declared_key_count
+  - declared_source
+  - confirmed
+  - updated_at
+  - test_script_root
+llm_owned:
+  - call
+  - mapping
+  - golden
+  - compare
+  - modes
+  - generate_inputs
+  - findings
+enums:
+  kind:
+    - script_repo
+    - default_input
+  call.kind:
+    - pta
+    - aclnn
+    - mixed

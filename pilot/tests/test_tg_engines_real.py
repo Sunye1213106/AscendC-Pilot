@@ -59,7 +59,7 @@ def test_output_contracts_are_three_products() -> None:
     assert OUTPUT_CONTRACT_PATHS["tg-cases-v1"] == ["tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"]
     assert OUTPUT_CONTRACT_PATHS["plan-precheck-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == [
-        "runs/{run_id}/actions/plan_scope/parts/purpose.md"
+        "runs/{run_id}/actions/plan_scope/parts/targets.yaml"
     ]
     assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == []
     assert "tilingkey-contract-v1" not in OUTPUT_CONTRACT_PATHS
@@ -93,26 +93,46 @@ def test_start_persists_pilot_params(tmp_path: Path) -> None:
 
 _PLAN_BODY = """# why
 
+## 测什么
+
+默认 TilingKey 维。
+
+## 第一轮怎么造
+
+改 B 列。
+
+## 怎么知道打到了
+
+看 Replay tiling_key。
+
 ```yaml
-schema: tg-plan/v1
-obligations:
-- id: L0-dtype
-  why: cover dtype
-  class: derived
-  control: {columns: [B], recipe: set dtype}
-  hit: {pred: key}
-  uo: {query: InputDType, span: "op_host/x.cpp:1"}
-  cover: L0
+schema: tg-plan/v2
+intent: default_tilingkey
+approved: true
+variables:
+- id: V-dtype
+  symbol: InputDType
+  direction: {columns: [B], note: set dtype}
+  evidence: {kind: replay_field, field: tiling_key}
+ladder:
+  L0: [V-dtype]
+  L1: []
+  L2: []
+  L3: []
+oracle: []
 ```
 """
 
 
-def _write_purpose(root: Path, run_id: str) -> None:
+def _write_targets(root: Path, run_id: str) -> None:
     from ascendc_pilot.paths import agent_root
 
     parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_scope" / "parts"
     parts.mkdir(parents=True, exist_ok=True)
-    (parts / "purpose.md").write_text("测 L0 入口与精度/性能 mode。\n", encoding="utf-8")
+    (parts / "targets.yaml").write_text(
+        "intent: default_tilingkey\nvariables:\n  - id: V-dtype\n    kind: tilingkey_dim\n",
+        encoding="utf-8",
+    )
 
 
 def test_plan_staging_contract_accepts_parts_plan_md(tmp_path: Path) -> None:
@@ -133,7 +153,7 @@ def test_plan_staging_contract_accepts_parts_plan_md(tmp_path: Path) -> None:
     parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse" / "parts"
     parts.mkdir(parents=True)
     (parts / "plan.md").write_text(_PLAN_BODY, encoding="utf-8")
-    _write_purpose(root, run_id)
+    _write_targets(root, run_id)
     checked = _check_output_contract(
         root,
         "tg-plan-staging-v1",
@@ -162,7 +182,7 @@ def test_plan_staging_contract_accepts_legacy_staging_md(tmp_path: Path) -> None
     action = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse"
     action.mkdir(parents=True)
     (action / "staging.md").write_text(_PLAN_BODY, encoding="utf-8")
-    _write_purpose(root, run_id)
+    _write_targets(root, run_id)
     checked = _check_output_contract(
         root,
         "tg-plan-staging-v1",
@@ -213,7 +233,7 @@ def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
     assert "intent_sources" in packet
 
 
-def test_plan_promote_requires_purpose(tmp_path: Path) -> None:
+def test_plan_promote_requires_targets(tmp_path: Path) -> None:
     from ascendc_pilot.actions.tg_product import run_plan_promote
     from ascendc_pilot.paths import agent_root, ensure_agent_layout
     from ascendc_pilot.state import start_workflow

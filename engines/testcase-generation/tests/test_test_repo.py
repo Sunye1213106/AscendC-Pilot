@@ -93,3 +93,36 @@ def test_scan_column_profile_has_stats_and_truncates_long_uniques(tmp_path: Path
     doc = TR.contract_from_inventory(inv)
     assert doc["column_profile"]["n_rows"] == 81
     assert "D" in doc["column_profile"]["columns"]
+
+
+def test_modes_candidates_come_from_entry_not_sidecar_help(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "run_x.py").write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser()\n"
+        "p.add_argument('--case')\n"
+        "p.add_argument('--pta_mode', choices=['only_grad', 'profiler', 'auto_grad'])\n"
+        "if __name__ == '__main__':\n"
+        "    p.parse_args()\n",
+        encoding="utf-8",
+    )
+    (root / "show_prof.py").write_text(
+        "import argparse\n"
+        "p = argparse.ArgumentParser(description='wait for profiler dump')\n"
+        "p.add_argument('--wait', help='wait until profiler file appears')\n"
+        "if __name__ == '__main__':\n"
+        "    p.parse_args()\n",
+        encoding="utf-8",
+    )
+    (root / "cases.csv").write_text("Testcase_Name,Dtype\na,fp16\n", encoding="utf-8")
+    inv = TR.scan(root)
+    doc = TR.contract_from_inventory(inv)
+    precision = " ".join(str(x) for x in (doc.get("modes") or {}).get("precision") or [])
+    perf = " ".join(str(x) for x in (doc.get("modes") or {}).get("perf") or [])
+    assert "--wait" not in precision
+    assert "--wait" not in perf
+    candidates = doc.get("mode_candidates") or (doc.get("modes") or {}).get("candidates") or []
+    flags = [str(row.get("flag") or row) for row in candidates] if candidates and isinstance(candidates[0], dict) else [str(x) for x in candidates]
+    assert any("pta_mode" in f for f in flags)
+    assert not any("wait" in f for f in flags)

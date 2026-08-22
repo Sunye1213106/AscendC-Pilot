@@ -17,7 +17,7 @@ read_scopes:
 - pilot:runs/**
 - pilot:context/**
 - source:test_script/**
-- method:skills/plan/**
+- method:skills/test-plan/**
 - method:skills/source-proof/**
 write_scopes:
 - pilot:tg/**

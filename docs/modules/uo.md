@@ -268,9 +268,9 @@ Source -> CodeMap -> {/uo-query 只读提问（直接查询或同一轮委派）
 
 ## 与 TG、CE 的衔接
 
-TG 消费 CodeMap、TilingKey domain、Host/Kernel projection 与 unresolved 来写 `tg/plan.md` 义务。CE 用 `uo-query` 读图，不另走 impact API。二者都不应重新建立完整源码权威。
+TG 消费 CodeMap、TilingKey domain、Host/Kernel projection 与 unresolved 来写 `tg/plan.md` 独立变量。CE 用 `uo-query` 读图，不另走 impact API。二者都不应重新建立完整源码权威。
 
-UO 负责如实交付可证明关系及其未知部分；TG 决定哪些测试义务可通过 replay 或可靠排除关闭。
+UO 负责如实交付可证明关系及其未知部分；TG 决定哪些独立变量可通过 Replay evidence 命中或经审查引理排除。
 
 ---
 

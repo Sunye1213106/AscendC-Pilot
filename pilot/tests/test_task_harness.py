@@ -503,6 +503,8 @@ def test_intent_promote_empty_roots_returns_facts(tmp_path: Path, monkeypatch) -
     assert out.get("next_workflow_id") == ""
     assert list(out.get("changed_files") or []) == ["docs/README.md"]
     assert list(out.get("operator_roots") or []) == []
+    assert out.get("needs_human_decision") is not True
+    assert "ask_question" not in out
 
 
 def test_pr_base_uses_provider_metadata(tmp_path: Path, monkeypatch) -> None:

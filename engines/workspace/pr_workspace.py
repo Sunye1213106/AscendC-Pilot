@@ -24,22 +24,18 @@ _SHARED_DIR_NAMES = frozenset({"common", "shared"})
 _ARCH_RE = re.compile(r"^arch[0-9A-Za-z._-]+$", re.I)
 
 
-_NON_OPERATOR_DIR_NAMES = frozenset({"tests", "test", "ut", "st", "examples", "example", "docs"})
+def _is_operator_root(path: Path, *, worktree: Path | None = None) -> bool:
+    return bool(_git._is_operator_root(path, worktree=worktree))
 
 
-def _is_operator_root(path: Path) -> bool:
-    parts = [p.lower() for p in Path(path).parts]
-    if any(name in _NON_OPERATOR_DIR_NAMES for name in parts):
-        return False
-    return (path / "op_host").is_dir() or (path / "op_kernel").is_dir()
-
-
-def _add_root(out: list[Path], seen: set[Path], candidate: Path) -> None:
+def _add_root(
+    out: list[Path], seen: set[Path], candidate: Path, *, worktree: Path | None = None
+) -> None:
     try:
         resolved = candidate.resolve()
     except OSError:
         resolved = candidate
-    if resolved in seen or not _is_operator_root(resolved):
+    if resolved in seen or not _is_operator_root(resolved, worktree=worktree):
         return
     seen.add(resolved)
     out.append(resolved)
@@ -65,7 +61,7 @@ def _shared_family_operators(worktree: Path, rel: str) -> list[Path]:
         return []
     for child in children:
         if child.is_dir() and child.name.lower() not in _SHARED_DIR_NAMES:
-            _add_root(out, seen, child)
+            _add_root(out, seen, child, worktree=worktree)
     return out
 
 
@@ -79,8 +75,8 @@ def detect_operator_roots(worktree: Path, changed_files: list[str]) -> list[Path
         cur = target if target.is_dir() else target.parent
         hit = False
         while True:
-            if _is_operator_root(cur):
-                _add_root(roots, seen, cur)
+            if _is_operator_root(cur, worktree=wt):
+                _add_root(roots, seen, cur, worktree=wt)
                 hit = True
                 break
             if cur == wt or cur.parent == cur:
@@ -88,9 +84,9 @@ def detect_operator_roots(worktree: Path, changed_files: list[str]) -> list[Path
             cur = cur.parent
         if not hit:
             for candidate in _shared_family_operators(wt, rel):
-                _add_root(roots, seen, candidate)
-    if not roots and _is_operator_root(wt):
-        _add_root(roots, seen, wt)
+                _add_root(roots, seen, candidate, worktree=wt)
+    if not roots and _is_operator_root(wt, worktree=wt):
+        _add_root(roots, seen, wt, worktree=wt)
     return roots
 
 

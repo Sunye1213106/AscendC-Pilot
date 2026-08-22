@@ -5,7 +5,7 @@ description: 只读查询已有 Operator CodeMap。用户问图上有什么、�
 
 # 查 CodeMap
 
-用已 commit 的 `.uo` 回答本路 FOCUS。工具：插件 `pilot_cli` 的 `uo-query`。形态见 code-access（无参数索引 / 标识符 / `Dim=<维名>` 或 `Name=Value` / `--file --line`）。
+用已 commit 的 `.uo` 回答本路 FOCUS。工具：插件 `pilot_cli` 的 `uo-query`。合法形态见 kb-query capability；本步定义选哪种、何时停、怎么解释 partial / coverage。全局访问约束见 code-access。
 
 ## 输入 / 输出 / 停
 

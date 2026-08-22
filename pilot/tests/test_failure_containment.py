@@ -392,6 +392,35 @@ def test_deterministic_quality_failure_is_human_required(tmp_path: Path):
     assert any(f.get("code") == "UNROOTED_TILING_KEYS" for f in (lf.get("findings") or []))
 
 
+def test_preferred_failure_text_uses_engine_errors_list():
+    from ascendc_pilot.actions.failure_text import preferred_failure_text
+
+    text = preferred_failure_text(
+        {
+            "ok": False,
+            "errors": ["mapping prefix: api_arg requires uo_id"],
+        }
+    )
+    assert "prefix" in text
+    assert "uo_id" in text
+
+
+def test_validate_init_mapping_errors_rework_bind(tmp_path: Path):
+    start_workflow(tmp_path, "tg-init", phase="validate", force_phase=True, architecture="arch35")
+    recorded = record_pilot_result(
+        tmp_path,
+        ok=False,
+        action_id="validate_init",
+        step_id="action_finalize",
+        error_code="INIT_INVALID",
+        messages=["mapping prefix: api_arg requires uo_id"],
+        source="finalize_action",
+    )
+    assert recorded["status"] == "rework_required"
+    lf = recorded.get("last_failure") or {}
+    assert "bind_init" in (lf.get("rework_action_ids") or [])
+
+
 def test_llm_checker_failure_reworks_that_action_with_findings(tmp_path: Path):
     start_workflow(tmp_path, "uo-investigate", phase="investigate", force_phase=True, architecture="arch35")
     recorded = record_pilot_result(

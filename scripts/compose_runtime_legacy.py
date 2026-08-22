@@ -85,7 +85,7 @@ CONTROL_PLANE_SKILL_IDS: tuple[str, ...] = ()
 ROUTER_SKILLS = frozenset(
     {
         "bind-init",
-        "plan",
+        "test-plan",
         "solve",
         "standalone-review",
     }
@@ -228,11 +228,11 @@ WORKFLOW_ENTRIES: dict[str, dict[str, str]] = {
         ),
     },
     "tg-plan": {
-        "command_description": "把测试意图融成 plan.md 义务（根在 CSV 列）",
+        "command_description": "把测试意图写成独立变量与观测（根在 CSV 列）",
         "description": (
-            "规划测试义务，只落一份 `tg/plan.md`（散文 + YAML 义务表）。"
-            "强制 `init.yaml`；意图有则融合。控制面是 CSV/XLS 列，不是 T=D。"
-            "指标只有 Host replay 与 derived 公式。缺列则 test_harness_gap，先改测试仓。"
+            "白盒测试规划，只落一份 `tg/plan.md`（散文 + YAML 变量表）。"
+            "强制 `init.yaml`；未指定方向则独立变量 = TilingKey 维。"
+            "direction 是第一轮提示；evidence 是 Host 运行命中尺。缺列则 test_harness_gap。"
             "向用户说明批准后进入求解的后果。"
         ),
     },
@@ -685,7 +685,7 @@ def validate(repo: Path) -> list[str]:
         "knowledge/ascendc/performance.md",
         "knowledge/ascendc/cross-layer-contracts.md",
         "knowledge/ascendc/synchronization.md",
-        "skills/plan/references/scenario-catalog.md",
+        "skills/test-plan/references/evidence.md",
         "skills/solve/references/precision-construction.md",
         "skills/solve/references/performance-construction.md",
         "skills/source-proof/references/review.md",

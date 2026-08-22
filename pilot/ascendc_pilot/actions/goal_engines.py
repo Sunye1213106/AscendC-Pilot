@@ -218,6 +218,86 @@ def _isolated_pr_tree(root: Path) -> bool:
         return False
 
 
+def _worktree_changed_files(worktree: Path) -> list[str]:
+    """Recover changed-files from an already-cloned tree so skip does not emit empty facts."""
+    wt = Path(worktree).expanduser()
+    try:
+        gw = _git_workspace()
+        git_mod = getattr(gw, "_git", None)
+        run_git = getattr(git_mod, "_run_git", None) if git_mod is not None else None
+        changed_fn = getattr(git_mod, "changed_files", None) if git_mod is not None else None
+    except Exception:  # noqa: BLE001
+        run_git = None
+        changed_fn = None
+    if not callable(run_git):
+        return []
+    top = run_git(["rev-parse", "--show-toplevel"], cwd=wt)
+    if getattr(top, "returncode", 1) != 0:
+        return []
+    git_root = Path(str(getattr(top, "stdout", "") or "").strip())
+    if not git_root.as_posix():
+        return []
+    bases: list[str] = []
+    for args in (
+        ["merge-base", "HEAD", "origin/HEAD"],
+        ["merge-base", "HEAD", "origin/master"],
+        ["merge-base", "HEAD", "origin/main"],
+        ["rev-parse", "HEAD^"],
+    ):
+        got = run_git(args, cwd=git_root)
+        base = str(getattr(got, "stdout", "") or "").strip().splitlines()
+        if getattr(got, "returncode", 1) == 0 and base:
+            bases.append(base[0])
+            break
+    if not bases:
+        return []
+    if callable(changed_fn):
+        files = changed_fn(git_root, bases[0], "HEAD")
+        return [str(p).strip() for p in (files or []) if str(p).strip()]
+    got = run_git(["diff", "--name-only", f"{bases[0]}...HEAD"], cwd=git_root)
+    if getattr(got, "returncode", 1) != 0:
+        return []
+    return [ln.strip() for ln in str(getattr(got, "stdout", "") or "").splitlines() if ln.strip()]
+
+
+def _facts_for_existing_tree(project_pin: Path, source: dict[str, Any]) -> dict[str, Any]:
+    already_operator = (project_pin / "op_host").is_dir() or (project_pin / "op_kernel").is_dir()
+    files = _worktree_changed_files(project_pin)
+    acquire: dict[str, Any] = {
+        "ok": True,
+        "skipped_nested_clone": True,
+        "project": str(project_pin),
+        "worktree_head": str(project_pin),
+        "changed_files": files,
+        "source": {"url": str(source.get("url") or "")},
+        "workspace_mode": "isolated_pr" if _isolated_pr_tree(project_pin) else "local",
+    }
+    try:
+        gw = _git_workspace()
+        matrix_fn = getattr(gw, "operator_arch_matrix", None)
+        flatten_fn = getattr(gw, "flatten_operator_targets", None)
+        if callable(matrix_fn) and files:
+            matrix = list(matrix_fn(project_pin, files) or [])
+            acquire["operator_roots"] = [
+                str(row.get("operator_root") or "")
+                for row in matrix
+                if str(row.get("operator_root") or "").strip()
+            ]
+            if callable(flatten_fn):
+                acquire["operator_targets"] = list(flatten_fn(matrix) or [])
+            if len(matrix) == 1:
+                acquire["changed_architectures"] = [
+                    str(arch).strip()
+                    for arch in (matrix[0].get("architectures") or [])
+                    if str(arch).strip()
+                ]
+    except Exception:  # noqa: BLE001
+        pass
+    if already_operator and not acquire.get("operator_roots"):
+        acquire["operator_roots"] = [str(project_pin)]
+    return acquire
+
+
 def _unique_operator_arch_pair(resolved: dict[str, Any]) -> tuple[Path, str] | None:
     pairs = [row for row in (resolved.get("operator_targets") or []) if isinstance(row, dict)]
     if len(pairs) != 1:
@@ -239,22 +319,24 @@ def _clone_only_receipt(
 ) -> dict[str, Any]:
     worktree = str(acquire.get("worktree_head") or acquire.get("project") or project)
     resolved: dict[str, Any] = {}
-    if not skipped_nested or acquire.get("changed_files") or acquire.get("operator_targets"):
-        try:
-            gw = _git_workspace()
-            resolve_fn = getattr(gw, "resolve_targets_or_ask", None)
-            if callable(resolve_fn):
-                resolved = resolve_fn(acquire, host_root=str(anchor_root or project)) or {}
-        except Exception:  # noqa: BLE001
-            resolved = {}
-        if not isinstance(resolved, dict):
-            resolved = {}
+    try:
+        gw = _git_workspace()
+        resolve_fn = getattr(gw, "resolve_targets_or_ask", None)
+        if callable(resolve_fn):
+            resolved = resolve_fn(acquire, host_root=str(anchor_root or project)) or {}
+    except Exception:  # noqa: BLE001
+        resolved = {}
+    if not isinstance(resolved, dict):
+        resolved = {}
 
     unique = _unique_operator_arch_pair(resolved)
     op_root = unique[0] if unique else Path(worktree)
     arch = unique[1] if unique else ""
     changed = list(acquire.get("changed_files") or resolved.get("changed_files") or [])
     pairs = [row for row in (resolved.get("operator_targets") or []) if isinstance(row, dict)]
+    ask_payload = resolved.get("ask_question") if isinstance(resolved.get("ask_question"), dict) else {}
+    ask_options = [opt for opt in (ask_payload.get("options") or []) if opt]
+    can_ask = bool(resolved.get("needs_human_decision") and ask_options)
     if unique:
         try:
             from ascendc_pilot.run_resume import save_pr_architecture_pin
@@ -269,12 +351,31 @@ def _clone_only_receipt(
                 write_last_project_cache(op_root)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from ascendc_pilot.human_interaction import copy_confirmed_harness
+
+            copy_confirmed_harness(Path(anchor_root or project), op_root)
+        except Exception:  # noqa: BLE001
+            pass
         message = (
             f"已获取 PR 代码。changed-files 已唯一确定算子 `{op_root.name}`、"
             f"architecture `{arch}`。后续 `pilot_run` 使用该 `--project` 与 `--architecture`。"
             "不要为理解语义通读全量 git diff；不要把本回执当成自动开 `/uo-init` 的脚本链。"
         )
-    elif resolved.get("needs_human_decision"):
+        try:
+            from ascendc_pilot.pin_facts import persist_pin_on_state
+
+            persist_pin_on_state(
+                Path(anchor_root or project),
+                next_project=str(op_root),
+                next_architecture=arch,
+                selected_by="pr_changed_files",
+                changed_files=changed,
+                message_zh=message,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+    elif can_ask:
         message = (
             "已获取 PR 代码。changed-files 无法唯一确定算子目录与 architecture，请按选项选择。"
             "不要为理解语义通读全量 git diff。"
@@ -337,12 +438,11 @@ def _clone_only_receipt(
             "allow_free_text": False,
             "field": "architecture",
         }
-    elif resolved.get("needs_human_decision"):
+    elif can_ask:
         receipt["needs_human_decision"] = True
         receipt["decision_kind"] = str(resolved.get("decision_kind") or "architecture")
         receipt["reason_code"] = str(resolved.get("reason_code") or "")
-        if isinstance(resolved.get("ask_question"), dict):
-            receipt["ask_question"] = resolved["ask_question"]
+        receipt["ask_question"] = ask_payload
 
     receipt_ctx = dict(ctx or {})
     receipt_root = Path(anchor_root or project)
@@ -416,12 +516,7 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     explicit_wfs = bool(needed_workflows)
 
     if is_pr and (already_operator or _isolated_pr_tree(project_pin)):
-        acquire = {
-            "ok": True,
-            "skipped_nested_clone": True,
-            "project": str(project_pin),
-            "worktree_head": str(project_pin),
-        }
+        acquire = _facts_for_existing_tree(project_pin, source)
     elif is_pr:
         try:
             gw = _git_workspace()
@@ -502,6 +597,21 @@ def run_intent_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
         llm_intent = dict(checked["intent"])
         llm_intent["intent_text"] = intent_text
         source = llm_intent.get("source") if isinstance(llm_intent.get("source"), dict) else {}
+        if is_pr and acquire:
+            source = dict(source)
+            source.update(
+                {
+                    "base_sha": str(acquire.get("base_sha") or source.get("base_sha") or ""),
+                    "head_sha": str(acquire.get("head_sha") or source.get("head_sha") or ""),
+                    "diff_digest": str(acquire.get("diff_digest") or source.get("diff_digest") or ""),
+                    "materialization": str(
+                        source.get("materialization") or "isolated_pr"
+                    ),
+                }
+            )
+            llm_intent["source"] = source
+            if acquire.get("operator_targets") and not llm_intent.get("operator_targets"):
+                llm_intent["operator_targets"] = list(acquire.get("operator_targets") or [])
         constraints = (
             dict(llm_intent.get("constraints") or {})
             if isinstance(llm_intent.get("constraints"), dict)

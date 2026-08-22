@@ -1,0 +1,45 @@
+schema: tg-bind-part/v1
+description: >
+  bind_init columns slice. Engine emits this file with identity, column names,
+  entry, and domain profiles filled. LLM only edits semantic cells.
+engine_owned:
+  - schema
+  - run_id
+  - workflow_id
+  - action_id
+  - actor_id
+  - artifact_identity
+  - kind
+  - table_kind
+  - entry
+  - case_arg
+  - columns
+  - mapping_keys
+  - domains_keys
+  - domains_profile
+  - llm_edit
+llm_owned:
+  - call
+  - call_args
+  - mapping.role
+  - mapping.uo_id
+  - mapping.encoding
+  - mapping.evidence
+  - domains.operator
+  - domains.compare
+  - findings
+enums:
+  call.kind:
+    - pta
+    - aclnn
+    - mixed
+  mapping.role:
+    - api_arg
+    - feature
+    - script_meta
+    - result_sink
+  domains.compare:
+    - match
+    - tighter_profile
+    - tighter_operator
+    - mismatch

@@ -1,5 +1,5 @@
 <task>
-根据 `tg/init.yaml` 与紧凑改动包写出这次测什么。
+根据对话意图与 `tg/init.yaml` 列出独立测试变量。未指定方向时用 TilingKey 维。
 </task>
 
 <input>
@@ -10,5 +10,5 @@
 </input>
 
 <output>
-写入 `parts/purpose.md`。不要写正式 `tg/plan.md`。
+写入 `parts/targets.yaml`。不要写正式 `tg/plan.md`。
 </output>

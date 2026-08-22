@@ -44,6 +44,15 @@ def test_repo_scan_and_validate_init(synthetic_root: Path):
     run_id = str(state.get("run_id") or "")
     scan = run_repo_scan(synthetic_root, {"architecture": "arch0", "run_id": run_id})
     assert scan.get("ok") is True
+    from ascendc_pilot.actions.tg_product import _action_dir
+
+    parts = _action_dir(synthetic_root, {"architecture": "arch0", "run_id": run_id}, "bind_init") / "parts"
+    assert (parts / "bind.yaml").is_file()
+    assert (parts / "harness.yaml").is_file()
+    assert (parts / ".engine" / "bind.owned.yaml").is_file()
+    bind_doc = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    assert bind_doc.get("schema") == "tg-bind-part/v1"
+    assert bind_doc.get("run_id") == run_id
     dump_init(
         tg_root(synthetic_root, arch="arch0"),
         {
@@ -75,7 +84,7 @@ def test_plan_validate_rejects_td_mode(synthetic_root: Path):
         },
     )
     (tg / "plan.md").write_text(
-        "# plan\n\n```yaml\nschema: tg-plan/v1\nmode: tilingkey_full_coverage\nobligations: []\n```\n",
+        "# plan\n\n```yaml\nschema: tg-plan/v2\nmode: tilingkey_full_coverage\nvariables: []\n```\n",
         encoding="utf-8",
     )
     out = run_plan_validate(synthetic_root, {"architecture": "arch0", "run_id": "RUN1"})
@@ -240,7 +249,7 @@ def test_bind_promote_merges_parts_after_referee(synthetic_root: Path) -> None:
     scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": "no_repo_uo_query"})
     assert scan.get("ok") is True
     bind_root = _action_dir(synthetic_root, ctx, "bind_init")
-    (bind_root / "parts").mkdir(parents=True)
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
     (bind_root / "parts" / "harness.yaml").write_text(
         "golden: {status: match}\ncompare: {atol: 1e-4}\nmodes: {precision: [run], perf: []}\n"
         "generate_inputs: {kind: default}\nfindings: [h1]\n",
@@ -258,6 +267,12 @@ def test_bind_promote_merges_parts_after_referee(synthetic_root: Path) -> None:
     assert out.get("ok") is True, out
     doc = load_init(tg_root(synthetic_root, arch="arch0"))
     assert doc.get("kind") == "default_input"
+    assert doc.get("confirmed") is not True
+    from ascendc_pilot.actions.tg_product import run_validate_init
+
+    val = run_validate_init(synthetic_root, ctx)
+    assert val.get("ok") is True, val
+    doc = load_init(tg_root(synthetic_root, arch="arch0"))
     assert doc.get("confirmed") is True
     assert doc.get("golden", {}).get("status") == "match"
     assert doc.get("columns")[0]["name"] == "B"
@@ -280,7 +295,7 @@ def test_bind_promote_normalizes_list_mapping_domains_and_mixed_table(synthetic_
     scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": "no_repo_uo_query"})
     assert scan.get("ok") is True
     bind_root = _action_dir(synthetic_root, ctx, "bind_init")
-    (bind_root / "parts").mkdir(parents=True)
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
     (bind_root / "parts" / "harness.yaml").write_text(
         "golden: {status: match}\ncompare: {how: script}\n"
         "modes:\n  precision: {flag: only_grad}\n  perf: {flag: profiler}\n"
@@ -332,6 +347,203 @@ _INVALID_HARNESS = (
 )
 
 
+def test_bind_promote_merges_empty_uo_id_and_validate_init_confirms(
+    synthetic_root: Path,
+) -> None:
+    """Structure-clean parts merge; empty uo_id is Primary content, not a merge gate."""
+    from testcase_agent import products as tg_products
+    from ascendc_pilot.actions.tg_product import (
+        _action_dir,
+        run_bind_promote,
+        run_repo_scan,
+        run_validate_init,
+    )
+    from ascendc_pilot.human_interaction import adopt_test_script_root
+    from ascendc_pilot.paths import tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import load_init
+
+    bind_text = (
+        "schema: tg-bind-part/v1\nkind: script_repo\ntable_kind: csv\n"
+        "entry: run.py\ncase_arg: --case\n"
+        "call: {kind: pta, api: npu_fusion}\n"
+        "columns: [{name: prefix}]\n"
+        "mapping:\n  prefix:\n    role: api_arg\n    uo_id: ''\n    encoding: prefix list\n"
+        "domains:\n  prefix:\n    profile: {empty_rate: 1.0}\n    operator: ''\n"
+        "    compare: match\n"
+    )
+    harness_text = (
+        "schema: tg-harness-part/v1\ngolden: {status: match}\ncompare: {how: script}\n"
+        "modes:\n  precision: [only_grad]\n  perf: [profiler]\n"
+        "generate_inputs: {kind: default}\ncall: {kind: pta}\n"
+    )
+    import yaml as _yaml
+
+    bind_doc = _yaml.safe_load(bind_text)
+    harness_doc = _yaml.safe_load(harness_text)
+    assert tg_products.check_tg_part(bind_doc) == []
+    assert tg_products.check_tg_part(harness_doc) == []
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    repo = synthetic_root / "fag_debug_tools"
+    repo.mkdir()
+    (repo / "run.py").write_text("print(1)\n", encoding="utf-8")
+    adopt_test_script_root(synthetic_root, str(repo))
+    ctx = {
+        "architecture": "arch0",
+        "run_id": str(state.get("run_id") or ""),
+        "op_name": "_synthetic_toy",
+    }
+    scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": str(repo)})
+    assert scan.get("ok") is True, scan
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
+    (bind_root / "parts" / "harness.yaml").write_text(harness_text, encoding="utf-8")
+    (bind_root / "parts" / "bind.yaml").write_text(bind_text, encoding="utf-8")
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is True, out
+    tg = tg_root(synthetic_root, arch="arch0")
+    assert (tg / "init.yaml").is_file()
+    doc = load_init(tg)
+    assert doc["mapping"]["prefix"]["role"] == "api_arg"
+    assert str(doc["mapping"]["prefix"].get("uo_id") or "") == ""
+
+    val = run_validate_init(synthetic_root, ctx)
+    assert val.get("ok") is True, val
+    assert load_init(tg).get("confirmed") is True
+
+
+def test_checker_clean_bind_part_promotes_and_validates(synthetic_root: Path) -> None:
+    """Structural inspect yaml pass ⇒ merge writes and validate_init confirms."""
+    from testcase_agent import products as tg_products
+    from ascendc_pilot.actions.tg_product import (
+        _action_dir,
+        run_bind_promote,
+        run_repo_scan,
+        run_validate_init,
+    )
+    from ascendc_pilot.human_interaction import adopt_test_script_root
+    from ascendc_pilot.paths import tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import load_init
+
+    bind_doc = {
+        "schema": "tg-bind-part/v1",
+        "kind": "script_repo",
+        "table_kind": "csv",
+        "entry": "run.py",
+        "case_arg": "--case",
+        "call": {"kind": "pta", "api": "npu_fusion"},
+        "columns": [{"name": "B"}],
+        "mapping": {"B": {"role": "api_arg", "uo_id": "b", "encoding": "batch"}},
+        "domains": {"B": {"profile": {"max": 8}, "operator": "b", "compare": "match"}},
+    }
+    harness_doc = {
+        "schema": "tg-harness-part/v1",
+        "golden": {"status": "match"},
+        "compare": {"how": "script"},
+        "modes": {"precision": ["only_grad"], "perf": ["profiler"]},
+        "generate_inputs": {"kind": "default"},
+        "call": {"kind": "pta"},
+    }
+    assert tg_products.validate_bind_part(bind_doc) == []
+    assert tg_products.validate_harness_part(harness_doc) == []
+    assert tg_products.check_tg_part(bind_doc) == []
+    assert tg_products.check_tg_part(harness_doc) == []
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    repo = synthetic_root / "fag_debug_tools"
+    repo.mkdir()
+    (repo / "run.py").write_text("print(1)\n", encoding="utf-8")
+    adopt_test_script_root(synthetic_root, str(repo))
+    ctx = {
+        "architecture": "arch0",
+        "run_id": str(state.get("run_id") or ""),
+        "op_name": "_synthetic_toy",
+    }
+    scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": str(repo)})
+    assert scan.get("ok") is True, scan
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
+    import yaml as _yaml
+
+    (bind_root / "parts" / "harness.yaml").write_text(
+        _yaml.safe_dump(harness_doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    (bind_root / "parts" / "bind.yaml").write_text(
+        _yaml.safe_dump(bind_doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is True, out
+    val = run_validate_init(synthetic_root, ctx)
+    assert val.get("ok") is True, val
+    assert load_init(tg_root(synthetic_root, arch="arch0")).get("confirmed") is True
+
+
+def test_bind_promote_writes_illegal_call_kind_for_validate_init(
+    synthetic_root: Path,
+) -> None:
+    """ses_fd6e: pta_direct must merge into init.yaml, then fail validate_init."""
+    from ascendc_pilot.actions.tg_product import (
+        _action_dir,
+        run_bind_promote,
+        run_repo_scan,
+        run_validate_init,
+    )
+    from ascendc_pilot.human_interaction import adopt_test_script_root
+    from ascendc_pilot.paths import tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import load_init
+
+    state = start_workflow(
+        synthetic_root, "tg-init", architecture="arch0", op_name="_synthetic_toy"
+    )
+    adopt_test_script_root(synthetic_root, "no_repo_uo_query")
+    ctx = {
+        "architecture": "arch0",
+        "run_id": str(state.get("run_id") or ""),
+        "op_name": "_synthetic_toy",
+    }
+    scan = run_repo_scan(synthetic_root, {**ctx, "test_script_root": "no_repo_uo_query"})
+    assert scan.get("ok") is True
+    bind_root = _action_dir(synthetic_root, ctx, "bind_init")
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
+    (bind_root / "parts" / "harness.yaml").write_text(
+        "golden: {status: match}\ncompare: {how: script}\n"
+        "modes: {precision: [run], perf: []}\n"
+        "generate_inputs: {kind: default}\ncall: {kind: pta}\n",
+        encoding="utf-8",
+    )
+    (bind_root / "parts" / "bind.yaml").write_text(
+        "table_kind: csv\nentry: ''\ncase_arg: ''\ncolumns: [{name: B}]\n"
+        "call: {kind: pta_direct, api: npu_fusion}\n"
+        "mapping: {}\ndomains: {B: '>=0'}\n",
+        encoding="utf-8",
+    )
+    review_root = _action_dir(synthetic_root, ctx, "bind_review")
+    review_root.mkdir(parents=True)
+    (review_root / "verdict.yaml").write_text("ok: true\n", encoding="utf-8")
+    out = run_bind_promote(synthetic_root, ctx)
+    assert out.get("ok") is True, out
+    doc = load_init(tg_root(synthetic_root, arch="arch0"))
+    assert doc.get("call", {}).get("kind") == "pta_direct"
+    val = run_validate_init(synthetic_root, ctx)
+    assert val.get("ok") is False, val
+    joined = " ".join(str(item) for item in (val.get("errors") or []))
+    assert "pta_direct" in joined
+
+
 def test_bind_promote_invalid_yaml_is_structured(synthetic_root: Path) -> None:
     from ascendc_pilot.actions.tg_product import _action_dir, run_bind_promote
     from ascendc_pilot.state import start_workflow
@@ -341,7 +553,7 @@ def test_bind_promote_invalid_yaml_is_structured(synthetic_root: Path) -> None:
     )
     ctx = {"architecture": "arch0", "run_id": str(state.get("run_id") or ""), "op_name": "_synthetic_toy"}
     bind_root = _action_dir(synthetic_root, ctx, "bind_init")
-    (bind_root / "parts").mkdir(parents=True)
+    (bind_root / "parts").mkdir(parents=True, exist_ok=True)
     (bind_root / "parts" / "harness.yaml").write_text(_INVALID_HARNESS, encoding="utf-8")
     (bind_root / "parts" / "bind.yaml").write_text(
         "table_kind: csv\nentry: ''\ncase_arg: ''\ncolumns: [{name: B}]\n"

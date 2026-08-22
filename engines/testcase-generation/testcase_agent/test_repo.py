@@ -25,8 +25,9 @@ from typing import Any
 SCHEMA = "tg-test-repo/v1"
 _SKIP_DIR = {".git", "__pycache__", ".venv", "venv", "node_modules", ".mypy_cache"}
 _CASE_HINTS = ("case", "csv", "xls", "xlsx", "table", "sheet")
-_PRECISION_HINTS = ("only_grad", "golden", "precision", "compare", "atol", "rtol", "accuracy")
+_PRECISION_HINTS = ("only_grad", "precision", "compare", "atol", "rtol", "accuracy")
 _PERF_HINTS = ("profiler", "profiling", "perf", "performance", "kernel_time")
+_NOT_PRECISION_FLAGS = frozenset({"--golden-only", "--only_input_golden", "--no-save-golden"})
 _ENABLE_NAMES = ("enable", "Enable", "ENABLE")
 _PROFILE_TOPK = 16
 _PROFILE_UNIQUE_CAP = 64
@@ -42,6 +43,7 @@ def default_contract(*, root: str = "", reason: str = "no_test_script_root") -> 
         "entry": "",
         "case_arg": "",
         "modes": {"precision": [], "perf": []},
+        "mode_candidates": [],
         "columns": [],
         "defaults": {},
         "corpus": [],
@@ -147,7 +149,9 @@ def contract_from_inventory(
     profile = dict(primary.get("profile") or {}) if isinstance(primary.get("profile"), dict) else {}
     entry = _pick_entry(entries, flags)
     case_arg = _pick_case_arg(flags)
-    modes = _pick_modes(flags)
+    entry_flags = _flags_for_entry(flags, entry)
+    modes = _pick_modes(entry_flags)
+    mode_candidates = _mode_candidates(entry_flags)
     defaults = dict(sample)
     for name, value in (knob_defaults or {}).items():
         key = _match_column(columns, str(name)) or str(name)
@@ -168,6 +172,7 @@ def contract_from_inventory(
         "entry": entry,
         "case_arg": case_arg,
         "modes": modes,
+        "mode_candidates": mode_candidates,
         "columns": columns,
         "defaults": defaults,
         "corpus": [str(t.get("path") or "") for t in tables if t.get("path")],
@@ -249,7 +254,7 @@ def _parse_python(path: Path) -> dict[str, Any]:
         flag = _const_str(node.args[0])
         if not flag.startswith("-"):
             continue
-        meta = {"flag": flag, "dest": "", "help": "", "takes_value": True}
+        meta = {"flag": flag, "dest": "", "help": "", "takes_value": True, "choices": []}
         for kw in node.keywords:
             if kw.arg == "dest":
                 meta["dest"] = _const_str(kw.value)
@@ -257,6 +262,8 @@ def _parse_python(path: Path) -> dict[str, Any]:
                 meta["help"] = _const_str(kw.value)
             elif kw.arg == "action" and _const_str(kw.value) in {"store_true", "store_false"}:
                 meta["takes_value"] = False
+            elif kw.arg == "choices":
+                meta["choices"] = _const_list(kw.value)
         flags.append(meta)
     return {"is_entry": is_entry, "flags": flags}
 
@@ -288,6 +295,12 @@ def _const_str(node: ast.AST) -> str:
     if isinstance(node, ast.Constant):
         return str(node.value or "")
     return ""
+
+
+def _const_list(node: ast.AST) -> list[str]:
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return [item for item in (_const_str(elt) for elt in node.elts) if item]
+    return []
 
 
 def _csv_table(path: Path) -> tuple[list[str], dict[str, str], dict[str, Any]]:
@@ -493,6 +506,26 @@ def _pick_case_arg(flags: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _flags_for_entry(flags: list[dict[str, Any]], entry: str) -> list[dict[str, Any]]:
+    if not entry:
+        return list(flags)
+    return [row for row in flags if str(row.get("path") or "") == entry]
+
+
+def _mode_candidates(flags: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for row in flags:
+        flag = str(row.get("flag") or "")
+        if not flag or flag in _NOT_PRECISION_FLAGS:
+            continue
+        blob = _flag_blob(row)
+        if any(hint in blob for hint in _CASE_HINTS) and "cache" not in blob:
+            continue
+        item: dict[str, Any] = {"flag": flag, "values": list(row.get("choices") or [])}
+        out.append(item)
+    return out
+
+
 def _pick_modes(flags: list[dict[str, Any]]) -> dict[str, list[str]]:
     precision: list[str] = []
     perf: list[str] = []
@@ -500,6 +533,8 @@ def _pick_modes(flags: list[dict[str, Any]]) -> dict[str, list[str]]:
         blob = _flag_blob(row)
         flag = str(row.get("flag") or "")
         if not flag:
+            continue
+        if flag in _NOT_PRECISION_FLAGS:
             continue
         if any(hint in blob for hint in _PRECISION_HINTS):
             precision = _mode_argv(row, blob, _PRECISION_HINTS) or precision

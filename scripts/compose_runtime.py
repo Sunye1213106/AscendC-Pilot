@@ -19,11 +19,11 @@ _legacy.WORKFLOW_ENTRIES["ce-review"]["description"] = (
     "结论留在对话。建议测试走 /tg-plan。用 `pilot_run`。"
 )
 _legacy.WORKFLOW_ENTRIES["tg-plan"]["description"] = (
-    "规划测试义务，只落 tg/plan.md。两项核心输入都必须存在：tg/init.yaml + Planning Context"
-    "（词表见 CONTEXT）。`/tg-plan` 不审查 diff。"
-    "把测试意图落到有限覆盖子集（CSV/XLS 列或代码变量）及精度/性能要求。"
-    "缺脚本/列/生成器（含随机数）写 test_harness_gap 说明书交 /ce-apply，不默认全量 tilingkey。"
-    "缺 purpose.md 返回 PLAN_SCOPE_REQUIRED。"
+    "白盒测试规划，只落 tg/plan.md。两项核心输入都必须存在：tg/init.yaml + Planning Context"
+    "（独立变量表，词表见 CONTEXT）。`/tg-plan` 不审查 diff。"
+    "从测试意图列出独立变量（默认 TilingKey 维），给出大致求解方向和可观测的命中证据。"
+    "未指定时 solve 默认生成 L0+L1。缺脚本/列/生成器写 test_harness_gap 说明书交 /ce-apply，不默认全量 tilingkey。"
+    "缺 targets.yaml 返回 PLAN_SCOPE_REQUIRED。"
 )
 
 # Keep the Primary OpenCode permission contract explicit at the entrypoint. The

@@ -6,6 +6,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from uo_init.diagnostics.source_api import (
     GRAPH_API_NEEDLES,
     count_graph_kernel_api,
@@ -321,3 +323,49 @@ def codemap_quality(
             "role_resolution_rate": role_rate,
         },
     }
+
+
+def ready_status_fields(quality: dict[str, Any] | None) -> dict[str, Any]:
+    """Compact grade / graph counts for status-only and host_step.done."""
+    q = quality if isinstance(quality, dict) else {}
+    graph = q.get("graph") if isinstance(q.get("graph"), dict) else {}
+    unresolved = q.get("unresolved") if isinstance(q.get("unresolved"), dict) else {}
+    out: dict[str, Any] = {}
+    if q.get("grade") is not None:
+        out["grade"] = q.get("grade")
+    if q.get("integrity") is not None:
+        out["integrity"] = q.get("integrity")
+    if "locate_ready" in q:
+        out["locate_ready"] = q.get("locate_ready")
+    if unresolved.get("locate_blocking") is not None:
+        out["locate_blocking"] = unresolved.get("locate_blocking")
+    if unresolved.get("total") is not None:
+        out["unresolved_total"] = unresolved.get("total")
+    if graph.get("entity_count") is not None:
+        out["entity_count"] = graph.get("entity_count")
+    if graph.get("relation_count") is not None:
+        out["relation_count"] = graph.get("relation_count")
+    return out
+
+
+def load_product_ready_status(product: Path | None) -> dict[str, Any]:
+    """Read verify's quality.yaml next to the .uo; never open the binary."""
+    if product is None:
+        return {}
+    p = Path(product)
+    candidates: list[Path] = []
+    if p.is_dir():
+        candidates.append(p / "checks" / "quality.yaml")
+        candidates.append(p / "quality.yaml")
+    else:
+        candidates.append(p.parent / "checks" / "quality.yaml")
+    for quality_path in candidates:
+        if not quality_path.is_file():
+            continue
+        try:
+            doc = yaml.safe_load(quality_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(doc, dict):
+            return ready_status_fields(doc)
+    return {}

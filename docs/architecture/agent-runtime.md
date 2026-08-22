@@ -88,7 +88,7 @@ Harness 是软控制面，不是 OS 安全边界。从其他 Tab 或外部终端
 
 职责分离：Workflow 管状态；Action 管任务；Agent 管身份；Skill 管这一步怎么做；Prompt 管当前任务；Policy 管约束；Engine 管确定性计算。
 
-例如在 TG 中：“如何判断列是否可测”属于 `bind-init`；“融合义务”属于 `plan` 的 fuse 窗；“Host replay”属于 Engine；“是否允许签发 worklog”属于 Workflow + Gate。它们不能混在一个 Agent 中。
+例如在 TG 中：“如何判断列是否可测”属于 `bind-init`；“独立变量与观测”属于 `test-plan` 的 fuse 窗；“Host replay”属于 Engine；“是否允许签发 worklog”属于 Workflow + Gate。它们不能混在一个 Agent 中。
 
 ---
 

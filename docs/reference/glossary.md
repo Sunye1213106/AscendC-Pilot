@@ -18,9 +18,10 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 | Host adapter | OpenCode、Cursor、Codex 的 host-specific 投影：**安装期** compose + **运行时** Session Driver。 |
 | Host Session Driver | Host 侧传输角色：消费 `host_step`、派发 Task / AskQuestion、调用 `dispatch-result`；不写 canonical、不 advance。**不驱动** `uo-query`（主控直接查询或同一轮委派）。 |
 | `host_step` | ACP drive 返回的结构化下一步：`dispatch_subagent` / `ask_human` / `done` / `failed` / `primary_router`（查询拒走 Driver）。 |
-| L0 | TG 覆盖梯子的默认档：每维一次。写在 `plan.md` 义务的 `cover` 上，不是 `tg/plan/levels/L0/`。 |
+| L0 | TG 覆盖梯子：每个独立变量一次。未指定时 solve 默认生成 L0+L1。不是 `tg/plan/levels/L0/`。 |
+| L1 | TG 覆盖梯子：独立变量成对。 |
 | L2 | TG 覆盖梯子：有界笛卡尔。全量 tilingkey 只在意图点名时做，不是默认 T=D。 |
-| L3 | TG 覆盖梯子：异常 / 分支结局。 |
+| L3 | TG 覆盖梯子：异常 / 特殊取值，仍须能被 evidence 判命中。 |
 | Local Extension | 算子本地的 replay / build / golden / decoder 接口实现。 |
 | `OUTPUT_NOT_WRITABLE` | prepare 写闭合失败：合同产物路径不在 agent∩action 可写集合内。 |
 | `pilot_run` | OpenCode 自定义工具：Host Session Driver 入口（start → auto → Task → dispatch-result）。`workflow=uo-query` 会立刻返回 `UO_QUERY_NOT_HOST_DRIVEN`。 |
@@ -43,6 +44,6 @@ Agent 常驻词表（compose 进 invariant pack）：[`agents/CONTEXT.md`](../..
 | --- | --- | --- | --- |
 | TilingKey / TILING_KEY | CodeMap **维实体**（名字 + span + packing 位点） | 声明域来自 `product_uo.legal_key_rows`；不是默认 T | 查询锚点，不是默认全量覆盖 |
 | legal_key | 模板可接纳的组合 | 声明域大小，供规划参考 | 基本不直接查 |
-| obligation | `key_field_obligations`（legacy YAML） | `plan.md` YAML 义务 | `{slug}_plan.md`「测试内容」散文；CE 不写义务 yaml |
+| obligation | `key_field_obligations`（legacy YAML） | worklog 未 `TARGET_HIT` 的变量；`plan.md` 写 `variables` | `{slug}_plan.md`「测试内容」散文；CE 不写变量 yaml |
 | fingerprint | graph 直方图 digest | `init.yaml` 的 `uo_digest` | git revision。新鲜度比 **handle.digest**（`canonical_graph_digest`），禁止用当前图和自己比来宣称 fresh |
 | kind | `EntityKind`（含 FIELD 与 TILING_FIELD） | 列 mapping | 不按 risk 路由写账本 |

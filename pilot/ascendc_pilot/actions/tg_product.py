@@ -238,6 +238,27 @@ def _collect_staging_text(root: Path, *, names: tuple[str, ...] = ("plan.md", "w
     return ""
 
 
+def _evidence_proofs(project_root: Path, mapping: dict[str, Any]) -> list[dict[str, Any]]:
+    proofs: list[dict[str, Any]] = []
+    try:
+        from ascendc_pilot.evidence_window import disk_window_proof
+    except Exception:  # noqa: BLE001
+        return proofs
+    for col, row in (mapping or {}).items():
+        if not isinstance(row, dict):
+            continue
+        ev = str(row.get("evidence") or "").strip()
+        if not ev or ":" not in ev:
+            continue
+        rel, _, spec = ev.replace("\\", "/").rpartition(":")
+        spec = spec.strip()
+        if not rel or not spec.replace("-", "").isdigit():
+            continue
+        proof = disk_window_proof(project_root, path=rel, lines=spec)
+        proofs.append({"column": col, "evidence": ev, **proof})
+    return proofs
+
+
 def _goal_wants_test_generation(project_root: Path) -> bool:
     try:
         from ascendc_pilot.human_confirm import _auto_goal_wants_tests
@@ -348,6 +369,35 @@ def run_repo_scan(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "declared_source": "product_uo.legal_key_rows",
     }
     out = _receipt(project_root, ctx, "repo_scan.yaml", doc)
+    try:
+        from testcase_agent.bind_parts import emit_bind_parts
+
+        parts = _action_dir(project_root, ctx, "bind_init") / "parts"
+        session = {
+            "run_id": _run_id(ctx),
+            "workflow_id": str(ctx.get("workflow_id") or "tg-init"),
+            "phase": str(ctx.get("phase") or "bind"),
+            "action_id": "bind_init",
+            "actor_id": str(ctx.get("actor_id") or ""),
+            "role_id": str(ctx.get("role_id") or ""),
+            "action_session_id": str(ctx.get("action_session_id") or ""),
+            "lease_id": str(ctx.get("lease_id") or ""),
+            "prepare_nonce": str(ctx.get("prepare_nonce") or ""),
+            "execution_mode": str(ctx.get("execution_mode") or "deterministic"),
+        }
+        identity = {"run_id": session["run_id"], "workflow_id": session["workflow_id"], "action_id": "bind_init"}
+        try:
+            from ascendc_pilot.ownership import artifact_identity_from_session
+
+            identity = artifact_identity_from_session(session)
+        except Exception:  # noqa: BLE001
+            identity.setdefault("produced_by", "pilot-finalizer")
+        emitted = emit_bind_parts(parts, scan=doc, identity=identity)
+        doc["bind_parts"] = emitted
+        out = _receipt(project_root, ctx, "repo_scan.yaml", doc)
+    except Exception as exc:  # noqa: BLE001
+        doc["bind_parts_error"] = str(exc)[:300]
+        out = _receipt(project_root, ctx, "repo_scan.yaml", doc)
     return {"ok": True, "engine": "repo_scan", "artifact": out.as_posix(), **doc}
 
 
@@ -409,6 +459,23 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             "message_zh": "缺少 parts/harness.yaml 或 parts/bind.yaml，禁止 promote。",
             "receipt": receipt.as_posix(),
         }
+    owned_bind = _load_yaml(action_root / "parts" / ".engine" / "bind.owned.yaml")
+    owned_harness = _load_yaml(action_root / "parts" / ".engine" / "harness.owned.yaml")
+    restore_err: list[Any] = []
+    if owned_bind or owned_harness:
+        from testcase_agent.bind_parts import restore_bind, restore_harness
+
+        if owned_bind:
+            bind, bind_restore_err = restore_bind(bind, owned_bind)
+        else:
+            bind_restore_err = []
+        if owned_harness:
+            harness, harness_restore_err = restore_harness(harness, owned_harness)
+        else:
+            harness_restore_err = []
+        restore_err = list(bind_restore_err) + list(harness_restore_err)
+        _dump_yaml(bind_path, bind)
+        _dump_yaml(harness_path, harness)
     staged = _collect_staging_mapping(action_root)
     from ascendc_pilot.runs import receipts_dir
 
@@ -450,6 +517,7 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     for src in (harness.get("findings"), bind.get("findings"), staged.get("findings"), contract.get("findings")):
         if isinstance(src, list):
             findings.extend(src)
+    findings.extend({"code": "bind_restore", "detail": item} for item in restore_err)
 
     mapping = products.mapping_as_dict(bind.get("mapping"))
     if not mapping:
@@ -460,13 +528,21 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             staged.get("domains") if staged.get("domains") is not None else staged.get("value_domains")
         )
 
+    bind_call = bind.get("call") if isinstance(bind.get("call"), dict) else {}
+    harness_call = harness.get("call") if isinstance(harness.get("call"), dict) else {}
+    staged_call = staged.get("call") if isinstance(staged.get("call"), dict) else {}
+
+    modes = dict(
+        harness.get("modes") or staged.get("modes") or contract.get("modes") or {"precision": [], "perf": []}
+    )
+    modes.pop("candidates", None)
     doc = {
         "schema": products.INIT_SCHEMA,
         "kind": kind,
         "table_kind": table_kind,
         "entry": bind.get("entry") or staged.get("entry") or contract.get("entry") or "",
         "case_arg": bind.get("case_arg") or staged.get("case_arg") or contract.get("case_arg") or "",
-        "modes": harness.get("modes") or staged.get("modes") or contract.get("modes") or {"precision": [], "perf": []},
+        "modes": modes,
         "columns": columns,
         "defaults": bind.get("defaults") or staged.get("defaults") or contract.get("defaults") or {},
         "mapping": mapping,
@@ -474,7 +550,7 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "golden": harness.get("golden") or staged.get("golden") or {},
         "compare": harness.get("compare") or harness.get("script_compare") or staged.get("compare") or staged.get("script_compare") or {},
         "generate_inputs": harness.get("generate_inputs") or staged.get("generate_inputs") or {},
-        "call": bind.get("call") or harness.get("call") or staged.get("call") or {},
+        "call": bind_call or harness_call or staged_call or {},
         "findings": findings,
         "test_script_root": str(scan.get("test_script_root") or _test_script_root(project_root, ctx)),
         "uo_digest": str(ident.get("sha256") or ident.get("digest") or scan.get("uo_digest") or ""),
@@ -492,30 +568,25 @@ def run_bind_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             doc[key] = harness[key]
         elif staged.get(key) is not None:
             doc[key] = staged[key]
-    errors = products.validate_init(doc)
-    if errors:
-        receipt = _receipt(project_root, ctx, "bind_promote.yaml", {"ok": False, "errors": errors})
-        return {"ok": False, "engine": "bind_promote", "errors": errors, "receipt": receipt.as_posix()}
+    # Merge dumps extracted structure. inspect yaml only refuses illegal
+    # shape (parse, kind enum, mapping key schema). Identifier content is
+    # Primary. Illegal call.kind still fails validate_init (ses_fd6e).
     path = products.dump_init(tg, doc)
-    try:
-        from testcase_agent.init_status import mark_init_confirmed
-
-        mark_init_confirmed(tg, notes="Confirmed after Primary bind_review", project_root=project_root)
-    except Exception as exc:  # noqa: BLE001
-        receipt = _receipt(
-            project_root,
-            ctx,
-            "bind_promote.yaml",
-            {"ok": False, "error": str(exc)[:300], "artifact": path.as_posix()},
-        )
-        return {
-            "ok": False,
-            "engine": "bind_promote",
-            "error": str(exc)[:300],
-            "artifact": path.as_posix(),
-            "receipt": receipt.as_posix(),
-        }
-    return {"ok": True, "engine": "bind_promote", "artifact": path.as_posix()}
+    proofs = _evidence_proofs(project_root, mapping)
+    receipt = _receipt(
+        project_root,
+        ctx,
+        "bind_promote.yaml",
+        {"ok": True, "artifact": path.as_posix(), "evidence_proofs": proofs, "confirmed": False},
+    )
+    return {
+        "ok": True,
+        "engine": "bind_promote",
+        "artifact": path.as_posix(),
+        "receipt": receipt.as_posix(),
+        "evidence_proofs": proofs,
+        "confirmed": False,
+    }
 
 
 def run_validate_init(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -524,11 +595,54 @@ def run_validate_init(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         doc = products.load_init(tg)
     except products.ProductError as exc:
         receipt = _receipt(project_root, ctx, "validate_init.yaml", {"ok": False, "error": str(exc)})
-        return {"ok": False, "engine": "validate_init", "error": str(exc), "ask": exc.ask, "receipt": receipt.as_posix()}
+        return {
+            "ok": False,
+            "engine": "validate_init",
+            "error": "INIT_INVALID",
+            "reason_code": "INIT_INVALID",
+            "ask": exc.ask,
+            "message_zh": str(exc),
+            "receipt": receipt.as_posix(),
+        }
     errors = products.validate_init(doc)
-    ok = not errors
-    receipt = _receipt(project_root, ctx, "validate_init.yaml", {"ok": ok, "errors": errors})
-    return {"ok": ok, "engine": "validate_init", "errors": errors, "receipt": receipt.as_posix()}
+    if errors:
+        message_zh = "tg/init.yaml 校验失败：" + "；".join(str(item) for item in errors[:12])
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "validate_init.yaml",
+            {"ok": False, "error": "INIT_INVALID", "errors": errors},
+        )
+        return {
+            "ok": False,
+            "engine": "validate_init",
+            "error": "INIT_INVALID",
+            "reason_code": "INIT_INVALID",
+            "errors": errors,
+            "message_zh": message_zh,
+            "receipt": receipt.as_posix(),
+        }
+    try:
+        from testcase_agent.init_status import mark_init_confirmed
+
+        mark_init_confirmed(tg, notes="Confirmed after Primary bind_review", project_root=project_root)
+    except Exception as exc:  # noqa: BLE001
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "validate_init.yaml",
+            {"ok": False, "error": str(exc)[:300]},
+        )
+        return {
+            "ok": False,
+            "engine": "validate_init",
+            "error": "INIT_INVALID",
+            "reason_code": "INIT_INVALID",
+            "message_zh": str(exc)[:400],
+            "receipt": receipt.as_posix(),
+        }
+    receipt = _receipt(project_root, ctx, "validate_init.yaml", {"ok": True, "errors": []})
+    return {"ok": True, "engine": "validate_init", "errors": [], "receipt": receipt.as_posix()}
 
 
 def _compact_plan_scope_packet(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -638,14 +752,14 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
-    purpose = _action_dir(project_root, ctx, "plan_scope") / "parts" / "purpose.md"
-    if not purpose.is_file() or not purpose.read_text(encoding="utf-8").strip():
+    targets = _action_dir(project_root, ctx, "plan_scope") / "parts" / "targets.yaml"
+    if not targets.is_file() or not targets.read_text(encoding="utf-8").strip():
         return {
             "ok": False,
             "engine": "plan_promote",
             "error": "PLAN_SCOPE_REQUIRED",
             "ask": "scope",
-            "message_zh": "缺少 plan_scope/parts/purpose.md；回 scope 写出测试用途，不要在 fuse 里补语义调查。",
+            "message_zh": "缺少 plan_scope/parts/targets.yaml；回 scope 列出独立测试变量，不要在 fuse 里补语义调查。",
         }
     text = _collect_staging_text(_action_dir(project_root, ctx, "plan_fuse"))
     if not text.strip():
@@ -662,7 +776,7 @@ def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "engine": "plan_promote",
         "artifact": path.as_posix(),
         "plan_hash": products.plan_hash(text),
-        "obligation_count": len(fence.get("obligations") or []),
+        "variable_count": len(fence.get("variables") or []),
     }
 
 
@@ -674,8 +788,7 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
     except products.ProductError as exc:
         return {"ok": False, "engine": "plan_validate", "error": str(exc), "ask": exc.ask}
     errors = products.validate_plan_fence(fence, init_columns=products.column_names(init_doc))
-    if not (fence.get("obligations") or []):
-        errors.append("obligations empty; default L0 still needs rootable precision/perf rows")
+    errors.extend(products.validate_plan_prose(text))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
         errors.append("tilingkey_full_coverage / T=D is not a plan mode")
     ok = not errors

@@ -956,7 +956,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "tg-bind-review-v1": [],
     "plan-precheck-v1": [],
-    "tg-plan-scope-v1": ["runs/{run_id}/actions/plan_scope/parts/purpose.md"],
+    "tg-plan-scope-v1": ["runs/{run_id}/actions/plan_scope/parts/targets.yaml"],
     "tg-plan-v1": ["tg/plan.md"],
     "tg-plan-staging-v1": [
         "runs/{run_id}/actions/plan_fuse/parts/**",

@@ -276,11 +276,69 @@ def coerce_test_script_root_arg(value: object, project_root: Path | str | None =
     return raw
 
 
+def harness_pin_path(project_root: Path) -> Path:
+    return Path(project_root).expanduser().resolve() / AGENT_DIR / "harness_pin.yaml"
+
+
+def persist_confirmed_harness_pin(project_root: Path, url: str) -> None:
+    """Write a confirmed harness URL so later operator pins / tg-init can inherit it."""
+    stored = str(url or "").strip()
+    if not stored:
+        return
+    path = harness_pin_path(project_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _dump(path, {"test_script_root": stored, "test_script_confirmed": True})
+
+
+def peek_confirmed_harness(project_root: Path) -> str:
+    """Confirmed URL from pin sidecar, goal occupancy, or current run-state. Empty is not a hit."""
+    root = Path(project_root).expanduser().resolve()
+    pin = _load(harness_pin_path(root))
+    pinned = str(pin.get("test_script_root") or "").strip()
+    if pinned and pin.get("test_script_confirmed") is not False:
+        return pinned
+    for kwargs in (
+        {"arch": "goal", "workflow_id": "auto"},
+        {"arch": "goal"},
+        {"workflow_id": "auto"},
+        {},
+    ):
+        try:
+            st = load_state(root, **kwargs) if kwargs else load_state(root)
+        except Exception:  # noqa: BLE001
+            continue
+        if not isinstance(st, dict):
+            continue
+        url = str(st.get("test_script_root") or "").strip()
+        if url and st.get("test_script_confirmed"):
+            return url
+    return ""
+
+
+def copy_confirmed_harness(src_root: Path, dest_root: Path) -> str:
+    """Copy a confirmed URL from goal / source occupancy onto the operator pin."""
+    url = peek_confirmed_harness(src_root)
+    if not url:
+        url = peek_confirmed_harness(dest_root)
+    if not url:
+        return ""
+    persist_confirmed_harness_pin(dest_root, url)
+    return url
+
+
 def normalize_start_test_script_root(project_root: Path, value: str) -> tuple[str, bool]:
-    """Seed run-state from ``pilot_run`` / CLI. In-tree tests and default markers stay unconfirmed."""
+    """Seed run-state from ``pilot_run`` / CLI. In-tree tests and default markers stay unconfirmed.
+
+    An empty incoming value must not wipe a previously confirmed URL.
+    """
     seed = external_harness_seed(project_root, value)
     if seed:
         return seed, True
+    if str(value or "").strip():
+        return "", False
+    inherited = peek_confirmed_harness(project_root)
+    if inherited:
+        return inherited, True
     return "", False
 
 
@@ -291,9 +349,17 @@ def resolved_test_script_root(project_root: Path, picked: str = "") -> str:
     if str(st.get("workflow_id") or "") != "tg-init":
         return str(picked or st.get("test_script_root") or "").strip()
     if st.get("test_script_confirmed"):
-        return str(st.get("test_script_root") or "").strip()
+        url = str(st.get("test_script_root") or "").strip()
+        if url:
+            return url
+        inherited = peek_confirmed_harness(root)
+        if inherited:
+            return inherited
     raw = str(picked or st.get("test_script_root") or "").strip()
-    return external_harness_seed(root, raw)
+    seeded = external_harness_seed(root, raw)
+    if seeded:
+        return seeded
+    return peek_confirmed_harness(root)
 
 
 def invalidate_tg_harness_downstream(project_root: Path) -> dict[str, Any]:
@@ -415,6 +481,7 @@ def adopt_test_script_root(project_root: Path, value: str) -> dict[str, Any]:
     st["test_script_root"] = stored
     st["test_script_confirmed"] = True
     save_state(root, st)
+    persist_confirmed_harness_pin(root, stored)
     reset: dict[str, Any] = {}
     if old and old != stored:
         reset = invalidate_tg_harness_downstream(root)

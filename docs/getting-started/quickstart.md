@@ -25,7 +25,7 @@ Slash 专家   →  /uo-init /tg-plan /ce-review … 直接跑对应工作流
 https://github.com/<org>/<repo>/pull/<id>
 ```
 
-主控应先写出 Todo（获取代码 / uo-init / tg-init，再视产物缺口写消费格），再执行。系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ Engine 回执列出 changed-files；路径令牌唯一时直接使用该 `(算子, architecture)`，多个才 AskQuestion（禁止在没有证据时默认 arch35）→ 建立或复用 CodeMap。**全部 init 先于任何消费**：缺 `.uo` 先 `/uo-init`；最终产物是用例且缺 `tg/init.yaml` 先 `/tg-init`（意图没有仓外测试脚本路径时第一步问人；仓内 `tests/` 未确认不得当 harness；主控不得把仓内 UT 填进 `test_script_root` 代答），再按产物缺口消费。禁止把 `/ce-review` 插在未完成的 init 之前。最终产物是用例、审查不是交付物时，`/tg-init` 完成后直接 `/tg-plan`（测试用途由 `plan_scope` 写 `purpose.md`），不要把 `/ce-review` 推理成依赖，也不要在 init 与 plan 之间再派自由 `/uo-query`。需主控派 Task 的格串行。凭证失败会问人，这不是 UX 失败。显式 slash 只跑该格。不要按个别措辞选 slash。
+主控应先写出 Todo（获取代码 / uo-init / tg-init，再视产物缺口写消费格），再执行。系统会：在当前 OpenCode 打开目录下 **新建文件夹** clone PR exact-head（空打开目录只做 clone 锚点，**不**落下 `.ascendc-pilot`）→ Engine 回执列出 changed-files；路径令牌唯一时直接使用该 `(算子, architecture)`，多个才 AskQuestion（禁止在没有证据时默认 arch35）→ 建立或复用 CodeMap。**全部 init 先于任何消费**：缺 `.uo` 先 `/uo-init`；最终产物是用例且缺 `tg/init.yaml` 先 `/tg-init`（意图没有仓外测试脚本路径时第一步问人；仓内 `tests/` 未确认不得当 harness；主控不得把仓内 UT 填进 `test_script_root` 代答），再按产物缺口消费。禁止把 `/ce-review` 插在未完成的 init 之前。最终产物是用例、审查不是交付物时，`/tg-init` 完成后直接 `/tg-plan`（独立变量由 `plan_scope` 写 `targets.yaml`），不要把 `/ce-review` 推理成依赖，也不要在 init 与 plan 之间再派自由 `/uo-query`。需主控派 Task 的格串行。凭证失败会问人，这不是 UX 失败。显式 slash 只跑该格。不要按个别措辞选 slash。
 
 ## 1. 打开目标算子
 
@@ -157,7 +157,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 
 `/tg-solve` 按已批准 `plan.md` 构造脚本可读的 cases 表，跑 Host tiling 回放（无 NPU），把每条 case 写进 `worklog.md`，直到文首 `open: []`。详细算法见 [TG](../modules/tg.md)。无 WSL/CANN 时 `replay_round` 失败停住，不进入 analyze。
 
-义务关闭方式：Host replay 命中，或 derived 公式成立。`Replay reject ≠ E`。
+义务关闭方式：Host 跑完 evidence 对上（`TARGET_HIT`）。`Replay reject ≠ E`。未指定时第一轮造 L0+L1。
 
 产物位于 `<operator-repo>/.ascendc-pilot/<arch>/tg/`：`init.yaml`、`plan.md`、`worklog.md`、`cases.csv`/`xls`/`xlsx`。
 
@@ -179,7 +179,7 @@ TG 消费已有 CodeMap：架构与算子身份以 `.uo` 为准。若尚未建�
 /ce-review --project <算子目录>
 ```
 
-自然语言要生成用例且带 PR URL：先 Todo 再按格执行。获取代码走 Engine clone；`auto` 回执已唯一钉死 `(算子, architecture)` 时直接用于后续格，不要单独一条「确定算子/架构」Todo。全部 init 在前，再按产物缺口消费：最终产物是用例、审查不是交付物 → `/tg-init` 后直接 `/tg-plan` / `/tg-solve`（用途由 `plan_scope` 写，不要中间再派自由 `/uo-query`）；审查才是交付物 → `/ce-review`（若同时还要用例，审查结论留给 `/tg-plan` 的 purpose，不再加一轮自由查询）。勾 Todo 后再 `pilot_run` 下一格，不要再调 `auto` 做 intake。`/tg-init` 缺测试仓会问人。需主控派 Task 的格串行。不要按个别措辞选 slash。
+自然语言要生成用例且带 PR URL：先 Todo 再按格执行。获取代码走 Engine clone；`auto` 回执已唯一钉死 `(算子, architecture)` 时直接用于后续格，不要单独一条「确定算子/架构」Todo。全部 init 在前，再按产物缺口消费：最终产物是用例、审查不是交付物 → `/tg-init` 后直接 `/tg-plan` / `/tg-solve`（独立变量由 `plan_scope` 写 `targets.yaml`，不要中间再派自由 `/uo-query`）；审查才是交付物 → `/ce-review`（若同时还要用例，审查结论留给 `/tg-plan` 的 Planning Context，不再加一轮自由查询）。勾 Todo 后再 `pilot_run` 下一格，不要再调 `auto` 做 intake。`/tg-init` 缺测试仓会问人。需主控派 Task 的格串行。不要按个别措辞选 slash。
 
 
 CE 沿已有 CodeMap 读图，不重新建立源码权威。语义只走 `uo-query`（形态见 code-access 不变量）。审查是双轴对话，不落盘。plan 不以 PR 为输入；review 不以设计改码为职责。旧 `/ce-intent` `/ce-impact` `/ce-verify` `/ce-handoff` 已删除。

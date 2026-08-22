@@ -1,5 +1,5 @@
 <task>
-对照本轮 Replay 与义务预期，写 worklog 草稿。
+对照本轮 Replay 与各变量的 evidence，写 worklog 草稿。
 </task>
 
 <input>

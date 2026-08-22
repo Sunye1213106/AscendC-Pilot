@@ -1,15 +1,15 @@
-# 性能构造旋钮
+# 性能邻域取值
 
-已经有合法 `F-*` id 之后才读。本步不重新判断该不该挂场景，只把已批准 id 落成列。
+**何时加载**：`plan.md` 的 `oracle` 已点性能，并且该变量已经 `TARGET_HIT`。本步不决定测哪些变量，只给命中后的取值邻域。
 
-怎么跑 profiler、哪一列选 case 以当前仓 `tg/init.yaml` 为准，不要发明 NPU 指标。
+怎么跑 profiler、哪一列选 case 以当前仓 `tg/init.yaml` 为准。
 
-挂上任一性能场景时带上 `F-SHAPE-TYPICAL`（网络常用 shape）。切片里有 tail / 切不整再加 `F-SHAPE-TAIL`。
+点了性能时带一条网络常用 shape。切片里有 tail / 切不整再加一条余数 shape。
 
 ## 选 case
 
-- 切分字段 / 核数 → `F-SPLIT`、`F-BALANCE`
-- Buffer / 队列方向 → `F-BUFFER`
-- 计算 dtype 路径 → `F-DTYPE`
+- 切分字段 / 核数 → 对照 Replay 的 usedCoreNum / split
+- Buffer / 队列方向 → workspace / queue
+- 计算 dtype 路径 → 与精度邻域分开记账
 
-预算 3–8 条，禁止枚举全部 legal key。Oracle 是 harness profiler。Host HIT 关不了 `F-*`。
+预算 3–8 条。Oracle 是 harness profiler。Host `HIT` 不是性能 PASS。

@@ -1761,7 +1761,7 @@ function formatPilotCliOutput(opts: {
     )
   }
   const blob = parts.join("\n")
-  if (/cann|UO_CANN_ROOT|ASCEND_CANN|impl\/include/i.test(blob)) {
+  if (/\bUO_CANN_ROOT\b|\bASCEND_CANN(?:_[A-Z]+)?\b|impl\/include|CANN_ENV_NOT_READY|CANN 环境/i.test(blob)) {
     parts.push(
       "查 ~/.config/opencode/ascendc-cann-root；跑 python scripts/dev/check_cann.py；" +
         "必要时 python scripts/cann_extract.py --fixup --dest <pkg>。",
@@ -3143,7 +3143,7 @@ export const AscendCHarnessPlugin = async (ctx?: {
           throw new Error(
             `[ascendc-pilot] human interaction pending (request_id=${pending.request_id}).` +
               `${prompt}${allowed}. ` +
-              `pending 不等于确认框已可见。若屏幕上没有可点选框，立刻用 question 按上述 prompt/options 原样询问；这是用户能看见的第一问。` +
+              `pending 不等于确认框已可见。若屏幕上没有可点选框，用户已经给过仓外路径或 git URL 时用该值 answer；否则立刻用 question 按上述 prompt/options 原样询问；这是用户能看见的第一问。` +
               `禁止用文字告诉用户「框应该已经弹出」。` +
               `若用户已在聊天里回复，用该原文调用 interpret-user-turn — 不要再问一遍。` +
               `仅当原生确认框已经可见时才不要再开 question。` +

@@ -9,9 +9,7 @@ max_skill_ids: &skills [ce-apply]
 skill_ids: *skills
 read_scopes:
 - pilot:ce/plan/**
-- pilot:uo/**
 - pilot:runs/**
-- pilot:context/**
 - source:op_host/**
 - source:op_kernel/**
 - source:common/**

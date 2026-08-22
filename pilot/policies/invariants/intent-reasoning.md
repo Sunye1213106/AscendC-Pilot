@@ -68,13 +68,13 @@ CodeMap 准备（按缺口二选一，不要当固定串）：
 
 `auto` 返回的 `(operator, architecture)` 直接用于后续 `pilot_run`。`status` / `uo-query --status-only` 也必须带上该算子路径，不要对着打开目录根判断 `.uo`。
 
-`Planning Context` 就是 `/tg-plan` 的 `purpose.md`（外加用户意图 / handoff）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
+`Planning Context` 就是 `/tg-plan` 的 `plan_scope/parts/targets.yaml`（外加用户意图 / handoff）。不要求先执行 Code Review，也不要求 Host 在 init 与 plan 之间自己跑一遍 `uo-query`。
 
 ## 按用户目标选择流程
 
 用户只要求 Code Review 时，只执行 `/ce-review`。
 
-用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；测试用途由 `plan_scope` 写出，不要在中间再派自由查询。
+用户只要生成用例、未要求完整审查时，不要默认加入 `/ce-review`。`/tg-init` 完成后直接 `/tg-plan`；独立变量由 `plan_scope` 写出 `targets.yaml`，不要在中间再派自由查询。
 
 用户只要求语义查询时：
 
@@ -111,7 +111,7 @@ TG 和 CE producer 查询 UO 只使用 `pilot_cli uo-query`。
 
 调查只获取下一步真正需要的事实。
 
-`/tg-init` 完成后直接 `/tg-plan`。测试用途由 `plan_scope` 根据 `tg/init.yaml` 与紧凑改动包写出 `purpose.md`。不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash，也不要在 bind 里加第三路 fanout。
+`/tg-init` 完成后直接 `/tg-plan`。独立测试变量由 `plan_scope` 根据对话与 `tg/init.yaml` 写出 `targets.yaml`（未指定则 TilingKey 维）。不要在 init 与 plan 之间再派自由 `uo-query` 调查 slash，也不要在 bind 里加第三路 fanout。
 
 用户只要求语义查询、不要生成用例时，仍用 `pilot_cli uo-query`，不进入 `/tg-plan`。
 

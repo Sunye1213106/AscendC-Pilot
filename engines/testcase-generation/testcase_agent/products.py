@@ -14,7 +14,7 @@ from typing import Any
 from .io import read_yaml, write_yaml
 
 INIT_SCHEMA = "tg-init/v1"
-PLAN_SCHEMA = "tg-plan/v1"
+PLAN_SCHEMA = "tg-plan/v2"
 WORKLOG_SCHEMA = "tg-worklog/v1"
 
 _FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -67,38 +67,132 @@ def column_names(init_doc: dict[str, Any]) -> list[str]:
     return names
 
 
-_ROLES_REQUIRE_UO = frozenset({"api_arg", "attr", "feature"})
-_ROLES_OPTIONAL_UO = frozenset({"script_meta", "result_sink"})
+_ROLES_OPTIONAL_UO = frozenset({"script_meta", "result_sink", "feature"})
+_CALL_KINDS = frozenset({"pta", "aclnn", "mixed"})
+_MAPPING_WRAPPER_KEYS = frozenset({"columns", "rows", "items", "mapping"})
+
+
+def _ingest_mapping_row(out: dict[str, Any], item: dict[str, Any], *, fallback: str = "") -> None:
+    col = str(item.get("column") or fallback).strip()
+    if not col:
+        return
+    row = dict(item)
+    row.setdefault("column", col)
+    out[col] = row
+
+
+def _drop_unfilled_mapping(out: dict[str, Any]) -> dict[str, Any]:
+    """Form cells with explicit empty role are not yet bound."""
+    kept: dict[str, Any] = {}
+    for key, row in out.items():
+        if isinstance(row, dict) and "role" in row and not str(row.get("role") or "").strip():
+            continue
+        kept[key] = row
+    return kept
 
 
 def mapping_as_dict(raw: Any) -> dict[str, Any]:
-    """Normalize bind mapping (list-of-rows or dict) keyed by column name."""
+    """Normalize bind mapping (list-of-rows or dict) keyed by column name.
+
+    A wrapper list under ``columns`` / ``rows`` is not itself a column. Rows
+    must use ``column=``; ``name=`` alone is dropped so it cannot become a
+    garbage binding.
+    """
     out: dict[str, Any] = {}
     if isinstance(raw, dict):
-        items = raw.items()
-        for key, value in items:
-            col = str(key or "").strip()
-            if isinstance(value, dict):
-                row = dict(value)
-                col = str(row.get("column") or col).strip()
-            else:
-                row = {"uo_id": value}
-            if not col:
+        for key, value in raw.items():
+            label = str(key or "").strip()
+            if label in _MAPPING_WRAPPER_KEYS and isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        _ingest_mapping_row(out, item)
                 continue
-            row.setdefault("column", col)
-            out[col] = row
-        return out
+            if isinstance(value, dict):
+                _ingest_mapping_row(out, value, fallback=label)
+                continue
+            if not label:
+                continue
+            row = {"uo_id": value, "column": label}
+            out[label] = row
+        return _drop_unfilled_mapping(out)
     if isinstance(raw, list):
         for item in raw:
-            if not isinstance(item, dict):
-                continue
-            col = str(item.get("column") or "").strip()
-            if not col:
-                continue
-            row = dict(item)
-            row.setdefault("column", col)
-            out[col] = row
-    return out
+            if isinstance(item, dict):
+                _ingest_mapping_row(out, item)
+    return _drop_unfilled_mapping(out)
+
+
+def _mapping_uses_name_schema(raw: Any) -> bool:
+    rows: list[dict[str, Any]] = []
+    if isinstance(raw, dict):
+        wrapped = raw.get("columns")
+        if isinstance(wrapped, list):
+            rows = [item for item in wrapped if isinstance(item, dict)]
+        else:
+            return False
+    elif isinstance(raw, list):
+        rows = [item for item in raw if isinstance(item, dict)]
+    else:
+        return False
+    return any(
+        str(row.get("name") or "").strip() and not str(row.get("column") or "").strip()
+        for row in rows
+    )
+
+
+def validate_bind_part(bind: Any) -> list[str]:
+    """Structural gate for `inspect yaml` / Primary PASS: kind enum + mapping shape.
+
+    Identifier values (empty or wrong uo_id) are Primary content, not this gate.
+    """
+    if not isinstance(bind, dict):
+        return ["bind part is not a mapping"]
+    errors: list[str] = []
+    call = bind.get("call") if isinstance(bind.get("call"), dict) else {}
+    kind = str(call.get("kind") or "").strip()
+    kinds = _CALL_KINDS
+    try:
+        from .bind_parts import load_schema
+
+        declared = load_schema("bind-part").get("enums", {}).get("call.kind")
+        if declared:
+            kinds = frozenset(str(x) for x in declared)
+    except Exception:  # noqa: BLE001
+        kinds = _CALL_KINDS
+    if kind and kind not in kinds:
+        errors.append(f"call.kind {kind!r} not in pta|aclnn|mixed")
+    if _mapping_uses_name_schema(bind.get("mapping")):
+        errors.append(
+            "mapping.columns[].name is not a valid schema; use mapping keyed by "
+            "column or a list of {column: ...}"
+        )
+    return errors
+
+
+def validate_harness_part(harness: Any) -> list[str]:
+    """Same gate `inspect yaml` uses for parts/harness.yaml."""
+    if not isinstance(harness, dict):
+        return ["harness part is not a mapping"]
+    errors: list[str] = []
+    call = harness.get("call") if isinstance(harness.get("call"), dict) else {}
+    kind = str(call.get("kind") or "").strip()
+    if kind and kind not in _CALL_KINDS:
+        errors.append(f"call.kind {kind!r} not in pta|aclnn|mixed")
+    return errors
+
+
+def check_tg_part(doc: Any) -> list[str]:
+    """Dispatch bind/harness part checks. init.yaml stays parse-only here."""
+    if not isinstance(doc, dict):
+        return ["part is not a mapping"]
+    schema = str(doc.get("schema") or "")
+    if schema in {INIT_SCHEMA, "tg-init/v1"}:
+        return []
+    if schema == "tg-harness-part/v1":
+        return validate_harness_part(doc)
+    if schema == "tg-bind-part/v1" or "mapping" in doc:
+        return validate_bind_part(doc)
+    return []
 
 
 def domains_as_dict(raw: Any) -> dict[str, Any]:
@@ -158,8 +252,6 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
         if role in _ROLES_OPTIONAL_UO:
             continue
         api_mapped = True
-        if role in _ROLES_REQUIRE_UO and not str(row.get("uo_id") or "").strip():
-            errors.append(f"mapping {col}: {role} requires uo_id")
     if kind == "script_repo" and must_map and mapping and not api_mapped:
         errors.append("script_repo API argument columns are unbound; script_meta-only mapping is not enough")
     if kind == "script_repo":
@@ -256,13 +348,26 @@ def pending_harness_intent(text: str, fence: dict[str, Any]) -> bool:
     return pending_test_harness_gap(text, fence)
 
 
+_EVIDENCE_KINDS = frozenset({"replay_field", "derived", "dispatch_map", "probe", "source_proof"})
+_LADDER_LEVELS = ("L0", "L1", "L2", "L3")
+_PLAN_PROSE_HEADINGS = ("测什么", "第一轮怎么造", "怎么知道打到了")
+
+
+def validate_plan_prose(text: str) -> list[str]:
+    errors: list[str] = []
+    for heading in _PLAN_PROSE_HEADINGS:
+        if not re.search(rf"^##\s*{re.escape(heading)}\s*$", text or "", re.MULTILINE):
+            errors.append(f"plan.md missing heading {heading!r}")
+    return errors
+
+
 def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> list[str]:
     errors: list[str] = []
     schema = str(fence.get("schema") or fence.get("version") or "")
-    if schema not in {PLAN_SCHEMA, "1", "1.0", ""}:
-        # version: 1 is accepted; schema tg-plan/v1 preferred
-        if schema not in {PLAN_SCHEMA, "1"}:
-            errors.append(f"plan schema {schema!r} unexpected")
+    if schema != PLAN_SCHEMA:
+        errors.append(f"plan schema {schema!r} unexpected; want {PLAN_SCHEMA}")
+    if fence.get("obligations"):
+        errors.append("obligations removed; use variables")
     allowed = {c.lower() for c in init_columns}
     extra_cols = {
         str(c).strip()
@@ -270,60 +375,49 @@ def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> li
         if str(c).strip()
     }
     allowed |= {c.lower() for c in extra_cols}
-    cover = fence.get("cover") if isinstance(fence.get("cover"), dict) else {}
-    budget = cover.get("budget")
-    if budget is not None:
-        try:
-            if int(budget) <= 0:
-                errors.append("cover.budget must be positive")
-        except (TypeError, ValueError):
-            errors.append("cover.budget is not an int")
-    obligations = fence.get("obligations") or []
-    if not isinstance(obligations, list):
-        errors.append("obligations must be a list")
+    if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
+        errors.append("tilingkey_full_coverage / T=D is not a plan mode")
+    variables = fence.get("variables") or []
+    if not isinstance(variables, list):
+        errors.append("variables must be a list")
+        return errors
+    if not variables:
+        errors.append("variables empty; at least one independent test variable")
         return errors
     seen: set[str] = set()
-    for idx, row in enumerate(obligations):
+    for idx, row in enumerate(variables):
         if not isinstance(row, dict):
-            errors.append(f"obligations[{idx}] is not a mapping")
+            errors.append(f"variables[{idx}] is not a mapping")
             continue
-        oid = str(row.get("id") or "").strip()
-        if not oid:
-            errors.append(f"obligations[{idx}] missing id")
+        vid = str(row.get("id") or "").strip()
+        if not vid:
+            errors.append(f"variables[{idx}] missing id")
             continue
-        if oid in seen:
-            errors.append(f"duplicate obligation id {oid}")
-        seen.add(oid)
-        if not str(row.get("why") or "").strip():
-            errors.append(f"{oid}: why required")
-        klass = str(row.get("class") or "").strip().lower()
-        if klass == "untestable":
-            errors.append(f"{oid}: put untestable rows in untestable:, not obligations")
-        elif klass not in {"replay", "derived"}:
-            errors.append(f"{oid}: class must be replay|derived")
-        control = row.get("control") if isinstance(row.get("control"), dict) else {}
-        cols = [str(c).strip() for c in (control.get("columns") or []) if str(c).strip()]
-        if not cols:
-            errors.append(f"{oid}: control.columns empty")
-        if not str(control.get("recipe") or "").strip():
-            errors.append(f"{oid}: control.recipe required")
+        if vid in seen:
+            errors.append(f"duplicate variable id {vid}")
+        seen.add(vid)
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        kind = str(evidence.get("kind") or "").strip()
+        if kind not in _EVIDENCE_KINDS:
+            errors.append(f"{vid}: evidence.kind must be replay_field|derived|dispatch_map|probe|source_proof")
+        direction = row.get("direction") if isinstance(row.get("direction"), dict) else {}
+        cols = [str(c).strip() for c in (direction.get("columns") or []) if str(c).strip()]
         for col in cols:
             if col.lower() not in allowed:
-                errors.append(f"{oid}: column {col!r} not in init.yaml (and not added_columns)")
-        hit = row.get("hit")
-        if not isinstance(hit, dict) or not hit:
-            errors.append(f"{oid}: hit missing")
-        uo = row.get("uo") if isinstance(row.get("uo"), dict) else {}
-        if not str(uo.get("span") or uo.get("query") or "").strip():
-            errors.append(f"{oid}: uo.query/span required")
-        cover = row.get("cover")
-        level = ""
-        if isinstance(cover, str):
-            level = cover
-        elif isinstance(cover, dict):
-            level = str(cover.get("level") or cover.get("ladder") or "")
-        if level and str(level).upper() not in {"L0", "L1", "L2", "L3"}:
-            errors.append(f"{oid}: cover must be L0|L1|L2|L3")
+                errors.append(f"{vid}: column {col!r} not in init.yaml (and not added_columns)")
+    ladder = fence.get("ladder") if isinstance(fence.get("ladder"), dict) else {}
+    if not ladder:
+        errors.append("ladder missing; need L0|L1|L2|L3")
+    else:
+        for level in _LADDER_LEVELS:
+            if level not in ladder:
+                errors.append(f"ladder.{level} missing")
+        l0 = ladder.get("L0") or []
+        l1 = ladder.get("L1") or []
+        if not l0:
+            errors.append("ladder.L0 empty")
+        if len(variables) >= 2 and not l1:
+            errors.append("ladder.L1 empty when two or more variables; default solve generates L0+L1")
     untestable = fence.get("untestable") or []
     if untestable and not isinstance(untestable, list):
         errors.append("untestable must be a list")

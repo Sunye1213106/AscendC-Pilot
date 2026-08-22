@@ -129,6 +129,13 @@ def main() -> int:
         errors.append("pilot-driver-core.ts must forbid narrating a missing confirmation box")
     if "ask_ui_shown" not in core_src:
         errors.append("pilot-driver-core.ts must expose ask_ui_shown")
+    keys_start = core_src.find("const HOST_STEP_MODEL_KEYS")
+    keys_chunk = core_src[keys_start : keys_start + 1200] if keys_start >= 0 else ""
+    for pin_key in ('"project"', '"architecture"', '"selected_by"', '"changed_files_preview"'):
+        if pin_key not in keys_chunk:
+            errors.append(f"HOST_STEP_MODEL_KEYS missing {pin_key}")
+    if "args.step.message_zh" not in core_src:
+        errors.append("driveContinueGoalAfterAck must keep args.step.message_zh")
     if "Host 已弹出确认框时不要再开第二个 question" in core_src:
         errors.append("pilot-driver-core.ts must not forbid a fallback question on the missing-UI path")
     # Must not concat stderr into JSON parse buffer

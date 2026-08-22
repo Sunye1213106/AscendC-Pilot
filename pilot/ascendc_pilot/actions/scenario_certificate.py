@@ -151,7 +151,7 @@ def evaluate_scenario_certificate(
         construction_complete = cases.is_file()
         scenarios = [
             str(row.get("id") or "")
-            for row in (fence.get("obligations") or [])
+            for row in (fence.get("variables") or [])
             if isinstance(row, dict) and row.get("id")
         ]
         digest = str(init_doc.get("uo_digest") or "")

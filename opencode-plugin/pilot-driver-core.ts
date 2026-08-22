@@ -107,6 +107,11 @@ const HOST_STEP_MODEL_KEYS = [
   "stop_reason",
   "ask_ui_shown",
   "host_owned_ask",
+  "project",
+  "architecture",
+  "selected_by",
+  "changed_files",
+  "changed_files_preview",
 ] as const
 
 const HOST_STEP_TASK_KEYS = [
@@ -914,17 +919,25 @@ export async function driveContinueGoalAfterAck(args: {
   const nextWf = String(args.step.next_workflow_id || "").trim()
   const project = String(args.step.project || "").trim()
   const architecture = String(args.step.architecture || "").trim()
-  return {
-    ok: true,
-    host_step: {
-      kind: "done",
-      next_workflow_id: nextWf,
-      project,
-      architecture,
-      message_zh: nextWf
+  const selectedBy = String(args.step.selected_by || "").trim()
+  const files = args.step.changed_files_preview || args.step.changed_files
+  const messageZh = String(args.step.message_zh || "").trim()
+  const hostStep: Record<string, unknown> = {
+    kind: "done",
+    next_workflow_id: nextWf,
+    project,
+    architecture,
+    message_zh: messageZh
+      ? messageZh
+      : nextWf
         ? `当前工作流已结束。勾掉 Todo 后 pilot_run(workflow=${nextWf})。`
         : "当前工作流已结束。按 Primary Todo 推进下一格。",
-    },
+  }
+  if (selectedBy) hostStep.selected_by = selectedBy
+  if (Array.isArray(files) && files.length) hostStep.changed_files_preview = files
+  return {
+    ok: true,
+    host_step: hostStep,
   }
 }
 
@@ -1339,7 +1352,8 @@ async function handleAskHumanStep(args: {
     "原生确认框没有出现（" +
     uiReason +
     "）。ask_ui_shown=false。host_owned_ask 只表示选项归 Host、不许改选项，不表示框已弹出。" +
-    "立刻用 question 按 ask_question.options 原样询问；这是用户能看见的第一问，不是第二个 question。" +
+    "用户已经给过仓外路径或 git URL 时用该值 answer，不要再问。" +
+    "否则立刻用 question 按 ask_question.options 原样询问；这是用户能看见的第一问，不是第二个 question。" +
     "禁止用文字告诉用户「框应该已经弹出」或让用户去点看不见的框。点选结果由 Host 写入收据。"
   return {
     ok: false,

@@ -77,11 +77,11 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert bind.get("output_mode") == "staged"
     scope = action_by_id("tg-plan", "plan_scope") or {}
     assert scope.get("agent_id") == "tg-analyst"
-    assert scope.get("skill_id") == "plan"
-    assert scope.get("method_ref") == "scope.md"
+    assert scope.get("skill_id") == "test-plan"
+    assert scope.get("method_ref") == "target-planning.md"
     fuse = action_by_id("tg-plan", "plan_fuse") or {}
-    assert fuse.get("skill_id") == "plan"
-    assert fuse.get("method_ref") == "fuse.md"
+    assert fuse.get("skill_id") == "test-plan"
+    assert fuse.get("method_ref") == "constraint-planning.md"
     construct = action_by_id("tg-solve", "construct_cases") or {}
     assert construct.get("skill_id") == "solve"
     assert construct.get("method_ref") == "construct.md"

@@ -1,6 +1,8 @@
 # 绑定 harness
 
-只写 `parts/harness.yaml`。本路回答「现有 runner 怎么跑、怎么比、精度/性能入口在哪、现在造得出什么」。本路写完应能单独回答：现有 runner 能否执行计划稍后会点名的精度/性能义务。
+只 Edit 引擎已写出的 `parts/harness.yaml` 语义格。不要新建空白 YAML，不要改 `schema`、`run_id`、`artifact_identity`、mode candidates。
+
+本路回答「现有 runner 怎么跑、怎么比、精度/性能入口在哪、现在造得出什么」。本路写完应能单独回答：现有 runner 能否执行计划稍后会点名的精度/性能义务。
 
 引擎不懂 runner。要打开入口脚本和 argparse，仓内若有用例设计 YAML（接口、dtype、range、精度/性能标准）一并打开。
 
@@ -10,7 +12,7 @@
 
 点了脚本仓却扫不到目录 → 本切片失败，不是改写成 default_input。
 
-完成：一份自洽的 harness 草稿，口径来自脚本事实。本路交卷即停。
+完成：一份自洽的 harness 草稿，口径来自脚本事实。`pilot_cli inspect yaml --rel <草稿相对 .ascendc-pilot 的路径>` 返回 ok 再停（同一解析器，过了才能合并）。
 
 ## 步骤
 
@@ -19,7 +21,7 @@
 3. **写 compare。** 脚本真实怎么比：函数里的阈值写进 compare；argparse 没有的 `atol`/`rtol` 不要编。Host replay 只关 dispatch / key，不是本路的精度 oracle。
 4. **写 `modes.precision` / `modes.perf`。** argparse 同时有两种 mode 就分别写。默认值若是性能 mode，不得把默认当精度。设计文件分开写了精度标准与性能标准，照抄事实，不要发明阈值。怎么跑只抄当前脚本与 `tg/init.yaml` 将要记录的事实。在 golden/modes 之外记下同一 `call.kind`（pta / aclnn / mixed）。
 5. **写 `generate_inputs` 缺口。** 脚本现在造得出什么、造不出什么。至少核对这些轴（runner 吃不了的标缺口，不要假装已覆盖）：空 tensor、标量 tensor、inf / -inf / nan、上/下边界、末维对齐 vs +1、合法 range vs 非法 range。常规 dtype 覆盖和这些特殊值分开计，不要铺进每一组 shape。
-6. **参数依赖。** reduce 轴必须落在 rank 内，shape 列与 `*TemplateNum` / `dim_*` 同理。依赖用 `control.recipe` 从可控列复算；生成器做不到 → `test_harness_gap`。记进 findings，不要当成两列独立可填。
+6. **参数依赖。** reduce 轴必须落在 rank 内；shape 列与模板切块尺寸列同理。依赖用 `control.recipe` 从可控列复算；生成器做不到 → `test_harness_gap`。记进 findings，不要当成两列独立可填。
 
 ## 常驻判断
 
@@ -49,6 +51,7 @@
 - [ ] 精度口径能在脚本里指到 flag 或函数，没有编 atol/rtol
 - [ ] 特殊值没有假装已覆盖
 - [ ] 没有写 mapping，没有读 bind.yaml
+- [ ] `pilot_cli inspect yaml --rel <草稿相对 .ascendc-pilot 的路径>` 返回 ok
 
 ## 循环
 
@@ -56,7 +59,7 @@
 2. 先写怎么选 case、怎么比、精度/性能分别怎么跑。写不出就标缺口，不要抄别的算子。
 3. 再写 `generate_inputs`：造得出的列清单，造不出的轴（空 tensor、inf、对齐+1、非法 range…）。
 4. 对照脚本核对默认 mode 是不是性能；是则不要标成精度。
-5. 停。本路只交 harness 草稿。
+5. `inspect yaml` 过了再停。本路只交 harness 草稿。
 
 输出是一份草稿 YAML：`golden`、`compare`、`modes`、`generate_inputs`、`findings`。无仓时前三项可以是明确缺失，不能是编造入口。
 

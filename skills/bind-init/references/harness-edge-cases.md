@@ -20,4 +20,4 @@ argparse 同时有精度和性能 mode 就分别写入 `modes.precision` / `mode
 
 ## 依赖
 
-reduce 轴必须落在 rank 内；shape 与 `*TemplateNum` / `dim_*` 同理。依赖用 `control.recipe` 从可控列复算；生成器做不到 → `test_harness_gap`。
+reduce 轴必须落在 rank 内；shape 与模板切块尺寸列同理。依赖用 `control.recipe` 从可控列复算；生成器做不到 → `test_harness_gap`。

@@ -80,8 +80,8 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 
 | 种类 | 何时用 | 例子 |
 | --- | --- | --- |
-| 执行步 | Action `skill_id` 强装 | `bind-init`、`plan`、`solve`、`ce-plan-draft`、`uo-query` |
-| 轴 playbook | `method_ref`，无独立 skill 目录 | `harness.md`、`scope.md`、`spec.md` |
+| 执行步 | Action `skill_id` 强装 | `bind-init`、`test-plan`、`solve`、`ce-plan-draft`、`uo-query` |
+| 轴 playbook | `method_ref`，无独立 skill 目录 | `harness.md`、`target-planning.md`、`spec.md` |
 | 叠加原语 | 点名才 Read，不进 `max_skill_ids` | `source-proof` |
 
 切目录的唯一合法理由：同一 slash 的多窗，或同一叠加原语的多支。禁止「都跟 plan / 测试有关」焊成一份 always-loaded 正文。后序步骤进前窗会 rush。
@@ -148,7 +148,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 - 多个 Skill 都写「不得伪造 evidence」→ 留在 evidence Policy，Skill 只引用。
 - Spec.focus 写 `Dim=` / `--golden-only` → 留 playbook，focus 删到交付物名。
 - 路由 SKILL 复述阶段表 → 删；图在 Spec。
-- 精度配方写进 `plan` SKILL → 错位；留 overlay 指针。
+- 精度邻域写进 `test-plan` SKILL → 错位；留 solve 窗 overlay 指针。
 
 ---
 
@@ -157,7 +157,7 @@ lemma / 方案类产物先读 `INDEX.md`（标题+标签+摘要），再最多�
 | slash | 磁盘执行步 | 窗 / method_ref |
 | --- | --- | --- |
 | `/tg-init` | `bind-init` | harness / columns / review |
-| `/tg-plan` | `plan` | scope / fuse |
+| `/tg-plan` | `test-plan` | target-planning / constraint-planning |
 | `/tg-solve` | `solve` | construct / analyze |
 | `/ce-review` | `standalone-review` | spec / standards |
 | `/ce-plan` | `ce-plan-draft` | 单窗 |

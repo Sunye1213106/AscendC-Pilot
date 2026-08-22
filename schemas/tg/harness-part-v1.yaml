@@ -1,0 +1,32 @@
+schema: tg-harness-part/v1
+description: >
+  bind_init harness slice. Engine emits identity, entry, mode candidates, and
+  generate_inputs.cannot keys. LLM fills golden/compare/mode slots.
+engine_owned:
+  - schema
+  - run_id
+  - workflow_id
+  - action_id
+  - actor_id
+  - artifact_identity
+  - kind
+  - entry
+  - case_arg
+  - modes.candidates
+  - generate_inputs.cannot_keys
+  - llm_edit
+llm_owned:
+  - golden
+  - compare
+  - modes.precision
+  - modes.perf
+  - generate_inputs.can
+  - generate_inputs.cannot
+  - findings
+  - call
+cannot_keys:
+  - empty_tensor
+  - scalar
+  - inf_nan
+  - align_plus_1
+  - illegal_range

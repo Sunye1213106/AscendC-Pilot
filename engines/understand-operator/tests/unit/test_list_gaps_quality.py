@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from uo_init.diagnostics.quality import codemap_quality
 from uo_init.ir.codemap import CodeMap
 from uo_init.ir.entity import EntityKind
@@ -377,3 +379,32 @@ def test_quality_packing_uses_source_declared_schema_not_catalog() -> None:
     q = codemap_quality(cm, integrity_ok=True)
     assert q["surfaces"]["tiling_key"]["ok"] is True, q["surfaces"]["tiling_key"]
     assert q["surfaces"]["tiling_key"]["packing"] == "1/1"
+
+
+def test_load_product_ready_status_reads_quality_yaml(tmp_path: Path) -> None:
+    from uo_init.diagnostics.quality import load_product_ready_status
+
+    product = tmp_path / "FlashAttentionScoreGrad.arch35.uo"
+    product.write_text("", encoding="utf-8")
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (checks / "quality.yaml").write_text(
+        "grade: ready\n"
+        "integrity: pass\n"
+        "locate_ready: true\n"
+        "graph:\n"
+        "  entity_count: 9\n"
+        "  relation_count: 11\n"
+        "unresolved:\n"
+        "  locate_blocking: 0\n"
+        "  total: 3\n",
+        encoding="utf-8",
+    )
+    status = load_product_ready_status(product)
+    assert status["grade"] == "ready"
+    assert status["entity_count"] == 9
+    assert status["relation_count"] == 11
+    assert status["locate_blocking"] == 0
+    assert status["unresolved_total"] == 3
+    assert status["locate_ready"] is True
+    assert status["integrity"] == "pass"

@@ -1082,6 +1082,12 @@ def save_pr_architecture_pin(project_root: Path, architectures: list[str] | str)
         ),
         encoding="utf-8",
     )
+    try:
+        from ascendc_pilot.human_interaction import copy_confirmed_harness
+
+        copy_confirmed_harness(project_root, project_root)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def load_pr_architecture_pin(project_root: Path) -> list[str]:

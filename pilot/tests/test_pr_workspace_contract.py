@@ -129,6 +129,51 @@ def test_ses_fe87_style_fag_arch35_autopin(tmp_path: Path):
     assert "ask_question" not in resolved
 
 
+def test_host_folder_named_test_does_not_hide_pr_operator(tmp_path: Path):
+    """Host cwd D:\\TEST\\... must not be treated as an in-repo tests/ tree.
+
+    ses_fd69: changed-files uniquely named flash_attention_score_grad/arch35,
+    but OPERATOR_ROOTS_EMPTY + empty AskQuestion because `TEST`.lower()==`test`.
+    """
+    repo = tmp_path / "TEST" / "pr_workspace" / "ops-transformer"
+    fag = repo / "attention" / "flash_attention_score_grad"
+    (fag / "op_host" / "arch35").mkdir(parents=True)
+    (fag / "op_kernel" / "arch35").mkdir(parents=True)
+    changed = [
+        "attention/flash_attention_score_grad/op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+        "attention/flash_attention_score_grad/op_kernel/arch35/deter.h",
+        "attention/flash_attention_score_grad/tests/ut/op_host/arch35/test_flash_attention_score_grad_tiling.cpp",
+    ]
+    for rel in changed:
+        path = repo / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("// pr\n", encoding="utf-8")
+    acquire = {
+        "ok": True,
+        "worktree_head": str(repo),
+        "changed_files": changed,
+    }
+    resolved = pr_workspace.resolve_targets_or_ask(
+        acquire, host_root=tmp_path / "TEST" / "pr_workspace"
+    )
+    assert resolved.get("ok") is True, resolved
+    assert Path(str(resolved["project"])).resolve() == fag.resolve()
+    assert resolved.get("architecture") == "arch35"
+    assert resolved.get("reason_code") != "OPERATOR_ROOTS_EMPTY"
+    assert "ask_question" not in resolved
+
+
+def test_operator_nested_under_tests_is_ignored(tmp_path: Path):
+    repo = tmp_path / "repo"
+    fake = repo / "attention" / "foo" / "tests" / "dummy_op"
+    (fake / "op_host").mkdir(parents=True)
+    changed = ["attention/foo/tests/dummy_op/op_host/a.cpp"]
+    path = repo / changed[0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("// ut fixture\n", encoding="utf-8")
+    assert pr_workspace.detect_operator_roots(repo, changed) == []
+
+
 def test_resolve_targets_accepts_flattened_pairs(tmp_path: Path):
     repo = tmp_path / "repo"
     op = _operator(repo, "flash_attention_score_grad")

@@ -19,6 +19,7 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     assert agent["write_scopes"] == []
 
     skill = _text("skills/uo-query/SKILL.md")
+    capability = _text("tools/codemap/kb-query/METHOD.md")
     prompt = _text("prompts/tasks/uo/codemap-query.md")
     invariant = _text("pilot/policies/invariants/control-invariants.md")
     access = _text("pilot/policies/invariants/code-access-invariants.md")
@@ -27,8 +28,12 @@ def test_uo_query_assets_agree_on_readonly_return_value() -> None:
     assert "禁止 Write `answer.yaml`" in invariant
     assert "partial" in skill or "不存在" in skill
     assert "Dim=V" in skill
+    assert "Dim=V" in capability
+    assert "无参数索引" in capability
     assert "禁止 `--mode`" in access
     assert "Dim=V" not in access
+    assert "形态见 code-access" not in skill
+    assert "见 `uo-query` Skill" not in _text("skills/test-plan/references/target-planning.md")
     assert "--query" in _text("pilot/ascendc_pilot/cli.py")
     assert "相关 ≠ 单域" in reason
     assert "fanout" in reason.lower() or "隔离" in reason

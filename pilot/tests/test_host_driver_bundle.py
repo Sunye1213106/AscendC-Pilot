@@ -367,7 +367,7 @@ def test_knowledge_refs_materialize_into_session(tmp_path: Path) -> None:
     assert "P-CAST" not in body
     assert "/tg-plan" not in body
     fuse = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_fuse")
-    assert "scenario-catalog.md" in (fuse.get("refs") or [])
+    assert "evidence.md" in (fuse.get("refs") or [])
     assert "ascendc/precision.md" in (fuse.get("knowledge_refs") or [])
     draft = next(a for a in WORKFLOWS["ce-plan"]["actions"] if a["id"] == "plan_draft")
     assert "ascendc/cross-layer-contracts.md" in (draft.get("knowledge_refs") or [])
@@ -565,6 +565,45 @@ def test_done_read_hint_uses_status_query_not_quality_read(tmp_path: Path) -> No
     assert "uo-query --status-only" in msg
     assert "Read" not in msg or "quality.yaml" not in msg
     assert out.get("message_zh") == step.get("message_zh")
+
+
+def test_done_read_hint_embeds_quality_counts(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.dispatch import attach_host_step
+    from ascendc_pilot.paths import uo_root
+
+    ensure_agent_layout(tmp_path, arch="arch35")
+    checks = uo_root(tmp_path, arch="arch35") / "checks"
+    checks.mkdir(parents=True, exist_ok=True)
+    (checks / "quality.yaml").write_text(
+        "grade: ready\n"
+        "integrity: pass\n"
+        "locate_ready: true\n"
+        "graph:\n"
+        "  entity_count: 19606\n"
+        "  relation_count: 37694\n"
+        "unresolved:\n"
+        "  locate_blocking: 0\n"
+        "  total: 11\n",
+        encoding="utf-8",
+    )
+    out = attach_host_step(
+        tmp_path,
+        {
+            "ok": True,
+            "stop_reason": "workflow_complete",
+            "status": "passed",
+            "complete": {
+                "state": {"workflow_id": "uo-init", "architecture": "arch35"},
+            },
+        },
+    )
+    msg = str((out.get("host_step") or {}).get("message_zh") or "")
+    assert "uo-query --status-only" in msg
+    assert "grade=ready" in msg
+    assert "19606" in msg
+    assert "37694" in msg
+    assert "locate_blocking=0" in msg
+    assert "请 Read uo/checks/quality.yaml" not in msg
 
 
 def test_done_read_hint_without_arch_still_status_query(tmp_path: Path) -> None:

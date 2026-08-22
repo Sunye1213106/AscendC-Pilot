@@ -134,7 +134,7 @@ jobs:
           PYTHONPATH: ${{ env.ACP_PYTHONPATH }}
         run: |
           python scripts/check_host_driver_contract.py
-          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_context_compiler.py pilot/tests/test_live_eval_skip.py pilot/tests/test_opencode_isolation_ses_fefd.py
+          pytest -q pilot/tests/test_host_driver_bundle.py pilot/tests/test_live_eval_skip.py pilot/tests/test_opencode_isolation_ses_fefd.py
       - name: Validate deterministic drive
         env:
           PYTHONPATH: ${{ env.ACP_PYTHONPATH }}

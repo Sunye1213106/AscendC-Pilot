@@ -1,0 +1,30 @@
+{
+  "skill_name": "bind-init-columns",
+  "evals": [
+    {
+      "id": 1,
+      "eval_name": "d4-bind-accuracy",
+      "prompt": "skills/bind-init-workspace/iteration-2/d4-bind-accuracy/prompt.md",
+      "expected_output": "HOW transfer on FAG columns without the skill naming those bindings",
+      "expectations": [
+        "D.uo_id in {d,d1} not scaleValue",
+        "inner_drop feature with drop* header field",
+        "eod feature without borrowed neighbor uo_id",
+        "seqlens_list_q not Dim=IsTnd",
+        "inspect yaml; header-first plan"
+      ]
+    },
+    {
+      "id": 2,
+      "eval_name": "alt-scene-bind",
+      "prompt": "skills/bind-init-workspace/iteration-2/alt-scene-bind/prompt.md",
+      "expected_output": "Same HOW on a different operator (Width/segs/pad_tail/gate_on)",
+      "expectations": [
+        "Width.uo_id in {width,width1} not scaleValue",
+        "segs packedSeg not Dim=Packed",
+        "pad_tail feature without borrowed uo_id",
+        "gate_on feature + maskOuter"
+      ]
+    }
+  ]
+}

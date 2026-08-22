@@ -22,7 +22,7 @@ CE（Code Engineering）在已有 Operator CodeMap 上做两件不要混用的�
 
 正式计划形状参考 `skills/ce-plan-draft/examples/deter-band-schedule_plan.md`。
 
-`/tg-plan` 自己从计划的「测试内容」节、同一会话的 review 对话、或 `session_handoff.md` 总结义务。不要等 CE yaml。
+`/tg-plan` 自己从计划的「测试内容」节、同一会话的 review 对话、或 `session_handoff.md` 列出独立测试变量。不要等 CE yaml。
 
 ## 工作流
 

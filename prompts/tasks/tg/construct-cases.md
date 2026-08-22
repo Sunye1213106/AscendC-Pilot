@@ -1,5 +1,5 @@
 <task>
-按已批准 plan.md 义务构造脚本仓能直接吃的用例行。
+按已批准 plan.md 的独立变量与 direction 构造脚本仓能直接吃的用例行。未指定时第一轮 L0+L1。
 </task>
 
 <input>

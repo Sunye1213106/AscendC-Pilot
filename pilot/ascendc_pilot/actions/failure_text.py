@@ -85,6 +85,9 @@ def collect_failure_texts(obj: Any, *, depth: int = 0) -> list[str]:
     issues = obj.get("issues")
     if isinstance(issues, list):
         out.extend(str(item).strip() for item in issues[:8] if str(item).strip())
+    errors = obj.get("errors")
+    if isinstance(errors, list):
+        out.extend(str(item).strip() for item in errors[:12] if str(item).strip())
     for nested_key in (
         "engine",
         "failure",

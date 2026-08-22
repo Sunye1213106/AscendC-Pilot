@@ -519,6 +519,12 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
                 project_root,
                 state=snap,
             )
+            try:
+                from ascendc_pilot.pin_facts import apply_pin_to_payload
+
+                apply_pin_to_payload(payload, snap)
+            except Exception:  # noqa: BLE001
+                pass
             release_live_execution(
                 project_root, reason="workflow_passed_idempotent", state=snap
             )
@@ -664,6 +670,22 @@ def complete_workflow(project_root: Path, *, reason: str = "") -> dict[str, Any]
         project_root, reason="workflow_passed", state=fresh
     )
     payload["released_execution"] = released
+    try:
+        from ascendc_pilot.pin_facts import apply_pin_to_payload
+        from ascendc_pilot.runs import receipts_dir
+
+        rid = str((fresh or {}).get("run_id") or "")
+        promoted: dict = {}
+        promoted_path = receipts_dir(project_root, rid or None) / "intent_promoted.yaml"
+        if promoted_path.is_file():
+            import yaml
+
+            loaded = yaml.safe_load(promoted_path.read_text(encoding="utf-8")) or {}
+            if isinstance(loaded, dict):
+                promoted = loaded
+        apply_pin_to_payload(payload, fresh, promoted)
+    except Exception:  # noqa: BLE001
+        pass
     if not payload.get("message_zh"):
         payload["message_zh"] = "工作流已完成；已释放本产物族锁。"
     from ascendc_pilot.state import _end_uo_init_session

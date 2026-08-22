@@ -23,7 +23,7 @@ def test_agent_yaml_uses_machine_constraints_not_only_forbidden() -> None:
     assert "write_uo_formal_products" in meta["machine_constraints"]
     ceiling = agent_skill_ceiling("tg-analyst", REPO)
     assert "bind-init" in ceiling
-    assert "plan" in ceiling
+    assert "test-plan" in ceiling
     assert "solve" in ceiling
     assert "uo-query" in ceiling
     assert "test-modes" not in ceiling

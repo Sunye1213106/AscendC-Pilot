@@ -598,6 +598,13 @@ def harvest_parts_into_ticket(project_root: Path, ticket: dict[str, Any]) -> dic
             except OSError:
                 text = "SLICE_ID=fix"
             acked = ack_fanout_slice(project_root, tid, result_text=text, slice_id="fix")
+            try:
+                from testcase_agent.bind_parts import mark_llm_edited
+
+                mark_llm_edited(harness)
+                mark_llm_edited(bindp)
+            except Exception:
+                pass
             return acked.get("ticket") or load_dispatch_ticket(project_root, tid) or ticket
     if len(expected) < 2:
         return ticket
@@ -612,6 +619,12 @@ def harvest_parts_into_ticket(project_root: Path, ticket: dict[str, Any]) -> dic
         except OSError:
             continue
         acked = ack_fanout_slice(project_root, tid, result_text=text, slice_id=sid)
+        try:
+            from testcase_agent.bind_parts import mark_llm_edited
+
+            mark_llm_edited(path)
+        except Exception:
+            pass
         ticket = acked.get("ticket") or load_dispatch_ticket(project_root, tid) or ticket
         results = dict(ticket.get("slice_results") or {})
     return load_dispatch_ticket(project_root, tid) or ticket
@@ -948,11 +961,34 @@ def _done_read_hint(project_root: Path, complete: dict[str, Any]) -> dict[str, A
     hint: dict[str, Any] = {"workflow_id": wid}
     try:
         if wid in {"uo-init", "uo-update"}:
+            stats = {}
+            stats_zh = ""
+            try:
+                from uo_init.diagnostics.quality import load_product_ready_status
+                from uo_init.store.reader import find_uo_product
+
+                product = find_uo_product(project_root, architecture=str(arch or ""))
+                stats = load_product_ready_status(product)
+                if not stats and arch:
+                    from ascendc_pilot.paths import uo_root
+
+                    stats = load_product_ready_status(uo_root(project_root, arch=arch))
+                if stats.get("grade") is not None:
+                    stats_zh = (
+                        f"grade={stats.get('grade')}，节点 {stats.get('entity_count')}，"
+                        f"关系 {stats.get('relation_count')}，未闭合 {stats.get('unresolved_total')}"
+                        f"（locate_blocking={stats.get('locate_blocking')}）。"
+                    )
+            except Exception:  # noqa: BLE001
+                stats = {}
+                stats_zh = ""
+            prefix = "建库已完成。" + (stats_zh if stats_zh else "")
             hint["message_zh"] = (
-                "建库已完成。用 `pilot_cli` `uo-query --status-only` 查看产物是否就绪"
+                f"{prefix}用 `pilot_cli` `uo-query --status-only` 查看产物是否就绪"
                 "（节点/关系/未闭合）。禁止打开 .uo 二进制，禁止仅回复「完成」。"
                 "勾掉当前 Todo 后由 Primary `pilot_run` 下一格，不要把建库结束当成整个目标完成。"
             )
+            hint.update(stats)
         elif wid == "uo-query" and run_id:
             hint["message_zh"] = (
                 "查询完成。请将本次子代理返回的答案正文向用户陈述。"
@@ -999,6 +1035,17 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
             )
             out["message_zh"] = fail_zh
             return out
+        from ascendc_pilot.pin_facts import apply_pin_to_payload, host_step_pin_extra
+        from ascendc_pilot.state import load_state as _load_pin_state
+
+        live_state: dict[str, Any] = {}
+        try:
+            live_state = _load_pin_state(project_root) or {}
+        except Exception:  # noqa: BLE001
+            live_state = {}
+        pin_payload = apply_pin_to_payload(
+            {}, complete, complete.get("state"), live_state
+        )
         if next_wf:
             arch = ""
             intent = ""
@@ -1050,25 +1097,29 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                 extra={
                     "status": status or "passed",
                     "next_workflow_id": next_wf,
-                    "architecture": arch,
+                    "architecture": arch or pin_payload.get("architecture") or "",
                     "intent": intent,
-                    "project": str(project_from_goal or ""),
+                    "project": str(project_from_goal or pin_payload.get("project") or ""),
                     "completed_workflow_id": str(
                         (complete.get("state") or {}).get("workflow_id")
                         if isinstance(complete.get("state"), dict)
                         else ""
                     ),
+                    **host_step_pin_extra(pin_payload),
                 },
             )
             return out
         done = _done_read_hint(project_root, complete)
         extra: dict[str, Any] = {"status": status or "passed"}
+        extra.update(host_step_pin_extra(pin_payload))
         extra.update({k: v for k, v in done.items() if k != "message_zh"})
+        hint_zh = str(done.get("message_zh") or "").strip()
         out["host_step"] = build_host_step(
             kind="done",
             project_root=project_root,
             message_zh=str(
-                done.get("message_zh")
+                hint_zh
+                or pin_payload.get("message_zh")
                 or complete.get("message_zh")
                 or out.get("message_zh")
                 or "workflow complete"

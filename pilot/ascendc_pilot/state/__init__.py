@@ -390,6 +390,13 @@ def start_workflow(
     consumer, harness_confirmed = normalize_start_test_script_root(
         project_root, test_script_root
     )
+    if harness_confirmed and consumer:
+        try:
+            from ascendc_pilot.human_interaction import persist_confirmed_harness_pin
+
+            persist_confirmed_harness_pin(project_root, consumer)
+        except Exception:  # noqa: BLE001
+            pass
     session_id = current_session_id()
     pin = pin_digest_from_product(
         project_root, architecture=arch, op_name=(op_name or "").strip()

@@ -595,21 +595,43 @@ def changed_files(mirror: Path, base_sha: str, head_sha: str) -> list[str]:
 _NON_OPERATOR_DIR_NAMES = frozenset({"tests", "test", "ut", "st", "examples", "example", "docs"})
 
 
-def _is_operator_root(path: Path) -> bool:
-    parts = [p.lower() for p in Path(path).parts]
-    if any(name in _NON_OPERATOR_DIR_NAMES for name in parts):
+def _denylist_parts(path: Path, *, worktree: Path | None = None) -> list[str]:
+    """Directory names that can mark a path as non-operator.
+
+    Only inspect names inside the worktree. A Host folder such as ``D:\\TEST``
+    must not hide ``attention/flash_attention_score_grad``.
+    """
+    p = Path(path)
+    if worktree is None:
+        return [p.name.lower()] if p.name else []
+    try:
+        rel = p.resolve().relative_to(Path(worktree).resolve())
+    except (ValueError, OSError):
+        return [p.name.lower()] if p.name else []
+    return [part.lower() for part in rel.parts]
+
+
+def _is_operator_root(path: Path, *, worktree: Path | None = None) -> bool:
+    p = Path(path)
+    if any(name in _NON_OPERATOR_DIR_NAMES for name in _denylist_parts(p, worktree=worktree)):
         return False
-    return (path / "op_host").is_dir() or (path / "op_kernel").is_dir()
+    return (p / "op_host").is_dir() or (p / "op_kernel").is_dir()
 
 
-def _add_root(roots: list[Path], seen: set[Path], candidate: Path) -> None:
+def _add_root(
+    roots: list[Path],
+    seen: set[Path],
+    candidate: Path,
+    *,
+    worktree: Path | None = None,
+) -> None:
     try:
         resolved = candidate.resolve()
     except OSError:
         resolved = candidate
     if resolved in seen:
         return
-    if not _is_operator_root(resolved):
+    if not _is_operator_root(resolved, worktree=worktree):
         return
     seen.add(resolved)
     roots.append(resolved)
@@ -620,8 +642,8 @@ def list_operator_roots(worktree: Path, *, max_depth: int = 5) -> list[Path]:
     roots: list[Path] = []
     seen: set[Path] = set()
     wt = Path(worktree)
-    if _is_operator_root(wt):
-        _add_root(roots, seen, wt)
+    if _is_operator_root(wt, worktree=wt):
+        _add_root(roots, seen, wt, worktree=wt)
         return roots
     stack: list[tuple[Path, int]] = [(wt, 0)]
     while stack:
@@ -635,8 +657,8 @@ def list_operator_roots(worktree: Path, *, max_depth: int = 5) -> list[Path]:
         for child in children:
             if not child.is_dir() or child.name.startswith("."):
                 continue
-            if _is_operator_root(child):
-                _add_root(roots, seen, child)
+            if _is_operator_root(child, worktree=wt):
+                _add_root(roots, seen, child, worktree=wt)
                 continue
             stack.append((child, depth + 1))
     return roots
@@ -663,7 +685,7 @@ def _shared_family_operators(worktree: Path, rel: str) -> list[Path]:
         return out
     for child in children:
         if child.is_dir() and child.name.lower() not in _SHARED_DIR_NAMES:
-            _add_root(out, seen, child)
+            _add_root(out, seen, child, worktree=worktree)
     return out
 
 
@@ -699,7 +721,7 @@ def _basename_referenced_operators(worktree: Path, files: list[str], known: set[
             if matched:
                 break
         if matched:
-            _add_root(hits, seen, op)
+            _add_root(hits, seen, op, worktree=worktree)
     return hits
 
 
@@ -711,8 +733,8 @@ def detect_operator_roots(worktree: Path, files: list[str]) -> list[Path]:
         cur = (wt / rel).parent if not (wt / rel).is_dir() else (wt / rel)
         hit = False
         while True:
-            if _is_operator_root(cur):
-                _add_root(roots, seen, cur)
+            if _is_operator_root(cur, worktree=wt):
+                _add_root(roots, seen, cur, worktree=wt)
                 hit = True
                 break
             if cur == wt or cur.parent == cur:
@@ -720,12 +742,12 @@ def detect_operator_roots(worktree: Path, files: list[str]) -> list[Path]:
             cur = cur.parent
         if not hit:
             for fam in _shared_family_operators(wt, rel):
-                _add_root(roots, seen, fam)
+                _add_root(roots, seen, fam, worktree=wt)
     if not roots:
         for extra in _basename_referenced_operators(wt, files, seen):
-            _add_root(roots, seen, extra)
-    if not roots and _is_operator_root(wt):
-        _add_root(roots, seen, wt)
+            _add_root(roots, seen, extra, worktree=wt)
+    if not roots and _is_operator_root(wt, worktree=wt):
+        _add_root(roots, seen, wt, worktree=wt)
     return roots
 
 

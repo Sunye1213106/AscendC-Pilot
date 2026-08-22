@@ -29,6 +29,9 @@ def test_plugin_always_registers_pilot_run_not_named_acp() -> None:
     assert "USE_UO_QUERY" in plugin
     assert "formatPilotCliOutput" in plugin
     assert "FAIL ${code}" in plugin or "FAIL " in plugin
+    assert "/cann|" not in plugin
+    assert "UO_CANN_ROOT" in plugin
+    assert "gitcode.com--cann--" not in plugin.split("formatPilotCliOutput")[1].split("function createPilotRunStub")[0]
     assert "tools.pilot_run = true" in plugin
     assert "tools.pilot_cli = true" in plugin
     assert "NATIVE_OPENCODE_AGENTS" in plugin

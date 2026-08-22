@@ -62,7 +62,7 @@ retry-after-environment-fix --project D:\ops\attention\flash_attention_score_gra
 
 | `command` | 何时用 |
 | --- | --- |
-| `uo-query --project <abs> [--architecture arch]` | 形态见 code-access 不变量。整句 NL 会失败 |
+| `uo-query --project <abs> [--architecture arch]` | 合法形态见 kb-query capability。整句 NL 会失败 |
 | `uo-query --project <abs> --status-only` | 只看产物是否存在 / 是否 fresh |
 | `scan-architectures --project <abs>` | 启动前列出 `arch*` 实现选项；没有这些目录时返回产物槽 `default` |
 | `status --project <abs>` | 当前 workflow / run 状态 |

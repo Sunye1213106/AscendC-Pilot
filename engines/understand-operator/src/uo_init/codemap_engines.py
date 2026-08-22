@@ -370,12 +370,19 @@ def verify(project_root: Path, payload: dict[str, Any] | None = None) -> dict[st
             end_session(op_root=root, architecture=arch)
         except Exception:  # noqa: BLE001
             pass
+        try:
+            from uo_init.diagnostics.quality import ready_status_fields
+
+            status = ready_status_fields(quality)
+        except Exception:  # noqa: BLE001
+            status = {}
         return {
             "ok": ok,
             "engine": "verify",
             "path": str(product),
             "audit": report,
             "verdict": "pass" if ok else "fail",
+            **status,
             "integrity": str(uo / "checks" / "integrity.yaml"),
             "quality": str(uo / "checks" / "quality.yaml"),
             "performance": str(perf_path) if perf_path else None,
