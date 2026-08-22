@@ -1,17 +1,16 @@
 <task>
-把已记录的变更意图问清并写成 `{slug}_plan.md`。边查图边问决策，当场写计划。
+根据当前用户需求写出命名 CE plan。
 </task>
 
 <inputs>
-- UO product root: `<UO_ROOT>`
-- Plan dir: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/ce/plan/`
+- 用户当前需求：见本轮对话
+- 当前计划（若有）：`<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/ce/plan/`
+- UO：`<UO_ROOT>`（由当前 Action lease 提供）
+- Domain knowledge：见 session method 指针
 - Shape reference: session refs 中的 deter-band-schedule 例
 </inputs>
 
-<instructions>
-事实走 `uo-query`。当前可问决策一轮问完，每题带推荐答案。写出实现分析、计划、可勾选 todo、测试内容。路径写反引号。不要写 yaml。不要以 PR 为输入。不要先写 staging。
-</instructions>
-
 <output>
 写入 `ce/plan/{slug}_plan.md`。
+若存在影响文件集的未决决策，保留为 unresolved。
 </output>

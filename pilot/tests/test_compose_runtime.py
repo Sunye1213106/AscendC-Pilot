@@ -113,6 +113,10 @@ def test_tg_and_ce_execution_bindings_are_explicit():
     assert "git-ops" not in WORKFLOWS
     assert "perf-analyze" not in WORKFLOWS
     assert WORKFLOWS["ce-apply"]["slash"] == "/ce-apply"
+    patch = next(a for a in WORKFLOWS["ce-apply"]["actions"] if a["id"] == "patch")
+    assert patch["capability_ids"] == ["source-reading"]
+    assert "kb-query" not in patch["capability_ids"]
+    assert "source-navigation" not in patch["capability_ids"]
     assert WORKFLOWS["handoff"]["slash"] == "/handoff"
 
 

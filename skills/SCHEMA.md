@@ -20,7 +20,7 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 
 对照对象：可复用的执行 Skill（Matt Pocock 仓里 `diagnosing-bugs` / `code-review` / `wayfinder` / `writing-beats` 这一档），不是 15 行的入口壳。
 
-量过：那一档正文大约 **80–140 行**，中位数约 75。本仓硬顶 **200 行**（compose / architecture lint）。执行步目标 **80–150 行**。路由父本（`bind-init` / `plan` / `solve` / `standalone-review`）允许更短，禁止为过 80 行补背景课。
+量过：那一档正文大约 **80–140 行**，中位数约 75。这是写作对照，不是 Anthropic / OpenAI 官方行数标准。**AscendC-Pilot 仓内 lint / engineering budget**：执行步目标 **80–150 行**，硬顶 **200 行**（compose / architecture lint）。路由父本（`bind-init` / `plan` / `solve` / `standalone-review`）允许更短，禁止为过 80 行补背景课。
 
 ### 渐进式披露
 
@@ -52,7 +52,7 @@ Action Spec 用 `skill_id` 指向 `skills/<id>/SKILL.md`。prepare 把它写入 
 
 ### 正文骨架
 
-`description`：做什么是能力短句，不是「先…再…」步骤。什么时候用是触发场景（出现什么意图 / 产物 / 问题），不是「执行 <Action> / slash 时使用」。
+`description`：做什么是能力短句，不是「先…再…」步骤。什么时候用是触发场景（出现什么意图 / 产物 / 问题），不是「执行 <Action> / slash 时使用」。内部 cognitive Skill 的 description 是文档元数据，选择由 ActionSpec 决定；若日后 export 成 host-native Skill，description 才必须编码触发条件。
 
 ```markdown
 ---
@@ -103,7 +103,7 @@ description: <做什么>。<什么时候用>。第三人称。
 - 叠加原语：`skills/<id>/SKILL.md`
 ```
 
-lint：执行步少于 80 行视为空壳，超过 200 行失败。路由父本不设 80 行地板。150 以上先考虑把目录/长表示例下沉到 `references/`，不要删判断。
+仓内 lint：执行步少于 80 行视为空壳，超过 200 行失败。这是本仓 engineering budget，不是官方 Skill 标准。路由父本不设 80 行地板。150 以上先考虑把目录/长表示例下沉到 `references/`，不要删判断。
 
 父步（fanout / 序列路由，如 `bind-init`、`plan`、`solve`、`standalone-review`）写清各窗交什么、禁止混轴、本步不代替切片。不要为凑行数写背景课。按 slash 窗口收目录，禁止按主题焊成一份 always-loaded 正文。
 
@@ -111,7 +111,7 @@ lint：执行步少于 80 行视为空壳，超过 200 行失败。路由父本�
 
 ### 禁止
 
-- 复述 Policy / invariant 全文；只点名（如「形态见 code-access」）。
+- 复述 Policy / invariant 全文；只点名（如「形态见 `uo-query` Skill」）。
 - 复述 workflow 阶段表、lease、finalize。
 - 「你是某某角色」。
 - 把五个家族或 slash 说明书写进 Skill。

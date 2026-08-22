@@ -86,9 +86,9 @@ Policy 只描述**全局不可违反的约束**。不教某一步怎么绑列。
 
 切目录的唯一合法理由：同一 slash 的多窗，或同一叠加原语的多支。禁止「都跟 plan / 测试有关」焊成一份 always-loaded 正文。后序步骤进前窗会 rush。
 
-`description` 只做人读短句，不写步骤。本仓是 Action 强装，不拿 description 做触发实验。
+`description` 只做人读短句，不写步骤。本仓是 Action 强装，不拿 description 做触发实验。cognitive Skill 是 Pilot 按 ActionSpec 确定性装载的 method package，不是 host 按 description 发现的 native Agent Skill。
 
-写法权威：`skills/SCHEMA.md`。执行步目标 80–150 行、硬顶 200；路由父本允许更短。
+写法权威：`skills/SCHEMA.md`。80–150 / 200 是 **AscendC-Pilot 仓内 lint / engineering budget**，不是 Anthropic / OpenAI 官方标准；路由父本允许更短。
 
 先问是图、是确定性、还是判断；判断才加执行步或 overlay。不要尽管加 Skill。
 

@@ -28,7 +28,7 @@
 
 禁止另写意图 YAML，也不要把本步当成审查。审查不是测试用途的前置。
 
-查图四种形态见 code-access 不变量。包已跳过 around；本步默认也不 around。需要覆盖列表时用 `Dim=<维名>`，组合过滤用 `Name=Value`。
+查图四种形态见 `uo-query` Skill。包已跳过 around；本步默认也不 around。需要覆盖列表时用 `Dim=<维名>`，组合过滤用 `Name=Value`。
 
 默认 L0 仍然要能 root 到列：每维点一次还不够写进 plan，但本步至少要说「没有特殊意图时测哪些入口」。
 

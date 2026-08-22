@@ -39,6 +39,8 @@ worklog 文首 `open:` 列出仍开放的义务。open 非空不得假装本轮�
 
 ## 常驻判断
 
+闭合账本：`T = (R ∩ T) ∪ E` 且 `R ∩ E = ∅`。R 只来自真实 oracle 成功观测。E 只来自经审查的源码引理。`Replay reject ≠ E`。搜索耗尽、样本缺失、模型分数不能单独进 E。
+
 HIT / REWRITE / REFUSE 是 Host tiling 回放裁决（无 NPU），只对 dispatch/key 有意义。**HIT** = Host 接受且实际 TilingKey 等于目标 key。`REWRITE` / `REFUSE` 是预期外观测，供分类和引理，不是 E。
 
 `P-*` 是精度场景 id（如 `P-DTYPE`），`F-*` 是性能场景 id（如 `F-SHAPE-TYPICAL`）。它们的 oracle 是 harness，不是 Host。Host 命中 TilingKey 关不了这两类义务。

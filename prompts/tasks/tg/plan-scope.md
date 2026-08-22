@@ -1,5 +1,5 @@
 <task>
-根据 `tg/init.yaml` 与紧凑改动包写出这次测什么。不要写正式 `tg/plan.md`，不要枚举全量 Key。
+根据 `tg/init.yaml` 与紧凑改动包写出这次测什么。
 </task>
 
 <input>
@@ -9,12 +9,6 @@
 - UO: `<UO_ROOT>`
 </input>
 
-<delta_constraints>
-1. 只写 `runs/<RUN_ID>/actions/plan_scope/parts/purpose.md`。
-2. 改动包已预取标识符；禁止 around。无 diff 时用途来自意图 / L0。
-3. 身份字段由框架写入，不要从 stub 抄进文首 YAML。
-</delta_constraints>
-
 <output>
-写入 `parts/purpose.md`：这次测什么、碰到哪些维/路径、哪些是编码控制面。
+写入 `parts/purpose.md`。不要写正式 `tg/plan.md`。
 </output>

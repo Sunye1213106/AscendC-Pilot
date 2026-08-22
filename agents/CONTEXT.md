@@ -2,46 +2,46 @@
 
 模型常驻的跨工作流术语表。完整人类定义见 `docs/reference/glossary.md`。
 
-只回答：这个词是什么、不是什么、易与哪个词混淆。编排不写在这里。人记 slash（`/tg-init` / `/tg-plan` / `/tg-solve` / `/ce-*` / `/uo-*` / `/handoff`），不记磁盘 `skills/` 目录名。
+每条只回答：是什么 / 不是什么 / 容易和什么混。
 
 ## 核心术语
 
-**CodeMap / `.uo`** — 按「算子目录 + architecture」建立的二进制源码语义图。不是通用 call graph。UO 查询、TG、CE 的语义底座。
+**CodeMap / `.uo`** — 按「算子目录 + architecture」建立的二进制源码语义图。不是通用 call graph。易与「随便一张依赖图」混。
 
-**digest** — session binding 中的 `canonical_graph_digest`。`fresh` 表示当前 digest 匹配，不表示「最近建过库」。
+**digest** — session binding 中的 `canonical_graph_digest`。`fresh` 表示当前 digest 匹配，不是「最近建过库」。
 
-**`/uo-update`** — 已有 CodeMap 上刷新源码变化。不同于首次 `/uo-init`。
+**`/uo-update`** — 已有 CodeMap 上刷新源码变化。不是首次 `/uo-init`。
 
-**查询 / `/uo-query`** — 读 CodeMap 的 Command，不是 Host workflow。形态见 code-access 不变量。
+**查询 / `/uo-query`** — 读已有 CodeMap 的即时问答。不是 Host workflow，也不是建库。
 
-**简单查询** — 单一起始符号或参数形态。
-**复杂查询** — 含多个可独立查询的目标。
+**简单查询** — 单一起始符号或一种参数形态。
+**复杂查询** — 含多个可独立查询的目标。二者不是「问得深 vs 问得浅」。
 
-**`{slug}_plan.md`** — `/ce-plan` 确认后的用户变更计划（`ce/plan/{slug}_plan.md`）。输入是需求 + UO 语义，不是 PR。边问边写：实现分析、todo、测试内容。不是 `plan.md`，也不是 cases。
+**`{slug}_plan.md`** — CE 用户变更计划。不是 TG `plan.md`，也不是 cases。
 
-**ce-apply** — 按计划未完成 `- [ ]` 改代码，或按 `test_harness_gap` 改测试脚本。不是审查，不是查图。
+**ce-apply** — 按 CE 计划未完成 todo 改源码。不是审查，不是查图。
 
-**两轴 review** — Spec：是否完成计划（无计划时按 diff 推断粗粒度意图）。Standards：是否符合仓规范。结论留在会话，可作为 Planning Context，但不是 `plan.md` 或 cases。
+**两轴 review** — Spec 验收需求完成度；Standards 验收仓规范。不是 `plan.md`，也不是 cases。易与「写测试计划」混。
 
-**Planning Context** — 用来确定本轮测试范围的上下文。来源可以是当前会话、审查结论、`{slug}_plan.md` 的测试内容、用户已陈述范围、`session_handoff.md`，或已有 `init.yaml` + 查询结论。
+**Planning Context** — 用来确定本轮测试范围的上下文。不是正式 `plan.md`，也不是审查结论本身。
 
-**clone 事实** — `workflow=auto` 成功回执中的 worktree 与 changed-files。
+**clone 事实** — `workflow=auto` 成功回执中的 worktree 与 changed-files。不是「用户口头说的改动」。
 
-**Open** — TG `worklog.md` 顶部 `open:` 里尚未闭合的 obligation id。CE 不维护该账本。
+**Open** — TG `worklog.md` 顶部尚未闭合的义务 id。不是 CE 的未决项。
 
-**replay / derived** — TG 两类可判定依据，均须 root 到列或 `init.yaml` 已声明变量。`replay`：Host tiling 回放（key / TD / OP_CHECK / 分支）。`derived`：由当前输入与代码直接推出。`Replay reject ≠ E`。
+**replay / derived** — TG 两类可判定依据。`replay` 是 Host tiling 回放；`derived` 是由当前输入与代码直接推出。二者都不是 E。易与「板上跑过」混。
 
-**init.yaml** — `/tg-init` 的测试前置契约：列绑定 + 跑法/口径。不是 cases，也不是 `plan.md`。
+**init.yaml** — TG 测试前置契约（列绑定 + 跑法/口径）。不是 cases，也不是 `plan.md`。
 
-**plan.md** — `/tg-plan` 的测试义务表。不是可执行用例。缺脚本/列/生成器记 `test_harness_gap`，不改算子仓。
+**plan.md** — TG 正式测试义务计划。不是 CE `{slug}_plan.md`，也不是 cases。
 
-**cases 表** — `/tg-solve` 按义务构造、经 replay / 引理闭合后的可执行行。存在未落地 `test_harness_gap` 时不得 start。
+**cases 表** — TG 可执行用例行。不是义务表，也不是 worklog。
 
-**worklog.md** — TG 求解账本；临时草稿只放 `runs/`。
+**worklog.md** — TG 求解账本。不是正式 cases；草稿不是正式 worklog。
 
-**session_handoff.md** — 会话交接摘要。只引用已有产物路径与下一步 slash，不复制计划全文。
+**session_handoff.md** — 会话交接摘要。不是计划全文副本。
 
-**quality.yaml** — 建库质量看 `grade` / `locate_blocking`，不看 unresolved 条数。
+**quality.yaml** — 建库质量看 `grade` / `locate_blocking`。不是 unresolved 条数。
 
 ## 同名不可互换
 

@@ -124,6 +124,8 @@ def errors(repo: Path | None = None) -> list[str]:
             out.append("uo-query SKILL must not stack 丢掉 recovery on --mode")
         if "相关 ≠ 单域" in mtext:
             out.append("uo-query SKILL must not own 相关 ≠ 单域; belongs in intent-reasoning")
+        if "Dim=V" not in mtext or "无参数索引" not in mtext:
+            out.append("uo-query SKILL must own the four uo-query forms")
     forms = root / "pilot/policies/invariants/code-access-invariants.md"
     if not forms.is_file():
         out.append("missing code-access-invariants.md")
@@ -131,8 +133,12 @@ def errors(repo: Path | None = None) -> list[str]:
         ftext = forms.read_text(encoding="utf-8")
         if "禁止 `--mode`" not in ftext:
             out.append("code-access invariant must own 禁止 `--mode`")
-        if "Dim=V" not in ftext or "无参数索引" not in ftext:
-            out.append("code-access invariant must own the four uo-query forms")
+        if "四种形态之外" not in ftext:
+            out.append("code-access invariant must keep the hard bound 禁止四种形态之外")
+        if "Dim=V" in ftext or "Dim=<维名>" in ftext or "--file PATH" in ftext:
+            out.append(
+                "code-access invariant must not catalog uo-query forms; belongs in uo-query Skill"
+            )
     restated = (
         "不要传 `--mode`",
         "禁止在 Task 正文写 `--mode`",

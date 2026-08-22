@@ -14,7 +14,7 @@
 6. 读取必须位于 confirmed scope。宏表 / 注册宏 / Host 谓词 / CMake / 模板参数绑定：以确定性脚本 + 范围内 Read 为主路径。
 7. 官方文档只提供接口 / 宏契约；权威序：算子源码 → 目标 CANN 版本文档 → latest。文档不得创建无源码边。
 8. 符号身份使用稳定 id，禁止短名唯一键。
-9. `uo-query` 只有四种参数形态，禁止 `--mode`（含 Task 正文）以及 `explain-*` / `search` / `locate`：无参数索引（默认首次）；一个标识符；覆盖列表 `Dim=<维名>` 或组合 `Name=Value`（历史写法 `Dim=V[,Other=V]`）；`--file PATH --line N`（只从上一张卡复制）。0 命中不得回填全集覆盖。around 只扩 1 跳。
+9. `uo-query` 禁止 `--mode`（含 Task 正文）以及 `explain-*` / `search` / `locate`，禁止四种形态之外的参数。选哪种形态、何时停、怎么解释 partial / coverage 见 `uo-query` Skill。0 命中不得回填全集覆盖。around 只扩 1 跳。
 10. 高置信源码比对要求见 `evidence`。语义表面与浅 writer 见 `semantic-grounding`。本策略不另开例外。
 
 ## Hard Constraints

@@ -190,8 +190,10 @@ def test_spec_method_infers_intent_not_narrate_only() -> None:
     standalone = (REPO / "skills" / "standalone-review" / "SKILL.md").read_text(
         encoding="utf-8"
     )
-    assert "index.md" in standalone
-    assert "禁止只陈述变更理解" in standalone
+    assert "spec.md" in standalone
+    assert "standards.md" in standalone
+    assert "index.md" in method
+    assert "禁止只陈述理解就算完成" in method or "只陈述理解就算完成" in method
     prompt = (REPO / "prompts" / "tasks" / "ce" / "standalone-review.md").read_text(
         encoding="utf-8"
     )
