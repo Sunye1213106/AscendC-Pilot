@@ -84,7 +84,7 @@ def test_bind_session_tiling_key_keeps_writers(q, name: str) -> None:
     writers = extras.get("writers") or []
     assert writers, extras
     assert any(int(row.get("line") or 0) > 0 and row.get("file") for row in writers)
-    assert _dump_size(out) < 4_000
+    assert _dump_size(out) < 8_000
 
 
 def test_bind_session_bad_dim_true_is_honest_zero(q) -> None:

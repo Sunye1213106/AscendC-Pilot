@@ -1,0 +1,745 @@
+{
+  "summary": {
+    "op": "flash_attention_score_grad",
+    "arch": "arch35",
+    "n": 24,
+    "avg_bytes": 4261,
+    "avg_tokens": 1065,
+    "p50_bytes": 4011,
+    "max_bytes": 14205,
+    "max_tokens": 3551,
+    "p50_ms": 78.2,
+    "max_ms": 1862.3,
+    "grades": {
+      "usable": 20,
+      "partial": 1,
+      "weak": 0,
+      "fail": 3
+    },
+    "cap_bytes": 24000,
+    "cap_tokens": 6000
+  },
+  "rows": [
+    {
+      "id": "Q1",
+      "scene": "index / launch",
+      "question": "这个算子 launch 分几段？有哪些 tiling 维？",
+      "argv": {},
+      "ms": 96.8,
+      "bytes": 2318,
+      "tokens": 580,
+      "grade": "usable",
+      "shape": "index",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:213",
+      "kind": "1",
+      "name": "pipeIn",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "siblings_checked",
+      "hint": "Coverage list: Dim=DTemplateNum. Combo filter: DTemplateNum=0 (Name=Value). One identifier for a name card. --file --line only after copying file:line from a ca",
+      "notes": [
+        "3 phases, 19 dims"
+      ]
+    },
+    {
+      "id": "Q2",
+      "scene": "tilingkey / domain",
+      "question": "IsTnd 声明域是什么？",
+      "argv": {
+        "pattern": "Dim=IsTnd"
+      },
+      "ms": 1837.2,
+      "bytes": 673,
+      "tokens": 168,
+      "grade": "usable",
+      "shape": "cover",
+      "ok": true,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [
+        "IsTnd"
+      ],
+      "completeness": "coverage_checked",
+      "hint": "",
+      "notes": [
+        "IsTnd=['0', '1']"
+      ]
+    },
+    {
+      "id": "Q3",
+      "scene": "tilingkey / combo",
+      "question": "IsTnd=1 模板能不能编过？有多少块？",
+      "argv": {
+        "pattern": "IsTnd=1"
+      },
+      "ms": 1862.3,
+      "bytes": 2492,
+      "tokens": 623,
+      "grade": "usable",
+      "shape": "cover",
+      "ok": true,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 38,
+      "dim_keys": [
+        "DTemplateNum",
+        "DeterType",
+        "InputDType",
+        "IsAttenMask",
+        "IsBn2MultiBlk",
+        "IsDNoEqual",
+        "IsDrop",
+        "IsEmptyTensor"
+      ],
+      "completeness": "coverage_checked",
+      "hint": "",
+      "notes": [
+        "38 blocks, coverage_checked"
+      ]
+    },
+    {
+      "id": "Q4",
+      "scene": "tilingkey / combo",
+      "question": "IsTnd=1 且 S2TemplateNum=1 这组能否编过？",
+      "argv": {
+        "pattern": "IsTnd=1,S2TemplateNum=1"
+      },
+      "ms": 1738.1,
+      "bytes": 1235,
+      "tokens": 309,
+      "grade": "fail",
+      "shape": "cover",
+      "ok": true,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "coverage_checked",
+      "hint": "No combo matched. Declared values include IsTnd=0, S2TemplateNum=0. Boolean true/false aliases 0/1. Dim=<name> lists one dimension.",
+      "notes": [
+        "matching_block_count=0"
+      ]
+    },
+    {
+      "id": "Q5",
+      "scene": "tilingkey / honesty",
+      "question": "IsTnd=9 有没有合法块？（应诚实空集）",
+      "argv": {
+        "pattern": "IsTnd=9"
+      },
+      "ms": 1627.5,
+      "bytes": 913,
+      "tokens": 228,
+      "grade": "usable",
+      "shape": "cover",
+      "ok": true,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "coverage_checked",
+      "hint": "No combo matched. Declared values include IsTnd=0. Boolean true/false aliases 0/1. Dim=<name> lists one dimension.",
+      "notes": [
+        "honest empty + coverage_checked"
+      ]
+    },
+    {
+      "id": "Q6",
+      "scene": "tilingkey / alias",
+      "question": "BOOL 别名 IsTnd=true 能否对上 0/1？",
+      "argv": {
+        "pattern": "IsTnd=true"
+      },
+      "ms": 1786.8,
+      "bytes": 930,
+      "tokens": 232,
+      "grade": "fail",
+      "shape": "cover",
+      "ok": true,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "coverage_checked",
+      "hint": "No combo matched. Declared values include IsTnd=0. Boolean true/false aliases 0/1. Dim=<name> lists one dimension.",
+      "notes": [
+        "matching_block_count=0"
+      ]
+    },
+    {
+      "id": "Q7",
+      "scene": "tilingkey / name",
+      "question": "InputDType 是什么、谁写？",
+      "argv": {
+        "pattern": "InputDType"
+      },
+      "ms": 80.9,
+      "bytes": 5382,
+      "tokens": 1346,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:64",
+      "kind": "TILING_KEY",
+      "name": "InputDType",
+      "snippet_chars": 306,
+      "writers": 2,
+      "readers": 0,
+      "edge_kinds": [
+        "BINDS",
+        "DERIVES",
+        "SELECTS",
+        "WRITES"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "siblings_checked",
+      "hint": "",
+      "notes": [
+        "TILING_KEY @ op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:64"
+      ]
+    },
+    {
+      "id": "Q8",
+      "scene": "tilingkey / name",
+      "question": "S1TemplateNum 定义和 packing 在哪？",
+      "argv": {
+        "pattern": "S1TemplateNum"
+      },
+      "ms": 78.2,
+      "bytes": 5181,
+      "tokens": 1295,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:82",
+      "kind": "TILING_KEY",
+      "name": "S1TemplateNum",
+      "snippet_chars": 503,
+      "writers": 2,
+      "readers": 0,
+      "edge_kinds": [
+        "BINDS",
+        "DERIVES",
+        "SELECTS",
+        "WRITES"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "siblings_checked",
+      "hint": "",
+      "notes": [
+        "TILING_KEY @ op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:82"
+      ]
+    },
+    {
+      "id": "Q9",
+      "scene": "tilingdata",
+      "question": "s1Inner 谁写谁读？",
+      "argv": {
+        "pattern": "s1Inner"
+      },
+      "ms": 78.6,
+      "bytes": 10866,
+      "tokens": 2716,
+      "grade": "partial",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:197",
+      "kind": "TILING_FIELD",
+      "name": "s1Inner",
+      "snippet_chars": 236,
+      "writers": 2,
+      "readers": 0,
+      "edge_kinds": [
+        "DECLARES",
+        "WRITES"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "siblings_checked",
+      "hint": "",
+      "notes": [
+        "readers empty"
+      ]
+    },
+    {
+      "id": "Q10",
+      "scene": "tilingdata",
+      "question": "tilingData / TilingData 结构在哪？",
+      "argv": {
+        "pattern": "tilingData"
+      },
+      "ms": 67.4,
+      "bytes": 8094,
+      "tokens": 2024,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_block_cube.h:158",
+      "kind": "FIELD",
+      "name": "tilingData",
+      "snippet_chars": 387,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [
+        "DECLARES"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "siblings_checked",
+      "hint": "",
+      "notes": [
+        "FIELD @ op_kernel/arch35/flash_attention_score_grad_block_cube.h:158"
+      ]
+    },
+    {
+      "id": "Q11",
+      "scene": "host / api",
+      "question": "keep_prob 这个属性登记在哪？",
+      "argv": {
+        "pattern": "keep_prob"
+      },
+      "ms": 207.4,
+      "bytes": 4149,
+      "tokens": 1037,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h:188",
+      "kind": "COMPILE_VAR",
+      "name": "AttrIndex::KEEP_PROB",
+      "snippet_chars": 167,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "siblings_checked",
+      "hint": "",
+      "notes": [
+        "COMPILE_VAR @ op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+      ]
+    },
+    {
+      "id": "Q12",
+      "scene": "host / kernel",
+      "question": "Init 定义体在哪？",
+      "argv": {
+        "pattern": "Init"
+      },
+      "ms": 74.4,
+      "bytes": 8029,
+      "tokens": 2007,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_presfmg_regbase.h:130",
+      "kind": "FUNCTION",
+      "name": "Init",
+      "snippet_chars": 377,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "page_clipped",
+      "hint": "",
+      "notes": [
+        "FUNCTION @ op_kernel/arch35/flash_attention_score_grad_presfmg_regbase.h:130"
+      ]
+    },
+    {
+      "id": "Q13",
+      "scene": "host / kernel",
+      "question": "Process 定义体在哪？",
+      "argv": {
+        "pattern": "Process"
+      },
+      "ms": 49.3,
+      "bytes": 5596,
+      "tokens": 1399,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_empty_tensor_regbase.h:57",
+      "kind": "METHOD",
+      "name": "Process",
+      "snippet_chars": 2261,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [
+        "CALLS",
+        "DECLARES",
+        "READS"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "page_clipped",
+      "hint": "",
+      "notes": [
+        "METHOD @ op_kernel/arch35/flash_attention_score_grad_empty_tensor_regbase.h:57"
+      ]
+    },
+    {
+      "id": "Q14",
+      "scene": "sync / pipe",
+      "question": "pipeBase 对应哪段 launch？",
+      "argv": {
+        "pattern": "pipeBase"
+      },
+      "ms": 107.9,
+      "bytes": 4011,
+      "tokens": 1003,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:63",
+      "kind": "PIPE",
+      "name": "pipeBase",
+      "snippet_chars": 991,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [
+        "ALIASES",
+        "BINDS",
+        "CALLS",
+        "PRECEDES",
+        "ROOTED_AT"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "",
+      "notes": [
+        "PIPE @ op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:63"
+      ]
+    },
+    {
+      "id": "Q15",
+      "scene": "sync / pipe",
+      "question": "pipePost 对应哪段 launch？",
+      "argv": {
+        "pattern": "pipePost"
+      },
+      "ms": 103.5,
+      "bytes": 3756,
+      "tokens": 939,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:94",
+      "kind": "PIPE",
+      "name": "pipePost",
+      "snippet_chars": 991,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [
+        "ALIASES",
+        "BINDS",
+        "PRECEDES",
+        "ROOTED_AT"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "",
+      "notes": [
+        "PIPE @ op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:94"
+      ]
+    },
+    {
+      "id": "Q16",
+      "scene": "buffer / catalog",
+      "question": "LocalTensor 类型根（应空，跟实例名）",
+      "argv": {
+        "pattern": "LocalTensor"
+      },
+      "ms": 39.7,
+      "bytes": 557,
+      "tokens": 139,
+      "grade": "usable",
+      "shape": "name",
+      "ok": false,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "notes": [
+        "empty as designed; follow hint"
+      ]
+    },
+    {
+      "id": "Q17",
+      "scene": "buffer / catalog",
+      "question": "TQue 类型根（应空）",
+      "argv": {
+        "pattern": "TQue"
+      },
+      "ms": 44.3,
+      "bytes": 543,
+      "tokens": 136,
+      "grade": "usable",
+      "shape": "name",
+      "ok": false,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+      "notes": [
+        "empty as designed; follow hint"
+      ]
+    },
+    {
+      "id": "Q18",
+      "scene": "template / macro",
+      "question": "ASCENDC_TPL_ARGS_DECL 登记点在哪？",
+      "argv": {
+        "pattern": "ASCENDC_TPL_ARGS_DECL"
+      },
+      "ms": 40.4,
+      "bytes": 3689,
+      "tokens": 922,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:49",
+      "kind": "MACRO",
+      "name": "ASCENDC_TPL_ARGS_DECL",
+      "snippet_chars": 368,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "",
+      "notes": [
+        "MACRO @ op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:49"
+      ]
+    },
+    {
+      "id": "Q19",
+      "scene": "template / macro",
+      "question": "GET_TPL_TILING_KEY packing 入口在哪？",
+      "argv": {
+        "pattern": "GET_TPL_TILING_KEY"
+      },
+      "ms": 50.4,
+      "bytes": 4401,
+      "tokens": 1100,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:1460",
+      "kind": "MACRO",
+      "name": "GET_TPL_TILING_KEY",
+      "snippet_chars": 419,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "",
+      "notes": [
+        "MACRO @ op_kernel/arch35/flash_attention_score_grad_template_tiling_key.h:1460"
+      ]
+    },
+    {
+      "id": "Q20",
+      "scene": "host / refuse",
+      "question": "GRAPH_FAILED 是不是 Host 拒单入口？",
+      "argv": {
+        "pattern": "GRAPH_FAILED"
+      },
+      "ms": 57.0,
+      "bytes": 2313,
+      "tokens": 578,
+      "grade": "fail",
+      "shape": "name",
+      "ok": true,
+      "span": "",
+      "kind": "TYPE",
+      "name": "GRAPH_FAILED",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [
+        "RETURNS",
+        "ROOTED_AT"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "",
+      "notes": [
+        "shape=name span=none"
+      ]
+    },
+    {
+      "id": "Q21",
+      "scene": "host / check",
+      "question": "CheckShapeValid 定义窗够不够读？",
+      "argv": {
+        "pattern": "CheckShapeValid"
+      },
+      "ms": 46.0,
+      "bytes": 4309,
+      "tokens": 1077,
+      "grade": "usable",
+      "shape": "name",
+      "ok": true,
+      "span": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:194",
+      "kind": "FUNCTION",
+      "name": "CheckShapeValid",
+      "snippet_chars": 1197,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [
+        "CALLS",
+        "RETURNS",
+        "ROOTED_AT",
+        "WRITES"
+      ],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "first_hit",
+      "hint": "",
+      "notes": [
+        "FUNCTION @ op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:194"
+      ]
+    },
+    {
+      "id": "Q22",
+      "scene": "nl refuse",
+      "question": "自然语言整句（应拒绝当结构化命中）",
+      "argv": {
+        "pattern": "who writes s1Inner in the kernel"
+      },
+      "ms": 0.0,
+      "bytes": 495,
+      "tokens": 124,
+      "grade": "usable",
+      "shape": "",
+      "ok": false,
+      "span": "",
+      "kind": "",
+      "name": "",
+      "snippet_chars": 0,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "",
+      "hint": "Whole-sentence / multi-token queries are rejected. Use one of four forms: (1) no-arg index, (2) one identifier, (3) Dim=<dimName> for one coverage list or Name=",
+      "notes": [
+        "shape= ok=False"
+      ]
+    },
+    {
+      "id": "Q23",
+      "scene": "around / launch",
+      "question": "从索引第一段 launch 位点扩邻居",
+      "argv": {
+        "file": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h",
+        "line": 213
+      },
+      "ms": 33.0,
+      "bytes": 8130,
+      "tokens": 2032,
+      "grade": "usable",
+      "shape": "around",
+      "ok": true,
+      "span": "op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:201",
+      "kind": "FUNCTION",
+      "name": "RegbaseFAG",
+      "snippet_chars": 3041,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "",
+      "hint": "",
+      "notes": [
+        "around op_kernel/arch35/flash_attention_score_grad_entry_regbase.h:201"
+      ]
+    },
+    {
+      "id": "Q24",
+      "scene": "around / attr",
+      "question": "从 keep_prob 卡片位点扩 1 跳邻居",
+      "argv": {
+        "file": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h",
+        "line": 188
+      },
+      "ms": 37.5,
+      "bytes": 14205,
+      "tokens": 3551,
+      "grade": "usable",
+      "shape": "around",
+      "ok": true,
+      "span": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h:188",
+      "kind": "COMPILE_VAR",
+      "name": "AttrIndex::HEAD_NUM",
+      "snippet_chars": 167,
+      "writers": 0,
+      "readers": 0,
+      "edge_kinds": [],
+      "blocks": 0,
+      "dim_keys": [],
+      "completeness": "",
+      "hint": "",
+      "notes": [
+        "around op_host/arch35/flash_attention_score_grad_tiling_common_regbase.h:188"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,434 @@
+{
+  "summary": {
+    "n": 5,
+    "reached_usable": 2,
+    "stuck_partial": 3,
+    "rounds": {
+      "Q6": 2,
+      "Q9": null,
+      "Q10": 4,
+      "Q13": null,
+      "Q20": null
+    },
+    "final": {
+      "Q6": "usable",
+      "Q9": "partial",
+      "Q10": "usable",
+      "Q13": "partial",
+      "Q20": "partial"
+    }
+  },
+  "results": [
+    {
+      "id": "Q6",
+      "question": "BOOL 别名 IsTnd=true 能否对上 0/1？",
+      "rounds": 2,
+      "final": "usable",
+      "stop": "retry hit 38 blocks; true itself does not alias",
+      "hops": [
+        {
+          "round": 1,
+          "why": "first ask",
+          "argv": {
+            "pattern": "IsTnd=true"
+          },
+          "shape": "cover",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": 0,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "No combo matched. Declared values include IsTnd=0. Boolean true/false aliases 0/1. Dim=<name> lists one dimension.",
+          "grade": "partial",
+          "stop": "empty cover; nearby values=['0', '1']"
+        },
+        {
+          "round": 2,
+          "why": "hint nearby values 0/1 → IsTnd=1",
+          "argv": {
+            "pattern": "IsTnd=1"
+          },
+          "shape": "cover",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": 38,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "",
+          "grade": "usable",
+          "stop": "retry hit 38 blocks; true itself does not alias"
+        }
+      ]
+    },
+    {
+      "id": "Q9",
+      "question": "s1Inner 谁写谁读？",
+      "rounds": 4,
+      "final": "partial",
+      "stop": "no writers/readers",
+      "hops": [
+        {
+          "round": 1,
+          "why": "first ask",
+          "argv": {
+            "pattern": "s1Inner"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:197",
+          "kind": "TILING_FIELD",
+          "name": "s1Inner",
+          "blocks": null,
+          "writers": 2,
+          "readers": 0,
+          "next": [
+            "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase",
+            "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase::s1Inner <- fBaseParams.s1Inner",
+            "!(!fBaseParams.isDeterministic || fBaseParams.deterSparseType == static_cast<uint32_t>(DeterSparseType::DETER_OLD))",
+            "dy"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "writers only; kernel READS still missing"
+        },
+        {
+          "round": 2,
+          "why": "around Host writer from extras",
+          "argv": {
+            "file": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp",
+            "line": 1899
+          },
+          "shape": "around",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "",
+          "grade": "partial",
+          "stop": "no writers/readers"
+        },
+        {
+          "round": 3,
+          "why": "around kernel field decl",
+          "argv": {
+            "file": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h",
+            "line": 197
+          },
+          "shape": "around",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "",
+          "grade": "partial",
+          "stop": "no writers/readers"
+        },
+        {
+          "round": 4,
+          "why": "follow next owner struct",
+          "argv": {
+            "pattern": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:194",
+          "kind": "TILING_DATA",
+          "name": "FlashAttentionScoreGradS1S2BNGS1S2SplitCoreParamsRegbase",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "bandIdx",
+            "blockOuter",
+            "maxValidBBLen",
+            "get_bandIdx"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "no writers/readers"
+        }
+      ]
+    },
+    {
+      "id": "Q10",
+      "question": "tilingData / TilingData 结构在哪？",
+      "rounds": 4,
+      "final": "usable",
+      "stop": "TILING_DATA op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:610",
+      "hops": [
+        {
+          "round": 1,
+          "why": "first ask",
+          "argv": {
+            "pattern": "tilingData"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_kernel/arch35/flash_attention_score_grad_block_cube.h:158",
+          "kind": "FIELD",
+          "name": "tilingData",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "FAGBlockCube",
+            "!(IsNewDeter(fBaseParams)&& tndBaseInfo.isTndSwizzle)",
+            "!(IsNewDeter(fBaseParams))",
+            "!(fBaseParams.isDeterministic)"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "still a member FIELD, not the struct"
+        },
+        {
+          "round": 2,
+          "why": "follow next InitTilingData",
+          "argv": {
+            "pattern": "InitTilingData"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:1752",
+          "kind": "FUNCTION",
+          "name": "InitTilingData",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "CheckLogLevel",
+            "DlogRecord",
+            "DoOpTiling",
+            "DoSparse"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "FUNCTION InitTilingData — not the struct yet"
+        },
+        {
+          "round": 3,
+          "why": "around member FIELD",
+          "argv": {
+            "file": "op_kernel/arch35/flash_attention_score_grad_block_cube.h",
+            "line": 158
+          },
+          "shape": "around",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "",
+          "grade": "partial",
+          "stop": "kind=around"
+        },
+        {
+          "round": 4,
+          "why": "battery ident struct name",
+          "argv": {
+            "pattern": "FlashAttentionScoreGradTilingData"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:610",
+          "kind": "TILING_DATA",
+          "name": "FlashAttentionScoreGradTilingDataUs1s2Bbn2gs1s2Regbase",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "baseDeterParam",
+            "deterParam",
+            "postTilingData",
+            "flash_attention_score_grad"
+          ],
+          "hint": "",
+          "grade": "usable",
+          "stop": "TILING_DATA op_kernel/arch35/flash_attention_score_grad_tiling_data_regbase.h:610"
+        }
+      ]
+    },
+    {
+      "id": "Q13",
+      "question": "Process 定义体在哪？",
+      "rounds": 3,
+      "final": "partial",
+      "stop": "shape=around ['@']",
+      "hops": [
+        {
+          "round": 1,
+          "why": "first ask",
+          "argv": {
+            "pattern": "Process"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_kernel/arch35/flash_attention_score_grad_empty_tensor_regbase.h:57",
+          "kind": "METHOD",
+          "name": "Process",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "FlashAttentionScoreGradEmptyTensorRegbase"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "still EmptyTensor or other: ['Process@op_kernel/arch35/flash_attention_score_grad_empty_tensor_regbase.h:57']"
+        },
+        {
+          "round": 2,
+          "why": "definition_sites kernel.h:493",
+          "argv": {
+            "file": "op_kernel/arch35/flash_attention_score_grad_kernel.h",
+            "line": 493
+          },
+          "shape": "around",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "",
+          "grade": "partial",
+          "stop": "shape=around ['@']"
+        },
+        {
+          "round": 3,
+          "why": "definition_sites kernel_base.h:237",
+          "argv": {
+            "file": "op_kernel/arch35/flash_attention_score_grad_kernel_base.h",
+            "line": 237
+          },
+          "shape": "around",
+          "ok": true,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "",
+          "grade": "partial",
+          "stop": "shape=around ['@']"
+        }
+      ]
+    },
+    {
+      "id": "Q20",
+      "question": "GRAPH_FAILED 是不是 Host 拒单入口？",
+      "rounds": 4,
+      "final": "partial",
+      "stop": "span op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:28 but not typed as refuse root",
+      "hops": [
+        {
+          "round": 1,
+          "why": "first ask",
+          "argv": {
+            "pattern": "GRAPH_FAILED"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "",
+          "kind": "TYPE",
+          "name": "GRAPH_FAILED",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "!(!(fBaseParams.layoutType == INPUT_FORMAT_TND ? CheckVarLenSparseModeValue(fBaseParams): CheckSparseModeValue(fBasePara",
+            "!(!CaclePerCoreBlockInfoBn2(totalBlockInfo, acturalBlockInfo, maxBlockNumPerCore, blockStarts, blockEnds))",
+            "!(!IsSameShape(dy, attentionIn))"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "typed host_refuse, no file:line"
+        },
+        {
+          "round": 2,
+          "why": "catalog name ge.graphStatus",
+          "argv": {
+            "pattern": "graphStatus"
+          },
+          "shape": "name",
+          "ok": false,
+          "span": "",
+          "kind": "",
+          "name": "",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [],
+          "hint": "Retry a shorter identifier, or Dim=<dimName> / Name=Value for coverage, or --file --line from a previous card. Empty is not proof the symbol is absent.",
+          "grade": "partial",
+          "stop": "kind=None span=none"
+        },
+        {
+          "round": 3,
+          "why": "follow next guard as around from CheckShapeValid family",
+          "argv": {
+            "pattern": "CheckVarLenSparseModeValue"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:574",
+          "kind": "FUNCTION",
+          "name": "CheckVarLenSparseModeValue",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "CheckLogLevel",
+            "DlogRecord",
+            "GetOpInfo",
+            "ProcessOptionalInput"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "span op_host/arch35/flash_attention_score_grad_tiling_common_regbase.cpp:574 but not typed as refuse root"
+        },
+        {
+          "round": 4,
+          "why": "OP_CHECK_IF host refuse sites",
+          "argv": {
+            "pattern": "OP_CHECK_IF"
+          },
+          "shape": "name",
+          "ok": true,
+          "span": "op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:28",
+          "kind": "BRANCH",
+          "name": "OP_CHECK_IF((aShape == nullptr)||(bShape == nullptr), OP_LOGW(\"flash_attention_score_grad_tiling_normal_regbase\", \"aShap",
+          "blocks": null,
+          "writers": 0,
+          "readers": 0,
+          "next": [
+            "GRAPH_FAILED"
+          ],
+          "hint": "",
+          "grade": "partial",
+          "stop": "span op_host/arch35/flash_attention_score_grad_tiling_normal_regbase.cpp:28 but not typed as refuse root"
+        }
+      ]
+    }
+  ]
+}
