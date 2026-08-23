@@ -1147,6 +1147,57 @@ def _complete_bind_review_prepare(
     return result
 
 
+def _complete_plan_narrate_prepare(
+    project_root: Path,
+    *,
+    run_id: str,
+    sdir: Path,
+    result: dict[str, Any],
+    intent: str = "",
+) -> dict[str, Any]:
+    """Primary writes the three plan.md headings; next pilot_run captures them."""
+    from ascendc_pilot.actions.tg_product import _has_plan_prose
+
+    turn = str(intent or current_turn_intent() or "").strip()
+    prompted = sdir / "narrate_prompted.yaml"
+    result["dispatch_task"] = False
+    result["needs_human_decision"] = False
+    result["host_step_kind"] = "primary_review"
+    if _has_plan_prose(turn):
+        captured = {"text": turn, "doc": {}}
+        _dump(sdir / "captured.yaml", captured)
+        try:
+            if prompted.is_file():
+                prompted.unlink()
+        except OSError:
+            pass
+        fin = finalize_action(
+            project_root,
+            "plan_narrate",
+            engine_result={"ok": True, "text": turn, "result_text": turn},
+        )
+        result["auto_finalize"] = True
+        result["finalize"] = fin
+        result["ok"] = bool(fin.get("ok"))
+        result["message_zh"] = "plan_narrate 三节散文已捕获，继续 plan_promote。"
+        return result
+    if prompted.is_file() and not turn:
+        result["ok"] = False
+        result["error"] = "NEED_PLAN_NARRATE"
+        result["message_zh"] = (
+            "需要三节散文：## 测什么 / ## 覆盖什么 / ## 怎么判定。"
+            "下一发 `pilot_run(tg-plan)` 把这三节作为 intent，不要空跑。"
+        )
+        return result
+    _dump(prompted, {"schema": "tg-plan-narrate-prompted/v1"})
+    result["ok"] = True
+    result["message_zh"] = (
+        "读 plan_scope 回答与 plan_fuse YAML，写 ## 测什么 / ## 覆盖什么 / ## 怎么判定。"
+        "不要编覆盖模型，不要 Write plan.md。下一发 `pilot_run(tg-plan)` intent=这三节全文。"
+    )
+    return result
+
+
 def _skill_path(repo: Path, skill_id: str) -> Path:
     """``skills/<skill_id>/SKILL.md`` — one document per executable step."""
     return repo / "skills" / str(skill_id or "").strip() / "SKILL.md"
@@ -2734,6 +2785,14 @@ def prepare_action(
         return result
 
     if execution_mode == EXECUTION_PRIMARY_REVIEW:
+        if action_id == "plan_narrate":
+            return _complete_plan_narrate_prepare(
+                project_root,
+                run_id=run_id,
+                sdir=sdir,
+                result=result,
+                intent=str(turn_intent or current_turn_intent() or ""),
+            )
         return _complete_bind_review_prepare(
             project_root,
             run_id=run_id,

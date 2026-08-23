@@ -89,8 +89,6 @@ def pin_facts(
                 "head_sha": doc["head_sha"],
             }
             goal["artifacts"] = arts
-            if kind_s:
-                goal["kind"] = kind_s
             write_user_goal(root, goal)
     except Exception:  # noqa: BLE001
         pass
@@ -103,11 +101,38 @@ def changed_files_of(contract: dict[str, Any] | None) -> list[str]:
     return [str(x).strip() for x in (contract.get("changed_files") or []) if str(x).strip()]
 
 
-def pr_change_gate(project_root: Path | str) -> dict[str, Any] | None:
-    """Fail closed when kind is PR regression but no pinned files."""
+def _source_kind(project_root: Path | str) -> str:
+    try:
+        from ascendc_pilot.user_goal import load_user_goal
+
+        goal = load_user_goal(project_root) or {}
+    except Exception:  # noqa: BLE001
+        return ""
+    source = goal.get("source") if isinstance((goal or {}).get("source"), dict) else {}
+    return str(source.get("kind") or "").strip().lower()
+
+
+def is_pr_regression_intent(project_root: Path | str) -> bool:
+    """PR-targeted planning is source.kind=pull_request, not user_goal.kind.
+
+    ``user_goal.kind`` is the deliverable label (``generate_change_tests``).
+    ``change_contract.kind`` is the planning axis after pin.
+    """
     contract = load_change_contract(project_root) or {}
-    kind = str(contract.get("kind") or "").strip()
-    if kind == PR_REGRESSION and not changed_files_of(contract):
+    pinned = str(contract.get("kind") or "").strip()
+    if pinned == IMPLEMENTATION_COVERAGE:
+        return False
+    if pinned == PR_REGRESSION:
+        return True
+    return _source_kind(project_root) in {"pull_request", "pr"}
+
+
+def pr_change_gate(project_root: Path | str) -> dict[str, Any] | None:
+    """Fail closed when PR-targeted planning has no pinned changed_files."""
+    if not is_pr_regression_intent(project_root):
+        return None
+    contract = load_change_contract(project_root)
+    if not contract or not changed_files_of(contract):
         return {
             "ok": False,
             "engine": "plan_precheck",
@@ -116,6 +141,9 @@ def pr_change_gate(project_root: Path | str) -> dict[str, Any] | None:
             "retryable": True,
             "failure_class": "format_transport",
             "ask": "primary",
-            "message_zh": "goal.kind=pr_regression 需要 Primary 先 pin_facts(change_contract.changed_files)。clone 回执不是 SSOT。",
+            "message_zh": (
+                "PR 针对性 plan 需要先 pin_facts(change_contract.changed_files)。"
+                "clone 回执不是 SSOT；缺 pin 不得当 implementation_coverage。"
+            ),
         }
     return None

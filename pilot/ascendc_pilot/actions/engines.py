@@ -958,6 +958,7 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     "plan-precheck-v1": [],
     "tg-plan-scope-v1": [],
     "tg-plan-fuse-v1": [],
+    "tg-plan-narrate-v1": [],
     "tg-plan-v1": ["tg/plan.md"],
     "tg-plan-validate-v1": ["runs/{run_id}/receipts/plan_validate.yaml"],
     "tg-plan-approved-v1": ["tg/plan.md"],

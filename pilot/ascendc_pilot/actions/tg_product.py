@@ -257,16 +257,11 @@ def _captured_text(project_root: Path, ctx: dict[str, Any], action_id: str) -> s
 
 
 _PLAN_PROSE_HEADINGS = ("测什么", "覆盖什么", "怎么判定")
-_YAML_FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
 def _has_plan_prose(text: str) -> bool:
     blob = str(text or "")
     return all(re.search(rf"^##\s*{re.escape(h)}\s*$", blob, re.MULTILINE) for h in _PLAN_PROSE_HEADINGS)
-
-
-def _prose_without_fence(text: str) -> str:
-    return _YAML_FENCE_RE.sub("", str(text or "")).strip()
 
 
 def _assemble_plan_md(prose: str, mapping: dict[str, Any]) -> str:
@@ -803,21 +798,17 @@ def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
 
     prose = str(ctx.get("plan_prose") or "").strip()
     if not _has_plan_prose(prose):
-        prose_cap = _captured(project_root, ctx, "plan_prose")
-        prose = str(prose_cap.get("text") or "").strip()
-    if not _has_plan_prose(prose) and _has_plan_prose(fuse_text):
-        prose = _prose_without_fence(fuse_text)
+        narrate_cap = _captured(project_root, ctx, "plan_narrate")
+        prose = str(narrate_cap.get("text") or "").strip()
     if not _has_plan_prose(prose):
         return _plan_fail(
             "PLAN_PROSE_REQUIRED",
             ask="primary",
-            message_zh="缺少 Primary 写的 plan.md 三节散文；promote 不从 YAML 合成标题。",
+            message_zh="缺少 plan_narrate 三节散文；promote 不从 fuse YAML 合成标题。",
+            rework_action_ids=["plan_narrate"],
         )
 
-    if _has_plan_prose(fuse_text) and _YAML_FENCE_RE.search(fuse_text):
-        text = fuse_text
-    else:
-        text = _assemble_plan_md(prose, mapping)
+    text = _assemble_plan_md(prose, mapping)
     path = products.plan_path(_tg(project_root, ctx))
     isolation.assert_tg_write_path(path)
     path.write_text(text, encoding="utf-8")
@@ -846,10 +837,15 @@ def run_plan_validate(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
         text, fence = products.load_plan(tg)
     except products.ProductError as exc:
         return {"ok": False, "engine": "plan_validate", "error": str(exc), "ask": exc.ask}
+    from ascendc_pilot.change_contract import load_change_contract
+
+    contract = load_change_contract(project_root) or {}
+    allow_legal_keys = str(contract.get("enumerate") or "").strip() == "legal_keys"
     errors = products.validate_plan_fence(
         fence,
         init_columns=products.column_names(init_doc),
         init_mapping=products.mapping_as_dict(init_doc.get("mapping")),
+        allow_legal_keys=allow_legal_keys,
     )
     errors.extend(products.validate_plan_prose(text))
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:

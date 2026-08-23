@@ -197,3 +197,80 @@ def test_legal_keys_only_when_pin_asks(tmp_path: Path) -> None:
     )
     packet = _compact_plan_scope_packet(op, {"architecture": "arch35"})
     assert packet.get("allow_legal_keys") is True
+
+
+def test_pr_change_gate_fails_when_pr_source_and_no_contract(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions.tg_product import run_plan_precheck
+    from ascendc_pilot.paths import ensure_agent_layout
+    from ascendc_pilot.state import start_workflow
+    from ascendc_pilot.user_goal import create_user_goal
+
+    op = _op(tmp_path)
+    ensure_agent_layout(op, arch="arch35")
+    state = start_workflow(op, "tg-plan", architecture="arch35", op_name="flash_op")
+    create_user_goal(
+        op,
+        intent_text="给这个 PR 生成针对性 case",
+        llm_intent={
+            "needed_workflows": ["tg-plan", "tg-solve"],
+            "source": {"kind": "pull_request", "url": "https://gitcode.com/org/repo/pulls/1"},
+        },
+        architecture="arch35",
+        op_name="flash_op",
+    )
+    monkeypatch.setattr(
+        "testcase_agent.init_status.require_init_confirmed",
+        lambda *_a, **_k: {"confirmed": True, "uo_digest": "deadbeef"},
+    )
+    monkeypatch.setattr(
+        "ascendc_pilot.actions.tg_product._legal_key_count",
+        lambda *_a, **_k: 0,
+    )
+    out = run_plan_precheck(
+        op,
+        {
+            "architecture": "arch35",
+            "op_name": "flash_op",
+            "run_id": str(state.get("run_id") or "R1"),
+        },
+    )
+    assert out.get("ok") is False, out
+    assert out.get("error") == "PLAN_PR_CHANGE_REQUIRED"
+
+
+def test_pr_change_gate_allows_local_source_without_contract(tmp_path: Path, monkeypatch) -> None:
+    from ascendc_pilot.actions.tg_product import run_plan_precheck
+    from ascendc_pilot.paths import ensure_agent_layout
+    from ascendc_pilot.state import start_workflow
+    from ascendc_pilot.user_goal import create_user_goal
+
+    op = _op(tmp_path)
+    ensure_agent_layout(op, arch="arch35")
+    state = start_workflow(op, "tg-plan", architecture="arch35", op_name="flash_op")
+    create_user_goal(
+        op,
+        intent_text="把当前实现测明白",
+        llm_intent={
+            "needed_workflows": ["tg-plan"],
+            "source": {"kind": "local"},
+        },
+        architecture="arch35",
+        op_name="flash_op",
+    )
+    monkeypatch.setattr(
+        "testcase_agent.init_status.require_init_confirmed",
+        lambda *_a, **_k: {"confirmed": True, "uo_digest": "deadbeef"},
+    )
+    monkeypatch.setattr(
+        "ascendc_pilot.actions.tg_product._legal_key_count",
+        lambda *_a, **_k: 0,
+    )
+    out = run_plan_precheck(
+        op,
+        {
+            "architecture": "arch35",
+            "op_name": "flash_op",
+            "run_id": str(state.get("run_id") or "R1"),
+        },
+    )
+    assert out.get("ok") is True, out

@@ -4,7 +4,7 @@
 
 ## 输入 / 输出 / 停
 
-读：`tg/init.yaml`、对话 / `--intent`、可选 CE plan / handoff、算子 `.ascendc-pilot/control/change_contract.yaml`（若已 pin）。改动文件只作方向线索，不要当覆盖清单。没有 pin 时禁止 `git diff HEAD`。`kind=pr_regression` 且 pin 的 `changed_files` 为空时，回答缺口是 `PLAN_PR_CHANGE_REQUIRED`，不要改口去测「当前实现」。generic TilingKey 仅 `kind=implementation_coverage`。`legal_keys` 仅 pin `enumerate: legal_keys`。
+读：`tg/init.yaml`、对话 / `--intent`、可选 CE plan / handoff、算子 `.ascendc-pilot/control/change_contract.yaml`（若已 pin）。改动文件只作方向线索，不要当覆盖清单。没有 pin 时禁止 `git diff HEAD`。`source.kind=pull_request` 且 pin 的 `changed_files` 为空（或根本没有 pin）时，回答缺口是 `PLAN_PR_CHANGE_REQUIRED`，不要改口去测「当前实现」。generic TilingKey 仅 `change_contract.kind=implementation_coverage`。`legal_keys` 仅 pin `enumerate: legal_keys`。
 
 交回：一段说清楚「测什么」的回答。禁止 Write。禁止为了格式去凑 YAML。
 

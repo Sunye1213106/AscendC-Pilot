@@ -112,8 +112,39 @@ def test_validate_bind_part_accepts_sources_and_empty_uo_id() -> None:
 
 def test_confirmed_active_is_solve_control() -> None:
     row = _confirmed(uo_id="InputDType")
+    assert products.is_bound_control(row) is True
     assert products.is_confirmed_active(row) is True
     assert products.is_solve_control(row) is True
+
+
+def test_confirmed_without_uo_id_is_not_bound() -> None:
+    row = {
+        "control": {"status": "active"},
+        "relation": "direct",
+        "confidence": "confirmed",
+        "uo": {"id": "", "candidate": ""},
+    }
+    assert products.is_bound_control(row) is False
+    assert products.is_confirmed_active(row) is False
+    assert products.is_solve_control(row) is False
+    errors = products.validate_init(
+        {
+            "schema": products.INIT_SCHEMA,
+            "kind": "script_repo",
+            "table_kind": "csv",
+            "entry": "run.py",
+            "case_arg": "--case",
+            "modes": {"precision": ["only_grad"], "perf": ["profiler"]},
+            "columns": [{"name": "B"}],
+            "mapping": {"B": row},
+            "domains": {"B": {"compare": "match"}},
+            "golden": {},
+            "compare": {"how": "script"},
+            "generate_inputs": {"fn": "gen"},
+            "uo_digest": "abc",
+        }
+    )
+    assert any("confirmed" in e or "uo.id" in e or "bound" in e for e in errors)
 
 
 def test_danger_fixtures_are_not_solve_controls() -> None:
@@ -165,21 +196,28 @@ def test_plan_rejects_unconfirmed_control() -> None:
     assert any("untestable" in e and "needs_binding" in e for e in errors)
 
 
-def test_plan_rejects_projection_as_equality() -> None:
-    fence = _v3_fence(["Input_Layout"])
-    errors = products.validate_plan_fence(
-        fence,
-        init_columns=["Input_Layout"],
-        init_mapping={
-            "Input_Layout": {
-                "control": {"status": "active"},
-                "relation": "projection",
-                "confidence": "confirmed",
-                "uo": {"id": "IsTnd"},
-            }
-        },
+def test_mapping_relation_projection_is_invalid() -> None:
+    errors = products.validate_bind_part(
+        {
+            "call": {"kind": "pta"},
+            "mapping": {
+                "Input_Layout": {
+                    "control": {"status": "active"},
+                    "relation": "projection",
+                    "confidence": "confirmed",
+                    "uo": {"id": "IsTnd"},
+                }
+            },
+        }
     )
     assert any("projection" in e for e in errors)
+    stuffed = {
+        "control": {"status": "active"},
+        "relation": "projection",
+        "confidence": "confirmed",
+        "uo": {"id": "IsTnd"},
+    }
+    assert products.is_solve_control(stuffed) is False
 
 
 def test_plan_accepts_confirmed_active_direct() -> None:
@@ -190,3 +228,27 @@ def test_plan_accepts_confirmed_active_direct() -> None:
         init_mapping={"B": _confirmed(uo_id="b")},
     )
     assert not any("untestable" in e or "projection" in e for e in errors)
+
+
+def test_plan_rejects_legal_keys_without_authorization() -> None:
+    fence = _v3_fence(["B"])
+    fence["coverage"]["enumerate"] = "legal_keys"
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["B"],
+        init_mapping={"B": _confirmed(uo_id="b")},
+        allow_legal_keys=False,
+    )
+    assert any("legal_keys" in e for e in errors)
+
+
+def test_plan_accepts_legal_keys_when_allowed() -> None:
+    fence = _v3_fence(["B"])
+    fence["coverage"]["enumerate"] = "legal_keys"
+    errors = products.validate_plan_fence(
+        fence,
+        init_columns=["B"],
+        init_mapping={"B": _confirmed(uo_id="b")},
+        allow_legal_keys=True,
+    )
+    assert not any("legal_keys" in e for e in errors)

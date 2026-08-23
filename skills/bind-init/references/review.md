@@ -16,10 +16,10 @@ scan 的 `kind` 与草稿叙事必须一致：无仓时有没有假装 `script_r
 
 1. **`control.status` 对得上 corpus / runner。** 表 100% 空且 runner 从别列重算 → 空列必须是 `shadowed`，不得 `active`。API 语义对但当前 corpus 全空 → `unwired`。不进调用的 harness 标志 → `metadata`。把这些写成 active 控制 → `REWORK bind`。
 2. **`uo.id` 仅当链路闭合。** CSV → runtime → Host/Tiling 整条可追才允许 `uo.id` + `confidence: confirmed`。只碰到相似 UO 符号 → `uo.candidate` + `unresolved`。**禁止把 `candidate` 升格成 `uo.id`。**
-3. **`relation` 不要压成一种。** 直接传参 `direct`；脚本变换 `derived`；张量构造 `tensor_shape` / `tensor_dtype`；开关投影 `projection`。`Input_Layout → IsTnd` 是 projection，不是 equality。
+3. **`relation` 不要压成一种。** 直接传参 `direct`；脚本变换 `derived`；张量构造 `tensor_shape` / `tensor_dtype`。`Input_Layout → IsTnd` 写在 `domains.projection`，不是 mapping.relation。
 4. **`call_args` 用 `sources[]`。** 出现 `source_column` → `REWORK bind`。张量多源必须分条，不要挑一列当整个张量的身份。
 5. **domains 拆开。** `applicability` / `value` / `projection` 分开写。`domains.profile` 引用 scan profile，不要改引擎写入的 profile。`operator` 空却 `compare=match` → `REWORK bind`。
-6. **plan 消费面。** 未 `confirmed` + `active` 的列不得当确定性 classifier。本步不写 plan，但草稿若把 unresolved / candidate 写成已绑定控制 → `REWORK bind`。后续 plan 会把未确认轴标 `untestable + needs_binding`；projection 不得写成等式。
+6. **plan 消费面。** 未 `confirmed` + `active` + 非空 `uo.id` 的列不得当确定性 classifier。本步不写 plan，但草稿若把 unresolved / candidate 写成已绑定控制 → `REWORK bind`。后续 plan 会把未确认轴标 `untestable + needs_binding`。
 
 ## 清单（其余）
 

@@ -19,6 +19,10 @@ def test_plan_intent_action_removed() -> None:
     assert fuse is not None
     assert fuse.get("execution_mode") == "subagent"
     assert fuse.get("output_mode") == "return_value"
+    narrate = action_by_id("tg-plan", "plan_narrate")
+    assert narrate is not None
+    assert narrate.get("execution_mode") == "primary_review"
+    assert narrate.get("output_mode") == "return_value"
     pre = action_by_id("tg-plan", "plan_precheck")
     assert pre is not None
     assert pre.get("execution_mode") == "deterministic"

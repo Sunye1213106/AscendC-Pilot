@@ -71,10 +71,13 @@ _CALL_KINDS = frozenset({"pta", "aclnn", "mixed"})
 _MAPPING_WRAPPER_KEYS = frozenset({"columns", "rows", "items", "mapping"})
 CONTROL_STATUSES = frozenset({"active", "fallback", "shadowed", "unwired", "result", "metadata"})
 RELATIONS = frozenset(
-    {"direct", "derived", "tensor_shape", "tensor_dtype", "presence", "projection", "candidate"}
+    {"direct", "derived", "tensor_shape", "tensor_dtype", "presence", "candidate"}
 )
 CONFIDENCES = frozenset({"confirmed", "partial", "unresolved"})
 _SOLVE_BLOCKED = frozenset({"unwired", "shadowed", "fallback", "result", "metadata"})
+_SOLVE_RELATIONS = frozenset(
+    {"direct", "derived", "tensor_shape", "tensor_dtype", "presence"}
+)
 
 
 def empty_mapping_row() -> dict[str, Any]:
@@ -100,18 +103,38 @@ def _control_status(row: Any) -> str:
     return str(control.get("status") or "").strip()
 
 
-def is_confirmed_active(row: Any) -> bool:
+def _uo_id(row: Any) -> str:
+    if not isinstance(row, dict):
+        return ""
+    uo = row.get("uo") if isinstance(row.get("uo"), dict) else {}
+    return str(uo.get("id") or "").strip()
+
+
+def is_bound_control(row: Any) -> bool:
     if not isinstance(row, dict) or has_legacy_bind_fields(row):
         return False
-    return _control_status(row) == "active" and str(row.get("confidence") or "").strip() == "confirmed"
+    if _control_status(row) != "active":
+        return False
+    if str(row.get("confidence") or "").strip() != "confirmed":
+        return False
+    if not _uo_id(row):
+        return False
+    relation = str(row.get("relation") or "").strip()
+    if relation == "candidate":
+        return False
+    return True
+
+
+def is_confirmed_active(row: Any) -> bool:
+    return is_bound_control(row)
 
 
 def is_solve_control(row: Any) -> bool:
-    if not is_confirmed_active(row):
+    if not is_bound_control(row):
         return False
     if _control_status(row) in _SOLVE_BLOCKED:
         return False
-    return str(row.get("relation") or "").strip() not in {"projection", "candidate"}
+    return str(row.get("relation") or "").strip() in _SOLVE_RELATIONS
 
 
 def _ingest_mapping_row(out: dict[str, Any], item: dict[str, Any], *, fallback: str = "") -> None:
@@ -333,9 +356,9 @@ def validate_init(doc: dict[str, Any], *, require_mapping: bool | None = None) -
     must_map = require_mapping if require_mapping is not None else kind == "script_repo"
     if must_map and not mapping:
         errors.append("script_repo mapping is empty; bind columns to script and UO identifiers")
-    confirmed = any(is_confirmed_active(row) for row in mapping.values())
+    confirmed = any(is_bound_control(row) for row in mapping.values())
     if kind == "script_repo" and must_map and mapping and not confirmed:
-        errors.append("script_repo has no confirmed+active control; old role+uo_id is not a bind")
+        errors.append("script_repo has no confirmed+active control with uo.id; old role+uo_id is not a bind")
     if kind == "script_repo":
         if not str(doc.get("entry") or "").strip():
             errors.append("entry required")
@@ -479,6 +502,7 @@ def validate_plan_fence(
     *,
     init_columns: list[str],
     init_mapping: Any = None,
+    allow_legal_keys: bool = False,
 ) -> list[str]:
     from testcase_agent.coverage.predicate import validate_predicate
 
@@ -558,14 +582,10 @@ def validate_plan_fence(
             mapping = mapping_as_dict(init_mapping)
             for col in controls:
                 mrow = _mapping_row_for(mapping, col)
-                if not is_confirmed_active(mrow):
+                if not is_bound_control(mrow):
                     errors.append(
                         f"{did}: control {col!r} is not confirmed+active; "
                         "mark untestable + needs_binding"
-                    )
-                elif str((mrow or {}).get("relation") or "") == "projection":
-                    errors.append(
-                        f"{did}: projection {col!r} must not be written as an equality classifier"
                     )
         parts = row.get("partitions") or []
         if not isinstance(parts, list) or len(parts) < 2:
@@ -658,6 +678,8 @@ def validate_plan_fence(
                 errors.append(f"coverage.L3 unknown guard {gid}")
         if str(cov.get("enumerate") or "").strip() not in {"", "legal_keys"}:
             errors.append("coverage.enumerate must be omitted or legal_keys")
+        elif str(cov.get("enumerate") or "").strip() == "legal_keys" and not allow_legal_keys:
+            errors.append("coverage.enumerate: legal_keys is not authorized; pin enumerate: legal_keys")
 
     untestable = fence.get("untestable") or []
     if untestable and not isinstance(untestable, list):

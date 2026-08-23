@@ -54,11 +54,14 @@ CodeMap 准备（按缺口二选一，不要当固定串）：
 
 ```text
 IF 下一步还要用 clone/git 事实 THEN pin-facts(change_contract)
-IF goal.kind == pr_regression AND change_contract.changed_files 为空
+IF source.kind == pull_request AND (change_contract 不存在 OR changed_files 为空)
+   AND change_contract.kind != implementation_coverage
 THEN FAIL PLAN_PR_CHANGE_REQUIRED（可重试，回 Primary pin，不是 human_required）
-generic TilingKey fallback 仅 goal.kind == implementation_coverage
-enumerate: legal_keys 仅用户显式要求
+generic TilingKey fallback 仅 change_contract.kind == implementation_coverage
+enumerate: legal_keys 仅 pin enumerate: legal_keys
 ```
+
+`user_goal.kind` 是交付物标签（`generate_change_tests`），不是 `pr_regression`。PR 针对性看 `source.kind=pull_request`。不要用 pin 去改写 `user_goal.kind`。
 
 需要测试契约时再 `/tg-init`。
 

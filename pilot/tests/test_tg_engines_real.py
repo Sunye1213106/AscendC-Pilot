@@ -60,6 +60,7 @@ def test_output_contracts_are_three_products() -> None:
     assert OUTPUT_CONTRACT_PATHS["plan-precheck-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-plan-fuse-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-narrate-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-construct-v1"] == []
     assert OUTPUT_CONTRACT_PATHS["tg-analyze-v1"] == []
     assert "tg-plan-staging-v1" not in OUTPUT_CONTRACT_PATHS
@@ -196,7 +197,8 @@ def test_plan_promote_writes_from_session_capture(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
+    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
+    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
     checked = _check_output_contract(
         root,
         "tg-plan-fuse-v1",
@@ -207,7 +209,9 @@ def test_plan_promote_writes_from_session_capture(tmp_path: Path) -> None:
     assert checked.get("ok") is True, checked
     out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
-    assert (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8") == _PLAN_BODY
+    text = (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
+    assert "## 测什么" in text
+    assert "schema: tg-plan/v3" in text
 
 
 def test_plan_promote_does_not_require_scope_file(tmp_path: Path) -> None:
@@ -221,7 +225,8 @@ def test_plan_promote_does_not_require_scope_file(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
+    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
+    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
     out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
     assert "schema: tg-plan/v3" in (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
@@ -248,10 +253,8 @@ def test_plan_promote_assembles_primary_prose_and_fuse_yaml(tmp_path: Path) -> N
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
     _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
-    out = run_plan_promote(
-        root,
-        {"architecture": _ARCH, "run_id": run_id, "plan_prose": _PLAN_PROSE},
-    )
+    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
+    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
     text = (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8")
     assert "## 测什么" in text
@@ -272,7 +275,7 @@ def test_plan_promote_requires_fuse_yaml(tmp_path: Path) -> None:
     run_id = str(state.get("run_id") or "")
     out = run_plan_promote(
         root,
-        {"architecture": _ARCH, "run_id": run_id, "plan_prose": _PLAN_PROSE},
+        {"architecture": _ARCH, "run_id": run_id},
     )
     assert out.get("ok") is False
     assert out.get("error") == "PLAN_FUSE_REQUIRED"
@@ -297,6 +300,24 @@ def test_plan_promote_requires_primary_prose(tmp_path: Path) -> None:
     assert out.get("error") == "PLAN_PROSE_REQUIRED"
     assert out.get("retryable") is True
     assert out.get("failure_class") == "format_transport"
+    assert "plan_narrate" in (out.get("rework_action_ids") or [])
+
+
+def test_plan_promote_does_not_take_prose_from_fuse(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_plan_promote
+    from ascendc_pilot.paths import ensure_agent_layout
+    from ascendc_pilot.state import start_workflow
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
+    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is False
+    assert out.get("error") == "PLAN_PROSE_REQUIRED"
 
 
 def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
@@ -421,7 +442,8 @@ def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
+    _write_capture(root, run_id, "plan_fuse", text=_FUSE_YAML)
+    _write_capture(root, run_id, "plan_narrate", text=_PLAN_PROSE)
     promoted = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
     assert promoted.get("ok") is True, promoted
     tg = tg_root(root, arch=_ARCH)

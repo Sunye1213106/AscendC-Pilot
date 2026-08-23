@@ -52,7 +52,6 @@ enums:
     - tensor_shape
     - tensor_dtype
     - presence
-    - projection
     - candidate
   mapping.confidence:
     - confirmed

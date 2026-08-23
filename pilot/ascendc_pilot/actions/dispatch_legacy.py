@@ -1315,13 +1315,18 @@ def attach_host_step(project_root: Path, drive_payload: dict[str, Any]) -> dict[
                 "bind_path": str(prep.get("bind_path") or ""),
                 "verdict_path": str(prep.get("verdict_path") or ""),
             }
+            review_msg = str(prep.get("message_zh") or "")
+            if action_id == "plan_narrate":
+                review_msg = review_msg or "主控写三节散文；下一发 intent 交 ## 测什么 / ## 覆盖什么 / ## 怎么判定"
+            else:
+                review_msg = review_msg or "主控通读两路草稿；下一发 PASS 或 REWORK"
             out["host_step"] = build_host_step(
                 kind="primary_review",
                 project_root=project_root,
                 action_id=action_id,
                 actor_id=actor_id or str(prep.get("actor_id") or "ascendc-pilot"),
                 prepare=prep,
-                message_zh=str(prep.get("message_zh") or "主控通读两路草稿；下一发 PASS 或 REWORK"),
+                message_zh=review_msg,
                 extra=extra_review,
             )
             out["prepare"] = prep

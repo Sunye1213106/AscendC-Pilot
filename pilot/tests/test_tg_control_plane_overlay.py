@@ -17,7 +17,7 @@ def test_tg_pipelines_are_explicit() -> None:
     assert phase_pipeline("tg-init", "confirm") == []
     assert phase_pipeline("tg-plan", "gate") == ["plan_precheck"]
     assert phase_pipeline("tg-plan", "scope") == ["plan_scope"]
-    assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_promote"]
+    assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_narrate", "plan_promote"]
     assert phase_pipeline("tg-plan", "validate") == ["plan_validate"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
     assert phase_pipeline("tg-solve", "gate") == ["solve_precheck", "compile_obligations"]
@@ -84,6 +84,13 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     fuse = action_by_id("tg-plan", "plan_fuse") or {}
     assert fuse.get("skill_id") == "test-plan"
     assert fuse.get("method_ref") == "coverage-planning.md"
+    narrate = action_by_id("tg-plan", "plan_narrate") or {}
+    assert narrate.get("agent_id") == "ascendc-pilot"
+    assert narrate.get("execution_mode") == "primary_review"
+    assert narrate.get("output_mode") == "return_value"
+    assert narrate.get("skill_id") == "test-plan"
+    assert narrate.get("method_ref") == "plan-narrate.md"
+    assert list(narrate.get("allowed_write_paths") or []) == []
     construct = action_by_id("tg-solve", "construct_cases") or {}
     assert construct.get("skill_id") == "solve"
     assert construct.get("method_ref") == "construct.md"
@@ -112,7 +119,7 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
         encoding="utf-8"
     )
     assert "profile" in columns
-    assert "无参数" in columns or "Dim=" in columns
+    assert "sources[]" in columns or "control.status" in columns
 
 
 def test_reset_policy_only_touches_three_products() -> None:
