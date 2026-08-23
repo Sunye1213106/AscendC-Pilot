@@ -416,7 +416,7 @@ def test_policy_ids_follow_execution_mode() -> None:
     assert "pilot-control" not in review["policy_ids"]
 
     mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "construct_cases")
-    assert mine.get("output_mode") == "staged"
+    assert mine.get("output_mode") == "return_value"
     assert "pilot-control" not in mine["policy_ids"]
     assert "language" not in mine["policy_ids"]
 

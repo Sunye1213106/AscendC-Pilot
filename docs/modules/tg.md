@@ -1,14 +1,14 @@
 # TG：Testcase Generation
 
-TG 把 UO 的 Operator CodeMap 变成**脚本仓能直接跑的用例表**，再用 Host tiling 回放（无 NPU）核对独立变量是否命中。正式产物只有三份，外加 cases 表。
+TG 把 UO 的 Operator CodeMap 变成**脚本仓能直接跑的用例表**，再用 Host tiling 回放（无 NPU）对 Target / Dimension / Guard 做确定性分类。正式产物只有三份：
 
 | 阶段 | 产物 | 谁写 |
 | --- | --- | --- |
 | `/tg-init` | `tg/init.yaml` | 两路草稿在 `runs/`，主控裁判放行后 `bind_promote` 落盘并确认 |
-| `/tg-plan` | `tg/plan.md` | 上半散文（测什么 / 第一轮怎么造 / 怎么知道打到了），下半 YAML：独立变量 + direction + evidence + L0–L3；人批准打 `approved` |
-| `/tg-solve` | `tg/worklog.md` + `cases.csv`/`xls`/`xlsx` | 未指定时第一轮 L0+L1；Replay 后用 evidence 判 `TARGET_HIT`，直到文首 `open: []` |
+| `/tg-plan` | `tg/plan.md` | 散文（测什么 / 覆盖什么 / 怎么判定）+ YAML：Target / Dimension / Guard / L0–L3；人批准打 `approved` |
+| `/tg-solve` | `tg/worklog.md` + `cases.csv`/`xls`/`xlsx` | 引擎展开义务；Replay 后 `coverage_eval` 更新 worklog 围栏；**certify 才写出正式 cases** |
 
-草稿只留 `runs/`。人确认走已有 `control/decisions/`。不要 inventory / audit / review / fingerprint YAML 旁路。
+子代理 `return_value`，禁止 Write。过程中不落 `targets.yaml` / staging / `coverage_ledger.yaml`。
 
 ## 门禁
 
@@ -21,13 +21,13 @@ test_harness_gap 未落地 → 禁止 start solve
 TG 永不改算子仓
 ```
 
-`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射（API 入参绑脚本读点 + UO 标识符；`script_meta` 可无标识符）、双源值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。有脚本仓但 API 入参 mapping 空 → init 失败。无脚本仓时用 `/uo-query` 读输入 API 设计控制面。扫描必须含 xls/xlsx。FAG 精度写 `only_grad`，性能写 `profiler`，禁止把精度记成 `--golden-only`。
+`init.yaml` 必须有：`table_kind`、入口与 `--case`、精度/性能怎么跑、列映射、双源值域、golden、脚本比对口径、`generate_inputs`、`uo_digest`。
 
-## 规划是独立变量，不是套覆盖
+## 规划是 Target / Dimension / Guard，不是套覆盖
 
-控制面 = CSV/XLS 列。未指定方向时独立变量 = TilingKey 维。点了 PR / 场景才从代码归并正交变量。
+控制面 = CSV/XLS 列。未指定方向时 Target = Host 接受的 dispatch（`tiling_key` 可观测）；candidate dimensions = UO 已声明且通过 RCPO 的 TilingKey 维。B/N/S/D 默认只是 Control。
 
-每条变量：`id, symbol, direction{columns,note}, evidence{kind,field,expected}`。`direction` 是第一轮大致怎么命中；`evidence` 是 Host 跑完的命中尺。覆盖 L0–L3 写在计划级 `ladder` 上。全量 tilingkey 只在意图点名时做，**不是默认 T=D**。CE 不传 yaml 意图。
+谓词必须是结构化 `op=` mapping。覆盖 L0–L3 写在 `coverage` 上。全量 tilingkey 只在意图点名时用 `coverage.enumerate: legal_keys`，**不是默认 T=D**。
 
 缺列或缺 `generate_inputs` → `test_harness_gap`，先 `/ce-apply` 改**测试脚本仓**，再 `/tg-init`。
 
@@ -35,40 +35,44 @@ TG 永不改算子仓
 
 ```text
 已批准 plan.md
-    → 构造 cases 表（未指定则 L0+L1；按 direction 填列）
-    → Host Replay（无 NPU；无 WSL/CANN 则 replay_round 失败停住，不进 analyze）
-    → 对照 evidence：TARGET_HIT 进 R，TARGET_MISS 分类并推引理
-    → open: [] 才签发
+    → compile_obligations 把义务进度写入 worklog 围栏
+    → construct 交回 rows 和/或 recipe（不写正式 cases）
+    → Host Replay（无 NPU；无 WSL/CANN 则 replay_round 失败停住）
+    → coverage_eval 分类 CLOSED / MISS / UNKNOWN / GUARD_LEAK
+    → analyze 只处理 MISS / UNKNOWN
+    → ledger 闭合才签发，并物化 cases
 ```
 
-引理：`Replay reject ≠ E`。查算子语义优先 `uo-query`；Grep 只作定位辅助。
+签发看 worklog 围栏 ledger，不看空 `open: []` 散文。`Replay reject ≠ E`。`GUARD_LEAK` 停 refine，留给 CE。
 
 ## 相位
 
 ```text
 /tg-init
-kb_check [D] → repo_scan [D] → bind_init [S fanout=2] → bind_review [Primary 通读 PASS/REWORK]
+kb_check [D] → repo_scan [D] → bind_init [S 1 harness + N bind，每路 ≤20 列] → bind_review [Primary 通读 PASS/REWORK]
     → bind_promote [D] → validate_init [D]
                                           ──gate: init_confirmed, uo_digest
 
 /tg-plan
-plan_precheck [D] → plan_scope [S] → plan_fuse [S] → plan_promote [D]
+plan_precheck [D] → plan_scope [S return_value] → plan_fuse [S return_value] → plan_promote [D]
     → plan_validate [D] → plan_approve [H]
                                           ──gate: plan_approved
 
 /tg-solve
-solve_precheck [D] → construct_cases [S] → construct_promote [D]
-    → replay_round [D] → analyze_round [S] → analyze_promote [D]
+solve_precheck [D] → compile_obligations [D]
+    → construct_cases [S return_value] → construct_promote [D]
+    → replay_round [D] → coverage_eval [D]
+    → analyze_round [S return_value] → analyze_promote [D]
     → solve_certify [D]
                                           ──gate: worklog_closed
 rework: analyze → construct；validate → fuse/bind
 ```
 
-Host replay 基础设施（`HostOracle`、WSL replay）仍复用；不再写 `tg/closure/**` 证书森林。
+Host replay 基础设施（`HostOracle`、WSL replay）仍复用；不再写 `tg/closure/**` 证书森林。插桩只改 TG sandbox 拷贝，禁止改算子 git。
 
 ## 实现锚点
 
 - Workflow：`pilot/ascendc_pilot/workflows/tg_specs.py`
 - 确定性引擎：`pilot/ascendc_pilot/actions/tg_product.py`
 - 产物校验：`engines/testcase-generation/testcase_agent/products.py`
-- 改动记录：[TG 产物模型重建](../development/tg-rebuild.md)
+- 覆盖：`engines/testcase-generation/testcase_agent/coverage/`

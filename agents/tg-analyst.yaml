@@ -4,27 +4,15 @@ name_zh: TG 分析
 role: producer
 mode: subagent
 description: >
-  TG bind、plan、solve 的分阶段 producer。只写 `runs/` 草稿。
-  禁止写算子源码、`.uo`、正式 `tg/init.yaml` / `plan.md` / `worklog.md`。
+  TG bind、plan、solve 的分阶段 producer。bind 写 `runs/` 草稿；
+  plan/solve 窗 return_value，禁止 Write。
+  禁止写算子源码、`.uo`、正式 `tg/init.yaml` / `plan.md` / `worklog.md` / `cases.*`。
 max_skill_ids: &skills [bind-init, test-plan, solve, uo-query]
 skill_ids: *skills
 write_scopes:
 - pilot:runs/**/actions/bind_init/parts/**
 - pilot:runs/**/actions/bind_init/scratch/**
 - pilot:runs/**/actions/bind_init/staging.yaml
-- pilot:runs/**/actions/plan_scope/parts/**
-- pilot:runs/**/actions/plan_scope/scratch/**
-- pilot:runs/**/actions/plan_fuse/parts/**
-- pilot:runs/**/actions/plan_fuse/scratch/**
-- pilot:runs/**/actions/plan_fuse/staging.md
-- pilot:runs/**/actions/plan_fuse/staging.yaml
-- pilot:runs/**/actions/construct_cases/parts/**
-- pilot:runs/**/actions/construct_cases/scratch/**
-- pilot:runs/**/actions/construct_cases/staging.yaml
-- pilot:runs/**/actions/analyze_round/parts/**
-- pilot:runs/**/actions/analyze_round/scratch/**
-- pilot:runs/**/actions/analyze_round/staging.md
-- pilot:runs/**/actions/analyze_round/staging.yaml
 read_scopes:
 - pilot:tg/**
 - pilot:uo/**

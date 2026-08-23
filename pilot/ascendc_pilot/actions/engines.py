@@ -956,39 +956,23 @@ OUTPUT_CONTRACT_PATHS: dict[str, list[str]] = {
     ],
     "tg-bind-review-v1": [],
     "plan-precheck-v1": [],
-    "tg-plan-scope-v1": ["runs/{run_id}/actions/plan_scope/parts/targets.yaml"],
+    "tg-plan-scope-v1": [],
+    "tg-plan-fuse-v1": [],
     "tg-plan-v1": ["tg/plan.md"],
-    "tg-plan-staging-v1": [
-        "runs/{run_id}/actions/plan_fuse/parts/**",
-        "runs/{run_id}/actions/plan_fuse/staging.md",
-    ],
     "tg-plan-validate-v1": ["runs/{run_id}/receipts/plan_validate.yaml"],
     "tg-plan-approved-v1": ["tg/plan.md"],
     "solve-precheck-v1": [],
-    "tg-cases-v1": ["tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"],
-    "tg-construct-staging-v1": [
-        "runs/{run_id}/actions/construct_cases/parts/**",
-        "runs/{run_id}/actions/construct_cases/staging.yaml",
-    ],
+    "tg-construct-v1": [],
+    "tg-construct-capture-v1": ["runs/{run_id}/receipts/construct_promote.yaml"],
     "tg-replay-v1": ["runs/{run_id}/receipts/replay_round.yaml"],
     "tg-worklog-v1": ["tg/worklog.md"],
-    "tg-analyze-staging-v1": [
-        "runs/{run_id}/actions/analyze_round/parts/**",
-        "runs/{run_id}/actions/analyze_round/staging.md",
-        "runs/{run_id}/actions/analyze_round/staging.yaml",
-    ],
+    "tg-analyze-v1": [],
     "tg-certify-v1": ["runs/{run_id}/receipts/solve_certify.yaml"],
     "intent-promoted-v1": ["runs/{run_id}/receipts/intent_promoted.yaml"],
 }
 
 # Alternative draft locations: any one nonempty path satisfies the contract.
-OUTPUT_CONTRACT_MATCH_ANY: frozenset[str] = frozenset(
-    {
-        "tg-plan-staging-v1",
-        "tg-construct-staging-v1",
-        "tg-analyze-staging-v1",
-    }
-)
+OUTPUT_CONTRACT_MATCH_ANY: frozenset[str] = frozenset()
 
 # Contracts that must contain at least one nonempty concrete artifact (not empty dir / empty file)
 OUTPUT_CONTRACT_NONEMPTY_GLOBS: dict[str, list[str]] = {

@@ -128,6 +128,57 @@ def test_is_llm_edited_false_on_engine_skeleton_true_after_mark(tmp_path: Path) 
     assert BP.is_llm_edited(harness_path) is False
 
 
+def test_apply_bind_fill_merges_llm_cells_keeps_profile(tmp_path: Path) -> None:
+    scan = {
+        "kind": "script_repo",
+        "contract": {
+            "entry": "run_x.py",
+            "case_arg": "--case",
+            "columns": ["Dtype", "B"],
+        },
+        "inventory": {
+            "tables": [
+                {
+                    "columns": ["Dtype", "B"],
+                    "kind": "csv",
+                    "profile": {"columns": {"B": {"inferred_type": "int", "min": 1}}},
+                }
+            ]
+        },
+    }
+    parts = tmp_path / "parts"
+    BP.emit_bind_parts(parts, scan=scan, identity={"run_id": "RUN_1"})
+    fill = {
+        "call": {"kind": "pta", "api": "torch_npu.foo", "site": "a.py:1"},
+        "call_args": [{"name": "batch", "source_column": "B"}],
+        "mapping": {
+            "B": {"role": "api_arg", "uo_id": "b", "encoding": "int", "evidence": "a.py:1"},
+            "Dtype": {"role": "api_arg", "uo_id": "", "encoding": "enum", "evidence": "a.py:2"},
+            "Forged": {"role": "api_arg", "uo_id": "nope"},
+        },
+        "domains": {
+            "B": {"operator": "b", "compare": "match", "profile": {"hack": True}},
+        },
+        "findings": [{"code": "partial_uo_id", "column": "Dtype"}],
+        "run_id": "LLM_FORGED",
+    }
+    (parts / "bind.fill.yaml").write_text(yaml.safe_dump(fill, allow_unicode=True), encoding="utf-8")
+    out = BP.apply_bind_fill(parts / "bind.yaml")
+    assert out["ok"] is True
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    assert bind["run_id"] == "RUN_1"
+    assert bind["call"] == {"kind": "pta", "api": "torch_npu.foo", "site": "a.py:1"}
+    assert bind["call_args"] == [{"name": "batch", "source_column": "B"}]
+    assert bind["mapping"]["B"]["uo_id"] == "b"
+    assert bind["mapping"]["Dtype"]["role"] == "api_arg"
+    assert "Forged" not in bind["mapping"]
+    assert bind["domains"]["B"]["operator"] == "b"
+    assert bind["domains"]["B"]["compare"] == "match"
+    assert bind["domains"]["B"]["profile"] == {"inferred_type": "int", "min": 1}
+    assert bind["findings"][0]["column"] == "Dtype"
+    assert bind["llm_edit"] is True
+
+
 def test_restore_rejects_illegal_call_kind(tmp_path: Path) -> None:
     scan = {
         "kind": "script_repo",
@@ -143,3 +194,65 @@ def test_restore_rejects_illegal_call_kind(tmp_path: Path) -> None:
     out = BP.restore_and_dump_parts(parts)
     assert out["ok"] is False
     assert any("call.kind" in str(e) for e in out.get("errors") or [])
+
+
+def test_chunk_column_names_sixty_is_three_groups() -> None:
+    names = [f"C{i}" for i in range(60)]
+    chunks = BP.chunk_column_names(names, 20)
+    assert len(chunks) == 3
+    assert chunks[0][0] == "C0" and chunks[0][-1] == "C19"
+    assert chunks[2][0] == "C40" and chunks[2][-1] == "C59"
+
+
+def test_expand_bind_fanout_axes_sixty_columns_four_tasks() -> None:
+    axes = [
+        {"id": "harness", "capability_id": "bind-init", "artifact": "h.yaml"},
+        {
+            "id": "bind",
+            "capability_id": "bind-init",
+            "artifact": "runs/{run_id}/actions/bind_init/parts/bind.yaml",
+            "chunk_size": 20,
+        },
+    ]
+    names = [f"C{i:02d}" for i in range(60)]
+    out = BP.expand_bind_fanout_axes(axes, columns=names, run_id="R1")
+    assert [row["id"] for row in out] == ["harness", "bind0", "bind1", "bind2"]
+    assert out[1]["artifact"].endswith("bind0.yaml")
+    assert len(out[1]["column_names"]) == 20
+    assert out[3]["column_names"][-1] == "C59"
+
+
+def test_merge_bind_chunks_unions_mapping_and_call_args(tmp_path: Path) -> None:
+    names = [f"C{i}" for i in range(25)]
+    scan = {
+        "kind": "script_repo",
+        "contract": {"entry": "run.py", "case_arg": "--case", "columns": names},
+        "inventory": {"tables": [{"columns": names, "kind": "csv"}]},
+    }
+    parts = tmp_path / "parts"
+    BP.emit_bind_parts(parts, scan=scan, identity={"run_id": "RUN_1"})
+    assert (parts / "bind0.yaml").is_file()
+    assert (parts / "bind1.yaml").is_file()
+    c0 = yaml.safe_load((parts / "bind0.yaml").read_text(encoding="utf-8"))
+    c0["call"] = {"kind": "pta", "api": "torch_npu.foo", "site": "a.py:1"}
+    c0["call_args"] = [{"name": "x", "source_column": "C0"}]
+    c0["mapping"]["C0"]["role"] = "api_arg"
+    c0["mapping"]["C0"]["uo_id"] = "c0"
+    (parts / "bind0.yaml").write_text(yaml.safe_dump(c0, allow_unicode=True), encoding="utf-8")
+    c1 = yaml.safe_load((parts / "bind1.yaml").read_text(encoding="utf-8"))
+    c1["call_args"] = [{"name": "y", "source_column": "C20"}]
+    c1["mapping"]["C20"]["role"] = "feature"
+    (parts / "bind1.yaml").write_text(yaml.safe_dump(c1, allow_unicode=True), encoding="utf-8")
+    merged = BP.merge_bind_chunks(parts)
+    assert merged["ok"] is True and merged["chunks"] == 2
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    assert bind["call"]["kind"] == "pta"
+    names_args = {row["name"] for row in bind["call_args"]}
+    assert names_args == {"x", "y"}
+    assert bind["mapping"]["C0"]["uo_id"] == "c0"
+    assert bind["mapping"]["C20"]["role"] == "feature"
+    restored = BP.restore_and_dump_parts(parts)
+    assert restored["ok"] is True
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    assert bind["llm_edit"] is True
+    assert bind["run_id"] == "RUN_1"

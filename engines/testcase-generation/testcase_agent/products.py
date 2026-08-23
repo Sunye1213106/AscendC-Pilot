@@ -14,8 +14,8 @@ from typing import Any
 from .io import read_yaml, write_yaml
 
 INIT_SCHEMA = "tg-init/v1"
-PLAN_SCHEMA = "tg-plan/v2"
-WORKLOG_SCHEMA = "tg-worklog/v1"
+PLAN_SCHEMA = "tg-plan/v3"
+WORKLOG_SCHEMA = "tg-worklog/v2"
 
 _FENCE_RE = re.compile(r"```ya?ml\s*\n(.*?)```", re.DOTALL | re.IGNORECASE)
 _OPEN_RE = re.compile(r"^open:\s*\[(.*?)\]\s*$", re.MULTILINE)
@@ -350,7 +350,8 @@ def pending_harness_intent(text: str, fence: dict[str, Any]) -> bool:
 
 _EVIDENCE_KINDS = frozenset({"replay_field", "derived", "dispatch_map", "probe", "source_proof"})
 _LADDER_LEVELS = ("L0", "L1", "L2", "L3")
-_PLAN_PROSE_HEADINGS = ("测什么", "第一轮怎么造", "怎么知道打到了")
+_PLAN_PROSE_HEADINGS = ("测什么", "覆盖什么", "怎么判定")
+_OBSERVE_PREFIXES = ("case.", "replay.", "probe.")
 
 
 def validate_plan_prose(text: str) -> list[str]:
@@ -361,13 +362,41 @@ def validate_plan_prose(text: str) -> list[str]:
     return errors
 
 
+def _check_observe_field(field: str, *, owner: str) -> str | None:
+    name = str(field or "").strip()
+    if not name:
+        return f"{owner}: observe field empty"
+    if name.startswith(_OBSERVE_PREFIXES) or "." not in name:
+        return None
+    return f"{owner}: observe field {name!r} must be case.*|replay.*|probe.* or a bare symbol"
+
+
+def _check_controls(row: dict[str, Any], *, owner: str, allowed: set[str]) -> list[str]:
+    errors: list[str] = []
+    cols = [str(c).strip() for c in (row.get("controls") or []) if str(c).strip()]
+    hint = row.get("construct_hint") if isinstance(row.get("construct_hint"), dict) else {}
+    hint_cols = [str(c).strip() for c in (hint.get("columns") or []) if str(c).strip()]
+    for col in cols + hint_cols:
+        if col.lower() not in allowed:
+            errors.append(f"{owner}: column {col!r} not in init.yaml (and not added_columns)")
+    return errors
+
+
 def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> list[str]:
+    from testcase_agent.coverage.predicate import validate_predicate
+
     errors: list[str] = []
     schema = str(fence.get("schema") or fence.get("version") or "")
     if schema != PLAN_SCHEMA:
         errors.append(f"plan schema {schema!r} unexpected; want {PLAN_SCHEMA}")
+    if fence.get("variables") is not None:
+        errors.append("variables removed; use targets / dimensions / guards")
+    if fence.get("direction") is not None:
+        errors.append("direction removed; use predicate + optional construct_hint")
+    if fence.get("ladder") is not None:
+        errors.append("ladder removed; use coverage.L0|L1|L2|L3")
     if fence.get("obligations"):
-        errors.append("obligations removed; use variables")
+        errors.append("obligations are compiled by the engine; do not put them in plan.md")
     allowed = {c.lower() for c in init_columns}
     extra_cols = {
         str(c).strip()
@@ -377,47 +406,149 @@ def validate_plan_fence(fence: dict[str, Any], *, init_columns: list[str]) -> li
     allowed |= {c.lower() for c in extra_cols}
     if str(fence.get("mode") or "").strip() in {"tilingkey_full_coverage", "T=D", "t_equals_d"}:
         errors.append("tilingkey_full_coverage / T=D is not a plan mode")
-    variables = fence.get("variables") or []
-    if not isinstance(variables, list):
-        errors.append("variables must be a list")
+
+    targets = fence.get("targets") or []
+    if not isinstance(targets, list) or not targets:
+        errors.append("targets empty; at least one Target")
         return errors
-    if not variables:
-        errors.append("variables empty; at least one independent test variable")
-        return errors
-    seen: set[str] = set()
-    for idx, row in enumerate(variables):
+    target_ids: set[str] = set()
+    for idx, row in enumerate(targets):
         if not isinstance(row, dict):
-            errors.append(f"variables[{idx}] is not a mapping")
+            errors.append(f"targets[{idx}] is not a mapping")
             continue
-        vid = str(row.get("id") or "").strip()
-        if not vid:
-            errors.append(f"variables[{idx}] missing id")
+        tid = str(row.get("id") or "").strip()
+        if not tid:
+            errors.append(f"targets[{idx}] missing id")
             continue
-        if vid in seen:
-            errors.append(f"duplicate variable id {vid}")
-        seen.add(vid)
+        if tid in target_ids:
+            errors.append(f"duplicate target id {tid}")
+        target_ids.add(tid)
         evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
         kind = str(evidence.get("kind") or "").strip()
         if kind not in _EVIDENCE_KINDS:
-            errors.append(f"{vid}: evidence.kind must be replay_field|derived|dispatch_map|probe|source_proof")
-        direction = row.get("direction") if isinstance(row.get("direction"), dict) else {}
-        cols = [str(c).strip() for c in (direction.get("columns") or []) if str(c).strip()]
-        for col in cols:
-            if col.lower() not in allowed:
-                errors.append(f"{vid}: column {col!r} not in init.yaml (and not added_columns)")
-    ladder = fence.get("ladder") if isinstance(fence.get("ladder"), dict) else {}
-    if not ladder:
-        errors.append("ladder missing; need L0|L1|L2|L3")
+            errors.append(f"{tid}: evidence.kind must be replay_field|derived|dispatch_map|probe|source_proof")
+        field = str(evidence.get("field") or "").strip()
+        if kind in {"replay_field", "probe"} and not field:
+            errors.append(f"{tid}: evidence.field required")
+        if field:
+            err = _check_observe_field(field, owner=tid)
+            if err:
+                errors.append(err)
+        if kind == "derived":
+            pred = evidence.get("predicate") or evidence.get("expr")
+            errors.extend(validate_predicate(pred, path=f"{tid}.evidence.predicate"))
+
+    dim_ids: set[str] = set()
+    for idx, row in enumerate(fence.get("dimensions") or []):
+        if not isinstance(row, dict):
+            errors.append(f"dimensions[{idx}] is not a mapping")
+            continue
+        did = str(row.get("id") or "").strip()
+        if not did:
+            errors.append(f"dimensions[{idx}] missing id")
+            continue
+        if did in dim_ids:
+            errors.append(f"duplicate dimension id {did}")
+        dim_ids.add(did)
+        tgt = str(row.get("target") or "").strip()
+        if tgt and tgt not in target_ids:
+            errors.append(f"{did}: target {tgt!r} is not a declared Target")
+        controls = [str(c).strip() for c in (row.get("controls") or []) if str(c).strip()]
+        if not controls:
+            errors.append(f"{did}: controls required")
+        errors.extend(_check_controls(row, owner=did, allowed=allowed))
+        parts = row.get("partitions") or []
+        if not isinstance(parts, list) or len(parts) < 2:
+            errors.append(f"{did}: need >=2 partitions")
+        seen_parts: set[str] = set()
+        for pidx, part in enumerate(parts if isinstance(parts, list) else []):
+            if not isinstance(part, dict):
+                errors.append(f"{did}.partitions[{pidx}] is not a mapping")
+                continue
+            pid = str(part.get("id") or "").strip()
+            if not pid:
+                errors.append(f"{did}.partitions[{pidx}] missing id")
+                continue
+            if pid in seen_parts:
+                errors.append(f"{did}: duplicate partition {pid}")
+            seen_parts.add(pid)
+            errors.extend(validate_predicate(part.get("predicate"), path=f"{did}.{pid}.predicate"))
+        classifier = row.get("classifier") if isinstance(row.get("classifier"), dict) else {}
+        for req in classifier.get("requires") or []:
+            err = _check_observe_field(str(req), owner=f"{did}.classifier")
+            if err:
+                errors.append(err)
+
+    guard_ids: set[str] = set()
+    for idx, row in enumerate(fence.get("guards") or []):
+        if not isinstance(row, dict):
+            errors.append(f"guards[{idx}] is not a mapping")
+            continue
+        gid = str(row.get("id") or "").strip()
+        if not gid:
+            errors.append(f"guards[{idx}] missing id")
+            continue
+        if gid in guard_ids:
+            errors.append(f"duplicate guard id {gid}")
+        guard_ids.add(gid)
+        tgt = str(row.get("target") or "").strip()
+        if tgt not in target_ids:
+            errors.append(f"{gid}: must bind to a declared Target")
+        if not (row.get("controls") or []):
+            errors.append(f"{gid}: controls required")
+        errors.extend(_check_controls(row, owner=gid, allowed=allowed))
+        errors.extend(validate_predicate(row.get("predicate"), path=f"{gid}.predicate"))
+        if not isinstance(row.get("negate_hint"), dict) or not row.get("negate_hint"):
+            errors.append(f"{gid}: negate_hint required")
+
+    cov = fence.get("coverage") if isinstance(fence.get("coverage"), dict) else {}
+    if not cov:
+        errors.append("coverage missing; need L0|L1|L2|L3")
     else:
         for level in _LADDER_LEVELS:
-            if level not in ladder:
-                errors.append(f"ladder.{level} missing")
-        l0 = ladder.get("L0") or []
-        l1 = ladder.get("L1") or []
-        if not l0:
-            errors.append("ladder.L0 empty")
-        if len(variables) >= 2 and not l1:
-            errors.append("ladder.L1 empty when two or more variables; default solve generates L0+L1")
+            if level not in cov and str(cov.get("enumerate") or "") != "legal_keys":
+                errors.append(f"coverage.{level} missing")
+
+        def _dim_refs(raw: Any) -> list[str]:
+            if isinstance(raw, dict):
+                raw = raw.get("dimensions") or raw.get("dims") or raw.get("guards") or []
+            if not isinstance(raw, list):
+                return []
+            out: list[str] = []
+            for item in raw:
+                if isinstance(item, dict):
+                    out.extend(_dim_refs(item.get("dims") or item.get("dimensions") or item.get("id")))
+                elif isinstance(item, list):
+                    out.extend(str(x).strip() for x in item if str(x).strip())
+                else:
+                    vid = str(item or "").strip()
+                    if vid:
+                        out.append(vid)
+            return out
+
+        for did in _dim_refs(cov.get("L0")):
+            if did not in dim_ids:
+                errors.append(f"coverage.L0 unknown dimension {did}")
+        l1 = cov.get("L1")
+        combos = (l1.get("combinations") if isinstance(l1, dict) else l1) or []
+        if isinstance(combos, list):
+            for combo in combos:
+                ids = _dim_refs(combo)
+                for did in ids:
+                    if did not in dim_ids:
+                        errors.append(f"coverage.L1 unknown dimension {did}")
+                if isinstance(combo, dict) and ids and not str(combo.get("reason") or "").strip():
+                    errors.append("coverage.L1 combination missing reason")
+        for item in (cov.get("L2") or []) if not isinstance(cov.get("L2"), dict) else (cov.get("L2") or {}).get("tuples") or []:
+            for did in _dim_refs(item):
+                if did not in dim_ids:
+                    errors.append(f"coverage.L2 unknown dimension {did}")
+        for gid in _dim_refs(cov.get("L3")):
+            if gid not in guard_ids:
+                errors.append(f"coverage.L3 unknown guard {gid}")
+        if str(cov.get("enumerate") or "").strip() not in {"", "legal_keys"}:
+            errors.append("coverage.enumerate must be omitted or legal_keys")
+
     untestable = fence.get("untestable") or []
     if untestable and not isinstance(untestable, list):
         errors.append("untestable must be a list")

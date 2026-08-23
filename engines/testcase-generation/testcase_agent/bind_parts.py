@@ -24,6 +24,8 @@ _CANNOT_DEFAULT = (
 _CALL_KINDS = frozenset({"pta", "aclnn", "mixed"})
 _ROLES = frozenset({"api_arg", "feature", "script_meta", "result_sink", ""})
 LLM_EDIT_KEY = "llm_edit"
+BIND_COLUMN_CHUNK_SIZE = 20
+_MAPPING_CELLS = ("role", "uo_id", "encoding", "evidence")
 
 
 def load_schema(kind: str) -> dict[str, Any]:
@@ -178,6 +180,292 @@ def _empty_mapping_row() -> dict[str, str]:
     return {"role": "", "uo_id": "", "encoding": "", "evidence": ""}
 
 
+def chunk_column_names(
+    names: list[str], size: int = BIND_COLUMN_CHUNK_SIZE
+) -> list[list[str]]:
+    clean = [str(n).strip() for n in names if str(n).strip()]
+    if not clean:
+        return [[]]
+    n = max(1, int(size or BIND_COLUMN_CHUNK_SIZE))
+    return [clean[i : i + n] for i in range(0, len(clean), n)]
+
+
+def bind_chunk_slice_id(index: int) -> str:
+    return f"bind{int(index)}"
+
+
+def bind_chunk_filename(index: int) -> str:
+    return f"{bind_chunk_slice_id(index)}.yaml"
+
+
+def is_bind_chunk_id(slice_id: str) -> bool:
+    token = str(slice_id or "").strip()
+    return token.startswith("bind") and token[4:].isdigit()
+
+
+def bind_part_column_names(parts_dir: Path) -> list[str]:
+    parts = Path(parts_dir)
+    for rel in (Path("bind.yaml"), Path(".engine") / "bind.owned.yaml"):
+        path = parts / rel
+        if not path.is_file():
+            continue
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        cols = doc.get("columns") or doc.get("mapping_keys") or []
+        names: list[str] = []
+        for item in cols:
+            if isinstance(item, dict):
+                name = str(item.get("name") or "").strip()
+            else:
+                name = str(item or "").strip()
+            if name:
+                names.append(name)
+        if names:
+            return names
+        mapping = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
+        if mapping:
+            return [str(k) for k in mapping if str(k).strip()]
+    return []
+
+
+def list_bind_chunk_paths(parts_dir: Path) -> list[Path]:
+    parts = Path(parts_dir)
+    if not parts.is_dir():
+        return []
+    found: list[Path] = []
+    for path in parts.glob("bind*.yaml"):
+        if is_bind_chunk_id(path.stem):
+            found.append(path)
+    return sorted(found, key=lambda p: int(p.stem[4:]))
+
+
+def _chunk_has_llm_semantics(doc: dict[str, Any]) -> bool:
+    if bool(doc.get(LLM_EDIT_KEY)):
+        return True
+    call = doc.get("call") if isinstance(doc.get("call"), dict) else {}
+    if str(call.get("kind") or "").strip():
+        return True
+    if doc.get("call_args"):
+        return True
+    mapping = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
+    for row in mapping.values():
+        if isinstance(row, dict) and str(row.get("role") or "").strip():
+            return True
+    return False
+
+
+def expand_bind_fanout_axes(
+    axes_spec: list[dict[str, Any]],
+    *,
+    columns: list[str],
+    run_id: str,
+    chunk_size: int = BIND_COLUMN_CHUNK_SIZE,
+) -> list[dict[str, Any]]:
+    """Turn the bind axis template into bind0..bindN (≤ chunk_size columns each)."""
+    chunks = chunk_column_names(columns, chunk_size)
+    out: list[dict[str, Any]] = []
+    run = str(run_id or "").strip() or "current"
+    for row in axes_spec:
+        if not isinstance(row, dict):
+            continue
+        axis_id = str(row.get("id") or "").strip()
+        if axis_id != "bind":
+            out.append(dict(row))
+            continue
+        size = int(row.get("chunk_size") or chunk_size or BIND_COLUMN_CHUNK_SIZE)
+        chunks = chunk_column_names(columns, size)
+        count = len(chunks)
+        for index, names in enumerate(chunks):
+            shard = dict(row)
+            sid = bind_chunk_slice_id(index)
+            shard["id"] = sid
+            shard["chunk_index"] = index
+            shard["chunk_count"] = count
+            shard["column_names"] = list(names)
+            shard["refs_ns"] = "bind"
+            shard["prompt_alias"] = "bind"
+            shard["method_filename"] = "method_bind.md"
+            shard["artifact"] = (
+                f"runs/{run}/actions/bind_init/parts/{bind_chunk_filename(index)}"
+            )
+            listed = ", ".join(names) if names else "(无列)"
+            shard["focus"] = (
+                f"parts/{bind_chunk_filename(index)}（call / mapping / domains；"
+                f"本路 {len(names)} 列：{listed}）"
+            )
+            out.append(shard)
+    return out
+
+
+def _bind_doc_subset(bind: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    mapping = bind.get("mapping") if isinstance(bind.get("mapping"), dict) else {}
+    domains = bind.get("domains") if isinstance(bind.get("domains"), dict) else {}
+    return {
+        "schema": bind.get("schema") or "tg-bind-part/v1",
+        "kind": bind.get("kind") or "",
+        "table_kind": bind.get("table_kind") or "",
+        "entry": bind.get("entry") or "",
+        "case_arg": bind.get("case_arg") or "",
+        "call": {"kind": "", "api": "", "site": ""},
+        "call_args": [],
+        "columns": [{"name": name} for name in names],
+        "mapping": {
+            name: dict(mapping.get(name) or _empty_mapping_row()) for name in names
+        },
+        "domains": {
+            name: dict(domains.get(name) or {"profile": {}, "operator": "", "compare": ""})
+            for name in names
+        },
+        "findings": [],
+        LLM_EDIT_KEY: False,
+    }
+
+
+def write_bind_chunk(
+    parts_dir: Path,
+    *,
+    bind: dict[str, Any],
+    names: list[str],
+    index: int,
+    count: int,
+    identity: dict[str, Any] | None = None,
+) -> Path:
+    parts = Path(parts_dir)
+    doc = _stamp(_bind_doc_subset(bind, names), identity)
+    doc["chunk"] = {"index": int(index), "count": int(count), "columns": list(names)}
+    path = parts / bind_chunk_filename(index)
+    _dump(path, doc)
+    return path
+
+
+def emit_bind_chunks(
+    parts_dir: Path,
+    bind: dict[str, Any],
+    *,
+    identity: dict[str, Any] | None = None,
+    chunk_size: int = BIND_COLUMN_CHUNK_SIZE,
+) -> list[Path]:
+    parts = Path(parts_dir)
+    names = []
+    for item in bind.get("columns") or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or "").strip()
+        else:
+            name = str(item or "").strip()
+        if name:
+            names.append(name)
+    if not names:
+        mapping = bind.get("mapping") if isinstance(bind.get("mapping"), dict) else {}
+        names = [str(k) for k in mapping if str(k).strip()]
+    chunks = chunk_column_names(names, chunk_size)
+    written: list[Path] = []
+    for index, group in enumerate(chunks):
+        written.append(
+            write_bind_chunk(
+                parts,
+                bind=bind,
+                names=group,
+                index=index,
+                count=len(chunks),
+                identity=identity,
+            )
+        )
+    for stale in list_bind_chunk_paths(parts):
+        idx = int(stale.stem[4:])
+        if idx >= len(chunks):
+            stale.unlink()
+    return written
+
+
+def merge_bind_chunks(parts_dir: Path) -> dict[str, Any]:
+    """Fold bind0.yaml..bindN.yaml into parts/bind.yaml. No-op if no chunks."""
+    parts = Path(parts_dir)
+    bind_path = parts / "bind.yaml"
+    chunks = list_bind_chunk_paths(parts)
+    if not chunks:
+        return {"ok": True, "merged": False, "chunks": 0}
+    if not bind_path.is_file():
+        return {"ok": False, "error": "missing_bind", "chunks": len(chunks)}
+    try:
+        bind = yaml.safe_load(bind_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "invalid_yaml", "detail": str(exc)}
+    if not isinstance(bind, dict):
+        return {"ok": False, "error": "invalid_yaml"}
+    call = dict(bind.get("call") or {}) if isinstance(bind.get("call"), dict) else {}
+    call_args: list[dict[str, Any]] = []
+    seen_args: set[str] = set()
+    for row in bind.get("call_args") or []:
+        if isinstance(row, dict) and str(row.get("name") or "").strip():
+            name = str(row["name"])
+            if name not in seen_args:
+                call_args.append(dict(row))
+                seen_args.add(name)
+    mapping = dict(bind.get("mapping") or {}) if isinstance(bind.get("mapping"), dict) else {}
+    domains = dict(bind.get("domains") or {}) if isinstance(bind.get("domains"), dict) else {}
+    findings: list[Any] = list(bind.get("findings") or []) if isinstance(bind.get("findings"), list) else []
+    for chunk_path in chunks:
+        try:
+            doc = yaml.safe_load(chunk_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        if not isinstance(doc, dict):
+            continue
+        if not _chunk_has_llm_semantics(doc):
+            continue
+        ch_call = doc.get("call") if isinstance(doc.get("call"), dict) else {}
+        if str(ch_call.get("kind") or "").strip() and not str(call.get("kind") or "").strip():
+            call = dict(ch_call)
+        for row in doc.get("call_args") or []:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name") or "").strip()
+            if not name or name in seen_args:
+                continue
+            call_args.append(dict(row))
+            seen_args.add(name)
+        ch_map = doc.get("mapping") if isinstance(doc.get("mapping"), dict) else {}
+        meta = doc.get("chunk") if isinstance(doc.get("chunk"), dict) else {}
+        chunk_names = [str(x).strip() for x in (meta.get("columns") or []) if str(x).strip()]
+        if not chunk_names:
+            chunk_names = [str(k) for k in ch_map if str(k).strip()]
+        for name in chunk_names:
+            src = ch_map.get(name)
+            if not isinstance(src, dict):
+                continue
+            dst = dict(mapping.get(name) or _empty_mapping_row())
+            for key in _MAPPING_CELLS:
+                if key in src:
+                    val = src.get(key)
+                    dst[key] = "" if val is None else val
+            mapping[name] = dst
+        ch_dom = doc.get("domains") if isinstance(doc.get("domains"), dict) else {}
+        for name in chunk_names:
+            src = ch_dom.get(name)
+            if not isinstance(src, dict):
+                continue
+            dst = dict(domains.get(name) or {})
+            if "operator" in src:
+                dst["operator"] = src.get("operator") or ""
+            if "compare" in src:
+                dst["compare"] = src.get("compare") or ""
+            dst.setdefault("profile", {})
+            domains[name] = dst
+        if isinstance(doc.get("findings"), list):
+            findings.extend(doc["findings"])
+    bind["call"] = call
+    bind["call_args"] = call_args
+    bind["mapping"] = mapping
+    bind["domains"] = domains
+    bind["findings"] = findings
+    _dump(bind_path, bind)
+    return {"ok": True, "merged": True, "chunks": len(chunks)}
+
+
 def emit_bind_parts(
     parts_dir: Path,
     *,
@@ -239,6 +527,7 @@ def emit_bind_parts(
     )
     _dump(parts / "bind.yaml", bind)
     _dump(parts / "harness.yaml", harness)
+    emit_bind_chunks(parts, bind, identity=identity)
     owned = parts / ".engine"
     _dump(owned / "bind.owned.yaml", _owned_bind_snapshot(bind))
     _dump(owned / "harness.owned.yaml", _owned_harness_snapshot(harness))
@@ -397,6 +686,9 @@ def restore_harness(doc: dict[str, Any], owned: dict[str, Any]) -> tuple[dict[st
 
 def restore_and_dump_parts(parts_dir: Path) -> dict[str, Any]:
     parts = Path(parts_dir)
+    merged = merge_bind_chunks(parts)
+    if not merged.get("ok"):
+        return {"ok": False, "errors": [merged.get("error") or "merge_bind_chunks"]}
     errors: list[str] = []
     bind_path = parts / "bind.yaml"
     harness_path = parts / "harness.yaml"
@@ -416,4 +708,65 @@ def restore_and_dump_parts(parts_dir: Path) -> dict[str, Any]:
     _dump(harness_path, harness)
     mark_llm_edited(bind_path)
     mark_llm_edited(harness_path)
+    return {"ok": True, "errors": []}
+
+
+def bind_fill_path(bind_path: Path) -> Path:
+    target = Path(bind_path)
+    return target.with_name(f"{target.stem}.fill.yaml")
+
+
+def apply_bind_fill(bind_path: Path, fill_path: Path | None = None) -> dict[str, Any]:
+    """Merge LLM-owned cells from bind.fill.yaml. Engine-owned keys stay locked."""
+    target = Path(bind_path)
+    fill_file = Path(fill_path) if fill_path is not None else bind_fill_path(target)
+    if not fill_file.is_file():
+        return {"ok": False, "error": "missing_fill", "path": str(fill_file)}
+    try:
+        bind = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+        fill = yaml.safe_load(fill_file.read_text(encoding="utf-8")) or {}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": "invalid_yaml", "detail": str(exc)}
+    if not isinstance(bind, dict) or not isinstance(fill, dict):
+        return {"ok": False, "error": "invalid_yaml"}
+    if isinstance(fill.get("call"), dict):
+        bind["call"] = dict(fill["call"])
+    if isinstance(fill.get("call_args"), list):
+        bind["call_args"] = list(fill["call_args"])
+    if isinstance(fill.get("findings"), list):
+        bind["findings"] = list(fill["findings"])
+    fill_map = fill.get("mapping") if isinstance(fill.get("mapping"), dict) else {}
+    mapping = bind.get("mapping") if isinstance(bind.get("mapping"), dict) else {}
+    for name, row in list(mapping.items()):
+        src = fill_map.get(name)
+        if not isinstance(src, dict):
+            continue
+        dst = dict(row) if isinstance(row, dict) else _empty_mapping_row()
+        for key in _MAPPING_CELLS:
+            if key in src:
+                val = src.get(key)
+                dst[key] = "" if val is None else val
+        mapping[name] = dst
+    bind["mapping"] = mapping
+    fill_dom = fill.get("domains") if isinstance(fill.get("domains"), dict) else {}
+    domains = bind.get("domains") if isinstance(bind.get("domains"), dict) else {}
+    for name, row in list(domains.items()):
+        dst = dict(row) if isinstance(row, dict) else {}
+        src = fill_dom.get(name)
+        if isinstance(src, dict):
+            dst["operator"] = str(src.get("operator") or "")
+            dst["compare"] = str(src.get("compare") or "")
+        domains[name] = dst
+    bind["domains"] = domains
+    owned_path = target.parent / ".engine" / "bind.owned.yaml"
+    owned: dict[str, Any] = {}
+    if owned_path.is_file():
+        loaded = yaml.safe_load(owned_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            owned = loaded
+    restored, errors = restore_bind(bind, owned)
+    if errors:
+        return {"ok": False, "errors": errors}
+    dump_part(target, restored)
+    mark_llm_edited(target)
     return {"ok": True, "errors": []}

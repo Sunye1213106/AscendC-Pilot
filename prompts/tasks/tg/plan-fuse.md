@@ -1,14 +1,13 @@
 <task>
-基于本次 `tg/init.yaml` 与已给定的独立测试变量，生成 `plan.md` 草稿：求解方向 + 观测 + L0–L3。
+基于本次 `tg/init.yaml` 与已给定的 Target model，生成完整 `plan.md` 正文：语义 Dimension partitions、结构化谓词、L0–L3。
 </task>
 
 <input>
 - Init: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/tg/init.yaml`
-- Planning Context: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/runs/<RUN_ID>/actions/plan_scope/parts/targets.yaml`（外加用户意图 / CE plan「测试内容」 / session handoff）
+- Planning Context: Host 注入的上一窗 session 捕获（外加用户意图 / CE plan「测试内容」 / session handoff）。不是磁盘 `targets.yaml`。
 - UO query authority: `<UO_ROOT>`
-- Draft: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/runs/<RUN_ID>/actions/plan_fuse`
 </input>
 
 <output>
-写入本步草稿 markdown。缺失 Planning Context 时返回 `PLAN_SCOPE_REQUIRED`。不要写正式 `tg/plan.md`。
+最终消息交回完整 `plan.md`（散文三节：测什么 / 覆盖什么 / 怎么判定，然后 `schema: tg-plan/v3` YAML 围栏）。缺失 Planning Context 时返回 `PLAN_SCOPE_REQUIRED`。不要 Write staging / parts / 正式 `tg/plan.md`。
 </output>

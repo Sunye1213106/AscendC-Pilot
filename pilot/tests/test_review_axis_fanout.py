@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import sys
+
 REPO = Path(__file__).resolve().parents[2]
+for _p in (REPO / "pilot", REPO / "engines" / "testcase-generation"):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 
 def test_review_axis_fanout_writes_isolated_stubs(tmp_path: Path) -> None:
@@ -144,14 +149,14 @@ def test_bind_init_fanout_writes_isolated_yaml_stubs(tmp_path: Path) -> None:
     )
     assert len(tasks) == 2
     ids = {t["slice_id"] for t in tasks}
-    assert ids == {"harness", "bind"}
+    assert ids == {"harness", "bind0"}
     harness = next(t for t in tasks if t["slice_id"] == "harness")
-    bind = next(t for t in tasks if t["slice_id"] == "bind")
+    bind = next(t for t in tasks if t["slice_id"] == "bind0")
     assert "AXIS=harness" in harness["task_prompt_stub"]
     assert "harness.yaml" in harness["task_prompt_stub"]
-    assert "AXIS=bind" in bind["task_prompt_stub"]
-    assert "bind.yaml" in bind["task_prompt_stub"]
-    assert "parts/bind.yaml" in bind["task_prompt_stub"]
+    assert "AXIS=bind0" in bind["task_prompt_stub"]
+    assert "bind0.yaml" in bind["task_prompt_stub"]
+    assert "parts/bind0.yaml" in bind["task_prompt_stub"]
     assert (sdir / "method_harness.md").is_file()
     assert (sdir / "method_bind.md").is_file()
     assert (sdir / "prompt_harness.md").is_file()
@@ -221,7 +226,7 @@ def test_bind_init_fanout_dispatches_engine_skeleton_llm_edit_false(tmp_path: Pa
         project_root=tmp_path.as_posix(),
         architecture="arch0",
     )
-    assert {t["slice_id"] for t in tasks} == {"harness", "bind"}
+    assert {t["slice_id"] for t in tasks} == {"harness", "bind0"}
 
 
 def test_bind_init_fanout_skips_existing_part(tmp_path: Path) -> None:
@@ -269,6 +274,64 @@ def test_bind_init_fanout_skips_existing_part(tmp_path: Path) -> None:
         architecture="arch0",
     )
     assert {t["slice_id"] for t in tasks} == {"harness"}
+
+
+def test_bind_init_fanout_splits_sixty_columns_into_four_tasks(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.runtime import _review_axis_fanout_tasks
+    from ascendc_pilot.workflows.specs import WORKFLOWS
+    from testcase_agent.bind_parts import emit_bind_parts
+
+    sdir = tmp_path / "session"
+    parts = sdir / "parts"
+    parts.mkdir(parents=True)
+    (sdir / "prompt.md").write_text("# p\n", encoding="utf-8")
+    (sdir / "bundle.yaml").write_text("ok: true\n", encoding="utf-8")
+    names = [f"C{i:02d}" for i in range(60)]
+    emit_bind_parts(
+        parts,
+        scan={
+            "kind": "script_repo",
+            "contract": {"entry": "run.py", "case_arg": "--case", "columns": names},
+            "inventory": {"tables": [{"columns": names, "kind": "csv"}]},
+        },
+        identity={"run_id": "r1"},
+    )
+    stub_kwargs = {
+        "actor_id": "tg-analyst",
+        "action_id": "bind_init",
+        "run_id": "r1",
+        "session_dir": sdir.as_posix(),
+        "prompt_path": (sdir / "prompt.md").as_posix(),
+        "method_path": (sdir / "method.md").as_posix(),
+        "bundle_path": (sdir / "bundle.yaml").as_posix(),
+        "project_root": tmp_path.as_posix(),
+        "architecture": "arch0",
+        "write_paths": ["runs/{run_id}/actions/bind_init/parts/**"],
+        "user_question": "bind",
+    }
+    action = next(a for a in WORKFLOWS["tg-init"]["actions"] if a["id"] == "bind_init")
+    tasks = _review_axis_fanout_tasks(
+        action=action,
+        action_id="bind_init",
+        actor_id="tg-analyst",
+        phase="bind",
+        sdir=sdir,
+        stub_kwargs=stub_kwargs,
+        repo=REPO,
+        dispatch_targets={},
+        write_paths=["runs/{run_id}/actions/bind_init/parts/**"],
+        project_root=tmp_path.as_posix(),
+        architecture="arch0",
+    )
+    ids = [t["slice_id"] for t in tasks]
+    assert ids == ["harness", "bind0", "bind1", "bind2"]
+    bind0 = next(t for t in tasks if t["slice_id"] == "bind0")
+    assert "C00" in bind0["focus"]
+    assert "C19" in bind0["focus"]
+    assert "C20" not in bind0["focus"]
+    assert (parts / "bind0.yaml").is_file()
+    assert (parts / "bind2.yaml").is_file()
+    assert not (parts / "bind3.yaml").exists()
 
 
 def test_review_axis_fanout_missing_knowledge_fails_closed(tmp_path: Path) -> None:

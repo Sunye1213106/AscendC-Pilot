@@ -1,11 +1,11 @@
 ---
 name: test-plan
-description: 从测试意图列出独立测试变量（默认 TilingKey 维），给出大致求解方向和可观测的命中证据，供 solve 生成并迭代 case。init 已有、要规划覆盖时使用。
+description: 把测试要求编译为 Target、Dimension、Guard 与 L0–L3 覆盖义务。init 已有、要规划覆盖时使用。
 ---
 
 # 白盒测试规划
 
-本目录是 family manifest，不是某一窗的 HOW。禁止把识别变量与写求解方向写进同一窗。
+本目录是 family manifest，不是某一窗的 HOW。禁止把识别目标与写覆盖模型写进同一窗。子代理禁止 Write；最终消息用 YAML/Markdown 围栏交回。
 
-- 识别变量：`references/target-planning.md`
-- 求解方向与观测：`references/constraint-planning.md`；观测专表：`references/evidence.md`
+- Target / Guard / candidate Dimension：`references/target-planning.md`
+- partitions / classifier / L0–L3：`references/coverage-planning.md`；观测种类：`references/evidence.md`

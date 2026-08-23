@@ -206,15 +206,17 @@ def gate_worklog_closed(
     out = tg_root(project_root, arch=architecture)
 
     def _run() -> Any:
-        from testcase_agent.products import worklog_open_ids, worklog_path
+        from testcase_agent.coverage.ledger import ledger_closed, parse_worklog_fence
+        from testcase_agent.products import worklog_path
 
         path = worklog_path(out)
         if not path.is_file():
             raise RuntimeError("missing tg/worklog.md")
-        open_ids = worklog_open_ids(path.read_text(encoding="utf-8"))
-        if open_ids:
-            raise RuntimeError(f"worklog still open: {open_ids}")
-        return {"ok": True, "open": []}
+        ledger = parse_worklog_fence(path.read_text(encoding="utf-8"))
+        closed, problems = ledger_closed(ledger)
+        if not closed:
+            raise RuntimeError(f"worklog ledger not closed: {problems}")
+        return {"ok": True, "problems": []}
 
     return _wrap_exc("worklog_closed", _run)
 

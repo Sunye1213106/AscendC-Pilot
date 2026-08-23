@@ -51,6 +51,8 @@ class Result:
     logged: dict = field(default_factory=dict)    # read off the tiling's own log
     diag: dict = field(default_factory=dict)      # intermediates
     reject: str = ""                              # why tiling refused, if it did
+    probes: dict = field(default_factory=dict)    # TG_PROBE key=value
+    tiling_data: dict = field(default_factory=dict)
 
     @property
     def verdict(self) -> bool:
@@ -154,6 +156,22 @@ class ReplayRunner:
                 cur.series = got["series"]
                 if got["reject"]:
                     cur.reject = got["reject"]
+                probes: dict[str, str] = {}
+                td: dict[str, object] = {}
+                for line in body:
+                    stripped = line.strip()
+                    if stripped.startswith("TG_PROBE "):
+                        rest = stripped[len("TG_PROBE "):]
+                        if "=" in rest:
+                            k, v = rest.split("=", 1)
+                            probes[k.strip()] = v.strip()
+                    if stripped.startswith("###TD "):
+                        parts = stripped.split()
+                        if len(parts) >= 3:
+                            td["size"] = parts[1]
+                            td["b64"] = parts[2]
+                cur.probes = probes
+                cur.tiling_data = td
 
         for line in text.splitlines():
             m = case_mark.match(line)

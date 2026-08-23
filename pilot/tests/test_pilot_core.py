@@ -140,12 +140,14 @@ def test_plan_approved_reads_plan_md(tmp_path: Path):
     tg = tg_root(tmp_path, arch="arch35")
     tg.mkdir(parents=True, exist_ok=True)
     (tg / "plan.md").write_text(
-        "# plan\n\n```yaml\nschema: tg-plan/v2\napproved: true\ndecision: approve\n"
-        "intent: default_tilingkey\n"
-        "variables:\n  - id: V-dtype\n    direction:\n      columns: [B]\n"
-        "      note: set\n    evidence:\n      kind: replay_field\n"
-        "      field: tiling_key\n"
-        "ladder:\n  L0: [V-dtype]\n  L1: []\n  L2: []\n  L3: []\noracle: []\n```\n",
+        "# plan\n\n```yaml\nschema: tg-plan/v3\napproved: true\ndecision: approve\n"
+        "requirement: {id: R-dtype, text: dtype}\n"
+        "targets:\n  - id: T-dispatch\n    evidence:\n      kind: replay_field\n"
+        "      field: tiling_key\n      expected: 1\n"
+        "guards: []\n"
+        "dimensions: []\n"
+        "coverage:\n  L0: {dimensions: []}\n  L1: {combinations: []}\n  L2: []\n  L3: {guards: []}\n"
+        "oracle: []\n```\n",
         encoding="utf-8",
     )
     r = gate_plan_approved(tmp_path)

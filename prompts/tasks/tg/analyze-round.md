@@ -1,14 +1,13 @@
 <task>
-对照本轮 Replay 与各变量的 evidence，写 worklog 草稿。
+只处理 coverage_eval 标成 MISS / UNKNOWN 的义务，交回 refinement。禁止宣布 HIT。
 </task>
 
 <input>
 - Plan: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/tg/plan.md`
-- Cases: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/tg/cases.*`
+- Worklog: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/tg/worklog.md`
 - Replay: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/runs/<RUN_ID>/receipts/replay_round.yaml`
-- Draft: `<PROJECT_ROOT>/.ascendc-pilot/<ARCHITECTURE>/runs/<RUN_ID>/actions/analyze_round`
 </input>
 
 <output>
-写入本步草稿 markdown。不要写正式 `tg/worklog.md`。
+最终消息交回 refinement YAML。不要 Write staging / 正式 `tg/worklog.md`。
 </output>

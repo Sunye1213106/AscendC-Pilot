@@ -2,23 +2,21 @@
 
 **何时加载**：调用接口对不上表头、列值是编码控制面、或查图形态写错时。
 
+本路只改 FOCUS 里的 `bindN.yaml`。`call_args` 仍写最富调用全貌；mapping / domains 只填本路列。
+
 ## 先调用点再表头
 
-打开最富调用，先写 `call_args` 再写 role。传进 `torch_npu` / `aclnn` 的列是 `api_arg`，必须有 `uo_id`。`call_args.name` 用 API 形参名，不用 runner 局部变量。不要用 `attr`。`call.kind` ∈ {`pta`, `aclnn`, `mixed`}。
+打开最富调用，先写 `call_args` 再写 role。传进 `torch_npu` / `aclnn` 的列是 `api_arg`，必须有 `uo_id`。不要用 `attr`。`call.kind` ∈ {`pta`, `aclnn`, `mixed`}。
 
 `.pt` 加载不改变维 / dtype / layout 列的 `api_arg`。最富调用里出现的 kwargs，同名表列仍是 `api_arg`（表全空或值从 `.pt` 来也一样）。查不到图上的 AttrIndex 也不能改成 `script_meta`。
 
 ## 值域两源
 
-`domains.profile` 引用 `tables[].profile`（range，不通读 CSV）。`domains.operator` 只对已是 `api_arg` 的列：填该列短名。覆盖列表 `Dim=<维名>` 仅当该列本身就是那个开关。只在某种模板/layout 下才出现的列，仍绑该列自己的短名，不要把开关维写成它的 `operator`。`compare=match` 仅当 `operator` 非空。`compare` ∈ {`match`, `tighter_profile`, `tighter_operator`, `mismatch`}。
+`domains.profile` 引用 `tables[].profile`（range，不通读 CSV），不要改引擎已写入的 profile。`domains.operator` 只对已是 `api_arg` 的列查图：覆盖列表用 `Dim=<维名>`，组合过滤用 `Name=Value`。声明面与产品覆盖面分开写。`compare` 只能是 `match` / `tighter_profile` / `tighter_operator` / `mismatch`。**`compare=match` 仅当 `operator` 非空。**
 
 ## 查图只为 uo_id
 
-role 冻结后对名：先读一次 tiling 头文件，得到本次短名全集。该列是某个 kwargs 的 `source_column` 则**必须**有短名：优先头文件同名字段，否则直接抄调用点形参名。列只是公式输入则抄本列对应的维/字段。无参索引的 `dim_names` 不是 dtype 列的身份。对不上时 findings 写 PARTIAL，格子留空，不借邻居短名。头文件有哪些字段以这次打开的文件为准。Enable / 用例名 / 是否跑行 才是 `script_meta`；确定性一类运行上下文是 `feature`。追列时以读表函数为准：局部变量名碰巧等于另一列表头，仍不是那一列。
-
-改写列（本身不在实参里，只截短 / 过滤 / 重映射另一列）是 `feature`。头文件字段必须表示同一量才抄进 `uo_id`；同一开关的两侧仍抄该字段。词形相近但量不同就留空，也不要抄被改写列的短名。无参查询里的开关维只写到「列本身就是该开关」的 `operator`，不要写到只在该开关下才出现的列，也不要写到 dtype 列的 `operator`。
-
-`uo_id` 填短名 / `canonical`，禁止 `TDF::` id 和 `tiling_data_names` 结构名。尺寸列绑「这一列对应的维/字段」，不要绑调用里的张量操作数名。dtype 与 shape 不许共一个 `uo_id`。未从卡片复制 `file:line` 时禁止 around。
+role 冻结后再查。必须先做一次无参 `uo-query`（开关维以这次查询为准），不能用索引文件代替。`uo_id` 填短名 / `canonical`，禁止 `TDF::` id 和 `tiling_data_names` 结构名。形状列绑短 tiling 维，禁止 `query` / `key` / `value`。dtype 与 shape 不许共一个 `uo_id`。开关维不是 dtype 列的身份。未从卡片复制 `file:line` 时禁止 around。
 
 ## 编码
 

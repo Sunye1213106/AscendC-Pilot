@@ -66,6 +66,16 @@ def _wsl_path(distro: str, path: Path) -> str:
     return proc.stdout.strip()
 
 
+_COPY_IGNORE = shutil.ignore_patterns(".git", "build", "__pycache__", ".pytest_cache")
+
+
+def _pilot_cache_root() -> Path:
+    raw = (os.environ.get("ASCENDC_PILOT_CACHE") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return Path.home() / ".cache" / "ascendc-pilot"
+
+
 def _ops_root(runner: Any) -> Path:
     snap = (os.environ.get("ASCENDC_SNAPSHOT_WORKSPACE") or "").strip()
     if snap:
@@ -82,6 +92,26 @@ def _ops_root(runner: Any) -> Path:
     for _ in rel.parts:
         root = root.parent
     return root
+
+
+def ops_sandbox_local(runner: Any) -> Path:
+    """Windows/Linux path of the TG-owned ops copy. Never the operator git tree."""
+    name = str(getattr(runner.manifest, "name", "") or "op")
+    return _pilot_cache_root() / name / "ops"
+
+
+def _copy_ops_sandbox(src: Path, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(src, dest, ignore=_COPY_IGNORE)
+
+
+def _sandbox_collides(src: Path, dest: Path) -> bool:
+    try:
+        return src.resolve() == dest.resolve()
+    except OSError:
+        return False
 
 
 def _bundled(runner: Any, name: str) -> Path:
@@ -205,26 +235,24 @@ def _write_cann_env(runtime: Path, pkg_linux: str, host: str) -> Path:
     return path
 
 
-def _linux_tree(distro: str, windows_path: Path, cache_key: str) -> tuple[str, str]:
-    """Map a Windows tree into WSL; copy into ~/.cache/ascendc-pilot when /mnt fails."""
+def _linux_tree(distro: str, windows_path: Path, cache_key: str, *, force_copy: bool = False) -> tuple[str, str]:
+    """Map a Windows tree into WSL; copy into ~/.cache/ascendc-pilot when /mnt fails.
+
+    Probe injection must pass ``force_copy=True`` so Host prints never write back
+    through ``/mnt`` into the operator git tree.
+    """
     mapped = ""
-    try:
-        mapped = _wsl_path(distro, windows_path)
-    except RuntimeError:
-        mapped = ""
-    if mapped:
-        probe = _wsl(distro, "bash", "-lc", f"test -d {sh_quote(mapped)} && test -r {sh_quote(mapped)}")
-        if probe.returncode == 0:
-            return mapped, "map"
-    dest = Path.home() / ".cache" / "ascendc-pilot" / cache_key
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(
-        windows_path,
-        dest,
-        ignore=shutil.ignore_patterns(".git", "build", "__pycache__", ".pytest_cache"),
-    )
+    if not force_copy:
+        try:
+            mapped = _wsl_path(distro, windows_path)
+        except RuntimeError:
+            mapped = ""
+        if mapped:
+            probe = _wsl(distro, "bash", "-lc", f"test -d {sh_quote(mapped)} && test -r {sh_quote(mapped)}")
+            if probe.returncode == 0:
+                return mapped, "map"
+    dest = _pilot_cache_root() / cache_key
+    _copy_ops_sandbox(windows_path, dest)
     return _wsl_path(distro, dest), "copy"
 
 
@@ -298,7 +326,7 @@ def _wrapper_text(*, cann_env: str, run_script: str, ops_root: str, replay_bin: 
     )
 
 
-def _native_bootstrap(runner: Any) -> dict[str, Any]:
+def _native_bootstrap(runner: Any, *, force_copy: bool = False, rebuild: bool = False) -> dict[str, Any]:
     manifest = runner.manifest
     runtime = _runtime_dir(runner)
     run_script = _bundled(runner, "run_replay.sh").resolve()
@@ -316,12 +344,24 @@ def _native_bootstrap(runner: Any) -> dict[str, Any]:
             "message_zh": "未找到 UO 解包的 CANN（UO_CANN_ROOT / ASCEND_CANN_PACKAGE_PATH / _cann/pkg）。",
             "hint": "python scripts/cann_extract.py <toolkit.run> --dest _cann/pkg",
         }
-    ops = _ops_root(runner)
+    src = _ops_root(runner)
+    ops = src
+    ops_mode = "direct"
+    ops_local = ""
+    if force_copy or rebuild:
+        dest = ops_sandbox_local(runner)
+        if _sandbox_collides(src, dest):
+            return {"ok": False, "error": "SANDBOX_COLLIDES_WITH_OPS", "ops_root": str(src)}
+        if force_copy or not dest.is_dir():
+            _copy_ops_sandbox(src, dest)
+        ops = dest
+        ops_mode = "copy"
+        ops_local = str(dest)
     replay_bin = runtime / "replay_main"
     replay_so = ops / "build" / "tests" / "ut" / "framework_normal" / "op_host" / "libophost_transformer_ut.so"
 
     host_build_attempted = False
-    if not replay_so.is_file():
+    if not replay_so.is_file() or rebuild:
         host_build_attempted = True
         build_sh = ops / "build.sh"
         if not build_sh.is_file():
@@ -335,7 +375,7 @@ def _native_bootstrap(runner: Any) -> dict[str, Any]:
         if proc.returncode != 0:
             return {"ok": False, "error": "OPHOST_BOOTSTRAP_FAILED", "stdout": proc.stdout[-1000:], "stderr": proc.stderr[-1000:]}
 
-    if not replay_bin.is_file():
+    if not replay_bin.is_file() or rebuild:
         cmd = (
             f"set -e; source {sh_quote(cann_env)} >/dev/null 2>&1; "
             f"export OPS_ROOT={sh_quote(str(ops))}; "
@@ -366,14 +406,17 @@ def _native_bootstrap(runner: Any) -> dict[str, Any]:
         "entry": str(wrapper),
         "bin": str(replay_bin),
         "ops_root": str(ops),
+        "ops_local": ops_local or str(ops),
+        "ops_mode": ops_mode,
         "cann_env": cann_env,
         "cann_pkg": str(_cann_pkg_root() or ""),
         "controller": "wsl" if _inside_wsl() else "linux",
         "host_build_attempted": host_build_attempted,
+        "rebuilt": rebuild,
     }
 
 
-def _windows_wsl_bootstrap(runner: Any, distro: str) -> dict[str, Any]:
+def _windows_wsl_bootstrap(runner: Any, distro: str, *, force_copy: bool = False, rebuild: bool = False) -> dict[str, Any]:
     manifest = runner.manifest
     runtime = _runtime_dir(runner)
     run_script = _bundled(runner, "run_replay.sh")
@@ -396,8 +439,18 @@ def _windows_wsl_bootstrap(runner: Any, distro: str) -> dict[str, Any]:
             "hint": "python scripts/cann_extract.py <toolkit.run> --dest _cann/pkg",
         }
     ops = _ops_root(runner)
+    dest = ops_sandbox_local(runner)
+    if (force_copy or rebuild) and _sandbox_collides(ops, dest):
+        return {"ok": False, "error": "SANDBOX_COLLIDES_WITH_OPS", "ops_root": str(ops)}
     try:
-        ops_wsl, _ops_mode = _linux_tree(distro, ops, f"{manifest.name}/ops")
+        if force_copy or rebuild:
+            if force_copy or not dest.is_dir():
+                ops_wsl, ops_mode = _linux_tree(distro, ops, f"{manifest.name}/ops", force_copy=True)
+            else:
+                ops_wsl = _wsl_path(distro, dest)
+                ops_mode = "copy"
+        else:
+            ops_wsl, ops_mode = _linux_tree(distro, ops, f"{manifest.name}/ops", force_copy=False)
         runtime_wsl = _wsl_path(distro, runtime)
         run_wsl = _wsl_path(distro, run_script)
         build_wsl = _wsl_path(distro, build_script)
@@ -409,7 +462,7 @@ def _windows_wsl_bootstrap(runner: Any, distro: str) -> dict[str, Any]:
 
     host_build_attempted = False
     have_so = _wsl(distro, "test", "-f", replay_so)
-    if have_so.returncode != 0:
+    if have_so.returncode != 0 or rebuild:
         host_build_attempted = True
         cmd = (
             f"set -e; source {sh_quote(cann_env)} >/dev/null 2>&1; cd {sh_quote(ops_wsl)}; "
@@ -421,7 +474,7 @@ def _windows_wsl_bootstrap(runner: Any, distro: str) -> dict[str, Any]:
             return {"ok": False, "error": "OPHOST_BOOTSTRAP_FAILED", "stdout": proc.stdout[-1000:], "stderr": proc.stderr[-1000:]}
 
     have_bin = _wsl(distro, "test", "-x", replay_bin)
-    if have_bin.returncode != 0:
+    if have_bin.returncode != 0 or rebuild:
         cmd = (
             f"set -e; source {sh_quote(cann_env)} >/dev/null 2>&1; "
             f"export OPS_ROOT={sh_quote(ops_wsl)}; "
@@ -456,11 +509,14 @@ def _windows_wsl_bootstrap(runner: Any, distro: str) -> dict[str, Any]:
         "entry": wrapper,
         "bin": replay_bin,
         "ops_root": ops_wsl,
+        "ops_local": str(dest) if ops_mode == "copy" else "",
+        "ops_mode": ops_mode,
         "cann_env": cann_env,
         "cann_pkg": str(_cann_pkg_root() or ""),
         "distro": distro,
         "controller": "windows",
         "host_build_attempted": host_build_attempted,
+        "rebuilt": rebuild,
     }
 
 
@@ -546,12 +602,15 @@ def _write_environment_receipt(runner: Any, result: dict[str, Any]) -> dict[str,
     return result
 
 
-def ensure_runner(runner: Any) -> dict[str, Any]:
+def ensure_runner(runner: Any, *, force_copy: bool = False, rebuild: bool = False) -> dict[str, Any]:
     """Ensure a usable replay entry and binary exist, then bind the runner to it.
 
     Existing explicit runtimes are reused. Otherwise the generated runtime is
     created under TG's replay cache. The function is idempotent and always
     writes ``tg/replay/environment.yaml`` (except CI/synthetic skips).
+    Probe injection must pass ``force_copy=True`` so ops are copied, never mapped.
+    After injecting probes, call again with ``rebuild=True`` (and not
+    ``force_copy``) so the sandbox is recompiled without recopying from git.
     """
     if _disabled(runner):
         return _write_environment_receipt(runner, {"ok": True, "skipped": "ci_or_synthetic"})
@@ -562,7 +621,7 @@ def ensure_runner(runner: Any) -> dict[str, Any]:
 
     if native:
         entry = str(manifest.entry or "")
-        if entry and Path(entry).expanduser().is_file():
+        if entry and Path(entry).expanduser().is_file() and not force_copy and not rebuild:
             return _write_environment_receipt(
                 runner,
                 {"ok": True, "reused": True, "entry": entry, "controller": "wsl" if _inside_wsl() else "linux"},
@@ -572,7 +631,9 @@ def ensure_runner(runner: Any) -> dict[str, Any]:
                 runner,
                 {"ok": False, "error": "EXPLICIT_REPLAY_ENTRY_MISSING", "entry": entry},
             )
-        return _write_environment_receipt(runner, _native_bootstrap(runner))
+        return _write_environment_receipt(
+            runner, _native_bootstrap(runner, force_copy=force_copy, rebuild=rebuild)
+        )
 
     host = str(manifest.host or "wsl").lower()
     if host != "wsl":
@@ -593,7 +654,7 @@ def ensure_runner(runner: Any) -> dict[str, Any]:
             },
         )
     probe = _wsl(distro, "test", "-f", str(manifest.entry or "")) if manifest.entry else None
-    if probe is not None and probe.returncode == 0:
+    if probe is not None and probe.returncode == 0 and not force_copy and not rebuild:
         return _write_environment_receipt(
             runner,
             {"ok": True, "reused": True, "entry": manifest.entry, "distro": distro, "controller": "windows"},
@@ -603,7 +664,9 @@ def ensure_runner(runner: Any) -> dict[str, Any]:
             runner,
             {"ok": False, "error": "EXPLICIT_REPLAY_ENTRY_MISSING", "entry": manifest.entry, "distro": distro},
         )
-    return _write_environment_receipt(runner, _windows_wsl_bootstrap(runner, distro))
+    return _write_environment_receipt(
+        runner, _windows_wsl_bootstrap(runner, distro, force_copy=force_copy, rebuild=rebuild)
+    )
 
 
 def sh_quote(value: str) -> str:

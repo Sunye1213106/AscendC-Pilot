@@ -56,11 +56,15 @@ def test_output_contracts_are_three_products() -> None:
     assert OUTPUT_CONTRACT_PATHS["tg-init-v1"] == ["tg/init.yaml"]
     assert OUTPUT_CONTRACT_PATHS["tg-plan-v1"] == ["tg/plan.md"]
     assert OUTPUT_CONTRACT_PATHS["tg-worklog-v1"] == ["tg/worklog.md"]
-    assert OUTPUT_CONTRACT_PATHS["tg-cases-v1"] == ["tg/cases.csv", "tg/cases.xls", "tg/cases.xlsx"]
+    assert "tg-cases-v1" not in OUTPUT_CONTRACT_PATHS
     assert OUTPUT_CONTRACT_PATHS["plan-precheck-v1"] == []
-    assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == [
-        "runs/{run_id}/actions/plan_scope/parts/targets.yaml"
-    ]
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-fuse-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-construct-v1"] == []
+    assert OUTPUT_CONTRACT_PATHS["tg-analyze-v1"] == []
+    assert "tg-plan-staging-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "tg-construct-staging-v1" not in OUTPUT_CONTRACT_PATHS
+    assert "tg-analyze-staging-v1" not in OUTPUT_CONTRACT_PATHS
     assert OUTPUT_CONTRACT_PATHS["solve-precheck-v1"] == []
     assert "tilingkey-contract-v1" not in OUTPUT_CONTRACT_PATHS
     assert "lemma-mine-v1" not in OUTPUT_CONTRACT_PATHS
@@ -97,66 +101,80 @@ _PLAN_BODY = """# why
 
 默认 TilingKey 维。
 
-## 第一轮怎么造
+## 覆盖什么
 
-改 B 列。
+每维一个 witness。
 
-## 怎么知道打到了
+## 怎么判定
 
 看 Replay tiling_key。
 
 ```yaml
-schema: tg-plan/v2
-intent: default_tilingkey
+schema: tg-plan/v3
+requirement: {id: R-dtype, text: dtype}
 approved: true
-variables:
-- id: V-dtype
-  symbol: InputDType
-  direction: {columns: [B], note: set dtype}
-  evidence: {kind: replay_field, field: tiling_key}
-ladder:
-  L0: [V-dtype]
-  L1: []
+targets:
+- id: T-dispatch
+  evidence: {kind: replay_field, field: tiling_key, expected: 1}
+guards: []
+dimensions:
+- id: D-dtype
+  target: T-dispatch
+  controls: [B]
+  partitions:
+  - {id: fp16, predicate: {op: eq, field: case.dtype, value: fp16}}
+  - {id: bf16, predicate: {op: eq, field: case.dtype, value: bf16}}
+coverage:
+  L0: {dimensions: [D-dtype]}
+  L1: {combinations: []}
   L2: []
-  L3: []
+  L3: {guards: []}
 oracle: []
 ```
 """
 
 
-def _write_targets(root: Path, run_id: str) -> None:
+def _write_capture(root: Path, run_id: str, action_id: str, *, text: str = "", doc: dict | None = None) -> None:
     from ascendc_pilot.paths import agent_root
 
-    parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_scope" / "parts"
-    parts.mkdir(parents=True, exist_ok=True)
-    (parts / "targets.yaml").write_text(
-        "intent: default_tilingkey\nvariables:\n  - id: V-dtype\n    kind: tilingkey_dim\n",
+    sdir = agent_root(root, _ARCH) / "runs" / run_id / "actions" / action_id
+    sdir.mkdir(parents=True, exist_ok=True)
+    payload = {"text": text, "doc": doc or {}}
+    (sdir / "captured.yaml").write_text(
+        __import__("yaml").safe_dump(payload, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
 
 
-def test_plan_staging_contract_accepts_parts_plan_md(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_MATCH_ANY, OUTPUT_CONTRACT_PATHS
+def _write_scope_capture(root: Path, run_id: str) -> None:
+    _write_capture(
+        root,
+        run_id,
+        "plan_scope",
+        text="targets:\n  - id: T-dispatch\n",
+        doc={"targets": [{"id": "T-dispatch"}]},
+    )
+
+
+def test_plan_promote_writes_from_session_capture(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_PATHS
     from ascendc_pilot.actions.runtime import _check_output_contract
     from ascendc_pilot.actions.tg_product import run_plan_promote
-    from ascendc_pilot.paths import agent_root, ensure_agent_layout, tg_root
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
     from ascendc_pilot.state import start_workflow
 
-    assert "tg-plan-staging-v1" in OUTPUT_CONTRACT_MATCH_ANY
-    assert "staging.yaml" not in ",".join(OUTPUT_CONTRACT_PATHS["tg-plan-staging-v1"])
+    assert OUTPUT_CONTRACT_PATHS["tg-plan-scope-v1"] == []
     root = tmp_path / "op"
     root.mkdir()
     ensure_agent_layout(root, arch=_ARCH)
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse" / "parts"
-    parts.mkdir(parents=True)
-    (parts / "plan.md").write_text(_PLAN_BODY, encoding="utf-8")
-    _write_targets(root, run_id)
+    _write_scope_capture(root, run_id)
+    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
     checked = _check_output_contract(
         root,
-        "tg-plan-staging-v1",
+        "tg-plan-fuse-v1",
         run_id=run_id,
         workflow_id="tg-plan",
         action_id="plan_fuse",
@@ -167,37 +185,8 @@ def test_plan_staging_contract_accepts_parts_plan_md(tmp_path: Path) -> None:
     assert (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8") == _PLAN_BODY
 
 
-def test_plan_staging_contract_accepts_legacy_staging_md(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.runtime import _check_output_contract
+def test_plan_promote_requires_scope_capture(tmp_path: Path) -> None:
     from ascendc_pilot.actions.tg_product import run_plan_promote
-    from ascendc_pilot.paths import agent_root, ensure_agent_layout, tg_root
-    from ascendc_pilot.state import start_workflow
-
-    root = tmp_path / "op"
-    root.mkdir()
-    ensure_agent_layout(root, arch=_ARCH)
-    _seed_manifest(root)
-    state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
-    run_id = str(state.get("run_id") or "")
-    action = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse"
-    action.mkdir(parents=True)
-    (action / "staging.md").write_text(_PLAN_BODY, encoding="utf-8")
-    _write_targets(root, run_id)
-    checked = _check_output_contract(
-        root,
-        "tg-plan-staging-v1",
-        run_id=run_id,
-        workflow_id="tg-plan",
-        action_id="plan_fuse",
-    )
-    assert checked.get("ok") is True, checked
-    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
-    assert out.get("ok") is True, out
-    assert (tg_root(root, arch=_ARCH) / "plan.md").read_text(encoding="utf-8") == _PLAN_BODY
-
-
-def test_plan_staging_contract_fails_when_empty(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.runtime import _check_output_contract
     from ascendc_pilot.paths import ensure_agent_layout
     from ascendc_pilot.state import start_workflow
 
@@ -207,15 +196,10 @@ def test_plan_staging_contract_fails_when_empty(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    checked = _check_output_contract(
-        root,
-        "tg-plan-staging-v1",
-        run_id=run_id,
-        workflow_id="tg-plan",
-        action_id="plan_fuse",
-    )
-    assert checked.get("ok") is False
-    assert "missing outputs" in str(checked.get("message") or "")
+    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
+    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is False
+    assert out.get("error") == "PLAN_SCOPE_REQUIRED"
 
 
 def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
@@ -233,9 +217,105 @@ def test_compact_plan_scope_packet_skips_around(tmp_path: Path) -> None:
     assert "intent_sources" in packet
 
 
-def test_plan_promote_requires_targets(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.tg_product import run_plan_promote
-    from ascendc_pilot.paths import agent_root, ensure_agent_layout
+def test_construct_promote_does_not_write_cases(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_construct_promote
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import INIT_SCHEMA, dump_init
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-solve", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    tg = tg_root(root, arch=_ARCH)
+    dump_init(
+        tg,
+        {
+            "schema": INIT_SCHEMA,
+            "kind": "default_input",
+            "table_kind": "csv",
+            "uo_digest": "deadbeef",
+            "columns": [{"name": "B"}, {"name": "dtype"}],
+        },
+    )
+    _write_capture(
+        root,
+        run_id,
+        "construct_cases",
+        doc={"columns": ["B", "dtype"], "rows": [{"B": "1", "dtype": "fp16"}]},
+    )
+    out = run_construct_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is True, out
+    assert out.get("wrote_cases") is False
+    assert not (tg / "cases.csv").is_file()
+    assert (tg / "replay" / "pending.yaml").is_file()
+    assert not (tg / "coverage_ledger.yaml").is_file()
+    assert not (tg / "case_bindings.yaml").is_file()
+    assert not any(p.name == "targets.yaml" for p in root.rglob("targets.yaml"))
+    assert not any(p.parent.name == "parts" and p.parents[1].name == "construct_cases" for p in root.rglob("*"))
+
+
+def test_certify_rejects_empty_open_prose(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_solve_certify
+    from ascendc_pilot.gates.tg_adapters import gate_worklog_closed
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.products import INIT_SCHEMA, dump_init
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    start_workflow(root, "tg-solve", architecture=_ARCH, op_name="synth_tg")
+    tg = tg_root(root, arch=_ARCH)
+    dump_init(
+        tg,
+        {
+            "schema": INIT_SCHEMA,
+            "kind": "default_input",
+            "table_kind": "csv",
+            "uo_digest": "deadbeef",
+            "columns": [{"name": "B"}],
+        },
+    )
+    (tg / "worklog.md").write_text("open: []\n\nno ledger fence\n", encoding="utf-8")
+    gated = gate_worklog_closed(root, architecture=_ARCH)
+    assert gated.get("ok") is False
+    out = run_solve_certify(root, {"architecture": _ARCH, "run_id": "R1"})
+    assert out.get("ok") is False
+    assert not (tg / "cases.csv").is_file()
+
+
+def test_analyze_promote_merges_capture_into_ledger(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_analyze_promote
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
+    from ascendc_pilot.state import start_workflow
+    from testcase_agent.coverage.ledger import dump_worklog, seed_ledger
+
+    root = tmp_path / "op"
+    root.mkdir()
+    ensure_agent_layout(root, arch=_ARCH)
+    _seed_manifest(root)
+    state = start_workflow(root, "tg-solve", architecture=_ARCH, op_name="synth_tg")
+    run_id = str(state.get("run_id") or "")
+    tg = tg_root(root, arch=_ARCH)
+    (tg / "worklog.md").write_text(
+        dump_worklog(seed_ledger([{"id": "O1", "status": "MISS"}])),
+        encoding="utf-8",
+    )
+    _write_capture(root, run_id, "analyze_round", text="refinement:\n  miss:\n    - obligation: O1\n")
+    out = run_analyze_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert out.get("ok") is True, out
+    text = (tg / "worklog.md").read_text(encoding="utf-8")
+    assert "O1" in text
+    assert "schema: tg-worklog/v2" in text or "tg-worklog/v2" in text
+
+
+def test_compile_obligations_writes_worklog_not_sidecar(tmp_path: Path) -> None:
+    from ascendc_pilot.actions.tg_product import run_compile_obligations, run_plan_promote
+    from ascendc_pilot.paths import ensure_agent_layout, tg_root
     from ascendc_pilot.state import start_workflow
 
     root = tmp_path / "op"
@@ -244,40 +324,19 @@ def test_plan_promote_requires_targets(tmp_path: Path) -> None:
     _seed_manifest(root)
     state = start_workflow(root, "tg-plan", architecture=_ARCH, op_name="synth_tg")
     run_id = str(state.get("run_id") or "")
-    parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "plan_fuse" / "parts"
-    parts.mkdir(parents=True)
-    (parts / "plan.md").write_text(_PLAN_BODY, encoding="utf-8")
-    out = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
-    assert out.get("ok") is False
-    assert out.get("error") == "PLAN_SCOPE_REQUIRED"
-
-
-def test_analyze_staging_contract_accepts_parts_worklog_md(tmp_path: Path) -> None:
-    from ascendc_pilot.actions.engines import OUTPUT_CONTRACT_MATCH_ANY
-    from ascendc_pilot.actions.runtime import _check_output_contract
-    from ascendc_pilot.actions.tg_product import run_analyze_promote
-    from ascendc_pilot.paths import agent_root, ensure_agent_layout, tg_root
-    from ascendc_pilot.state import start_workflow
-
-    assert "tg-analyze-staging-v1" in OUTPUT_CONTRACT_MATCH_ANY
-    root = tmp_path / "op"
-    root.mkdir()
-    ensure_agent_layout(root, arch=_ARCH)
-    _seed_manifest(root)
-    state = start_workflow(root, "tg-solve", architecture=_ARCH, op_name="synth_tg")
-    run_id = str(state.get("run_id") or "")
-    parts = agent_root(root, _ARCH) / "runs" / run_id / "actions" / "analyze_round" / "parts"
-    parts.mkdir(parents=True)
-    body = "open: []\n\n## case-1\n场景与命中\n构造\n收窄\n引理线索\n"
-    (parts / "worklog.md").write_text(body, encoding="utf-8")
-    checked = _check_output_contract(
-        root,
-        "tg-analyze-staging-v1",
-        run_id=run_id,
-        workflow_id="tg-solve",
-        action_id="analyze_round",
-    )
-    assert checked.get("ok") is True, checked
-    out = run_analyze_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    _write_scope_capture(root, run_id)
+    _write_capture(root, run_id, "plan_fuse", text=_PLAN_BODY)
+    promoted = run_plan_promote(root, {"architecture": _ARCH, "run_id": run_id})
+    assert promoted.get("ok") is True, promoted
+    tg = tg_root(root, arch=_ARCH)
+    out = run_compile_obligations(root, {"architecture": _ARCH, "run_id": run_id})
     assert out.get("ok") is True, out
-    assert (tg_root(root, arch=_ARCH) / "worklog.md").read_text(encoding="utf-8").startswith("open:")
+    assert (tg / "worklog.md").is_file()
+    assert "tg-worklog/v2" in (tg / "worklog.md").read_text(encoding="utf-8")
+    assert not (tg / "coverage_ledger.yaml").is_file()
+    assert not any(p.name == "targets.yaml" for p in root.rglob("targets.yaml"))
+    assert not any(
+        p.name == "parts" and p.parent.name in {"plan_scope", "plan_fuse"}
+        for p in root.rglob("*")
+        if p.is_dir()
+    )

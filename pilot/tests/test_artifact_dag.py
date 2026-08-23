@@ -214,17 +214,19 @@ def test_construct_cases_write_allow_forbid_disjoint() -> None:
     mine = next(a for a in WORKFLOWS["tg-solve"]["actions"] if a["id"] == "construct_cases")
     allow = list(mine.get("allowed_write_paths") or [])
     forbid = list(mine.get("forbidden_write_paths") or [])
-    assert any("construct_cases" in p for p in allow)
+    assert mine.get("output_mode") == "return_value"
+    assert allow == []
     for a in allow:
         for b in forbid:
             assert not write_paths_overlap(a, b), (a, b)
 
 
-def test_staged_producer_does_not_publish_canonical() -> None:
+def test_return_value_producer_does_not_publish_canonical() -> None:
     from ascendc_pilot.workflows.artifact_dag import is_staged_producer, normalize_published
     from ascendc_pilot.workflows.specs import WORKFLOWS
 
     fuse = next(a for a in WORKFLOWS["tg-plan"]["actions"] if a["id"] == "plan_fuse")
-    assert is_staged_producer(fuse)
+    assert fuse.get("output_mode") == "return_value"
+    assert not is_staged_producer(fuse)
     published = normalize_published(fuse)
-    assert not any(str(p).endswith(".yaml") for p in published)
+    assert published == []

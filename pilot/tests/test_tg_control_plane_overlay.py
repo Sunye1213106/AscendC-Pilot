@@ -20,9 +20,9 @@ def test_tg_pipelines_are_explicit() -> None:
     assert phase_pipeline("tg-plan", "fuse") == ["plan_fuse", "plan_promote"]
     assert phase_pipeline("tg-plan", "validate") == ["plan_validate"]
     assert phase_pipeline("tg-plan", "approve") == ["plan_approve"]
-    assert phase_pipeline("tg-solve", "gate") == ["solve_precheck"]
+    assert phase_pipeline("tg-solve", "gate") == ["solve_precheck", "compile_obligations"]
     assert phase_pipeline("tg-solve", "construct") == ["construct_cases", "construct_promote"]
-    assert phase_pipeline("tg-solve", "replay") == ["replay_round"]
+    assert phase_pipeline("tg-solve", "replay") == ["replay_round", "coverage_eval"]
     assert phase_pipeline("tg-solve", "analyze") == ["analyze_round", "analyze_promote"]
     assert phase_pipeline("tg-solve", "certify") == ["solve_certify"]
     assert not (WORKFLOWS["tg-solve"].get("mode_overlays") or {})
@@ -41,8 +41,10 @@ def test_tg_engines_registered() -> None:
         ("tg-plan", "plan_promote"),
         ("tg-plan", "plan_validate"),
         ("tg-solve", "solve_precheck"),
+        ("tg-solve", "compile_obligations"),
         ("tg-solve", "construct_promote"),
         ("tg-solve", "replay_round"),
+        ("tg-solve", "coverage_eval"),
         ("tg-solve", "analyze_promote"),
         ("tg-solve", "solve_certify"),
     ):
@@ -73,7 +75,7 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
         assert row.get("agent_id") == "tg-analyst"
         writes = row.get("allowed_write_paths") or []
         assert all("tg/init.yaml" not in p and "tg/plan.md" not in p for p in writes)
-    assert fuse.get("output_mode") == "staged"
+    assert fuse.get("output_mode") == "return_value"
     assert bind.get("output_mode") == "staged"
     scope = action_by_id("tg-plan", "plan_scope") or {}
     assert scope.get("agent_id") == "tg-analyst"
@@ -81,15 +83,19 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert scope.get("method_ref") == "target-planning.md"
     fuse = action_by_id("tg-plan", "plan_fuse") or {}
     assert fuse.get("skill_id") == "test-plan"
-    assert fuse.get("method_ref") == "constraint-planning.md"
+    assert fuse.get("method_ref") == "coverage-planning.md"
     construct = action_by_id("tg-solve", "construct_cases") or {}
     assert construct.get("skill_id") == "solve"
     assert construct.get("method_ref") == "construct.md"
     analyze = action_by_id("tg-solve", "analyze_round") or {}
     assert analyze.get("skill_id") == "solve"
     assert analyze.get("method_ref") == "analyze.md"
-    assert scope.get("output_mode") == "direct"
+    assert scope.get("output_mode") == "return_value"
     assert scope.get("output_contract_id") == "tg-plan-scope-v1"
+    assert list(scope.get("allowed_write_paths") or []) == []
+    assert list(fuse.get("allowed_write_paths") or []) == []
+    assert list(construct.get("allowed_write_paths") or []) == []
+    assert list(analyze.get("allowed_write_paths") or []) == []
     assert all("tg/plan.md" not in p for p in (scope.get("allowed_write_paths") or []))
     axes = bind.get("fanout_axes") or []
     assert {a.get("id") for a in axes} == {"harness", "bind"}
@@ -97,7 +103,9 @@ def test_staged_analyst_does_not_publish_canonical() -> None:
     assert {a.get("method_ref") for a in axes} == {"harness.md", "columns.md"}
     assert {a.get("skill") for a in axes} == {"bind-init"}
     bind_axis = next(a for a in axes if a.get("id") == "bind")
-    assert "parts/bind.yaml" in str(bind_axis.get("focus") or "")
+    assert bind_axis.get("chunk_size") == 20
+    assert bind_axis.get("chunk_by") == "columns"
+    assert "bind.yaml" in str(bind_axis.get("focus") or "")
     columns = (Path(__file__).resolve().parents[2] / "skills" / "bind-init" / "references" / "columns.md").read_text(
         encoding="utf-8"
     )

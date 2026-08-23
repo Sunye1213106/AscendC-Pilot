@@ -1,5 +1,5 @@
 <task>
-根据对话意图与 `tg/init.yaml` 列出独立测试变量。未指定方向时用 TilingKey 维。
+根据对话意图与 `tg/init.yaml` 列出 Target、Guard、candidate Dimension。未指定方向时 Target = Host dispatch，candidate dims = TilingKey 维。禁止 Write。
 </task>
 
 <input>
@@ -10,5 +10,5 @@
 </input>
 
 <output>
-写入 `parts/targets.yaml`。不要写正式 `tg/plan.md`。
+最终消息交回 YAML（requirement / targets / guards / candidate_dimensions）。不要 Write `parts/`、`targets.yaml` 或正式 `tg/plan.md`。
 </output>

@@ -1645,6 +1645,35 @@ def _cmd_inspect(args: Any) -> int:
     if sub == "yaml":
         rel = str(getattr(args, "rel", "") or "").replace("\\", "/").lstrip("/")
         path = project / ".ascendc-pilot" / rel
+        fill = path.with_name(f"{path.stem}.fill.yaml")
+        if path.name == "bind.yaml" and fill.is_file():
+            try:
+                from testcase_agent.bind_parts import apply_bind_fill
+
+                merged = apply_bind_fill(path, fill)
+                if not merged.get("ok"):
+                    print_json(
+                        {
+                            "ok": False,
+                            "error": "BIND_FILL_INVALID",
+                            "rel": rel,
+                            "errors": merged.get("errors") or [merged.get("error")],
+                            "message_zh": "bind.fill.yaml 未能合并进草稿",
+                        },
+                        default=str,
+                    )
+                    return 1
+            except Exception as exc:  # noqa: BLE001
+                print_json(
+                    {
+                        "ok": False,
+                        "error": "BIND_FILL_INVALID",
+                        "rel": rel,
+                        "message_zh": f"bind.fill.yaml 合并失败：{exc}",
+                    },
+                    default=str,
+                )
+                return 1
         if not path.is_file():
             print_json({"ok": False, "error": "missing", "path": str(path)})
             return 1

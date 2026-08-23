@@ -192,7 +192,7 @@ kb_ready  [D]  校验 .uo          ──gate: uo_ready
 scan      [D]  确认测试仓（意图无仓外路径则 Ask；仓内 tests/ 未确认不得当 harness；改路径则 HARNESS_CHANGED 回到本步）
     │
     ▼
-bind      [S fanout=2 tg-analyst]  harness.yaml ∥ bind.yaml
+bind      [S 1 harness + N bind（每路 ≤20 列）]  harness.yaml ∥ bind0.yaml…；引擎合并 bind.yaml
     │
     ▼
 review    [Primary 裁判]  通读两路；下一发 PASS / REWORK（不问用户、不写 yaml）
@@ -212,13 +212,13 @@ validate  [D]  mapping 空则失败   ──gate: init_confirmed
 gate     [D]  强制 init.yaml      ──gate: tg_init_confirmed
     │
     ▼
-scope    [S tg-analyst]  targets.yaml（独立测试变量）
+scope    [S tg-analyst]  return_value：Target / Guard / candidate Dimension
     │
     ▼
-fuse     [S tg-analyst] → promote [D]  一份 plan.md（direction + evidence + L0–L3）
+fuse     [S tg-analyst] → promote [D]  一份 plan.md（谓词 + L0–L3）
     │
     ▼
-validate [D]  变量 / evidence / ladder
+validate [D]  Target / Dimension / Guard / coverage
     │
     ▼
 approve  [H]  开始求解            ──gate: plan_approved
@@ -232,17 +232,17 @@ approve  [H]  开始求解            ──gate: plan_approved
 gate      [D]  已批准 + harness 落地
     │
     ▼
-construct [S] → promote [D]  cases 表
+construct [S return_value] → promote [D]  candidate / recipe（不写正式 cases）
     │
     ▼
-replay    [D]  Host tiling（无 NPU）
+replay    [D]  Host tiling（无 NPU）→ coverage_eval [D]
     │
     ▼
-analyze   [S] → promote [D]  对照预期，同步 worklog
+analyze   [S return_value] → promote [D]  只处理 MISS / UNKNOWN
     │
-    ├── open 非空 ──► construct
+    ├── ledger 未闭合 ──► construct
     ▼
-certify   [D]  open: []           ──gate: worklog_closed
+certify   [D]  ledger 闭合后写出 cases  ──gate: worklog_closed
 ```
 
 `Replay reject ≠ E`。TG 永不改算子仓；缺列走 CE apply 测试脚本仓。

@@ -6,6 +6,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -236,6 +237,57 @@ def _collect_staging_text(root: Path, *, names: tuple[str, ...] = ("plan.md", "w
         if chunks:
             return "\n\n".join(chunks)
     return ""
+
+
+def _captured(project_root: Path, ctx: dict[str, Any], action_id: str) -> dict[str, Any]:
+    from ascendc_pilot.actions.runtime import _load_tg_captured
+
+    return _load_tg_captured(project_root, _run_id(ctx), action_id)
+
+
+def _captured_text(project_root: Path, ctx: dict[str, Any], action_id: str) -> str:
+    row = _captured(project_root, ctx, action_id)
+    text = str(row.get("text") or "")
+    if text.strip():
+        return text
+    doc = row.get("doc")
+    if isinstance(doc, dict) and doc:
+        return yaml.safe_dump(doc, allow_unicode=True, sort_keys=False)
+    return ""
+
+
+def _parse_captured_mapping(text: str, doc: dict[str, Any] | None = None) -> dict[str, Any]:
+    if isinstance(doc, dict) and doc:
+        return dict(doc)
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+    import re
+
+    matches = list(re.finditer(r"```ya?ml\s*\n(.*?)```", raw, re.DOTALL | re.IGNORECASE)) if "```" in raw else []
+    candidates = [m.group(1) for m in matches] + [raw]
+    for body in candidates:
+        try:
+            parsed = yaml.safe_load(body)
+        except Exception:  # noqa: BLE001
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return {}
+
+
+def _replay_dir(project_root: Path, ctx: dict[str, Any] | None = None) -> Path:
+    return _tg(project_root, ctx) / "replay"
+
+
+def _scope_has_target(captured: dict[str, Any]) -> bool:
+    doc = captured.get("doc") if isinstance(captured.get("doc"), dict) else {}
+    targets = doc.get("targets")
+    if isinstance(targets, list) and targets:
+        return True
+    parsed = _parse_captured_mapping(str(captured.get("text") or ""), doc if isinstance(doc, dict) else None)
+    targets = parsed.get("targets")
+    return isinstance(targets, list) and bool(targets)
 
 
 def _evidence_proofs(project_root: Path, mapping: dict[str, Any]) -> list[dict[str, Any]]:
@@ -751,20 +803,19 @@ def run_plan_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]
 
 
 def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    tg = _tg(project_root, ctx)
-    targets = _action_dir(project_root, ctx, "plan_scope") / "parts" / "targets.yaml"
-    if not targets.is_file() or not targets.read_text(encoding="utf-8").strip():
+    captured = _captured(project_root, ctx, "plan_scope")
+    if not _scope_has_target(captured):
         return {
             "ok": False,
             "engine": "plan_promote",
             "error": "PLAN_SCOPE_REQUIRED",
             "ask": "scope",
-            "message_zh": "缺少 plan_scope/parts/targets.yaml；回 scope 列出独立测试变量，不要在 fuse 里补语义调查。",
+            "message_zh": "缺少 plan_scope session 捕获；回 scope 列出 Target，不要在 fuse 里补语义调查。",
         }
-    text = _collect_staging_text(_action_dir(project_root, ctx, "plan_fuse"))
+    text = _captured_text(project_root, ctx, "plan_fuse")
     if not text.strip():
-        return {"ok": False, "engine": "plan_promote", "error": "empty plan staging"}
-    path = products.plan_path(tg)
+        return {"ok": False, "engine": "plan_promote", "error": "empty plan capture"}
+    path = products.plan_path(_tg(project_root, ctx))
     isolation.assert_tg_write_path(path)
     path.write_text(text, encoding="utf-8")
     try:
@@ -776,7 +827,7 @@ def run_plan_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
         "engine": "plan_promote",
         "artifact": path.as_posix(),
         "plan_hash": products.plan_hash(text),
-        "variable_count": len(fence.get("variables") or []),
+        "target_count": len(fence.get("targets") or []),
     }
 
 
@@ -832,13 +883,68 @@ def run_solve_precheck(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any
     return {"ok": True, "engine": "solve_precheck", "receipt": receipt.as_posix()}
 
 
+def run_compile_obligations(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.coverage.compile import compile_obligations
+    from testcase_agent.coverage.ledger import dump_worklog, parse_worklog_fence, seed_ledger
+
+    tg = _tg(project_root, ctx)
+    try:
+        _text, fence = products.load_plan(tg)
+    except products.ProductError as exc:
+        return {"ok": False, "engine": "compile_obligations", "error": str(exc), "ask": exc.ask}
+    legal_keys = None
+    cov = fence.get("coverage") if isinstance(fence.get("coverage"), dict) else {}
+    if str(cov.get("enumerate") or "").strip() == "legal_keys":
+        from testcase_agent import product_uo
+
+        from ascendc_pilot.actions.engines import _resolve_tg_ctx
+
+        tg_ctx = _resolve_tg_ctx(project_root, ctx)
+        try:
+            legal_keys = product_uo.legal_key_rows(
+                project_root,
+                op_name=str(tg_ctx.get("op_name") or ""),
+                architecture=str(tg_ctx.get("architecture") or ""),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "engine": "compile_obligations", "error": f"legal_keys unavailable: {exc}"}
+    obligations = compile_obligations(fence, legal_keys=legal_keys)
+    path = products.worklog_path(tg)
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    old = parse_worklog_fence(existing)
+    old_rows = old.get("obligations") if isinstance(old.get("obligations"), dict) else {}
+    ledger = seed_ledger(obligations)
+    for oid, row in (ledger.get("obligations") or {}).items():
+        prev = old_rows.get(oid) if isinstance(old_rows.get(oid), dict) else {}
+        if prev.get("status"):
+            row["status"] = prev.get("status")
+            if prev.get("signature"):
+                row["signature"] = prev.get("signature")
+            if prev.get("witness"):
+                row["witness"] = prev.get("witness")
+    if isinstance(old.get("signatures"), list):
+        ledger["signatures"] = list(old.get("signatures") or [])
+    isolation.assert_tg_write_path(path)
+    path.write_text(dump_worklog(ledger, prose=""), encoding="utf-8")
+    return {
+        "ok": True,
+        "engine": "compile_obligations",
+        "artifact": path.as_posix(),
+        "count": len(ledger.get("obligations") or {}),
+    }
+
+
 def run_construct_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
     tg = _tg(project_root, ctx)
     init_doc = products.load_init(tg)
-    staged = _collect_staging_mapping(_action_dir(project_root, ctx, "construct_cases"))
+    captured = _captured(project_root, ctx, "construct_cases")
+    staged = _parse_captured_mapping(str(captured.get("text") or ""), captured.get("doc") if isinstance(captured.get("doc"), dict) else None)
+    if not staged:
+        staged = _collect_staging_mapping(_action_dir(project_root, ctx, "construct_cases"))
     rows = staged.get("rows") or staged.get("cases") or []
-    if not isinstance(rows, list):
-        return {"ok": False, "engine": "construct_promote", "error": "staging rows is not a list"}
+    if rows and not isinstance(rows, list):
+        return {"ok": False, "engine": "construct_promote", "error": "rows is not a list"}
+    recipe = staged.get("recipe") if isinstance(staged.get("recipe"), dict) else {}
     columns = [c["name"] if isinstance(c, dict) else str(c) for c in (init_doc.get("columns") or [])]
     extra = staged.get("columns") or []
     for col in extra:
@@ -847,16 +953,99 @@ def run_construct_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, 
             columns.append(name)
     if not columns and rows and isinstance(rows[0], dict):
         columns = [str(k) for k in rows[0].keys()]
-    kind = str(init_doc.get("table_kind") or "csv")
-    path = products.cases_path(tg, kind)
-    products.write_cases_table(path, columns, [r for r in rows if isinstance(r, dict)], table_kind=kind)
+    replay = _replay_dir(project_root, ctx)
+    replay.mkdir(parents=True, exist_ok=True)
+    pending = {"columns": columns, "rows": [r for r in rows if isinstance(r, dict)], "recipe": recipe}
+    if str(recipe.get("kind") or "") == "enumerate_legal_keys":
+        pending["rows"] = _materialize_legal_key_batch(project_root, ctx, recipe, columns, init_doc)
+    pending_path = replay / "pending.yaml"
+    isolation.assert_tg_write_path(pending_path)
+    _dump_yaml(pending_path, pending)
+    receipt = _receipt(
+        project_root,
+        ctx,
+        "construct_promote.yaml",
+        {"ok": True, "rows": len(pending.get("rows") or []), "recipe": recipe.get("kind") or "", "pending": pending_path.as_posix()},
+    )
+    cases = products.cases_path(tg, str(init_doc.get("table_kind") or "csv"))
     return {
         "ok": True,
         "engine": "construct_promote",
-        "artifact": path.as_posix(),
-        "rows": len(rows),
-        "table_kind": kind,
+        "receipt": receipt.as_posix(),
+        "rows": len(pending.get("rows") or []),
+        "wrote_cases": cases.is_file(),
+        "pending": pending_path.as_posix(),
     }
+
+
+def _materialize_legal_key_batch(
+    project_root: Path,
+    ctx: dict[str, Any],
+    recipe: dict[str, Any],
+    columns: list[str],
+    init_doc: dict[str, Any],
+) -> list[dict[str, str]]:
+    from testcase_agent import product_uo
+    from testcase_agent.coverage.ledger import parse_worklog_fence
+
+    from ascendc_pilot.actions.engines import _resolve_tg_ctx
+
+    tg_ctx = _resolve_tg_ctx(project_root, ctx)
+    try:
+        key_rows = product_uo.legal_key_rows(
+            project_root,
+            op_name=str(tg_ctx.get("op_name") or ""),
+            architecture=str(tg_ctx.get("architecture") or ""),
+        )
+    except Exception:
+        key_rows = []
+    worklog = products.worklog_path(_tg(project_root, ctx))
+    ledger = parse_worklog_fence(worklog.read_text(encoding="utf-8") if worklog.is_file() else "")
+    open_keys: set[int] = set()
+    for row in (ledger.get("obligations") or {}).values():
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("status") or "OPEN") != "OPEN":
+            continue
+        if row.get("tiling_key") is None:
+            continue
+        try:
+            open_keys.add(int(row.get("tiling_key")))
+        except (TypeError, ValueError):
+            continue
+    try:
+        batch_size = int(recipe.get("batch_size") or 64)
+    except (TypeError, ValueError):
+        batch_size = 64
+    batch_size = max(1, min(batch_size, 512))
+    fillers = recipe.get("fillers") if isinstance(recipe.get("fillers"), dict) else {}
+    defaults = {}
+    for col in init_doc.get("columns") or []:
+        if isinstance(col, dict) and col.get("name") is not None:
+            defaults[str(col["name"])] = "" if col.get("default") is None else str(col.get("default"))
+    out: list[dict[str, str]] = []
+    for raw in key_rows:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            key_i = int(raw.get("tiling_key") if raw.get("tiling_key") is not None else raw.get("key"))
+        except (TypeError, ValueError):
+            continue
+        if open_keys and key_i not in open_keys:
+            continue
+        row = dict(defaults)
+        for key, value in raw.items():
+            row[str(key)] = "" if value is None else str(value)
+        for key, value in fillers.items():
+            row[str(key)] = "" if value is None else str(value)
+        row.setdefault("tiling_key", str(key_i))
+        out.append({c: row.get(c, "") for c in (columns or list(row.keys()))} if columns else row)
+        if len(out) >= batch_size:
+            break
+    cache = _replay_dir(project_root, ctx)
+    cache.mkdir(parents=True, exist_ok=True)
+    products.write_cases_csv(cache / "batch.csv", columns or (list(out[0].keys()) if out else []), out)
+    return out
 
 
 def _read_cases(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -943,39 +1132,85 @@ def _replay_bootstrap_failure(exc: BaseException) -> tuple[str, str]:
     return code, message_zh
 
 
-def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
-    tg = _tg(project_root, ctx)
-    init_doc = products.load_init(tg)
-    path = products.cases_path(tg, str(init_doc.get("table_kind") or "csv"))
-    _cols, rows = _read_cases(path)
+def _load_pending_rows(project_root: Path, ctx: dict[str, Any]) -> list[dict[str, str]]:
+    pending_path = _replay_dir(project_root, ctx) / "pending.yaml"
+    if pending_path.is_file():
+        doc = _load_yaml(pending_path)
+        if isinstance(doc, dict):
+            rows = doc.get("rows") or []
+            if isinstance(rows, list):
+                return [{str(k): "" if v is None else str(v) for k, v in row.items()} for row in rows if isinstance(row, dict)]
+    batch = _replay_dir(project_root, ctx) / "batch.csv"
+    if batch.is_file():
+        _cols, rows = _read_cases(batch)
+        return rows
+    return []
+
+
+def _observe_from_verdict(row: dict[str, str], item: Any) -> dict[str, Any]:
+    replay = {
+        "tiling_key": getattr(item, "key", None) if item is not None else row.get("tiling_key"),
+        "dims": dict(getattr(item, "dims", {}) or {}) if item is not None else {},
+        "logged": dict(getattr(item, "logged", {}) or {}) if item is not None else {},
+        "diag": dict(getattr(item, "diag", {}) or {}) if item is not None else {},
+        "tiling_data": dict(getattr(item, "tiling_data", {}) or {}) if item is not None else {},
+        "ok": bool(getattr(item, "ok", False)) if item is not None else False,
+        "reject": str(getattr(item, "reject", "") or "") if item is not None else str(row.get("reject") or ""),
+    }
+    for blob in (replay["logged"], replay["diag"], replay["dims"], replay["tiling_data"]):
+        if isinstance(blob, dict):
+            replay.update({str(k): v for k, v in blob.items() if str(k) not in replay})
+    probes = dict(getattr(item, "probes", {}) or {}) if item is not None else {}
+    return {"case": dict(row), "replay": replay, "probe": probes}
+
+
+def _judge_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    from testcase_agent.closure.oracle import HostOracle
+
+    class _Row:
+        def __init__(self, tag: str, row: dict[str, str]) -> None:
+            self.tag = tag
+            self.row = row
+
+    oracle = HostOracle()
+    tagged = [_Row(str(row.get("Testcase_Name") or f"case_{i}"), row) for i, row in enumerate(rows)]
+    judged = oracle.judge(tagged, tag="tg_solve")
     verdicts: list[dict[str, Any]] = []
+    observes: list[dict[str, Any]] = []
+    for i, item in enumerate(judged):
+        row = rows[i] if i < len(rows) else {}
+        observe = _observe_from_verdict(row, item)
+        observes.append(observe)
+        verdicts.append(
+            {
+                "case_id": item.case_id,
+                "ok": item.ok,
+                "tiling_key": item.key,
+                "reject": item.reject,
+                "judged": item.judged,
+                "dims": item.dims,
+                "logged": item.logged,
+                "diag": item.diag,
+                "probes": item.probes,
+                "tiling_data": item.tiling_data,
+                "observe": observe,
+                "row": row,
+            }
+        )
+    return verdicts, observes
+
+
+def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    rows = _load_pending_rows(project_root, ctx)
+    verdicts: list[dict[str, Any]] = []
+    observes: list[dict[str, Any]] = []
     replayed = False
     error = ""
     message_zh = ""
     if rows and _live_replay(ctx):
         try:
-            from testcase_agent.closure.oracle import HostOracle
-
-            class _Row:
-                def __init__(self, tag: str, row: dict[str, str]) -> None:
-                    self.tag = tag
-                    self.row = row
-
-            oracle = HostOracle()
-            tagged = [_Row(str(row.get("Testcase_Name") or f"case_{i}"), row) for i, row in enumerate(rows)]
-            judged = oracle.judge(tagged, tag="tg_solve")
+            verdicts, observes = _judge_rows(rows)
             replayed = True
-            for item in judged:
-                verdicts.append(
-                    {
-                        "case_id": item.case_id,
-                        "ok": item.ok,
-                        "tiling_key": item.key,
-                        "reject": item.reject,
-                        "judged": item.judged,
-                        "dims": item.dims,
-                    }
-                )
         except Exception as exc:  # noqa: BLE001
             error, message_zh = _replay_bootstrap_failure(exc)
             doc = {
@@ -985,7 +1220,6 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
                 "error": error,
                 "message_zh": message_zh,
                 "detail": str(exc)[:400],
-                "cases": path.as_posix() if path.is_file() else "",
                 "count": len(rows),
                 "verdicts": [],
             }
@@ -1002,6 +1236,8 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
             }
     if not verdicts:
         for i, row in enumerate(rows):
+            observe = _observe_from_verdict(row, None)
+            observes.append(observe)
             verdicts.append(
                 {
                     "case_id": str(row.get("Testcase_Name") or f"case_{i}"),
@@ -1010,54 +1246,202 @@ def run_replay_round(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
                     "reject": error or "NOT_RUN",
                     "judged": False,
                     "row": row,
+                    "observe": observe,
                 }
             )
+    probed = False
+    try:
+        _text, fence = products.load_plan(_tg(project_root, ctx))
+        from testcase_agent.coverage.probe import missing_probe_fields
+
+        missing = missing_probe_fields(fence, observes) if _live_replay(ctx) else []
+        if missing:
+            inj = _try_inject_probes(project_root, ctx, missing)
+            probed = bool(inj.get("ok"))
+            if probed and rows and _live_replay(ctx):
+                try:
+                    verdicts, observes = _judge_rows(rows)
+                    replayed = True
+                except Exception:  # noqa: BLE001
+                    pass
+    except Exception:  # noqa: BLE001
+        pass
     doc = {
         "schema": "tg-replay-round/v1",
         "ok": True,
         "replayed": replayed,
+        "probed": probed,
         "error": error,
-        "cases": path.as_posix() if path.is_file() else "",
         "count": len(rows),
         "verdicts": verdicts,
     }
     out = _receipt(project_root, ctx, "replay_round.yaml", doc)
+    cache = _replay_dir(project_root, ctx)
+    cache.mkdir(parents=True, exist_ok=True)
+    _dump_yaml(cache / "last_observes.yaml", {"observes": observes})
     return {"ok": True, "engine": "replay_round", "artifact": out.as_posix(), "replayed": replayed, "count": len(rows)}
 
 
-def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+def _try_inject_probes(project_root: Path, ctx: dict[str, Any], fields: list[str]) -> dict[str, Any]:
+    from testcase_agent.coverage.probe import inject_probes
+    from testcase_agent.closure.workspace import replay_runner
+
+    try:
+        from replay.bootstrap import ensure_runner, ops_sandbox_local, _ops_root
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
+    runner = replay_runner()
+    _ = (project_root, ctx)
+    boot = ensure_runner(runner, force_copy=True)
+    if not boot.get("ok"):
+        return {"ok": False, "error": boot.get("error")}
+    raw_local = str(boot.get("ops_local") or "").strip()
+    local = Path(raw_local) if raw_local else ops_sandbox_local(runner)
+    try:
+        original = _ops_root(runner)
+        if local.resolve() == original.resolve():
+            return {"ok": False, "error": "SANDBOX_COLLIDES_WITH_OPS"}
+    except OSError:
+        return {"ok": False, "error": "SANDBOX_OPS_UNRESOLVED"}
+    if not local.is_dir():
+        return {"ok": False, "error": "SANDBOX_OPS_MISSING"}
+    injected = inject_probes(local, fields)
+    if injected.get("missing") and not injected.get("patched"):
+        return {**injected, "ok": False, "error": "PROBE_UNTESTABLE"}
+    rebuilt = ensure_runner(runner, rebuild=True)
+    if not rebuilt.get("ok"):
+        return {"ok": False, "error": rebuilt.get("error"), "inject": injected}
+    return {"ok": True, "inject": injected, "rebuild": True}
+
+
+def run_coverage_eval(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.coverage.eval import evaluate_obligation
+    from testcase_agent.coverage.ledger import dump_worklog, ledger_closed, parse_worklog_fence, upsert_obligation
+
     tg = _tg(project_root, ctx)
-    text = _collect_staging_text(_action_dir(project_root, ctx, "analyze_round"), names=("worklog.md", "staging.md"))
+    try:
+        _text, fence = products.load_plan(tg)
+    except products.ProductError as exc:
+        return {"ok": False, "engine": "coverage_eval", "error": str(exc)}
+    worklog = products.worklog_path(tg)
+    ledger = parse_worklog_fence(worklog.read_text(encoding="utf-8") if worklog.is_file() else "")
+    if not ledger.get("obligations"):
+        return {"ok": False, "engine": "coverage_eval", "error": "ledger empty"}
+    receipt_path = _action_dir(project_root, ctx, "replay_round").parent.parent / "receipts" / "replay_round.yaml"
+    # receipts live under runs/{run_id}/receipts
+    from ascendc_pilot.paths import agent_root
+
+    arch = str(ctx.get("architecture") or "")
+    receipt_path = agent_root(project_root, arch) / "runs" / _run_id(ctx) / "receipts" / "replay_round.yaml"
+    replay_doc = _load_yaml(receipt_path) if receipt_path.is_file() else {}
+    verdicts = replay_doc.get("verdicts") if isinstance(replay_doc, dict) else []
+    observes = []
+    for item in verdicts or []:
+        if isinstance(item, dict) and isinstance(item.get("observe"), dict):
+            observes.append(item["observe"])
+    cache_obs = _load_yaml(_replay_dir(project_root, ctx) / "last_observes.yaml")
+    if not observes and isinstance(cache_obs, dict):
+        observes = [row for row in (cache_obs.get("observes") or []) if isinstance(row, dict)]
+    seen = set(str(s) for s in (ledger.get("signatures") or []) if s)
+    witnesses: list[dict[str, Any]] = []
+    leak = False
+    for observe in observes:
+        rows = ledger.get("obligations") if isinstance(ledger.get("obligations"), dict) else {}
+        for oid, obl in list(rows.items()):
+            if not isinstance(obl, dict):
+                continue
+            status = str(obl.get("status") or "OPEN")
+            if status not in {"OPEN", "MISS", "UNKNOWN"}:
+                continue
+            result = evaluate_obligation(obl, fence, observe, seen_signatures=seen)
+            if result["status"] == "REDUNDANT":
+                continue
+            upsert_obligation(ledger, oid, status=result["status"], signature=result.get("signature"))
+            if result["status"] == "CLOSED":
+                seen.add(str(result.get("signature") or ""))
+                row = (observe.get("case") if isinstance(observe.get("case"), dict) else {}) or {}
+                witnesses.append({"obligation": oid, "row": row, "signature": result.get("signature")})
+                obl["witness"] = {"row": row}
+            if result["status"] == "GUARD_LEAK":
+                leak = True
+    isolation.assert_tg_write_path(worklog)
+    worklog.write_text(dump_worklog(ledger), encoding="utf-8")
+    cache = _replay_dir(project_root, ctx)
+    cache.mkdir(parents=True, exist_ok=True)
+    existing = _load_yaml(cache / "witnesses.yaml")
+    kept = existing.get("witnesses") if isinstance(existing, dict) else []
+    if not isinstance(kept, list):
+        kept = []
+    kept.extend(witnesses)
+    _dump_yaml(cache / "witnesses.yaml", {"witnesses": kept})
+    closed, problems = ledger_closed(ledger)
+    return {
+        "ok": not leak,
+        "engine": "coverage_eval",
+        "closed": closed,
+        "problems": problems,
+        "guard_leak": leak,
+        "artifact": worklog.as_posix(),
+    }
+
+
+def run_analyze_promote(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.coverage.ledger import merge_prose, parse_worklog_fence
+
+    tg = _tg(project_root, ctx)
+    text = _captured_text(project_root, ctx, "analyze_round")
     if not text.strip():
-        return {"ok": False, "engine": "analyze_promote", "error": "empty worklog staging"}
-    if not text.lstrip().startswith("open:"):
-        text = "open: []\n\n" + text
+        text = _collect_staging_text(_action_dir(project_root, ctx, "analyze_round"), names=("worklog.md", "staging.md"))
     path = products.worklog_path(tg)
+    existing = path.read_text(encoding="utf-8") if path.is_file() else ""
+    ledger = parse_worklog_fence(existing)
+    if not ledger:
+        return {"ok": False, "engine": "analyze_promote", "error": "missing worklog ledger"}
     isolation.assert_tg_write_path(path)
-    path.write_text(text, encoding="utf-8")
-    open_ids = products.worklog_open_ids(text)
-    return {"ok": True, "engine": "analyze_promote", "artifact": path.as_posix(), "open": open_ids}
+    path.write_text(merge_prose(existing, ledger, extra_prose=text), encoding="utf-8")
+    from testcase_agent.coverage.ledger import open_ids
+
+    return {"ok": True, "engine": "analyze_promote", "artifact": path.as_posix(), "open": open_ids(ledger)}
 
 
 def run_solve_certify(project_root: Path, ctx: dict[str, Any]) -> dict[str, Any]:
+    from testcase_agent.coverage.ledger import ledger_closed, parse_worklog_fence
+
     tg = _tg(project_root, ctx)
     path = products.worklog_path(tg)
     if not path.is_file():
         return {"ok": False, "engine": "solve_certify", "error": "missing worklog.md"}
     text = path.read_text(encoding="utf-8")
-    open_ids = products.worklog_open_ids(text)
+    ledger = parse_worklog_fence(text)
+    closed, problems = ledger_closed(ledger)
+    if not closed:
+        receipt = _receipt(
+            project_root,
+            ctx,
+            "solve_certify.yaml",
+            {"ok": False, "problems": problems, "worklog": path.as_posix()},
+        )
+        return {"ok": False, "engine": "solve_certify", "problems": problems, "receipt": receipt.as_posix()}
     init_doc = products.load_init(tg)
-    cases = products.cases_path(tg, str(init_doc.get("table_kind") or "csv"))
-    if not cases.is_file():
-        return {"ok": False, "engine": "solve_certify", "error": "missing cases table", "path": cases.as_posix()}
-    ok = not open_ids
+    kind = str(init_doc.get("table_kind") or "csv")
+    cases = products.cases_path(tg, kind)
+    witnesses_doc = _load_yaml(_replay_dir(project_root, ctx) / "witnesses.yaml")
+    rows = []
+    for item in (witnesses_doc.get("witnesses") or []) if isinstance(witnesses_doc, dict) else []:
+        if isinstance(item, dict) and isinstance(item.get("row"), dict):
+            rows.append(item["row"])
+    columns = [c["name"] if isinstance(c, dict) else str(c) for c in (init_doc.get("columns") or [])]
+    if not columns and rows:
+        columns = [str(k) for k in rows[0].keys()]
+    isolation.assert_tg_write_path(cases)
+    products.write_cases_table(cases, columns, rows, table_kind=kind)
     receipt = _receipt(
         project_root,
         ctx,
         "solve_certify.yaml",
-        {"ok": ok, "open": open_ids, "worklog": path.as_posix(), "cases": cases.as_posix()},
+        {"ok": True, "problems": [], "worklog": path.as_posix(), "cases": cases.as_posix(), "rows": len(rows)},
     )
-    return {"ok": ok, "engine": "solve_certify", "open": open_ids, "receipt": receipt.as_posix()}
+    return {"ok": True, "engine": "solve_certify", "receipt": receipt.as_posix(), "rows": len(rows)}
 
 
 def install(registry: dict[tuple[str, str], Any]) -> None:
@@ -1068,7 +1452,9 @@ def install(registry: dict[tuple[str, str], Any]) -> None:
     registry[("tg-plan", "plan_promote")] = run_plan_promote
     registry[("tg-plan", "plan_validate")] = run_plan_validate
     registry[("tg-solve", "solve_precheck")] = run_solve_precheck
+    registry[("tg-solve", "compile_obligations")] = run_compile_obligations
     registry[("tg-solve", "construct_promote")] = run_construct_promote
     registry[("tg-solve", "replay_round")] = run_replay_round
+    registry[("tg-solve", "coverage_eval")] = run_coverage_eval
     registry[("tg-solve", "analyze_promote")] = run_analyze_promote
     registry[("tg-solve", "solve_certify")] = run_solve_certify

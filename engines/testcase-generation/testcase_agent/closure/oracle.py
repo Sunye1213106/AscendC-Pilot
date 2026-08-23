@@ -17,6 +17,10 @@ class Verdict:
     dims: dict = field(default_factory=dict)
     reject: str = ""
     judged: bool = True
+    logged: dict = field(default_factory=dict)
+    diag: dict = field(default_factory=dict)
+    probes: dict = field(default_factory=dict)
+    tiling_data: dict = field(default_factory=dict)
 
     @property
     def verdict(self) -> bool:
@@ -144,6 +148,10 @@ class HostOracle:
                 dims=dict(getattr(r, "dims", {}) or {}),
                 reject=str(getattr(r, "reject", "") or ""),
                 judged=bool(getattr(r, "verdict", True)),
+                logged=dict(getattr(r, "logged", {}) or {}),
+                diag=dict(getattr(r, "diag", {}) or {}),
+                probes=dict(getattr(r, "probes", {}) or {}),
+                tiling_data=dict(getattr(r, "tiling_data", {}) or {}),
             ))
         flag = self.batch_integrity(len(sent), done)
         if flag:

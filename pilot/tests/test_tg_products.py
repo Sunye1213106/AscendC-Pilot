@@ -5,6 +5,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 TG_ENGINE = ROOT / "engines" / "testcase-generation"
 if str(TG_ENGINE) not in sys.path:
@@ -115,19 +117,29 @@ def test_golden_only_precision_fails() -> None:
     assert any("golden-only" in e for e in errors)
 
 
-def _v2_fence(**overrides: object) -> dict:
+def _v3_fence(**overrides: object) -> dict:
     fence = {
         "schema": products.PLAN_SCHEMA,
-        "intent": "default_tilingkey",
-        "variables": [
+        "requirement": {"id": "R-dtype", "text": "dtype"},
+        "targets": [
             {
-                "id": "V-dtype",
-                "symbol": "InputDType",
-                "direction": {"columns": ["B"], "note": "set dtype"},
-                "evidence": {"kind": "replay_field", "field": "tiling_key"},
+                "id": "T-dispatch",
+                "evidence": {"kind": "replay_field", "field": "tiling_key", "expected": 1},
             }
         ],
-        "ladder": {"L0": ["V-dtype"], "L1": [], "L2": [], "L3": []},
+        "guards": [],
+        "dimensions": [
+            {
+                "id": "D-dtype",
+                "target": "T-dispatch",
+                "controls": ["B"],
+                "partitions": [
+                    {"id": "fp16", "predicate": {"op": "eq", "field": "case.dtype", "value": "fp16"}},
+                    {"id": "bf16", "predicate": {"op": "eq", "field": "case.dtype", "value": "bf16"}},
+                ],
+            }
+        ],
+        "coverage": {"L0": {"dimensions": ["D-dtype"]}, "L1": {"combinations": []}, "L2": [], "L3": {"guards": []}},
         "oracle": [],
     }
     fence.update(overrides)
@@ -135,13 +147,17 @@ def _v2_fence(**overrides: object) -> dict:
 
 
 def test_plan_rejects_td_mode_and_unknown_column() -> None:
-    fence = _v2_fence(
+    fence = _v3_fence(
         mode="tilingkey_full_coverage",
-        variables=[
+        dimensions=[
             {
-                "id": "V-dtype",
-                "direction": {"columns": ["Missing"], "note": "set dtype"},
-                "evidence": {"kind": "replay_field", "field": "tiling_key"},
+                "id": "D-dtype",
+                "target": "T-dispatch",
+                "controls": ["Missing"],
+                "partitions": [
+                    {"id": "fp16", "predicate": {"op": "eq", "field": "case.dtype", "value": "fp16"}},
+                    {"id": "bf16", "predicate": {"op": "eq", "field": "case.dtype", "value": "bf16"}},
+                ],
             }
         ],
     )
@@ -155,44 +171,39 @@ def test_plan_rejects_v1_obligations() -> None:
         {
             "schema": "tg-plan/v1",
             "obligations": [{"id": "o1", "class": "replay"}],
-            "variables": [
-                {
-                    "id": "V-dtype",
-                    "direction": {"columns": ["B"], "note": "x"},
-                    "evidence": {"kind": "replay_field", "field": "tiling_key"},
-                }
+            "targets": [
+                {"id": "T-dispatch", "evidence": {"kind": "replay_field", "field": "tiling_key", "expected": 1}}
             ],
-            "ladder": {"L0": ["V-dtype"], "L1": [], "L2": [], "L3": []},
+            "coverage": {"L0": {"dimensions": []}, "L1": {"combinations": []}, "L2": [], "L3": {"guards": []}},
         },
         init_columns=["B"],
     )
     assert any("obligations" in e for e in errors)
-    assert any("v2" in e or "schema" in e for e in errors)
+    assert any("v3" in e or "schema" in e for e in errors)
 
 
-def test_plan_requires_evidence_and_ladder() -> None:
+def test_plan_requires_target_and_coverage() -> None:
     errors = products.validate_plan_fence(
         {
             "schema": products.PLAN_SCHEMA,
-            "variables": [{"id": "V-dtype", "direction": {"columns": ["B"]}}],
+            "targets": [{"id": "T-dispatch", "evidence": {"kind": "replay_field"}}],
         },
         init_columns=["B"],
     )
-    assert any("evidence.kind" in e for e in errors)
-    assert any("ladder" in e for e in errors)
+    assert any("evidence.field" in e or "evidence.kind" in e or "coverage" in e for e in errors)
 
 
 def test_untestable_needs_reason() -> None:
-    fence = _v2_fence(untestable=[{"id": "u1"}])
+    fence = _v3_fence(untestable=[{"id": "u1"}])
     errors = products.validate_plan_fence(fence, init_columns=["B"])
     assert any("reason" in e for e in errors)
 
 
 def test_plan_prose_requires_three_headings() -> None:
-    errors = products.validate_plan_prose("# plan\n\n```yaml\nschema: tg-plan/v2\n```\n")
+    errors = products.validate_plan_prose("# plan\n\n```yaml\nschema: tg-plan/v3\n```\n")
     assert any("测什么" in e for e in errors)
     ok = products.validate_plan_prose(
-        "## 测什么\n\n## 第一轮怎么造\n\n## 怎么知道打到了\n"
+        "## 测什么\n\n## 覆盖什么\n\n## 怎么判定\n"
     )
     assert ok == []
 
@@ -223,6 +234,52 @@ def test_collect_intent_reads_plan_markdown_not_yaml(tmp_path: Path) -> None:
     assert "ce_plan" in kinds
     assert "ce_tg_plan_intent" not in kinds
     assert not (tmp_path / ".ascendc-pilot" / "arch35" / "tg" / "plan" / "plan_intent.yaml").exists()
+
+
+def test_inspect_yaml_applies_bind_fill_before_structure_check(tmp_path: Path, capsys) -> None:
+    import json
+    from argparse import Namespace
+
+    from ascendc_pilot.cli import _cmd_inspect
+    from testcase_agent.bind_parts import emit_bind_parts
+
+    rel = "arch0/runs/R1/actions/bind_init/parts/bind.yaml"
+    parts = tmp_path / ".ascendc-pilot" / "arch0" / "runs" / "R1" / "actions" / "bind_init" / "parts"
+    emit_bind_parts(
+        parts,
+        scan={
+            "kind": "script_repo",
+            "contract": {"entry": "run_x.py", "case_arg": "--case", "columns": ["B"]},
+            "inventory": {
+                "tables": [
+                    {
+                        "columns": ["B"],
+                        "kind": "csv",
+                        "profile": {"columns": {"B": {"inferred_type": "int"}}},
+                    }
+                ]
+            },
+        },
+        identity={"run_id": "RUN_1"},
+    )
+    (parts / "bind.fill.yaml").write_text(
+        "call: {kind: pta, api: torch_npu.foo, site: a.py:1}\n"
+        "call_args: [{name: batch, source_column: B}]\n"
+        "mapping:\n  B: {role: api_arg, uo_id: b, encoding: int, evidence: a.py:1}\n"
+        "domains:\n  B: {operator: b, compare: match}\n"
+        "findings: []\n",
+        encoding="utf-8",
+    )
+    rc = _cmd_inspect(Namespace(inspect_cmd="yaml", project=tmp_path, rel=rel))
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    payload = json.loads(out)
+    assert payload.get("ok") is True
+    bind = yaml.safe_load((parts / "bind.yaml").read_text(encoding="utf-8"))
+    assert bind["call"]["kind"] == "pta"
+    assert bind["mapping"]["B"]["uo_id"] == "b"
+    assert bind["domains"]["B"]["profile"] == {"inferred_type": "int"}
+    assert bind["run_id"] == "RUN_1"
 
 
 def test_inspect_yaml_checks_structure_not_uo_id_content(tmp_path: Path, capsys) -> None:

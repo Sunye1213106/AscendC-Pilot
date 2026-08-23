@@ -84,7 +84,7 @@ def test_plan_validate_rejects_td_mode(synthetic_root: Path):
         },
     )
     (tg / "plan.md").write_text(
-        "# plan\n\n```yaml\nschema: tg-plan/v2\nmode: tilingkey_full_coverage\nvariables: []\n```\n",
+        "# plan\n\n```yaml\nschema: tg-plan/v3\nmode: tilingkey_full_coverage\ntargets: []\n```\n",
         encoding="utf-8",
     )
     out = run_plan_validate(synthetic_root, {"architecture": "arch0", "run_id": "RUN1"})

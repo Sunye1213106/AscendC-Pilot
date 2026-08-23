@@ -14,11 +14,11 @@ def test_plan_intent_action_removed() -> None:
     assert scope.get("execution_mode") == "subagent"
     assert scope.get("skill_id") == "test-plan"
     assert scope.get("method_ref") == "target-planning.md"
-    assert scope.get("output_mode") == "direct"
+    assert scope.get("output_mode") == "return_value"
     fuse = action_by_id("tg-plan", "plan_fuse")
     assert fuse is not None
     assert fuse.get("execution_mode") == "subagent"
-    assert fuse.get("output_mode") == "staged"
+    assert fuse.get("output_mode") == "return_value"
     pre = action_by_id("tg-plan", "plan_precheck")
     assert pre is not None
     assert pre.get("execution_mode") == "deterministic"

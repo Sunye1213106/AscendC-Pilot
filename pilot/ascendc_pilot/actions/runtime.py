@@ -232,6 +232,7 @@ _SESSION_STATE_KEYS = (
     "receipt",
     "checker_result",
     "bundle_digest",
+    "captured_result",
 )
 
 
@@ -249,6 +250,67 @@ def _session_overlay_path(sdir: Path) -> Path:
     if modern.is_file() or not legacy.is_file():
         return modern
     return legacy
+
+
+def _capture_return_value(
+    *,
+    result_file: Path | str | None = None,
+    action_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist a subagent return_value into the Action session (not a TG product)."""
+    text = ""
+    doc: dict[str, Any] | None = None
+    if result_file:
+        path = Path(result_file)
+        if path.is_file():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                text = ""
+    payload = action_result if isinstance(action_result, dict) else {}
+    if not text:
+        for key in ("result_text", "text", "body", "markdown", "content", "answer_zh", "answer"):
+            raw = payload.get(key) if payload else None
+            if raw:
+                text = str(raw)
+                break
+    if not text and isinstance(action_result, str):
+        text = action_result
+    keep_keys = (
+        "requirement",
+        "targets",
+        "guards",
+        "candidate_dimensions",
+        "schema",
+        "columns",
+        "rows",
+        "recipe",
+        "refinement",
+        "coverage",
+        "dimensions",
+    )
+    if payload and any(k in payload for k in keep_keys):
+        doc = {k: payload[k] for k in payload if k in keep_keys or k in {"construct_hint", "untestable"}}
+        if not text:
+            try:
+                import yaml as _yaml
+
+                text = _yaml.safe_dump(doc, allow_unicode=True, sort_keys=False)
+            except Exception:  # noqa: BLE001
+                text = str(doc)
+    if not text and not doc:
+        return {}
+    return {"text": str(text or ""), "doc": doc or {}}
+
+
+def _load_tg_captured(project_root: Path, run_id: str, action_id: str) -> dict[str, Any]:
+    sdir = _session_dir(project_root, run_id, action_id)
+    captured = _load(sdir / "captured.yaml")
+    if captured:
+        return captured
+    session = _load_action_session(sdir)
+    row = session.get("captured_result")
+    return row if isinstance(row, dict) else {}
 
 
 def _dump_session_state(sdir: Path, bundle: dict[str, Any]) -> None:
@@ -533,6 +595,56 @@ def _build_task_prompt_stub(
 
 
 _BIND_REWORK_SLICES = frozenset({"harness", "bind"})
+
+
+def _axis_matches_bind_rework(axis_id: str, rework_slices: set[str]) -> bool:
+    aid = str(axis_id or "").strip()
+    if aid in rework_slices:
+        return True
+    from testcase_agent.bind_parts import is_bind_chunk_id
+
+    return "bind" in rework_slices and is_bind_chunk_id(aid)
+
+
+def _expand_bind_axes_for_session(
+    axes_spec: list[dict[str, Any]],
+    sdir: Path,
+    run_id: str,
+) -> list[dict[str, Any]]:
+    """Host counts table headers and splits the bind axis into ≤20-column Tasks."""
+    if not any(str(row.get("id") or "").strip() == "bind" for row in axes_spec):
+        return list(axes_spec)
+    from testcase_agent.bind_parts import (
+        BIND_COLUMN_CHUNK_SIZE,
+        bind_part_column_names,
+        emit_bind_chunks,
+        expand_bind_fanout_axes,
+    )
+
+    parts = sdir / "parts"
+    names = bind_part_column_names(parts)
+    size = BIND_COLUMN_CHUNK_SIZE
+    for row in axes_spec:
+        if str(row.get("id") or "").strip() == "bind":
+            try:
+                size = int(row.get("chunk_size") or size)
+            except (TypeError, ValueError):
+                size = BIND_COLUMN_CHUNK_SIZE
+            break
+    expanded = expand_bind_fanout_axes(
+        axes_spec, columns=names, run_id=run_id, chunk_size=size
+    )
+    bind_path = parts / "bind.yaml"
+    if bind_path.is_file() and yaml is not None:
+        try:
+            bind = yaml.safe_load(bind_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            bind = {}
+        if isinstance(bind, dict):
+            ident = dict(bind.get("artifact_identity") or {})
+            ident.setdefault("run_id", bind.get("run_id") or run_id)
+            emit_bind_chunks(parts, bind, identity=ident or None, chunk_size=size)
+    return expanded
 _BIND_PASS_HEAD = re.compile(r"^\s*(PASS|OK|通过)\b", re.I)
 _BIND_REWORK_HEAD = re.compile(r"^\s*(REWORK|打回)\b", re.I)
 
@@ -583,10 +695,11 @@ def _review_axis_fanout_tasks(
     project_root: str,
     architecture: str,
 ) -> list[dict[str, str]]:
-    """Parallel axis Tasks so the two slices do not share context.
+    """Parallel axis Tasks so slices do not share context.
 
     Axes come from Workflow Spec ``execution_variant=review_axis_fanout`` +
-    ``fanout_axes`` — runtime does not invent a second graph.
+    ``fanout_axes``. The bind axis is expanded from table headers into
+    ``bind0..bindN`` (≤20 columns each); runtime does not invent a new kind.
     """
     del write_paths
     if str(action.get("execution_variant") or "") != "review_axis_fanout":
@@ -606,7 +719,7 @@ def _review_axis_fanout_tasks(
         if str(s).strip() in _BIND_REWORK_SLICES
     }
     rework_reason = str(rework_doc.get("reason") or "").strip()
-    if rework_slices:
+    if rework_slices == {"harness", "bind"}:
         axes_spec = [row for row in axes_spec if str(row.get("id") or "").strip() in rework_slices]
         if not axes_spec:
             return []
@@ -693,6 +806,15 @@ def _review_axis_fanout_tasks(
                 },
             )
             return tasks
+    axes_spec = _expand_bind_axes_for_session(axes_spec, sdir, run_id)
+    if rework_slices:
+        axes_spec = [
+            row
+            for row in axes_spec
+            if _axis_matches_bind_rework(str(row.get("id") or ""), rework_slices)
+        ]
+        if not axes_spec:
+            return []
     dt = dict(dispatch_targets or {})
     tasks: list[dict[str, str]] = []
     for axis_row in axes_spec:
@@ -708,15 +830,18 @@ def _review_axis_fanout_tasks(
         if allow_write and not rework_slices:
             part_name = Path(artifact.replace("\\", "/")).name
             part_path = sdir / "parts" / part_name
-            if part_name and part_path.is_file():
-                try:
-                    from testcase_agent.bind_parts import is_llm_edited
+            skip = False
+            try:
+                from testcase_agent.bind_parts import is_bind_chunk_id, is_llm_edited
 
-                    skip = is_llm_edited(part_path)
-                except Exception:
+                if is_bind_chunk_id(axis) and is_llm_edited(sdir / "parts" / "bind.yaml"):
                     skip = True
-                if skip:
-                    continue
+                elif part_name and part_path.is_file():
+                    skip = is_llm_edited(part_path)
+            except Exception:
+                skip = bool(part_name and part_path.is_file())
+            if skip:
+                continue
         mp = _axis_method_path(repo, axis_row)
         if not mp.is_file():
             return []
@@ -727,7 +852,8 @@ def _review_axis_fanout_tasks(
             src_prompt = _task_prompt_path(repo, axis_tpid)
             if src_prompt.is_file():
                 axis_prompt_text = src_prompt.read_text(encoding="utf-8")
-                axis_prompt = sdir / f"prompt_{axis}.md"
+                prompt_key = str(axis_row.get("prompt_alias") or axis).strip() or axis
+                axis_prompt = sdir / f"prompt_{prompt_key}.md"
                 axis_prompt.write_text(axis_prompt_text, encoding="utf-8")
                 axis_prompt_path = axis_prompt.as_posix()
         _materialize_fanout_axis(
@@ -737,12 +863,27 @@ def _review_axis_fanout_tasks(
             axis=axis,
             prompt_text=axis_prompt_text,
         )
-        axis_method = sdir / f"method_{axis}.md"
+        axis_method_name = str(axis_row.get("method_filename") or f"method_{axis}.md")
+        axis_method = sdir / axis_method_name
         axis_dt = dict(dt)
         axis_write = [artifact] if allow_write else []
         axis_dt["write"] = axis_write
         forbid = list(axis_dt.get("forbid_read") or [])
         blocked = [other] if other else []
+        try:
+            from testcase_agent.bind_parts import is_bind_chunk_id, list_bind_chunk_paths
+
+            if is_bind_chunk_id(axis):
+                blocked.append(f"runs/{run_id}/actions/bind_init/parts/bind.yaml")
+            if axis == "harness" or is_bind_chunk_id(axis):
+                mine = Path(artifact.replace("\\", "/")).name
+                for sibling in list_bind_chunk_paths(sdir / "parts"):
+                    if sibling.name != mine:
+                        blocked.append(
+                            f"runs/{run_id}/actions/bind_init/parts/{sibling.name}"
+                        )
+        except Exception:
+            pass
         if cap in {"spec-review", "standards-review", "standalone-review"} or skill in {
             "code-review",
             "standalone-review",
@@ -1079,8 +1220,9 @@ def _materialize_fanout_axis(
         project_root=repo,
         prompt=prompt_text,
         current_skill_id=skill,
-        method_filename=f"method_{axis}.md",
-        refs_ns=refs_ns,
+        method_filename=str(axis_row.get("method_filename") or f"method_{axis}.md"),
+        refs_ns=str(axis_row.get("refs_ns") or "").strip()
+        or (axis if str(axis_row.get("method_ref") or "").strip() else ""),
         explicit_refs=[str(r).strip() for r in (axis_row.get("refs") or []) if str(r).strip()],
     )
     if not mat.get("ok"):
@@ -1829,6 +1971,22 @@ def prepare_action(
     }
     method_r = _render_placeholders(method, **ph_kwargs)
     prompt_r = _render_placeholders(prompt, **ph_kwargs)
+    if action_id == "plan_fuse":
+        captured = _load_tg_captured(project_root, run_id, "plan_scope")
+        body = str(captured.get("text") or "").strip()
+        if not body and captured.get("doc"):
+            try:
+                import yaml as _yaml
+
+                body = _yaml.safe_dump(captured.get("doc"), allow_unicode=True, sort_keys=False)
+            except Exception:  # noqa: BLE001
+                body = str(captured.get("doc"))
+        prompt_r = (
+            prompt_r.rstrip()
+            + "\n\n## Planning Context (session capture)\n\n```yaml\n"
+            + (body or "# missing — PLAN_SCOPE_REQUIRED")
+            + "\n```\n"
+        )
     user_question = str(state.get("intent") or "").strip()
     if (
         user_question
@@ -2583,11 +2741,24 @@ def prepare_action(
     if len(fanout_tasks) >= 2:
         result["dispatch_tasks"] = fanout_tasks
         if action_id == "bind_init":
+            from testcase_agent.bind_parts import is_bind_chunk_id
+
+            n_bind = sum(
+                1
+                for t in fanout_tasks
+                if is_bind_chunk_id(str(t.get("slice_id") or ""))
+            )
+            n_harness = sum(
+                1 for t in fanout_tasks if str(t.get("slice_id") or "") == "harness"
+            )
             result["message_zh"] = (
-                f"已准备 {len(fanout_tasks)} 个 Task（agent=`{actor_id}`，Action `{action_id}` / 一张 ticket）。"
+                f"已准备 {len(fanout_tasks)} 个 Task（{n_harness} 路 harness + {n_bind} 路 bind，"
+                "每路 bind ≤20 列）。"
                 "同一轮并行最好；每条 prompt 必须原样为 `dispatch_tasks[i].task_prompt_stub`。"
                 "禁止用父 `task_prompt_stub` 再开一个。"
-                "若已分两轮写完 `parts/harness.yaml` 与 `parts/bind.yaml`，下一轮 `pilot_run` 从磁盘收齐，不要重派、不要 force_new。"
+                "列数由引擎按表头切开，不要自己改路数。"
+                "子代理写完后引擎合并 harness.yaml 与全部 bindN.yaml → bind.yaml。"
+                "若磁盘已齐，下一轮 `pilot_run` 收齐，不要重派、不要 force_new。"
                 "对人只说 golden/精度口径与列映射是否齐，不要套审查完成模板。"
                 "禁止发明子代理没引用的事实。不要再调 workflow=auto 做 intake。"
             )
@@ -3210,9 +3381,13 @@ def finalize_action(
     action_sid = str(session.get("action_session_id") or "")
     lease_id = str(session.get("lease_id") or "")
     prepare_nonce = str(session.get("prepare_nonce") or "")
-    # Dialogue contract: Host may still pass result_file / action_result;
-    # kb-answer-v1 no longer materializes a disk payload.
-    _ = (result_file, action_result)
+    captured = _capture_return_value(result_file=result_file, action_result=action_result)
+    if captured:
+        session["captured_result"] = captured
+        try:
+            _dump(sdir / "captured.yaml", captured)
+        except Exception:  # noqa: BLE001
+            pass
 
     producer_identity = _validate_producer_declared_identity(
         project_root,

@@ -9,7 +9,7 @@ import yaml
 ACTUAL = Path(
     r"D:/TEST/pr_workspace/.ascendc-pr/gitcode.com--cann--ops-transformer--pr-9851/"
     r"attention/flash_attention_score_grad/.ascendc-pilot/arch35/runs/"
-    r"RUN_20260822_135454_8f9307bd/actions/bind_init/parts/bind.yaml"
+    r"RUN_20260822_160048_c23c9341/actions/bind_init/parts/bind.yaml"
 )
 
 ROLE = {

@@ -321,6 +321,19 @@ def reopen_fanout_slices(
     )
     if not doc:
         return {"ok": False, "error": "TICKET_NOT_FOUND", "action_id": action_id}
+    if "bind" in wanted:
+        from testcase_agent.bind_parts import is_bind_chunk_id, list_bind_chunk_paths
+
+        expected = _expected_slices(doc)
+        extra = [s for s in expected if is_bind_chunk_id(s)]
+        if not extra:
+            extra = [
+                p.stem
+                for p in list_bind_chunk_paths(P(str(doc.get("session_dir") or "")) / "parts")
+            ]
+        wanted = [s for s in wanted if s != "bind"] + extra
+        if not wanted:
+            return {"ok": False, "error": "REWORK_SLICES_EMPTY"}
     results = dict(doc.get("slice_results") or {})
     for sid in wanted:
         results.pop(sid, None)
